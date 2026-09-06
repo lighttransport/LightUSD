@@ -46,9 +46,31 @@ USDA
 
 fail() { echo "FAIL: $1"; exit 1; }
 
+# GNU coreutils `timeout` is absent on stock macOS runners. Use Python's
+# standard subprocess timeout as a portable fallback while preserving status
+# 124 for an actual timeout.
+run_timeout() {
+  local duration="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$duration" "$@"
+    return $?
+  fi
+  python3 - "$duration" "$@" <<'PY'
+import subprocess
+import sys
+
+seconds = float(sys.argv[1].rstrip("s"))
+try:
+    result = subprocess.run(sys.argv[2:], timeout=seconds)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+sys.exit(result.returncode)
+PY
+}
+
 # 1. A huge range must be rejected quickly (not enumerated). Kill after 20s: if
 #    the guard is missing this either OOMs or runs far past the timeout.
-timeout 20 "$LUSDRENDER" "$ASSET" "$TMP/big.####.png" -rtPreview \
+run_timeout 20 "$LUSDRENDER" "$ASSET" "$TMP/big.####.png" -rtPreview \
     -frames 0:100000000 -w 16 -height 16 -samples 1 > "$TMP/big.log" 2>&1
 rc=$?
 if [ $rc -eq 124 ]; then
@@ -61,7 +83,7 @@ grep -qi "invalid -frames" "$TMP/big.log" \
   || fail "-frames 0:100000000 failed without the expected 'Invalid -frames' diagnostic"
 
 # 2. A sub-ULP stride at a large offset must be rejected (non-progressing loop).
-timeout 20 "$LUSDRENDER" "$ASSET" "$TMP/tiny.####.png" -rtPreview \
+run_timeout 20 "$LUSDRENDER" "$ASSET" "$TMP/tiny.####.png" -rtPreview \
     -frames "0:1000x1e-320" -w 16 -height 16 -samples 1 > "$TMP/tiny.log" 2>&1
 rc=$?
 if [ $rc -eq 124 ]; then
@@ -72,7 +94,7 @@ if [ $rc -eq 0 ]; then
 fi
 
 # 3. An ordinary small spec must still render exactly one image per frame.
-timeout 120 "$LUSDRENDER" "$ASSET" "$TMP/ok.####.png" -rtPreview \
+run_timeout 120 "$LUSDRENDER" "$ASSET" "$TMP/ok.####.png" -rtPreview \
     -frames 1:3 -w 16 -height 16 -samples 1 -autoframe > "$TMP/ok.log" 2>&1 \
     || fail "-frames 1:3 failed: $(cat "$TMP/ok.log")"
 n=$(ls "$TMP"/ok.*.png 2>/dev/null | wc -l)
