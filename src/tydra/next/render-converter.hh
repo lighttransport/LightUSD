@@ -9,7 +9,6 @@
 
 #include <cstdint>
 #include <functional>
-#include <mutex>
 #include <string>
 #include <unordered_map>
 
@@ -18,6 +17,9 @@
 #include "scene-access.hh"
 #include "next/stage/stage.hh"
 #include "next/execution.hh"
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include "tsa-mutex.hh"
+#endif
 
 namespace lightusd {
 namespace next {
@@ -28,6 +30,19 @@ class AssetResolver;
 namespace lightusd {
 namespace tydra {
 namespace next {
+
+#if defined(LIGHTUSD_ENABLE_THREAD)
+using ConverterStateMutex = ::lightusd::Mutex;
+using ConverterStateLock = ::lightusd::MutexLockGuard;
+#else
+// The converter is fully serial when threading is disabled. Keep its state
+// lock ABI-free in that configuration so no mutex/thread implementation is
+// pulled into single-threaded or WASM builds.
+struct ConverterStateMutex {};
+struct ConverterStateLock {
+  explicit ConverterStateLock(ConverterStateMutex&) {}
+};
+#endif
 
 //
 // Conversion configuration
@@ -342,7 +357,7 @@ class RenderSceneConverter {
 
   // Get last error
   std::string GetLastError() const {
-    std::lock_guard<std::mutex> lk(state_mu_);
+    ConverterStateLock lk(state_mu_);
     return last_error_;
   }
 
@@ -454,7 +469,7 @@ class RenderSceneConverter {
   // today; see the mesh-conversion loop in Convert()). No-op cost on the
   // serial phases that still call SetLastError()/AddWarning()/
   // BudgetWouldExceed() from the main thread only.
-  mutable std::mutex state_mu_;
+  mutable ConverterStateMutex state_mu_;
   void AddWarning(std::string msg);
   void SetLastError(std::string msg);
   const RenderScene* image_cache_scene_ = nullptr;

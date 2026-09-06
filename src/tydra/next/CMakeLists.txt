@@ -55,6 +55,11 @@ endif()
 # Keep Tydra-next on the repository C++17 baseline.
 target_compile_features(tydra_next PUBLIC cxx_std_17)
 
+if(LIGHTUSD_ENABLE_THREAD)
+    target_compile_definitions(tydra_next PUBLIC LIGHTUSD_ENABLE_THREAD)
+    target_link_libraries(tydra_next PUBLIC Threads::Threads)
+endif()
+
 # Set include directories
 target_include_directories(tydra_next PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../..>

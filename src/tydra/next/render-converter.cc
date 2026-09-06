@@ -38,7 +38,9 @@
 #include <sstream>
 #include <iomanip>
 #include <atomic>
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <thread>
+#endif
 #include <unordered_set>
 
 namespace lightusd {
@@ -3925,7 +3927,8 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     float mesh_progress_end = 0.5f;
 
     const size_t mesh_count = extracted.meshes.size();
-    size_t mesh_workers;
+    size_t mesh_workers = 1;
+#if defined(LIGHTUSD_ENABLE_THREAD)
     if (config_.execution.max_threads >= 0) {
       if (config_.execution.max_threads == 0) {
         const unsigned hw_threads = std::thread::hardware_concurrency();
@@ -3945,6 +3948,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       mesh_workers =
           std::max<size_t>(1, std::min<size_t>(hw_threads ? hw_threads : 4, 16));
     }
+#endif
     ::lightusd::next::TaskArena task_arena(mesh_workers);
 
     // Dynamic work distribution: instead of fixed-size batch waves (where one
@@ -5586,7 +5590,7 @@ bool RenderSceneConverter::BudgetWouldExceed(size_t estimate,
   // resulting warning are both taken under state_mu_. Locks warnings_
   // directly rather than through AddWarning() -- AddWarning() takes the same
   // mutex, and it is non-recursive.
-  std::lock_guard<std::mutex> lk(state_mu_);
+  ConverterStateLock lk(state_mu_);
 
   if (budget_exceeded_) return true;  // latched: stay degraded for this run
 
@@ -5626,12 +5630,12 @@ void RenderSceneConverter::ResetOperationState() {
 }
 
 void RenderSceneConverter::AddWarning(std::string msg) {
-  std::lock_guard<std::mutex> lk(state_mu_);
+  ConverterStateLock lk(state_mu_);
   warnings_.push_back(std::move(msg));
 }
 
 void RenderSceneConverter::SetLastError(std::string msg) {
-  std::lock_guard<std::mutex> lk(state_mu_);
+  ConverterStateLock lk(state_mu_);
   last_error_ = std::move(msg);
 }
 
