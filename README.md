@@ -1,15 +1,14 @@
 # LightUSD
 
 LightUSD is a full-featured, dependency-free, lightweight USD library written
-in C++17. It reads and writes USDA, USDC, and USDZ without requiring the
-OpenUSD runtime, and includes MaterialX and USD Physics support.
+in C++17. It reads and writes USDA, USDC, and USDZ, and includes MaterialX and USD Physics support.
 
 LightUSD is designed for applications that need USD to be compact, portable,
 and fast: high-performance 3D interchange and DCC tools, render and asset
 pipelines, generative AI, and Physical AI systems that connect scene
 understanding with simulation and robotics. The same core runs across desktop,
 mobile, WebAssembly, and sandboxed environments, with explicit resource limits
-for untrusted assets.
+for untrusted assets. MCP interface provided.
 
 [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?logo=github)](https://github.com/sponsors/lighttransport)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/lighttransport/lightusd)
