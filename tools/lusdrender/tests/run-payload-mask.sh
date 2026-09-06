@@ -8,7 +8,26 @@ SCENE="$ROOT/tests/feat/large-scene/fixture/deferred-nested/root.usda"
 TMP="$(mktemp -d /tmp/lusdrender-payload-mask.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 
-if ! timeout 30s "$LUSDRENDER" "$SCENE" "$TMP/selected.png" \
+run_timeout() {
+  local duration="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$duration" "$@"
+    return $?
+  fi
+  python3 - "$duration" "$@" <<'PY'
+import subprocess
+import sys
+
+seconds = float(sys.argv[1].rstrip("s"))
+try:
+    result = subprocess.run(sys.argv[2:], timeout=seconds)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+sys.exit(result.returncode)
+PY
+}
+
+if ! run_timeout 30s "$LUSDRENDER" "$SCENE" "$TMP/selected.png" \
     -rtPreview -mask /P -w 64 -height 64 -stats >"$TMP/selected.log" 2>&1; then
   cat "$TMP/selected.log"
   echo "FAIL: selected payload did not render"
@@ -21,7 +40,7 @@ grep -q "rt meshes: 1" "$TMP/selected.log" || {
 }
 
 set +e
-timeout 30s "$LUSDRENDER" "$SCENE" "$TMP/deferred.png" \
+run_timeout 30s "$LUSDRENDER" "$SCENE" "$TMP/deferred.png" \
   -rtPreview -mask /NotSelected -w 64 -height 64 -stats >"$TMP/deferred.log" 2>&1
 rc=$?
 set -e

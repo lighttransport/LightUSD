@@ -25,6 +25,28 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 fail() { echo "FAIL: $1"; exit 1; }
 
+# GNU coreutils `timeout` is not present on stock macOS runners. Keep the
+# timeout contract portable without requiring Homebrew: Python is already a
+# test prerequisite and can terminate the child with the same 124 status.
+run_timeout() {
+  local duration="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$duration" "$@"
+    return $?
+  fi
+  python3 - "$duration" "$@" <<'PY'
+import subprocess
+import sys
+
+seconds = float(sys.argv[1].rstrip("s"))
+try:
+    result = subprocess.run(sys.argv[2:], timeout=seconds)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+sys.exit(result.returncode)
+PY
+}
+
 cat > "$TMP/tri.usda" <<'USDA'
 #usda 1.0
 (defaultPrim = "World" upAxis = "Y")
@@ -41,7 +63,7 @@ USDA
 # (128+N = signal; 134 = the old SIGABRT from std::stof).
 expect_clean_failure() {
   local desc="$1"; shift
-  timeout 20 "$LUSDRENDER" "$@" > "$TMP/log" 2>&1
+  run_timeout 20 "$LUSDRENDER" "$@" > "$TMP/log" 2>&1
   local rc=$?
   if [ $rc -eq 0 ]; then fail "$desc was accepted (exit 0)"; fi
   if [ $rc -ge 128 ]; then fail "$desc crashed/hung (exit $rc): $(tail -1 "$TMP/log")"; fi
@@ -62,7 +84,7 @@ grep -qi "frames" "$TMP/log" \
   || fail "-frames rejection did not mention -frames: $(tail -1 "$TMP/log")"
 
 # Sane inputs must still work.
-timeout 60 "$LUSDRENDER" "$TMP/tri.usda" "$TMP/ok.png" -w 16 -height 16 \
+run_timeout 60 "$LUSDRENDER" "$TMP/tri.usda" "$TMP/ok.png" -w 16 -height 16 \
     -samples 1 -fitScale 1.5 -autoframe > "$TMP/log" 2>&1 \
   || fail "a valid render regressed: $(cat "$TMP/log")"
 [ -f "$TMP/ok.png" ] || fail "valid render wrote no image"
