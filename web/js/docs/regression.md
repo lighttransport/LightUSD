@@ -85,6 +85,8 @@ contribution. Graph assertions cover the diffuse-roughness aliases.
 Transport assertions also cover matching the weighted specular sampling/PDF
 probability.
 
+The OpenPBR weighted fixture also covers authored `specular_color` tinting.
+
 The `open-pbr-film` scene covers bounded OpenPBR thin-film weight, thickness,
 and IOR propagation.
 

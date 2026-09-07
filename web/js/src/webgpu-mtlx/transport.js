@@ -89,7 +89,7 @@ fn transportEval(m: Lobe, wo: vec3f, wi: vec3f, eta: f32) -> vec4f {
     let f=select(baseFresnel,thinFilmFresnel(oh,m.ior,m.thinFilmIOR,m.thinFilmThickness),m.thinFilmThickness>0.0);
     let spec=f*microfacetD(h,alpha)*microfacetG(wo,wi,alpha)/(4.0*wo.z*wi.z);
     let diff=(1.0-m.metal)*(1.0-fr)*m.base/PI;
-    value=opaque*(m.weight*spec+diff);
+    value=opaque*(m.weight*m.schlickColor90*spec+diff);
     pdf=opaque*(specProbability*visibleNormalPDF(wo,h,alpha)/(4.0*oh)+(1.0-specProbability)*wi.z/PI);
   }
   if(t>0.0 && m.roughness>0.0001 && eta!=1.0) {

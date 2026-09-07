@@ -400,3 +400,8 @@ future work.
 
 The same weight now controls the opaque specular sampling probability and PDF,
 avoiding zero-contribution specular samples when the authored weight is low.
+
+Authored Standard Surface/OpenPBR `specular_color` now tints the kind-0
+microfacet response through the existing lobe storage, without changing the
+WGSL layout. This is an RGB tint approximation; measured spectral and layered
+specular semantics remain future work.
