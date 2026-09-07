@@ -70,10 +70,10 @@ $ ninja -C build_64       # or: cmake --build build_64
 The package build script uses the **Ninja** generator with
 **`CMAKE_BUILD_TYPE=MinSizeRel`**. MinSizeRel
 applies emscripten's link-time `-Oz` (and drops runtime assertions), which is
-what keeps the module small — the `.wasm` is roughly **~5MB**. A plain
+what keeps the module small. See the measured legacy and next sizes below. A plain
 `Release` build does **not** apply link-time size optimization (emscripten links
-at `-O0`, pulling debug system libs + assertions), producing a **~13MB** `.wasm`
-from the same code. Always ship MinSizeRel.
+at `-O0`, pulling debug system libs + assertions), and produces a substantially
+larger `.wasm` from the same code. Always ship MinSizeRel.
 
 For an experimental speed-over-size build (larger `.wasm`, no `-Oz`/assertions),
 use `bootstrap-linux-release.sh` / `bootstrap-linux-wasm64-release.sh`. The
@@ -100,15 +100,18 @@ The generated modules are written to `web/js/src/lightusd/`. Use
 
 ### Code size
 
-lightusd.wasm
+The following sizes were measured on 2026/09/07 with Emscripten 4.0.14,
+WASM32, Ninja, and `CMAKE_BUILD_TYPE=MinSizeRel`:
 
-2025/05. emsdk 4.0.8. -Oz : 1.6 MB
-2025/06. emsdk 4.0.9. -Oz : 1.9 MB
+| Variant | `.wasm` | `zstd -19` |
+|---|---:|---:|
+| legacy (`lightusd.wasm`) | 6,551,876 bytes (6.25 MiB) | 1,321,824 bytes (1,290.84 KiB) |
+| next (`lightusd_next.wasm`) | 1,671,646 bytes (1.59 MiB) | 557,584 bytes (544.52 KiB) |
 
 ### zstd compression
 
-we recommend to use zstd compression for wasm binary in the deployment.
-for example, 1.9MB lightusd wasm can be compressed to 400KB with `-19` compression level.
+We recommend using zstd compression for the WASM binary in deployment. The
+measured results above use compression level `-19`.
 
 ### Prepare wasm.zstd
 
