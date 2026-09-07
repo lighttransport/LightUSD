@@ -183,17 +183,17 @@ test('closure composition preserves lobe bounds and interior ownership',()=>{
   const leaf={name:'leaf',category:'oren_nayar_diffuse_bsdf',type:'BSDF'};
   const nodes=[leaf];
   let previous='leaf';
-  for(let i=1;i<=8;i++) {
+  for(let i=1;i<=16;i++) {
     nodes.push({name:`sum${i}`,category:'add',type:'BSDF',inputs:{in1:{nodename:previous},in2:{nodename:'leaf'}}});
     previous=`sum${i}`;
-    if(i<8) assert.match(compileGraph({nodes}).body,/closureAdd/);
+    if(i<16) assert.match(compileGraph({nodes}).body,/closureAdd/);
   }
-  assert.throws(()=>compileGraph({nodes}),/exceeds 8 lobes/);
+  assert.throws(()=>compileGraph({nodes}),/exceeds 16 lobes/);
   const layered=[leaf,{name:'medium',category:'anisotropic_vdf',type:'VDF'},
     {name:'layer',category:'layer',type:'BSDF',inputs:{top:{nodename:'leaf'},base:{nodename:'medium'}}}];
   assert.match(compileGraph({nodes:layered}).body,/closureInterior/);
   layered.push({name:'sum',category:'add',type:'BSDF',inputs:{in1:{nodename:'layer'},in2:{nodename:'leaf'}}});
-  assert.throws(()=>compileGraph({nodes:layered}),/attach the interior after/);
+  assert.match(compileGraph({nodes:layered}).body,/closureAddPreservingInterior/);
 });
 test('native closures compile and unsupported uniform inputs are diagnosed',()=>{
   for(const preset of ['native-copper','native-glass']) {

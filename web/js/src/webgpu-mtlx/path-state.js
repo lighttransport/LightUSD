@@ -98,6 +98,14 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
     ctx.normal=gn;
     var surface=getSurface(materialID,ctx);
     if(cfg.dimensions.w==2u) { surface=spectralSurface(surface,materialID,p.previous.x); }
+    // MaterialX opacity is a cutout/transmittance factor. Stochastic
+    // continuation keeps fractional opacity unbiased without a second shading
+    // event for the transparent branch.
+    let surfaceOpacity=surface.opacity;
+    if(!(surfaceOpacity>0.0)||surfaceOpacity<1.0){
+      if(!(surfaceOpacity>0.0)||random(&rng)>=surfaceOpacity){p.origin=vec4f(p.origin.xyz+p.direction.xyz*max(1e-5,length(ctx.position)*2e-6),0);continue;}
+      p.beta/=surfaceOpacity;
+    }
     let m=primaryLobe(surface);
     if(!validClosure(surface.bsdf)){atomicAdd(&pathCounters[2],1u);p.state.w=1u;break;}
     if(m.ior<=0.0 || m.roughness<0.0 || m.weight<0.0 || any(m.alpha<vec2f(0)) || any(m.complexIOR<vec3f(0)) || any(m.extinction<vec3f(0)) || m.metal<0.0 || m.metal>1.0 || m.transmission<0.0 || m.transmission>1.0 || any(m.base<vec3f(0)) || any(m.transmissionColor<vec3f(0))) {
@@ -108,7 +116,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
       if(depth==0u) { etaI=m.ior; etaT=1.0; }
       else { etaT=p.iors[depth-1u]; }
     }
-    let eta=etaT/etaI; let frame=transportFrame(gn); let wo=transpose(frame)*(-p.direction.xyz);
+    let eta=select(etaT/etaI,m.ior,m.thinWalled!=0u); let frame=transportFrame(gn); let wo=transpose(frame)*(-p.direction.xyz);
     var emitterMIS=1.0;
     if(p.state.y>0u && p.direction.w>0.0){emitterMIS=powerHeuristic(p.direction.w,triangleLightPDF(tri,h.t,p.direction.xyz));}
     p.radiance+=vec4f(p.beta.xyz*m.emission*m.emissionWeight*emitterMIS*emissionSidedness(materialID,outward,p.direction.xyz),0);
@@ -155,7 +163,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
     let sample=closureSample(surface.bsdf,wo,eta,&rng);
     if(sample.pdf<=0.0 || dot(sample.wi,sample.wi)<0.5 || all(sample.weight<=vec3f(0))) { finishPath(index,&p); break; }
     p.beta=vec4f(p.beta.xyz*sample.weight,p.beta.w*sample.eta*sample.eta);
-    if(sample.wi.z<0.0) {
+    if(sample.wi.z<0.0 && m.thinWalled==0u) {
       if(entering) {
         if(depth>=3u) { atomicAdd(&pathCounters[1],1u); p.state.w=1u; break; }
         p.previous.w=f32(depth+1u); p.iors[depth+1u]=m.ior; p.media[depth+1u]=materialID+1u;

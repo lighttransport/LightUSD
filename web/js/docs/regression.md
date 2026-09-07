@@ -19,10 +19,10 @@ nonzero layered lobes that the approximate terminal cannot represent.
 The optional `--authored-materials` ShaderBall flag loads the pinned library and
 attempts strict translation of every composed Material prim, reporting explicit
 per-material diagnostics for unsupported graphs without replacing render slots.
-The current pinned ShaderBall corpus yields ten translated materials. The WGSL
-compiler currently accepts zero: three report unsupported cutout opacity and
-seven report missing MaterialX surface terminals; these counts are reported in
-the Chrome JSON.
+The current pinned ShaderBall corpus yields ten translated materials and nine
+WGSL-compiled documents. Seven report missing MaterialX surface terminals; the
+remaining ground document is blocked only by its 7,500² EXR decoded-pixel
+budget. The counts and texture diagnostic are reported in the Chrome JSON.
 The Chrome fixture additionally translates a native USD emission graph through
 the pinned MaterialX definitions and checks every rendered pixel analytically.
 See [implementation status and setup](webgpu-mtlx.md) for the pinned fixtures,

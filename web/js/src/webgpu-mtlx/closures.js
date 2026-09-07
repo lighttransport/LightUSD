@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // A bounded closure program. The compiler proves the lobe bound before upload.
-export const MAX_CLOSURE_LOBES = 8;
+export const MAX_CLOSURE_LOBES = 16;
 export const closureTypesWGSL = /* wgsl */`
-struct Closure { lobes:array<Lobe,8>, scales:array<vec3f,8>, count:u32, interior:Medium, hasInterior:u32 }
-struct Material { bsdf:Closure, emission:vec3f }
+struct Closure { lobes:array<Lobe,16>, scales:array<vec3f,16>, count:u32, interior:Medium, hasInterior:u32 }
+struct Material { bsdf:Closure, emission:vec3f, opacity:f32 }
 fn closureImportance(c:Closure,index:u32)->f32 {
   let scale=c.scales[index];let weight=c.lobes[index].weight;
   return max(0.0,max(scale.x,max(scale.y,scale.z))*weight);
@@ -12,10 +12,12 @@ fn emptyClosure()->Closure {var c:Closure;return c;}
 fn closureLeaf(lobe:Lobe)->Closure {var c:Closure;c.lobes[0]=lobe;c.scales[0]=vec3f(1);c.count=1u;return c;}
 fn closureScale(input:Closure,scale:vec3f)->Closure {var c=input;for(var i=0u;i<c.count;i++){c.scales[i]*=scale;}return c;}
 fn closureAdd(a:Closure,b:Closure)->Closure {var c=a;for(var i=0u;i<b.count;i++){c.lobes[c.count]=b.lobes[i];c.scales[c.count]=b.scales[i];c.count++;}return c;}
+fn closureAddPreservingInterior(a:Closure,b:Closure)->Closure {var c=closureAdd(a,b);if(a.hasInterior!=0u){c.interior=a.interior;c.hasInterior=1u;}else if(b.hasInterior!=0u){c.interior=b.interior;c.hasInterior=1u;}return c;}
 fn closureMix(bg:Closure,fg:Closure,weight:f32)->Closure {return closureAdd(closureScale(bg,vec3f(1.0-weight)),closureScale(fg,vec3f(weight)));}
+fn closureMixPreservingInterior(bg:Closure,fg:Closure,weight:f32)->Closure {return closureAddPreservingInterior(closureScale(bg,vec3f(1.0-weight)),closureScale(fg,vec3f(weight)));}
 fn closureInterior(top:Closure,base:Medium)->Closure {var c=top;c.interior=base;c.hasInterior=1u;return c;}
-fn surfaceEmission(bsdf:Closure,edf:vec3f)->Material {return Material(bsdf,edf);}
-fn materialFromLobe(lobe:Lobe)->Material {return Material(closureLeaf(lobe),lobe.emission*lobe.emissionWeight);}
+fn surfaceEmission(bsdf:Closure,edf:vec3f,opacity:f32,thinWalled:u32)->Material {var c=bsdf;for(var i=0u;i<c.count;i++){c.lobes[i].thinWalled=thinWalled;}return Material(c,edf,opacity);}
+fn materialFromLobe(lobe:Lobe,opacity:f32)->Material {return Material(closureLeaf(lobe),lobe.emission*lobe.emissionWeight,opacity);}
 fn primaryLobe(surface:Material)->Lobe {
   var m=nativeDiffuse(vec3f(0),0,0);
   for(var i=0u;i<surface.bsdf.count;i++){if(closureImportance(surface.bsdf,i)>0.0){m=surface.bsdf.lobes[i];break;}}
@@ -43,7 +45,7 @@ fn closureSample(c:Closure,wo:vec3f,eta:f32,rng:ptr<function,u32>)->Scatter {
   let f=closureEval(c,wo,s.wi,eta);s.pdf=f.w;s.weight=f.xyz*abs(s.wi.z)/max(1e-30,f.w);return s;
 }
 fn validClosure(c:Closure)->bool {
-  if(c.count>8u){return false;}
+  if(c.count>16u){return false;}
   var interfaceIOR=0.0;
   for(var i=0u;i<c.count;i++){
     let l=c.lobes[i];

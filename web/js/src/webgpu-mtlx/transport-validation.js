@@ -14,7 +14,7 @@ export async function validateTransportKernels(device) {
     ['conductor normal Fresnel', 'conductorFresnel(1.0,vec3f(0.2),vec3f(3)).x', ((.2-1)**2+9)/((.2+1)**2+9)],
     ['closure weighted evaluation', 'closureEval(closureMix(closureLeaf(nativeDiffuse(vec3f(.2),1,0)),closureLeaf(nativeDiffuse(vec3f(.8),1,0)),.25),vec3f(0,0,1),vec3f(0,0,1),1.5).x', .35/Math.PI],
     ['closure mixture PDF', 'closureEval(closureMix(closureLeaf(nativeDiffuse(vec3f(.2),1,0)),closureLeaf(nativeDiffuse(vec3f(.8),1,0)),.25),vec3f(0,0,1),vec3f(0,0,1),1.5).w', 1/Math.PI],
-    ['inactive transmission interface', 'primaryLobe(surfaceEmission(closureMix(closureLeaf(nativeDielectric(vec3f(1),1.8,vec2f(.1),1,3u)),closureLeaf(nativeDiffuse(vec3f(.5),1,0)),1.0),vec3f(0))).transmission', 0],
+    ['inactive transmission interface', 'primaryLobe(surfaceEmission(closureMix(closureLeaf(nativeDielectric(vec3f(1),1.8,vec2f(.1),1,3u)),closureLeaf(nativeDiffuse(vec3f(.5),1,0)),1.0),vec3f(0),1.0,0u)).transmission', 0],
     ['secondary invalid lobe', 'select(0.0,1.0,validClosure(closureAdd(closureLeaf(nativeDiffuse(vec3f(1),1,0)),closureLeaf(nativeDiffuse(vec3f(-1),1,0)))))',0],
   ];
   const count = analytic.length + 4;
@@ -29,7 +29,7 @@ export async function validateTransportKernels(device) {
       let ft=dielectricEval(wo,wt,vec2f(.2,.4),1.5); let rt=dielectricEval(-wt,-wo,vec2f(.2,.4),1.0/1.5);
       checks[${analytic.length+1}]=vec4f(ft.x*2.25,rt.x,ft.y,rt.y);
       var rng=123456u; var total=0.0; var error=0.0; var transmitted=0.0;
-      let m=makeMaterial(vec3f(1),0,.3,1.5,1,vec3f(0),0,0,vec3f(1));
+      let m=makeMaterial(vec3f(1),0,.3,1.5,1,vec3f(0),0,0,vec3f(1),0u);
       for(var i=0u;i<32768u;i++) {
         let s=transportSample(m,wo,1.5,&rng);
         if(s.pdf>0.0) {
