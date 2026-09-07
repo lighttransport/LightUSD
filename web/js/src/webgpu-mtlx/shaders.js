@@ -141,13 +141,13 @@ fn preview(o0: vec3f, d0: vec3f, rng: ptr<function,u32>, realtime: bool) -> vec3
     let h = intersect(o,d);
     if (h.id == 0xffffffffu) { radiance += beta*environment(d); break; }
     var ctx = context(h,o,d); if (dot(ctx.normal,d)>0.0) { ctx.normal = -ctx.normal; }
-    let surface = getSurface(u32(triangles[h.id].a.uv.z),ctx); ctx.normal=normalize(surface.normal); if(dot(ctx.normal,d)>0.0){ctx.normal=-ctx.normal;} let m = primaryLobe(surface);
+    let surface = getSurface(u32(triangles[h.id].a.uv.z),ctx); if(surface.opacity<=0.001){break;} let opacity=clamp(surface.opacity,0.0,1.0); ctx.normal=normalize(surface.normal); if(dot(ctx.normal,d)>0.0){ctx.normal=-ctx.normal;} let m = primaryLobe(surface);
     let eps = max(1e-4,length(ctx.position)*1e-5);
     let emittingTriangle=triangles[h.id];let emittingNormal=normalize(cross(emittingTriangle.b.p.xyz-emittingTriangle.a.p.xyz,emittingTriangle.c.p.xyz-emittingTriangle.a.p.xyz));
-    radiance += beta*m.emission*m.emissionWeight*emissionSidedness(u32(triangles[h.id].a.uv.z),emittingNormal,d);
-    let direct = bsdf(m,ctx.normal,-d,light).xyz * max(0.0,dot(ctx.normal,light))*directionalRadiance();
+    radiance += beta*m.emission*m.emissionWeight*emissionSidedness(u32(triangles[h.id].a.uv.z),emittingNormal,d)*opacity;
+    let direct = bsdf(m,ctx.normal,-d,light).xyz * max(0.0,dot(ctx.normal,light))*directionalRadiance()*opacity;
     if (intersect(ctx.position+ctx.normal*eps,light).id == 0xffffffffu) { radiance += beta*direct; }
-    if (realtime) { radiance += beta*(m.base*(1.0-m.metal)*0.22+fresnel(max(0.0,dot(ctx.normal,-d)),mix(vec3f(0.04),m.base,m.metal))*environment(reflect(d,ctx.normal))); break; }
+    if (realtime) { radiance += beta*(m.base*(1.0-m.metal)*0.22+fresnel(max(0.0,dot(ctx.normal,-d)),mix(vec3f(0.04),m.base,m.metal))*environment(reflect(d,ctx.normal)))*opacity; break; }
     let wi = sampleDirection(m,ctx.normal,-d,rng); let f = bsdf(m,ctx.normal,-d,wi);
     if (f.w <= 0.0) { break; }
     beta *= f.xyz*max(0.0,dot(ctx.normal,wi))/f.w;

@@ -338,6 +338,10 @@ full sorted transparency and blend compositing remain future work.
 Opacity now scales both environment and direct-light raster contributions, so
 partial-opacity materials do not retain an opaque direct-light term.
 
+The compute preview's realtime branch applies the same opacity factor to
+emission and direct/environment lighting; physical path modes still require
+stochastic transparency and sorted compositing for full transmission parity.
+
 Realtime raster lighting now uses the authored `Material.normal` for BRDF and
 environment terms while retaining the geometric normal for offsets and shadow
 queries. The normal-map hardware fixture exercises this parity path.

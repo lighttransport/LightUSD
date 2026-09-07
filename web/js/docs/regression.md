@@ -53,6 +53,8 @@ Graph assertions cover both `color3` and `vector3` normal-map inputs.
 The `opacity` scene covers realtime opacity discard/scaling behavior.
 
 Its shader assertion also guards opacity scaling on direct-light contributions.
+The compute-preview realtime branch is covered by the same generated shader
+source and opacity fixture.
 
 The normal-map fixture also covers authored-normal use in the realtime raster
 lighting path.
