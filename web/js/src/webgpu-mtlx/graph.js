@@ -11,7 +11,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 // Units are semantic annotations; implementations consume their authored
 // convention (for example degrees for rotate2d and nanometers for thin film).
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
-export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'exp', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan2', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
+export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'exp', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan2', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'surfacematerial', 'surface']);
 for(const category of ['transformmatrix','normalmap','bump3','heighttonormal'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
@@ -305,6 +305,16 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'distance': code = `distance(${x('in1')},${x('in2')})`; break;
         case 'reflect': code = `reflect(${x('in')},${x('normal',undefined,'vector3')})`; break;
         case 'refract': code = `refract(${x('in')},${x('normal',undefined,'vector3')},${x('ior',1,'float')})`; break;
+        case 'fresnel': {
+          const direction=x('in',undefined,'vector3'), normal=x('normal',undefined,'vector3'), ior=x('ior',1.5,'float');
+          const cosine=`abs(dot(normalize(${direction}),normalize(${normal})))`;
+          const f0=`pow((${ior}-1.0)/(${ior}+1.0),2.0)`;
+          code=`(${f0}+(1.0-${f0})*pow(1.0-clamp(${cosine},0.0,1.0),5.0))`; break;
+        }
+        case 'facing_ratio': {
+          const direction=x('in',undefined,'vector3'), normal=x('normal',undefined,'vector3'), exponent=x('exponent',1,'float');
+          code=`pow(1.0-clamp(abs(dot(normalize(${direction}),normalize(${normal}))),0.0,1.0),max(0.0,${exponent}))`; break;
+        }
         case 'dotproduct': code = `dot(${x('in1')},${x('in2')})`; break;
         case 'crossproduct': code = `cross(${x('in1', undefined, 'vector3')},${x('in2', undefined, 'vector3')})`; break;
         case 'texcoord':

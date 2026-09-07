@@ -386,6 +386,16 @@ test('vector reflection, refraction and distance nodes compile with typed ports'
   ]};
   const source=compileGraph(doc); assert.match(source.body,/reflect\(/); assert.match(source.body,/refract\(/); assert.match(source.body,/distance\(/);
 });
+test('fresnel and facing-ratio nodes compile with safe vector normalization', () => {
+  const doc={nodes:[
+    {name:'direction',category:'constant',type:'vector3',inputs:{value:{type:'vector3',value:[0,0,-1]}}},
+    {name:'normal',category:'normal',type:'vector3',inputs:{}},
+    {name:'f',category:'fresnel',type:'float',inputs:{in:{nodename:'direction'},normal:{nodename:'normal'},ior:{type:'float',value:1.5}}},
+    {name:'face',category:'facing_ratio',type:'float',inputs:{in:{nodename:'direction'},normal:{nodename:'normal'},exponent:{type:'float',value:2}}},
+    {name:'out',category:'add',type:'float',inputs:{in1:{nodename:'f'},in2:{nodename:'face'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/pow\(\(1\.5-1\.0\)/); assert.match(source.body,/normalize\(n1\)/);
+});
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
   assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/);
