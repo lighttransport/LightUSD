@@ -85,6 +85,11 @@ export function syntheticScene(preset = 'copper') {
     materials[1].nodes[0].inputs.coat_roughness={type:'float',value:.08};
     materials[1].nodes[0].inputs.coat_IOR={type:'float',value:1.5};
   }
+  if(preset==='sheen') {
+    materials[1]=surfaceDocument([.12,.25,.42],0,.3);
+    materials[1].nodes[0].inputs.sheen={type:'float',value:.55};
+    materials[1].nodes[0].inputs.sheen_color={type:'color3',value:[.8,.9,1]};
+  }
   if(preset==='native-copper'||preset==='native-glass') {
     const glass=preset==='native-glass';
     materials[1]={nodes:[

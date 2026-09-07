@@ -340,3 +340,8 @@ Standard Surface and OpenPBR coat controls now compile to a bounded additive
 dielectric coat lobe (`coat`, `coat_weight`, color, roughness and IOR aliases).
 The synthetic `coat` scene is hardware-tested; exact layered energy
 compensation and multiple-scattering coat transport remain future work.
+
+Standard Surface `sheen` and OpenPBR `fuzz` controls now compile to a bounded
+diffuse-sheen lobe with authored color and weight aliases. The synthetic
+`sheen` scene is hardware-tested; exact Charlie/artist-friendly sheen and
+layered energy compensation remain future work.

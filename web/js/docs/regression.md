@@ -57,6 +57,8 @@ diagnostics; hardware Chrome now completes seven compiled authored slots and
 
 The synthetic hardware matrix also covers the `coat` dielectric-lobe path.
 
+It also covers the `sheen`/`fuzz` diffuse-sheen fallback path.
+
 All web/WASM regression procedures live under `web/js`. The canonical gate is
 `npm test`; it runs the assertion-based Node/WASM suites, the physics-only
 MuJoCo binding smoke test, the USD Physics simulation, every pinned MuJoCo
