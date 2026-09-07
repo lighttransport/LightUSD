@@ -134,7 +134,11 @@ export function compileGraph(document, { output, library = {}, material = false,
       if(p.colorspace&&['color3','color4'].includes(type)) {
         literal(type,value,path);
         try{value=colorToLinearRec709(Array.isArray(value)?value:String(value).split(',').map(Number),p.colorspace);}catch(e){fail('SEMANTICS',path,e.message);}
-      } else if(p.colorspace&&!['raw','lin_rec709'].includes(p.colorspace))fail('SEMANTICS',path,'colorspace on non-color input');
+      } else if (p.colorspace) {
+        let normalized;
+        try { normalized = normalizeColorSpace(p.colorspace); } catch (e) { fail('SEMANTICS', path, e.message); }
+        if (!['raw', 'lin_rec709'].includes(normalized)) fail('SEMANTICS', path, 'colorspace on non-color input');
+      }
       result={type,code:literal(type,value,path)};
     }
     if (wanted && result.type !== wanted) fail('TYPE', path, `expected ${wanted}, got ${result.type}`);
