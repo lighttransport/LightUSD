@@ -361,6 +361,11 @@ an anisotropic VDF interior, exercising BSDF-over-medium attachment in a scene.
 The `edf` fixture covers a `uniform_edf` connected to a surface terminal,
 including emission-only material compilation in the realtime target.
 
+The `native-film` fixture exercises thin-film thickness/IOR propagation on a
+direct `dielectric_bsdf`, including film Fresnel evaluation and sampling.
+Its focused Chrome pipeline run remains pending while the native-film shader
+compile stall is isolated.
+
 The synthetic displacement fixture now requests two levels of bounded linear
 triangle refinement before the GPU displacement bake, exercising interior
 height samples instead of only moving the original triangle corners.

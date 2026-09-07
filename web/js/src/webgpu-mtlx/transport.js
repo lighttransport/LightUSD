@@ -157,9 +157,10 @@ fn nativeEval(m:Lobe,wo:vec3f,wi:vec3f,eta:f32)->vec4f {
     return vec4f(m.weight*conductorFresnel(oh,m.complexIOR,m.extinction)*microfacetD(h,alpha)*microfacetG(wo,wi,alpha)/(4.0*wo.z*wi.z),visibleNormalPDF(wo,h,alpha)/(4.0*oh));
   }
   if((wi.z>0.0&&m.scatterMode==2u)||(wi.z<0.0&&m.scatterMode==1u)){return vec4f(0);}
-  let f=dielectricEval(wo,wi,alpha,eta);var normalization=1.0;
+  let f=dielectricEval(wo,wi,alpha,eta);var value=f.x;var normalization=1.0;
+  if(wi.z>0.0&&m.thinFilmThickness>0.0){let h=normalize(wo+wi);value=dot(thinFilmFresnel(dot(wo,h),m.ior,m.thinFilmIOR,m.thinFilmThickness),vec3f(1.0/3.0));}
   if(m.scatterMode!=3u) {let sum=wo+wi*select(eta,1.0,wi.z>0.0);let h=normalize(sum);let fr=dielectricFresnel(abs(dot(wo,h)),eta);normalization=select(1.0-fr,fr,m.scatterMode==1u);}
-  return vec4f(m.weight*m.transmissionColor*transmissionAttenuation(m)*f.x,f.y/max(1e-30,normalization));
+  return vec4f(m.weight*m.transmissionColor*transmissionAttenuation(m)*value,f.y/max(1e-30,normalization));
 }
 fn nativeSample(m:Lobe,wo:vec3f,eta:f32,rng:ptr<function,u32>)->Scatter {
   var wi=vec3f(0);var delta=0u;
@@ -169,7 +170,7 @@ fn nativeSample(m:Lobe,wo:vec3f,eta:f32,rng:ptr<function,u32>)->Scatter {
     if(m.kind==2u){wi=reflect(-wo,h);if(delta!=0u){return Scatter(wi,1,m.weight*conductorFresnel(wo.z,m.complexIOR,m.extinction),1u,1);}}
     else if(m.kind==5u){wi=reflect(-wo,h);if(wi.z<=0.0){return Scatter(wi,0,vec3f(0),0u,1);}if(delta!=0u){return Scatter(wi,1,m.weight*generalizedSchlickFresnel(m,dot(wo,h)),1u,1);}}
     else {
-      let fr=dielectricFresnel(dot(wo,h),eta);let pr=select(fr,0.0,m.scatterMode==2u);let pt=select(1.0-fr,0.0,m.scatterMode==1u);let total=pr+pt;
+      let fr0=dielectricFresnel(dot(wo,h),eta);let fr=select(fr0,dot(thinFilmFresnel(dot(wo,h),m.ior,m.thinFilmIOR,m.thinFilmThickness),vec3f(1.0/3.0)),m.thinFilmThickness>0.0);let pr=select(fr,0.0,m.scatterMode==2u);let pt=select(1.0-fr,0.0,m.scatterMode==1u);let total=pr+pt;
       if(total<=0.0){return Scatter(vec3f(0),0,vec3f(0),0u,1);}
       if(random(rng)<pr/total){wi=reflect(-wo,h);if(wi.z<=0.0){return Scatter(wi,0,vec3f(0),0u,1);}if(delta!=0u){return Scatter(wi,pr/total,m.weight*m.transmissionColor*total,1u,1);}}
       else{wi=refract(-wo,h,1.0/eta);if(delta!=0u){return Scatter(wi,pt/total,m.weight*m.transmissionColor*transmissionAttenuation(m)*total/(eta*eta),1u,eta);}if(wi.z>=0.0){return Scatter(wi,0,vec3f(0),0u,1);}}

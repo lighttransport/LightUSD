@@ -187,7 +187,8 @@ export function compileGraph(document, { output, library = {}, material = false,
         }
         case 'dielectric_bsdf': case 'conductor_bsdf': case 'oren_nayar_diffuse_bsdf': {
           if(ins.retroreflective && ![false,'false'].includes(ins.retroreflective.value))fail('UNSUPPORTED',key,'retroreflection is not implemented');
-          if(ins.thinfilm_thickness && !ins.thinfilm_thickness.nodename && !ins.thinfilm_thickness.nodegraph && !ins.thinfilm_thickness.interfacename && Number(ins.thinfilm_thickness.value)!==0)fail('UNSUPPORTED',key,'thin film is not implemented');
+          const filmThicknessInput=ins.thinfilm_thickness||ins.thin_film_thickness;
+          const filmIORInput=ins.thinfilm_IOR||ins.thinfilm_ior||ins.thin_film_IOR||ins.thin_film_ior;
           if(ins.distribution && ins.distribution.value!=='ggx')fail('UNSUPPORTED',key,'only GGX microfacets are implemented');
           if(n.category==='oren_nayar_diffuse_bsdf') {
             code=`nativeDiffuse(${x('color',[.18,.18,.18],'color3')},${x('weight',1,'float')},${x('roughness',0,'float')})`;
@@ -195,7 +196,9 @@ export function compileGraph(document, { output, library = {}, material = false,
             code=`nativeConductor(${x('ior',[.183,.421,1.373],'color3')},${x('extinction',[3.424,2.346,1.77],'color3')},${x('roughness',[.05,.05],'vector2')},${x('weight',1,'float')})`;
           } else {
             const mode=['R','T','RT'].indexOf(ins.scatter_mode?.value??'R');if(mode<0||ins.scatter_mode?.nodename||ins.scatter_mode?.nodegraph||ins.scatter_mode?.interfacename)fail('UNSUPPORTED',key,'invalid or connected scatter_mode');
-            code=`nativeDielectric(${x('tint',[1,1,1],'color3')},${x('ior',1.5,'float')},${x('roughness',[.05,.05],'vector2')},${x('weight',1,'float')},${mode+1}u)`;
+            const dielectric=`nativeDielectric(${x('tint',[1,1,1],'color3')},${x('ior',1.5,'float')},${x('roughness',[.05,.05],'vector2')},${x('weight',1,'float')},${mode+1}u)`;
+            const film=filmThicknessInput?`withThinFilm(${dielectric},${x(filmThicknessInput===ins.thinfilm_thickness?'thinfilm_thickness':'thin_film_thickness',0,'float')},${filmIORInput?x(filmIORInput===ins.thinfilm_IOR?'thinfilm_IOR':filmIORInput===ins.thinfilm_ior?'thinfilm_ior':filmIORInput===ins.thin_film_IOR?'thin_film_IOR':'thin_film_ior',1.5,'float'):'1.5'})`:dielectric;
+            code=film;
           }
           code=`closureLeaf(${code})`;closureCount=1;break;
         }
@@ -453,6 +456,7 @@ fn makeMaterial(base:vec3f,metal:f32,rough:f32,ior:f32,trans:f32,emission:vec3f,
  return Lobe(base,metal,rough,ior,trans,emission,emissionWeight,anisotropy,tint,0u,1.0,vec2f(rough*rough),vec3f(ior),vec3f(0),3u,thinWalled,thinFilmThickness,thinFilmIOR,0.0,vec3f(0),vec3f(1),5.0);
 }
 fn withTransmission(lobe:Lobe,depth:f32,scatter:vec3f)->Lobe {var m=lobe;m.transmissionDepth=max(0.0,depth);m.transmissionScatter=max(vec3f(0),scatter);return m;}
+fn withThinFilm(lobe:Lobe,thickness:f32,ior:f32)->Lobe {var m=lobe;m.thinFilmThickness=max(0.0,thickness);m.thinFilmIOR=max(1.0,ior);return m;}
 fn withSpecular(lobe:Lobe,weight:f32)->Lobe {var m=lobe;m.weight=clamp(weight,0.0,1.0);return m;}
 fn withSpecularColor(lobe:Lobe,color:vec3f)->Lobe {var m=lobe;m.schlickColor90=max(vec3f(0),color);return m;}
 fn nativeDiffuse(color:vec3f,weight:f32,rough:f32)->Lobe {var m=makeMaterial(color,0,rough,1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=3u;m.weight=weight;return m;}

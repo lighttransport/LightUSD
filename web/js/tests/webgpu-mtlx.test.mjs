@@ -209,7 +209,7 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   assert.throws(()=>compileGraph(doc,{material:true}),/connected scatter_mode/);
   doc.nodes[0].inputs.scatter_mode={value:'RT'};
   doc.nodes[0].inputs.thinfilm_thickness={type:'float',value:100};
-  assert.throws(()=>compileGraph(doc,{material:true}),/thin film/);
+  assert.match(compileGraph(doc,{material:true}).body,/withThinFilm/);
   const volume=syntheticScene('sss').materials[1];volume.mediumMajorant=-1;
   assert.throws(()=>shaderSource([volume]),/majorant/);
   const hair=syntheticScene('hair').materials[1];
@@ -264,6 +264,8 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   const edf=syntheticScene('edf').materials[1];
   assert.match(compileGraph(edf,{material:true}).body,/surfaceEmission/);
   assert.match(compileGraph(edf,{material:true}).body,/vec3f\(2\.5,0\.8,0\.15\)/);
+  const nativeFilm=syntheticScene('native-film').materials[1];
+  assert.match(compileGraph(nativeFilm,{material:true}).body,/withThinFilm/);
   const coat=syntheticScene('coat').materials[1];
   assert.match(compileGraph(coat,{material:true}).body,/closureAdd/);
   assert.match(shaderSource([coat]),/closureAdd/);

@@ -79,6 +79,12 @@ export function syntheticScene(preset = 'copper') {
       { name: 'surface', category: 'surface', type: 'surfaceshader', inputs: { edf: { nodename: 'emit' } } },
     ] };
   }
+  if (preset === 'native-film') {
+    materials[1] = { nodes: [
+      { name: 'film', category: 'dielectric_bsdf', type: 'BSDF', inputs: { scatter_mode: { type: 'string', value: 'RT' }, roughness: { type: 'vector2', value: [.08, .12] }, ior: { type: 'float', value: 1.5 }, thinfilm_thickness: { type: 'float', value: 180 }, thinfilm_IOR: { type: 'float', value: 1.4 } } },
+      { name: 'surface', category: 'surface', type: 'surfaceshader', inputs: { bsdf: { nodename: 'film' } } },
+    ] };
+  }
   if(preset==='displacement') {
     materials[1].nodes.unshift(
       {name:'uv',category:'texcoord',type:'vector2',inputs:{}},
