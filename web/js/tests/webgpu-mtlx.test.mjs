@@ -494,8 +494,12 @@ test('cell-noise nodes hash integer cells without interpolation', () => {
 });
 test('tiledimage compiles the validated single-tile resource path', () => {
   const doc={images:{tile:{width:1,height:1,data:[1,0,0,1],colorspace:'raw'}},nodes:[{name:'tile',category:'tiledimage',type:'color3',inputs:{file:{type:'filename',value:'tile'},uvtiling:{type:'vector2',value:[1,1]}}}]};
-  const source=compileGraph(doc,{imageDescriptors:{tile:{offset:0,width:1,height:1,levels:1,colorspace:'raw'}}}); assert.match(source.body,/imageSample\(0u/);
-  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,uvtiling:{type:'vector2',value:[2,1]}}}]},{imageDescriptors:{tile:{offset:0,width:1,height:1,levels:1,colorspace:'raw'}}}),/tiled image uvtiling/);
+  const descriptor={tile:{offset:0,width:1,height:1,levels:1,colorspace:'raw'}};
+  const source=compileGraph(doc,{imageDescriptors:descriptor}); assert.match(source.body,/imageSample\(0u/);
+  const tiled=compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,uvtiling:{type:'vector2',value:[2,1]}}}]},{imageDescriptors:descriptor});
+  assert.match(tiled.body,/ctx\.uv\*vec2f\(2\.0,1\.0\)/);
+  assert.match(tiled.body,/ctx\.uvDx\*vec2f\(1\.0,1\.0\)\*vec2f\(2\.0,1\.0\)/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,realworldimagesize:{type:'vector2',value:[2,1]}}}]},{imageDescriptors:descriptor}),/realworldimagesize/);
 });
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});

@@ -200,8 +200,9 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   procedural UV/position graphs.
 - `cellnoise2d` and `cellnoise3d` provide non-interpolated integer-cell hash
   values for procedural masks.
-- `tiledimage` accepts the validated single-tile resource path; nontrivial tile
-  controls and UDIM expansion remain explicit unsupported diagnostics.
+- `tiledimage` accepts the validated single-tile resource path and applies
+  static `uvtiling` multipliers; real-world image-size controls and UDIM
+  expansion remain explicit unsupported diagnostics.
 - URL resource tests cover includes, source-relative EXR paths, inherited image
   colorspace, cycle rejection and cross-origin rejection. ShaderBall's 2048x2048
   neutral EXR decodes successfully.

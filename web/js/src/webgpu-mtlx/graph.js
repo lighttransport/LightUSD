@@ -255,7 +255,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           if (!['float', 'color3', 'color4', 'vector2', 'vector3', 'vector4'].includes(type)) fail('TYPE', key, 'invalid image output type');
           for (const name of Object.keys(ins)) if (!['file', 'default', 'texcoord', 'uaddressmode', 'vaddressmode', 'filtertype', 'layer', 'framerange', 'frameoffset', 'frameendaction', 'uvtiling', 'realworldimagesize'].includes(name)) fail('UNSUPPORTED', key, `unsupported image input ${name}`);
           for (const name of ['layer', 'framerange', 'frameoffset']) if (ins[name] && !['', '0', 0].includes(ins[name].value)) fail('UNSUPPORTED', key, `image ${name} is not implemented`);
-          for (const name of ['uvtiling', 'realworldimagesize']) { const value=Array.isArray(ins[name]?.value)?ins[name].value.join(','):ins[name]?.value; if (ins[name] && value !== undefined && ![0, 1, '0', '1', '0,0', '1,1'].includes(value)) fail('UNSUPPORTED', key, `tiled image ${name} is not implemented`); }
+          if (ins.realworldimagesize) { const value=Array.isArray(ins.realworldimagesize.value)?ins.realworldimagesize.value.join(','):ins.realworldimagesize.value; if (value !== undefined && !['0', 0, '0,0', '1,1'].includes(value)) fail('UNSUPPORTED', key, 'tiled image realworldimagesize is not implemented'); }
           const file = ins.file?.value ?? '';
           if (ins.file && (ins.file.nodename || ins.file.nodegraph || ins.file.interfacename)) fail('UNSUPPORTED', key, 'connected image filenames are not implemented');
           const fallback = x('default', widths[type] === 1 ? 0 : Array(widths[type]).fill(0), type);
@@ -270,11 +270,13 @@ export function compileGraph(document, { output, library = {}, material = false,
           };
           const filter = ins.filtertype?.value ?? 'linear';
           if (!['closest', 'linear'].includes(filter) || ins.filtertype?.nodename || ins.filtertype?.interfacename || ins.filtertype?.nodegraph) fail('UNSUPPORTED', key, 'only static closest/linear image filters are implemented');
-          const uv = ins.texcoord ? x('texcoord', undefined, 'vector2') : 'ctx.uv';
+          const uvBase = ins.texcoord ? x('texcoord', undefined, 'vector2') : 'ctx.uv';
+          const uv = ins.uvtiling ? `(${uvBase}*${x('uvtiling',[1,1],'vector2')})` : uvBase;
           const fill = widths[type] === 4 ? fallback : widths[type] === 3 ? `vec4f(${fallback},0)` : widths[type] === 2 ? `vec4f(${fallback},0,0)` : `vec4f(${fallback})`;
           const swizzle = ({ float: 'r', vector2: 'rg', vector3: 'rgb', color3: 'rgb', vector4: 'rgba', color4: 'rgba' })[type];
           const size = `vec2f(${descriptor.width}.0,${descriptor.height}.0)`;
-          const lod = `log2(max(1.0,max(length(ctx.uvDx*${size}),length(ctx.uvDy*${size}))))`;
+          const lodScale = ins.uvtiling ? x('uvtiling',[1,1],'vector2') : 'vec2f(1.0)';
+          const lod = `log2(max(1.0,max(length(ctx.uvDx*${size}*${lodScale}),length(ctx.uvDy*${size}*${lodScale}))))`;
           code = `imageSample(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${filter === 'linear'},${fill}).${swizzle}`;
           break;
         }
