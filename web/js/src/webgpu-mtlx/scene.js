@@ -55,6 +55,11 @@ export function syntheticScene(preset = 'copper') {
       {name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'fiber'}}}
     ]};
   }
+  if(preset==='thin-film') {
+    materials[1]=surfaceDocument([.72,.18,.06],0,.18);
+    materials[1].nodes[0].inputs.thin_film_thickness={type:'float',value:180};
+    materials[1].nodes[0].inputs.thin_film_IOR={type:'float',value:1.4};
+  }
   if(preset==='native-copper'||preset==='native-glass') {
     const glass=preset==='native-glass';
     materials[1]={nodes:[

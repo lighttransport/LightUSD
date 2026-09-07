@@ -21,6 +21,12 @@ fn conductorFresnel(c0: f32, eta: vec3f, k: vec3f) -> vec3f {
   let rp=rs*(c2*a2b2+vec3f(s2*s2)-2.0*c*a*s2)/(c2*a2b2+vec3f(s2*s2)+2.0*c*a*s2);
   return 0.5*(rp+rs);
 }
+fn thinFilmFresnel(c0:f32,baseIOR:f32,filmIOR:f32,thickness:f32)->vec3f {
+  let c=clamp(abs(c0),0.0,1.0);let phase=4.0*PI*filmIOR*max(0.0,thickness)*c;
+  let r01=(1.0-filmIOR)/(1.0+filmIOR);let r12=(filmIOR-baseIOR)/(filmIOR+baseIOR);
+  let wavelengths=vec3f(650.0,510.0,475.0);let interference=2.0*r01*r12*cos(phase*1e-3*wavelengths);
+  return clamp(vec3f(r01*r01)+vec3f(r12*r12)+vec3f(interference),vec3f(0),vec3f(1));
+}
 fn microfacetD(h: vec3f, alpha: vec2f) -> f32 {
   if(h.z<=0.0) { return 0.0; }
   let q=dot(h.xy/alpha,h.xy/alpha)+h.z*h.z;
@@ -77,7 +83,8 @@ fn transportEval(m: Lobe, wo: vec3f, wi: vec3f, eta: f32) -> vec4f {
   if(wi.z>0.0) {
     let h=normalize(wo+wi); let oh=max(1e-20,dot(wo,h));
     let fr=dielectricFresnel(oh,eta);
-    let f=mix(vec3f(fr),fresnel(oh,m.base),m.metal);
+    let baseFresnel=mix(vec3f(fr),fresnel(oh,m.base),m.metal);
+    let f=select(baseFresnel,thinFilmFresnel(oh,m.ior,m.thinFilmIOR,m.thinFilmThickness),m.thinFilmThickness>0.0);
     let spec=f*microfacetD(h,alpha)*microfacetG(wo,wi,alpha)/(4.0*wo.z*wi.z);
     let diff=(1.0-m.metal)*(1.0-fr)*m.base/PI;
     value=opaque*(spec+diff);

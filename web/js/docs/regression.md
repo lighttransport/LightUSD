@@ -36,6 +36,9 @@ The synthetic reference-image gate also covers the `hair` MaterialX scene;
 Chrome hardware completed it at 32 spp alongside native copper/glass, SSS and
 displacement scenes.
 
+The same gate covers the `thin-film` scene, exercising the bounded RGB
+interference Fresnel path in Chrome hardware.
+
 All web/WASM regression procedures live under `web/js`. The canonical gate is
 `npm test`; it runs the assertion-based Node/WASM suites, the physics-only
 MuJoCo binding smoke test, the USD Physics simulation, every pinned MuJoCo

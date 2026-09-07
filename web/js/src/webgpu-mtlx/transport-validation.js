@@ -29,7 +29,7 @@ export async function validateTransportKernels(device) {
       let ft=dielectricEval(wo,wt,vec2f(.2,.4),1.5); let rt=dielectricEval(-wt,-wo,vec2f(.2,.4),1.0/1.5);
       checks[${analytic.length+1}]=vec4f(ft.x*2.25,rt.x,ft.y,rt.y);
       var rng=123456u; var total=0.0; var error=0.0; var transmitted=0.0;
-      let m=makeMaterial(vec3f(1),0,.3,1.5,1,vec3f(0),0,0,vec3f(1),0u);
+      let m=makeMaterial(vec3f(1),0,.3,1.5,1,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);
       for(var i=0u;i<32768u;i++) {
         let s=transportSample(m,wo,1.5,&rng);
         if(s.pdf>0.0) {

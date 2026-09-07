@@ -380,9 +380,9 @@ export function compileGraph(document, { output, library = {}, material = false,
           // This baseline mapping is explicitly approximate, not a reference closure.
           const pick = (names, fallback, expected) => x(names.find(name => ins[name]) || names[0], fallback, expected);
           const fields = [pick(['base_color'], [0.8, 0.8, 0.8], 'color3'), pick(open ? ['base_metalness'] : ['metalness'], 0, 'float'), pick(['specular_roughness'], 0.3, 'float'), pick(open ? ['specular_ior'] : ['specular_IOR', 'specular_ior'], 1.5, 'float'), pick(open ? ['transmission_weight'] : ['transmission'], 0, 'float'), pick(['emission_color'], [1, 1, 1], 'color3'), pick(open ? ['emission_luminance'] : ['emission'], 0, 'float'), pick(open ? ['specular_roughness_anisotropy'] : ['specular_anisotropy'], 0, 'float'), pick(['transmission_color'], [1,1,1], 'color3')];
-          const supported = new Set(open ? ['base_weight', 'base_color', 'base_diffuse_roughness', 'base_metalness', 'specular_weight', 'specular_color', 'specular_roughness', 'specular_ior', 'specular_roughness_anisotropy', 'transmission_weight', 'transmission_color', 'transmission_depth', 'transmission_scatter', 'emission_color', 'emission_luminance', 'geometry_opacity', 'geometry_thin_walled'] : ['base', 'base_color', 'diffuse_roughness', 'metalness', 'specular', 'specular_color', 'specular_roughness', 'specular_IOR', 'specular_ior', 'specular_anisotropy', 'transmission', 'transmission_color', 'transmission_depth', 'transmission_scatter', 'emission_color', 'emission', 'opacity', 'thin_walled']);
+          const supported = new Set(open ? ['base_weight', 'base_color', 'base_diffuse_roughness', 'base_metalness', 'specular_weight', 'specular_color', 'specular_roughness', 'specular_ior', 'specular_roughness_anisotropy', 'transmission_weight', 'transmission_color', 'transmission_depth', 'transmission_scatter', 'emission_color', 'emission_luminance', 'geometry_opacity', 'geometry_thin_walled'] : ['base', 'base_color', 'diffuse_roughness', 'metalness', 'specular', 'specular_color', 'specular_roughness', 'specular_IOR', 'specular_ior', 'specular_anisotropy', 'transmission', 'transmission_color', 'transmission_depth', 'transmission_scatter', 'emission_color', 'emission', 'opacity', 'thin_walled', 'thin_film_thickness', 'thin_film_IOR']);
           for (const k of Object.keys(n.inputs || {})) if (!supported.has(k)) fail('UNSUPPORTED', `${key}/${k}`, 'surface input not yet implemented');
-          const unsupportedLobes = open ? ['subsurface_weight', 'coat_weight', 'thin_film_weight'] : ['subsurface', 'coat', 'thin_film_thickness'];
+          const unsupportedLobes = open ? ['subsurface_weight', 'coat_weight', 'thin_film_weight'] : ['subsurface', 'coat'];
           for (const k of unsupportedLobes) if (ins[k]) {
             if (ins[k].nodename || ins[k].nodegraph || ins[k].interfacename || !Number.isFinite(Number(ins[k].value))) fail('UNSUPPORTED', `${key}/${k}`, 'connected layered surface lobe is not implemented');
             if (Number(ins[k].value) !== 0) fail('UNSUPPORTED', `${key}/${k}`, 'nonzero layered surface lobe is not implemented');
@@ -390,7 +390,9 @@ export function compileGraph(document, { output, library = {}, material = false,
           const opacityInput = open ? 'geometry_opacity' : 'opacity';
           const opacity = ins[opacityInput] ? x(opacityInput, 1, 'float') : '1.0';
           const thin = open ? (ins.geometry_thin_walled ? `select(0u,1u,${x('geometry_thin_walled', false, 'boolean')})` : '0u') : '0u';
-          code = `materialFromLobe(makeMaterial(${fields.join(',')},${thin}),clamp(${opacity},0.0,1.0))`; break;
+          const filmThickness = !open && ins.thin_film_thickness ? x('thin_film_thickness', 0, 'float') : '0.0';
+          const filmIOR = !open && ins.thin_film_IOR ? x('thin_film_IOR', 1.5, 'float') : '1.5';
+          code = `materialFromLobe(makeMaterial(${fields.join(',')},${thin},${filmThickness},${filmIOR}),clamp(${opacity},0.0,1.0))`; break;
         }
         case 'surfacematerial': result = input('surfaceshader'); break;
         default: fail('UNSUPPORTED', key, `node ${n.category} (${type}) is not implemented`);
@@ -416,13 +418,13 @@ fn mxNormalmap(value:vec3f,scale:vec2f,n:vec3f,t:vec3f,b:vec3f)->vec3f {
  let decoded=select(value*2.0-1.0,vec3f(0,0,1),dot(value,value)==0.0);
  return normalize(t*decoded.x*scale.x+b*decoded.y*scale.y+n*decoded.z);
 }
-struct Lobe { base: vec3f, metal: f32, roughness: f32, ior: f32, transmission: f32, emission: vec3f, emissionWeight: f32, anisotropy: f32, transmissionColor: vec3f, kind:u32, weight:f32, alpha:vec2f, complexIOR:vec3f, extinction:vec3f, scatterMode:u32, thinWalled:u32 }
+struct Lobe { base: vec3f, metal: f32, roughness: f32, ior: f32, transmission: f32, emission: vec3f, emissionWeight: f32, anisotropy: f32, transmissionColor: vec3f, kind:u32, weight:f32, alpha:vec2f, complexIOR:vec3f, extinction:vec3f, scatterMode:u32, thinWalled:u32, thinFilmThickness:f32, thinFilmIOR:f32 }
 struct Medium { absorption: vec3f, scattering: vec3f, anisotropy: f32 }
-fn makeMaterial(base:vec3f,metal:f32,rough:f32,ior:f32,trans:f32,emission:vec3f,emissionWeight:f32,anisotropy:f32,tint:vec3f,thinWalled:u32)->Lobe {
- return Lobe(base,metal,rough,ior,trans,emission,emissionWeight,anisotropy,tint,0u,1.0,vec2f(rough*rough),vec3f(ior),vec3f(0),3u,thinWalled);
+fn makeMaterial(base:vec3f,metal:f32,rough:f32,ior:f32,trans:f32,emission:vec3f,emissionWeight:f32,anisotropy:f32,tint:vec3f,thinWalled:u32,thinFilmThickness:f32,thinFilmIOR:f32)->Lobe {
+ return Lobe(base,metal,rough,ior,trans,emission,emissionWeight,anisotropy,tint,0u,1.0,vec2f(rough*rough),vec3f(ior),vec3f(0),3u,thinWalled,thinFilmThickness,thinFilmIOR);
 }
-fn nativeDiffuse(color:vec3f,weight:f32,rough:f32)->Lobe {var m=makeMaterial(color,0,rough,1.5,0,vec3f(0),0,0,vec3f(1),0u);m.kind=3u;m.weight=weight;return m;}
-fn nativeHair(color:vec3f,weight:f32,longitudinal:f32,azimuthal:f32)->Lobe {var m=makeMaterial(color,0,longitudinal,1.55,0,vec3f(0),0,azimuthal,vec3f(1),0u);m.kind=4u;m.weight=weight;m.alpha=vec2f(max(.02,longitudinal),max(.02,azimuthal));return m;}
-fn nativeDielectric(tint:vec3f,ior:f32,alpha:vec2f,weight:f32,mode:u32)->Lobe {var m=makeMaterial(tint,0,sqrt(max(alpha.x,alpha.y)),ior,1,vec3f(0),0,0,tint,0u);m.kind=1u;m.weight=weight;m.alpha=alpha;m.scatterMode=mode;return m;}
-fn nativeConductor(ior:vec3f,k:vec3f,alpha:vec2f,weight:f32)->Lobe {var m=makeMaterial(vec3f(1),1,sqrt(max(alpha.x,alpha.y)),1.5,0,vec3f(0),0,0,vec3f(1),0u);m.kind=2u;m.complexIOR=ior;m.extinction=k;m.alpha=alpha;m.weight=weight;return m;}
+fn nativeDiffuse(color:vec3f,weight:f32,rough:f32)->Lobe {var m=makeMaterial(color,0,rough,1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=3u;m.weight=weight;return m;}
+fn nativeHair(color:vec3f,weight:f32,longitudinal:f32,azimuthal:f32)->Lobe {var m=makeMaterial(color,0,longitudinal,1.55,0,vec3f(0),0,azimuthal,vec3f(1),0u,0.0,1.5);m.kind=4u;m.weight=weight;m.alpha=vec2f(max(.02,longitudinal),max(.02,azimuthal));return m;}
+fn nativeDielectric(tint:vec3f,ior:f32,alpha:vec2f,weight:f32,mode:u32)->Lobe {var m=makeMaterial(tint,0,sqrt(max(alpha.x,alpha.y)),ior,1,vec3f(0),0,0,tint,0u,0.0,1.5);m.kind=1u;m.weight=weight;m.alpha=alpha;m.scatterMode=mode;return m;}
+fn nativeConductor(ior:vec3f,k:vec3f,alpha:vec2f,weight:f32)->Lobe {var m=makeMaterial(vec3f(1),1,sqrt(max(alpha.x,alpha.y)),1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=2u;m.complexIOR=ior;m.extinction=k;m.alpha=alpha;m.weight=weight;return m;}
 ${closureTypesWGSL}`;

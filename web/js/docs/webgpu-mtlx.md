@@ -301,3 +301,8 @@ The synthetic coverage set now includes a `hair` scene using the MaterialX
 bounded fiber lobe with longitudinal/azimuthal roughness and are exercised by
 the Chrome hardware reference-image gate. This is a practical approximation,
 not a full Marschner/RTRT hair model.
+
+Standard Surface `thin_film_thickness`/`thin_film_IOR` now carry through the
+compiled lobe and use a bounded RGB interference Fresnel approximation. The
+synthetic `thin-film` scene is included in the hardware reference-image gate;
+spectral wavelength-dependent film optics remain future work.
