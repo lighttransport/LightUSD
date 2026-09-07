@@ -170,7 +170,7 @@ Screenshots and JSON reports go to `web/js/.regression/webgpu-mtlx`.
 
 Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 
-- Forty-five Node tests pass, including native closure diagnostics, image checks and EXR
+- Forty-six Node tests pass, including native closure diagnostics, image checks and EXR
   decoding through Three.js independently.
 - 37 numeric WGSL cases pass at `1e-5 + 1e-4 * abs(expected)` tolerance.
 - Four actual pinned library graph cases pass: scalar-gamma color range, ACEScg
@@ -193,6 +193,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   inverse matrix for round-trip authored color graphs.
 - Piecewise signed `lin_rec709_to_srgb` and `srgb_to_lin_rec709` transfer nodes
   match the resource decoder thresholds.
+- Typed `select` branches enforce boolean conditions and matching output types,
+  preserving MaterialX conditional graph semantics.
 - URL resource tests cover includes, source-relative EXR paths, inherited image
   colorspace, cycle rejection and cross-origin rejection. ShaderBall's 2048x2048
   neutral EXR decodes successfully.

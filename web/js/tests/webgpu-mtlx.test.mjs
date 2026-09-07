@@ -440,6 +440,16 @@ test('sRGB transfer nodes preserve the signed piecewise transfer', () => {
   ]};
   const source=compileGraph(doc); assert.match(source.body,/mxLinRec709ToSrgb/); assert.match(source.body,/mxSrgbToLinRec709/); assert.match(contextWGSL,/(?:0)?\.0031308/);
 });
+test('select node enforces boolean condition and matching branch types', () => {
+  const doc={nodes:[
+    {name:'condition',category:'constant',type:'boolean',inputs:{value:{type:'boolean',value:true}}},
+    {name:'yes',category:'constant',type:'color3',inputs:{value:{type:'color3',value:[1,0,0]}}},
+    {name:'no',category:'constant',type:'color3',inputs:{value:{type:'color3',value:[0,0,1]}}},
+    {name:'out',category:'select',type:'color3',inputs:{condition:{nodename:'condition'},truevalue:{nodename:'yes'},falsevalue:{nodename:'no'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/select\(n2,n1,n0\)/);
+  assert.throws(()=>compileGraph({...doc,nodes:[...doc.nodes.slice(0,-1),{...doc.nodes.at(-1),type:'float'}]}),/select branches/);
+});
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
   assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/);
