@@ -65,9 +65,9 @@ class MaterialXRenderer extends EventTarget {
     const textures = {}; const code = shaderSource(packed.materials, textures, packed.lighting, { maxDimension: this.options.textureMaxDimension || undefined, maxBytes: this.options.textureMaxBytes });
     const module = await this.module(code);
     const layout = this.device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout] });
-    const [compute, physical, raster, displayModule] = await Promise.all([
+    const physicalTask = this.device.createComputePipelineAsync({ layout, compute: { module, entryPoint: 'tracePhysical' } });
+    const [compute, raster, displayModule] = await Promise.all([
       this.device.createComputePipelineAsync({ layout, compute: { module, entryPoint: 'trace' } }),
-      this.device.createComputePipelineAsync({ layout, compute: { module, entryPoint: 'tracePhysical' } }),
       this.device.createRenderPipelineAsync({ layout, vertex: { module, entryPoint: 'rasterVertex' }, fragment: { module, entryPoint: 'rasterFragment', targets: [{ format: this.format }] }, primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' } }),
       this.module(displayShader),
     ]);
@@ -84,7 +84,9 @@ class MaterialXRenderer extends EventTarget {
     try { allocated.push(buffer(packed.nodeData)); allocated.push(buffer(packed.triangleData)); allocated.push(buffer(textures.imageData)); allocated.push(buffer(textures.spectralData)); }
     catch (e) { allocated.forEach(b => b.destroy()); throw e; }
     this.resources.forEach(b => b.destroy()); this.resources = allocated;
-    this.scene = packed; this.compute = compute; this.physical = physical; this.raster = raster; this.displayPipeline = display; this.blit = blit;
+    this.scene = packed; this.compute = compute; this.raster = raster; this.displayPipeline = display; this.blit = blit;
+    this.physical = null; this.physicalError = null; this.physicalPending = physicalTask.then(p => { if (generation === this.sceneGeneration && !this.disposed) this.physical = p; return p; }, e => { if (generation === this.sceneGeneration) this.physicalError = e; return null; });
+    if (this.mode !== 'realtime') this.physical = await this.physicalPending;
     this.sourceScene = sourceScene;
     this.scene.requiresPhysical = textures.requiresPhysical;
     this.scene.requiresSpectral = packed.materials.some(m=>m.mediumMajorant);
@@ -194,6 +196,7 @@ class MaterialXRenderer extends EventTarget {
       const physical = ['path-physical', 'path-spectral'].includes(this.mode);
       const tracing = this.mode !== 'realtime' && this.samples < this.options.maxSamples;
       if (tracing) {
+        if (physical && !this.physical) { this.physical = await this.physicalPending; if (!this.physical) throw this.physicalError || new Error('Physical pipeline compilation failed'); }
         if (physical) encoder.clearBuffer(this.pathCounters);
         const pass = encoder.beginComputePass(); pass.setPipeline(physical ? this.physical : this.compute); pass.setBindGroup(0, this.sceneGroup); pass.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(this.height / 8)); pass.end();
         if (physical) encoder.copyBufferToBuffer(this.pathCounters, 0, this.pathReadback, 0, 16);

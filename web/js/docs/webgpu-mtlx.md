@@ -297,6 +297,11 @@ Authored-render preflight now rejects oversized EXR maps from their header
 before allocation and records a structured diagnostic; remaining maps use
 bounded downsampling for the partial authored-material render.
 
+Realtime scene loads no longer wait for the physical path pipeline to compile;
+that pipeline is compiled lazily and awaited only when physical or spectral
+transport is selected. This keeps large authored graphs interactive while
+preserving the path-tracing mode.
+
 The synthetic coverage set now includes a `hair` scene using the MaterialX
 `hair_bsdf` category. Its legacy melanin and explicit-color forms compile to a
 bounded fiber lobe with longitudinal/azimuthal roughness and are exercised by

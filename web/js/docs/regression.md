@@ -112,6 +112,8 @@ oversized regular raster images, matching the existing EXR budget coverage.
 The authored ShaderBall gate reuses the already-loaded authored scene for its
 diagnostics; hardware Chrome now completes seven compiled authored slots and
 51,008 triangles without a duplicate asset decode.
+Realtime loads compile the physical pipeline lazily; the gate therefore checks
+the authored raster path without waiting on unused path-tracing compilation.
 
 The synthetic hardware matrix also covers the `coat` dielectric-lobe path.
 
