@@ -320,6 +320,10 @@ The Chrome harness keeps the image-backed physical reference case behind
 `--include-image-path` while its path convergence is investigated; realtime
 image validation remains part of the default gate.
 
+Shading normals from normal/normalmap nodes are now clamped to the geometric
+hemisphere before path and raster transport, preventing perturbed frames from
+launching rays through the wrong side of a surface.
+
 The synthetic coverage set now includes a `hair` scene using the MaterialX
 `hair_bsdf` category. Its legacy melanin and explicit-color forms compile to a
 bounded fiber lobe with longitudinal/azimuthal roughness and are exercised by

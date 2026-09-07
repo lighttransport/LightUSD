@@ -129,6 +129,8 @@ The image-backed path reference gate is opt-in with
 within the bounded browser harness and remains under investigation.
 Diagnostic runs may override its workload with `--reference-width` and
 `--reference-height`; the default reference resolution remains 192x128.
+Normal-map transport applies a geometric-hemisphere correction before BSDF
+sampling; realtime image coverage remains the browser regression for this path.
 
 The synthetic hardware matrix also covers the `coat` dielectric-lobe path.
 

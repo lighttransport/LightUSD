@@ -146,7 +146,7 @@ fn preview(o0: vec3f, d0: vec3f, rng: ptr<function,u32>, realtime: bool) -> vec3
     let h = intersect(o,d);
     if (h.id == 0xffffffffu) { radiance += beta*environment(d); break; }
     var ctx = context(h,o,d); if (dot(ctx.normal,d)>0.0) { ctx.normal = -ctx.normal; }
-    let surface = getSurface(u32(triangles[h.id].a.uv.z),ctx); let opacity=clamp(surface.opacity,0.0,1.0); if(opacity<=0.001){if(realtime){break;}o=ctx.position+d*max(1e-4,length(ctx.position)*1e-5);continue;} if(!realtime && opacity<1.0 && random(rng)>opacity){o=ctx.position+d*max(1e-4,length(ctx.position)*1e-5);continue;} let contributionOpacity=select(1.0,opacity,realtime); ctx.normal=normalize(surface.normal); if(dot(ctx.normal,d)>0.0){ctx.normal=-ctx.normal;} let m = primaryLobe(surface);
+    let surface = getSurface(u32(triangles[h.id].a.uv.z),ctx); let opacity=clamp(surface.opacity,0.0,1.0); if(opacity<=0.001){if(realtime){break;}o=ctx.position+d*max(1e-4,length(ctx.position)*1e-5);continue;} if(!realtime && opacity<1.0 && random(rng)>opacity){o=ctx.position+d*max(1e-4,length(ctx.position)*1e-5);continue;} let contributionOpacity=select(1.0,opacity,realtime); let geometricNormal=ctx.normal; ctx.normal=normalize(surface.normal); if(dot(ctx.normal,geometricNormal)<0.0){ctx.normal=-ctx.normal;} if(dot(ctx.normal,d)>0.0){ctx.normal=-ctx.normal;} let m = primaryLobe(surface);
     let eps = max(1e-4,length(ctx.position)*1e-5);
     let emittingTriangle=triangles[h.id];let emittingNormal=normalize(cross(emittingTriangle.b.p.xyz-emittingTriangle.a.p.xyz,emittingTriangle.c.p.xyz-emittingTriangle.a.p.xyz));
     radiance += beta*m.emission*m.emissionWeight*emissionSidedness(u32(triangles[h.id].a.uv.z),emittingNormal,d)*contributionOpacity;
@@ -182,7 +182,7 @@ struct RasterVertex { @builtin(position) clip: vec4f, @location(0) position: vec
 @fragment fn rasterFragment(v: RasterVertex, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   let geomN = normalize(select(-v.normal,v.normal,front)); let tangent = normalize(cross(select(vec3f(0,1,0),vec3f(1,0,0),abs(geomN.y)>0.9),geomN));
   var ctx = ShadingContext(v.position,geomN,tangent,cross(geomN,tangent),v.uv,0,0,dpdx(v.uv),dpdy(v.uv));
-  let surface=getSurface(v.material,ctx); if(surface.opacity<=0.001){discard;} let n=normalize(surface.normal); ctx.normal=n; let m = primaryLobe(surface); let wo = normalize(cfg.origin.xyz-v.position); let light=directionalDirection();
+  let surface=getSurface(v.material,ctx); if(surface.opacity<=0.001){discard;} var n=normalize(surface.normal); if(dot(n,geomN)<0.0){n=-n;} ctx.normal=n; let m = primaryLobe(surface); let wo = normalize(cfg.origin.xyz-v.position); let light=directionalDirection();
   var color = m.emission*m.emissionWeight*emissionSidedness(v.material,geomN,-wo)+m.base*(1.0-m.metal)*0.22+fresnel(max(0.0,dot(n,wo)),mix(vec3f(0.04),m.base,m.metal))*environment(reflect(-wo,n));
   let transmission=clamp((1.0-m.metal)*m.transmission,0.0,1.0);
   let refracted=refract(-wo,n,1.0/max(1.0001,m.ior));
