@@ -12,7 +12,52 @@ import { refineDisplacementScene } from '../src/webgpu-mtlx/displacement.js';
 import { fetchResource, inspectEXR, decodeImage } from '../src/webgpu-mtlx/resources.js';
 import { appendRectLights } from '../src/webgpu-mtlx/usd-lights.js';
 import { mayEmit } from '../src/webgpu-mtlx/emission.js';
+import { materialXFromUSD } from '../src/webgpu-mtlx/usd-graph.js';
 const constant = (name, value, type = 'float') => ({ name, category: 'constant', type, inputs: { value: { type, value } } });
+
+test('USD graph translation preserves interfaces and exact NodeDef typing', () => {
+  const p = (type, value, connections = []) => ({ type, ...(value === undefined ? {} : { value }), connections, timeSampled: false });
+  const snapshot = { version: 1, prims: [
+    { path: '/M', type: 'Material', properties: { 'outputs:mtlx:surface': p('token', undefined, ['/M/G.outputs:surface']) } },
+    { path: '/M/G', type: 'NodeGraph', properties: { 'outputs:surface': p('token', undefined, ['/M/S.outputs:out']), 'inputs:color': p('color3f', [.2,.4,.6]) } },
+    { path: '/M/S', type: 'Shader', properties: { 'info:id': p('token', 'ND_standard_surface_surfaceshader'), 'inputs:base_color': p('color3f', [1,0,0], ['/M/G.inputs:color']), 'outputs:out': p('token') } }
+  ] };
+  const library = { definitions: { ND_standard_surface_surfaceshader: { node: 'standard_surface', inputs: { base_color: { type: 'color3' } }, outputs: { out: { type: 'surfaceshader' } } } } };
+  const doc = materialXFromUSD(snapshot, '/M', { library });
+  assert.equal(doc.nodes.length, 1);
+  assert.deepEqual(doc.nodes[0].inputs.base_color, { type: 'color3', value: [.2,.4,.6] });
+  assert.doesNotThrow(() => compileGraph(doc, { material: true }));
+  const changed = () => structuredClone(snapshot);
+  let bad = changed(); bad.prims[1].properties['inputs:color'].connections = ['/M/S.inputs:base_color'];
+  assert.throws(() => materialXFromUSD(bad, '/M', { library }), /cycle/);
+  bad = changed(); bad.prims[1].properties['inputs:color'].timeSampled = true;
+  assert.throws(() => materialXFromUSD(bad, '/M', { library }), /time-sampled/);
+  bad = changed(); bad.prims[1].properties['inputs:color'].type = 'float';
+  assert.throws(() => materialXFromUSD(bad, '/M', { library }), /type mismatch/);
+  assert.throws(() => materialXFromUSD(snapshot, '/M'), /missing exact/);
+  bad = changed(); bad.prims.push(bad.prims[0]);
+  assert.throws(() => materialXFromUSD(bad, '/M', { library }), /duplicate/);
+  bad = changed(); bad.prims[2].properties['inputs:unknown'] = p('float', 1);
+  assert.throws(() => materialXFromUSD(bad, '/M', { library }), /absent from NodeDef/);
+  bad = changed(); bad.prims[0].properties['outputs:displacement'] = p('token', undefined, ['/M/S.outputs:out']);
+  assert.throws(() => materialXFromUSD(bad, '/M', { library }), /non-surface/);
+});
+
+test('USD graph asset resolution requires explicit source-aware ownership', () => {
+  const p = (type, value, connections = []) => ({ type, value, connections, timeSampled: false });
+  const snapshot = { version: 1, prims: [
+    { path: '/M', type: 'Material', properties: { 'outputs:mtlx:surface': p('token', undefined, ['/S.outputs:out']) } },
+    { path: '/S', type: 'Shader', properties: { 'info:id': p('token', 'custom_surface'), 'inputs:file': p('asset', '../maps/image.exr'), 'outputs:out': p('token') } }
+  ] };
+  const library = { definitions: { custom_surface: { node: 'custom_surface', inputs: { file: { type: 'filename' } }, outputs: { out: { type: 'surfaceshader' } } } } };
+  assert.throws(() => materialXFromUSD(snapshot, '/M', { library }), /source-layer-aware/);
+  const doc = materialXFromUSD(snapshot, '/M', { library, resolveAsset(value, context) {
+    assert.equal(value, '../maps/image.exr'); assert.equal(context.propertyPath, '/S.inputs:file');
+    return 'resolved-resource';
+  } });
+  assert.equal(doc.nodes[0].inputs.file.value, 'resolved-resource');
+  assert.throws(() => materialXFromUSD(snapshot, '/M', { library, resolveAsset: () => Promise.resolve('key') }), /nonempty resource key/);
+});
 test('layered medium bounds follow interior dependencies, not unrelated surface nodes',()=>{
   const doc={nodes:[
     {name:'position',category:'position',type:'vector3'},

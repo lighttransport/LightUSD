@@ -10,6 +10,8 @@ Its pure Node graph/scene tests are included in the aggregate Node profile.
 After rebuilding the combined WASM binding, run
 `node tests/webgpu-mtlx-usd-graph.mjs` for typed USD shading connections and
 connected defaults; `--shaderball` also runs that fixture inside Chrome.
+The Chrome fixture additionally translates a native USD emission graph through
+the pinned MaterialX definitions and checks every rendered pixel analytically.
 See [implementation status and setup](webgpu-mtlx.md) for the pinned fixtures,
 generated artifacts, measured coverage, and unfinished reference-rendering work.
 

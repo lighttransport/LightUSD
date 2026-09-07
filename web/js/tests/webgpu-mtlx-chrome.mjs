@@ -133,8 +133,9 @@ try {
     let shaderballResult;
     if (shaderball) {
       await page.evaluate(async () => {
-        const { validateUSDGraphSnapshot } = await import('/src/webgpu-mtlx/usd-graph-validation.js');
-        return validateUSDGraphSnapshot();
+        const { validateUSDGraphSnapshot, validateUSDMaterialTranslation } = await import('/src/webgpu-mtlx/usd-graph-validation.js');
+        await validateUSDGraphSnapshot();
+        return validateUSDMaterialTranslation(window.__webgpuMtlx.renderer);
       });
     if(process.argv.includes('--authored-lights'))await page.click('#authored-lights');
     await page.select('#scene', 'shaderball');

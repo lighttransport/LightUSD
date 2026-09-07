@@ -222,3 +222,15 @@ explicit markers; time-sampled properties are flagged, not evaluated. It is not
 yet a complete material import format: metadata, source-layer asset resolution,
 binding resolution and remaining value types still need coverage. ShaderBall
 retains this snapshot alongside the explicitly lossy render-material diagnostic.
+
+`materialXFromUSD(snapshot, materialPath, { library, resolveAsset })` translates
+the reachable surface graph into a compiler document. It resolves graph outputs
+and interface inputs by absolute property path, selects exact library NodeDefs,
+and checks typed ports. Missing definitions, unknown inputs, cycles, time samples
+and authored displacement/volume terminals fail explicitly. Asset inputs require
+a synchronous caller-supplied resolver returning a resource key; no source-layer
+anchor or texture colorspace is guessed. This API does not yet enable faithful
+ShaderBall material rendering, because metadata and asset provenance are still
+incomplete. The Chrome ShaderBall gate additionally checks a synthetic native USD
+material with a nested graph interface against an exact linear RGB emission
+image, using the pinned `ND_surface` and `ND_uniform_edf` definitions.

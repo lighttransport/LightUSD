@@ -49,3 +49,44 @@ def Material "Mat" {
     return { prims: graph.prims.length, connections: 4, connectedDefault: true };
   } finally { layer.delete(); }
 }
+
+export async function validateUSDMaterialTranslation(renderer) {
+  const { parseMaterialX } = await import('./graph.js');
+  const { materialXFromUSD } = await import('./usd-graph.js');
+  const { fetchResource } = await import('./resources.js');
+  const library = parseMaterialX(new TextDecoder().decode(await fetchResource('/__mtlx/libraries/pbrlib/pbrlib_defs.mtlx')));
+  const { default: createModule } = await import('../lightusd/lightusd_combined.js');
+  const native = await createModule(), layer = new native.LightUSDLoaderNative();
+  const source = `#usda 1.0
+def Material "M" {
+    token outputs:mtlx:surface.connect = </M/Graph.outputs:surface>
+    def NodeGraph "Graph" {
+        color3f inputs:color = (0.25, 0.5, 0.75)
+        token outputs:surface.connect = </M/Surface.outputs:out>
+    }
+    def Shader "Emission" {
+        uniform token info:id = "ND_uniform_edf"
+        color3f inputs:color.connect = </M/Graph.inputs:color>
+        token outputs:out
+    }
+    def Shader "Surface" {
+        uniform token info:id = "ND_surface"
+        token inputs:edf.connect = </M/Emission.outputs:out>
+        token outputs:out
+    }
+}`;
+  try {
+    if (!layer.loadAsLayerFromBinary(new TextEncoder().encode(source), 'material-translation.usda')) throw new Error(layer.error());
+    const doc = materialXFromUSD(JSON.parse(layer.getShadingGraphJSON()), '/M', { library });
+    const scene = { positions: [-10,-10,0,10,-10,0,10,10,0,-10,10,0], indices: [0,1,2,0,2,3], materials: [doc],
+      camera: { origin: [0,0,1], target: [0,0,0], fov: 45 }, lighting: { environment: [0,0,0], directional: { radiance: [0,0,0] } } };
+    await renderer.loadScene(scene); renderer.setMode('path-physical');
+    for (let i = 0; i < 20 && renderer.samples < 2; i++) await renderer.renderStep();
+    if (renderer.samples < 2) throw new Error('USD translated emission paths did not complete');
+    const capture = await renderer.capture({ format: 'float32' });
+    for (let i = 0; i < capture.pixels.length; i += 4) {
+      for (let c = 0; c < 3; c++) if (!Number.isFinite(capture.pixels[i+c]) || Math.abs(capture.pixels[i+c] - [.25,.5,.75][c]) > 1e-6) throw new Error('USD to MaterialX emission radiance mismatch');
+    }
+    return { nodes: doc.nodes.length, expected: [.25,.5,.75], samples: renderer.samples };
+  } finally { layer.delete(); }
+}
