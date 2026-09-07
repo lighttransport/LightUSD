@@ -335,6 +335,10 @@ Realtime raster shading now honors compiled opacity with a zero-opacity discard
 and bounded color scaling. The synthetic `opacity` scene exercises this path;
 full sorted transparency and blend compositing remain future work.
 
+Realtime raster lighting now uses the authored `Material.normal` for BRDF and
+environment terms while retaining the geometric normal for offsets and shadow
+queries. The normal-map hardware fixture exercises this parity path.
+
 
 Scalar MaterialX `bump3` and `heighttonormal` nodes now have a bounded
 height-to-normal fallback (`mxBumpHeight`) that feeds the same authored normal
