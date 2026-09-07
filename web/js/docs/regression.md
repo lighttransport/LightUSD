@@ -127,6 +127,8 @@ work.
 The image-backed path reference gate is opt-in with
 `--include-image-path`; its current physical transport case does not converge
 within the bounded browser harness and remains under investigation.
+Diagnostic runs may override its workload with `--reference-width` and
+`--reference-height`; the default reference resolution remains 192x128.
 
 The synthetic hardware matrix also covers the `coat` dielectric-lobe path.
 

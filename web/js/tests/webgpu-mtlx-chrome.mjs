@@ -131,20 +131,23 @@ try {
     const onlyPreset=process.argv.find(arg=>arg.startsWith('--only-preset='))?.slice('--only-preset='.length);
     const requestedReferenceSamples=Number(process.argv.find(arg=>arg.startsWith('--reference-samples='))?.slice('--reference-samples='.length)||32);
     const requestedReferenceMode=process.argv.find(arg=>arg.startsWith('--reference-mode='))?.slice('--reference-mode='.length)||'path-spectral';
+    const referenceWidth=Number(process.argv.find(arg=>arg.startsWith('--reference-width='))?.slice('--reference-width='.length)||192);
+    const referenceHeight=Number(process.argv.find(arg=>arg.startsWith('--reference-height='))?.slice('--reference-height='.length)||128);
     assert.ok(['path-spectral','path-physical','realtime'].includes(requestedReferenceMode),'reference mode must be path-spectral, path-physical, or realtime');
     assert.ok(Number.isInteger(requestedReferenceSamples)&&requestedReferenceSamples>0&&requestedReferenceSamples<=32,'reference samples must be 1..32');
+    assert.ok(Number.isInteger(referenceWidth)&&referenceWidth>=16&&referenceWidth<=1920&&Number.isInteger(referenceHeight)&&referenceHeight>=16&&referenceHeight<=1080,'reference resolution is invalid');
     const includeImagePath=process.argv.includes('--include-image-path');
     for(const preset of referencePresets.filter(name=>!onlyPreset||name===onlyPreset).filter(name=>name!=='normalmap-image'||requestedReferenceMode==='realtime'||includeImagePath)) {
       console.log(`reference-start preset=${preset} mode=${requestedReferenceMode} samples=${requestedReferenceSamples}`);
-      const stats=await page.evaluate(async (preset,requestedReferenceSamples,requestedReferenceMode)=>{
+      const stats=await page.evaluate(async (preset,requestedReferenceSamples,requestedReferenceMode,referenceWidth,referenceHeight)=>{
         const r=window.__webgpuMtlx.renderer;const {syntheticScene}=await import('/src/webgpu-mtlx/scene.js');
-        r.canvas.width=192;r.canvas.height=128;await r.loadScene(syntheticScene(preset));r.setMode(requestedReferenceMode);
+        r.canvas.width=referenceWidth;r.canvas.height=referenceHeight;await r.loadScene(syntheticScene(preset));r.setMode(requestedReferenceMode);
         if(requestedReferenceMode==='realtime'){await r.renderStep();return {preset,samples:r.samples,dispatches:1};}
         let dispatches=0;while(r.samples<requestedReferenceSamples&&dispatches<4000){await r.renderStep();dispatches++;}
         if(r.samples!==requestedReferenceSamples)throw new Error(`${preset} did not converge to ${requestedReferenceSamples} spp`);
         const capture=await r.capture({format:'float32'});if(!capture.pixels.every(Number.isFinite))throw new Error(`${preset} has invalid radiance`);
         return {preset,samples:r.samples,dispatches};
-      },preset,requestedReferenceSamples,requestedReferenceMode);
+      },preset,requestedReferenceSamples,requestedReferenceMode,referenceWidth,referenceHeight);
       referenceImages.push(stats);console.log(JSON.stringify(stats));await page.screenshot({path:path.join(out,`${preset}-${requestedReferenceMode}.png`)});
     }
   }
