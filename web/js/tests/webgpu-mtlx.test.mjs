@@ -413,6 +413,18 @@ test('RGB/HSV conversion nodes emit bounded color conversion helpers', () => {
   ]};
   const source=compileGraph(doc); assert.match(source.body,/mxRgbToHsv/); assert.match(source.body,/mxHsvToRgb/);
 });
+test('common trigonometric and angle-unit nodes map to WGSL math', () => {
+  const doc={nodes:[
+    {name:'x',category:'constant',type:'float',inputs:{value:{type:'float',value:45}}},
+    {name:'r',category:'radians',type:'float',inputs:{in:{nodename:'x'}}},
+    {name:'a',category:'atan',type:'float',inputs:{in:{nodename:'r'}}},
+    {name:'l',category:'log10',type:'float',inputs:{in:{nodename:'x'}}},
+    {name:'e',category:'exp2',type:'float',inputs:{in:{nodename:'x'}}},
+    {name:'sum',category:'add',type:'float',inputs:{in1:{nodename:'a'},in2:{nodename:'l'}}},
+    {name:'out',category:'add',type:'float',inputs:{in1:{nodename:'sum'},in2:{nodename:'e'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/0\.017453292519943295/); assert.match(source.body,/log\(n0\)\*0\.4342944819032518/); assert.match(source.body,/exp2\(n0\)/);
+});
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
   assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/);
