@@ -396,6 +396,15 @@ test('fresnel and facing-ratio nodes compile with safe vector normalization', ()
   ]};
   const source=compileGraph(doc); assert.match(source.body,/pow\(\(1\.5-1\.0\)/); assert.match(source.body,/normalize\(n1\)/);
 });
+test('luminance and average nodes preserve explicit component semantics', () => {
+  const doc={nodes:[
+    {name:'color',category:'constant',type:'color3',inputs:{value:{type:'color3',value:[1,.5,0]}}},
+    {name:'lum',category:'luminance',type:'float',inputs:{in:{nodename:'color'}}},
+    {name:'avg',category:'average',type:'float',inputs:{in:{nodename:'color'}}},
+    {name:'out',category:'add',type:'float',inputs:{in1:{nodename:'lum'},in2:{nodename:'avg'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/0\.2126,0\.7152,0\.0722/); assert.match(source.body,/0\.3333333333/);
+});
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
   assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/);
