@@ -260,3 +260,9 @@ The Chrome ShaderBall gate checks a synthetic native USD material with a nested
 graph interface and sRGB attribute metadata against an analytic linear emission
 image, using the pinned `ND_surface` and `ND_uniform_edf` definitions. Conflicting
 destination metadata must not recolor the connected source.
+
+Standard Surface/OpenPBR terminals now accept the canonical 1.39.5 input spellings,
+including Standard Surface's `specular_IOR` and OpenPBR's `specular_ior`, geometry
+opacity/thin-wall fields, and common authored defaults. The current terminal is
+still an approximate single-lobe mapping. Nonzero or connected subsurface, fuzz,
+sheen, coat and thin-film controls fail explicitly; they are not silently erased.

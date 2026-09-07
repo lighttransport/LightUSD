@@ -38,6 +38,26 @@ test('USD texture provenance keeps anchors and rejects ambiguous source layers',
   assert.equal(sources.requests.get(override).url, 'https://example.test/override.exr');
 });
 
+test('standard and OpenPBR terminal aliases preserve authored graph inputs', () => {
+  const standard = { nodes: [
+    { name: 'surface', category: 'standard_surface', type: 'surfaceshader', inputs: {
+      base_color: { type: 'color3', value: [.2,.3,.4] }, metalness: { type: 'float', value: .5 },
+      specular_color: { type: 'color3', value: [1, .8, .7] }, specular_IOR: { type: 'float', value: 1.7 },
+      specular_roughness: { type: 'float', value: .2 }, emission: { type: 'float', value: 0 }
+    } }
+  ] };
+  assert.doesNotThrow(() => compileGraph(standard, { material: true }));
+  const open = { nodes: [{ name: 'surface', category: 'open_pbr_surface', type: 'surfaceshader', inputs: {
+    base_weight: { type: 'float', value: 1 }, base_color: { type: 'color3', value: [.2,.3,.4] },
+    specular_weight: { type: 'float', value: 1 }, specular_ior: { type: 'float', value: 1.5 },
+    specular_roughness_anisotropy: { type: 'float', value: 0 }, emission_luminance: { type: 'float', value: 0 },
+    geometry_opacity: { type: 'float', value: 1 }
+  } }] };
+  assert.doesNotThrow(() => compileGraph(open, { material: true }));
+  const unsupported = structuredClone(standard); unsupported.nodes[0].inputs.coat = { type: 'float', value: .2 };
+  assert.throws(() => compileGraph(unsupported, { material: true }), /coat/);
+});
+
 test('USD graph translation preserves interfaces and exact NodeDef typing', () => {
   const p = (type, value, connections = []) => ({ type, ...(value === undefined ? {} : { value }), connections, timeSampled: false });
   const snapshot = { version: 1, prims: [

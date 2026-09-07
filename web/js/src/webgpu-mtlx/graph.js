@@ -338,9 +338,15 @@ export function compileGraph(document, { output, library = {}, material = false,
           if (!material) fail('CONTEXT', key, 'surface requires material compilation');
           const open = n.category === 'open_pbr_surface';
           // This baseline mapping is explicitly approximate, not a reference closure.
-          const fields = [x('base_color', [0.8, 0.8, 0.8], 'color3'), x(open ? 'base_metalness' : 'metalness', 0, 'float'), x('specular_roughness', 0.3, 'float'), x('specular_ior', 1.5, 'float'), x(open ? 'transmission_weight' : 'transmission', 0, 'float'), x('emission_color', [1, 1, 1], 'color3'), x(open ? 'emission_luminance' : 'emission', 0, 'float'), x('specular_anisotropy', 0, 'float'), x('transmission_color', [1,1,1], 'color3')];
-          const supported = new Set(['base_color', 'base_metalness', 'metalness', 'specular_roughness', 'specular_ior', 'transmission_weight', 'transmission', 'emission_color', 'emission_luminance', 'emission', 'specular_anisotropy', 'transmission_color']);
+          const pick = (names, fallback, expected) => x(names.find(name => ins[name]) || names[0], fallback, expected);
+          const fields = [pick(['base_color'], [0.8, 0.8, 0.8], 'color3'), pick(open ? ['base_metalness'] : ['metalness'], 0, 'float'), pick(['specular_roughness'], 0.3, 'float'), pick(open ? ['specular_ior'] : ['specular_IOR', 'specular_ior'], 1.5, 'float'), pick(open ? ['transmission_weight'] : ['transmission'], 0, 'float'), pick(['emission_color'], [1, 1, 1], 'color3'), pick(open ? ['emission_luminance'] : ['emission'], 0, 'float'), pick(open ? ['specular_roughness_anisotropy'] : ['specular_anisotropy'], 0, 'float'), pick(['transmission_color'], [1,1,1], 'color3')];
+          const supported = new Set(open ? ['base_weight', 'base_color', 'base_diffuse_roughness', 'base_metalness', 'specular_weight', 'specular_color', 'specular_roughness', 'specular_ior', 'specular_roughness_anisotropy', 'transmission_weight', 'transmission_color', 'transmission_depth', 'transmission_scatter', 'emission_color', 'emission_luminance', 'geometry_opacity', 'geometry_thin_walled'] : ['base', 'base_color', 'diffuse_roughness', 'metalness', 'specular', 'specular_color', 'specular_roughness', 'specular_IOR', 'specular_ior', 'specular_anisotropy', 'transmission', 'transmission_color', 'transmission_depth', 'transmission_scatter', 'emission_color', 'emission', 'opacity', 'thin_walled']);
           for (const k of Object.keys(n.inputs || {})) if (!supported.has(k)) fail('UNSUPPORTED', `${key}/${k}`, 'surface input not yet implemented');
+          const unsupportedLobes = open ? ['subsurface_weight', 'fuzz_weight', 'coat_weight', 'thin_film_weight'] : ['subsurface', 'sheen', 'coat', 'thin_film_thickness'];
+          for (const k of unsupportedLobes) if (ins[k]) {
+            if (ins[k].nodename || ins[k].nodegraph || ins[k].interfacename || !Number.isFinite(Number(ins[k].value))) fail('UNSUPPORTED', `${key}/${k}`, 'connected layered surface lobe is not implemented');
+            if (Number(ins[k].value) !== 0) fail('UNSUPPORTED', `${key}/${k}`, 'nonzero layered surface lobe is not implemented');
+          }
           code = `materialFromLobe(makeMaterial(${fields.join(',')}))`; break;
         }
         case 'surfacematerial': result = input('surfaceshader'); break;

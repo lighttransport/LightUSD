@@ -14,6 +14,8 @@ It covers color-space metadata and asset opinions on untyped overrides. The
 ShaderBall gate requires source-layer provenance for every composed texture key.
 Image tests cover bounded downsampling and mip-budget rejection; renderer options
 `textureMaxDimension` and `textureMaxBytes` feed that path.
+The graph suite also checks Standard Surface/OpenPBR spelling aliases and rejects
+nonzero layered lobes that the approximate terminal cannot represent.
 The Chrome fixture additionally translates a native USD emission graph through
 the pinned MaterialX definitions and checks every rendered pixel analytically.
 See [implementation status and setup](webgpu-mtlx.md) for the pinned fixtures,
