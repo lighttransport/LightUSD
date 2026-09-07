@@ -16,6 +16,11 @@ Image tests cover bounded downsampling and mip-budget rejection; renderer option
 `textureMaxDimension` and `textureMaxBytes` feed that path.
 The graph suite also checks Standard Surface/OpenPBR spelling aliases and rejects
 nonzero layered lobes that the approximate terminal cannot represent.
+The optional `--authored-materials` ShaderBall flag loads the pinned library and
+attempts strict translation of every composed Material prim, reporting explicit
+per-material diagnostics for unsupported graphs without replacing render slots.
+The current pinned ShaderBall corpus yields ten translated materials and seven
+explicit missing-terminal diagnostics; this count is reported in the Chrome JSON.
 The Chrome fixture additionally translates a native USD emission graph through
 the pinned MaterialX definitions and checks every rendered pixel analytically.
 See [implementation status and setup](webgpu-mtlx.md) for the pinned fixtures,

@@ -273,3 +273,14 @@ diagnostic slots for all authored material IDs and no longer decides the gold
 material from a pathname heuristic. Per-face subset ranges are used when the
 native render mesh provides them; the current ShaderBall asset exposes no such
 ranges after composition, so binding-level IDs remain the authoritative result.
+
+`loadShaderBallGeometry({ authoredMaterials: true })` loads the pinned
+stdlib/pbrlib/bxdf libraries and attempts strict translation of every composed
+Material prim through `materialXFromUSD`. Successful documents are retained in
+`authored.translatedMaterials`; failures are structured in
+`authored.translationDiagnostics`. This is inspection-only until texture requests
+are decoded into document images and all terminal/closure features are supported.
+The optional Chrome `--authored-materials` run currently translates 10 composed
+ShaderBall Material prims and reports seven explicit diagnostics for materials
+whose composed layer lacks an `outputs:mtlx:surface` terminal; those diagnostics
+are evidence of missing authored graph data, not fallback success.

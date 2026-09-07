@@ -166,6 +166,15 @@ try {
       }
     }
     if(process.argv.includes('--authored-lights')){assert.equal(shaderballResult.provenance.lightingOverride,false);assert.equal(shaderballResult.provenance.rectLights.length,5);}
+    if(process.argv.includes('--authored-materials')) {
+      const translation = await page.evaluate(async () => {
+        const { loadShaderBallGeometry } = await import('/src/webgpu-mtlx/usd-scene.js');
+        const scene = await loadShaderBallGeometry(() => {}, { authoredMaterials: true });
+        return { translated: Object.keys(scene.authored.translatedMaterials).length, diagnostics: scene.authored.translationDiagnostics };
+      });
+      assert.ok(translation.translated + translation.diagnostics.length >= 1);
+      shaderballResult.authoredTranslation = translation;
+    }
     await page.screenshot({ path: path.join(out, 'shaderball.png') });
   }
   let performanceResult;

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { GraphError } from './graph.js';
+import { fetchResource } from './resources.js';
+import { parseMaterialX } from './graph.js';
 
 const usdTypes = Object.freeze({ float: 'float', int: 'integer', bool: 'boolean',
   color3f: 'color3', color4f: 'color4', float2: 'vector2', float3: 'vector3',
@@ -118,4 +120,17 @@ export function materialXFromUSD(snapshot, materialPath, { library = {}, resolve
   const output = port(`${materialPath}.outputs:mtlx:surface`, 'surfaceshader');
   return { version: '1.39', nodes, output, definitions, graphs: library.graphs || {},
     source: materialPath, provenance: { materialPath, source: 'USD layer snapshot', referenceReady: false } };
+}
+
+/** Load the pinned MaterialX library partitions needed by USD shader IDs. */
+export async function loadUSDMaterialXLibrary({ base = '/__mtlx/libraries/' } = {}) {
+  const files = ['stdlib/stdlib_defs.mtlx', 'stdlib/stdlib_ng.mtlx', 'pbrlib/pbrlib_defs.mtlx',
+    'pbrlib/pbrlib_ng.mtlx', 'bxdf/standard_surface.mtlx', 'bxdf/open_pbr_surface.mtlx'];
+  const library = { definitions: Object.create(null), graphs: Object.create(null) };
+  for (const file of files) {
+    const source = new URL(file, new URL(base, globalThis.location?.href || 'http://localhost/')).href;
+    const doc = parseMaterialX(new TextDecoder().decode(await fetchResource(source)), { source });
+    Object.assign(library.definitions, doc.definitions); Object.assign(library.graphs, doc.graphs);
+  }
+  return library;
 }
