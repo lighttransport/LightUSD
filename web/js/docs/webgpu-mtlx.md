@@ -342,6 +342,11 @@ The compute preview's realtime branch applies the same opacity factor to
 emission and direct/environment lighting; physical path modes still require
 stochastic transparency and sorted compositing for full transmission parity.
 
+The physical preview now uses stochastic alpha continuation for partial
+opacity: rejected hits advance along the current ray, while surviving hits
+retain unbiased throughput. This is alpha cutout/coverage handling, not sorted
+transparency or volumetric transmission.
+
 Realtime raster lighting now uses the authored `Material.normal` for BRDF and
 environment terms while retaining the geometric normal for offsets and shadow
 queries. The normal-map hardware fixture exercises this parity path.
