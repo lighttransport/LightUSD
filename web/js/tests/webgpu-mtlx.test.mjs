@@ -390,6 +390,11 @@ test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
   assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/);
 });
+test('volume transport includes direct HG light estimation at scattering events', () => {
+  const source=shaderSource(syntheticScene('sss').materials, {});
+  assert.match(source,/hgPhase\(dot\(-p\.direction\.xyz,light\)/);
+  assert.match(source,/p\.beta\.xyz\*hgPhase/);
+});
 test('cycle, missing node, mismatch, duplicate, unknown operation fail', () => {
   assert.throws(() => compileGraph({ nodes: [{ name: 'x', category: 'absval', type: 'float', inputs: { in: { nodename: 'x' } } }] }), /cycle/);
   assert.throws(() => compileGraph({ nodes: [{ name: 'x', category: 'absval', type: 'float', inputs: { in: { nodename: 'missing' } } }] }), /unknown node/);
