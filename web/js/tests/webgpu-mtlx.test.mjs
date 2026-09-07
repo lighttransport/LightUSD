@@ -429,6 +429,10 @@ test('ACEScg conversion node uses the pinned MaterialX matrix', () => {
   const doc={nodes:[{name:'aces',category:'acescg_to_lin_rec709',type:'color3',inputs:{in:{type:'color3',value:[1,0,0]}}}]};
   const source=compileGraph(doc); assert.match(source.body,/mxAcescgToLinRec709/); assert.match(contextWGSL,/1\.705050992658/);
 });
+test('linear Rec.709 to ACEScg conversion exposes the inverse matrix', () => {
+  const doc={nodes:[{name:'lin',category:'lin_rec709_to_acescg',type:'color3',inputs:{in:{type:'color3',value:[1,0,0]}}}]};
+  const source=compileGraph(doc); assert.match(source.body,/mxLinRec709ToAcescg/); assert.match(contextWGSL,/(?:0)?\.613097402401/);
+});
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
   assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/);
