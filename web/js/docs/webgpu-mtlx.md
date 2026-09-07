@@ -170,7 +170,7 @@ Screenshots and JSON reports go to `web/js/.regression/webgpu-mtlx`.
 
 Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 
-- Forty-eight Node tests pass, including native closure diagnostics, image checks and EXR
+- Forty-nine Node tests pass, including native closure diagnostics, image checks and EXR
   decoding through Three.js independently.
 - 37 numeric WGSL cases pass at `1e-5 + 1e-4 * abs(expected)` tolerance.
 - Four actual pinned library graph cases pass: scalar-gamma color range, ACEScg
@@ -199,6 +199,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   procedural UV/position graphs.
 - `cellnoise2d` and `cellnoise3d` provide non-interpolated integer-cell hash
   values for procedural masks.
+- `tiledimage` accepts the validated single-tile resource path; nontrivial tile
+  controls and UDIM expansion remain explicit unsupported diagnostics.
 - URL resource tests cover includes, source-relative EXR paths, inherited image
   colorspace, cycle rejection and cross-origin rejection. ShaderBall's 2048x2048
   neutral EXR decodes successfully.

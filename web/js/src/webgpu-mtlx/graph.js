@@ -247,10 +247,11 @@ export function compileGraph(document, { output, library = {}, material = false,
           if(!['color3','vector3'].includes(absorption.type)||!['color3','vector3'].includes(scattering.type))fail('TYPE',key,'volume coefficients must be color3/vector3');
           code=`Medium(${absorption.code},${scattering.code},${x('anisotropy',0,'float')})`; break;
         }
-        case 'image': {
+        case 'image': case 'tiledimage': {
           if (!['float', 'color3', 'color4', 'vector2', 'vector3', 'vector4'].includes(type)) fail('TYPE', key, 'invalid image output type');
-          for (const name of Object.keys(ins)) if (!['file', 'default', 'texcoord', 'uaddressmode', 'vaddressmode', 'filtertype', 'layer', 'framerange', 'frameoffset', 'frameendaction'].includes(name)) fail('UNSUPPORTED', key, `unsupported image input ${name}`);
+          for (const name of Object.keys(ins)) if (!['file', 'default', 'texcoord', 'uaddressmode', 'vaddressmode', 'filtertype', 'layer', 'framerange', 'frameoffset', 'frameendaction', 'uvtiling', 'realworldimagesize'].includes(name)) fail('UNSUPPORTED', key, `unsupported image input ${name}`);
           for (const name of ['layer', 'framerange', 'frameoffset']) if (ins[name] && !['', '0', 0].includes(ins[name].value)) fail('UNSUPPORTED', key, `image ${name} is not implemented`);
+          for (const name of ['uvtiling', 'realworldimagesize']) { const value=Array.isArray(ins[name]?.value)?ins[name].value.join(','):ins[name]?.value; if (ins[name] && value !== undefined && ![0, 1, '0', '1', '0,0', '1,1'].includes(value)) fail('UNSUPPORTED', key, `tiled image ${name} is not implemented`); }
           const file = ins.file?.value ?? '';
           if (ins.file && (ins.file.nodename || ins.file.nodegraph || ins.file.interfacename)) fail('UNSUPPORTED', key, 'connected image filenames are not implemented');
           const fallback = x('default', widths[type] === 1 ? 0 : Array(widths[type]).fill(0), type);

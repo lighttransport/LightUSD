@@ -470,6 +470,11 @@ test('cell-noise nodes hash integer cells without interpolation', () => {
   ]};
   const source=compileGraph(doc); assert.match(source.body,/mxHash2\(floor/); assert.match(source.body,/mxHash3\(floor/);
 });
+test('tiledimage compiles the validated single-tile resource path', () => {
+  const doc={images:{tile:{width:1,height:1,data:[1,0,0,1],colorspace:'raw'}},nodes:[{name:'tile',category:'tiledimage',type:'color3',inputs:{file:{type:'filename',value:'tile'},uvtiling:{type:'vector2',value:[1,1]}}}]};
+  const source=compileGraph(doc,{imageDescriptors:{tile:{offset:0,width:1,height:1,levels:1,colorspace:'raw'}}}); assert.match(source.body,/imageSample\(0u/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,uvtiling:{type:'vector2',value:[2,1]}}}]},{imageDescriptors:{tile:{offset:0,width:1,height:1,levels:1,colorspace:'raw'}}}),/tiled image uvtiling/);
+});
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
   assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/);
