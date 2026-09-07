@@ -7,6 +7,7 @@ import { surfaceDocument } from './scene.js';
 import { appendRectLights } from './usd-lights.js';
 import { USDTextureSources } from './usd-texture-sources.js';
 import { loadUSDMaterialXLibrary, materialXFromUSD } from './usd-graph.js';
+import { compileGraph } from './graph.js';
 export const SHADERBALL_COMMIT = '3b75c2dad6a494897557dcca0098257bcf42a8c6';
 let nativePromise;
 // The legacy composer requests merged references without their source layer.
@@ -63,19 +64,23 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
     const shadingGraphJSON = layer.getShadingGraphJSON();
     if (!shadingGraphJSON) throw new Error(layer.error());
     const shadingGraph = JSON.parse(shadingGraphJSON);
-    let mtlxLibrary, translatedMaterials = {}, translationDiagnostics = [];
+    let mtlxLibrary, translatedMaterials = {}, compiledMaterials = {}, translationDiagnostics = [];
     if (authoredMaterials) {
       mtlxLibrary = await loadUSDMaterialXLibrary();
       for (const material of shadingGraph.prims.filter(prim => prim.type === 'Material')) {
         try {
-          translatedMaterials[material.path] = materialXFromUSD(shadingGraph, material.path, { library: mtlxLibrary, resolveAsset: resolver.textures.resolveAsset });
+          const document = materialXFromUSD(shadingGraph, material.path, { library: mtlxLibrary, resolveAsset: resolver.textures.resolveAsset });
+          translatedMaterials[material.path] = document;
+          try {
+            compiledMaterials[material.path] = compileGraph(document, { material: true, output: document.output });
+          } catch (error) { translationDiagnostics.push({ path: material.path, phase: 'compile', error: String(error.message || error) }); }
         } catch (error) { translationDiagnostics.push({ path: material.path, error: String(error.message || error) }); }
       }
     }
     if (!layer.layerToRenderScene()) throw new Error(layer.error());
     // Native material serialization is reduced, NOT an authored graph export.
     // Preserve this diagnostic snapshot without substituting it for source graphs.
-    const authored = { materialSerializationIsLossy: true, shadingGraph, translatedMaterials, translationDiagnostics, textureSources: resolver.textures.snapshot(), materials: [], lights: [], bindings: [] };
+    const authored = { materialSerializationIsLossy: true, shadingGraph, translatedMaterials, compiledMaterials, translationDiagnostics, textureSources: resolver.textures.snapshot(), materials: [], lights: [], bindings: [] };
     for (let i = 0; i < layer.numMaterials(); i++) {
       const serialized = layer.getMaterialWithFormat(i, 'json');
       let material = serialized;

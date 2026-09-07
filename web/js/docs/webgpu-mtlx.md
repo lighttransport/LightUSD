@@ -277,10 +277,14 @@ ranges after composition, so binding-level IDs remain the authoritative result.
 `loadShaderBallGeometry({ authoredMaterials: true })` loads the pinned
 stdlib/pbrlib/bxdf libraries and attempts strict translation of every composed
 Material prim through `materialXFromUSD`. Successful documents are retained in
-`authored.translatedMaterials`; failures are structured in
+`authored.translatedMaterials` and passed through the real WGSL `compileGraph`
+path. Documents accepted by that compiler are retained in
+`authored.compiledMaterials`; translation or compile failures are structured in
 `authored.translationDiagnostics`. This is inspection-only until texture requests
 are decoded into document images and all terminal/closure features are supported.
 The optional Chrome `--authored-materials` run currently translates 10 composed
-ShaderBall Material prims and reports seven explicit diagnostics for materials
-whose composed layer lacks an `outputs:mtlx:surface` terminal; those diagnostics
-are evidence of missing authored graph data, not fallback success.
+ShaderBall Material prims. The real compiler accepts none yet: three translated
+graphs are rejected because cutout opacity is not implemented, while seven
+additional materials report a missing `outputs:mtlx:surface` terminal. These
+diagnostics are evidence of missing authored graph data or unsupported features,
+not fallback success.

@@ -170,9 +170,10 @@ try {
       const translation = await page.evaluate(async () => {
         const { loadShaderBallGeometry } = await import('/src/webgpu-mtlx/usd-scene.js');
         const scene = await loadShaderBallGeometry(() => {}, { authoredMaterials: true });
-        return { translated: Object.keys(scene.authored.translatedMaterials).length, diagnostics: scene.authored.translationDiagnostics };
+        return { translated: Object.keys(scene.authored.translatedMaterials).length, compiled: Object.keys(scene.authored.compiledMaterials).length, diagnostics: scene.authored.translationDiagnostics };
       });
       assert.ok(translation.translated + translation.diagnostics.length >= 1);
+      assert.ok(translation.compiled <= translation.translated);
       shaderballResult.authoredTranslation = translation;
     }
     await page.screenshot({ path: path.join(out, 'shaderball.png') });
