@@ -11,7 +11,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 // Units are semantic annotations; implementations consume their authored
 // convention (for example degrees for rotate2d and nanometers for thin film).
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
-export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
+export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'surfacematerial', 'surface']);
 for(const category of ['transformmatrix','normalmap','bump3','heighttonormal'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
@@ -328,6 +328,8 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'hsvtorgb': code=`mxHsvToRgb(${x('in',undefined,'color3')})`; break;
         case 'acescg_to_lin_rec709': code=`mxAcescgToLinRec709(${x('in',undefined,'color3')})`; break;
         case 'lin_rec709_to_acescg': code=`mxLinRec709ToAcescg(${x('in',undefined,'color3')})`; break;
+        case 'lin_rec709_to_srgb': code=`mxLinRec709ToSrgb(${x('in',undefined,'color3')})`; break;
+        case 'srgb_to_lin_rec709': code=`mxSrgbToLinRec709(${x('in',undefined,'color3')})`; break;
         case 'dotproduct': code = `dot(${x('in1')},${x('in2')})`; break;
         case 'crossproduct': code = `cross(${x('in1', undefined, 'vector3')},${x('in2', undefined, 'vector3')})`; break;
         case 'texcoord':
@@ -490,6 +492,14 @@ fn mxLinRec709ToAcescg(c:vec3f)->vec3f {
   return mat3x3f(.613097402401,.070193722470,.020615592882,
                  .339523146184,.916353879058,.109569772938,
                  .047379451415,.013452398473,.869814634179)*c;
+}
+fn mxLinRec709ToSrgb(c:vec3f)->vec3f {
+  let a=abs(c); let encoded=select(12.92*a,1.055*pow(a,vec3f(1.0/2.4))-.055,a>vec3f(.0031308));
+  return sign(c)*encoded;
+}
+fn mxSrgbToLinRec709(c:vec3f)->vec3f {
+  let a=abs(c); let linear=select(a/12.92,pow((a+.055)/1.055,vec3f(2.4)),a>vec3f(.04045));
+  return sign(c)*linear;
 }
 fn safeNormal(v:vec3f,fallback:vec3f)->vec3f {
   let l2=dot(v,v); let valid=l2>1e-20 && all(v==v);

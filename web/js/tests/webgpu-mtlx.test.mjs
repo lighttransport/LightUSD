@@ -433,6 +433,13 @@ test('linear Rec.709 to ACEScg conversion exposes the inverse matrix', () => {
   const doc={nodes:[{name:'lin',category:'lin_rec709_to_acescg',type:'color3',inputs:{in:{type:'color3',value:[1,0,0]}}}]};
   const source=compileGraph(doc); assert.match(source.body,/mxLinRec709ToAcescg/); assert.match(contextWGSL,/(?:0)?\.613097402401/);
 });
+test('sRGB transfer nodes preserve the signed piecewise transfer', () => {
+  const doc={nodes:[
+    {name:'lin',category:'lin_rec709_to_srgb',type:'color3',inputs:{in:{type:'color3',value:[.18,-.01,.8]}}},
+    {name:'out',category:'srgb_to_lin_rec709',type:'color3',inputs:{in:{nodename:'lin'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/mxLinRec709ToSrgb/); assert.match(source.body,/mxSrgbToLinRec709/); assert.match(contextWGSL,/(?:0)?\.0031308/);
+});
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
   assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/);
