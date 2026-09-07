@@ -322,6 +322,10 @@ cosine sampling branch, carrying authored radius into its profile width instead
 of reusing the ordinary diffuse closure. True random-walk BSSRDF transport,
 surface-distance coupling, and multiple scattering remain future work.
 
+The profile uses a bounded rational falloff to keep WGSL evaluation finite and
+portable across realtime and path pipelines; it is not a measured diffusion
+profile.
+
 Authored `standard_surface normal` connections now populate `Material.normal`
 and are used by both path and realtime transport, with geometric-normal
 fallbacks and geometric offsets retained for robustness. The synthetic
