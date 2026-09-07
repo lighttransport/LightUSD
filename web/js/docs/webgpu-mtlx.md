@@ -275,9 +275,10 @@ per-triangle material IDs when the native render mesh provides them; invalid or
 overlapping ranges are rejected. If composition exposes no ranges, binding-level
 IDs remain the authoritative result.
 
-`loadShaderBallGeometry({ authoredMaterials: true })` loads the pinned
-stdlib/pbrlib/bxdf libraries and attempts strict translation of every composed
-Material prim through `materialXFromUSD`. Successful documents are retained in
+`loadShaderBallGeometry({ authoredMaterials: true })` loads every `.mtlx` file
+listed by the pinned 1.39.5 catalog (with bounded, same-origin validation) and
+attempts strict translation of every composed Material prim through
+`materialXFromUSD`. Successful documents are retained in
 `authored.translatedMaterials` and passed through the real WGSL `compileGraph`
 path. Documents accepted by that compiler are retained in
 `authored.compiledMaterials`; translation or compile failures are structured in

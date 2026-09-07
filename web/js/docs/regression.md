@@ -16,7 +16,8 @@ Image tests cover bounded downsampling and mip-budget rejection; renderer option
 `textureMaxDimension` and `textureMaxBytes` feed that path.
 The graph suite also checks Standard Surface/OpenPBR spelling aliases and rejects
 nonzero layered lobes that the approximate terminal cannot represent.
-The optional `--authored-materials` ShaderBall flag loads the pinned library and
+The optional `--authored-materials` ShaderBall flag loads every library file from
+the pinned 1.39.5 catalog and
 attempts strict translation of every composed Material prim, reporting explicit
 per-material diagnostics for unsupported graphs without replacing render slots.
 Mesh subset ranges are expanded to per-triangle material IDs and overlapping or

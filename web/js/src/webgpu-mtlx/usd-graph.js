@@ -124,11 +124,19 @@ export function materialXFromUSD(snapshot, materialPath, { library = {}, resolve
 
 /** Load the pinned MaterialX library partitions needed by USD shader IDs. */
 export async function loadUSDMaterialXLibrary({ base = '/__mtlx/libraries/' } = {}) {
-  const files = ['stdlib/stdlib_defs.mtlx', 'stdlib/stdlib_ng.mtlx', 'pbrlib/pbrlib_defs.mtlx',
-    'pbrlib/pbrlib_ng.mtlx', 'bxdf/standard_surface.mtlx', 'bxdf/open_pbr_surface.mtlx'];
+  const baseURL = new URL(base, globalThis.location?.href || 'http://localhost/');
+  const catalogURL = new URL('../catalog.json', baseURL);
+  const catalogBytes = await fetchResource(catalogURL.href);
+  let catalog;
+  try { catalog = JSON.parse(new TextDecoder().decode(catalogBytes)); } catch { throw new Error('MaterialX catalog is not valid JSON'); }
+  if (catalog?.version !== '1.39.5' || !Array.isArray(catalog.files) || catalog.files.length === 0 || catalog.files.length > 256) throw new Error('MaterialX catalog is missing, unsupported, or oversized');
+  const files = [...new Set(catalog.files)];
   const library = { definitions: Object.create(null), graphs: Object.create(null) };
   for (const file of files) {
-    const source = new URL(file, new URL(base, globalThis.location?.href || 'http://localhost/')).href;
+    if (typeof file !== 'string' || !file.endsWith('.mtlx')) throw new Error('MaterialX catalog contains an invalid library path');
+    const sourceURL = new URL(file, catalogURL);
+    if (sourceURL.origin !== catalogURL.origin || !sourceURL.pathname.includes('/libraries/')) throw new Error('MaterialX catalog contains a non-local library path');
+    const source = sourceURL.href;
     const doc = parseMaterialX(new TextDecoder().decode(await fetchResource(source)), { source });
     Object.assign(library.definitions, doc.definitions); Object.assign(library.graphs, doc.graphs);
   }
