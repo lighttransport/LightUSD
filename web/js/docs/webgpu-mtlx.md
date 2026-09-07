@@ -99,8 +99,8 @@ interior. Homogeneous absorption/scattering uses free-flight sampling and HG
 phase sampling. Spatially varying coefficients require spectral mode and an
 explicit conservative `document.mediumMajorant`; delta tracking checks for bound
 violations at sampled events. Both homogeneous and delta-tracked scattering
-events estimate directional-light radiance with HG phase evaluation and shadow
-tests. This supports geometric random walks, not the MaterialX subsurface
+events estimate directional-light radiance with HG phase evaluation and
+first-boundary shadow transmittance. This supports geometric random walks, not the MaterialX subsurface
 albedo/radius parameterization. Cameras are assumed to start in vacuum; the
 stack supports three nested interiors and fails on overflow or mismatched
 boundaries. Uniform-sphere environment direct sampling is included at medium
