@@ -252,6 +252,7 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   assert.match(compileGraph(openPbrWeight,{material:true}).body,/0\.35/);
   assert.match(compileGraph(openPbrWeight,{material:true}).body,/withSpecular/);
   assert.match(shaderSource([openPbrWeight]),/vec3f\(0\.35/);
+  assert.match(shaderSource([openPbrWeight]),/clamp\(m\.weight\*mix/);
   const openPbrFilm=syntheticScene('open-pbr-film').materials[1];
   assert.match(compileGraph(openPbrFilm,{material:true}).body,/220\.0/);
   assert.match(shaderSource([openPbrFilm]),/thinFilmFresnel/);

@@ -82,6 +82,9 @@ compiled base-color contribution.
 It also covers OpenPBR `specular_weight` scaling of the terminal microfacet
 contribution. Graph assertions cover the diffuse-roughness aliases.
 
+Transport assertions also cover matching the weighted specular sampling/PDF
+probability.
+
 The `open-pbr-film` scene covers bounded OpenPBR thin-film weight, thickness,
 and IOR propagation.
 

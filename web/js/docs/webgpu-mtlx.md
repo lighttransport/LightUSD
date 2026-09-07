@@ -397,3 +397,6 @@ terminal microfacet contribution through the bounded lobe weight, while the
 diffuse contribution remains separate. The OpenPBR synthetic scene exercises
 this path; authored specular-color and full layered energy compensation remain
 future work.
+
+The same weight now controls the opaque specular sampling probability and PDF,
+avoiding zero-contribution specular samples when the authored weight is low.

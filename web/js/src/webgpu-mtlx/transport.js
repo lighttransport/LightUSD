@@ -80,7 +80,7 @@ fn transportEval(m: Lobe, wo: vec3f, wi: vec3f, eta: f32) -> vec4f {
   if(wo.z<=0.0 || wi.z==0.0) { return vec4f(0); }
   if(m.kind!=0u){return nativeEval(m,wo,wi,eta);}
   let alpha=transportAlpha(m); let t=(1.0-m.metal)*m.transmission;
-  let opaque=1.0-t; let specProbability=mix(0.5,1.0,m.metal);
+  let opaque=1.0-t; let specProbability=clamp(m.weight*mix(0.5,1.0,m.metal),0.0,1.0);
   var value=vec3f(0); var pdf=0.0;
   if(wi.z>0.0) {
     let h=normalize(wo+wi); let oh=max(1e-20,dot(wo,h));
@@ -109,7 +109,7 @@ fn transportSample(m: Lobe, wo: vec3f, eta: f32, rng: ptr<function,u32>) -> Scat
     wi=refract(-wo,vec3f(0,0,1),1.0/eta);
     return Scatter(wi,t*(1.0-f),m.transmissionColor*transmissionAttenuation(m)/(eta*eta),1u,eta);
   }
-  if(glass || random(rng)<mix(0.5,1.0,m.metal)) {
+  if(glass || random(rng)<clamp(m.weight*mix(0.5,1.0,m.metal),0.0,1.0)) {
     let h=visibleNormal(wo,alpha,vec2f(random(rng),random(rng)));
     if(glass && random(rng)>=dielectricFresnel(dot(wo,h),eta)) { wi=refract(-wo,h,1.0/eta); if(wi.z>=0.0) { return Scatter(wi,0,vec3f(0),0u,1); } }
     else { wi=reflect(-wo,h); if(wi.z<=0.0) { return Scatter(wi,0,vec3f(0),0u,1); } }
