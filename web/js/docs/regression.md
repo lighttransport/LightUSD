@@ -76,6 +76,8 @@ Compiler coverage also checks thin-film propagation on a direct conductor BSDF.
 
 The displacement fixture uses two levels of linear refinement before baking;
 this is still not Catmull-Clark subdivision or adaptive tessellation.
+The bake also smooths normals across matching material/UV vertices while
+retaining seam boundaries.
 
 The `opacity` scene covers realtime opacity discard/scaling behavior.
 

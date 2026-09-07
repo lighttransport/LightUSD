@@ -302,6 +302,8 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
 test('displacement refinement preserves bounds, typed indices and material assignment',()=>{
   const scene={positions:new Float32Array([0,0,0,1,0,0,0,1,0]),indices:new Uint32Array([0,1,2]),materials:[{}]};
   const r=refineDisplacementScene(scene,2);assert.equal(r.indices.length,48);assert.equal(r.materialIds.length,16);assert.ok(r.positions.every(v=>v>=0&&v<=1));
+  assert.ok(r.normals.every(Number.isFinite));
+  for(let i=0;i<r.normals.length;i+=3)assert.ok(Math.abs(Math.hypot(r.normals[i],r.normals[i+1],r.normals[i+2])-1)<1e-5);
   assert.throws(()=>refineDisplacementScene(scene,5,1),/budget/);
 });
 test('CIE table agrees with official column-sum validation', () => {

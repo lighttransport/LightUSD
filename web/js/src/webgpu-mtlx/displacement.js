@@ -63,7 +63,9 @@ export async function bakeDisplacement(scene, device) {
     const entries=[{binding:0,resource:{buffer:source}},{binding:1,resource:{buffer:result}}];if(usedImages)entries.push({binding:4,resource:{buffer:images}});
     const group=device.createBindGroup({layout:pipeline.getBindGroupLayout(0),entries});const encoder=device.createCommandEncoder(),pass=encoder.beginComputePass();pass.setPipeline(pipeline);pass.setBindGroup(0,group);pass.dispatchWorkgroups(Math.ceil(count/64));pass.end();encoder.copyBufferToBuffer(result,0,read,0,read.size);device.queue.submit([encoder.finish()]);await read.mapAsync(GPUMapMode.READ);
     const output=new Float32Array(read.getMappedRange());for(let i=0;i<count;i++)for(let k=0;k<3;k++){const value=output[i*4+k];if(!Number.isFinite(value))throw new Error('Non-finite displacement');refined.positions[i*3+k]=value;}
-    for(let i=0;i<count;i+=3){const p=[0,1,2].map(k=>refined.positions.slice((i+k)*3,(i+k)*3+3));const n=normalize(cross(sub(p[1],p[0]),sub(p[2],p[0])));for(let v=0;v<3;v++)for(let k=0;k<3;k++)refined.normals[(i+v)*3+k]=n[k];}
+    const sums=new Map();
+    for(let i=0;i<count;i+=3){const p=[0,1,2].map(k=>refined.positions.slice((i+k)*3,(i+k)*3+3));const n=normalize(cross(sub(p[1],p[0]),sub(p[2],p[0])));const mat=refined.materialIds[Math.floor(i/3)];for(let v=0;v<3;v++){const uv=refined.uvs.slice((i+v)*2,(i+v)*2+2);const key=`${mat}:${p[v].join(',')}:${uv.join(',')}`;const sum=sums.get(key)||[0,0,0];sum[0]+=n[0];sum[1]+=n[1];sum[2]+=n[2];sums.set(key,sum);}}
+    for(let i=0;i<count;i++){const p=refined.positions.slice(i*3,i*3+3),uv=refined.uvs.slice(i*2,i*2+2),mat=refined.materialIds[Math.floor(i/3)],key=`${mat}:${p.join(',')}:${uv.join(',')}`,n=normalize(sums.get(key)||[0,1,0]);for(let k=0;k<3;k++)refined.normals[i*3+k]=n[k];}
     refined.provenance={...scene.provenance,displacement:{refinement:scene.displacementRefinement??0,scheme:'linear triangles',bakedBeforeBVH:true}};return refined;
   } finally {resources.forEach(b=>b.destroy());}
 }
