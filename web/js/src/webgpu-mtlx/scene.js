@@ -40,6 +40,17 @@ export function syntheticScene(preset = 'copper') {
       { name: 'surface', category: 'standard_surface', type: 'surfaceshader', inputs: { base_color: { nodename: 'color' }, specular_roughness: { type: 'float', value: 0.28 } } },
     ] };
   }
+  if (preset === 'ops') {
+    materials[1] = { nodes: [
+      { name: 'uv', category: 'texcoord', type: 'vector2', inputs: {} },
+      { name: 'rot', category: 'rotate2d', type: 'vector2', inputs: { in: { nodename: 'uv' }, amount: { type: 'float', value: 35 } } },
+      { name: 'u', category: 'extract', type: 'float', inputs: { in: { nodename: 'rot' }, index: { type: 'integer', value: 0 } } },
+      { name: 'mapped', category: 'range', type: 'float', inputs: { in: { nodename: 'u' }, inlow: { type: 'float', value: -.5 }, inhigh: { type: 'float', value: .5 }, outlow: { type: 'float', value: 0 }, outhigh: { type: 'float', value: 1 }, gamma: { type: 'float', value: 1 }, doclamp: { type: 'boolean', value: true } } },
+      { name: 'mask', category: 'ifgreater', type: 'float', inputs: { in1: { nodename: 'mapped' }, in2: { type: 'float', value: 0 }, value1: { nodename: 'mapped' }, value2: { type: 'float', value: .5 } } },
+      { name: 'color', category: 'combine3', type: 'color3', inputs: { in1: { nodename: 'mask' }, in2: { type: 'float', value: .2 }, in3: { type: 'float', value: .8 } } },
+      { name: 'surface', category: 'standard_surface', type: 'surfaceshader', inputs: { base_color: { nodename: 'color' }, specular_roughness: { type: 'float', value: .3 } } },
+    ] };
+  }
   if(preset==='displacement') {
     materials[1].nodes.unshift(
       {name:'uv',category:'texcoord',type:'vector2',inputs:{}},

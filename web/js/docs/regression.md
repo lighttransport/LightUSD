@@ -55,6 +55,9 @@ normal-map node. The graph/packing check passes in Node; its focused spectral
 Chrome run is currently isolated from the default matrix because it stalls
 before reporting a sample.
 
+The `ops` fixture covers rotate, remap, conditional, extraction, and typed
+combine nodes in a single compiled surface graph.
+
 The `opacity` scene covers realtime opacity discard/scaling behavior.
 
 Its shader assertion also guards opacity scaling on direct-light contributions.
