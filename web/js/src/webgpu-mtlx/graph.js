@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Typed, deterministic MaterialX value-graph compiler. No shader-source eval.
 import { closureTypesWGSL, MAX_CLOSURE_LOBES } from './closures.js';
-import { colorToLinearRec709 } from './color.js';
+import { colorToLinearRec709, normalizeColorSpace } from './color.js';
 export const MATERIALX_VERSION = '1.39.5';
 export class GraphError extends Error {
   constructor(code, path, message) { super(`${path}: ${message}`); this.name = 'GraphError'; this.code = code; this.path = path; }
@@ -258,7 +258,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           if (!file) { code = fallback; break; }
           const descriptor = Object.hasOwn(imageDescriptors, file) && imageDescriptors[file];
           if (!descriptor) fail('RESOURCE', key, `missing decoded image ${file}`);
-          if (n.colorspace && n.colorspace !== descriptor.colorspace) fail('SEMANTICS', key, 'image colorspace differs from decoded resource');
+          if (n.colorspace && normalizeColorSpace(n.colorspace) !== normalizeColorSpace(descriptor.colorspace)) fail('SEMANTICS', key, 'image colorspace differs from decoded resource');
           const address = name => {
             const p = ins[name]; const mode = ['constant', 'clamp', 'periodic', 'mirror'].indexOf(p?.value ?? 'periodic');
             if (mode < 0 || p?.nodename || p?.interfacename || p?.nodegraph) fail('UNSUPPORTED', key, 'invalid or connected image address mode');
