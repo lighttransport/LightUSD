@@ -214,6 +214,15 @@ export function compileGraph(document, { output, library = {}, material = false,
           // still represented by the native dielectric path only.
           code=`closureLeaf(nativeDielectric(${x('color',[1,1,1],'color3')},1.5,vec2f(.5),${x('weight',1,'float')},2u))`;closureCount=1;break;
         }
+        case 'hair_bsdf': {
+          // Normalize legacy melanin and explicit-color forms into a bounded
+          // fiber lobe; longitudinal and azimuthal roughness remain dynamic.
+          const color = ins.color ? x('color',[.6,.25,.08],'color3') : ins.base_color ? x('base_color',[.6,.25,.08],'color3') :
+            `mix(vec3f(.85,.55,.32),vec3f(.03,.008,.002),clamp(${x('melanin',0,'float')},0.0,1.0))`;
+          const longitudinal = ins.longitudinal_roughness ? x('longitudinal_roughness',.35,'float') : x('roughness',.35,'float');
+          const azimuthal = ins.azimuthal_roughness ? x('azimuthal_roughness',.3,'float') : longitudinal;
+          code=`closureLeaf(nativeHair(${color},${x('weight',1,'float')},${longitudinal},${azimuthal}))`;closureCount=1;break;
+        }
         case 'generalized_schlick_bsdf': {
           // Schlick fallback uses the authored base color and roughness while
           // retaining a bounded dielectric lobe until the full exponent model
@@ -413,6 +422,7 @@ fn makeMaterial(base:vec3f,metal:f32,rough:f32,ior:f32,trans:f32,emission:vec3f,
  return Lobe(base,metal,rough,ior,trans,emission,emissionWeight,anisotropy,tint,0u,1.0,vec2f(rough*rough),vec3f(ior),vec3f(0),3u,thinWalled);
 }
 fn nativeDiffuse(color:vec3f,weight:f32,rough:f32)->Lobe {var m=makeMaterial(color,0,rough,1.5,0,vec3f(0),0,0,vec3f(1),0u);m.kind=3u;m.weight=weight;return m;}
+fn nativeHair(color:vec3f,weight:f32,longitudinal:f32,azimuthal:f32)->Lobe {var m=makeMaterial(color,0,longitudinal,1.55,0,vec3f(0),0,azimuthal,vec3f(1),0u);m.kind=4u;m.weight=weight;m.alpha=vec2f(max(.02,longitudinal),max(.02,azimuthal));return m;}
 fn nativeDielectric(tint:vec3f,ior:f32,alpha:vec2f,weight:f32,mode:u32)->Lobe {var m=makeMaterial(tint,0,sqrt(max(alpha.x,alpha.y)),ior,1,vec3f(0),0,0,tint,0u);m.kind=1u;m.weight=weight;m.alpha=alpha;m.scatterMode=mode;return m;}
 fn nativeConductor(ior:vec3f,k:vec3f,alpha:vec2f,weight:f32)->Lobe {var m=makeMaterial(vec3f(1),1,sqrt(max(alpha.x,alpha.y)),1.5,0,vec3f(0),0,0,vec3f(1),0u);m.kind=2u;m.complexIOR=ior;m.extinction=k;m.alpha=alpha;m.weight=weight;return m;}
 ${closureTypesWGSL}`;

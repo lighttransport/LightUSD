@@ -212,6 +212,9 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   assert.throws(()=>compileGraph(doc,{material:true}),/thin film/);
   const volume=syntheticScene('sss').materials[1];volume.mediumMajorant=-1;
   assert.throws(()=>shaderSource([volume]),/majorant/);
+  const hair=syntheticScene('hair').materials[1];
+  assert.match(compileGraph(hair,{material:true}).body,/nativeHair/);
+  assert.match(shaderSource([hair]),/nativeHair/);
 });
 test('displacement refinement preserves bounds, typed indices and material assignment',()=>{
   const scene={positions:new Float32Array([0,0,0,1,0,0,0,1,0]),indices:new Uint32Array([0,1,2]),materials:[{}]};

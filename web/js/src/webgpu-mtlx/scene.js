@@ -49,6 +49,12 @@ export function syntheticScene(preset = 'copper') {
       {name:'height',category:'multiply',type:'float',inputs:{in1:{nodename:'wave'},in2:{type:'float',value:.08}}}
     );materials[1].displacementOutput={nodename:'height'};
   }
+  if(preset==='hair') {
+    materials[1]={nodes:[
+      {name:'fiber',category:'hair_bsdf',type:'BSDF',inputs:{melanin:{type:'float',value:.35},melanin_redness:{type:'float',value:.2},longitudinal_roughness:{type:'float',value:.25},azimuthal_roughness:{type:'float',value:.2}}},
+      {name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'fiber'}}}
+    ]};
+  }
   if(preset==='native-copper'||preset==='native-glass') {
     const glass=preset==='native-glass';
     materials[1]={nodes:[

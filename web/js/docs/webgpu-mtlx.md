@@ -295,3 +295,9 @@ not claim full MaterialX physical conformance.
 Authored-render preflight now rejects oversized EXR maps from their header
 before allocation and records a structured diagnostic; remaining maps use
 bounded downsampling for the partial authored-material render.
+
+The synthetic coverage set now includes a `hair` scene using the MaterialX
+`hair_bsdf` category. Its legacy melanin and explicit-color forms compile to a
+bounded fiber lobe with longitudinal/azimuthal roughness and are exercised by
+the Chrome hardware reference-image gate. This is a practical approximation,
+not a full Marschner/RTRT hair model.

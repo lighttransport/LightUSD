@@ -113,6 +113,15 @@ fn transportSample(m: Lobe, wo: vec3f, eta: f32, rng: ptr<function,u32>) -> Scat
 }
 fn powerHeuristic(a: f32, b: f32) -> f32 { return a*a/max(1e-30,a*a+b*b); }
 fn nativeEval(m:Lobe,wo:vec3f,wi:vec3f,eta:f32)->vec4f {
+  if(m.kind==4u) {
+    if(wi.z<=0.0){return vec4f(0);}
+    let sigma=max(.02,m.alpha.x);let az=max(.02,m.alpha.y);
+    let forward=max(0.0,dot(wo,wi));
+    let longitudinal=exp(-(1.0-forward)/max(1e-4,sigma*sigma))/(2.0*PI*sigma*sigma);
+    let azimuth=pow(max(0.0,1.0-abs(wo.z-wi.z)),1.0/max(.02,az));
+    let value=m.weight*m.base*(.2/PI+.8*longitudinal*azimuth);
+    return vec4f(value,wi.z/PI);
+  }
   if(m.kind==3u) {
     if(wi.z<=0.0){return vec4f(0);}
     let s=dot(wo,wi)-wo.z*wi.z;let sigma=m.roughness*m.roughness;
@@ -133,7 +142,7 @@ fn nativeEval(m:Lobe,wo:vec3f,wi:vec3f,eta:f32)->vec4f {
 }
 fn nativeSample(m:Lobe,wo:vec3f,eta:f32,rng:ptr<function,u32>)->Scatter {
   var wi=vec3f(0);var delta=0u;
-  if(m.kind==3u) {let r=sqrt(random(rng));let phi=2.0*PI*random(rng);wi=vec3f(r*cos(phi),r*sin(phi),sqrt(max(0.0,1.0-r*r)));}
+  if(m.kind==3u || m.kind==4u) {let r=sqrt(random(rng));let phi=2.0*PI*random(rng);wi=vec3f(r*cos(phi),r*sin(phi),sqrt(max(0.0,1.0-r*r)));}
   else {
     var h=vec3f(0,0,1);if(max(m.alpha.x,m.alpha.y)>0.0001 && (eta!=1.0||m.kind==2u)){h=visibleNormal(wo,max(vec2f(.0001),m.alpha),vec2f(random(rng),random(rng)));}else{delta=1u;}
     if(m.kind==2u){wi=reflect(-wo,h);if(delta!=0u){return Scatter(wi,1,m.weight*conductorFresnel(wo.z,m.complexIOR,m.extinction),1u,1);}}

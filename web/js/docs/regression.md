@@ -32,6 +32,10 @@ Authored-render preflight note: oversized EXR maps are diagnosed from their
 header before allocation and omitted from the partial authored-material render;
 remaining maps use bounded downsampling.
 
+The synthetic reference-image gate also covers the `hair` MaterialX scene;
+Chrome hardware completed it at 32 spp alongside native copper/glass, SSS and
+displacement scenes.
+
 All web/WASM regression procedures live under `web/js`. The canonical gate is
 `npm test`; it runs the assertion-based Node/WASM suites, the physics-only
 MuJoCo binding smoke test, the USD Physics simulation, every pinned MuJoCo
