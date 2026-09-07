@@ -8,6 +8,9 @@ export class GraphError extends Error {
 }
 const types = { float: 'f32', integer: 'i32', boolean: 'bool', color3: 'vec3f', color4: 'vec4f', vector2: 'vec2f', vector3: 'vec3f', vector4: 'vec4f', matrix33: 'mat3x3f', matrix44: 'mat4x4f', VDF: 'Medium', BSDF: 'Closure', EDF: 'vec3f' };
 const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4: 4, vector4: 4, vector2: 2, matrix33: 9, matrix44: 16 };
+// Units are semantic annotations; implementations consume their authored
+// convention (for example degrees for rotate2d and nanometers for thin film).
+const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
 export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'exp', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan2', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'surfacematerial', 'surface']);
 for(const category of ['transformmatrix','normalmap','bump3','heighttonormal'])valueCategories.add(category);
@@ -107,7 +110,7 @@ export function compileGraph(document, { output, library = {}, material = false,
     if (++portDepth > 256) fail('LIMIT', path, 'port resolution exceeds 256 levels');
     try {
     if (p == null) fail('INPUT', path, 'missing input');
-    if (p.unit) fail('SEMANTICS', path, 'unit conversion is not implemented yet');
+    if (p.unit !== undefined && (!['string', 'number'].includes(typeof p.unit) || !units.has(String(p.unit).toLowerCase()))) fail('SEMANTICS', path, `unsupported MaterialX unit ${p.unit}`);
     let result;
     if (p.nodename) result = evaluate(p.nodename, p.output || 'out', scope, env);
     else if (p.nodegraph) {

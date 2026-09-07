@@ -68,6 +68,15 @@ test('standard and OpenPBR terminal aliases preserve authored graph inputs', () 
   assert.match(compileGraph(coated, { material: true }).body, /closureAdd/);
 });
 
+test('MaterialX unit annotations are validated and preserved', () => {
+  const rotate = { nodes: [{ name: 'r', category: 'rotate2d', type: 'vector2', inputs: {
+    in: { type: 'vector2', value: [1, 0] }, amount: { type: 'float', value: 90, unit: 'degree' }
+  } }] };
+  assert.doesNotThrow(() => compileGraph(rotate));
+  const bad = structuredClone(rotate); bad.nodes[0].inputs.amount.unit = 'furlong';
+  assert.throws(() => compileGraph(bad), /unsupported MaterialX unit/);
+});
+
 test('USD graph translation preserves interfaces and exact NodeDef typing', () => {
   const p = (type, value, connections = []) => ({ type, ...(value === undefined ? {} : { value }), connections, timeSampled: false });
   const snapshot = { version: 1, prims: [
