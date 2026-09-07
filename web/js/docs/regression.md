@@ -72,7 +72,7 @@ The `open-pbr-weight` scene covers OpenPBR `base_weight` propagation into the
 compiled base-color contribution.
 
 It also covers OpenPBR `specular_weight` scaling of the terminal microfacet
-contribution.
+contribution. Graph assertions cover the diffuse-roughness aliases.
 
 All web/WASM regression procedures live under `web/js`. The canonical gate is
 `npm test`; it runs the assertion-based Node/WASM suites, the physics-only

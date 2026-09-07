@@ -248,6 +248,10 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   assert.match(compileGraph(openPbrWeight,{material:true}).body,/0\.35/);
   assert.match(compileGraph(openPbrWeight,{material:true}).body,/withSpecular/);
   assert.match(shaderSource([openPbrWeight]),/vec3f\(0\.35/);
+  const diffuseRoughness = { nodes: [{ name: 'surface', category: 'standard_surface', type: 'surfaceshader', inputs: {
+    base_color: { type: 'color3', value: [.4, .2, .1] }, diffuse_roughness: { type: 'float', value: .72 }
+  } }] };
+  assert.match(compileGraph(diffuseRoughness,{material:true}).body,/0\.72/);
 });
 test('displacement refinement preserves bounds, typed indices and material assignment',()=>{
   const scene={positions:new Float32Array([0,0,0,1,0,0,0,1,0]),indices:new Uint32Array([0,1,2]),materials:[{}]};

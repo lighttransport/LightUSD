@@ -116,7 +116,7 @@ export function syntheticScene(preset = 'copper') {
         base_color:{type:'color3',value:[.8,.2,.08]},
         base_metalness:{type:'float',value:0},
         specular_weight:{type:'float',value:.42},
-        specular_roughness:{type:'float',value:.24},
+        base_diffuse_roughness:{type:'float',value:.72},
         specular_ior:{type:'float',value:1.5},
         geometry_opacity:{type:'float',value:1}
       }}

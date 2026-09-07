@@ -367,6 +367,11 @@ of being accepted and silently ignored. The synthetic `open-pbr-weight` scene
 is included in the Chrome reference-image matrix; full OpenPBR energy-balanced
 layer semantics remain future work.
 
+Standard Surface `diffuse_roughness` and OpenPBR `base_diffuse_roughness` now
+feed the bounded roughness path when no explicit specular roughness is authored.
+This is an approximation because the current lobe shares one roughness field;
+independent diffuse/specular roughness remains future work.
+
 OpenPBR `specular_weight` and Standard Surface `specular` now scale the
 terminal microfacet contribution through the bounded lobe weight, while the
 diffuse contribution remains separate. The OpenPBR synthetic scene exercises
