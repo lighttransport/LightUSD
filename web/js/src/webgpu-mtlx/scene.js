@@ -133,6 +133,14 @@ export function syntheticScene(preset = 'copper') {
       }}
     ]};
   }
+  if(preset==='open-pbr-normal') {
+    materials[1]={nodes:[
+      {name:'surface',category:'open_pbr_surface',type:'surfaceshader',inputs:{
+        base_color:{type:'color3',value:[.42,.18,.05]}, base_diffuse_roughness:{type:'float',value:.28},
+        geometry_normal:{type:'vector3',value:[.72,.42,.98]}, geometry_opacity:{type:'float',value:1}
+      }}
+    ]};
+  }
   if(preset==='native-copper'||preset==='native-glass') {
     const glass=preset==='native-glass';
     materials[1]={nodes:[

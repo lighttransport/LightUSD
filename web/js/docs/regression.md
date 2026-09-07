@@ -46,6 +46,8 @@ authored radius also feeds the bounded scattering-lobe roughness.
 The `normalmap` scene covers authored normal connections in both path and
 realtime shader pipelines.
 
+The `open-pbr-normal` scene covers the OpenPBR `geometry_normal` alias.
+
 The `bump` scene covers scalar `bump3` height-to-normal fallback in both
 pipelines; it does not claim texture-aware finite-difference conformance.
 

@@ -323,6 +323,10 @@ fallbacks and geometric offsets retained for robustness. The synthetic
 `normalmap` scene is included in the hardware matrix. Bump/displacement and
 normal-map texture filtering still need broader authored-asset coverage.
 
+OpenPBR `geometry_normal` is now accepted as an alias for the authored normal
+frame and is exercised by the synthetic `open-pbr-normal` scene. Tangent-space
+normal-map filtering and geometric displacement remain separate limitations.
+
 Scalar MaterialX `bump3` and `heighttonormal` nodes now have a bounded
 height-to-normal fallback (`mxBumpHeight`) that feeds the same authored normal
 path without mutating geometry. The synthetic `bump` scene is hardware-tested;
