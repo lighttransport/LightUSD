@@ -394,7 +394,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           }
           const opacityInput = open ? 'geometry_opacity' : 'opacity';
           const opacity = ins[opacityInput] ? x(opacityInput, 1, 'float') : '1.0';
-          const thin = open ? (ins.geometry_thin_walled ? `select(0u,1u,${x('geometry_thin_walled', false, 'boolean')})` : '0u') : '0u';
+          const thin = open ? (ins.geometry_thin_walled ? `select(0u,1u,${x('geometry_thin_walled', false, 'boolean')})` : '0u') : (ins.thin_walled ? `select(0u,1u,${x('thin_walled', false, 'boolean')})` : '0u');
           const filmThickness = !open && ins.thin_film_thickness ? x('thin_film_thickness', 0, 'float') : '0.0';
           const filmIOR = !open && ins.thin_film_IOR ? x('thin_film_IOR', 1.5, 'float') : '1.5';
           const subsurfaceWeight = open ? (ins.subsurface_weight ? x('subsurface_weight', 0, 'float') : '0.0') : (ins.subsurface ? x('subsurface', 0, 'float') : '0.0');

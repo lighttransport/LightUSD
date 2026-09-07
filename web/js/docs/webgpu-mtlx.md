@@ -345,3 +345,7 @@ Standard Surface `sheen` and OpenPBR `fuzz` controls now compile to a bounded
 diffuse-sheen lobe with authored color and weight aliases. The synthetic
 `sheen` scene is hardware-tested; exact Charlie/artist-friendly sheen and
 layered energy compensation remain future work.
+
+Standard Surface `thin_walled` now propagates into the compiled dielectric
+lobe instead of being silently forced opaque. The synthetic `thin-walled`
+scene exercises medium-stack-free glossy transmission in the hardware gate.
