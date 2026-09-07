@@ -312,3 +312,9 @@ closure mixture with a broad diffuse scattering lobe; authored subsurface color
 and radius inputs are accepted and retained in the graph path. The synthetic
 `subsurface` scene is hardware-tested, while true random-walk BSSRDF transport
 and radius-dependent exit sampling remain future work.
+
+Authored `standard_surface normal` connections now populate `Material.normal`
+and are used by both path and realtime transport, with geometric-normal
+fallbacks and geometric offsets retained for robustness. The synthetic
+`normalmap` scene is included in the hardware matrix. Bump/displacement and
+normal-map texture filtering still need broader authored-asset coverage.

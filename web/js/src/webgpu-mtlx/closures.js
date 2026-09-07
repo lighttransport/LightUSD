@@ -3,7 +3,7 @@
 export const MAX_CLOSURE_LOBES = 16;
 export const closureTypesWGSL = /* wgsl */`
 struct Closure { lobes:array<Lobe,16>, scales:array<vec3f,16>, count:u32, interior:Medium, hasInterior:u32 }
-struct Material { bsdf:Closure, emission:vec3f, opacity:f32 }
+struct Material { bsdf:Closure, emission:vec3f, opacity:f32, normal:vec3f }
 fn closureImportance(c:Closure,index:u32)->f32 {
   let scale=c.scales[index];let weight=c.lobes[index].weight;
   return max(0.0,max(scale.x,max(scale.y,scale.z))*weight);
@@ -16,9 +16,9 @@ fn closureAddPreservingInterior(a:Closure,b:Closure)->Closure {var c=closureAdd(
 fn closureMix(bg:Closure,fg:Closure,weight:f32)->Closure {return closureAdd(closureScale(bg,vec3f(1.0-weight)),closureScale(fg,vec3f(weight)));}
 fn closureMixPreservingInterior(bg:Closure,fg:Closure,weight:f32)->Closure {return closureAddPreservingInterior(closureScale(bg,vec3f(1.0-weight)),closureScale(fg,vec3f(weight)));}
 fn closureInterior(top:Closure,base:Medium)->Closure {var c=top;c.interior=base;c.hasInterior=1u;return c;}
-fn surfaceEmission(bsdf:Closure,edf:vec3f,opacity:f32,thinWalled:u32)->Material {var c=bsdf;for(var i=0u;i<c.count;i++){c.lobes[i].thinWalled=thinWalled;}return Material(c,edf,opacity);}
-fn materialFromLobe(lobe:Lobe,opacity:f32)->Material {return Material(closureLeaf(lobe),lobe.emission*lobe.emissionWeight,opacity);}
-fn materialFromClosure(bsdf:Closure,emission:vec3f,opacity:f32)->Material {return Material(bsdf,emission,opacity);}
+fn surfaceEmission(bsdf:Closure,edf:vec3f,opacity:f32,thinWalled:u32,normal:vec3f)->Material {var c=bsdf;for(var i=0u;i<c.count;i++){c.lobes[i].thinWalled=thinWalled;}return Material(c,edf,opacity,normal);}
+fn materialFromLobe(lobe:Lobe,opacity:f32,normal:vec3f)->Material {return Material(closureLeaf(lobe),lobe.emission*lobe.emissionWeight,opacity,normal);}
+fn materialFromClosure(bsdf:Closure,emission:vec3f,opacity:f32,normal:vec3f)->Material {return Material(bsdf,emission,opacity,normal);}
 fn primaryLobe(surface:Material)->Lobe {
   var m=nativeDiffuse(vec3f(0),0,0);
   for(var i=0u;i<surface.bsdf.count;i++){if(closureImportance(surface.bsdf,i)>0.0){m=surface.bsdf.lobes[i];break;}}

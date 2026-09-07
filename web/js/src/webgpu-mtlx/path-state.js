@@ -98,6 +98,11 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
     ctx.normal=gn;
     var surface=getSurface(materialID,ctx);
     if(cfg.dimensions.w==2u) { surface=spectralSurface(surface,materialID,p.previous.x); }
+    // MaterialX normal/normalmap outputs are evaluated after geometric
+    // orientation and before transport. Keep the geometric normal for ray
+    // offsets while using the authored normal for the local BSDF frame.
+    ctx.normal=normalize(surface.normal);
+    if(dot(ctx.normal,p.direction.xyz)>0.0){ctx.normal=-ctx.normal;}
     // MaterialX opacity is a cutout/transmittance factor. Stochastic
     // continuation keeps fractional opacity unbiased without a second shading
     // event for the transparent branch.
@@ -116,7 +121,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
       if(depth==0u) { etaI=m.ior; etaT=1.0; }
       else { etaT=p.iors[depth-1u]; }
     }
-    let eta=select(etaT/etaI,m.ior,m.thinWalled!=0u); let frame=transportFrame(gn); let wo=transpose(frame)*(-p.direction.xyz);
+    let eta=select(etaT/etaI,m.ior,m.thinWalled!=0u); let frame=transportFrame(ctx.normal); let wo=transpose(frame)*(-p.direction.xyz);
     var emitterMIS=1.0;
     if(p.state.y>0u && p.direction.w>0.0){emitterMIS=powerHeuristic(p.direction.w,triangleLightPDF(tri,h.t,p.direction.xyz));}
     p.radiance+=vec4f(p.beta.xyz*m.emission*m.emissionWeight*emitterMIS*emissionSidedness(materialID,outward,p.direction.xyz),0);

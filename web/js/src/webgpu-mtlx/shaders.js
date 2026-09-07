@@ -141,7 +141,7 @@ fn preview(o0: vec3f, d0: vec3f, rng: ptr<function,u32>, realtime: bool) -> vec3
     let h = intersect(o,d);
     if (h.id == 0xffffffffu) { radiance += beta*environment(d); break; }
     var ctx = context(h,o,d); if (dot(ctx.normal,d)>0.0) { ctx.normal = -ctx.normal; }
-    let m = getMaterial(u32(triangles[h.id].a.uv.z),ctx);
+    let surface = getSurface(u32(triangles[h.id].a.uv.z),ctx); ctx.normal=normalize(surface.normal); if(dot(ctx.normal,d)>0.0){ctx.normal=-ctx.normal;} let m = primaryLobe(surface);
     let eps = max(1e-4,length(ctx.position)*1e-5);
     let emittingTriangle=triangles[h.id];let emittingNormal=normalize(cross(emittingTriangle.b.p.xyz-emittingTriangle.a.p.xyz,emittingTriangle.c.p.xyz-emittingTriangle.a.p.xyz));
     radiance += beta*m.emission*m.emissionWeight*emissionSidedness(u32(triangles[h.id].a.uv.z),emittingNormal,d);
@@ -176,8 +176,8 @@ struct RasterVertex { @builtin(position) clip: vec4f, @location(0) position: vec
 }
 @fragment fn rasterFragment(v: RasterVertex, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   let n = normalize(select(-v.normal,v.normal,front)); let tangent = normalize(cross(select(vec3f(0,1,0),vec3f(1,0,0),abs(n.y)>0.9),n));
-  let ctx = ShadingContext(v.position,n,tangent,cross(n,tangent),v.uv,0,0,dpdx(v.uv),dpdy(v.uv));
-  let m = getMaterial(v.material,ctx); let wo = normalize(cfg.origin.xyz-v.position); let light=directionalDirection();
+  var ctx = ShadingContext(v.position,n,tangent,cross(n,tangent),v.uv,0,0,dpdx(v.uv),dpdy(v.uv));
+  let surface=getSurface(v.material,ctx); ctx.normal=normalize(surface.normal); let m = primaryLobe(surface); let wo = normalize(cfg.origin.xyz-v.position); let light=directionalDirection();
   var color = m.emission*m.emissionWeight*emissionSidedness(v.material,v.normal,-wo)+m.base*(1.0-m.metal)*0.22+fresnel(max(0.0,dot(n,wo)),mix(vec3f(0.04),m.base,m.metal))*environment(reflect(-wo,n));
   if (intersect(v.position+n*max(1e-4,length(v.position)*1e-5),light).id==0xffffffffu) { color += bsdf(m,n,wo,light).xyz*max(0.0,dot(n,light))*directionalRadiance(); }
   let linear = max(vec3f(0),color*exp2(cfg.display.x)); let mapped=linear/(1.0+linear);

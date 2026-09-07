@@ -66,6 +66,13 @@ export function syntheticScene(preset = 'copper') {
     materials[1].nodes[0].inputs.subsurface_color={type:'color3',value:[1,.25,.12]};
     materials[1].nodes[0].inputs.subsurface_radius={type:'color3',value:[1,.35,.15]};
   }
+  if(preset==='normalmap') {
+    materials[1]=surfaceDocument([.45,.35,.18],0,.24);
+    materials[1].nodes.unshift(
+      {name:'normal',category:'normalmap',type:'vector3',inputs:{in:{type:'vector3',value:[.72,.42,.98]},scale:{type:'vector2',value:[1.2,.8]}}}
+    );
+    materials[1].nodes.at(-1).inputs.normal={nodename:'normal'};
+  }
   if(preset==='native-copper'||preset==='native-glass') {
     const glass=preset==='native-glass';
     materials[1]={nodes:[

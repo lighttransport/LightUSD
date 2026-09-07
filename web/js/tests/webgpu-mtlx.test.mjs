@@ -223,6 +223,9 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   const subsurface=syntheticScene('subsurface').materials[1];
   assert.match(compileGraph(subsurface,{material:true}).body,/materialFromClosure/);
   assert.match(shaderSource([subsurface]),/closureMix/);
+  const normal=syntheticScene('normalmap').materials[1];
+  assert.match(compileGraph(normal,{material:true}).body,/normalize\(n/);
+  assert.match(shaderSource([normal]),/surface\.normal/);
 });
 test('displacement refinement preserves bounds, typed indices and material assignment',()=>{
   const scene={positions:new Float32Array([0,0,0,1,0,0,0,1,0]),indices:new Uint32Array([0,1,2]),materials:[{}]};
