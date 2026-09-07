@@ -10,6 +10,21 @@ import { loadUSDMaterialXLibrary, materialXFromUSD } from './usd-graph.js';
 import { compileGraph } from './graph.js';
 import { fetchResource, decodeImage, inspectEXRHeader } from './resources.js';
 export const SHADERBALL_COMMIT = '3b75c2dad6a494897557dcca0098257bcf42a8c6';
+/** Expand native index-range submeshes into one material ID per triangle. */
+export function triangleMaterialIds(indexCount, fallback, submeshes = []) {
+  if (!Number.isInteger(indexCount) || indexCount < 0 || indexCount % 3) throw new Error('index count must be a nonnegative multiple of three');
+  if (!Number.isInteger(fallback) || fallback < 0) throw new Error('fallback material ID must be nonnegative');
+  const ids = new Array(indexCount / 3).fill(fallback), occupied = new Uint8Array(indexCount / 3);
+  for (const part of submeshes || []) {
+    const start = Number(part?.start), count = Number(part?.count), material = Number(part?.materialId);
+    if (!Number.isInteger(start) || !Number.isInteger(count) || !Number.isInteger(material) || start < 0 || count <= 0 || material < 0 || start % 3 || count % 3 || start + count > indexCount) throw new Error('invalid mesh material submesh');
+    for (let i = start / 3, end = (start + count) / 3; i < end; i++) {
+      if (occupied[i]) throw new Error('overlapping mesh material submeshes');
+      occupied[i] = 1; ids[i] = material;
+    }
+  }
+  return ids;
+}
 let nativePromise;
 // The legacy composer requests merged references without their source layer.
 // Retain provenance while loading each layer; reject ambiguous authored keys.
@@ -146,7 +161,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
         for (let i = 0; i < ps.length / 3 * 2; i++) uvs.push(uv?.[i] ?? 0);
         for (let i = 0; i < ix.length; i++) indices.push(ix[i] + offset);
         const mat = Number.isInteger(mesh.materialId) && mesh.materialId >= 0 ? mesh.materialId : 0;
-        for (let i = 0; i < ix.length / 3; i++) materialIds.push(mat);
+        materialIds.push(...triangleMaterialIds(ix.length, mat, mesh.submeshes));
         geo.dispose();
       }
       for (const child of node.children || []) visit(child);
@@ -155,7 +170,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
     if (!indices.length) throw new Error('ShaderBall conversion produced no triangles');
     if (!camera) throw new Error('ShaderBall authored camera was not found');
     onStatus(`Prepared ${indices.length / 3} ShaderBall triangles; ${authoredMaterials ? `${Object.keys(authoredDocuments).length} compiled authored MaterialX slots enabled` : 'materials/lights are diagnostic overrides'}`);
-    const materialCount = Math.max(2, ...authored.bindings.map(binding => Number.isInteger(binding.materialId) && binding.materialId >= 0 ? binding.materialId + 1 : 0));
+    const materialCount = Math.max(2, ...materialIds.map(id => id + 1), ...authored.bindings.map(binding => Number.isInteger(binding.materialId) && binding.materialId >= 0 ? binding.materialId + 1 : 0));
     const materials = Array.from({ length: materialCount }, (_, id) => authoredDocuments[id] || (id === 1 ? surfaceDocument([0.8, 0.45, 0.15], 1, 0.25) : surfaceDocument([0.35, 0.35, 0.35], 0, 0.7)));
     const scene={ positions, normals, uvs, indices, materialIds, authored, materials, camera, provenance: { asset: 'StandardShaderBall', commit: SHADERBALL_COMMIT, variant: 'triangulated', materialOverride: authoredMaterials ? 'partial-authored' : true, authoredMaterialCount: Object.keys(authoredDocuments).length, lightingOverride: true, referenceReady: false } };
     return authoredLights ? appendRectLights(scene,authored.lights) : scene;

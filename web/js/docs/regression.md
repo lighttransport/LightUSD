@@ -19,6 +19,8 @@ nonzero layered lobes that the approximate terminal cannot represent.
 The optional `--authored-materials` ShaderBall flag loads the pinned library and
 attempts strict translation of every composed Material prim, reporting explicit
 per-material diagnostics for unsupported graphs without replacing render slots.
+Mesh subset ranges are expanded to per-triangle material IDs and overlapping or
+misaligned ranges are rejected before scene upload.
 The current pinned ShaderBall corpus yields ten translated and ten WGSL-compiled
 documents. Seven report missing MaterialX surface terminals. The 7,500² ground
 EXR is decoded through the bounded downsample path; texture diagnostics remain

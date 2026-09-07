@@ -14,7 +14,17 @@ import { appendRectLights } from '../src/webgpu-mtlx/usd-lights.js';
 import { mayEmit } from '../src/webgpu-mtlx/emission.js';
 import { materialXFromUSD } from '../src/webgpu-mtlx/usd-graph.js';
 import { USDTextureSources } from '../src/webgpu-mtlx/usd-texture-sources.js';
+import { triangleMaterialIds } from '../src/webgpu-mtlx/usd-scene.js';
 const constant = (name, value, type = 'float') => ({ name, category: 'constant', type, inputs: { value: { type, value } } });
+
+test('USD mesh submeshes preserve per-face material bindings', () => {
+  assert.deepEqual(triangleMaterialIds(18, 2, [
+    { start: 0, count: 6, materialId: 4 },
+    { start: 6, count: 3, materialId: 1 }
+  ]), [4, 4, 1, 2, 2, 2]);
+  assert.throws(() => triangleMaterialIds(6, 0, [{ start: 0, count: 6, materialId: 1 }, { start: 3, count: 3, materialId: 2 }]), /overlapping/);
+  assert.throws(() => triangleMaterialIds(6, 0, [{ start: 1, count: 3, materialId: 1 }]), /invalid/);
+});
 
 test('USD texture provenance keeps anchors and rejects ambiguous source layers', () => {
   const snapshot = value => ({ prims: [{ path: '/Shader', properties: { 'inputs:file': { type: 'asset', value } } }] });

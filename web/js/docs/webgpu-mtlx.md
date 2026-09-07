@@ -270,9 +270,10 @@ sheen, coat and thin-film controls fail explicitly; they are not silently erased
 The ShaderBall geometry adapter now retains native material IDs, serialized
 material absolute paths, and subset-presence records per mesh binding. It creates
 diagnostic slots for all authored material IDs and no longer decides the gold
-material from a pathname heuristic. Per-face subset ranges are used when the
-native render mesh provides them; the current ShaderBall asset exposes no such
-ranges after composition, so binding-level IDs remain the authoritative result.
+material from a pathname heuristic. Per-face subset ranges are expanded to
+per-triangle material IDs when the native render mesh provides them; invalid or
+overlapping ranges are rejected. If composition exposes no ranges, binding-level
+IDs remain the authoritative result.
 
 `loadShaderBallGeometry({ authoredMaterials: true })` loads the pinned
 stdlib/pbrlib/bxdf libraries and attempts strict translation of every composed
