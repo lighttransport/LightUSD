@@ -103,6 +103,12 @@ export function syntheticScene(preset = 'copper') {
     materials[1].nodes[0].inputs.transmission_depth={type:'float',value:2.5};
     materials[1].nodes[0].inputs.transmission_scatter={type:'color3',value:[.08,.2,.5]};
   }
+  if(preset==='generalized-schlick') {
+    materials[1]={nodes:[
+      {name:'fresnel',category:'generalized_schlick_bsdf',type:'BSDF',inputs:{color0:{type:'color3',value:[.04,.08,.16]},color90:{type:'color3',value:[.8,.95,1]},roughness:{type:'vector2',value:[.12,.2]},weight:{type:'float',value:1},exponent:{type:'float',value:4}}},
+      {name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'fresnel'}}}
+    ]};
+  }
   if(preset==='native-copper'||preset==='native-glass') {
     const glass=preset==='native-glass';
     materials[1]={nodes:[

@@ -127,7 +127,9 @@ try {
   await page.screenshot({ path: path.join(out, 'chrome.png') });
   const referenceImages=[];
   if(process.argv.includes('--reference-images')) {
-    for(const preset of ['native-copper','native-glass','sss','hair','thin-film','subsurface','normalmap','bump','coat','sheen','thin-walled','transmission-depth','displacement']) {
+    const referencePresets=['native-copper','native-glass','sss','hair','thin-film','subsurface','normalmap','bump','coat','sheen','thin-walled','transmission-depth','generalized-schlick','displacement'];
+    const onlyPreset=process.argv.find(arg=>arg.startsWith('--only-preset='))?.slice('--only-preset='.length);
+    for(const preset of referencePresets.filter(name=>!onlyPreset||name===onlyPreset)) {
       const stats=await page.evaluate(async preset=>{
         const r=window.__webgpuMtlx.renderer;const {syntheticScene}=await import('/src/webgpu-mtlx/scene.js');
         r.canvas.width=192;r.canvas.height=128;await r.loadScene(syntheticScene(preset));r.setMode('path-spectral');

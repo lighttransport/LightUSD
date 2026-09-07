@@ -65,6 +65,9 @@ and verifies the physical transport path without a medium-stack mutation.
 The `transmission-depth` scene covers bounded Beer-Lambert attenuation from
 authored transmission depth/scatter controls, including the spectral pipeline.
 
+The targeted `generalized-schlick` Chrome run covers authored color-at-normal,
+color-at-grazing and exponent transport controls.
+
 All web/WASM regression procedures live under `web/js`. The canonical gate is
 `npm test`; it runs the assertion-based Node/WASM suites, the physics-only
 MuJoCo binding smoke test, the USD Physics simulation, every pinned MuJoCo

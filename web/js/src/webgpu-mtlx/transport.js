@@ -28,6 +28,7 @@ fn thinFilmFresnel(c0:f32,baseIOR:f32,filmIOR:f32,thickness:f32)->vec3f {
   return clamp(vec3f(r01*r01)+vec3f(r12*r12)+vec3f(interference),vec3f(0),vec3f(1));
 }
 fn transmissionAttenuation(m:Lobe)->vec3f { return exp(-max(vec3f(0),m.transmissionScatter)*max(0.0,m.transmissionDepth)); }
+fn generalizedSchlickFresnel(m:Lobe,c:f32)->vec3f { return mix(m.base,m.schlickColor90,vec3f(pow(1.0-clamp(abs(c),0.0,1.0),m.schlickExponent))); }
 fn microfacetD(h: vec3f, alpha: vec2f) -> f32 {
   if(h.z<=0.0) { return 0.0; }
   let q=dot(h.xy/alpha,h.xy/alpha)+h.z*h.z;
@@ -121,6 +122,11 @@ fn transportSample(m: Lobe, wo: vec3f, eta: f32, rng: ptr<function,u32>) -> Scat
 }
 fn powerHeuristic(a: f32, b: f32) -> f32 { return a*a/max(1e-30,a*a+b*b); }
 fn nativeEval(m:Lobe,wo:vec3f,wi:vec3f,eta:f32)->vec4f {
+  if(m.kind==5u) {
+    if(wi.z<=0.0){return vec4f(0);}
+    let h=normalize(wo+wi);let oh=max(1e-6,dot(wo,h));let alpha=max(vec2f(.0001),m.alpha);
+    let f=generalizedSchlickFresnel(m,oh);return vec4f(m.weight*f*microfacetD(h,alpha)*microfacetG(wo,wi,alpha)/(4.0*wo.z*wi.z),visibleNormalPDF(wo,h,alpha)/(4.0*oh));
+  }
   if(m.kind==4u) {
     if(wi.z<=0.0){return vec4f(0);}
     let sigma=max(.02,m.alpha.x);let az=max(.02,m.alpha.y);
@@ -154,6 +160,7 @@ fn nativeSample(m:Lobe,wo:vec3f,eta:f32,rng:ptr<function,u32>)->Scatter {
   else {
     var h=vec3f(0,0,1);if(max(m.alpha.x,m.alpha.y)>0.0001 && (eta!=1.0||m.kind==2u)){h=visibleNormal(wo,max(vec2f(.0001),m.alpha),vec2f(random(rng),random(rng)));}else{delta=1u;}
     if(m.kind==2u){wi=reflect(-wo,h);if(delta!=0u){return Scatter(wi,1,m.weight*conductorFresnel(wo.z,m.complexIOR,m.extinction),1u,1);}}
+    else if(m.kind==5u){wi=reflect(-wo,h);if(wi.z<=0.0){return Scatter(wi,0,vec3f(0),0u,1);}if(delta!=0u){return Scatter(wi,1,m.weight*generalizedSchlickFresnel(m,dot(wo,h)),1u,1);}}
     else {
       let fr=dielectricFresnel(dot(wo,h),eta);let pr=select(fr,0.0,m.scatterMode==2u);let pt=select(1.0-fr,0.0,m.scatterMode==1u);let total=pr+pt;
       if(total<=0.0){return Scatter(vec3f(0),0,vec3f(0),0u,1);}

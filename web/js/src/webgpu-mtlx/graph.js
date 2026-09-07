@@ -224,10 +224,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           code=`closureLeaf(nativeHair(${color},${x('weight',1,'float')},${longitudinal},${azimuthal}))`;closureCount=1;break;
         }
         case 'generalized_schlick_bsdf': {
-          // Schlick fallback uses the authored base color and roughness while
-          // retaining a bounded dielectric lobe until the full exponent model
-          // is implemented.
-          code=`closureLeaf(nativeDielectric(${x('color0',[1,1,1],'color3')},1.5,${x('roughness',[.05,.05],'vector2')},${x('weight',1,'float')},1u))`;closureCount=1;break;
+          code=`closureLeaf(nativeGeneralizedSchlick(${x('color0',[1,1,1],'color3')},${x('color90',[1,1,1],'color3')},${x('roughness',[.05,.05],'vector2')},${x('weight',1,'float')},${x('exponent',5,'float')}))`;closureCount=1;break;
         }
         case 'layer': {
           const top=input('top',undefined,'BSDF'),base=input('base');
@@ -445,14 +442,15 @@ fn mxBumpHeight(height:f32,scale:f32,n:vec3f,t:vec3f,b:vec3f)->vec3f {
   // explicit without silently turning them into geometric displacement.
   return normalize(n+t*(height*scale)+b*(height*scale));
 }
-struct Lobe { base: vec3f, metal: f32, roughness: f32, ior: f32, transmission: f32, emission: vec3f, emissionWeight: f32, anisotropy: f32, transmissionColor: vec3f, kind:u32, weight:f32, alpha:vec2f, complexIOR:vec3f, extinction:vec3f, scatterMode:u32, thinWalled:u32, thinFilmThickness:f32, thinFilmIOR:f32, transmissionDepth:f32, transmissionScatter:vec3f }
+struct Lobe { base: vec3f, metal: f32, roughness: f32, ior: f32, transmission: f32, emission: vec3f, emissionWeight: f32, anisotropy: f32, transmissionColor: vec3f, kind:u32, weight:f32, alpha:vec2f, complexIOR:vec3f, extinction:vec3f, scatterMode:u32, thinWalled:u32, thinFilmThickness:f32, thinFilmIOR:f32, transmissionDepth:f32, transmissionScatter:vec3f, schlickColor90:vec3f, schlickExponent:f32 }
 struct Medium { absorption: vec3f, scattering: vec3f, anisotropy: f32 }
 fn makeMaterial(base:vec3f,metal:f32,rough:f32,ior:f32,trans:f32,emission:vec3f,emissionWeight:f32,anisotropy:f32,tint:vec3f,thinWalled:u32,thinFilmThickness:f32,thinFilmIOR:f32)->Lobe {
- return Lobe(base,metal,rough,ior,trans,emission,emissionWeight,anisotropy,tint,0u,1.0,vec2f(rough*rough),vec3f(ior),vec3f(0),3u,thinWalled,thinFilmThickness,thinFilmIOR,0.0,vec3f(0));
+ return Lobe(base,metal,rough,ior,trans,emission,emissionWeight,anisotropy,tint,0u,1.0,vec2f(rough*rough),vec3f(ior),vec3f(0),3u,thinWalled,thinFilmThickness,thinFilmIOR,0.0,vec3f(0),base,5.0);
 }
 fn withTransmission(lobe:Lobe,depth:f32,scatter:vec3f)->Lobe {var m=lobe;m.transmissionDepth=max(0.0,depth);m.transmissionScatter=max(vec3f(0),scatter);return m;}
 fn nativeDiffuse(color:vec3f,weight:f32,rough:f32)->Lobe {var m=makeMaterial(color,0,rough,1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=3u;m.weight=weight;return m;}
 fn nativeHair(color:vec3f,weight:f32,longitudinal:f32,azimuthal:f32)->Lobe {var m=makeMaterial(color,0,longitudinal,1.55,0,vec3f(0),0,azimuthal,vec3f(1),0u,0.0,1.5);m.kind=4u;m.weight=weight;m.alpha=vec2f(max(.02,longitudinal),max(.02,azimuthal));return m;}
+fn nativeGeneralizedSchlick(color0:vec3f,color90:vec3f,alpha:vec2f,weight:f32,exponent:f32)->Lobe {var m=makeMaterial(color0,0,sqrt(max(alpha.x,alpha.y)),1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=5u;m.weight=weight;m.alpha=alpha;m.schlickColor90=color90;m.schlickExponent=max(.01,exponent);return m;}
 fn nativeDielectric(tint:vec3f,ior:f32,alpha:vec2f,weight:f32,mode:u32)->Lobe {var m=makeMaterial(tint,0,sqrt(max(alpha.x,alpha.y)),ior,1,vec3f(0),0,0,tint,0u,0.0,1.5);m.kind=1u;m.weight=weight;m.alpha=alpha;m.scatterMode=mode;return m;}
 fn nativeConductor(ior:vec3f,k:vec3f,alpha:vec2f,weight:f32)->Lobe {var m=makeMaterial(vec3f(1),1,sqrt(max(alpha.x,alpha.y)),1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=2u;m.complexIOR=ior;m.extinction=k;m.alpha=alpha;m.weight=weight;return m;}
 ${closureTypesWGSL}`;

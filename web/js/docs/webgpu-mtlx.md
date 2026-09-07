@@ -355,3 +355,9 @@ survive graph compilation in the lobe and apply bounded Beer-Lambert
 attenuation to transmitted paths, including spectral conversion. The synthetic
 `transmission-depth` scene is hardware-tested; full distance-aware random-walk
 volumes remain a separate model.
+
+`generalized_schlick_bsdf` now preserves authored color-at-normal, color-at-
+grazing, roughness and exponent controls in a bounded microfacet lobe rather
+than collapsing to the ordinary dielectric Fresnel curve. The synthetic
+`generalized-schlick` scene passes the targeted Chrome hardware reference gate;
+full measured/angle-dependent Schlick layering remains future work.
