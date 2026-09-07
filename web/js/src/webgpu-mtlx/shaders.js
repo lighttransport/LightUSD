@@ -182,7 +182,7 @@ struct RasterVertex { @builtin(position) clip: vec4f, @location(0) position: vec
   let transmission=clamp((1.0-m.metal)*m.transmission,0.0,1.0);
   let refracted=refract(-wo,n,1.0/max(1.0001,m.ior));
   color=mix(color,m.transmissionColor*environment(refracted),transmission)*clamp(surface.opacity,0.0,1.0);
-  if (intersect(v.position+geomN*max(1e-4,length(v.position)*1e-5),light).id==0xffffffffu) { color += bsdf(m,n,wo,light).xyz*max(0.0,dot(n,light))*directionalRadiance(); }
+  if (intersect(v.position+geomN*max(1e-4,length(v.position)*1e-5),light).id==0xffffffffu) { color += bsdf(m,n,wo,light).xyz*max(0.0,dot(n,light))*directionalRadiance()*clamp(surface.opacity,0.0,1.0); }
   let linear = max(vec3f(0),color*exp2(cfg.display.x)); let mapped=linear/(1.0+linear);
   return vec4f(select(12.92*mapped,1.055*pow(mapped,vec3f(1.0/2.4))-0.055,mapped>vec3f(0.0031308)),1);
 }

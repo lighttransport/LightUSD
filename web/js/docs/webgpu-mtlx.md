@@ -335,6 +335,9 @@ Realtime raster shading now honors compiled opacity with a zero-opacity discard
 and bounded color scaling. The synthetic `opacity` scene exercises this path;
 full sorted transparency and blend compositing remain future work.
 
+Opacity now scales both environment and direct-light raster contributions, so
+partial-opacity materials do not retain an opaque direct-light term.
+
 Realtime raster lighting now uses the authored `Material.normal` for BRDF and
 environment terms while retaining the geometric normal for offsets and shadow
 queries. The normal-map hardware fixture exercises this parity path.

@@ -234,6 +234,7 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   assert.match(compileGraph(openNormal,{material:true}).body,/geometry_normal|normalize\(vec3f/);
   const opacity=syntheticScene('opacity').materials[1];
   assert.match(shaderSource([opacity]),/surface\.opacity/);
+  assert.match(shaderSource([opacity]),/directionalRadiance\(\)\*clamp\(surface\.opacity/);
   const bump=syntheticScene('bump').materials[1];
   assert.match(compileGraph(bump,{material:true}).body,/mxBumpHeight/);
   assert.match(shaderSource([bump]),/mxBumpHeight/);
