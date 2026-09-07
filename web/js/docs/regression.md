@@ -77,7 +77,8 @@ For expensive focused scenes, `--reference-samples=N` bounds the reference-image
 loop for diagnostics; the default and pre-merge matrix remain 32 spp.
 Focused diagnostics also accept `--reference-mode=path-physical` to separate
 image-resource failures from spectral transport; the default remains
-`path-spectral`.
+`path-spectral`. `--reference-mode=realtime` runs one raster frame and enables
+the image-backed normal-map fixture without requiring linear path capture.
 
 The Chrome resource check now verifies bounded downsampling and rejection for
 oversized regular raster images, matching the existing EXR budget coverage.

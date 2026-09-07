@@ -336,7 +336,8 @@ feeding `normalmap`, including packed-resource binding and linear filtering;
 authored texture mip residency and UDIM streaming remain future work. Its
 focused spectral Chrome run currently stalls before a sample is reported, so
 it is intentionally not in the default reference matrix until image-backed
-spectral dispatch diagnostics are fixed.
+spectral dispatch diagnostics are fixed. The fixture is available through the
+focused realtime Chrome mode for raster-resource validation.
 
 Realtime raster shading now honors compiled opacity with a zero-opacity discard
 and bounded color scaling. The synthetic `opacity` scene exercises this path;
