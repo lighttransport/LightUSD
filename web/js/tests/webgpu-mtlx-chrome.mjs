@@ -157,6 +157,8 @@ try {
       return { stats: state.renderer.stats, provenance: state.renderer.scene.provenance, authored:state.renderer.sourceScene.authored, texture:{width:image.width,height:image.height},errors: state.errors };
     });
     assert.deepEqual(shaderballResult.errors, []); assert.ok(shaderballResult.stats.triangles > 1000);
+    assert.ok(Object.keys(shaderballResult.authored.materialPaths).length >= 2);
+    assert.ok(shaderballResult.authored.bindings.every(binding => Array.isArray(binding.submeshes) && Number.isInteger(binding.materialId)));
     const sourceKeys = new Set(shaderballResult.authored.textureSources.map(entry => entry.authored));
     for (const prim of shaderballResult.authored.shadingGraph.prims) {
       for (const property of Object.values(prim.properties)) {

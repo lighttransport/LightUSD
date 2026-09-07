@@ -66,7 +66,13 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
     // Native material serialization is reduced, NOT an authored graph export.
     // Preserve this diagnostic snapshot without substituting it for source graphs.
     const authored = { materialSerializationIsLossy: true, shadingGraph, textureSources: resolver.textures.snapshot(), materials: [], lights: [], bindings: [] };
-    for (let i = 0; i < layer.numMaterials(); i++) authored.materials.push(layer.getMaterialWithFormat(i, 'json'));
+    for (let i = 0; i < layer.numMaterials(); i++) {
+      const serialized = layer.getMaterialWithFormat(i, 'json');
+      let material = serialized;
+      try { material = JSON.parse(serialized.data || serialized); } catch { /* retain serializer diagnostics */ }
+      authored.materials.push({ id: i, path: material.abs_path || material.path || '', serialized });
+    }
+    authored.materialPaths = Object.fromEntries(authored.materials.filter(m => m.path).map(m => [m.path, m.id]));
     for (let i = 0; i < layer.numLights(); i++) authored.lights.push(layer.getLight(i));
     const positions = [], normals = [], uvs = [], indices = [], materialIds = [];
     const read = d => {
@@ -86,7 +92,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
       }
       if (node.nodeType?.toLowerCase() === 'mesh') {
         const mesh = layer.getMeshPtr(node.contentId);
-        authored.bindings.push({ path: mesh.absPath, materialId: mesh.materialId, submeshes: mesh.submeshes });
+        authored.bindings.push({ path: mesh.absPath, materialId: mesh.materialId, submeshes: mesh.submeshes || [], hasSubmeshes: !!mesh.hasSubmeshes });
         if (!mesh.singleIndexable || !mesh.triangulated) throw new Error(`USD mesh is not triangulated/single-indexed: ${mesh.absPath}`);
         const p = read(mesh.points), ix = read(mesh.indices); if (!p?.length || !ix?.length) return;
         const geo = new BufferGeometry(); geo.setAttribute('position', new BufferAttribute(p, 3)); geo.setIndex(new BufferAttribute(ix, 1));
@@ -97,7 +103,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
         for (let i = 0; i < ps.length; i++) { positions.push(ps[i]); normals.push(ns[i]); }
         for (let i = 0; i < ps.length / 3 * 2; i++) uvs.push(uv?.[i] ?? 0);
         for (let i = 0; i < ix.length; i++) indices.push(ix[i] + offset);
-        const mat = /material_surface/.test(mesh.absPath || '') ? 1 : 0;
+        const mat = Number.isInteger(mesh.materialId) && mesh.materialId >= 0 ? mesh.materialId : 0;
         for (let i = 0; i < ix.length / 3; i++) materialIds.push(mat);
         geo.dispose();
       }
@@ -107,7 +113,9 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
     if (!indices.length) throw new Error('ShaderBall conversion produced no triangles');
     if (!camera) throw new Error('ShaderBall authored camera was not found');
     onStatus(`Prepared ${indices.length / 3} ShaderBall triangles; materials/lights are diagnostic overrides`);
-    const scene={ positions, normals, uvs, indices, materialIds, authored, materials: [surfaceDocument([0.35, 0.35, 0.35], 0, 0.7), surfaceDocument([0.8, 0.45, 0.15], 1, 0.25)], camera, provenance: { asset: 'StandardShaderBall', commit: SHADERBALL_COMMIT, variant: 'triangulated', materialOverride: true, lightingOverride: true, referenceReady: false } };
+    const materialCount = Math.max(2, ...authored.bindings.map(binding => Number.isInteger(binding.materialId) && binding.materialId >= 0 ? binding.materialId + 1 : 0));
+    const materials = Array.from({ length: materialCount }, (_, id) => id === 1 ? surfaceDocument([0.8, 0.45, 0.15], 1, 0.25) : surfaceDocument([0.35, 0.35, 0.35], 0, 0.7));
+    const scene={ positions, normals, uvs, indices, materialIds, authored, materials, camera, provenance: { asset: 'StandardShaderBall', commit: SHADERBALL_COMMIT, variant: 'triangulated', materialOverride: true, lightingOverride: true, referenceReady: false } };
     return authoredLights ? appendRectLights(scene,authored.lights) : scene;
   } finally { layer.delete(); }
 }

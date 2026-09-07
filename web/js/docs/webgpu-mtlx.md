@@ -266,3 +266,10 @@ including Standard Surface's `specular_IOR` and OpenPBR's `specular_ior`, geomet
 opacity/thin-wall fields, and common authored defaults. The current terminal is
 still an approximate single-lobe mapping. Nonzero or connected subsurface, fuzz,
 sheen, coat and thin-film controls fail explicitly; they are not silently erased.
+
+The ShaderBall geometry adapter now retains native material IDs, serialized
+material absolute paths, and subset-presence records per mesh binding. It creates
+diagnostic slots for all authored material IDs and no longer decides the gold
+material from a pathname heuristic. Per-face subset ranges are used when the
+native render mesh provides them; the current ShaderBall asset exposes no such
+ranges after composition, so binding-level IDs remain the authoritative result.
