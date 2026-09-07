@@ -288,6 +288,9 @@ compression modes still use the third-party decoder and therefore require a
 future streaming decoder for the 7,500² ShaderBall ground map.
 `loadMaterialXResources` exposes the same behavior through its explicit
 `allowDownsample` option; the default remains fail-closed at `maxPixels`.
+Authored EXR aliases (`lin_ap1_scene`, `srgb_rec709_scene`, `lin_rec709_scene`,
+and `data`) are normalized before packing, while unknown metadata remains an
+explicit error.
 The API still does not enable faithful ShaderBall material rendering.
 
 The Chrome ShaderBall gate checks a synthetic native USD material with a nested

@@ -210,6 +210,13 @@ test('EXR authored color-space metadata is read from the header, never filename'
   assert.deepEqual(inspectEXR(bytes), { width: 1, height: 1 });
   assert.throws(() => encodeEXR(1, 1, new Float32Array([1,2,3,1]), { colorspace: 'bad\nspace' }), /metadata/);
 });
+test('EXR color-space aliases normalize before image packing', async () => {
+  const bytes = encodeEXR(1, 1, new Float32Array([1, 0, 0, 1]), { colorspace: 'lin_ap1_scene' });
+  const image = await decodeImage(bytes, { filename: 'metadata.exr' });
+  assert.equal(image.colorspace, 'acescg');
+  const packed = packImages([image]);
+  assert.ok(Number.isFinite(packed.data[0]));
+});
 test('ACEScg image conversion matches pinned MaterialX matrix without alpha or gamut clipping',()=>{
   const image=packImages([{width:1,height:1,colorspace:'acescg',data:[1,0,0,.3]}]);
   const expected=[1.705050992658,-.130256417507,-.024003356805,.3];

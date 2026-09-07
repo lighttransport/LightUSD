@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Decoded image resources: RGBA float data, row zero at MaterialX v=0.
 // Preview working space is linear Rec.709; ACEScg transport is a later milestone.
+import { normalizeColorSpace } from './color.js';
 function resizeBox(image, maxDimension) {
   if (!maxDimension || Math.max(image.width, image.height) <= maxDimension) return image;
   const scale = maxDimension / Math.max(image.width, image.height);
@@ -25,10 +26,10 @@ export function packImages(images, { maxBytes = 64 * 1024 * 1024, maxDimension }
   const chunks = [], descriptors = []; let texels = 0;
   for (let image of images) {
     image = resizeBox(image, maxDimension);
-    const { width, height, data, colorspace = 'lin_rec709' } = image;
+    const { width, height, data } = image;
+    const colorspace = normalizeColorSpace(image.colorspace || 'lin_rec709');
     if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width > 16384 || height > 16384) throw new Error('Invalid image dimensions');
     if (!data || data.length !== width * height * 4) throw new Error('Expected RGBA image data');
-    if (!['lin_rec709', 'srgb_texture', 'raw', 'acescg', 'ACEScg'].includes(colorspace)) throw new Error(`Unsupported image colorspace: ${colorspace}`);
     let w = width, h = height, count = 0;
     do { count += w * h; if (w === 1 && h === 1) break; w = Math.max(1, Math.floor(w / 2)); h = Math.max(1, Math.floor(h / 2)); } while (true);
     if ((texels + count) * 16 > maxBytes) throw new Error('Image mip chain exceeds texture budget');

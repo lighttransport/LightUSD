@@ -2,6 +2,7 @@
 import { DataUtils, FloatType, HalfFloatType } from 'three';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { parseMaterialX } from './graph.js';
+import { normalizeColorSpace } from './color.js';
 
 /** Read with a streaming budget, including responses without Content-Length. */
 export async function fetchResource(url, { fetcher = fetch, maxBytes = 32 * 1024 * 1024, signal } = {}) {
@@ -153,7 +154,7 @@ function downsampleEXRScanlines(bytes, maxPixels) {
     }
   }
   for (let i = 0; i < weights.length; i++) { const d = i * 4, w = weights[i] || 1; data[d] /= w; data[d + 1] /= w; data[d + 2] /= w; data[d + 3] = 1; }
-  return { width: outWidth, height: outHeight, data, colorspace: colorSpace || 'lin_rec709', exrColorSpace: colorSpace, resizedFrom: { width, height } };
+  return { width: outWidth, height: outHeight, data, colorspace: normalizeColorSpace(colorSpace || 'lin_rec709'), exrColorSpace: colorSpace, resizedFrom: { width, height } };
 }
 
 export async function decodeImage(bytes, { filename = '', colorspace, maxPixels = 4 * 1024 * 1024, allowDownsample = false } = {}) {
@@ -163,7 +164,7 @@ export async function decodeImage(bytes, { filename = '', colorspace, maxPixels 
     if (oversized && !allowDownsample) throw new Error('EXR exceeds decoded pixel budget');
     if (oversized && allowDownsample) {
       const streamed = downsampleEXRScanlines(bytes, maxPixels);
-      if (streamed) { if (colorspace) streamed.colorspace = colorspace; return streamed; }
+      if (streamed) { if (colorspace) streamed.colorspace = normalizeColorSpace(colorspace); return streamed; }
     }
     const image = new EXRLoader().setDataType(oversized ? HalfFloatType : FloatType).parse(bytes.slice().buffer);
     if (image.width !== dimensions.width || image.height !== dimensions.height || image.data.length !== image.width * image.height * 4) throw new Error('Unexpected EXR decoded layout');
@@ -180,7 +181,7 @@ export async function decodeImage(bytes, { filename = '', colorspace, maxPixels 
       return { width, height, data, colorspace: colorspace || header.colorSpace || 'lin_rec709', exrColorSpace: header.colorSpace, resizedFrom: dimensions };
     }
     // EXRLoader returns bottom-up rows, matching MaterialX v=0.
-    return { width: image.width, height: image.height, data: image.data, colorspace: colorspace || header.colorSpace || 'lin_rec709', exrColorSpace: header.colorSpace };
+    return { width: image.width, height: image.height, data: image.data, colorspace: normalizeColorSpace(colorspace || header.colorSpace || 'lin_rec709'), exrColorSpace: header.colorSpace };
   }
   const bitmap = await createImageBitmap(new Blob([bytes]), { premultiplyAlpha: 'none', colorSpaceConversion: 'none', imageOrientation: 'none' });
   try {
