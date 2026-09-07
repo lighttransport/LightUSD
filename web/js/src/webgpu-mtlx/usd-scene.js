@@ -75,7 +75,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
       }
       for (const [key, request] of resolver.textures.requests) {
         try {
-          const image = await decodeImage(await fetchResource(request.url), { filename: request.url, colorspace: request.colorspace });
+          const image = await decodeImage(await fetchResource(request.url), { filename: request.url, colorspace: request.colorspace, allowDownsample: true });
           imageDescriptors[key] = { offset: 0, width: image.width, height: image.height, levels: 1, colorspace: request.colorspace };
         } catch (error) { textureDiagnostics.push({ key, url: request.url, error: String(error.message || error) }); }
       }

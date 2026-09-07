@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { FloatType } from 'three';
+import { DataUtils, FloatType, HalfFloatType } from 'three';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { parseMaterialX } from './graph.js';
 
@@ -67,11 +67,25 @@ export function inspectEXRHeader(bytes, maxPixels = 4 * 1024 * 1024) {
   return { dimensions, colorSpace };
 }
 
-export async function decodeImage(bytes, { filename = '', colorspace, maxPixels = 4 * 1024 * 1024 } = {}) {
+export async function decodeImage(bytes, { filename = '', colorspace, maxPixels = 4 * 1024 * 1024, allowDownsample = false } = {}) {
   if (/\.exr(?:$|[?#])/i.test(filename)) {
-    const header = inspectEXRHeader(bytes, maxPixels), dimensions = header.dimensions;
-    const image = new EXRLoader().setDataType(FloatType).parse(bytes.slice().buffer);
+    const header = inspectEXRHeader(bytes, allowDownsample ? Number.MAX_SAFE_INTEGER : maxPixels), dimensions = header.dimensions;
+    const oversized = dimensions.width * dimensions.height > maxPixels;
+    if (oversized && !allowDownsample) throw new Error('EXR exceeds decoded pixel budget');
+    const image = new EXRLoader().setDataType(oversized ? HalfFloatType : FloatType).parse(bytes.slice().buffer);
     if (image.width !== dimensions.width || image.height !== dimensions.height || image.data.length !== image.width * image.height * 4) throw new Error('Unexpected EXR decoded layout');
+    if (oversized) {
+      const scale = Math.sqrt((dimensions.width * dimensions.height) / maxPixels);
+      const width = Math.max(1, Math.floor(dimensions.width / scale)), height = Math.max(1, Math.floor(dimensions.height / scale));
+      const data = new Float32Array(width * height * 4), source = image.data;
+      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+        const sx = Math.min(dimensions.width - 1, Math.floor((x + .5) * dimensions.width / width));
+        const sy = Math.min(dimensions.height - 1, Math.floor((y + .5) * dimensions.height / height));
+        const si = (sy * dimensions.width + sx) * 4, di = (y * width + x) * 4;
+        for (let c = 0; c < 4; c++) data[di + c] = DataUtils.fromHalfFloat(source[si + c]);
+      }
+      return { width, height, data, colorspace: colorspace || header.colorSpace || 'lin_rec709', exrColorSpace: header.colorSpace, resizedFrom: dimensions };
+    }
     // EXRLoader returns bottom-up rows, matching MaterialX v=0.
     return { width: image.width, height: image.height, data: image.data, colorspace: colorspace || header.colorSpace || 'lin_rec709', exrColorSpace: header.colorSpace };
   }

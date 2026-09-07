@@ -166,6 +166,10 @@ test('EXR resource preflight bounds allocation and decode preserves bottom-up ro
   assert.throws(()=>inspectEXR(bytes.subarray(0,20)),/EXR/);
   const image=await decodeImage(bytes,{filename:'test.exr',colorspace:'raw'});
   assert.deepEqual(Array.from(image.data),[4,5,6,1,1,2,3,1]);
+  await assert.rejects(decodeImage(bytes,{filename:'test.exr',maxPixels:1}),/budget/);
+  const reduced=await decodeImage(bytes,{filename:'test.exr',maxPixels:1,allowDownsample:true});
+  assert.deepEqual([reduced.width,reduced.height,reduced.resizedFrom.width,reduced.resizedFrom.height],[1,1,1,2]);
+  assert.ok(reduced.data.every(Number.isFinite));
 });
 
 test('EXR authored color-space metadata is read from the header, never filename', () => {
