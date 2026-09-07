@@ -51,6 +51,20 @@ export function syntheticScene(preset = 'copper') {
       { name: 'surface', category: 'standard_surface', type: 'surfaceshader', inputs: { base_color: { nodename: 'color' }, specular_roughness: { type: 'float', value: .3 } } },
     ] };
   }
+  if (preset === 'ops-advanced') {
+    materials[1] = { nodes: [
+      { name: 'uv', category: 'texcoord', type: 'vector2', inputs: {} },
+      { name: 'uv3', category: 'convert', type: 'vector3', inputs: { in: { nodename: 'uv' } } },
+      { name: 'swz', category: 'swizzle', type: 'vector2', inputs: { in: { nodename: 'uv3' }, channels: { type: 'string', value: 'yx' } } },
+      { name: 'parts', category: 'separate2', type: 'float', inputs: { in: { nodename: 'swz' } } },
+      { name: 'power', category: 'power', type: 'float', inputs: { in1: { nodename: 'parts', output: 'outx' }, in2: { type: 'float', value: 2 } } },
+      { name: 'cross', category: 'crossproduct', type: 'vector3', inputs: { in1: { nodename: 'uv3' }, in2: { type: 'vector3', value: [0, 0, 1] } } },
+      { name: 'dot', category: 'dotproduct', type: 'float', inputs: { in1: { nodename: 'cross' }, in2: { type: 'vector3', value: [1, 0, 0] } } },
+      { name: 'chosen', category: 'ifequal', type: 'float', inputs: { in1: { nodename: 'power' }, in2: { nodename: 'dot' }, value1: { nodename: 'parts', output: 'outx' }, value2: { type: 'float', value: 0 } } },
+      { name: 'color', category: 'combine3', type: 'color3', inputs: { in1: { nodename: 'chosen' }, in2: { nodename: 'power' }, in3: { nodename: 'dot' } } },
+      { name: 'surface', category: 'standard_surface', type: 'surfaceshader', inputs: { base_color: { nodename: 'color' }, specular_roughness: { type: 'float', value: .36 } } },
+    ] };
+  }
   if(preset==='displacement') {
     materials[1].nodes.unshift(
       {name:'uv',category:'texcoord',type:'vector2',inputs:{}},

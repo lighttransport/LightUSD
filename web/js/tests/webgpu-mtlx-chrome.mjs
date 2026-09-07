@@ -127,7 +127,7 @@ try {
   await page.screenshot({ path: path.join(out, 'chrome.png') });
   const referenceImages=[];
   if(process.argv.includes('--reference-images')) {
-    const referencePresets=['native-copper','native-glass','sss','hair','thin-film','subsurface','normalmap','bump','ops','coat','sheen','thin-walled','transmission-depth','generalized-schlick','open-pbr-weight','open-pbr-film','open-pbr-normal','opacity','displacement','normalmap-image'];
+    const referencePresets=['native-copper','native-glass','sss','hair','thin-film','subsurface','normalmap','bump','ops','ops-advanced','coat','sheen','thin-walled','transmission-depth','generalized-schlick','open-pbr-weight','open-pbr-film','open-pbr-normal','opacity','displacement','normalmap-image'];
     const onlyPreset=process.argv.find(arg=>arg.startsWith('--only-preset='))?.slice('--only-preset='.length);
     const requestedReferenceSamples=Number(process.argv.find(arg=>arg.startsWith('--reference-samples='))?.slice('--reference-samples='.length)||32);
     const requestedReferenceMode=process.argv.find(arg=>arg.startsWith('--reference-mode='))?.slice('--reference-mode='.length)||'path-spectral';

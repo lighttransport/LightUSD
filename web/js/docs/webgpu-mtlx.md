@@ -352,6 +352,9 @@ The synthetic `ops` fixture now chains `rotate2d`, `extract`, `remap`,
 `ifgreater`, and `combine3` into a surface color, adding graph-operation
 coverage beyond the earlier arithmetic/wave scene.
 
+The `ops-advanced` fixture extends this with typed vector conversion/swizzling,
+component separation, power, dot/cross products, and equality selection.
+
 Realtime raster shading now honors compiled opacity with a zero-opacity discard
 and bounded color scaling. The synthetic `opacity` scene exercises this path;
 full sorted transparency and blend compositing remain future work.

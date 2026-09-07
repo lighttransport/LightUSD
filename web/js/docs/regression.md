@@ -61,6 +61,9 @@ before reporting a sample.
 The `ops` fixture covers rotate, remap, conditional, extraction, and typed
 combine nodes in a single compiled surface graph.
 
+The `ops-advanced` fixture covers vector conversion/swizzle, separate, power,
+dot/cross, and equality-selection nodes.
+
 The `opacity` scene covers realtime opacity discard/scaling behavior.
 
 Its shader assertion also guards opacity scaling on direct-light contributions.
