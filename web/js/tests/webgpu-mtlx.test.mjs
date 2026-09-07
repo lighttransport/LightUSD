@@ -246,6 +246,7 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   assert.match(shaderSource([schlick]),/generalizedSchlickFresnel/);
   const openPbrWeight=syntheticScene('open-pbr-weight').materials[1];
   assert.match(compileGraph(openPbrWeight,{material:true}).body,/0\.35/);
+  assert.match(compileGraph(openPbrWeight,{material:true}).body,/withSpecular/);
   assert.match(shaderSource([openPbrWeight]),/vec3f\(0\.35/);
 });
 test('displacement refinement preserves bounds, typed indices and material assignment',()=>{

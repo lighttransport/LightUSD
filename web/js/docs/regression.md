@@ -71,6 +71,9 @@ color-at-grazing and exponent transport controls.
 The `open-pbr-weight` scene covers OpenPBR `base_weight` propagation into the
 compiled base-color contribution.
 
+It also covers OpenPBR `specular_weight` scaling of the terminal microfacet
+contribution.
+
 All web/WASM regression procedures live under `web/js`. The canonical gate is
 `npm test`; it runs the assertion-based Node/WASM suites, the physics-only
 MuJoCo binding smoke test, the USD Physics simulation, every pinned MuJoCo

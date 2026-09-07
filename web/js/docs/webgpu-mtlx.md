@@ -366,3 +366,9 @@ OpenPBR `base_weight` now scales the compiled base-color contribution instead
 of being accepted and silently ignored. The synthetic `open-pbr-weight` scene
 is included in the Chrome reference-image matrix; full OpenPBR energy-balanced
 layer semantics remain future work.
+
+OpenPBR `specular_weight` and Standard Surface `specular` now scale the
+terminal microfacet contribution through the bounded lobe weight, while the
+diffuse contribution remains separate. The OpenPBR synthetic scene exercises
+this path; authored specular-color and full layered energy compensation remain
+future work.

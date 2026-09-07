@@ -397,12 +397,13 @@ export function compileGraph(document, { output, library = {}, material = false,
           const thin = open ? (ins.geometry_thin_walled ? `select(0u,1u,${x('geometry_thin_walled', false, 'boolean')})` : '0u') : (ins.thin_walled ? `select(0u,1u,${x('thin_walled', false, 'boolean')})` : '0u');
           const filmThickness = !open && ins.thin_film_thickness ? x('thin_film_thickness', 0, 'float') : '0.0';
           const filmIOR = !open && ins.thin_film_IOR ? x('thin_film_IOR', 1.5, 'float') : '1.5';
+          const specularWeight = open ? (ins.specular_weight ? x('specular_weight', 1, 'float') : '1.0') : (ins.specular ? x('specular', 1, 'float') : '1.0');
           const subsurfaceWeight = open ? (ins.subsurface_weight ? x('subsurface_weight', 0, 'float') : '0.0') : (ins.subsurface ? x('subsurface', 0, 'float') : '0.0');
           const subsurfaceColor = ins.subsurface_color ? x('subsurface_color', [0.8, 0.8, 0.8], 'color3') : fields[0];
           const baseLobe = `makeMaterial(${fields.join(',')},${thin},${filmThickness},${filmIOR})`;
           const transmissionDepth = ins.transmission_depth ? x('transmission_depth', 0, 'float') : '0.0';
           const transmissionScatter = ins.transmission_scatter ? x('transmission_scatter', [0, 0, 0], 'color3') : 'vec3f(0)';
-          const transmittedLobe = `withTransmission(${baseLobe},${transmissionDepth},${transmissionScatter})`;
+          const transmittedLobe = `withSpecular(withTransmission(${baseLobe},${transmissionDepth},${transmissionScatter}),${specularWeight})`;
           const closure = `closureMix(closureLeaf(${transmittedLobe}),closureLeaf(nativeDiffuse(${subsurfaceColor},1.0,.9)),clamp(${subsurfaceWeight},0.0,1.0))`;
           const coatWeight = open ? (ins.coat_weight ? x('coat_weight', 0, 'float') : '0.0') : (ins.coat ? x('coat', 0, 'float') : '0.0');
           const coatColor = ins.coat_color ? x('coat_color', [1, 1, 1], 'color3') : 'vec3f(1)';
@@ -451,6 +452,7 @@ fn makeMaterial(base:vec3f,metal:f32,rough:f32,ior:f32,trans:f32,emission:vec3f,
  return Lobe(base,metal,rough,ior,trans,emission,emissionWeight,anisotropy,tint,0u,1.0,vec2f(rough*rough),vec3f(ior),vec3f(0),3u,thinWalled,thinFilmThickness,thinFilmIOR,0.0,vec3f(0),base,5.0);
 }
 fn withTransmission(lobe:Lobe,depth:f32,scatter:vec3f)->Lobe {var m=lobe;m.transmissionDepth=max(0.0,depth);m.transmissionScatter=max(vec3f(0),scatter);return m;}
+fn withSpecular(lobe:Lobe,weight:f32)->Lobe {var m=lobe;m.weight=clamp(weight,0.0,1.0);return m;}
 fn nativeDiffuse(color:vec3f,weight:f32,rough:f32)->Lobe {var m=makeMaterial(color,0,rough,1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=3u;m.weight=weight;return m;}
 fn nativeHair(color:vec3f,weight:f32,longitudinal:f32,azimuthal:f32)->Lobe {var m=makeMaterial(color,0,longitudinal,1.55,0,vec3f(0),0,azimuthal,vec3f(1),0u,0.0,1.5);m.kind=4u;m.weight=weight;m.alpha=vec2f(max(.02,longitudinal),max(.02,azimuthal));return m;}
 fn nativeGeneralizedSchlick(color0:vec3f,color90:vec3f,alpha:vec2f,weight:f32,exponent:f32)->Lobe {var m=makeMaterial(color0,0,sqrt(max(alpha.x,alpha.y)),1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=5u;m.weight=weight;m.alpha=alpha;m.schlickColor90=color90;m.schlickExponent=max(.01,exponent);return m;}
