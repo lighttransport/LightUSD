@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // OpenEXR v2, uncompressed scanline RGB FLOAT. No lossy/tone-mapped reference data.
-export function encodeEXR(width, height, rgba, { channels: channelNames = ['R','G','B'] } = {}) {
+export function encodeEXR(width, height, rgba, { channels: channelNames = ['R','G','B'], colorspace } = {}) {
   if (![['R','G','B'],['X','Y','Z']].some(names => names.join() === channelNames.join())) throw new Error('EXR channels must be RGB or XYZ');
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || rgba.length !== width * height * 4) throw new Error('Invalid EXR dimensions');
   const bytes = [], encoder = new TextEncoder();
@@ -14,6 +14,10 @@ export function encodeEXR(width, height, rgba, { channels: channelNames = ['R','
   for (const name of ordered) channels.push(...str(name), ...int(2), 0, 0, 0, 0, ...int(1), ...int(1));
   channels.push(0);
   attr('channels', 'chlist', channels); attr('compression', 'compression', [0]);
+  if (colorspace !== undefined) {
+    if (typeof colorspace !== 'string' || !colorspace || colorspace.length > 255 || /[\0\r\n]/.test(colorspace)) throw new Error('Invalid EXR colorspace metadata');
+    attr('colorSpace', 'string', [...encoder.encode(colorspace), 0]);
+  }
   const box = [...int(0), ...int(0), ...int(width - 1), ...int(height - 1)];
   attr('dataWindow', 'box2i', box); attr('displayWindow', 'box2i', box); attr('lineOrder', 'lineOrder', [0]);
   attr('pixelAspectRatio', 'float', float(1)); attr('screenWindowCenter', 'v2f', [...float(0), ...float(0)]); attr('screenWindowWidth', 'float', float(1));

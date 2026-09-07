@@ -7,14 +7,14 @@ import { spectrumWGSL } from './spectrum.js';
 import { volumeWGSL } from './volume.js';
 import { closureTransportWGSL } from './closures.js';
 
-export function shaderSource(materials, resources = {}, lighting = {}) {
+export function shaderSource(materials, resources = {}, lighting = {}, textureOptions = {}) {
   for(const doc of materials)if(doc.twoSidedEmission!==undefined&&typeof doc.twoSidedEmission!=='boolean')throw new Error('twoSidedEmission must be boolean');
   const lightDirection=lighting.directional?.direction||[-.5,.8,.4];
   if(!Array.isArray(lightDirection)||lightDirection.length!==3||Math.hypot(...lightDirection)<1e-8)throw new Error('Invalid directional light direction');
   for(const color of [lighting.environment,lighting.directional?.radiance])if(color && (!Array.isArray(color)||color.length!==3||color.some(v=>!Number.isFinite(v)||v<0)))throw new Error('Invalid light radiance');
   resources.requiresPhysical = materials.some(doc => doc.mediumOutput || doc.nodes.some(n => ['transmission', 'transmission_weight'].some(k => n.inputs?.[k] && (n.inputs[k].value === undefined || Number(n.inputs[k].value) !== 0))));
   const images = materials.flatMap(doc => Object.values(doc.images || {}));
-  const packed = packImages(images); resources.imageData = packed.data;
+  const packed = packImages(images, textureOptions); resources.imageData = packed.data;
   let imageIndex = 0;
   const functions = materials.map((doc, i) => {
     const imageDescriptors = Object.fromEntries(Object.entries(doc.images || {}).map(([name, image]) => [name, { ...packed.descriptors[imageIndex++], colorspace: image.colorspace || 'lin_rec709' }]));

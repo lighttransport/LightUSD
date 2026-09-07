@@ -9,7 +9,7 @@ import { shaderSource } from '../src/webgpu-mtlx/shaders.js';
 import { validateSpectrum, sampleSpectrum } from '../src/webgpu-mtlx/spectrum.js';
 import { cieXYZ } from '../src/webgpu-mtlx/cie-data.js';
 import { refineDisplacementScene } from '../src/webgpu-mtlx/displacement.js';
-import { fetchResource, inspectEXR, decodeImage } from '../src/webgpu-mtlx/resources.js';
+import { fetchResource, inspectEXR, inspectEXRHeader, decodeImage } from '../src/webgpu-mtlx/resources.js';
 import { appendRectLights } from '../src/webgpu-mtlx/usd-lights.js';
 import { mayEmit } from '../src/webgpu-mtlx/emission.js';
 import { materialXFromUSD } from '../src/webgpu-mtlx/usd-graph.js';
@@ -147,6 +147,13 @@ test('EXR resource preflight bounds allocation and decode preserves bottom-up ro
   const image=await decodeImage(bytes,{filename:'test.exr',colorspace:'raw'});
   assert.deepEqual(Array.from(image.data),[4,5,6,1,1,2,3,1]);
 });
+
+test('EXR authored color-space metadata is read from the header, never filename', () => {
+  const bytes = encodeEXR(1, 1, new Float32Array([1, 2, 3, 1]), { colorspace: 'lin_ap1_scene' });
+  assert.equal(inspectEXRHeader(bytes).colorSpace, 'lin_ap1_scene');
+  assert.deepEqual(inspectEXR(bytes), { width: 1, height: 1 });
+  assert.throws(() => encodeEXR(1, 1, new Float32Array([1,2,3,1]), { colorspace: 'bad\nspace' }), /metadata/);
+});
 test('ACEScg image conversion matches pinned MaterialX matrix without alpha or gamut clipping',()=>{
   const image=packImages([{width:1,height:1,colorspace:'acescg',data:[1,0,0,.3]}]);
   const expected=[1.705050992658,-.130256417507,-.024003356805,.3];
@@ -203,6 +210,14 @@ test('image packing linearizes before mip filtering and preserves alpha', () => 
   assert.ok(Math.abs(packed.data[4] - .21404114) < 1e-6);
   assert.ok(Math.abs(packed.data[12] - (1 + .21404114) / 3) < 1e-6);
   assert.ok(Math.abs(packed.data[15] - .4) < 1e-6);
+});
+test('image packing can bounded-box downsample before GPU mip allocation', () => {
+  const data = new Float32Array(4 * 2 * 4); for (let i = 0; i < data.length; i += 4) { data[i] = 1; data[i + 3] = 1; }
+  const packed = packImages([{ width: 4, height: 2, data }], { maxDimension: 2, maxBytes: 1024 });
+  assert.deepEqual(packed.descriptors[0].resizedFrom, [4, 2]);
+  assert.equal(packed.descriptors[0].width, 2); assert.equal(packed.descriptors[0].height, 1);
+  assert.equal(packed.data[0], 1); assert.equal(packed.data[3], 1);
+  assert.throws(() => packImages([{ width: 4, height: 2, data }], { maxDimension: 2, maxBytes: 15 }), /budget/);
 });
 test('image budgets, finite float32, dimensions and color interpretation are validated', () => {
   const image = { width: 1, height: 1, data: [0,0,0,1] };

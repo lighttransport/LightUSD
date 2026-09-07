@@ -27,10 +27,17 @@ export async function fetchResource(url, { fetcher = fetch, maxBytes = 32 * 1024
 
 // Bound EXR dimensions before the third-party decoder allocates pixel buffers.
 export function inspectEXR(bytes, maxPixels = 4 * 1024 * 1024) {
+  return inspectEXRHeader(bytes, maxPixels).dimensions;
+}
+
+// Header-only EXR inspection. Pixel payload is never touched, so this remains
+// safe for very large files. `colorSpace` is an authored header opinion only;
+// filenames are deliberately not consulted.
+export function inspectEXRHeader(bytes, maxPixels = 4 * 1024 * 1024) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (bytes.length < 9 || view.getUint32(0, true) !== 20000630) throw new Error('Invalid EXR signature');
   if (view.getUint32(4, true) & ~255) throw new Error('Only single-part scanline EXR files are supported');
-  let offset = 8, dimensions;
+  let offset = 8, dimensions, colorSpace;
   const string = () => {
     const start = offset;
     while (offset < bytes.length && bytes[offset] !== 0 && offset - start <= 255) offset++;
@@ -50,19 +57,23 @@ export function inspectEXR(bytes, maxPixels = 4 * 1024 * 1024) {
       if (width < 1 || height < 1 || width > 16384 || height > 16384 || width * height > maxPixels) throw new Error('EXR exceeds decoded pixel budget');
       dimensions = { width, height };
     }
+    if (name === 'colorSpace' && type === 'string') {
+      if (size > 1024 || bytes[offset + size - 1] !== 0) throw new Error('Invalid EXR colorSpace attribute');
+      colorSpace = new TextDecoder().decode(bytes.subarray(offset, offset + size - 1));
+    }
     offset += size;
   }
   if (!dimensions) throw new Error('EXR data window is missing');
-  return dimensions;
+  return { dimensions, colorSpace };
 }
 
 export async function decodeImage(bytes, { filename = '', colorspace, maxPixels = 4 * 1024 * 1024 } = {}) {
   if (/\.exr(?:$|[?#])/i.test(filename)) {
-    const dimensions = inspectEXR(bytes, maxPixels);
+    const header = inspectEXRHeader(bytes, maxPixels), dimensions = header.dimensions;
     const image = new EXRLoader().setDataType(FloatType).parse(bytes.slice().buffer);
     if (image.width !== dimensions.width || image.height !== dimensions.height || image.data.length !== image.width * image.height * 4) throw new Error('Unexpected EXR decoded layout');
     // EXRLoader returns bottom-up rows, matching MaterialX v=0.
-    return { width: image.width, height: image.height, data: image.data, colorspace: colorspace || 'lin_rec709' };
+    return { width: image.width, height: image.height, data: image.data, colorspace: colorspace || header.colorSpace || 'lin_rec709', exrColorSpace: header.colorSpace };
   }
   const bitmap = await createImageBitmap(new Blob([bytes]), { premultiplyAlpha: 'none', colorSpaceConversion: 'none', imageOrientation: 'none' });
   try {

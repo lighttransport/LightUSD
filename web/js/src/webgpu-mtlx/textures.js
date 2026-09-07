@@ -1,9 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 // Decoded image resources: RGBA float data, row zero at MaterialX v=0.
 // Preview working space is linear Rec.709; ACEScg transport is a later milestone.
-export function packImages(images, { maxBytes = 64 * 1024 * 1024 } = {}) {
+function resizeBox(image, maxDimension) {
+  if (!maxDimension || Math.max(image.width, image.height) <= maxDimension) return image;
+  const scale = maxDimension / Math.max(image.width, image.height);
+  const width = Math.max(1, Math.floor(image.width * scale)), height = Math.max(1, Math.floor(image.height * scale));
+  const data = new Float32Array(width * height * 4);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const x0 = x * image.width / width, x1 = (x + 1) * image.width / width;
+    const y0 = y * image.height / height, y1 = (y + 1) * image.height / height;
+    let sum = 0;
+    for (let iy = Math.floor(y0); iy < Math.ceil(y1); iy++) for (let ix = Math.floor(x0); ix < Math.ceil(x1); ix++) {
+      const weight = (Math.min(ix + 1, x1) - Math.max(ix, x0)) * (Math.min(iy + 1, y1) - Math.max(iy, y0));
+      const src = (iy * image.width + ix) * 4, dst = (y * width + x) * 4;
+      for (let c = 0; c < 4; c++) data[dst + c] += image.data[src + c] * weight;
+      sum += weight;
+    }
+    const dst = (y * width + x) * 4; for (let c = 0; c < 4; c++) data[dst + c] /= sum;
+  }
+  return { ...image, width, height, data, resizedFrom: [image.width, image.height] };
+}
+
+export function packImages(images, { maxBytes = 64 * 1024 * 1024, maxDimension } = {}) {
   const chunks = [], descriptors = []; let texels = 0;
-  for (const image of images) {
+  for (let image of images) {
+    image = resizeBox(image, maxDimension);
     const { width, height, data, colorspace = 'lin_rec709' } = image;
     if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width > 16384 || height > 16384) throw new Error('Invalid image dimensions');
     if (!data || data.length !== width * height * 4) throw new Error('Expected RGBA image data');
@@ -25,7 +46,7 @@ export function packImages(images, { maxBytes = 64 * 1024 * 1024 } = {}) {
       pixels[i + 2] = -.024003356805 * r - .128968976065 * g + 1.15297233287 * b;
     }
     if (!pixels.every(Number.isFinite)) throw new Error('Image colorspace conversion overflows float32');
-    const descriptor = { offset: texels, width, height, levels: 0 }; descriptors.push(descriptor);
+    const descriptor = { offset: texels, width, height, levels: 0, ...(image.resizedFrom ? { resizedFrom: image.resizedFrom } : {}) }; descriptors.push(descriptor);
     w = width; h = height;
     while (true) {
       chunks.push(pixels); texels += w * h; descriptor.levels++;
