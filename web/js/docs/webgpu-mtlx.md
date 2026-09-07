@@ -166,12 +166,13 @@ Screenshots and JSON reports go to `web/js/.regression/webgpu-mtlx`.
 
 Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 
-- Twenty-seven Node tests pass, including native closure diagnostics, image checks and EXR
+- Thirty-six Node tests pass, including native closure diagnostics, image checks and EXR
   decoding through Three.js independently.
 - 37 numeric WGSL cases pass at `1e-5 + 1e-4 * abs(expected)` tolerance.
 - Four actual pinned library graph cases pass: scalar-gamma color range, ACEScg
   color transform, channel conversion, and normal-map decoding. These are not
-  evidence for all 807 NodeDefs. Normal maps are not yet consumed by native BSDFs.
+  evidence for all 807 NodeDefs. Connected normal/normalmap outputs now feed
+  native BSDF frames, with geometric-hemisphere correction during transport.
 - URL resource tests cover includes, source-relative EXR paths, inherited image
   colorspace, cycle rejection and cross-origin rejection. ShaderBall's 2048x2048
   neutral EXR decodes successfully.
