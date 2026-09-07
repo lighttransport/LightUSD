@@ -210,7 +210,7 @@ export function syntheticScene(preset = 'copper') {
   for (let i = 0; i < 4; i++) normals.push(0, 1, 0);
   uvs.push(0, 0, 0, 1, 1, 1, 1, 0);
   indices.push(first, first + 1, first + 2, first, first + 2, first + 3); materialIds.push(0, 0);
-  return { positions, normals, uvs, indices, materialIds, materials, camera: { origin: [3.6, 2.6, 4.4], target: [0, 0.8, 0], fov: 42 }, provenance: { synthetic: preset } };
+  return { positions, normals, uvs, indices, materialIds, materials, ...(preset === 'displacement' ? { displacementRefinement: 2 } : {}), camera: { origin: [3.6, 2.6, 4.4], target: [0, 0.8, 0], fov: 42 }, provenance: { synthetic: preset } };
 }
 
 /** Stackless median BVH. Immutable copied scene data, no references into WASM. */

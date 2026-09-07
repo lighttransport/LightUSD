@@ -64,6 +64,9 @@ combine nodes in a single compiled surface graph.
 The `ops-advanced` fixture covers vector conversion/swizzle, separate, power,
 dot/cross, and equality-selection nodes.
 
+The displacement fixture uses two levels of linear refinement before baking;
+this is still not Catmull-Clark subdivision or adaptive tessellation.
+
 The `opacity` scene covers realtime opacity discard/scaling behavior.
 
 Its shader assertion also guards opacity scaling on direct-light contributions.

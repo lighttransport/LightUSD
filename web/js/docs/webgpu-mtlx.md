@@ -355,6 +355,10 @@ coverage beyond the earlier arithmetic/wave scene.
 The `ops-advanced` fixture extends this with typed vector conversion/swizzling,
 component separation, power, dot/cross products, and equality selection.
 
+The synthetic displacement fixture now requests two levels of bounded linear
+triangle refinement before the GPU displacement bake, exercising interior
+height samples instead of only moving the original triangle corners.
+
 Realtime raster shading now honors compiled opacity with a zero-opacity discard
 and bounded color scaling. The synthetic `opacity` scene exercises this path;
 full sorted transparency and blend compositing remain future work.
