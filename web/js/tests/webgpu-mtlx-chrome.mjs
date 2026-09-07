@@ -18,16 +18,20 @@ try {
   let started = false;
   for (let i = 0; i < 100; i++) { try { if ((await fetch(`http://127.0.0.1:${port}/webgpu-mtlx.html`)).ok) { started = true; break; } } catch {} await new Promise(r => setTimeout(r, 100)); }
   if (!started) throw new Error('Vite failed to serve webgpu-mtlx.html');
-  browser = await puppeteer.launch({ executablePath, headless: true, protocolTimeout: 600000, args: hardware ? [] : ['--enable-unsafe-webgpu', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+  browser = await puppeteer.launch({ executablePath, headless: true, timeout: 60000, protocolTimeout: 600000, args: hardware ? [] : ['--enable-unsafe-webgpu', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   page = await browser.newPage(); await page.setViewport({ width: 1100, height: 700 });
   page.on('console',msg=>{browserLog.push(msg.text());if(browserLog.length>30)browserLog.shift();});
   const errors = []; page.on('pageerror', e => errors.push(e.message));
-  await page.goto(`http://127.0.0.1:${port}/webgpu-mtlx.html?manual&width=96&height=64`);
+  await page.goto(`http://127.0.0.1:${port}/webgpu-mtlx.html?manual&width=96&height=64`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForFunction(() => window.__webgpuMtlx?.ready || window.__webgpuMtlx?.errors.length, { timeout: 60000 });
   const initial = await page.evaluate(() => ({ ready: window.__webgpuMtlx.ready, errors: window.__webgpuMtlx.errors }));
   assert.deepEqual(initial.errors, [], 'initialization errors'); assert.ok(initial.ready);
+  await page.evaluate(timeout => { globalThis.__webgpuMtlxRenderTimeout = timeout; }, Number(process.env.WEBGPU_MTLX_RENDER_TIMEOUT_MS || 120000));
   const results = await page.evaluate(async () => {
     const state = window.__webgpuMtlx, r = state.renderer;
+    const renderTimeout = Number(globalThis.__webgpuMtlxRenderTimeout || 120000);
+    const renderStep = r.renderStep.bind(r);
+    r.renderStep = (...args) => Promise.race([renderStep(...args), new Promise((_, reject) => setTimeout(() => reject(new Error(`renderStep timeout after ${renderTimeout}ms`)), renderTimeout))]);
     const {validateResourceLoading}=await import('/src/webgpu-mtlx/resource-validation.js');
     const resourceLoading=await validateResourceLoading();
     const {validateLibraryGraphs}=await import('/src/webgpu-mtlx/library-validation.js');const libraryGraphs=await validateLibraryGraphs(r.device);
