@@ -134,6 +134,7 @@ try {
     assert.ok(['path-spectral','path-physical'].includes(requestedReferenceMode),'reference mode must be path-spectral or path-physical');
     assert.ok(Number.isInteger(requestedReferenceSamples)&&requestedReferenceSamples>0&&requestedReferenceSamples<=32,'reference samples must be 1..32');
     for(const preset of referencePresets.filter(name=>!onlyPreset||name===onlyPreset)) {
+      console.log(`reference-start preset=${preset} mode=${requestedReferenceMode} samples=${requestedReferenceSamples}`);
       const stats=await page.evaluate(async (preset,requestedReferenceSamples,requestedReferenceMode)=>{
         const r=window.__webgpuMtlx.renderer;const {syntheticScene}=await import('/src/webgpu-mtlx/scene.js');
         r.canvas.width=192;r.canvas.height=128;await r.loadScene(syntheticScene(preset));r.setMode(requestedReferenceMode);
