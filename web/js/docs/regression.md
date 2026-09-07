@@ -119,6 +119,9 @@ Material replacement follows the same demand-driven pipeline path, preventing
 concurrent physical shader builds during interactive edits.
 The graph suite validates supported MaterialX unit annotations and rejects
 unknown unit names; the `ops` realtime fixture exercises the updated compiler.
+Path shader generation also checks that image sampling receives a nonzero UV
+footprint estimate for mip selection; exact ray differentials remain future
+work.
 
 The synthetic hardware matrix also covers the `coat` dielectric-lobe path.
 

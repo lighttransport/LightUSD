@@ -89,7 +89,12 @@ fn context(h: Hit, o: vec3f, d: vec3f) -> ShadingContext {
   let tri = triangles[h.id]; let w = 1.0-h.u-h.v;
   let n = normalize(tri.a.n.xyz*w+tri.b.n.xyz*h.u+tri.c.n.xyz*h.v);
   let tangent = normalize(cross(select(vec3f(0,1,0),vec3f(1,0,0),abs(n.y)>0.9),n));
-  return ShadingContext(o+d*h.t,n,tangent,cross(n,tangent),tri.a.uv.xy*w+tri.b.uv.xy*h.u+tri.c.uv.xy*h.v,0,0,vec2f(0),vec2f(0));
+  let p1=tri.b.p.xyz-tri.a.p.xyz; let p2=tri.c.p.xyz-tri.a.p.xyz;
+  let uv1=tri.b.uv.xy-tri.a.uv.xy; let uv2=tri.c.uv.xy-tri.a.uv.xy;
+  let uvScale=0.5*(length(uv1)/max(length(p1),1e-6)+length(uv2)/max(length(p2),1e-6));
+  let pixelWorld=max(2.0*cfg.right.w/f32(cfg.dimensions.x),2.0*cfg.up.w/f32(cfg.dimensions.y))*max(h.t,1e-4);
+  let footprint=max(1e-7,pixelWorld*uvScale);
+  return ShadingContext(o+d*h.t,n,tangent,cross(n,tangent),tri.a.uv.xy*w+tri.b.uv.xy*h.u+tri.c.uv.xy*h.v,0,0,vec2f(footprint,0),vec2f(0,footprint));
 }
 fn getSurface(id: u32, ctx: ShadingContext) -> Material {
   switch id { ${materials.map((_, i) => `case ${i}u: { return material${i}(ctx); }`).join('\n')} default: { return material0(ctx); } }
