@@ -460,6 +460,16 @@ test('procedural noise nodes compile deterministic bounded WGSL helpers', () => 
   ]};
   const source=compileGraph(doc); assert.match(source.body,/mxNoise2/); assert.match(source.body,/mxNoise3/); assert.match(contextWGSL,/mxHash3/);
 });
+test('cell-noise nodes hash integer cells without interpolation', () => {
+  const doc={nodes:[
+    {name:'uv',category:'texcoord',type:'vector2',inputs:{}},
+    {name:'c2',category:'cellnoise2d',type:'float',inputs:{in:{nodename:'uv'}}},
+    {name:'p',category:'position',type:'vector3',inputs:{}},
+    {name:'c3',category:'cellnoise3d',type:'float',inputs:{in:{nodename:'p'}}},
+    {name:'out',category:'add',type:'float',inputs:{in1:{nodename:'c2'},in2:{nodename:'c3'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/mxHash2\(floor/); assert.match(source.body,/mxHash3\(floor/);
+});
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
   assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/);
