@@ -67,6 +67,9 @@ dot/cross, and equality-selection nodes.
 The `layered` fixture covers an Oren–Nayar BSDF layered over an anisotropic VDF
 interior in the compiled scene path.
 
+The `edf` fixture covers a uniform EDF connected to a surface terminal and
+emission-only realtime rendering.
+
 The displacement fixture uses two levels of linear refinement before baking;
 this is still not Catmull-Clark subdivision or adaptive tessellation.
 

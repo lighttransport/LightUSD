@@ -358,6 +358,9 @@ component separation, power, dot/cross products, and equality selection.
 The `layered` fixture now compiles and raster-tests an Oren–Nayar top lobe over
 an anisotropic VDF interior, exercising BSDF-over-medium attachment in a scene.
 
+The `edf` fixture covers a `uniform_edf` connected to a surface terminal,
+including emission-only material compilation in the realtime target.
+
 The synthetic displacement fixture now requests two levels of bounded linear
 triangle refinement before the GPU displacement bake, exercising interior
 height samples instead of only moving the original triangle corners.

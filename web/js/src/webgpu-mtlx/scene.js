@@ -73,6 +73,12 @@ export function syntheticScene(preset = 'copper') {
       { name: 'surface', category: 'surface', type: 'surfaceshader', inputs: { bsdf: { nodename: 'layer' } } },
     ] };
   }
+  if (preset === 'edf') {
+    materials[1] = { nodes: [
+      { name: 'emit', category: 'uniform_edf', type: 'EDF', inputs: { color: { type: 'color3', value: [2.5, .8, .15] } } },
+      { name: 'surface', category: 'surface', type: 'surfaceshader', inputs: { edf: { nodename: 'emit' } } },
+    ] };
+  }
   if(preset==='displacement') {
     materials[1].nodes.unshift(
       {name:'uv',category:'texcoord',type:'vector2',inputs:{}},
