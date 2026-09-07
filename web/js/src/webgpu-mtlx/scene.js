@@ -10,6 +10,24 @@ export function surfaceDocument(color = [0.6, 0.2, 0.05], metal = 0, roughness =
 export function syntheticScene(preset = 'copper') {
   const positions = [], normals = [], uvs = [], indices = [], materialIds = [];
   const materials = [surfaceDocument([0.5, 0.5, 0.5], 0, 0.8), surfaceDocument([0.95, 0.55, 0.22], preset === 'copper' ? 1 : 0, 0.22)];
+  if (['glass','rough-glass','sss'].includes(preset)) {
+    materials[1] = surfaceDocument([1,1,1], 0, preset === 'glass' ? 0 : 0.22);
+    materials[1].nodes[0].inputs.transmission = { type: 'float', value: 1 };
+    materials[1].nodes[0].inputs.transmission_color = { type: 'color3', value: [.92,.98,1] };
+    if(preset==='sss') {
+      materials[1].nodes[0].inputs.transmission_color.value=[1,1,1];
+      materials[1].nodes[0].inputs.specular_ior={type:'float',value:1.3};
+      materials[1].nodes.unshift({name:'interior',category:'anisotropic_vdf',type:'VDF',inputs:{absorption:{type:'color3',value:[.08,.3,.7]},scattering:{type:'color3',value:[3,3,3]},anisotropy:{type:'float',value:.2}}});
+      materials[1].mediumOutput={nodename:'interior'};
+    }
+  }
+  if (preset === 'image') {
+    const data = new Float32Array(64 * 64 * 4);
+    for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) data.set(((x >> 3) + (y >> 3)) % 2 ? [.9,.3,.05,1] : [.05,.3,.9,1], (y * 64 + x) * 4);
+    materials[1].images = { checker: { width: 64, height: 64, data, colorspace: 'srgb_texture' } };
+    materials[1].nodes[0].inputs.base_color = { nodename: 'checker' };
+    materials[1].nodes.unshift({ name: 'checker', category: 'image', type: 'color3', inputs: { file: { type: 'filename', value: 'checker' } } });
+  }
   if (preset === 'graph') {
     materials[1] = { nodes: [
       { name: 'uv', category: 'texcoord', type: 'vector2', inputs: {} },
@@ -20,6 +38,22 @@ export function syntheticScene(preset = 'copper') {
       { name: 'color', category: 'mix', type: 'color3', inputs: { bg: { type: 'color3', value: [0.015, 0.05, 0.2] }, fg: { type: 'color3', value: [0.9, 0.6, 0.1] }, mix: { nodename: 'mask' } } },
       { name: 'surface', category: 'standard_surface', type: 'surfaceshader', inputs: { base_color: { nodename: 'color' }, specular_roughness: { type: 'float', value: 0.28 } } },
     ] };
+  }
+  if(preset==='displacement') {
+    materials[1].nodes.unshift(
+      {name:'uv',category:'texcoord',type:'vector2',inputs:{}},
+      {name:'u',category:'extract',type:'float',inputs:{in:{nodename:'uv'},index:{type:'integer',value:0}}},
+      {name:'freq',category:'multiply',type:'float',inputs:{in1:{nodename:'u'},in2:{type:'float',value:50.2654824574}}},
+      {name:'wave',category:'sin',type:'float',inputs:{in:{nodename:'freq'}}},
+      {name:'height',category:'multiply',type:'float',inputs:{in1:{nodename:'wave'},in2:{type:'float',value:.08}}}
+    );materials[1].displacementOutput={nodename:'height'};
+  }
+  if(preset==='native-copper'||preset==='native-glass') {
+    const glass=preset==='native-glass';
+    materials[1]={nodes:[
+      {name:'closure',category:glass?'dielectric_bsdf':'conductor_bsdf',type:'BSDF',inputs:glass?{scatter_mode:{type:'string',value:'RT'},roughness:{type:'vector2',value:[.04,.15]}}:{}},
+      {name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'closure'}}}
+    ]};
   }
   function sphere(cx, cy, cz, r, mat, segments = 64, rings = 32) {
     const first = positions.length / 3;
@@ -80,6 +114,11 @@ export function packScene(scene, { maxTriangles = 2_000_000 } = {}) {
   const nodeData = new Float32Array(nodes.length * 12);
   nodes.forEach((n, i) => nodeData.set([...n.lo, n.first, ...n.hi, n.count, n.escape, 0, 0, 0], i * 12));
   const triangleData = new Float32Array(ordered.length * 36);
-  ordered.forEach((t, i) => { for (let v = 0; v < 3; v++) triangleData.set([...t.p[v], 0, ...t.n[v], 0, ...t.uv[v], t.mat, 0], i * 36 + v * 12); });
-  return { nodeData, triangleData, triangleCount: ordered.length, nodeCount: nodes.length, bounds: nodes[0], camera: scene.camera, materials, provenance: scene.provenance || {} };
+  let areaCDF=0;
+  ordered.forEach((t, i) => {
+    const area=.5*Math.hypot(...cross(sub(t.p[1],t.p[0]),sub(t.p[2],t.p[0]))),start=areaCDF;areaCDF=Math.fround(areaCDF+area);
+    if(!Number.isFinite(areaCDF))throw new Error('Triangle area CDF exceeds float32');
+    for (let v = 0; v < 3; v++) triangleData.set([...t.p[v], [start,areaCDF,area][v], ...t.n[v], 0, ...t.uv[v], t.mat, 0], i * 36 + v * 12);
+  });
+  return { nodeData, triangleData, triangleCount: ordered.length, nodeCount: nodes.length, bounds: nodes[0], camera: scene.camera, lighting: scene.lighting, materials, provenance: scene.provenance || {} };
 }

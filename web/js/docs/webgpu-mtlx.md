@@ -1,6 +1,6 @@
 # WebGPU MaterialX implementation status
 
-This is an initial renderer milestone, **not the completed spectral reference
+This is an experimental renderer, **not the completed full reference
 renderer**. The original complete plan remains in the untracked repository-root
 `webgpu-mtlx.md`. Existing WebGPU/Three.js demos are unchanged.
 
@@ -36,6 +36,10 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 - Scalar/vector value emitters and an explicitly approximate Standard Surface /
   OpenPBR terminal mapping. The UI inventories 807 upstream NodeDefs, but this
   count is **not a supported-node count**; individual overloads remain unverified.
+- Image nodes backed by caller-decoded RGBA float resources in both modes:
+  closest/linear filtering; constant/clamp/periodic/mirror addressing; float,
+  vector and color outputs; default colors; linear-light area-filtered mip chains.
+  The image-node checker demo requires no downloaded textures.
 - Worker-built median triangle BVH, stackless compute traversal, per-hit UV/value
   evaluation, GGX/diffuse RGB path preview with progressive accumulation and a
   12-bounce limit. The preview uses a procedural sky and directional light.
@@ -53,16 +57,82 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 
 ## Not implemented
 
-Full MaterialX coverage; spectral transport and measured-spectrum overrides;
-reference BSDF closure composition; random-walk SSS; hair; transmission and
-dispersion; volumes; texture/UDIM evaluation; bump and geometric displacement;
+Full MaterialX coverage; general BSDF/EDF/VDF closure composition/layering;
+MaterialX subsurface_bsdf albedo/radius conversion; hair and curves;
+file texture decoding/UDIM; bump; Catmull-Clark displacement refinement;
 faithful authored ShaderBall materials/lights/EXR maps; independent physical
-reference-image validation; long-path continuation and variance estimates.
-`setMode('reference')` fails rather than substituting the RGB preview. Nonzero
-transmission and unsupported surface inputs fail compilation.
+reference-image validation; complete ACEScg graph color management.
+`setMode('reference')` fails rather than substituting the RGB preview. Explicit
+unsupported surface inputs fail compilation. Transmissive materials select the
+resumable transport path instead of silently becoming opaque in path-preview.
+
+## Experimental reference-transport work
+
+`path-physical` runs RGB transport; `path-spectral` samples one wavelength over
+360–830 nm and accumulates CIE XYZ. Both retain path state across four-event
+dispatches, without a bounce cutoff. Roulette begins after five scattering
+events. They are not enabled under a misleading `reference` alias.
+
+Implemented native nodes: `dielectric_bsdf` (R/T/RT, anisotropic GGX, smooth and
+rough refraction, exact Fresnel), `conductor_bsdf` (complex Fresnel), uncompensated
+`oren_nayar_diffuse_bsdf`, `uniform_edf`, and `surface`. Native closures currently
+use geometric normals and a generated tangent frame. Standard Surface/OpenPBR
+remain approximate mappings. Thin film, sheen, coat, closure mixing/layering and
+multiple-scattering microfacet compensation remain missing.
+
+Attach `document.spectra` curves as sorted `[wavelengthNm,value]` pairs, keyed by
+`base_color`, `transmission_color`, `emission_color`, `ior`, `conductor_ior` or
+`extinction`. Scalar IOR curves must cover 360–830 nm. RGB uplift is an explicit
+assumption using PBRT v3 numerical bases, with illuminant white normalized to
+CIE Y=1; measured data avoids this ambiguity. The CIE table is attributed under
+CC-BY-SA-4.0 and the PBRT numerical tables retain their BSD license notice.
+
+`document.mediumOutput` selects an `anisotropic_vdf` graph for the closed mesh
+interior. Homogeneous absorption/scattering uses free-flight sampling and HG
+phase sampling. Spatially varying coefficients require spectral mode and an
+explicit conservative `document.mediumMajorant`; delta tracking checks for bound
+violations at sampled events. This supports geometric random walks, not the
+MaterialX subsurface albedo/radius parameterization. Cameras are assumed to start
+in vacuum; the stack supports three nested interiors and fails on overflow or
+mismatched boundaries. Volume direct-light sampling is not implemented.
+
+Scene `lighting.environment` is an optional constant RGB radiance; optional
+`lighting.directional` contains `direction` and `radiance`. Otherwise the original
+procedural lights are used. The physical paths sample the environment and all
+triangles (area-weighted), with BSDF/light MIS. Realtime does not reproduce the
+new transmission and volume effects.
+
+`document.displacementOutput` selects float normal displacement or a world-space
+vector3 offset. `scene.displacementRefinement` (0–5, budget-limited) performs
+linear triangle refinement. GPU graph evaluation and normal recomputation happen
+before worker BVH construction; raster and paths share the displaced triangles.
+Material changes that affect displacement rebake the source mesh. This is not
+Catmull-Clark subdivision or a verified displacement-convergence implementation.
+
+Float captures return per-pixel `sampleCounts` and, for resumable modes,
+`variance` of the mean (NaN for fewer than two samples). Spectral float captures
+and EXRs contain XYZ, not RGB mislabeled as XYZ. Invalid transport prevents further
+rendering/capture until reset. No denoising or radiance clamping is applied.
 
 The current render color convention is linear RGB without a validated ACEScg
 pipeline. Do not use these outputs as ground truth or claim the full plan done.
+
+### Decoded image resource API and limits
+
+Attach `document.images[filename] = {width, height, data, colorspace}` before
+loading a scene or replacing a material. `data` is unpremultiplied RGBA float
+data with row zero at v=0. Colorspace is `lin_rec709` (default), `srgb_texture`
+(RGB decoding only; alpha unchanged), or explicitly untransformed `raw` data.
+The renderer packs resources into a storage buffer with a 64 MiB total mip
+budget, validates finite float32 values, and diagnoses missing files.
+It does not fetch/decode filenames automatically. Other color spaces fail.
+
+Raster mip selection uses the base mesh UV derivatives, so transformed or
+procedural UV graph derivatives are approximate. Path preview currently uses
+level zero: ray differentials/cones remain outstanding. Cubic filtering,
+connected filename/sampler inputs, layers, image sequences, UDIM and full
+MaterialX colorspace inheritance are not implemented. These images do not
+complete authored ShaderBall material support.
 
 ## Verification
 
@@ -77,12 +147,24 @@ Screenshots and JSON reports go to `web/js/.regression/webgpu-mtlx`.
 
 Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 
-- Ten Node tests pass, including EXR decoding through Three.js independently.
+- Eighteen Node tests pass, including native closure diagnostics, image checks and EXR
+  decoding through Three.js independently.
 - 27 numeric WGSL cases pass at `1e-5 + 1e-4 * abs(expected)` tolerance.
+- Ten analytic GPU image sampling cases pass (addressing, edge/default color,
+  bilinear/trilinear and explicit mip levels), alongside textured path/raster
+  scene loading and material replacement tests.
+- Transport checks cover Fresnel/TIR, reflection/refraction reciprocity,
+  32,768-sample dielectric energy/PDF consistency, Beer survival and HG mean.
+  Spectral checks cover official CIE column sums, GPU XYZ integration, measured
+  curves and white normalization. End-to-end constant RGB emitter radiance and
+  zero variance, equal-energy spectral emitter Y, and baked displacement pass.
+- `--reference-images` adds four 192x128 32-spp spectral smoke renders for native
+  conductor, rough dielectric, scattering media and displacement. These noisy
+  smoke images are not independent full-scene reference comparisons.
 - ShaderBall geometry, accumulation/reset, exposure, resize, worker scene loading,
   graph replacement and mode switching pass without GPU or page errors.
-- Fixed 1280×720 ShaderBall raster diagnostic: 30-second run, 1,741 frames,
-  median 16.9 ms, p95 19.6 ms. These measurements cover the diagnostic shaders,
+- Fixed 1280×720 ShaderBall raster diagnostic: latest 30-second run, 1,570 frames,
+  median 19.0 ms, p95 21.3 ms. These measurements cover the diagnostic shaders,
   not the planned complete MaterialX realtime renderer.
 - Combined and next-only WASM builds complete with cached Emscripten 4.0.8.
 - Node regression profile in WSL: 19 reported passes, zero failures (the native

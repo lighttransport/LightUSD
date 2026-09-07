@@ -28,6 +28,12 @@ try {
     const state = window.__webgpuMtlx, r = state.renderer;
     const { validateValueKernels } = await import('/src/webgpu-mtlx/gpu-validation.js');
     const numeric = await validateValueKernels(r.device);
+    const { validateImageKernels } = await import('/src/webgpu-mtlx/image-validation.js');
+    const imageNumeric = await validateImageKernels(r.device);
+    const { validateTransportKernels } = await import('/src/webgpu-mtlx/transport-validation.js');
+    const transport = await validateTransportKernels(r.device);
+    const { validateSpectrumKernels } = await import('/src/webgpu-mtlx/spectrum-validation.js');
+    const spectrum = await validateSpectrumKernels(r.device);
     for (let i = 0; i < 4; i++) await r.renderStep();
     const capture = await r.capture({ format: 'float32' });
     const luminance = []; for (let i = 0; i < capture.pixels.length; i += 4) luminance.push(capture.pixels[i] + capture.pixels[i + 1] + capture.pixels[i + 2]);
@@ -37,7 +43,55 @@ try {
     r.setMode('path-preview'); r.setOptions({ resolutionScale: 0.5 }); await r.renderStep();
     const resized = await r.capture({ format: 'float32' });
     const { syntheticScene } = await import('/src/webgpu-mtlx/scene.js'); await r.loadScene(syntheticScene('graph')); await r.renderStep();
-    return { numeric, samples, exposureSamples, reset, raster, resized: resized.metadata, min: Math.min(...luminance), max: Math.max(...luminance), finite: capture.pixels.every(Number.isFinite), adapter: r.stats.adapter, errors: [...state.errors, ...r.errors] };
+    const textured = syntheticScene(); const doc = textured.materials[1];
+    doc.images = { checker: { width: 2, height: 2, colorspace: 'srgb_texture', data: [1,0,0,1, 0,1,0,1, 0,0,1,1, 1,1,1,1] } };
+    doc.nodes[0].inputs.base_color = { nodename: 'image' };
+    doc.nodes.unshift({ name: 'image', category: 'image', type: 'color3', inputs: { file: { type: 'filename', value: 'checker' } } });
+    await r.loadScene(textured); await r.renderStep();
+    const imageCapture = await r.capture({ format: 'float32' });
+    if (!imageCapture.pixels.every(Number.isFinite)) throw new Error('Non-finite textured render');
+    r.setMode('realtime'); await r.renderStep();
+    await r.setMaterialDocument(doc); await r.renderStep(); r.setMode('path-preview');
+    await r.loadScene(syntheticScene('rough-glass')); r.setMode('path-physical');
+    let dispatches=0; while(r.samples<4 && dispatches<200) { await r.renderStep(); dispatches++; }
+    if(r.samples!==4) throw new Error('Resumable transport did not finish four samples');
+    const physicalCapture=await r.capture({format:'float32'});
+    if(!physicalCapture.pixels.every(Number.isFinite)) throw new Error('Physical capture is non-finite');
+    const physical={dispatches,samples:r.samples};
+    const spectralScene=syntheticScene('glass'); spectralScene.materials[1].spectra={ior:[[360,1.6],[830,1.4]]};
+    await r.loadScene(spectralScene); r.setMode('path-spectral');
+    let spectralDispatches=0; while(r.samples<4 && spectralDispatches<200) {await r.renderStep();spectralDispatches++;}
+    if(r.samples!==4)throw new Error('Spectral transport did not finish');
+    const spectralCapture=await r.capture({format:'float32'});
+    if(spectralCapture.metadata.colorSpace!=='CIE XYZ' || !spectralCapture.pixels.every(Number.isFinite))throw new Error('Invalid spectral capture');
+    await r.loadScene(syntheticScene('sss'));let volumeDispatches=0;
+    while(r.samples<2 && volumeDispatches<400){await r.renderStep();volumeDispatches++;}
+    if(r.samples!==2)throw new Error('Random-walk volume did not finish');
+    const volumeCapture=await r.capture({format:'float32'});if(!volumeCapture.pixels.every(Number.isFinite))throw new Error('Invalid volume radiance');
+    const heterogeneous=syntheticScene('sss');heterogeneous.materials[1].mediumMajorant=5;await r.loadScene(heterogeneous);let heterogeneousDispatches=0;
+    while(r.samples<1&&heterogeneousDispatches<400){await r.renderStep();heterogeneousDispatches++;}if(r.samples!==1)throw new Error('Delta-tracking did not finish');
+    const {bakeDisplacement}=await import('/src/webgpu-mtlx/displacement.js');
+    const flat={positions:[0,0,0,1,0,0,0,1,0],indices:[0,1,2],materials:[{nodes:[{name:'height',category:'constant',type:'float',inputs:{value:{type:'float',value:.25}}}],displacementOutput:{nodename:'height'}}],displacementRefinement:1};
+    const baked=await bakeDisplacement(flat,r.device);for(let i=2;i<baked.positions.length;i+=3)if(Math.abs(baked.positions[i]-.25)>1e-6)throw new Error('Displacement mismatch');
+    await r.loadScene(syntheticScene('displacement'));r.setMode('realtime');await r.renderStep();
+    if(!r.scene.provenance.displacement?.bakedBeforeBVH)throw new Error('Displacement did not rebuild scene geometry');
+    const emitterMaterial={nodes:[
+      {name:'black',category:'oren_nayar_diffuse_bsdf',type:'BSDF',inputs:{weight:{type:'float',value:0}}},
+      {name:'emission',category:'uniform_edf',type:'EDF',inputs:{color:{type:'color3',value:[2,3,4]}}},
+      {name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'black'},edf:{nodename:'emission'}}}
+    ]};
+    const emitterScene={positions:[-10,-10,0,10,-10,0,10,10,0,-10,10,0],indices:[0,1,2,0,2,3],materials:[emitterMaterial],camera:{origin:[0,0,1],target:[0,0,0],fov:45},lighting:{environment:[0,0,0],directional:{radiance:[0,0,0]}}};
+    await r.loadScene(emitterScene);r.setMode('path-physical');while(r.samples<3)await r.renderStep();
+    const emissionCapture=await r.capture({format:'float32'});
+    for(let i=0;i<emissionCapture.pixels.length;i+=4)for(let k=0;k<3;k++)if(Math.abs(emissionCapture.pixels[i+k]-(k+2))>1e-5||emissionCapture.variance[i+k]>1e-10)throw new Error('Analytic emitter radiance/variance failed');
+    emitterMaterial.spectra={emission_color:[[360,2],[830,2]]};await r.loadScene(emitterScene);r.setMode('path-spectral');while(r.samples<16)await r.renderStep();
+    const spectralEmitter=await r.capture({format:'float32'});let meanY=0;for(let i=1;i<spectralEmitter.pixels.length;i+=4)meanY+=spectralEmitter.pixels[i]/spectralEmitter.sampleCounts.length;
+    if(Math.abs(meanY-2)>.06)throw new Error(`Equal-energy spectral emitter Y=${meanY}`);
+    emitterMaterial.nodes[0].inputs.weight.value=-1;await r.loadScene(emitterScene);r.setMode('path-physical');
+    let rejected=false;try{await r.renderStep();}catch(e){rejected=/Physical transport invalid/.test(e.message);}if(!rejected)throw new Error('Negative closure weight was not rejected');
+    rejected=false;try{await r.capture({format:'float32'});}catch(e){rejected=/Physical transport invalid/.test(e.message);}if(!rejected)throw new Error('Invalid transport capture was not blocked');
+    await r.loadScene(syntheticScene('image')); r.setMode('path-preview');
+    return { numeric, imageNumeric, transport, spectrum, physical, spectralDispatches, volumeDispatches,analyticEmitter:{rgb:[2,3,4],spectralMeanY:meanY}, samples, exposureSamples, reset, raster, resized: resized.metadata, min: Math.min(...luminance), max: Math.max(...luminance), finite: capture.pixels.every(Number.isFinite), adapter: r.stats.adapter, errors: [...state.errors, ...r.errors] };
   });
   assert.equal(results.samples, 4); assert.equal(results.exposureSamples, 4); assert.equal(results.reset, 0);
   assert.ok(results.finite); assert.ok(results.max - results.min > 0.1, 'nonblank radiance');
@@ -55,6 +109,20 @@ try {
     for (let i = 0; i < 32; i++) await r.renderStep();
   });
   await page.screenshot({ path: path.join(out, 'chrome.png') });
+  const referenceImages=[];
+  if(process.argv.includes('--reference-images')) {
+    for(const preset of ['native-copper','native-glass','sss','displacement']) {
+      const stats=await page.evaluate(async preset=>{
+        const r=window.__webgpuMtlx.renderer;const {syntheticScene}=await import('/src/webgpu-mtlx/scene.js');
+        r.canvas.width=192;r.canvas.height=128;await r.loadScene(syntheticScene(preset));r.setMode('path-spectral');
+        let dispatches=0;while(r.samples<32&&dispatches<4000){await r.renderStep();dispatches++;}
+        if(r.samples!==32)throw new Error(`${preset} did not converge to 32 spp`);
+        const capture=await r.capture({format:'float32'});if(!capture.pixels.every(Number.isFinite))throw new Error(`${preset} has invalid radiance`);
+        return {preset,samples:r.samples,dispatches};
+      },preset);
+      referenceImages.push(stats);console.log(JSON.stringify(stats));await page.screenshot({path:path.join(out,`${preset}-spectral.png`)});
+    }
+  }
   let shaderballResult;
   if (shaderball) {
     await page.select('#scene', 'shaderball');
@@ -81,7 +149,8 @@ try {
     });
     assert.ok(performanceResult.pngBytes > 100); assert.ok(performanceResult.p95 <= 33.3, `720p frame p95 ${performanceResult.p95} exceeds target`);
   }
-  const report = { browser: await browser.version(), requestedHardware: hardware, inventoriedNodeDefs: inventory.length, shaderball: shaderballResult, performance: performanceResult, ...results };
+  const finalErrors=await page.evaluate(()=>[...window.__webgpuMtlx.errors,...window.__webgpuMtlx.renderer.errors]);assert.deepEqual(finalErrors,[]);assert.deepEqual(errors,[]);
+  const report = { browser: await browser.version(), requestedHardware: hardware, inventoriedNodeDefs: inventory.length, shaderball: shaderballResult, performance: performanceResult,referenceImages, ...results };
   fs.writeFileSync(path.join(out, 'chrome.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ browser: report.browser, adapter: results.adapter, inventoriedNodeDefs: inventory.length, numericPassed: results.numeric.length, samples: results.samples, shaderball: shaderballResult, performance: performanceResult, errors: results.errors, report: path.relative(root, path.join(out, 'chrome.json')) }, null, 2));
 } finally { await browser?.close(); server.kill(); }

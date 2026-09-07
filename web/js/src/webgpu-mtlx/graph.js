@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 // Typed, deterministic MaterialX value-graph compiler. No shader-source eval.
+import { closureTypesWGSL, MAX_CLOSURE_LOBES } from './closures.js';
 export const MATERIALX_VERSION = '1.39.5';
 export class GraphError extends Error {
   constructor(code, path, message) { super(`${path}: ${message}`); this.name = 'GraphError'; this.code = code; this.path = path; }
 }
-const types = { float: 'f32', integer: 'i32', boolean: 'bool', color3: 'vec3f', color4: 'vec4f', vector2: 'vec2f', vector3: 'vec3f', vector4: 'vec4f', matrix33: 'mat3x3f', matrix44: 'mat4x4f' };
+const types = { float: 'f32', integer: 'i32', boolean: 'bool', color3: 'vec3f', color4: 'vec4f', vector2: 'vec2f', vector3: 'vec3f', vector4: 'vec4f', matrix33: 'mat3x3f', matrix44: 'mat4x4f', VDF: 'Medium', BSDF: 'Closure', EDF: 'vec3f' };
 const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4: 4, vector4: 4, vector2: 2, matrix33: 9, matrix44: 16 };
 export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'exp', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan2', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
-const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'surfacematerial']);
+const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'surfacematerial', 'surface']);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
 export function literal(type, value, path = '') {
+  if(value===''&&type==='BSDF')return 'emptyClosure()';
+  if(value===''&&type==='EDF')return 'vec3f(0)';
+  if(value===''&&type==='VDF')return 'Medium(vec3f(0),vec3f(0),0)';
   const t = types[type];
   if (!t) fail('TYPE', path, `unsupported value type ${type}`);
   if (type === 'boolean') {
@@ -49,7 +53,7 @@ export function parseMaterialX(xml, { source = '', parser = globalThis.DOMParser
 }
 
 /** Compile a normalized graph. Connections are {nodename, output} or {nodegraph, output}. */
-export function compileGraph(document, { output, library = {}, material = false } = {}) {
+export function compileGraph(document, { output, library = {}, material = false, imageDescriptors = {} } = {}) {
   const rawDefinitions = Object.assign(Object.create(null), library.definitions, document.definitions), definitions = Object.create(null);
   function inherit(name, chain = new Set()) {
     if (definitions[name]) return definitions[name];
@@ -138,13 +142,78 @@ export function compileGraph(document, { output, library = {}, material = false 
       const x = (k, fallback, expected) => input(k, fallback, expected).code;
       const same = k => x(k, undefined, type);
       const binary = op => `(${same('in1')} ${op} ${same('in2')})`;
-      let code;
+      let code, closureCount = 0, hasInterior = false;
       switch (n.category) {
+        case 'uniform_edf': code = x('color',[1,1,1],'color3'); break;
+        case 'surface': {
+          if(ins.opacity && Number(ins.opacity.value)!==1)fail('UNSUPPORTED',key,'surface cutout opacity is not implemented');
+          if(ins.thin_walled && ![false,'false'].includes(ins.thin_walled.value))fail('UNSUPPORTED',key,'thin-walled transport is not implemented');
+          const bsdf=ins.bsdf?.value===''||!ins.bsdf ? 'emptyClosure()' : x('bsdf',undefined,'BSDF');
+          const edf=ins.edf?.value===''||!ins.edf ? 'vec3f(0)' : x('edf',undefined,'EDF');
+          code=`surfaceEmission(${bsdf},${edf})`;break;
+        }
+        case 'dielectric_bsdf': case 'conductor_bsdf': case 'oren_nayar_diffuse_bsdf': {
+          for(const k of ['normal','tangent'])if(n.inputs?.[k])fail('UNSUPPORTED',key,'authored closure normal/tangent is not implemented');
+          if(ins.retroreflective && ![false,'false'].includes(ins.retroreflective.value))fail('UNSUPPORTED',key,'retroreflection is not implemented');
+          if(ins.thinfilm_thickness && Number(ins.thinfilm_thickness.value)!==0)fail('UNSUPPORTED',key,'thin film is not implemented');
+          if(ins.distribution && ins.distribution.value!=='ggx')fail('UNSUPPORTED',key,'only GGX microfacets are implemented');
+          if(n.category==='oren_nayar_diffuse_bsdf') {
+            if(ins.energy_compensation && ![false,'false'].includes(ins.energy_compensation.value))fail('UNSUPPORTED',key,'Oren-Nayar compensation is not implemented');
+            code=`nativeDiffuse(${x('color',[.18,.18,.18],'color3')},${x('weight',1,'float')},${x('roughness',0,'float')})`;
+          } else if(n.category==='conductor_bsdf') {
+            code=`nativeConductor(${x('ior',[.183,.421,1.373],'color3')},${x('extinction',[3.424,2.346,1.77],'color3')},${x('roughness',[.05,.05],'vector2')},${x('weight',1,'float')})`;
+          } else {
+            const mode=['R','T','RT'].indexOf(ins.scatter_mode?.value??'R');if(mode<0||ins.scatter_mode?.nodename||ins.scatter_mode?.nodegraph||ins.scatter_mode?.interfacename)fail('UNSUPPORTED',key,'invalid or connected scatter_mode');
+            code=`nativeDielectric(${x('tint',[1,1,1],'color3')},${x('ior',1.5,'float')},${x('roughness',[.05,.05],'vector2')},${x('weight',1,'float')},${mode+1}u)`;
+          }
+          code=`closureLeaf(${code})`;closureCount=1;break;
+        }
+        case 'layer': {
+          const top=input('top',undefined,'BSDF'),base=input('base');
+          if(base.type!=='VDF')fail('UNSUPPORTED',key,'BSDF-over-BSDF transport requires a layered integrator; only BSDF-over-VDF is implemented');
+          if(top.hasInterior)fail('SEMANTICS',key,'closure already has an interior');
+          code=`closureInterior(${top.code},${base.code})`;closureCount=top.closureCount||0;hasInterior=true;break;
+        }
+        case 'anisotropic_vdf':
+          code = `Medium(${x('absorption',[0,0,0],'color3')},${x('scattering',[0,0,0],'color3')},${x('anisotropy',0,'float')})`; break;
+        case 'image': {
+          if (!['float', 'color3', 'color4', 'vector2', 'vector3', 'vector4'].includes(type)) fail('TYPE', key, 'invalid image output type');
+          for (const name of Object.keys(ins)) if (!['file', 'default', 'texcoord', 'uaddressmode', 'vaddressmode', 'filtertype', 'layer', 'framerange', 'frameoffset', 'frameendaction'].includes(name)) fail('UNSUPPORTED', key, `unsupported image input ${name}`);
+          for (const name of ['layer', 'framerange', 'frameoffset']) if (ins[name] && !['', '0', 0].includes(ins[name].value)) fail('UNSUPPORTED', key, `image ${name} is not implemented`);
+          const file = ins.file?.value ?? '';
+          if (ins.file && (ins.file.nodename || ins.file.nodegraph || ins.file.interfacename)) fail('UNSUPPORTED', key, 'connected image filenames are not implemented');
+          const fallback = x('default', widths[type] === 1 ? 0 : Array(widths[type]).fill(0), type);
+          if (!file) { code = fallback; break; }
+          const descriptor = Object.hasOwn(imageDescriptors, file) && imageDescriptors[file];
+          if (!descriptor) fail('RESOURCE', key, `missing decoded image ${file}`);
+          if (n.colorspace && n.colorspace !== descriptor.colorspace) fail('SEMANTICS', key, 'image colorspace differs from decoded resource');
+          const address = name => {
+            const p = ins[name]; const mode = ['constant', 'clamp', 'periodic', 'mirror'].indexOf(p?.value ?? 'periodic');
+            if (mode < 0 || p?.nodename || p?.interfacename || p?.nodegraph) fail('UNSUPPORTED', key, 'invalid or connected image address mode');
+            return `${mode}u`;
+          };
+          const filter = ins.filtertype?.value ?? 'linear';
+          if (!['closest', 'linear'].includes(filter) || ins.filtertype?.nodename || ins.filtertype?.interfacename || ins.filtertype?.nodegraph) fail('UNSUPPORTED', key, 'only static closest/linear image filters are implemented');
+          const uv = ins.texcoord ? x('texcoord', undefined, 'vector2') : 'ctx.uv';
+          const fill = widths[type] === 4 ? fallback : widths[type] === 3 ? `vec4f(${fallback},0)` : widths[type] === 2 ? `vec4f(${fallback},0,0)` : `vec4f(${fallback})`;
+          const swizzle = ({ float: 'r', vector2: 'rg', vector3: 'rgb', color3: 'rgb', vector4: 'rgba', color4: 'rgba' })[type];
+          const size = `vec2f(${descriptor.width}.0,${descriptor.height}.0)`;
+          const lod = `log2(max(1.0,max(length(ctx.uvDx*${size}),length(ctx.uvDy*${size}))))`;
+          code = `imageSample(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${filter === 'linear'},${fill}).${swizzle}`;
+          break;
+        }
         case 'constant': code = same('value'); break;
-        case 'add': code = binary('+'); break;
+        case 'add': {
+          if(type==='BSDF') {const a=input('in1',undefined,'BSDF'),b=input('in2',undefined,'BSDF');if(a.hasInterior||b.hasInterior)fail('SEMANTICS',key,'attach the interior after composing surface lobes');code=`closureAdd(${a.code},${b.code})`;closureCount=(a.closureCount||0)+(b.closureCount||0);}
+          else code = binary('+'); break;
+        }
         case 'subtract': code = binary('-'); break;
         case 'multiply': case 'divide': {
           const a = input('in1', undefined, type), b = input('in2');
+          if(type==='BSDF') {
+            if(n.category!=='multiply'||!['float','color3'].includes(b.type))fail('TYPE',key,'BSDF weighting requires float or color3 multiplication');
+            code=`closureScale(${a.code},${b.type==='float'?`vec3f(${b.code})`:b.code})`;closureCount=a.closureCount||0;hasInterior=a.hasInterior||false;break;
+          }
           if (b.type !== type && b.type !== 'float') fail('TYPE', key, 'invalid scalar/vector arithmetic');
           code = `(${a.code} ${n.category === 'multiply' ? '*' : '/'} ${b.code})`; break;
         }
@@ -153,10 +222,13 @@ export function compileGraph(document, { output, library = {}, material = false 
         case 'absval': case 'sign': case 'floor': case 'ceil': case 'round': case 'sqrt': case 'ln': case 'exp': case 'sin': case 'cos': case 'tan': case 'asin': case 'acos': case 'normalize': code = `${({ absval: 'abs', ln: 'log' })[n.category] || n.category}(${same('in')})`; break;
         case 'atan2': code = `atan2(${same('iny')},${same('inx')})`; break;
         case 'clamp': code = `clamp(${same('in')},${x('low', undefined, type)},${x('high', undefined, type)})`; break;
-        case 'mix': code = `mix(${same('bg')},${same('fg')},${x('mix')})`; break;
+        case 'mix': {
+          if(type==='BSDF'){const a=input('bg',undefined,'BSDF'),b=input('fg',undefined,'BSDF');if(a.hasInterior||b.hasInterior)fail('SEMANTICS',key,'attach the interior after composing surface lobes');code=`closureMix(${a.code},${b.code},${x('mix',0,'float')})`;closureCount=(a.closureCount||0)+(b.closureCount||0);}
+          else code = `mix(${same('bg')},${same('fg')},${x('mix')})`; break;
+        }
         case 'smoothstep': code = `smoothstep(${same('low')},${same('high')},${same('in')})`; break;
         case 'invert': code = `(${same('amount')} - ${same('in')})`; break;
-        case 'dot': code = same('in'); break;
+        case 'dot': result = input('in',undefined,type); break;
         case 'magnitude': code = `length(${x('in')})`; break;
         case 'dotproduct': code = `dot(${x('in1')},${x('in2')})`; break;
         case 'crossproduct': code = `cross(${x('in1', undefined, 'vector3')},${x('in2', undefined, 'vector3')})`; break;
@@ -203,23 +275,22 @@ export function compileGraph(document, { output, library = {}, material = false 
         case 'standard_surface': case 'open_pbr_surface': {
           if (!material) fail('CONTEXT', key, 'surface requires material compilation');
           const open = n.category === 'open_pbr_surface';
-          const transmission = n.inputs?.[open ? 'transmission_weight' : 'transmission'];
-          if (transmission && (transmission.nodename || transmission.nodegraph || Number(transmission.value) !== 0)) fail('UNSUPPORTED', key, 'transmission transport is not implemented yet');
           // This baseline mapping is explicitly approximate, not a reference closure.
-          const fields = [x('base_color', [0.8, 0.8, 0.8], 'color3'), x(open ? 'base_metalness' : 'metalness', 0, 'float'), x('specular_roughness', 0.3, 'float'), x('specular_ior', 1.5, 'float'), x(open ? 'transmission_weight' : 'transmission', 0, 'float'), x('emission_color', [1, 1, 1], 'color3'), x(open ? 'emission_luminance' : 'emission', 0, 'float')];
-          const supported = new Set(['base_color', 'base_metalness', 'metalness', 'specular_roughness', 'specular_ior', 'transmission_weight', 'transmission', 'emission_color', 'emission_luminance', 'emission']);
+          const fields = [x('base_color', [0.8, 0.8, 0.8], 'color3'), x(open ? 'base_metalness' : 'metalness', 0, 'float'), x('specular_roughness', 0.3, 'float'), x('specular_ior', 1.5, 'float'), x(open ? 'transmission_weight' : 'transmission', 0, 'float'), x('emission_color', [1, 1, 1], 'color3'), x(open ? 'emission_luminance' : 'emission', 0, 'float'), x('specular_anisotropy', 0, 'float'), x('transmission_color', [1,1,1], 'color3')];
+          const supported = new Set(['base_color', 'base_metalness', 'metalness', 'specular_roughness', 'specular_ior', 'transmission_weight', 'transmission', 'emission_color', 'emission_luminance', 'emission', 'specular_anisotropy', 'transmission_color']);
           for (const k of Object.keys(n.inputs || {})) if (!supported.has(k)) fail('UNSUPPORTED', `${key}/${k}`, 'surface input not yet implemented');
-          code = `Material(${fields.join(',')})`; break;
+          code = `materialFromLobe(makeMaterial(${fields.join(',')}))`; break;
         }
         case 'surfacematerial': result = input('surfaceshader'); break;
         default: fail('UNSUPPORTED', key, `node ${n.category} (${type}) is not implemented`);
       }
       if (!result) {
-        const target = materialCategories.has(n.category) ? 'Material' : types[type];
+        if(closureCount>MAX_CLOSURE_LOBES)fail('LIMIT',key,`closure exceeds ${MAX_CLOSURE_LOBES} lobes`);
+        const target = materialCategories.has(n.category) ? 'Material' : type==='EDF' ? 'vec3f' : types[type];
         if (!target) fail('TYPE', key, `unsupported output type ${type}`);
         const id = `n${serial++}`;
         lines.push(`let ${id}: ${target} = ${code};`);
-        result = { type, code: id };
+        result = { type, code: id, closureCount, hasInterior };
       }
     }
     used.add(n.category); active.delete(key); cached.set(key, result); return result;
@@ -229,5 +300,13 @@ export function compileGraph(document, { output, library = {}, material = false 
   return { body: lines.join('\n'), expression: value.code, type: value.type, categories: [...used].sort(), diagnostics: [], referenceReady: false };
 }
 
-export const contextWGSL = `struct ShadingContext { position: vec3f, normal: vec3f, tangent: vec3f, bitangent: vec3f, uv: vec2f, time: f32, frame: f32 }
-struct Material { base: vec3f, metal: f32, roughness: f32, ior: f32, transmission: f32, emission: vec3f, emissionWeight: f32 }`;
+export const contextWGSL = `struct ShadingContext { position: vec3f, normal: vec3f, tangent: vec3f, bitangent: vec3f, uv: vec2f, time: f32, frame: f32, uvDx: vec2f, uvDy: vec2f }
+struct Lobe { base: vec3f, metal: f32, roughness: f32, ior: f32, transmission: f32, emission: vec3f, emissionWeight: f32, anisotropy: f32, transmissionColor: vec3f, kind:u32, weight:f32, alpha:vec2f, complexIOR:vec3f, extinction:vec3f, scatterMode:u32 }
+struct Medium { absorption: vec3f, scattering: vec3f, anisotropy: f32 }
+fn makeMaterial(base:vec3f,metal:f32,rough:f32,ior:f32,trans:f32,emission:vec3f,emissionWeight:f32,anisotropy:f32,tint:vec3f)->Lobe {
+ return Lobe(base,metal,rough,ior,trans,emission,emissionWeight,anisotropy,tint,0u,1.0,vec2f(rough*rough),vec3f(ior),vec3f(0),3u);
+}
+fn nativeDiffuse(color:vec3f,weight:f32,rough:f32)->Lobe {var m=makeMaterial(color,0,rough,1.5,0,vec3f(0),0,0,vec3f(1));m.kind=3u;m.weight=weight;return m;}
+fn nativeDielectric(tint:vec3f,ior:f32,alpha:vec2f,weight:f32,mode:u32)->Lobe {var m=makeMaterial(tint,0,sqrt(max(alpha.x,alpha.y)),ior,1,vec3f(0),0,0,tint);m.kind=1u;m.weight=weight;m.alpha=alpha;m.scatterMode=mode;return m;}
+fn nativeConductor(ior:vec3f,k:vec3f,alpha:vec2f,weight:f32)->Lobe {var m=makeMaterial(vec3f(1),1,sqrt(max(alpha.x,alpha.y)),1.5,0,vec3f(0),0,0,vec3f(1));m.kind=2u;m.complexIOR=ior;m.extinction=k;m.alpha=alpha;m.weight=weight;return m;}
+${closureTypesWGSL}`;

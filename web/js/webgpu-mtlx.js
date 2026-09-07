@@ -23,11 +23,11 @@ async function main() {
       initial = await loadShaderBallGeometry(s => { $('status').textContent = s; });
       renderer.setMode('realtime'); $('mode').value = 'realtime';
     } else initial = syntheticScene($('scene').value);
-    await renderer.loadScene(initial); syncOrbit(initial.camera); state.ready = true;
+    await renderer.loadScene(initial); $('mode').value = renderer.mode; syncOrbit(initial.camera); state.ready = true;
   }
   await scene();
   $('scene').onchange = () => scene().catch(error);
-  $('mode').onchange = () => renderer.setMode($('mode').value);
+  $('mode').onchange = () => { try { renderer.setMode($('mode').value); } catch (e) { error(e); $('mode').value = renderer.mode; } };
   $('exposure').oninput = () => renderer.setOptions({ exposure: Number($('exposure').value) });
   $('scale').onchange = () => renderer.setOptions($('scale').value === 'auto' ? { autoResolution: true } : { autoResolution: false, resolutionScale: Number($('scale').value) });
   $('pause').onclick = () => { state.paused = !state.paused; $('pause').textContent = state.paused ? 'Resume' : 'Pause'; };

@@ -1,14 +1,35 @@
 // SPDX-License-Identifier: Apache-2.0
-import { compileGraph, contextWGSL } from './graph.js';
+import { compileGraph, contextWGSL, literal } from './graph.js';
+import { packImages, imageWGSL } from './textures.js';
+import { transportWGSL } from './transport.js';
+import { pathStateWGSL } from './path-state.js';
+import { spectrumWGSL } from './spectrum.js';
+import { volumeWGSL } from './volume.js';
+import { closureTransportWGSL } from './closures.js';
 
-export function shaderSource(materials) {
+export function shaderSource(materials, resources = {}, lighting = {}) {
+  const lightDirection=lighting.directional?.direction||[-.5,.8,.4];
+  if(!Array.isArray(lightDirection)||lightDirection.length!==3||Math.hypot(...lightDirection)<1e-8)throw new Error('Invalid directional light direction');
+  for(const color of [lighting.environment,lighting.directional?.radiance])if(color && (!Array.isArray(color)||color.length!==3||color.some(v=>!Number.isFinite(v)||v<0)))throw new Error('Invalid light radiance');
+  resources.requiresPhysical = materials.some(doc => doc.mediumOutput || doc.nodes.some(n => ['transmission', 'transmission_weight'].some(k => n.inputs?.[k] && (n.inputs[k].value === undefined || Number(n.inputs[k].value) !== 0))));
+  const images = materials.flatMap(doc => Object.values(doc.images || {}));
+  const packed = packImages(images); resources.imageData = packed.data;
+  let imageIndex = 0;
   const functions = materials.map((doc, i) => {
-    const c = compileGraph(doc, { material: true });
+    const imageDescriptors = Object.fromEntries(Object.entries(doc.images || {}).map(([name, image]) => [name, { ...packed.descriptors[imageIndex++], colorspace: image.colorspace || 'lin_rec709' }]));
+    const c = compileGraph(doc, { material: true, imageDescriptors, output: doc.output });
+    if(c.categories.some(c=>['dielectric_bsdf','conductor_bsdf','oren_nayar_diffuse_bsdf'].includes(c)))resources.requiresPhysical=true;
     if (!['surfaceshader', 'material'].includes(c.type)) throw new Error('Material graph must produce a surface');
-    return `fn material${i}(ctx: ShadingContext) -> Material { ${c.body}\nreturn ${c.expression}; }`;
+    const medium = doc.mediumOutput ? compileGraph(doc, { output: doc.mediumOutput, imageDescriptors }) : null;
+    if(medium && medium.type!=='VDF') throw new Error('mediumOutput must produce VDF');
+    if(doc.mediumMajorant!==undefined && (!Number.isFinite(doc.mediumMajorant)||doc.mediumMajorant<=0))throw new Error('Medium majorant must be finite and positive');
+    if(medium && medium.categories.some(c=>['position','normal','tangent','bitangent','texcoord','image'].includes(c)) && !doc.mediumMajorant) throw new Error('Spatially varying media require a conservative mediumMajorant');
+    return `fn material${i}(ctx: ShadingContext) -> Material { ${c.body}\nreturn ${c.expression}; }\nfn medium${i}(ctx:ShadingContext)->Medium { ${medium ? `${medium.body}\nreturn ${medium.expression};` : `return material${i}(ctx).bsdf.interior;`} }`;
   }).join('\n');
   return /* wgsl */`
 ${contextWGSL}
+${spectrumWGSL(materials, resources)}
+${imageWGSL}
 ${functions}
 struct Settings { origin: vec4f, forward: vec4f, right: vec4f, up: vec4f, dimensions: vec4u, display: vec4f }
 struct Node { lo: vec4f, hi: vec4f, link: vec4f }
@@ -20,6 +41,10 @@ struct Hit { t: f32, u: f32, v: f32, id: u32 }
 @group(0) @binding(2) var<storage,read> triangles: array<Triangle>;
 @group(0) @binding(3) var<storage,read_write> accumulation: array<vec4f>;
 const PI = 3.141592653589793;
+${transportWGSL}
+${closureTransportWGSL}
+${volumeWGSL}
+${pathStateWGSL}
 fn hash(v0: u32) -> u32 { var v = v0; v = (v ^ (v >> 16u)) * 0x7feb352du; v = (v ^ (v >> 15u)) * 0x846ca68bu; return v ^ (v >> 16u); }
 fn random(state: ptr<function,u32>) -> f32 { *state = hash(*state + 0x9e3779b9u); return (f32(*state >> 8u) + 0.5) / 16777216.0; }
 fn intersect(o: vec3f, d: vec3f) -> Hit {
@@ -48,15 +73,23 @@ fn context(h: Hit, o: vec3f, d: vec3f) -> ShadingContext {
   let tri = triangles[h.id]; let w = 1.0-h.u-h.v;
   let n = normalize(tri.a.n.xyz*w+tri.b.n.xyz*h.u+tri.c.n.xyz*h.v);
   let tangent = normalize(cross(select(vec3f(0,1,0),vec3f(1,0,0),abs(n.y)>0.9),n));
-  return ShadingContext(o+d*h.t,n,tangent,cross(n,tangent),tri.a.uv.xy*w+tri.b.uv.xy*h.u+tri.c.uv.xy*h.v,0,0);
+  return ShadingContext(o+d*h.t,n,tangent,cross(n,tangent),tri.a.uv.xy*w+tri.b.uv.xy*h.u+tri.c.uv.xy*h.v,0,0,vec2f(0),vec2f(0));
 }
-fn getMaterial(id: u32, ctx: ShadingContext) -> Material {
+fn getSurface(id: u32, ctx: ShadingContext) -> Material {
   switch id { ${materials.map((_, i) => `case ${i}u: { return material${i}(ctx); }`).join('\n')} default: { return material0(ctx); } }
 }
+fn getMaterial(id:u32,ctx:ShadingContext)->Lobe {return primaryLobe(getSurface(id,ctx));}
+fn getMedium(id:u32,ctx:ShadingContext)->Medium {
+  switch id { ${materials.map((_,i)=>`case ${i}u: {return medium${i}(ctx);}`).join('\n')} default:{return Medium(vec3f(0),vec3f(0),0);} }
+}
+fn mediumMajorant(id:u32)->f32 {switch id {${materials.map((doc,i)=>`case ${i}u:{return ${literal('float',doc.mediumMajorant||0)};}`).join('\n')}default:{return 0.0;}}}
 fn environment(d: vec3f) -> vec3f {
+  ${lighting.environment ? `return ${literal('color3',lighting.environment)};` : ''}
   let sky = mix(vec3f(0.12,0.15,0.2),vec3f(0.55,0.66,0.85),smoothstep(-0.1,0.9,d.y));
   return sky;
 }
+fn directionalDirection()->vec3f{return normalize(${literal('vector3',lightDirection)});}
+fn directionalRadiance()->vec3f{return ${literal('color3',lighting.directional?.radiance||[3.5,3.2,2.8])};}
 fn basis(n: vec3f, v: vec3f) -> vec3f {
   let t = normalize(cross(select(vec3f(0,1,0),vec3f(1,0,0),abs(n.y)>0.9),n));
   return t*v.x+cross(n,t)*v.y+n*v.z;
@@ -68,7 +101,7 @@ fn cosine(n: vec3f, rng: ptr<function,u32>) -> vec3f {
 fn fresnel(c: f32, f0: vec3f) -> vec3f { return f0+(1.0-f0)*pow(1.0-clamp(c,0.0,1.0),5.0); }
 fn distribution(nh: f32, a2: f32) -> f32 { let d = nh*nh*(a2-1.0)+1.0; return a2/(PI*d*d); }
 fn masking(nv: f32, a2: f32) -> f32 { return 2.0*nv/(nv+sqrt(a2+(1.0-a2)*nv*nv)); }
-fn bsdf(m: Material, n: vec3f, wo: vec3f, wi: vec3f) -> vec4f {
+fn bsdf(m: Lobe, n: vec3f, wo: vec3f, wi: vec3f) -> vec4f {
   let nv = dot(n,wo); let nl = dot(n,wi); if (nv <= 0.0 || nl <= 0.0) { return vec4f(0); }
   let h = normalize(wo+wi); let nh = max(0.0,dot(n,h)); let vh = max(1e-7,dot(wo,h));
   let a = max(0.001,m.roughness*m.roughness); let a2 = a*a;
@@ -79,7 +112,7 @@ fn bsdf(m: Material, n: vec3f, wo: vec3f, wi: vec3f) -> vec4f {
   let prob = mix(0.25,0.9,m.metal); let pdf = prob*D*nh/(4.0*vh)+(1.0-prob)*nl/PI;
   return vec4f(spec+diff,pdf);
 }
-fn sampleDirection(m: Material, n: vec3f, wo: vec3f, rng: ptr<function,u32>) -> vec3f {
+fn sampleDirection(m: Lobe, n: vec3f, wo: vec3f, rng: ptr<function,u32>) -> vec3f {
   if (random(rng) >= mix(0.25,0.9,m.metal)) { return cosine(n,rng); }
   let a = max(0.001,m.roughness*m.roughness); let u = random(rng); let phi = 2.0*PI*random(rng);
   let ct = sqrt((1.0-u)/(1.0+(a*a-1.0)*u)); let st = sqrt(max(0.0,1.0-ct*ct));
@@ -126,7 +159,7 @@ struct RasterVertex { @builtin(position) clip: vec4f, @location(0) position: vec
 }
 @fragment fn rasterFragment(v: RasterVertex, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   let n = normalize(select(-v.normal,v.normal,front)); let tangent = normalize(cross(select(vec3f(0,1,0),vec3f(1,0,0),abs(n.y)>0.9),n));
-  let ctx = ShadingContext(v.position,n,tangent,cross(n,tangent),v.uv,0,0);
+  let ctx = ShadingContext(v.position,n,tangent,cross(n,tangent),v.uv,0,0,dpdx(v.uv),dpdy(v.uv));
   let m = getMaterial(v.material,ctx); let wo = normalize(cfg.origin.xyz-v.position); let light=normalize(vec3f(-0.5,0.8,0.4));
   var color = m.emission*m.emissionWeight+m.base*(1.0-m.metal)*0.22+fresnel(max(0.0,dot(n,wo)),mix(vec3f(0.04),m.base,m.metal))*environment(reflect(-wo,n));
   if (intersect(v.position+n*max(1e-4,length(v.position)*1e-5),light).id==0xffffffffu) { color += bsdf(m,n,wo,light).xyz*max(0.0,dot(n,light))*vec3f(3.5,3.2,2.8); }
@@ -144,7 +177,9 @@ struct Settings { origin: vec4f, forward: vec4f, right: vec4f, up: vec4f, dimens
 @fragment fn fragment(@builtin(position) p: vec4f) -> @location(0) vec4f {
   let xy = min(vec2u(p.xy * vec2f(cfg.dimensions.xy)/cfg.display.yz),cfg.dimensions.xy-vec2u(1));
   let sum = accumulation[xy.y*cfg.dimensions.x+xy.x];
-  let linear = max(vec3f(0),sum.xyz/max(1.0,sum.w)*exp2(cfg.display.x));
+  var color=sum.xyz/max(1.0,sum.w);
+  if(cfg.dimensions.w==2u) { color=mat3x3f(3.2404542,-0.9692660,0.0556434,-1.5371385,1.8760108,-0.2040259,-0.4985314,0.0415560,1.0572252)*color; }
+  let linear = max(vec3f(0),color*exp2(cfg.display.x));
   let mapped = linear/(1.0+linear);
   let srgb = select(12.92*mapped,1.055*pow(mapped,vec3f(1.0/2.4))-0.055,mapped>vec3f(0.0031308));
   return vec4f(srgb,1);

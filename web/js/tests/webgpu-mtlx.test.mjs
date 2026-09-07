@@ -4,7 +4,65 @@ import assert from 'node:assert/strict';
 import { compileGraph, literal, GraphError } from '../src/webgpu-mtlx/graph.js';
 import { packScene, syntheticScene } from '../src/webgpu-mtlx/scene.js';
 import { encodeEXR } from '../src/webgpu-mtlx/capture.js';
+import { packImages } from '../src/webgpu-mtlx/textures.js';
+import { shaderSource } from '../src/webgpu-mtlx/shaders.js';
+import { validateSpectrum, sampleSpectrum } from '../src/webgpu-mtlx/spectrum.js';
+import { cieXYZ } from '../src/webgpu-mtlx/cie-data.js';
+import { refineDisplacementScene } from '../src/webgpu-mtlx/displacement.js';
 const constant = (name, value, type = 'float') => ({ name, category: 'constant', type, inputs: { value: { type, value } } });
+test('native closures compile and unsupported uniform inputs are diagnosed',()=>{
+  for(const preset of ['native-copper','native-glass']) {
+    const resources={};const source=shaderSource(syntheticScene(preset).materials,resources);
+    assert.equal(resources.requiresPhysical,true);assert.match(source,/surfaceEmission/);
+  }
+  const doc=syntheticScene('native-glass').materials[1];
+  doc.nodes[0].inputs.scatter_mode={nodename:'dynamic_mode'};
+  assert.throws(()=>compileGraph(doc,{material:true}),/connected scatter_mode/);
+  doc.nodes[0].inputs.scatter_mode={value:'RT'};
+  doc.nodes[0].inputs.thinfilm_thickness={type:'float',value:100};
+  assert.throws(()=>compileGraph(doc,{material:true}),/thin film/);
+  const volume=syntheticScene('sss').materials[1];volume.mediumMajorant=-1;
+  assert.throws(()=>shaderSource([volume]),/majorant/);
+});
+test('displacement refinement preserves bounds, typed indices and material assignment',()=>{
+  const scene={positions:new Float32Array([0,0,0,1,0,0,0,1,0]),indices:new Uint32Array([0,1,2]),materials:[{}]};
+  const r=refineDisplacementScene(scene,2);assert.equal(r.indices.length,48);assert.equal(r.materialIds.length,16);assert.ok(r.positions.every(v=>v>=0&&v<=1));
+  assert.throws(()=>refineDisplacementScene(scene,5,1),/budget/);
+});
+test('CIE table agrees with official column-sum validation', () => {
+  assert.equal(cieXYZ.length,471);
+  [106.865469489595,106.8569171011719,106.892251278636].forEach((expected,k)=>assert.ok(Math.abs(cieXYZ.reduce((sum,row)=>sum+row[k],0)-expected)<1e-9));
+});
+test('measured spectra validate ordering, coverage and interpolate linearly', () => {
+  const p=validateSpectrum([[360,1.6],[830,1.4]],{ior:true});assert.equal(sampleSpectrum(p,595),1.5);assert.equal(sampleSpectrum(p,350),0);
+  assert.throws(()=>validateSpectrum([[400,1.5],[700,1.4]],{ior:true}),/cover/);
+  assert.throws(()=>validateSpectrum([[400,1],[400,2]]),/unordered/);
+  assert.throws(()=>validateSpectrum([[400,1],[700,-1]]),/Invalid/);
+});
+test('image packing linearizes before mip filtering and preserves alpha', () => {
+  const packed = packImages([{ width: 3, height: 1, colorspace: 'srgb_texture', data: [0,0,0,.2, .5,.5,.5,.4, 1,1,1,.6] }]);
+  assert.deepEqual(packed.descriptors, [{ offset: 0, width: 3, height: 1, levels: 2 }]);
+  assert.ok(Math.abs(packed.data[4] - .21404114) < 1e-6);
+  assert.ok(Math.abs(packed.data[12] - (1 + .21404114) / 3) < 1e-6);
+  assert.ok(Math.abs(packed.data[15] - .4) < 1e-6);
+});
+test('image budgets, finite float32, dimensions and color interpretation are validated', () => {
+  const image = { width: 1, height: 1, data: [0,0,0,1] };
+  assert.throws(() => packImages([image], { maxBytes: 15 }), /budget/);
+  assert.throws(() => packImages([{ ...image, width: .5 }]), /dimensions/);
+  assert.throws(() => packImages([{ ...image, data: [1e100,0,0,1] }]), /non-finite/);
+  assert.throws(() => packImages([{ ...image, colorspace: 'unknown' }]), /colorspace/);
+});
+test('image graph resource resolution and unsupported filtering diagnostics', () => {
+  const doc = syntheticScene().materials[1];
+  const image = { name: 'image', category: 'image', type: 'color3', inputs: { file: { type: 'filename', value: 'test' } } };
+  doc.nodes[0].inputs.base_color = { nodename: 'image' }; doc.nodes.unshift(image);
+  assert.throws(() => shaderSource([doc]), /missing decoded image/);
+  doc.images = { test: { width: 1, height: 1, data: [1,0,0,1] } };
+  const resources = {}; assert.match(shaderSource([doc], resources), /imageSample\(0u/); assert.equal(resources.imageData.length, 4);
+  image.inputs.filtertype = { value: 'cubic' }; assert.throws(() => shaderSource([doc]), /closest\/linear/);
+  image.inputs.file.value = ''; assert.match(shaderSource([doc]), /vec3f\(0.0,0.0,0.0\)/);
+});
 test('finite typed literals cannot inject shader code', () => {
   assert.equal(literal('color3', [1, 0.25, 0]), 'vec3f(1.0,0.25,0.0)');
   for (const v of [NaN, Infinity, '1.0); return;', [1, 2]]) assert.throws(() => literal('float', v), GraphError);
@@ -38,7 +96,7 @@ test('prototype names do not resolve as definitions or graphs', () => {
 });
 test('unsupported physical features never silently become opaque defaults', () => {
   const doc = syntheticScene().materials[1]; doc.nodes[0].inputs.transmission = { type: 'float', value: 1 };
-  assert.throws(() => compileGraph(doc, { material: true }), /transmission transport/);
+  assert.match(compileGraph(doc, { material: true }).body, /Material/);
   delete doc.nodes[0].inputs.transmission; doc.nodes[0].inputs.subsurface = { type: 'float', value: 0.5 };
   assert.throws(() => compileGraph(doc, { material: true }), /not yet implemented/);
 });
@@ -63,4 +121,13 @@ test('EXR float roundtrip through independent Three.js decoder', async () => {
   const encoded = encodeEXR(2, 1, pixels); assert.equal(new DataView(encoded.buffer).getInt32(0, true), 20000630);
   const decoded = new EXRLoader().setDataType(FloatType).parse(encoded.buffer);
   assert.equal(decoded.width, 2); assert.equal(decoded.height, 1); assert.deepEqual([...decoded.data], [...pixels]);
+});
+
+test('spectral EXR declares XYZ channels and preserves component order',()=>{
+  const bytes=encodeEXR(1,1,new Float32Array([.25,2,32,1]),{channels:['X','Y','Z']}),view=new DataView(bytes.buffer);let offset=8;
+  const z=()=>{const start=offset;while(bytes[offset]!==0)offset++;return new TextDecoder().decode(bytes.subarray(start,offset++));};
+  let channels=[];
+  while(bytes[offset]!==0){const name=z();z();const size=view.getUint32(offset,true);offset+=4;const end=offset+size;if(name==='channels'){while(bytes[offset]!==0){channels.push(z());assert.equal(view.getUint32(offset,true),2);offset+=16;}}offset=end;}
+  offset++;assert.deepEqual(channels,['X','Y','Z']);const row=Number(view.getBigUint64(offset,true));assert.equal(view.getUint32(row+4,true),12);
+  assert.deepEqual([0,1,2].map(i=>view.getFloat32(row+8+i*4,true)),[.25,2,32]);
 });

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // OpenEXR v2, uncompressed scanline RGB FLOAT. No lossy/tone-mapped reference data.
-export function encodeEXR(width, height, rgba) {
+export function encodeEXR(width, height, rgba, { channels: channelNames = ['R','G','B'] } = {}) {
+  if (![['R','G','B'],['X','Y','Z']].some(names => names.join() === channelNames.join())) throw new Error('EXR channels must be RGB or XYZ');
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || rgba.length !== width * height * 4) throw new Error('Invalid EXR dimensions');
   const bytes = [], encoder = new TextEncoder();
   const str = s => [...encoder.encode(s), 0];
@@ -9,7 +10,8 @@ export function encodeEXR(width, height, rgba) {
   const attr = (name, type, value) => bytes.push(...str(name), ...str(type), ...int(value.length), ...value);
   bytes.push(...int(20000630), ...int(2));
   const channels = [];
-  for (const name of ['B', 'G', 'R']) channels.push(...str(name), ...int(2), 0, 0, 0, 0, ...int(1), ...int(1));
+  const ordered = channelNames.slice().sort();
+  for (const name of ordered) channels.push(...str(name), ...int(2), 0, 0, 0, 0, ...int(1), ...int(1));
   channels.push(0);
   attr('channels', 'chlist', channels); attr('compression', 'compression', [0]);
   const box = [...int(0), ...int(0), ...int(width - 1), ...int(height - 1)];
@@ -22,7 +24,7 @@ export function encodeEXR(width, height, rgba) {
     const row = start + y * rowSize; view.setBigUint64(bytes.length + y * 8, BigInt(row), true);
     view.setInt32(row, y, true); view.setInt32(row + 4, width * 12, true);
     for (let c = 0; c < 3; c++) for (let x = 0; x < width; x++) {
-      const v = rgba[(y * width + x) * 4 + 2 - c];
+      const v = rgba[(y * width + x) * 4 + channelNames.indexOf(ordered[c])];
       if (!Number.isFinite(v)) throw new Error('Cannot export non-finite radiance');
       view.setFloat32(row + 8 + (c * width + x) * 4, v, true);
     }
