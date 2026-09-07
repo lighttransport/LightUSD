@@ -72,6 +72,7 @@ emission-only realtime rendering.
 
 The `native-film` fixture covers thin-film controls on a direct dielectric BSDF.
 Chrome verification is pending for its native-film pipeline compile.
+Compiler coverage also checks thin-film propagation on a direct conductor BSDF.
 
 The displacement fixture uses two levels of linear refinement before baking;
 this is still not Catmull-Clark subdivision or adaptive tessellation.

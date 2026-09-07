@@ -154,7 +154,8 @@ fn nativeEval(m:Lobe,wo:vec3f,wi:vec3f,eta:f32)->vec4f {
   if(m.kind==2u) {
     if(wi.z<=0.0){return vec4f(0);}
     let h=normalize(wo+wi);let oh=dot(wo,h);
-    return vec4f(m.weight*conductorFresnel(oh,m.complexIOR,m.extinction)*microfacetD(h,alpha)*microfacetG(wo,wi,alpha)/(4.0*wo.z*wi.z),visibleNormalPDF(wo,h,alpha)/(4.0*oh));
+    var fres=conductorFresnel(oh,m.complexIOR,m.extinction);if(m.thinFilmThickness>0.0){fres*=thinFilmFresnel(oh,m.ior,m.thinFilmIOR,m.thinFilmThickness);}
+    return vec4f(m.weight*fres*microfacetD(h,alpha)*microfacetG(wo,wi,alpha)/(4.0*wo.z*wi.z),visibleNormalPDF(wo,h,alpha)/(4.0*oh));
   }
   if((wi.z>0.0&&m.scatterMode==2u)||(wi.z<0.0&&m.scatterMode==1u)){return vec4f(0);}
   let f=dielectricEval(wo,wi,alpha,eta);var value=f.x;var normalization=1.0;
@@ -167,7 +168,7 @@ fn nativeSample(m:Lobe,wo:vec3f,eta:f32,rng:ptr<function,u32>)->Scatter {
   if(m.kind==3u || m.kind==4u || m.kind==6u) {let r=sqrt(random(rng));let phi=2.0*PI*random(rng);wi=vec3f(r*cos(phi),r*sin(phi),sqrt(max(0.0,1.0-r*r)));}
   else {
     var h=vec3f(0,0,1);if(max(m.alpha.x,m.alpha.y)>0.0001 && (eta!=1.0||m.kind==2u)){h=visibleNormal(wo,max(vec2f(.0001),m.alpha),vec2f(random(rng),random(rng)));}else{delta=1u;}
-    if(m.kind==2u){wi=reflect(-wo,h);if(delta!=0u){return Scatter(wi,1,m.weight*conductorFresnel(wo.z,m.complexIOR,m.extinction),1u,1);}}
+    if(m.kind==2u){wi=reflect(-wo,h);if(delta!=0u){var fres=conductorFresnel(wo.z,m.complexIOR,m.extinction);if(m.thinFilmThickness>0.0){fres*=thinFilmFresnel(wo.z,m.ior,m.thinFilmIOR,m.thinFilmThickness);}return Scatter(wi,1,m.weight*fres,1u,1);}}
     else if(m.kind==5u){wi=reflect(-wo,h);if(wi.z<=0.0){return Scatter(wi,0,vec3f(0),0u,1);}if(delta!=0u){return Scatter(wi,1,m.weight*generalizedSchlickFresnel(m,dot(wo,h)),1u,1);}}
     else {
       let fr0=dielectricFresnel(dot(wo,h),eta);let fr=select(fr0,dot(thinFilmFresnel(dot(wo,h),m.ior,m.thinFilmIOR,m.thinFilmThickness),vec3f(1.0/3.0)),m.thinFilmThickness>0.0);let pr=select(fr,0.0,m.scatterMode==2u);let pt=select(1.0-fr,0.0,m.scatterMode==1u);let total=pr+pt;

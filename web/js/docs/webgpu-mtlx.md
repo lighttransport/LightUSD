@@ -366,6 +366,10 @@ direct `dielectric_bsdf`, including film Fresnel evaluation and sampling.
 Its focused Chrome pipeline run remains pending while the native-film shader
 compile stall is isolated.
 
+The same thin-film controls now propagate through direct `conductor_bsdf`
+closures, modulating complex-conductor Fresnel in evaluation and delta
+sampling.
+
 The synthetic displacement fixture now requests two levels of bounded linear
 triangle refinement before the GPU displacement bake, exercising interior
 height samples instead of only moving the original triangle corners.
