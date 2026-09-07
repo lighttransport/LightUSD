@@ -405,6 +405,14 @@ test('luminance and average nodes preserve explicit component semantics', () => 
   ]};
   const source=compileGraph(doc); assert.match(source.body,/0\.2126,0\.7152,0\.0722/); assert.match(source.body,/0\.3333333333/);
 });
+test('RGB/HSV conversion nodes emit bounded color conversion helpers', () => {
+  const doc={nodes:[
+    {name:'rgb',category:'constant',type:'color3',inputs:{value:{type:'color3',value:[.2,.4,.8]}}},
+    {name:'hsv',category:'rgbtohsv',type:'color3',inputs:{in:{nodename:'rgb'}}},
+    {name:'out',category:'hsvtorgb',type:'color3',inputs:{in:{nodename:'hsv'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/mxRgbToHsv/); assert.match(source.body,/mxHsvToRgb/);
+});
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
   assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/);

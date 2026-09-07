@@ -11,7 +11,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 // Units are semantic annotations; implementations consume their authored
 // convention (for example degrees for rotate2d and nanometers for thin film).
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
-export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'exp', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan2', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
+export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'exp', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan2', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'surfacematerial', 'surface']);
 for(const category of ['transformmatrix','normalmap','bump3','heighttonormal'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
@@ -321,6 +321,8 @@ export function compileGraph(document, { output, library = {}, material = false,
           if(!['color3','vector3','vector4','color4'].includes(value.type))fail('TYPE',key,'average requires a vector or color input');
           const width=widths[value.type]; code=`dot(${value.code},${types[value.type]}(${Array(width).fill((1/width).toFixed(10)).join(',')}))`; break;
         }
+        case 'rgbtohsv': code=`mxRgbToHsv(${x('in',undefined,'color3')})`; break;
+        case 'hsvtorgb': code=`mxHsvToRgb(${x('in',undefined,'color3')})`; break;
         case 'dotproduct': code = `dot(${x('in1')},${x('in2')})`; break;
         case 'crossproduct': code = `cross(${x('in1', undefined, 'vector3')},${x('in2', undefined, 'vector3')})`; break;
         case 'texcoord':
@@ -463,6 +465,17 @@ export function compileGraph(document, { output, library = {}, material = false,
 }
 
 export const contextWGSL = `struct ShadingContext { position: vec3f, normal: vec3f, tangent: vec3f, bitangent: vec3f, uv: vec2f, time: f32, frame: f32, uvDx: vec2f, uvDy: vec2f }
+fn mxHsvToRgb(c:vec3f)->vec3f {
+  let k=vec4f(1.0,2.0/3.0,1.0/3.0,3.0);
+  let p=abs(fract(c.xxx+k.xyz)*6.0-k.www);
+  return c.z*mix(k.xxx,clamp(p-k.xxx,vec3f(0),vec3f(1)),c.y);
+}
+fn mxRgbToHsv(c:vec3f)->vec3f {
+  let p=select(vec4f(c.bg,-1.0,2.0/3.0),vec4f(c.gb,0.0,-1.0/3.0),c.g<c.b);
+  let q=select(vec4f(p.xyw,c.r),vec4f(c.r,p.yzx),c.r<p.x);
+  let d=q.x-min(q.w,q.y); let e=1e-10;
+  return vec3f(abs(q.z+(q.w-q.y)/(6.0*d+e)),d/(q.x+e),q.x);
+}
 fn safeNormal(v:vec3f,fallback:vec3f)->vec3f {
   let l2=dot(v,v); let valid=l2>1e-20 && all(v==v);
   return select(fallback,v*inverseSqrt(max(l2,1e-20)),valid);
