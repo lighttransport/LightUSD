@@ -227,6 +227,8 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   const normal=syntheticScene('normalmap').materials[1];
   assert.match(compileGraph(normal,{material:true}).body,/normalize\(n/);
   assert.match(shaderSource([normal]),/surface\.normal/);
+  const colorNormal={nodes:[{name:'normal',category:'normalmap',type:'vector3',inputs:{in:{type:'color3',value:[.65,.45,.95]},scale:{type:'float',value:1}}}]};
+  assert.match(compileGraph(colorNormal).body,/mxNormalmap\(vec3f/);
   const openNormal=syntheticScene('open-pbr-normal').materials[1];
   assert.match(compileGraph(openNormal,{material:true}).body,/geometry_normal|normalize\(vec3f/);
   const bump=syntheticScene('bump').materials[1];

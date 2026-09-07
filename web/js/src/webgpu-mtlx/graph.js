@@ -331,7 +331,9 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'normalmap': {
           const scale=ins.scale?input('scale'):{type:'float',code:'1.0'};if(!['float','vector2'].includes(scale.type))fail('TYPE',key,'normalmap scale must be float or vector2');
           const vector=(k,field)=>ins[k]?x(k,undefined,'vector3'):`ctx.${field}`;
-          code=`mxNormalmap(${x('in',[.5,.5,1],'vector3')},vec2f(${scale.code}),${vector('normal','normal')},${vector('tangent','tangent')},${vector('bitangent','bitangent')})`;break;
+          const normalInput=ins.in?input('in'):{type:'vector3',code:'vec3f(.5,.5,1.0)'};
+          if(!['color3','vector3'].includes(normalInput.type))fail('TYPE',key,'normalmap input must be color3/vector3');
+          code=`mxNormalmap(${normalInput.code},vec2f(${scale.code}),${vector('normal','normal')},${vector('tangent','tangent')},${vector('bitangent','bitangent')})`;break;
         }
         case 'bump3': case 'heighttonormal': {
           const height=x('in',0,'float'), scale=x('scale',1,'float');

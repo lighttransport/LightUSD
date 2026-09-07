@@ -327,6 +327,11 @@ OpenPBR `geometry_normal` is now accepted as an alias for the authored normal
 frame and is exercised by the synthetic `open-pbr-normal` scene. Tangent-space
 normal-map filtering and geometric displacement remain separate limitations.
 
+`normalmap` now accepts both MaterialX `color3` and `vector3` inputs, matching
+the common image-node color representation without changing tangent-space
+normal semantics.
+
+
 Scalar MaterialX `bump3` and `heighttonormal` nodes now have a bounded
 height-to-normal fallback (`mxBumpHeight`) that feeds the same authored normal
 path without mutating geometry. The synthetic `bump` scene is hardware-tested;
