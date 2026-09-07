@@ -63,7 +63,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
           p.beta=vec4f(p.beta.xyz*(sigmaS/majorant),p.beta.w);
           let light=directionalDirection();
           let shadow=intersect(point+light*max(1e-5,length(point)*2e-6),light);
-          if(shadow.id!=0xffffffffu){
+          if(shadow.id!=0xffffffffu && u32(triangles[shadow.id].a.uv.z)==mediumID){
             var lightColor=directionalRadiance();
             lightColor=vec3f(rgbSpectrum(lightColor,p.previous.x,true));
             let tr=exp(-vec3f(sigmaA+sigmaS)*shadow.t);
@@ -72,7 +72,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
           let ez=1.0-2.0*random(&rng); let ephi=2.0*PI*random(&rng); let er=sqrt(max(0.0,1.0-ez*ez));
           let envDirection=vec3f(er*cos(ephi),ez,er*sin(ephi));
           let envShadow=intersect(point+envDirection*max(1e-5,length(point)*2e-6),envDirection);
-          if(envShadow.id!=0xffffffffu){
+          if(envShadow.id!=0xffffffffu && u32(triangles[envShadow.id].a.uv.z)==mediumID){
             var envColor=environment(envDirection); envColor=vec3f(rgbSpectrum(envColor,p.previous.x,true));
             let tr=exp(-vec3f(sigmaA+sigmaS)*envShadow.t);
             p.radiance+=vec4f(p.beta.xyz*tr*hgPhase(dot(-p.direction.xyz,envDirection),medium.anisotropy)*envColor*(4.0*PI),0);
@@ -98,7 +98,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
         p.origin=vec4f(p.origin.xyz+p.direction.xyz*distance,0);
         let light=directionalDirection();
         let shadow=intersect(p.origin.xyz+light*max(1e-5,length(p.origin.xyz)*2e-6),light);
-        if(shadow.id!=0xffffffffu){
+        if(shadow.id!=0xffffffffu && u32(triangles[shadow.id].a.uv.z)==p.media[mediumDepth]-1u){
           var lightColor=directionalRadiance(); if(cfg.dimensions.w==2u){lightColor=vec3f(rgbSpectrum(lightColor,p.previous.x,true));}
           let tr=exp(-sigmaT*shadow.t);
           p.radiance+=vec4f(p.beta.xyz*tr*hgPhase(dot(-p.direction.xyz,light),medium.anisotropy)*lightColor,0);
@@ -106,7 +106,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
         let ez=1.0-2.0*random(&rng); let ephi=2.0*PI*random(&rng); let er=sqrt(max(0.0,1.0-ez*ez));
         let envDirection=vec3f(er*cos(ephi),ez,er*sin(ephi));
         let envShadow=intersect(p.origin.xyz+envDirection*max(1e-5,length(p.origin.xyz)*2e-6),envDirection);
-        if(envShadow.id!=0xffffffffu){
+        if(envShadow.id!=0xffffffffu && u32(triangles[envShadow.id].a.uv.z)==p.media[mediumDepth]-1u){
           var envColor=environment(envDirection); if(cfg.dimensions.w==2u){envColor=vec3f(rgbSpectrum(envColor,p.previous.x,true));}
           let tr=exp(-sigmaT*envShadow.t);
           p.radiance+=vec4f(p.beta.xyz*tr*hgPhase(dot(-p.direction.xyz,envDirection),medium.anisotropy)*envColor*(4.0*PI),0);

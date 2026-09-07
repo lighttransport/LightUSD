@@ -485,6 +485,7 @@ test('volume transport includes direct HG light estimation at scattering events'
   assert.match(source,/p\.beta\.xyz\*tr\*hgPhase/);
   assert.match(source,/envColor\*\(4\.0\*PI\)/);
   assert.match(source,/let tr=exp\(-sigmaT\*shadow\.t\)/);
+  assert.match(source,/triangles\[shadow\.id\]\.a\.uv\.z\)==p\.media\[mediumDepth\]-1u/);
 });
 test('cycle, missing node, mismatch, duplicate, unknown operation fail', () => {
   assert.throws(() => compileGraph({ nodes: [{ name: 'x', category: 'absval', type: 'float', inputs: { in: { nodename: 'x' } } }] }), /cycle/);
