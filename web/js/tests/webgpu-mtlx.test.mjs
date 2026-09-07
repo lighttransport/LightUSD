@@ -450,6 +450,16 @@ test('select node enforces boolean condition and matching branch types', () => {
   const source=compileGraph(doc); assert.match(source.body,/select\(n2,n1,n0\)/);
   assert.throws(()=>compileGraph({...doc,nodes:[...doc.nodes.slice(0,-1),{...doc.nodes.at(-1),type:'float'}]}),/select branches/);
 });
+test('procedural noise nodes compile deterministic bounded WGSL helpers', () => {
+  const doc={nodes:[
+    {name:'uv',category:'texcoord',type:'vector2',inputs:{}},
+    {name:'n2',category:'noise2d',type:'float',inputs:{in:{nodename:'uv'}}},
+    {name:'p',category:'position',type:'vector3',inputs:{}},
+    {name:'n3',category:'noise3d',type:'float',inputs:{in:{nodename:'p'}}},
+    {name:'out',category:'add',type:'float',inputs:{in1:{nodename:'n2'},in2:{nodename:'n3'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/mxNoise2/); assert.match(source.body,/mxNoise3/); assert.match(contextWGSL,/mxHash3/);
+});
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
   assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/);

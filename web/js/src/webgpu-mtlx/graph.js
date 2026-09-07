@@ -11,7 +11,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 // Units are semantic annotations; implementations consume their authored
 // convention (for example degrees for rotate2d and nanometers for thin film).
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
-export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
+export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'noise2d', 'noise3d', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'surfacematerial', 'surface']);
 for(const category of ['transformmatrix','normalmap','bump3','heighttonormal'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
@@ -308,6 +308,8 @@ export function compileGraph(document, { output, library = {}, material = false,
           if(whenTrue.type!==whenFalse.type||whenTrue.type!==type)fail('TYPE',key,'select branches must match output type');
           code=`select(${whenFalse.code},${whenTrue.code},${condition})`; break;
         }
+        case 'noise2d': code=`mxNoise2(${x('in',undefined,'vector2')})`; break;
+        case 'noise3d': code=`mxNoise3(${x('in',undefined,'vector3')})`; break;
         case 'dot': result = input('in',undefined,type); break;
         case 'magnitude': code = `length(${x('in')})`; break;
         case 'distance': code = `distance(${x('in1')},${x('in2')})`; break;
@@ -505,6 +507,20 @@ fn mxLinRec709ToSrgb(c:vec3f)->vec3f {
 fn mxSrgbToLinRec709(c:vec3f)->vec3f {
   let a=abs(c); let linear=select(a/12.92,pow((a+.055)/1.055,vec3f(2.4)),a>vec3f(.04045));
   return sign(c)*linear;
+}
+fn mxHash2(p:vec2f)->f32 { return fract(sin(dot(p,vec2f(127.1,311.7)))*43758.5453123); }
+fn mxHash3(p:vec3f)->f32 { return fract(sin(dot(p,vec3f(127.1,311.7,74.7)))*43758.5453123); }
+fn mxNoise2(p:vec2f)->f32 {
+  let i=floor(p); let f=fract(p); let u=f*f*(vec2f(3.0)-2.0*f);
+  let a=mxHash2(i); let b=mxHash2(i+vec2f(1,0)); let c=mxHash2(i+vec2f(0,1)); let d=mxHash2(i+vec2f(1,1));
+  return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);
+}
+fn mxNoise3(p:vec3f)->f32 {
+  let i=floor(p); let f=fract(p); let u=f*f*(vec3f(3.0)-2.0*f);
+  let c000=mxHash3(i); let c100=mxHash3(i+vec3f(1,0,0)); let c010=mxHash3(i+vec3f(0,1,0)); let c110=mxHash3(i+vec3f(1,1,0));
+  let c001=mxHash3(i+vec3f(0,0,1)); let c101=mxHash3(i+vec3f(1,0,1)); let c011=mxHash3(i+vec3f(0,1,1)); let c111=mxHash3(i+vec3f(1,1,1));
+  let x0=mix(mix(c000,c100,u.x),mix(c010,c110,u.x),u.y); let x1=mix(mix(c001,c101,u.x),mix(c011,c111,u.x),u.y);
+  return mix(x0,x1,u.z);
 }
 fn safeNormal(v:vec3f,fallback:vec3f)->vec3f {
   let l2=dot(v,v); let valid=l2>1e-20 && all(v==v);
