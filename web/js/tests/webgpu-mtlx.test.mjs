@@ -247,6 +247,7 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   const thin=syntheticScene('thin-walled').materials[1];
   assert.match(compileGraph(thin,{material:true}).body,/select\(0u,1u,true\)/);
   assert.match(shaderSource([thin]),/thinWalled/);
+  assert.match(shaderSource([thin]),/refract\(-wo,n/);
   const depth=syntheticScene('transmission-depth').materials[1];
   assert.match(compileGraph(depth,{material:true}).body,/withTransmission/);
   assert.match(shaderSource([depth]),/transmissionAttenuation/);

@@ -339,6 +339,11 @@ Realtime raster lighting now uses the authored `Material.normal` for BRDF and
 environment terms while retaining the geometric normal for offsets and shadow
 queries. The normal-map hardware fixture exercises this parity path.
 
+Realtime raster transmission now blends a bounded environment-refraction term
+using the compiled IOR, transmission weight, and transmission color. This is
+an approximation without screen-space thickness, local refraction rays, or
+volume transport.
+
 
 Scalar MaterialX `bump3` and `heighttonormal` nodes now have a bounded
 height-to-normal fallback (`mxBumpHeight`) that feeds the same authored normal

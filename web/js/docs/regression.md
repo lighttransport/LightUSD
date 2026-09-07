@@ -55,6 +55,9 @@ The `opacity` scene covers realtime opacity discard/scaling behavior.
 The normal-map fixture also covers authored-normal use in the realtime raster
 lighting path.
 
+The `thin-walled` fixture also compiles the realtime environment-refraction
+approximation.
+
 
 The `bump` scene covers scalar `bump3` height-to-normal fallback in both
 pipelines; it does not claim texture-aware finite-difference conformance.
