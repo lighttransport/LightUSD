@@ -376,6 +376,16 @@ test('shared dependency emitted once and deterministic', () => {
   const doc = { nodes: [constant('a', 2), { name: 'sum', category: 'add', type: 'float', inputs: { in1: { nodename: 'a' }, in2: { nodename: 'a' } } }] };
   const a = compileGraph(doc); assert.equal(a.body.split('\n').length, 2); assert.deepEqual(a, compileGraph(doc));
 });
+test('vector reflection, refraction and distance nodes compile with typed ports', () => {
+  const doc={nodes:[
+    {name:'in',category:'constant',type:'vector3',inputs:{value:{type:'vector3',value:[0,0,-1]}}},
+    {name:'normal',category:'constant',type:'vector3',inputs:{value:{type:'vector3',value:[0,0,1]}}},
+    {name:'r',category:'reflect',type:'vector3',inputs:{in:{nodename:'in'},normal:{nodename:'normal'}}},
+    {name:'t',category:'refract',type:'vector3',inputs:{in:{nodename:'in'},normal:{nodename:'normal'},ior:{type:'float',value:1.5}}},
+    {name:'d',category:'distance',type:'float',inputs:{in1:{nodename:'r'},in2:{nodename:'t'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/reflect\(/); assert.match(source.body,/refract\(/); assert.match(source.body,/distance\(/);
+});
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
   assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/);
