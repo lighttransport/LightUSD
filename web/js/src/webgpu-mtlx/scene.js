@@ -89,6 +89,7 @@ export function syntheticScene(preset = 'copper') {
     materials[1]=surfaceDocument([.12,.25,.42],0,.3);
     materials[1].nodes[0].inputs.sheen={type:'float',value:.55};
     materials[1].nodes[0].inputs.sheen_color={type:'color3',value:[.8,.9,1]};
+    materials[1].nodes[0].inputs.sheen_roughness={type:'float',value:.38};
   }
   if(preset==='thin-walled') {
     materials[1]=surfaceDocument([.92,.98,1],0,.08);

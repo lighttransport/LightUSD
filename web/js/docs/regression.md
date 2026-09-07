@@ -62,6 +62,8 @@ The synthetic hardware matrix also covers the `coat` dielectric-lobe path.
 
 It also covers the `sheen`/`fuzz` diffuse-sheen fallback path.
 
+The sheen fixture also exercises authored `sheen_roughness` propagation.
+
 The `thin-walled` scene covers Standard Surface thin-walled glossy transmission
 and verifies the physical transport path without a medium-stack mutation.
 

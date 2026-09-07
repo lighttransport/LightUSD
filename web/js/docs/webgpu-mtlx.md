@@ -349,6 +349,10 @@ diffuse-sheen lobe with authored color and weight aliases. The synthetic
 `sheen` scene is hardware-tested; exact Charlie/artist-friendly sheen and
 layered energy compensation remain future work.
 
+Standard Surface `sheen_roughness` and OpenPBR `fuzz_roughness` now control the
+bounded diffuse-sheen lobe roughness, with clamped fallback behavior. Exact
+Charlie/fuzz distributions remain future work.
+
 Standard Surface `thin_walled` now propagates into the compiled dielectric
 lobe instead of being silently forced opaque. The synthetic `thin-walled`
 scene exercises medium-stack-free glossy transmission in the hardware gate.

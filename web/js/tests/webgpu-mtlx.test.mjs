@@ -234,6 +234,7 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   assert.match(shaderSource([coat]),/closureAdd/);
   const sheen=syntheticScene('sheen').materials[1];
   assert.match(compileGraph(sheen,{material:true}).body,/nativeDiffuse/);
+  assert.match(compileGraph(sheen,{material:true}).body,/0\.38/);
   assert.match(shaderSource([sheen]),/nativeDiffuse/);
   const thin=syntheticScene('thin-walled').materials[1];
   assert.match(compileGraph(thin,{material:true}).body,/select\(0u,1u,true\)/);
