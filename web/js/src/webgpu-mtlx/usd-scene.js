@@ -8,7 +8,7 @@ import { appendRectLights } from './usd-lights.js';
 import { USDTextureSources } from './usd-texture-sources.js';
 import { loadUSDMaterialXLibrary, materialXFromUSD } from './usd-graph.js';
 import { compileGraph } from './graph.js';
-import { fetchResource, decodeImage } from './resources.js';
+import { fetchResource, decodeImage, inspectEXRHeader } from './resources.js';
 export const SHADERBALL_COMMIT = '3b75c2dad6a494897557dcca0098257bcf42a8c6';
 let nativePromise;
 // The legacy composer requests merged references without their source layer.
@@ -65,7 +65,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
     const shadingGraphJSON = layer.getShadingGraphJSON();
     if (!shadingGraphJSON) throw new Error(layer.error());
     const shadingGraph = JSON.parse(shadingGraphJSON);
-    let mtlxLibrary, translatedMaterials = {}, compiledMaterials = {}, imageDescriptors = {}, textureDiagnostics = [], translationDiagnostics = [];
+    let mtlxLibrary, translatedMaterials = {}, compiledMaterials = {}, authoredImages = {}, imageDescriptors = {}, textureDiagnostics = [], translationDiagnostics = [];
     if (authoredMaterials) {
       mtlxLibrary = await loadUSDMaterialXLibrary();
       for (const material of shadingGraph.prims.filter(prim => prim.type === 'Material')) {
@@ -73,9 +73,20 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
           translatedMaterials[material.path] = materialXFromUSD(shadingGraph, material.path, { library: mtlxLibrary, resolveAsset: resolver.textures.resolveAsset });
         } catch (error) { translationDiagnostics.push({ path: material.path, error: String(error.message || error) }); }
       }
+      const neededAssetKeys = new Set(Object.values(translatedMaterials).flatMap(document => document.nodes.filter(node => node.category === 'image').map(node => node.inputs?.file?.value).filter(Boolean)));
       for (const [key, request] of resolver.textures.requests) {
+        if (!neededAssetKeys.has(key)) continue;
         try {
-          const image = await decodeImage(await fetchResource(request.url), { filename: request.url, colorspace: request.colorspace, allowDownsample: true });
+          const bytes = await fetchResource(request.url);
+          if (/\.exr(?:$|[?#])/i.test(request.url)) {
+            const dimensions = inspectEXRHeader(bytes, Number.MAX_SAFE_INTEGER).dimensions;
+            if (dimensions.width * dimensions.height > 8 * 1024 * 1024) {
+              textureDiagnostics.push({ key, url: request.url, error: 'EXR exceeds authored render preflight; scanline reduction required' });
+              continue;
+            }
+          }
+          const image = await decodeImage(bytes, { filename: request.url, colorspace: request.colorspace, maxPixels: 256 * 1024, allowDownsample: true });
+          authoredImages[key] = image;
           imageDescriptors[key] = { offset: 0, width: image.width, height: image.height, levels: 1, colorspace: request.colorspace };
         } catch (error) { textureDiagnostics.push({ key, url: request.url, error: String(error.message || error) }); }
       }
@@ -95,6 +106,15 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
       authored.materials.push({ id: i, path: material.abs_path || material.path || '', serialized });
     }
     authored.materialPaths = Object.fromEntries(authored.materials.filter(m => m.path).map(m => [m.path, m.id]));
+    const authoredDocuments = {};
+    if (authoredMaterials) for (const material of authored.materials) {
+      const document = translatedMaterials[material.path];
+      if (document && compiledMaterials[material.path]) {
+        const used = new Set(document.nodes.filter(node => node.category === 'image').map(node => node.inputs?.file?.value).filter(Boolean));
+        document.images = Object.fromEntries([...used].filter(key => authoredImages[key]).map(key => [key, authoredImages[key]]));
+        authoredDocuments[material.id] = document;
+      }
+    }
     for (let i = 0; i < layer.numLights(); i++) authored.lights.push(layer.getLight(i));
     const positions = [], normals = [], uvs = [], indices = [], materialIds = [];
     const read = d => {
@@ -134,10 +154,10 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
     for (let i = 0; i < layer.numRootNodes(); i++) visit(layer.getRootNode(i));
     if (!indices.length) throw new Error('ShaderBall conversion produced no triangles');
     if (!camera) throw new Error('ShaderBall authored camera was not found');
-    onStatus(`Prepared ${indices.length / 3} ShaderBall triangles; materials/lights are diagnostic overrides`);
+    onStatus(`Prepared ${indices.length / 3} ShaderBall triangles; ${authoredMaterials ? `${Object.keys(authoredDocuments).length} compiled authored MaterialX slots enabled` : 'materials/lights are diagnostic overrides'}`);
     const materialCount = Math.max(2, ...authored.bindings.map(binding => Number.isInteger(binding.materialId) && binding.materialId >= 0 ? binding.materialId + 1 : 0));
-    const materials = Array.from({ length: materialCount }, (_, id) => id === 1 ? surfaceDocument([0.8, 0.45, 0.15], 1, 0.25) : surfaceDocument([0.35, 0.35, 0.35], 0, 0.7));
-    const scene={ positions, normals, uvs, indices, materialIds, authored, materials, camera, provenance: { asset: 'StandardShaderBall', commit: SHADERBALL_COMMIT, variant: 'triangulated', materialOverride: true, lightingOverride: true, referenceReady: false } };
+    const materials = Array.from({ length: materialCount }, (_, id) => authoredDocuments[id] || (id === 1 ? surfaceDocument([0.8, 0.45, 0.15], 1, 0.25) : surfaceDocument([0.35, 0.35, 0.35], 0, 0.7)));
+    const scene={ positions, normals, uvs, indices, materialIds, authored, materials, camera, provenance: { asset: 'StandardShaderBall', commit: SHADERBALL_COMMIT, variant: 'triangulated', materialOverride: authoredMaterials ? 'partial-authored' : true, authoredMaterialCount: Object.keys(authoredDocuments).length, lightingOverride: true, referenceReady: false } };
     return authoredLights ? appendRectLights(scene,authored.lights) : scene;
   } finally { layer.delete(); }
 }

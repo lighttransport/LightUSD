@@ -17,7 +17,7 @@ try {
   let started = false;
   for (let i = 0; i < 100; i++) { try { if ((await fetch(`http://127.0.0.1:${port}/webgpu-mtlx.html`)).ok) { started = true; break; } } catch {} await new Promise(r => setTimeout(r, 100)); }
   if (!started) throw new Error(`Vite failed: ${log}`);
-  browser = await puppeteer.launch({ executablePath, headless: true, args: hardware ? [] : ['--enable-unsafe-webgpu', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+  browser = await puppeteer.launch({ executablePath, headless: true, protocolTimeout: 600000, args: hardware ? [] : ['--enable-unsafe-webgpu', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   page = await browser.newPage(); await page.setViewport({ width: 1100, height: 700 });
   page.on('console',msg=>{browserLog.push(msg.text());if(browserLog.length>30)browserLog.shift();});
   const errors = []; page.on('pageerror', e => errors.push(e.message));
@@ -138,6 +138,7 @@ try {
         return validateUSDMaterialTranslation(window.__webgpuMtlx.renderer);
       });
     if(process.argv.includes('--authored-lights'))await page.click('#authored-lights');
+    if(process.argv.includes('--authored-materials'))await page.click('#authored-materials');
     await page.select('#scene', 'shaderball');
     await page.waitForFunction(() => window.__webgpuMtlx.ready || window.__webgpuMtlx.errors.length, { timeout: 120000 });
     shaderballResult = await page.evaluate(async () => {
@@ -157,6 +158,7 @@ try {
       return { stats: state.renderer.stats, provenance: state.renderer.scene.provenance, authored:state.renderer.sourceScene.authored, texture:{width:image.width,height:image.height},errors: state.errors };
     });
     assert.deepEqual(shaderballResult.errors, []); assert.ok(shaderballResult.stats.triangles > 1000);
+    if(process.argv.includes('--authored-materials')) assert.ok(shaderballResult.provenance.authoredMaterialCount >= 1);
     assert.ok(Object.keys(shaderballResult.authored.materialPaths).length >= 2);
     assert.ok(shaderballResult.authored.bindings.every(binding => Array.isArray(binding.submeshes) && Number.isInteger(binding.materialId)));
     const sourceKeys = new Set(shaderballResult.authored.textureSources.map(entry => entry.authored));

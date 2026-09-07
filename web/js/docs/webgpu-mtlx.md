@@ -283,7 +283,7 @@ path. Documents accepted by that compiler are retained in
 `authored.translationDiagnostics`. This is inspection-only until texture requests
 are decoded into document images and all terminal/closure features are supported.
 The optional Chrome `--authored-materials` run currently translates 10 composed
-ShaderBall Material prims and compiles all 10 through the real WGSL path. The
+ShaderBall Material prims and attempts all 10 through the real WGSL path. The
 seven example materials still report missing `outputs:mtlx:surface` terminals.
 The authored inspection downsamples the 7,500² ground EXR into the bounded
 image budget instead of rejecting it. It now covers opacity cutouts,
@@ -291,3 +291,7 @@ thin-wall continuation, approximate sheen/subsurface/translucent lobes,
 interior-preserving closure composition, OpenPBR anisotropy and bounded
 generalized-Schlick fallbacks. These mappings are explicitly approximate and do
 not claim full MaterialX physical conformance.
+
+Authored-render preflight now rejects oversized EXR maps from their header
+before allocation and records a structured diagnostic; remaining maps use
+bounded downsampling for the partial authored-material render.

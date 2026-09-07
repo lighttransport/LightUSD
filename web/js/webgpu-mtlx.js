@@ -21,7 +21,7 @@ async function main() {
     state.ready = false;
     if ($('scene').value === 'shaderball') {
       const { loadShaderBallGeometry } = await import('./src/webgpu-mtlx/usd-scene.js');
-      initial = await loadShaderBallGeometry(s => { $('status').textContent = s; },{authoredLights:$('authored-lights').checked});
+      initial = await loadShaderBallGeometry(s => { $('status').textContent = s; },{authoredLights:$('authored-lights').checked, authoredMaterials:$('authored-materials')?.checked});
       renderer.setMode($('authored-lights').checked?'path-physical':'realtime'); $('mode').value = renderer.mode;
     } else initial = syntheticScene($('scene').value);
     await renderer.loadScene(initial); $('mode').value = renderer.mode; syncOrbit(initial.camera); state.ready = true;
@@ -29,6 +29,7 @@ async function main() {
   await scene();
   $('scene').onchange = () => scene().catch(error);
   $('authored-lights').onchange=()=>{if($('scene').value==='shaderball')scene().catch(error);};
+  $('authored-materials').onchange=()=>{if($('scene').value==='shaderball')scene().catch(error);};
   $('mode').onchange = () => { try { renderer.setMode($('mode').value); } catch (e) { error(e); $('mode').value = renderer.mode; } };
   $('exposure').oninput = () => renderer.setOptions({ exposure: Number($('exposure').value) });
   $('scale').onchange = () => renderer.setOptions($('scale').value === 'auto' ? { autoResolution: true } : { autoResolution: false, resolutionScale: Number($('scale').value) });

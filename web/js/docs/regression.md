@@ -28,6 +28,10 @@ the pinned MaterialX definitions and checks every rendered pixel analytically.
 See [implementation status and setup](webgpu-mtlx.md) for the pinned fixtures,
 generated artifacts, measured coverage, and unfinished reference-rendering work.
 
+Authored-render preflight note: oversized EXR maps are diagnosed from their
+header before allocation and omitted from the partial authored-material render;
+remaining maps use bounded downsampling.
+
 All web/WASM regression procedures live under `web/js`. The canonical gate is
 `npm test`; it runs the assertion-based Node/WASM suites, the physics-only
 MuJoCo binding smoke test, the USD Physics simulation, every pinned MuJoCo
