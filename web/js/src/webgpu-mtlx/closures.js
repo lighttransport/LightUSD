@@ -18,6 +18,7 @@ fn closureMixPreservingInterior(bg:Closure,fg:Closure,weight:f32)->Closure {retu
 fn closureInterior(top:Closure,base:Medium)->Closure {var c=top;c.interior=base;c.hasInterior=1u;return c;}
 fn surfaceEmission(bsdf:Closure,edf:vec3f,opacity:f32,thinWalled:u32)->Material {var c=bsdf;for(var i=0u;i<c.count;i++){c.lobes[i].thinWalled=thinWalled;}return Material(c,edf,opacity);}
 fn materialFromLobe(lobe:Lobe,opacity:f32)->Material {return Material(closureLeaf(lobe),lobe.emission*lobe.emissionWeight,opacity);}
+fn materialFromClosure(bsdf:Closure,emission:vec3f,opacity:f32)->Material {return Material(bsdf,emission,opacity);}
 fn primaryLobe(surface:Material)->Lobe {
   var m=nativeDiffuse(vec3f(0),0,0);
   for(var i=0u;i<surface.bsdf.count;i++){if(closureImportance(surface.bsdf,i)>0.0){m=surface.bsdf.lobes[i];break;}}

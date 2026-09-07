@@ -306,3 +306,9 @@ Standard Surface `thin_film_thickness`/`thin_film_IOR` now carry through the
 compiled lobe and use a bounded RGB interference Fresnel approximation. The
 synthetic `thin-film` scene is included in the hardware reference-image gate;
 spectral wavelength-dependent film optics remain future work.
+
+Standard Surface and OpenPBR subsurface weights now compile as an explicit
+closure mixture with a broad diffuse scattering lobe; authored subsurface color
+and radius inputs are accepted and retained in the graph path. The synthetic
+`subsurface` scene is hardware-tested, while true random-walk BSSRDF transport
+and radius-dependent exit sampling remain future work.

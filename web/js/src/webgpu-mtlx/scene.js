@@ -60,6 +60,12 @@ export function syntheticScene(preset = 'copper') {
     materials[1].nodes[0].inputs.thin_film_thickness={type:'float',value:180};
     materials[1].nodes[0].inputs.thin_film_IOR={type:'float',value:1.4};
   }
+  if(preset==='subsurface') {
+    materials[1]=surfaceDocument([.82,.22,.12],0,.28);
+    materials[1].nodes[0].inputs.subsurface={type:'float',value:.55};
+    materials[1].nodes[0].inputs.subsurface_color={type:'color3',value:[1,.25,.12]};
+    materials[1].nodes[0].inputs.subsurface_radius={type:'color3',value:[1,.35,.15]};
+  }
   if(preset==='native-copper'||preset==='native-glass') {
     const glass=preset==='native-glass';
     materials[1]={nodes:[

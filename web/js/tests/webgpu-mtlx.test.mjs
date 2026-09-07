@@ -220,6 +220,9 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   film.nodes[0].inputs.thin_film_IOR={type:'float',value:1.4};
   assert.match(compileGraph(film,{material:true}).body,/180\.0/);
   assert.match(shaderSource([film]),/thinFilmFresnel/);
+  const subsurface=syntheticScene('subsurface').materials[1];
+  assert.match(compileGraph(subsurface,{material:true}).body,/materialFromClosure/);
+  assert.match(shaderSource([subsurface]),/closureMix/);
 });
 test('displacement refinement preserves bounds, typed indices and material assignment',()=>{
   const scene={positions:new Float32Array([0,0,0,1,0,0,0,1,0]),indices:new Uint32Array([0,1,2]),materials:[{}]};
@@ -303,7 +306,7 @@ test('unsupported physical features never silently become opaque defaults', () =
   const doc = syntheticScene().materials[1]; doc.nodes[0].inputs.transmission = { type: 'float', value: 1 };
   assert.match(compileGraph(doc, { material: true }).body, /Material/);
   delete doc.nodes[0].inputs.transmission; doc.nodes[0].inputs.subsurface = { type: 'float', value: 0.5 };
-  assert.throws(() => compileGraph(doc, { material: true }), /not yet implemented/);
+  assert.match(compileGraph(doc, { material: true }).body, /materialFromClosure/);
 });
 test('BVH escape links progress, leaves cover every triangle exactly once', () => {
   const scene = syntheticScene('graph'), packed = packScene(scene); let leaves = 0;

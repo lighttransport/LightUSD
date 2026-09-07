@@ -39,6 +39,9 @@ displacement scenes.
 The same gate covers the `thin-film` scene, exercising the bounded RGB
 interference Fresnel path in Chrome hardware.
 
+It also covers the `subsurface` scene, exercising authored subsurface color and
+weight closure mixing; this is not yet a random-walk BSSRDF reference.
+
 All web/WASM regression procedures live under `web/js`. The canonical gate is
 `npm test`; it runs the assertion-based Node/WASM suites, the physics-only
 MuJoCo binding smoke test, the USD Physics simulation, every pinned MuJoCo
