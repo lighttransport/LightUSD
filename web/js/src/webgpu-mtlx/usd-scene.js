@@ -5,13 +5,18 @@ import { LightUSDComposer } from '../lightusd/LightUSDComposer.js';
 import { HttpAssetResolver } from '../../http-asset-resolver.js';
 import { surfaceDocument } from './scene.js';
 import { appendRectLights } from './usd-lights.js';
+import { USDTextureSources } from './usd-texture-sources.js';
 export const SHADERBALL_COMMIT = '3b75c2dad6a494897557dcca0098257bcf42a8c6';
 let nativePromise;
 // The legacy composer requests merged references without their source layer.
 // Retain provenance while loading each layer; reject ambiguous authored keys.
 class LayerResolver extends HttpAssetResolver {
-  constructor(native, options) { super(options); this.native = native; this.sources = new Map(); }
+  constructor(native, options) { super(options); this.native = native; this.sources = new Map(); this.textures = new USDTextureSources(); }
   registerLayer(layer, source) {
+    if (!layer.getShadingGraphJSON) throw new Error('Rebuild the combined WASM module for shading graph inspection');
+    const snapshot = layer.getShadingGraphJSON();
+    if (!snapshot) throw new Error(layer.error());
+    this.textures.register(JSON.parse(snapshot), source);
     for (const method of ['extractSublayerAssetPaths', 'extractReferencesAssetPaths', 'extractPayloadAssetPaths']) {
       for (const key of layer[method]?.() || []) {
         const url = this.rewrite(key, { parentAssetPath: source });
@@ -60,7 +65,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
     if (!layer.layerToRenderScene()) throw new Error(layer.error());
     // Native material serialization is reduced, NOT an authored graph export.
     // Preserve this diagnostic snapshot without substituting it for source graphs.
-    const authored = { materialSerializationIsLossy: true, shadingGraph, materials: [], lights: [], bindings: [] };
+    const authored = { materialSerializationIsLossy: true, shadingGraph, textureSources: resolver.textures.snapshot(), materials: [], lights: [], bindings: [] };
     for (let i = 0; i < layer.numMaterials(); i++) authored.materials.push(layer.getMaterialWithFormat(i, 'json'));
     for (let i = 0; i < layer.numLights(); i++) authored.lights.push(layer.getLight(i));
     const positions = [], normals = [], uvs = [], indices = [], materialIds = [];

@@ -157,6 +157,12 @@ try {
       return { stats: state.renderer.stats, provenance: state.renderer.scene.provenance, authored:state.renderer.sourceScene.authored, texture:{width:image.width,height:image.height},errors: state.errors };
     });
     assert.deepEqual(shaderballResult.errors, []); assert.ok(shaderballResult.stats.triangles > 1000);
+    const sourceKeys = new Set(shaderballResult.authored.textureSources.map(entry => entry.authored));
+    for (const prim of shaderballResult.authored.shadingGraph.prims) {
+      for (const property of Object.values(prim.properties)) {
+        if (property.type === 'asset' && property.value) assert.ok(sourceKeys.has(property.value), `Missing texture source: ${property.value}`);
+      }
+    }
     if(process.argv.includes('--authored-lights')){assert.equal(shaderballResult.provenance.lightingOverride,false);assert.equal(shaderballResult.provenance.rectLights.length,5);}
     await page.screenshot({ path: path.join(out, 'shaderball.png') });
   }

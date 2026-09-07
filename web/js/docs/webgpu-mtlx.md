@@ -217,9 +217,11 @@ The combined WASM loader exposes `getShadingGraphJSON()` for inspection of
 composed Shader, Material and NodeGraph properties directly from a loaded layer,
 before schema reconstruction or render conversion.
 The version-1 snapshot retains property types, connections and supported default
-values separately, including connected defaults. Unsupported value types are
-explicit markers; time-sampled properties are flagged, not evaluated. It is not
-yet a complete material import format: metadata, source-layer asset resolution,
+values separately, including connected defaults. `colorMetadataVersion: 1` adds
+attribute `colorSpace` metadata and a `colorSpaces` map of authored ColorSpaceAPI
+settings, including non-shading ancestors. Unsupported value types are explicit
+markers; time-sampled properties are flagged, not evaluated. It is not yet a
+complete import format: general metadata, full property-stack asset resolution,
 binding resolution and remaining value types still need coverage. ShaderBall
 retains this snapshot alongside the explicitly lossy render-material diagnostic.
 
@@ -229,8 +231,26 @@ and interface inputs by absolute property path, selects exact library NodeDefs,
 and checks typed ports. Missing definitions, unknown inputs, cycles, time samples
 and authored displacement/volume terminals fail explicitly. Asset inputs require
 a synchronous caller-supplied resolver returning a resource key; no source-layer
-anchor or texture colorspace is guessed. This API does not yet enable faithful
-ShaderBall material rendering, because metadata and asset provenance are still
-incomplete. The Chrome ShaderBall gate additionally checks a synthetic native USD
-material with a nested graph interface against an exact linear RGB emission
-image, using the pinned `ND_surface` and `ND_uniform_edf` definitions.
+anchor is guessed. Color literals and asset resolver requests retain the source
+attribute's color space, with attribute overrides preceding inherited prim
+settings as described in the [OpenUSD color guide](https://openusd.org/release/user_guides/color_user_guide.html).
+Supported canonical names map to the existing Rec.709, sRGB, ACEScg and raw
+transforms; custom/unknown spaces fail explicitly. The graph working space is
+still Rec.709, not the planned ACEScg working pipeline.
+
+`USDTextureSources` records authored asset keys and their source-layer URLs before
+composition remaps prims. Resolution succeeds only when all observed sources
+agree on one URL. Missing, ambiguous, package/tiled and cross-origin paths fail.
+Resource keys include color space so the same image can be used as color or data
+without aliasing. ShaderBall retains the source index for inspection; this is not
+a full USD property-stack resolver and can conservatively reject valid assets.
+The snapshot's separate `assetPaths` list includes asset opinions on untyped
+`over` prims, such as ShaderBall's inherited wall-material texture overrides.
+Image-header color interpretation and legacy assets without color metadata still
+need work; no color space is inferred from a filename containing `ACEScg`.
+The API still does not enable faithful ShaderBall material rendering.
+
+The Chrome ShaderBall gate checks a synthetic native USD material with a nested
+graph interface and sRGB attribute metadata against an analytic linear emission
+image, using the pinned `ND_surface` and `ND_uniform_edf` definitions. Conflicting
+destination metadata must not recolor the connected source.

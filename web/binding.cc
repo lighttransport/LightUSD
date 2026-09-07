@@ -7990,7 +7990,9 @@ class LightUSDLoaderNative {
       return std::string();
     }
     const lightusd::Layer &source = composited_ ? composed_layer_ : layer_;
-    json root = {{"version", 1}, {"prims", json::array()}};
+    json root = {{"version", 1}, {"colorMetadataVersion", 1},
+                 {"colorSpaces", json::object()}, {"assetPaths", json::array()},
+                 {"prims", json::array()}};
     size_t count = 0;
     bool ok = true;
     std::function<void(const lightusd::PrimSpec &, const std::string &, int)> visit =
@@ -8002,6 +8004,30 @@ class LightUSDLoaderNative {
             return;
           }
           const std::string type = prim.typeName();
+          // Asset overrides can be authored on untyped `over` prims. Keep
+          // these source opinions even when this prim is not a shading node.
+          for (const auto &entry : prim.props()) {
+            if (const auto *attr = entry.second.get_attribute_or_null()) {
+              if (auto asset = attr->get_value<lightusd::value::AssetPath>()) {
+                root["assetPaths"].push_back({{"primPath", path},
+                    {"propertyPath", path + "." + entry.first},
+                    {"authored", asset->GetAssetPath()}});
+              }
+            }
+          }
+          if (const auto *schemas = prim.metas().get_apiSchemas_ptr()) {
+            for (const auto &schema : schemas->names) {
+              if (schema.first != lightusd::APISchemas::APIName::ColorSpaceAPI) continue;
+              const auto found = prim.props().find("colorSpace:name");
+              if (found != prim.props().end()) {
+                if (const auto *attr = found->second.get_attribute_or_null()) {
+                  root["colorSpaces"][path] = {
+                      {"value", AttributeValueJson(*attr)},
+                      {"timeSampled", attr->has_timesamples()}};
+                }
+              }
+            }
+          }
           if (type == "Shader" || type == "Material" || type == "NodeGraph") {
             json properties = json::object();
             for (const auto &entry : prim.props()) {
@@ -8011,6 +8037,9 @@ class LightUSDLoaderNative {
                 json item = {{"type", attr->type_name()},
                              {"connections", json::array()},
                              {"timeSampled", attr->has_timesamples()}};
+                if (attr->metas().has_colorSpace()) {
+                  item["colorSpace"] = attr->metas().get_colorSpace().str();
+                }
                 for (const auto &connection : attr->connections()) {
                   item["connections"].push_back(PathName(connection));
                 }

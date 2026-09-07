@@ -13,7 +13,30 @@ import { fetchResource, inspectEXR, decodeImage } from '../src/webgpu-mtlx/resou
 import { appendRectLights } from '../src/webgpu-mtlx/usd-lights.js';
 import { mayEmit } from '../src/webgpu-mtlx/emission.js';
 import { materialXFromUSD } from '../src/webgpu-mtlx/usd-graph.js';
+import { USDTextureSources } from '../src/webgpu-mtlx/usd-texture-sources.js';
 const constant = (name, value, type = 'float') => ({ name, category: 'constant', type, inputs: { value: { type, value } } });
+
+test('USD texture provenance keeps anchors and rejects ambiguous source layers', () => {
+  const snapshot = value => ({ prims: [{ path: '/Shader', properties: { 'inputs:file': { type: 'asset', value } } }] });
+  const sources = new USDTextureSources(), context = { propertyPath: '/Remapped.inputs:file', colorspace: 'acescg' };
+  sources.register(snapshot('../maps/color.exr'), 'https://example.test/layers/a.usda');
+  const key = sources.resolveAsset('../maps/color.exr', context);
+  assert.equal(sources.requests.get(key).url, 'https://example.test/maps/color.exr');
+  const rawKey = sources.resolveAsset('../maps/color.exr', { ...context, colorspace: 'raw' });
+  assert.notEqual(rawKey, key);
+  sources.register(snapshot('../maps/color.exr'), 'https://example.test/layers/b.usda');
+  assert.equal(sources.resolveAsset('../maps/color.exr', context), key);
+  sources.register(snapshot('../maps/color.exr'), 'https://example.test/nested/layers/c.usda');
+  assert.throws(() => sources.resolveAsset('../maps/color.exr', context), /ambiguous/);
+  assert.throws(() => sources.resolveAsset('missing.exr', context), /no source-layer/);
+  for (const asset of ['https://other.test/image.exr', 'a[image.exr]', 'image.<UDIM>.exr', 'file:///image.exr']) {
+    sources.register(snapshot(asset), 'https://example.test/root.usda');
+    assert.throws(() => sources.resolveAsset(asset, context), /unsupported/);
+  }
+  sources.register({ assetPaths: [{ propertyPath: '/Override.inputs:file', authored: './override.exr' }] }, 'https://example.test/layer.usda');
+  const override = sources.resolveAsset('./override.exr', context);
+  assert.equal(sources.requests.get(override).url, 'https://example.test/override.exr');
+});
 
 test('USD graph translation preserves interfaces and exact NodeDef typing', () => {
   const p = (type, value, connections = []) => ({ type, ...(value === undefined ? {} : { value }), connections, timeSampled: false });
@@ -25,7 +48,7 @@ test('USD graph translation preserves interfaces and exact NodeDef typing', () =
   const library = { definitions: { ND_standard_surface_surfaceshader: { node: 'standard_surface', inputs: { base_color: { type: 'color3' } }, outputs: { out: { type: 'surfaceshader' } } } } };
   const doc = materialXFromUSD(snapshot, '/M', { library });
   assert.equal(doc.nodes.length, 1);
-  assert.deepEqual(doc.nodes[0].inputs.base_color, { type: 'color3', value: [.2,.4,.6] });
+  assert.deepEqual(doc.nodes[0].inputs.base_color, { type: 'color3', value: [.2,.4,.6], colorspace: 'lin_rec709' });
   assert.doesNotThrow(() => compileGraph(doc, { material: true }));
   const changed = () => structuredClone(snapshot);
   let bad = changed(); bad.prims[1].properties['inputs:color'].connections = ['/M/S.inputs:base_color'];
@@ -41,6 +64,14 @@ test('USD graph translation preserves interfaces and exact NodeDef typing', () =
   assert.throws(() => materialXFromUSD(bad, '/M', { library }), /absent from NodeDef/);
   bad = changed(); bad.prims[0].properties['outputs:displacement'] = p('token', undefined, ['/M/S.outputs:out']);
   assert.throws(() => materialXFromUSD(bad, '/M', { library }), /non-surface/);
+  const colored = changed(); colored.colorSpaces = { '/M': { value: 'lin_ap1_scene', timeSampled: false } };
+  assert.equal(materialXFromUSD(colored, '/M', { library }).nodes[0].inputs.base_color.colorspace, 'acescg');
+  colored.prims[1].properties['inputs:color'].colorSpace = 'srgb_rec709_scene';
+  // Destination metadata must not recolor a connected source value.
+  colored.prims[2].properties['inputs:base_color'].colorSpace = 'data';
+  assert.equal(materialXFromUSD(colored, '/M', { library }).nodes[0].inputs.base_color.colorspace, 'srgb_texture');
+  colored.prims[1].properties['inputs:color'].colorSpace = 'custom_unknown';
+  assert.throws(() => materialXFromUSD(colored, '/M', { library }), /unsupported USD color/);
 });
 
 test('USD graph asset resolution requires explicit source-aware ownership', () => {
@@ -53,6 +84,7 @@ test('USD graph asset resolution requires explicit source-aware ownership', () =
   assert.throws(() => materialXFromUSD(snapshot, '/M', { library }), /source-layer-aware/);
   const doc = materialXFromUSD(snapshot, '/M', { library, resolveAsset(value, context) {
     assert.equal(value, '../maps/image.exr'); assert.equal(context.propertyPath, '/S.inputs:file');
+    assert.equal(context.colorspace, 'lin_rec709');
     return 'resolved-resource';
   } });
   assert.equal(doc.nodes[0].inputs.file.value, 'resolved-resource');

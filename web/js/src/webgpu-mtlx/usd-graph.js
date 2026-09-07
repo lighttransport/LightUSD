@@ -26,6 +26,24 @@ export function materialXFromUSD(snapshot, materialPath, { library = {}, resolve
     if (p && (p.connections?.length || own(p, 'value') || p.timeSampled)) fail(`${materialPath}.${name}`, 'non-surface terminals are not yet translated');
   }
   const definitions = Object.create(null);
+  // OpenUSD ColorSpaceAPI precedence; only the renderer's supported built-ins.
+  // https://openusd.org/release/user_guides/color_user_guide.html
+  function colorSpace(primPath, property) {
+    let name = property.colorSpace;
+    if (name === undefined || name === '') {
+      for (let path = primPath; path; path = path.slice(0, path.lastIndexOf('/'))) {
+        if (!own(snapshot.colorSpaces, path)) continue;
+        const entry = snapshot.colorSpaces[path];
+        if (entry.timeSampled || typeof entry.value !== 'string') fail(path, 'invalid or time-sampled color space');
+        name = entry.value; if (name) break;
+      }
+    }
+    const aliases = { lin_rec709_scene: 'lin_rec709', srgb_rec709_scene: 'srgb_texture', lin_ap1_scene: 'acescg',
+      data: 'raw', raw: 'raw', lin_rec709: 'lin_rec709', srgb_texture: 'srgb_texture', acescg: 'acescg' };
+    if (name === undefined || name === '') return 'lin_rec709';
+    if (!own(aliases, name)) fail(primPath, `unsupported USD color space ${name}`);
+    return aliases[name];
+  }
   function definition(id, chain = new Set()) {
     if (own(definitions, id)) return definitions[id];
     if (!own(library.definitions, id)) fail(id, 'missing exact MaterialX NodeDef');
@@ -68,11 +86,12 @@ export function materialXFromUSD(snapshot, materialPath, { library = {}, resolve
       if (p.type === 'token' && type !== 'string') fail(path, 'token literals require a string NodeDef input');
       if (type === 'filename') {
         if (typeof resolveAsset !== 'function') fail(path, 'asset requires source-layer-aware resolution');
-        const value = resolveAsset(p.value, { primPath: prim.path, propertyPath: path });
+        const colorspace = colorSpace(prim.path, p);
+        const value = resolveAsset(p.value, { primPath: prim.path, propertyPath: path, colorspace });
         if (typeof value !== 'string' || !value) fail(path, 'asset resolver must return a nonempty resource key');
         return { type, value };
       }
-      return { type, value: p.value };
+      return { type, value: p.value, ...(['color3', 'color4'].includes(type) ? { colorspace: colorSpace(prim.path, p) } : {}) };
     } finally { active.delete(path); }
   }
   function shader(prim) {
