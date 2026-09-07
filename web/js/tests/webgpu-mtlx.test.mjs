@@ -222,6 +222,7 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   assert.match(shaderSource([film]),/thinFilmFresnel/);
   const subsurface=syntheticScene('subsurface').materials[1];
   assert.match(compileGraph(subsurface,{material:true}).body,/materialFromClosure/);
+  assert.match(compileGraph(subsurface,{material:true}).body,/subsurface_radius|clamp\(max/);
   assert.match(shaderSource([subsurface]),/closureMix/);
   const normal=syntheticScene('normalmap').materials[1];
   assert.match(compileGraph(normal,{material:true}).body,/normalize\(n/);

@@ -40,7 +40,8 @@ The same gate covers the `thin-film` scene, exercising the bounded RGB
 interference Fresnel path in Chrome hardware.
 
 It also covers the `subsurface` scene, exercising authored subsurface color and
-weight closure mixing; this is not yet a random-walk BSSRDF reference.
+weight closure mixing; this is not yet a random-walk BSSRDF reference. Its
+authored radius also feeds the bounded scattering-lobe roughness.
 
 The `normalmap` scene covers authored normal connections in both path and
 realtime shader pipelines.

@@ -395,11 +395,13 @@ export function compileGraph(document, { output, library = {}, material = false,
           const specularWeight = open ? (ins.specular_weight ? x('specular_weight', 1, 'float') : '1.0') : (ins.specular ? x('specular', 1, 'float') : '1.0');
           const subsurfaceWeight = open ? (ins.subsurface_weight ? x('subsurface_weight', 0, 'float') : '0.0') : (ins.subsurface ? x('subsurface', 0, 'float') : '0.0');
           const subsurfaceColor = ins.subsurface_color ? x('subsurface_color', [0.8, 0.8, 0.8], 'color3') : fields[0];
+          const subsurfaceRadius = ins.subsurface_radius ? x('subsurface_radius', [1, 1, 1], 'color3') : 'vec3f(1)';
+          const subsurfaceRoughness = `clamp(max(max(${subsurfaceRadius}.x,${subsurfaceRadius}.y),${subsurfaceRadius}.z),0.02,1.0)`;
           const baseLobe = `makeMaterial(${fields.join(',')},${thin},${filmThickness},${filmIOR})`;
           const transmissionDepth = ins.transmission_depth ? x('transmission_depth', 0, 'float') : '0.0';
           const transmissionScatter = ins.transmission_scatter ? x('transmission_scatter', [0, 0, 0], 'color3') : 'vec3f(0)';
           const transmittedLobe = `withSpecular(withTransmission(${baseLobe},${transmissionDepth},${transmissionScatter}),${specularWeight})`;
-          const closure = `closureMix(closureLeaf(${transmittedLobe}),closureLeaf(nativeDiffuse(${subsurfaceColor},1.0,.9)),clamp(${subsurfaceWeight},0.0,1.0))`;
+          const closure = `closureMix(closureLeaf(${transmittedLobe}),closureLeaf(nativeDiffuse(${subsurfaceColor},1.0,${subsurfaceRoughness})),clamp(${subsurfaceWeight},0.0,1.0))`;
           const coatWeight = open ? (ins.coat_weight ? x('coat_weight', 0, 'float') : '0.0') : (ins.coat ? x('coat', 0, 'float') : '0.0');
           const coatColor = ins.coat_color ? x('coat_color', [1, 1, 1], 'color3') : 'vec3f(1)';
           const coatRoughness = ins.coat_roughness ? x('coat_roughness', .1, 'float') : '.1';

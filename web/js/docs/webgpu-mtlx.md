@@ -313,6 +313,10 @@ and radius inputs are accepted and retained in the graph path. The synthetic
 `subsurface` scene is hardware-tested, while true random-walk BSSRDF transport
 and radius-dependent exit sampling remain future work.
 
+Authored `subsurface_radius` now also controls the bounded scattering-lobe
+roughness through its maximum channel, preserving a visible radius influence
+without claiming a true BSSRDF or radius-dependent exit profile.
+
 Authored `standard_surface normal` connections now populate `Material.normal`
 and are used by both path and realtime transport, with geometric-normal
 fallbacks and geometric offsets retained for robustness. The synthetic
