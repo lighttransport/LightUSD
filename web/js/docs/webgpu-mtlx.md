@@ -331,6 +331,13 @@ normal-map filtering and geometric displacement remain separate limitations.
 the common image-node color representation without changing tangent-space
 normal semantics.
 
+The synthetic `normalmap-image` fixture now exercises a raw-color image node
+feeding `normalmap`, including packed-resource binding and linear filtering;
+authored texture mip residency and UDIM streaming remain future work. Its
+focused spectral Chrome run currently stalls before a sample is reported, so
+it is intentionally not in the default reference matrix until image-backed
+spectral dispatch diagnostics are fixed.
+
 Realtime raster shading now honors compiled opacity with a zero-opacity discard
 and bounded color scaling. The synthetic `opacity` scene exercises this path;
 full sorted transparency and blend compositing remain future work.

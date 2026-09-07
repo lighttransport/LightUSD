@@ -73,6 +73,19 @@ export function syntheticScene(preset = 'copper') {
     );
     materials[1].nodes.at(-1).inputs.normal={nodename:'normal'};
   }
+  if(preset==='normalmap-image') {
+    materials[1]=surfaceDocument([.45,.35,.18],0,.24);
+    const normalData = new Float32Array([
+      .5,.5,1,1,  .72,.42,.98,1,
+      .35,.65,.98,1, .5,.5,1,1
+    ]);
+    materials[1].images={normalTex:{width:2,height:2,data:normalData,colorspace:'raw'}};
+    materials[1].nodes.unshift(
+      {name:'normalTex',category:'image',type:'color3',colorspace:'raw',inputs:{file:{type:'filename',value:'normalTex'},filtertype:{type:'string',value:'linear'}}},
+      {name:'normal',category:'normalmap',type:'vector3',inputs:{in:{nodename:'normalTex'},scale:{type:'vector2',value:[1.2,.8]}}}
+    );
+    materials[1].nodes.at(-1).inputs.normal={nodename:'normal'};
+  }
   if(preset==='bump') {
     materials[1]=surfaceDocument([.36,.12,.04],0,.3);
     materials[1].nodes.unshift({name:'bump',category:'bump3',type:'vector3',inputs:{in:{type:'float',value:.18},scale:{type:'float',value:1.4}}});

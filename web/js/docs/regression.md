@@ -50,6 +50,11 @@ The `open-pbr-normal` scene covers the OpenPBR `geometry_normal` alias.
 
 Graph assertions cover both `color3` and `vector3` normal-map inputs.
 
+The `normalmap-image` fixture covers a packed raw-color image feeding the
+normal-map node. The graph/packing check passes in Node; its focused spectral
+Chrome run is currently isolated from the default matrix because it stalls
+before reporting a sample.
+
 The `opacity` scene covers realtime opacity discard/scaling behavior.
 
 Its shader assertion also guards opacity scaling on direct-light contributions.
