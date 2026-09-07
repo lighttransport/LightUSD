@@ -129,15 +129,17 @@ try {
   if(process.argv.includes('--reference-images')) {
     const referencePresets=['native-copper','native-glass','sss','hair','thin-film','subsurface','normalmap','bump','coat','sheen','thin-walled','transmission-depth','generalized-schlick','open-pbr-weight','open-pbr-film','displacement'];
     const onlyPreset=process.argv.find(arg=>arg.startsWith('--only-preset='))?.slice('--only-preset='.length);
+    const requestedReferenceSamples=Number(process.argv.find(arg=>arg.startsWith('--reference-samples='))?.slice('--reference-samples='.length)||32);
+    assert.ok(Number.isInteger(requestedReferenceSamples)&&requestedReferenceSamples>0&&requestedReferenceSamples<=32,'reference samples must be 1..32');
     for(const preset of referencePresets.filter(name=>!onlyPreset||name===onlyPreset)) {
-      const stats=await page.evaluate(async preset=>{
+      const stats=await page.evaluate(async (preset,requestedReferenceSamples)=>{
         const r=window.__webgpuMtlx.renderer;const {syntheticScene}=await import('/src/webgpu-mtlx/scene.js');
         r.canvas.width=192;r.canvas.height=128;await r.loadScene(syntheticScene(preset));r.setMode('path-spectral');
-        let dispatches=0;while(r.samples<32&&dispatches<4000){await r.renderStep();dispatches++;}
-        if(r.samples!==32)throw new Error(`${preset} did not converge to 32 spp`);
+        let dispatches=0;while(r.samples<requestedReferenceSamples&&dispatches<4000){await r.renderStep();dispatches++;}
+        if(r.samples!==requestedReferenceSamples)throw new Error(`${preset} did not converge to ${requestedReferenceSamples} spp`);
         const capture=await r.capture({format:'float32'});if(!capture.pixels.every(Number.isFinite))throw new Error(`${preset} has invalid radiance`);
         return {preset,samples:r.samples,dispatches};
-      },preset);
+      },preset,requestedReferenceSamples);
       referenceImages.push(stats);console.log(JSON.stringify(stats));await page.screenshot({path:path.join(out,`${preset}-spectral.png`)});
     }
   }

@@ -325,6 +325,9 @@ path without mutating geometry. The synthetic `bump` scene is hardware-tested;
 texture-aware finite-difference bump and true displacement/subdivision remain
 separate follow-up work.
 
+The Chrome harness accepts `--reference-samples=N` for bounded focused
+diagnostics; the default and pre-merge matrix remain 32 spp.
+
 Regular raster-image resources now honor `allowDownsample` as well as EXR:
 oversized PNG/JPEG inputs are reduced into the configured pixel budget before
 RGBA conversion, with `resizedFrom` provenance. Default decode still rejects
