@@ -281,9 +281,11 @@ need work; no color space is inferred from a filename containing `ACEScg`.
 `packImages` accepts `maxDimension` and performs bounded area-box downsampling
 before generating float mip levels. The renderer exposes this as
 `textureMaxDimension` and `textureMaxBytes`, preserving alpha and colorspace
-conversion while keeping GPU allocation bounded. EXR source decoding still
-preflights pixel count before allocation; true scanline streaming/downsampling is
-needed for the 7,500² ShaderBall ground EXR.
+conversion while keeping GPU allocation bounded. Oversized uncompressed
+single-part scanline EXRs now stream their offset-table rows directly into the
+bounded area-box result, avoiding a full-resolution float allocation. Other EXR
+compression modes still use the third-party decoder and therefore require a
+future streaming decoder for the 7,500² ShaderBall ground map.
 The API still does not enable faithful ShaderBall material rendering.
 
 The Chrome ShaderBall gate checks a synthetic native USD material with a nested

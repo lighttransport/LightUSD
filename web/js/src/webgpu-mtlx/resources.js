@@ -67,11 +67,104 @@ export function inspectEXRHeader(bytes, maxPixels = 4 * 1024 * 1024) {
   return { dimensions, colorSpace };
 }
 
+// Decode only the source scanlines needed to build a bounded image. This is
+// deliberately limited to uncompressed single-part scanline EXR: unlike the
+// general EXRLoader path it never allocates a full-resolution pixel buffer.
+function downsampleEXRScanlines(bytes, maxPixels) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(0, true) !== 20000630 || (view.getUint32(4, true) & ~255)) return null;
+  let offset = 8, dimensions, colorSpace, compression = 255, channels = [];
+  const readString = () => {
+    const start = offset;
+    while (offset < bytes.length && bytes[offset] !== 0) offset++;
+    if (offset >= bytes.length) throw new Error('Invalid EXR header string');
+    const value = new TextDecoder().decode(bytes.subarray(start, offset)); offset++; return value;
+  };
+  while (offset < bytes.length) {
+    const name = readString(); if (!name) break;
+    const type = readString();
+    if (offset + 4 > bytes.length) throw new Error('Truncated EXR header');
+    const size = view.getUint32(offset, true); offset += 4;
+    if (size > bytes.length - offset) throw new Error('Truncated EXR attribute');
+    if (name === 'dataWindow' && type === 'box2i' && size === 16) {
+      const minX = view.getInt32(offset, true), minY = view.getInt32(offset + 4, true);
+      const maxX = view.getInt32(offset + 8, true), maxY = view.getInt32(offset + 12, true);
+      dimensions = { width: maxX - minX + 1, height: maxY - minY + 1, minX, minY };
+    } else if (name === 'compression' && type === 'compression' && size >= 1) compression = bytes[offset];
+    else if (name === 'colorSpace' && type === 'string' && size > 0 && bytes[offset + size - 1] === 0) colorSpace = new TextDecoder().decode(bytes.subarray(offset, offset + size - 1));
+    else if (name === 'channels' && type === 'chlist') {
+      let p = offset;
+      while (p < offset + size && bytes[p]) {
+        const start = p; while (p < offset + size && bytes[p]) p++;
+        if (p >= offset + size || p + 17 > offset + size) return null;
+        const channel = new TextDecoder().decode(bytes.subarray(start, p)); p++;
+        const pixelType = view.getInt32(p, true); p += 4;
+        p += 4; // pLinear and reserved bytes
+        const xSampling = view.getInt32(p, true), ySampling = view.getInt32(p + 4, true); p += 8;
+        channels.push({ name: channel, pixelType, xSampling, ySampling });
+      }
+    }
+    offset += size;
+  }
+  if (!dimensions || compression !== 0 || !channels.length) return null;
+  const supported = channels.length === 3 && channels.every(c => (c.name === 'R' || c.name === 'G' || c.name === 'B' || c.name === 'X' || c.name === 'Y' || c.name === 'Z') && c.xSampling === 1 && c.ySampling === 1 && (c.pixelType === 1 || c.pixelType === 2));
+  if (!supported || ![['R','G','B'], ['X','Y','Z']].some(names => names.every(n => channels.some(c => c.name === n)))) return null;
+  const width = dimensions.width, height = dimensions.height;
+  if (width * height <= maxPixels) return null;
+  const scale = Math.sqrt((width * height) / maxPixels);
+  const outWidth = Math.max(1, Math.floor(width / scale)), outHeight = Math.max(1, Math.floor(height / scale));
+  const data = new Float32Array(outWidth * outHeight * 4), weights = new Float64Array(outWidth * outHeight);
+  const tableStart = offset, tableBytes = height * 8;
+  if (tableStart + tableBytes > bytes.length) throw new Error('Truncated EXR scanline table');
+  const offsets = new Array(height);
+  for (let y = 0; y < height; y++) {
+    const value = view.getBigUint64(tableStart + y * 8, true);
+    if (value > BigInt(bytes.length - 8)) throw new Error('Invalid EXR scanline offset');
+    offsets[y] = Number(value);
+  }
+  const ordered = channels.slice().sort((a, b) => a.name.localeCompare(b.name));
+  const channelIndex = new Map(ordered.map((c, i) => [c.name, i]));
+  for (let sy = 0; sy < height; sy++) {
+    const row = offsets[sy];
+    if (row + 8 > bytes.length) throw new Error('Truncated EXR scanline');
+    const lineY = view.getInt32(row, true), packed = view.getUint32(row + 4, true), payload = row + 8;
+    if (payload + packed > bytes.length || lineY < dimensions.minY || lineY >= dimensions.minY + height) throw new Error('Invalid EXR scanline');
+    const sourceY = lineY - dimensions.minY, sy0 = sourceY * outHeight / height, sy1 = (sourceY + 1) * outHeight / height;
+    const oy0 = Math.floor(sy0), oy1 = Math.min(outHeight - 1, Math.ceil(sy1) - 1);
+    const rowValues = [new Float32Array(width), new Float32Array(width), new Float32Array(width)];
+    let p = payload;
+    for (const channel of ordered) {
+      const target = channel.name === 'R' || channel.name === 'X' ? 0 : channel.name === 'G' || channel.name === 'Y' ? 1 : 2;
+      const bytesPer = channel.pixelType === 1 ? 2 : 4;
+      if (p + width * bytesPer > payload + packed) throw new Error('Truncated EXR channel data');
+      for (let x = 0; x < width; x++) { rowValues[target][x] = channel.pixelType === 1 ? DataUtils.fromHalfFloat(view.getUint16(p, true)) : view.getFloat32(p, true); p += bytesPer; }
+    }
+    for (let oy = oy0; oy <= oy1; oy++) {
+      const wy = Math.min(sy1, oy + 1) - Math.max(sy0, oy); if (wy <= 0) continue;
+      const sxScale = outWidth / width;
+      for (let x = 0; x < width; x++) {
+        const sx0 = x * sxScale, sx1 = (x + 1) * sxScale, ox0 = Math.floor(sx0), ox1 = Math.min(outWidth - 1, Math.ceil(sx1) - 1);
+        for (let ox = ox0; ox <= ox1; ox++) {
+          const wx = Math.min(sx1, ox + 1) - Math.max(sx0, ox); if (wx <= 0) continue;
+          const w = wx * wy, i = oy * outWidth + ox, d = i * 4; weights[i] += w;
+          data[d] += rowValues[0][x] * w; data[d + 1] += rowValues[1][x] * w; data[d + 2] += rowValues[2][x] * w;
+        }
+      }
+    }
+  }
+  for (let i = 0; i < weights.length; i++) { const d = i * 4, w = weights[i] || 1; data[d] /= w; data[d + 1] /= w; data[d + 2] /= w; data[d + 3] = 1; }
+  return { width: outWidth, height: outHeight, data, colorspace: colorSpace || 'lin_rec709', exrColorSpace: colorSpace, resizedFrom: { width, height } };
+}
+
 export async function decodeImage(bytes, { filename = '', colorspace, maxPixels = 4 * 1024 * 1024, allowDownsample = false } = {}) {
   if (/\.exr(?:$|[?#])/i.test(filename)) {
     const header = inspectEXRHeader(bytes, allowDownsample ? Number.MAX_SAFE_INTEGER : maxPixels), dimensions = header.dimensions;
     const oversized = dimensions.width * dimensions.height > maxPixels;
     if (oversized && !allowDownsample) throw new Error('EXR exceeds decoded pixel budget');
+    if (oversized && allowDownsample) {
+      const streamed = downsampleEXRScanlines(bytes, maxPixels);
+      if (streamed) { if (colorspace) streamed.colorspace = colorspace; return streamed; }
+    }
     const image = new EXRLoader().setDataType(oversized ? HalfFloatType : FloatType).parse(bytes.slice().buffer);
     if (image.width !== dimensions.width || image.height !== dimensions.height || image.data.length !== image.width * image.height * 4) throw new Error('Unexpected EXR decoded layout');
     if (oversized) {

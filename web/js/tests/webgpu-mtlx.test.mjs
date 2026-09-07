@@ -191,6 +191,19 @@ test('EXR resource preflight bounds allocation and decode preserves bottom-up ro
   assert.ok(reduced.data.every(Number.isFinite));
 });
 
+test('oversized uncompressed EXR uses scanline reduction without full-resolution allocation', async () => {
+  const rgba = new Float32Array([
+    1,0,0,1, 3,0,0,1, 5,0,0,1, 7,0,0,1,
+    9,0,0,1, 11,0,0,1, 13,0,0,1, 15,0,0,1
+  ]);
+  const bytes = encodeEXR(4, 2, rgba);
+  const image = await decodeImage(bytes, { filename: 'large.exr', maxPixels: 4, allowDownsample: true });
+  assert.deepEqual({ width: image.width, height: image.height, resizedFrom: image.resizedFrom }, { width: 2, height: 1, resizedFrom: { width: 4, height: 2 } });
+  assert.ok(Math.abs(image.data[0] - 6) < 1e-5);
+  assert.ok(Math.abs(image.data[4] - 10) < 1e-5);
+  assert.equal(image.data[3], 1);
+});
+
 test('EXR authored color-space metadata is read from the header, never filename', () => {
   const bytes = encodeEXR(1, 1, new Float32Array([1, 2, 3, 1]), { colorspace: 'lin_ap1_scene' });
   assert.equal(inspectEXRHeader(bytes).colorSpace, 'lin_ap1_scene');
