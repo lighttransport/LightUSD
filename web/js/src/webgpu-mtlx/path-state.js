@@ -67,6 +67,12 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
             lightColor=vec3f(rgbSpectrum(lightColor,p.previous.x,true));
             p.radiance+=vec4f(p.beta.xyz*hgPhase(dot(-p.direction.xyz,light),medium.anisotropy)*lightColor,0);
           }
+          let ez=1.0-2.0*random(&rng); let ephi=2.0*PI*random(&rng); let er=sqrt(max(0.0,1.0-ez*ez));
+          let envDirection=vec3f(er*cos(ephi),ez,er*sin(ephi));
+          if(intersect(point+envDirection*max(1e-5,length(point)*2e-6),envDirection).id==0xffffffffu){
+            var envColor=environment(envDirection); envColor=vec3f(rgbSpectrum(envColor,p.previous.x,true));
+            p.radiance+=vec4f(p.beta.xyz*hgPhase(dot(-p.direction.xyz,envDirection),medium.anisotropy)*envColor*(4.0*PI),0);
+          }
           p.direction=vec4f(normalize(hgDirection(p.direction.xyz,medium.anisotropy,vec2f(random(&rng),random(&rng)))),0);p.state.y++;
           if(p.state.y>=5u){let survival=min(.95,max(.05,p.beta.x*p.beta.w));if(random(&rng)>=survival){finishPath(index,&p);break;}p.beta=vec4f(p.beta.xyz/survival,p.beta.w);}
         }
@@ -90,6 +96,12 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
         if(intersect(p.origin.xyz+light*max(1e-5,length(p.origin.xyz)*2e-6),light).id==0xffffffffu){
           var lightColor=directionalRadiance(); if(cfg.dimensions.w==2u){lightColor=vec3f(rgbSpectrum(lightColor,p.previous.x,true));}
           p.radiance+=vec4f(p.beta.xyz*hgPhase(dot(-p.direction.xyz,light),medium.anisotropy)*lightColor,0);
+        }
+        let ez=1.0-2.0*random(&rng); let ephi=2.0*PI*random(&rng); let er=sqrt(max(0.0,1.0-ez*ez));
+        let envDirection=vec3f(er*cos(ephi),ez,er*sin(ephi));
+        if(intersect(p.origin.xyz+envDirection*max(1e-5,length(p.origin.xyz)*2e-6),envDirection).id==0xffffffffu){
+          var envColor=environment(envDirection); if(cfg.dimensions.w==2u){envColor=vec3f(rgbSpectrum(envColor,p.previous.x,true));}
+          p.radiance+=vec4f(p.beta.xyz*hgPhase(dot(-p.direction.xyz,envDirection),medium.anisotropy)*envColor*(4.0*PI),0);
         }
         p.direction=vec4f(normalize(hgDirection(p.direction.xyz,medium.anisotropy,vec2f(random(&rng),random(&rng)))),0);
         p.state.y++;

@@ -394,6 +394,7 @@ test('volume transport includes direct HG light estimation at scattering events'
   const source=shaderSource(syntheticScene('sss').materials, {});
   assert.match(source,/hgPhase\(dot\(-p\.direction\.xyz,light\)/);
   assert.match(source,/p\.beta\.xyz\*hgPhase/);
+  assert.match(source,/envColor\*\(4\.0\*PI\)/);
 });
 test('cycle, missing node, mismatch, duplicate, unknown operation fail', () => {
   assert.throws(() => compileGraph({ nodes: [{ name: 'x', category: 'absval', type: 'float', inputs: { in: { nodename: 'x' } } }] }), /cycle/);

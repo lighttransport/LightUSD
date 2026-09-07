@@ -103,7 +103,9 @@ events estimate directional-light radiance with HG phase evaluation and shadow
 tests. This supports geometric random walks, not the MaterialX subsurface
 albedo/radius parameterization. Cameras are assumed to start in vacuum; the
 stack supports three nested interiors and fails on overflow or mismatched
-boundaries. Environment direct sampling inside volumes remains future work.
+boundaries. Uniform-sphere environment direct sampling is included at medium
+events; multiple-importance weighting between volume light strategies remains
+future work.
 
 Scene `lighting.environment` is an optional constant RGB radiance; optional
 `lighting.directional` contains `direction` and `radiance`. Otherwise the original
