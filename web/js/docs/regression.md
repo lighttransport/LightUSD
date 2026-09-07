@@ -74,6 +74,9 @@ compiled base-color contribution.
 It also covers OpenPBR `specular_weight` scaling of the terminal microfacet
 contribution. Graph assertions cover the diffuse-roughness aliases.
 
+The `open-pbr-film` scene covers bounded OpenPBR thin-film weight, thickness,
+and IOR propagation.
+
 All web/WASM regression procedures live under `web/js`. The canonical gate is
 `npm test`; it runs the assertion-based Node/WASM suites, the physics-only
 MuJoCo binding smoke test, the USD Physics simulation, every pinned MuJoCo

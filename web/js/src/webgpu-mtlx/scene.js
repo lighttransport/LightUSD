@@ -122,6 +122,16 @@ export function syntheticScene(preset = 'copper') {
       }}
     ]};
   }
+  if(preset==='open-pbr-film') {
+    materials[1]={nodes:[
+      {name:'surface',category:'open_pbr_surface',type:'surfaceshader',inputs:{
+        base_weight:{type:'float',value:1}, base_color:{type:'color3',value:[.3,.12,.04]},
+        base_metalness:{type:'float',value:0}, base_diffuse_roughness:{type:'float',value:.3},
+        thin_film_weight:{type:'float',value:.8}, thin_film_thickness:{type:'float',value:220},
+        thin_film_ior:{type:'float',value:1.4}, geometry_opacity:{type:'float',value:1}
+      }}
+    ]};
+  }
   if(preset==='native-copper'||preset==='native-glass') {
     const glass=preset==='native-glass';
     materials[1]={nodes:[
