@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compileGraph, literal, GraphError } from '../src/webgpu-mtlx/graph.js';
+import { compileGraph, literal, GraphError, contextWGSL } from '../src/webgpu-mtlx/graph.js';
 import { packScene, syntheticScene } from '../src/webgpu-mtlx/scene.js';
 import { encodeEXR } from '../src/webgpu-mtlx/capture.js';
 import { packImages } from '../src/webgpu-mtlx/textures.js';
@@ -424,6 +424,10 @@ test('common trigonometric and angle-unit nodes map to WGSL math', () => {
     {name:'out',category:'add',type:'float',inputs:{in1:{nodename:'sum'},in2:{nodename:'e'}}}
   ]};
   const source=compileGraph(doc); assert.match(source.body,/0\.017453292519943295/); assert.match(source.body,/log\(n0\)\*0\.4342944819032518/); assert.match(source.body,/exp2\(n0\)/);
+});
+test('ACEScg conversion node uses the pinned MaterialX matrix', () => {
+  const doc={nodes:[{name:'aces',category:'acescg_to_lin_rec709',type:'color3',inputs:{in:{type:'color3',value:[1,0,0]}}}]};
+  const source=compileGraph(doc); assert.match(source.body,/mxAcescgToLinRec709/); assert.match(contextWGSL,/1\.705050992658/);
 });
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});

@@ -11,7 +11,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 // Units are semantic annotations; implementations consume their authored
 // convention (for example degrees for rotate2d and nanometers for thin film).
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
-export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
+export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'acescg_to_lin_rec709', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'surfacematerial', 'surface']);
 for(const category of ['transformmatrix','normalmap','bump3','heighttonormal'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
@@ -326,6 +326,7 @@ export function compileGraph(document, { output, library = {}, material = false,
         }
         case 'rgbtohsv': code=`mxRgbToHsv(${x('in',undefined,'color3')})`; break;
         case 'hsvtorgb': code=`mxHsvToRgb(${x('in',undefined,'color3')})`; break;
+        case 'acescg_to_lin_rec709': code=`mxAcescgToLinRec709(${x('in',undefined,'color3')})`; break;
         case 'dotproduct': code = `dot(${x('in1')},${x('in2')})`; break;
         case 'crossproduct': code = `cross(${x('in1', undefined, 'vector3')},${x('in2', undefined, 'vector3')})`; break;
         case 'texcoord':
@@ -478,6 +479,11 @@ fn mxRgbToHsv(c:vec3f)->vec3f {
   let q=select(vec4f(p.xyw,c.r),vec4f(c.r,p.yzx),c.r<p.x);
   let d=q.x-min(q.w,q.y); let e=1e-10;
   return vec3f(abs(q.z+(q.w-q.y)/(6.0*d+e)),d/(q.x+e),q.x);
+}
+fn mxAcescgToLinRec709(c:vec3f)->vec3f {
+  return mat3x3f(1.705050992658,-.130256417507,-.024003356805,
+                 -.621792120657,1.140804736575,-.128968976065,
+                 -.083258872001,-.010548319068,1.15297233287)*c;
 }
 fn safeNormal(v:vec3f,fallback:vec3f)->vec3f {
   let l2=dot(v,v); let valid=l2>1e-20 && all(v==v);
