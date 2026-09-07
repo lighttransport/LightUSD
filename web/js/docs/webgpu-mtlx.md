@@ -349,3 +349,9 @@ layered energy compensation remain future work.
 Standard Surface `thin_walled` now propagates into the compiled dielectric
 lobe instead of being silently forced opaque. The synthetic `thin-walled`
 scene exercises medium-stack-free glossy transmission in the hardware gate.
+
+Standard Surface/OpenPBR `transmission_depth` and `transmission_scatter` now
+survive graph compilation in the lobe and apply bounded Beer-Lambert
+attenuation to transmitted paths, including spectral conversion. The synthetic
+`transmission-depth` scene is hardware-tested; full distance-aware random-walk
+volumes remain a separate model.

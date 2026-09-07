@@ -96,6 +96,13 @@ export function syntheticScene(preset = 'copper') {
     materials[1].nodes[0].inputs.transmission_color={type:'color3',value:[.9,.96,1]};
     materials[1].nodes[0].inputs.thin_walled={type:'boolean',value:true};
   }
+  if(preset==='transmission-depth') {
+    materials[1]=surfaceDocument([.95,.98,1],0,.12);
+    materials[1].nodes[0].inputs.transmission={type:'float',value:1};
+    materials[1].nodes[0].inputs.transmission_color={type:'color3',value:[1,.92,.8]};
+    materials[1].nodes[0].inputs.transmission_depth={type:'float',value:2.5};
+    materials[1].nodes[0].inputs.transmission_scatter={type:'color3',value:[.08,.2,.5]};
+  }
   if(preset==='native-copper'||preset==='native-glass') {
     const glass=preset==='native-glass';
     materials[1]={nodes:[

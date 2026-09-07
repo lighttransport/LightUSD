@@ -62,6 +62,9 @@ It also covers the `sheen`/`fuzz` diffuse-sheen fallback path.
 The `thin-walled` scene covers Standard Surface thin-walled glossy transmission
 and verifies the physical transport path without a medium-stack mutation.
 
+The `transmission-depth` scene covers bounded Beer-Lambert attenuation from
+authored transmission depth/scatter controls, including the spectral pipeline.
+
 All web/WASM regression procedures live under `web/js`. The canonical gate is
 `npm test`; it runs the assertion-based Node/WASM suites, the physics-only
 MuJoCo binding smoke test, the USD Physics simulation, every pinned MuJoCo

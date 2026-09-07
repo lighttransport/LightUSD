@@ -400,7 +400,10 @@ export function compileGraph(document, { output, library = {}, material = false,
           const subsurfaceWeight = open ? (ins.subsurface_weight ? x('subsurface_weight', 0, 'float') : '0.0') : (ins.subsurface ? x('subsurface', 0, 'float') : '0.0');
           const subsurfaceColor = ins.subsurface_color ? x('subsurface_color', [0.8, 0.8, 0.8], 'color3') : fields[0];
           const baseLobe = `makeMaterial(${fields.join(',')},${thin},${filmThickness},${filmIOR})`;
-          const closure = `closureMix(closureLeaf(${baseLobe}),closureLeaf(nativeDiffuse(${subsurfaceColor},1.0,.9)),clamp(${subsurfaceWeight},0.0,1.0))`;
+          const transmissionDepth = ins.transmission_depth ? x('transmission_depth', 0, 'float') : '0.0';
+          const transmissionScatter = ins.transmission_scatter ? x('transmission_scatter', [0, 0, 0], 'color3') : 'vec3f(0)';
+          const transmittedLobe = `withTransmission(${baseLobe},${transmissionDepth},${transmissionScatter})`;
+          const closure = `closureMix(closureLeaf(${transmittedLobe}),closureLeaf(nativeDiffuse(${subsurfaceColor},1.0,.9)),clamp(${subsurfaceWeight},0.0,1.0))`;
           const coatWeight = open ? (ins.coat_weight ? x('coat_weight', 0, 'float') : '0.0') : (ins.coat ? x('coat', 0, 'float') : '0.0');
           const coatColor = ins.coat_color ? x('coat_color', [1, 1, 1], 'color3') : 'vec3f(1)';
           const coatRoughness = ins.coat_roughness ? x('coat_roughness', .1, 'float') : '.1';
@@ -442,11 +445,12 @@ fn mxBumpHeight(height:f32,scale:f32,n:vec3f,t:vec3f,b:vec3f)->vec3f {
   // explicit without silently turning them into geometric displacement.
   return normalize(n+t*(height*scale)+b*(height*scale));
 }
-struct Lobe { base: vec3f, metal: f32, roughness: f32, ior: f32, transmission: f32, emission: vec3f, emissionWeight: f32, anisotropy: f32, transmissionColor: vec3f, kind:u32, weight:f32, alpha:vec2f, complexIOR:vec3f, extinction:vec3f, scatterMode:u32, thinWalled:u32, thinFilmThickness:f32, thinFilmIOR:f32 }
+struct Lobe { base: vec3f, metal: f32, roughness: f32, ior: f32, transmission: f32, emission: vec3f, emissionWeight: f32, anisotropy: f32, transmissionColor: vec3f, kind:u32, weight:f32, alpha:vec2f, complexIOR:vec3f, extinction:vec3f, scatterMode:u32, thinWalled:u32, thinFilmThickness:f32, thinFilmIOR:f32, transmissionDepth:f32, transmissionScatter:vec3f }
 struct Medium { absorption: vec3f, scattering: vec3f, anisotropy: f32 }
 fn makeMaterial(base:vec3f,metal:f32,rough:f32,ior:f32,trans:f32,emission:vec3f,emissionWeight:f32,anisotropy:f32,tint:vec3f,thinWalled:u32,thinFilmThickness:f32,thinFilmIOR:f32)->Lobe {
- return Lobe(base,metal,rough,ior,trans,emission,emissionWeight,anisotropy,tint,0u,1.0,vec2f(rough*rough),vec3f(ior),vec3f(0),3u,thinWalled,thinFilmThickness,thinFilmIOR);
+ return Lobe(base,metal,rough,ior,trans,emission,emissionWeight,anisotropy,tint,0u,1.0,vec2f(rough*rough),vec3f(ior),vec3f(0),3u,thinWalled,thinFilmThickness,thinFilmIOR,0.0,vec3f(0));
 }
+fn withTransmission(lobe:Lobe,depth:f32,scatter:vec3f)->Lobe {var m=lobe;m.transmissionDepth=max(0.0,depth);m.transmissionScatter=max(vec3f(0),scatter);return m;}
 fn nativeDiffuse(color:vec3f,weight:f32,rough:f32)->Lobe {var m=makeMaterial(color,0,rough,1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=3u;m.weight=weight;return m;}
 fn nativeHair(color:vec3f,weight:f32,longitudinal:f32,azimuthal:f32)->Lobe {var m=makeMaterial(color,0,longitudinal,1.55,0,vec3f(0),0,azimuthal,vec3f(1),0u,0.0,1.5);m.kind=4u;m.weight=weight;m.alpha=vec2f(max(.02,longitudinal),max(.02,azimuthal));return m;}
 fn nativeDielectric(tint:vec3f,ior:f32,alpha:vec2f,weight:f32,mode:u32)->Lobe {var m=makeMaterial(tint,0,sqrt(max(alpha.x,alpha.y)),ior,1,vec3f(0),0,0,tint,0u,0.0,1.5);m.kind=1u;m.weight=weight;m.alpha=alpha;m.scatterMode=mode;return m;}

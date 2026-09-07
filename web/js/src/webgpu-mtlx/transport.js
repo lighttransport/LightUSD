@@ -27,6 +27,7 @@ fn thinFilmFresnel(c0:f32,baseIOR:f32,filmIOR:f32,thickness:f32)->vec3f {
   let wavelengths=vec3f(650.0,510.0,475.0);let interference=2.0*r01*r12*cos(phase*1e-3*wavelengths);
   return clamp(vec3f(r01*r01)+vec3f(r12*r12)+vec3f(interference),vec3f(0),vec3f(1));
 }
+fn transmissionAttenuation(m:Lobe)->vec3f { return exp(-max(vec3f(0),m.transmissionScatter)*max(0.0,m.transmissionDepth)); }
 fn microfacetD(h: vec3f, alpha: vec2f) -> f32 {
   if(h.z<=0.0) { return 0.0; }
   let q=dot(h.xy/alpha,h.xy/alpha)+h.z*h.z;
@@ -92,7 +93,7 @@ fn transportEval(m: Lobe, wo: vec3f, wi: vec3f, eta: f32) -> vec4f {
   }
   if(t>0.0 && m.roughness>0.0001 && eta!=1.0) {
     let glass=dielectricEval(wo,wi,alpha,eta);
-    value+=t*glass.x*select(m.transmissionColor,vec3f(1),wi.z>0.0); pdf+=t*glass.y;
+    value+=t*glass.x*select(m.transmissionColor*transmissionAttenuation(m),vec3f(1),wi.z>0.0); pdf+=t*glass.y;
   }
   return vec4f(value,pdf);
 }
@@ -105,7 +106,7 @@ fn transportSample(m: Lobe, wo: vec3f, eta: f32, rng: ptr<function,u32>) -> Scat
     let f=dielectricFresnel(wo.z,eta);
     if(random(rng)<f) { return Scatter(vec3f(-wo.xy,wo.z),t*f,vec3f(1),1u,1.0); }
     wi=refract(-wo,vec3f(0,0,1),1.0/eta);
-    return Scatter(wi,t*(1.0-f),m.transmissionColor/(eta*eta),1u,eta);
+    return Scatter(wi,t*(1.0-f),m.transmissionColor*transmissionAttenuation(m)/(eta*eta),1u,eta);
   }
   if(glass || random(rng)<mix(0.5,1.0,m.metal)) {
     let h=visibleNormal(wo,alpha,vec2f(random(rng),random(rng)));
@@ -145,7 +146,7 @@ fn nativeEval(m:Lobe,wo:vec3f,wi:vec3f,eta:f32)->vec4f {
   if((wi.z>0.0&&m.scatterMode==2u)||(wi.z<0.0&&m.scatterMode==1u)){return vec4f(0);}
   let f=dielectricEval(wo,wi,alpha,eta);var normalization=1.0;
   if(m.scatterMode!=3u) {let sum=wo+wi*select(eta,1.0,wi.z>0.0);let h=normalize(sum);let fr=dielectricFresnel(abs(dot(wo,h)),eta);normalization=select(1.0-fr,fr,m.scatterMode==1u);}
-  return vec4f(m.weight*m.transmissionColor*f.x,f.y/max(1e-30,normalization));
+  return vec4f(m.weight*m.transmissionColor*transmissionAttenuation(m)*f.x,f.y/max(1e-30,normalization));
 }
 fn nativeSample(m:Lobe,wo:vec3f,eta:f32,rng:ptr<function,u32>)->Scatter {
   var wi=vec3f(0);var delta=0u;
@@ -157,7 +158,7 @@ fn nativeSample(m:Lobe,wo:vec3f,eta:f32,rng:ptr<function,u32>)->Scatter {
       let fr=dielectricFresnel(dot(wo,h),eta);let pr=select(fr,0.0,m.scatterMode==2u);let pt=select(1.0-fr,0.0,m.scatterMode==1u);let total=pr+pt;
       if(total<=0.0){return Scatter(vec3f(0),0,vec3f(0),0u,1);}
       if(random(rng)<pr/total){wi=reflect(-wo,h);if(wi.z<=0.0){return Scatter(wi,0,vec3f(0),0u,1);}if(delta!=0u){return Scatter(wi,pr/total,m.weight*m.transmissionColor*total,1u,1);}}
-      else{wi=refract(-wo,h,1.0/eta);if(delta!=0u){return Scatter(wi,pt/total,m.weight*m.transmissionColor*total/(eta*eta),1u,eta);}if(wi.z>=0.0){return Scatter(wi,0,vec3f(0),0u,1);}}
+      else{wi=refract(-wo,h,1.0/eta);if(delta!=0u){return Scatter(wi,pt/total,m.weight*m.transmissionColor*transmissionAttenuation(m)*total/(eta*eta),1u,eta);}if(wi.z>=0.0){return Scatter(wi,0,vec3f(0),0u,1);}}
     }
   }
   if((m.kind!=1u&&wi.z<=0.0)||wo.z<=0.0){return Scatter(wi,0,vec3f(0),0u,1);}
