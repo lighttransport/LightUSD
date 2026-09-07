@@ -324,3 +324,8 @@ height-to-normal fallback (`mxBumpHeight`) that feeds the same authored normal
 path without mutating geometry. The synthetic `bump` scene is hardware-tested;
 texture-aware finite-difference bump and true displacement/subdivision remain
 separate follow-up work.
+
+Regular raster-image resources now honor `allowDownsample` as well as EXR:
+oversized PNG/JPEG inputs are reduced into the configured pixel budget before
+RGBA conversion, with `resizedFrom` provenance. Default decode still rejects
+oversized images. The Chrome gate exercises both branches with a generated PNG.

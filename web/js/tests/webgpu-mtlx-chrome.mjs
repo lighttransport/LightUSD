@@ -55,6 +55,15 @@ try {
     await r.loadScene(textured); await r.renderStep();
     const imageCapture = await r.capture({ format: 'float32' });
     if (!imageCapture.pixels.every(Number.isFinite)) throw new Error('Non-finite textured render');
+    const { decodeImage } = await import('/src/webgpu-mtlx/resources.js');
+    const oversizedCanvas = document.createElement('canvas'); oversizedCanvas.width = 512; oversizedCanvas.height = 512;
+    const oversizedContext = oversizedCanvas.getContext('2d'); oversizedContext.fillStyle = '#c84'; oversizedContext.fillRect(0, 0, 512, 512);
+    const oversizedBlob = await new Promise(resolve => oversizedCanvas.toBlob(resolve, 'image/png'));
+    const oversizedBytes = new Uint8Array(await oversizedBlob.arrayBuffer());
+    const reducedImage = await decodeImage(oversizedBytes, { filename: 'oversized.png', maxPixels: 64 * 64, allowDownsample: true });
+    if (reducedImage.width * reducedImage.height > 64 * 64 || !reducedImage.resizedFrom || !reducedImage.data.every(Number.isFinite)) throw new Error('Regular image downsample budget failed');
+    let rejectedOversized = false; try { await decodeImage(oversizedBytes, { filename: 'oversized.png', maxPixels: 64 * 64 }); } catch { rejectedOversized = true; }
+    if (!rejectedOversized) throw new Error('Regular image budget rejection failed');
     r.setMode('realtime'); await r.renderStep();
     await r.setMaterialDocument(doc); await r.renderStep(); r.setMode('path-preview');
     await r.loadScene(syntheticScene('rough-glass')); r.setMode('path-physical');

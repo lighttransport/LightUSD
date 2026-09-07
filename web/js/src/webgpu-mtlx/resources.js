@@ -91,13 +91,17 @@ export async function decodeImage(bytes, { filename = '', colorspace, maxPixels 
   }
   const bitmap = await createImageBitmap(new Blob([bytes]), { premultiplyAlpha: 'none', colorSpaceConversion: 'none', imageOrientation: 'none' });
   try {
-    if (bitmap.width * bitmap.height > maxPixels) throw new Error('Image exceeds decoded pixel budget');
-    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), context = canvas.getContext('2d', { willReadFrequently: true });
-    context.drawImage(bitmap, 0, 0);
-    const rgba = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+    const oversized = bitmap.width * bitmap.height > maxPixels;
+    if (oversized && !allowDownsample) throw new Error('Image exceeds decoded pixel budget');
+    const scale = oversized ? Math.sqrt((bitmap.width * bitmap.height) / maxPixels) : 1;
+    const width = oversized ? Math.max(1, Math.floor(bitmap.width / scale)) : bitmap.width;
+    const height = oversized ? Math.max(1, Math.floor(bitmap.height / scale)) : bitmap.height;
+    const canvas = new OffscreenCanvas(width, height), context = canvas.getContext('2d', { willReadFrequently: true });
+    context.drawImage(bitmap, 0, 0, width, height);
+    const rgba = context.getImageData(0, 0, width, height).data;
     const data = new Float32Array(rgba.length);
-    for (let y = 0; y < bitmap.height; y++) for (let x = 0; x < bitmap.width * 4; x++) data[y * bitmap.width * 4 + x] = rgba[(bitmap.height - 1 - y) * bitmap.width * 4 + x] / 255;
-    return { width: bitmap.width, height: bitmap.height, data, colorspace: colorspace || 'srgb_texture' };
+    for (let y = 0; y < height; y++) for (let x = 0; x < width * 4; x++) data[y * width * 4 + x] = rgba[(height - 1 - y) * width * 4 + x] / 255;
+    return { width, height, data, colorspace: colorspace || 'srgb_texture', ...(oversized ? { resizedFrom: { width: bitmap.width, height: bitmap.height } } : {}) };
   } finally { bitmap.close(); }
 }
 
