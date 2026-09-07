@@ -317,6 +317,11 @@ Authored `subsurface_radius` now also controls the bounded scattering-lobe
 roughness through its maximum channel, preserving a visible radius influence
 without claiming a true BSSRDF or radius-dependent exit profile.
 
+The bounded subsurface lobe now has a distinct diffusion-profile evaluation and
+cosine sampling branch, carrying authored radius into its profile width instead
+of reusing the ordinary diffuse closure. True random-walk BSSRDF transport,
+surface-distance coupling, and multiple scattering remain future work.
+
 Authored `standard_surface normal` connections now populate `Material.normal`
 and are used by both path and realtime transport, with geometric-normal
 fallbacks and geometric offsets retained for robustness. The synthetic

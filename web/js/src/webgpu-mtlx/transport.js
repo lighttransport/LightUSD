@@ -136,6 +136,13 @@ fn nativeEval(m:Lobe,wo:vec3f,wi:vec3f,eta:f32)->vec4f {
     let value=m.weight*m.base*(.2/PI+.8*longitudinal*azimuth);
     return vec4f(value,wi.z/PI);
   }
+  if(m.kind==6u) {
+    if(wi.z<=0.0){return vec4f(0);}
+    let sigma=max(.02,m.alpha.x);let radial=length(wo-wi);
+    let profile=exp(-radial/max(.02,sigma))/(2.0*PI*max(.02,sigma)*max(.02,sigma));
+    let value=m.weight*m.base*(.25/PI+.75*profile);
+    return vec4f(value,wi.z/PI);
+  }
   if(m.kind==3u) {
     if(wi.z<=0.0){return vec4f(0);}
     let s=dot(wo,wi)-wo.z*wi.z;let sigma=m.roughness*m.roughness;
@@ -156,7 +163,7 @@ fn nativeEval(m:Lobe,wo:vec3f,wi:vec3f,eta:f32)->vec4f {
 }
 fn nativeSample(m:Lobe,wo:vec3f,eta:f32,rng:ptr<function,u32>)->Scatter {
   var wi=vec3f(0);var delta=0u;
-  if(m.kind==3u || m.kind==4u) {let r=sqrt(random(rng));let phi=2.0*PI*random(rng);wi=vec3f(r*cos(phi),r*sin(phi),sqrt(max(0.0,1.0-r*r)));}
+  if(m.kind==3u || m.kind==4u || m.kind==6u) {let r=sqrt(random(rng));let phi=2.0*PI*random(rng);wi=vec3f(r*cos(phi),r*sin(phi),sqrt(max(0.0,1.0-r*r)));}
   else {
     var h=vec3f(0,0,1);if(max(m.alpha.x,m.alpha.y)>0.0001 && (eta!=1.0||m.kind==2u)){h=visibleNormal(wo,max(vec2f(.0001),m.alpha),vec2f(random(rng),random(rng)));}else{delta=1u;}
     if(m.kind==2u){wi=reflect(-wo,h);if(delta!=0u){return Scatter(wi,1,m.weight*conductorFresnel(wo.z,m.complexIOR,m.extinction),1u,1);}}

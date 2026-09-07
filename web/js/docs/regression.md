@@ -43,6 +43,9 @@ It also covers the `subsurface` scene, exercising authored subsurface color and
 weight closure mixing; this is not yet a random-walk BSSRDF reference. Its
 authored radius also feeds the bounded scattering-lobe roughness.
 
+The subsurface closure now uses a distinct bounded diffusion-profile evaluator
+and cosine sampler; true random-walk BSSRDF transport remains future work.
+
 The `normalmap` scene covers authored normal connections in both path and
 realtime shader pipelines.
 
