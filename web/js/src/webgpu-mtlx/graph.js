@@ -444,15 +444,19 @@ export function compileGraph(document, { output, library = {}, material = false,
 }
 
 export const contextWGSL = `struct ShadingContext { position: vec3f, normal: vec3f, tangent: vec3f, bitangent: vec3f, uv: vec2f, time: f32, frame: f32, uvDx: vec2f, uvDy: vec2f }
+fn safeNormal(v:vec3f,fallback:vec3f)->vec3f {
+  let l2=dot(v,v); let valid=l2>1e-20 && all(v==v);
+  return select(fallback,v*inverseSqrt(max(l2,1e-20)),valid);
+}
 fn mxNormalmap(value:vec3f,scale:vec2f,n:vec3f,t:vec3f,b:vec3f)->vec3f {
  let decoded=select(value*2.0-1.0,vec3f(0,0,1),dot(value,value)==0.0);
- return normalize(t*decoded.x*scale.x+b*decoded.y*scale.y+n*decoded.z);
+ return safeNormal(t*decoded.x*scale.x+b*decoded.y*scale.y+n*decoded.z,n);
 }
 fn mxBumpHeight(height:f32,scale:f32,n:vec3f,t:vec3f,b:vec3f)->vec3f {
   // Bounded height-to-normal fallback. Texture-aware finite differences are
   // supplied by normalmap/image graphs; this node keeps scalar bump graphs
   // explicit without silently turning them into geometric displacement.
-  return normalize(n+t*(height*scale)+b*(height*scale));
+  return safeNormal(n+t*(height*scale)+b*(height*scale),n);
 }
 struct Lobe { base: vec3f, metal: f32, roughness: f32, ior: f32, transmission: f32, emission: vec3f, emissionWeight: f32, anisotropy: f32, transmissionColor: vec3f, kind:u32, weight:f32, alpha:vec2f, complexIOR:vec3f, extinction:vec3f, scatterMode:u32, thinWalled:u32, thinFilmThickness:f32, thinFilmIOR:f32, transmissionDepth:f32, transmissionScatter:vec3f, schlickColor90:vec3f, schlickExponent:f32 }
 struct Medium { absorption: vec3f, scattering: vec3f, anisotropy: f32 }

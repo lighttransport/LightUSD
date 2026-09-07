@@ -246,7 +246,7 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   const normal=syntheticScene('normalmap').materials[1];
   assert.match(compileGraph(normal,{material:true}).body,/normalize\(n/);
   assert.match(shaderSource([normal]),/surface\.normal/);
-  assert.match(shaderSource([normal]),/var n=normalize\(surface\.normal\)/);
+  assert.match(shaderSource([normal]),/var n=safeNormal\(surface\.normal/);
   const imageNormal=syntheticScene('normalmap-image').materials[1];
   const imageResources={};
   assert.match(shaderSource([imageNormal],imageResources),/imageSample\(0u/);
@@ -378,7 +378,7 @@ test('shared dependency emitted once and deterministic', () => {
 });
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
-  assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /pathCounters\[3\]/);
+  assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/);
 });
 test('cycle, missing node, mismatch, duplicate, unknown operation fail', () => {
   assert.throws(() => compileGraph({ nodes: [{ name: 'x', category: 'absval', type: 'float', inputs: { in: { nodename: 'x' } } }] }), /cycle/);

@@ -106,7 +106,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
     // MaterialX normal/normalmap outputs are evaluated after geometric
     // orientation and before transport. Keep the geometric normal for ray
     // offsets while using the authored normal for the local BSDF frame.
-    ctx.normal=normalize(surface.normal);
+    ctx.normal=safeNormal(surface.normal,gn);
     if(dot(ctx.normal,gn)<0.0){ctx.normal=-ctx.normal;}
     if(dot(ctx.normal,p.direction.xyz)>0.0){ctx.normal=-ctx.normal;}
     // MaterialX opacity is a cutout/transmittance factor. Stochastic
