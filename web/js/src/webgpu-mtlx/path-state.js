@@ -37,6 +37,11 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
   if(p.state.w!=0u) { paths[index]=p; return; }
   var rng=p.state.x;
   for(var step=0u;step<4u;step++) {
+    // Russian roulette normally bounds physical path depth after five events.
+    // Keep a finite guard as a last resort for degenerate authored normals or
+    // delta chains; this terminates a path, never a dispatch, and is reported
+    // separately so reference runs can detect pathological materials.
+    if(p.state.y>=64u){atomicAdd(&pathCounters[3],1u);finishPath(index,&p);break;}
     let h=intersect(p.origin.xyz,p.direction.xyz);
     let mediumDepth=u32(p.previous.w);
     var homogeneous=true;

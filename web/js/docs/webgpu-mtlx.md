@@ -324,6 +324,10 @@ Shading normals from normal/normalmap nodes are now clamped to the geometric
 hemisphere before path and raster transport, preventing perturbed frames from
 launching rays through the wrong side of a surface.
 
+Physical paths also have a post-Russian-roulette depth guard at 64 events. It
+terminates only pathological trajectories (and exposes a `depthTerminated`
+counter); it does not truncate a dispatch or hide invalid transport errors.
+
 The synthetic coverage set now includes a `hair` scene using the MaterialX
 `hair_bsdf` category. Its legacy melanin and explicit-color forms compile to a
 bounded fiber lobe with longitudinal/azimuthal roughness and are exercised by

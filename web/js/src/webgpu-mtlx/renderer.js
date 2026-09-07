@@ -229,6 +229,7 @@ class MaterialXRenderer extends EventTarget {
           await this.pathReadback.mapAsync(GPUMapMode.READ);
           const counters = new Uint32Array(this.pathReadback.getMappedRange()).slice(); this.pathReadback.unmap();
           this.stats.activePaths = counters[0];
+          this.stats.depthTerminated = counters[3];
           if (counters[1] || counters[2]) {this.transportError=new Error(`Physical transport invalid: ${counters[1]} medium stack errors, ${counters[2]} invalid values`);throw this.transportError;}
           if (counters[0] === 0) this.samples++;
         } else this.samples++;
