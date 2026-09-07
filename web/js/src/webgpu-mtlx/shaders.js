@@ -177,8 +177,8 @@ struct RasterVertex { @builtin(position) clip: vec4f, @location(0) position: vec
 @fragment fn rasterFragment(v: RasterVertex, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   let n = normalize(select(-v.normal,v.normal,front)); let tangent = normalize(cross(select(vec3f(0,1,0),vec3f(1,0,0),abs(n.y)>0.9),n));
   var ctx = ShadingContext(v.position,n,tangent,cross(n,tangent),v.uv,0,0,dpdx(v.uv),dpdy(v.uv));
-  let surface=getSurface(v.material,ctx); ctx.normal=normalize(surface.normal); let m = primaryLobe(surface); let wo = normalize(cfg.origin.xyz-v.position); let light=directionalDirection();
-  var color = m.emission*m.emissionWeight*emissionSidedness(v.material,v.normal,-wo)+m.base*(1.0-m.metal)*0.22+fresnel(max(0.0,dot(n,wo)),mix(vec3f(0.04),m.base,m.metal))*environment(reflect(-wo,n));
+  let surface=getSurface(v.material,ctx); if(surface.opacity<=0.001){discard;} ctx.normal=normalize(surface.normal); let m = primaryLobe(surface); let wo = normalize(cfg.origin.xyz-v.position); let light=directionalDirection();
+  var color = (m.emission*m.emissionWeight*emissionSidedness(v.material,v.normal,-wo)+m.base*(1.0-m.metal)*0.22+fresnel(max(0.0,dot(n,wo)),mix(vec3f(0.04),m.base,m.metal))*environment(reflect(-wo,n)))*clamp(surface.opacity,0.0,1.0);
   if (intersect(v.position+n*max(1e-4,length(v.position)*1e-5),light).id==0xffffffffu) { color += bsdf(m,n,wo,light).xyz*max(0.0,dot(n,light))*directionalRadiance(); }
   let linear = max(vec3f(0),color*exp2(cfg.display.x)); let mapped=linear/(1.0+linear);
   return vec4f(select(12.92*mapped,1.055*pow(mapped,vec3f(1.0/2.4))-0.055,mapped>vec3f(0.0031308)),1);

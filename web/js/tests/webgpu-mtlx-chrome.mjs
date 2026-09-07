@@ -127,7 +127,7 @@ try {
   await page.screenshot({ path: path.join(out, 'chrome.png') });
   const referenceImages=[];
   if(process.argv.includes('--reference-images')) {
-    const referencePresets=['native-copper','native-glass','sss','hair','thin-film','subsurface','normalmap','bump','coat','sheen','thin-walled','transmission-depth','generalized-schlick','open-pbr-weight','open-pbr-film','open-pbr-normal','displacement'];
+    const referencePresets=['native-copper','native-glass','sss','hair','thin-film','subsurface','normalmap','bump','coat','sheen','thin-walled','transmission-depth','generalized-schlick','open-pbr-weight','open-pbr-film','open-pbr-normal','opacity','displacement'];
     const onlyPreset=process.argv.find(arg=>arg.startsWith('--only-preset='))?.slice('--only-preset='.length);
     const requestedReferenceSamples=Number(process.argv.find(arg=>arg.startsWith('--reference-samples='))?.slice('--reference-samples='.length)||32);
     assert.ok(Number.isInteger(requestedReferenceSamples)&&requestedReferenceSamples>0&&requestedReferenceSamples<=32,'reference samples must be 1..32');

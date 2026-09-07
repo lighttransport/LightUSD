@@ -50,6 +50,8 @@ The `open-pbr-normal` scene covers the OpenPBR `geometry_normal` alias.
 
 Graph assertions cover both `color3` and `vector3` normal-map inputs.
 
+The `opacity` scene covers realtime opacity discard/scaling behavior.
+
 
 The `bump` scene covers scalar `bump3` height-to-normal fallback in both
 pipelines; it does not claim texture-aware finite-difference conformance.

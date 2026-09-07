@@ -142,6 +142,10 @@ export function syntheticScene(preset = 'copper') {
       }}
     ]};
   }
+  if(preset==='opacity') {
+    materials[1]=surfaceDocument([.72,.18,.04],0,.26);
+    materials[1].nodes[0].inputs.opacity={type:'float',value:.55};
+  }
   if(preset==='native-copper'||preset==='native-glass') {
     const glass=preset==='native-glass';
     materials[1]={nodes:[

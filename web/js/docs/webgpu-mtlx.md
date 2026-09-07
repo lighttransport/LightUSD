@@ -331,6 +331,10 @@ normal-map filtering and geometric displacement remain separate limitations.
 the common image-node color representation without changing tangent-space
 normal semantics.
 
+Realtime raster shading now honors compiled opacity with a zero-opacity discard
+and bounded color scaling. The synthetic `opacity` scene exercises this path;
+full sorted transparency and blend compositing remain future work.
+
 
 Scalar MaterialX `bump3` and `heighttonormal` nodes now have a bounded
 height-to-normal fallback (`mxBumpHeight`) that feeds the same authored normal
