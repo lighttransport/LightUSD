@@ -4,6 +4,10 @@
   "version": "1.0.0-rc4",
   "type": "module",
   "scripts": {
+    "dev:webgpu-mtlx": "vite --config vite.webgpu-mtlx.config.mjs --open /webgpu-mtlx.html",
+    "prepare:webgpu-mtlx": "node scripts/prepare-webgpu-mtlx.mjs",
+    "test:webgpu-mtlx": "node --test tests/webgpu-mtlx.test.mjs",
+    "test:webgpu-mtlx:chrome": "node tests/webgpu-mtlx-chrome.mjs --hardware",
     "dev": "vite",
     "dev:anim": "vite --open /animation.html",
     "dev:skel": "vite --open /skin-anim.html",

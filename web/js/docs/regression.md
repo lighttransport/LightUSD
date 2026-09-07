@@ -1,5 +1,11 @@
 # Web regression gate
 
+The fresh WebGPU MaterialX baseline has a focused Windows/Chrome hardware gate:
+`node tests/webgpu-mtlx-chrome.mjs --hardware --shaderball --performance`.
+Its pure Node graph/scene tests are included in the aggregate Node profile.
+See [implementation status and setup](webgpu-mtlx.md) for the pinned fixtures,
+generated artifacts, measured coverage, and unfinished reference-rendering work.
+
 All web/WASM regression procedures live under `web/js`. The canonical gate is
 `npm test`; it runs the assertion-based Node/WASM suites, the physics-only
 MuJoCo binding smoke test, the USD Physics simulation, every pinned MuJoCo

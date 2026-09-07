@@ -1,0 +1,85 @@
+// SPDX-License-Identifier: Apache-2.0
+export const sub = (a, b) => a.map((v, i) => v - b[i]);
+export const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+export const normalize = a => { const l = Math.hypot(...a); return l > 1e-20 ? a.map(v => v / l) : [0, 1, 0]; };
+export function surfaceDocument(color = [0.6, 0.2, 0.05], metal = 0, roughness = 0.3) {
+  return { nodes: [{ name: 'surface', category: 'standard_surface', type: 'surfaceshader', inputs: {
+    base_color: { type: 'color3', value: color }, metalness: { type: 'float', value: metal }, specular_roughness: { type: 'float', value: roughness },
+  } }] };
+}
+export function syntheticScene(preset = 'copper') {
+  const positions = [], normals = [], uvs = [], indices = [], materialIds = [];
+  const materials = [surfaceDocument([0.5, 0.5, 0.5], 0, 0.8), surfaceDocument([0.95, 0.55, 0.22], preset === 'copper' ? 1 : 0, 0.22)];
+  if (preset === 'graph') {
+    materials[1] = { nodes: [
+      { name: 'uv', category: 'texcoord', type: 'vector2', inputs: {} },
+      { name: 'x', category: 'extract', type: 'float', inputs: { in: { nodename: 'uv' }, index: { type: 'integer', value: 0 } } },
+      { name: 'frequency', category: 'multiply', type: 'float', inputs: { in1: { nodename: 'x' }, in2: { type: 'float', value: 100 } } },
+      { name: 'wave', category: 'sin', type: 'float', inputs: { in: { nodename: 'frequency' } } },
+      { name: 'mask', category: 'smoothstep', type: 'float', inputs: { in: { nodename: 'wave' }, low: { type: 'float', value: -0.1 }, high: { type: 'float', value: 0.1 } } },
+      { name: 'color', category: 'mix', type: 'color3', inputs: { bg: { type: 'color3', value: [0.015, 0.05, 0.2] }, fg: { type: 'color3', value: [0.9, 0.6, 0.1] }, mix: { nodename: 'mask' } } },
+      { name: 'surface', category: 'standard_surface', type: 'surfaceshader', inputs: { base_color: { nodename: 'color' }, specular_roughness: { type: 'float', value: 0.28 } } },
+    ] };
+  }
+  function sphere(cx, cy, cz, r, mat, segments = 64, rings = 32) {
+    const first = positions.length / 3;
+    for (let y = 0; y <= rings; y++) for (let x = 0; x <= segments; x++) {
+      const theta = y / rings * Math.PI, phi = x / segments * Math.PI * 2;
+      const n = [Math.sin(theta) * Math.cos(phi), Math.cos(theta), Math.sin(theta) * Math.sin(phi)];
+      positions.push(cx + n[0] * r, cy + n[1] * r, cz + n[2] * r); normals.push(...n); uvs.push(x / segments, y / rings);
+    }
+    for (let y = 0; y < rings; y++) for (let x = 0; x < segments; x++) {
+      const a = first + y * (segments + 1) + x, b = a + segments + 1;
+      if (y > 0) { indices.push(a, a + 1, b); materialIds.push(mat); }
+      if (y < rings - 1) { indices.push(a + 1, b + 1, b); materialIds.push(mat); }
+    }
+  }
+  sphere(0, 1, 0, 1, 1);
+  const first = positions.length / 3;
+  positions.push(-8, 0, -8, -8, 0, 8, 8, 0, 8, 8, 0, -8);
+  for (let i = 0; i < 4; i++) normals.push(0, 1, 0);
+  uvs.push(0, 0, 0, 1, 1, 1, 1, 0);
+  indices.push(first, first + 1, first + 2, first, first + 2, first + 3); materialIds.push(0, 0);
+  return { positions, normals, uvs, indices, materialIds, materials, camera: { origin: [3.6, 2.6, 4.4], target: [0, 0.8, 0], fov: 42 }, provenance: { synthetic: preset } };
+}
+
+/** Stackless median BVH. Immutable copied scene data, no references into WASM. */
+export function packScene(scene, { maxTriangles = 2_000_000 } = {}) {
+  const { positions, indices, normals, uvs, materialIds, materials } = scene;
+  if (!positions || !indices || positions.length % 3 || indices.length % 3 || indices.length === 0) throw new Error('Invalid triangle mesh');
+  if (indices.length / 3 > maxTriangles) throw new Error(`Triangle budget exceeded (${maxTriangles})`);
+  if (!materials?.length || materials.length > 64) throw new Error('Expected 1–64 materials');
+  if (normals && normals.length !== positions.length) throw new Error('Normal count mismatch');
+  if (uvs && uvs.length !== positions.length / 3 * 2) throw new Error('UV count mismatch');
+  if (materialIds && materialIds.length !== indices.length / 3) throw new Error('Material count mismatch');
+  for (const a of [positions, normals, uvs]) if (a && !Array.from(a).every(v => Number.isFinite(v) && Number.isFinite(Math.fround(v)))) throw new Error('Non-finite float32 vertex attributes');
+  const tris = [];
+  for (let t = 0; t < indices.length / 3; t++) {
+    const ids = Array.from(indices.slice(t * 3, t * 3 + 3));
+    if (ids.some(i => !Number.isInteger(i) || i < 0 || i >= positions.length / 3)) throw new Error('Invalid vertex index');
+    const mat = materialIds?.[t] ?? 0;
+    if (!Number.isInteger(mat) || mat < 0 || mat >= materials.length) throw new Error('Invalid material index');
+    const p = ids.map(i => Array.from(positions.slice(i * 3, i * 3 + 3)));
+    const geometric = normalize(cross(sub(p[1], p[0]), sub(p[2], p[0])));
+    tris.push({ p, n: ids.map(i => normals ? Array.from(normals.slice(i * 3, i * 3 + 3)) : geometric), uv: ids.map(i => uvs ? Array.from(uvs.slice(i * 2, i * 2 + 2)) : [0, 0]), mat, center: [0, 1, 2].map(k => (p[0][k] + p[1][k] + p[2][k]) / 3) });
+  }
+  const nodes = [], ordered = [];
+  function build(items) {
+    const idx = nodes.length, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (const t of items) for (const p of t.p) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p[k]); hi[k] = Math.max(hi[k], p[k]); }
+    const node = { lo, hi, first: 0, count: 0, escape: 0 }; nodes.push(node);
+    if (items.length <= 4) { node.first = ordered.length; node.count = items.length; ordered.push(...items); }
+    else {
+      let axis = 0; for (let k = 1; k < 3; k++) if (hi[k] - lo[k] > hi[axis] - lo[axis]) axis = k;
+      items.sort((a, b) => a.center[axis] - b.center[axis]); const mid = items.length >> 1;
+      build(items.slice(0, mid)); build(items.slice(mid));
+    }
+    node.escape = nodes.length; return idx;
+  }
+  build(tris);
+  const nodeData = new Float32Array(nodes.length * 12);
+  nodes.forEach((n, i) => nodeData.set([...n.lo, n.first, ...n.hi, n.count, n.escape, 0, 0, 0], i * 12));
+  const triangleData = new Float32Array(ordered.length * 36);
+  ordered.forEach((t, i) => { for (let v = 0; v < 3; v++) triangleData.set([...t.p[v], 0, ...t.n[v], 0, ...t.uv[v], t.mat, 0], i * 36 + v * 12); });
+  return { nodeData, triangleData, triangleCount: ordered.length, nodeCount: nodes.length, bounds: nodes[0], camera: scene.camera, materials, provenance: scene.provenance || {} };
+}

@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<materialx version="1.39">
+  <texcoord name="uv" type="vector2"/>
+  <extract name="u" type="float"><input name="in" type="vector2" nodename="uv"/><input name="index" type="integer" value="0"/></extract>
+  <multiply name="frequency" type="float"><input name="in1" type="float" nodename="u"/><input name="in2" type="float" value="100"/></multiply>
+  <sin name="wave" type="float"><input name="in" type="float" nodename="frequency"/></sin>
+  <smoothstep name="mask" type="float"><input name="in" type="float" nodename="wave"/><input name="low" type="float" value="-0.1"/><input name="high" type="float" value="0.1"/></smoothstep>
+  <mix name="color" type="color3"><input name="bg" type="color3" value="0.015,0.05,0.2"/><input name="fg" type="color3" value="0.9,0.6,0.1"/><input name="mix" type="float" nodename="mask"/></mix>
+  <standard_surface name="surface" type="surfaceshader"><input name="base_color" type="color3" nodename="color"/><input name="specular_roughness" type="float" value="0.28"/></standard_surface>
+</materialx>

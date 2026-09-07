@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<materialx version="1.39">
+  <constant name="two" type="float"><input name="value" type="float" value="2"/></constant>
+  <multiply name="six" type="float"><input name="in1" type="float" nodename="two"/><input name="in2" type="float" value="3"/></multiply>
+  <add name="eight" type="float"><input name="in1" type="float" nodename="six"/><input name="in2" type="float" nodename="two"/></add>
+</materialx>

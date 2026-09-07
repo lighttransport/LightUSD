@@ -1,0 +1,159 @@
+// SPDX-License-Identifier: Apache-2.0
+import { compileGraph, contextWGSL } from './graph.js';
+
+export function shaderSource(materials) {
+  const functions = materials.map((doc, i) => {
+    const c = compileGraph(doc, { material: true });
+    if (!['surfaceshader', 'material'].includes(c.type)) throw new Error('Material graph must produce a surface');
+    return `fn material${i}(ctx: ShadingContext) -> Material { ${c.body}\nreturn ${c.expression}; }`;
+  }).join('\n');
+  return /* wgsl */`
+${contextWGSL}
+${functions}
+struct Settings { origin: vec4f, forward: vec4f, right: vec4f, up: vec4f, dimensions: vec4u, display: vec4f }
+struct Node { lo: vec4f, hi: vec4f, link: vec4f }
+struct Vertex { p: vec4f, n: vec4f, uv: vec4f }
+struct Triangle { a: Vertex, b: Vertex, c: Vertex }
+struct Hit { t: f32, u: f32, v: f32, id: u32 }
+@group(0) @binding(0) var<uniform> cfg: Settings;
+@group(0) @binding(1) var<storage,read> nodes: array<Node>;
+@group(0) @binding(2) var<storage,read> triangles: array<Triangle>;
+@group(0) @binding(3) var<storage,read_write> accumulation: array<vec4f>;
+const PI = 3.141592653589793;
+fn hash(v0: u32) -> u32 { var v = v0; v = (v ^ (v >> 16u)) * 0x7feb352du; v = (v ^ (v >> 15u)) * 0x846ca68bu; return v ^ (v >> 16u); }
+fn random(state: ptr<function,u32>) -> f32 { *state = hash(*state + 0x9e3779b9u); return (f32(*state >> 8u) + 0.5) / 16777216.0; }
+fn intersect(o: vec3f, d: vec3f) -> Hit {
+  var h = Hit(1e30,0,0,0xffffffffu); var ni = 0u;
+  let safeD = select(select(vec3f(-1e-20),vec3f(1e-20),d >= vec3f(0)),d,abs(d) > vec3f(1e-20));
+  let inv = 1.0 / safeD;
+  loop {
+    if (ni >= arrayLength(&nodes)) { break; }
+    let node = nodes[ni]; let a = (node.lo.xyz-o)*inv; let b = (node.hi.xyz-o)*inv;
+    let near = min(a,b); let far = max(a,b);
+    if (max(max(near.x,near.y),max(near.z,0.0)) > min(min(far.x,far.y),min(far.z,h.t))) { ni = u32(node.link.x); continue; }
+    for (var j = 0u; j < u32(node.hi.w); j++) {
+      let ti = u32(node.lo.w)+j; let tri = triangles[ti];
+      let e1 = tri.b.p.xyz-tri.a.p.xyz; let e2 = tri.c.p.xyz-tri.a.p.xyz;
+      let p = cross(d,e2); let det = dot(e1,p);
+      if (abs(det) < 1e-10) { continue; }
+      let s = o-tri.a.p.xyz; let u = dot(s,p)/det; if (u < 0.0 || u > 1.0) { continue; }
+      let q = cross(s,e1); let v = dot(d,q)/det; if (v < 0.0 || u+v > 1.0) { continue; }
+      let t = dot(e2,q)/det; if (t > 1e-5 && t < h.t) { h = Hit(t,u,v,ti); }
+    }
+    ni++;
+  }
+  return h;
+}
+fn context(h: Hit, o: vec3f, d: vec3f) -> ShadingContext {
+  let tri = triangles[h.id]; let w = 1.0-h.u-h.v;
+  let n = normalize(tri.a.n.xyz*w+tri.b.n.xyz*h.u+tri.c.n.xyz*h.v);
+  let tangent = normalize(cross(select(vec3f(0,1,0),vec3f(1,0,0),abs(n.y)>0.9),n));
+  return ShadingContext(o+d*h.t,n,tangent,cross(n,tangent),tri.a.uv.xy*w+tri.b.uv.xy*h.u+tri.c.uv.xy*h.v,0,0);
+}
+fn getMaterial(id: u32, ctx: ShadingContext) -> Material {
+  switch id { ${materials.map((_, i) => `case ${i}u: { return material${i}(ctx); }`).join('\n')} default: { return material0(ctx); } }
+}
+fn environment(d: vec3f) -> vec3f {
+  let sky = mix(vec3f(0.12,0.15,0.2),vec3f(0.55,0.66,0.85),smoothstep(-0.1,0.9,d.y));
+  return sky;
+}
+fn basis(n: vec3f, v: vec3f) -> vec3f {
+  let t = normalize(cross(select(vec3f(0,1,0),vec3f(1,0,0),abs(n.y)>0.9),n));
+  return t*v.x+cross(n,t)*v.y+n*v.z;
+}
+fn cosine(n: vec3f, rng: ptr<function,u32>) -> vec3f {
+  let r = sqrt(random(rng)); let phi = 2.0*PI*random(rng);
+  return basis(n,vec3f(r*cos(phi),r*sin(phi),sqrt(max(0.0,1.0-r*r))));
+}
+fn fresnel(c: f32, f0: vec3f) -> vec3f { return f0+(1.0-f0)*pow(1.0-clamp(c,0.0,1.0),5.0); }
+fn distribution(nh: f32, a2: f32) -> f32 { let d = nh*nh*(a2-1.0)+1.0; return a2/(PI*d*d); }
+fn masking(nv: f32, a2: f32) -> f32 { return 2.0*nv/(nv+sqrt(a2+(1.0-a2)*nv*nv)); }
+fn bsdf(m: Material, n: vec3f, wo: vec3f, wi: vec3f) -> vec4f {
+  let nv = dot(n,wo); let nl = dot(n,wi); if (nv <= 0.0 || nl <= 0.0) { return vec4f(0); }
+  let h = normalize(wo+wi); let nh = max(0.0,dot(n,h)); let vh = max(1e-7,dot(wo,h));
+  let a = max(0.001,m.roughness*m.roughness); let a2 = a*a;
+  let f0 = mix(vec3f(pow((m.ior-1.0)/(m.ior+1.0),2.0)),m.base,m.metal);
+  let f = fresnel(vh,f0); let D = distribution(nh,a2);
+  let spec = f*D*masking(nv,a2)*masking(nl,a2)/(4.0*nl*nv);
+  let diff = (1.0-f)*m.base*(1.0-m.metal)/PI;
+  let prob = mix(0.25,0.9,m.metal); let pdf = prob*D*nh/(4.0*vh)+(1.0-prob)*nl/PI;
+  return vec4f(spec+diff,pdf);
+}
+fn sampleDirection(m: Material, n: vec3f, wo: vec3f, rng: ptr<function,u32>) -> vec3f {
+  if (random(rng) >= mix(0.25,0.9,m.metal)) { return cosine(n,rng); }
+  let a = max(0.001,m.roughness*m.roughness); let u = random(rng); let phi = 2.0*PI*random(rng);
+  let ct = sqrt((1.0-u)/(1.0+(a*a-1.0)*u)); let st = sqrt(max(0.0,1.0-ct*ct));
+  return reflect(-wo,basis(n,vec3f(st*cos(phi),st*sin(phi),ct)));
+}
+fn preview(o0: vec3f, d0: vec3f, rng: ptr<function,u32>, realtime: bool) -> vec3f {
+  var o = o0; var d = d0; var beta = vec3f(1); var radiance = vec3f(0);
+  let light = normalize(vec3f(-0.5,0.8,0.4));
+  for (var bounce = 0u; bounce < 12u; bounce++) {
+    let h = intersect(o,d);
+    if (h.id == 0xffffffffu) { radiance += beta*environment(d); break; }
+    var ctx = context(h,o,d); if (dot(ctx.normal,d)>0.0) { ctx.normal = -ctx.normal; }
+    let m = getMaterial(u32(triangles[h.id].a.uv.z),ctx);
+    let eps = max(1e-4,length(ctx.position)*1e-5);
+    radiance += beta*m.emission*m.emissionWeight;
+    let direct = bsdf(m,ctx.normal,-d,light).xyz * max(0.0,dot(ctx.normal,light))*vec3f(3.5,3.2,2.8);
+    if (intersect(ctx.position+ctx.normal*eps,light).id == 0xffffffffu) { radiance += beta*direct; }
+    if (realtime) { radiance += beta*(m.base*(1.0-m.metal)*0.22+fresnel(max(0.0,dot(ctx.normal,-d)),mix(vec3f(0.04),m.base,m.metal))*environment(reflect(d,ctx.normal))); break; }
+    let wi = sampleDirection(m,ctx.normal,-d,rng); let f = bsdf(m,ctx.normal,-d,wi);
+    if (f.w <= 0.0) { break; }
+    beta *= f.xyz*max(0.0,dot(ctx.normal,wi))/f.w;
+    if (bounce >= 4u) { let p = clamp(max(max(beta.x,beta.y),beta.z),0.05,0.95); if (random(rng)>p) { break; } beta /= p; }
+    o = ctx.position+ctx.normal*eps; d = wi;
+  }
+  return radiance;
+}
+@compute @workgroup_size(8,8) fn trace(@builtin(global_invocation_id) id: vec3u) {
+  if (id.x>=cfg.dimensions.x || id.y>=cfg.dimensions.y) { return; }
+  let index = id.y*cfg.dimensions.x+id.x;
+  var rng = hash(index ^ hash(cfg.dimensions.z + 0x1234u));
+  let pixel = vec2f(id.xy)+select(vec2f(random(&rng),random(&rng)),vec2f(0.5),cfg.dimensions.w==1u);
+  let uv = pixel/vec2f(cfg.dimensions.xy)*2.0-1.0;
+  let d = normalize(cfg.forward.xyz+cfg.right.xyz*uv.x*cfg.right.w-cfg.up.xyz*uv.y*cfg.up.w);
+  let color = preview(cfg.origin.xyz,d,&rng,cfg.dimensions.w==1u);
+  if (cfg.dimensions.z==0u || cfg.dimensions.w==1u) { accumulation[index] = vec4f(color,1); }
+  else { accumulation[index] += vec4f(color,1); }
+}
+struct RasterVertex { @builtin(position) clip: vec4f, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) @interpolate(flat) material: u32 }
+@vertex fn rasterVertex(@builtin(vertex_index) id: u32) -> RasterVertex {
+  let tri = triangles[id/3u]; var v = tri.a;
+  if (id%3u==1u) { v=tri.b; } else if (id%3u==2u) { v=tri.c; }
+  let d = v.p.xyz-cfg.origin.xyz; let z = dot(d,cfg.forward.xyz);
+  return RasterVertex(vec4f(dot(d,cfg.right.xyz)/cfg.right.w,dot(d,cfg.up.xyz)/cfg.up.w,1.00001*z-0.0100001,z),v.p.xyz,v.n.xyz,v.uv.xy,u32(v.uv.z));
+}
+@fragment fn rasterFragment(v: RasterVertex, @builtin(front_facing) front: bool) -> @location(0) vec4f {
+  let n = normalize(select(-v.normal,v.normal,front)); let tangent = normalize(cross(select(vec3f(0,1,0),vec3f(1,0,0),abs(n.y)>0.9),n));
+  let ctx = ShadingContext(v.position,n,tangent,cross(n,tangent),v.uv,0,0);
+  let m = getMaterial(v.material,ctx); let wo = normalize(cfg.origin.xyz-v.position); let light=normalize(vec3f(-0.5,0.8,0.4));
+  var color = m.emission*m.emissionWeight+m.base*(1.0-m.metal)*0.22+fresnel(max(0.0,dot(n,wo)),mix(vec3f(0.04),m.base,m.metal))*environment(reflect(-wo,n));
+  if (intersect(v.position+n*max(1e-4,length(v.position)*1e-5),light).id==0xffffffffu) { color += bsdf(m,n,wo,light).xyz*max(0.0,dot(n,light))*vec3f(3.5,3.2,2.8); }
+  let linear = max(vec3f(0),color*exp2(cfg.display.x)); let mapped=linear/(1.0+linear);
+  return vec4f(select(12.92*mapped,1.055*pow(mapped,vec3f(1.0/2.4))-0.055,mapped>vec3f(0.0031308)),1);
+}
+`;
+}
+
+export const displayShader = /* wgsl */`
+struct Settings { origin: vec4f, forward: vec4f, right: vec4f, up: vec4f, dimensions: vec4u, display: vec4f }
+@group(0) @binding(0) var<uniform> cfg: Settings;
+@group(0) @binding(1) var<storage,read> accumulation: array<vec4f>;
+@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f { return vec4f(f32((i<<1u)&2u)*2.0-1.0,f32(i&2u)*2.0-1.0,0,1); }
+@fragment fn fragment(@builtin(position) p: vec4f) -> @location(0) vec4f {
+  let xy = min(vec2u(p.xy * vec2f(cfg.dimensions.xy)/cfg.display.yz),cfg.dimensions.xy-vec2u(1));
+  let sum = accumulation[xy.y*cfg.dimensions.x+xy.x];
+  let linear = max(vec3f(0),sum.xyz/max(1.0,sum.w)*exp2(cfg.display.x));
+  let mapped = linear/(1.0+linear);
+  let srgb = select(12.92*mapped,1.055*pow(mapped,vec3f(1.0/2.4))-0.055,mapped>vec3f(0.0031308));
+  return vec4f(srgb,1);
+}`;
+
+export const blitShader = /* wgsl */`
+@group(0) @binding(0) var image: texture_2d<f32>;
+@group(0) @binding(1) var filtering: sampler;
+struct V { @builtin(position) p: vec4f, @location(0) uv: vec2f }
+@vertex fn vertex(@builtin(vertex_index) i: u32) -> V { let p = vec2f(f32((i<<1u)&2u),f32(i&2u)); return V(vec4f(p*2.0-1.0,0,1),vec2f(p.x,1.0-p.y)); }
+@fragment fn fragment(v: V) -> @location(0) vec4f { return textureSample(image,filtering,v.uv); }
+`;

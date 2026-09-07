@@ -16,6 +16,7 @@ const REPO_ROOT = path.resolve(WEB_JS_DIR, '../..');
 const NODE = process.execPath;
 
 const NODE_TESTS = [
+  ['WebGPU MaterialX graph and scene', 'tests/webgpu-mtlx.test.mjs'],
   ['usdzconvert helpers', 'tests/test-usdzconvert.js'],
   ['combined RenderStream regression', 'tests/regression-usdzconvert-material-dedup.mjs'],
   ['next usdzconvert', 'tests/usdzconvert-next.test.mjs'],
