@@ -318,3 +318,9 @@ and are used by both path and realtime transport, with geometric-normal
 fallbacks and geometric offsets retained for robustness. The synthetic
 `normalmap` scene is included in the hardware matrix. Bump/displacement and
 normal-map texture filtering still need broader authored-asset coverage.
+
+Scalar MaterialX `bump3` and `heighttonormal` nodes now have a bounded
+height-to-normal fallback (`mxBumpHeight`) that feeds the same authored normal
+path without mutating geometry. The synthetic `bump` scene is hardware-tested;
+texture-aware finite-difference bump and true displacement/subdivision remain
+separate follow-up work.

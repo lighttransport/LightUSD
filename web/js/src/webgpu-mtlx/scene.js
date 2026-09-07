@@ -73,6 +73,11 @@ export function syntheticScene(preset = 'copper') {
     );
     materials[1].nodes.at(-1).inputs.normal={nodename:'normal'};
   }
+  if(preset==='bump') {
+    materials[1]=surfaceDocument([.36,.12,.04],0,.3);
+    materials[1].nodes.unshift({name:'bump',category:'bump3',type:'vector3',inputs:{in:{type:'float',value:.18},scale:{type:'float',value:1.4}}});
+    materials[1].nodes.at(-1).inputs.normal={nodename:'bump'};
+  }
   if(preset==='native-copper'||preset==='native-glass') {
     const glass=preset==='native-glass';
     materials[1]={nodes:[

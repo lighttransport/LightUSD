@@ -10,7 +10,7 @@ const types = { float: 'f32', integer: 'i32', boolean: 'bool', color3: 'vec3f', 
 const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4: 4, vector4: 4, vector2: 2, matrix33: 9, matrix44: 16 };
 export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'exp', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan2', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'surfacematerial', 'surface']);
-for(const category of ['transformmatrix','normalmap'])valueCategories.add(category);
+for(const category of ['transformmatrix','normalmap','bump3','heighttonormal'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
 export function literal(type, value, path = '') {
   if(value===''&&type==='BSDF')return 'emptyClosure()';
@@ -336,6 +336,11 @@ export function compileGraph(document, { output, library = {}, material = false,
           const vector=(k,field)=>ins[k]?x(k,undefined,'vector3'):`ctx.${field}`;
           code=`mxNormalmap(${x('in',[.5,.5,1],'vector3')},vec2f(${scale.code}),${vector('normal','normal')},${vector('tangent','tangent')},${vector('bitangent','bitangent')})`;break;
         }
+        case 'bump3': case 'heighttonormal': {
+          const height=x('in',0,'float'), scale=x('scale',1,'float');
+          const vector=(k,field)=>ins[k]?x(k,undefined,'vector3'):`ctx.${field}`;
+          code=`mxBumpHeight(${height},${scale},${vector('normal','normal')},${vector('tangent','tangent')},${vector('bitangent','bitangent')})`;break;
+        }
         case 'open_pbr_anisotropy': {
           const rough=x('roughness',0,'float'), anisotropy=x('anisotropy',0,'float');
           const inv=`(1.0-${anisotropy})`, alphaX=`(${rough}*${rough}*sqrt(2.0/(${inv}*${inv}+1.0)))`;
@@ -422,6 +427,12 @@ export const contextWGSL = `struct ShadingContext { position: vec3f, normal: vec
 fn mxNormalmap(value:vec3f,scale:vec2f,n:vec3f,t:vec3f,b:vec3f)->vec3f {
  let decoded=select(value*2.0-1.0,vec3f(0,0,1),dot(value,value)==0.0);
  return normalize(t*decoded.x*scale.x+b*decoded.y*scale.y+n*decoded.z);
+}
+fn mxBumpHeight(height:f32,scale:f32,n:vec3f,t:vec3f,b:vec3f)->vec3f {
+  // Bounded height-to-normal fallback. Texture-aware finite differences are
+  // supplied by normalmap/image graphs; this node keeps scalar bump graphs
+  // explicit without silently turning them into geometric displacement.
+  return normalize(n+t*(height*scale)+b*(height*scale));
 }
 struct Lobe { base: vec3f, metal: f32, roughness: f32, ior: f32, transmission: f32, emission: vec3f, emissionWeight: f32, anisotropy: f32, transmissionColor: vec3f, kind:u32, weight:f32, alpha:vec2f, complexIOR:vec3f, extinction:vec3f, scatterMode:u32, thinWalled:u32, thinFilmThickness:f32, thinFilmIOR:f32 }
 struct Medium { absorption: vec3f, scattering: vec3f, anisotropy: f32 }
