@@ -4,6 +4,10 @@ export const MAX_CLOSURE_LOBES = 8;
 export const closureTypesWGSL = /* wgsl */`
 struct Closure { lobes:array<Lobe,8>, scales:array<vec3f,8>, count:u32, interior:Medium, hasInterior:u32 }
 struct Material { bsdf:Closure, emission:vec3f }
+fn closureImportance(c:Closure,index:u32)->f32 {
+  let scale=c.scales[index];let weight=c.lobes[index].weight;
+  return max(0.0,max(scale.x,max(scale.y,scale.z))*weight);
+}
 fn emptyClosure()->Closure {var c:Closure;return c;}
 fn closureLeaf(lobe:Lobe)->Closure {var c:Closure;c.lobes[0]=lobe;c.scales[0]=vec3f(1);c.count=1u;return c;}
 fn closureScale(input:Closure,scale:vec3f)->Closure {var c=input;for(var i=0u;i<c.count;i++){c.scales[i]*=scale;}return c;}
@@ -14,17 +18,13 @@ fn surfaceEmission(bsdf:Closure,edf:vec3f)->Material {return Material(bsdf,edf);
 fn materialFromLobe(lobe:Lobe)->Material {return Material(closureLeaf(lobe),lobe.emission*lobe.emissionWeight);}
 fn primaryLobe(surface:Material)->Lobe {
   var m=nativeDiffuse(vec3f(0),0,0);
-  if(surface.bsdf.count>0u){m=surface.bsdf.lobes[0];}
-  for(var i=0u;i<surface.bsdf.count;i++){if(surface.bsdf.lobes[i].transmission>0.0){m=surface.bsdf.lobes[i];break;}}
+  for(var i=0u;i<surface.bsdf.count;i++){if(closureImportance(surface.bsdf,i)>0.0){m=surface.bsdf.lobes[i];break;}}
+  for(var i=0u;i<surface.bsdf.count;i++){if(surface.bsdf.lobes[i].transmission>0.0&&closureImportance(surface.bsdf,i)>0.0){m=surface.bsdf.lobes[i];break;}}
   m.emission=surface.emission;m.emissionWeight=1.0;return m;
 }
 `;
 
 export const closureTransportWGSL = /* wgsl */`
-fn closureImportance(c:Closure,index:u32)->f32 {
-  let scale=c.scales[index];let weight=c.lobes[index].weight;
-  return max(0.0,max(scale.x,max(scale.y,scale.z))*weight);
-}
 fn closureTotal(c:Closure)->f32 {var total=0.0;for(var i=0u;i<c.count;i++){total+=closureImportance(c,i);}return total;}
 fn closureEval(c:Closure,wo:vec3f,wi:vec3f,eta:f32)->vec4f {
   let total=closureTotal(c);var f=vec3f(0);var pdf=0.0;
@@ -47,7 +47,8 @@ fn validClosure(c:Closure)->bool {
   var interfaceIOR=0.0;
   for(var i=0u;i<c.count;i++){
     let l=c.lobes[i];
-    if(any(c.scales[i]<vec3f(0))||l.weight<0.0||l.ior<=0.0||l.roughness<0.0||any(l.alpha<vec2f(0))){return false;}
+    if(!all(c.scales[i]>=vec3f(0))||!all(c.scales[i]<=vec3f(3e37))||!(l.weight>=0.0&&l.weight<=3e37&&l.ior>0.0&&l.ior<=3e37&&l.roughness>=0.0&&l.roughness<=3e37)||!all(l.alpha>=vec2f(0))||!all(l.alpha<=vec2f(3e37))){return false;}
+    if(!all(l.base>=vec3f(0))||!all(l.base<=vec3f(3e37))||!all(l.transmissionColor>=vec3f(0))||!all(l.transmissionColor<=vec3f(3e37))||!all(l.complexIOR>=vec3f(0))||!all(l.complexIOR<=vec3f(3e37))||!all(l.extinction>=vec3f(0))||!all(l.extinction<=vec3f(3e37))||!(l.metal>=0.0&&l.metal<=1.0&&l.transmission>=0.0&&l.transmission<=1.0)){return false;}
     if(l.transmission>0.0&&closureImportance(c,i)>0.0){if(interfaceIOR>0.0&&abs(interfaceIOR-l.ior)>1e-5){return false;}interfaceIOR=l.ior;}
   }
   return true;

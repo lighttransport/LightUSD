@@ -7982,6 +7982,77 @@ class LightUSDLoaderNative {
     return root.dump();
   }
 
+  /// Authored shading properties, before the lossy render-material conversion.
+  /// This is an inspection snapshot, not a claim of MaterialX compatibility.
+  std::string getShadingGraphJSON() {
+    if (!loaded_ || !loaded_as_layer_) {
+      error_ = "Shading graph inspection requires a loaded Layer";
+      return std::string();
+    }
+    const lightusd::Layer &source = composited_ ? composed_layer_ : layer_;
+    json root = {{"version", 1}, {"prims", json::array()}};
+    size_t count = 0;
+    bool ok = true;
+    std::function<void(const lightusd::PrimSpec &, const std::string &, int)> visit =
+        [&](const lightusd::PrimSpec &prim, const std::string &path, int depth) {
+          if (!ok) return;
+          if (depth > 256 || ++count > 1000000) {
+            error_ = "Shading graph traversal budget exceeded";
+            ok = false;
+            return;
+          }
+          const std::string type = prim.typeName();
+          if (type == "Shader" || type == "Material" || type == "NodeGraph") {
+            json properties = json::object();
+            for (const auto &entry : prim.props()) {
+              const auto &name = entry.first;
+              const auto &property = entry.second;
+              if (const auto *attr = property.get_attribute_or_null()) {
+                json item = {{"type", attr->type_name()},
+                             {"connections", json::array()},
+                             {"timeSampled", attr->has_timesamples()}};
+                for (const auto &connection : attr->connections()) {
+                  item["connections"].push_back(PathName(connection));
+                }
+                // Connections and a default may coexist. The general JSON
+                // helper prioritizes connections, so inspect a detached copy.
+                lightusd::Attribute value = *attr;
+                value.connections().clear();
+                if (value.has_value()) {
+                  if (auto v = value.get_value<lightusd::value::color3f>()) {
+                    item["value"] = json::array({(*v)[0], (*v)[1], (*v)[2]});
+                  } else if (auto v = value.get_value<lightusd::value::color4f>()) {
+                    item["value"] = json::array({(*v)[0], (*v)[1], (*v)[2], (*v)[3]});
+                  } else if (auto v = value.get_value<lightusd::value::float2>()) {
+                    item["value"] = json::array({(*v)[0], (*v)[1]});
+                  } else if (auto v = value.get_value<lightusd::value::float4>()) {
+                    item["value"] = json::array({(*v)[0], (*v)[1], (*v)[2], (*v)[3]});
+                  } else {
+                    item["value"] = AttributeValueJson(value);
+                  }
+                }
+                properties[name] = std::move(item);
+              } else if (property.is_relationship()) {
+                json targets = json::array();
+                for (const auto &target : property.get_relationTargets()) {
+                  targets.push_back(PathName(target));
+                }
+                properties[name] = {{"targets", targets}};
+              }
+            }
+            root["prims"].push_back({{"path", path}, {"type", type},
+                                     {"properties", properties}});
+          }
+          for (const auto &child : prim.children()) {
+            visit(child, path + "/" + child.name(), depth + 1);
+          }
+        };
+    for (const auto &entry : source.primspecs()) {
+      visit(entry.second, "/" + entry.second.name(), 0);
+    }
+    return ok ? root.dump() : std::string();
+  }
+
   /// Export loaded scene as USDA (ASCII) string
   std::string exportAsUSDA() {
     lightusd::Stage stage;
@@ -11828,6 +11899,7 @@ EMSCRIPTEN_BINDINGS(lightusd_module) {
 
       // USD Export
       .function("exportAsUSDA", &LightUSDLoaderNative::exportAsUSDA)
+      .function("getShadingGraphJSON", &LightUSDLoaderNative::getShadingGraphJSON)
       .function("exportAsUSDC", &LightUSDLoaderNative::exportAsUSDC)
       .function("exportLayerAsUSDCWithOptions", &LightUSDLoaderNative::exportLayerAsUSDCWithOptions)
       .function("exportLayerAsUSDCToBufferWithOptions", &LightUSDLoaderNative::exportLayerAsUSDCToBufferWithOptions)

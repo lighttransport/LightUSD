@@ -31,8 +31,10 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 
 - Typed numeric graph-to-WGSL compilation, named outputs, nested graph-defined
   NodeDefs, inheritance, interface binding, shared expressions and diagnostics.
-  XML import rejects DTD/entity declarations. Includes, arbitrary source nodes,
-  units and color-space transforms are rejected when encountered.
+  XML import rejects DTD/entity declarations. The URL loader resolves bounded,
+  same-origin whole-document includes and source-relative images. Arbitrary
+  source nodes and units remain unsupported. Authored sRGB/ACEScg color literals
+  and images convert to the current linear Rec.709 working space.
 - Scalar/vector value emitters and an explicitly approximate Standard Surface /
   OpenPBR terminal mapping. The UI inventories 807 upstream NodeDefs, but this
   count is **not a supported-node count**; individual overloads remain unverified.
@@ -50,7 +52,8 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   explicitly records that the image is not a validated reference render.
 - ShaderBall composition and authored-camera geometry diagnostic, selecting the
   triangulated variant (51,008 triangles in the pinned asset). It explicitly
-  overrides materials and lighting. Asset provenance is retained across layer
+  overrides materials and, by default, lighting. An optional checkbox imports
+  the five authored RectLights for path modes. Asset provenance is retained across layer
   loading to resolve relative references inside variants.
 - Procedural synthetic sphere scenes and small MaterialX arithmetic/stripe
   fixtures, deterministic numeric GPU tests, scene validation and EXR roundtrip.
@@ -59,9 +62,9 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 
 Full MaterialX coverage; general BSDF/EDF/VDF closure composition/layering;
 MaterialX subsurface_bsdf albedo/radius conversion; hair and curves;
-file texture decoding/UDIM; bump; Catmull-Clark displacement refinement;
-faithful authored ShaderBall materials/lights/EXR maps; independent physical
-reference-image validation; complete ACEScg graph color management.
+UDIM; bump and authored BSDF shading normals; Catmull-Clark displacement refinement;
+faithful authored ShaderBall material graphs and full-resolution map storage;
+broad independent physical reference-image validation; complete ACEScg graph color management.
 `setMode('reference')` fails rather than substituting the RGB preview. Explicit
 unsupported surface inputs fail compilation. Transmissive materials select the
 resumable transport path instead of silently becoming opaque in path-preview.
@@ -77,8 +80,12 @@ Implemented native nodes: `dielectric_bsdf` (R/T/RT, anisotropic GGX, smooth and
 rough refraction, exact Fresnel), `conductor_bsdf` (complex Fresnel), uncompensated
 `oren_nayar_diffuse_bsdf`, `uniform_edf`, and `surface`. Native closures currently
 use geometric normals and a generated tangent frame. Standard Surface/OpenPBR
-remain approximate mappings. Thin film, sheen, coat, closure mixing/layering and
-multiple-scattering microfacet compensation remain missing.
+remain approximate mappings. BSDF add, mix, and scalar/color weighting preserve
+up to eight lobes with mixture evaluation and sampling PDFs. BSDF-over-VDF layer
+attaches an interior after surface composition. Active transmissive lobes must
+agree on interface IOR. Realtime shading still uses a primary-lobe approximation.
+Thin film, sheen, coat, BSDF-over-BSDF layering and multiple-scattering microfacet
+compensation remain missing.
 
 Attach `document.spectra` curves as sorted `[wavelengthNm,value]` pairs, keyed by
 `base_color`, `transmission_color`, `emission_color`, `ior`, `conductor_ior` or
@@ -122,10 +129,21 @@ pipeline. Do not use these outputs as ground truth or claim the full plan done.
 Attach `document.images[filename] = {width, height, data, colorspace}` before
 loading a scene or replacing a material. `data` is unpremultiplied RGBA float
 data with row zero at v=0. Colorspace is `lin_rec709` (default), `srgb_texture`
-(RGB decoding only; alpha unchanged), or explicitly untransformed `raw` data.
+(RGB decoding only; alpha unchanged), `acescg` (or `ACEScg`), or explicitly
+untransformed `raw` data. ACEScg conversion uses the pinned MaterialX cmlib matrix
+and does not clamp out-of-gamut values.
 The renderer packs resources into a storage buffer with a 64 MiB total mip
 budget, validates finite float32 values, and diagnoses missing files.
-It does not fetch/decode filenames automatically. Other color spaces fail.
+The optional `loadMaterialXResources(url, options)` API and URL control fetch
+EXR/PNG/JPEG resources. It resolves file prefixes and source layers, uses streaming
+byte budgets, preflights EXR dimensions before decoder allocation, and rejects
+include cycles, cross-origin dependencies and redirects by default. EXR support
+is single-part scanline; browser bitmap decoding supplies other image formats.
+Caller-provided decoded data remains supported. Other color spaces fail.
+
+ShaderBall's 7500x7500 ground map exceeds the current full-resolution float-buffer
+budget. It is rejected, not silently downsampled. Native material serialization
+is explicitly recorded as lossy and is not treated as an authored graph import.
 
 Raster mip selection uses the base mesh UV derivatives, so transformed or
 procedural UV graph derivatives are approximate. Path preview currently uses
@@ -139,6 +157,7 @@ complete authored ShaderBall material support.
 ```sh
 npm run test:webgpu-mtlx
 node tests/webgpu-mtlx-chrome.mjs --hardware --shaderball --performance
+node tests/webgpu-mtlx-chrome.mjs --hardware --shaderball --authored-lights
 ```
 
 `CHROME_PATH` overrides the Chrome executable. Without `--hardware`, the focused
@@ -147,9 +166,21 @@ Screenshots and JSON reports go to `web/js/.regression/webgpu-mtlx`.
 
 Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 
-- Eighteen Node tests pass, including native closure diagnostics, image checks and EXR
+- Twenty-seven Node tests pass, including native closure diagnostics, image checks and EXR
   decoding through Three.js independently.
-- 27 numeric WGSL cases pass at `1e-5 + 1e-4 * abs(expected)` tolerance.
+- 37 numeric WGSL cases pass at `1e-5 + 1e-4 * abs(expected)` tolerance.
+- Four actual pinned library graph cases pass: scalar-gamma color range, ACEScg
+  color transform, channel conversion, and normal-map decoding. These are not
+  evidence for all 807 NodeDefs. Normal maps are not yet consumed by native BSDFs.
+- URL resource tests cover includes, source-relative EXR paths, inherited image
+  colorspace, cycle rejection and cross-origin rejection. ShaderBall's 2048x2048
+  neutral EXR decodes successfully.
+- Authored RectLights use one-sided emissive geometry, world-space normalized
+  area, and intensity/exposure scaling per the
+  [UsdLux LightAPI definition](https://openusd.org/dev/user_guides/schemas/usdLux/LightAPI.html).
+  Texture, shaping, temperature and nonphysical contribution overrides fail.
+  The 192x128 eight-sample ShaderBall light-import smoke test passes; its materials
+  remain diagnostic overrides, and the image is visibly noisy at eight samples.
 - Ten analytic GPU image sampling cases pass (addressing, edge/default color,
   bilinear/trilinear and explicit mip levels), alongside textured path/raster
   scene loading and material replacement tests.
@@ -158,18 +189,36 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   Spectral checks cover official CIE column sums, GPU XYZ integration, measured
   curves and white normalization. End-to-end constant RGB emitter radiance and
   zero variance, equal-energy spectral emitter Y, and baked displacement pass.
+- Independent Lambert-furnace and lossless dielectric-slab scenes run with seeds
+  1, 17 and 31337 at 8 and 32 spp. They compare analytic radiance to image means
+  with four standard errors plus 1e-4 absolute tolerance. A systematic slab error
+  exposed shared-edge intersection cancellation; ray-aligned shear intersection
+  resolved it (32-spp means 0.92307/0.92371/0.92273, expected 0.92308).
+  WGSL still lacks PBRT's double-precision edge fallback; broader robust-geometry
+  coverage remains necessary. `setOptions({seed})` accepts uint32 seeds, resets
+  accumulation, and records the seed in linear capture metadata.
 - `--reference-images` adds four 192x128 32-spp spectral smoke renders for native
   conductor, rough dielectric, scattering media and displacement. These noisy
   smoke images are not independent full-scene reference comparisons.
 - ShaderBall geometry, accumulation/reset, exposure, resize, worker scene loading,
   graph replacement and mode switching pass without GPU or page errors.
-- Fixed 1280×720 ShaderBall raster diagnostic: latest 30-second run, 1,570 frames,
-  median 19.0 ms, p95 21.3 ms. These measurements cover the diagnostic shaders,
+- Fixed 1280×720 ShaderBall raster diagnostic: latest 30-second run, 1,543 frames,
+  median 19.2 ms, p95 21.7 ms. These measurements cover the diagnostic shaders,
   not the planned complete MaterialX realtime renderer.
 - Combined and next-only WASM builds complete with cached Emscripten 4.0.8.
-- Node regression profile in WSL: 19 reported passes, zero failures (the native
+- Node regression profile in WSL: 20 reported passes, zero failures (the native
   validation-parity check is skipped because lusdcat is not built).
 
 Full Windows `npm test` is not green: three existing USD tests construct an
 invalid doubled-drive WASM path, and two dataset gates lack MuJoCo Menagerie.
 The same Node profile passes under WSL. See `docs/regression.md` for full setup.
+
+The combined WASM loader exposes `getShadingGraphJSON()` for inspection of
+composed Shader, Material and NodeGraph properties directly from a loaded layer,
+before schema reconstruction or render conversion.
+The version-1 snapshot retains property types, connections and supported default
+values separately, including connected defaults. Unsupported value types are
+explicit markers; time-sampled properties are flagged, not evaluated. It is not
+yet a complete material import format: metadata, source-layer asset resolution,
+binding resolution and remaining value types still need coverage. ShaderBall
+retains this snapshot alongside the explicitly lossy render-material diagnostic.

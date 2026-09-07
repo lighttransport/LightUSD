@@ -3,6 +3,7 @@ import { shaderSource, displayShader, blitShader } from './shaders.js';
 import { normalize, sub, cross } from './scene.js';
 import { encodeEXR } from './capture.js';
 import { bakeDisplacement } from './displacement.js';
+import { mayEmit } from './emission.js';
 
 export async function createRenderer(canvas, options = {}) {
   if (!navigator.gpu) throw new Error('WebGPU unavailable: use Chrome on localhost with an enabled GPU');
@@ -17,13 +18,13 @@ class MaterialXRenderer extends EventTarget {
     super(); this.canvas = canvas; this.device = device; this.adapter = adapter;
     this.context = canvas.getContext('webgpu'); this.format = navigator.gpu.getPreferredCanvasFormat();
     this.context.configure({ device, format: this.format, alphaMode: 'opaque' });
-    this.options = { exposure: 0, resolutionScale: 1, maxSamples: 4096, autoResolution: false };
+    this.options = { exposure: 0, resolutionScale: 1, maxSamples: 4096, autoResolution: false, seed: 0 };
     this.mode = 'path-preview'; this.samples = 0; this.generation = 0; this.sceneGeneration = 0; this.disposed = false; this.busy = false;
     this.resources = []; this.errors = [];
     this.stats = { adapter: { vendor: adapter.info?.vendor, architecture: adapter.info?.architecture, device: adapter.info?.device, description: adapter.info?.description, isFallbackAdapter: adapter.info?.isFallbackAdapter }, referenceReady: false, samples: 0 };
     device.addEventListener('uncapturederror', e => this.report(e.error));
     device.lost.then(info => { if (!this.disposed) { this.lost = true; this.report(new Error(`WebGPU device lost: ${info.message}`)); } });
-    this.uniform = device.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.uniform = device.createBuffer({ size: 112, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.sceneLayout = device.createBindGroupLayout({ entries: [
       { binding: 0, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       { binding: 1, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
@@ -96,7 +97,7 @@ class MaterialXRenderer extends EventTarget {
   async setMaterialDocument(document, index = 1) {
     this.check(); if (!this.scene) throw new Error('Load a scene first');
     if (!Number.isInteger(index) || index < 0 || index >= this.scene.materials.length) throw new Error('Invalid material index');
-    if (document.displacementOutput || this.scene.materials[index].displacementOutput) {
+    if (document.displacementOutput || this.scene.materials[index].displacementOutput || mayEmit(document)!==mayEmit(this.scene.materials[index])) {
       const materials = this.sourceScene.materials.slice(); materials[index] = document;
       return this.loadScene({ ...this.sourceScene, materials, camera: this.camera });
     }
@@ -139,12 +140,14 @@ class MaterialXRenderer extends EventTarget {
     this.check();
     for (const [k, v] of Object.entries(options)) {
       if (k === 'autoResolution') { if (typeof v !== 'boolean') throw new Error('autoResolution must be boolean'); continue; }
-      if (!['exposure', 'resolutionScale', 'maxSamples'].includes(k) || !Number.isFinite(v)) throw new Error(`Invalid option ${k}`);
+      if (!['exposure', 'resolutionScale', 'maxSamples', 'seed'].includes(k) || !Number.isFinite(v)) throw new Error(`Invalid option ${k}`);
+      if(k==='seed'&&(!Number.isInteger(v)||v<0||v>0xffffffff))throw new Error('Seed must be a uint32');
       if (k === 'resolutionScale' && (v < 0.1 || v > 1)) throw new Error('Resolution scale must be 0.1–1');
       if (k === 'exposure' && Math.abs(v) > 32) throw new Error('Exposure must be within ±32 stops');
       if (k === 'maxSamples' && (!Number.isInteger(v) || v < 1 || v > 1_000_000)) throw new Error('Invalid sample limit');
     }
-    Object.assign(this.options, options); if ('resolutionScale' in options) this.resize();
+    const reseed=options.seed!==undefined&&options.seed!==this.options.seed;
+    Object.assign(this.options, options); if ('resolutionScale' in options) this.resize();if(reseed)this.resetAccumulation();
   }
   resetAccumulation() { this.samples = 0; this.generation++; this.stats.samples = 0; this.transportError = null; }
   resize(force = false) {
@@ -177,10 +180,10 @@ class MaterialXRenderer extends EventTarget {
       const forward = normalize(sub(this.camera.target, this.camera.origin));
       const right = normalize(cross(forward, Math.abs(forward[1]) > 0.999 ? [0, 0, 1] : [0, 1, 0])); const up = cross(right, forward);
       const tan = Math.tan(this.camera.fov * Math.PI / 360);
-      const data = new ArrayBuffer(96), f = new Float32Array(data), u = new Uint32Array(data);
+      const data = new ArrayBuffer(112), f = new Float32Array(data), u = new Uint32Array(data);
       f.set([...this.camera.origin, 0, ...forward, 0, ...right, tan * this.width / this.height, ...up, tan]);
       u.set([this.width, this.height, this.samples, this.mode === 'realtime' ? 1 : this.mode === 'path-spectral' ? 2 : 0], 16);
-      f.set([this.options.exposure, this.canvas.width, this.canvas.height, this.generation], 20); this.device.queue.writeBuffer(this.uniform, 0, data);
+      f.set([this.options.exposure, this.canvas.width, this.canvas.height, this.generation], 20);u.set([this.options.seed,0,0,0],24); this.device.queue.writeBuffer(this.uniform, 0, data);
       const encoder = this.device.createCommandEncoder();
       const physical = ['path-physical', 'path-spectral'].includes(this.mode);
       const tracing = this.mode !== 'realtime' && this.samples < this.options.maxSamples;
@@ -249,6 +252,8 @@ class MaterialXRenderer extends EventTarget {
       for (let i = 0; i < pixels.length; i += 4) { const n = pixels[i + 3];sampleCounts[i/4]=n; for (let k = 0; k < 3; k++) {pixels[i + k] /= Math.max(1, n);if(variance)variance[i+k]=n>1?Math.max(0,variance[i+k])/(n*(n-1)):NaN;} pixels[i + 3] = 1; }
       const spectral = this.mode === 'path-spectral';
       const metadata = { mode: this.mode, referenceReady: false, colorSpace: spectral ? 'CIE XYZ' : 'linear Rec.709', spectral: spectral ? { wavelengthRange: [360,830], sampling: 'uniform hero wavelength', observer: 'CIE 1931 2 degree, 1 nm table', rgbUplift: 'PBRT v3 bases; illuminant white normalized to CIE Y=1', overrides: this.scene.materials.map(m=>m.spectra || {}) } : null, limitations: [...(spectral ? [] : ['RGB transport']), ...(this.mode === 'path-preview' ? ['12-bounce preview limit'] : ['three-level medium stack', 'single-scattering GGX', 'geometric shading normals']), 'approximate Standard Surface mapping', 'no general closure composition, MaterialX subsurface BSDF, or hair BSDF', 'path textures use level zero', 'linear triangle displacement refinement, not Catmull-Clark', 'RGB graph working space is not ACEScg'], width, height, samples, adapter: this.stats.adapter, provenance: this.scene.provenance };
+      metadata.seed=this.options.seed;
+      metadata.limitations=metadata.limitations.map(v=>v==='no general closure composition, MaterialX subsurface BSDF, or hair BSDF'?'eight surface lobes; no BSDF-over-BSDF layering, MaterialX subsurface BSDF, or hair BSDF':v);
       metadata.variance=hasVariance?'unbiased variance of the mean; NaN when fewer than two samples':null;
       if (format === 'float32') return { pixels, variance, sampleCounts, metadata };
       if (format !== 'exr') throw new Error('Expected exr or float32');

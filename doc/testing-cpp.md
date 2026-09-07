@@ -822,6 +822,19 @@ These directories hold `.usda` fixtures used by feature tests or as reference ma
 
 ### MaterialX standalone tests
 
+After changing the WASM shading snapshot binding, rebuild both web modules and
+run `node tests/webgpu-mtlx-usd-graph.mjs` from `web/js`; the aggregate Node
+profile includes this typed connection/default preservation fixture.
+
+The separate JavaScript/WebGPU renderer has a focused Chrome hardware gate:
+run `node tests/webgpu-mtlx-chrome.mjs --hardware` from `web/js`. It covers
+analytic transport, pinned MaterialX graph kernels and resource loading; add
+`--shaderball --authored-lights` for the authored RectLight smoke scene, or
+`--shaderball --performance` for the diagnostic 720p raster gate. These tests do
+not establish full MaterialX/reference-rendering conformance. See
+[WebGPU renderer status](../web/js/docs/webgpu-mtlx.md) and the
+[web regression procedure](../web/js/docs/regression.md).
+
 Besides the four ctest-registered targets (`feat-mtlx-parse`, `-import`,
 `-export`, `-grouped-params`), `tests/feat/mtlx/` holds extra source files built
 only via its local Makefile, e.g. `test_nodegraph_export.cc`,

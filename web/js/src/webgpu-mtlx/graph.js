@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Typed, deterministic MaterialX value-graph compiler. No shader-source eval.
 import { closureTypesWGSL, MAX_CLOSURE_LOBES } from './closures.js';
+import { colorToLinearRec709 } from './color.js';
 export const MATERIALX_VERSION = '1.39.5';
 export class GraphError extends Error {
   constructor(code, path, message) { super(`${path}: ${message}`); this.name = 'GraphError'; this.code = code; this.path = path; }
@@ -9,6 +10,7 @@ const types = { float: 'f32', integer: 'i32', boolean: 'bool', color3: 'vec3f', 
 const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4: 4, vector4: 4, vector2: 2, matrix33: 9, matrix44: 16 };
 export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'exp', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan2', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'surfacematerial', 'surface']);
+for(const category of ['transformmatrix','normalmap'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
 export function literal(type, value, path = '') {
   if(value===''&&type==='BSDF')return 'emptyClosure()';
@@ -35,20 +37,30 @@ const ports = el => Object.fromEntries([...el.children].filter(c => c.tagName ==
 const outputs = el => Object.fromEntries([...el.children].filter(c => c.tagName === 'output').map(c => [c.getAttribute('name'), attrs(c)]));
 
 /** Browser XML entry point; DTDs/entities are deliberately disallowed. */
-export function parseMaterialX(xml, { source = '', parser = globalThis.DOMParser } = {}) {
+export function parseMaterialX(xml, { source = '', parser = globalThis.DOMParser, allowIncludes = false } = {}) {
   if (typeof xml !== 'string' || xml.length > 16 * 1024 * 1024) fail('LIMIT', source, 'XML exceeds 16 MiB');
   if (/<!DOCTYPE|<!ENTITY/i.test(xml)) fail('XML', source, 'DTD/entity declarations are not allowed');
   if (!parser) fail('XML', source, 'DOMParser is required for XML import');
   const doc = new parser().parseFromString(xml, 'application/xml');
   if (doc.querySelector('parsererror') || doc.documentElement.tagName !== 'materialx') fail('XML', source, 'invalid MaterialX XML');
-  if (doc.querySelector('include')) fail('INCLUDE', source, 'resolve MaterialX includes before compilation');
-  const result = { version: doc.documentElement.getAttribute('version'), nodes: [], graphs: Object.create(null), definitions: Object.create(null), source };
-  function node(el) { return { ...attrs(el), category: el.tagName, inputs: ports(el), outputs: outputs(el) }; }
+  const includes = [...doc.getElementsByTagName('*')].filter(el=>el.localName==='include');
+  if (includes.length && !allowIncludes) fail('INCLUDE', source, 'resolve MaterialX includes before compilation');
+  if (includes.some(el=>el.parentElement!==doc.documentElement || !el.getAttribute('href') || el.hasAttribute('xpointer') || (el.getAttribute('parse') && el.getAttribute('parse')!=='xml'))) fail('INCLUDE',source,'only top-level whole-document XML includes are supported');
+  const result = { version: doc.documentElement.getAttribute('version'), colorspace: doc.documentElement.getAttribute('colorspace') || undefined, includes:includes.map(el=>el.getAttribute('href')), nodes: [], graphs: Object.create(null), definitions: Object.create(null), source };
+  function node(el) {
+    let colorspace, fileprefix = '';
+    const ancestors = []; for (let p = el; p?.nodeType === 1; p = p.parentElement) ancestors.unshift(p);
+    for (const p of ancestors) { if (p.hasAttribute('colorspace')) colorspace = p.getAttribute('colorspace'); fileprefix += p.getAttribute('fileprefix') || ''; }
+    return { ...attrs(el), colorspace, fileprefix, source, category: el.tagName, inputs: ports(el), outputs: outputs(el) };
+  }
   for (const el of doc.documentElement.children) {
+    if (el.localName === 'include') continue;
     if (el.tagName === 'nodedef') result.definitions[el.getAttribute('name')] = { ...attrs(el), inputs: ports(el), outputs: outputs(el) };
     else if (el.tagName === 'nodegraph') result.graphs[el.getAttribute('name')] = { ...attrs(el), inputs: ports(el), outputs: outputs(el), nodes: [...el.children].filter(c => !['input', 'output', 'token'].includes(c.tagName)).map(node) };
     else if (!['typedef', 'geompropdef', 'unittypedef', 'unitdef', 'implementation', 'look', 'collection', 'propertyset'].includes(el.tagName)) result.nodes.push(node(el));
   }
+  const materials=result.nodes.filter(n=>n.category==='surfacematerial');
+  if(materials.length===1)result.output={nodename:materials[0].name};
   return result;
 }
 
@@ -83,7 +95,7 @@ export function compileGraph(document, { output, library = {}, material = false,
       if (!definitions[n.nodedef]) fail('NODEDEF', n.name, `unknown NodeDef ${n.nodedef}`);
       return definitions[n.nodedef];
     }
-    const matches = Object.values(definitions).filter(d => d.node === n.category && (!n.type || d.type === n.type || Object.values(d.outputs || {}).some(o => o.type === n.type)) && (!n.version || d.version === n.version));
+    const matches = Object.values(definitions).filter(d => d.node === n.category && (!n.type || d.type === n.type || n.type==='multioutput'&&Object.keys(d.outputs||{}).length>1 || Object.values(d.outputs || {}).some(o => o.type === n.type)) && (!n.version || d.version === n.version) && Object.entries(n.inputs||{}).every(([name,p])=>!p.type||!d.inputs?.[name]?.type||p.type===d.inputs[name].type));
     if (matches.length > 1) {
       const defaults = matches.filter(d => d.isdefaultversion === 'true');
       if (defaults.length === 1) return defaults[0];
@@ -95,7 +107,7 @@ export function compileGraph(document, { output, library = {}, material = false,
     if (++portDepth > 256) fail('LIMIT', path, 'port resolution exceeds 256 levels');
     try {
     if (p == null) fail('INPUT', path, 'missing input');
-    if (p.unit || p.colorspace) fail('SEMANTICS', path, 'unit/colorspace conversion is not implemented yet');
+    if (p.unit) fail('SEMANTICS', path, 'unit conversion is not implemented yet');
     let result;
     if (p.nodename) result = evaluate(p.nodename, p.output || 'out', scope, env);
     else if (p.nodegraph) {
@@ -110,7 +122,18 @@ export function compileGraph(document, { output, library = {}, material = false,
       const binding = env[p.interfacename];
       if (binding) result = port(binding.port, binding.scope, binding.env, wanted, path);
       else result = port(scope.inputs[p.interfacename], scope, {}, wanted, path);
-    } else result = { type: p.type || wanted, code: literal(p.type || wanted, p.value, path) };
+    } else if(p.defaultgeomprop) {
+      const geometry={Nworld:['vector3','ctx.normal'],Tworld:['vector3','ctx.tangent'],Bworld:['vector3','ctx.bitangent'],Pworld:['vector3','ctx.position'],UV0:['vector2','ctx.uv']};
+      const value=geometry[p.defaultgeomprop];if(!value)fail('GEOMETRY',path,`unsupported default geometry ${p.defaultgeomprop}`);
+      result={type:value[0],code:value[1]};
+    } else {
+      const type=p.type||wanted;let value=p.value;
+      if(p.colorspace&&['color3','color4'].includes(type)) {
+        literal(type,value,path);
+        try{value=colorToLinearRec709(Array.isArray(value)?value:String(value).split(',').map(Number),p.colorspace);}catch(e){fail('SEMANTICS',path,e.message);}
+      } else if(p.colorspace&&!['raw','lin_rec709'].includes(p.colorspace))fail('SEMANTICS',path,'colorspace on non-color input');
+      result={type,code:literal(type,value,path)};
+    }
     if (wanted && result.type !== wanted) fail('TYPE', path, `expected ${wanted}, got ${result.type}`);
     return result;
     } finally { portDepth--; }
@@ -126,8 +149,9 @@ export function compileGraph(document, { output, library = {}, material = false,
     const def = definition(n);
     const declared = def?.outputs?.[out];
     if (out !== 'out' && !declared && !n.outputs?.[out] && !/^separate[234]$/.test(n.category)) fail('OUTPUT', key, 'unknown named output');
-    const type = declared?.type || n.outputs?.[out]?.type || n.type || def?.type;
-    const ins = { ...def?.inputs, ...n.inputs };
+    const type = declared?.type || n.outputs?.[out]?.type || (/^separate[234]$/.test(n.category)&&out!=='out'?'float':n.type) || def?.type;
+    const authoredInputs=Object.fromEntries(Object.entries(n.inputs||{}).map(([key,p])=>[key,p.value!==undefined&&['color3','color4'].includes(p.type)&&!p.colorspace?{...p,colorspace:n.colorspace||(n.source&&n.source!==document.source?undefined:document.colorspace)}:p]));
+    const ins = { ...def?.inputs, ...authoredInputs };
     const compound = def && Object.values(graphs).find(g => g.nodedef === def.name);
     let result;
     if (compound) {
@@ -135,20 +159,28 @@ export function compileGraph(document, { output, library = {}, material = false,
       const bindings = Object.fromEntries(Object.entries(ins).map(([k, p]) => [k, { port: p, scope, env }]));
       result = port(compound.outputs[out], child, bindings, type, key);
     } else {
+      const dependencies=new Set([n.category]);
       const input = (k, fallback, expected) => {
         const p = ins[k] ?? (fallback !== undefined ? { type: expected || type, value: fallback } : null);
-        return port(p, scope, env, expected, `${key}/${k}`);
+        const value=port(p, scope, env, expected, `${key}/${k}`);for(const category of value.categories||[])dependencies.add(category);return value;
       };
       const x = (k, fallback, expected) => input(k, fallback, expected).code;
       const same = k => x(k, undefined, type);
-      const binary = op => `(${same('in1')} ${op} ${same('in2')})`;
-      let code, closureCount = 0, hasInterior = false;
+      const scalarOrSame = (k, fallback) => {
+        const p=input(k,fallback);
+        if(p.type===type)return p.code;
+        if(p.type==='float'&&widths[type]>=2&&widths[type]<=4)return `${types[type]}(${p.code})`;
+        fail('TYPE',key,`expected ${type} or scalar float for ${k}`);
+      };
+      const binary = op => `(${same('in1')} ${op} ${scalarOrSame('in2')})`;
+      let code, closureCount = 0, hasInterior = false, interiorCategories=[];
       switch (n.category) {
         case 'uniform_edf': code = x('color',[1,1,1],'color3'); break;
         case 'surface': {
           if(ins.opacity && Number(ins.opacity.value)!==1)fail('UNSUPPORTED',key,'surface cutout opacity is not implemented');
           if(ins.thin_walled && ![false,'false'].includes(ins.thin_walled.value))fail('UNSUPPORTED',key,'thin-walled transport is not implemented');
-          const bsdf=ins.bsdf?.value===''||!ins.bsdf ? 'emptyClosure()' : x('bsdf',undefined,'BSDF');
+          const bsdfValue=ins.bsdf?.value===''||!ins.bsdf ? null : input('bsdf',undefined,'BSDF');
+          const bsdf=bsdfValue?.code||'emptyClosure()';hasInterior=bsdfValue?.hasInterior||false;interiorCategories=bsdfValue?.interiorCategories||[];
           const edf=ins.edf?.value===''||!ins.edf ? 'vec3f(0)' : x('edf',undefined,'EDF');
           code=`surfaceEmission(${bsdf},${edf})`;break;
         }
@@ -172,7 +204,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           const top=input('top',undefined,'BSDF'),base=input('base');
           if(base.type!=='VDF')fail('UNSUPPORTED',key,'BSDF-over-BSDF transport requires a layered integrator; only BSDF-over-VDF is implemented');
           if(top.hasInterior)fail('SEMANTICS',key,'closure already has an interior');
-          code=`closureInterior(${top.code},${base.code})`;closureCount=top.closureCount||0;hasInterior=true;break;
+          code=`closureInterior(${top.code},${base.code})`;closureCount=top.closureCount||0;hasInterior=true;interiorCategories=base.categories||[];break;
         }
         case 'anisotropic_vdf':
           code = `Medium(${x('absorption',[0,0,0],'color3')},${x('scattering',[0,0,0],'color3')},${x('anisotropy',0,'float')})`; break;
@@ -212,22 +244,23 @@ export function compileGraph(document, { output, library = {}, material = false,
           const a = input('in1', undefined, type), b = input('in2');
           if(type==='BSDF') {
             if(n.category!=='multiply'||!['float','color3'].includes(b.type))fail('TYPE',key,'BSDF weighting requires float or color3 multiplication');
-            code=`closureScale(${a.code},${b.type==='float'?`vec3f(${b.code})`:b.code})`;closureCount=a.closureCount||0;hasInterior=a.hasInterior||false;break;
+            code=`closureScale(${a.code},${b.type==='float'?`vec3f(${b.code})`:b.code})`;closureCount=a.closureCount||0;hasInterior=a.hasInterior||false;interiorCategories=a.interiorCategories||[];break;
           }
           if (b.type !== type && b.type !== 'float') fail('TYPE', key, 'invalid scalar/vector arithmetic');
-          code = `(${a.code} ${n.category === 'multiply' ? '*' : '/'} ${b.code})`; break;
+          const rhs=b.type==='float'&&widths[type]>=2&&widths[type]<=4?`${types[type]}(${b.code})`:b.code;
+          code = `(${a.code} ${n.category === 'multiply' ? '*' : '/'} ${rhs})`; break;
         }
         case 'modulo': code = `(${same('in1')} - ${same('in2')} * floor(${same('in1')} / ${same('in2')}))`; break;
-        case 'power': case 'min': case 'max': code = `${n.category === 'power' ? 'pow' : n.category}(${same('in1')},${same('in2')})`; break;
+        case 'power': case 'min': case 'max': code = `${n.category === 'power' ? 'pow' : n.category}(${same('in1')},${scalarOrSame('in2')})`; break;
         case 'absval': case 'sign': case 'floor': case 'ceil': case 'round': case 'sqrt': case 'ln': case 'exp': case 'sin': case 'cos': case 'tan': case 'asin': case 'acos': case 'normalize': code = `${({ absval: 'abs', ln: 'log' })[n.category] || n.category}(${same('in')})`; break;
         case 'atan2': code = `atan2(${same('iny')},${same('inx')})`; break;
-        case 'clamp': code = `clamp(${same('in')},${x('low', undefined, type)},${x('high', undefined, type)})`; break;
+        case 'clamp': code = `clamp(${same('in')},${scalarOrSame('low')},${scalarOrSame('high')})`; break;
         case 'mix': {
           if(type==='BSDF'){const a=input('bg',undefined,'BSDF'),b=input('fg',undefined,'BSDF');if(a.hasInterior||b.hasInterior)fail('SEMANTICS',key,'attach the interior after composing surface lobes');code=`closureMix(${a.code},${b.code},${x('mix',0,'float')})`;closureCount=(a.closureCount||0)+(b.closureCount||0);}
           else code = `mix(${same('bg')},${same('fg')},${x('mix')})`; break;
         }
-        case 'smoothstep': code = `smoothstep(${same('low')},${same('high')},${same('in')})`; break;
-        case 'invert': code = `(${same('amount')} - ${same('in')})`; break;
+        case 'smoothstep': code = `smoothstep(${scalarOrSame('low')},${scalarOrSame('high')},${same('in')})`; break;
+        case 'invert': code = `(${scalarOrSame('amount')} - ${same('in')})`; break;
         case 'dot': result = input('in',undefined,type); break;
         case 'magnitude': code = `length(${x('in')})`; break;
         case 'dotproduct': code = `dot(${x('in1')},${x('in2')})`; break;
@@ -240,8 +273,34 @@ export function compileGraph(document, { output, library = {}, material = false,
           code = `ctx.${n.category}`; break;
         case 'time': code = 'ctx.time'; break;
         case 'frame': code = 'ctx.frame'; break;
-        case 'convert': code = `${types[type]}(${x('in')})`; break;
-        case 'combine2': case 'combine3': case 'combine4': code = `${types[type]}(${Array.from({ length: Number(n.category.at(-1)) }, (_, i) => x(`in${i + 1}`, undefined, 'float')).join(',')})`; break;
+        case 'convert': {
+          const p=input('in'),from=widths[p.type],to=widths[type];
+          if(!from||!to||from>4||to>4)fail('TYPE',key,'unsupported conversion');
+          if(p.type==='boolean')code=type==='integer'?`select(0i,1i,${p.code})`:`${types[type]}(select(0.0,1.0,${p.code}))`;
+          else if(type==='boolean'){if(from!==1)fail('TYPE',key,'vector to boolean conversion is ambiguous');code=`(${p.code}!=${p.type==='integer'?'0i':'0.0'})`;}
+          else if(from===1)code=`${types[type]}(${p.type==='integer'&&to>1?`f32(${p.code})`:p.code})`;
+          else if(to===1)fail('TYPE',key,'vector to scalar conversion is ambiguous; use extract');
+          else if(to<=from)code=`${types[type]}(${p.code}.${'xyzw'.slice(0,to)})`;
+          else code=`${types[type]}(${p.code},${Array.from({length:to-from},(_,i)=>from+i===3?'1.0':'0.0').join(',')})`;
+          break;
+        }
+        case 'combine2': case 'combine3': case 'combine4': {
+          const values=Array.from({length:Number(n.category.at(-1))},(_,i)=>input(`in${i+1}`));
+          if(values.some(p=>!['float','color3','vector2','vector3'].includes(p.type))||values.reduce((n,p)=>n+widths[p.type],0)!==widths[type])fail('TYPE',key,'combine inputs do not match output width');
+          code=`${types[type]}(${values.map(p=>p.code).join(',')})`;break;
+        }
+        case 'transformmatrix': {
+          const p=input('in',undefined,type),m=input('mat');
+          if(type==='vector2'&&m.type==='matrix33')code=`(${m.code}*vec3f(${p.code},1.0)).xy`;
+          else if(type==='vector3'&&m.type==='matrix44')code=`(${m.code}*vec4f(${p.code},1.0)).xyz`;
+          else if(type==='vector3'&&m.type==='matrix33'||type==='vector4'&&m.type==='matrix44')code=`(${m.code}*${p.code})`;
+          else fail('TYPE',key,'unsupported matrix transform overload');break;
+        }
+        case 'normalmap': {
+          const scale=ins.scale?input('scale'):{type:'float',code:'1.0'};if(!['float','vector2'].includes(scale.type))fail('TYPE',key,'normalmap scale must be float or vector2');
+          const vector=(k,field)=>ins[k]?x(k,undefined,'vector3'):`ctx.${field}`;
+          code=`mxNormalmap(${x('in',[.5,.5,1],'vector3')},vec2f(${scale.code}),${vector('normal','normal')},${vector('tangent','tangent')},${vector('bitangent','bitangent')})`;break;
+        }
         case 'extract': {
           const v = input('in'), idx = Number(ins.index?.value);
           if (!Number.isInteger(idx) || idx < 0 || idx >= widths[v.type] || widths[v.type] > 4) fail('INDEX', key, 'invalid or dynamic extraction index');
@@ -264,9 +323,12 @@ export function compileGraph(document, { output, library = {}, material = false,
         }
         case 'ifequal': case 'ifgreater': case 'ifgreatereq': code = `select(${same('in2')},${same('in1')},${x('value1')} ${({ ifequal: '==', ifgreater: '>', ifgreatereq: '>=' })[n.category]} ${x('value2')})`; break;
         case 'remap': case 'range': {
-          const q = `((${same('in')} - ${same('inlow')}) / (${same('inhigh')} - ${same('inlow')}))`;
-          if (n.category === 'range') fail('UNSUPPORTED', key, 'range gamma/clamp semantics not implemented');
-          code = `(${same('outlow')} + ${q} * (${same('outhigh')} - ${same('outlow')}))`; break;
+          const fallback=v=>widths[type]===1?v:Array(widths[type]).fill(v);
+          const low=scalarOrSame('inlow',fallback(0)),high=scalarOrSame('inhigh',fallback(1)),outlow=scalarOrSame('outlow',fallback(0)),outhigh=scalarOrSame('outhigh',fallback(1));
+          let q = `((${same('in')} - ${low}) / (${high} - ${low}))`;
+          if(n.category==='range')q=`(sign(${q})*pow(abs(${q}),${literal(type,fallback(1))}/${scalarOrSame('gamma',fallback(1))}))`;
+          code = `(${outlow} + ${q} * (${outhigh} - ${outlow}))`;
+          if(n.category==='range')code=`select(${code},clamp(${code},${outlow},${outhigh}),${x('doclamp',false,'boolean')})`;break;
         }
         case 'rotate2d': {
           const v = x('in', undefined, 'vector2'), a = `(${x('amount', undefined, 'float')} * 0.017453292519943295)`;
@@ -290,17 +352,21 @@ export function compileGraph(document, { output, library = {}, material = false,
         if (!target) fail('TYPE', key, `unsupported output type ${type}`);
         const id = `n${serial++}`;
         lines.push(`let ${id}: ${target} = ${code};`);
-        result = { type, code: id, closureCount, hasInterior };
+        result = { type, code: id, closureCount, hasInterior, interiorCategories, categories:[...dependencies] };
       }
     }
     used.add(n.category); active.delete(key); cached.set(key, result); return result;
   }
   const selected = output || { nodename: document.nodes.at(-1)?.name };
   const value = port(selected, root, {}, undefined, '$output');
-  return { body: lines.join('\n'), expression: value.code, type: value.type, categories: [...used].sort(), diagnostics: [], referenceReady: false };
+  return { body: lines.join('\n'), expression: value.code, type: value.type, categories: [...used].sort(), hasInterior:value.hasInterior||false,interiorCategories:value.interiorCategories||[],diagnostics: [], referenceReady: false };
 }
 
 export const contextWGSL = `struct ShadingContext { position: vec3f, normal: vec3f, tangent: vec3f, bitangent: vec3f, uv: vec2f, time: f32, frame: f32, uvDx: vec2f, uvDy: vec2f }
+fn mxNormalmap(value:vec3f,scale:vec2f,n:vec3f,t:vec3f,b:vec3f)->vec3f {
+ let decoded=select(value*2.0-1.0,vec3f(0,0,1),dot(value,value)==0.0);
+ return normalize(t*decoded.x*scale.x+b*decoded.y*scale.y+n*decoded.z);
+}
 struct Lobe { base: vec3f, metal: f32, roughness: f32, ior: f32, transmission: f32, emission: vec3f, emissionWeight: f32, anisotropy: f32, transmissionColor: vec3f, kind:u32, weight:f32, alpha:vec2f, complexIOR:vec3f, extinction:vec3f, scatterMode:u32 }
 struct Medium { absorption: vec3f, scattering: vec3f, anisotropy: f32 }
 fn makeMaterial(base:vec3f,metal:f32,rough:f32,ior:f32,trans:f32,emission:vec3f,emissionWeight:f32,anisotropy:f32,tint:vec3f)->Lobe {

@@ -13,12 +13,22 @@ export async function validateValueKernels(device) {
     { category: 'dotproduct', inputs: { in1: { type: 'vector3', value: [1, 2, 3] }, in2: { type: 'vector3', value: [3, 2, 1] } }, expected: 10 },
     { category: 'magnitude', inputs: { in: { type: 'vector3', value: [3, 4, 0] } }, expected: 5 },
     { category: 'ifequal', inputs: { value1: value(1), value2: value(1), in1: value(7), in2: value(9) }, expected: 7 },
+    {category:'range',inputs:{in:value(-4),gamma:value(2)},expected:-2},
+    {category:'range',inputs:{in:value(-4),gamma:value(2),doclamp:{type:'boolean',value:true}},expected:0},
+    {category:'range',type:'color3',component:2,inputs:{in:{type:'color3',value:[1,4,9]},gamma:value(2)},expected:3},
+    {category:'add',type:'vector3',component:1,inputs:{in1:{type:'vector3',value:[1,2,3]},in2:value(4)},expected:6},
+    {category:'combine2',type:'color4',component:3,inputs:{in1:{type:'color3',value:[1,2,3]},in2:value(.7)},expected:.7},
+    {category:'convert',type:'color4',component:3,inputs:{in:{type:'vector2',value:[.2,.4]}},expected:1},
+    {category:'convert',type:'vector2',component:1,inputs:{in:{type:'color4',value:[.2,.4,.6,.8]}},expected:.4},
+    {category:'transformmatrix',type:'vector2',component:0,inputs:{in:{type:'vector2',value:[2,3]},mat:{type:'matrix33',value:[1,0,0,0,1,0,5,6,1]}},expected:7},
+    {category:'normalmap',type:'vector3',component:2,inputs:{in:{type:'vector3',value:[.5,.5,1]}},expected:1},
+    {category:'normalmap',type:'vector3',component:0,inputs:{in:{type:'vector3',value:[1,.5,1]},scale:{type:'vector2',value:[2,1]}},expected:2/Math.sqrt(5)},
   ];
   const bodies = cases.map((c, i) => {
-    const g = compileGraph({ nodes: [{ name: 'test', type: 'float', category: c.category, inputs: c.inputs }] });
-    return `{ ${g.body}\nresult[${i}] = ${g.expression}; }`;
+    const g = compileGraph({ nodes: [{ name: 'test', type: c.type||'float', category: c.category, inputs: c.inputs }] });
+    return `{ ${g.body}\nresult[${i}] = ${g.expression}${c.component===undefined?'':`[${c.component}]`}; }`;
   });
-  const module = device.createShaderModule({ code: `${contextWGSL}\n@group(0) @binding(0) var<storage,read_write> result: array<f32>; @compute @workgroup_size(1) fn main() { ${bodies.join('\n')} }` });
+  const module = device.createShaderModule({ code: `${contextWGSL}\n@group(0) @binding(0) var<storage,read_write> result: array<f32>; @compute @workgroup_size(1) fn main() { let ctx=ShadingContext(vec3f(0),vec3f(0,0,1),vec3f(1,0,0),vec3f(0,1,0),vec2f(0),0,0,vec2f(0),vec2f(0)); ${bodies.join('\n')} }` });
   const info = await module.getCompilationInfo();
   if (info.messages.some(m => m.type === 'error')) throw new Error(info.messages.map(m => m.message).join('\n'));
   const pipeline = await device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'main' } });

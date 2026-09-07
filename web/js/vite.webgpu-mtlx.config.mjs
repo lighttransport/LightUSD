@@ -9,6 +9,7 @@ const cache = path.resolve(root, '../../.cache/lightusd-verification');
 const roots = { '/__assets/': process.env.USD_WG_ASSETS_DIR || path.join(cache, 'usd-assets'), '/__mtlx/': process.env.MATERIALX_DIR || path.join(cache, 'MaterialX') };
 function files(dir) { return fs.readdirSync(dir, { withFileTypes: true }).flatMap(d => d.isDirectory() ? files(path.join(dir, d.name)) : [path.join(dir, d.name)]); }
 export default defineConfig({
+  optimizeDeps: { include: ['three', 'three/addons/loaders/EXRLoader.js'] },
   root, appType: 'mpa', server: { host: '127.0.0.1', strictPort: true },
   plugins: [{ name: 'materialx-local-fixtures', configureServer(server) {
     server.middlewares.use((req, res, next) => {

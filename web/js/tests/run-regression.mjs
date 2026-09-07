@@ -17,6 +17,7 @@ const NODE = process.execPath;
 
 const NODE_TESTS = [
   ['WebGPU MaterialX graph and scene', 'tests/webgpu-mtlx.test.mjs'],
+  ['WebGPU MaterialX USD graph snapshot', 'tests/webgpu-mtlx-usd-graph.mjs'],
   ['usdzconvert helpers', 'tests/test-usdzconvert.js'],
   ['combined RenderStream regression', 'tests/regression-usdzconvert-material-dedup.mjs'],
   ['next usdzconvert', 'tests/usdzconvert-next.test.mjs'],

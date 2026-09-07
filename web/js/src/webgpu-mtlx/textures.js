@@ -7,7 +7,7 @@ export function packImages(images, { maxBytes = 64 * 1024 * 1024 } = {}) {
     const { width, height, data, colorspace = 'lin_rec709' } = image;
     if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width > 16384 || height > 16384) throw new Error('Invalid image dimensions');
     if (!data || data.length !== width * height * 4) throw new Error('Expected RGBA image data');
-    if (!['lin_rec709', 'srgb_texture', 'raw'].includes(colorspace)) throw new Error(`Unsupported image colorspace: ${colorspace}`);
+    if (!['lin_rec709', 'srgb_texture', 'raw', 'acescg', 'ACEScg'].includes(colorspace)) throw new Error(`Unsupported image colorspace: ${colorspace}`);
     let w = width, h = height, count = 0;
     do { count += w * h; if (w === 1 && h === 1) break; w = Math.max(1, Math.floor(w / 2)); h = Math.max(1, Math.floor(h / 2)); } while (true);
     if ((texels + count) * 16 > maxBytes) throw new Error('Image mip chain exceeds texture budget');
@@ -15,6 +15,14 @@ export function packImages(images, { maxBytes = 64 * 1024 * 1024 } = {}) {
     if (!pixels.every(Number.isFinite)) throw new Error('Image contains non-finite float32 values');
     if (colorspace === 'srgb_texture') for (let i = 0; i < pixels.length; i++) if (i % 4 !== 3) {
       const c = pixels[i]; pixels[i] = c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    }
+    // MaterialX 1.39.5 cmlib NG_acescg_to_lin_rec709_color3 matrix.
+    // Keep negative out-of-gamut values; alpha is not color transformed.
+    if (colorspace.toLowerCase() === 'acescg') for (let i = 0; i < pixels.length; i += 4) {
+      const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+      pixels[i] = 1.705050992658 * r - .621792120657 * g - .083258872001 * b;
+      pixels[i + 1] = -.130256417507 * r + 1.140804736575 * g - .010548319068 * b;
+      pixels[i + 2] = -.024003356805 * r - .128968976065 * g + 1.15297233287 * b;
     }
     if (!pixels.every(Number.isFinite)) throw new Error('Image colorspace conversion overflows float32');
     const descriptor = { offset: texels, width, height, levels: 0 }; descriptors.push(descriptor);

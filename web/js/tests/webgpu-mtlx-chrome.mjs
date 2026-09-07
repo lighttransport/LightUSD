@@ -12,13 +12,14 @@ const executablePath = process.env.CHROME_PATH || (process.platform === 'win32' 
 const port = Number(process.env.WEBGPU_MTLX_TEST_PORT || 5198);
 const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--config', 'vite.webgpu-mtlx.config.mjs', '--port', String(port)], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 let log = ''; server.stdout.on('data', d => { log += d; }); server.stderr.on('data', d => { log += d; });
-let browser;
+let browser, page; const browserLog=[];
 try {
   let started = false;
   for (let i = 0; i < 100; i++) { try { if ((await fetch(`http://127.0.0.1:${port}/webgpu-mtlx.html`)).ok) { started = true; break; } } catch {} await new Promise(r => setTimeout(r, 100)); }
   if (!started) throw new Error(`Vite failed: ${log}`);
   browser = await puppeteer.launch({ executablePath, headless: true, args: hardware ? [] : ['--enable-unsafe-webgpu', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
-  const page = await browser.newPage(); await page.setViewport({ width: 1100, height: 700 });
+  page = await browser.newPage(); await page.setViewport({ width: 1100, height: 700 });
+  page.on('console',msg=>{browserLog.push(msg.text());if(browserLog.length>30)browserLog.shift();});
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.goto(`http://127.0.0.1:${port}/webgpu-mtlx.html?manual&width=96&height=64`);
   await page.waitForFunction(() => window.__webgpuMtlx?.ready || window.__webgpuMtlx?.errors.length, { timeout: 60000 });
@@ -26,6 +27,10 @@ try {
   assert.deepEqual(initial.errors, [], 'initialization errors'); assert.ok(initial.ready);
   const results = await page.evaluate(async () => {
     const state = window.__webgpuMtlx, r = state.renderer;
+    const {validateResourceLoading}=await import('/src/webgpu-mtlx/resource-validation.js');
+    const resourceLoading=await validateResourceLoading();
+    const {validateLibraryGraphs}=await import('/src/webgpu-mtlx/library-validation.js');const libraryGraphs=await validateLibraryGraphs(r.device);
+    const {validateReferenceScenes}=await import('/src/webgpu-mtlx/reference-validation.js');const referenceScenes=await validateReferenceScenes(r);await r.loadScene((await import('/src/webgpu-mtlx/scene.js')).syntheticScene());r.setMode('path-preview');
     const { validateValueKernels } = await import('/src/webgpu-mtlx/gpu-validation.js');
     const numeric = await validateValueKernels(r.device);
     const { validateImageKernels } = await import('/src/webgpu-mtlx/image-validation.js');
@@ -84,6 +89,8 @@ try {
     await r.loadScene(emitterScene);r.setMode('path-physical');while(r.samples<3)await r.renderStep();
     const emissionCapture=await r.capture({format:'float32'});
     for(let i=0;i<emissionCapture.pixels.length;i+=4)for(let k=0;k<3;k++)if(Math.abs(emissionCapture.pixels[i+k]-(k+2))>1e-5||emissionCapture.variance[i+k]>1e-10)throw new Error('Analytic emitter radiance/variance failed');
+    r.setCamera({origin:[0,0,-1],target:[0,0,0],fov:45});while(r.samples<1)await r.renderStep();
+    const backEmitter=await r.capture({format:'float32'});for(let i=0;i<backEmitter.pixels.length;i+=4)if(backEmitter.pixels[i]!==0||backEmitter.pixels[i+1]!==0||backEmitter.pixels[i+2]!==0)throw new Error('One-sided emitter leaked through back face');
     emitterMaterial.spectra={emission_color:[[360,2],[830,2]]};await r.loadScene(emitterScene);r.setMode('path-spectral');while(r.samples<16)await r.renderStep();
     const spectralEmitter=await r.capture({format:'float32'});let meanY=0;for(let i=1;i<spectralEmitter.pixels.length;i+=4)meanY+=spectralEmitter.pixels[i]/spectralEmitter.sampleCounts.length;
     if(Math.abs(meanY-2)>.06)throw new Error(`Equal-energy spectral emitter Y=${meanY}`);
@@ -91,7 +98,7 @@ try {
     let rejected=false;try{await r.renderStep();}catch(e){rejected=/Physical transport invalid/.test(e.message);}if(!rejected)throw new Error('Negative closure weight was not rejected');
     rejected=false;try{await r.capture({format:'float32'});}catch(e){rejected=/Physical transport invalid/.test(e.message);}if(!rejected)throw new Error('Invalid transport capture was not blocked');
     await r.loadScene(syntheticScene('image')); r.setMode('path-preview');
-    return { numeric, imageNumeric, transport, spectrum, physical, spectralDispatches, volumeDispatches,analyticEmitter:{rgb:[2,3,4],spectralMeanY:meanY}, samples, exposureSamples, reset, raster, resized: resized.metadata, min: Math.min(...luminance), max: Math.max(...luminance), finite: capture.pixels.every(Number.isFinite), adapter: r.stats.adapter, errors: [...state.errors, ...r.errors] };
+    return { referenceScenes,libraryGraphs,resourceLoading,numeric, imageNumeric, transport, spectrum, physical, spectralDispatches, volumeDispatches,analyticEmitter:{rgb:[2,3,4],spectralMeanY:meanY}, samples, exposureSamples, reset, raster, resized: resized.metadata, min: Math.min(...luminance), max: Math.max(...luminance), finite: capture.pixels.every(Number.isFinite), adapter: r.stats.adapter, errors: [...state.errors, ...r.errors] };
   });
   assert.equal(results.samples, 4); assert.equal(results.exposureSamples, 4); assert.equal(results.reset, 0);
   assert.ok(results.finite); assert.ok(results.max - results.min > 0.1, 'nonblank radiance');
@@ -123,17 +130,33 @@ try {
       referenceImages.push(stats);console.log(JSON.stringify(stats));await page.screenshot({path:path.join(out,`${preset}-spectral.png`)});
     }
   }
-  let shaderballResult;
-  if (shaderball) {
+    let shaderballResult;
+    if (shaderball) {
+      await page.evaluate(async () => {
+        const { validateUSDGraphSnapshot } = await import('/src/webgpu-mtlx/usd-graph-validation.js');
+        return validateUSDGraphSnapshot();
+      });
+    if(process.argv.includes('--authored-lights'))await page.click('#authored-lights');
     await page.select('#scene', 'shaderball');
     await page.waitForFunction(() => window.__webgpuMtlx.ready || window.__webgpuMtlx.errors.length, { timeout: 120000 });
     shaderballResult = await page.evaluate(async () => {
       const state = window.__webgpuMtlx;
       if (state.errors.length) return { errors: state.errors };
+      if(state.renderer.mode==='path-physical') {
+        const r=state.renderer;r.canvas.width=192;r.canvas.height=128;let dispatches=0;
+        do{await r.renderStep();dispatches++;}while(r.samples<8&&dispatches<800);
+        if(r.samples<8)throw new Error('Authored-light ShaderBall paths did not complete');
+        const capture=await r.capture({format:'float32'});if(!capture.pixels.every(Number.isFinite))throw new Error('Invalid authored-light radiance');
+      }
       await state.renderer.renderStep();
-      return { stats: state.renderer.stats, provenance: state.renderer.scene.provenance, errors: state.errors };
+      const {fetchResource,decodeImage}=await import('/src/webgpu-mtlx/resources.js');
+      const filename='/__assets/full_assets/StandardShaderBall/maps/neutral.ACEScg.exr';
+      const image=await decodeImage(await fetchResource(filename),{filename,colorspace:'acescg'});
+      if(!image.data.every(Number.isFinite))throw new Error('ShaderBall EXR contains non-finite values');
+      return { stats: state.renderer.stats, provenance: state.renderer.scene.provenance, authored:state.renderer.sourceScene.authored, texture:{width:image.width,height:image.height},errors: state.errors };
     });
     assert.deepEqual(shaderballResult.errors, []); assert.ok(shaderballResult.stats.triangles > 1000);
+    if(process.argv.includes('--authored-lights')){assert.equal(shaderballResult.provenance.lightingOverride,false);assert.equal(shaderballResult.provenance.rectLights.length,5);}
     await page.screenshot({ path: path.join(out, 'shaderball.png') });
   }
   let performanceResult;
@@ -152,5 +175,8 @@ try {
   const finalErrors=await page.evaluate(()=>[...window.__webgpuMtlx.errors,...window.__webgpuMtlx.renderer.errors]);assert.deepEqual(finalErrors,[]);assert.deepEqual(errors,[]);
   const report = { browser: await browser.version(), requestedHardware: hardware, inventoriedNodeDefs: inventory.length, shaderball: shaderballResult, performance: performanceResult,referenceImages, ...results };
   fs.writeFileSync(path.join(out, 'chrome.json'), JSON.stringify(report, null, 2));
-  console.log(JSON.stringify({ browser: report.browser, adapter: results.adapter, inventoriedNodeDefs: inventory.length, numericPassed: results.numeric.length, samples: results.samples, shaderball: shaderballResult, performance: performanceResult, errors: results.errors, report: path.relative(root, path.join(out, 'chrome.json')) }, null, 2));
+  console.log(JSON.stringify({ browser: report.browser, adapter: results.adapter, inventoriedNodeDefs: inventory.length, numericPassed: results.numeric.length, samples: results.samples, shaderball: shaderballResult?{stats:shaderballResult.stats,provenance:shaderballResult.provenance,texture:shaderballResult.texture}:undefined, performance: performanceResult, errors: results.errors, report: path.relative(root, path.join(out, 'chrome.json')) }, null, 2));
+} catch(e) {
+  const state=await page?.evaluate(()=>({url:location.href,status:document.getElementById('status')?.textContent,ready:window.__webgpuMtlx?.ready,errors:window.__webgpuMtlx?.errors})).catch(()=>null);
+  console.error(JSON.stringify({failure:e.message,state,browserLog,serverLog:log.slice(-3000)},null,2));throw e;
 } finally { await browser?.close(); server.kill(); }

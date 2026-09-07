@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { mayEmit } from './emission.js';
 export const sub = (a, b) => a.map((v, i) => v - b[i]);
 export const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 export const normalize = a => { const l = Math.hypot(...a); return l > 1e-20 ? a.map(v => v / l) : [0, 1, 0]; };
@@ -115,8 +116,9 @@ export function packScene(scene, { maxTriangles = 2_000_000 } = {}) {
   nodes.forEach((n, i) => nodeData.set([...n.lo, n.first, ...n.hi, n.count, n.escape, 0, 0, 0], i * 12));
   const triangleData = new Float32Array(ordered.length * 36);
   let areaCDF=0;
+  const emitters=materials.map(mayEmit);
   ordered.forEach((t, i) => {
-    const area=.5*Math.hypot(...cross(sub(t.p[1],t.p[0]),sub(t.p[2],t.p[0]))),start=areaCDF;areaCDF=Math.fround(areaCDF+area);
+    const area=.5*Math.hypot(...cross(sub(t.p[1],t.p[0]),sub(t.p[2],t.p[0]))),start=areaCDF;areaCDF=Math.fround(areaCDF+(emitters[t.mat]?area:0));
     if(!Number.isFinite(areaCDF))throw new Error('Triangle area CDF exceeds float32');
     for (let v = 0; v < 3; v++) triangleData.set([...t.p[v], [start,areaCDF,area][v], ...t.n[v], 0, ...t.uv[v], t.mat, 0], i * 36 + v * 12);
   });

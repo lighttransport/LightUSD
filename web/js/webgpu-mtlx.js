@@ -2,6 +2,7 @@
 import { createRenderer } from './src/webgpu-mtlx/renderer.js';
 import { syntheticScene } from './src/webgpu-mtlx/scene.js';
 import { parseMaterialX, valueCategories } from './src/webgpu-mtlx/graph.js';
+import { loadMaterialXResources } from './src/webgpu-mtlx/resources.js';
 const $ = id => document.getElementById(id), canvas = $('view');
 const params = new URLSearchParams(location.search);
 const width = Number(params.get('width') || 1280), height = Number(params.get('height') || 720);
@@ -20,13 +21,14 @@ async function main() {
     state.ready = false;
     if ($('scene').value === 'shaderball') {
       const { loadShaderBallGeometry } = await import('./src/webgpu-mtlx/usd-scene.js');
-      initial = await loadShaderBallGeometry(s => { $('status').textContent = s; });
-      renderer.setMode('realtime'); $('mode').value = 'realtime';
+      initial = await loadShaderBallGeometry(s => { $('status').textContent = s; },{authoredLights:$('authored-lights').checked});
+      renderer.setMode($('authored-lights').checked?'path-physical':'realtime'); $('mode').value = renderer.mode;
     } else initial = syntheticScene($('scene').value);
     await renderer.loadScene(initial); $('mode').value = renderer.mode; syncOrbit(initial.camera); state.ready = true;
   }
   await scene();
   $('scene').onchange = () => scene().catch(error);
+  $('authored-lights').onchange=()=>{if($('scene').value==='shaderball')scene().catch(error);};
   $('mode').onchange = () => { try { renderer.setMode($('mode').value); } catch (e) { error(e); $('mode').value = renderer.mode; } };
   $('exposure').oninput = () => renderer.setOptions({ exposure: Number($('exposure').value) });
   $('scale').onchange = () => renderer.setOptions($('scale').value === 'auto' ? { autoResolution: true } : { autoResolution: false, resolutionScale: Number($('scale').value) });
@@ -35,6 +37,11 @@ async function main() {
   $('save').onclick = async () => { try { const capture = await renderer.capture(); download(capture.bytes, 'image/x-exr', 'materialx-preview.exr'); download(JSON.stringify(capture.metadata, null, 2), 'application/json', 'materialx-preview.json'); } catch (e) { error(e); } };
   $('png').onclick = async () => { try { const capture = await renderer.capture({ format: 'png' }); download(capture.bytes, 'image/png', 'materialx-preview.png'); } catch (e) { error(e); } };
   $('material').onchange = async e => { try { const file = e.target.files[0]; if (file) { await renderer.setMaterialDocument(parseMaterialX(await file.text(), { source: file.name })); $('error').textContent = ''; } } catch (e) { error(e); } };
+  $('load-material-url').onclick = async () => {
+    const button=$('load-material-url');button.disabled=true;
+    try { const doc=await loadMaterialXResources(new URL($('material-url').value,location.href));await renderer.setMaterialDocument(doc);$('error').textContent=''; }
+    catch(e){error(e);}finally{button.disabled=false;}
+  };
   $('inventory').onclick = async () => {
     try {
       const response = await fetch('/__mtlx/catalog.json'); if (!response.ok) throw new Error('Pinned MaterialX checkout is unavailable');

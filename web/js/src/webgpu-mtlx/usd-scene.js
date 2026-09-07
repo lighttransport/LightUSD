@@ -4,6 +4,7 @@ import { BufferGeometry, BufferAttribute, Matrix4 } from 'three';
 import { LightUSDComposer } from '../lightusd/LightUSDComposer.js';
 import { HttpAssetResolver } from '../../http-asset-resolver.js';
 import { surfaceDocument } from './scene.js';
+import { appendRectLights } from './usd-lights.js';
 export const SHADERBALL_COMMIT = '3b75c2dad6a494897557dcca0098257bcf42a8c6';
 let nativePromise;
 // The legacy composer requests merged references without their source layer.
@@ -37,7 +38,7 @@ async function nativeModule() {
   }
   return nativePromise;
 }
-export async function loadShaderBallGeometry(onStatus = () => {}) {
+export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLights = false } = {}) {
   const url = new URL('/__assets/full_assets/StandardShaderBall/standard_shader_ball_scene.usda', location.href);
   onStatus('Loading USD module…'); const native = await nativeModule();
   const response = await fetch(url); if (!response.ok) throw new Error('ShaderBall checkout is missing');
@@ -52,7 +53,16 @@ export async function loadShaderBallGeometry(onStatus = () => {}) {
     composer.setBaseWorkingPath('./'); composer.setAssetSearchPaths(['./']);
     onStatus('Composing ShaderBall layers and references…'); await composer.progressiveComposition();
     if (layer.hasReferences() || layer.hasPayload()) throw new Error('ShaderBall composition is incomplete');
+    if (!layer.getShadingGraphJSON) throw new Error('Rebuild the combined WASM module for shading graph inspection');
+    const shadingGraphJSON = layer.getShadingGraphJSON();
+    if (!shadingGraphJSON) throw new Error(layer.error());
+    const shadingGraph = JSON.parse(shadingGraphJSON);
     if (!layer.layerToRenderScene()) throw new Error(layer.error());
+    // Native material serialization is reduced, NOT an authored graph export.
+    // Preserve this diagnostic snapshot without substituting it for source graphs.
+    const authored = { materialSerializationIsLossy: true, shadingGraph, materials: [], lights: [], bindings: [] };
+    for (let i = 0; i < layer.numMaterials(); i++) authored.materials.push(layer.getMaterialWithFormat(i, 'json'));
+    for (let i = 0; i < layer.numLights(); i++) authored.lights.push(layer.getLight(i));
     const positions = [], normals = [], uvs = [], indices = [], materialIds = [];
     const read = d => {
       if (!d?.length) return null;
@@ -71,6 +81,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}) {
       }
       if (node.nodeType?.toLowerCase() === 'mesh') {
         const mesh = layer.getMeshPtr(node.contentId);
+        authored.bindings.push({ path: mesh.absPath, materialId: mesh.materialId, submeshes: mesh.submeshes });
         if (!mesh.singleIndexable || !mesh.triangulated) throw new Error(`USD mesh is not triangulated/single-indexed: ${mesh.absPath}`);
         const p = read(mesh.points), ix = read(mesh.indices); if (!p?.length || !ix?.length) return;
         const geo = new BufferGeometry(); geo.setAttribute('position', new BufferAttribute(p, 3)); geo.setIndex(new BufferAttribute(ix, 1));
@@ -91,6 +102,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}) {
     if (!indices.length) throw new Error('ShaderBall conversion produced no triangles');
     if (!camera) throw new Error('ShaderBall authored camera was not found');
     onStatus(`Prepared ${indices.length / 3} ShaderBall triangles; materials/lights are diagnostic overrides`);
-    return { positions, normals, uvs, indices, materialIds, materials: [surfaceDocument([0.35, 0.35, 0.35], 0, 0.7), surfaceDocument([0.8, 0.45, 0.15], 1, 0.25)], camera, provenance: { asset: 'StandardShaderBall', commit: SHADERBALL_COMMIT, variant: 'triangulated', materialOverride: true, lightingOverride: true, referenceReady: false } };
+    const scene={ positions, normals, uvs, indices, materialIds, authored, materials: [surfaceDocument([0.35, 0.35, 0.35], 0, 0.7), surfaceDocument([0.8, 0.45, 0.15], 1, 0.25)], camera, provenance: { asset: 'StandardShaderBall', commit: SHADERBALL_COMMIT, variant: 'triangulated', materialOverride: true, lightingOverride: true, referenceReady: false } };
+    return authoredLights ? appendRectLights(scene,authored.lights) : scene;
   } finally { layer.delete(); }
 }

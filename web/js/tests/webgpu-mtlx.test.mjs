@@ -9,7 +9,88 @@ import { shaderSource } from '../src/webgpu-mtlx/shaders.js';
 import { validateSpectrum, sampleSpectrum } from '../src/webgpu-mtlx/spectrum.js';
 import { cieXYZ } from '../src/webgpu-mtlx/cie-data.js';
 import { refineDisplacementScene } from '../src/webgpu-mtlx/displacement.js';
+import { fetchResource, inspectEXR, decodeImage } from '../src/webgpu-mtlx/resources.js';
+import { appendRectLights } from '../src/webgpu-mtlx/usd-lights.js';
+import { mayEmit } from '../src/webgpu-mtlx/emission.js';
 const constant = (name, value, type = 'float') => ({ name, category: 'constant', type, inputs: { value: { type, value } } });
+test('layered medium bounds follow interior dependencies, not unrelated surface nodes',()=>{
+  const doc={nodes:[
+    {name:'position',category:'position',type:'vector3'},
+    {name:'color',category:'convert',type:'color3',inputs:{in:{nodename:'position'}}},
+    {name:'diffuse',category:'oren_nayar_diffuse_bsdf',type:'BSDF',inputs:{color:{nodename:'color'}}},
+    {name:'medium',category:'anisotropic_vdf',type:'VDF',inputs:{scattering:{type:'color3',value:[1,1,1]}}},
+    {name:'layer',category:'layer',type:'BSDF',inputs:{top:{nodename:'diffuse'},base:{nodename:'medium'}}},
+    {name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'layer'}}}
+  ]};
+  assert.equal(compileGraph(doc,{material:true}).hasInterior,true);shaderSource([doc]);
+  doc.nodes[3].inputs.scattering={nodename:'color'};
+  assert.throws(()=>shaderSource([doc]),/layered media require/);
+  doc.mediumMajorant=5;shaderSource([doc]);
+});
+test('emission sampling excludes proven dark surfaces but retains unknown and spectral emitters',()=>{
+  const scene=syntheticScene();assert.equal(mayEmit(scene.materials[0]),false);
+  const packed=packScene(scene);assert.equal(packed.triangleData[(packed.triangleCount-1)*36+15],0);
+  scene.materials[1].nodes[0].inputs.emission={type:'float',value:1};assert.equal(mayEmit(scene.materials[1]),true);
+  assert.ok(packScene(scene).triangleData[(packed.triangleCount-1)*36+15]>0);
+  assert.equal(mayEmit({nodes:[{name:'custom',category:'custom'}]}),true);
+  const doc=syntheticScene().materials[1];doc.spectra={emission_color:[[360,1],[830,1]]};assert.equal(mayEmit(doc),true);
+});
+test('authored literal colors inherit source colorspace and preserve alpha',()=>{
+  const doc={colorspace:'srgb_texture',nodes:[constant('color',[.5,.5,.5,.25],'color4')]};
+  assert.match(compileGraph(doc).body,/0.21404114048223255/);assert.match(compileGraph(doc).body,/,0.25\)/);
+  doc.colorspace='unknown';assert.throws(()=>compileGraph(doc),/Unsupported color space/);
+});
+test('NodeDef overload resolution uses authored input types',()=>{
+  const definitions=Object.fromEntries(['float','vector3'].map(type=>[type,{name:type,node:'add',inputs:{in1:{type:'vector3'},in2:{type}},outputs:{out:{type:'vector3'}}}]));
+  const doc={definitions,nodes:[{name:'sum',type:'vector3',category:'add',inputs:{in1:{type:'vector3',value:[1,2,3]},in2:{type:'float',value:2}}}]};
+  assert.match(compileGraph(doc).body,/vec3f\(2.0\)/);
+});
+test('USD rect lights preserve world-space area, radiance and negative-Z orientation',()=>{
+  const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
+  const light={type:'rect',width:2,height:3,intensity:12,exposure:1,normalize:true,color:[1,.5,.25],transform:[2,0,0,0,0,3,0,0,0,0,1,0,1,2,3,1]};
+  const r=appendRectLights(scene,[light]);
+  assert.equal(r.provenance.rectLights[0].worldArea,36);
+  assert.deepEqual(r.provenance.rectLights[0].radiance,[2/3,1/3,1/6]);
+  assert.equal(r.normals[2],-1);assert.equal(r.positions[2],3);assert.equal(scene.positions.length,0);
+  assert.equal(r.materials[0].twoSidedEmission,false);
+  assert.throws(()=>appendRectLights(scene,[{...light,textureFile:'light.exr'}]),/Unsupported/);
+  assert.throws(()=>appendRectLights(scene,[{...light,width:0}]),/Invalid/);
+});
+test('resource fetch enforces streaming budgets and HTTP errors',async()=>{
+  const fetcher=async()=>new Response(new Uint8Array([1,2,3,4]));
+  assert.deepEqual(await fetchResource('test',{fetcher,maxBytes:4}),new Uint8Array([1,2,3,4]));
+  await assert.rejects(fetchResource('test',{fetcher,maxBytes:3}),/budget/);
+  await assert.rejects(fetchResource('test',{fetcher:async()=>new Response('',{status:404})}),/HTTP 404/);
+});
+test('EXR resource preflight bounds allocation and decode preserves bottom-up rows',async()=>{
+  const bytes=encodeEXR(1,2,new Float32Array([1,2,3,1,4,5,6,1]));
+  assert.deepEqual(inspectEXR(bytes),{width:1,height:2});
+  assert.throws(()=>inspectEXR(bytes,1),/budget/);
+  assert.throws(()=>inspectEXR(bytes.subarray(0,20)),/EXR/);
+  const image=await decodeImage(bytes,{filename:'test.exr',colorspace:'raw'});
+  assert.deepEqual(Array.from(image.data),[4,5,6,1,1,2,3,1]);
+});
+test('ACEScg image conversion matches pinned MaterialX matrix without alpha or gamut clipping',()=>{
+  const image=packImages([{width:1,height:1,colorspace:'acescg',data:[1,0,0,.3]}]);
+  const expected=[1.705050992658,-.130256417507,-.024003356805,.3];
+  expected.forEach((v,i)=>assert.ok(Math.abs(image.data[i]-v)<1e-7));
+});
+test('closure composition preserves lobe bounds and interior ownership',()=>{
+  const leaf={name:'leaf',category:'oren_nayar_diffuse_bsdf',type:'BSDF'};
+  const nodes=[leaf];
+  let previous='leaf';
+  for(let i=1;i<=8;i++) {
+    nodes.push({name:`sum${i}`,category:'add',type:'BSDF',inputs:{in1:{nodename:previous},in2:{nodename:'leaf'}}});
+    previous=`sum${i}`;
+    if(i<8) assert.match(compileGraph({nodes}).body,/closureAdd/);
+  }
+  assert.throws(()=>compileGraph({nodes}),/exceeds 8 lobes/);
+  const layered=[leaf,{name:'medium',category:'anisotropic_vdf',type:'VDF'},
+    {name:'layer',category:'layer',type:'BSDF',inputs:{top:{nodename:'leaf'},base:{nodename:'medium'}}}];
+  assert.match(compileGraph({nodes:layered}).body,/closureInterior/);
+  layered.push({name:'sum',category:'add',type:'BSDF',inputs:{in1:{nodename:'layer'},in2:{nodename:'leaf'}}});
+  assert.throws(()=>compileGraph({nodes:layered}),/attach the interior after/);
+});
 test('native closures compile and unsupported uniform inputs are diagnosed',()=>{
   for(const preset of ['native-copper','native-glass']) {
     const resources={};const source=shaderSource(syntheticScene(preset).materials,resources);

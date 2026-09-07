@@ -8,6 +8,7 @@ import { volumeWGSL } from './volume.js';
 import { closureTransportWGSL } from './closures.js';
 
 export function shaderSource(materials, resources = {}, lighting = {}) {
+  for(const doc of materials)if(doc.twoSidedEmission!==undefined&&typeof doc.twoSidedEmission!=='boolean')throw new Error('twoSidedEmission must be boolean');
   const lightDirection=lighting.directional?.direction||[-.5,.8,.4];
   if(!Array.isArray(lightDirection)||lightDirection.length!==3||Math.hypot(...lightDirection)<1e-8)throw new Error('Invalid directional light direction');
   for(const color of [lighting.environment,lighting.directional?.radiance])if(color && (!Array.isArray(color)||color.length!==3||color.some(v=>!Number.isFinite(v)||v<0)))throw new Error('Invalid light radiance');
@@ -24,6 +25,7 @@ export function shaderSource(materials, resources = {}, lighting = {}) {
     if(medium && medium.type!=='VDF') throw new Error('mediumOutput must produce VDF');
     if(doc.mediumMajorant!==undefined && (!Number.isFinite(doc.mediumMajorant)||doc.mediumMajorant<=0))throw new Error('Medium majorant must be finite and positive');
     if(medium && medium.categories.some(c=>['position','normal','tangent','bitangent','texcoord','image'].includes(c)) && !doc.mediumMajorant) throw new Error('Spatially varying media require a conservative mediumMajorant');
+    if(!medium&&c.interiorCategories.some(c=>['position','normal','tangent','bitangent','texcoord','image'].includes(c))&&!doc.mediumMajorant)throw new Error('Spatially varying layered media require a conservative mediumMajorant');
     return `fn material${i}(ctx: ShadingContext) -> Material { ${c.body}\nreturn ${c.expression}; }\nfn medium${i}(ctx:ShadingContext)->Medium { ${medium ? `${medium.body}\nreturn ${medium.expression};` : `return material${i}(ctx).bsdf.interior;`} }`;
   }).join('\n');
   return /* wgsl */`
@@ -31,7 +33,11 @@ ${contextWGSL}
 ${spectrumWGSL(materials, resources)}
 ${imageWGSL}
 ${functions}
-struct Settings { origin: vec4f, forward: vec4f, right: vec4f, up: vec4f, dimensions: vec4u, display: vec4f }
+fn emissionSidedness(id:u32,normal:vec3f,direction:vec3f)->f32 {
+  switch id { ${materials.map((doc,i)=>doc.twoSidedEmission?`case ${i}u:{return 1.0;}`:'').join('\n')} default:{} }
+  return select(0.0,1.0,dot(normal,direction)<0.0);
+}
+struct Settings { origin: vec4f, forward: vec4f, right: vec4f, up: vec4f, dimensions: vec4u, display: vec4f, sampling:vec4u }
 struct Node { lo: vec4f, hi: vec4f, link: vec4f }
 struct Vertex { p: vec4f, n: vec4f, uv: vec4f }
 struct Triangle { a: Vertex, b: Vertex, c: Vertex }
@@ -46,9 +52,16 @@ ${closureTransportWGSL}
 ${volumeWGSL}
 ${pathStateWGSL}
 fn hash(v0: u32) -> u32 { var v = v0; v = (v ^ (v >> 16u)) * 0x7feb352du; v = (v ^ (v >> 15u)) * 0x846ca68bu; return v ^ (v >> 16u); }
-fn random(state: ptr<function,u32>) -> f32 { *state = hash(*state + 0x9e3779b9u); return (f32(*state >> 8u) + 0.5) / 16777216.0; }
+fn random(state: ptr<function,u32>) -> f32 { *state = hash(*state + 0x9e3779b9u); return min(0.9999999403953552,(f32(*state >> 8u) + 0.5) / 16777216.0); }
 fn intersect(o: vec3f, d: vec3f) -> Hit {
   var h = Hit(1e30,0,0,0xffffffffu); var ni = 0u;
+  // Ray-aligned shear coordinates use the same edge endpoints on adjacent
+  // triangles, avoiding cancellation cracks from separate Moller-Trumbore solves.
+  // Algorithm: https://www.pbr-book.org/4ed/Shapes/Triangle_Meshes
+  // Float32 WGSL only: this does not claim PBRT's double-precision edge fallback.
+  let ad=abs(d);let kz=select(select(0u,1u,ad.y>ad.x),2u,ad.z>max(ad.x,ad.y));
+  let kx=(kz+1u)%3u;let ky=(kx+1u)%3u;
+  let shear=vec3f(-d[kx]/d[kz],-d[ky]/d[kz],1.0/d[kz]);
   let safeD = select(select(vec3f(-1e-20),vec3f(1e-20),d >= vec3f(0)),d,abs(d) > vec3f(1e-20));
   let inv = 1.0 / safeD;
   loop {
@@ -58,12 +71,15 @@ fn intersect(o: vec3f, d: vec3f) -> Hit {
     if (max(max(near.x,near.y),max(near.z,0.0)) > min(min(far.x,far.y),min(far.z,h.t))) { ni = u32(node.link.x); continue; }
     for (var j = 0u; j < u32(node.hi.w); j++) {
       let ti = u32(node.lo.w)+j; let tri = triangles[ti];
-      let e1 = tri.b.p.xyz-tri.a.p.xyz; let e2 = tri.c.p.xyz-tri.a.p.xyz;
-      let p = cross(d,e2); let det = dot(e1,p);
-      if (abs(det) < 1e-10) { continue; }
-      let s = o-tri.a.p.xyz; let u = dot(s,p)/det; if (u < 0.0 || u > 1.0) { continue; }
-      let q = cross(s,e1); let v = dot(d,q)/det; if (v < 0.0 || u+v > 1.0) { continue; }
-      let t = dot(e2,q)/det; if (t > 1e-5 && t < h.t) { h = Hit(t,u,v,ti); }
+      let a0=tri.a.p.xyz-o;let b0=tri.b.p.xyz-o;let c0=tri.c.p.xyz-o;
+      let a=vec3f(a0[kx]+shear.x*a0[kz],a0[ky]+shear.y*a0[kz],a0[kz]*shear.z);
+      let b=vec3f(b0[kx]+shear.x*b0[kz],b0[ky]+shear.y*b0[kz],b0[kz]*shear.z);
+      let c=vec3f(c0[kx]+shear.x*c0[kz],c0[ky]+shear.y*c0[kz],c0[kz]*shear.z);
+      let edges=vec3f(b.x*c.y-b.y*c.x,c.x*a.y-c.y*a.x,a.x*b.y-a.y*b.x);
+      if(any(edges<vec3f(0))&&any(edges>vec3f(0))){continue;}
+      let det=edges.x+edges.y+edges.z;if(det==0.0){continue;}
+      let t=dot(edges,vec3f(a.z,b.z,c.z))/det;
+      if(t>1e-5&&t<h.t){h=Hit(t,edges.y/det,edges.z/det,ti);}
     }
     ni++;
   }
@@ -120,15 +136,16 @@ fn sampleDirection(m: Lobe, n: vec3f, wo: vec3f, rng: ptr<function,u32>) -> vec3
 }
 fn preview(o0: vec3f, d0: vec3f, rng: ptr<function,u32>, realtime: bool) -> vec3f {
   var o = o0; var d = d0; var beta = vec3f(1); var radiance = vec3f(0);
-  let light = normalize(vec3f(-0.5,0.8,0.4));
+  let light = directionalDirection();
   for (var bounce = 0u; bounce < 12u; bounce++) {
     let h = intersect(o,d);
     if (h.id == 0xffffffffu) { radiance += beta*environment(d); break; }
     var ctx = context(h,o,d); if (dot(ctx.normal,d)>0.0) { ctx.normal = -ctx.normal; }
     let m = getMaterial(u32(triangles[h.id].a.uv.z),ctx);
     let eps = max(1e-4,length(ctx.position)*1e-5);
-    radiance += beta*m.emission*m.emissionWeight;
-    let direct = bsdf(m,ctx.normal,-d,light).xyz * max(0.0,dot(ctx.normal,light))*vec3f(3.5,3.2,2.8);
+    let emittingTriangle=triangles[h.id];let emittingNormal=normalize(cross(emittingTriangle.b.p.xyz-emittingTriangle.a.p.xyz,emittingTriangle.c.p.xyz-emittingTriangle.a.p.xyz));
+    radiance += beta*m.emission*m.emissionWeight*emissionSidedness(u32(triangles[h.id].a.uv.z),emittingNormal,d);
+    let direct = bsdf(m,ctx.normal,-d,light).xyz * max(0.0,dot(ctx.normal,light))*directionalRadiance();
     if (intersect(ctx.position+ctx.normal*eps,light).id == 0xffffffffu) { radiance += beta*direct; }
     if (realtime) { radiance += beta*(m.base*(1.0-m.metal)*0.22+fresnel(max(0.0,dot(ctx.normal,-d)),mix(vec3f(0.04),m.base,m.metal))*environment(reflect(d,ctx.normal))); break; }
     let wi = sampleDirection(m,ctx.normal,-d,rng); let f = bsdf(m,ctx.normal,-d,wi);
@@ -142,7 +159,7 @@ fn preview(o0: vec3f, d0: vec3f, rng: ptr<function,u32>, realtime: bool) -> vec3
 @compute @workgroup_size(8,8) fn trace(@builtin(global_invocation_id) id: vec3u) {
   if (id.x>=cfg.dimensions.x || id.y>=cfg.dimensions.y) { return; }
   let index = id.y*cfg.dimensions.x+id.x;
-  var rng = hash(index ^ hash(cfg.dimensions.z + 0x1234u));
+  var rng = hash(index ^ hash(cfg.dimensions.z + 0x1234u) ^ hash(cfg.sampling.x));
   let pixel = vec2f(id.xy)+select(vec2f(random(&rng),random(&rng)),vec2f(0.5),cfg.dimensions.w==1u);
   let uv = pixel/vec2f(cfg.dimensions.xy)*2.0-1.0;
   let d = normalize(cfg.forward.xyz+cfg.right.xyz*uv.x*cfg.right.w-cfg.up.xyz*uv.y*cfg.up.w);
@@ -160,9 +177,9 @@ struct RasterVertex { @builtin(position) clip: vec4f, @location(0) position: vec
 @fragment fn rasterFragment(v: RasterVertex, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   let n = normalize(select(-v.normal,v.normal,front)); let tangent = normalize(cross(select(vec3f(0,1,0),vec3f(1,0,0),abs(n.y)>0.9),n));
   let ctx = ShadingContext(v.position,n,tangent,cross(n,tangent),v.uv,0,0,dpdx(v.uv),dpdy(v.uv));
-  let m = getMaterial(v.material,ctx); let wo = normalize(cfg.origin.xyz-v.position); let light=normalize(vec3f(-0.5,0.8,0.4));
-  var color = m.emission*m.emissionWeight+m.base*(1.0-m.metal)*0.22+fresnel(max(0.0,dot(n,wo)),mix(vec3f(0.04),m.base,m.metal))*environment(reflect(-wo,n));
-  if (intersect(v.position+n*max(1e-4,length(v.position)*1e-5),light).id==0xffffffffu) { color += bsdf(m,n,wo,light).xyz*max(0.0,dot(n,light))*vec3f(3.5,3.2,2.8); }
+  let m = getMaterial(v.material,ctx); let wo = normalize(cfg.origin.xyz-v.position); let light=directionalDirection();
+  var color = m.emission*m.emissionWeight*emissionSidedness(v.material,v.normal,-wo)+m.base*(1.0-m.metal)*0.22+fresnel(max(0.0,dot(n,wo)),mix(vec3f(0.04),m.base,m.metal))*environment(reflect(-wo,n));
+  if (intersect(v.position+n*max(1e-4,length(v.position)*1e-5),light).id==0xffffffffu) { color += bsdf(m,n,wo,light).xyz*max(0.0,dot(n,light))*directionalRadiance(); }
   let linear = max(vec3f(0),color*exp2(cfg.display.x)); let mapped=linear/(1.0+linear);
   return vec4f(select(12.92*mapped,1.055*pow(mapped,vec3f(1.0/2.4))-0.055,mapped>vec3f(0.0031308)),1);
 }
@@ -170,7 +187,7 @@ struct RasterVertex { @builtin(position) clip: vec4f, @location(0) position: vec
 }
 
 export const displayShader = /* wgsl */`
-struct Settings { origin: vec4f, forward: vec4f, right: vec4f, up: vec4f, dimensions: vec4u, display: vec4f }
+struct Settings { origin: vec4f, forward: vec4f, right: vec4f, up: vec4f, dimensions: vec4u, display: vec4f, sampling:vec4u }
 @group(0) @binding(0) var<uniform> cfg: Settings;
 @group(0) @binding(1) var<storage,read> accumulation: array<vec4f>;
 @vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f { return vec4f(f32((i<<1u)&2u)*2.0-1.0,f32(i&2u)*2.0-1.0,0,1); }

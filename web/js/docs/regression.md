@@ -2,7 +2,14 @@
 
 The fresh WebGPU MaterialX baseline has a focused Windows/Chrome hardware gate:
 `node tests/webgpu-mtlx-chrome.mjs --hardware --shaderball --performance`.
+Use `--authored-lights` with `--shaderball` for the authored RectLight path-tracing
+smoke scene (materials remain diagnostic overrides). The focused harness also
+checks real pinned MaterialX library graphs, resource includes/EXR decoding, and
+seeded analytic transport scenes. See the status document for coverage limits.
 Its pure Node graph/scene tests are included in the aggregate Node profile.
+After rebuilding the combined WASM binding, run
+`node tests/webgpu-mtlx-usd-graph.mjs` for typed USD shading connections and
+connected defaults; `--shaderball` also runs that fixture inside Chrome.
 See [implementation status and setup](webgpu-mtlx.md) for the pinned fixtures,
 generated artifacts, measured coverage, and unfinished reference-rendering work.
 
