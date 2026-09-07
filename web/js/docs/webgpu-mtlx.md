@@ -286,6 +286,8 @@ single-part scanline EXRs now stream their offset-table rows directly into the
 bounded area-box result, avoiding a full-resolution float allocation. Other EXR
 compression modes still use the third-party decoder and therefore require a
 future streaming decoder for the 7,500² ShaderBall ground map.
+`loadMaterialXResources` exposes the same behavior through its explicit
+`allowDownsample` option; the default remains fail-closed at `maxPixels`.
 The API still does not enable faithful ShaderBall material rendering.
 
 The Chrome ShaderBall gate checks a synthetic native USD material with a nested

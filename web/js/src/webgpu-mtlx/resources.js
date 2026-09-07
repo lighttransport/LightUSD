@@ -241,7 +241,7 @@ export async function loadMaterialXResources(url, options = {}) {
     const key = `${resolved.href}#colorspace=${colorspace || 'auto'}`;
     if (!document.images[key]) {
       const imageBytes = await fetchResource(resolved.href, options);
-      const image = await decodeImage(imageBytes, { filename: resolved.href, colorspace, maxPixels: options.maxPixels });
+      const image = await decodeImage(imageBytes, { filename: resolved.href, colorspace, maxPixels: options.maxPixels, allowDownsample: options.allowDownsample === true });
       decodedBytes += image.data.byteLength;
       if (decodedBytes > (options.maxDecodedBytes || 48 * 1024 * 1024)) throw new Error('Material images exceed decoded byte budget');
       document.images[key] = image;
