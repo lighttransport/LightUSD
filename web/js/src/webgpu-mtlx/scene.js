@@ -78,6 +78,13 @@ export function syntheticScene(preset = 'copper') {
     materials[1].nodes.unshift({name:'bump',category:'bump3',type:'vector3',inputs:{in:{type:'float',value:.18},scale:{type:'float',value:1.4}}});
     materials[1].nodes.at(-1).inputs.normal={nodename:'bump'};
   }
+  if(preset==='coat') {
+    materials[1]=surfaceDocument([.28,.08,.025],0,.32);
+    materials[1].nodes[0].inputs.coat={type:'float',value:.65};
+    materials[1].nodes[0].inputs.coat_color={type:'color3',value:[1,.92,.78]};
+    materials[1].nodes[0].inputs.coat_roughness={type:'float',value:.08};
+    materials[1].nodes[0].inputs.coat_IOR={type:'float',value:1.5};
+  }
   if(preset==='native-copper'||preset==='native-glass') {
     const glass=preset==='native-glass';
     materials[1]={nodes:[

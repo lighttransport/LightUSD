@@ -55,6 +55,8 @@ The authored ShaderBall gate reuses the already-loaded authored scene for its
 diagnostics; hardware Chrome now completes seven compiled authored slots and
 51,008 triangles without a duplicate asset decode.
 
+The synthetic hardware matrix also covers the `coat` dielectric-lobe path.
+
 All web/WASM regression procedures live under `web/js`. The canonical gate is
 `npm test`; it runs the assertion-based Node/WASM suites, the physics-only
 MuJoCo binding smoke test, the USD Physics simulation, every pinned MuJoCo

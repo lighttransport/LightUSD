@@ -335,3 +335,8 @@ for diagnostics instead of decoding the asset graph a second time. The hardware
 run completes with seven compiled authored material slots, 51,008 triangles,
 and no GPU/page errors; remaining slots stay explicit placeholders when their
 composed terminal or texture preflight is unavailable.
+
+Standard Surface and OpenPBR coat controls now compile to a bounded additive
+dielectric coat lobe (`coat`, `coat_weight`, color, roughness and IOR aliases).
+The synthetic `coat` scene is hardware-tested; exact layered energy
+compensation and multiple-scattering coat transport remain future work.

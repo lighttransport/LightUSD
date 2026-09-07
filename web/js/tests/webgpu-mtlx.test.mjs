@@ -54,8 +54,8 @@ test('standard and OpenPBR terminal aliases preserve authored graph inputs', () 
     geometry_opacity: { type: 'float', value: 1 }
   } }] };
   assert.doesNotThrow(() => compileGraph(open, { material: true }));
-  const unsupported = structuredClone(standard); unsupported.nodes[0].inputs.coat = { type: 'float', value: .2 };
-  assert.throws(() => compileGraph(unsupported, { material: true }), /coat/);
+  const coated = structuredClone(standard); coated.nodes[0].inputs.coat = { type: 'float', value: .2 };
+  assert.match(compileGraph(coated, { material: true }).body, /closureAdd/);
 });
 
 test('USD graph translation preserves interfaces and exact NodeDef typing', () => {
@@ -229,6 +229,9 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   const bump=syntheticScene('bump').materials[1];
   assert.match(compileGraph(bump,{material:true}).body,/mxBumpHeight/);
   assert.match(shaderSource([bump]),/mxBumpHeight/);
+  const coat=syntheticScene('coat').materials[1];
+  assert.match(compileGraph(coat,{material:true}).body,/closureAdd/);
+  assert.match(shaderSource([coat]),/closureAdd/);
 });
 test('displacement refinement preserves bounds, typed indices and material assignment',()=>{
   const scene={positions:new Float32Array([0,0,0,1,0,0,0,1,0]),indices:new Uint32Array([0,1,2]),materials:[{}]};

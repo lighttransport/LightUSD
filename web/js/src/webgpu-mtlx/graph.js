@@ -385,9 +385,9 @@ export function compileGraph(document, { output, library = {}, material = false,
           // This baseline mapping is explicitly approximate, not a reference closure.
           const pick = (names, fallback, expected) => x(names.find(name => ins[name]) || names[0], fallback, expected);
           const fields = [pick(['base_color'], [0.8, 0.8, 0.8], 'color3'), pick(open ? ['base_metalness'] : ['metalness'], 0, 'float'), pick(['specular_roughness'], 0.3, 'float'), pick(open ? ['specular_ior'] : ['specular_IOR', 'specular_ior'], 1.5, 'float'), pick(open ? ['transmission_weight'] : ['transmission'], 0, 'float'), pick(['emission_color'], [1, 1, 1], 'color3'), pick(open ? ['emission_luminance'] : ['emission'], 0, 'float'), pick(open ? ['specular_roughness_anisotropy'] : ['specular_anisotropy'], 0, 'float'), pick(['transmission_color'], [1,1,1], 'color3')];
-          const supported = new Set(open ? ['base_weight', 'base_color', 'base_diffuse_roughness', 'base_metalness', 'specular_weight', 'specular_color', 'specular_roughness', 'specular_ior', 'specular_roughness_anisotropy', 'transmission_weight', 'transmission_color', 'transmission_depth', 'transmission_scatter', 'subsurface_weight', 'subsurface_color', 'subsurface_radius', 'emission_color', 'emission_luminance', 'geometry_opacity', 'geometry_thin_walled', 'normal'] : ['base', 'base_color', 'diffuse_roughness', 'metalness', 'specular', 'specular_color', 'specular_roughness', 'specular_IOR', 'specular_ior', 'specular_anisotropy', 'transmission', 'transmission_color', 'transmission_depth', 'transmission_scatter', 'subsurface', 'subsurface_color', 'subsurface_radius', 'emission_color', 'emission', 'opacity', 'thin_walled', 'normal', 'thin_film_thickness', 'thin_film_IOR']);
+          const supported = new Set(open ? ['base_weight', 'base_color', 'base_diffuse_roughness', 'base_metalness', 'specular_weight', 'specular_color', 'specular_roughness', 'specular_ior', 'specular_roughness_anisotropy', 'transmission_weight', 'transmission_color', 'transmission_depth', 'transmission_scatter', 'subsurface_weight', 'subsurface_color', 'subsurface_radius', 'coat_weight', 'coat_color', 'coat_roughness', 'coat_ior', 'emission_color', 'emission_luminance', 'geometry_opacity', 'geometry_thin_walled', 'normal'] : ['base', 'base_color', 'diffuse_roughness', 'metalness', 'specular', 'specular_color', 'specular_roughness', 'specular_IOR', 'specular_ior', 'specular_anisotropy', 'transmission', 'transmission_color', 'transmission_depth', 'transmission_scatter', 'subsurface', 'subsurface_color', 'subsurface_radius', 'coat', 'coat_color', 'coat_roughness', 'coat_IOR', 'emission_color', 'emission', 'opacity', 'thin_walled', 'normal', 'thin_film_thickness', 'thin_film_IOR']);
           for (const k of Object.keys(n.inputs || {})) if (!supported.has(k)) fail('UNSUPPORTED', `${key}/${k}`, 'surface input not yet implemented');
-          const unsupportedLobes = open ? ['coat_weight', 'thin_film_weight'] : ['coat'];
+          const unsupportedLobes = open ? ['thin_film_weight'] : [];
           for (const k of unsupportedLobes) if (ins[k]) {
             if (ins[k].nodename || ins[k].nodegraph || ins[k].interfacename || !Number.isFinite(Number(ins[k].value))) fail('UNSUPPORTED', `${key}/${k}`, 'connected layered surface lobe is not implemented');
             if (Number(ins[k].value) !== 0) fail('UNSUPPORTED', `${key}/${k}`, 'nonzero layered surface lobe is not implemented');
@@ -401,8 +401,13 @@ export function compileGraph(document, { output, library = {}, material = false,
           const subsurfaceColor = ins.subsurface_color ? x('subsurface_color', [0.8, 0.8, 0.8], 'color3') : fields[0];
           const baseLobe = `makeMaterial(${fields.join(',')},${thin},${filmThickness},${filmIOR})`;
           const closure = `closureMix(closureLeaf(${baseLobe}),closureLeaf(nativeDiffuse(${subsurfaceColor},1.0,.9)),clamp(${subsurfaceWeight},0.0,1.0))`;
+          const coatWeight = open ? (ins.coat_weight ? x('coat_weight', 0, 'float') : '0.0') : (ins.coat ? x('coat', 0, 'float') : '0.0');
+          const coatColor = ins.coat_color ? x('coat_color', [1, 1, 1], 'color3') : 'vec3f(1)';
+          const coatRoughness = ins.coat_roughness ? x('coat_roughness', .1, 'float') : '.1';
+          const coatIOR = open ? (ins.coat_ior ? x('coat_ior', 1.5, 'float') : '1.5') : (ins.coat_IOR ? x('coat_IOR', 1.5, 'float') : '1.5');
+          const coated = `closureAdd(${closure},closureScale(closureLeaf(nativeDielectric(${coatColor},${coatIOR},vec2f(${coatRoughness}*${coatRoughness}),1.0,1u)),vec3f(clamp(${coatWeight},0.0,1.0))))`;
           const normal = ins.normal ? x('normal', undefined, 'vector3') : 'ctx.normal';
-          code = `materialFromClosure(${closure},${fields[5]}*${fields[6]},clamp(${opacity},0.0,1.0),normalize(${normal}))`; break;
+          code = `materialFromClosure(${coated},${fields[5]}*${fields[6]},clamp(${opacity},0.0,1.0),normalize(${normal}))`; break;
         }
         case 'surfacematerial': result = input('surfaceshader'); break;
         default: fail('UNSUPPORTED', key, `node ${n.category} (${type}) is not implemented`);
