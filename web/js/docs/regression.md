@@ -117,6 +117,8 @@ Realtime loads compile the physical pipeline lazily; the gate therefore checks
 the authored raster path without waiting on unused path-tracing compilation.
 Material replacement follows the same demand-driven pipeline path, preventing
 concurrent physical shader builds during interactive edits.
+Scene-load mode changes are also covered: realtime image scenes no longer wait
+on a physical pipeline inherited from the previous scene.
 The graph suite validates supported MaterialX unit annotations and rejects
 unknown unit names; the `ops` realtime fixture exercises the updated compiler.
 Path shader generation also checks that image sampling receives a nonzero UV

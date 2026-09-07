@@ -92,7 +92,6 @@ class MaterialXRenderer extends EventTarget {
       if (!this.physical) throw this.physicalError || new Error('Physical pipeline compilation failed');
       return this.physical;
     };
-    if (this.mode !== 'realtime') await this.ensurePhysicalPipeline();
     this.sourceScene = sourceScene;
     this.scene.requiresPhysical = textures.requiresPhysical;
     this.scene.requiresSpectral = packed.materials.some(m=>m.mediumMajorant);
@@ -130,7 +129,6 @@ class MaterialXRenderer extends EventTarget {
       if (!this.physical) throw this.physicalError || new Error('Physical pipeline compilation failed');
       return this.physical;
     };
-    if (this.mode !== 'realtime') await this.ensurePhysicalPipeline();
     this.sourceScene = { ...this.sourceScene, materials };
     this.scene.requiresPhysical = textures.requiresPhysical;
     this.scene.requiresSpectral = materials.some(m=>m.mediumMajorant);

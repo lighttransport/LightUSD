@@ -302,6 +302,9 @@ Realtime scene loads no longer wait for the physical path pipeline to compile;
 that pipeline is compiled lazily and awaited only when physical or spectral
 transport is selected. Live material replacement uses the same demand-driven
 path, avoiding concurrent physical compilations while preserving path tracing.
+Scene loads remain mode-independent: a caller may switch from the previous
+physical mode to realtime immediately without inheriting an eager physical
+compile from the prior scene.
 
 MaterialX unit annotations are now validated against the supported vocabulary
 (`degree`, `radian`, metric length/time units, `nanometer`, and related unitless
