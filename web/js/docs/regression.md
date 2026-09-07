@@ -114,6 +114,8 @@ diagnostics; hardware Chrome now completes seven compiled authored slots and
 51,008 triangles without a duplicate asset decode.
 Realtime loads compile the physical pipeline lazily; the gate therefore checks
 the authored raster path without waiting on unused path-tracing compilation.
+Material replacement follows the same demand-driven pipeline path, preventing
+concurrent physical shader builds during interactive edits.
 
 The synthetic hardware matrix also covers the `coat` dielectric-lobe path.
 

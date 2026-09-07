@@ -299,8 +299,8 @@ bounded downsampling for the partial authored-material render.
 
 Realtime scene loads no longer wait for the physical path pipeline to compile;
 that pipeline is compiled lazily and awaited only when physical or spectral
-transport is selected. This keeps large authored graphs interactive while
-preserving the path-tracing mode.
+transport is selected. Live material replacement uses the same demand-driven
+path, avoiding concurrent physical compilations while preserving path tracing.
 
 The synthetic coverage set now includes a `hair` scene using the MaterialX
 `hair_bsdf` category. Its legacy melanin and explicit-color forms compile to a

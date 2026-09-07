@@ -65,7 +65,6 @@ class MaterialXRenderer extends EventTarget {
     const textures = {}; const code = shaderSource(packed.materials, textures, packed.lighting, { maxDimension: this.options.textureMaxDimension || undefined, maxBytes: this.options.textureMaxBytes });
     const module = await this.module(code);
     const layout = this.device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout] });
-    const physicalTask = this.device.createComputePipelineAsync({ layout, compute: { module, entryPoint: 'tracePhysical' } });
     const [compute, raster, displayModule] = await Promise.all([
       this.device.createComputePipelineAsync({ layout, compute: { module, entryPoint: 'trace' } }),
       this.device.createRenderPipelineAsync({ layout, vertex: { module, entryPoint: 'rasterVertex' }, fragment: { module, entryPoint: 'rasterFragment', targets: [{ format: this.format }] }, primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' } }),
@@ -85,8 +84,15 @@ class MaterialXRenderer extends EventTarget {
     catch (e) { allocated.forEach(b => b.destroy()); throw e; }
     this.resources.forEach(b => b.destroy()); this.resources = allocated;
     this.scene = packed; this.compute = compute; this.raster = raster; this.displayPipeline = display; this.blit = blit;
-    this.physical = null; this.physicalError = null; this.physicalPending = physicalTask.then(p => { if (generation === this.sceneGeneration && !this.disposed) this.physical = p; return p; }, e => { if (generation === this.sceneGeneration) this.physicalError = e; return null; });
-    if (this.mode !== 'realtime') this.physical = await this.physicalPending;
+    this.physical = null; this.physicalError = null; this.physicalPending = null;
+    this.ensurePhysicalPipeline = async () => {
+      if (this.physical) return this.physical;
+      if (!this.physicalPending) this.physicalPending = this.device.createComputePipelineAsync({ layout, compute: { module, entryPoint: 'tracePhysical' } }).then(p => { if (generation === this.sceneGeneration && !this.disposed) this.physical = p; return p; }, e => { if (generation === this.sceneGeneration) this.physicalError = e; return null; });
+      this.physical = await this.physicalPending;
+      if (!this.physical) throw this.physicalError || new Error('Physical pipeline compilation failed');
+      return this.physical;
+    };
+    if (this.mode !== 'realtime') await this.ensurePhysicalPipeline();
     this.sourceScene = sourceScene;
     this.scene.requiresPhysical = textures.requiresPhysical;
     this.scene.requiresSpectral = packed.materials.some(m=>m.mediumMajorant);
@@ -107,9 +113,8 @@ class MaterialXRenderer extends EventTarget {
     const generation = ++this.sceneGeneration;
     const textures = {}; const module = await this.module(shaderSource(materials, textures, this.scene.lighting, { maxDimension: this.options.textureMaxDimension || undefined, maxBytes: this.options.textureMaxBytes }));
     const layout = this.device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout] });
-    const [compute, physical, raster] = await Promise.all([
+    const [compute, raster] = await Promise.all([
       this.device.createComputePipelineAsync({ layout, compute: { module, entryPoint: 'trace' } }),
-      this.device.createComputePipelineAsync({ layout, compute: { module, entryPoint: 'tracePhysical' } }),
       this.device.createRenderPipelineAsync({ layout, vertex: { module, entryPoint: 'rasterVertex' }, fragment: { module, entryPoint: 'rasterFragment', targets: [{ format: this.format }] }, primitive: { topology: 'triangle-list' }, depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' } }),
     ]);
     if (generation !== this.sceneGeneration || this.disposed) return { cancelled: true };
@@ -117,7 +122,15 @@ class MaterialXRenderer extends EventTarget {
     const imageBuffer = this.device.createBuffer({ size: textures.imageData.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.device.queue.writeBuffer(imageBuffer, 0, textures.imageData);
     this.resources[2].destroy(); this.resources[2] = imageBuffer;
-    this.compute = compute; this.physical = physical; this.raster = raster; this.scene.materials = materials;
+    this.compute = compute; this.physical = null; this.physicalError = null; this.physicalPending = null; this.raster = raster; this.scene.materials = materials;
+    this.ensurePhysicalPipeline = async () => {
+      if (this.physical) return this.physical;
+      if (!this.physicalPending) this.physicalPending = this.device.createComputePipelineAsync({ layout, compute: { module, entryPoint: 'tracePhysical' } }).then(p => { if (generation === this.sceneGeneration && !this.disposed) this.physical = p; return p; }, e => { if (generation === this.sceneGeneration) this.physicalError = e; return null; });
+      this.physical = await this.physicalPending;
+      if (!this.physical) throw this.physicalError || new Error('Physical pipeline compilation failed');
+      return this.physical;
+    };
+    if (this.mode !== 'realtime') await this.ensurePhysicalPipeline();
     this.sourceScene = { ...this.sourceScene, materials };
     this.scene.requiresPhysical = textures.requiresPhysical;
     this.scene.requiresSpectral = materials.some(m=>m.mediumMajorant);
@@ -196,7 +209,7 @@ class MaterialXRenderer extends EventTarget {
       const physical = ['path-physical', 'path-spectral'].includes(this.mode);
       const tracing = this.mode !== 'realtime' && this.samples < this.options.maxSamples;
       if (tracing) {
-        if (physical && !this.physical) { this.physical = await this.physicalPending; if (!this.physical) throw this.physicalError || new Error('Physical pipeline compilation failed'); }
+        if (physical) await this.ensurePhysicalPipeline();
         if (physical) encoder.clearBuffer(this.pathCounters);
         const pass = encoder.beginComputePass(); pass.setPipeline(physical ? this.physical : this.compute); pass.setBindGroup(0, this.sceneGroup); pass.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(this.height / 8)); pass.end();
         if (physical) encoder.copyBufferToBuffer(this.pathCounters, 0, this.pathReadback, 0, 16);
