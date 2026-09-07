@@ -259,6 +259,8 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   assert.match(advancedBody,/cross\(/);
   assert.match(advancedBody,/dot\(/);
   assert.match(advancedBody,/pow\(/);
+  const layeredScene=syntheticScene('layered').materials[1];
+  assert.match(compileGraph(layeredScene,{material:true}).body,/closureInterior/);
   const coat=syntheticScene('coat').materials[1];
   assert.match(compileGraph(coat,{material:true}).body,/closureAdd/);
   assert.match(shaderSource([coat]),/closureAdd/);

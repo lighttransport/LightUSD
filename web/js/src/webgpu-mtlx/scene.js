@@ -65,6 +65,14 @@ export function syntheticScene(preset = 'copper') {
       { name: 'surface', category: 'standard_surface', type: 'surfaceshader', inputs: { base_color: { nodename: 'color' }, specular_roughness: { type: 'float', value: .36 } } },
     ] };
   }
+  if (preset === 'layered') {
+    materials[1] = { nodes: [
+      { name: 'diffuse', category: 'oren_nayar_diffuse_bsdf', type: 'BSDF', inputs: { color: { type: 'color3', value: [.7, .18, .08] }, roughness: { type: 'float', value: .45 }, weight: { type: 'float', value: 1 } } },
+      { name: 'medium', category: 'anisotropic_vdf', type: 'VDF', inputs: { absorption: { type: 'color3', value: [.08, .18, .35] }, scattering: { type: 'color3', value: [2, 1.2, .8] }, anisotropy: { type: 'float', value: .25 } } },
+      { name: 'layer', category: 'layer', type: 'BSDF', inputs: { top: { nodename: 'diffuse' }, base: { nodename: 'medium' } } },
+      { name: 'surface', category: 'surface', type: 'surfaceshader', inputs: { bsdf: { nodename: 'layer' } } },
+    ] };
+  }
   if(preset==='displacement') {
     materials[1].nodes.unshift(
       {name:'uv',category:'texcoord',type:'vector2',inputs:{}},

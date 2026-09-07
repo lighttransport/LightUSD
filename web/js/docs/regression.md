@@ -64,6 +64,9 @@ combine nodes in a single compiled surface graph.
 The `ops-advanced` fixture covers vector conversion/swizzle, separate, power,
 dot/cross, and equality-selection nodes.
 
+The `layered` fixture covers an Oren–Nayar BSDF layered over an anisotropic VDF
+interior in the compiled scene path.
+
 The displacement fixture uses two levels of linear refinement before baking;
 this is still not Catmull-Clark subdivision or adaptive tessellation.
 
