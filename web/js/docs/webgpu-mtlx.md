@@ -316,6 +316,9 @@ Path shading now supplies an isotropic UV ray-footprint estimate from camera
 pixel size, hit distance, and triangle UV/world scale. Image nodes can select a
 bounded mip level during path tracing instead of always sampling level zero;
 the estimate is conservative and does not replace true ray differentials.
+The Chrome harness keeps the image-backed physical reference case behind
+`--include-image-path` while its path convergence is investigated; realtime
+image validation remains part of the default gate.
 
 The synthetic coverage set now includes a `hair` scene using the MaterialX
 `hair_bsdf` category. Its legacy melanin and explicit-color forms compile to a

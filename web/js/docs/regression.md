@@ -124,6 +124,9 @@ unknown unit names; the `ops` realtime fixture exercises the updated compiler.
 Path shader generation also checks that image sampling receives a nonzero UV
 footprint estimate for mip selection; exact ray differentials remain future
 work.
+The image-backed path reference gate is opt-in with
+`--include-image-path`; its current physical transport case does not converge
+within the bounded browser harness and remains under investigation.
 
 The synthetic hardware matrix also covers the `coat` dielectric-lobe path.
 

@@ -133,7 +133,8 @@ try {
     const requestedReferenceMode=process.argv.find(arg=>arg.startsWith('--reference-mode='))?.slice('--reference-mode='.length)||'path-spectral';
     assert.ok(['path-spectral','path-physical','realtime'].includes(requestedReferenceMode),'reference mode must be path-spectral, path-physical, or realtime');
     assert.ok(Number.isInteger(requestedReferenceSamples)&&requestedReferenceSamples>0&&requestedReferenceSamples<=32,'reference samples must be 1..32');
-    for(const preset of referencePresets.filter(name=>!onlyPreset||name===onlyPreset).filter(name=>name!=='normalmap-image'||requestedReferenceMode==='realtime')) {
+    const includeImagePath=process.argv.includes('--include-image-path');
+    for(const preset of referencePresets.filter(name=>!onlyPreset||name===onlyPreset).filter(name=>name!=='normalmap-image'||requestedReferenceMode==='realtime'||includeImagePath)) {
       console.log(`reference-start preset=${preset} mode=${requestedReferenceMode} samples=${requestedReferenceSamples}`);
       const stats=await page.evaluate(async (preset,requestedReferenceSamples,requestedReferenceMode)=>{
         const r=window.__webgpuMtlx.renderer;const {syntheticScene}=await import('/src/webgpu-mtlx/scene.js');
