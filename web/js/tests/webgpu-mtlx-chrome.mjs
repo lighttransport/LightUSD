@@ -130,16 +130,18 @@ try {
     const referencePresets=['native-copper','native-glass','sss','hair','thin-film','subsurface','normalmap','bump','coat','sheen','thin-walled','transmission-depth','generalized-schlick','open-pbr-weight','open-pbr-film','open-pbr-normal','opacity','displacement'];
     const onlyPreset=process.argv.find(arg=>arg.startsWith('--only-preset='))?.slice('--only-preset='.length);
     const requestedReferenceSamples=Number(process.argv.find(arg=>arg.startsWith('--reference-samples='))?.slice('--reference-samples='.length)||32);
+    const requestedReferenceMode=process.argv.find(arg=>arg.startsWith('--reference-mode='))?.slice('--reference-mode='.length)||'path-spectral';
+    assert.ok(['path-spectral','path-physical'].includes(requestedReferenceMode),'reference mode must be path-spectral or path-physical');
     assert.ok(Number.isInteger(requestedReferenceSamples)&&requestedReferenceSamples>0&&requestedReferenceSamples<=32,'reference samples must be 1..32');
     for(const preset of referencePresets.filter(name=>!onlyPreset||name===onlyPreset)) {
-      const stats=await page.evaluate(async (preset,requestedReferenceSamples)=>{
+      const stats=await page.evaluate(async (preset,requestedReferenceSamples,requestedReferenceMode)=>{
         const r=window.__webgpuMtlx.renderer;const {syntheticScene}=await import('/src/webgpu-mtlx/scene.js');
-        r.canvas.width=192;r.canvas.height=128;await r.loadScene(syntheticScene(preset));r.setMode('path-spectral');
+        r.canvas.width=192;r.canvas.height=128;await r.loadScene(syntheticScene(preset));r.setMode(requestedReferenceMode);
         let dispatches=0;while(r.samples<requestedReferenceSamples&&dispatches<4000){await r.renderStep();dispatches++;}
         if(r.samples!==requestedReferenceSamples)throw new Error(`${preset} did not converge to ${requestedReferenceSamples} spp`);
         const capture=await r.capture({format:'float32'});if(!capture.pixels.every(Number.isFinite))throw new Error(`${preset} has invalid radiance`);
         return {preset,samples:r.samples,dispatches};
-      },preset,requestedReferenceSamples);
+      },preset,requestedReferenceSamples,requestedReferenceMode);
       referenceImages.push(stats);console.log(JSON.stringify(stats));await page.screenshot({path:path.join(out,`${preset}-spectral.png`)});
     }
   }

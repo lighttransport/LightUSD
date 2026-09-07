@@ -75,6 +75,9 @@ pipelines; it does not claim texture-aware finite-difference conformance.
 
 For expensive focused scenes, `--reference-samples=N` bounds the reference-image
 loop for diagnostics; the default and pre-merge matrix remain 32 spp.
+Focused diagnostics also accept `--reference-mode=path-physical` to separate
+image-resource failures from spectral transport; the default remains
+`path-spectral`.
 
 The Chrome resource check now verifies bounded downsampling and rejection for
 oversized regular raster images, matching the existing EXR budget coverage.
