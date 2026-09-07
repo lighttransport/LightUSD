@@ -329,3 +329,9 @@ Regular raster-image resources now honor `allowDownsample` as well as EXR:
 oversized PNG/JPEG inputs are reduced into the configured pixel budget before
 RGBA conversion, with `resizedFrom` provenance. Default decode still rejects
 oversized images. The Chrome gate exercises both branches with a generated PNG.
+
+The authored ShaderBall Chrome integration now reuses the loaded authored scene
+for diagnostics instead of decoding the asset graph a second time. The hardware
+run completes with seven compiled authored material slots, 51,008 triangles,
+and no GPU/page errors; remaining slots stay explicit placeholders when their
+composed terminal or texture preflight is unavailable.

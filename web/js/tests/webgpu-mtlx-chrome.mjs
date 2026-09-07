@@ -178,11 +178,11 @@ try {
     }
     if(process.argv.includes('--authored-lights')){assert.equal(shaderballResult.provenance.lightingOverride,false);assert.equal(shaderballResult.provenance.rectLights.length,5);}
     if(process.argv.includes('--authored-materials')) {
-      const translation = await page.evaluate(async () => {
-        const { loadShaderBallGeometry } = await import('/src/webgpu-mtlx/usd-scene.js');
-        const scene = await loadShaderBallGeometry(() => {}, { authoredMaterials: true });
-        return { translated: Object.keys(scene.authored.translatedMaterials).length, compiled: Object.keys(scene.authored.compiledMaterials).length, diagnostics: scene.authored.translationDiagnostics, textureDiagnostics: scene.authored.textureDiagnostics };
-      });
+      // The selected ShaderBall scene was already loaded with authoredMaterials
+      // above. Re-loading it here doubles large texture fetch/decode cost and
+      // can make the inspection gate appear hung; inspect the rendered source
+      // scene instead.
+      const translation = { translated: Object.keys(shaderballResult.authored.translatedMaterials || {}).length, compiled: Object.keys(shaderballResult.authored.compiledMaterials || {}).length, diagnostics: shaderballResult.authored.translationDiagnostics || [], textureDiagnostics: shaderballResult.authored.textureDiagnostics || [] };
       assert.ok(translation.translated + translation.diagnostics.length >= 1);
       assert.ok(translation.compiled <= translation.translated);
       shaderballResult.authoredTranslation = translation;
