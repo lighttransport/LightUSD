@@ -68,6 +68,9 @@ authored transmission depth/scatter controls, including the spectral pipeline.
 The targeted `generalized-schlick` Chrome run covers authored color-at-normal,
 color-at-grazing and exponent transport controls.
 
+The `open-pbr-weight` scene covers OpenPBR `base_weight` propagation into the
+compiled base-color contribution.
+
 All web/WASM regression procedures live under `web/js`. The canonical gate is
 `npm test`; it runs the assertion-based Node/WASM suites, the physics-only
 MuJoCo binding smoke test, the USD Physics simulation, every pinned MuJoCo

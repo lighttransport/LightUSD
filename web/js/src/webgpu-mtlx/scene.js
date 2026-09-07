@@ -109,6 +109,18 @@ export function syntheticScene(preset = 'copper') {
       {name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'fresnel'}}}
     ]};
   }
+  if(preset==='open-pbr-weight') {
+    materials[1]={nodes:[
+      {name:'surface',category:'open_pbr_surface',type:'surfaceshader',inputs:{
+        base_weight:{type:'float',value:.35},
+        base_color:{type:'color3',value:[.8,.2,.08]},
+        base_metalness:{type:'float',value:0},
+        specular_roughness:{type:'float',value:.24},
+        specular_ior:{type:'float',value:1.5},
+        geometry_opacity:{type:'float',value:1}
+      }}
+    ]};
+  }
   if(preset==='native-copper'||preset==='native-glass') {
     const glass=preset==='native-glass';
     materials[1]={nodes:[

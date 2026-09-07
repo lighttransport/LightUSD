@@ -361,3 +361,8 @@ grazing, roughness and exponent controls in a bounded microfacet lobe rather
 than collapsing to the ordinary dielectric Fresnel curve. The synthetic
 `generalized-schlick` scene passes the targeted Chrome hardware reference gate;
 full measured/angle-dependent Schlick layering remains future work.
+
+OpenPBR `base_weight` now scales the compiled base-color contribution instead
+of being accepted and silently ignored. The synthetic `open-pbr-weight` scene
+is included in the Chrome reference-image matrix; full OpenPBR energy-balanced
+layer semantics remain future work.

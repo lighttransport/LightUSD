@@ -127,7 +127,7 @@ try {
   await page.screenshot({ path: path.join(out, 'chrome.png') });
   const referenceImages=[];
   if(process.argv.includes('--reference-images')) {
-    const referencePresets=['native-copper','native-glass','sss','hair','thin-film','subsurface','normalmap','bump','coat','sheen','thin-walled','transmission-depth','generalized-schlick','displacement'];
+    const referencePresets=['native-copper','native-glass','sss','hair','thin-film','subsurface','normalmap','bump','coat','sheen','thin-walled','transmission-depth','generalized-schlick','open-pbr-weight','displacement'];
     const onlyPreset=process.argv.find(arg=>arg.startsWith('--only-preset='))?.slice('--only-preset='.length);
     for(const preset of referencePresets.filter(name=>!onlyPreset||name===onlyPreset)) {
       const stats=await page.evaluate(async preset=>{
