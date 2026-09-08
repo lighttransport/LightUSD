@@ -12,7 +12,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 // convention (for example degrees for rotate2d and nanometers for thin film).
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
 export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'saturate', 'contrast', 'premult', 'unpremult', 'ramp4', 'triplanarprojection', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
-const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'surfacematerial', 'surface']);
+const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'UsdPreviewSurface', 'surfacematerial', 'surface']);
 for(const category of ['transformmatrix','normalmap','bump3','heighttonormal','rotate3d','reorder','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
 export function literal(type, value, path = '') {
@@ -573,6 +573,20 @@ export function compileGraph(document, { output, library = {}, material = false,
           if (type !== 'vector2') fail('TYPE', key, 'place2d output must be vector2');
           const uv=ins.texcoord?x('texcoord',undefined,'vector2'):'ctx.uv', pivot=x('pivot',[0,0],'vector2'), scale=x('scale',[1,1],'vector2'), rotate=`(${x('rotate',0,'float')}*0.017453292519943295)`, offset=x('offset',[0,0],'vector2');
           code=`((mat2x2f(cos(${rotate}),sin(${rotate}),-sin(${rotate}),cos(${rotate})) * ((${uv}-${pivot})/${scale}))+${pivot}-${offset})`; break;
+        }
+        case 'UsdPreviewSurface': {
+          if (!material) fail('CONTEXT', key, 'UsdPreviewSurface requires material compilation');
+          const supported = new Set(['diffuseColor','emissiveColor','useSpecularWorkflow','specularColor','metallic','roughness','clearcoat','clearcoatRoughness','opacity','opacityMode','opacityThreshold','ior','normal','displacement','occlusion']);
+          for (const k of Object.keys(n.inputs || {})) if (!supported.has(k)) fail('UNSUPPORTED', `${key}/${k}`, 'UsdPreviewSurface input not implemented');
+          const displacement=ins.displacement;
+          if (displacement && (displacement.nodename || displacement.nodegraph || displacement.interfacename || Number(displacement.value)!==0)) fail('UNSUPPORTED', `${key}/displacement`, 'UsdPreviewSurface displacement requires a displacement terminal');
+          const base=`(${x('diffuseColor',[.18,.18,.18],'color3')}*${x('occlusion',1,'float')})`, metallic=x('metallic',0,'float'), roughness=x('roughness',.5,'float'), ior=x('ior',1.5,'float');
+          const specularColor=x('specularColor',[0,0,0],'color3'), emission=x('emissiveColor',[0,0,0],'color3');
+          const lobe=`withSpecularColor(makeMaterial(${base},${metallic},${roughness},${ior},0.0,${emission},1.0,0.0,vec3f(1),0u,0.0,1.5),${specularColor})`;
+          const coat=`closureScale(closureLeaf(nativeDielectric(vec3f(1),1.5,vec2f(${x('clearcoatRoughness',.01,'float')}),1.0,1u)),vec3f(clamp(${x('clearcoat',0,'float')},0.0,1.0)))`;
+          const closure=`closureAdd(closureLeaf(${lobe}),${coat})`, opacity=x('opacity',1,'float'), mode=x('opacityMode',0,'integer'), threshold=x('opacityThreshold',0,'float');
+          const alpha=`select(clamp(${opacity},0.0,1.0),select(0.0,1.0,${opacity}>=${threshold}),${mode}==1i)`;
+          code=`materialFromClosure(${closure},${emission},${alpha},${x('normal',[0,0,1],'vector3')})`; break;
         }
         case 'standard_surface': case 'open_pbr_surface': {
           if (!material) fail('CONTEXT', key, 'surface requires material compilation');

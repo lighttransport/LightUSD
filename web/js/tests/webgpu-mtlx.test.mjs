@@ -57,6 +57,9 @@ test('standard and OpenPBR terminal aliases preserve authored graph inputs', () 
     } }
   ] };
   assert.doesNotThrow(() => compileGraph(standard, { material: true }));
+  const preview=compileGraph({nodes:[{name:'s',category:'UsdPreviewSurface',type:'surfaceshader',inputs:{diffuseColor:{type:'color3',value:[.8,.2,.1]},metallic:{type:'float',value:.7},roughness:{type:'float',value:.25},clearcoat:{type:'float',value:.4},opacity:{type:'float',value:.8},normal:{type:'vector3',value:[0,0,1]}}}]},{material:true});
+  assert.match(preview.body,/materialFromClosure/); assert.match(preview.body,/nativeDielectric/); assert.match(preview.body,/vec3f\(0\.0,0\.0,1\.0\)/);
+  assert.throws(()=>compileGraph({nodes:[{name:'s',category:'UsdPreviewSurface',type:'surfaceshader',inputs:{displacement:{type:'float',value:1}}}]},{material:true}),/displacement/);
   const open = { nodes: [{ name: 'surface', category: 'open_pbr_surface', type: 'surfaceshader', inputs: {
     base_weight: { type: 'float', value: 1 }, base_color: { type: 'color3', value: [.2,.3,.4] },
     specular_weight: { type: 'float', value: 1 }, specular_ior: { type: 'float', value: 1.5 },

@@ -347,6 +347,10 @@ opacity/thin-wall fields, and common authored defaults. The current terminal is
 still an approximate single-lobe mapping. Nonzero or connected subsurface, fuzz,
 sheen, coat and thin-film controls fail explicitly; they are not silently erased.
 
+`UsdPreviewSurface` maps diffuse/metallic/roughness/IOR, emissive, occlusion,
+opacity mode, normal, and bounded clearcoat inputs into the shared material
+closure path. Nonzero displacement remains an explicit diagnostic.
+
 The ShaderBall geometry adapter now retains native material IDs, serialized
 material absolute paths, and subset-presence records per mesh binding. It creates
 diagnostic slots for all authored material IDs and no longer decides the gold
