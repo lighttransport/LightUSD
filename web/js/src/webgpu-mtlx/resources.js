@@ -273,12 +273,12 @@ export async function loadMaterialXResources(url, options = {}) {
       const colorspace = file.colorspace || node.colorspace || document.colorspace;
       const key = `${resolved.href}#colorspace=${colorspace || 'auto'}`;
       if (!document.images[key]) {
-        const udim = /<UDIM>|<UVTILE>/i.test(file.value);
+        const udim = /<UDIM>|<UVTILE>|%04d|%\(UDIM\)d/i.test(file.value);
         if (udim) {
           const tiles = [];
           for (let id = 1001; id <= 1100; id++) {
             const u = (id - 1001) % 10, v = Math.floor((id - 1001) / 10);
-            const tileName = file.value.replace(/<UDIM>/ig, String(id)).replace(/<UVTILE>/ig, `u${u + 1}_v${v + 1}`);
+            const tileName = file.value.replace(/<UDIM>/ig, String(id)).replace(/<UVTILE>/ig, `u${u + 1}_v${v + 1}`).replace(/%04d/ig, String(id).padStart(4, '0')).replace(/%\(UDIM\)d/ig, String(id));
             const tileURL = new URL((node.fileprefix || '') + (file.fileprefix || '') + tileName, node.source || source);
             allowed(tileURL.href);
             try {
