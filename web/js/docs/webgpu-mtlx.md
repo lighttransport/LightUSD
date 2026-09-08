@@ -654,6 +654,11 @@ its profile instead of reusing the ordinary diffuse closure. True random-walk
 BSSRDF transport, surface-distance coupling, and multiple scattering remain
 future work.
 
+OpenPBR and Standard Surface `subsurface_anisotropy` inputs now reach that
+bounded profile and are clamped to the same finite range as direct
+`subsurface_bsdf` anisotropy. This preserves the authored directional bias;
+true anisotropic random-walk BSSRDF transport remains future work.
+
 The profile uses a bounded rational falloff to keep WGSL evaluation finite and
 portable across realtime and path pipelines; it is not a measured diffusion
 profile.
