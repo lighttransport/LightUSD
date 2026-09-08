@@ -882,6 +882,15 @@ test('common trigonometric and angle-unit nodes map to WGSL math', () => {
   ]};
   const source=compileGraph(doc); assert.match(source.body,/0\.017453292519943295/); assert.match(source.body,/log\(n0\)\*0\.4342944819032518/); assert.match(source.body,/exp2\(n0\)/);
 });
+test('exponential and hyperbolic math nodes map to WGSL overloads', () => {
+  const source=compileGraph({nodes:[
+    {name:'e',category:'exp10',type:'vector3',inputs:{in:{type:'vector3',value:[1,2,3]}}},
+    {name:'h',category:'sinh',type:'vector3',inputs:{in:{nodename:'e'}}},
+    {name:'l',category:'log2',type:'vector3',inputs:{in:{nodename:'h'}}},
+    {name:'out',category:'tanh',type:'vector3',inputs:{in:{nodename:'l'}}}
+  ]});
+  assert.match(source.body,/pow\(vec3f\(10\.0\),vec3f\(1\.0,2\.0,3\.0\)\)/); assert.match(source.body,/sinh\(/); assert.match(source.body,/log2\(/); assert.match(source.body,/tanh\(/);
+});
 test('safepower preserves the sign of negative bases', () => {
   const source=compileGraph({nodes:[{name:'p',category:'safepower',type:'float',inputs:{in1:{type:'float',value:-2},in2:{type:'float',value:3}}}]});
   assert.match(source.body,/sign\(-2\.0\)\*pow\(abs\(-2\.0\),3\.0\)/);

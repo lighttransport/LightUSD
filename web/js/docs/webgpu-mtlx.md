@@ -305,7 +305,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   handles color/vector widths with generated typed dot products.
 - `rgbtohsv` and `hsvtorgb` are available as bounded color3 graph operations
   for authored procedural color networks.
-- Common angle and math nodes (`atan`, `log10`, `exp2`, `radians`, `degrees`)
+- Common angle, exponential, and hyperbolic math nodes (`atan`, `log10`,
+  `exp2`, `exp10`, `log2`, `sinh`/`cosh`/`tanh`, `radians`, `degrees`)
   map to WGSL with explicit conversion constants.
 - `acescg_to_lin_rec709` is a graph operation using the pinned MaterialX
   white-adapted matrix, matching the library validation fixture.
