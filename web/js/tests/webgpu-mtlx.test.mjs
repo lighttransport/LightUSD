@@ -277,6 +277,16 @@ test('authored disk lights preserve transformed area emission', () => {
   const zScaled=appendRectLights(scene,[{type:'disk',radius:2,intensity:3,normalize:true,transform:[1,0,0,0,0,1,0,0,0,0,4,0,0,0,0,1]}]);
   assert.ok(Math.abs(zScaled.provenance.diskLights[0].worldArea-polygonArea)<1e-6);
 });
+test('authored cylinder lights preserve transformed side emission', () => {
+  const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
+  const r=appendRectLights(scene,[{type:'cylinder',radius:1,length:2,intensity:3,normalize:true,color:[1,.5,.25],transform:[2,0,0,0,0,3,0,0,0,0,1,0,4,5,6,1]}]);
+  assert.equal(r.positions.length,24*2*3);assert.equal(r.indices.length,24*6);assert.equal(r.materialIds.length,48);
+  assert.equal(r.provenance.cylinderLights.length,1);assert.equal(r.lighting.areaLights[0].shape,'cylinder');
+  assert.ok(Math.abs(r.provenance.cylinderLights[0].worldArea-2*Math.PI*1*2*2.5)<0.5);
+  assert.match(shaderSource(syntheticScene('default').materials,{},r.lighting),/authoredAreaDirect/);
+  assert.equal(r.materials[0].twoSidedEmission,false);
+  assert.throws(()=>appendRectLights(scene,[{type:'cylinder',radius:0,length:1}]),/Invalid cylinder/);
+});
 test('resource fetch enforces streaming budgets and HTTP errors',async()=>{
   const fetcher=async()=>new Response(new Uint8Array([1,2,3,4]));
   assert.deepEqual(await fetchResource('test',{fetcher,maxBytes:4}),new Uint8Array([1,2,3,4]));

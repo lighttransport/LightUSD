@@ -19,6 +19,7 @@ export function appendRectLights(scene, lights) {
   let environmentTexture=null;
   const points=[];
   const disks=[];
+  const cylinders=[];
   for(const light of lights) {
     if(light.type==='dome') {
       if(Number.isInteger(light.envmapTextureId)&&light.envmapTextureId>=0||light.enableColorTemperature)throw new Error('Environment-map-ID or temperature-controlled dome lights are unsupported');
@@ -76,6 +77,25 @@ export function appendRectLights(scene, lights) {
       disks.push({path:light.absPath,radius,worldArea:area,radiance,materialId:material});
       areaLights.push({path:light.absPath,position:vertices[0].toArray(),normal:normal.toArray(),worldArea:area,radiance,twoSided:false});continue;
     }
+    if(light.type==='cylinder') {
+      if(light.textureFile||light.enableColorTemperature||light.shapingIesFile||light.shapingFocus>0||light.shapingConeAngle<90||light.diffuse!==undefined&&light.diffuse!==1||light.specular!==undefined&&light.specular!==1||light.shadowEnable===false)throw new Error('Unsupported cylinder light texture, shaping, temperature, or contribution controls');
+      const {radius=.5,length=1,intensity=1,exposure=0,color=[1,1,1]}=light;
+      if(![radius,length,intensity,exposure,...color].every(Number.isFinite)||radius<=0||length<=0||intensity<0||color.length!==3||color.some(c=>c<0)||!Array.isArray(light.transform)||light.transform.length!==16||!light.transform.every(Number.isFinite)||light.transform[3]!==0||light.transform[7]!==0||light.transform[11]!==0||light.transform[15]!==1)throw new Error('Invalid cylinder light parameters');
+      const matrix=new Matrix4().fromArray(light.transform);if(Math.abs(matrix.determinant())<1e-15)throw new Error('Singular cylinder light transform');
+      const segments=24,vertices=[];
+      for(let i=0;i<segments;i++) { const a=i*2*Math.PI/segments; const x=radius*Math.cos(a),y=radius*Math.sin(a); vertices.push(new Vector3(x,y,-length/2).applyMatrix4(matrix),new Vector3(x,y,length/2).applyMatrix4(matrix)); }
+      const normalMatrix=new Matrix3().getNormalMatrix(matrix), normals=[];
+      for(let i=0;i<segments;i++) { const a=i*2*Math.PI/segments; normals.push(new Vector3(Math.cos(a),Math.sin(a),0).applyMatrix3(normalMatrix).normalize()); }
+      let area=0;
+      for(let i=0;i<segments;i++) { const next=(i+1)%segments, a=vertices[i*2], b=vertices[i*2+1], c=vertices[next*2+1], d=vertices[next*2]; area+=new Vector3().subVectors(b,a).cross(new Vector3().subVectors(d,a)).length()*.5+new Vector3().subVectors(c,b).cross(new Vector3().subVectors(d,b)).length()*.5; }
+      const radiance=color.map(c=>c*intensity*2**exposure/(light.normalize?area:1));if(!radiance.every(Number.isFinite)||area<=0)throw new Error('Invalid cylinder light radiance or area');
+      const offset=result.positions.length/3,material=result.materials.length;result.materials.push({twoSidedEmission:false,nodes:[{name:'emission',category:'uniform_edf',type:'EDF',inputs:{color:{type:'color3',value:radiance}}},{name:'surface',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'emission'}}}]});
+      for(let i=0;i<segments;i++) { const a=i*2; for(const j of [a,a+1]) { result.positions.push(...vertices[j].toArray());result.normals.push(...normals[i].toArray());const u=i/segments;result.uvs.push(u,j===a?0:1);result.colors.push(0,0,0,1); } }
+      for(let i=0;i<segments;i++) { const next=(i+1)%segments,a=offset+i*2,b=a+1,c=offset+next*2+1,d=offset+next*2;result.indices.push(a,d,b,d,c,b);result.materialIds.push(material,material); }
+      cylinders.push({path:light.absPath,radius,length,worldArea:area,radiance,materialId:material});
+      const center=vertices.reduce((sum,v)=>sum.add(v),new Vector3()).multiplyScalar(1/vertices.length),sampleNormal=new Vector3(1,0,0).applyMatrix3(normalMatrix).normalize();
+      areaLights.push({path:light.absPath,position:center.toArray(),normal:sampleNormal.toArray(),worldArea:area,radiance,twoSided:true,shape:'cylinder'});continue;
+    }
     if(light.type!=='rect')throw new Error(`Unsupported authored light type: ${light.type}`);
     if(light.textureFile||light.enableColorTemperature||light.shapingIesFile||light.shapingFocus>0||light.shapingConeAngle<90||light.diffuse!==undefined&&light.diffuse!==1||light.specular!==undefined&&light.specular!==1||light.shadowEnable===false)throw new Error('Unsupported rect light texture, shaping, temperature, or contribution controls');
     const {width=1,height=1,intensity=1,exposure=0,color=[1,1,1]}=light;
@@ -102,6 +122,6 @@ export function appendRectLights(scene, lights) {
     areaLights.push({path:light.absPath,position:center.toArray(),normal:normal.toArray(),worldArea:area,radiance,twoSided:false});
   }
   result.lighting={environment,directional:distant||{radiance:[0,0,0]},pointLights:points,areaLights,...(environmentTexture?{environmentTexture}: {})};
-  result.provenance={...scene.provenance,lightingOverride:false,rectLights:imported,pointLights:points,diskLights:disks,distantLight:distant,domeLights:domes};
+  result.provenance={...scene.provenance,lightingOverride:false,rectLights:imported,pointLights:points,diskLights:disks,cylinderLights:cylinders,distantLight:distant,domeLights:domes};
   return result;
 }
