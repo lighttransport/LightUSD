@@ -245,6 +245,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   negative-secondary fallback and squared/clamped outputs.
 - The NPR `gooch_shade` graph is available with world-space normal, view, and
   authored light direction inputs.
+- The procedural `cloverleaf` mask follows the pinned four-circle construction
+  and defaults to the current UV stream.
 - Typed `select` branches enforce boolean conditions and matching output types,
   preserving MaterialX conditional graph semantics.
 - Deterministic bounded `noise2d` and `noise3d` value nodes are available for
