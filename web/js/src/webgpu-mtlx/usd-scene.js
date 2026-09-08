@@ -63,11 +63,11 @@ export function materialGeompropNames(document) {
 export function materialGeompropName(document) {
   return materialGeompropNames(document)[0] || '';
 }
-function decodeCustomPrimvar(item, vertexCount) {
+export function decodeCustomPrimvar(item, vertexCount) {
   if (!item?.value || item.error) return null;
   const type = String(item.value.type || item.type || '').replace(/\[\]$/, '').toLowerCase();
   const components = type === 'float' ? 1 : ['float2','half2'].includes(type) ? 2 : ['float3','half3','color3f','normal3f','point3f','vector3f'].includes(type) ? 3 : ['float4','half4','color4f','vector4f'].includes(type) ? 4 : 0;
-  if (!components || !['constant','vertex','varying'].includes(item.interpolation)) return null;
+  if (!components || !['constant','uniform','vertex','varying','faceVarying'].includes(item.interpolation)) return null;
   const raw = item.value.value;
   const values = Array.isArray(raw) ? raw : [raw];
   const one = value => {
@@ -81,6 +81,9 @@ function decodeCustomPrimvar(item, vertexCount) {
     for (let i = 0; i < vertexCount; i++) out.splice(i * 4, 4, ...value);
     return out;
   }
+  // The native render mesh may already have expanded uniform/face-varying
+  // data into one value per emitted vertex. Preserve that stream when its
+  // flattened length matches the render geometry; otherwise fail closed.
   if (values.length !== vertexCount) return null;
   for (let i = 0; i < vertexCount; i++) {
     const value = one(values[i]); if (!value) return null;

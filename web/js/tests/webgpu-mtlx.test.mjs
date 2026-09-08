@@ -14,7 +14,7 @@ import { appendRectLights } from '../src/webgpu-mtlx/usd-lights.js';
 import { mayEmit } from '../src/webgpu-mtlx/emission.js';
 import { materialXFromUSD } from '../src/webgpu-mtlx/usd-graph.js';
 import { USDTextureSources } from '../src/webgpu-mtlx/usd-texture-sources.js';
-import { triangleMaterialIds, materialImageKeys, materialUVIndex, materialGeompropName, materialGeompropNames } from '../src/webgpu-mtlx/usd-scene.js';
+import { triangleMaterialIds, materialImageKeys, materialUVIndex, materialGeompropName, materialGeompropNames, decodeCustomPrimvar } from '../src/webgpu-mtlx/usd-scene.js';
 const constant = (name, value, type = 'float') => ({ name, category: 'constant', type, inputs: { value: { type, value } } });
 
 test('USD mesh submeshes preserve per-face material bindings', () => {
@@ -24,6 +24,12 @@ test('USD mesh submeshes preserve per-face material bindings', () => {
   ]), [4, 4, 1, 2, 2, 2]);
   assert.throws(() => triangleMaterialIds(6, 0, [{ start: 0, count: 6, materialId: 1 }, { start: 3, count: 3, materialId: 2 }]), /overlapping/);
   assert.throws(() => triangleMaterialIds(6, 0, [{ start: 1, count: 3, materialId: 1 }]), /invalid/);
+});
+test('custom primvars preserve expanded uniform and face-varying streams', () => {
+  const item = (interpolation, values) => ({ type: 'float3[]', interpolation, value: { type: 'float3[]', value: values } });
+  assert.deepEqual(Array.from(decodeCustomPrimvar(item('uniform', [[1, 2, 3], [4, 5, 6]]), 2)), [1, 2, 3, 1, 4, 5, 6, 1]);
+  assert.deepEqual(Array.from(decodeCustomPrimvar(item('faceVarying', [[1, 0, 0], [0, 1, 0], [0, 0, 1]]), 3)), [1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1]);
+  assert.equal(decodeCustomPrimvar(item('faceVarying', [[1, 0, 0]]), 3), null);
 });
 
 test('USD texture provenance keeps anchors and rejects ambiguous source layers', () => {

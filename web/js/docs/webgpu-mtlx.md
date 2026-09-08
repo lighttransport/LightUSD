@@ -99,8 +99,10 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   explicitly until additional primvar streams are available. One authored
   float/vector2/vector3/vector4/color3/color4 custom geomprop channels are now
   snapshotted from composed mesh primvars, carried through the packed vertex ABI,
-  and exposed to matching MaterialX `geompropvalue` readers; more than eight
-  channels and unsupported interpolation/types remain diagnosed or use the graph
+  and exposed to matching MaterialX `geompropvalue` readers. Constant, vertex,
+  varying, uniform, and already-expanded face-varying streams are accepted when
+  they provide one value per emitted render vertex; more than eight channels,
+  unexpanded streams, and unsupported types remain diagnosed or use the graph
   fallback.
 - Authored tangent streams are decoded from native packed or float formats,
   carried through the WebGPU triangle buffer and displacement bake, and used
