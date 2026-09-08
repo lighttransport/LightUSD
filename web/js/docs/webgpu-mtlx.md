@@ -484,7 +484,8 @@ retains this snapshot alongside the explicitly lossy render-material diagnostic.
 the reachable surface graph into a compiler document. It resolves graph outputs
 and interface inputs by absolute property path, selects exact library NodeDefs,
 and checks typed ports. Missing definitions, unknown inputs, cycles, time samples
-and authored volume terminals fail explicitly. Asset inputs require
+and authored volume terminals now preserve their VDF medium input; volume EDF
+emission remains an explicit unsupported diagnostic. Asset inputs require
 a synchronous caller-supplied resolver returning a resource key; no source-layer
 anchor is guessed. Color literals and asset resolver requests retain the source
 attribute's color space, with attribute overrides preceding inherited prim

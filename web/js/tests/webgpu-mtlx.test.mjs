@@ -117,7 +117,7 @@ test('USD graph translation preserves interfaces and exact NodeDef typing', () =
     { path: '/M/G', type: 'NodeGraph', properties: { 'outputs:surface': p('token', undefined, ['/M/S.outputs:out']), 'inputs:color': p('color3f', [.2,.4,.6]) } },
     { path: '/M/S', type: 'Shader', properties: { 'info:id': p('token', 'ND_standard_surface_surfaceshader'), 'inputs:base_color': p('color3f', [1,0,0], ['/M/G.inputs:color']), 'outputs:out': p('token') } }
   ] };
-  const library = { definitions: { ND_standard_surface_surfaceshader: { node: 'standard_surface', inputs: { base_color: { type: 'color3' } }, outputs: { out: { type: 'surfaceshader' } } }, ND_displacement_float: { node: 'displacement', inputs: { displacement: { type: 'float' }, scale: { type: 'float' } }, outputs: { out: { type: 'displacementshader' } } } } };
+  const library = { definitions: { ND_standard_surface_surfaceshader: { node: 'standard_surface', inputs: { base_color: { type: 'color3' } }, outputs: { out: { type: 'surfaceshader' } } }, ND_displacement_float: { node: 'displacement', inputs: { displacement: { type: 'float' }, scale: { type: 'float' } }, outputs: { out: { type: 'displacementshader' } } }, ND_volume_volumeshader: { node: 'volume', inputs: { vdf: { type: 'VDF' }, edf: { type: 'EDF' } }, outputs: { out: { type: 'volumeshader' } } }, ND_anisotropic_vdf: { node: 'anisotropic_vdf', inputs: { absorption: { type: 'color3' }, scattering: { type: 'color3' }, anisotropy: { type: 'float' } }, outputs: { out: { type: 'VDF' } } } } };
   const doc = materialXFromUSD(snapshot, '/M', { library });
   assert.equal(doc.nodes.length, 1);
   assert.deepEqual(doc.nodes[0].inputs.base_color, { type: 'color3', value: [.2,.4,.6], colorspace: 'lin_rec709' });
@@ -144,6 +144,10 @@ test('USD graph translation preserves interfaces and exact NodeDef typing', () =
   const displacementDoc = materialXFromUSD(displaced, '/M', { library });
   assert.equal(displacementDoc.displacementOutput.type, 'displacementshader');
   assert.match(compileGraph(displacementDoc, { output: displacementDoc.displacementOutput }).body, /0\.25/);
+  const volume = changed(); volume.prims.push({ path: '/M/V', type: 'Shader', properties: { 'info:id': p('token', 'ND_volume_volumeshader'), 'inputs:vdf': p('token', undefined, ['/M/VDF.outputs:out']), 'outputs:out': p('token') } }, { path: '/M/VDF', type: 'Shader', properties: { 'info:id': p('token', 'ND_anisotropic_vdf'), 'inputs:absorption': p('color3f', [.1,.2,.3]), 'inputs:scattering': p('color3f', [.4,.5,.6]), 'inputs:anisotropy': p('float', .2), 'outputs:out': p('token') } }); volume.prims[0].properties['outputs:volume'] = p('token', undefined, ['/M/V.outputs:out']);
+  const volumeDoc = materialXFromUSD(volume, '/M', { library });
+  assert.equal(volumeDoc.mediumOutput.type, 'VDF');
+  assert.match(compileGraph(volumeDoc, { output: volumeDoc.mediumOutput }).body, /Medium/);
   const colored = changed(); colored.colorSpaces = { '/M': { value: 'lin_ap1_scene', timeSampled: false } };
   assert.equal(materialXFromUSD(colored, '/M', { library }).nodes[0].inputs.base_color.colorspace, 'acescg');
   colored.prims[1].properties['inputs:color'].colorSpace = 'srgb_rec709_scene';

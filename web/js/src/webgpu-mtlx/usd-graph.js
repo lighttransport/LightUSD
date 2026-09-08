@@ -26,10 +26,6 @@ export function materialXFromUSD(snapshot, materialPath, { library = {}, resolve
   }
   const material = prims.get(materialPath);
   if (material?.type !== 'Material') fail(materialPath, 'expected Material');
-  for (const name of ['outputs:volume', 'outputs:mtlx:volume']) {
-    const p = material.properties?.[name];
-    if (p && (p.connections?.length || own(p, 'value') || p.timeSampled)) fail(`${materialPath}.${name}`, 'non-surface terminals are not yet translated');
-  }
   const definitions = Object.create(null);
   // OpenUSD ColorSpaceAPI precedence; only the renderer's supported built-ins.
   // https://openusd.org/release/user_guides/color_user_guide.html
@@ -119,13 +115,29 @@ export function materialXFromUSD(snapshot, materialPath, { library = {}, resolve
     }
     building.delete(prim.path); return node;
   }
+  function volumeVdf(path) {
+    const { prim, name, property: p } = split(path);
+    if (p.timeSampled) fail(path, 'time-sampled volume terminals are not yet evaluated');
+    if (p.connections?.length === 1) return volumeVdf(p.connections[0]);
+    if (prim.type === 'Shader' && name.startsWith('outputs:')) {
+      const node = shader(prim), def = definition(node.nodedef);
+      if (def.node !== 'volume') fail(path, `expected volume constructor, got ${def.node}`);
+      const edf = node.inputs.edf;
+      if (edf && (edf.nodename || edf.nodegraph || edf.interfacename || edf.value !== '')) fail(`${prim.path}.inputs:edf`, 'volume EDF emission is not implemented');
+      if (!node.inputs.vdf) fail(`${prim.path}.inputs:vdf`, 'volume constructor requires a VDF input');
+      return node.inputs.vdf;
+    }
+    fail(path, 'volume terminal must connect to a volume constructor');
+  }
   const terminal = own(material.properties, 'outputs:mtlx:surface') ? 'outputs:mtlx:surface' : own(material.properties, 'outputs:surface') ? 'outputs:surface' : null;
   if (!terminal) fail(materialPath, 'missing MaterialX surface terminal');
   const output = port(`${materialPath}.${terminal}`, 'surfaceshader');
   const displacementTerminal = own(material.properties, 'outputs:mtlx:displacement') ? 'outputs:mtlx:displacement' : own(material.properties, 'outputs:displacement') ? 'outputs:displacement' : null;
   const displacementOutput = displacementTerminal ? port(`${materialPath}.${displacementTerminal}`, 'displacementshader') : undefined;
+  const volumeTerminal = own(material.properties, 'outputs:mtlx:volume') ? 'outputs:mtlx:volume' : own(material.properties, 'outputs:volume') ? 'outputs:volume' : null;
+  const mediumOutput = volumeTerminal ? volumeVdf(`${materialPath}.${volumeTerminal}`) : undefined;
   return { version: '1.39', nodes, output, definitions, graphs: library.graphs || {},
-    ...(displacementOutput ? { displacementOutput } : {}), source: materialPath, provenance: { materialPath, source: 'USD layer snapshot', referenceReady: false } };
+    ...(displacementOutput ? { displacementOutput } : {}), ...(mediumOutput ? { mediumOutput } : {}), source: materialPath, provenance: { materialPath, source: 'USD layer snapshot', referenceReady: false } };
 }
 
 /** Load the pinned MaterialX library partitions needed by USD shader IDs. */
