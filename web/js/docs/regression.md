@@ -17,6 +17,11 @@ normal-map orientation on standard, rotated and mirrored UVs. Every physical
 pixel is compared to analytic linear emission, and raster capture pixels are
 compared after the display transfer. Numeric checks include degenerate UVs.
 
+`node tests/webgpu-mtlx-chrome.mjs --hardware --bump-only` checks six analytic
+textured bump/height-to-normal scenes in physical and raster modes, including
+rotated/mirrored UVs. The numeric gate checks constant/procedural heights and
+height-to-normal scaling, transformed texcoords, encoding and degenerate UVs.
+
 The fresh WebGPU MaterialX baseline has a focused Windows/Chrome hardware gate:
 `node tests/webgpu-mtlx-chrome.mjs --hardware --shaderball --performance`.
 Use `--authored-lights` with `--shaderball` for the authored RectLight path-tracing

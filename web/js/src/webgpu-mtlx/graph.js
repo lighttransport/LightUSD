@@ -83,7 +83,7 @@ export function compileGraph(document, { output, library = {}, material = false,
   if (!Array.isArray(document.nodes) || document.nodes.length > 4096) fail('LIMIT', '', 'expected at most 4096 nodes');
   const root = { nodes: document.nodes, inputs: {}, name: '$root' };
   const lines = [], active = new Set(), cached = new Map(), used = new Set();
-  let serial = 0, portDepth = 0;
+  let serial = 0, portDepth = 0, contextName = 'ctx', bumpDepth = 0;
   const scopes = new WeakMap();
   function map(scope) {
     if (!scopes.has(scope)) {
@@ -128,7 +128,7 @@ export function compileGraph(document, { output, library = {}, material = false,
     } else if(p.defaultgeomprop) {
       const geometry={Nworld:['vector3','ctx.normal'],Tworld:['vector3','ctx.tangent'],Bworld:['vector3','ctx.bitangent'],Pworld:['vector3','ctx.position'],UV0:['vector2','ctx.uv']};
       const value=geometry[p.defaultgeomprop];if(!value)fail('GEOMETRY',path,`unsupported default geometry ${p.defaultgeomprop}`);
-      result={type:value[0],code:value[1]};
+      result={type:value[0],code:value[1].replace(/\bctx\b/g,contextName)};
     } else {
       const type=p.type||wanted;let value=p.value;
       if(p.colorspace&&['color3','color4'].includes(type)) {
@@ -148,7 +148,7 @@ export function compileGraph(document, { output, library = {}, material = false,
   function evaluate(name, out, scope, env) {
     const n = map(scope).get(name);
     if (!n) fail('NODE', name, 'unknown node');
-    const key = `${scope.name}/${name}.${out}`;
+    const key = `${scope.name}/${name}.${out}${contextName==='ctx'?'':`@${contextName}`}`;
     if (cached.has(key)) return cached.get(key);
     if (active.has(key)) fail('CYCLE', key, 'connection cycle');
     if (active.size > 128) fail('LIMIT', key, 'graph depth exceeds 128');
@@ -672,10 +672,29 @@ export function compileGraph(document, { output, library = {}, material = false,
           code=`mxNormalmap(${normalInput.code},vec2f(${scale.code}),${vector('normal','normal')},${vector('tangent','tangent')},${vector('bitangent','bitangent')})`;break;
         }
         case 'bump': case 'bump3': case 'heighttonormal': {
-          if (type !== 'vector3') fail('TYPE', key, `${n.category} output must be vector3`);
-          const height=x(n.category==='bump'?'height':'in',0,'float'), scale=x('scale',1,'float');
-          const vector=(k,field)=>ins[k]?x(k,undefined,'vector3'):`ctx.${field}`;
-          code=`mxBumpHeight(${height},${scale},${vector('normal','normal')},${vector('tangent','tangent')},${vector('bitangent','bitangent')})`;break;
+          if (type !== 'vector3') fail('TYPE',key,'bump output must be vector3');
+          const encoded=n.category==='heighttonormal';
+          const heightName=n.category==='bump'?'height':'in';
+          input(heightName,0,'float');
+          const scale=x('scale',1,'float'), normal=!encoded&&ins.normal?x('normal',undefined,'vector3'):'ctx.normal';
+          if(++bumpDepth>2)fail('LIMIT',key,'bump nesting exceeds two levels');
+          const parent=contextName, step=literal('float',Math.max(1e-6,Math.min(.001,...Object.values(imageDescriptors).map(d=>.5/Math.max(d.width,d.height)))));
+          const heights=[], coordinates=[];
+          try {
+            for(const delta of [`vec2f(${step},0)`,`vec2f(-${step},0)`,`vec2f(0,${step})`,`vec2f(0,-${step})`]) {
+              const shifted=`bumpCtx${serial++}`;
+              lines.push(`let ${shifted}=mxOffsetContext(${parent},${delta});`);
+              contextName=shifted;heights.push(x(heightName,0,'float'));
+              if(encoded)coordinates.push(ins.texcoord?x('texcoord',undefined,'vector2'):`${shifted}.uv`);
+            }
+          } finally {contextName=parent;bumpDepth--;}
+          const gradient=`vec2f(${heights[0]}-${heights[1]},${heights[2]}-${heights[3]})/(2.0*${step})`;
+          if(encoded){
+            code=`mxHeightToNormal(${gradient},(${coordinates[0]}-${coordinates[1]})/(2.0*${step}),(${coordinates[2]}-${coordinates[3]})/(2.0*${step}),${scale})`;break;
+          }
+          const du=ins.tangent&&!ins.tangent.defaultgeomprop?`safeNormal(${x('tangent',undefined,'vector3')},ctx.tangent)*length(ctx.dpdu)`:'ctx.dpdu';
+          const dv=ins.bitangent&&!ins.bitangent.defaultgeomprop?`safeNormal(${x('bitangent',undefined,'vector3')},ctx.bitangent)*length(ctx.dpdv)`:'ctx.dpdv';
+          code=`mxBumpGradient(${gradient},${scale},${normal},${du},${dv})`;break;
         }
         case 'open_pbr_anisotropy': {
           const rough=x('roughness',0,'float'), anisotropy=x('anisotropy',0,'float');
@@ -800,7 +819,8 @@ export function compileGraph(document, { output, library = {}, material = false,
         const target = materialCategories.has(n.category) ? 'Material' : type==='EDF' ? 'vec3f' : types[type];
         if (!target) fail('TYPE', key, `unsupported output type ${type}`);
         const id = `n${serial++}`;
-        lines.push(`let ${id}: ${target} = ${code};`);
+        if(serial>32768)fail('LIMIT',key,'expanded graph exceeds 32768 expressions');
+        lines.push(`let ${id}: ${target} = ${code.replace(/\bctx\b/g,contextName)};`);
         result = { type, code: id, closureCount, hasInterior, interiorCategories, categories:[...dependencies] };
       }
     }
@@ -811,7 +831,22 @@ export function compileGraph(document, { output, library = {}, material = false,
   return { body: lines.join('\n'), expression: value.code, type: value.type, categories: [...used].sort(), hasInterior:value.hasInterior||false,interiorCategories:value.interiorCategories||[],diagnostics: [], referenceReady: false };
 }
 
-export const contextWGSL = `struct ShadingContext { position: vec3f, normal: vec3f, tangent: vec3f, bitangent: vec3f, uv: vec2f, time: f32, frame: f32, uvDx: vec2f, uvDy: vec2f }
+export const contextWGSL = `struct ShadingContext { position: vec3f, normal: vec3f, tangent: vec3f, bitangent: vec3f, uv: vec2f, time: f32, frame: f32, uvDx: vec2f, uvDy: vec2f, dpdu:vec3f, dpdv:vec3f }
+fn mxOffsetContext(ctx:ShadingContext,delta:vec2f)->ShadingContext {
+  var shifted=ctx;shifted.uv+=delta;shifted.position+=ctx.dpdu*delta.x+ctx.dpdv*delta.y;return shifted;
+}
+fn mxBumpGradient(gradient:vec2f,scale:f32,normal:vec3f,du:vec3f,dv:vec3f)->vec3f {
+  let n=safeNormal(normal,vec3f(0,0,1));let ru=cross(dv,n);let rv=cross(n,du);let det=dot(du,ru);
+  if(abs(det)<1e-20){return n;}
+  return safeNormal(n-scale*(ru*gradient.x+rv*gradient.y)/det,n);
+}
+fn mxSurfaceDerivatives(n:vec3f,p1:vec3f,p2:vec3f,uv1:vec2f,uv2:vec2f)->mat2x3f {
+  let det=uv1.x*uv2.y-uv1.y*uv2.x;
+  if(abs(det)<=1e-7*max(length(uv1)*length(uv2),1e-30)){
+    let frame=mxSurfaceFrame(n,p1,p2,uv1,uv2);return mat2x3f(frame[0],frame[1]);
+  }
+  return mat2x3f((p1*uv2.y-p2*uv1.y)/det,(p2*uv1.x-p1*uv2.x)/det);
+}
 fn mxHsvToRgb(c:vec3f)->vec3f {
   let k=vec4f(1.0,2.0/3.0,1.0/3.0,3.0);
   let p=abs(fract(c.xxx+k.xyz)*6.0-k.www);
@@ -913,11 +948,13 @@ fn mxSurfaceFrame(normal:vec3f,p1:vec3f,p2:vec3f,uv1:vec2f,uv2:vec2f)->mat3x3f {
   let b=cross(n,t)*select(1.0,-1.0,dot(cross(n,t),dv)<0.0);
   return mat3x3f(t,b,n);
 }
-fn mxBumpHeight(height:f32,scale:f32,n:vec3f,t:vec3f,b:vec3f)->vec3f {
-  // Bounded height-to-normal fallback. Texture-aware finite differences are
-  // supplied by normalmap/image graphs; this node keeps scalar bump graphs
-  // explicit without silently turning them into geometric displacement.
-  return safeNormal(n+t*(height*scale)+b*(height*scale),n);
+fn mxHeightToNormal(gradient:vec2f,du:vec2f,dv:vec2f,scale:f32)->vec3f {
+  // MaterialX 1.39.5 mx_heighttonormal_vector3: Sobel parity scale and
+  // encoded tangent-space output. Gradients are central UV differences.
+  let h=gradient*(scale/16.0);
+  var n=cross(vec3f(du,h.x),vec3f(dv,h.y));
+  if(dot(n,n)<1e-16){n=vec3f(0,0,1);}else if(n.z<0.0){n=-n;}
+  return normalize(n)*0.5+0.5;
 }
 fn mxBlackbody(k:f32)->vec3f {
   // MaterialX 1.39.5 pbrlib/genglsl/mx_blackbody.glsl (Apache-2.0):

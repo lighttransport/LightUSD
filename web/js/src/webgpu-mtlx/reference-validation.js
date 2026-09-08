@@ -66,7 +66,7 @@ export async function validateOpacityScenes(renderer) {
 }
 
 /** Encode a tangent-space normal as emission to isolate the geometric frame. */
-export async function validateSurfaceFrameScenes(renderer) {
+export async function validateSurfaceFrameScenes(renderer, { bump = false, heightToNormal = false } = {}) {
   const material={nodes:[
     {name:'n',category:'normalmap',type:'vector3',inputs:{in:{type:'vector3',value:[1,.5,1]}}},
     {name:'c',category:'convert',type:'color3',inputs:{in:{nodename:'n'}}},
@@ -75,11 +75,20 @@ export async function validateSurfaceFrameScenes(renderer) {
     {name:'e',category:'uniform_edf',type:'EDF',inputs:{color:{nodename:'offset'}}},
     {name:'s',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'e'}}},
   ]};
-  const q=Math.SQRT1_2*.5, results=[];
+  if(bump){
+    material.nodes[0]={name:'n',category:'bump',type:'vector3',inputs:{height:{nodename:'height'}}};
+    material.nodes.unshift({name:'height',category:'image',type:'float',colorspace:'raw',inputs:{file:{type:'filename',value:'ramp'}}});
+    material.images={ramp:{width:2,height:2,colorspace:'raw',data:new Float32Array([.25,0,0,1,.75,0,0,1,.25,0,0,1,.75,0,0,1])}};
+    if(heightToNormal){
+      material.nodes[1]={name:'n',category:'normalmap',type:'vector3',inputs:{in:{nodename:'encoded'}}};
+      material.nodes.unshift({name:'encoded',category:'heighttonormal',type:'vector3',inputs:{in:{nodename:'height'},scale:{type:'float',value:8}}});
+    }
+  }
+  const q=bump?-.5/Math.sqrt(5):Math.SQRT1_2*.5, z=bump?.5+1/Math.sqrt(5):.5+q, results=[];
   for(const [name,uvs,expected] of [
-    ['standard',[0,0,1,0,1,1,0,1],[.5+q,.5,.5+q]],
-    ['rotated/mirrored',[0,0,0,1,1,1,1,0],[.5,.5+q,.5+q]],
-    ['mirrored U',[0,0,-1,0,-1,1,0,1],[.5-q,.5,.5+q]],
+    ['standard',[0,0,1,0,1,1,0,1],[.5+q,.5,z]],
+    ['rotated/mirrored',[0,0,0,1,1,1,1,0],[.5,.5+q,z]],
+    ['mirrored U',[0,0,-1,0,-1,1,0,1],[.5-q,.5,z]],
   ]){
     const scene=planeScene([material],[[0,false,0]],[0,0,0]);scene.uvs=uvs;
     // Raster derivatives must resolve at float32 precision across the plane.
@@ -89,7 +98,7 @@ export async function validateSurfaceFrameScenes(renderer) {
     await renderer.renderStep();
     const capture=await renderer.capture({format:'float32'});
     for(let i=0;i<capture.pixels.length;i+=4)for(let k=0;k<3;k++){
-      if(!Number.isFinite(capture.pixels[i+k])||Math.abs(capture.pixels[i+k]-expected[k])>1e-5)throw new Error(`${name}: wrong path normal emission`);
+      if(!Number.isFinite(capture.pixels[i+k])||Math.abs(capture.pixels[i+k]-expected[k])>(bump?1e-4:1e-5))throw new Error(`${name}: wrong path normal emission: ${capture.pixels.slice(i,i+3)} expected ${expected}`);
     }
     renderer.setMode('realtime');await renderer.renderStep();
     const png=await renderer.capture({format:'png'});
@@ -98,7 +107,7 @@ export async function validateSurfaceFrameScenes(renderer) {
     const pixel=Array.from(ctx.getImageData(8,8,1,1).data);
     const display=expected.map(v=>{const m=v/(1+v);return Math.round(255*(m<=.0031308?12.92*m:1.055*m**(1/2.4)-.055));});
     if(display.some((v,k)=>Math.abs(v-pixel[k])>2))throw new Error(`${name}: raster ${pixel} expected ${display}`);
-    results.push({name,expected,path:Array.from(capture.pixels.slice(0,3)),raster:pixel});
+    results.push({name,operation:heightToNormal?'heighttonormal':bump?'bump':'normalmap',expected,path:Array.from(capture.pixels.slice(0,3)),raster:pixel});
   }
   return results;
 }

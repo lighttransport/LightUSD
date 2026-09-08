@@ -835,6 +835,12 @@ not establish full MaterialX/reference-rendering conformance. See
 [WebGPU renderer status](../web/js/docs/webgpu-mtlx.md) and the
 [web regression procedure](../web/js/docs/regression.md).
 
+Use `--bump-only` for analytic textured bump and height-to-normal image chains
+in both physical and raster modes. `--frames-only` isolates UV normal frames,
+`--opacity-only` checks stochastic cutout coverage, and `--numeric-only` runs
+value kernels without the demo pipeline. These focused checks complement,
+not replace, the broader renderer gate.
+
 Besides the four ctest-registered targets (`feat-mtlx-parse`, `-import`,
 `-export`, `-grouped-params`), `tests/feat/mtlx/` holds extra source files built
 only via its local Makefile, e.g. `test_nodegraph_export.cc`,

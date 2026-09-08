@@ -55,12 +55,35 @@ export async function validateValueKernels(device) {
     ['small UVs',[.00001,0],[0,.00001],[1,0,0,0,1,0]],
   ]) for(let i=0;i<6;i++)cases.push({category:`UV frame ${label}`,expected:expected[i],
     expression:`mxSurfaceFrame(vec3f(0,0,1),vec3f(2,0,0),vec3f(0,3,0),vec2f(${uv1}),vec2f(${uv2}))[${Math.floor(i/3)}][${i%3}]`});
+  for(let component=0;component<3;component++){
+    cases.push({category:'heighttonormal constant',component,type:'vector3',expected:[.5,.5,1][component],nodes:[
+      {name:'h',category:'heighttonormal',type:'vector3',inputs:{in:value(.7)}}]});
+    for(const [label,uvScale,scale,normal] of [
+      ['default',[1,1],1,[-1/Math.sqrt(257),0,16/Math.sqrt(257)]],
+      ['scaled',[2,3],16,[-1/Math.sqrt(5),0,2/Math.sqrt(5)]],
+      ['mirrored',[-1,1],16,[Math.SQRT1_2,0,Math.SQRT1_2]],
+      ['degenerate',[0,0],16,[0,0,1]],
+    ])cases.push({category:`heighttonormal ${label}`,component,type:'vector3',expected:.5+.5*normal[component],nodes:[
+      {name:'uv',category:'texcoord',type:'vector2'},
+      {name:'height',category:'extract',type:'float',inputs:{in:{nodename:'uv'},index:{type:'integer',value:0}}},
+      {name:'mapped',category:'multiply',type:'vector2',inputs:{in1:{nodename:'uv'},in2:{type:'vector2',value:uvScale}}},
+      {name:'h',category:'heighttonormal',type:'vector3',inputs:{in:{nodename:'height'},scale:value(scale),texcoord:{nodename:'mapped'}}},
+    ]});
+    cases.push({category:'bump constant',component,type:'vector3',expected:[0,0,1][component],nodes:[
+      {name:'b',category:'bump',type:'vector3',inputs:{height:value(.7)}}]});
+    cases.push({category:'bump procedural',component,type:'vector3',expected:[-Math.SQRT1_2,0,Math.SQRT1_2][component],nodes:[
+      {name:'uv',category:'texcoord',type:'vector2'},
+      {name:'height',category:'extract',type:'float',inputs:{in:{nodename:'uv'},index:{type:'integer',value:0}}},
+      {name:'b',category:'bump',type:'vector3',inputs:{height:{nodename:'height'}}}]});
+  }
   const bodies = cases.map((c, i) => {
+    // Graphs below exercise re-evaluation at shifted contexts, not only the
+    // normal reconstruction helper.
     if(c.expression)return `result[${i}] = ${c.expression};`;
-    const g = compileGraph({ nodes: [{ name: 'test', type: c.type||'float', category: c.category, inputs: c.inputs }] });
+    const g = compileGraph({ nodes: c.nodes || [{ name: 'test', type: c.type||'float', category: c.category, inputs: c.inputs }] });
     return `{ ${g.body}\nresult[${i}] = ${g.expression}${c.component===undefined?'':`[${c.component}]`}; }`;
   });
-  const module = device.createShaderModule({ code: `${contextWGSL}\n@group(0) @binding(0) var<storage,read_write> result: array<f32>; @compute @workgroup_size(1) fn main() { let ctx=ShadingContext(vec3f(0),vec3f(0,0,1),vec3f(1,0,0),vec3f(0,1,0),vec2f(0),0,0,vec2f(0),vec2f(0)); ${bodies.join('\n')} }` });
+  const module = device.createShaderModule({ code: `${contextWGSL}\n@group(0) @binding(0) var<storage,read_write> result: array<f32>; @compute @workgroup_size(1) fn main() { let ctx=ShadingContext(vec3f(0),vec3f(0,0,1),vec3f(1,0,0),vec3f(0,1,0),vec2f(0),0,0,vec2f(0),vec2f(0),vec3f(1,0,0),vec3f(0,1,0)); ${bodies.join('\n')} }` });
   const info = await module.getCompilationInfo();
   if (info.messages.some(m => m.type === 'error')) throw new Error(info.messages.map(m => m.message).join('\n'));
   const pipeline = await device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'main' } });

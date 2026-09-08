@@ -21,7 +21,7 @@ export async function validateLibraryGraphs(device) {
     return `{${graph.body}\nresult[${i}]=${c.type==='color4'?graph.expression:`vec4f(${graph.expression},1)`};}`;
   });
   const code=`${contextWGSL}\n@group(0) @binding(0) var<storage,read_write> result:array<vec4f>;
-  @compute @workgroup_size(1) fn main(){let ctx=ShadingContext(vec3f(0),vec3f(0,0,1),vec3f(1,0,0),vec3f(0,1,0),vec2f(0),0,0,vec2f(0),vec2f(0));${bodies.join('\n')}}`;
+  @compute @workgroup_size(1) fn main(){let ctx=ShadingContext(vec3f(0),vec3f(0,0,1),vec3f(1,0,0),vec3f(0,1,0),vec2f(0),0,0,vec2f(0),vec2f(0),vec3f(1,0,0),vec3f(0,1,0));${bodies.join('\n')}}`;
   const module=device.createShaderModule({code});const info=await module.getCompilationInfo();
   if(info.messages.some(m=>m.type==='error'))throw new Error(info.messages.map(m=>m.message).join('\n'));
   const pipeline=await device.createComputePipelineAsync({layout:'auto',compute:{module,entryPoint:'main'}});

@@ -42,7 +42,10 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   approximation, defaults to 5000 K, clamps temperature to 800–25000 K, and
   retains HDR RGB values. This is chromaticity with normalized Y, not spectral
   Planck radiance. `plus`/`minus` use `fg`, `bg`, and `mix` compositing ports.
-  The scalar `bump` path still needs texture-aware derivatives.
+  `bump`/`bump3` evaluate connected height graphs at four central-difference
+  offsets, using world/UV derivatives for the surface gradient. Constant heights
+  leave normals unchanged. `heighttonormal` separately emits encoded tangent-space
+  normals with the pinned library's 1/16 scale and authored texcoord Jacobian.
 - `colorcorrect` applies hue, luminance saturation, signed gamma, lift, gain,
   contrast, then exposure in pinned-library order; color4 alpha is unchanged.
   `switch` selects among ten typed value inputs
@@ -81,7 +84,7 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 
 Full MaterialX coverage; general BSDF/EDF/VDF closure composition/layering;
 MaterialX subsurface_bsdf albedo/radius conversion; hair and curves;
-UDIM; texture-aware bump and arbitrary authored primvar/shading-property maps;
+UDIM; arbitrary authored primvar/shading-property maps;
 Catmull-Clark displacement refinement; faithful authored ShaderBall material
 graphs and full-resolution map storage;
 broad independent physical reference-image validation; complete ACEScg graph color management.
@@ -581,11 +584,16 @@ an approximation without screen-space thickness, local refraction rays, or
 volume transport.
 
 
-Scalar MaterialX `bump3` and `heighttonormal` nodes now have a bounded
-height-to-normal fallback (`mxBumpHeight`) that feeds the same authored normal
-path without mutating geometry. The synthetic `bump` scene is hardware-tested;
-texture-aware finite-difference bump and true displacement/subdivision remain
-separate follow-up work.
+MaterialX bump derivatives now reevaluate connected image/procedural graphs in
+isolated shading contexts. Offsets update UV and local planar position, not
+curvature or arbitrary geometry properties. Nesting is limited to two derivative
+nodes and graph expansion to 32768 expressions. Finite differences are not exact
+analytic derivatives; discontinuities and extreme UV scales need broader tests.
+The synthetic bump scene uses a varying sinusoidal height instead of a constant.
+`--bump-only` verifies six analytic image chains (bump and
+image -> heighttonormal -> normalmap, each with three UV orientations) in both
+physical and raster modes. Chrome 152/NVIDIA Ampere passed these checks, plus
+123 numeric cases; focused Node tests pass 85/85.
 
 The Chrome harness accepts `--reference-samples=N` for bounded focused
 diagnostics; the default and pre-merge matrix remain 32 spp.

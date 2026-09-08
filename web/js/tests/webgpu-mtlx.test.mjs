@@ -288,8 +288,8 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   assert.match(shaderSource([opacity]),/let opacity=clamp\(surface\.opacity/);
   assert.match(shaderSource([opacity]),/random\(rng\)>opacity/);
   const bump=syntheticScene('bump').materials[1];
-  assert.match(compileGraph(bump,{material:true}).body,/mxBumpHeight/);
-  assert.match(shaderSource([bump]),/mxBumpHeight/);
+  assert.match(compileGraph(bump,{material:true}).body,/mxBumpGradient/);
+  assert.match(shaderSource([bump]),/mxBumpGradient/);
   assert.equal(syntheticScene('displacement').displacementRefinement,2);
   const ops=syntheticScene('ops').materials[1];
   const opsBody=compileGraph(ops,{material:true}).body;
@@ -685,6 +685,21 @@ test('unified noise dispatches typed noise families and output remapping', () =>
   const source3=compileGraph({nodes:[{name:'u',category:'unifiednoise3d',type:'float',inputs:{position:{type:'vector3',value:[0,0,0]},type:{type:'integer',value:2}}}]});
   assert.match(source3.body,/mxWorley3/);
 });
+test('bump derivatives reevaluate shared height graphs in isolated contexts', () => {
+  const nodes=[
+    {name:'uv',category:'texcoord',type:'vector2'},
+    {name:'h',category:'extract',type:'float',inputs:{in:{nodename:'uv'},index:{type:'integer',value:0}}},
+    {name:'b',category:'bump',type:'vector3',inputs:{height:{nodename:'h'}}},
+  ];
+  const result=compileGraph({nodes});
+  assert.equal((result.body.match(/mxOffsetContext\(/g)||[]).length,4);
+  for(const m of result.body.matchAll(/let (bumpCtx\d+)=/g))assert.ok(result.body.includes(`${m[1]}.uv`));
+  assert.match(result.body,/ctx.dpdu,ctx.dpdv/);
+  const encoded=compileGraph({nodes:[...nodes.slice(0,2),{name:'encoded',category:'heighttonormal',type:'vector3',inputs:{in:{nodename:'h'}}}]});
+  assert.match(encoded.body,/mxHeightToNormal/);
+  assert.doesNotMatch(encoded.body,/mxBumpGradient/);
+});
+
 test('stdlib utility aliases, blackbody and bump compile with bounded controls', () => {
   const plus=compileGraph({nodes:[{name:'p',category:'plus',type:'float',inputs:{fg:{type:'float',value:.25},bg:{type:'float',value:.5}}}]});
   assert.match(plus.body,/mix\(0\.5,\(0\.5\+0\.25\),1\.0\)/);
@@ -695,7 +710,7 @@ test('stdlib utility aliases, blackbody and bump compile with bounded controls',
   const defaultBlackbody=compileGraph({nodes:[{name:'b',category:'blackbody',type:'color3',inputs:{}}]});
   assert.match(defaultBlackbody.body,/mxBlackbody\(5000\.0\)/);
   const bump=compileGraph({nodes:[{name:'b',category:'bump',type:'vector3',inputs:{height:{type:'float',value:.2},scale:{type:'float',value:1.5}}}]});
-  assert.match(bump.body,/mxBumpHeight/);
+  assert.match(bump.body,/mxBumpGradient/);
 });
 test('stdlib color correction and switch preserve typed authored controls', () => {
   const color=compileGraph({nodes:[{name:'c',category:'colorcorrect',type:'color3',inputs:{in:{type:'color3',value:[.2,.4,.8]},hue:{type:'float',value:.1},gamma:{type:'float',value:2},exposure:{type:'float',value:1}}}]});

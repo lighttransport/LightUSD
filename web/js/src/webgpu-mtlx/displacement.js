@@ -48,8 +48,10 @@ export async function bakeDisplacement(scene, device) {
     @group(0) @binding(1) var<storage,read_write> result:array<vec4f>;
     @compute @workgroup_size(64) fn bake(@builtin(global_invocation_id) id:vec3u){
       if(id.x>=arrayLength(&source)){return;}let v=source[id.x];let n=normalize(v.n.xyz);
-      let t=normalize(cross(select(vec3f(0,1,0),vec3f(1,0,0),abs(n.y)>.9),n));
-      let ctx=ShadingContext(v.p.xyz,n,t,cross(n,t),v.uv.xy,0,0,vec2f(0),vec2f(0));var d=vec3f(0);
+      let base=(id.x/3u)*3u;let a=source[base];let b=source[base+1u];let c=source[base+2u];
+      let frame=mxSurfaceFrame(n,b.p.xyz-a.p.xyz,c.p.xyz-a.p.xyz,b.uv.xy-a.uv.xy,c.uv.xy-a.uv.xy);
+      let derivatives=mxSurfaceDerivatives(n,b.p.xyz-a.p.xyz,c.p.xyz-a.p.xyz,b.uv.xy-a.uv.xy,c.uv.xy-a.uv.xy);
+      let ctx=ShadingContext(v.p.xyz,n,frame[0],frame[1],v.uv.xy,0,0,vec2f(0),vec2f(0),derivatives[0],derivatives[1]);var d=vec3f(0);
       switch u32(v.uv.z){${scene.materials.map((_,i)=>`case ${i}u:{d=displacement${i}(ctx);}`).join('')}default:{}}
       result[id.x]=vec4f(v.p.xyz+d,0);
     }`});

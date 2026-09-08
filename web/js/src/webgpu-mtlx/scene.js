@@ -133,7 +133,12 @@ export function syntheticScene(preset = 'copper') {
   }
   if(preset==='bump') {
     materials[1]=surfaceDocument([.36,.12,.04],0,.3);
-    materials[1].nodes.unshift({name:'bump',category:'bump3',type:'vector3',inputs:{in:{type:'float',value:.18},scale:{type:'float',value:1.4}}});
+    materials[1].nodes.unshift(
+      {name:'bumpUV',category:'texcoord',type:'vector2'},
+      {name:'bumpU',category:'extract',type:'float',inputs:{in:{nodename:'bumpUV'},index:{type:'integer',value:0}}},
+      {name:'bumpFrequency',category:'multiply',type:'float',inputs:{in1:{nodename:'bumpU'},in2:{type:'float',value:40}}},
+      {name:'bumpHeight',category:'sin',type:'float',inputs:{in:{nodename:'bumpFrequency'}}},
+      {name:'bump',category:'bump',type:'vector3',inputs:{height:{nodename:'bumpHeight'},scale:{type:'float',value:.025}}});
     materials[1].nodes.at(-1).inputs.normal={nodename:'bump'};
   }
   if(preset==='coat') {
