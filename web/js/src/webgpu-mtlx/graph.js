@@ -228,7 +228,8 @@ export function compileGraph(document, { output, library = {}, material = false,
         }
         case 'sheen_bsdf': {
           if (ins.mode?.nodename || ins.mode?.nodegraph || ins.mode?.interfacename || (ins.mode?.value && !['conty_kulla', 'zeltner'].includes(ins.mode.value))) fail('UNSUPPORTED', key, 'dynamic or unknown sheen mode is not implemented');
-          code=`closureLeaf(nativeDiffuse(${x('color',[1,1,1],'color3')},${x('weight',1,'float')},${x('roughness',.3,'float')}))`;closureCount=1;break;
+          const mode=ins.mode?.value==='zeltner'?1:0;
+          code=`closureLeaf(nativeSheen(${x('color',[1,1,1],'color3')},${x('weight',1,'float')},${x('roughness',.3,'float')},${mode}u))`;closureCount=1;break;
         }
         case 'deon_hair_absorption_from_melanin': {
           if (type !== 'vector3') fail('TYPE', key, 'deon_hair_absorption_from_melanin output must be vector3');
@@ -1289,6 +1290,7 @@ fn withSpecularColor(lobe:Lobe,color:vec3f)->Lobe {var m=lobe;m.schlickColor90=m
 fn nativeDiffuse(color:vec3f,weight:f32,rough:f32)->Lobe {var m=makeMaterial(color,0,rough,1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=3u;m.weight=weight;return m;}
 fn nativeSubsurface(color:vec3f,weight:f32,radius:vec3f)->Lobe {var m=makeMaterial(color,0,1.0,1.3,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=6u;m.weight=weight;m.alpha=vec2f(max(.02,max(radius.x,max(radius.y,radius.z))),max(.02,radius.x));return m;}
 fn nativeTranslucent(color:vec3f,weight:f32)->Lobe {var m=makeMaterial(color,0,1.0,1.0,1,vec3f(0),0,0,vec3f(1),1u,0.0,1.5);m.kind=7u;m.weight=weight;return m;}
+fn nativeSheen(color:vec3f,weight:f32,roughness:f32,mode:u32)->Lobe {var m=makeMaterial(color,0,roughness,1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=8u;m.weight=weight;m.alpha=vec2f(clamp(roughness,.01,1.0),0.0);m.scatterMode=mode;return m;}
 fn nativeHair(color:vec3f,weight:f32,longitudinal:f32,azimuthal:f32,ior:f32)->Lobe {var m=makeMaterial(color,0,longitudinal,ior,0,vec3f(0),0,azimuthal,vec3f(1),0u,0.0,1.5);m.kind=4u;m.weight=weight;m.alpha=vec2f(max(.02,longitudinal),max(.02,azimuthal));return m;}
 fn nativeGeneralizedSchlick(color0:vec3f,color82:vec3f,color90:vec3f,alpha:vec2f,weight:f32,exponent:f32)->Lobe {var m=makeMaterial(color0,0,sqrt(max(alpha.x,alpha.y)),1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=5u;m.weight=weight;m.alpha=alpha;m.schlickColor82=max(vec3f(0),color82);m.schlickColor90=max(vec3f(0),color90);m.schlickExponent=max(.01,exponent);return m;}
 fn nativeDielectric(tint:vec3f,ior:f32,alpha:vec2f,weight:f32,mode:u32)->Lobe {var m=makeMaterial(tint,0,sqrt(max(alpha.x,alpha.y)),ior,1,vec3f(0),0,0,tint,0u,0.0,1.5);m.kind=1u;m.weight=weight;m.alpha=alpha;m.scatterMode=mode;return m;}
