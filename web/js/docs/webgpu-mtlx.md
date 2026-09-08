@@ -233,10 +233,11 @@ configured pixel budget; native material serialization
 is explicitly recorded as lossy and is not treated as an authored graph import.
 
 Raster mip selection uses the base mesh UV derivatives, so transformed or
-procedural UV graph derivatives are approximate. Direction based `latlongimage`
-lookups still use level zero; path tracing now carries a bounded ray-cone
-footprint through secondary bounces, while full ray differentials remain
-outstanding. Connected
+procedural UV graph derivatives are approximate. Direction-based `latlongimage`
+lookups now use the same bounded shading footprint for mip selection; this is
+an angular approximation because the context does not carry full direction
+derivatives. Path tracing carries a bounded ray-cone footprint through secondary
+bounces, while full ray differentials remain outstanding. Connected
 filename/sampler inputs, layers, image sequences and full
 MaterialX colorspace inheritance are not implemented. These images do not
 complete authored ShaderBall material support.

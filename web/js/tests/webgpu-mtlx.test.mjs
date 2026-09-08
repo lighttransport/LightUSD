@@ -896,8 +896,8 @@ test('Worley noise nodes provide bounded distance and hash channels', () => {
 });
 test('latlongimage maps view direction to periodic longitude and clamped latitude', () => {
   const doc={images:{env:{width:4,height:2,data:[1,1,1,1],colorspace:'raw'}},nodes:[{name:'e',category:'latlongimage',type:'color3',inputs:{file:{type:'filename',value:'env'},viewdir:{type:'vector3',value:[1,0,0]},rotation:{type:'float',value:90},default:{type:'color3',value:[.1,.2,.3]}}}]};
-  const source=compileGraph(doc,{imageDescriptors:{env:{offset:0,width:4,height:2,levels:1,colorspace:'raw'}}});
-  assert.match(source.body,/atan2\(safeNormal\(vec3f\(1\.0,0\.0,0\.0\)/); assert.match(source.body,/vec2u\(2u,1u\)/);
+  const source=compileGraph(doc,{imageDescriptors:{env:{offset:0,width:4,height:2,levels:3,colorspace:'raw'}}});
+  assert.match(source.body,/atan2\(safeNormal\(vec3f\(1\.0,0\.0,0\.0\)/); assert.match(source.body,/vec2u\(2u,1u\)/); assert.match(source.body,/imageSample\(0u,vec2u\(4u,2u\),3u/); assert.match(source.body,/log2\(max\(1\.0,max\(length\(ctx\.uvDx/);
   assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],type:'float'}]},{imageDescriptors:{env:{offset:0,width:4,height:2,levels:1,colorspace:'raw'}}}),/output must be color3/);
 });
 test('splitlr and splittb select typed matte values from UV coordinates', () => {

@@ -420,8 +420,9 @@ export function compileGraph(document, { output, library = {}, material = false,
           if(n.colorspace&&normalizeColorSpace(n.colorspace)!==normalizeColorSpace(descriptor.colorspace)) fail('SEMANTICS',key,'latlongimage colorspace differs from decoded resource');
           const direction=`safeNormal(${x('viewdir',[0,0,1],'vector3')},vec3f(0.0,0.0,1.0))`, rotation=`(${x('rotation',0,'float')}*0.017453292519943295)`, pi='3.141592653589793';
           const uv=`vec2f(fract(atan2(${direction}.z,${direction}.x)/(2.0*${pi})+0.5+${rotation}/(2.0*${pi})),acos(clamp(${direction}.y,-1.0,1.0))/${pi})`;
+          const lod=`log2(max(1.0,max(length(ctx.uvDx*vec2f(${descriptor.width}.0,${descriptor.height}.0)),length(ctx.uvDy*vec2f(${descriptor.width}.0,${descriptor.height}.0)))))`;
           const grid=descriptor.udim&&`vec2u(${descriptor.udim.columns}u,${descriptor.udim.rows}u)`;
-          code=(descriptor.udim?`imageSampleUDIM(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${grid},0.0,true,vec4f(${fallback},0))`:`imageSample(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},0.0,vec2u(2u,1u),true,vec4f(${fallback},0))`).concat('.rgb'); break;
+          code=(descriptor.udim?`imageSampleUDIM(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${grid},${lod},true,vec4f(${fallback},0))`:`imageSample(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${lod},vec2u(2u,1u),true,vec4f(${fallback},0))`).concat('.rgb'); break;
         }
         case 'splitlr': case 'splittb': {
           const uv=x('texcoord',[0,0],'vector2'), center=x('center',.5,'float');
