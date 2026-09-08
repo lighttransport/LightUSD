@@ -4914,6 +4914,30 @@ class LightUSDLoaderNative {
       }
     }
 
+    // Keep copied mesh access consistent with getMeshPtr(): RenderMesh stores
+    // authored displayColor as float3 and displayOpacity as a float stream.
+    {
+      using lightusd::tydra::VertexAttributeFormat;
+      if (!rmesh.vertex_colors.empty() &&
+          rmesh.vertex_colors.format == VertexAttributeFormat::Vec3) {
+        const float *colors_ptr = reinterpret_cast<const float *>(
+            rmesh.vertex_colors.data.data());
+        mesh.set("colors",
+                 typedArray_(rmesh.vertex_colors.vertex_count() * 3,
+                             colors_ptr, copy_arrays));
+        mesh.set("colorsFormat", std::string("float32"));
+      }
+      if (!rmesh.vertex_opacities.empty() &&
+          rmesh.vertex_opacities.format == VertexAttributeFormat::Float) {
+        const float *opacities_ptr = reinterpret_cast<const float *>(
+            rmesh.vertex_opacities.data.data());
+        mesh.set("colorOpacities",
+                 typedArray_(rmesh.vertex_opacities.vertex_count(),
+                             opacities_ptr, copy_arrays));
+        mesh.set("colorOpacitiesFormat", std::string("float32"));
+      }
+    }
+
     {
       // Export all UV sets
       emscripten::val uvSets = emscripten::val::object();
