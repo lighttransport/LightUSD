@@ -339,6 +339,14 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   } }] };
   assert.match(compileGraph(diffuseRoughness,{material:true}).body,/0\.72/);
 });
+test('standard MaterialX Burley, Chiang hair, and absorption VDF nodes compile',()=>{
+  const burley=compileGraph({nodes:[{name:'b',category:'burley_diffuse_bsdf',type:'BSDF',inputs:{color:{type:'color3',value:[.5,.4,.3]},roughness:{type:'float',value:.2}}}]});
+  assert.match(burley.body,/nativeDiffuse/);
+  const hair=compileGraph({nodes:[{name:'h',category:'chiang_hair_bsdf',type:'BSDF',inputs:{tint_R:{type:'color3',value:[.8,.7,.6]},roughness_R:{type:'vector2',value:[.1,.2]},roughness_TT:{type:'vector2',value:[.05,.1]}}}]});
+  assert.match(hair.body,/nativeHair/); assert.match(hair.body,/\.x/);
+  const medium=compileGraph({nodes:[{name:'m',category:'absorption_vdf',type:'VDF',inputs:{absorption:{type:'vector3',value:[.1,.2,.3]}}}]});
+  assert.match(medium.body,/Medium\(vec3f\(0\.1,0\.2,0\.3\),vec3f\(0\),0\.0\)/);
+});
 test('displacement refinement preserves bounds, typed indices and material assignment',()=>{
   const scene={positions:new Float32Array([0,0,0,1,0,0,0,1,0]),indices:new Uint32Array([0,1,2]),materials:[{}]};
   const r=refineDisplacementScene(scene,2);assert.equal(r.indices.length,48);assert.equal(r.materialIds.length,16);assert.ok(r.positions.every(v=>v>=0&&v<=1));

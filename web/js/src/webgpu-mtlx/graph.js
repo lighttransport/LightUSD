@@ -192,12 +192,12 @@ export function compileGraph(document, { output, library = {}, material = false,
           const edf=ins.edf?.value===''||!ins.edf ? 'vec3f(0)' : x('edf',undefined,'EDF');
           code=`surfaceEmission(${bsdf},${edf},clamp(${opacity},0.0,1.0),${thin},ctx.normal)`;break;
         }
-        case 'dielectric_bsdf': case 'conductor_bsdf': case 'oren_nayar_diffuse_bsdf': {
+        case 'dielectric_bsdf': case 'conductor_bsdf': case 'oren_nayar_diffuse_bsdf': case 'burley_diffuse_bsdf': {
           if(ins.retroreflective && ![false,'false'].includes(ins.retroreflective.value))fail('UNSUPPORTED',key,'retroreflection is not implemented');
           const filmThicknessInput=ins.thinfilm_thickness||ins.thin_film_thickness;
           const filmIORInput=ins.thinfilm_IOR||ins.thinfilm_ior||ins.thin_film_IOR||ins.thin_film_ior;
           if(ins.distribution && ins.distribution.value!=='ggx')fail('UNSUPPORTED',key,'only GGX microfacets are implemented');
-          if(n.category==='oren_nayar_diffuse_bsdf') {
+          if(n.category==='oren_nayar_diffuse_bsdf' || n.category==='burley_diffuse_bsdf') {
             code=`nativeDiffuse(${x('color',[.18,.18,.18],'color3')},${x('weight',1,'float')},${x('roughness',0,'float')})`;
           } else if(n.category==='conductor_bsdf') {
             const conductor=`nativeConductor(${x('ior',[.183,.421,1.373],'color3')},${x('extinction',[3.424,2.346,1.77],'color3')},${x('roughness',[.05,.05],'vector2')},${x('weight',1,'float')})`;
@@ -225,13 +225,13 @@ export function compileGraph(document, { output, library = {}, material = false,
           // still represented by the native dielectric path only.
           code=`closureLeaf(nativeDielectric(${x('color',[1,1,1],'color3')},1.5,vec2f(.5),${x('weight',1,'float')},2u))`;closureCount=1;break;
         }
-        case 'hair_bsdf': {
+        case 'hair_bsdf': case 'chiang_hair_bsdf': {
           // Normalize legacy melanin and explicit-color forms into a bounded
           // fiber lobe; longitudinal and azimuthal roughness remain dynamic.
-          const color = ins.color ? x('color',[.6,.25,.08],'color3') : ins.base_color ? x('base_color',[.6,.25,.08],'color3') :
+          const color = ins.color ? x('color',[.6,.25,.08],'color3') : ins.base_color ? x('base_color',[.6,.25,.08],'color3') : ins.tint_R ? x('tint_R',[1,1,1],'color3') :
             `mix(vec3f(.85,.55,.32),vec3f(.03,.008,.002),clamp(${x('melanin',0,'float')},0.0,1.0))`;
-          const longitudinal = ins.longitudinal_roughness ? x('longitudinal_roughness',.35,'float') : x('roughness',.35,'float');
-          const azimuthal = ins.azimuthal_roughness ? x('azimuthal_roughness',.3,'float') : longitudinal;
+          const longitudinal = ins.longitudinal_roughness ? x('longitudinal_roughness',.35,'float') : ins.roughness_R ? `${x('roughness_R',[.1,.1],'vector2')}.x` : x('roughness',.35,'float');
+          const azimuthal = ins.azimuthal_roughness ? x('azimuthal_roughness',.3,'float') : ins.roughness_TT ? `${x('roughness_TT',[.05,.05],'vector2')}.x` : longitudinal;
           code=`closureLeaf(nativeHair(${color},${x('weight',1,'float')},${longitudinal},${azimuthal}))`;closureCount=1;break;
         }
         case 'generalized_schlick_bsdf': {
@@ -250,6 +250,11 @@ export function compileGraph(document, { output, library = {}, material = false,
           const absorption=ins.absorption ? input('absorption') : {type:'color3',code:'vec3f(0)'}, scattering=ins.scattering ? input('scattering') : {type:'color3',code:'vec3f(0)'};
           if(!['color3','vector3'].includes(absorption.type)||!['color3','vector3'].includes(scattering.type))fail('TYPE',key,'volume coefficients must be color3/vector3');
           code=`Medium(${absorption.code},${scattering.code},${x('anisotropy',0,'float')})`; break;
+        }
+        case 'absorption_vdf': {
+          const absorption=input('absorption', [0, 0, 0]);
+          if (!['color3','vector3'].includes(absorption.type)) fail('TYPE', key, 'absorption coefficient must be color3/vector3');
+          code=`Medium(${absorption.code},vec3f(0),0.0)`; break;
         }
         case 'triplanarprojection': {
           if (!['float','color3','color4','vector2','vector3','vector4'].includes(type)) fail('TYPE', key, 'triplanarprojection requires an image-compatible output type');

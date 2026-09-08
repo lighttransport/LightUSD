@@ -79,7 +79,9 @@ events. They are not enabled under a misleading `reference` alias.
 
 Implemented native nodes: `dielectric_bsdf` (R/T/RT, anisotropic GGX, smooth and
 rough refraction, exact Fresnel), `conductor_bsdf` (complex Fresnel), uncompensated
-`oren_nayar_diffuse_bsdf`, `uniform_edf`, and `surface`. Native closures currently
+`oren_nayar_diffuse_bsdf`, bounded `burley_diffuse_bsdf`, bounded
+`chiang_hair_bsdf`, homogeneous `absorption_vdf`, `uniform_edf`, and `surface`.
+Native closures currently
 use geometric normals and a generated tangent frame. Standard Surface/OpenPBR
 remain approximate mappings. BSDF add, mix, and scalar/color weighting preserve
 up to eight lobes with mixture evaluation and sampling PDFs. BSDF-over-VDF layer
