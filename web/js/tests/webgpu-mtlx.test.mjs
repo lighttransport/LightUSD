@@ -300,12 +300,18 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
     ['distribution',{type:'string',value:'beckmann'},/distribution/],
     ['scatter_mode',{type:'string',value:'RT'},/scatter_mode/],
     ['thinfilm_thickness',{type:'float',value:10},/thin film/],
-    ['normal',{type:'vector3',value:[0,1,0]},/normal\/tangent/]
+    ['tangent',{type:'vector3',value:[1,0,0]},/tangent/]
   ]) {
     generalized.nodes[0].inputs[name]=input;
     assert.throws(()=>compileGraph(generalized,{material:true}),pattern);
     delete generalized.nodes[0].inputs[name];
   }
+  const authoredNormal={type:'vector3',value:[0,1,0]};
+  generalized.nodes[0].inputs.normal=authoredNormal;
+  const generalizedSurface={nodes:[generalized.nodes[0],{name:'s',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'g'}}}],output:{nodename:'s'}};
+  assert.match(compileGraph(generalizedSurface,{material:true}).body,/surfaceEmission\(n\d+,vec3f\(0\),clamp\(1\.0,0\.0,1\.0\),0u,vec3f\(0\.0,1\.0,0\.0\)/);
+  const subsurfaceNormal={nodes:[{name:'s',category:'subsurface_bsdf',type:'BSDF',inputs:{normal:authoredNormal}},{name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'s'}}}],output:{nodename:'surface'}};
+  assert.match(compileGraph(subsurfaceNormal,{material:true}).body,/surfaceEmission\(n\d+,vec3f\(0\),clamp\(1\.0,0\.0,1\.0\),0u,vec3f\(0\.0,1\.0,0\.0\)/);
   const translucent=compileGraph({nodes:[{name:'t',category:'translucent_bsdf',type:'BSDF',inputs:{color:{type:'color3',value:[.7,.5,.3]},weight:{type:'float',value:.65}}}]});
   assert.match(translucent.body,/nativeTranslucent\(vec3f\(0\.7,0\.5,0\.3\),0\.65\)/);
   assert.match(shaderSource([{nodes:[{name:'t',category:'translucent_bsdf',type:'BSDF',inputs:{color:{type:'color3',value:[.7,.5,.3]},weight:{type:'float',value:.65}}},{name:'s',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'t'}}}],output:{nodename:'s'}}]),/m\.kind==7u/);
@@ -324,7 +330,9 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   assert.throws(()=>compileGraph(subsurfaceNode),/anisotropy/);
   delete subsurfaceNode.nodes[0].inputs.anisotropy;
   subsurfaceNode.nodes[0].inputs.normal={type:'vector3',value:[0,1,0]};
-  assert.throws(()=>compileGraph(subsurfaceNode),/normal\/tangent/);
+  assert.match(compileGraph(subsurfaceNode).body,/nativeSubsurface/);
+  subsurfaceNode.nodes[0].inputs.tangent={type:'vector3',value:[1,0,0]};
+  assert.throws(()=>compileGraph(subsurfaceNode),/tangent/);
   const normal=syntheticScene('normalmap').materials[1];
   assert.match(compileGraph(normal,{material:true}).body,/normalize\(n/);
   assert.match(shaderSource([normal]),/surface\.normal/);
