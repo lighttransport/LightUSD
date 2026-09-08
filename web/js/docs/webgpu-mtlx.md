@@ -101,9 +101,10 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   snapshotted from composed mesh primvars, carried through the packed vertex ABI,
   and exposed to matching MaterialX `geompropvalue` readers. Constant, vertex,
   varying, uniform, and already-expanded face-varying streams are accepted when
-  they provide one value per emitted render vertex; more than eight channels,
-  unexpanded streams, and unsupported types remain diagnosed or use the graph
-  fallback.
+  they provide one value per emitted render vertex. Common half/double and
+  integer scalar/vector aliases are converted to the packed float32 ABI; more
+  than eight channels, unexpanded streams, and unsupported types remain
+  diagnosed or use the graph fallback.
 - Authored tangent streams are decoded from native packed or float formats,
   carried through the WebGPU triangle buffer and displacement bake, and used
   for MaterialX tangent/bitangent inputs with derivative frames as fallback.

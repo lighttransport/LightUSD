@@ -66,7 +66,10 @@ export function materialGeompropName(document) {
 export function decodeCustomPrimvar(item, vertexCount) {
   if (!item?.value || item.error) return null;
   const type = String(item.value.type || item.type || '').replace(/\[\]$/, '').toLowerCase();
-  const components = type === 'float' ? 1 : ['float2','half2'].includes(type) ? 2 : ['float3','half3','color3f','normal3f','point3f','vector3f'].includes(type) ? 3 : ['float4','half4','color4f','vector4f'].includes(type) ? 4 : 0;
+  const scalarType = /^(?:float|half|double|int|uint)$/.test(type);
+  const vectorMatch = type.match(/^(?:float|half|double|int|uint)([234])$/);
+  const roleMatch = type.match(/^(?:color|normal|point|vector)([234])(?:f|h|d)?$/);
+  const components = scalarType ? 1 : vectorMatch ? Number(vectorMatch[1]) : roleMatch ? Number(roleMatch[1]) : 0;
   if (!components || !['constant','uniform','vertex','varying','faceVarying'].includes(item.interpolation)) return null;
   const raw = item.value.value;
   const values = Array.isArray(raw) ? raw : [raw];

@@ -30,6 +30,9 @@ test('custom primvars preserve expanded uniform and face-varying streams', () =>
   assert.deepEqual(Array.from(decodeCustomPrimvar(item('uniform', [[1, 2, 3], [4, 5, 6]]), 2)), [1, 2, 3, 1, 4, 5, 6, 1]);
   assert.deepEqual(Array.from(decodeCustomPrimvar(item('faceVarying', [[1, 0, 0], [0, 1, 0], [0, 0, 1]]), 3)), [1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1]);
   assert.equal(decodeCustomPrimvar(item('faceVarying', [[1, 0, 0]]), 3), null);
+  const typed = (type, values) => ({ type: `${type}[]`, interpolation: 'vertex', value: { type: `${type}[]`, value: values } });
+  assert.deepEqual(Array.from(decodeCustomPrimvar(typed('double3', [[1, 2, 3]]), 1)), [1, 2, 3, 1]);
+  assert.deepEqual(Array.from(decodeCustomPrimvar(typed('int', [7, 8]), 2)), [7, 0, 0, 1, 8, 0, 0, 1]);
 });
 
 test('USD texture provenance keeps anchors and rejects ambiguous source layers', () => {
