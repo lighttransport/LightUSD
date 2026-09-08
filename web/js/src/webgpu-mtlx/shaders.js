@@ -11,15 +11,26 @@ function measuredProfileWGSL(materials) {
   const profiles = new Map(); let next = 1;
   for (const doc of materials) for (const [key, profile] of Object.entries(doc.measuredProfiles || {})) if (!profiles.has(key)) profiles.set(key, { id: next++, profile });
   const cases = [...profiles.values()].map(({ id, profile }) => {
-    if (!Array.isArray(profile.samples) || profile.samples.length < 2 || profile.samples.length > 181) throw new Error('Invalid measured EDF profile');
-    const samples = profile.samples;
-    if (samples.some((p, i) => !Array.isArray(p) || p.length !== 2 || !p.every(Number.isFinite) || p[0] < 0 || p[0] > 180 || p[1] < 0 || i && p[0] <= samples[i - 1][0])) throw new Error('Invalid measured EDF samples');
-    const lines = [`let theta=degrees(acos(clamp(c,-1.0,1.0)));`];
-    for (let i = 1; i < samples.length; i++) { const a=samples[i-1], b=samples[i]; lines.push(`if(theta<=${b[0]}f){return mix(${a[1]}f,${b[1]}f,(theta-${a[0]}f)/max(1e-6,${b[0]-a[0]}f));}`); }
-    lines.push(`return ${samples.at(-1)[1]}f;`);
-    return `case ${id}u:{${lines.join('')}}`;
+    const vertical = profile.verticalAngles || profile.samples?.map(sample => sample[0]), horizontal = profile.horizontalAngles || [0], values = profile.values || profile.samples?.map(sample => sample[1]);
+    if (!Array.isArray(vertical) || !Array.isArray(horizontal) || !Array.isArray(values) || vertical.length < 2 || vertical.length > 181 || horizontal.length < 1 || horizontal.length > 73 || values.length !== vertical.length * horizontal.length) throw new Error('Invalid measured EDF profile');
+    if (vertical.some((v, i) => !Number.isFinite(v) || v < 0 || v > 180 || i && v <= vertical[i - 1]) || horizontal.some((v, i) => !Number.isFinite(v) || v < 0 || v > 360 || i && v <= horizontal[i - 1]) || values.some(v => !Number.isFinite(v) || v < 0)) throw new Error('Invalid measured EDF grid');
+    const rows = horizontal.map((_, h) => {
+      const row = values.slice(h * vertical.length, (h + 1) * vertical.length);
+      const lines = [`fn measuredProfileV${id}_${h}(theta:f32)->f32{`];
+      for (let v = 1; v < vertical.length; v++) { const a=vertical[v-1], b=vertical[v], va=row[v-1], vb=row[v]; lines.push(`if(theta<=${b}f){return mix(${va}f,${vb}f,(theta-${a}f)/max(1e-6,${b-a}f));}`); }
+      lines.push(`return ${row.at(-1)}f;}`); return lines.join('');
+    }).join('');
+    const lines = [`case ${id}u:{let theta=degrees(acos(clamp(c,-1.0,1.0)));let az=degrees(atan2(py,px));if(az<0.0){az+=360.0;}`];
+    if (horizontal.length === 1) lines.push(`return measuredProfileV${id}_0(theta);`);
+    else {
+      for (let h = 1; h < horizontal.length; h++) { const a=horizontal[h-1], b=horizontal[h]; lines.push(`if(az<=${b}f){return mix(measuredProfileV${id}_${h-1}(theta),measuredProfileV${id}_${h}(theta),(az-${a}f)/max(1e-6,${b-a}f));}`); }
+      lines.push(`return measuredProfileV${id}_${horizontal.length-1}(theta);`);
+    }
+    return `${rows}${lines.join('')}}`;
   });
-  return `fn measuredProfile(id:u32,c:f32)->f32{switch id{${cases.join('')}default:{return 1.0;}}}`;
+  // px/py are the azimuth components in a stable tangent frame around the
+  // authored emission axis. Rotational profiles simply ignore them.
+  return `fn measuredProfile(id:u32,c:f32,px:f32,py:f32)->f32{switch id{${cases.join('')}default:{return 1.0;}}}`;
 }
 
 export function shaderSource(materials, resources = {}, lighting = {}, textureOptions = {}) {

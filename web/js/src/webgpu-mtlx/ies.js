@@ -19,16 +19,19 @@ export function parseIES(input) {
   const count = verticalCount * horizontalCount;
   if (values.length < i + count) throw new Error('IES candela table is truncated');
   const candela = values.slice(i, i + count).map(v => v * multiplier);
-  for (let h = 1; h < horizontalCount; h++) for (let v = 0; v < verticalCount; v++) {
-    const reference = candela[v], value = candela[h * verticalCount + v];
-    if (Math.abs(value - reference) > 1e-5 * Math.max(1, Math.abs(reference), Math.abs(value))) throw new Error('IES azimuthal profiles are unsupported');
-  }
-  const samples = angles.map((angle, n) => {
-    let peak = 0;
-    for (let h = 0; h < horizontalCount; h++) peak = Math.max(peak, candela[h * verticalCount + n]);
-    return [angle, peak];
-  });
-  const max = Math.max(...samples.map(([, value]) => value));
+  if (candela.some(v => v < 0)) throw new Error('IES candela values must be nonnegative');
+  const max = Math.max(...candela);
   if (!(max > 0)) throw new Error('IES profile has no positive candela values');
-  return { samples: samples.map(([angle, value]) => [angle, value / max]), lumens, lampCount };
+  const normalized = candela.map(value => value / max);
+  const samples = angles.map((angle, n) => [angle, normalized[n]]);
+  return {
+    // Keep the legacy vertical representation for callers that only need a
+    // rotationally symmetric profile. The full grid below is authoritative.
+    samples,
+    verticalAngles: angles,
+    horizontalAngles: horizontal,
+    values: normalized,
+    lumens,
+    lampCount
+  };
 }

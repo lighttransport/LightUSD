@@ -56,10 +56,10 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   contributes along traveled segments, while spatially varying emission still
   fails explicitly until its estimator is implemented.
 - `measured_edf` accepts bounded LM-63 IES files from source-aware USD asset
-  resolution. The supported profile is rotationally symmetric: the parser
-  retains its normalized vertical candela profile and the shader interpolates
-  it against the authored EDF normal for path and raster emission. Malformed,
-  oversized, asymmetric, empty, or ambiguous profiles fail with diagnostics.
+  resolution. The parser retains bounded vertical and horizontal candela grids;
+  the shader bilinearly interpolates both angles in a deterministic tangent
+  frame around the authored EDF axis. Malformed, oversized, empty, or
+  ambiguous profiles fail with diagnostics; `TILT=INCLUDE` remains unsupported.
 - `generalized_schlick_bsdf` now carries the pinned `color82` control and
   Hoffman Schlick correction through RGB and spectral lobe evaluation. Its
   supported authored path is static GGX reflection; transmission,
@@ -159,8 +159,8 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 ## Not implemented
 
 Full MaterialX coverage; general BSDF/EDF/VDF closure composition/layering;
-full measured IES azimuthal EDF profiles and complete authored light/material
-sync semantics;
+IES photometric tilt sections and complete authored light/material sync
+semantics;
 MaterialX subsurface_bsdf albedo/radius conversion; hair and curves;
 arbitrary authored primvar/shading-property maps beyond the supported geometry
 aliases, UV slots, and eight bounded custom geomprop channels;

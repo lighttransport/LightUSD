@@ -1269,14 +1269,15 @@ test('measured EDF parses bounded LM-63 profiles and reaches emission transport'
   const ies = `IESNA:LM-63-2002\n[TILT=NONE]\n1 1000 1 3 1 1 1 1 1 1 1 1 1\n0 90 180\n0\n100 50 0`;
   const profile = parseIES(ies);
   assert.deepEqual(profile.samples, [[0, 1], [90, .5], [180, 0]]);
-  assert.throws(() => parseIES(`IESNA:LM-63-2002\nTILT=NONE\n1 1000 1 3 2 1 1 1 1 1 1 1 1\n0 90 180\n0 180\n100 50 0 0 50 100`), /azimuthal/);
-  const doc={measuredProfiles:{ies:{samples:profile.samples}},nodes:[
+  const azimuthal = parseIES(`IESNA:LM-63-2002\nTILT=NONE\n1 1000 1 3 2 1 1 1 1 1 1 1 1\n0 90 180\n0 180\n100 50 0 0 50 100`);
+  assert.deepEqual(azimuthal.horizontalAngles, [0, 180]); assert.deepEqual(azimuthal.values, [1, .5, 0, 0, .5, 1]);
+  const doc={measuredProfiles:{ies:azimuthal},nodes:[
     {name:'edf',category:'measured_edf',type:'EDF',inputs:{file:{type:'filename',value:'ies'},normal:{type:'vector3',value:[0,1,0]}}},
     {name:'surface',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'edf'}}}
   ],output:{nodename:'surface'}};
   const graph=compileGraph(doc,{material:true});
   assert.match(graph.body,/surfaceEmission\(/); assert.match(graph.body,/,1u\)/);
-  const source=shaderSource([doc],{}); assert.match(source,/measuredProfile/); assert.match(source,/emissionProfile/);
+  const source=shaderSource([doc],{}); assert.match(source,/measuredProfile/); assert.match(source,/emissionProfile/); assert.match(source,/atan2\(py,px\)/);
   assert.deepEqual(materialMeasuredProfileKeys(doc), ['ies']);
   assert.deepEqual(materialImageKeys(doc), []);
 });
