@@ -93,6 +93,12 @@ Physical cutout continuation advances past the hit point and preserves
 throughput on the accepted coverage branch. Chrome analytic emission tests
 verify fractional coverage and six transparent surfaces across dispatches.
 
+Path and raster shading derive tangent frames from world-space geometry and UV
+derivatives, including mirrored UV handedness and degenerate-UV fallbacks.
+Chrome renders normal-as-emission fixtures for standard, rotated and mirrored
+UVs in both modes. Explicit authored tangent primvars and MikkTSpace matching
+are still separate work.
+
 ## Experimental reference-transport work
 
 `path-physical` runs RGB transport; `path-spectral` samples one wavelength over

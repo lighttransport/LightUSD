@@ -64,3 +64,41 @@ export async function validateOpacityScenes(renderer) {
   }
   return results;
 }
+
+/** Encode a tangent-space normal as emission to isolate the geometric frame. */
+export async function validateSurfaceFrameScenes(renderer) {
+  const material={nodes:[
+    {name:'n',category:'normalmap',type:'vector3',inputs:{in:{type:'vector3',value:[1,.5,1]}}},
+    {name:'c',category:'convert',type:'color3',inputs:{in:{nodename:'n'}}},
+    {name:'half',category:'multiply',type:'color3',inputs:{in1:{nodename:'c'},in2:{type:'float',value:.5}}},
+    {name:'offset',category:'add',type:'color3',inputs:{in1:{nodename:'half'},in2:{type:'float',value:.5}}},
+    {name:'e',category:'uniform_edf',type:'EDF',inputs:{color:{nodename:'offset'}}},
+    {name:'s',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'e'}}},
+  ]};
+  const q=Math.SQRT1_2*.5, results=[];
+  for(const [name,uvs,expected] of [
+    ['standard',[0,0,1,0,1,1,0,1],[.5+q,.5,.5+q]],
+    ['rotated/mirrored',[0,0,0,1,1,1,1,0],[.5,.5+q,.5+q]],
+    ['mirrored U',[0,0,-1,0,-1,1,0,1],[.5-q,.5,.5+q]],
+  ]){
+    const scene=planeScene([material],[[0,false,0]],[0,0,0]);scene.uvs=uvs;
+    // Raster derivatives must resolve at float32 precision across the plane.
+    scene.camera.fov=45;scene.positions=scene.positions.map(v=>v/100);
+    renderer.canvas.width=16;renderer.canvas.height=16;renderer.setOptions({resolutionScale:1,exposure:0});
+    await renderer.loadScene(scene);renderer.setMode('path-physical');
+    await renderer.renderStep();
+    const capture=await renderer.capture({format:'float32'});
+    for(let i=0;i<capture.pixels.length;i+=4)for(let k=0;k<3;k++){
+      if(!Number.isFinite(capture.pixels[i+k])||Math.abs(capture.pixels[i+k]-expected[k])>1e-5)throw new Error(`${name}: wrong path normal emission`);
+    }
+    renderer.setMode('realtime');await renderer.renderStep();
+    const png=await renderer.capture({format:'png'});
+    const bitmap=await createImageBitmap(new Blob([png.bytes],{type:'image/png'}));
+    const canvas=new OffscreenCanvas(16,16),ctx=canvas.getContext('2d');ctx.drawImage(bitmap,0,0);bitmap.close();
+    const pixel=Array.from(ctx.getImageData(8,8,1,1).data);
+    const display=expected.map(v=>{const m=v/(1+v);return Math.round(255*(m<=.0031308?12.92*m:1.055*m**(1/2.4)-.055));});
+    if(display.some((v,k)=>Math.abs(v-pixel[k])>2))throw new Error(`${name}: raster ${pixel} expected ${display}`);
+    results.push({name,expected,path:Array.from(capture.pixels.slice(0,3)),raster:pixel});
+  }
+  return results;
+}

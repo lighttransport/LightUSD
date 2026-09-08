@@ -900,6 +900,19 @@ fn mxNormalmap(value:vec3f,scale:vec2f,n:vec3f,t:vec3f,b:vec3f)->vec3f {
  let decoded=select(value*2.0-1.0,vec3f(0,0,1),dot(value,value)==0.0);
  return safeNormal(t*decoded.x*scale.x+b*decoded.y*scale.y+n*decoded.z,n);
 }
+fn mxSurfaceFrame(normal:vec3f,p1:vec3f,p2:vec3f,uv1:vec2f,uv2:vec2f)->mat3x3f {
+  let n=safeNormal(normal,vec3f(0,0,1));
+  let fallback=safeNormal(cross(select(vec3f(0,1,0),vec3f(1,0,0),abs(n.y)>.9),n),vec3f(1,0,0));
+  let det=uv1.x*uv2.y-uv1.y*uv2.x;
+  let uvAreaScale=max(length(uv1)*length(uv2),1e-30);
+  if(abs(det)<=1e-7*uvAreaScale){return mat3x3f(fallback,cross(n,fallback),n);}
+  // Only direction is needed; using det's sign avoids overflow at tiny UV scales.
+  let du=(p1*uv2.y-p2*uv1.y)*sign(det);
+  let dv=(p2*uv1.x-p1*uv2.x)*sign(det);
+  let t=safeNormal(du-n*dot(n,du),fallback);
+  let b=cross(n,t)*select(1.0,-1.0,dot(cross(n,t),dv)<0.0);
+  return mat3x3f(t,b,n);
+}
 fn mxBumpHeight(height:f32,scale:f32,n:vec3f,t:vec3f,b:vec3f)->vec3f {
   // Bounded height-to-normal fallback. Texture-aware finite differences are
   // supplied by normalmap/image graphs; this node keeps scalar bump graphs

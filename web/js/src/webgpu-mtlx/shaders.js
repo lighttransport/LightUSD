@@ -88,13 +88,13 @@ fn intersect(o: vec3f, d: vec3f) -> Hit {
 fn context(h: Hit, o: vec3f, d: vec3f) -> ShadingContext {
   let tri = triangles[h.id]; let w = 1.0-h.u-h.v;
   let n = normalize(tri.a.n.xyz*w+tri.b.n.xyz*h.u+tri.c.n.xyz*h.v);
-  let tangent = normalize(cross(select(vec3f(0,1,0),vec3f(1,0,0),abs(n.y)>0.9),n));
   let p1=tri.b.p.xyz-tri.a.p.xyz; let p2=tri.c.p.xyz-tri.a.p.xyz;
   let uv1=tri.b.uv.xy-tri.a.uv.xy; let uv2=tri.c.uv.xy-tri.a.uv.xy;
+  let frame=mxSurfaceFrame(n,p1,p2,uv1,uv2);
   let uvScale=0.5*(length(uv1)/max(length(p1),1e-6)+length(uv2)/max(length(p2),1e-6));
   let pixelWorld=max(2.0*cfg.right.w/f32(cfg.dimensions.x),2.0*cfg.up.w/f32(cfg.dimensions.y))*max(h.t,1e-4);
   let footprint=max(1e-7,pixelWorld*uvScale);
-  return ShadingContext(o+d*h.t,n,tangent,cross(n,tangent),tri.a.uv.xy*w+tri.b.uv.xy*h.u+tri.c.uv.xy*h.v,0,0,vec2f(footprint,0),vec2f(0,footprint));
+  return ShadingContext(o+d*h.t,n,frame[0],frame[1],tri.a.uv.xy*w+tri.b.uv.xy*h.u+tri.c.uv.xy*h.v,0,0,vec2f(footprint,0),vec2f(0,footprint));
 }
 fn getSurface(id: u32, ctx: ShadingContext) -> Material {
   switch id { ${materials.map((_, i) => `case ${i}u: { return material${i}(ctx); }`).join('\n')} default: { return material0(ctx); } }
@@ -180,8 +180,9 @@ struct RasterVertex { @builtin(position) clip: vec4f, @location(0) position: vec
   return RasterVertex(vec4f(dot(d,cfg.right.xyz)/cfg.right.w,dot(d,cfg.up.xyz)/cfg.up.w,1.00001*z-0.0100001,z),v.p.xyz,v.n.xyz,v.uv.xy,u32(v.uv.z));
 }
 @fragment fn rasterFragment(v: RasterVertex, @builtin(front_facing) front: bool) -> @location(0) vec4f {
-  let geomN = normalize(select(-v.normal,v.normal,front)); let tangent = normalize(cross(select(vec3f(0,1,0),vec3f(1,0,0),abs(geomN.y)>0.9),geomN));
-  var ctx = ShadingContext(v.position,geomN,tangent,cross(geomN,tangent),v.uv,0,0,dpdx(v.uv),dpdy(v.uv));
+  let geomN = normalize(select(-v.normal,v.normal,front));
+  let frame=mxSurfaceFrame(geomN,dpdx(v.position),dpdy(v.position),dpdx(v.uv),dpdy(v.uv));
+  var ctx = ShadingContext(v.position,geomN,frame[0],frame[1],v.uv,0,0,dpdx(v.uv),dpdy(v.uv));
   let surface=getSurface(v.material,ctx); if(surface.opacity<=0.001){discard;} var n=safeNormal(surface.normal,geomN); if(dot(n,geomN)<0.0){n=-n;} ctx.normal=n; let m = primaryLobe(surface); let wo = normalize(cfg.origin.xyz-v.position); let light=directionalDirection();
   var color = m.emission*m.emissionWeight*emissionSidedness(v.material,geomN,-wo)+m.base*(1.0-m.metal)*0.22+fresnel(max(0.0,dot(n,wo)),mix(vec3f(0.04),m.base,m.metal))*environment(reflect(-wo,n));
   let transmission=clamp((1.0-m.metal)*m.transmission,0.0,1.0);

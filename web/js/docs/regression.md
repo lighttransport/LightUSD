@@ -12,6 +12,11 @@ crossing a dispatch boundary. It checks known Bernoulli expectations and exact
 transparent/opaque endpoints on the physical path tracer. The test server
 disables HMR so edits cannot reload a running validation page.
 
+`node tests/webgpu-mtlx-chrome.mjs --hardware --frames-only` checks actual
+normal-map orientation on standard, rotated and mirrored UVs. Every physical
+pixel is compared to analytic linear emission, and raster capture pixels are
+compared after the display transfer. Numeric checks include degenerate UVs.
+
 The fresh WebGPU MaterialX baseline has a focused Windows/Chrome hardware gate:
 `node tests/webgpu-mtlx-chrome.mjs --hardware --shaderball --performance`.
 Use `--authored-lights` with `--shaderball` for the authored RectLight path-tracing

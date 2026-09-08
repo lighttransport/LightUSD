@@ -47,7 +47,16 @@ export async function validateValueKernels(device) {
   for (const [temperature, rgb] of blackbodyCases) for (let component=0;component<3;component++) {
     cases.push({category:'blackbody',type:'color3',component,inputs:{temperature:value(temperature)},expected:rgb[component]});
   }
+  for(const [label,uv1,uv2,expected] of [
+    ['standard',[1,0],[0,1],[1,0,0,0,1,0]],
+    ['rotated/mirrored',[0,1],[1,0],[0,1,0,1,0,0]],
+    ['mirrored U',[-1,0],[0,1],[-1,0,0,0,1,0]],
+    ['degenerate',[0,0],[0,0],[1,0,0,0,1,0]],
+    ['small UVs',[.00001,0],[0,.00001],[1,0,0,0,1,0]],
+  ]) for(let i=0;i<6;i++)cases.push({category:`UV frame ${label}`,expected:expected[i],
+    expression:`mxSurfaceFrame(vec3f(0,0,1),vec3f(2,0,0),vec3f(0,3,0),vec2f(${uv1}),vec2f(${uv2}))[${Math.floor(i/3)}][${i%3}]`});
   const bodies = cases.map((c, i) => {
+    if(c.expression)return `result[${i}] = ${c.expression};`;
     const g = compileGraph({ nodes: [{ name: 'test', type: c.type||'float', category: c.category, inputs: c.inputs }] });
     return `{ ${g.body}\nresult[${i}] = ${g.expression}${c.component===undefined?'':`[${c.component}]`}; }`;
   });

@@ -133,6 +133,8 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
     let gn=select(-outward,outward,entering);
     // Geometric normals avoid shading-normal energy leaks at dielectric boundaries.
     ctx.normal=gn;
+    let uvFrame=mxSurfaceFrame(gn,tri.b.p.xyz-tri.a.p.xyz,tri.c.p.xyz-tri.a.p.xyz,tri.b.uv.xy-tri.a.uv.xy,tri.c.uv.xy-tri.a.uv.xy);
+    ctx.tangent=uvFrame[0];ctx.bitangent=uvFrame[1];
     var surface=getSurface(materialID,ctx);
     if(cfg.dimensions.w==2u) { surface=spectralSurface(surface,materialID,p.previous.x); }
     // MaterialX normal/normalmap outputs are evaluated after geometric
