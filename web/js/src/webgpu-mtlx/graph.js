@@ -11,7 +11,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 // Units are semantic annotations; implementations consume their authored
 // convention (for example degrees for rotate2d and nanometers for thin film).
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
-export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
+export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'contrast', 'premult', 'unpremult', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'surfacematerial', 'surface']);
 for(const category of ['transformmatrix','normalmap','bump3','heighttonormal'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
@@ -342,6 +342,24 @@ export function compileGraph(document, { output, library = {}, material = false,
         }
         case 'rgbtohsv': code=`mxRgbToHsv(${x('in',undefined,'color3')})`; break;
         case 'hsvtorgb': code=`mxHsvToRgb(${x('in',undefined,'color3')})`; break;
+        case 'hsvadjust': {
+          if (type !== 'color3') fail('TYPE', key, 'hsvadjust output must be color3');
+          const hsv=`mxRgbToHsv(${x('in',undefined,'color3')})`, hue=x('hue',0,'float'), saturation=x('saturation',1,'float'), value=x('value',1,'float');
+          code=`mxHsvToRgb(vec3f(fract(${hsv}.x+${hue}),max(0.0,${hsv}.y*${saturation}),max(0.0,${hsv}.z*${value})))`; break;
+        }
+        case 'contrast': {
+          const amount=x('amount',1,'float'), pivot=x('pivot',.5,'float'), value=input('in',undefined,type);
+          if (!['float','color3','color4','vector2','vector3','vector4'].includes(type)) fail('TYPE', key, 'contrast requires a numeric value');
+          code=`((${value.code}-${types[type]}(${pivot}))*${types[type]}(${amount})+${types[type]}(${pivot}))`; break;
+        }
+        case 'premult': {
+          if (type !== 'color4') fail('TYPE', key, 'premult output must be color4');
+          const value=input('in',undefined,'color4'); code=`vec4f(${value.code}.rgb*${value.code}.a,${value.code}.a)`; break;
+        }
+        case 'unpremult': {
+          if (type !== 'color4') fail('TYPE', key, 'unpremult output must be color4');
+          const value=input('in',undefined,'color4'); code=`select(vec4f(0.0),vec4f(${value.code}.rgb/${value.code}.a,${value.code}.a),${value.code}.a>0.0)`; break;
+        }
         case 'acescg_to_lin_rec709': code=`mxAcescgToLinRec709(${x('in',undefined,'color3')})`; break;
         case 'lin_rec709_to_acescg': code=`mxLinRec709ToAcescg(${x('in',undefined,'color3')})`; break;
         case 'lin_rec709_to_srgb': code=`mxLinRec709ToSrgb(${x('in',undefined,'color3')})`; break;

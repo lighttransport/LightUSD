@@ -200,6 +200,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   procedural UV/position graphs.
 - `cellnoise2d` and `cellnoise3d` provide non-interpolated integer-cell hash
   values for procedural masks.
+- Common color utility nodes `premult`, `unpremult`, `contrast`, and
+  `hsvadjust` now compile with typed ports and bounded alpha/value handling.
 - `tiledimage` accepts the validated single-tile resource path and applies
   static `uvtiling` multipliers; real-world image-size controls and UDIM
   expansion remain explicit unsupported diagnostics.

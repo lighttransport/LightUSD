@@ -435,6 +435,18 @@ test('RGB/HSV conversion nodes emit bounded color conversion helpers', () => {
   ]};
   const source=compileGraph(doc); assert.match(source.body,/mxRgbToHsv/); assert.match(source.body,/mxHsvToRgb/);
 });
+test('color utility nodes compile with typed alpha and HSV controls', () => {
+  const doc={nodes:[
+    {name:'rgba',category:'constant',type:'color4',inputs:{value:{type:'color4',value:[.2,.4,.6,.5]}}},
+    {name:'premult',category:'premult',type:'color4',inputs:{in:{nodename:'rgba'}}},
+    {name:'unpremult',category:'unpremult',type:'color4',inputs:{in:{nodename:'premult'}}},
+    {name:'hsv',category:'hsvadjust',type:'color3',inputs:{in:{type:'color3',value:[1,0,0]},hue:{type:'float',value:.25},saturation:{type:'float',value:.8},value:{type:'float',value:1.2}}},
+    {name:'out',category:'contrast',type:'color3',inputs:{in:{nodename:'hsv'},amount:{type:'float',value:1.1},pivot:{type:'float',value:.5}}}
+  ]};
+  const alpha=compileGraph({nodes:doc.nodes.slice(0,3)}); assert.match(alpha.body,/vec4f\(n0\.rgb\*n0\.a,n0\.a\)/);
+  const source=compileGraph(doc); assert.match(source.body,/mxRgbToHsv/); assert.match(source.body,/fract/); assert.match(source.body,/1\.1/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[2],type:'color3'}]}),/unpremult output must be color4/);
+});
 test('common trigonometric and angle-unit nodes map to WGSL math', () => {
   const doc={nodes:[
     {name:'x',category:'constant',type:'float',inputs:{value:{type:'float',value:45}}},
