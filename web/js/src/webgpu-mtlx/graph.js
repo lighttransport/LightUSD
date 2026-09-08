@@ -368,7 +368,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           code=type==='color4'?`vec4f(${adjusted},${value.code}.a)`:adjusted; break;
         }
         case 'ramp4': {
-          const uv=x('texcoord',undefined,'vector2'), tl=x('valuetl',undefined,type), tr=x('valuetr',undefined,type), bl=x('valuebl',undefined,type), br=x('valuebr',undefined,type);
+          const uv=ins.texcoord?x('texcoord',undefined,'vector2'):'ctx.uv', tl=x('valuetl',undefined,type), tr=x('valuetr',undefined,type), bl=x('valuebl',undefined,type), br=x('valuebr',undefined,type);
           const top=`mix(${tl},${tr},${uv}.x)`, bottom=`mix(${bl},${br},${uv}.x)`; code=`mix(${bottom},${top},${uv}.y)`; break;
         }
         case 'contrast': {
@@ -473,7 +473,7 @@ export function compileGraph(document, { output, library = {}, material = false,
         }
         case 'place2d': {
           if (type !== 'vector2') fail('TYPE', key, 'place2d output must be vector2');
-          const uv=x('texcoord',undefined,'vector2'), pivot=x('pivot',[0,0],'vector2'), scale=x('scale',[1,1],'vector2'), rotate=`(${x('rotate',0,'float')}*0.017453292519943295)`, offset=x('offset',[0,0],'vector2');
+          const uv=ins.texcoord?x('texcoord',undefined,'vector2'):'ctx.uv', pivot=x('pivot',[0,0],'vector2'), scale=x('scale',[1,1],'vector2'), rotate=`(${x('rotate',0,'float')}*0.017453292519943295)`, offset=x('offset',[0,0],'vector2');
           code=`((mat2x2f(cos(${rotate}),sin(${rotate}),-sin(${rotate}),cos(${rotate})) * ((${uv}-${pivot})/${scale}))+${pivot}-${offset})`; break;
         }
         case 'standard_surface': case 'open_pbr_surface': {

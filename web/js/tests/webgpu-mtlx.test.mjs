@@ -491,10 +491,12 @@ test('place2d applies pivot, inverse scale, degree rotation and offset', () => {
   const source=compileGraph({nodes:[{name:'p',category:'place2d',type:'vector2',inputs:{texcoord:{type:'vector2',value:[1,0]},pivot:{type:'vector2',value:[.5,.5]},scale:{type:'vector2',value:[2,2]},rotate:{type:'float',value:90},offset:{type:'vector2',value:[.1,.2]}}}]});
   assert.match(source.body,/mat2x2f\(cos\(/); assert.match(source.body,/0\.017453292519943295/); assert.match(source.body,/vec2f\(0\.1,0\.2\)/);
   assert.throws(()=>compileGraph({nodes:[{name:'p',category:'place2d',type:'color3',inputs:{}}]}),/place2d output must be vector2/);
+  assert.match(compileGraph({nodes:[{name:'p',category:'place2d',type:'vector2',inputs:{}}]}).body,/ctx\.uv/);
 });
 test('ramp4 evaluates four corners with bilinear interpolation', () => {
   const source=compileGraph({nodes:[{name:'r',category:'ramp4',type:'color3',inputs:{texcoord:{type:'vector2',value:[.25,.75]},valuetl:{type:'color3',value:[1,0,0]},valuetr:{type:'color3',value:[0,1,0]},valuebl:{type:'color3',value:[0,0,1]},valuebr:{type:'color3',value:[1,1,1]}}}]});
   assert.match(source.body,/mix\(mix\(vec3f\(0\.0,0\.0,1\.0\),vec3f\(1\.0,1\.0,1\.0\),vec2f\(0\.25,0\.75\)\.x\),mix/);
+  assert.match(compileGraph({nodes:[{name:'r',category:'ramp4',type:'float',inputs:{valuetl:{type:'float',value:0},valuetr:{type:'float',value:1},valuebl:{type:'float',value:1},valuebr:{type:'float',value:0}}}]}).body,/ctx\.uv/);
 });
 test('ACEScg conversion node uses the pinned MaterialX matrix', () => {
   const doc={nodes:[{name:'aces',category:'acescg_to_lin_rec709',type:'color3',inputs:{in:{type:'color3',value:[1,0,0]}}}]};

@@ -209,9 +209,9 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 - Supplemental `safepower` preserves the sign of negative bases while applying
   the exponent to the absolute value.
 - Supplemental `place2d` applies pivot, inverse scale, degree rotation and UV
-  offset transforms with typed vector2 inputs.
+  offset transforms with typed vector2 inputs, defaulting to current UVs.
 - Supplemental `ramp4` evaluates typed four-corner values with bilinear UV
-  interpolation.
+  interpolation and defaults its coordinate input to current UVs.
 - `screen` and `difference` compositing nodes compile for scalar, vector, and
   color values using explicit component-wise arithmetic.
 - Boolean `and`, `or`, `xor`, and `not` nodes now compile with strict boolean
