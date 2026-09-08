@@ -623,6 +623,12 @@ test('Worley noise nodes provide bounded distance and hash channels', () => {
   const b=compileGraph({nodes:[{name:'w',category:'worleynoise3d',type:'float',inputs:{position:{type:'vector3',value:[0,0,0]}}}]});
   assert.match(b.body,/mxWorley3/); assert.throws(()=>compileGraph({nodes:[{name:'w',category:'worleynoise2d',type:'color3',inputs:{}}]}),/supports float/);
 });
+test('latlongimage maps view direction to periodic longitude and clamped latitude', () => {
+  const doc={images:{env:{width:4,height:2,data:[1,1,1,1],colorspace:'raw'}},nodes:[{name:'e',category:'latlongimage',type:'color3',inputs:{file:{type:'filename',value:'env'},viewdir:{type:'vector3',value:[1,0,0]},rotation:{type:'float',value:90},default:{type:'color3',value:[.1,.2,.3]}}}]};
+  const source=compileGraph(doc,{imageDescriptors:{env:{offset:0,width:4,height:2,levels:1,colorspace:'raw'}}});
+  assert.match(source.body,/atan2\(safeNormal\(vec3f\(1\.0,0\.0,0\.0\)/); assert.match(source.body,/vec2u\(2u,1u\)/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],type:'float'}]},{imageDescriptors:{env:{offset:0,width:4,height:2,levels:1,colorspace:'raw'}}}),/output must be color3/);
+});
 test('cell-noise nodes hash integer cells without interpolation', () => {
   const doc={nodes:[
     {name:'uv',category:'texcoord',type:'vector2',inputs:{}},

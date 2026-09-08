@@ -210,6 +210,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   octave, lacunarity, diminish, and coordinate inputs with an eight-octave cap.
 - Bounded `worleynoise2d`/`worleynoise3d` nodes provide deterministic distance,
   solid-style, and hash channels over a fixed 3x3/3x3x3 neighborhood.
+- `latlongimage` maps a normalized view direction to periodic longitude and
+  clamped latitude, with authored rotation and typed fallback color.
 - `cellnoise2d` and `cellnoise3d` provide non-interpolated integer-cell hash
   values for procedural masks.
 - Common color utility nodes `premult`, `unpremult`, `contrast`, and
