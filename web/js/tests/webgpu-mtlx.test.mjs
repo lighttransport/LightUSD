@@ -407,6 +407,17 @@ test('screen and difference compositing nodes preserve numeric types', () => {
   ]};
   const source=compileGraph(doc); assert.match(source.body,/vec3f\(1\.0\)-\(vec3f\(1\.0\)-n0\)/); assert.match(source.body,/abs\(/);
 });
+test('boolean logic nodes enforce boolean ports', () => {
+  const doc={nodes:[
+    {name:'a',category:'constant',type:'boolean',inputs:{value:{type:'boolean',value:true}}},
+    {name:'b',category:'constant',type:'boolean',inputs:{value:{type:'boolean',value:false}}},
+    {name:'and',category:'and',type:'boolean',inputs:{in1:{nodename:'a'},in2:{nodename:'b'}}},
+    {name:'not',category:'not',type:'boolean',inputs:{in:{nodename:'and'}}},
+    {name:'out',category:'xor',type:'boolean',inputs:{in1:{nodename:'not'},in2:{nodename:'b'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/&&/); assert.match(source.body,/!/); assert.match(source.body,/!=/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[2],type:'float'}]}),/and requires boolean inputs/);
+});
 test('vector reflection, refraction and distance nodes compile with typed ports', () => {
   const doc={nodes:[
     {name:'in',category:'constant',type:'vector3',inputs:{value:{type:'vector3',value:[0,0,-1]}}},

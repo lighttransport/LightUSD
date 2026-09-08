@@ -205,6 +205,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   unpremultiplication clamps its divisor before WGSL conditional selection.
 - `screen` and `difference` compositing nodes compile for scalar, vector, and
   color values using explicit component-wise arithmetic.
+- Boolean `and`, `or`, `xor`, and `not` nodes now compile with strict boolean
+  ports for graph control expressions.
 - `tiledimage` accepts the validated single-tile resource path and applies
   static `uvtiling` multipliers; real-world image-size controls and UDIM
   expansion remain explicit unsupported diagnostics.

@@ -11,7 +11,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 // Units are semantic annotations; implementations consume their authored
 // convention (for example degrees for rotate2d and nanometers for thin film).
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
-export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'screen', 'difference', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'contrast', 'premult', 'unpremult', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
+export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'screen', 'difference', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'contrast', 'premult', 'unpremult', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'surfacematerial', 'surface']);
 for(const category of ['transformmatrix','normalmap','bump3','heighttonormal'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
@@ -289,6 +289,11 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'difference': code = `abs(${same('in1')}-${scalarOrSame('in2')})`; break;
         case 'screen': {
           const one=type==='float'?'1.0':`${types[type]}(1.0)`; code=`(${one}-(${one}-${same('in1')})*(${one}-${scalarOrSame('in2')}))`; break;
+        }
+        case 'not': if (type !== 'boolean') fail('TYPE', key, 'not requires boolean input'); code=`!${x('in',false,'boolean')}`; break;
+        case 'and': case 'or': case 'xor': {
+          if (type !== 'boolean') fail('TYPE', key, `${n.category} requires boolean inputs`);
+          const a=x('in1',false,'boolean'), b=x('in2',false,'boolean'); code=n.category==='and'?`(${a}&&${b})`:n.category==='or'?`(${a}||${b})`:`(${a}!=${b})`; break;
         }
         case 'multiply': case 'divide': {
           const a = input('in1', undefined, type), b = input('in2');
