@@ -13,7 +13,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
 export const valueCategories = new Set(['constant', 'add', 'subtract', 'plus', 'minus', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'fract', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'colorcorrect', 'saturate', 'contrast', 'premult', 'unpremult', 'blackbody', 'artistic_ior', 'roughness_anisotropy', 'glossiness_anisotropy', 'ramp4', 'triplanarprojection', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'switch', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'UsdPreviewSurface', 'surface_unlit', 'surfacematerial', 'surface']);
-for(const category of ['transformmatrix','normalmap','bump','bump3','heighttonormal','rotate3d','reorder','fractal2d','fractal3d','worleynoise2d','worleynoise3d','unifiednoise2d','unifiednoise3d','latlongimage','splitlr','splittb','ramp','ramp_gradient','ramplr','ramptb','checkerboard','line','circle','grid','crosshatch','tiledcircles','randomfloat','randomcolor','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d'])valueCategories.add(category);
+for(const category of ['transformmatrix','transformnormal','transformpoint','transformvector','trianglewave','normalmap','bump','bump3','heighttonormal','rotate3d','reorder','fractal2d','fractal3d','worleynoise2d','worleynoise3d','unifiednoise2d','unifiednoise3d','latlongimage','splitlr','splittb','ramp','ramp_gradient','ramplr','ramptb','checkerboard','line','circle','grid','crosshatch','tiledcircles','randomfloat','randomcolor','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
 export function literal(type, value, path = '') {
   if(value===''&&type==='BSDF')return 'emptyClosure()';
@@ -636,6 +636,22 @@ export function compileGraph(document, { output, library = {}, material = false,
           else if(type==='vector3'&&m.type==='matrix44')code=`(${m.code}*vec4f(${p.code},1.0)).xyz`;
           else if(type==='vector3'&&m.type==='matrix33'||type==='vector4'&&m.type==='matrix44')code=`(${m.code}*${p.code})`;
           else fail('TYPE',key,'unsupported matrix transform overload');break;
+        }
+        case 'transformnormal': case 'transformpoint': case 'transformvector': {
+          if (type !== 'vector3') fail('TYPE', key, `${n.category} output must be vector3`);
+          for (const name of ['fromspace','tospace']) if (ins[name]?.nodename || ins[name]?.nodegraph || ins[name]?.interfacename) fail('GEOMETRY', key, `${n.category} spaces must be static`);
+          const from=String(ins.fromspace?.value??'').toLowerCase(), to=String(ins.tospace?.value??'').toLowerCase();
+          const known=new Set(['','world','object','tangent']);
+          if (!known.has(from)||!known.has(to)) fail('GEOMETRY', key, `${n.category} has an unsupported space`);
+          const worldAlias=(from===''||from==='world')&&(to===''||to==='world');
+          if (from!==to && !worldAlias) fail('GEOMETRY', key, `${n.category} cannot transform between non-world spaces`);
+          const value=x('in',[0,0,0],'vector3');
+          if (n.category==='transformnormal') code=`safeNormal(${value},ctx.normal)`; else code=value;
+          break;
+        }
+        case 'trianglewave': {
+          if (type !== 'float') fail('TYPE', key, 'trianglewave output must be float');
+          const value=x('in',0,'float'); code=`(1.0-abs(2.0*fract(${value})-1.0))`; break;
         }
         case 'normalmap': {
           const scale=ins.scale?input('scale'):{type:'float',code:'1.0'};if(!['float','vector2'].includes(scale.type))fail('TYPE',key,'normalmap scale must be float or vector2');

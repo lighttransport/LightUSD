@@ -48,6 +48,9 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 - PBR utility nodes `artistic_ior`, `roughness_anisotropy`, and
   `glossiness_anisotropy` preserve the pinned MaterialX conversion formulas,
   including multi-output artistic conductor IOR/extinction results.
+- Transform aliases `transformnormal`, `transformpoint`, and `transformvector`
+  accept world-space identity aliases and reject unsupported non-world
+  conversions; `trianglewave` is available as a bounded periodic utility.
 - Image nodes backed by caller-decoded RGBA float resources in both modes:
   closest/linear filtering; constant/clamp/periodic/mirror addressing; float,
   vector and color outputs; default colors; linear-light area-filtered mip chains.

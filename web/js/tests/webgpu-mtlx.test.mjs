@@ -712,6 +712,15 @@ test('stdlib PBR conversion nodes preserve artistic IOR and anisotropic roughnes
   const gloss=compileGraph({nodes:[{name:'g',category:'glossiness_anisotropy',type:'vector2',inputs:{glossiness:{type:'float',value:.8},anisotropy:{type:'float',value:-.25}}}]});
   assert.match(gloss.body,/1\.0-0\.8/);
 });
+test('stdlib transform aliases and trianglewave keep space semantics explicit', () => {
+  const normal=compileGraph({nodes:[{name:'n',category:'transformnormal',type:'vector3',inputs:{in:{type:'vector3',value:[0,0,1]},fromspace:{type:'string',value:'world'},tospace:{type:'string',value:'world'}}}]});
+  assert.match(normal.body,/safeNormal/);
+  const point=compileGraph({nodes:[{name:'p',category:'transformpoint',type:'vector3',inputs:{in:{type:'vector3',value:[1,2,3]},fromspace:{type:'string',value:''},tospace:{type:'string',value:'world'}}}]});
+  assert.match(point.body,/vec3f\(1\.0,2\.0,3\.0\)/);
+  assert.throws(()=>compileGraph({nodes:[{name:'p',category:'transformpoint',type:'vector3',inputs:{fromspace:{type:'string',value:'object'},tospace:{type:'string',value:'world'}}}]}),/non-world/);
+  const wave=compileGraph({nodes:[{name:'w',category:'trianglewave',type:'float',inputs:{in:{type:'float',value:1.25}}}]});
+  assert.match(wave.body,/1\.0-abs\(2\.0\*fract/);
+});
 test('cell-noise nodes hash integer cells without interpolation', () => {
   const doc={nodes:[
     {name:'uv',category:'texcoord',type:'vector2',inputs:{}},
