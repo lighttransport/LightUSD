@@ -806,6 +806,8 @@ test('stdlib PBR conversion nodes preserve artistic IOR and anisotropic roughnes
   assert.match(gooch.body,/ctx\.normal/); assert.match(gooch.body,/ctx\.viewdir/); assert.match(gooch.body,/mix\(/); assert.match(gooch.body,/pow\(/);
   const clover=compileGraph({nodes:[{name:'c',category:'cloverleaf',type:'float',inputs:{texcoord:{type:'vector2',value:[.5,.5]},center:{type:'vector2',value:[.5,.5]},radius:{type:'float',value:.25}}}]});
   assert.match(clover.body,/distance\(/); assert.match(clover.body,/min\(/);
+  const hexagon=compileGraph({nodes:[{name:'h',category:'hexagon',type:'float',inputs:{texcoord:{type:'vector2',value:[.5,.5]},center:{type:'vector2',value:[.5,.5]},radius:{type:'float',value:.25}}}]});
+  assert.match(hexagon.body,/dot\(/); assert.match(hexagon.body,/sign\(/); assert.match(hexagon.body,/clamp\(/);
 });
 test('stdlib transform aliases and trianglewave keep space semantics explicit', () => {
   const normal=compileGraph({nodes:[{name:'n',category:'transformnormal',type:'vector3',inputs:{in:{type:'vector3',value:[0,0,1]},fromspace:{type:'string',value:'world'},tospace:{type:'string',value:'world'}}}]});

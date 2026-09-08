@@ -247,6 +247,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   authored light direction inputs.
 - The procedural `cloverleaf` mask follows the pinned four-circle construction
   and defaults to the current UV stream.
+- The procedural `hexagon` mask follows the pinned signed-distance construction
+  with centered coordinates and a bounded radius.
 - Typed `select` branches enforce boolean conditions and matching output types,
   preserving MaterialX conditional graph semantics.
 - Deterministic bounded `noise2d` and `noise3d` value nodes are available for
