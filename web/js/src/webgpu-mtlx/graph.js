@@ -1281,7 +1281,8 @@ export function compileGraph(document, { output, library = {}, material = false,
           const coatColor = ins.coat_color ? x('coat_color', [1, 1, 1], 'color3') : 'vec3f(1)';
           const coatRoughness = ins.coat_roughness ? x('coat_roughness', .1, 'float') : '.1';
           const coatIOR = open ? (ins.coat_ior ? x('coat_ior', 1.5, 'float') : '1.5') : (ins.coat_IOR ? x('coat_IOR', 1.5, 'float') : '1.5');
-          const coated = `closureAdd(${closure},closureScale(closureLeaf(nativeDielectric(${coatColor},${coatIOR},vec2f(${coatRoughness}*${coatRoughness}),1.0,1u)),vec3f(clamp(${coatWeight},0.0,1.0))))`;
+          const coatLayer = `closureLayer(closureLeaf(nativeDielectric(${coatColor},${coatIOR},vec2f(${coatRoughness}*${coatRoughness}),1.0,0u)),${closure})`;
+          const coated = `closureMix(${closure},${coatLayer},clamp(${coatWeight},0.0,1.0))`;
           const sheenWeight = open ? (ins.fuzz ? x('fuzz', 0, 'float') : '0.0') : (ins.sheen ? x('sheen', 0, 'float') : '0.0');
           const sheenColor = open ? (ins.fuzz_color ? x('fuzz_color', [1, 1, 1], 'color3') : 'vec3f(1)') : (ins.sheen_color ? x('sheen_color', [1, 1, 1], 'color3') : 'vec3f(1)');
           const sheenRoughness = open ? (ins.fuzz_roughness ? x('fuzz_roughness', .6, 'float') : '.6') : (ins.sheen_roughness ? x('sheen_roughness', .6, 'float') : '.6');

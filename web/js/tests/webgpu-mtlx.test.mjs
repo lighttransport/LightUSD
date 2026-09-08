@@ -113,7 +113,7 @@ test('standard and OpenPBR terminal aliases preserve authored graph inputs', () 
   standardSubsurface.nodes[0].inputs.subsurface_anisotropy = { type: 'float', value: -.25 };
   assert.match(compileGraph(standardSubsurface, { material: true }).body, /nativeSubsurface\(.*-0\.25/);
   const coated = structuredClone(standard); coated.nodes[0].inputs.coat = { type: 'float', value: .2 };
-  assert.match(compileGraph(coated, { material: true }).body, /closureAdd/);
+  assert.match(compileGraph(coated, { material: true }).body, /closureLayer/);
 });
 
 test('MaterialX unit annotations are validated and preserved', () => {
@@ -621,8 +621,8 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   const stdlibFilm=structuredClone(conductorFilm); stdlibFilm.nodes[0].inputs.thinfilm_thickness={type:'float',value:.12,unit:'micron'};
   assert.match(compileGraph(stdlibFilm,{material:true}).body,/\*1000/);
   const coat=syntheticScene('coat').materials[1];
-  assert.match(compileGraph(coat,{material:true}).body,/closureAdd/);
-  assert.match(shaderSource([coat]),/closureAdd/);
+  assert.match(compileGraph(coat,{material:true}).body,/closureLayer/);
+  assert.match(shaderSource([coat]),/closureLayer/);
   const sheen=syntheticScene('sheen').materials[1];
   assert.match(compileGraph(sheen,{material:true}).body,/nativeSheen/);
   assert.match(compileGraph(sheen,{material:true}).body,/0\.38/);

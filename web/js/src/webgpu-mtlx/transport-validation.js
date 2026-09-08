@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { shaderSource } from './shaders.js';
-import { surfaceDocument } from './scene.js';
+import { surfaceDocument, syntheticScene } from './scene.js';
 
 export async function validateTransportKernels(device) {
   const film = wavelength => {
@@ -50,7 +50,8 @@ export async function validateTransportKernels(device) {
     { name: 'switchedTop', category: 'switch', type: 'BSDF', inputs: { which: { type: 'float', value: 1 }, in1: { nodename: 'selectedTop' }, in2: { nodename: 'topAlt' } } },
     { name: 'surface', category: 'surface', type: 'surfaceshader', inputs: { bsdf: { nodename: 'switchedTop' } } },
   ], mediumOutput: { nodename: 'switchedMedium' }, output: { nodename: 'surface' } };
-  const module = device.createShaderModule({ code: shaderSource([surfaceDocument(), nestedLayer, volumeComposition]) + `
+  const coatDocument = syntheticScene('coat').materials[1];
+  const module = device.createShaderModule({ code: shaderSource([surfaceDocument(), nestedLayer, volumeComposition, coatDocument]) + `
     @group(0) @binding(9) var<storage,read_write> checks: array<vec4f>;
     @compute @workgroup_size(1) fn validateTransport() {
       ${analytic.map(([,expr], i) => `checks[${i}]=vec4f(${expr},0,0,0);`).join('\n')}

@@ -821,10 +821,11 @@ run completes with seven compiled authored material slots, 51,008 triangles,
 and no GPU/page errors; remaining slots stay explicit placeholders when their
 composed terminal or texture preflight is unavailable.
 
-Standard Surface and OpenPBR coat controls now compile to a bounded additive
-dielectric coat lobe (`coat`, `coat_weight`, color, roughness and IOR aliases).
-The synthetic `coat` scene is hardware-tested; exact layered energy
-compensation and multiple-scattering coat transport remain future work.
+Standard Surface and OpenPBR coat controls now compile to a bounded dielectric
+layer over the base closure, blended by `coat`/`coat_weight` and carrying color,
+roughness and IOR aliases. The synthetic `coat` scene is hardware-tested; exact
+layered energy compensation and multiple-scattering coat transport remain
+future work.
 
 Standard Surface `base` now scales the authored `base_color` contribution;
 `base=0` therefore removes the diffuse base while preserving the other authored
