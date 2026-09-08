@@ -241,6 +241,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   both linear and transfer-encoded inputs, with color4 alpha preserved.
 - Matrix utilities cover typed `transpose`, `determinant`, `invertmatrix`, and
   `creatematrix` operations for the supported 3x3/4x4 overloads.
+- `roughness_dual` follows the pbrlib dual roughness convention, including the
+  negative-secondary fallback and squared/clamped outputs.
 - Typed `select` branches enforce boolean conditions and matching output types,
   preserving MaterialX conditional graph semantics.
 - Deterministic bounded `noise2d` and `noise3d` value nodes are available for

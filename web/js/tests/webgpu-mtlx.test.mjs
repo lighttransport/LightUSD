@@ -800,6 +800,8 @@ test('stdlib PBR conversion nodes preserve artistic IOR and anisotropic roughnes
   assert.match(rough.body,/min\(/); assert.match(rough.body,/vec2f/);
   const gloss=compileGraph({nodes:[{name:'g',category:'glossiness_anisotropy',type:'vector2',inputs:{glossiness:{type:'float',value:.8},anisotropy:{type:'float',value:-.25}}}]});
   assert.match(gloss.body,/1\.0-0\.8/);
+  const dual=compileGraph({nodes:[{name:'d',category:'roughness_dual',type:'vector2',inputs:{roughness:{type:'vector2',value:[.4,-1]}}}]});
+  assert.match(dual.body,/select\(.*\.y,.*\.x,.*\.y<0\.0\)/); assert.match(dual.body,/clamp\(vec2f/);
 });
 test('stdlib transform aliases and trianglewave keep space semantics explicit', () => {
   const normal=compileGraph({nodes:[{name:'n',category:'transformnormal',type:'vector3',inputs:{in:{type:'vector3',value:[0,0,1]},fromspace:{type:'string',value:'world'},tospace:{type:'string',value:'world'}}}]});
