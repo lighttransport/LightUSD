@@ -398,6 +398,13 @@ test('image graph resource resolution and unsupported filtering diagnostics', ()
   image.inputs.filtertype = { value: 'cubic' }; assert.match(shaderSource([doc]), /imageSampleCubic\(0u/);
   image.inputs.file.value = ''; assert.match(shaderSource([doc]), /vec3f\(0.0,0.0,0.0\)/);
 });
+test('UsdUVTexture maps st/fallback/scale/bias and named channel outputs', () => {
+  const doc={images:{tex:{width:2,height:2,data:[1,0,0,1],colorspace:'raw'}},nodes:[{name:'tex',category:'UsdUVTexture',type:'multioutput',outputs:{rgb:{type:'color3'},r:{type:'float'}},inputs:{file:{type:'filename',value:'tex'},st:{type:'vector2',value:[.25,.5]},fallback:{type:'color4',value:[.1,.2,.3,1]},scale:{type:'color4',value:[2,2,2,1]},bias:{type:'color4',value:[.1,0,0,0]}}}]};
+  const descriptor={tex:{offset:0,width:2,height:2,levels:1,colorspace:'raw'}};
+  const rgb=compileGraph(doc,{output:{nodename:'tex',output:'rgb'},imageDescriptors:descriptor});
+  assert.match(rgb.body,/ctx\.uv/); assert.match(rgb.body,/\*vec4f\(2\.0,2\.0,2\.0,1\.0\)\+vec4f\(0\.1,0\.0,0\.0,0\.0\)/);
+  const red=compileGraph(doc,{output:{nodename:'tex',output:'r'},imageDescriptors:descriptor}); assert.match(red.body,/\)\.r/);
+});
 test('triplanarprojection blends three typed image planes by normal weights', () => {
   const descriptor={x:{offset:0,width:2,height:2,levels:1,colorspace:'raw'},y:{offset:4,width:2,height:2,levels:1,colorspace:'raw'},z:{offset:8,width:2,height:2,levels:1,colorspace:'raw'}};
   const doc={nodes:[{name:'tri',category:'triplanarprojection',type:'color3',inputs:{filex:{type:'filename',value:'x'},filey:{type:'filename',value:'y'},filez:{type:'filename',value:'z'},normal:{type:'vector3',value:[1,0,0]},filtertype:{type:'string',value:'linear'}}}]};
