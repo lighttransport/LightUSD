@@ -90,7 +90,7 @@ test('standard and OpenPBR terminal aliases preserve authored graph inputs', () 
   } }] }, { material: true });
   assert.match(baseOff.body,/\(vec3f\(0\.8,0\.2,0\.1\)\s*\*\s*vec3f\(0\.0\)\)/);
   const preview=compileGraph({nodes:[{name:'s',category:'UsdPreviewSurface',type:'surfaceshader',inputs:{diffuseColor:{type:'color3',value:[.8,.2,.1]},metallic:{type:'float',value:.7},roughness:{type:'float',value:.25},clearcoat:{type:'float',value:.4},opacity:{type:'float',value:.8},normal:{type:'vector3',value:[0,0,1]}}}]},{material:true});
-  assert.match(preview.body,/materialFromClosure/); assert.match(preview.body,/nativeDielectric/); assert.match(preview.body,/vec3f\(0\.0,0\.0,1\.0\)/); assert.match(preview.body,/withSpecularColorMode/);
+  assert.match(preview.body,/materialFromClosure/); assert.match(preview.body,/nativeDielectric/); assert.match(preview.body,/mxNormalmap\(\(vec3f\(0\.0,0\.0,1\.0\)\*0\.5\+vec3f\(0\.5\)\)/); assert.match(preview.body,/withSpecularColorMode/);
   const previewGeometry=compileGraph({nodes:[{name:'s',category:'UsdPreviewSurface',type:'surfaceshader',inputs:{diffuseColor:{type:'color3',value:[.8,.2,.1]}}}]},{material:true});
   assert.match(previewGeometry.body,/materialFromClosure\(.*ctx\.normal/);
   const specularWorkflow=compileGraph({nodes:[{name:'s',category:'UsdPreviewSurface',type:'surfaceshader',inputs:{useSpecularWorkflow:{type:'boolean',value:true},diffuseColor:{type:'color3',value:[.6,.4,.2]},specularColor:{type:'color3',value:[.1,.2,.3]}}}]},{material:true});

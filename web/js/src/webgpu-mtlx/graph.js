@@ -1194,7 +1194,11 @@ export function compileGraph(document, { output, library = {}, material = false,
           const coat=`closureScale(closureLeaf(nativeDielectric(vec3f(1),1.5,vec2f(${x('clearcoatRoughness',.01,'float')}),1.0,1u)),vec3f(clamp(${x('clearcoat',0,'float')},0.0,1.0)))`;
           const closure=`closureAdd(closureLeaf(${lobe}),${coat})`, opacity=x('opacity',1,'float'), mode=x('opacityMode',0,'integer'), threshold=x('opacityThreshold',0,'float');
           const alpha=`select(clamp(${opacity},0.0,1.0),select(0.0,1.0,${opacity}>=${threshold}),${mode}==1i)`;
-          const normal = ins.normal ? x('normal', undefined, 'vector3') : 'ctx.normal';
+          // UsdPreviewSurface.normal is authored in tangent space.  Convert the
+          // signed vector convention used by USD to the encoded [0, 1] input
+          // expected by the MaterialX normalmap operation before evaluating the
+          // preview-surface closures in the shading frame.
+          const normal = ins.normal ? `mxNormalmap((${x('normal', undefined, 'vector3')}*0.5+vec3f(0.5)),vec2f(1.0),ctx.normal,ctx.tangent,ctx.bitangent)` : 'ctx.normal';
           code=`materialFromClosure(${closure},${emission},${alpha},${normal})`; break;
         }
         case 'surface_unlit': {
