@@ -227,7 +227,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 - `triplanarprojection` now resolves three image resources, projects them on
   the X/Y/Z planes, and blends the samples by normalized authored normals;
   each plane enforces decoded-resource colorspace compatibility, and its
-  projection path currently uses base-level sampling.
+  projection path currently uses base-level sampling. Degenerate normals use
+  the shared safe-normal fallback instead of producing zero weights.
 - URL resource tests cover includes, source-relative EXR paths, inherited image
   colorspace, cycle rejection and cross-origin rejection. ShaderBall's 2048x2048
   neutral EXR decodes successfully.
