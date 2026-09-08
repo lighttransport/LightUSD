@@ -854,6 +854,11 @@ before evaluating the bounded same-surface-point profile. Authored normals,
 tangents, radius channels and anisotropy are preserved. This remains an
 approximation; it does not perform cross-surface random-walk BSSRDF transport.
 
+VDF `add` and `mix` now compose absorption, scattering, emission and
+scattering-weighted anisotropy into a bounded `Medium`. Heterogeneous spatial
+composition and distance-aware random-walk volume semantics remain separate
+limitations.
+
 `generalized_schlick_bsdf` now preserves authored color-at-normal, color-at-
 82, color-at-grazing, roughness and exponent controls in a bounded microfacet
 lobe rather than collapsing to the ordinary dielectric Fresnel curve. Its

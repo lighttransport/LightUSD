@@ -36,7 +36,15 @@ export async function validateTransportKernels(device) {
     { name: 'outer', category: 'layer', type: 'BSDF', inputs: { top: { nodename: 'inner' }, base: { nodename: 'outerBase' } } },
     { name: 'surface', category: 'surface', type: 'surfaceshader', inputs: { bsdf: { nodename: 'outer' } } },
   ] };
-  const module = device.createShaderModule({ code: shaderSource([surfaceDocument(), nestedLayer]) + `
+  const volumeComposition = { mediumMajorant: 4, nodes: [
+    { name: 'baseMedium', category: 'absorption_vdf', type: 'VDF', inputs: { absorption: { type: 'color3', value: [.1, .2, .3] } } },
+    { name: 'scatterMedium', category: 'anisotropic_vdf', type: 'VDF', inputs: { scattering: { type: 'color3', value: [.2, .3, .4] }, anisotropy: { type: 'float', value: .25 } } },
+    { name: 'sumMedium', category: 'add', type: 'VDF', inputs: { in1: { nodename: 'baseMedium' }, in2: { nodename: 'scatterMedium' } } },
+    { name: 'mixMedium', category: 'mix', type: 'VDF', inputs: { bg: { nodename: 'baseMedium' }, fg: { nodename: 'sumMedium' }, mix: { type: 'float', value: .25 } } },
+    { name: 'surface', category: 'surface', type: 'surfaceshader', inputs: { bsdf: { nodename: 'top' } } },
+    { name: 'top', category: 'oren_nayar_diffuse_bsdf', type: 'BSDF', inputs: { color: { type: 'color3', value: [.4, .4, .4] } } },
+  ], mediumOutput: { nodename: 'mixMedium' }, output: { nodename: 'surface' } };
+  const module = device.createShaderModule({ code: shaderSource([surfaceDocument(), nestedLayer, volumeComposition]) + `
     @group(0) @binding(9) var<storage,read_write> checks: array<vec4f>;
     @compute @workgroup_size(1) fn validateTransport() {
       ${analytic.map(([,expr], i) => `checks[${i}]=vec4f(${expr},0,0,0);`).join('\n')}
