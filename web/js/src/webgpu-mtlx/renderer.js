@@ -62,7 +62,7 @@ class MaterialXRenderer extends EventTarget {
       try { worker.postMessage({ scene }); } catch (e) { worker.terminate(); reject(e); }
     });
     if (!packed || generation !== this.sceneGeneration || this.disposed) return { cancelled: true };
-    const textures = {}; const code = shaderSource(packed.materials, textures, packed.lighting, { maxDimension: this.options.textureMaxDimension || undefined, maxBytes: this.options.textureMaxBytes, compact: this.options.textureStorage === 'half' });
+    const textures = {}; const shaderOptions = { maxDimension: this.options.textureMaxDimension || undefined, maxBytes: this.options.textureMaxBytes, compact: this.options.textureStorage === 'half', physical: false }; const code = shaderSource(packed.materials, textures, packed.lighting, shaderOptions);
     const module = await this.module(code);
     const layout = this.device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout] });
     const [compute, raster, displayModule] = await Promise.all([
@@ -84,10 +84,10 @@ class MaterialXRenderer extends EventTarget {
     catch (e) { allocated.forEach(b => b.destroy()); throw e; }
     this.resources.forEach(b => b.destroy()); this.resources = allocated;
     this.scene = packed; this.compute = compute; this.raster = raster; this.displayPipeline = display; this.blit = blit;
-    this.physical = null; this.physicalError = null; this.physicalPending = null;
+    this.physical = null; this.physicalError = null; this.physicalPending = null; let physicalModule = null;
     this.ensurePhysicalPipeline = async () => {
       if (this.physical) return this.physical;
-      if (!this.physicalPending) this.physicalPending = this.device.createComputePipelineAsync({ layout, compute: { module, entryPoint: 'tracePhysical' } }).then(p => { if (generation === this.sceneGeneration && !this.disposed) this.physical = p; return p; }, e => { if (generation === this.sceneGeneration) this.physicalError = e; return null; });
+      if (!this.physicalPending) this.physicalPending = (async () => { physicalModule = physicalModule || await this.module(shaderSource(packed.materials, {}, packed.lighting, { ...shaderOptions, physical: true })); return this.device.createComputePipelineAsync({ layout, compute: { module: physicalModule, entryPoint: 'tracePhysical' } }); })().then(p => { if (generation === this.sceneGeneration && !this.disposed) this.physical = p; return p; }, e => { if (generation === this.sceneGeneration) this.physicalError = e; return null; });
       this.physical = await this.physicalPending;
       if (!this.physical) throw this.physicalError || new Error('Physical pipeline compilation failed');
       return this.physical;
@@ -110,7 +110,7 @@ class MaterialXRenderer extends EventTarget {
     }
     const materials = this.scene.materials.slice(); materials[index] = document;
     const generation = ++this.sceneGeneration;
-    const textures = {}; const module = await this.module(shaderSource(materials, textures, this.scene.lighting, { maxDimension: this.options.textureMaxDimension || undefined, maxBytes: this.options.textureMaxBytes, compact: this.options.textureStorage === 'half' }));
+    const textures = {}; const shaderOptions = { maxDimension: this.options.textureMaxDimension || undefined, maxBytes: this.options.textureMaxBytes, compact: this.options.textureStorage === 'half', physical: false }; const module = await this.module(shaderSource(materials, textures, this.scene.lighting, shaderOptions));
     const layout = this.device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout] });
     const [compute, raster] = await Promise.all([
       this.device.createComputePipelineAsync({ layout, compute: { module, entryPoint: 'trace' } }),
@@ -121,10 +121,10 @@ class MaterialXRenderer extends EventTarget {
     const imageBuffer = this.device.createBuffer({ size: textures.imageData.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.device.queue.writeBuffer(imageBuffer, 0, textures.imageData);
     this.resources[2].destroy(); this.resources[2] = imageBuffer;
-    this.compute = compute; this.physical = null; this.physicalError = null; this.physicalPending = null; this.raster = raster; this.scene.materials = materials;
+    this.compute = compute; this.physical = null; this.physicalError = null; this.physicalPending = null; let physicalModule = null; this.raster = raster; this.scene.materials = materials;
     this.ensurePhysicalPipeline = async () => {
       if (this.physical) return this.physical;
-      if (!this.physicalPending) this.physicalPending = this.device.createComputePipelineAsync({ layout, compute: { module, entryPoint: 'tracePhysical' } }).then(p => { if (generation === this.sceneGeneration && !this.disposed) this.physical = p; return p; }, e => { if (generation === this.sceneGeneration) this.physicalError = e; return null; });
+      if (!this.physicalPending) this.physicalPending = (async () => { physicalModule = physicalModule || await this.module(shaderSource(materials, {}, this.scene.lighting, { ...shaderOptions, physical: true })); return this.device.createComputePipelineAsync({ layout, compute: { module: physicalModule, entryPoint: 'tracePhysical' } }); })().then(p => { if (generation === this.sceneGeneration && !this.disposed) this.physical = p; return p; }, e => { if (generation === this.sceneGeneration) this.physicalError = e; return null; });
       this.physical = await this.physicalPending;
       if (!this.physical) throw this.physicalError || new Error('Physical pipeline compilation failed');
       return this.physical;

@@ -500,6 +500,9 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   for(const preset of ['native-copper','native-glass']) {
     const resources={};const source=shaderSource(syntheticScene(preset).materials,resources);
     assert.equal(resources.requiresPhysical,true);assert.match(source,/surfaceEmission/);
+    const previewSource=shaderSource(syntheticScene(preset).materials,{},undefined,{physical:false});
+    assert.doesNotMatch(previewSource,/tracePhysical/);
+    assert.match(shaderSource(syntheticScene(preset).materials,{},undefined,{physical:true}),/tracePhysical/);
   }
   const doc=syntheticScene('native-glass').materials[1];
   doc.nodes[0].inputs.scatter_mode={nodename:'dynamic_mode'};
