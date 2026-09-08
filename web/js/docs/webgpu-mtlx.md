@@ -42,6 +42,9 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   `chiang_hair_absorption_from_color`, and `chiang_hair_roughness` preserve the
   pinned MaterialX formulas and named roughness outputs. The resulting hair
   transport remains an explicitly bounded approximation.
+- The pinned float `blur` overload follows the MaterialX 1.39.5 standard library
+  implementation, which is currently a documented pass-through for box and
+  gaussian filter types.
 - `blackbody` matches the pinned GLSL Kelvin-to-xy-to-linear-Rec.709
   approximation, defaults to 5000 K, clamps temperature to 800–25000 K, and
   retains HDR RGB values. This is chromaticity with normalized Y, not spectral

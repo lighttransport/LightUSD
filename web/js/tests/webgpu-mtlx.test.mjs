@@ -393,6 +393,13 @@ test('standard MaterialX Burley, Chiang hair, and absorption VDF nodes compile',
   const medium=compileGraph({nodes:[{name:'m',category:'absorption_vdf',type:'VDF',inputs:{absorption:{type:'vector3',value:[.1,.2,.3]}}}]});
   assert.match(medium.body,/Medium\(vec3f\(0\.1,0\.2,0\.3\),vec3f\(0\),0\.0\)/);
 });
+test('pinned blur node preserves the documented stdlib pass-through implementation',()=>{
+  const blur={nodes:[{name:'b',category:'blur',type:'float',inputs:{in:{type:'float',value:.375},size:{type:'float',value:4},filtertype:{type:'string',value:'gaussian'}}}]};
+  const compiled=compileGraph(blur);
+  assert.match(compiled.body,/let n0: f32 = 0\.375/);
+  assert.equal(compiled.expression,'n0');
+  assert.throws(()=>compileGraph({...blur,nodes:[{...blur.nodes[0],inputs:{...blur.nodes[0].inputs,filtertype:{type:'string',value:'triangle'}}}]}),/filtertype/);
+});
 test('displacement refinement preserves bounds, typed indices and material assignment',()=>{
   const scene={positions:new Float32Array([0,0,0,1,0,0,0,1,0]),indices:new Uint32Array([0,1,2]),materials:[{}]};
   const r=refineDisplacementScene(scene,2);assert.equal(r.indices.length,48);assert.equal(r.materialIds.length,16);assert.ok(r.positions.every(v=>v>=0&&v<=1));

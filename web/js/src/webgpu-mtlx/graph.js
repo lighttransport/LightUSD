@@ -438,6 +438,13 @@ export function compileGraph(document, { output, library = {}, material = false,
           code=`select(${mapped},clamp(${mapped},min(${lo},${hi}),max(${lo},${hi})),${x('clampoutput',true,'boolean')})`; break;
         }
         case 'constant': code = same('value'); break;
+        case 'blur': {
+          if (type !== 'float') fail('TYPE', key, 'blur currently supports the pinned float overload only');
+          const filter=ins.filtertype?.value??'box';
+          if (!['box','gaussian'].includes(filter) || ins.filtertype?.nodename || ins.filtertype?.nodegraph || ins.filtertype?.interfacename) fail('UNSUPPORTED',key,'blur filtertype must be a static box or gaussian value');
+          x('size',0,'float');
+          code=x('in',0,'float'); break;
+        }
         case 'add': {
           if(type==='BSDF') {const a=input('in1',undefined,'BSDF'),b=input('in2',undefined,'BSDF');code=`${a.hasInterior||b.hasInterior?'closureAddPreservingInterior':'closureAdd'}(${a.code},${b.code})`;closureCount=(a.closureCount||0)+(b.closureCount||0);hasInterior=a.hasInterior||b.hasInterior;interiorCategories=a.hasInterior?a.interiorCategories:b.interiorCategories;}
           else code = binary('+'); break;
