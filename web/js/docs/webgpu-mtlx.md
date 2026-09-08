@@ -204,6 +204,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   `hsvadjust` now compile with typed ports and bounded alpha/value handling.
   `hsvadjust` follows the MaterialX `amount` vector3 contract and preserves
   color4 alpha; unpremultiplication clamps its divisor before WGSL selection.
+- `saturate` performs the specified luma interpolation with authored
+  coefficients and preserves color4 alpha.
 - `screen` and `difference` compositing nodes compile for scalar, vector, and
   color values using explicit component-wise arithmetic.
 - Boolean `and`, `or`, `xor`, and `not` nodes now compile with strict boolean

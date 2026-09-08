@@ -11,7 +11,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 // Units are semantic annotations; implementations consume their authored
 // convention (for example degrees for rotate2d and nanometers for thin film).
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
-export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'screen', 'difference', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'contrast', 'premult', 'unpremult', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
+export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'min', 'max', 'screen', 'difference', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'saturate', 'contrast', 'premult', 'unpremult', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'surfacematerial', 'surface']);
 for(const category of ['transformmatrix','normalmap','bump3','heighttonormal'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
@@ -357,6 +357,13 @@ export function compileGraph(document, { output, library = {}, material = false,
           const value=input('in',undefined,type), rgb=type==='color4'?`${value.code}.rgb`:value.code;
           const hsv=`mxRgbToHsv(${rgb})`, amount=x('amount',[0,1,1],'vector3');
           const adjusted=`mxHsvToRgb(vec3f(fract(${hsv}.x+${amount}.x),max(0.0,${hsv}.y*${amount}.y),max(0.0,${hsv}.z*${amount}.z)))`;
+          code=type==='color4'?`vec4f(${adjusted},${value.code}.a)`:adjusted; break;
+        }
+        case 'saturate': {
+          if (!['color3','color4'].includes(type)) fail('TYPE', key, 'saturate output must be color3/color4');
+          const value=input('in',undefined,type), rgb=type==='color4'?`${value.code}.rgb`:value.code;
+          const coeff=x('lumacoeffs',[0.2126,0.7152,0.0722],'color3'), amount=x('amount',1,'float');
+          const luma=`dot(${coeff},${rgb})`, adjusted=`mix(vec3f(${luma}),${rgb},${amount})`;
           code=type==='color4'?`vec4f(${adjusted},${value.code}.a)`:adjusted; break;
         }
         case 'contrast': {

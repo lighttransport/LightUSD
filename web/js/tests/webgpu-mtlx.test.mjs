@@ -467,6 +467,8 @@ test('color utility nodes compile with typed alpha and HSV controls', () => {
   const source=compileGraph(doc); assert.match(source.body,/mxRgbToHsv/); assert.match(source.body,/fract/); assert.match(source.body,/1\.1/);
   const color4=compileGraph({nodes:[{name:'hsv',category:'hsvadjust',type:'color4',inputs:{in:{type:'color4',value:[1,0,0,.25]},amount:{type:'vector3',value:[0,1,1]}}}]});
   assert.match(color4.body,/vec4f\(mxHsvToRgb/); assert.match(color4.body,/\.a/);
+  const saturated=compileGraph({nodes:[{name:'s',category:'saturate',type:'color4',inputs:{in:{type:'color4',value:[1,.2,.1,.4]},amount:{type:'float',value:0},lumacoeffs:{type:'color3',value:[.2,.7,.1]}}}]});
+  assert.match(saturated.body,/mix\(vec3f\(dot\(/); assert.match(saturated.body,/\.a/);
   assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[2],type:'color3'}]}),/unpremult output must be color4/);
 });
 test('common trigonometric and angle-unit nodes map to WGSL math', () => {
