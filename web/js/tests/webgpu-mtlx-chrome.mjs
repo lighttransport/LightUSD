@@ -22,7 +22,7 @@ try {
   page = await browser.newPage(); await page.setViewport({ width: 1100, height: 700 });
   page.on('console',msg=>{browserLog.push(msg.text());if(browserLog.length>30)browserLog.shift();});
   const errors = []; page.on('pageerror', e => errors.push(e.message));
-  if (process.argv.includes('--numeric-only') || process.argv.includes('--library-only') || process.argv.includes('--opacity-only') || process.argv.includes('--frames-only') || process.argv.includes('--bump-only')) {
+  if (process.argv.includes('--numeric-only') || process.argv.includes('--library-only') || process.argv.includes('--opacity-only') || process.argv.includes('--frames-only') || process.argv.includes('--bump-only') || process.argv.includes('--transport-only')) {
     // Avoid renderer pipeline compilation: isolate graph/WGSL numeric failures.
     const numericURL = `http://127.0.0.1:${port}/__numeric_validation__.html`;
     await page.setRequestInterception(true);
@@ -50,12 +50,13 @@ try {
       const gpuErrors = [];
       device.addEventListener('uncapturederror', e => gpuErrors.push(e.error.message));
       try {
-        const { validateValueKernels } = await import('/src/webgpu-mtlx/gpu-validation.js');
-        const numeric = libraryOnly?[]:await validateValueKernels(device);
-        const libraryGraphs = libraryOnly?await (await import('/src/webgpu-mtlx/library-validation.js')).validateLibraryGraphs(device):[];
+        const transportOnly = process.argv.includes('--transport-only');
+        const numeric = transportOnly ? [] : (libraryOnly?[]:await (await import('/src/webgpu-mtlx/gpu-validation.js')).validateValueKernels(device));
+        const libraryGraphs = transportOnly ? [] : (libraryOnly?await (await import('/src/webgpu-mtlx/library-validation.js')).validateLibraryGraphs(device):[]);
+        const transport = transportOnly ? await (await import('/src/webgpu-mtlx/transport-validation.js')).validateTransportKernels(device) : null;
         await device.queue.onSubmittedWorkDone();
         if (gpuErrors.length) throw new Error(gpuErrors.join('\n'));
-        return { numeric, libraryGraphs, adapter: { vendor: adapter.info.vendor, architecture: adapter.info.architecture, isFallbackAdapter: adapter.info.isFallbackAdapter } };
+        return { numeric, libraryGraphs, transport, adapter: { vendor: adapter.info.vendor, architecture: adapter.info.architecture, isFallbackAdapter: adapter.info.isFallbackAdapter } };
       } finally { device.destroy(); }
     }, {renderValidation:process.argv.includes('--bump-only')?'bump':process.argv.includes('--frames-only')?'frames':process.argv.includes('--opacity-only')?'opacity':null,libraryOnly:process.argv.includes('--library-only')});
     if (hardware) assert.equal(numericReport.adapter.isFallbackAdapter, false);

@@ -209,13 +209,16 @@ rough refraction, exact Fresnel), `conductor_bsdf` (complex Fresnel), uncompensa
 Native closures use the enclosing authored/geometric normal and its preserved
 tangent frame. Standard Surface/OpenPBR
 remain approximate mappings. BSDF add, mix, and scalar/color weighting preserve
-up to eight lobes with mixture evaluation and sampling PDFs; add/mix reject
+up to sixteen lobes with mixture evaluation and sampling PDFs; bounded closure
+expression nodes retain nested add/mix structure and BSDF-over-BSDF layers use
+directional top-transmission weighting during evaluation. Add/mix reject
 ambiguous combinations that carry two separate interiors. BSDF-over-VDF layer
 attaches an interior after surface composition. Active transmissive lobes must
 agree on interface IOR. Realtime shading still uses a primary-lobe approximation.
-Thin film, sheen, coat, BSDF-over-BSDF layering and multiple-scattering microfacet
-compensation remain missing; direct BSDF-over-BSDF `layer` graphs fail explicitly
-until recursive interface transport is available.
+Thin film, sheen, coat and multiple-scattering microfacet compensation remain
+approximate. Layered closure sampling still uses the bounded lobe mixture and
+does not yet provide full recursive interface continuation or exact layered
+energy compensation.
 
 Attach `document.spectra` curves as sorted `[wavelengthNm,value]` pairs, keyed by
 `base_color`, `transmission_color`, `emission_color`, `ior`, `conductor_ior` or
@@ -738,6 +741,9 @@ degree-valued amount, including a stable fallback for degenerate axes.
 
 The `layered` fixture now compiles and raster-tests an Oren–Nayar top lobe over
 an anisotropic VDF interior, exercising BSDF-over-medium attachment in a scene.
+Nested BSDF-over-BSDF graphs are preserved in a bounded closure expression tree;
+the transport validation shader compiles a two-level Oren-Nayar/sheen/Burley
+layer graph to guard the recursive representation.
 
 The `edf` fixture covers a `uniform_edf` connected to a surface terminal,
 including emission-only material compilation in the realtime target.

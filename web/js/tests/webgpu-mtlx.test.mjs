@@ -482,7 +482,10 @@ test('closure composition preserves lobe bounds and interior ownership',()=>{
   assert.throws(()=>compileGraph(conflicting),/cannot combine two interior-bearing closures/);
   const unsupportedLayer={nodes:[leaf,{name:'other',category:'sheen_bsdf',type:'BSDF'},
     {name:'layer',category:'layer',type:'BSDF',inputs:{top:{nodename:'leaf'},base:{nodename:'other'}}}]};
-  assert.throws(()=>compileGraph(unsupportedLayer),/BSDF-over-BSDF layering requires recursive interface transport/);
+  assert.match(compileGraph(unsupportedLayer).body,/closureLayer/);
+  const nestedLayer={nodes:[...unsupportedLayer.nodes,
+    {name:'outer',category:'layer',type:'BSDF',inputs:{top:{nodename:'layer'},base:{nodename:'leaf'}}}]};
+  assert.match(compileGraph(nestedLayer).body,/closureLayer\(n\d+,n\d+\)/);
   const emptyLayer={nodes:[leaf,{name:'empty',category:'constant',type:'BSDF',inputs:{value:{type:'BSDF',value:''}}},
     {name:'layer',category:'layer',type:'BSDF',inputs:{top:{nodename:'leaf'},base:{nodename:'empty'}}}]};
   assert.match(compileGraph(emptyLayer).body,/nativeDiffuse/);

@@ -1,20 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 // A bounded closure program. The compiler proves the lobe bound before upload.
 export const MAX_CLOSURE_LOBES = 16;
+export const MAX_CLOSURE_NODES = 32;
 export const closureTypesWGSL = /* wgsl */`
-struct Closure { lobes:array<Lobe,16>, scales:array<vec3f,16>, count:u32, interior:Medium, hasInterior:u32 }
+struct ClosureNode { kind:u32, aKind:u32, a:u32, aCount:u32, bKind:u32, b:u32, bCount:u32, mix:f32 }
+struct Closure { lobes:array<Lobe,16>, scales:array<vec3f,16>, count:u32, nodes:array<ClosureNode,32>, nodeCount:u32, rootKind:u32, root:u32, interior:Medium, hasInterior:u32 }
 struct Material { bsdf:Closure, emission:vec3f, opacity:f32, normal:vec3f, tangent:vec3f, bitangent:vec3f, emissionDirection:vec3f, emissionInnerCos:f32, emissionOuterCos:f32, emissionColor0:vec3f, emissionColor90:vec3f, emissionExponent:f32, emissionCone:u32, emissionSchlick:u32, emissionProfile:u32 }
 fn closureImportance(c:Closure,index:u32)->f32 {
   let scale=c.scales[index];let weight=c.lobes[index].weight;
   return max(0.0,max(scale.x,max(scale.y,scale.z))*weight);
 }
-fn emptyClosure()->Closure {var c:Closure;return c;}
-fn closureLeaf(lobe:Lobe)->Closure {var c:Closure;c.lobes[0]=lobe;c.scales[0]=vec3f(1);c.count=1u;return c;}
+fn emptyClosure()->Closure {var c:Closure;c.rootKind=0u;c.root=0u;return c;}
+fn closureLeaf(lobe:Lobe)->Closure {var c:Closure;c.lobes[0]=lobe;c.scales[0]=vec3f(1);c.count=1u;c.rootKind=0u;c.root=0u;return c;}
 fn closureScale(input:Closure,scale:vec3f)->Closure {var c=input;for(var i=0u;i<c.count;i++){c.scales[i]*=scale;}return c;}
-fn closureAdd(a:Closure,b:Closure)->Closure {var c=a;for(var i=0u;i<b.count;i++){c.lobes[c.count]=b.lobes[i];c.scales[c.count]=b.scales[i];c.count++;}return c;}
+fn closureCopyNodes(src:Closure,offset:u32,lobeOffset:u32,layerOffset:u32,dst:ptr<function,Closure>){for(var i=0u;i<src.nodeCount;i++){var n=src.nodes[i];if(n.aKind==0u){n.a+=lobeOffset;}else{n.a+=layerOffset;}if(n.bKind==0u){n.b+=lobeOffset;}else{n.b+=layerOffset;}(*dst).nodes[offset+i]=n;}}
+fn closureRootKind(c:Closure)->u32 {return c.rootKind;}
+fn closureRootIndex(c:Closure)->u32 {return c.root;}
+fn closureRootCount(c:Closure)->u32 {return select(c.count,0u,c.rootKind!=0u);}
+fn closureCombine(a:Closure,b:Closure,kind:u32,mix:f32)->Closure {var c=a;let nodeOffset=c.nodeCount;let lobeOffset=c.count;for(var i=0u;i<b.count;i++){c.lobes[c.count+i]=b.lobes[i];c.scales[c.count+i]=b.scales[i];}c.count+=b.count;closureCopyNodes(b,nodeOffset,lobeOffset,nodeOffset,&c);c.nodeCount+=b.nodeCount;let node=c.nodeCount;c.nodes[node]=ClosureNode(kind,a.rootKind,a.root,closureRootCount(a),b.rootKind,b.root+b.rootKind*nodeOffset,closureRootCount(b),mix);if(b.rootKind==0u){c.nodes[node].b=b.root+lobeOffset;}c.nodeCount++;c.rootKind=1u;c.root=node;return c;}
+fn closureAdd(a:Closure,b:Closure)->Closure {return closureCombine(a,b,1u,0.0);}
 fn closureAddPreservingInterior(a:Closure,b:Closure)->Closure {var c=closureAdd(a,b);if(a.hasInterior!=0u){c.interior=a.interior;c.hasInterior=1u;}else if(b.hasInterior!=0u){c.interior=b.interior;c.hasInterior=1u;}return c;}
-fn closureMix(bg:Closure,fg:Closure,weight:f32)->Closure {return closureAdd(closureScale(bg,vec3f(1.0-weight)),closureScale(fg,vec3f(weight)));}
-fn closureMixPreservingInterior(bg:Closure,fg:Closure,weight:f32)->Closure {return closureAddPreservingInterior(closureScale(bg,vec3f(1.0-weight)),closureScale(fg,vec3f(weight)));}
+fn closureMix(bg:Closure,fg:Closure,weight:f32)->Closure {return closureCombine(closureScale(bg,vec3f(1.0-weight)),closureScale(fg,vec3f(weight)),2u,clamp(weight,0.0,1.0));}
+fn closureMixPreservingInterior(bg:Closure,fg:Closure,weight:f32)->Closure {let b=closureScale(bg,vec3f(1.0-weight));let f=closureScale(fg,vec3f(weight));var c=closureCombine(b,f,2u,clamp(weight,0.0,1.0));if(bg.hasInterior!=0u){c.interior=bg.interior;c.hasInterior=1u;}else if(fg.hasInterior!=0u){c.interior=fg.interior;c.hasInterior=1u;}return c;}
+fn closureLayer(top:Closure,base:Closure)->Closure {var c=closureCombine(top,base,3u,0.0);if(top.hasInterior!=0u){c.interior=top.interior;c.hasInterior=1u;}else if(base.hasInterior!=0u){c.interior=base.interior;c.hasInterior=1u;}return c;}
 fn closureInterior(top:Closure,base:Medium)->Closure {var c=top;c.interior=base;c.hasInterior=1u;return c;}
 fn surfaceEmission(bsdf:Closure,edf:vec3f,opacity:f32,thinWalled:u32,normal:vec3f,tangent:vec3f,bitangent:vec3f,emissionDirection:vec3f,emissionInnerCos:f32,emissionOuterCos:f32,emissionColor0:vec3f,emissionColor90:vec3f,emissionExponent:f32,emissionCone:u32,emissionSchlick:u32,emissionProfile:u32)->Material {var c=bsdf;for(var i=0u;i<c.count;i++){c.lobes[i].thinWalled=thinWalled;}return Material(c,edf,opacity,normal,tangent,bitangent,emissionDirection,emissionInnerCos,emissionOuterCos,emissionColor0,emissionColor90,emissionExponent,emissionCone,emissionSchlick,emissionProfile);}
 fn materialFromLobe(lobe:Lobe,opacity:f32,normal:vec3f)->Material {return Material(closureLeaf(lobe),lobe.emission*lobe.emissionWeight,opacity,normal,vec3f(0),vec3f(0),normal,-1.0,-1.0,vec3f(1),vec3f(1),5.0,0u,0u,0u);}
@@ -30,11 +38,17 @@ fn primaryLobe(surface:Material)->Lobe {
 
 export const closureTransportWGSL = /* wgsl */`
 fn closureTotal(c:Closure)->f32 {var total=0.0;for(var i=0u;i<c.count;i++){total+=closureImportance(c,i);}return total;}
+fn closureRangeEval(c:Closure,start:u32,count:u32,wo:vec3f,wi:vec3f,eta:f32,wavelength:f32)->vec4f {var f=vec3f(0);var pdf=0.0;let end=min(c.count,start+count);for(var i=start;i<end;i++){let l=transportEval(c.lobes[i],wo,wi,eta,wavelength);f+=c.scales[i]*l.xyz;pdf+=closureImportance(c,i)/max(1e-30,closureTotal(c))*l.w;}return vec4f(f,pdf);}
+fn closureRangeTransmission(c:Closure,start:u32,count:u32,wo:vec3f,eta:f32,wavelength:f32)->vec3f {var t=vec3f(0);let end=min(c.count,start+count);for(var i=start;i<end;i++){let m=c.lobes[i];var q=vec3f(0);if(m.kind==7u){q=vec3f(1);}else if(m.kind==0u){q=(1.0-m.metal)*m.transmission*m.transmissionColor*transmissionAttenuation(m)*(1.0-dielectricFresnel(wo.z,m.ior));}else if(m.kind==1u&&m.scatterMode!=1u){q=m.transmissionColor*transmissionAttenuation(m)*(1.0-dielectricFresnel(wo.z,m.ior));}t+=c.scales[i]*q;}return clamp(t,vec3f(0),vec3f(1));}
 fn closureEval(c:Closure,wo:vec3f,wi:vec3f,eta:f32,wavelength:f32)->vec4f {
-  let total=closureTotal(c);var f=vec3f(0);var pdf=0.0;
-  if(total<=0.0){return vec4f(0);}
-  for(var i=0u;i<c.count;i++) {let l=transportEval(c.lobes[i],wo,wi,eta,wavelength);f+=c.scales[i]*l.xyz;pdf+=closureImportance(c,i)/total*l.w;}
-  return vec4f(f,pdf);
+  var values:array<vec4f,32>;var transmission:array<vec3f,32>;
+  for(var i=0u;i<c.nodeCount;i++) {let n=c.nodes[i];var a=vec4f(0);var b=vec4f(0);var at=vec3f(0);var bt=vec3f(0);
+    if(n.aKind==0u){a=closureRangeEval(c,n.a,n.aCount,wo,wi,eta,wavelength);at=closureRangeTransmission(c,n.a,n.aCount,wo,eta,wavelength);}else{a=values[n.a];at=transmission[n.a];}
+    if(n.bKind==0u){b=closureRangeEval(c,n.b,n.bCount,wo,wi,eta,wavelength);bt=closureRangeTransmission(c,n.b,n.bCount,wo,eta,wavelength);}else{b=values[n.b];bt=transmission[n.b];}
+    if(n.kind==3u){let pass=select(vec3f(0),at,wi.z>0.0);values[i]=vec4f(a.xyz+b.xyz*pass,a.w+b.w);transmission[i]=clamp(at*bt,vec3f(0),vec3f(1));}
+    else{values[i]=a+b;transmission[i]=clamp(at+bt,vec3f(0),vec3f(1));}
+  }
+  if(c.rootKind==0u){return closureRangeEval(c,c.root,c.count,wo,wi,eta,wavelength);}return values[c.root];
 }
 fn closureSample(c:Closure,wo:vec3f,eta:f32,rng:ptr<function,u32>,wavelength:f32)->Scatter {
   let total=closureTotal(c);if(total<=0.0){return Scatter(vec3f(0),0,vec3f(0),0u,1);}
@@ -47,7 +61,7 @@ fn closureSample(c:Closure,wo:vec3f,eta:f32,rng:ptr<function,u32>,wavelength:f32
   let f=closureEval(c,wo,s.wi,eta,wavelength);s.pdf=f.w;s.weight=f.xyz*abs(s.wi.z)/max(1e-30,f.w);return s;
 }
 fn validClosure(c:Closure)->bool {
-  if(c.count>16u){return false;}
+  if(c.count>16u||c.nodeCount>32u){return false;}
   var interfaceIOR=0.0;
   for(var i=0u;i<c.count;i++){
     let l=c.lobes[i];

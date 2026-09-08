@@ -26,7 +26,15 @@ export async function validateTransportKernels(device) {
     ['secondary invalid lobe', 'select(0.0,1.0,validClosure(closureAdd(closureLeaf(nativeDiffuse(vec3f(1),1,0)),closureLeaf(nativeDiffuse(vec3f(-1),1,0)))))',0],
   ];
   const count = analytic.length + 4;
-  const module = device.createShaderModule({ code: shaderSource([surfaceDocument()]) + `
+  const nestedLayer = { nodes: [
+    { name: 'top', category: 'oren_nayar_diffuse_bsdf', type: 'BSDF', inputs: { color: { type: 'color3', value: [.8, .2, .1] } } },
+    { name: 'base', category: 'sheen_bsdf', type: 'BSDF', inputs: { color: { type: 'color3', value: [.1, .3, .8] } } },
+    { name: 'inner', category: 'layer', type: 'BSDF', inputs: { top: { nodename: 'top' }, base: { nodename: 'base' } } },
+    { name: 'outerBase', category: 'burley_diffuse_bsdf', type: 'BSDF', inputs: { color: { type: 'color3', value: [.2, .2, .2] } } },
+    { name: 'outer', category: 'layer', type: 'BSDF', inputs: { top: { nodename: 'inner' }, base: { nodename: 'outerBase' } } },
+    { name: 'surface', category: 'surface', type: 'surfaceshader', inputs: { bsdf: { nodename: 'outer' } } },
+  ] };
+  const module = device.createShaderModule({ code: shaderSource([surfaceDocument(), nestedLayer]) + `
     @group(0) @binding(9) var<storage,read_write> checks: array<vec4f>;
     @compute @workgroup_size(1) fn validateTransport() {
       ${analytic.map(([,expr], i) => `checks[${i}]=vec4f(${expr},0,0,0);`).join('\n')}
