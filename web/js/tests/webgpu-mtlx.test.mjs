@@ -617,6 +617,12 @@ test('fractal noise emits bounded fBm helpers with authored controls', () => {
   const source3=compileGraph({nodes:[{name:'f',category:'fractal3d',type:'float',inputs:{texcoord:{type:'vector3',value:[0,0,0]}}}]});
   assert.match(source3.body,/mxFractal3/); assert.match(contextWGSL,/for\(var i=0i;i<8i/);
 });
+test('Worley noise nodes provide bounded distance and hash channels', () => {
+  const a=compileGraph({nodes:[{name:'w',category:'worleynoise2d',type:'vector3',inputs:{texcoord:{type:'vector2',value:[.1,.2]},jitter:{type:'float',value:.8},style:{type:'integer',value:0}}}]});
+  assert.match(a.body,/mxWorley2\(vec2f\(0\.1,0\.2\),0\.8,0i\)/); assert.match(contextWGSL,/for\(var y=-1i/);
+  const b=compileGraph({nodes:[{name:'w',category:'worleynoise3d',type:'float',inputs:{position:{type:'vector3',value:[0,0,0]}}}]});
+  assert.match(b.body,/mxWorley3/); assert.throws(()=>compileGraph({nodes:[{name:'w',category:'worleynoise2d',type:'color3',inputs:{}}]}),/supports float/);
+});
 test('cell-noise nodes hash integer cells without interpolation', () => {
   const doc={nodes:[
     {name:'uv',category:'texcoord',type:'vector2',inputs:{}},

@@ -13,7 +13,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
 export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'saturate', 'contrast', 'premult', 'unpremult', 'ramp4', 'triplanarprojection', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'UsdPreviewSurface', 'surfacematerial', 'surface']);
-for(const category of ['transformmatrix','normalmap','bump3','heighttonormal','rotate3d','reorder','fractal2d','fractal3d','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d'])valueCategories.add(category);
+for(const category of ['transformmatrix','normalmap','bump3','heighttonormal','rotate3d','reorder','fractal2d','fractal3d','worleynoise2d','worleynoise3d','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
 export function literal(type, value, path = '') {
   if(value===''&&type==='BSDF')return 'emptyClosure()';
@@ -390,6 +390,12 @@ export function compileGraph(document, { output, library = {}, material = false,
           const sample=n.category==='fractal2d'?`mxFractal2(${coordinate},${octaves},${lacunarity},${diminish})`:`mxFractal3(${coordinate},${octaves},${lacunarity},${diminish})`;
           code=`(${sample}*${ampCode})`; break;
         }
+        case 'worleynoise2d': case 'worleynoise3d': {
+          if (!['float','vector2','vector3'].includes(type)) fail('TYPE', key, `${n.category} supports float/vector2/vector3 outputs`);
+          const is2=n.category==='worleynoise2d', coordinate=x(is2?'texcoord':'position',is2?[0,0]:[0,0,0],is2?'vector2':'vector3'), jitter=x('jitter',1,'float'), style=x('style',0,'integer');
+          const value=is2?`mxWorley2(${coordinate},${jitter},${style})`:`mxWorley3(${coordinate},${jitter},${style})`;
+          code=type==='float'?`${value}.x`:type==='vector2'?`${value}.xy`:value; break;
+        }
         case 'cellnoise2d': code=`mxHash2(floor(${x('in',undefined,'vector2')}))`; break;
         case 'cellnoise3d': code=`mxHash3(floor(${x('in',undefined,'vector3')}))`; break;
         case 'dot': result = input('in',undefined,type); break;
@@ -705,6 +711,24 @@ fn mxFractal3(p:vec3f,octaves:i32,lacunarity:f32,diminish:f32)->f32 {
   var sum=0.0; var amplitude=1.0; var point=p;
   for(var i=0i;i<8i;i=i+1i){if(i<octaves){sum+=mxNoise3(point)*amplitude;point*=lacunarity;amplitude*=diminish;}}
   return sum;
+}
+fn mxWorley2(p:vec2f,jitter:f32,style:i32)->vec3f {
+  let cell=floor(p); var best=1e6; var id=0.0;
+  for(var y=-1i;y<=1i;y=y+1i){for(var x=-1i;x<=1i;x=x+1i){
+    let c=cell+vec2f(f32(x),f32(y)); let h=vec2f(mxHash2(c+vec2f(17.0,31.0)),mxHash2(c+vec2f(47.0,73.0)));
+    let d=length(p-(c+(h-0.5)*clamp(jitter,0.0,1.0))); if(d<best){best=d;id=mxHash2(c+vec2f(101.0,19.0));}
+  }}
+  let distanceValue=clamp(best,0.0,1.0); let solid=step(0.5,distanceValue);
+  return vec3f(select(distanceValue,solid,style==1i),fract(id),fract(id*7.13));
+}
+fn mxWorley3(p:vec3f,jitter:f32,style:i32)->vec3f {
+  let cell=floor(p); var best=1e6; var id=0.0;
+  for(var z=-1i;z<=1i;z=z+1i){for(var y=-1i;y<=1i;y=y+1i){for(var x=-1i;x<=1i;x=x+1i){
+    let c=cell+vec3f(f32(x),f32(y),f32(z)); let h=vec3f(mxHash3(c+vec3f(17.0,31.0,47.0)),mxHash3(c+vec3f(73.0,101.0,19.0)),mxHash3(c+vec3f(43.0,59.0,83.0)));
+    let d=length(p-(c+(h-0.5)*clamp(jitter,0.0,1.0))); if(d<best){best=d;id=mxHash3(c+vec3f(107.0,127.0,149.0));}
+  }}}
+  let distanceValue=clamp(best,0.0,1.0); let solid=step(0.5,distanceValue);
+  return vec3f(select(distanceValue,solid,style==1i),fract(id),fract(id*7.13));
 }
 fn safeNormal(v:vec3f,fallback:vec3f)->vec3f {
   let l2=dot(v,v); let valid=l2>1e-20 && all(v==v);
