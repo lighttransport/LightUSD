@@ -487,6 +487,15 @@ test('image packing can bounded-box downsample before GPU mip allocation', () =>
   assert.equal(packed.data[0], 1); assert.equal(packed.data[3], 1);
   assert.throws(() => packImages([{ width: 4, height: 2, data }], { maxDimension: 2, maxBytes: 15 }), /budget/);
 });
+test('image packing preserves bounded decoded frame sequences', () => {
+  const frame = value => ({ width: 1, height: 1, colorspace: 'raw', data: [value, 0, 0, 1] });
+  const packed = packImages([{ frames: [frame(.2), frame(.8)] }]);
+  assert.equal(packed.descriptors.length, 1);
+  assert.equal(packed.descriptors[0].frames.length, 2);
+  assert.deepEqual(packed.descriptors[0].frames.map(f => f.offset), [0, 1]);
+  assert.ok(Math.abs(packed.data[0] - .2) < 1e-6 && Math.abs(packed.data[4] - .8) < 1e-6);
+  assert.throws(() => packImages([{ frames: [frame(.2), { ...frame(.8), width: 2, data: [0,0,0,1,0,0,0,1] }] }]), /matching dimensions/);
+});
 test('image budgets, finite float32, dimensions and color interpretation are validated', () => {
   const image = { width: 1, height: 1, data: [0,0,0,1] };
   assert.throws(() => packImages([image], { maxBytes: 15 }), /budget/);
@@ -512,6 +521,15 @@ test('image sequence controls do not silently fall back to frame zero', () => {
   document.nodes[0].inputs.frameoffset = { type: 'integer', value: 0 };
   document.nodes[0].inputs.frameendaction = { type: 'string', value: 'periodic' };
   assert.throws(() => compileGraph(document, { imageDescriptors: { albedo: { offset: 0, width: 1, height: 1, levels: 1 } } }), /frameendaction/);
+  document.nodes[0].inputs.frameoffset = { type: 'float', value: 1 };
+  document.nodes[0].inputs.framerange = { type: 'vector2', value: [10, 11] };
+  document.nodes[0].inputs.frameendaction = { type: 'string', value: 'cycle' };
+  const sequence = compileGraph(document, { imageDescriptors: { albedo: { offset: 0, width: 1, height: 1, levels: 1, frames: [
+    { offset: 0, width: 1, height: 1, levels: 1 }, { offset: 1, width: 1, height: 1, levels: 1 }
+  ] } } });
+  assert.match(sequence.body, /imageSequenceIndex\(ctx\.frame,vec2f\(10\.0,11\.0\)\.x,vec2f\(10\.0,11\.0\)\.y,1\.0,2u,1u\)/);
+  assert.match(sequence.body, /select\(imageSample\(0u/);
+  assert.match(sequence.body, /imageSample\(1u/);
 });
 test('gltf_image preserves authored UV transforms and factor modulation', () => {
   const descriptor = { tex: { offset: 0, width: 2, height: 2, levels: 1, colorspace: 'raw' } };

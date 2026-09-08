@@ -24,8 +24,8 @@ function resizeBox(image, maxDimension) {
 
 export function packImages(images, { maxBytes = 64 * 1024 * 1024, maxDimension } = {}) {
   const chunks = [], descriptors = []; let texels = 0;
-  for (let image of images) {
-    image = resizeBox(image, maxDimension);
+  const packOne = source => {
+    const image = resizeBox(source, maxDimension);
     const { width, height, data } = image;
     const colorspace = normalizeColorSpace(image.colorspace || 'lin_rec709');
     if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width > 16384 || height > 16384) throw new Error('Invalid image dimensions');
@@ -50,7 +50,6 @@ export function packImages(images, { maxBytes = 64 * 1024 * 1024, maxDimension }
     const descriptor = { offset: texels, width, height, levels: 0,
       ...(image.resizedFrom ? { resizedFrom: image.resizedFrom } : {}),
       ...(image.udim ? { udim: { ...image.udim } } : {}) };
-    descriptors.push(descriptor);
     w = width; h = height;
     while (true) {
       chunks.push(pixels); texels += w * h; descriptor.levels++;
@@ -66,6 +65,15 @@ export function packImages(images, { maxBytes = 64 * 1024 * 1024, maxDimension }
       }
       pixels = next; w = nw; h = nh;
     }
+    return descriptor;
+  };
+  for (const image of images) {
+    if (!Array.isArray(image?.frames)) { descriptors.push(packOne(image)); continue; }
+    if (!image.frames.length || image.frames.length > 1024) throw new Error('Image sequence must contain 1..1024 frames');
+    const frames = image.frames.map(frame => packOne({ ...frame, colorspace: frame.colorspace ?? image.colorspace }));
+    const first = frames[0];
+    if (frames.some(frame => frame.width !== first.width || frame.height !== first.height || frame.levels !== first.levels)) throw new Error('Image sequence frames must have matching dimensions');
+    descriptors.push({ ...first, frames });
   }
   const data = new Float32Array(Math.max(4, texels * 4)); let offset = 0;
   for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.length; }
@@ -124,6 +132,12 @@ fn imageSampleCubicUDIM(offset:u32,size:vec2u,levels:u32,uv:vec2f,grid:vec2u,lod
   let tile=clamp(floor(uv),vec2f(0.0),vec2f(grid)-vec2f(1.0));
   let local=clamp(fract(uv),vec2f(0.5)/vec2f(size/grid),vec2f(1.0)-vec2f(0.5)/vec2f(size/grid));
   return imageSampleCubic(offset,size,levels,(tile+local)/vec2f(grid),lod,vec2u(1u),fallback);
+}
+fn imageSequenceIndex(frame:f32,start:f32,end:f32,offset:f32,count:u32,action:u32)->u32 {
+  let raw=floor(frame+offset-start);let n=max(1u,count);
+  if(action==1u){let i=i32(raw);let m=i32(n);return u32((i%m+m)%m);}
+  if(action==2u&&n>1u){let period=2u*n-2u;let i=u32((i32(raw)%i32(period)+i32(period))%i32(period));return select(i,period-i,i>=n);}
+  return u32(clamp(raw,0.0,f32(n-1u)));
 }
 fn mxHextileHash(p:vec2f)->vec2f {
   var p3=fract(vec3f(p.x,p.y,p.x)*vec3f(0.1031,0.1030,0.0973));

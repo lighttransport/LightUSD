@@ -355,8 +355,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           if (gltfTexture) allowedInputs.push('factor', 'pivot', 'scale', 'rotate', 'offset', 'operationorder');
           if (usdTexture) allowedInputs.push('st', 'fallback', 'scale', 'bias', 'sourceColorSpace', 'wrapS', 'wrapT');
           for (const name of Object.keys(ins)) if (!allowedInputs.includes(name)) fail('UNSUPPORTED', key, `unsupported image input ${name}`);
-          for (const name of ['layer', 'framerange', 'frameoffset']) if (ins[name] && (ins[name].nodename || ins[name].nodegraph || ins[name].interfacename || !['', '0', 0].includes(ins[name].value))) fail('UNSUPPORTED', key, `image ${name} is not implemented`);
-          if (ins.frameendaction && (ins.frameendaction.nodename || ins.frameendaction.nodegraph || ins.frameendaction.interfacename || ins.frameendaction.value !== undefined && ins.frameendaction.value !== 'constant')) fail('UNSUPPORTED', key, 'image frameendaction is not implemented');
+          if (ins.layer && (ins.layer.nodename || ins.layer.nodegraph || ins.layer.interfacename || !['', '0', 0].includes(ins.layer.value))) fail('UNSUPPORTED', key, 'image layers are not implemented');
           let realScale='vec2f(1.0)';
           if (ins.realworldimagesize || ins.realworldtilesize) {
             const imageSize=ins.realworldimagesize, tileSize=ins.realworldtilesize;
@@ -373,6 +372,12 @@ export function compileGraph(document, { output, library = {}, material = false,
           if (!file) { code = fallback; break; }
           const descriptor = Object.hasOwn(imageDescriptors, file) && imageDescriptors[file];
           if (!descriptor) fail('RESOURCE', key, `missing decoded image ${file}`);
+          const frames=descriptor.frames;
+          if (!frames && (ins.framerange || ins.frameoffset || ins.frameendaction)) {
+            for (const name of ['framerange','frameoffset']) if (ins[name] && (ins[name].nodename || ins[name].nodegraph || ins[name].interfacename || !['', '0', 0].includes(ins[name].value))) fail('UNSUPPORTED', key, `image ${name} requires decoded sequence frames`);
+            if (ins.frameendaction && (ins.frameendaction.nodename || ins.frameendaction.nodegraph || ins.frameendaction.interfacename || ins.frameendaction.value !== undefined && ins.frameendaction.value !== 'constant')) fail('UNSUPPORTED', key, 'image frameendaction requires decoded sequence frames');
+          }
+          if (frames && frames.length > 0 && ins.frameendaction && (ins.frameendaction.nodename || ins.frameendaction.nodegraph || ins.frameendaction.interfacename || !['constant','cycle','mirror'].includes(ins.frameendaction.value ?? 'constant'))) fail('UNSUPPORTED', key, 'image frameendaction must be constant, cycle, or mirror');
           if (n.colorspace && normalizeColorSpace(n.colorspace) !== normalizeColorSpace(descriptor.colorspace)) fail('SEMANTICS', key, 'image colorspace differs from decoded resource');
           if (usdTexture && ins.sourceColorSpace) {
             if (ins.sourceColorSpace.nodename || ins.sourceColorSpace.nodegraph || ins.sourceColorSpace.interfacename) fail('UNSUPPORTED', key, 'connected sourceColorSpace is not supported');
@@ -400,9 +405,17 @@ export function compileGraph(document, { output, library = {}, material = false,
           const udim = descriptor.udim;
           if (udim && (!Number.isInteger(udim.columns) || !Number.isInteger(udim.rows) || udim.columns < 1 || udim.rows < 1)) fail('RESOURCE', key, 'invalid UDIM atlas descriptor');
           const grid = udim && `vec2u(${udim.columns}u,${udim.rows}u)`;
-          const sample = filter === 'cubic'
-            ? (udim ? `imageSampleCubicUDIM(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${grid},${lod},${fill})` : `imageSampleCubic(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${fill})`)
-            : (udim ? `imageSampleUDIM(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${grid},${lod},${filter === 'linear'},${fill})` : `imageSample(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${filter === 'linear'},${fill})`);
+          const sampleFor = d => filter === 'cubic'
+            ? (udim ? `imageSampleCubicUDIM(${d.offset}u,vec2u(${d.width}u,${d.height}u),${d.levels}u,${uv},${grid},${lod},${fill})` : `imageSampleCubic(${d.offset}u,vec2u(${d.width}u,${d.height}u),${d.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${fill})`)
+            : (udim ? `imageSampleUDIM(${d.offset}u,vec2u(${d.width}u,${d.height}u),${d.levels}u,${uv},${grid},${lod},${filter === 'linear'},${fill})` : `imageSample(${d.offset}u,vec2u(${d.width}u,${d.height}u),${d.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${filter === 'linear'},${fill})`);
+          let sample=sampleFor(descriptor);
+          if(frames){
+            const range=ins.framerange ? x('framerange',[0,frames.length-1],'vector2') : `vec2f(0.0,${frames.length-1}.0)`;
+            const frameOffset=ins.frameoffset ? x('frameoffset',0,'float') : '0.0';
+            const action=['constant','cycle','mirror'].indexOf(ins.frameendaction?.value ?? 'constant');
+            const frameIndex=`imageSequenceIndex(ctx.frame,${range}.x,${range}.y,${frameOffset},${frames.length}u,${action}u)`;
+            sample=frames.map((frame,index)=>`${sampleFor(frame)}`).reduce((value,frame,index)=>index?`select(${value},${frame},${frameIndex}==${index}u)`:frame);
+          }
           if (usdTexture) {
             const scale = x('scale', [1, 1, 1, 1], 'color4'), bias = x('bias', [0, 0, 0, 0], 'color4');
             code = `((${sample}*${scale}+${bias})).${swizzle}`;

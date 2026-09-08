@@ -245,8 +245,10 @@ complete authored ShaderBall material support.
 `setOptions({time, frame})` supplies animation values to raster, preview, and
 physical shading contexts. Changing either value resets accumulated path
 samples so animated graph evaluation cannot reuse samples from another time.
-Image sequence resource selection remains separate work because decoded frame
-storage and filename expansion are not yet implemented.
+Caller-provided decoded image resources may now use `frames: [...]`; image
+nodes select those frames from `frame`, `framerange`, and `frameoffset`, with
+bounded `constant`, `cycle`, and `mirror` end actions. URL filename expansion
+and automatic sequence frame fetching remain separate work.
 
 ## Verification
 
