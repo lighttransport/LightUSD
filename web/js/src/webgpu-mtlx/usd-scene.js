@@ -39,23 +39,22 @@ export function materialUVIndex(document) {
 }
 /** Return one static non-standard geometry property used by a graph. */
 export function materialGeompropName(document) {
-  const names = new Set();
   const standard = new Set(['st','uv','uv0','texcoord','texcoord0','p','position','n','normal','t','tangent','b','bitangent','color','displaycolor','opacity','displayopacity']);
-  for (const node of document?.nodes || []) {
-    if (!['UsdPrimvarReader','geompropvalue','geompropvalueuniform'].includes(node.category)) continue;
+  const names = [...new Set((document?.nodes || []).flatMap(node => {
+    if (!['UsdPrimvarReader','geompropvalue','geompropvalueuniform'].includes(node.category)) return [];
     const raw = node.category === 'UsdPrimvarReader' ? node.inputs?.varname?.value : node.inputs?.geomprop?.value;
-    if (typeof raw !== 'string') continue;
+    if (typeof raw !== 'string') return [];
     const name = raw.toLowerCase().replace(/[_-]/g, '');
-    if (!standard.has(name) && !/^(?:uv|uvset)[0-9]+$/.test(name)) names.add(raw);
-  }
-  if (names.size > 1) throw new Error(`Material graph uses multiple custom geometry properties: ${[...names].join(', ')}`);
-  return names.values().next().value || '';
+    return standard.has(name) || /^(?:uv|uvset)[0-9]+$/.test(name) ? [] : [raw];
+  }))];
+  if (names.length > 1) throw new Error(`Material graph uses multiple custom geometry properties: ${names.join(', ')}`);
+  return names[0] || '';
 }
 function decodeCustomPrimvar(item, vertexCount) {
   if (!item?.value || item.error) return null;
   const type = String(item.value.type || item.type || '').replace(/\[\]$/, '').toLowerCase();
   const components = type === 'float' ? 1 : ['float2','half2'].includes(type) ? 2 : ['float3','half3','color3f','normal3f','point3f','vector3f'].includes(type) ? 3 : 0;
-  if (!components || !['constant','vertex'].includes(item.interpolation)) return null;
+  if (!components || !['constant','vertex','varying'].includes(item.interpolation)) return null;
   const raw = item.value.value;
   const values = Array.isArray(raw) ? raw : [raw];
   const one = value => {
@@ -146,6 +145,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
     const shadingGraphJSON = layer.getShadingGraphJSON();
     if (!shadingGraphJSON) throw new Error(layer.error());
     const shadingGraph = JSON.parse(shadingGraphJSON);
+    if (!layer.layerToRenderScene()) throw new Error(layer.error());
     const primvarSnapshots = {};
     const collectPrimvars = node => {
       if (node.nodeType?.toLowerCase() === 'mesh' && layer.getMeshPrimvarsJSON) {
@@ -188,7 +188,6 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
         catch (error) { translationDiagnostics.push({ path, phase: 'compile', error: String(error.message || error) }); }
       }
     }
-    if (!layer.layerToRenderScene()) throw new Error(layer.error());
     // Native material serialization is reduced, NOT an authored graph export.
     // Preserve this diagnostic snapshot without substituting it for source graphs.
     const authored = { materialSerializationIsLossy: true, shadingGraph, translatedMaterials, compiledMaterials, translationDiagnostics, textureDiagnostics, textureSources: resolver.textures.snapshot(), primvarSnapshots, materials: [], lights: [], bindings: [] };

@@ -616,6 +616,10 @@ test('custom geometry properties select one bounded authored channel', () => {
   const document = { nodes: [{ name: 'temperature', category: 'geompropvalue', type: 'float', inputs: { geomprop: { type: 'string', value: 'temperature' }, default: { type: 'float', value: .25 } } }], output: { nodename: 'temperature' } };
   assert.equal(materialGeompropName(document), 'temperature');
   assert.match(compileGraph(document, { geompropName: 'temperature' }).body, /ctx\.geomprop/);
+  assert.throws(() => materialGeompropName({ nodes: [
+    { category: 'geompropvalue', type: 'float', inputs: { geomprop: { type: 'string', value: 'temperatureA' } } },
+    { category: 'geompropvalue', type: 'float', inputs: { geomprop: { type: 'string', value: 'temperatureB' } } }
+  ] }), /multiple custom geometry properties/);
 });
 test('standard geometry aliases preserve facing ratio and uniform property semantics', () => {
   const facing=compileGraph({nodes:[{name:'f',category:'facingratio',type:'float',inputs:{viewdirection:{type:'vector3',value:[0,0,1]},normal:{type:'vector3',value:[0,0,1]},faceforward:{type:'boolean',value:true},invert:{type:'boolean',value:true}}}]});
