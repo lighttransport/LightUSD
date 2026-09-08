@@ -13,7 +13,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
 export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'saturate', 'contrast', 'premult', 'unpremult', 'ramp4', 'triplanarprojection', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'UsdPreviewSurface', 'surfacematerial', 'surface']);
-for(const category of ['transformmatrix','normalmap','bump3','heighttonormal','rotate3d','reorder','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d'])valueCategories.add(category);
+for(const category of ['transformmatrix','normalmap','bump3','heighttonormal','rotate3d','reorder','fractal2d','fractal3d','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
 export function literal(type, value, path = '') {
   if(value===''&&type==='BSDF')return 'emptyClosure()';
@@ -384,6 +384,12 @@ export function compileGraph(document, { output, library = {}, material = false,
           const sample = n.category === 'noise2d' ? `mxNoise2(${coordinate}*${scale})` : `mxNoise3(${coordinate}*${scale})`;
           code = `((${sample}-0.5)*${amplitude}+${pivot})`; break;
         }
+        case 'fractal2d': case 'fractal3d': {
+          const dimension=n.category==='fractal2d'?'vector2':'vector3', coordinate=x('texcoord',dimension==='vector2'?[0,0]:[0,0,0],dimension), octaves=x('octaves',3,'integer'), lacunarity=x('lacunarity',2,'float'), diminish=x('diminish',.5,'float');
+          const amp=input('amplitude',widths[type]===1?1:Array(widths[type]).fill(1),type), ampCode=amp.type==='float'&&widths[type]>1?`${types[type]}(${amp.code})`:amp.code;
+          const sample=n.category==='fractal2d'?`mxFractal2(${coordinate},${octaves},${lacunarity},${diminish})`:`mxFractal3(${coordinate},${octaves},${lacunarity},${diminish})`;
+          code=`(${sample}*${ampCode})`; break;
+        }
         case 'cellnoise2d': code=`mxHash2(floor(${x('in',undefined,'vector2')}))`; break;
         case 'cellnoise3d': code=`mxHash3(floor(${x('in',undefined,'vector3')}))`; break;
         case 'dot': result = input('in',undefined,type); break;
@@ -689,6 +695,16 @@ fn mxNoise3(p:vec3f)->f32 {
   let c001=mxHash3(i+vec3f(0,0,1)); let c101=mxHash3(i+vec3f(1,0,1)); let c011=mxHash3(i+vec3f(0,1,1)); let c111=mxHash3(i+vec3f(1,1,1));
   let x0=mix(mix(c000,c100,u.x),mix(c010,c110,u.x),u.y); let x1=mix(mix(c001,c101,u.x),mix(c011,c111,u.x),u.y);
   return mix(x0,x1,u.z);
+}
+fn mxFractal2(p:vec2f,octaves:i32,lacunarity:f32,diminish:f32)->f32 {
+  var sum=0.0; var amplitude=1.0; var point=p;
+  for(var i=0i;i<8i;i=i+1i){if(i<octaves){sum+=mxNoise2(point)*amplitude;point*=lacunarity;amplitude*=diminish;}}
+  return sum;
+}
+fn mxFractal3(p:vec3f,octaves:i32,lacunarity:f32,diminish:f32)->f32 {
+  var sum=0.0; var amplitude=1.0; var point=p;
+  for(var i=0i;i<8i;i=i+1i){if(i<octaves){sum+=mxNoise3(point)*amplitude;point*=lacunarity;amplitude*=diminish;}}
+  return sum;
 }
 fn safeNormal(v:vec3f,fallback:vec3f)->vec3f {
   let l2=dot(v,v); let valid=l2>1e-20 && all(v==v);

@@ -206,6 +206,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 - Deterministic bounded `noise2d` and `noise3d` value nodes are available for
   procedural UV/position graphs. Their authored scale, amplitude and pivot
   controls are applied; unsupported multi-octave controls fail explicitly.
+- Bounded `fractal2d` and `fractal3d` fBm nodes now support authored amplitude,
+  octave, lacunarity, diminish, and coordinate inputs with an eight-octave cap.
 - `cellnoise2d` and `cellnoise3d` provide non-interpolated integer-cell hash
   values for procedural masks.
 - Common color utility nodes `premult`, `unpremult`, `contrast`, and

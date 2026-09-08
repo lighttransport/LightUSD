@@ -611,6 +611,12 @@ test('noise controls affect the coordinate and output without silent octave loss
   assert.match(source.body,/\*0\.75\+0\.2/);
   assert.throws(()=>compileGraph({nodes:[{name:'n',category:'noise3d',type:'float',inputs:{in:{type:'vector3',value:[0,0,0]},octaves:{type:'integer',value:3}}}]}),/octaves/);
 });
+test('fractal noise emits bounded fBm helpers with authored controls', () => {
+  const source=compileGraph({nodes:[{name:'f',category:'fractal2d',type:'color3',inputs:{texcoord:{type:'vector2',value:[.1,.2]},amplitude:{type:'color3',value:[1,.5,.25]},octaves:{type:'integer',value:4},lacunarity:{type:'float',value:2},diminish:{type:'float',value:.5}}}]});
+  assert.match(source.body,/mxFractal2\(vec2f\(0\.1,0\.2\),4i,2\.0,0\.5\)/); assert.match(source.body,/vec3f\(1\.0,0\.5,0\.25\)/);
+  const source3=compileGraph({nodes:[{name:'f',category:'fractal3d',type:'float',inputs:{texcoord:{type:'vector3',value:[0,0,0]}}}]});
+  assert.match(source3.body,/mxFractal3/); assert.match(contextWGSL,/for\(var i=0i;i<8i/);
+});
 test('cell-noise nodes hash integer cells without interpolation', () => {
   const doc={nodes:[
     {name:'uv',category:'texcoord',type:'vector2',inputs:{}},
