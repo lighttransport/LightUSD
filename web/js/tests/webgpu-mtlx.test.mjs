@@ -503,6 +503,10 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   const hair=syntheticScene('hair').materials[1];
   assert.match(compileGraph(hair,{material:true}).body,/nativeHair/);
   assert.match(shaderSource([hair]),/nativeHair/);
+  const oren={nodes:[{name:'o',category:'oren_nayar_diffuse_bsdf',type:'BSDF',inputs:{roughness:{type:'float',value:.4}}}]};
+  assert.match(compileGraph(oren,{material:true}).body,/nativeDiffuse/);
+  oren.nodes[0].inputs.energy_compensation={type:'boolean',value:true};
+  assert.throws(()=>compileGraph(oren,{material:true}),/energy-compensated Oren-Nayar/);
   const generalized={nodes:[{name:'g',category:'generalized_schlick_bsdf',type:'BSDF',inputs:{color0:{type:'color3',value:[.04,.08,.16]}}}]};
   for (const [name,input,pattern] of [
     ['retroreflective',{type:'boolean',value:true},/retroreflection/],

@@ -292,6 +292,7 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'dielectric_bsdf': case 'conductor_bsdf': case 'oren_nayar_diffuse_bsdf': case 'burley_diffuse_bsdf': {
           normal = ins.normal ? x('normal', undefined, 'vector3') : null;
           if(ins.retroreflective && ![false,'false'].includes(ins.retroreflective.value))fail('UNSUPPORTED',key,'retroreflection is not implemented');
+          if (n.category === 'oren_nayar_diffuse_bsdf' && ins.energy_compensation && ![false, 'false'].includes(ins.energy_compensation.value)) fail('UNSUPPORTED', key, 'energy-compensated Oren-Nayar is not implemented');
           const filmThicknessInput=ins.thinfilm_thickness||ins.thin_film_thickness;
           const filmIORInput=ins.thinfilm_IOR||ins.thinfilm_ior||ins.thin_film_IOR||ins.thin_film_ior;
           if(ins.distribution && ins.distribution.value!=='ggx')fail('UNSUPPORTED',key,'only GGX microfacets are implemented');
