@@ -644,6 +644,12 @@ test('ramp and ramp_gradient compile static control points and interpolation mod
   assert.match(ramp.body,/select\(/); assert.match(ramp.body,/vec2f\(0\.75,0\.5\)\.x/);
   assert.throws(()=>compileGraph({nodes:[{name:'r',category:'ramp',type:'color3',inputs:{}}]}),/ramp output must be color4/);
 });
+test('ramplr and ramptb interpolate typed values along the requested UV axis', () => {
+  const lr=compileGraph({nodes:[{name:'r',category:'ramplr',type:'color3',inputs:{valuel:{type:'color3',value:[1,0,0]},valuer:{type:'color3',value:[0,1,0]},texcoord:{type:'vector2',value:[.25,.8]}}}]});
+  assert.match(lr.body,/mix\(vec3f\(1\.0,0\.0,0\.0\),vec3f\(0\.0,1\.0,0\.0\),vec2f\(0\.25,0\.8\)\.x\)/);
+  const tb=compileGraph({nodes:[{name:'r',category:'ramptb',type:'float',inputs:{valuet:{type:'float',value:1},valueb:{type:'float',value:0},texcoord:{type:'vector2',value:[.25,.8]}}}]});
+  assert.match(tb.body,/mix\(0\.0,1\.0,vec2f\(0\.25,0\.8\)\.y\)/);
+});
 test('cell-noise nodes hash integer cells without interpolation', () => {
   const doc={nodes:[
     {name:'uv',category:'texcoord',type:'vector2',inputs:{}},
