@@ -119,6 +119,8 @@ test('MaterialX unit annotations are validated and preserved', () => {
     in: { type: 'vector2', value: [1, 0] }, amount: { type: 'float', value: 90, unit: 'degree' }
   } }] };
   assert.doesNotThrow(() => compileGraph(rotate));
+  const radians = structuredClone(rotate); radians.nodes[0].inputs.amount = { type: 'float', value: Math.PI / 2, unit: 'radian' };
+  assert.match(compileGraph(radians).body, /57\.29577951308232/);
   const bad = structuredClone(rotate); bad.nodes[0].inputs.amount.unit = 'furlong';
   assert.throws(() => compileGraph(bad), /unsupported MaterialX unit/);
   assert.match(compileGraph({nodes:[{name:'r',category:'rotate2d',type:'vector2',inputs:{in:{type:'vector2',value:[1,0]}}}]}).body,/0\.0 \* 0\.017453292519943295/);

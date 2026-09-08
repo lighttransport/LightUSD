@@ -179,6 +179,10 @@ export function compileGraph(document, { output, library = {}, material = false,
         const value=port(p, scope, env, expected, `${key}/${k}`);for(const category of value.categories||[])dependencies.add(category);return value;
       };
       const x = (k, fallback, expected) => input(k, fallback, expected).code;
+      const angle = (k, fallback) => {
+        const code = x(k, fallback, 'float');
+        return String(ins[k]?.unit || '').toLowerCase() === 'radian' ? `(${code}*57.29577951308232)` : code;
+      };
       const same = k => x(k, undefined, type);
       const scalarOrSame = (k, fallback) => {
         const p=input(k,fallback);
@@ -224,8 +228,8 @@ export function compileGraph(document, { output, library = {}, material = false,
             color: x('color', [1, 1, 1], 'color3'),
             intensity: x('intensity', 1, 'float'),
             decayRate: x('decay_rate', 2, 'float'),
-            innerAngle: x('inner_angle', 0, 'float'),
-            outerAngle: x('outer_angle', 0, 'float')
+            innerAngle: angle('inner_angle', 0),
+            outerAngle: angle('outer_angle', 0)
           };
           code = `${lightInfo.color}*max(0.0,${lightInfo.intensity})`;
           break;
@@ -254,7 +258,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           code=`${x('displacement',0,'float')}*${x('scale',1,'float')}`; break;
         case 'conical_edf': {
           const direction=x('normal',undefined,'vector3');
-          const inner=x('inner_angle',60,'float'), outer=x('outer_angle',0,'float');
+          const inner=angle('inner_angle',60), outer=angle('outer_angle',0);
           code=x('color',[1,1,1],'color3');
           emissionCone={direction,innerCos:`cos(radians(max(${inner},${outer})))`,outerCos:`cos(radians(min(${inner},${outer})))`};
           break;
@@ -1143,23 +1147,23 @@ export function compileGraph(document, { output, library = {}, material = false,
           if(n.category==='range')code=`select(${code},clamp(${code},${outlow},${outhigh}),${x('doclamp',false,'boolean')})`;break;
         }
         case 'rotate2d': {
-          const v = x('in', undefined, 'vector2'), a = `(${x('amount', 0, 'float')} * 0.017453292519943295)`;
+          const v = x('in', undefined, 'vector2'), a = `(${angle('amount', 0)} * 0.017453292519943295)`;
           code = `(mat2x2f(cos(${a}),sin(${a}),-sin(${a}),cos(${a})) * ${v})`; break;
         }
         case 'rotate3d': {
           if (type !== 'vector3') fail('TYPE', key, 'rotate3d output must be vector3');
           const v = x('in', undefined, 'vector3'), axis = `safeNormal(${x('axis', [0, 0, 1], 'vector3')},vec3f(0.0,0.0,1.0))`;
-          const a = `(${x('amount', 0, 'float')} * 0.017453292519943295)`, c = `cos(${a})`, s = `sin(${a})`;
+          const a = `(${angle('amount', 0)} * 0.017453292519943295)`, c = `cos(${a})`, s = `sin(${a})`;
           code = `(${v}*${c}+cross(${axis},${v})*${s}+${axis}*dot(${axis},${v})*(1.0-${c}))`; break;
         }
         case 'UsdTransform2d': {
           if (type !== 'vector2') fail('TYPE', key, 'UsdTransform2d output must be vector2');
-          const v=x('in',[0,0],'vector2'), scale=x('scale',[1,1],'vector2'), translation=x('translation',[0,0],'vector2'), a=`(${x('rotation',0,'float')}*0.017453292519943295)`;
+          const v=x('in',[0,0],'vector2'), scale=x('scale',[1,1],'vector2'), translation=x('translation',[0,0],'vector2'), a=`(${angle('rotation',0)}*0.017453292519943295)`;
           code=`((mat2x2f(cos(${a}),sin(${a}),-sin(${a}),cos(${a})) * (${v}*${scale}))+${translation})`; break;
         }
         case 'place2d': {
           if (type !== 'vector2') fail('TYPE', key, 'place2d output must be vector2');
-          const uv=ins.texcoord?x('texcoord',undefined,'vector2'):'ctx.uv', pivot=x('pivot',[0,0],'vector2'), scale=x('scale',[1,1],'vector2'), rotate=`(${x('rotate',0,'float')}*0.017453292519943295)`, offset=x('offset',[0,0],'vector2');
+          const uv=ins.texcoord?x('texcoord',undefined,'vector2'):'ctx.uv', pivot=x('pivot',[0,0],'vector2'), scale=x('scale',[1,1],'vector2'), rotate=`(${angle('rotate',0)}*0.017453292519943295)`, offset=x('offset',[0,0],'vector2');
           code=`((mat2x2f(cos(${rotate}),sin(${rotate}),-sin(${rotate}),cos(${rotate})) * ((${uv}-${pivot})/${scale}))+${pivot}-${offset})`; break;
         }
         case 'UsdPreviewSurface': {
