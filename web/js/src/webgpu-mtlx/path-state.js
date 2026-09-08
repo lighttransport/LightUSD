@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // A dispatch advances at most four vertices. Surviving paths are never truncated.
 export const pathStateWGSL = /* wgsl */`
-struct PathState { origin: vec4f, direction: vec4f, beta: vec4f, radiance: vec4f, state: vec4u, previous: vec4f, iors: vec4f, media: vec4u }
+struct PathState { origin: vec4f, direction: vec4f, beta: vec4f, radiance: vec4f, state: vec4u, previous: vec4f, iorsLo: vec4f, iorsHi: vec4f, mediaLo: vec4u, mediaHi: vec4u }
 @group(0) @binding(5) var<storage,read_write> paths: array<PathState>;
 @group(0) @binding(6) var<storage,read_write> pathCounters: array<atomic<u32>>;
 @group(0) @binding(7) var<storage,read_write> moments: array<vec4f>;
+fn mediumIor(p:ptr<function,PathState>,index:u32)->f32 { if(index<4u){return (*p).iorsLo[index];} return (*p).iorsHi[index-4u]; }
+fn mediumId(p:ptr<function,PathState>,index:u32)->u32 { if(index<4u){return (*p).mediaLo[index];} return (*p).mediaHi[index-4u]; }
+fn setMediumIor(p:ptr<function,PathState>,index:u32,value:f32) { if(index<4u){(*p).iorsLo[index]=value;}else{(*p).iorsHi[index-4u]=value;} }
+fn setMediumId(p:ptr<function,PathState>,index:u32,value:u32) { if(index<4u){(*p).mediaLo[index]=value;}else{(*p).mediaHi[index-4u]=value;} }
 fn triangleLightPDF(tri:Triangle,distance:f32,direction:vec3f)->f32 {
   let total=triangles[arrayLength(&triangles)-1u].b.p.w;
   let normal=normalize(cross(tri.b.p.xyz-tri.a.p.xyz,tri.c.p.xyz-tri.a.p.xyz));
@@ -31,7 +35,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
     let pixel=vec2f(id.xy)+vec2f(random(&rng),random(&rng));
     let uv=pixel/vec2f(cfg.dimensions.xy)*2.0-1.0;
     let d=normalize(cfg.forward.xyz+cfg.right.xyz*uv.x*cfg.right.w-cfg.up.xyz*uv.y*cfg.up.w);
-    p=PathState(vec4f(cfg.origin.xyz,0),vec4f(d,0),vec4f(1),vec4f(0),vec4u(rng,0u,u32(cfg.display.w),0u),vec4f(0,0,f32(cfg.dimensions.z),0),vec4f(1),vec4u(0));
+    p=PathState(vec4f(cfg.origin.xyz,0),vec4f(d,0),vec4f(1),vec4f(0),vec4u(rng,0u,u32(cfg.display.w),0u),vec4f(0,0,f32(cfg.dimensions.z),0),vec4f(1),vec4f(1),vec4u(0),vec4u(0));
     p.previous.x=360.0+470.0*random(&rng); p.state.x=rng;
   }
   if(p.state.w!=0u) { paths[index]=p; return; }
@@ -45,10 +49,10 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
     let h=intersect(p.origin.xyz,p.direction.xyz);
     let mediumDepth=u32(p.previous.w);
     var homogeneous=true;
-    if(mediumDepth>0u && mediumMajorant(p.media[mediumDepth]-1u)>0.0) {
+    if(mediumDepth>0u && mediumMajorant(mediumId(&p,mediumDepth)-1u)>0.0) {
       homogeneous=false;
       if(cfg.dimensions.w!=2u){atomicAdd(&pathCounters[2],1u);p.state.w=1u;break;}
-      let mediumID=p.media[mediumDepth]-1u;let majorant=mediumMajorant(mediumID);
+      let mediumID=mediumId(&p,mediumDepth)-1u;let majorant=mediumMajorant(mediumID);
       let distance=-log(1.0-random(&rng))/majorant;
       if(distance<h.t) {
         let point=p.origin.xyz+p.direction.xyz*distance;
@@ -85,7 +89,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
     }
     if(mediumDepth>0u && homogeneous) {
       let mediumContext=ShadingContext(p.origin.xyz,-p.direction.xyz,vec3f(1,0,0),vec3f(0,1,0),vec2f(0),0,0,vec2f(0),vec2f(0),vec3f(1,0,0),vec3f(0,1,0),-p.direction.xyz,vec4f(0,0,0,1),vec4f(0),vec4f(0),vec4f(0));
-      let medium=mediumAt(p.media[mediumDepth]-1u,mediumContext,p.previous.x,cfg.dimensions.w==2u);
+      let medium=mediumAt(mediumId(&p,mediumDepth)-1u,mediumContext,p.previous.x,cfg.dimensions.w==2u);
       let sigmaT=medium.absorption+medium.scattering;
       if(any(medium.absorption<vec3f(0)) || any(medium.scattering<vec3f(0)) || abs(medium.anisotropy)>=1.0) { atomicAdd(&pathCounters[2],1u);p.state.w=1u;break; }
       let channel=min(2u,u32(random(&rng)*3.0));
@@ -98,7 +102,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
         p.origin=vec4f(p.origin.xyz+p.direction.xyz*distance,0);
         let light=directionalDirection();
         let shadow=intersect(p.origin.xyz+light*max(1e-5,length(p.origin.xyz)*2e-6),light);
-        if(shadow.id!=0xffffffffu && u32(triangles[shadow.id].a.uv.z)==p.media[mediumDepth]-1u){
+        if(shadow.id!=0xffffffffu && u32(triangles[shadow.id].a.uv.z)==mediumId(&p,mediumDepth)-1u){
           var lightColor=directionalRadiance(); if(cfg.dimensions.w==2u){lightColor=vec3f(rgbSpectrum(lightColor,p.previous.x,true));}
           let tr=exp(-sigmaT*shadow.t);
           p.radiance+=vec4f(p.beta.xyz*tr*hgPhase(dot(-p.direction.xyz,light),medium.anisotropy)*lightColor,0);
@@ -106,7 +110,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
         let ez=1.0-2.0*random(&rng); let ephi=2.0*PI*random(&rng); let er=sqrt(max(0.0,1.0-ez*ez));
         let envDirection=vec3f(er*cos(ephi),ez,er*sin(ephi));
         let envShadow=intersect(p.origin.xyz+envDirection*max(1e-5,length(p.origin.xyz)*2e-6),envDirection);
-        if(envShadow.id!=0xffffffffu && u32(triangles[envShadow.id].a.uv.z)==p.media[mediumDepth]-1u){
+        if(envShadow.id!=0xffffffffu && u32(triangles[envShadow.id].a.uv.z)==mediumId(&p,mediumDepth)-1u){
           var envColor=environment(envDirection); if(cfg.dimensions.w==2u){envColor=vec3f(rgbSpectrum(envColor,p.previous.x,true));}
           let tr=exp(-sigmaT*envShadow.t);
           p.radiance+=vec4f(p.beta.xyz*tr*hgPhase(dot(-p.direction.xyz,envDirection),medium.anisotropy)*envColor*(4.0*PI),0);
@@ -157,10 +161,10 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
     if(m.ior<=0.0 || m.roughness<0.0 || m.weight<0.0 || any(m.alpha<vec2f(0)) || any(m.complexIOR<vec3f(0)) || any(m.extinction<vec3f(0)) || m.metal<0.0 || m.metal>1.0 || m.transmission<0.0 || m.transmission>1.0 || any(m.base<vec3f(0)) || any(m.transmissionColor<vec3f(0))) {
       atomicAdd(&pathCounters[2],1u); p.state.w=1u; break;
     }
-    let depth=u32(p.previous.w); var etaI=p.iors[depth]; var etaT=m.ior;
+    let depth=u32(p.previous.w); var etaI=mediumIor(&p,depth); var etaT=m.ior;
     if(!entering) {
       if(depth==0u) { etaI=m.ior; etaT=1.0; }
-      else { etaT=p.iors[depth-1u]; }
+      else { etaT=mediumIor(&p,depth-1u); }
     }
     let eta=select(etaT/etaI,m.ior,m.thinWalled!=0u); let frame=transportFrame(ctx.normal); let wo=transpose(frame)*(-p.direction.xyz);
     var emitterMIS=1.0;
@@ -213,10 +217,10 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
     p.beta=vec4f(p.beta.xyz*sample.weight,p.beta.w*sample.eta*sample.eta);
     if(sample.wi.z<0.0 && m.thinWalled==0u) {
       if(entering) {
-        if(depth>=3u) { atomicAdd(&pathCounters[1],1u); p.state.w=1u; break; }
-        p.previous.w=f32(depth+1u); p.iors[depth+1u]=m.ior; p.media[depth+1u]=materialID+1u;
+        if(depth>=7u) { atomicAdd(&pathCounters[1],1u); p.state.w=1u; break; }
+        p.previous.w=f32(depth+1u); setMediumIor(&p,depth+1u,m.ior); setMediumId(&p,depth+1u,materialID+1u);
       } else if(depth>0u) {
-        if(p.media[depth]!=materialID+1u) { atomicAdd(&pathCounters[1],1u); p.state.w=1u; break; }
+        if(mediumId(&p,depth)!=materialID+1u) { atomicAdd(&pathCounters[1],1u); p.state.w=1u; break; }
         p.previous.w=f32(depth-1u);
       }
     }

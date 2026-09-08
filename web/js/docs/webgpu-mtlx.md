@@ -179,7 +179,7 @@ events estimate directional-light radiance with HG phase evaluation and
 first-boundary shadow transmittance, accepting a boundary only when its
 material matches the active medium. This supports geometric random walks, not the MaterialX subsurface
 albedo/radius parameterization. Cameras are assumed to start in vacuum; the
-stack supports three nested interiors and fails on overflow or mismatched
+stack supports eight nested interiors and fails on overflow or mismatched
 boundaries. Uniform-sphere environment direct sampling is included at medium
 events; multiple-importance weighting between volume light strategies remains
 future work.
