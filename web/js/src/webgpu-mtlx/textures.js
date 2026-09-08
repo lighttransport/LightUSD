@@ -68,6 +68,15 @@ export function packImages(images, { maxBytes = 64 * 1024 * 1024, maxDimension }
     return descriptor;
   };
   for (const image of images) {
+    if (Array.isArray(image?.layers)) {
+      if (Array.isArray(image.frames)) throw new Error('Image resources cannot combine layers and frames');
+      if (!image.layers.length || image.layers.length > 64) throw new Error('Image layer count exceeds budget');
+      const layers = [packOne(image), ...image.layers.map(layer => packOne({ ...layer, colorspace: layer.colorspace ?? image.colorspace }))];
+      const first = layers[0];
+      if (layers.some(layer => layer.width !== first.width || layer.height !== first.height || layer.levels !== first.levels)) throw new Error('Image layers must have matching dimensions');
+      descriptors.push({ ...first, layers });
+      continue;
+    }
     if (!Array.isArray(image?.frames)) { descriptors.push(packOne(image)); continue; }
     if (!image.frames.length || image.frames.length > 1024) throw new Error('Image sequence must contain 1..1024 frames');
     const frames = image.frames.map(frame => packOne({ ...frame, colorspace: frame.colorspace ?? image.colorspace }));

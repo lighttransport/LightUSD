@@ -238,8 +238,9 @@ lookups now use the same bounded shading footprint for mip selection; this is
 an angular approximation because the context does not carry full direction
 derivatives. Path tracing carries a bounded ray-cone footprint through secondary
 bounces, while full ray differentials remain outstanding. Connected
-filename/sampler inputs, layers and full MaterialX colorspace inheritance are
-not implemented. These images do not
+filename/sampler inputs and full MaterialX colorspace inheritance are not
+implemented. Caller-provided decoded image resources may also expose bounded
+same-size `layers`; static `layer` selectors choose a packed layer. These images do not
 complete authored ShaderBall material support.
 
 `setOptions({time, frame})` supplies animation values to raster, preview, and

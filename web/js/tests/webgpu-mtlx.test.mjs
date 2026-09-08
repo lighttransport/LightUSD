@@ -503,6 +503,15 @@ test('image packing preserves bounded decoded frame sequences', () => {
   assert.ok(Math.abs(packed.data[0] - .2) < 1e-6 && Math.abs(packed.data[4] - .8) < 1e-6);
   assert.throws(() => packImages([{ frames: [frame(.2), { ...frame(.8), width: 2, data: [0,0,0,1,0,0,0,1] }] }]), /matching dimensions/);
 });
+test('image packing preserves bounded decoded image layers', () => {
+  const layer = value => ({ width: 1, height: 1, data: [value, 0, 0, 1], colorspace: 'raw' });
+  const packed = packImages([{ ...layer(.2), layers: [layer(.8)] }]);
+  assert.equal(packed.descriptors[0].layers.length, 2);
+  assert.deepEqual(packed.descriptors[0].layers.map(d => d.offset), [0, 1]);
+  const compiled = compileGraph({ nodes: [{ name: 'tex', category: 'image', type: 'color3', inputs: { file: { type: 'filename', value: 'layered' }, layer: { type: 'integer', value: 1 } } }] }, { imageDescriptors: { layered: packed.descriptors[0] } });
+  assert.match(compiled.body, /select\(/);
+  assert.throws(() => packImages([{ ...layer(.2), frames: [layer(.4)], layers: [layer(.8)] }]), /combine layers and frames/);
+});
 test('image budgets, finite float32, dimensions and color interpretation are validated', () => {
   const image = { width: 1, height: 1, data: [0,0,0,1] };
   assert.throws(() => packImages([image], { maxBytes: 15 }), /budget/);

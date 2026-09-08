@@ -355,7 +355,6 @@ export function compileGraph(document, { output, library = {}, material = false,
           if (gltfTexture) allowedInputs.push('factor', 'pivot', 'scale', 'rotate', 'offset', 'operationorder');
           if (usdTexture) allowedInputs.push('st', 'fallback', 'scale', 'bias', 'sourceColorSpace', 'wrapS', 'wrapT');
           for (const name of Object.keys(ins)) if (!allowedInputs.includes(name)) fail('UNSUPPORTED', key, `unsupported image input ${name}`);
-          if (ins.layer && (ins.layer.nodename || ins.layer.nodegraph || ins.layer.interfacename || !['', '0', 0].includes(ins.layer.value))) fail('UNSUPPORTED', key, 'image layers are not implemented');
           let realScale='vec2f(1.0)';
           if (ins.realworldimagesize || ins.realworldtilesize) {
             const imageSize=ins.realworldimagesize, tileSize=ins.realworldtilesize;
@@ -373,7 +372,11 @@ export function compileGraph(document, { output, library = {}, material = false,
           const descriptor = Object.hasOwn(imageDescriptors, file) && imageDescriptors[file];
           if (!descriptor) fail('RESOURCE', key, `missing decoded image ${file}`);
           const frames=descriptor.frames;
+          const layers=descriptor.layers;
           const authored = p => p && (p.value !== undefined || p.nodename || p.nodegraph || p.interfacename);
+          if (frames && layers) fail('RESOURCE', key, 'image resource cannot combine layers and frames');
+          if (authored(ins.layer) && (ins.layer.nodename || ins.layer.nodegraph || ins.layer.interfacename)) fail('UNSUPPORTED', key, 'connected image layer selectors are not implemented');
+          if (authored(ins.layer) && !Number.isInteger(Number(ins.layer.value))) fail('SEMANTICS', key, 'image layer must be an integer');
           if (!frames && (authored(ins.framerange) || authored(ins.frameoffset) || authored(ins.frameendaction))) {
             for (const name of ['framerange','frameoffset']) if (authored(ins[name]) && (ins[name].nodename || ins[name].nodegraph || ins[name].interfacename || !['', '0', 0].includes(ins[name].value))) fail('UNSUPPORTED', key, `image ${name} requires decoded sequence frames`);
             if (authored(ins.frameendaction) && (ins.frameendaction.nodename || ins.frameendaction.nodegraph || ins.frameendaction.interfacename || ins.frameendaction.value !== undefined && ins.frameendaction.value !== 'constant')) fail('UNSUPPORTED', key, 'image frameendaction requires decoded sequence frames');
@@ -410,6 +413,11 @@ export function compileGraph(document, { output, library = {}, material = false,
             ? (udim ? `imageSampleCubicUDIM(${d.offset}u,vec2u(${d.width}u,${d.height}u),${d.levels}u,${uv},${grid},${lod},${fill})` : `imageSampleCubic(${d.offset}u,vec2u(${d.width}u,${d.height}u),${d.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${fill})`)
             : (udim ? `imageSampleUDIM(${d.offset}u,vec2u(${d.width}u,${d.height}u),${d.levels}u,${uv},${grid},${lod},${filter === 'linear'},${fill})` : `imageSample(${d.offset}u,vec2u(${d.width}u,${d.height}u),${d.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${filter === 'linear'},${fill})`);
           let sample=sampleFor(descriptor);
+          if (layers) {
+            const layerInput=authored(ins.layer)?x('layer',0,'integer'):'0i';
+            const layerIndex=`u32(clamp(${layerInput},0i,${layers.length-1}i))`;
+            sample=layers.map(layer=>sampleFor(layer)).reduce((value,layer,index)=>index?`select(${value},${layer},${layerIndex}==${index}u)`:layer);
+          }
           if(frames){
             const range=ins.framerange ? x('framerange',[0,frames.length-1],'vector2') : `vec2f(0.0,${frames.length-1}.0)`;
             const frameOffset=ins.frameoffset ? x('frameoffset',0,'float') : '0.0';
