@@ -119,13 +119,14 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 - ShaderBall composition and authored-camera geometry diagnostic, selecting the
   triangulated variant (51,008 triangles in the pinned asset). It explicitly
   overrides materials and, by default, lighting. An optional checkbox imports
-  the five authored RectLights for path modes. Asset provenance is retained across layer
+  authored USD lights for path modes. Asset provenance is retained across layer
   loading to resolve relative references inside variants. Authored distant
   lights preserve their world direction and radiance, textureless dome lights
   contribute environment radiance, and rect lights are imported as emissive
   geometry. Point and sphere lights use bounded finite-radius emissive geometry
-  to participate in path sampling; disk lights preserve transformed area and
-  orientation. The point representation approximates an ideal point source.
+  to participate in path sampling, using the authored position or transform
+  translation; disk lights preserve the emitted mesh area and orientation under
+  affine transforms. The point representation approximates an ideal point source.
   Textured domes still require latlong environment resource binding.
 - Procedural synthetic sphere scenes and small MaterialX arithmetic/stripe
   fixtures, deterministic numeric GPU tests, scene validation and EXR roundtrip.

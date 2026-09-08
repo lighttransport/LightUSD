@@ -38,7 +38,9 @@ export function appendRectLights(scene, lights) {
     }
     if(light.type==='point'||light.type==='sphere') {
       if(light.textureFile||light.enableColorTemperature||light.shapingIesFile||light.shapingFocus>0||light.shapingConeAngle<90||light.diffuse!==undefined&&light.diffuse!==1||light.specular!==undefined&&light.specular!==1||light.shadowEnable===false)throw new Error(`Unsupported ${light.type} light texture, shaping, temperature, or contribution controls`);
-      const {intensity=1,exposure=0,color=[1,1,1]}=light,position=light.position;
+      const {intensity=1,exposure=0,color=[1,1,1]}=light;
+      const transform=light.transform;
+      const position=light.position ?? (Array.isArray(transform)&&transform.length===16 ? [transform[12],transform[13],transform[14]] : null);
       const radius=light.radius===undefined?(light.type==='sphere'?0.5:0.01):Number(light.radius);
       if(!Array.isArray(position)||position.length!==3||!position.every(Number.isFinite)||![radius,intensity,exposure,...color].every(Number.isFinite)||radius<=0||intensity<0||color.length!==3||color.some(c=>c<0))throw new Error(`Invalid ${light.type} light parameters; radius must be positive`);
       const area=4*Math.sqrt(3)*radius*radius,radiance=color.map(c=>c*intensity*2**exposure/area);
@@ -55,7 +57,9 @@ export function appendRectLights(scene, lights) {
       if(![radius,intensity,exposure,...color].every(Number.isFinite)||radius<=0||intensity<0||color.length!==3||color.some(c=>c<0)||!Array.isArray(light.transform)||light.transform.length!==16||!light.transform.every(Number.isFinite)||light.transform[3]!==0||light.transform[7]!==0||light.transform[11]!==0||light.transform[15]!==1)throw new Error('Invalid disk light parameters');
       const matrix=new Matrix4().fromArray(light.transform);if(Math.abs(matrix.determinant())<1e-15)throw new Error('Singular disk light transform');
       const segments=16,local=[new Vector3(0,0,0)],vertices=[];for(let i=0;i<segments;i++)local.push(new Vector3(radius*Math.cos(i*2*Math.PI/segments),radius*Math.sin(i*2*Math.PI/segments),0));for(const p of local)vertices.push(p.applyMatrix4(matrix));
-      const normal=new Vector3(0,0,-1).applyMatrix3(new Matrix3().getNormalMatrix(matrix)).normalize(),area=Math.PI*radius*radius*Math.abs(matrix.determinant()),radiance=color.map(c=>c*intensity*2**exposure/(light.normalize?area:1));if(!radiance.every(Number.isFinite)||area<=0)throw new Error('Invalid disk light radiance');
+      const normal=new Vector3(0,0,-1).applyMatrix3(new Matrix3().getNormalMatrix(matrix)).normalize();
+      let area=0;for(let i=1;i<vertices.length;i++){const next=i===vertices.length-1?1:i+1;area+=new Vector3().subVectors(vertices[i],vertices[0]).cross(new Vector3().subVectors(vertices[next],vertices[0])).length()*.5;}
+      const radiance=color.map(c=>c*intensity*2**exposure/(light.normalize?area:1));if(!radiance.every(Number.isFinite)||area<=0)throw new Error('Invalid disk light radiance');
       const offset=result.positions.length/3,material=result.materials.length;result.materials.push({twoSidedEmission:false,nodes:[{name:'emission',category:'uniform_edf',type:'EDF',inputs:{color:{type:'color3',value:radiance}}},{name:'surface',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'emission'}}}]});
       for(let i=0;i<vertices.length;i++){result.positions.push(...vertices[i].toArray());result.normals.push(...normal.toArray());result.uvs.push(i?0.5+0.5*Math.cos((i-1)*2*Math.PI/segments):0.5,i?0.5+0.5*Math.sin((i-1)*2*Math.PI/segments):0.5);result.colors.push(0,0,0,1);}
       for(let i=0;i<segments;i++){const a=offset,b=offset+1+i,c=offset+1+(i+1)%segments;result.indices.push(...(new Vector3().subVectors(vertices[b-offset],vertices[a-offset]).cross(new Vector3().subVectors(vertices[c-offset],vertices[a-offset])).dot(normal)>0?[a,b,c]:[a,c,b]));result.materialIds.push(material);}

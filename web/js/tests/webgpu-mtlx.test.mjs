@@ -238,6 +238,8 @@ test('authored point lights become bounded emissive geometry', () => {
   assert.deepEqual(r.provenance.pointLights[0].position,[1,2,3]);
   assert.equal(r.materials[0].twoSidedEmission,true);
   assert.throws(()=>appendRectLights(scene,[{type:'point',position:[0,0,0],radius:0}]),/radius must be positive/);
+  const transformed=appendRectLights(scene,[{type:'sphere',transform:[1,0,0,0,0,1,0,0,0,0,1,0,-2,4,6,1],radius:.25}]);
+  assert.deepEqual(transformed.provenance.pointLights[0].position,[-2,4,6]);
 });
 test('authored sphere lights preserve finite emitter geometry', () => {
   const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
@@ -249,7 +251,10 @@ test('authored disk lights preserve transformed area emission', () => {
   const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
   const r=appendRectLights(scene,[{type:'disk',radius:2,intensity:3,normalize:true,color:[1,.5,.25],transform:[1,0,0,0,0,1,0,0,0,0,1,0,2,3,4,1]}]);
   assert.equal(r.positions.length,51);assert.equal(r.indices.length,48);assert.equal(r.provenance.diskLights.length,1);
-  assert.ok(Math.abs(r.provenance.diskLights[0].worldArea-4*Math.PI)<1e-6);assert.equal(r.positions[2],4);
+  const polygonArea=8*4*Math.sin(Math.PI/8);
+  assert.ok(Math.abs(r.provenance.diskLights[0].worldArea-polygonArea)<1e-6);assert.equal(r.positions[2],4);
+  const zScaled=appendRectLights(scene,[{type:'disk',radius:2,intensity:3,normalize:true,transform:[1,0,0,0,0,1,0,0,0,0,4,0,0,0,0,1]}]);
+  assert.ok(Math.abs(zScaled.provenance.diskLights[0].worldArea-polygonArea)<1e-6);
 });
 test('resource fetch enforces streaming budgets and HTTP errors',async()=>{
   const fetcher=async()=>new Response(new Uint8Array([1,2,3,4]));
