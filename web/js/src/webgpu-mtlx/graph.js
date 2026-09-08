@@ -468,7 +468,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           if(n.category==='range')code=`select(${code},clamp(${code},${outlow},${outhigh}),${x('doclamp',false,'boolean')})`;break;
         }
         case 'rotate2d': {
-          const v = x('in', undefined, 'vector2'), a = `(${x('amount', undefined, 'float')} * 0.017453292519943295)`;
+          const v = x('in', undefined, 'vector2'), a = `(${x('amount', 0, 'float')} * 0.017453292519943295)`;
           code = `(mat2x2f(cos(${a}),sin(${a}),-sin(${a}),cos(${a})) * ${v})`; break;
         }
         case 'place2d': {

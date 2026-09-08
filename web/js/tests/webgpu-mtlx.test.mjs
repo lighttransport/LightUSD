@@ -75,6 +75,7 @@ test('MaterialX unit annotations are validated and preserved', () => {
   assert.doesNotThrow(() => compileGraph(rotate));
   const bad = structuredClone(rotate); bad.nodes[0].inputs.amount.unit = 'furlong';
   assert.throws(() => compileGraph(bad), /unsupported MaterialX unit/);
+  assert.match(compileGraph({nodes:[{name:'r',category:'rotate2d',type:'vector2',inputs:{in:{type:'vector2',value:[1,0]}}}]}).body,/0\.0 \* 0\.017453292519943295/);
 });
 
 test('USD graph translation preserves interfaces and exact NodeDef typing', () => {
