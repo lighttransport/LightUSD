@@ -640,8 +640,8 @@ normal semantics.
 
 The synthetic `normalmap-image` fixture now exercises a raw-color image node
 feeding `normalmap`, including packed-resource binding and linear filtering;
-authored texture mip residency and UDIM streaming remain future work; bounded
-UDIM atlases are decoded eagerly. Its
+authored texture mip residency and UDIM streaming remain future work; USD and
+MaterialX UDIM atlases are decoded eagerly under bounded tile and byte limits. Its
 focused spectral Chrome run currently stalls before a sample is reported, so
 it is intentionally not in the default reference matrix until image-backed
 spectral dispatch diagnostics are fixed. The fixture is available through the

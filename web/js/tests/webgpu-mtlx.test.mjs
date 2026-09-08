@@ -48,10 +48,15 @@ test('USD texture provenance keeps anchors and rejects ambiguous source layers',
   sources.register(snapshot('../maps/color.exr'), 'https://example.test/nested/layers/c.usda');
   assert.throws(() => sources.resolveAsset('../maps/color.exr', context), /ambiguous/);
   assert.throws(() => sources.resolveAsset('missing.exr', context), /no source-layer/);
-  for (const asset of ['https://other.test/image.exr', 'a[image.exr]', 'image.<UDIM>.exr', 'file:///image.exr']) {
+  for (const asset of ['https://other.test/image.exr', 'a[image.exr]', 'file:///image.exr']) {
     sources.register(snapshot(asset), 'https://example.test/root.usda');
     assert.throws(() => sources.resolveAsset(asset, context), /unsupported/);
   }
+  const udim = 'textures/look.<UDIM>.exr';
+  sources.register(snapshot(udim), 'https://example.test/root.usda');
+  const udimKey = sources.resolveAsset(udim, context);
+  assert.equal(sources.requests.get(udimKey).udim, true);
+  assert.equal(sources.requests.get(udimKey).sources[0].source, 'https://example.test/root.usda');
   sources.register({ assetPaths: [{ propertyPath: '/Override.inputs:file', authored: './override.exr' }] }, 'https://example.test/layer.usda');
   const override = sources.resolveAsset('./override.exr', context);
   assert.equal(sources.requests.get(override).url, 'https://example.test/override.exr');

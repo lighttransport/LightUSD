@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { GraphError } from './graph.js';
 
+const udimPattern = /<UDIM>|<UVTILE>|%04d|%\(UDIM\)d/i;
+
 /** Conservative source-layer index collected before composition remaps prims.
  * An authored key is usable only if every observed source agrees on its URL.
  * This is not a replacement for a full USD property-stack asset resolver.
@@ -19,13 +21,13 @@ export class USDTextureSources {
         // Store unsupported paths too: unresolved data must not disappear.
         let url;
         try {
-          if (/[<>\[\]\\]/.test(authored)) throw new Error('package, tiled, or platform path');
+          if (/[\[\]\\]/.test(authored) || /[<>]/.test(authored) && !udimPattern.test(authored)) throw new Error('package, tiled, or platform path');
           const target = new URL(authored, source);
           if (!['http:', 'https:'].includes(target.protocol) || target.origin !== source.origin || target.username || target.password || target.hash) throw new Error('nonlocal or unsupported URL');
           url = target.href;
         } catch { url = null; }
         if (!this.assets.has(authored)) this.assets.set(authored, new Map());
-        this.assets.get(authored).set(`${source.href}\n${record.propertyPath}`, { source: source.href, propertyPath: record.propertyPath, url });
+        this.assets.get(authored).set(`${source.href}\n${record.propertyPath}`, { source: source.href, propertyPath: record.propertyPath, url, authored });
     }
   }
   resolveAsset = (authored, { propertyPath, colorspace }) => {
@@ -37,7 +39,7 @@ export class USDTextureSources {
     if (urls.size !== 1) fail(`ambiguous source layers for ${authored}`);
     if (typeof colorspace !== 'string' || !colorspace) fail('texture color space must be resolved first');
     const url = entries[0].url, key = JSON.stringify([url, colorspace]);
-    this.requests.set(key, { url, colorspace, sources: entries });
+    this.requests.set(key, { url, colorspace, sources: entries, ...(udimPattern.test(authored) ? { udim: true, authored } : {}) });
     return key;
   };
   snapshot() { return [...this.assets].map(([authored, sources]) => ({ authored, sources: [...sources.values()] })); }

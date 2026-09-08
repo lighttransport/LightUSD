@@ -8,7 +8,7 @@ import { appendRectLights } from './usd-lights.js';
 import { USDTextureSources } from './usd-texture-sources.js';
 import { loadUSDMaterialXLibrary, materialXFromUSD } from './usd-graph.js';
 import { compileGraph } from './graph.js';
-import { fetchResource, decodeImage, inspectEXRHeader } from './resources.js';
+import { fetchResource, decodeImage, inspectEXRHeader, atlasUDIMImages } from './resources.js';
 export const SHADERBALL_COMMIT = '3b75c2dad6a494897557dcca0098257bcf42a8c6';
 function materialNodes(document) {
   const nodes = [...(document?.nodes || [])];
@@ -190,13 +190,35 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
       for (const [key, request] of resolver.textures.requests) {
         if (!neededAssetKeys.has(key)) continue;
         try {
-          const bytes = await fetchResource(request.url);
-          let resizedFrom;
-          if (/\.exr(?:$|[?#])/i.test(request.url)) resizedFrom = inspectEXRHeader(bytes, Number.MAX_SAFE_INTEGER).dimensions;
-          const image = await decodeImage(bytes, { filename: request.url, colorspace: request.colorspace, maxPixels: 256 * 1024, allowDownsample: true });
-          if (resizedFrom && (resizedFrom.width !== image.width || resizedFrom.height !== image.height)) textureDiagnostics.push({ key, url: request.url, diagnostic: 'bounded downsample applied', resizedFrom, size: { width: image.width, height: image.height } });
+          const decode = async (bytes, filename) => {
+            let resizedFrom;
+            if (/\.exr(?:$|[?#])/i.test(filename)) resizedFrom = inspectEXRHeader(bytes, Number.MAX_SAFE_INTEGER).dimensions;
+            const image = await decodeImage(bytes, { filename, colorspace: request.colorspace, maxPixels: 256 * 1024, allowDownsample: true });
+            if (resizedFrom && (resizedFrom.width !== image.width || resizedFrom.height !== image.height)) textureDiagnostics.push({ key, url: filename, diagnostic: 'bounded downsample applied', resizedFrom, size: { width: image.width, height: image.height } });
+            return image;
+          };
+          let image;
+          if (request.udim) {
+            const source = request.sources[0].source, tiles = []; let decodedBytes = 0;
+            for (let id = 1001; id <= 1100; id++) {
+              const u = (id - 1001) % 10, v = Math.floor((id - 1001) / 10);
+              const tileName = request.authored.replace(/<UDIM>/ig, String(id)).replace(/<UVTILE>/ig, `u${u + 1}_v${v + 1}`).replace(/%04d/ig, String(id).padStart(4, '0')).replace(/%\(UDIM\)d/ig, String(id));
+              const tileURL = new URL(tileName, source).href;
+              try {
+                const tileImage = await decode(await fetchResource(tileURL), tileURL);
+                decodedBytes += tileImage.data.byteLength;
+                if (decodedBytes > 48 * 1024 * 1024) throw new Error('UDIM images exceed decoded byte budget');
+                tiles.push({ id, image: tileImage });
+              }
+              catch (error) { if (!/HTTP 404\b/.test(String(error?.message || error))) throw error; }
+            }
+            if (!tiles.length) throw new Error(`No UDIM tiles found for ${request.authored}`);
+            image = atlasUDIMImages(tiles);
+          } else {
+            image = await decode(await fetchResource(request.url), request.url);
+          }
           authoredImages[key] = image;
-          imageDescriptors[key] = { offset: 0, width: image.width, height: image.height, levels: 1, colorspace: request.colorspace };
+          imageDescriptors[key] = { offset: 0, width: image.width, height: image.height, levels: 1, colorspace: request.colorspace, ...(image.udim ? { udim: image.udim } : {}) };
         } catch (error) { textureDiagnostics.push({ key, url: request.url, error: String(error.message || error) }); }
       }
       for (const [path, document] of Object.entries(translatedMaterials)) {
