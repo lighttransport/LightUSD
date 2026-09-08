@@ -808,6 +808,10 @@ test('stdlib PBR conversion nodes preserve artistic IOR and anisotropic roughnes
   assert.match(clover.body,/distance\(/); assert.match(clover.body,/min\(/);
   const hexagon=compileGraph({nodes:[{name:'h',category:'hexagon',type:'float',inputs:{texcoord:{type:'vector2',value:[.5,.5]},center:{type:'vector2',value:[.5,.5]},radius:{type:'float',value:.25}}}]});
   assert.match(hexagon.body,/dot\(/); assert.match(hexagon.body,/sign\(/); assert.match(hexagon.body,/clamp\(/);
+  const tiled=compileGraph({nodes:[{name:'tc',category:'tiledcloverleafs',type:'color3',inputs:{texcoord:{type:'vector2',value:[.25,.25]},uvtiling:{type:'vector2',value:[2,2]},size:{type:'float',value:.4},staggered:{type:'boolean',value:true}}}]});
+  assert.match(tiled.body,/fract\(/); assert.match(tiled.body,/vec3f\(/);
+  const tiledHex=compileGraph({nodes:[{name:'th',category:'tiledhexagons',type:'color3',inputs:{uvtiling:{type:'vector2',value:[3,2]},size:{type:'float',value:.6}}}]});
+  assert.match(tiledHex.body,/dot\(/); assert.match(tiledHex.body,/sign\(/);
 });
 test('stdlib transform aliases and trianglewave keep space semantics explicit', () => {
   const normal=compileGraph({nodes:[{name:'n',category:'transformnormal',type:'vector3',inputs:{in:{type:'vector3',value:[0,0,1]},fromspace:{type:'string',value:'world'},tospace:{type:'string',value:'world'}}}]});

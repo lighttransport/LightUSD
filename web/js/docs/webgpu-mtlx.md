@@ -249,6 +249,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   and defaults to the current UV stream.
 - The procedural `hexagon` mask follows the pinned signed-distance construction
   with centered coordinates and a bounded radius.
+- Tiled cloverleaf and hexagon masks apply UV tiling, offset, size, and staggered
+  row controls with typed color3 outputs.
 - Typed `select` branches enforce boolean conditions and matching output types,
   preserving MaterialX conditional graph semantics.
 - Deterministic bounded `noise2d` and `noise3d` value nodes are available for
