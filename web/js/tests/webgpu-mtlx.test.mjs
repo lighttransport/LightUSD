@@ -493,6 +493,9 @@ test('image graph resource resolution and unsupported filtering diagnostics', ()
 test('image sequence controls do not silently fall back to frame zero', () => {
   const document = { nodes: [{ name: 'img', category: 'image', type: 'color3', inputs: { file: { type: 'filename', value: 'albedo' }, frameoffset: { nodename: 'time' } } }] };
   assert.throws(() => compileGraph(document, { imageDescriptors: { albedo: { offset: 0, width: 1, height: 1, levels: 1 } } }), /frameoffset/);
+  document.nodes[0].inputs.frameoffset = { type: 'integer', value: 0 };
+  document.nodes[0].inputs.frameendaction = { type: 'string', value: 'periodic' };
+  assert.throws(() => compileGraph(document, { imageDescriptors: { albedo: { offset: 0, width: 1, height: 1, levels: 1 } } }), /frameendaction/);
 });
 test('gltf_image preserves authored UV transforms and factor modulation', () => {
   const descriptor = { tex: { offset: 0, width: 2, height: 2, levels: 1, colorspace: 'raw' } };
