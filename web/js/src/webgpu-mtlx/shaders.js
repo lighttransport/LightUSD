@@ -12,6 +12,9 @@ export function shaderSource(materials, resources = {}, lighting = {}, textureOp
   const lightDirection=lighting.directional?.direction||[-.5,.8,.4];
   if(!Array.isArray(lightDirection)||lightDirection.length!==3||Math.hypot(...lightDirection)<1e-8)throw new Error('Invalid directional light direction');
   for(const color of [lighting.environment,lighting.directional?.radiance])if(color && (!Array.isArray(color)||color.length!==3||color.some(v=>!Number.isFinite(v)||v<0)))throw new Error('Invalid light radiance');
+  const pointLights=lighting.pointLights||[];
+  if(!Array.isArray(pointLights)||pointLights.length>256)throw new Error('Invalid authored point-light list');
+  for(const light of pointLights)if(!Array.isArray(light.position)||light.position.length!==3||!light.position.every(Number.isFinite)||!Array.isArray(light.radiance)||light.radiance.length!==3||!light.radiance.every(v=>Number.isFinite(v)&&v>=0)||!Number.isFinite(light.worldArea)||light.worldArea<=0)throw new Error('Invalid authored point light');
   resources.requiresPhysical = materials.some(doc => doc.mediumOutput || doc.nodes.some(n => ['transmission', 'transmission_weight'].some(k => n.inputs?.[k] && (n.inputs[k].value === undefined || Number(n.inputs[k].value) !== 0))));
   const images = materials.flatMap(doc => Object.values(doc.images || {}));
   const environmentImageIndex = lighting.environmentTexture ? images.length : -1;
@@ -32,6 +35,10 @@ export function shaderSource(materials, resources = {}, lighting = {}, textureOp
     return `fn material${i}(ctx: ShadingContext) -> Material { ${c.body}\nreturn ${c.expression}; }\nfn medium${i}(ctx:ShadingContext)->Medium { ${medium ? `${medium.body}\nreturn ${medium.expression};` : `return material${i}(ctx).bsdf.interior;`} }`;
   }).join('\n');
   const environmentImage = environmentImageIndex >= 0 ? packed.descriptors[environmentImageIndex] : null;
+  const authoredPointDirect = pointLights.map(light => {
+    const position=literal('vector3',light.position), radiance=literal('color3',light.radiance.map(v=>v*light.worldArea*.5));
+    return `{let to=${position}-p;let d2=max(1e-8,dot(to,to));let dist=sqrt(d2);let wi=to/dist;if(dot(n,wi)>0.0&&intersect(p+n*max(1e-4,length(p)*1e-5),wi).id==0xffffffffu){let f=bsdf(m,n,wo,wi);value+=f.xyz*max(0.0,dot(n,wi))*${radiance}/d2;}}`;
+  }).join('');
   return /* wgsl */`
 ${contextWGSL}
 ${spectrumWGSL(materials, resources)}
@@ -145,6 +152,7 @@ fn bsdf(m: Lobe, n: vec3f, wo: vec3f, wi: vec3f) -> vec4f {
   let prob = mix(0.25,0.9,m.metal); let pdf = prob*D*nh/(4.0*vh)+(1.0-prob)*nl/PI;
   return vec4f(spec+diff,pdf);
 }
+fn authoredPointDirect(m:Lobe,n:vec3f,wo:vec3f,p:vec3f)->vec3f {var value=vec3f(0);${authoredPointDirect}return value;}
 fn sampleDirection(m: Lobe, n: vec3f, wo: vec3f, rng: ptr<function,u32>) -> vec3f {
   if (random(rng) >= mix(0.25,0.9,m.metal)) { return cosine(n,rng); }
   let a = max(0.001,m.roughness*m.roughness); let u = random(rng); let phi = 2.0*PI*random(rng);
@@ -162,7 +170,8 @@ fn preview(o0: vec3f, d0: vec3f, rng: ptr<function,u32>, realtime: bool) -> vec3
     let eps = max(1e-4,length(ctx.position)*1e-5);
     let emittingTriangle=triangles[h.id];let emittingNormal=normalize(cross(emittingTriangle.b.p.xyz-emittingTriangle.a.p.xyz,emittingTriangle.c.p.xyz-emittingTriangle.a.p.xyz));
     radiance += beta*m.emission*m.emissionWeight*emissionFactor(surface,-d)*emissionSidedness(u32(triangles[h.id].a.uv.z),emittingNormal,d)*contributionOpacity;
-    let direct = bsdf(m,ctx.normal,-d,light).xyz * max(0.0,dot(ctx.normal,light))*directionalRadiance()*contributionOpacity;
+    var direct = bsdf(m,ctx.normal,-d,light).xyz * max(0.0,dot(ctx.normal,light))*directionalRadiance()*contributionOpacity;
+    if (realtime) { direct += authoredPointDirect(m,ctx.normal,-d,ctx.position)*contributionOpacity; }
     if (intersect(ctx.position+ctx.normal*eps,light).id == 0xffffffffu) { radiance += beta*direct; }
     if (realtime) { radiance += beta*(m.base*(1.0-m.metal)*0.22+fresnel(max(0.0,dot(ctx.normal,-d)),mix(vec3f(0.04),m.base,m.metal))*environment(reflect(d,ctx.normal)))*contributionOpacity; break; }
     let wi = sampleDirection(m,ctx.normal,-d,rng); let f = bsdf(m,ctx.normal,-d,wi);
@@ -202,6 +211,7 @@ struct RasterVertex { @builtin(position) clip: vec4f, @location(0) position: vec
   let transmission=clamp((1.0-m.metal)*m.transmission,0.0,1.0);
   let refracted=refract(-wo,n,1.0/max(1.0001,m.ior));
   color=mix(color,m.transmissionColor*environment(refracted),transmission)*clamp(surface.opacity,0.0,1.0);
+  color += authoredPointDirect(m,n,wo,v.position)*clamp(surface.opacity,0.0,1.0);
   if (intersect(v.position+geomN*max(1e-4,length(v.position)*1e-5),light).id==0xffffffffu) { color += bsdf(m,n,wo,light).xyz*max(0.0,dot(n,light))*directionalRadiance()*clamp(surface.opacity,0.0,1.0); }
   let linear = max(vec3f(0),color*exp2(cfg.display.x)); let mapped=linear/(1.0+linear);
   return vec4f(select(12.92*mapped,1.055*pow(mapped,vec3f(1.0/2.4))-0.055,mapped>vec3f(0.0031308)),1);

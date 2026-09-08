@@ -253,6 +253,8 @@ test('authored point lights become bounded emissive geometry', () => {
   const r=appendRectLights(scene,[{type:'point',position:[1,2,3],radius:.5,intensity:4,exposure:0,color:[1,.5,.25]}]);
   assert.equal(r.positions.length,18);assert.equal(r.indices.length,24);assert.equal(r.materialIds.length,8);
   assert.deepEqual(r.provenance.pointLights[0].position,[1,2,3]);
+  assert.deepEqual(r.lighting.pointLights[0].position,[1,2,3]);
+  assert.match(shaderSource(syntheticScene('default').materials,{},r.lighting),/authoredPointDirect/);
   assert.equal(r.materials[0].twoSidedEmission,true);
   assert.throws(()=>appendRectLights(scene,[{type:'point',position:[0,0,0],radius:0}]),/radius must be positive/);
   const transformed=appendRectLights(scene,[{type:'sphere',transform:[1,0,0,0,0,1,0,0,0,0,1,0,-2,4,6,1],radius:.25}]);

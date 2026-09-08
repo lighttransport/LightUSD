@@ -97,7 +97,7 @@ export function appendRectLights(scene, lights) {
     result.indices.push(...winding.map(i=>i+offset));result.materialIds.push(material,material);
     imported.push({path:light.absPath,worldArea:area,radiance,materialId:material});
   }
-  result.lighting={environment,directional:distant||{radiance:[0,0,0]},...(environmentTexture?{environmentTexture}: {})};
+  result.lighting={environment,directional:distant||{radiance:[0,0,0]},pointLights:points,...(environmentTexture?{environmentTexture}: {})};
   result.provenance={...scene.provenance,lightingOverride:false,rectLights:imported,pointLights:points,diskLights:disks,distantLight:distant,domeLights:domes};
   return result;
 }
