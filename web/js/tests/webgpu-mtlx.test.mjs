@@ -501,6 +501,15 @@ test('place2d applies pivot, inverse scale, degree rotation and offset', () => {
   assert.throws(()=>compileGraph({nodes:[{name:'p',category:'place2d',type:'color3',inputs:{}}]}),/place2d output must be vector2/);
   assert.match(compileGraph({nodes:[{name:'p',category:'place2d',type:'vector2',inputs:{}}]}).body,/ctx\.uv/);
 });
+test('geompropvalue maps standard authored geometry properties with typed fallbacks', () => {
+  const uv=compileGraph({nodes:[{name:'uv',category:'geompropvalue',type:'vector2',inputs:{geomprop:{type:'string',value:'st'}}}]});
+  assert.equal(uv.expression,'n0'); assert.match(uv.body,/ctx\.uv/);
+  const normal=compileGraph({nodes:[{name:'n',category:'geompropvalue',type:'vector3',inputs:{geomprop:{type:'string',value:'N'}}}]});
+  assert.match(normal.body,/ctx\.normal/);
+  const fallback=compileGraph({nodes:[{name:'x',category:'geompropvalue',type:'color3',inputs:{geomprop:{type:'string',value:'custom'},default:{type:'color3',value:[.2,.3,.4]}}}]});
+  assert.match(fallback.body,/vec3f\(0\.2,0\.3,0\.4\)/);
+  assert.throws(()=>compileGraph({nodes:[{name:'bad',category:'geompropvalue',type:'float',inputs:{geomprop:{type:'string',value:'P'}}}]}),/has type vector3/);
+});
 test('core math nodes honor MaterialX default bounds and amounts', () => {
   const doc={nodes:[
     {name:'x',category:'constant',type:'float',inputs:{value:{type:'float',value:.25}}},

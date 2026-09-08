@@ -455,6 +455,12 @@ coverage beyond the earlier arithmetic/wave scene.
 The `ops-advanced` fixture extends this with typed vector conversion/swizzling,
 component separation, power, dot/cross products, and equality selection.
 
+`geompropvalue` now resolves standard static geometry-property tokens
+(`st`/`uv`, `P`, `N`, `T`, and `B`) against the shading context with strict
+output typing. Unknown properties use the authored `default` value, preserving
+MaterialX fallback behavior; dynamic selectors remain explicit diagnostics
+because the current scene context has no arbitrary primvar map.
+
 The `layered` fixture now compiles and raster-tests an Oren–Nayar top lobe over
 an anisotropic VDF interior, exercising BSDF-over-medium attachment in a scene.
 
