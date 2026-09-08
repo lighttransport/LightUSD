@@ -438,8 +438,10 @@ test('UsdUVTexture maps st/fallback/scale/bias and named channel outputs', () =>
 test('USD primvar readers and transform2d resolve standard geometry inputs', () => {
   const uv=compileGraph({nodes:[{name:'u',category:'UsdPrimvarReader',type:'vector2',inputs:{varname:{type:'string',value:'st'},fallback:{type:'vector2',value:[.2,.3]}}}]});
   assert.match(uv.body,/ctx\.uv/);
-  const fallback=compileGraph({nodes:[{name:'c',category:'UsdPrimvarReader',type:'color3',inputs:{varname:{type:'string',value:'displayColor'},fallback:{type:'color3',value:[.2,.3,.4]}}}]});
-  assert.match(fallback.body,/vec3f\(0\.2,0\.3,0\.4\)/);
+  const color=compileGraph({nodes:[{name:'c',category:'UsdPrimvarReader',type:'color3',inputs:{varname:{type:'string',value:'displayColor'},fallback:{type:'color3',value:[.2,.3,.4]}}}]});
+  assert.match(color.body,/ctx\.geomcolor\.rgb/);
+  const opacity=compileGraph({nodes:[{name:'a',category:'UsdPrimvarReader',type:'float',inputs:{varname:{type:'string',value:'displayOpacity'},fallback:{type:'float',value:.25}}}]});
+  assert.match(opacity.body,/ctx\.geomcolor\.a/);
   const transformed=compileGraph({nodes:[{name:'t',category:'UsdTransform2d',type:'vector2',inputs:{in:{type:'vector2',value:[1,0]},scale:{type:'vector2',value:[2,1]},rotation:{type:'float',value:90},translation:{type:'vector2',value:[.1,.2]}}}]});
   assert.match(transformed.body,/mat2x2f\(cos\(/); assert.match(transformed.body,/vec2f\(0\.1,0\.2\)/);
 });

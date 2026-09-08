@@ -691,7 +691,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           const selector = ins.varname;
           if (selector && (selector.nodename || selector.nodegraph || selector.interfacename)) fail('GEOMETRY', key, 'UsdPrimvarReader varname must be static');
           const name = String(selector?.value ?? '').toLowerCase().replace(/[_-]/g, '');
-          const properties = {st:['vector2','ctx.uv'],uv:['vector2','ctx.uv'],uv0:['vector2','ctx.uv'],texcoord:['vector2','ctx.uv'],p:['vector3','ctx.position'],position:['vector3','ctx.position'],n:['vector3','ctx.normal'],normal:['vector3','ctx.normal'],t:['vector3','ctx.tangent'],tangent:['vector3','ctx.tangent'],b:['vector3','ctx.bitangent'],bitangent:['vector3','ctx.bitangent']};
+          const properties = {st:['vector2','ctx.uv'],uv:['vector2','ctx.uv'],uv0:['vector2','ctx.uv'],texcoord:['vector2','ctx.uv'],p:['vector3','ctx.position'],position:['vector3','ctx.position'],n:['vector3','ctx.normal'],normal:['vector3','ctx.normal'],t:['vector3','ctx.tangent'],tangent:['vector3','ctx.tangent'],b:['vector3','ctx.bitangent'],bitangent:['vector3','ctx.bitangent'],color:['color3','ctx.geomcolor.rgb'],displaycolor:['color3','ctx.geomcolor.rgb'],opacity:['float','ctx.geomcolor.a'],displayopacity:['float','ctx.geomcolor.a']};
           const property=properties[name];
           if (property) { if (property[0] !== type) fail('TYPE', key, `UsdPrimvarReader ${name} has type ${property[0]}, not ${type}`); code=property[1]; }
           else code=x('fallback',widths[type]===1?0:Array(widths[type]).fill(0),type);
