@@ -995,6 +995,13 @@ test('hextiledimage preserves pinned hex-tile controls and derivative sampling',
   assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,filtertype:{type:'string',value:'cubic'}}}]},{imageDescriptors:descriptor}),/closest\/linear/);
   assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,file:{type:'filename',value:'missing'}}}]},{imageDescriptors:descriptor}),/missing decoded image/);
 });
+test('hextilednormalmap preserves tangent rotation, flip and gradient blending', () => {
+  const descriptor={normal:{offset:0,width:4,height:4,levels:3,colorspace:'raw'}};
+  const doc={nodes:[{name:'normal',category:'hextilednormalmap',type:'vector3',inputs:{file:{type:'filename',value:'normal'},flip_g:{type:'boolean',value:true},strength:{type:'float',value:.8}}}]};
+  const source=compileGraph(doc,{imageDescriptors:descriptor});
+  assert.match(source.body,/imageHextileNormal\(0u/); assert.match(source.body,/ctx\.tangent/); assert.match(source.body,/0\.8/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,filtertype:{type:'string',value:'cubic'}}}]},{imageDescriptors:descriptor}),/closest\/linear/);
+});
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
   assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/);

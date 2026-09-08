@@ -301,6 +301,9 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 - `hextiledimage` color3/color4 overloads implement the pinned three-sample
   hexagonal tile transform, randomized rotation/scale/offset ranges,
   luminance-weighted falloff, and derivative-based mip selection.
+- `hextilednormalmap` applies the same tile transform to tangent-space normal
+  samples, including green-channel flipping, tangent rotation, strength, and
+  gradient-based normal blending.
 - `grid` and `crosshatch` provide typed color3 UV patterns with tiling, offset,
   thickness, and staggered-cell controls.
 - `tiledcircles` provides deterministic cell-local circle masks with authored
