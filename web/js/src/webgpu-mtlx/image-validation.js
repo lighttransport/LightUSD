@@ -16,7 +16,8 @@ export async function validateImageKernels(device) {
     ['trilinear', [.25,.25], .5, 2, true, [.75,.25,.25,1]],
     ['LOD clamp', [.25,.25], 99, 2, true, [.5,.5,.5,1]],
   ];
-  const module = device.createShaderModule({ code: `${imageWGSL}
+  const imageHelpers = `fn safeNormal(v:vec3f,fallback:vec3f)->vec3f { let l2=dot(v,v); return select(fallback,v/sqrt(max(l2,1e-20)),l2>1e-20); }`;
+  const module = device.createShaderModule({ code: `${imageHelpers}\n${imageWGSL}
     @group(0) @binding(0) var<storage,read_write> result: array<vec4f>;
     @compute @workgroup_size(1) fn main() {
       ${cases.map(([,uv,lod,address,linear], i) => `result[${i}]=imageSample(0u,vec2u(2),2u,vec2f(${uv.join(',')}),${Number(lod).toFixed(1)},vec2u(${address}u),${linear},vec4f(0));`).join('\n')}
