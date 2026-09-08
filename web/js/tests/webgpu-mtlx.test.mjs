@@ -153,7 +153,7 @@ test('USD graph translation preserves interfaces and exact NodeDef typing', () =
   assert.match(materialXFromUSD(volumeWrapped, '/M', { library }).mediumOutput.nodename, /usd_/);
   const volumeOnly = structuredClone(volumeWrapped); delete volumeOnly.prims[0].properties['outputs:mtlx:surface'];
   const volumeOnlyDoc = materialXFromUSD(volumeOnly, '/M', { library });
-  assert.match(volumeOnlyDoc.output.nodename, /usd_volume_surface/); assert.match(compileGraph(volumeOnlyDoc, { material: true }).body, /closureInterior/);
+  assert.match(volumeOnlyDoc.output.nodename, /usd_volume_surface/); assert.match(compileGraph(volumeOnlyDoc, { material: true }).body, /closureInterior/); assert.match(shaderSource([volumeOnlyDoc], {}), /fn medium0/);
   const wrapped = changed(); wrapped.prims.push({ path: '/M/SM', type: 'Shader', properties: { 'info:id': p('token', 'ND_surfacematerial'), 'inputs:surfaceshader': p('token', undefined, ['/M/S.outputs:out']), 'inputs:displacementshader': p('token', undefined, ['/M/D.outputs:out']), 'outputs:out': p('token') } }, { path: '/M/D', type: 'Shader', properties: { 'info:id': p('token', 'ND_displacement_float'), 'inputs:displacement': p('float', .1), 'outputs:out': p('token') } }); wrapped.prims[0].properties['outputs:mtlx:surface'] = p('token', undefined, ['/M/SM.outputs:out']);
   const wrappedDoc = materialXFromUSD(wrapped, '/M', { library });
   assert.equal(wrappedDoc.displacementOutput.type, 'displacementshader');
