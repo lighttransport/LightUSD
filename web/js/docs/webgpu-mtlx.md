@@ -61,8 +61,8 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   resolution. The parser retains bounded vertical and horizontal candela grids;
   the shader bilinearly interpolates both angles in a deterministic tangent
   frame around the authored EDF axis. Malformed, oversized, empty, or
-  ambiguous profiles fail with diagnostics; inline `TILT=INCLUDE` tables are
-  applied, while external tilt files remain unsupported.
+  ambiguous profiles fail with diagnostics; inline `TILT=INCLUDE` tables and
+  bounded external tilt files are applied relative to the photometric asset.
 - `generalized_schlick_bsdf` now carries the pinned `color82` control and
   Hoffman Schlick correction through RGB and spectral lobe evaluation. Its
   supported authored path is static GGX reflection; transmission,
