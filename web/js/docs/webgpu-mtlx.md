@@ -573,7 +573,9 @@ energy compensation and reference closure semantics remain incomplete.
 
 `UsdPreviewSurface` maps diffuse/metallic/roughness/IOR, emissive, occlusion,
 opacity mode, normal, and bounded clearcoat inputs into the shared material
-closure path. Nonzero displacement remains an explicit diagnostic.
+closure path. Authored `normal` vectors are decoded from USD's signed tangent
+space convention through the generated shading frame; omitted normals use the
+geometric frame. Nonzero displacement remains an explicit diagnostic.
 
 The stdlib `surface_unlit` shader now preserves authored emission, bounded
 transmission, and opacity without introducing direct-light shading.
