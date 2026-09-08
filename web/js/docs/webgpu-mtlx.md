@@ -47,7 +47,10 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 - `generalized_schlick_edf` preserves its base EDF and directional `color0`,
   `color90`, and exponent controls through the same emission transport.
 - `generalized_schlick_bsdf` now carries the pinned `color82` control and
-  Hoffman Schlick correction through RGB and spectral lobe evaluation.
+  Hoffman Schlick correction through RGB and spectral lobe evaluation. Its
+  supported authored path is static GGX reflection; transmission,
+  retroreflection, thin film, custom distribution, and authored normal/tangent
+  variants fail with structured diagnostics instead of being silently ignored.
 - `translucent_bsdf` uses a bounded opposite-hemisphere diffuse transmission
   lobe and preserves its authored color and weight.
 - Direct `sheen_bsdf` nodes use the pinned Imageworks sheen NDF/BRDF with
@@ -732,8 +735,11 @@ attenuation to transmitted paths, including spectral conversion. The synthetic
 volumes remain a separate model.
 
 `generalized_schlick_bsdf` now preserves authored color-at-normal, color-at-
-grazing, roughness and exponent controls in a bounded microfacet lobe rather
-than collapsing to the ordinary dielectric Fresnel curve. The synthetic
+82, color-at-grazing, roughness and exponent controls in a bounded microfacet
+lobe rather than collapsing to the ordinary dielectric Fresnel curve. Its
+current implementation accepts GGX reflection only and diagnoses authored
+transmission, retroreflection, thin-film, custom-distribution, and
+normal/tangent variants. The synthetic
 `generalized-schlick` scene passes the targeted Chrome hardware reference gate;
 full measured/angle-dependent Schlick layering remains future work.
 

@@ -277,6 +277,12 @@ export function compileGraph(document, { output, library = {}, material = false,
           code=`closureLeaf(nativeHair(${color},${x('weight',1,'float')},${longitudinal},${azimuthal},${x('ior',1.55,'float')}))`;closureCount=1;break;
         }
         case 'generalized_schlick_bsdf': {
+          const connected=name=>n.inputs?.[name]&&(n.inputs[name].nodename||n.inputs[name].nodegraph||n.inputs[name].interfacename);
+          if (connected('retroreflective') || n.inputs?.retroreflective?.value===true || n.inputs?.retroreflective?.value==='true') fail('UNSUPPORTED',key,'generalized Schlick retroreflection is not implemented');
+          if (connected('distribution') || n.inputs?.distribution?.value && n.inputs.distribution.value!=='ggx') fail('UNSUPPORTED',key,'generalized Schlick supports only GGX distribution');
+          if (connected('scatter_mode') || n.inputs?.scatter_mode?.value && n.inputs.scatter_mode.value!=='R') fail('UNSUPPORTED',key,'generalized Schlick supports reflection scatter_mode R only');
+          if (connected('thinfilm_thickness') || connected('thinfilm_ior') || n.inputs?.thinfilm_thickness?.value && Number(n.inputs.thinfilm_thickness.value)!==0) fail('UNSUPPORTED',key,'generalized Schlick thin film is not implemented');
+          if ((n.inputs?.normal && (n.inputs.normal.nodename||n.inputs.normal.nodegraph||n.inputs.normal.interfacename||n.inputs.normal.value!==undefined)) || (n.inputs?.tangent && (n.inputs.tangent.nodename||n.inputs.tangent.nodegraph||n.inputs.tangent.interfacename||n.inputs.tangent.value!==undefined))) fail('UNSUPPORTED',key,'generalized Schlick authored normal/tangent is not implemented');
           code=`closureLeaf(nativeGeneralizedSchlick(${x('color0',[1,1,1],'color3')},${x('color82',[1,1,1],'color3')},${x('color90',[1,1,1],'color3')},${x('roughness',[.05,.05],'vector2')},${x('weight',1,'float')},${x('exponent',5,'float')}))`;closureCount=1;break;
         }
         case 'layer': {

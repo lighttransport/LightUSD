@@ -290,6 +290,18 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   const hair=syntheticScene('hair').materials[1];
   assert.match(compileGraph(hair,{material:true}).body,/nativeHair/);
   assert.match(shaderSource([hair]),/nativeHair/);
+  const generalized={nodes:[{name:'g',category:'generalized_schlick_bsdf',type:'BSDF',inputs:{color0:{type:'color3',value:[.04,.08,.16]}}}]};
+  for (const [name,input,pattern] of [
+    ['retroreflective',{type:'boolean',value:true},/retroreflection/],
+    ['distribution',{type:'string',value:'beckmann'},/distribution/],
+    ['scatter_mode',{type:'string',value:'RT'},/scatter_mode/],
+    ['thinfilm_thickness',{type:'float',value:10},/thin film/],
+    ['normal',{type:'vector3',value:[0,1,0]},/normal\/tangent/]
+  ]) {
+    generalized.nodes[0].inputs[name]=input;
+    assert.throws(()=>compileGraph(generalized,{material:true}),pattern);
+    delete generalized.nodes[0].inputs[name];
+  }
   const translucent=compileGraph({nodes:[{name:'t',category:'translucent_bsdf',type:'BSDF',inputs:{color:{type:'color3',value:[.7,.5,.3]},weight:{type:'float',value:.65}}}]});
   assert.match(translucent.body,/nativeTranslucent\(vec3f\(0\.7,0\.5,0\.3\),0\.65\)/);
   assert.match(shaderSource([{nodes:[{name:'t',category:'translucent_bsdf',type:'BSDF',inputs:{color:{type:'color3',value:[.7,.5,.3]},weight:{type:'float',value:.65}}},{name:'s',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'t'}}}],output:{nodename:'s'}}]),/m\.kind==7u/);
