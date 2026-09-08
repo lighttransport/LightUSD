@@ -618,8 +618,9 @@ physical mode to realtime immediately without inheriting an eager physical
 compile from the prior scene.
 
 MaterialX unit annotations are now validated against the supported vocabulary
-(`degree`, `radian`, metric length/time units, `nanometer`, and related unitless
-forms) instead of being rejected wholesale. Percent literals normalize to
+(`degree`, `radian`, metric length/time units including the standard library's
+`micron` spelling, `nanometer`, and related unitless forms) instead of being
+rejected wholesale. Percent literals normalize to
 unitless factors, radian annotations convert at angle-bearing nodes, and metric
 thin-film thickness converts to nanometers before spectral Fresnel evaluation.
 Other length/time values remain in the authored convention consumed by each
