@@ -462,6 +462,9 @@ test('closure composition preserves lobe bounds and interior ownership',()=>{
   const unsupportedLayer={nodes:[leaf,{name:'other',category:'sheen_bsdf',type:'BSDF'},
     {name:'layer',category:'layer',type:'BSDF',inputs:{top:{nodename:'leaf'},base:{nodename:'other'}}}]};
   assert.throws(()=>compileGraph(unsupportedLayer),/BSDF-over-BSDF layering requires recursive interface transport/);
+  const emptyLayer={nodes:[leaf,{name:'empty',category:'constant',type:'BSDF',inputs:{value:{type:'BSDF',value:''}}},
+    {name:'layer',category:'layer',type:'BSDF',inputs:{top:{nodename:'leaf'},base:{nodename:'empty'}}}]};
+  assert.match(compileGraph(emptyLayer).body,/nativeDiffuse/);
 });
 test('native closures compile and unsupported uniform inputs are diagnosed',()=>{
   for(const preset of ['native-copper','native-glass']) {
