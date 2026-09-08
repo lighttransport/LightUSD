@@ -351,12 +351,14 @@ export function compileGraph(document, { output, library = {}, material = false,
           // The bounded transport lobe samples the opposite hemisphere and
           // carries the authored color and weight through direct/indirect paths.
           normal = ins.normal ? x('normal', undefined, 'vector3') : null;
+          if (ins.tangent && (ins.tangent.value !== undefined || ins.tangent.nodename || ins.tangent.nodegraph || ins.tangent.interfacename)) fail('UNSUPPORTED', key, 'translucent_bsdf authored tangent is not implemented');
           code=`closureLeaf(nativeTranslucent(${x('color',[1,1,1],'color3')},${x('weight',1,'float')}))`;closureCount=1;break;
         }
         case 'hair_bsdf': case 'chiang_hair_bsdf': {
           // Normalize legacy melanin and explicit-color forms into a bounded
           // fiber lobe; longitudinal and azimuthal roughness remain dynamic.
           normal = ins.normal ? x('normal', undefined, 'vector3') : null;
+          if (ins.tangent && (ins.tangent.value !== undefined || ins.tangent.nodename || ins.tangent.nodegraph || ins.tangent.interfacename)) fail('UNSUPPORTED', key, `${n.category} authored tangent is not implemented`);
           const color = ins.absorption_coefficient ? `exp(-${x('absorption_coefficient',[0,0,0],'vector3')})` : ins.color ? x('color',[.6,.25,.08],'color3') : ins.base_color ? x('base_color',[.6,.25,.08],'color3') : ins.tint_R ? x('tint_R',[1,1,1],'color3') :
             `mix(vec3f(.85,.55,.32),vec3f(.03,.008,.002),clamp(${x('melanin',0,'float')},0.0,1.0))`;
           const longitudinal = ins.longitudinal_roughness ? x('longitudinal_roughness',.35,'float') : ins.roughness_R ? `${x('roughness_R',[.1,.1],'vector2')}.x` : x('roughness',.35,'float');

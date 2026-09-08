@@ -509,6 +509,8 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   assert.throws(()=>compileGraph(oren,{material:true}),/energy-compensated Oren-Nayar/);
   const dielectricTangent={nodes:[{name:'d',category:'dielectric_bsdf',type:'BSDF',inputs:{tangent:{type:'vector3',value:[1,0,0]}}}]};
   assert.throws(()=>compileGraph(dielectricTangent,{material:true}),/authored tangent is not implemented/);
+  const hairTangent={nodes:[{name:'h',category:'chiang_hair_bsdf',type:'BSDF',inputs:{tangent:{type:'vector3',value:[1,0,0]}}}]};
+  assert.throws(()=>compileGraph(hairTangent,{material:true}),/authored tangent is not implemented/);
   const generalized={nodes:[{name:'g',category:'generalized_schlick_bsdf',type:'BSDF',inputs:{color0:{type:'color3',value:[.04,.08,.16]}}}]};
   for (const [name,input,pattern] of [
     ['retroreflective',{type:'boolean',value:true},/retroreflection/],
