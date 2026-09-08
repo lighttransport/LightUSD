@@ -398,6 +398,15 @@ test('shared dependency emitted once and deterministic', () => {
   const doc = { nodes: [constant('a', 2), { name: 'sum', category: 'add', type: 'float', inputs: { in1: { nodename: 'a' }, in2: { nodename: 'a' } } }] };
   const a = compileGraph(doc); assert.equal(a.body.split('\n').length, 2); assert.deepEqual(a, compileGraph(doc));
 });
+test('screen and difference compositing nodes preserve numeric types', () => {
+  const doc={nodes:[
+    {name:'a',category:'constant',type:'color3',inputs:{value:{type:'color3',value:[.2,.4,.6]}}},
+    {name:'b',category:'constant',type:'color3',inputs:{value:{type:'color3',value:[.1,.3,.5]}}},
+    {name:'screen',category:'screen',type:'color3',inputs:{in1:{nodename:'a'},in2:{nodename:'b'}}},
+    {name:'out',category:'difference',type:'color3',inputs:{in1:{nodename:'screen'},in2:{nodename:'b'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/vec3f\(1\.0\)-\(vec3f\(1\.0\)-n0\)/); assert.match(source.body,/abs\(/);
+});
 test('vector reflection, refraction and distance nodes compile with typed ports', () => {
   const doc={nodes:[
     {name:'in',category:'constant',type:'vector3',inputs:{value:{type:'vector3',value:[0,0,-1]}}},
