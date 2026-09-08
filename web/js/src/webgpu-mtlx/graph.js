@@ -346,7 +346,10 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'subsurface_bsdf': {
           normal=ins.normal ? x('normal',undefined,'vector3') : null;
           tangent=ins.tangent ? x('tangent',undefined,'vector3') : null;
-          code=`closureLeaf(nativeSubsurface(${x('color',[.18,.18,.18],'color3')},${x('weight',1,'float')},${x('radius',[1,1,1],'color3')},${x('anisotropy',0,'float')}))`;closureCount=1;break;
+          const albedo=ins.albedo ? x('albedo',[.18,.18,.18],'color3') : x('color',[.18,.18,.18],'color3');
+          const radius=ins.radius ? x('radius',[1,1,1],'color3') : 'vec3f(1)';
+          const scale=ins.scale ? `max(0.0,${x('scale',1,'float')})` : '1.0';
+          code=`closureLeaf(nativeSubsurface(${albedo},${x('weight',1,'float')},max(vec3f(.02),${radius}*${scale}),${x('anisotropy',0,'float')}))`;closureCount=1;break;
         }
         case 'translucent_bsdf': {
           // MaterialX translucent_bsdf is a diffuse transmission closure.

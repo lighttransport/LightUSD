@@ -1484,6 +1484,12 @@ test('subsurface BSDF preserves bounded anisotropy', () => {
   const material={nodes:[{name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'sss'}}},...doc.nodes],output:{nodename:'surface'}};
   assert.match(shaderSource([material],{}),/m\.anisotropy/);
 });
+test('subsurface BSDF accepts albedo and scaled radius aliases', () => {
+  const doc={nodes:[{name:'sss',category:'subsurface_bsdf',type:'BSDF',inputs:{albedo:{type:'color3',value:[.7,.2,.1]},radius:{type:'color3',value:[2,.5,.25]},scale:{type:'float',value:.25}}}],output:{nodename:'sss'}};
+  const graph=compileGraph(doc,{output:{nodename:'sss'}});
+  assert.match(graph.body,/nativeSubsurface\(vec3f\(0\.7,0\.2,0\.1\)/);
+  assert.match(graph.body,/vec3f\(2\.0,0\.5,0\.25\)\*max\(0\.0,0\.25\)/);
+});
 test('generalized Schlick EDF preserves directional color controls', () => {
   const doc={nodes:[
     {name:'edf',category:'generalized_schlick_edf',type:'EDF',inputs:{base:{type:'EDF',value:''},color0:{type:'color3',value:[.2,.3,.4]},color90:{type:'color3',value:[1,.8,.6]},exponent:{type:'float',value:3}}},

@@ -22,6 +22,7 @@ export async function validateTransportKernels(device) {
     ['thin film 650nm', 'thinFilmFresnelLambda(.8,1.5,1.4,180.0,650.0)', film(650)],
     ['closure weighted evaluation', 'closureEval(closureMix(closureLeaf(nativeDiffuse(vec3f(.2),1,0)),closureLeaf(nativeDiffuse(vec3f(.8),1,0)),.25),vec3f(0,0,1),vec3f(0,0,1),1.5,0.0).x', .35/Math.PI],
     ['closure mixture PDF', 'closureEval(closureMix(closureLeaf(nativeDiffuse(vec3f(.2),1,0)),closureLeaf(nativeDiffuse(vec3f(.8),1,0)),.25),vec3f(0,0,1),vec3f(0,0,1),1.5,0.0).w', 1/Math.PI],
+    ['scaled subsurface profile', 'nativeEval(nativeSubsurface(vec3f(.7,.2,.1),1,vec3f(.5,.125,.0625),.35),vec3f(0,0,1),vec3f(0,0,1),1.5,0.0).x', .7*(.25/Math.PI+.75/(2*Math.PI*.25))],
     ['weighted layered base transmission', 'closureEval(closureLayer(closureLeaf(nativeTranslucent(vec3f(1),.25)),closureLeaf(nativeDiffuse(vec3f(.5),1,0))),vec3f(0,0,1),vec3f(0,0,1),1.5,0.0).x', .125/Math.PI],
     ['inactive transmission interface', 'primaryLobe(surfaceEmission(closureMix(closureLeaf(nativeDielectric(vec3f(1),1.8,vec2f(.1),1,3u)),closureLeaf(nativeDiffuse(vec3f(.5),1,0)),1.0),vec3f(0),1.0,0u,vec3f(0,0,1),vec3f(1,0,0),vec3f(0,1,0),vec3f(0,0,1),-1.0,-1.0,vec3f(1),vec3f(1),5.0,0u,0u,0u)).transmission', 0],
     ['secondary invalid lobe', 'select(0.0,1.0,validClosure(closureAdd(closureLeaf(nativeDiffuse(vec3f(1),1,0)),closureLeaf(nativeDiffuse(vec3f(-1),1,0)))))',0],
