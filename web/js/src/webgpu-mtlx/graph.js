@@ -6,7 +6,7 @@ export const MATERIALX_VERSION = '1.39.5';
 export class GraphError extends Error {
   constructor(code, path, message) { super(`${path}: ${message}`); this.name = 'GraphError'; this.code = code; this.path = path; }
 }
-const types = { float: 'f32', integer: 'i32', boolean: 'bool', color3: 'vec3f', color4: 'vec4f', vector2: 'vec2f', vector3: 'vec3f', vector4: 'vec4f', matrix33: 'mat3x3f', matrix44: 'mat4x4f', VDF: 'Medium', BSDF: 'Closure', EDF: 'vec3f' };
+const types = { float: 'f32', integer: 'i32', boolean: 'bool', color3: 'vec3f', color4: 'vec4f', vector2: 'vec2f', vector3: 'vec3f', vector4: 'vec4f', matrix33: 'mat3x3f', matrix44: 'mat4x4f', VDF: 'Medium', BSDF: 'Closure', EDF: 'vec3f', displacementshader: 'f32' };
 const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4: 4, vector4: 4, vector2: 2, matrix33: 9, matrix44: 16 };
 // Units are semantic annotations; implementations consume their authored
 // convention (for example degrees for rotate2d and nanometers for thin film).
@@ -185,6 +185,9 @@ export function compileGraph(document, { output, library = {}, material = false,
       let code, closureCount = 0, hasInterior = false, interiorCategories=[], emissionCone = null, emissionSchlick = null, normal = null;
       switch (n.category) {
         case 'uniform_edf': code = x('color',[1,1,1],'color3'); break;
+        case 'displacement':
+          if (type !== 'displacementshader') fail('TYPE', key, 'displacement output must be displacementshader');
+          code=`${x('displacement',0,'float')}*${x('scale',1,'float')}`; break;
         case 'conical_edf': {
           const direction=x('normal',undefined,'vector3');
           const inner=x('inner_angle',60,'float'), outer=x('outer_angle',0,'float');

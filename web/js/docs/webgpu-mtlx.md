@@ -211,8 +211,10 @@ procedural lights are used. The physical paths sample the environment and all
 triangles (area-weighted), with BSDF/light MIS. Realtime does not reproduce the
 new transmission and volume effects.
 
-`document.displacementOutput` selects float normal displacement or a world-space
-vector3 offset. `scene.displacementRefinement` (0–5, budget-limited) performs
+`document.displacementOutput` selects a MaterialX displacement shader, a float
+normal displacement, or a world-space vector3 offset. USD Material terminals
+with `outputs:displacement` or `outputs:mtlx:displacement` now translate the
+typed displacement constructor into that path. `scene.displacementRefinement` (0–5, budget-limited) performs
 linear triangle refinement. GPU graph evaluation and normal recomputation happen
 before worker BVH construction; raster and paths share the displaced triangles.
 Material changes that affect displacement rebake the source mesh. This is not
@@ -482,7 +484,7 @@ retains this snapshot alongside the explicitly lossy render-material diagnostic.
 the reachable surface graph into a compiler document. It resolves graph outputs
 and interface inputs by absolute property path, selects exact library NodeDefs,
 and checks typed ports. Missing definitions, unknown inputs, cycles, time samples
-and authored displacement/volume terminals fail explicitly. Asset inputs require
+and authored volume terminals fail explicitly. Asset inputs require
 a synchronous caller-supplied resolver returning a resource key; no source-layer
 anchor is guessed. Color literals and asset resolver requests retain the source
 attribute's color space, with attribute overrides preceding inherited prim

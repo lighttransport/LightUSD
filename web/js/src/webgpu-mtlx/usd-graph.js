@@ -26,7 +26,7 @@ export function materialXFromUSD(snapshot, materialPath, { library = {}, resolve
   }
   const material = prims.get(materialPath);
   if (material?.type !== 'Material') fail(materialPath, 'expected Material');
-  for (const name of ['outputs:displacement', 'outputs:mtlx:displacement', 'outputs:volume', 'outputs:mtlx:volume']) {
+  for (const name of ['outputs:volume', 'outputs:mtlx:volume']) {
     const p = material.properties?.[name];
     if (p && (p.connections?.length || own(p, 'value') || p.timeSampled)) fail(`${materialPath}.${name}`, 'non-surface terminals are not yet translated');
   }
@@ -122,8 +122,10 @@ export function materialXFromUSD(snapshot, materialPath, { library = {}, resolve
   const terminal = own(material.properties, 'outputs:mtlx:surface') ? 'outputs:mtlx:surface' : own(material.properties, 'outputs:surface') ? 'outputs:surface' : null;
   if (!terminal) fail(materialPath, 'missing MaterialX surface terminal');
   const output = port(`${materialPath}.${terminal}`, 'surfaceshader');
+  const displacementTerminal = own(material.properties, 'outputs:mtlx:displacement') ? 'outputs:mtlx:displacement' : own(material.properties, 'outputs:displacement') ? 'outputs:displacement' : null;
+  const displacementOutput = displacementTerminal ? port(`${materialPath}.${displacementTerminal}`, 'displacementshader') : undefined;
   return { version: '1.39', nodes, output, definitions, graphs: library.graphs || {},
-    source: materialPath, provenance: { materialPath, source: 'USD layer snapshot', referenceReady: false } };
+    ...(displacementOutput ? { displacementOutput } : {}), source: materialPath, provenance: { materialPath, source: 'USD layer snapshot', referenceReady: false } };
 }
 
 /** Load the pinned MaterialX library partitions needed by USD shader IDs. */

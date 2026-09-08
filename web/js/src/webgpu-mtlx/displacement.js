@@ -36,8 +36,8 @@ export async function bakeDisplacement(scene, device) {
     if(!doc.displacementOutput)return `fn displacement${i}(ctx:ShadingContext)->vec3f{return vec3f(0);}`;
     const c=compileGraph(doc,{output:doc.displacementOutput,imageDescriptors,uvIndex:Number.isInteger(doc.uvIndex)&&doc.uvIndex>=0?doc.uvIndex:0,geompropNames:doc.geompropNames||(doc.geompropName?[doc.geompropName]:[])});
     usedImages ||= c.categories.includes('image');
-    if(!['float','vector3'].includes(c.type))throw new Error('Displacement output must be float height or world-space vector3');
-    return `fn displacement${i}(ctx:ShadingContext)->vec3f{${c.body}\nreturn ${c.type==='float'?`ctx.normal*${c.expression}`:c.expression};}`;
+    if(!['float','vector3','displacementshader'].includes(c.type))throw new Error('Displacement output must be float height, displacement shader, or world-space vector3');
+    return `fn displacement${i}(ctx:ShadingContext)->vec3f{${c.body}\nreturn ${c.type==='vector3'?c.expression:`ctx.normal*${c.expression}`};}`;
   }).join('\n');
   const count=refined.positions.length/3,data=new Float32Array(count*52);
   for(let i=0;i<count;i++){const mat=refined.materialIds[Math.floor(i/3)],names=scene.materials[mat]?.geompropNames||(scene.materials[mat]?.geompropName?[scene.materials[mat].geompropName]:[]),g=slot=>names[slot]&&refined.geompropSets?.[names[slot]]?.slice(i*4,i*4+4)||[0,0,0,0];data.set([...refined.positions.slice(i*3,i*3+3),0,...refined.normals.slice(i*3,i*3+3),0,...refined.uvs.slice(i*2,i*2+2),mat,0,...(refined.colors.length?refined.colors.slice(i*4,i*4+4):[0,0,0,1]),...(refined.tangents.length?refined.tangents.slice(i*4,i*4+4):[0,0,0,1]),...Array.from({length:8},(_,slot)=>g(slot)).flat()],i*52);}

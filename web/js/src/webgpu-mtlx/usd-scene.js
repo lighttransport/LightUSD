@@ -222,7 +222,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
         } catch (error) { textureDiagnostics.push({ key, url: request.url, error: String(error.message || error) }); }
       }
       for (const [path, document] of Object.entries(translatedMaterials)) {
-        try { document.uvIndex = materialUVIndex(document); compiledMaterials[path] = compileGraph(document, { material: true, output: document.output, imageDescriptors, uvIndex: document.uvIndex, geompropNames: document.geompropNames || [] }); }
+        try { document.uvIndex = materialUVIndex(document); compiledMaterials[path] = compileGraph(document, { material: true, output: document.output, imageDescriptors, uvIndex: document.uvIndex, geompropNames: document.geompropNames || [] }); if (document.displacementOutput) compileGraph(document, { output: document.displacementOutput, imageDescriptors, uvIndex: document.uvIndex, geompropNames: document.geompropNames || [] }); }
         catch (error) { translationDiagnostics.push({ path, phase: 'compile', error: String(error.message || error) }); }
       }
     }

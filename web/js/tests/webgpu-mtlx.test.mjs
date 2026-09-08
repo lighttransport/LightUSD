@@ -117,7 +117,7 @@ test('USD graph translation preserves interfaces and exact NodeDef typing', () =
     { path: '/M/G', type: 'NodeGraph', properties: { 'outputs:surface': p('token', undefined, ['/M/S.outputs:out']), 'inputs:color': p('color3f', [.2,.4,.6]) } },
     { path: '/M/S', type: 'Shader', properties: { 'info:id': p('token', 'ND_standard_surface_surfaceshader'), 'inputs:base_color': p('color3f', [1,0,0], ['/M/G.inputs:color']), 'outputs:out': p('token') } }
   ] };
-  const library = { definitions: { ND_standard_surface_surfaceshader: { node: 'standard_surface', inputs: { base_color: { type: 'color3' } }, outputs: { out: { type: 'surfaceshader' } } } } };
+  const library = { definitions: { ND_standard_surface_surfaceshader: { node: 'standard_surface', inputs: { base_color: { type: 'color3' } }, outputs: { out: { type: 'surfaceshader' } } }, ND_displacement_float: { node: 'displacement', inputs: { displacement: { type: 'float' }, scale: { type: 'float' } }, outputs: { out: { type: 'displacementshader' } } } } };
   const doc = materialXFromUSD(snapshot, '/M', { library });
   assert.equal(doc.nodes.length, 1);
   assert.deepEqual(doc.nodes[0].inputs.base_color, { type: 'color3', value: [.2,.4,.6], colorspace: 'lin_rec709' });
@@ -139,7 +139,11 @@ test('USD graph translation preserves interfaces and exact NodeDef typing', () =
   bad = changed(); bad.prims[2].properties['inputs:unknown'] = p('float', 1);
   assert.throws(() => materialXFromUSD(bad, '/M', { library }), /absent from NodeDef/);
   bad = changed(); bad.prims[0].properties['outputs:displacement'] = p('token', undefined, ['/M/S.outputs:out']);
-  assert.throws(() => materialXFromUSD(bad, '/M', { library }), /non-surface/);
+  assert.throws(() => materialXFromUSD(bad, '/M', { library }), /output mismatch/);
+  const displaced = changed(); displaced.prims.push({ path: '/M/D', type: 'Shader', properties: { 'info:id': p('token', 'ND_displacement_float'), 'inputs:displacement': p('float', .25), 'inputs:scale': p('float', 2), 'outputs:out': p('token') } }); displaced.prims[0].properties['outputs:displacement'] = p('token', undefined, ['/M/D.outputs:out']);
+  const displacementDoc = materialXFromUSD(displaced, '/M', { library });
+  assert.equal(displacementDoc.displacementOutput.type, 'displacementshader');
+  assert.match(compileGraph(displacementDoc, { output: displacementDoc.displacementOutput }).body, /0\.25/);
   const colored = changed(); colored.colorSpaces = { '/M': { value: 'lin_ap1_scene', timeSampled: false } };
   assert.equal(materialXFromUSD(colored, '/M', { library }).nodes[0].inputs.base_color.colorspace, 'acescg');
   colored.prims[1].properties['inputs:color'].colorSpace = 'srgb_rec709_scene';
