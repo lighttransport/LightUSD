@@ -182,12 +182,47 @@ export function compileGraph(document, { output, library = {}, material = false,
         fail('TYPE',key,`expected ${type} or scalar float for ${k}`);
       };
       const binary = op => `(${same('in1')} ${op} ${scalarOrSame('in2')})`;
-      let code, closureCount = 0, hasInterior = false, interiorCategories=[], emissionCone = null, emissionSchlick = null, emissionProfile = null, volumeEmission = false, normal = null;
+      let code, closureCount = 0, hasInterior = false, interiorCategories=[], emissionCone = null, emissionSchlick = null, emissionProfile = null, lightInfo = null, volumeEmission = false, normal = null;
       switch (n.category) {
         case 'uniform_edf': code = x('color',[1,1,1],'color3'); break;
         case 'light': {
           const edf = !ins.edf || (!ins.edf.nodename && !ins.edf.nodegraph && !ins.edf.interfacename && (ins.edf.value === '' || ins.edf.value === undefined)) ? { type: 'EDF', code: 'vec3f(0)' } : input('edf', undefined, 'EDF');
           code = `${edf.code}*max(0.0,${x('intensity',1,'float')})*pow(2.0,${x('exposure',0,'float')})`;
+          break;
+        }
+        case 'point_light': {
+          lightInfo = {
+            kind: 'point',
+            position: x('position', undefined, 'vector3'),
+            color: x('color', [1, 1, 1], 'color3'),
+            intensity: x('intensity', 1, 'float'),
+            decayRate: x('decay_rate', 2, 'float')
+          };
+          code = `${lightInfo.color}*max(0.0,${lightInfo.intensity})`;
+          break;
+        }
+        case 'directional_light': {
+          lightInfo = {
+            kind: 'directional',
+            direction: x('direction', undefined, 'vector3'),
+            color: x('color', [1, 1, 1], 'color3'),
+            intensity: x('intensity', 1, 'float')
+          };
+          code = `${lightInfo.color}*max(0.0,${lightInfo.intensity})`;
+          break;
+        }
+        case 'spot_light': {
+          lightInfo = {
+            kind: 'spot',
+            position: x('position', undefined, 'vector3'),
+            direction: x('direction', undefined, 'vector3'),
+            color: x('color', [1, 1, 1], 'color3'),
+            intensity: x('intensity', 1, 'float'),
+            decayRate: x('decay_rate', 2, 'float'),
+            innerAngle: x('inner_angle', 0, 'float'),
+            outerAngle: x('outer_angle', 0, 'float')
+          };
+          code = `${lightInfo.color}*max(0.0,${lightInfo.intensity})`;
           break;
         }
         case 'volume': {
@@ -1178,14 +1213,15 @@ export function compileGraph(document, { output, library = {}, material = false,
         const id = `n${serial++}`;
         if(serial>32768)fail('LIMIT',key,'expanded graph exceeds 32768 expressions');
         lines.push(`let ${id}: ${target} = ${code.replace(/\bctx\b/g,contextName)};`);
-        result = { type, code: id, closureCount, hasInterior, interiorCategories, categories:[...dependencies], ...(volumeEmission ? { volumeEmission: true } : {}), ...(normal ? { normal: normal.replace(/\bctx\b/g, contextName) } : {}), ...(emissionCone ? { emissionCone: { direction: emissionCone.direction.replace(/\bctx\b/g, contextName), innerCos: emissionCone.innerCos.replace(/\bctx\b/g, contextName), outerCos: emissionCone.outerCos.replace(/\bctx\b/g, contextName) } } : {}), ...(emissionSchlick ? { emissionSchlick: { color0: emissionSchlick.color0.replace(/\bctx\b/g, contextName), color90: emissionSchlick.color90.replace(/\bctx\b/g, contextName), exponent: emissionSchlick.exponent.replace(/\bctx\b/g, contextName) } } : {}), ...(emissionProfile ? { emissionProfile: { direction: emissionProfile.direction.replace(/\bctx\b/g, contextName), id: emissionProfile.id } } : {}) };
+        const replaceContext = value => typeof value === 'string' ? value.replace(/\bctx\b/g, contextName) : value;
+        result = { type, code: id, closureCount, hasInterior, interiorCategories, categories:[...dependencies], ...(volumeEmission ? { volumeEmission: true } : {}), ...(normal ? { normal: replaceContext(normal) } : {}), ...(lightInfo ? { lightInfo: Object.fromEntries(Object.entries(lightInfo).map(([key, value]) => [key, replaceContext(value)])) } : {}), ...(emissionCone ? { emissionCone: { direction: replaceContext(emissionCone.direction), innerCos: replaceContext(emissionCone.innerCos), outerCos: replaceContext(emissionCone.outerCos) } } : {}), ...(emissionSchlick ? { emissionSchlick: { color0: replaceContext(emissionSchlick.color0), color90: replaceContext(emissionSchlick.color90), exponent: replaceContext(emissionSchlick.exponent) } } : {}), ...(emissionProfile ? { emissionProfile: { direction: replaceContext(emissionProfile.direction), id: emissionProfile.id } } : {}) };
       }
     }
     used.add(n.category); active.delete(key); cached.set(key, result); return result;
   }
   const selected = output || { nodename: document.nodes.at(-1)?.name };
   const value = port(selected, root, {}, undefined, '$output');
-  return { body: lines.join('\n'), expression: value.code, type: value.type, categories: [...used].sort(), hasInterior:value.hasInterior||false,interiorCategories:value.interiorCategories||[], volumeEmission:value.volumeEmission||false, diagnostics: [], referenceReady: false };
+  return { body: lines.join('\n'), expression: value.code, type: value.type, categories: [...used].sort(), hasInterior:value.hasInterior||false,interiorCategories:value.interiorCategories||[], volumeEmission:value.volumeEmission||false, ...(value.lightInfo ? { lightInfo: value.lightInfo } : {}), diagnostics: [], referenceReady: false };
 }
 
 export const contextWGSL = `struct ShadingContext { position: vec3f, normal: vec3f, tangent: vec3f, bitangent: vec3f, uv: vec2f, time: f32, frame: f32, uvDx: vec2f, uvDy: vec2f, dpdu:vec3f, dpdv:vec3f, viewdir:vec3f, geomcolor:vec4f, geomprop:vec4f, geomprop1:vec4f, geomprop2:vec4f, geomprop3:vec4f, geomprop4:vec4f, geomprop5:vec4f, geomprop6:vec4f, geomprop7:vec4f }

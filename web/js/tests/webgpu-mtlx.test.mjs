@@ -1304,6 +1304,26 @@ test('MaterialX light and volume constructors preserve typed outputs', () => {
   ], output: { nodename: 'surface' }, mediumOutput: { nodename: 'volume' } };
   assert.match(shaderSource([material], {}), /mediumWithEmission/);
 });
+test('MaterialX point, directional, and spot lights preserve authored parameters', () => {
+  const point = compileGraph({ nodes: [{ name: 'light', category: 'point_light', type: 'lightshader', inputs: {
+    position: { type: 'vector3', value: [1, 2, 3] }, color: { type: 'color3', value: [2, 1, .5] },
+    intensity: { type: 'float', value: 4 }, decay_rate: { type: 'float', value: 1 }
+  } }] }, { output: { nodename: 'light' } });
+  assert.equal(point.type, 'lightshader'); assert.equal(point.lightInfo.kind, 'point');
+  assert.match(point.lightInfo.position, /vec3f\(1\.0,2\.0,3\.0\)/); assert.match(point.body, /max\(0\.0,4\.0\)/);
+  const directional = compileGraph({ nodes: [{ name: 'light', category: 'directional_light', type: 'lightshader', inputs: {
+    direction: { type: 'vector3', value: [0, -1, 0] }, color: { type: 'color3', value: [1, .8, .6] }, intensity: { type: 'float', value: 2 }
+  } }] }, { output: { nodename: 'light' } });
+  assert.equal(directional.lightInfo.kind, 'directional'); assert.match(directional.lightInfo.direction, /vec3f\(0\.0,-1\.0,0\.0\)/);
+  const spot = compileGraph({ nodes: [{ name: 'light', category: 'spot_light', type: 'lightshader', inputs: {
+    position: { type: 'vector3', value: [0, 1, 2] }, direction: { type: 'vector3', value: [0, -1, 0] },
+    color: { type: 'color3', value: [1, 1, 1] }, inner_angle: { type: 'float', value: 15 }, outer_angle: { type: 'float', value: 30 }
+  } }] }, { output: { nodename: 'light' } });
+  assert.equal(spot.lightInfo.kind, 'spot'); assert.match(spot.lightInfo.innerAngle, /15\.0/); assert.match(spot.lightInfo.outerAngle, /30\.0/);
+  assert.throws(() => compileGraph({ nodes: [{ name: 'light', category: 'point_light', type: 'lightshader', inputs: {
+    color: { type: 'color3', value: [1, 1, 1] }
+  } }] }, { output: { nodename: 'light' } }), /missing input/);
+});
 test('generalized Schlick EDF preserves directional color controls', () => {
   const doc={nodes:[
     {name:'edf',category:'generalized_schlick_edf',type:'EDF',inputs:{base:{type:'EDF',value:''},color0:{type:'color3',value:[.2,.3,.4]},color90:{type:'color3',value:[1,.8,.6]},exponent:{type:'float',value:3}}},
