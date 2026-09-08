@@ -121,6 +121,14 @@ export function materialXFromUSD(snapshot, materialPath, { library = {}, resolve
     if (p.connections?.length === 1) return volumeVdf(p.connections[0]);
     if (prim.type === 'Shader' && name.startsWith('outputs:')) {
       const node = shader(prim), def = definition(node.nodedef);
+      if (def.node === 'volumematerial') {
+        const volume = node.inputs.volumeshader, volumeNode = volume?.nodename && nodes.find(candidate => candidate.name === volume.nodename);
+        if (!volumeNode || volumeNode.category !== 'volume') fail(`${prim.path}.inputs:volumeshader`, 'volume material requires a volume constructor');
+        const edf = volumeNode.inputs.edf;
+        if (edf && (edf.nodename || edf.nodegraph || edf.interfacename || edf.value !== '')) fail(`${volumeNode.source}.inputs:edf`, 'volume EDF emission is not implemented');
+        if (!volumeNode.inputs.vdf) fail(`${volumeNode.source}.inputs:vdf`, 'volume constructor requires a VDF input');
+        return volumeNode.inputs.vdf;
+      }
       if (def.node !== 'volume') fail(path, `expected volume constructor, got ${def.node}`);
       const edf = node.inputs.edf;
       if (edf && (edf.nodename || edf.nodegraph || edf.interfacename || edf.value !== '')) fail(`${prim.path}.inputs:edf`, 'volume EDF emission is not implemented');
