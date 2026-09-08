@@ -69,6 +69,7 @@ export function parseMaterialX(xml, { source = '', parser = globalThis.DOMParser
 
 /** Compile a normalized graph. Connections are {nodename, output} or {nodegraph, output}. */
 export function compileGraph(document, { output, library = {}, material = false, imageDescriptors = {}, uvIndex = 0, geompropName = '', geompropNames = undefined, measuredProfileIds = {} } = {}) {
+  if (document?.version !== undefined && !['1.39', MATERIALX_VERSION].includes(String(document.version))) fail('VERSION', '', `unsupported MaterialX version ${document.version}; expected 1.39.5`);
   const customGeompropNames = (geompropNames ?? (geompropName ? [geompropName] : [])).slice(0, 8).map(name => String(name).toLowerCase().replace(/[_-]/g, ''));
   const customGeomprop = name => { const slot = customGeompropNames.indexOf(name); return slot < 0 ? null : `ctx.geomprop${slot ? slot : ''}`; };
   const rawDefinitions = Object.assign(Object.create(null), library.definitions, document.definitions), definitions = Object.create(null);

@@ -124,6 +124,13 @@ test('MaterialX unit annotations are validated and preserved', () => {
   assert.match(compileGraph({nodes:[{name:'r',category:'rotate2d',type:'vector2',inputs:{in:{type:'vector2',value:[1,0]}}}]}).body,/0\.0 \* 0\.017453292519943295/);
 });
 
+test('MaterialX version gate accepts 1.39 documents and rejects newer semantics', () => {
+  const node = { name: 'v', category: 'constant', type: 'float', inputs: { value: { type: 'float', value: 1 } } };
+  assert.doesNotThrow(() => compileGraph({ version: '1.39', nodes: [node] }));
+  assert.doesNotThrow(() => compileGraph({ version: '1.39.5', nodes: [node] }));
+  assert.throws(() => compileGraph({ version: '1.40', nodes: [node] }), /unsupported MaterialX version/);
+});
+
 test('USD graph translation preserves interfaces and exact NodeDef typing', () => {
   const p = (type, value, connections = []) => ({ type, ...(value === undefined ? {} : { value }), connections, timeSampled: false });
   const snapshot = { version: 1, prims: [
