@@ -86,7 +86,7 @@ fn intersect(o: vec3f, d: vec3f) -> Hit {
   }
   return h;
 }
-fn context(h: Hit, o: vec3f, d: vec3f) -> ShadingContext {
+fn context(h: Hit, o: vec3f, d: vec3f, rayCone:f32) -> ShadingContext {
   let tri = triangles[h.id]; let w = 1.0-h.u-h.v;
   let n = normalize(tri.a.n.xyz*w+tri.b.n.xyz*h.u+tri.c.n.xyz*h.v);
   let p1=tri.b.p.xyz-tri.a.p.xyz; let p2=tri.c.p.xyz-tri.a.p.xyz;
@@ -95,7 +95,7 @@ fn context(h: Hit, o: vec3f, d: vec3f) -> ShadingContext {
   let derivatives=mxSurfaceDerivatives(n,p1,p2,uv1,uv2);
   let uvScale=0.5*(length(uv1)/max(length(p1),1e-6)+length(uv2)/max(length(p2),1e-6));
   let pixelWorld=max(2.0*cfg.right.w/f32(cfg.dimensions.x),2.0*cfg.up.w/f32(cfg.dimensions.y))*max(h.t,1e-4);
-  let footprint=max(1e-7,pixelWorld*uvScale);
+  let footprint=max(1e-7,max(pixelWorld,rayCone*max(h.t,1e-4))*uvScale);
   let authoredT=tri.a.tangent*w+tri.b.tangent*h.u+tri.c.tangent*h.v;
   let hasT=length(authoredT.xyz)>1e-5;
   let t=normalize(authoredT.xyz-n*dot(n,authoredT.xyz));
@@ -153,7 +153,7 @@ fn preview(o0: vec3f, d0: vec3f, rng: ptr<function,u32>, realtime: bool) -> vec3
   for (var bounce = 0u; bounce < 12u; bounce++) {
     let h = intersect(o,d);
     if (h.id == 0xffffffffu) { radiance += beta*environment(d); break; }
-    var ctx = context(h,o,d); if (dot(ctx.normal,d)>0.0) { ctx.normal = -ctx.normal; }
+    var ctx = context(h,o,d,0.0); if (dot(ctx.normal,d)>0.0) { ctx.normal = -ctx.normal; }
     let surface = getSurface(u32(triangles[h.id].a.uv.z),ctx); let opacity=clamp(surface.opacity,0.0,1.0); if(opacity<=0.001){if(realtime){break;}o=ctx.position+d*max(1e-4,length(ctx.position)*1e-5);continue;} if(!realtime && opacity<1.0 && random(rng)>opacity){o=ctx.position+d*max(1e-4,length(ctx.position)*1e-5);continue;} let contributionOpacity=select(1.0,opacity,realtime); let geometricNormal=ctx.normal; ctx.normal=safeNormal(surface.normal,geometricNormal); if(dot(ctx.normal,geometricNormal)<0.0){ctx.normal=-ctx.normal;} if(dot(ctx.normal,d)>0.0){ctx.normal=-ctx.normal;} let m = primaryLobe(surface);
     let eps = max(1e-4,length(ctx.position)*1e-5);
     let emittingTriangle=triangles[h.id];let emittingNormal=normalize(cross(emittingTriangle.b.p.xyz-emittingTriangle.a.p.xyz,emittingTriangle.c.p.xyz-emittingTriangle.a.p.xyz));

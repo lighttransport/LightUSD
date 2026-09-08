@@ -233,7 +233,8 @@ is explicitly recorded as lossy and is not treated as an authored graph import.
 
 Raster mip selection uses the base mesh UV derivatives, so transformed or
 procedural UV graph derivatives are approximate. Direction based `latlongimage`
-lookups still use level zero; true path ray differentials/cones remain
+lookups still use level zero; path tracing now carries a bounded ray-cone
+footprint through secondary bounces, while full ray differentials remain
 outstanding. Connected
 filename/sampler inputs, layers, image sequences and full
 MaterialX colorspace inheritance are not implemented. These images do not

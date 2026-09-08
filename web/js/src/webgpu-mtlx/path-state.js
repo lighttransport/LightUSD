@@ -36,7 +36,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
     let uv=pixel/vec2f(cfg.dimensions.xy)*2.0-1.0;
     let d=normalize(cfg.forward.xyz+cfg.right.xyz*uv.x*cfg.right.w-cfg.up.xyz*uv.y*cfg.up.w);
     p=PathState(vec4f(cfg.origin.xyz,0),vec4f(d,0),vec4f(1),vec4f(0),vec4u(rng,0u,u32(cfg.display.w),0u),vec4f(0,0,f32(cfg.dimensions.z),0),vec4f(1),vec4f(1),vec4u(0),vec4u(0));
-    p.previous.x=360.0+470.0*random(&rng); p.state.x=rng;
+    p.previous.x=360.0+470.0*random(&rng); p.previous.y=max(2.0*cfg.right.w/f32(cfg.dimensions.x),2.0*cfg.up.w/f32(cfg.dimensions.y)); p.state.x=rng;
   }
   if(p.state.w!=0u) { paths[index]=p; return; }
   var rng=p.state.x;
@@ -131,7 +131,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
       p.radiance+=vec4f(p.beta.xyz*sky*mis,0); finishPath(index,&p); break;
     }
     let tri=triangles[h.id]; let materialID=u32(tri.a.uv.z);
-    var ctx=context(h,p.origin.xyz,p.direction.xyz);
+    var ctx=context(h,p.origin.xyz,p.direction.xyz,p.previous.y);
     let outward=normalize(cross(tri.b.p.xyz-tri.a.p.xyz,tri.c.p.xyz-tri.a.p.xyz));
     let entering=dot(outward,p.direction.xyz)<0.0;
     let gn=select(-outward,outward,entering);
@@ -200,7 +200,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
         let direction=delta/distance;let local=transpose(frame)*direction;
         let pdf=triangleLightPDF(emitter,distance,direction);
         let ev=closureEval(surface.bsdf,wo,local,eta,wavelength);
-        let lightCtx=context(Hit(distance,b1,b2,lo),ctx.position,direction);
+        let lightCtx=context(Hit(distance,b1,b2,lo),ctx.position,direction,p.previous.y);
         var emission=getMaterial(u32(emitter.a.uv.z),lightCtx);
         let emissionSurface=getSurface(u32(emitter.a.uv.z),lightCtx);
         if(cfg.dimensions.w==2u){emission=spectralMaterial(emission,u32(emitter.a.uv.z),p.previous.x);}
@@ -215,6 +215,9 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
     let sample=closureSample(surface.bsdf,wo,eta,&rng,wavelength);
     if(sample.pdf<=0.0 || dot(sample.wi,sample.wi)<0.5 || all(sample.weight<=vec3f(0))) { finishPath(index,&p); break; }
     p.beta=vec4f(p.beta.xyz*sample.weight,p.beta.w*sample.eta*sample.eta);
+    // Propagate a bounded ray-cone slope for path texture footprints. Rough
+    // lobes widen the cone; smooth specular/refraction keeps the incoming one.
+    p.previous.y=min(1.0,max(p.previous.y,0.25*clamp(m.roughness,0.0,1.0)));
     if(sample.wi.z<0.0 && m.thinWalled==0u) {
       if(entering) {
         if(depth>=7u) { atomicAdd(&pathCounters[1],1u); p.state.w=1u; break; }
