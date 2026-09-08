@@ -62,8 +62,9 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 
 Full MaterialX coverage; general BSDF/EDF/VDF closure composition/layering;
 MaterialX subsurface_bsdf albedo/radius conversion; hair and curves;
-UDIM; bump and authored BSDF shading normals; Catmull-Clark displacement refinement;
-faithful authored ShaderBall material graphs and full-resolution map storage;
+UDIM; texture-aware bump and arbitrary authored primvar/shading-property maps;
+Catmull-Clark displacement refinement; faithful authored ShaderBall material
+graphs and full-resolution map storage;
 broad independent physical reference-image validation; complete ACEScg graph color management.
 `setMode('reference')` fails rather than substituting the RGB preview. Explicit
 unsupported surface inputs fail compilation. Transmissive materials select the
