@@ -851,6 +851,20 @@ export function compileGraph(document, { output, library = {}, material = false,
             : (udim ? `imageSampleUDIM(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${grid},${lod},${filter === 'linear'},${fill})` : `imageSample(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${filter === 'linear'},${fill})`);
           code = normalMap(`${sample}.rgb`); break;
         }
+        case 'gltf_colorimage': {
+          if (!['outcolor', 'outa'].includes(out)) fail('OUTPUT', key, 'gltf_colorimage output must be outcolor or outa');
+          const imageInputs = Object.fromEntries(Object.entries(ins).filter(([name]) => !['color', 'geomcolor'].includes(name)));
+          const imageNode = { ...n, name: `${n.name || key}_image`, category: 'gltf_image', type: 'color4', inputs: imageInputs, outputs: undefined };
+          const nested = compileGraph({ nodes: [imageNode] }, { output: { nodename: imageNode.name }, imageDescriptors, uvIndex, geompropName });
+          const prefix = `gci${serial++}_`;
+          const rename = source => source.replace(/\bn\d+\b/g, match => `${prefix}${match}`);
+          if (nested.body) lines.push(rename(nested.body));
+          const image = rename(nested.expression);
+          const color = x('color', [1, 1, 1, 1], 'color4'), geomcolor = x('geomcolor', [1, 1, 1, 1], 'color4');
+          const combined = `(${image}*${color}*${geomcolor})`;
+          code = out === 'outa' ? `${combined}.a` : `${combined}.rgb`;
+          break;
+        }
         case 'bump': case 'bump3': case 'heighttonormal': {
           if (type !== 'vector3') fail('TYPE',key,'bump output must be vector3');
           const encoded=n.category==='heighttonormal';

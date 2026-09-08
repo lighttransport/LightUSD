@@ -195,7 +195,7 @@ The renderer packs resources into a storage buffer with a 64 MiB total mip
 budget, validates finite float32 values, and diagnoses missing files.
 The optional `loadMaterialXResources(url, options)` API and URL control fetch
 EXR/PNG/JPEG resources for image, tiledimage, gltf_image, gltf_normalmap,
-UsdUVTexture, latlongimage, and triplanarprojection nodes, including bounded
+gltf_colorimage, UsdUVTexture, latlongimage, and triplanarprojection nodes, including bounded
 `<UDIM>`/`<UVTILE>` atlases.
 It resolves file prefixes and source layers, uses streaming
 byte budgets, preflights EXR dimensions before decoder allocation, and rejects
