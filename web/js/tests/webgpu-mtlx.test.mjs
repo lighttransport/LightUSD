@@ -454,6 +454,19 @@ test('MaterialX compositing nodes preserve typed blend controls and alpha covera
   assert.throws(()=>compileGraph({nodes:[{name:'d',category:'disjointover',type:'color3',inputs:{}}]}),/requires color4/);
   assert.throws(()=>compileGraph({nodes:[{name:'b',category:'burn',type:'vector3',inputs:{}}]}),/requires float\/color3\/color4/);
 });
+test('MaterialX alpha compositing and mask nodes preserve Porter-Duff channels', () => {
+  const over=compileGraph({nodes:[{name:'o',category:'over',type:'color4',inputs:{fg:{type:'color4',value:[1,0,0,.6]},bg:{type:'color4',value:[0,1,0,.5]}}}]});
+  assert.match(over.body,/vec4f\(/); assert.match(over.body,/\.rgb\+.*\.rgb\*\(1\.0-.*\.a\)/); assert.match(over.body,/\.a\+.*\.a\*\(1\.0-.*\.a\)/);
+  const masked=compileGraph({nodes:[{name:'m',category:'mask',type:'color4',inputs:{fg:{type:'color4',value:[1,0,0,.6]},bg:{type:'color4',value:[0,1,0,.5]}}}]});
+  assert.match(masked.body,/\.rgb\*.*\.a/); assert.match(masked.body,/\.a\*.*\.a/);
+  const matte=compileGraph({nodes:[{name:'m',category:'matte',type:'color4',inputs:{fg:{type:'color4',value:[1,0,0,.6]},bg:{type:'color4',value:[0,1,0,.5]}}}]});
+  assert.match(matte.body,/\.rgb\*.*\.a\+.*\.rgb\*\(1\.0-.*\.a\)/);
+  const inside=compileGraph({nodes:[{name:'i',category:'inside',type:'color3',inputs:{in:{type:'color3',value:[1,.5,0]},mask:{type:'float',value:.25}}}]});
+  assert.match(inside.body,/vec3f\(1\.0,0\.5,0\.0\)\*vec3f\(0\.25\)/);
+  const outside=compileGraph({nodes:[{name:'o',category:'outside',type:'float',inputs:{in:{type:'float',value:.8},mask:{type:'float',value:.25}}}]});
+  assert.match(outside.body,/0\.8\*f32\(\(1\.0-0\.25\)\)/);
+  assert.throws(()=>compileGraph({nodes:[{name:'i',category:'inside',type:'vector2',inputs:{}}]}),/requires float\/color3\/color4/);
+});
 test('boolean logic nodes enforce boolean ports', () => {
   const doc={nodes:[
     {name:'a',category:'constant',type:'boolean',inputs:{value:{type:'boolean',value:true}}},

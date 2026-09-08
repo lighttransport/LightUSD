@@ -269,6 +269,9 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 - Standard compositing `burn`, `dodge`, and `overlay` support float/color3/
   color4 inputs with authored mix amounts; `disjointover` supports alpha-aware
   color4 compositing with bounded coverage and denominator handling.
+- Porter-Duff `in`, `mask`, `matte`, `out`, and `over` support color4 inputs
+  with explicit premultiplied-channel and alpha equations. `inside` and
+  `outside` apply typed scalar masks to float/color3/color4 values.
 - Common color utility nodes `premult`, `unpremult`, `contrast`, and
   `hsvadjust` now compile with typed ports and bounded alpha/value handling.
   `hsvadjust` follows the MaterialX `amount` vector3 contract and preserves
