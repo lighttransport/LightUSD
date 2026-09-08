@@ -314,6 +314,13 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   assert.match(compileGraph(subsurface,{material:true}).body,/materialFromClosure/);
   assert.match(compileGraph(subsurface,{material:true}).body,/nativeSubsurface/);
   assert.match(shaderSource([subsurface]),/closureMix/);
+  const subsurfaceNode={nodes:[{name:'s',category:'subsurface_bsdf',type:'BSDF',inputs:{radius:{type:'color3',value:[1,.35,.15]}}}]};
+  assert.match(compileGraph(subsurfaceNode).body,/vec3f\(1\.0,0\.35,0\.15\)/);
+  subsurfaceNode.nodes[0].inputs.anisotropy={type:'float',value:.2};
+  assert.throws(()=>compileGraph(subsurfaceNode),/anisotropy/);
+  delete subsurfaceNode.nodes[0].inputs.anisotropy;
+  subsurfaceNode.nodes[0].inputs.normal={type:'vector3',value:[0,1,0]};
+  assert.throws(()=>compileGraph(subsurfaceNode),/normal\/tangent/);
   const normal=syntheticScene('normalmap').materials[1];
   assert.match(compileGraph(normal,{material:true}).body,/normalize\(n/);
   assert.match(shaderSource([normal]),/surface\.normal/);

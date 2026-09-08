@@ -146,9 +146,9 @@ fn nativeEval(m:Lobe,wo:vec3f,wi:vec3f,eta:f32)->vec4f {
   }
   if(m.kind==6u) {
     if(wi.z<=0.0){return vec4f(0);}
-    let sigma2=max(.0004,m.alpha.x*m.alpha.x);let radial2=dot(wo-wi,wo-wi);
-    let profile=1.0/(2.0*PI*sigma2*(1.0+radial2/sigma2)*(1.0+radial2/sigma2));
-    let value=m.weight*m.base*(.25/PI+.75*profile);
+    let sigma2=max(vec3f(.0004),m.subsurfaceRadius*m.subsurfaceRadius);let radial2=dot(wo-wi,wo-wi);
+    let profile=vec3f(1.0)/(2.0*PI*sigma2*(vec3f(1.0)+radial2/sigma2)*(vec3f(1.0)+radial2/sigma2));
+    let value=m.weight*m.base*(vec3f(.25/PI)+vec3f(.75)*profile);
     return vec4f(value,wi.z/PI);
   }
   if(m.kind==7u) {
