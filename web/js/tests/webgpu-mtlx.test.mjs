@@ -508,9 +508,9 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   oren.nodes[0].inputs.energy_compensation={type:'boolean',value:true};
   assert.throws(()=>compileGraph(oren,{material:true}),/energy-compensated Oren-Nayar/);
   const dielectricTangent={nodes:[{name:'d',category:'dielectric_bsdf',type:'BSDF',inputs:{tangent:{type:'vector3',value:[1,0,0]}}}]};
-  assert.throws(()=>compileGraph(dielectricTangent,{material:true}),/authored tangent is not implemented/);
+  assert.doesNotThrow(()=>compileGraph(dielectricTangent,{material:true}));
   const hairTangent={nodes:[{name:'h',category:'chiang_hair_bsdf',type:'BSDF',inputs:{tangent:{type:'vector3',value:[1,0,0]}}}]};
-  assert.throws(()=>compileGraph(hairTangent,{material:true}),/authored tangent is not implemented/);
+  assert.doesNotThrow(()=>compileGraph(hairTangent,{material:true}));
   const generalized={nodes:[{name:'g',category:'generalized_schlick_bsdf',type:'BSDF',inputs:{color0:{type:'color3',value:[.04,.08,.16]}}}]};
   for (const [name,input,pattern] of [
     ['retroreflective',{type:'boolean',value:true},/retroreflection/],
@@ -519,9 +519,12 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
     ['tangent',{type:'vector3',value:[1,0,0]},/tangent/]
   ]) {
     generalized.nodes[0].inputs[name]=input;
-    assert.throws(()=>compileGraph(generalized,{material:true}),pattern);
+    if (name === 'tangent') assert.doesNotThrow(()=>compileGraph(generalized,{material:true}));
+    else assert.throws(()=>compileGraph(generalized,{material:true}),pattern);
     delete generalized.nodes[0].inputs[name];
   }
+  const tangentSurface={nodes:[{name:'d',category:'dielectric_bsdf',type:'BSDF',inputs:{tangent:{type:'vector3',value:[1,0,0]}}},{name:'s',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'d'}}}],output:{nodename:'s'}};
+  assert.match(shaderSource([tangentSurface]),/surfaceEmission\(.*vec3f\(1\.0,0\.0,0\.0\)/);
   const authoredNormal={type:'vector3',value:[0,1,0]};
   generalized.nodes[0].inputs.thinfilm_thickness={type:'float',value:180};
   generalized.nodes[0].inputs.thinfilm_ior={type:'float',value:1.4};
@@ -555,12 +558,12 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   subsurfaceNode.nodes[0].inputs.normal={type:'vector3',value:[0,1,0]};
   assert.match(compileGraph(subsurfaceNode).body,/nativeSubsurface/);
   subsurfaceNode.nodes[0].inputs.tangent={type:'vector3',value:[1,0,0]};
-  assert.throws(()=>compileGraph(subsurfaceNode),/tangent/);
+  assert.doesNotThrow(()=>compileGraph(subsurfaceNode));
   const normal=syntheticScene('normalmap').materials[1];
   assert.match(compileGraph(normal,{material:true}).body,/normalize\(n/);
   assert.match(shaderSource([normal]),/surface\.normal/);
   assert.match(shaderSource([normal]),/var n=safeNormal\(surface\.normal/);
-  assert.match(shaderSource([normal]),/transportFrame\(ctx\.normal,ctx\.tangent,ctx\.bitangent\)/);
+  assert.match(shaderSource([normal]),/transportFrame\(ctx\.normal,surface\.tangent,surface\.bitangent\)/);
   assert.match(shaderSource([normal]),/dot\(cross\(n,t\),bitangent\)>=0\.0/);
   const imageNormal=syntheticScene('normalmap-image').materials[1];
   const imageResources={};

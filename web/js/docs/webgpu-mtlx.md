@@ -70,9 +70,9 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 - `generalized_schlick_bsdf` now carries the pinned `color82` control and
   Hoffman Schlick correction through RGB and spectral lobe evaluation. Its
   supported authored path is static GGX reflection; transmission,
-  retroreflection, custom distribution, and authored tangent
-  variants fail with structured diagnostics instead of being silently ignored;
-  an authored normal propagates to the enclosing surface frame.
+  retroreflection, and custom distribution fail with structured diagnostics
+  instead of being silently ignored. Authored normal and tangent vectors
+  propagate to the enclosing surface frame.
 - `translucent_bsdf` uses a bounded opposite-hemisphere diffuse transmission
   lobe and preserves its authored color and weight.
 - Direct `sheen_bsdf` nodes use the pinned Imageworks sheen NDF/BRDF with
@@ -842,18 +842,17 @@ attenuation to transmitted paths, including spectral conversion. The synthetic
 volumes remain a separate model.
 
 `subsurface_bsdf` now preserves all three authored radius channels and bounded
-anisotropy in the same-surface-point profile, propagates an authored normal to
-the enclosing surface frame, and rejects tangent controls that it cannot
-apply. This remains an approximation; it does not perform cross-surface
+anisotropy in the same-surface-point profile, propagates authored normal and
+tangent vectors to the enclosing surface frame. This remains an approximation;
+it does not perform cross-surface
 random-walk BSSRDF transport.
 
 `generalized_schlick_bsdf` now preserves authored color-at-normal, color-at-
 82, color-at-grazing, roughness and exponent controls in a bounded microfacet
 lobe rather than collapsing to the ordinary dielectric Fresnel curve. Its
 current implementation accepts GGX reflection only and diagnoses authored
-transmission, retroreflection, custom-distribution, and
-authored tangent variants. An authored normal is propagated to the enclosing
-surface frame. The synthetic
+transmission, retroreflection, and custom-distribution variants. Authored
+normal and tangent vectors propagate to the enclosing surface frame. The synthetic
 `generalized-schlick` scene passes the targeted Chrome hardware reference gate;
 full measured/angle-dependent Schlick layering remains future work.
 

@@ -196,7 +196,7 @@ export function compileGraph(document, { output, library = {}, material = false,
         fail('TYPE',key,`expected ${type} or scalar float for ${k}`);
       };
       const binary = op => `(${same('in1')} ${op} ${scalarOrSame('in2')})`;
-      let code, closureCount = 0, hasInterior = false, interiorCategories=[], emissionCone = null, emissionSchlick = null, emissionProfile = null, lightInfo = null, volumeEmission = false, normal = null;
+      let code, closureCount = 0, hasInterior = false, interiorCategories=[], emissionCone = null, emissionSchlick = null, emissionProfile = null, lightInfo = null, volumeEmission = false, normal = null, tangent = null;
       switch (n.category) {
         case 'uniform_edf': code = x('color',[1,1,1],'color3'); break;
         case 'light': {
@@ -284,15 +284,17 @@ export function compileGraph(document, { output, library = {}, material = false,
           const bsdfValue=ins.bsdf?.value===''||!ins.bsdf ? null : input('bsdf',undefined,'BSDF');
           const bsdf=bsdfValue?.code||'emptyClosure()';hasInterior=bsdfValue?.hasInterior||false;interiorCategories=bsdfValue?.interiorCategories||[];
           const surfaceNormal=ins.normal ? x('normal',undefined,'vector3') : (bsdfValue?.normal || 'ctx.normal');
+          const surfaceTangent=bsdfValue?.tangent || 'ctx.tangent';
+          const surfaceBitangent=bsdfValue?.tangent ? `normalize(cross(${surfaceNormal},${surfaceTangent}))` : 'ctx.bitangent';
           const edfValue=ins.edf?.value===''||!ins.edf ? {code:'vec3f(0)'} : input('edf',undefined,'EDF');
           const cone=edfValue.emissionCone, schlick=edfValue.emissionSchlick;
           const profile=edfValue.emissionProfile;
-          code=`surfaceEmission(${bsdf},${edfValue.code},clamp(${opacity},0.0,1.0),${thin},${surfaceNormal},${profile?.direction||cone?.direction||'ctx.normal'},${cone?.innerCos||'-1.0'},${cone?.outerCos||'-1.0'},${schlick?.color0||'vec3f(1)'},${schlick?.color90||'vec3f(1)'},${schlick?.exponent||'5.0'},${cone?'1u':'0u'},${schlick?'1u':'0u'},${profile ? `${profile.id}u` : '0u'})`; normal=surfaceNormal;break;
+          code=`surfaceEmission(${bsdf},${edfValue.code},clamp(${opacity},0.0,1.0),${thin},${surfaceNormal},${surfaceTangent},${surfaceBitangent},${profile?.direction||cone?.direction||'ctx.normal'},${cone?.innerCos||'-1.0'},${cone?.outerCos||'-1.0'},${schlick?.color0||'vec3f(1)'},${schlick?.color90||'vec3f(1)'},${schlick?.exponent||'5.0'},${cone?'1u':'0u'},${schlick?'1u':'0u'},${profile ? `${profile.id}u` : '0u'})`; normal=surfaceNormal;tangent=surfaceTangent;break;
         }
         case 'dielectric_bsdf': case 'conductor_bsdf': case 'oren_nayar_diffuse_bsdf': case 'burley_diffuse_bsdf': {
           normal = ins.normal ? x('normal', undefined, 'vector3') : null;
           if(ins.retroreflective && ![false,'false'].includes(ins.retroreflective.value))fail('UNSUPPORTED',key,'retroreflection is not implemented');
-          if (ins.tangent && (ins.tangent.value !== undefined || ins.tangent.nodename || ins.tangent.nodegraph || ins.tangent.interfacename)) fail('UNSUPPORTED', key, `${n.category} authored tangent is not implemented`);
+          tangent = ins.tangent ? x('tangent', undefined, 'vector3') : null;
           if (n.category === 'oren_nayar_diffuse_bsdf' && ins.energy_compensation && ![false, 'false'].includes(ins.energy_compensation.value)) fail('UNSUPPORTED', key, 'energy-compensated Oren-Nayar is not implemented');
           const filmThicknessInput=ins.thinfilm_thickness||ins.thin_film_thickness;
           const filmIORInput=ins.thinfilm_IOR||ins.thinfilm_ior||ins.thin_film_IOR||ins.thin_film_ior;
@@ -342,8 +344,8 @@ export function compileGraph(document, { output, library = {}, material = false,
           code=out==='roughness_R'?`vec2f(${v},${s})`:out==='roughness_TT'?`vec2f(${v}*${scaleTT}*${scaleTT},${s})`:`vec2f(${v}*${scaleTRT}*${scaleTRT},${s})`; break;
         }
         case 'subsurface_bsdf': {
-          if (ins.tangent?.value!==undefined || ins.tangent?.nodename || ins.tangent?.nodegraph || ins.tangent?.interfacename) fail('UNSUPPORTED',key,'subsurface authored tangent is not implemented');
           normal=ins.normal ? x('normal',undefined,'vector3') : null;
+          tangent=ins.tangent ? x('tangent',undefined,'vector3') : null;
           code=`closureLeaf(nativeSubsurface(${x('color',[.18,.18,.18],'color3')},${x('weight',1,'float')},${x('radius',[1,1,1],'color3')},${x('anisotropy',0,'float')}))`;closureCount=1;break;
         }
         case 'translucent_bsdf': {
@@ -351,14 +353,14 @@ export function compileGraph(document, { output, library = {}, material = false,
           // The bounded transport lobe samples the opposite hemisphere and
           // carries the authored color and weight through direct/indirect paths.
           normal = ins.normal ? x('normal', undefined, 'vector3') : null;
-          if (ins.tangent && (ins.tangent.value !== undefined || ins.tangent.nodename || ins.tangent.nodegraph || ins.tangent.interfacename)) fail('UNSUPPORTED', key, 'translucent_bsdf authored tangent is not implemented');
+          tangent=ins.tangent ? x('tangent',undefined,'vector3') : null;
           code=`closureLeaf(nativeTranslucent(${x('color',[1,1,1],'color3')},${x('weight',1,'float')}))`;closureCount=1;break;
         }
         case 'hair_bsdf': case 'chiang_hair_bsdf': {
           // Normalize legacy melanin and explicit-color forms into a bounded
           // fiber lobe; longitudinal and azimuthal roughness remain dynamic.
           normal = ins.normal ? x('normal', undefined, 'vector3') : null;
-          if (ins.tangent && (ins.tangent.value !== undefined || ins.tangent.nodename || ins.tangent.nodegraph || ins.tangent.interfacename)) fail('UNSUPPORTED', key, `${n.category} authored tangent is not implemented`);
+          tangent=ins.tangent ? x('tangent',undefined,'vector3') : null;
           const color = ins.absorption_coefficient ? `exp(-${x('absorption_coefficient',[0,0,0],'vector3')})` : ins.color ? x('color',[.6,.25,.08],'color3') : ins.base_color ? x('base_color',[.6,.25,.08],'color3') : ins.tint_R ? x('tint_R',[1,1,1],'color3') :
             `mix(vec3f(.85,.55,.32),vec3f(.03,.008,.002),clamp(${x('melanin',0,'float')},0.0,1.0))`;
           const longitudinal = ins.longitudinal_roughness ? x('longitudinal_roughness',.35,'float') : ins.roughness_R ? `${x('roughness_R',[.1,.1],'vector2')}.x` : x('roughness',.35,'float');
@@ -374,8 +376,8 @@ export function compileGraph(document, { output, library = {}, material = false,
           const filmIORInput=ins.thinfilm_IOR||ins.thinfilm_ior||ins.thin_film_IOR||ins.thin_film_ior;
           const filmThickness=filmThicknessInput ? nanometer(filmThicknessInput===ins.thinfilm_thickness?'thinfilm_thickness':'thin_film_thickness',0) : '0.0';
           const filmIOR=filmIORInput ? x(filmIORInput===ins.thinfilm_IOR?'thinfilm_IOR':filmIORInput===ins.thinfilm_ior?'thinfilm_ior':filmIORInput===ins.thin_film_IOR?'thin_film_IOR':'thin_film_ior',1.5,'float') : '1.5';
-          if (n.inputs?.tangent && (n.inputs.tangent.nodename||n.inputs.tangent.nodegraph||n.inputs.tangent.interfacename||n.inputs.tangent.value!==undefined)) fail('UNSUPPORTED',key,'generalized Schlick authored tangent is not implemented');
           normal=n.inputs?.normal ? x('normal',undefined,'vector3') : null;
+          tangent=n.inputs?.tangent ? x('tangent',undefined,'vector3') : null;
           code=`closureLeaf(nativeGeneralizedSchlick(${x('color0',[1,1,1],'color3')},${x('color82',[1,1,1],'color3')},${x('color90',[1,1,1],'color3')},${x('roughness',[.05,.05],'vector2')},${x('weight',1,'float')},${x('exponent',5,'float')},${filmThickness},${filmIOR}))`;closureCount=1;break;
         }
         case 'layer': {
@@ -1199,7 +1201,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           // expected by the MaterialX normalmap operation before evaluating the
           // preview-surface closures in the shading frame.
           const normal = ins.normal ? `mxNormalmap((${x('normal', undefined, 'vector3')}*0.5+vec3f(0.5)),vec2f(1.0),ctx.normal,ctx.tangent,ctx.bitangent)` : 'ctx.normal';
-          code=`materialFromClosure(${closure},${emission},${alpha},${normal})`; break;
+          code=`materialFromClosure(${closure},${emission},${alpha},${normal},ctx.tangent,ctx.bitangent)`; break;
         }
         case 'surface_unlit': {
           if (!material) fail('CONTEXT', key, 'surface_unlit requires material compilation');
@@ -1207,7 +1209,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           for(const k of Object.keys(n.inputs||{})) if(!allowed.has(k)) fail('UNSUPPORTED',`${key}/${k}`,'surface_unlit input not implemented');
           const emission=x('emission',1,'float'), emissionColor=x('emission_color',[1,1,1],'color3'), transmission=x('transmission',0,'float'), transmissionColor=x('transmission_color',[1,1,1],'color3');
           const bsdf=`closureLeaf(nativeDielectric(${transmissionColor},1.0,vec2f(0.0),clamp(${transmission},0.0,1.0),2u))`;
-          code=`materialFromClosure(${bsdf},${emissionColor}*max(0.0,${emission}),clamp(${x('opacity',1,'float')},0.0,1.0),ctx.normal)`; break;
+          code=`materialFromClosure(${bsdf},${emissionColor}*max(0.0,${emission}),clamp(${x('opacity',1,'float')},0.0,1.0),ctx.normal,ctx.tangent,ctx.bitangent)`; break;
         }
         case 'standard_surface': case 'open_pbr_surface': {
           if (!material) fail('CONTEXT', key, 'surface requires material compilation');
@@ -1250,7 +1252,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           const sheenRoughness = open ? (ins.fuzz_roughness ? x('fuzz_roughness', .6, 'float') : '.6') : (ins.sheen_roughness ? x('sheen_roughness', .6, 'float') : '.6');
           const finalClosure = `closureAdd(${coated},closureScale(closureLeaf(nativeSheen(${sheenColor},1.0,clamp(${sheenRoughness},0.02,1.0),0u)),vec3f(clamp(${sheenWeight},0.0,1.0))))`;
           const normal = ins.normal ? x('normal', undefined, 'vector3') : ins.geometry_normal ? x('geometry_normal', undefined, 'vector3') : 'ctx.normal';
-          code = `materialFromClosure(${finalClosure},${fields[5]}*${fields[6]},clamp(${opacity},0.0,1.0),normalize(${normal}))`; break;
+          code = `materialFromClosure(${finalClosure},${fields[5]}*${fields[6]},clamp(${opacity},0.0,1.0),normalize(${normal}),ctx.tangent,ctx.bitangent)`; break;
         }
         case 'surfacematerial': result = input('surfaceshader'); break;
         case 'volumematerial': result = input('volumeshader'); break;
@@ -1264,7 +1266,7 @@ export function compileGraph(document, { output, library = {}, material = false,
         if(serial>32768)fail('LIMIT',key,'expanded graph exceeds 32768 expressions');
         lines.push(`let ${id}: ${target} = ${code.replace(/\bctx\b/g,contextName)};`);
         const replaceContext = value => typeof value === 'string' ? value.replace(/\bctx\b/g, contextName) : value;
-        result = { type, code: id, closureCount, hasInterior, interiorCategories, categories:[...dependencies], ...(volumeEmission ? { volumeEmission: true } : {}), ...(normal ? { normal: replaceContext(normal) } : {}), ...(lightInfo ? { lightInfo: Object.fromEntries(Object.entries(lightInfo).map(([key, value]) => [key, replaceContext(value)])) } : {}), ...(emissionCone ? { emissionCone: { direction: replaceContext(emissionCone.direction), innerCos: replaceContext(emissionCone.innerCos), outerCos: replaceContext(emissionCone.outerCos) } } : {}), ...(emissionSchlick ? { emissionSchlick: { color0: replaceContext(emissionSchlick.color0), color90: replaceContext(emissionSchlick.color90), exponent: replaceContext(emissionSchlick.exponent) } } : {}), ...(emissionProfile ? { emissionProfile: { direction: replaceContext(emissionProfile.direction), id: emissionProfile.id } } : {}) };
+        result = { type, code: id, closureCount, hasInterior, interiorCategories, categories:[...dependencies], ...(volumeEmission ? { volumeEmission: true } : {}), ...(normal ? { normal: replaceContext(normal) } : {}), ...(tangent ? { tangent: replaceContext(tangent) } : {}), ...(lightInfo ? { lightInfo: Object.fromEntries(Object.entries(lightInfo).map(([key, value]) => [key, replaceContext(value)])) } : {}), ...(emissionCone ? { emissionCone: { direction: replaceContext(emissionCone.direction), innerCos: replaceContext(emissionCone.innerCos), outerCos: replaceContext(emissionCone.outerCos) } } : {}), ...(emissionSchlick ? { emissionSchlick: { color0: replaceContext(emissionSchlick.color0), color90: replaceContext(emissionSchlick.color90), exponent: replaceContext(emissionSchlick.exponent) } } : {}), ...(emissionProfile ? { emissionProfile: { direction: replaceContext(emissionProfile.direction), id: emissionProfile.id } } : {}) };
       }
     }
     used.add(n.category); active.delete(key); cached.set(key, result); return result;
