@@ -10,10 +10,19 @@ import { loadUSDMaterialXLibrary, materialXFromUSD } from './usd-graph.js';
 import { compileGraph } from './graph.js';
 import { fetchResource, decodeImage, inspectEXRHeader } from './resources.js';
 export const SHADERBALL_COMMIT = '3b75c2dad6a494897557dcca0098257bcf42a8c6';
+function materialNodes(document) {
+  const nodes = [...(document?.nodes || [])];
+  const visit = graph => {
+    nodes.push(...(graph?.nodes || []));
+    for (const child of Object.values(graph?.graphs || {})) visit(child);
+  };
+  for (const graph of Object.values(document?.graphs || {})) visit(graph);
+  return nodes;
+}
 /** Return static image resource keys used by translated MaterialX nodes. */
 export function materialImageKeys(document) {
   const keys = new Set();
-  for (const node of document?.nodes || []) {
+  for (const node of materialNodes(document)) {
     for (const input of ['file', 'filex', 'filey', 'filez']) {
       const port = node.inputs?.[input];
       if (port?.type === 'filename' && typeof port.value === 'string' && port.value) keys.add(port.value);
@@ -24,7 +33,7 @@ export function materialImageKeys(document) {
 /** Return the single authored UV slot used by a material graph. */
 export function materialUVIndex(document) {
   const slots = new Set();
-  for (const node of document?.nodes || []) {
+  for (const node of materialNodes(document)) {
     if (node.category === 'texcoord' && node.inputs?.index?.value !== undefined) slots.add(Number(node.inputs.index.value));
     if (node.category === 'UsdPrimvarReader' || node.category === 'geompropvalue' || node.category === 'geompropvalueuniform') {
       const name = String(node.inputs?.varname?.value ?? node.inputs?.geomprop?.value ?? '').toLowerCase().replace(/[_-]/g, '');
@@ -40,7 +49,7 @@ export function materialUVIndex(document) {
 /** Return one static non-standard geometry property used by a graph. */
 export function materialGeompropName(document) {
   const standard = new Set(['st','uv','uv0','texcoord','texcoord0','p','position','n','normal','t','tangent','b','bitangent','color','displaycolor','opacity','displayopacity']);
-  const names = [...new Set((document?.nodes || []).flatMap(node => {
+  const names = [...new Set(materialNodes(document).flatMap(node => {
     if (!['UsdPrimvarReader','geompropvalue','geompropvalueuniform'].includes(node.category)) return [];
     const raw = node.category === 'UsdPrimvarReader' ? node.inputs?.varname?.value : node.inputs?.geomprop?.value;
     if (typeof raw !== 'string') return [];
