@@ -505,6 +505,9 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
     assert.match(shaderSource(syntheticScene(preset).materials,{},undefined,{physical:true}),/tracePhysical/);
     const physicalSource=shaderSource(syntheticScene(preset).materials,{},undefined,{physical:true,physicalOnly:true});
     assert.match(physicalSource,/tracePhysical/); assert.doesNotMatch(physicalSource,/rasterVertex/);
+    const compactSource=shaderSource(syntheticScene(preset).materials,{},undefined,{physical:true,physicalOnly:true,physicalKernel:'compact'});
+    assert.match(compactSource,/tracePhysical/); assert.match(compactSource,/closureSample/);
+    assert.doesNotMatch(compactSource,/finishPath/); assert.doesNotMatch(compactSource,/for\s*\(var step=0u/);
   }
   const doc=syntheticScene('native-glass').materials[1];
   doc.nodes[0].inputs.scatter_mode={nodename:'dynamic_mode'};

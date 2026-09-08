@@ -3,6 +3,7 @@ import { compileGraph, contextWGSL, literal } from './graph.js';
 import { packImages, imageWGSL, imageWGSLCompact } from './textures.js';
 import { transportWGSL } from './transport.js';
 import { pathStateWGSL } from './path-state.js';
+import { pathStateCompactWGSL } from './path-state-compact.js';
 import { spectrumWGSL } from './spectrum.js';
 import { volumeWGSL } from './volume.js';
 import { closureTransportWGSL } from './closures.js';
@@ -36,6 +37,8 @@ export function measuredProfileWGSL(materials) {
 export function shaderSource(materials, resources = {}, lighting = {}, textureOptions = {}) {
   const includePhysical = textureOptions.physical !== false;
   const physicalOnly = textureOptions.physicalOnly === true;
+  const physicalKernel = textureOptions.physicalKernel || 'full';
+  if (!['full', 'compact'].includes(physicalKernel)) throw new Error('physicalKernel must be full or compact');
   for(const doc of materials)if(doc.twoSidedEmission!==undefined&&typeof doc.twoSidedEmission!=='boolean')throw new Error('twoSidedEmission must be boolean');
   const authoredDirectionalLights=lighting.directionalLights||[lighting.directional||{direction:[-.5,.8,.4],radiance:[3.5,3.2,2.8]}];
   if(!Array.isArray(authoredDirectionalLights)||authoredDirectionalLights.length<1||authoredDirectionalLights.length>256)throw new Error('Invalid authored directional-light list');
@@ -109,7 +112,7 @@ const PI = 3.141592653589793;
 ${transportWGSL}
 ${closureTransportWGSL}
 ${volumeWGSL}
-${includePhysical ? pathStateWGSL : ''}
+${includePhysical ? (physicalKernel === 'compact' ? pathStateCompactWGSL : pathStateWGSL) : ''}
 fn hash(v0: u32) -> u32 { var v = v0; v = (v ^ (v >> 16u)) * 0x7feb352du; v = (v ^ (v >> 15u)) * 0x846ca68bu; return v ^ (v >> 16u); }
 fn random(state: ptr<function,u32>) -> f32 { *state = hash(*state + 0x9e3779b9u); return min(0.9999999403953552,(f32(*state >> 8u) + 0.5) / 16777216.0); }
 fn intersect(o: vec3f, d: vec3f) -> Hit {
