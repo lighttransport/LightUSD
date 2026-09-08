@@ -295,8 +295,10 @@ export function compileGraph(document, { output, library = {}, material = false,
           const filmThicknessInput=ins.thinfilm_thickness||ins.thin_film_thickness;
           const filmIORInput=ins.thinfilm_IOR||ins.thinfilm_ior||ins.thin_film_IOR||ins.thin_film_ior;
           if(ins.distribution && ins.distribution.value!=='ggx')fail('UNSUPPORTED',key,'only GGX microfacets are implemented');
-          if(n.category==='oren_nayar_diffuse_bsdf' || n.category==='burley_diffuse_bsdf') {
+          if(n.category==='oren_nayar_diffuse_bsdf') {
             code=`nativeDiffuse(${x('color',[.18,.18,.18],'color3')},${x('weight',1,'float')},${x('roughness',0,'float')})`;
+          } else if (n.category === 'burley_diffuse_bsdf') {
+            code=`nativeBurley(${x('color',[.18,.18,.18],'color3')},${x('weight',1,'float')},${x('roughness',0,'float')})`;
           } else if(n.category==='conductor_bsdf') {
             const conductor=`nativeConductor(${x('ior',[.183,.421,1.373],'color3')},${x('extinction',[3.424,2.346,1.77],'color3')},${x('roughness',[.05,.05],'vector2')},${x('weight',1,'float')})`;
             code=filmThicknessInput?`withThinFilm(${conductor},${nanometer(filmThicknessInput===ins.thinfilm_thickness?'thinfilm_thickness':'thin_film_thickness',0)},${filmIORInput?x(filmIORInput===ins.thinfilm_IOR?'thinfilm_IOR':filmIORInput===ins.thinfilm_ior?'thinfilm_ior':filmIORInput===ins.thin_film_IOR?'thin_film_IOR':'thin_film_ior',1.5,'float'):'1.5'})`:conductor;
@@ -1430,6 +1432,7 @@ fn withSpecularColor(lobe:Lobe,color:vec3f)->Lobe {var m=lobe;m.schlickColor90=m
 fn withSpecularColorMode(lobe:Lobe,color:vec3f,enabled:bool)->Lobe {var m=lobe;m.specularColor=max(vec3f(0),color);m.specularColorEnabled=select(0u,1u,enabled);return m;}
 fn withSpecularColorTint(lobe:Lobe,color:vec3f)->Lobe {var m=lobe;let f0=mix(vec3f(pow((m.ior-1.0)/(m.ior+1.0),2.0)),m.base,m.metal);m.specularColor=clamp(f0*max(vec3f(0),color),vec3f(0),vec3f(1));m.specularColorEnabled=1u;return m;}
 fn nativeDiffuse(color:vec3f,weight:f32,rough:f32)->Lobe {var m=makeMaterial(color,0,rough,1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=3u;m.weight=weight;return m;}
+fn nativeBurley(color:vec3f,weight:f32,rough:f32)->Lobe {var m=makeMaterial(color,0,rough,1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=9u;m.weight=weight;return m;}
 fn nativeSubsurface(color:vec3f,weight:f32,radius:vec3f,anisotropy:f32)->Lobe {var m=makeMaterial(color,0,1.0,1.3,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=6u;m.weight=weight;m.anisotropy=clamp(anisotropy,-.9,.9);m.subsurfaceRadius=max(vec3f(.02),radius);m.alpha=vec2f(max(.02,max(m.subsurfaceRadius.x,max(m.subsurfaceRadius.y,m.subsurfaceRadius.z))),max(.02,m.subsurfaceRadius.x));return m;}
 fn nativeTranslucent(color:vec3f,weight:f32)->Lobe {var m=makeMaterial(color,0,1.0,1.0,1,vec3f(0),0,0,vec3f(1),1u,0.0,1.5);m.kind=7u;m.weight=weight;return m;}
 fn nativeSheen(color:vec3f,weight:f32,roughness:f32,mode:u32)->Lobe {var m=makeMaterial(color,0,roughness,1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=8u;m.weight=weight;m.alpha=vec2f(clamp(roughness,.01,1.0),0.0);m.scatterMode=mode;return m;}

@@ -648,7 +648,7 @@ test('authored BSDF normals propagate through surface terminals', () => {
 });
 test('standard MaterialX Burley, Chiang hair, and absorption VDF nodes compile',()=>{
   const burley=compileGraph({nodes:[{name:'b',category:'burley_diffuse_bsdf',type:'BSDF',inputs:{color:{type:'color3',value:[.5,.4,.3]},roughness:{type:'float',value:.2}}}]});
-  assert.match(burley.body,/nativeDiffuse/);
+  assert.match(burley.body,/nativeBurley/);
   const hair=compileGraph({nodes:[{name:'h',category:'chiang_hair_bsdf',type:'BSDF',inputs:{tint_R:{type:'color3',value:[.8,.7,.6]},roughness_R:{type:'vector2',value:[.1,.2]},roughness_TT:{type:'vector2',value:[.05,.1]}}}]});
   assert.match(hair.body,/nativeHair/); assert.match(hair.body,/\.x/);
   const authoredHair=compileGraph({nodes:[{name:'h',category:'chiang_hair_bsdf',type:'BSDF',inputs:{ior:{type:'float',value:1.45},absorption_coefficient:{type:'vector3',value:[.2,.4,.8]},roughness_R:{type:'vector2',value:[.1,.2]},roughness_TT:{type:'vector2',value:[.05,.1]}}}]});

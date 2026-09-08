@@ -57,7 +57,7 @@ export function shaderSource(materials, resources = {}, lighting = {}, textureOp
     const imageDescriptors = Object.fromEntries(Object.entries(doc.images || {}).map(([name, image]) => [name, { ...packed.descriptors[imageIndex++], colorspace: image.colorspace || 'lin_rec709' }]));
     const uvIndex = Number.isInteger(doc.uvIndex) && doc.uvIndex >= 0 ? doc.uvIndex : 0;
     const c = compileGraph(doc, { material: true, imageDescriptors, output: doc.output, uvIndex, measuredProfileIds, geompropNames: doc.geompropNames || (doc.geompropName ? [doc.geompropName] : []) });
-    if(c.categories.some(c=>['dielectric_bsdf','conductor_bsdf','oren_nayar_diffuse_bsdf'].includes(c)))resources.requiresPhysical=true;
+    if(c.categories.some(c=>['dielectric_bsdf','conductor_bsdf','oren_nayar_diffuse_bsdf','burley_diffuse_bsdf'].includes(c)))resources.requiresPhysical=true;
     if (!['surfaceshader', 'material'].includes(c.type)) throw new Error('Material graph must produce a surface');
     const medium = doc.mediumOutput ? compileGraph(doc, { output: doc.mediumOutput, imageDescriptors, uvIndex, geompropNames: doc.geompropNames || (doc.geompropName ? [doc.geompropName] : []) }) : null;
     if(medium && !['VDF', 'volumeshader'].includes(medium.type)) throw new Error('mediumOutput must produce VDF or volumeshader');
