@@ -267,10 +267,12 @@ export function compileGraph(document, { output, library = {}, material = false,
           const uv=[`${pos}.yz`,`${pos}.xz`,`${pos}.xy`], samples=descriptor.map(({d},i)=>{const fill=widths[type]===4?fallback:widths[type]===3?`vec4f(${fallback},0)`:widths[type]===2?`vec4f(${fallback},0,0)`:`vec4f(${fallback})`;const grid=d.udim&&`vec2u(${d.udim.columns}u,${d.udim.rows}u)`;const call=filter==='cubic'?(d.udim?`imageSampleCubicUDIM(${d.offset}u,vec2u(${d.width}u,${d.height}u),${d.levels}u,${uv[i]},${grid},0.0,${fill})`:`imageSampleCubic(${d.offset}u,vec2u(${d.width}u,${d.height}u),${d.levels}u,${uv[i]},0.0,vec2u(${address('uaddressmode')},${address('vaddressmode')}),${fill})`):(d.udim?`imageSampleUDIM(${d.offset}u,vec2u(${d.width}u,${d.height}u),${d.levels}u,${uv[i]},${grid},0.0,${filter==='linear'},${fill})`:`imageSample(${d.offset}u,vec2u(${d.width}u,${d.height}u),${d.levels}u,${uv[i]},0.0,vec2u(${address('uaddressmode')},${address('vaddressmode')}),${filter==='linear'},${fill})`);return `${call}.${swizzle}`;});
           const stableNormal=`safeNormal(${nrm},vec3f(0.0,0.0,1.0))`, weights=`abs(${stableNormal})/max(1e-6,dot(abs(${stableNormal}),vec3f(1.0)))`;code=`${samples[0]}*${weights}.x+${samples[1]}*${weights}.y+${samples[2]}*${weights}.z`;break;
         }
-        case 'image': case 'tiledimage': case 'UsdUVTexture': case 'usduvtexture': {
+        case 'image': case 'tiledimage': case 'gltf_image': case 'UsdUVTexture': case 'usduvtexture': {
           const usdTexture = n.category === 'UsdUVTexture' || n.category === 'usduvtexture';
+          const gltfTexture = n.category === 'gltf_image';
           if (!['float', 'color3', 'color4', 'vector2', 'vector3', 'vector4'].includes(type)) fail('TYPE', key, 'invalid image output type');
           const allowedInputs = ['file', 'default', 'texcoord', 'uaddressmode', 'vaddressmode', 'filtertype', 'layer', 'framerange', 'frameoffset', 'frameendaction', 'uvtiling', 'uvoffset', 'realworldimagesize', 'realworldtilesize'];
+          if (gltfTexture) allowedInputs.push('factor', 'pivot', 'scale', 'rotate', 'offset', 'operationorder');
           if (usdTexture) allowedInputs.push('st', 'fallback', 'scale', 'bias', 'sourceColorSpace', 'wrapS', 'wrapT');
           for (const name of Object.keys(ins)) if (!allowedInputs.includes(name)) fail('UNSUPPORTED', key, `unsupported image input ${name}`);
           for (const name of ['layer', 'framerange', 'frameoffset']) if (ins[name] && !['', '0', 0].includes(ins[name].value)) fail('UNSUPPORTED', key, `image ${name} is not implemented`);
@@ -305,8 +307,9 @@ export function compileGraph(document, { output, library = {}, material = false,
           const filter = ins.filtertype?.value ?? 'linear';
           if (!['closest', 'linear', 'cubic'].includes(filter) || ins.filtertype?.nodename || ins.filtertype?.interfacename || ins.filtertype?.nodegraph) fail('UNSUPPORTED', key, 'only static closest/linear/cubic image filters are implemented');
           const uvBase = usdTexture ? (ins.st ? x('st', undefined, 'vector2') : 'ctx.uv') : (ins.texcoord ? x('texcoord', undefined, 'vector2') : 'ctx.uv');
+          const uvGltf = gltfTexture ? `((mat2x2f(cos(-${x('rotate',0,'float')}*0.017453292519943295),sin(-${x('rotate',0,'float')}*0.017453292519943295),-sin(-${x('rotate',0,'float')}*0.017453292519943295),cos(-${x('rotate',0,'float')}*0.017453292519943295)) * ((${uvBase}-${x('pivot',[0,1],'vector2')})*${x('scale',[1,1],'vector2')}))+${x('pivot',[0,1],'vector2')}+vec2f(${x('offset',[0,0],'vector2')}.x,-${x('offset',[0,0],'vector2')}.y))` : uvBase;
           const uvScale = ins.uvtiling || realScale !== 'vec2f(1.0)' ? `(${ins.uvtiling ? x('uvtiling',[1,1],'vector2') : 'vec2f(1.0)'}*${realScale})` : 'vec2f(1.0)';
-          const uvTiled = `(${uvBase}*${uvScale})`;
+          const uvTiled = `(${uvGltf}*${uvScale})`;
           const uv = ins.uvoffset ? `(${uvTiled}-${x('uvoffset',[0,0],'vector2')})` : uvTiled;
           const fill = usdTexture ? fallback4 : widths[type] === 4 ? fallback : widths[type] === 3 ? `vec4f(${fallback},0)` : widths[type] === 2 ? `vec4f(${fallback},0,0)` : `vec4f(${fallback})`;
           const swizzle = ({ float: 'r', vector2: 'rg', vector3: 'rgb', color3: 'rgb', vector4: 'rgba', color4: 'rgba' })[type];
@@ -323,6 +326,7 @@ export function compileGraph(document, { output, library = {}, material = false,
             const scale = x('scale', [1, 1, 1, 1], 'color4'), bias = x('bias', [0, 0, 0, 0], 'color4');
             code = `((${sample}*${scale}+${bias})).${swizzle}`;
           } else code = `${sample}.${swizzle}`;
+          if (gltfTexture) code = `(${code}*${x('factor', widths[type] === 1 ? 1 : Array(widths[type]).fill(1), type)})`;
           break;
         }
         case 'latlongimage': {

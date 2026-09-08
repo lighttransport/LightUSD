@@ -337,6 +337,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   `realworldimagesize`/`realworldtilesize` values add their UV ratio, and that
   effective scale is also included in derivative-based mip LOD selection;
   bounded UDIM/UVTILE atlas expansion is supported for static filename inputs.
+- `gltf_image` supports the MaterialX glTF image resource path, factor
+  modulation, and the authored pivot/scale/rotate/offset UV transform.
 - Image nodes now support MaterialX `filtertype="cubic"` through a bounded
   16-tap cubic sampler with trilinear mip selection.
 - `triplanarprojection` now resolves three image resources, projects them on
