@@ -1257,7 +1257,7 @@ test('cell-noise nodes hash integer cells without interpolation', () => {
   ]};
   const source=compileGraph(doc); assert.match(source.body,/mxHash2\(floor/); assert.match(source.body,/mxHash3\(floor/);
 });
-test('tiledimage compiles the validated single-tile resource path', () => {
+test('tiledimage compiles validated single-tile, real-world-size, and UDIM paths', () => {
   const doc={images:{tile:{width:1,height:1,data:[1,0,0,1],colorspace:'raw'}},nodes:[{name:'tile',category:'tiledimage',type:'color3',inputs:{file:{type:'filename',value:'tile'},uvtiling:{type:'vector2',value:[1,1]}}}]};
   const descriptor={tile:{offset:0,width:1,height:1,levels:1,colorspace:'raw'}};
   const source=compileGraph(doc,{imageDescriptors:descriptor}); assert.match(source.body,/imageSample\(0u/);
@@ -1268,6 +1268,9 @@ test('tiledimage compiles the validated single-tile resource path', () => {
   assert.match(offset.body,/ctx\.uv\*\(vec2f\(1\.0,1\.0\)\*vec2f\(1\.0\)\)\)-vec2f\(0\.25,0\.5\)/);
   const real=compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,realworldimagesize:{type:'vector2',value:[2,1]},realworldtilesize:{type:'vector2',value:[1,1]}}}]},{imageDescriptors:descriptor});
   assert.match(real.body,/vec2f\(2\.0,1\.0\)/);
+  const udimDescriptor={tile:{offset:0,width:2,height:1,levels:2,colorspace:'raw',udim:{columns:2,rows:1}}};
+  const udim=compileGraph(doc,{imageDescriptors:udimDescriptor});
+  assert.match(udim.body,/imageSampleUDIM\(0u/); assert.match(udim.body,/vec2u\(2u,1u\)/);
   assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,realworldimagesize:{type:'vector2',value:[2,1]}}}]},{imageDescriptors:descriptor}),/paired static/);
 });
 test('hextiledimage preserves pinned hex-tile controls and derivative sampling', () => {
