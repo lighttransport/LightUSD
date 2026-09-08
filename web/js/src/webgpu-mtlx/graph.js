@@ -435,8 +435,8 @@ export function compileGraph(document, { output, library = {}, material = false,
           const layers=descriptor.layers;
           const authored = p => p && (p.value !== undefined || p.nodename || p.nodegraph || p.interfacename);
           if (frames && layers) fail('RESOURCE', key, 'image resource cannot combine layers and frames');
-          if (authored(ins.layer) && (ins.layer.nodename || ins.layer.nodegraph || ins.layer.interfacename)) fail('UNSUPPORTED', key, 'connected image layer selectors are not implemented');
-          if (authored(ins.layer) && !Number.isInteger(Number(ins.layer.value))) fail('SEMANTICS', key, 'image layer must be an integer');
+          if (authored(ins.layer) && !layers) fail('RESOURCE', key, 'image layer selection requires a decoded layered image');
+          if (authored(ins.layer) && ins.layer.value !== undefined && !ins.layer.nodename && !ins.layer.nodegraph && !ins.layer.interfacename && !Number.isInteger(Number(ins.layer.value))) fail('SEMANTICS', key, 'image layer must be an integer');
           if (!frames && (authored(ins.framerange) || authored(ins.frameoffset) || authored(ins.frameendaction))) {
             for (const name of ['framerange','frameoffset']) if (authored(ins[name]) && (ins[name].nodename || ins[name].nodegraph || ins[name].interfacename || !['', '0', 0].includes(ins[name].value))) fail('UNSUPPORTED', key, `image ${name} requires decoded sequence frames`);
             if (authored(ins.frameendaction) && (ins.frameendaction.nodename || ins.frameendaction.nodegraph || ins.frameendaction.interfacename || ins.frameendaction.value !== undefined && ins.frameendaction.value !== 'constant')) fail('UNSUPPORTED', key, 'image frameendaction requires decoded sequence frames');

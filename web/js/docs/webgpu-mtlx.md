@@ -686,6 +686,10 @@ normal-map filtering and geometric displacement remain separate limitations.
 the common image-node color representation without changing tangent-space
 normal semantics.
 
+Layered image nodes now accept connected integer layer selectors and clamp them
+to the decoded layer range. Authoring a layer selector against a flat image is
+reported as a resource error instead of being ignored.
+
 The synthetic `normalmap-image` fixture now exercises a raw-color image node
 feeding `normalmap`, including packed-resource binding and linear filtering;
 authored texture mip residency and UDIM streaming remain future work; USD and

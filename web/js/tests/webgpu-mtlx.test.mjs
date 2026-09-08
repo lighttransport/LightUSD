@@ -660,6 +660,13 @@ test('image packing preserves bounded decoded image layers', () => {
   assert.deepEqual(packed.descriptors[0].layers.map(d => d.offset), [0, 1]);
   const compiled = compileGraph({ nodes: [{ name: 'tex', category: 'image', type: 'color3', inputs: { file: { type: 'filename', value: 'layered' }, layer: { type: 'integer', value: 1 } } }] }, { imageDescriptors: { layered: packed.descriptors[0] } });
   assert.match(compiled.body, /select\(/);
+  const dynamic = compileGraph({ nodes: [
+    { name: 'selector', category: 'constant', type: 'integer', inputs: { value: { type: 'integer', value: 1 } } },
+    { name: 'tex', category: 'image', type: 'color3', inputs: { file: { type: 'filename', value: 'layered' }, layer: { nodename: 'selector' } } }
+  ], output: { nodename: 'tex' } }, { imageDescriptors: { layered: packed.descriptors[0] } });
+  assert.match(dynamic.body, /select\(/);
+  const flat = packImages([layer(.2)]).descriptors[0];
+  assert.throws(() => compileGraph({ nodes: [{ name: 'tex', category: 'image', type: 'color3', inputs: { file: { type: 'filename', value: 'flat' }, layer: { type: 'integer', value: 1 } } }] }, { imageDescriptors: { flat } }), /decoded layered image/);
   assert.throws(() => packImages([{ ...layer(.2), frames: [layer(.4)], layers: [layer(.8)] }]), /combine layers and frames/);
 });
 test('image budgets, finite float32, dimensions and color interpretation are validated', () => {
