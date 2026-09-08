@@ -564,7 +564,8 @@ component separation, power, dot/cross products, and equality selection.
 
 `geompropvalue` now resolves standard static geometry-property tokens
 (`st`/`uv`, `P`, `N`, `T`, and `B`) against the shading context with strict
-output typing. Unknown properties use the authored `default` value, preserving
+output typing. `color`/`displayColor` resolve the interpolated geometry color,
+and `opacity`/`displayOpacity` resolve its authored alpha channel. Unknown properties use the authored `default` value, preserving
 MaterialX fallback behavior; dynamic selectors remain explicit diagnostics
 because the current scene context has no arbitrary primvar map.
 

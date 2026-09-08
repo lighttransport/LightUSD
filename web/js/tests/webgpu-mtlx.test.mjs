@@ -586,6 +586,8 @@ test('standard geometry aliases preserve facing ratio and uniform property seman
   assert.match(color.body,/ctx\.geomcolor/); assert.throws(()=>compileGraph({nodes:[{name:'c',category:'geomcolor',type:'color3',inputs:{index:{type:'integer',value:1}}}]}),/primary geometry color/);
   const displayColor=compileGraph({nodes:[{name:'c',category:'geompropvalue',type:'color3',inputs:{geomprop:{type:'string',value:'displayColor'}}}]});
   assert.match(displayColor.body,/ctx\.geomcolor\.rgb/);
+  const displayOpacity=compileGraph({nodes:[{name:'a',category:'geompropvalue',type:'float',inputs:{geomprop:{type:'string',value:'displayOpacity'}}}]});
+  assert.match(displayOpacity.body,/ctx\.geomcolor\.a/);
 });
 test('viewdirection exposes the normalized outgoing shading direction', () => {
   const source=compileGraph({nodes:[{name:'v',category:'viewdirection',type:'vector3',inputs:{space:{type:'string',value:'world'}}}]});

@@ -710,7 +710,8 @@ export function compileGraph(document, { output, library = {}, material = false,
             n: ['vector3', 'ctx.normal'], normal: ['vector3', 'ctx.normal'],
             t: ['vector3', 'ctx.tangent'], tangent: ['vector3', 'ctx.tangent'],
             b: ['vector3', 'ctx.bitangent'], bitangent: ['vector3', 'ctx.bitangent'],
-            color: ['color3', 'ctx.geomcolor.rgb'], displaycolor: ['color3', 'ctx.geomcolor.rgb']
+            color: ['color3', 'ctx.geomcolor.rgb'], displaycolor: ['color3', 'ctx.geomcolor.rgb'],
+            opacity: ['float', 'ctx.geomcolor.a'], displayopacity: ['float', 'ctx.geomcolor.a']
           };
           const property = properties[name];
           if (property) {
