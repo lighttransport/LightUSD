@@ -28,7 +28,8 @@ fn thinFilmFresnel(c0:f32,baseIOR:f32,filmIOR:f32,thickness:f32)->vec3f {
   return clamp(vec3f(r01*r01)+vec3f(r12*r12)+vec3f(interference),vec3f(0),vec3f(1));
 }
 fn transmissionAttenuation(m:Lobe)->vec3f { return exp(-max(vec3f(0),m.transmissionScatter)*max(0.0,m.transmissionDepth)); }
-fn generalizedSchlickFresnel(m:Lobe,c:f32)->vec3f { return mix(m.base,m.schlickColor90,vec3f(pow(1.0-clamp(abs(c),0.0,1.0),m.schlickExponent))); }
+fn mxPow6(v:f32)->f32 { let v2=v*v; return v2*v2*v2; }
+fn generalizedSchlickFresnel(m:Lobe,c:f32)->vec3f { let x=clamp(abs(c),0.0,1.0);let maxCos=1.0/7.0;let factor=1.0/(maxCos*pow(1.0-maxCos,6.0));let a=mix(m.base,m.schlickColor90,vec3f(pow(1.0-maxCos,m.schlickExponent)))*(vec3f(1)-m.schlickColor82)*factor;return mix(m.base,m.schlickColor90,vec3f(pow(1.0-x,m.schlickExponent)))-a*x*vec3f(mxPow6(1.0-x)); }
 fn microfacetD(h: vec3f, alpha: vec2f) -> f32 {
   if(h.z<=0.0) { return 0.0; }
   let q=dot(h.xy/alpha,h.xy/alpha)+h.z*h.z;

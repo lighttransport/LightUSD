@@ -52,7 +52,7 @@ fn validClosure(c:Closure)->bool {
   for(var i=0u;i<c.count;i++){
     let l=c.lobes[i];
     if(!all(c.scales[i]>=vec3f(0))||!all(c.scales[i]<=vec3f(3e37))||!(l.weight>=0.0&&l.weight<=3e37&&l.ior>0.0&&l.ior<=3e37&&l.roughness>=0.0&&l.roughness<=3e37&&l.transmissionDepth>=0.0&&l.transmissionDepth<=3e37)||!all(l.alpha>=vec2f(0))||!all(l.alpha<=vec2f(3e37))){return false;}
-    if(!all(l.base>=vec3f(0))||!all(l.base<=vec3f(3e37))||!all(l.transmissionColor>=vec3f(0))||!all(l.transmissionColor<=vec3f(3e37))||!all(l.transmissionScatter>=vec3f(0))||!all(l.transmissionScatter<=vec3f(3e37))||!all(l.schlickColor90>=vec3f(0))||!all(l.schlickColor90<=vec3f(3e37))||!(l.schlickExponent>=0.0&&l.schlickExponent<=3e37)||!all(l.complexIOR>=vec3f(0))||!all(l.complexIOR<=vec3f(3e37))||!all(l.extinction>=vec3f(0))||!all(l.extinction<=vec3f(3e37))||!(l.metal>=0.0&&l.metal<=1.0&&l.transmission>=0.0&&l.transmission<=1.0)){return false;}
+    if(!all(l.base>=vec3f(0))||!all(l.base<=vec3f(3e37))||!all(l.transmissionColor>=vec3f(0))||!all(l.transmissionColor<=vec3f(3e37))||!all(l.transmissionScatter>=vec3f(0))||!all(l.transmissionScatter<=vec3f(3e37))||!all(l.schlickColor82>=vec3f(0))||!all(l.schlickColor82<=vec3f(3e37))||!all(l.schlickColor90>=vec3f(0))||!all(l.schlickColor90<=vec3f(3e37))||!(l.schlickExponent>=0.0&&l.schlickExponent<=3e37)||!all(l.complexIOR>=vec3f(0))||!all(l.complexIOR<=vec3f(3e37))||!all(l.extinction>=vec3f(0))||!all(l.extinction<=vec3f(3e37))||!(l.metal>=0.0&&l.metal<=1.0&&l.transmission>=0.0&&l.transmission<=1.0)){return false;}
     if(l.transmission>0.0&&closureImportance(c,i)>0.0){if(interfaceIOR>0.0&&abs(interfaceIOR-l.ior)>1e-5){return false;}interfaceIOR=l.ior;}
   }
   return true;

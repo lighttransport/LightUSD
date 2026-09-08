@@ -46,6 +46,8 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   smooth angular falloff through surface, path, area-light, and raster emission.
 - `generalized_schlick_edf` preserves its base EDF and directional `color0`,
   `color90`, and exponent controls through the same emission transport.
+- `generalized_schlick_bsdf` now carries the pinned `color82` control and
+  Hoffman Schlick correction through RGB and spectral lobe evaluation.
 - The pinned float, color3, and color4 `blur` overloads follow the MaterialX
   1.39.5 standard library implementation, which is currently a documented
   pass-through for box and gaussian filter types.

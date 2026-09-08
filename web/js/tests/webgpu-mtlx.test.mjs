@@ -360,6 +360,8 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   const schlick=syntheticScene('generalized-schlick').materials[1];
   assert.match(compileGraph(schlick,{material:true}).body,/nativeGeneralizedSchlick/);
   assert.match(shaderSource([schlick]),/generalizedSchlickFresnel/);
+  assert.match(shaderSource([schlick]),/schlickColor82/);
+  assert.match(shaderSource([schlick]),/mxPow6/);
   const openPbrWeight=syntheticScene('open-pbr-weight').materials[1];
   assert.match(compileGraph(openPbrWeight,{material:true}).body,/0\.35/);
   assert.match(compileGraph(openPbrWeight,{material:true}).body,/withSpecular/);
