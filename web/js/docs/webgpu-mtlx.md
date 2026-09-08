@@ -227,6 +227,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   tiling, offset, diameter, and staggering.
 - `randomfloat` produces deterministic bounded values from authored input and
   integer seed hashes, interpolated over the authored min/max range.
+- `randomcolor` derives deterministic hue, saturation, and brightness channels
+  from the authored input/seed and converts them through the bounded HSV path.
 - `cellnoise2d` and `cellnoise3d` provide non-interpolated integer-cell hash
   values for procedural masks.
 - Common color utility nodes `premult`, `unpremult`, `contrast`, and

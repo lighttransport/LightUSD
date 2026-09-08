@@ -675,6 +675,10 @@ test('randomfloat hashes input and seed within authored bounds', () => {
   assert.match(source.body,/mix\(-1\.0,3\.0,mxHash2\(vec2f\(2\.0,f32\(7i\)\)\)\)/);
   assert.match(contextWGSL,/fn mxHash2/);
 });
+test('randomcolor derives bounded HSV channels from input and seed', () => {
+  const source=compileGraph({nodes:[{name:'r',category:'randomcolor',type:'color3',inputs:{in:{type:'float',value:2},huelow:{type:'float',value:.1},huehigh:{type:'float',value:.4},seed:{type:'integer',value:7},brightnesshigh:{type:'float',value:.8}}}]});
+  assert.match(source.body,/mxHsvToRgb/); assert.match(source.body,/mxHash3\(vec3f\(2\.0,f32\(7i\),17\.0\)\)/);
+});
 test('cell-noise nodes hash integer cells without interpolation', () => {
   const doc={nodes:[
     {name:'uv',category:'texcoord',type:'vector2',inputs:{}},
