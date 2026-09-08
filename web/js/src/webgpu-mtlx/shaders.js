@@ -35,9 +35,11 @@ function measuredProfileWGSL(materials) {
 
 export function shaderSource(materials, resources = {}, lighting = {}, textureOptions = {}) {
   for(const doc of materials)if(doc.twoSidedEmission!==undefined&&typeof doc.twoSidedEmission!=='boolean')throw new Error('twoSidedEmission must be boolean');
-  const lightDirection=lighting.directional?.direction||[-.5,.8,.4];
-  if(!Array.isArray(lightDirection)||lightDirection.length!==3||Math.hypot(...lightDirection)<1e-8)throw new Error('Invalid directional light direction');
-  for(const color of [lighting.environment,lighting.directional?.radiance])if(color && (!Array.isArray(color)||color.length!==3||color.some(v=>!Number.isFinite(v)||v<0)))throw new Error('Invalid light radiance');
+  const authoredDirectionalLights=lighting.directionalLights||[lighting.directional||{direction:[-.5,.8,.4],radiance:[3.5,3.2,2.8]}];
+  if(!Array.isArray(authoredDirectionalLights)||authoredDirectionalLights.length<1||authoredDirectionalLights.length>256)throw new Error('Invalid authored directional-light list');
+  const directionalLights=authoredDirectionalLights.map(light=>({direction:light.direction||[-.5,.8,.4],radiance:light.radiance||[3.5,3.2,2.8]}));
+  for(const light of directionalLights)if(!Array.isArray(light.direction)||light.direction.length!==3||!light.direction.every(Number.isFinite)||Math.hypot(...light.direction)<1e-8||!Array.isArray(light.radiance)||light.radiance.length!==3||!light.radiance.every(v=>Number.isFinite(v)&&v>=0))throw new Error('Invalid authored directional light');
+  for(const color of [lighting.environment])if(color && (!Array.isArray(color)||color.length!==3||color.some(v=>!Number.isFinite(v)||v<0)))throw new Error('Invalid light radiance');
   const pointLights=lighting.pointLights||[];
   if(!Array.isArray(pointLights)||pointLights.length>256)throw new Error('Invalid authored point-light list');
   for(const light of pointLights)if(!Array.isArray(light.position)||light.position.length!==3||!light.position.every(Number.isFinite)||!Array.isArray(light.radiance)||light.radiance.length!==3||!light.radiance.every(v=>Number.isFinite(v)&&v>=0)||!Number.isFinite(light.worldArea)||light.worldArea<=0||light.coneDirection&&(!Array.isArray(light.coneDirection)||light.coneDirection.length!==3||!light.coneDirection.every(Number.isFinite)||!Number.isFinite(light.coneInnerCos)||!Number.isFinite(light.coneOuterCos)))throw new Error('Invalid authored point light');
@@ -66,6 +68,8 @@ export function shaderSource(materials, resources = {}, lighting = {}, textureOp
     return `fn material${i}(ctx: ShadingContext) -> Material { ${c.body}\nreturn ${c.expression}; }\nfn medium${i}(ctx:ShadingContext)->Medium { ${medium ? `${medium.body}\nreturn ${medium.expression};` : `return material${i}(ctx).bsdf.interior;`} }`;
   }).join('\n');
   const environmentImage = environmentImageIndex >= 0 ? packed.descriptors[environmentImageIndex] : null;
+  const directionalFns = directionalLights.map((light,i)=>`case ${i}u:{return normalize(${literal('vector3',light.direction)});}`).join('');
+  const directionalRadianceFns = directionalLights.map((light,i)=>`case ${i}u:{return ${literal('color3',light.radiance)};}`).join('');
   const authoredPointDirect = pointLights.map(light => {
     const position=literal('vector3',light.position), radiance=literal('color3',light.radiance.map(v=>v*light.worldArea*.5));
     const cone=light.coneDirection ? `let coneCos=dot(${literal('vector3',light.coneDirection)},-wi);let coneWeight=smoothstep(${Number(light.coneOuterCos)},${Number(light.coneInnerCos)},coneCos);` : 'let coneWeight=1.0;';
@@ -166,8 +170,9 @@ fn environment(d: vec3f) -> vec3f {
   let sky = mix(vec3f(0.12,0.15,0.2),vec3f(0.55,0.66,0.85),smoothstep(-0.1,0.9,d.y));
   return sky;
 }
-fn directionalDirection()->vec3f{return normalize(${literal('vector3',lightDirection)});}
-fn directionalRadiance()->vec3f{return ${literal('color3',lighting.directional?.radiance||[3.5,3.2,2.8])};}
+fn directionalCount()->u32{return ${directionalLights.length}u;}
+fn directionalDirectionAt(i:u32)->vec3f{switch i{${directionalFns}default:{return vec3f(0,1,0);}}}
+fn directionalRadianceAt(i:u32)->vec3f{switch i{${directionalRadianceFns}default:{return vec3f(0);}}}
 fn basis(n: vec3f, v: vec3f) -> vec3f {
   let t = normalize(cross(select(vec3f(0,1,0),vec3f(1,0,0),abs(n.y)>0.9),n));
   return t*v.x+cross(n,t)*v.y+n*v.z;
@@ -200,7 +205,6 @@ fn sampleDirection(m: Lobe, n: vec3f, wo: vec3f, rng: ptr<function,u32>) -> vec3
 }
 fn preview(o0: vec3f, d0: vec3f, rng: ptr<function,u32>, realtime: bool) -> vec3f {
   var o = o0; var d = d0; var beta = vec3f(1); var radiance = vec3f(0);
-  let light = directionalDirection();
   for (var bounce = 0u; bounce < 12u; bounce++) {
     let h = intersect(o,d);
     if (h.id == 0xffffffffu) { radiance += beta*environment(d); break; }
@@ -209,9 +213,10 @@ fn preview(o0: vec3f, d0: vec3f, rng: ptr<function,u32>, realtime: bool) -> vec3
     let eps = max(1e-4,length(ctx.position)*1e-5);
     let emittingTriangle=triangles[h.id];let emittingNormal=normalize(cross(emittingTriangle.b.p.xyz-emittingTriangle.a.p.xyz,emittingTriangle.c.p.xyz-emittingTriangle.a.p.xyz));
     radiance += beta*m.emission*m.emissionWeight*emissionFactor(surface,-d)*emissionSidedness(u32(triangles[h.id].a.uv.z),emittingNormal,d)*contributionOpacity;
-    var direct = bsdf(m,ctx.normal,-d,light).xyz * max(0.0,dot(ctx.normal,light))*directionalRadiance()*contributionOpacity;
+    var direct=vec3f(0);
+    for(var directionalIndex=0u;directionalIndex<directionalCount();directionalIndex++){let light=directionalDirectionAt(directionalIndex);if(intersect(ctx.position+ctx.normal*eps,light).id==0xffffffffu){direct+=bsdf(m,ctx.normal,-d,light).xyz*max(0.0,dot(ctx.normal,light))*directionalRadianceAt(directionalIndex)*contributionOpacity;}}
     if (realtime) { direct += (authoredPointDirect(m,ctx.normal,-d,ctx.position)+authoredAreaDirect(m,ctx.normal,-d,ctx.position))*contributionOpacity; }
-    if (intersect(ctx.position+ctx.normal*eps,light).id == 0xffffffffu) { radiance += beta*direct; }
+    radiance += beta*direct;
     if (realtime) { radiance += beta*(m.base*(1.0-m.metal)*0.22+fresnel(max(0.0,dot(ctx.normal,-d)),mix(vec3f(0.04),m.base,m.metal))*environment(reflect(d,ctx.normal)))*contributionOpacity; break; }
     let wi = sampleDirection(m,ctx.normal,-d,rng); let f = bsdf(m,ctx.normal,-d,wi);
     if (f.w <= 0.0) { break; }
@@ -245,14 +250,14 @@ struct RasterVertex { @builtin(position) clip: vec4f, @location(0) position: vec
   let derivatives=mxSurfaceDerivatives(geomN,dpdx(v.position),dpdy(v.position),dpdx(v.uv),dpdy(v.uv));
   let hasT=length(v.tangent.xyz)>1e-5;let t=safeNormal(v.tangent.xyz-geomN*dot(geomN,v.tangent.xyz),frame[0]);let handed=select(1.0,select(-1.0,1.0,v.tangent.w>=0.0),hasT);let bt=select(frame[1],normalize(cross(geomN,t))*handed,hasT);
   var ctx = ShadingContext(v.position,geomN,select(frame[0],t,hasT),bt,v.uv,cfg.animation.x,cfg.animation.y,dpdx(v.uv),dpdy(v.uv),derivatives[0],derivatives[1],normalize(cfg.origin.xyz-v.position),v.color,v.geomprop,v.geomprop1,v.geomprop2,v.geomprop3,v.geomprop4,v.geomprop5,v.geomprop6,v.geomprop7);
-  let surface=getSurface(v.material,ctx); if(surface.opacity<=0.001){discard;} var n=safeNormal(surface.normal,geomN); if(dot(n,geomN)<0.0){n=-n;} ctx.normal=n; let m = primaryLobe(surface); let wo = normalize(cfg.origin.xyz-v.position); let light=directionalDirection();
+  let surface=getSurface(v.material,ctx); if(surface.opacity<=0.001){discard;} var n=safeNormal(surface.normal,geomN); if(dot(n,geomN)<0.0){n=-n;} ctx.normal=n; let m = primaryLobe(surface); let wo = normalize(cfg.origin.xyz-v.position);
   var color = m.emission*m.emissionWeight*emissionFactor(surface,wo)*emissionSidedness(v.material,geomN,-wo)+m.base*(1.0-m.metal)*0.22+fresnel(max(0.0,dot(n,wo)),mix(vec3f(0.04),m.base,m.metal))*environment(reflect(-wo,n));
   let transmission=clamp((1.0-m.metal)*m.transmission,0.0,1.0);
   let refracted=refract(-wo,n,1.0/max(1.0001,m.ior));
   color=mix(color,m.transmissionColor*environment(refracted),transmission)*clamp(surface.opacity,0.0,1.0);
   color += authoredPointDirect(m,n,wo,v.position)*clamp(surface.opacity,0.0,1.0);
   color += authoredAreaDirect(m,n,wo,v.position)*clamp(surface.opacity,0.0,1.0);
-  if (intersect(v.position+geomN*max(1e-4,length(v.position)*1e-5),light).id==0xffffffffu) { color += bsdf(m,n,wo,light).xyz*max(0.0,dot(n,light))*directionalRadiance()*clamp(surface.opacity,0.0,1.0); }
+  for(var directionalIndex=0u;directionalIndex<directionalCount();directionalIndex++){let light=directionalDirectionAt(directionalIndex);if(intersect(v.position+geomN*max(1e-4,length(v.position)*1e-5),light).id==0xffffffffu){color+=bsdf(m,n,wo,light).xyz*max(0.0,dot(n,light))*directionalRadianceAt(directionalIndex)*clamp(surface.opacity,0.0,1.0);}}
   let linear = max(vec3f(0),color*exp2(cfg.display.x)); let mapped=linear/(1.0+linear);
   return vec4f(select(12.92*mapped,1.055*pow(mapped,vec3f(1.0/2.4))-0.055,mapped>vec3f(0.0031308)),1);
 }

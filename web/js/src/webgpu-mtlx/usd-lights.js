@@ -13,7 +13,7 @@ export function appendRectLights(scene, lights) {
   if(result.colors.length!==result.positions.length/3*4)throw new Error('Light conversion color count mismatch');
   const imported=[];
   const areaLights=[];
-  let distant = null;
+  const distantLights = [];
   const environment=[0,0,0];
   const domes=[];
   let environmentTexture=null;
@@ -47,8 +47,7 @@ export function appendRectLights(scene, lights) {
       if(!direction||!direction.every(Number.isFinite)||Math.hypot(...direction)<1e-8||![intensity,exposure,...color].every(Number.isFinite)||intensity<0||color.length!==3||color.some(c=>c<0))throw new Error('Invalid distant light parameters');
       const length=Math.hypot(...direction),towardLight=direction.map(v=>v===0?0:-v/length),radiance=color.map(c=>c*intensity*2**exposure);
       if(!radiance.every(Number.isFinite))throw new Error('Invalid distant light radiance');
-      if(distant && (distant.direction.some((v,i)=>Math.abs(v-towardLight[i])>1e-6)||distant.radiance.some((v,i)=>Math.abs(v-radiance[i])>1e-6)))throw new Error('Multiple nonmatching distant lights are unsupported');
-      distant={direction:towardLight,radiance};continue;
+      distantLights.push({path:light.absPath,direction:towardLight,radiance});continue;
     }
     if(lightType==='point'||lightType==='sphere') {
       if(light.textureFile||light.enableColorTemperature||light.shapingIesFile||light.shapingFocus>0||light.shapingConeAngle<90||light.diffuse!==undefined&&light.diffuse!==1||light.specular!==undefined&&light.specular!==1||light.shadowEnable===false)throw new Error(`Unsupported ${lightType} light texture, shaping, temperature, or contribution controls`);
@@ -167,7 +166,8 @@ export function appendRectLights(scene, lights) {
     }
     environmentTexture={...first,data,colorspace:first.colorspace||'lin_rec709',scale:[1,1,1]};
   }
-  result.lighting={environment,directional:distant||{radiance:[0,0,0]},pointLights:points,areaLights,...(environmentTexture?{environmentTexture}: {})};
-  result.provenance={...scene.provenance,lightingOverride:false,rectLights:imported,pointLights:points,diskLights:disks,cylinderLights:cylinders,geometryLights,distantLight:distant,domeLights:domes};
+  const directional=distantLights[0]||{radiance:[0,0,0]};
+  result.lighting={environment,directional,directionalLights:distantLights.length?distantLights:[directional],pointLights:points,areaLights,...(environmentTexture?{environmentTexture}: {})};
+  result.provenance={...scene.provenance,lightingOverride:false,rectLights:imported,pointLights:points,diskLights:disks,cylinderLights:cylinders,geometryLights,distantLight:distantLights[0]||null,distantLights,domeLights:domes};
   return result;
 }

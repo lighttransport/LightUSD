@@ -252,8 +252,12 @@ test('authored distant lights preserve direction and radiance', () => {
   const r=appendRectLights(scene,[{type:'distant',direction:[0,0,2],intensity:4,exposure:1,color:[1,.5,.25]}]);
   assert.deepEqual(r.lighting.directional.direction,[0,0,-1]);
   assert.deepEqual(r.lighting.directional.radiance,[8,4,2]);
+  assert.equal(r.lighting.directionalLights.length,1);
   assert.equal(r.provenance.rectLights.length,0);
-  assert.throws(()=>appendRectLights(scene,[{type:'distant',direction:[0,0,1]},{type:'distant',direction:[1,0,0]}]),/nonmatching/);
+  const multiple=appendRectLights(scene,[{type:'distant',direction:[0,0,1],intensity:2},{type:'distant',direction:[1,0,0],intensity:3,color:[.5,1,1]}]);
+  assert.equal(multiple.lighting.directionalLights.length,2);
+  assert.deepEqual(multiple.lighting.directionalLights[1].direction,[-1,0,0]);
+  assert.match(shaderSource(syntheticScene('default').materials,{},multiple.lighting),/directionalCount\(\)->u32\{return 2u/);
 });
 test('textureless authored domes contribute environment radiance', () => {
   const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
@@ -505,7 +509,7 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   assert.match(compileGraph(openNormal,{material:true}).body,/geometry_normal|normalize\(vec3f/);
   const opacity=syntheticScene('opacity').materials[1];
   assert.match(shaderSource([opacity]),/surface\.opacity/);
-  assert.match(shaderSource([opacity]),/directionalRadiance\(\)\*clamp\(surface\.opacity/);
+  assert.match(shaderSource([opacity]),/directionalRadianceAt\(directionalIndex\)\*clamp\(surface\.opacity/);
   assert.match(shaderSource([opacity]),/let opacity=clamp\(surface\.opacity/);
   assert.match(shaderSource([opacity]),/random\(rng\)>opacity/);
   const bump=syntheticScene('bump').materials[1];

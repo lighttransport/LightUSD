@@ -65,13 +65,15 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
         if(event<sigmaA){finishPath(index,&p);break;}
         if(event<sigmaA+sigmaS){
           p.beta=vec4f(p.beta.xyz*(sigmaS/majorant),p.beta.w);
-          let light=directionalDirection();
-          let shadow=intersect(point+light*max(1e-5,length(point)*2e-6),light);
-          if(shadow.id!=0xffffffffu && u32(triangles[shadow.id].a.uv.z)==mediumID){
-            var lightColor=directionalRadiance();
-            lightColor=vec3f(rgbSpectrum(lightColor,p.previous.x,true));
-            let tr=exp(-vec3f(sigmaA+sigmaS)*shadow.t);
-            p.radiance+=vec4f(p.beta.xyz*tr*hgPhase(dot(-p.direction.xyz,light),medium.anisotropy)*lightColor,0);
+          for(var directionalIndex=0u;directionalIndex<directionalCount();directionalIndex++){
+            let light=directionalDirectionAt(directionalIndex);
+            let shadow=intersect(point+light*max(1e-5,length(point)*2e-6),light);
+            if(shadow.id!=0xffffffffu && u32(triangles[shadow.id].a.uv.z)==mediumID){
+              var lightColor=directionalRadianceAt(directionalIndex);
+              lightColor=vec3f(rgbSpectrum(lightColor,p.previous.x,true));
+              let tr=exp(-vec3f(sigmaA+sigmaS)*shadow.t);
+              p.radiance+=vec4f(p.beta.xyz*tr*hgPhase(dot(-p.direction.xyz,light),medium.anisotropy)*lightColor,0);
+            }
           }
           let ez=1.0-2.0*random(&rng); let ephi=2.0*PI*random(&rng); let er=sqrt(max(0.0,1.0-ez*ez));
           let envDirection=vec3f(er*cos(ephi),ez,er*sin(ephi));
@@ -101,12 +103,14 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
         p.beta=vec4f(p.beta.xyz*tr*medium.scattering/max(1e-30,pdf),p.beta.w);
         if(all(p.beta.xyz<=vec3f(0))) {finishPath(index,&p);break;}
         p.origin=vec4f(p.origin.xyz+p.direction.xyz*distance,0);
-        let light=directionalDirection();
-        let shadow=intersect(p.origin.xyz+light*max(1e-5,length(p.origin.xyz)*2e-6),light);
-        if(shadow.id!=0xffffffffu && u32(triangles[shadow.id].a.uv.z)==mediumId(&p,mediumDepth)-1u){
-          var lightColor=directionalRadiance(); if(cfg.dimensions.w==2u){lightColor=vec3f(rgbSpectrum(lightColor,p.previous.x,true));}
-          let tr=exp(-sigmaT*shadow.t);
-          p.radiance+=vec4f(p.beta.xyz*tr*hgPhase(dot(-p.direction.xyz,light),medium.anisotropy)*lightColor,0);
+        for(var directionalIndex=0u;directionalIndex<directionalCount();directionalIndex++){
+          let light=directionalDirectionAt(directionalIndex);
+          let shadow=intersect(p.origin.xyz+light*max(1e-5,length(p.origin.xyz)*2e-6),light);
+          if(shadow.id!=0xffffffffu && u32(triangles[shadow.id].a.uv.z)==mediumId(&p,mediumDepth)-1u){
+            var lightColor=directionalRadianceAt(directionalIndex); if(cfg.dimensions.w==2u){lightColor=vec3f(rgbSpectrum(lightColor,p.previous.x,true));}
+            let tr=exp(-sigmaT*shadow.t);
+            p.radiance+=vec4f(p.beta.xyz*tr*hgPhase(dot(-p.direction.xyz,light),medium.anisotropy)*lightColor,0);
+          }
         }
         let ez=1.0-2.0*random(&rng); let ephi=2.0*PI*random(&rng); let er=sqrt(max(0.0,1.0-ez*ez));
         let envDirection=vec3f(er*cos(ephi),ez,er*sin(ephi));
@@ -172,13 +176,14 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
     if(p.state.y>0u && p.direction.w>0.0){emitterMIS=powerHeuristic(p.direction.w,triangleLightPDF(tri,h.t,p.direction.xyz));}
     p.radiance+=vec4f(p.beta.xyz*m.emission*m.emissionWeight*emissionFactor(surface,-p.direction.xyz)*emitterMIS*emissionSidedness(materialID,outward,p.direction.xyz),0);
     let eps=max(1e-5,length(ctx.position)*2e-6);
-    let light=directionalDirection();
-    let lightLocal=transpose(frame)*light;
     let wavelength=select(0.0,p.previous.x,cfg.dimensions.w==2u);
-    let direct=closureEval(surface.bsdf,wo,lightLocal,eta,wavelength);
-    let lightOrigin=ctx.position+gn*select(-eps,eps,lightLocal.z>0.0);
-    var lightColor=directionalRadiance(); if(cfg.dimensions.w==2u) { lightColor=vec3f(rgbSpectrum(lightColor,p.previous.x,true)); }
-    if(intersect(lightOrigin,light).id==0xffffffffu) { p.radiance+=vec4f(p.beta.xyz*direct.xyz*abs(lightLocal.z)*lightColor,0); }
+    for(var directionalIndex=0u;directionalIndex<directionalCount();directionalIndex++){
+      let light=directionalDirectionAt(directionalIndex); let lightLocal=transpose(frame)*light;
+      let direct=closureEval(surface.bsdf,wo,lightLocal,eta,wavelength);
+      let lightOrigin=ctx.position+gn*select(-eps,eps,lightLocal.z>0.0);
+      var lightColor=directionalRadianceAt(directionalIndex); if(cfg.dimensions.w==2u) { lightColor=vec3f(rgbSpectrum(lightColor,p.previous.x,true)); }
+      if(intersect(lightOrigin,light).id==0xffffffffu) { p.radiance+=vec4f(p.beta.xyz*direct.xyz*abs(lightLocal.z)*lightColor,0); }
+    }
     // Uniform environment sampling plus power-heuristic BSDF sampling.
     let z=1.0-2.0*random(&rng); let phi=2.0*PI*random(&rng); let rr=sqrt(max(0.0,1.0-z*z));
     let envDirection=vec3f(rr*cos(phi),z,rr*sin(phi)); let envLocal=transpose(frame)*envDirection;
