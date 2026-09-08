@@ -538,6 +538,10 @@ output typing. Unknown properties use the authored `default` value, preserving
 MaterialX fallback behavior; dynamic selectors remain explicit diagnostics
 because the current scene context has no arbitrary primvar map.
 
+The standard `geompropvalueuniform` alias uses the same typed geometry lookup
+and fallback behavior. `facingratio` is accepted as the library spelling of
+the existing bounded facing-ratio operation.
+
 `rotate3d` now emits a normalized-axis Rodrigues rotation with MaterialX's
 degree-valued amount, including a stable fallback for degenerate axes.
 

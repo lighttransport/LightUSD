@@ -551,6 +551,15 @@ test('geompropvalue maps standard authored geometry properties with typed fallba
   assert.match(fallback.body,/vec3f\(0\.2,0\.3,0\.4\)/);
   assert.throws(()=>compileGraph({nodes:[{name:'bad',category:'geompropvalue',type:'float',inputs:{geomprop:{type:'string',value:'P'}}}]}),/has type vector3/);
 });
+test('standard geometry aliases preserve facing ratio and uniform property semantics', () => {
+  const facing=compileGraph({nodes:[{name:'f',category:'facingratio',type:'float',inputs:{in:{type:'vector3',value:[0,0,1]},normal:{type:'vector3',value:[0,0,1]},exponent:{type:'float',value:2}}}]});
+  assert.match(facing.body,/pow\(1\.0-clamp\(/);
+  const uniform=compileGraph({nodes:[{name:'u',category:'geompropvalueuniform',type:'vector3',inputs:{geomprop:{type:'string',value:'P'}}}]});
+  assert.match(uniform.body,/ctx\.position/);
+  const fallback=compileGraph({nodes:[{name:'u',category:'geompropvalueuniform',type:'float',inputs:{geomprop:{type:'string',value:'custom'},default:{type:'float',value:.25}}}]});
+  assert.match(fallback.body,/0\.25/);
+  assert.throws(()=>compileGraph({nodes:[{name:'u',category:'geompropvalueuniform',type:'float',inputs:{geomprop:{type:'string',value:'N'}}}]}),/has type vector3/);
+});
 test('rotate3d uses a normalized axis and degree-valued Rodrigues rotation', () => {
   const source=compileGraph({nodes:[{name:'r',category:'rotate3d',type:'vector3',inputs:{in:{type:'vector3',value:[1,0,0]},axis:{type:'vector3',value:[0,0,1]},amount:{type:'float',value:90}}}]});
   assert.match(source.body,/safeNormal\(vec3f\(0\.0,0\.0,1\.0\)/);
