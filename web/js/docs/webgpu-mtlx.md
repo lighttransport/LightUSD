@@ -209,8 +209,9 @@ configured pixel budget; native material serialization
 is explicitly recorded as lossy and is not treated as an authored graph import.
 
 Raster mip selection uses the base mesh UV derivatives, so transformed or
-procedural UV graph derivatives are approximate. Path preview currently uses
-level zero: ray differentials/cones remain outstanding. Connected
+procedural UV graph derivatives are approximate. Direction based `latlongimage`
+lookups still use level zero; true path ray differentials/cones remain
+outstanding. Connected
 filename/sampler inputs, layers, image sequences and full
 MaterialX colorspace inheritance are not implemented. These images do not
 complete authored ShaderBall material support.
@@ -342,6 +343,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   modulation, and the authored pivot/scale/rotate/offset UV transform.
 - `gltf_normalmap` samples a bounded glTF normal image and applies it through
   the authored tangent basis with the same UV transform controls.
+- `gltf_colorimage` preserves the glTF color and geometry modulation inputs and
+  exposes authored RGB and alpha outputs.
 - Image nodes now support MaterialX `filtertype="cubic"` through a bounded
   16-tap cubic sampler with trilinear mip selection.
 - `triplanarprojection` now resolves three image resources, projects them on
