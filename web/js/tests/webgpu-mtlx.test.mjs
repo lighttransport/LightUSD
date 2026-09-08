@@ -1468,11 +1468,13 @@ test('VDF add and mix compose medium coefficients', () => {
     {name:'b',category:'anisotropic_vdf',type:'VDF',inputs:{scattering:{type:'color3',value:[.4,.5,.6]},anisotropy:{type:'float',value:.4}}},
     {name:'sum',category:'add',type:'VDF',inputs:{in1:{nodename:'a'},in2:{nodename:'b'}}},
     {name:'blend',category:'mix',type:'VDF',inputs:{bg:{nodename:'a'},fg:{nodename:'b'},mix:{type:'float',value:.25}}},
-    {name:'scaled',category:'multiply',type:'VDF',inputs:{in1:{nodename:'blend'},in2:{type:'color3',value:[.5,.6,.7]}}}
+    {name:'scaled',category:'multiply',type:'VDF',inputs:{in1:{nodename:'blend'},in2:{type:'color3',value:[.5,.6,.7]}}},
+    {name:'selected',category:'select',type:'VDF',inputs:{condition:{type:'boolean',value:true},truevalue:{nodename:'scaled'},falsevalue:{nodename:'a'}}}
   ]};
   assert.match(compileGraph(doc,{output:{nodename:'sum'}}).body,/mediumBlend\(n0,n1/);
   assert.match(compileGraph(doc,{output:{nodename:'blend'}}).body,/mediumBlend\(n0,n1/);
   assert.match(compileGraph(doc,{output:{nodename:'scaled'}}).body,/mediumScale\(n2,vec3f\(0\.5,0\.6,0\.7\)\)/);
+  assert.match(compileGraph(doc,{output:{nodename:'selected'}}).body,/mediumSelect\(n0,n3/);
 });
 test('MaterialX volumematerial forwards its typed volume shader', () => {
   const empty = compileGraph({ nodes: [

@@ -721,7 +721,7 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'select': {
           const condition=x('condition',undefined,'boolean'), whenTrue=input('truevalue'), whenFalse=input('falsevalue');
           if(whenTrue.type!==whenFalse.type||whenTrue.type!==type)fail('TYPE',key,'select branches must match output type');
-          code=`select(${whenFalse.code},${whenTrue.code},${condition})`; break;
+          code=type==='VDF'?`mediumSelect(${whenFalse.code},${whenTrue.code},${condition})`:`select(${whenFalse.code},${whenTrue.code},${condition})`; break;
         }
         case 'switch': {
           if (type === 'BSDF' || type === 'EDF' || type === 'VDF') fail('TYPE', key, 'switch requires a value type');
@@ -1443,6 +1443,7 @@ struct Lobe { base: vec3f, metal: f32, roughness: f32, ior: f32, transmission: f
 struct Medium { absorption: vec3f, scattering: vec3f, anisotropy: f32, emission: vec3f }
 fn mediumWithEmission(input:Medium,emission:vec3f)->Medium {var m=input;m.emission=emission;return m;}
 fn mediumScale(input:Medium,scale:vec3f)->Medium {var m=input;let s=max(vec3f(0.0),scale);m.absorption*=s;m.scattering*=s;m.emission*=s;return m;}
+fn mediumSelect(falseValue:Medium,trueValue:Medium,condition:bool)->Medium {var m:Medium;m.absorption=select(falseValue.absorption,trueValue.absorption,condition);m.scattering=select(falseValue.scattering,trueValue.scattering,condition);m.anisotropy=select(falseValue.anisotropy,trueValue.anisotropy,condition);m.emission=select(falseValue.emission,trueValue.emission,condition);return m;}
 fn mediumBlend(a:Medium,b:Medium,wa:f32,wb:f32)->Medium {var m:Medium;let aw=max(0.0,wa);let bw=max(0.0,wb);m.absorption=aw*a.absorption+bw*b.absorption;m.scattering=aw*a.scattering+bw*b.scattering;let aScatter=dot(a.scattering,vec3f(1.0))*aw;let bScatter=dot(b.scattering,vec3f(1.0))*bw;m.anisotropy=select(0.0,(a.anisotropy*aScatter+b.anisotropy*bScatter)/max(1e-6,aScatter+bScatter),aScatter+bScatter>0.0);m.emission=aw*a.emission+bw*b.emission;return m;}
 fn makeMaterial(base:vec3f,metal:f32,rough:f32,ior:f32,trans:f32,emission:vec3f,emissionWeight:f32,anisotropy:f32,tint:vec3f,thinWalled:u32,thinFilmThickness:f32,thinFilmIOR:f32)->Lobe {
  return Lobe(base,metal,rough,ior,trans,emission,emissionWeight,anisotropy,tint,0u,1.0,vec2f(rough*rough),vec3f(ior),vec3f(0),3u,thinWalled,thinFilmThickness,thinFilmIOR,0.0,vec3f(0),vec3f(1),vec3f(1),5.0,vec3f(1),vec3f(0),0u);
