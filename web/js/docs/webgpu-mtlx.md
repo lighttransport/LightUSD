@@ -212,6 +212,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   solid-style, and hash channels over a fixed 3x3/3x3x3 neighborhood.
 - `latlongimage` maps a normalized view direction to periodic longitude and
   clamped latitude, with authored rotation and typed fallback color.
+- `splitlr` and `splittb` provide typed left/right and top/bottom UV mattes with
+  authored centers and value branches.
 - `cellnoise2d` and `cellnoise3d` provide non-interpolated integer-cell hash
   values for procedural masks.
 - Common color utility nodes `premult`, `unpremult`, `contrast`, and

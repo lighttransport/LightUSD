@@ -13,7 +13,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
 export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'saturate', 'contrast', 'premult', 'unpremult', 'ramp4', 'triplanarprojection', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'UsdPreviewSurface', 'surface_unlit', 'surfacematerial', 'surface']);
-for(const category of ['transformmatrix','normalmap','bump3','heighttonormal','rotate3d','reorder','fractal2d','fractal3d','worleynoise2d','worleynoise3d','latlongimage','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d'])valueCategories.add(category);
+for(const category of ['transformmatrix','normalmap','bump3','heighttonormal','rotate3d','reorder','fractal2d','fractal3d','worleynoise2d','worleynoise3d','latlongimage','splitlr','splittb','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
 export function literal(type, value, path = '') {
   if(value===''&&type==='BSDF')return 'emptyClosure()';
@@ -333,6 +333,12 @@ export function compileGraph(document, { output, library = {}, material = false,
           const direction=`safeNormal(${x('viewdir',[0,0,1],'vector3')},vec3f(0.0,0.0,1.0))`, rotation=`(${x('rotation',0,'float')}*0.017453292519943295)`, pi='3.141592653589793';
           const uv=`vec2f(fract(atan2(${direction}.z,${direction}.x)/(2.0*${pi})+0.5+${rotation}/(2.0*${pi})),acos(clamp(${direction}.y,-1.0,1.0))/${pi})`;
           code=`imageSample(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},0.0,vec2u(2u,1u),true,vec4f(${fallback},0)).rgb`; break;
+        }
+        case 'splitlr': case 'splittb': {
+          const uv=x('texcoord',[0,0],'vector2'), center=x('center',.5,'float');
+          if (n.category==='splitlr') code=`select(${x('valuer',widths[type]===1?0:Array(widths[type]).fill(0),type)},${x('valuel',widths[type]===1?0:Array(widths[type]).fill(0),type)},${uv}.x<${center})`;
+          else code=`select(${x('valueb',widths[type]===1?0:Array(widths[type]).fill(0),type)},${x('valuet',widths[type]===1?0:Array(widths[type]).fill(0),type)},${uv}.y>=${center})`;
+          break;
         }
         case 'constant': code = same('value'); break;
         case 'add': {

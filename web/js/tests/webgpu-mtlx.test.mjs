@@ -631,6 +631,12 @@ test('latlongimage maps view direction to periodic longitude and clamped latitud
   assert.match(source.body,/atan2\(safeNormal\(vec3f\(1\.0,0\.0,0\.0\)/); assert.match(source.body,/vec2u\(2u,1u\)/);
   assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],type:'float'}]},{imageDescriptors:{env:{offset:0,width:4,height:2,levels:1,colorspace:'raw'}}}),/output must be color3/);
 });
+test('splitlr and splittb select typed matte values from UV coordinates', () => {
+  const lr=compileGraph({nodes:[{name:'s',category:'splitlr',type:'color3',inputs:{valuel:{type:'color3',value:[1,0,0]},valuer:{type:'color3',value:[0,1,0]},center:{type:'float',value:.4},texcoord:{type:'vector2',value:[.2,.5]}}}]});
+  assert.match(lr.body,/select\(vec3f\(0\.0,1\.0,0\.0\),vec3f\(1\.0,0\.0,0\.0\),vec2f\(0\.2,0\.5\)\.x<0\.4\)/);
+  const tb=compileGraph({nodes:[{name:'s',category:'splittb',type:'float',inputs:{valuet:{type:'float',value:1},valueb:{type:'float',value:2},texcoord:{type:'vector2',value:[.2,.8]}}}]});
+  assert.match(tb.body,/\.y>=0\.5/);
+});
 test('cell-noise nodes hash integer cells without interpolation', () => {
   const doc={nodes:[
     {name:'uv',category:'texcoord',type:'vector2',inputs:{}},
