@@ -63,6 +63,8 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   frame around the authored EDF axis. Malformed, oversized, empty, or
   ambiguous profiles fail with diagnostics; inline `TILT=INCLUDE` tables and
   bounded external tilt files are applied relative to the photometric asset.
+- `UsdPreviewSurface` now preserves `useSpecularWorkflow` and `specularColor`
+  in the compiled lobe, including spectral conversion of authored color.
 - `generalized_schlick_bsdf` now carries the pinned `color82` control and
   Hoffman Schlick correction through RGB and spectral lobe evaluation. Its
   supported authored path is static GGX reflection; transmission,

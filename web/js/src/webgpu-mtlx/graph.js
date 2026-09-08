@@ -1149,7 +1149,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           if (displacement && (displacement.nodename || displacement.nodegraph || displacement.interfacename || Number(displacement.value)!==0)) fail('UNSUPPORTED', `${key}/displacement`, 'UsdPreviewSurface displacement requires a displacement terminal');
           const base=`(${x('diffuseColor',[.18,.18,.18],'color3')}*${x('occlusion',1,'float')})`, metallic=x('metallic',0,'float'), roughness=x('roughness',.5,'float'), ior=x('ior',1.5,'float');
           const specularColor=x('specularColor',[0,0,0],'color3'), emission=x('emissiveColor',[0,0,0],'color3');
-          const lobe=`withSpecularColor(makeMaterial(${base},${metallic},${roughness},${ior},0.0,${emission},1.0,0.0,vec3f(1),0u,0.0,1.5),${specularColor})`;
+          const lobe=`withSpecularColorMode(makeMaterial(${base},${metallic},${roughness},${ior},0.0,${emission},1.0,0.0,vec3f(1),0u,0.0,1.5),${specularColor},${x('useSpecularWorkflow',false,'boolean')})`;
           const coat=`closureScale(closureLeaf(nativeDielectric(vec3f(1),1.5,vec2f(${x('clearcoatRoughness',.01,'float')}),1.0,1u)),vec3f(clamp(${x('clearcoat',0,'float')},0.0,1.0)))`;
           const closure=`closureAdd(closureLeaf(${lobe}),${coat})`, opacity=x('opacity',1,'float'), mode=x('opacityMode',0,'integer'), threshold=x('opacityThreshold',0,'float');
           const alpha=`select(clamp(${opacity},0.0,1.0),select(0.0,1.0,${opacity}>=${threshold}),${mode}==1i)`;
@@ -1380,16 +1380,17 @@ fn mxBlackbody(k:f32)->vec3f {
   let xyz=vec3f(x/y,1.0,(1.0-x-y)/y);
   return max(mat3x3f(vec3f(3.2406,-0.9689,0.0557),vec3f(-1.5372,1.8758,-0.2040),vec3f(-0.4986,0.0415,1.0570))*xyz,vec3f(0.0));
 }
-struct Lobe { base: vec3f, metal: f32, roughness: f32, ior: f32, transmission: f32, emission: vec3f, emissionWeight: f32, anisotropy: f32, transmissionColor: vec3f, kind:u32, weight:f32, alpha:vec2f, complexIOR:vec3f, extinction:vec3f, scatterMode:u32, thinWalled:u32, thinFilmThickness:f32, thinFilmIOR:f32, transmissionDepth:f32, transmissionScatter:vec3f, schlickColor82:vec3f, schlickColor90:vec3f, schlickExponent:f32, subsurfaceRadius:vec3f }
+struct Lobe { base: vec3f, metal: f32, roughness: f32, ior: f32, transmission: f32, emission: vec3f, emissionWeight: f32, anisotropy: f32, transmissionColor: vec3f, kind:u32, weight:f32, alpha:vec2f, complexIOR:vec3f, extinction:vec3f, scatterMode:u32, thinWalled:u32, thinFilmThickness:f32, thinFilmIOR:f32, transmissionDepth:f32, transmissionScatter:vec3f, schlickColor82:vec3f, schlickColor90:vec3f, schlickExponent:f32, subsurfaceRadius:vec3f, specularColor:vec3f, specularColorEnabled:u32 }
 struct Medium { absorption: vec3f, scattering: vec3f, anisotropy: f32, emission: vec3f }
 fn mediumWithEmission(input:Medium,emission:vec3f)->Medium {var m=input;m.emission=emission;return m;}
 fn makeMaterial(base:vec3f,metal:f32,rough:f32,ior:f32,trans:f32,emission:vec3f,emissionWeight:f32,anisotropy:f32,tint:vec3f,thinWalled:u32,thinFilmThickness:f32,thinFilmIOR:f32)->Lobe {
- return Lobe(base,metal,rough,ior,trans,emission,emissionWeight,anisotropy,tint,0u,1.0,vec2f(rough*rough),vec3f(ior),vec3f(0),3u,thinWalled,thinFilmThickness,thinFilmIOR,0.0,vec3f(0),vec3f(1),vec3f(1),5.0,vec3f(1));
+ return Lobe(base,metal,rough,ior,trans,emission,emissionWeight,anisotropy,tint,0u,1.0,vec2f(rough*rough),vec3f(ior),vec3f(0),3u,thinWalled,thinFilmThickness,thinFilmIOR,0.0,vec3f(0),vec3f(1),vec3f(1),5.0,vec3f(1),vec3f(0),0u);
 }
 fn withTransmission(lobe:Lobe,depth:f32,scatter:vec3f)->Lobe {var m=lobe;m.transmissionDepth=max(0.0,depth);m.transmissionScatter=max(vec3f(0),scatter);return m;}
 fn withThinFilm(lobe:Lobe,thickness:f32,ior:f32)->Lobe {var m=lobe;m.thinFilmThickness=max(0.0,thickness);m.thinFilmIOR=max(1.0,ior);return m;}
 fn withSpecular(lobe:Lobe,weight:f32)->Lobe {var m=lobe;m.weight=clamp(weight,0.0,1.0);return m;}
 fn withSpecularColor(lobe:Lobe,color:vec3f)->Lobe {var m=lobe;m.schlickColor90=max(vec3f(0),color);return m;}
+fn withSpecularColorMode(lobe:Lobe,color:vec3f,enabled:bool)->Lobe {var m=lobe;m.specularColor=max(vec3f(0),color);m.specularColorEnabled=select(0u,1u,enabled);return m;}
 fn nativeDiffuse(color:vec3f,weight:f32,rough:f32)->Lobe {var m=makeMaterial(color,0,rough,1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=3u;m.weight=weight;return m;}
 fn nativeSubsurface(color:vec3f,weight:f32,radius:vec3f,anisotropy:f32)->Lobe {var m=makeMaterial(color,0,1.0,1.3,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=6u;m.weight=weight;m.anisotropy=clamp(anisotropy,-.9,.9);m.subsurfaceRadius=max(vec3f(.02),radius);m.alpha=vec2f(max(.02,max(m.subsurfaceRadius.x,max(m.subsurfaceRadius.y,m.subsurfaceRadius.z))),max(.02,m.subsurfaceRadius.x));return m;}
 fn nativeTranslucent(color:vec3f,weight:f32)->Lobe {var m=makeMaterial(color,0,1.0,1.0,1,vec3f(0),0,0,vec3f(1),1u,0.0,1.5);m.kind=7u;m.weight=weight;return m;}

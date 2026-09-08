@@ -94,7 +94,7 @@ fn transportEval(m: Lobe, wo: vec3f, wi: vec3f, eta: f32, wavelength:f32) -> vec
   if(wi.z>0.0) {
     let h=normalize(wo+wi); let oh=max(1e-20,dot(wo,h));
     let fr=dielectricFresnel(oh,eta);
-    let baseFresnel=mix(vec3f(fr),fresnel(oh,m.base),m.metal);
+    let baseFresnel=select(mix(vec3f(fr),fresnel(oh,m.base),m.metal),fresnel(oh,m.specularColor),m.specularColorEnabled!=0u);
     let f=select(baseFresnel,thinFilmAt(oh,m.ior,m.thinFilmIOR,m.thinFilmThickness,wavelength),m.thinFilmThickness>0.0);
     let spec=f*microfacetD(h,alpha)*microfacetG(wo,wi,alpha)/(4.0*wo.z*wi.z);
     let diff=(1.0-m.metal)*(1.0-fr)*m.base/PI;

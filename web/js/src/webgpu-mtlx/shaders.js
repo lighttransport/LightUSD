@@ -188,7 +188,7 @@ fn bsdf(m: Lobe, n: vec3f, wo: vec3f, wi: vec3f) -> vec4f {
   let nv = dot(n,wo); let nl = dot(n,wi); if (nv <= 0.0 || nl <= 0.0) { return vec4f(0); }
   let h = normalize(wo+wi); let nh = max(0.0,dot(n,h)); let vh = max(1e-7,dot(wo,h));
   let a = max(0.001,m.roughness*m.roughness); let a2 = a*a;
-  let f0 = mix(vec3f(pow((m.ior-1.0)/(m.ior+1.0),2.0)),m.base,m.metal);
+  let f0 = select(mix(vec3f(pow((m.ior-1.0)/(m.ior+1.0),2.0)),m.base,m.metal),m.specularColor,m.specularColorEnabled!=0u);
   let f = fresnel(vh,f0); let D = distribution(nh,a2);
   let spec = f*D*masking(nv,a2)*masking(nl,a2)/(4.0*nl*nv);
   let diff = (1.0-f)*m.base*(1.0-m.metal)/PI;
