@@ -116,7 +116,7 @@ fn getMedium(id:u32,ctx:ShadingContext)->Medium {
 }
 fn mediumMajorant(id:u32)->f32 {switch id {${materials.map((doc,i)=>`case ${i}u:{return ${literal('float',doc.mediumMajorant||0)};}`).join('\n')}default:{return 0.0;}}}
 fn environment(d: vec3f) -> vec3f {
-  ${environmentImage ? `let dir=safeNormal(d,vec3f(0.0,1.0,0.0));let uv=vec2f(fract(atan2(dir.z,dir.x)/(2.0*PI)+0.5),acos(clamp(dir.y,-1.0,1.0))/PI);return imageSample(${environmentImage.offset}u,vec2u(${environmentImage.width}u,${environmentImage.height}u),${environmentImage.levels}u,uv,0.0,vec2u(2u,1u),true,vec4f(0.0)).rgb*${literal('color3',lighting.environmentTexture.scale||[1,1,1])};` : ''}
+  ${environmentImage ? `let dir=safeNormal(d,vec3f(0.0,1.0,0.0));let uv=vec2f(fract(atan2(dir.z,dir.x)/(2.0*PI)+0.5),acos(clamp(dir.y,-1.0,1.0))/PI);return imageSample(${environmentImage.offset}u,vec2u(${environmentImage.width}u,${environmentImage.height}u),${environmentImage.levels}u,uv,0.0,vec2u(2u,1u),true,vec4f(0.0)).rgb*${literal('color3',lighting.environmentTexture.scale||[1,1,1])}+${literal('color3',lighting.environment||[0,0,0])};` : ''}
   ${lighting.environment ? `return ${literal('color3',lighting.environment)};` : ''}
   let sky = mix(vec3f(0.12,0.15,0.2),vec3f(0.55,0.66,0.85),smoothstep(-0.1,0.9,d.y));
   return sky;
