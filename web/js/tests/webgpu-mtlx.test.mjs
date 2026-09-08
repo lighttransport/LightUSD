@@ -179,6 +179,18 @@ test('USD graph translation preserves interfaces and exact NodeDef typing', () =
   assert.equal(previewDisplacementDoc.displacementOutput.type, 'displacementshader');
   assert.equal(previewDisplacementDoc.nodes.find(node => node.category === 'UsdPreviewSurface').inputs.displacement, undefined);
   assert.match(compileGraph(previewDisplacementDoc, { output: previewDisplacementDoc.displacementOutput }).body, /0\.35/);
+  const previewConnected = structuredClone(previewDisplaced);
+  previewConnected.prims.find(prim => prim.path === '/M/PS').properties['inputs:displacement'] = p('float', .2, ['/M/H.outputs:out']);
+  previewConnected.prims.push({ path: '/M/H', type: 'Shader', properties: {
+    'info:id': p('token', 'ND_height'), 'inputs:value': p('float', .7), 'outputs:out': p('token')
+  } });
+  const previewConnectedLibrary = { definitions: {
+    ...previewDisplacementLibrary.definitions,
+    ND_height: { node: 'constant', inputs: { value: { type: 'float' } }, outputs: { out: { type: 'float' } } }
+  } };
+  const previewConnectedDoc = materialXFromUSD(previewConnected, '/M', { library: previewConnectedLibrary });
+  assert.equal(previewConnectedDoc.displacementOutput.type, 'displacementshader');
+  assert.match(compileGraph(previewConnectedDoc, { output: previewConnectedDoc.displacementOutput }).body, /0\.7/);
   const colored = changed(); colored.colorSpaces = { '/M': { value: 'lin_ap1_scene', timeSampled: false } };
   assert.equal(materialXFromUSD(colored, '/M', { library }).nodes[0].inputs.base_color.colorspace, 'acescg');
   colored.prims[1].properties['inputs:color'].colorSpace = 'srgb_rec709_scene';
