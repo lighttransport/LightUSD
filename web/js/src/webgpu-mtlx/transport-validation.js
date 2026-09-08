@@ -43,9 +43,10 @@ export async function validateTransportKernels(device) {
     { name: 'mixMedium', category: 'mix', type: 'VDF', inputs: { bg: { nodename: 'baseMedium' }, fg: { nodename: 'sumMedium' }, mix: { type: 'float', value: .25 } } },
     { name: 'scaledMedium', category: 'multiply', type: 'VDF', inputs: { in1: { nodename: 'mixMedium' }, in2: { type: 'color3', value: [.8, .9, 1] } } },
     { name: 'selectedMedium', category: 'select', type: 'VDF', inputs: { condition: { type: 'boolean', value: true }, truevalue: { nodename: 'scaledMedium' }, falsevalue: { nodename: 'baseMedium' } } },
+    { name: 'switchedMedium', category: 'switch', type: 'VDF', inputs: { which: { type: 'float', value: 1 }, in1: { nodename: 'selectedMedium' }, in2: { nodename: 'baseMedium' } } },
     { name: 'surface', category: 'surface', type: 'surfaceshader', inputs: { bsdf: { nodename: 'top' } } },
     { name: 'top', category: 'oren_nayar_diffuse_bsdf', type: 'BSDF', inputs: { color: { type: 'color3', value: [.4, .4, .4] } } },
-  ], mediumOutput: { nodename: 'selectedMedium' }, output: { nodename: 'surface' } };
+  ], mediumOutput: { nodename: 'switchedMedium' }, output: { nodename: 'surface' } };
   const module = device.createShaderModule({ code: shaderSource([surfaceDocument(), nestedLayer, volumeComposition]) + `
     @group(0) @binding(9) var<storage,read_write> checks: array<vec4f>;
     @compute @workgroup_size(1) fn validateTransport() {

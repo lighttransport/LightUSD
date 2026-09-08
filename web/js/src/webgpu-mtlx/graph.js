@@ -724,7 +724,15 @@ export function compileGraph(document, { output, library = {}, material = false,
           code=type==='VDF'?`mediumSelect(${whenFalse.code},${whenTrue.code},${condition})`:`select(${whenFalse.code},${whenTrue.code},${condition})`; break;
         }
         case 'switch': {
-          if (type === 'BSDF' || type === 'EDF' || type === 'VDF') fail('TYPE', key, 'switch requires a value type');
+          if (type === 'BSDF') fail('TYPE', key, 'switch requires a value type');
+          if (type === 'EDF' || type === 'VDF') {
+            const which=x('which',0,'float');
+            const fallback=type==='EDF'?{type:'EDF',code:'vec3f(0)'}:{type:'VDF',code:'Medium(vec3f(0),vec3f(0),0.0,vec3f(0))'};
+            const branch=k=>ins[k]?input(k,undefined,type):fallback;
+            let selected=branch('in10').code;
+            for(let i=9;i>=1;i--){const value=branch(`in${i}`).code;selected=type==='EDF'?`select(${value},${selected},${which}>=${i}.0)`: `mediumSelect(${value},${selected},${which}>=${i}.0)`;}
+            code=selected;break;
+          }
           const fallback=widths[type]===1?0:Array(widths[type]).fill(0), which=x('which',0,'float');
           let selected=x('in10',fallback,type);
           for (let i=9;i>=1;i--) selected=`select(${x(`in${i}`,fallback,type)},${selected},${which}>=${i}.0)`;
