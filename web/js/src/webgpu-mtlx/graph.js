@@ -407,11 +407,17 @@ export function compileGraph(document, { output, library = {}, material = false,
           code=`select(${mapped},clamp(${mapped},min(${lo},${hi}),max(${lo},${hi})),${x('clampoutput',true,'boolean')})`; break;
         }
         case 'constant': code = same('value'); break;
-        case 'add': case 'plus': {
+        case 'add': {
           if(type==='BSDF') {const a=input('in1',undefined,'BSDF'),b=input('in2',undefined,'BSDF');code=`${a.hasInterior||b.hasInterior?'closureAddPreservingInterior':'closureAdd'}(${a.code},${b.code})`;closureCount=(a.closureCount||0)+(b.closureCount||0);hasInterior=a.hasInterior||b.hasInterior;interiorCategories=a.hasInterior?a.interiorCategories:b.interiorCategories;}
           else code = binary('+'); break;
         }
-        case 'subtract': case 'minus': code = binary('-'); break;
+        case 'subtract': code = binary('-'); break;
+        case 'plus': case 'minus': {
+          if (!['float','color3','color4'].includes(type)) fail('TYPE',key,'compositing requires float/color3/color4');
+          for (const name of Object.keys(ins)) if (!['fg','bg','mix'].includes(name)) fail('INPUT',key,`unsupported compositing input ${name}`);
+          const fallback=type==='float'?0:Array(widths[type]).fill(0), fg=x('fg',fallback,type), bg=x('bg',fallback,type), amount=x('mix',1,'float');
+          code=`mix(${bg},(${bg}${n.category==='plus'?'+':'-'}${fg}),${amount})`; break;
+        }
         case 'difference': code = `abs(${same('in1')}-${scalarOrSame('in2')})`; break;
         case 'screen': {
           const one=type==='float'?'1.0':`${types[type]}(1.0)`; code=`(${one}-(${one}-${same('in1')})*(${one}-${scalarOrSame('in2')}))`; break;
@@ -520,16 +526,21 @@ export function compileGraph(document, { output, library = {}, material = false,
           code=type==='color4'?`vec4f(${adjusted},${value.code}.a)`:adjusted; break;
         }
         case 'colorcorrect': {
-          if (type !== 'color3') fail('TYPE', key, 'colorcorrect output must be color3');
-          const value=x('in',[1,1,1],'color3'), hue=x('hue',0,'float'), saturation=x('saturation',1,'float');
-          const hsv=`mxRgbToHsv(${value})`, rgb=`mxHsvToRgb(vec3f(fract(${hsv}.x+${hue}),max(0.0,${hsv}.y*${saturation}),max(0.0,${hsv}.z)))`;
+          if (!['color3','color4'].includes(type)) fail('TYPE', key, 'colorcorrect output must be color3/color4');
+          const value=x('in',type==='color4'?[1,1,1,1]:[1,1,1],type), source=type==='color4'?`${value}.rgb`:value, hue=x('hue',0,'float'), saturation=x('saturation',1,'float');
+          const hsv=`mxRgbToHsv(${source})`, rgb=`mxHsvToRgb(vec3f(fract(${hsv}.x+${hue}),max(0.0,${hsv}.y),max(0.0,${hsv}.z)))`;
           const lift=x('lift',0,'float'), gain=x('gain',1,'float'), contrast=x('contrast',1,'float'), pivot=x('contrastpivot',.5,'float'), exposure=x('exposure',0,'float'), gamma=x('gamma',1,'float');
-          const lifted=`(${rgb}+${lift}*(vec3f(1.0)-${rgb}))`, contrasted=`((${lifted}*${gain}-vec3f(${pivot}))*${contrast}+vec3f(${pivot}))`;
-          code=`pow(max(vec3f(0.0),${contrasted}*exp2(${exposure})),vec3f(1.0/max(abs(${gamma}),0.001)))`; break;
+          // Match NG_colorcorrect: hue, luminance saturation, signed gamma,
+          // lift, gain, contrast, exposure. Alpha bypasses all adjustments.
+          const saturated=`mix(vec3f(dot(vec3f(.2126,.7152,.0722),${rgb})),${rgb},${saturation})`;
+          const corrected=`(sign(${saturated})*pow(abs(${saturated}),vec3f(1.0/${gamma})))`;
+          const lifted=`(${corrected}*(1.0-${lift})+vec3f(${lift}))`, contrasted=`((${lifted}*${gain}-vec3f(${pivot}))*${contrast}+vec3f(${pivot}))`;
+          const resultColor=`(${contrasted}*exp2(${exposure}))`;
+          code=type==='color4'?`vec4f(${resultColor},${value}.a)`:resultColor; break;
         }
         case 'blackbody': {
           if (type !== 'color3') fail('TYPE', key, 'blackbody output must be color3');
-          const temperature = `clamp(${x('temperature',6500,'float')},1000.0,40000.0)`;
+          const temperature = x('temperature',5000,'float');
           code = `mxBlackbody(${temperature})`; break;
         }
         case 'artistic_ior': {
@@ -651,7 +662,7 @@ export function compileGraph(document, { output, library = {}, material = false,
         }
         case 'trianglewave': {
           if (type !== 'float') fail('TYPE', key, 'trianglewave output must be float');
-          const value=x('in',0,'float'); code=`(1.0-abs(2.0*fract(${value})-1.0))`; break;
+          const value=x('in',0,'float'); code=`(0.5-abs(fract(abs(${value}))-0.5))`; break;
         }
         case 'normalmap': {
           const scale=ins.scale?input('scale'):{type:'float',code:'1.0'};if(!['float','vector2'].includes(scale.type))fail('TYPE',key,'normalmap scale must be float or vector2');
@@ -896,12 +907,19 @@ fn mxBumpHeight(height:f32,scale:f32,n:vec3f,t:vec3f,b:vec3f)->vec3f {
   return safeNormal(n+t*(height*scale)+b*(height*scale),n);
 }
 fn mxBlackbody(k:f32)->vec3f {
-  // Bounded Planckian-locus approximation in the renderer's linear RGB space.
-  let t=clamp(k,1000.0,40000.0);
-  let r=select(1.0,329.698727446*pow(max(t-6000.0,1.0),-0.1332047592),t>6600.0);
-  let g=select(clamp(99.4708025861*log(max(t,1.0))-161.1195681661,0.0,255.0),288.1221695283*pow(max(t-6000.0,1.0),-0.0755148492),t>6600.0);
-  let b=select(0.0,138.5177312231*log(max(t-1000.0,1.0))-305.0447927307,t>1900.0);
-  return clamp(vec3f(r,g,b)/255.0,vec3f(0),vec3f(1));
+  // MaterialX 1.39.5 pbrlib/genglsl/mx_blackbody.glsl (Apache-2.0):
+  // Kang et al. chromaticity approximation, Y=1, linear Rec.709 output.
+  let kelvin=clamp(k,800.0,25000.0);
+  let t=1000.0/kelvin; let t2=t*t; let t3=t2*t;
+  var x=-3.0258469*t3+2.1070379*t2+0.2226347*t+0.240390;
+  if(kelvin<4000.0){x=-0.2661239*t3-0.2343580*t2+0.8776956*t+0.179910;}
+  let x2=x*x; let x3=x2*x;
+  var y=3.0817580*x3-5.87338670*x2+3.75112997*x-0.37001483;
+  if(kelvin<2222.0){y=-1.1063814*x3-1.34811020*x2+2.18555832*x-0.20219683;}
+  else if(kelvin<4000.0){y=-0.9549476*x3-1.37418593*x2+2.09137015*x-0.16748867;}
+  if(y<=0.0){return vec3f(1.0);}
+  let xyz=vec3f(x/y,1.0,(1.0-x-y)/y);
+  return max(mat3x3f(vec3f(3.2406,-0.9689,0.0557),vec3f(-1.5372,1.8758,-0.2040),vec3f(-0.4986,0.0415,1.0570))*xyz,vec3f(0.0));
 }
 struct Lobe { base: vec3f, metal: f32, roughness: f32, ior: f32, transmission: f32, emission: vec3f, emissionWeight: f32, anisotropy: f32, transmissionColor: vec3f, kind:u32, weight:f32, alpha:vec2f, complexIOR:vec3f, extinction:vec3f, scatterMode:u32, thinWalled:u32, thinFilmThickness:f32, thinFilmIOR:f32, transmissionDepth:f32, transmissionScatter:vec3f, schlickColor90:vec3f, schlickExponent:f32 }
 struct Medium { absorption: vec3f, scattering: vec3f, anisotropy: f32 }

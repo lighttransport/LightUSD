@@ -38,19 +38,21 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 - Scalar/vector value emitters and an explicitly approximate Standard Surface /
   OpenPBR terminal mapping. The UI inventories 807 upstream NodeDefs, but this
   count is **not a supported-node count**; individual overloads remain unverified.
-- Common stdlib utility overloads `fract`, `plus`, `minus`, `blackbody`, and
-  `bump` compile with typed inputs, finite temperature bounds, and explicit
-  tangent-frame normal generation. The blackbody and scalar bump paths remain
-  bounded approximations rather than a claim of full physical conformance.
-- `colorcorrect` applies bounded HSV hue/saturation, lift/gain, contrast,
-  exposure, and gamma controls; `switch` selects among ten typed value inputs
+- `blackbody` matches the pinned GLSL Kelvin-to-xy-to-linear-Rec.709
+  approximation, defaults to 5000 K, clamps temperature to 800–25000 K, and
+  retains HDR RGB values. This is chromaticity with normalized Y, not spectral
+  Planck radiance. `plus`/`minus` use `fg`, `bg`, and `mix` compositing ports.
+  The scalar `bump` path still needs texture-aware derivatives.
+- `colorcorrect` applies hue, luminance saturation, signed gamma, lift, gain,
+  contrast, then exposure in pinned-library order; color4 alpha is unchanged.
+  `switch` selects among ten typed value inputs
   using the authored index and preserves explicit defaults.
 - PBR utility nodes `artistic_ior`, `roughness_anisotropy`, and
   `glossiness_anisotropy` preserve the pinned MaterialX conversion formulas,
   including multi-output artistic conductor IOR/extinction results.
 - Transform aliases `transformnormal`, `transformpoint`, and `transformvector`
   accept world-space identity aliases and reject unsupported non-world
-  conversions; `trianglewave` is available as a bounded periodic utility.
+  conversions; `trianglewave` has the library's period 1 and peak 0.5.
 - Image nodes backed by caller-decoded RGBA float resources in both modes:
   closest/linear filtering; constant/clamp/periodic/mirror addressing; float,
   vector and color outputs; default colors; linear-light area-filtered mip chains.

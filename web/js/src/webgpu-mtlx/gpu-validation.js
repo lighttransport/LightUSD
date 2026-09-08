@@ -24,6 +24,29 @@ export async function validateValueKernels(device) {
     {category:'normalmap',type:'vector3',component:2,inputs:{in:{type:'vector3',value:[.5,.5,1]}},expected:1},
     {category:'normalmap',type:'vector3',component:0,inputs:{in:{type:'vector3',value:[1,.5,1]},scale:{type:'vector2',value:[2,1]}},expected:2/Math.sqrt(5)},
   ];
+  // Fixed double-precision values from the pinned GLSL xy -> XYZ -> Rec.709
+  // equations; include all polynomial branches, HDR channels and clamp edges.
+  const blackbodyCases = [
+    [0,[1.496339391,.904075611,.489343155]],
+    [1000,[2.867483188,.548988133,0]],
+    [2200,[2.312416446,.704255010,.065786727]],
+    [3000,[1.766762683,.845570184,.272628244]],
+    [4000,[1.414415168,.923947437,.533722653]],
+    [5000,[1.212318392,.960889191,.762853288]],
+    [6500,[1.042633029,.983863471,1.034904717]],
+    [40000,[.727261487,.987542194,1.927041689]],
+  ];
+  for (const [v,expected] of [[0,0],[.25,.25],[.5,.5],[1,0],[-1.25,.25]]) cases.push(unary('trianglewave',v,expected));
+  cases.push({category:'plus',inputs:{fg:value(2),bg:value(3),mix:value(.25)},expected:3.5});
+  cases.push({category:'minus',inputs:{fg:value(2),bg:value(3),mix:value(.25)},expected:2.5});
+  for (let component=0;component<4;component++) {
+    cases.push({category:'colorcorrect',type:'color4',component,
+      inputs:{in:{type:'color4',value:[.25,.25,.25,.37]},gamma:value(2),lift:value(.2),gain:value(2),contrast:value(.5),exposure:value(1)},
+      expected:component===3?.37:1.7});
+  }
+  for (const [temperature, rgb] of blackbodyCases) for (let component=0;component<3;component++) {
+    cases.push({category:'blackbody',type:'color3',component,inputs:{temperature:value(temperature)},expected:rgb[component]});
+  }
   const bodies = cases.map((c, i) => {
     const g = compileGraph({ nodes: [{ name: 'test', type: c.type||'float', category: c.category, inputs: c.inputs }] });
     return `{ ${g.body}\nresult[${i}] = ${g.expression}${c.component===undefined?'':`[${c.component}]`}; }`;

@@ -1,5 +1,11 @@
 # Web regression gate
 
+Use `node tests/webgpu-mtlx-chrome.mjs --hardware --numeric-only` to isolate
+WGSL value-kernel validation from renderer pipeline compilation. This uses a
+blank same-origin page and includes blackbody branch/clamp/HDR checks,
+color-correction operation ordering and alpha, compositing, and trianglewave.
+It does not replace the full renderer/ShaderBall gate below.
+
 The fresh WebGPU MaterialX baseline has a focused Windows/Chrome hardware gate:
 `node tests/webgpu-mtlx-chrome.mjs --hardware --shaderball --performance`.
 Use `--authored-lights` with `--shaderball` for the authored RectLight path-tracing

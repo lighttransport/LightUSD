@@ -22,6 +22,33 @@ try {
   page = await browser.newPage(); await page.setViewport({ width: 1100, height: 700 });
   page.on('console',msg=>{browserLog.push(msg.text());if(browserLog.length>30)browserLog.shift();});
   const errors = []; page.on('pageerror', e => errors.push(e.message));
+  if (process.argv.includes('--numeric-only')) {
+    // Avoid renderer pipeline compilation: isolate graph/WGSL numeric failures.
+    const numericURL = `http://127.0.0.1:${port}/__numeric_validation__.html`;
+    await page.setRequestInterception(true);
+    page.on('request', request => {
+      if (request.url() === numericURL) request.respond({ status: 200, contentType: 'text/html', body: '<!doctype html><title>MaterialX numeric validation</title>' });
+      else request.continue();
+    });
+    await page.goto(numericURL, { waitUntil: 'domcontentloaded' });
+    const numericReport = await page.evaluate(async () => {
+      const adapter = await navigator.gpu?.requestAdapter();
+      if (!adapter) throw new Error('WebGPU adapter unavailable');
+      const device = await adapter.requestDevice();
+      const gpuErrors = [];
+      device.addEventListener('uncapturederror', e => gpuErrors.push(e.error.message));
+      try {
+        const { validateValueKernels } = await import('/src/webgpu-mtlx/gpu-validation.js');
+        const numeric = await validateValueKernels(device);
+        await device.queue.onSubmittedWorkDone();
+        if (gpuErrors.length) throw new Error(gpuErrors.join('\n'));
+        return { numeric, adapter: { vendor: adapter.info.vendor, architecture: adapter.info.architecture, isFallbackAdapter: adapter.info.isFallbackAdapter } };
+      } finally { device.destroy(); }
+    });
+    if (hardware) assert.equal(numericReport.adapter.isFallbackAdapter, false);
+    assert.deepEqual(errors, []);
+    console.log(JSON.stringify({ browser: await browser.version(), ...numericReport }, null, 2));
+  } else {
   await page.goto(`http://127.0.0.1:${port}/webgpu-mtlx.html?manual&width=96&height=64`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForFunction(() => window.__webgpuMtlx?.ready || window.__webgpuMtlx?.errors.length, { timeout: 60000 });
   const initial = await page.evaluate(() => ({ ready: window.__webgpuMtlx.ready, errors: window.__webgpuMtlx.errors }));
@@ -223,6 +250,7 @@ try {
   const report = { browser: await browser.version(), requestedHardware: hardware, inventoriedNodeDefs: inventory.length, shaderball: shaderballResult, performance: performanceResult,referenceImages, ...results };
   fs.writeFileSync(path.join(out, 'chrome.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ browser: report.browser, adapter: results.adapter, inventoriedNodeDefs: inventory.length, numericPassed: results.numeric.length, samples: results.samples, shaderball: shaderballResult?{stats:shaderballResult.stats,provenance:shaderballResult.provenance,texture:shaderballResult.texture}:undefined, performance: performanceResult, errors: results.errors, report: path.relative(root, path.join(out, 'chrome.json')) }, null, 2));
+  }
 } catch(e) {
   const state=await page?.evaluate(()=>({url:location.href,status:document.getElementById('status')?.textContent,ready:window.__webgpuMtlx?.ready,errors:window.__webgpuMtlx?.errors})).catch(()=>null);
   console.error(JSON.stringify({failure:e.message,state,browserLog},null,2));throw e;

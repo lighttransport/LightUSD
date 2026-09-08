@@ -686,12 +686,14 @@ test('unified noise dispatches typed noise families and output remapping', () =>
   assert.match(source3.body,/mxWorley3/);
 });
 test('stdlib utility aliases, blackbody and bump compile with bounded controls', () => {
-  const plus=compileGraph({nodes:[{name:'p',category:'plus',type:'float',inputs:{in1:{type:'float',value:.25},in2:{type:'float',value:.5}}}]});
-  assert.match(plus.body,/0\.25 \+ 0\.5/);
+  const plus=compileGraph({nodes:[{name:'p',category:'plus',type:'float',inputs:{fg:{type:'float',value:.25},bg:{type:'float',value:.5}}}]});
+  assert.match(plus.body,/mix\(0\.5,\(0\.5\+0\.25\),1\.0\)/);
   const fract=compileGraph({nodes:[{name:'f',category:'fract',type:'vector3',inputs:{in:{type:'vector3',value:[-1.25,.25,2.5]}}}]});
   assert.match(fract.body,/fract\(/);
   const blackbody=compileGraph({nodes:[{name:'b',category:'blackbody',type:'color3',inputs:{temperature:{type:'float',value:3200}}}]});
-  assert.match(blackbody.body,/mxBlackbody/); assert.match(blackbody.body,/clamp\(/);
+  assert.match(blackbody.body,/mxBlackbody\(3200\.0\)/);
+  const defaultBlackbody=compileGraph({nodes:[{name:'b',category:'blackbody',type:'color3',inputs:{}}]});
+  assert.match(defaultBlackbody.body,/mxBlackbody\(5000\.0\)/);
   const bump=compileGraph({nodes:[{name:'b',category:'bump',type:'vector3',inputs:{height:{type:'float',value:.2},scale:{type:'float',value:1.5}}}]});
   assert.match(bump.body,/mxBumpHeight/);
 });
@@ -719,7 +721,7 @@ test('stdlib transform aliases and trianglewave keep space semantics explicit', 
   assert.match(point.body,/vec3f\(1\.0,2\.0,3\.0\)/);
   assert.throws(()=>compileGraph({nodes:[{name:'p',category:'transformpoint',type:'vector3',inputs:{fromspace:{type:'string',value:'object'},tospace:{type:'string',value:'world'}}}]}),/non-world/);
   const wave=compileGraph({nodes:[{name:'w',category:'trianglewave',type:'float',inputs:{in:{type:'float',value:1.25}}}]});
-  assert.match(wave.body,/1\.0-abs\(2\.0\*fract/);
+  assert.match(wave.body,/0\.5-abs\(fract\(abs/);
 });
 test('cell-noise nodes hash integer cells without interpolation', () => {
   const doc={nodes:[
