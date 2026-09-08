@@ -173,7 +173,8 @@ ambiguous combinations that carry two separate interiors. BSDF-over-VDF layer
 attaches an interior after surface composition. Active transmissive lobes must
 agree on interface IOR. Realtime shading still uses a primary-lobe approximation.
 Thin film, sheen, coat, BSDF-over-BSDF layering and multiple-scattering microfacet
-compensation remain missing.
+compensation remain missing; direct BSDF-over-BSDF `layer` graphs fail explicitly
+until recursive interface transport is available.
 
 Attach `document.spectra` curves as sorted `[wavelengthNm,value]` pairs, keyed by
 `base_color`, `transmission_color`, `emission_color`, `ior`, `conductor_ior` or

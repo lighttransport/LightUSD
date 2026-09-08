@@ -293,9 +293,7 @@ export function compileGraph(document, { output, library = {}, material = false,
         }
         case 'layer': {
           const top=input('top',undefined,'BSDF'),base=input('base');
-          if (base.type==='BSDF') {
-            code=`${top.hasInterior || base.hasInterior ? 'closureAddPreservingInterior' : 'closureAdd'}(${top.code},${base.code})`;closureCount=(top.closureCount||0)+(base.closureCount||0);hasInterior=top.hasInterior||base.hasInterior;interiorCategories=top.hasInterior?top.interiorCategories:base.interiorCategories;break;
-          }
+          if (base.type==='BSDF') fail('UNSUPPORTED', key, 'BSDF-over-BSDF layering requires recursive interface transport');
           if(base.type!=='VDF')fail('UNSUPPORTED',key,'layer base must be a VDF or BSDF closure');
           if(top.hasInterior)fail('SEMANTICS',key,'closure already has an interior');
           code=`closureInterior(${top.code},${base.code})`;closureCount=top.closureCount||0;hasInterior=true;interiorCategories=base.categories||[];break;

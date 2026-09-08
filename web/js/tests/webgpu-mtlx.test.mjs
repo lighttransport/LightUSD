@@ -345,6 +345,9 @@ test('closure composition preserves lobe bounds and interior ownership',()=>{
   assert.match(compileGraph(mixed).body,/closureMix\(.*0\.25/);
   const conflicting={nodes:[...layered.slice(0, 3),{name:'sum',category:'add',type:'BSDF',inputs:{in1:{nodename:'layer'},in2:{nodename:'layer'}}}]};
   assert.throws(()=>compileGraph(conflicting),/cannot combine two interior-bearing closures/);
+  const unsupportedLayer={nodes:[leaf,{name:'other',category:'sheen_bsdf',type:'BSDF'},
+    {name:'layer',category:'layer',type:'BSDF',inputs:{top:{nodename:'leaf'},base:{nodename:'other'}}}]};
+  assert.throws(()=>compileGraph(unsupportedLayer),/BSDF-over-BSDF layering requires recursive interface transport/);
 });
 test('native closures compile and unsupported uniform inputs are diagnosed',()=>{
   for(const preset of ['native-copper','native-glass']) {
