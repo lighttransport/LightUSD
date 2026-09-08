@@ -314,13 +314,13 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'radians': code=`${same('in')}*0.017453292519943295`; break;
         case 'degrees': code=`${same('in')}*57.29577951308232`; break;
         case 'atan2': code = `atan2(${same('iny')},${same('inx')})`; break;
-        case 'clamp': code = `clamp(${same('in')},${scalarOrSame('low')},${scalarOrSame('high')})`; break;
+        case 'clamp': { const fallback=v=>widths[type]===1?v:Array(widths[type]).fill(v); code=`clamp(${same('in')},${scalarOrSame('low',fallback(0))},${scalarOrSame('high',fallback(1))})`; break; }
         case 'mix': {
           if(type==='BSDF'){const a=input('bg',undefined,'BSDF'),b=input('fg',undefined,'BSDF');code=`${a.hasInterior||b.hasInterior?'closureMixPreservingInterior':'closureMix'}(${a.code},${b.code},${x('mix',0,'float')})`;closureCount=(a.closureCount||0)+(b.closureCount||0);hasInterior=a.hasInterior||b.hasInterior;interiorCategories=a.hasInterior?a.interiorCategories:b.interiorCategories;}
-          else code = `mix(${same('bg')},${same('fg')},${x('mix')})`; break;
+          else code = `mix(${same('bg')},${same('fg')},${x('mix',0,'float')})`; break;
         }
-        case 'smoothstep': code = `smoothstep(${scalarOrSame('low')},${scalarOrSame('high')},${same('in')})`; break;
-        case 'invert': code = `(${scalarOrSame('amount')} - ${same('in')})`; break;
+        case 'smoothstep': { const fallback=v=>widths[type]===1?v:Array(widths[type]).fill(v); code=`smoothstep(${scalarOrSame('low',fallback(0))},${scalarOrSame('high',fallback(1))},${same('in')})`; break; }
+        case 'invert': { const fallback=widths[type]===1?1:Array(widths[type]).fill(1); code=`(${scalarOrSame('amount',fallback)} - ${same('in')})`; break; }
         case 'select': {
           const condition=x('condition',undefined,'boolean'), whenTrue=input('truevalue'), whenFalse=input('falsevalue');
           if(whenTrue.type!==whenFalse.type||whenTrue.type!==type)fail('TYPE',key,'select branches must match output type');

@@ -494,6 +494,16 @@ test('place2d applies pivot, inverse scale, degree rotation and offset', () => {
   assert.throws(()=>compileGraph({nodes:[{name:'p',category:'place2d',type:'color3',inputs:{}}]}),/place2d output must be vector2/);
   assert.match(compileGraph({nodes:[{name:'p',category:'place2d',type:'vector2',inputs:{}}]}).body,/ctx\.uv/);
 });
+test('core math nodes honor MaterialX default bounds and amounts', () => {
+  const doc={nodes:[
+    {name:'x',category:'constant',type:'float',inputs:{value:{type:'float',value:.25}}},
+    {name:'clamp',category:'clamp',type:'float',inputs:{in:{nodename:'x'}}},
+    {name:'smooth',category:'smoothstep',type:'float',inputs:{in:{nodename:'clamp'}}},
+    {name:'invert',category:'invert',type:'float',inputs:{in:{nodename:'smooth'}}},
+    {name:'out',category:'mix',type:'float',inputs:{bg:{nodename:'invert'},fg:{nodename:'x'}}}
+  ]};
+  const source=compileGraph(doc); assert.match(source.body,/clamp\(n0,0\.0,1\.0\)/); assert.match(source.body,/smoothstep\(0\.0,1\.0/); assert.match(source.body,/mix\(n3,n0,0\.0\)/);
+});
 test('ramp4 evaluates four corners with bilinear interpolation', () => {
   const source=compileGraph({nodes:[{name:'r',category:'ramp4',type:'color3',inputs:{texcoord:{type:'vector2',value:[.25,.75]},valuetl:{type:'color3',value:[1,0,0]},valuetr:{type:'color3',value:[0,1,0]},valuebl:{type:'color3',value:[0,0,1]},valuebr:{type:'color3',value:[1,1,1]}}}]});
   assert.match(source.body,/mix\(mix\(vec3f\(0\.0,0\.0,1\.0\),vec3f\(1\.0,1\.0,1\.0\),vec2f\(0\.25,0\.75\)\.x\),mix/);

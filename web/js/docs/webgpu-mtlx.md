@@ -211,6 +211,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 - Supplemental `place2d` applies pivot, inverse scale, degree rotation and UV
   offset transforms with typed vector2 inputs, defaulting to current UVs.
 - `rotate2d` now defaults its omitted rotation amount to zero degrees.
+- Core `clamp`/`smoothstep` bounds, `mix` amount, and `invert` amount now use
+  their MaterialX defaults when omitted, including typed vector fallbacks.
 - Supplemental `ramp4` evaluates typed four-corner values with bilinear UV
   interpolation and defaults its coordinate input to current UVs.
 - `screen` and `difference` compositing nodes compile for scalar, vector, and
