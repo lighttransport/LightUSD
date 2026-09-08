@@ -369,9 +369,9 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   assert.match(compileGraph(coat,{material:true}).body,/closureAdd/);
   assert.match(shaderSource([coat]),/closureAdd/);
   const sheen=syntheticScene('sheen').materials[1];
-  assert.match(compileGraph(sheen,{material:true}).body,/nativeDiffuse/);
+  assert.match(compileGraph(sheen,{material:true}).body,/nativeSheen/);
   assert.match(compileGraph(sheen,{material:true}).body,/0\.38/);
-  assert.match(shaderSource([sheen]),/nativeDiffuse/);
+  assert.match(shaderSource([sheen]),/nativeSheen/);
   const directSheen={nodes:[{name:'s',category:'sheen_bsdf',type:'BSDF',inputs:{color:{type:'color3',value:[.8,.7,.6]},weight:{type:'float',value:.75},roughness:{type:'float',value:.4}}}]};
   assert.match(compileGraph(directSheen).body,/nativeSheen/);
   assert.match(shaderSource([{nodes:[...directSheen.nodes,{name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'s'}}}],output:{nodename:'surface'}}]),/m\.kind==8u/);

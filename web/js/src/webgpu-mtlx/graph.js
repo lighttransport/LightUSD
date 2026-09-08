@@ -1107,7 +1107,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           const sheenWeight = open ? (ins.fuzz ? x('fuzz', 0, 'float') : '0.0') : (ins.sheen ? x('sheen', 0, 'float') : '0.0');
           const sheenColor = open ? (ins.fuzz_color ? x('fuzz_color', [1, 1, 1], 'color3') : 'vec3f(1)') : (ins.sheen_color ? x('sheen_color', [1, 1, 1], 'color3') : 'vec3f(1)');
           const sheenRoughness = open ? (ins.fuzz_roughness ? x('fuzz_roughness', .6, 'float') : '.6') : (ins.sheen_roughness ? x('sheen_roughness', .6, 'float') : '.6');
-          const finalClosure = `closureAdd(${coated},closureScale(closureLeaf(nativeDiffuse(${sheenColor},1.0,clamp(${sheenRoughness},0.02,1.0))),vec3f(clamp(${sheenWeight},0.0,1.0))))`;
+          const finalClosure = `closureAdd(${coated},closureScale(closureLeaf(nativeSheen(${sheenColor},1.0,clamp(${sheenRoughness},0.02,1.0),0u)),vec3f(clamp(${sheenWeight},0.0,1.0))))`;
           const normal = ins.normal ? x('normal', undefined, 'vector3') : ins.geometry_normal ? x('geometry_normal', undefined, 'vector3') : 'ctx.normal';
           code = `materialFromClosure(${finalClosure},${fields[5]}*${fields[6]},clamp(${opacity},0.0,1.0),normalize(${normal}))`; break;
         }

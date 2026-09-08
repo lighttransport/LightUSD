@@ -715,13 +715,14 @@ dielectric coat lobe (`coat`, `coat_weight`, color, roughness and IOR aliases).
 The synthetic `coat` scene is hardware-tested; exact layered energy
 compensation and multiple-scattering coat transport remain future work.
 
-Standard Surface `sheen` and OpenPBR `fuzz` controls now compile to a bounded
-diffuse-sheen lobe with authored color and weight aliases. The synthetic
-`sheen` scene is hardware-tested; exact Charlie/artist-friendly sheen and
-layered energy compensation remain future work.
+Standard Surface `sheen` and OpenPBR `fuzz` controls now compile to the same
+bounded Imageworks sheen lobe used by direct `sheen_bsdf`, with authored color
+and weight aliases. The synthetic `sheen` scene is hardware-tested; exact
+Charlie/artist-friendly sheen and layered energy compensation remain future
+work.
 
 Standard Surface `sheen_roughness` and OpenPBR `fuzz_roughness` now control the
-bounded diffuse-sheen lobe roughness, with clamped fallback behavior. Exact
+bounded Imageworks sheen lobe roughness, with clamped fallback behavior. Exact
 Charlie/fuzz distributions remain future work.
 
 Standard Surface `thin_walled` now propagates into the compiled dielectric
