@@ -3,9 +3,12 @@ import { GraphError } from './graph.js';
 import { fetchResource } from './resources.js';
 import { parseMaterialX } from './graph.js';
 
-const usdTypes = Object.freeze({ float: 'float', int: 'integer', bool: 'boolean',
-  color3f: 'color3', color4f: 'color4', float2: 'vector2', float3: 'vector3',
-  float4: 'vector4', vector3f: 'vector3', normal3f: 'vector3', point3f: 'vector3',
+const usdTypes = Object.freeze({ float: 'float', double: 'float', half: 'float', int: 'integer', uint: 'integer', bool: 'boolean',
+  color3f: 'color3', color3d: 'color3', color4f: 'color4', color4d: 'color4',
+  float2: 'vector2', half2: 'vector2', double2: 'vector2',
+  float3: 'vector3', half3: 'vector3', double3: 'vector3',
+  float4: 'vector4', half4: 'vector4', double4: 'vector4',
+  vector3f: 'vector3', vector3d: 'vector3', normal3f: 'vector3', normal3d: 'vector3', point3f: 'vector3', point3d: 'vector3',
   matrix3d: 'matrix33', matrix4d: 'matrix44', asset: 'filename', string: 'string' });
 const own = (object, key) => Object.hasOwn(object || {}, key);
 const fail = (path, message) => { throw new GraphError('USD_GRAPH', path, message); };
