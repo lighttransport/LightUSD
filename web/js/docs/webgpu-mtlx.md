@@ -198,7 +198,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 - Typed `select` branches enforce boolean conditions and matching output types,
   preserving MaterialX conditional graph semantics.
 - Deterministic bounded `noise2d` and `noise3d` value nodes are available for
-  procedural UV/position graphs.
+  procedural UV/position graphs. Their authored scale, amplitude and pivot
+  controls are applied; unsupported multi-octave controls fail explicitly.
 - `cellnoise2d` and `cellnoise3d` provide non-interpolated integer-cell hash
   values for procedural masks.
 - Common color utility nodes `premult`, `unpremult`, `contrast`, and

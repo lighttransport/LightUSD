@@ -566,6 +566,12 @@ test('procedural noise nodes compile deterministic bounded WGSL helpers', () => 
   ]};
   const source=compileGraph(doc); assert.match(source.body,/mxNoise2/); assert.match(source.body,/mxNoise3/); assert.match(contextWGSL,/mxHash3/);
 });
+test('noise controls affect the coordinate and output without silent octave loss', () => {
+  const source=compileGraph({nodes:[{name:'n',category:'noise2d',type:'float',inputs:{in:{type:'vector2',value:[.25,.5]},scale:{type:'float',value:2},amplitude:{type:'float',value:.75},pivot:{type:'float',value:.2}}}]});
+  assert.match(source.body,/mxNoise2\(vec2f\(0\.25,0\.5\)\*2\.0\)/);
+  assert.match(source.body,/\*0\.75\+0\.2/);
+  assert.throws(()=>compileGraph({nodes:[{name:'n',category:'noise3d',type:'float',inputs:{in:{type:'vector3',value:[0,0,0]},octaves:{type:'integer',value:3}}}]}),/octaves/);
+});
 test('cell-noise nodes hash integer cells without interpolation', () => {
   const doc={nodes:[
     {name:'uv',category:'texcoord',type:'vector2',inputs:{}},

@@ -349,8 +349,18 @@ export function compileGraph(document, { output, library = {}, material = false,
           if(whenTrue.type!==whenFalse.type||whenTrue.type!==type)fail('TYPE',key,'select branches must match output type');
           code=`select(${whenFalse.code},${whenTrue.code},${condition})`; break;
         }
-        case 'noise2d': code=`mxNoise2(${x('in',undefined,'vector2')})`; break;
-        case 'noise3d': code=`mxNoise3(${x('in',undefined,'vector3')})`; break;
+        case 'noise2d': case 'noise3d': {
+          const dimension = n.category === 'noise2d' ? 'vector2' : 'vector3';
+          for (const name of Object.keys(ins)) if (!['in', 'scale', 'amplitude', 'pivot', 'octaves', 'lacunarity', 'diminish'].includes(name)) fail('UNSUPPORTED', key, `unsupported ${n.category} input ${name}`);
+          for (const name of ['octaves', 'lacunarity', 'diminish']) {
+            const p = ins[name];
+            if (p && (p.nodename || p.nodegraph || p.interfacename || (name === 'octaves' ? Number(p.value) !== 1 : Number(p.value) !== (name === 'lacunarity' ? 2 : 0.5)))) fail('UNSUPPORTED', key, `${n.category} ${name} is only supported at its single-octave default`);
+          }
+          const coordinate = x('in', undefined, dimension), scale = x('scale', 1, 'float');
+          const amplitude = x('amplitude', 1, 'float'), pivot = x('pivot', 0.5, 'float');
+          const sample = n.category === 'noise2d' ? `mxNoise2(${coordinate}*${scale})` : `mxNoise3(${coordinate}*${scale})`;
+          code = `((${sample}-0.5)*${amplitude}+${pivot})`; break;
+        }
         case 'cellnoise2d': code=`mxHash2(floor(${x('in',undefined,'vector2')}))`; break;
         case 'cellnoise3d': code=`mxHash3(floor(${x('in',undefined,'vector3')}))`; break;
         case 'dot': result = input('in',undefined,type); break;
