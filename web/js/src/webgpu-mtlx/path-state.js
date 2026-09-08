@@ -171,7 +171,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
       if(depth==0u) { etaI=m.ior; etaT=1.0; }
       else { etaT=mediumIor(&p,depth-1u); }
     }
-    let eta=select(etaT/etaI,m.ior,m.thinWalled!=0u); let frame=transportFrame(ctx.normal); let wo=transpose(frame)*(-p.direction.xyz);
+    let eta=select(etaT/etaI,m.ior,m.thinWalled!=0u); let frame=transportFrame(ctx.normal,ctx.tangent,ctx.bitangent); let wo=transpose(frame)*(-p.direction.xyz);
     var emitterMIS=1.0;
     if(p.state.y>0u && p.direction.w>0.0){emitterMIS=powerHeuristic(p.direction.w,triangleLightPDF(tri,h.t,p.direction.xyz));}
     p.radiance+=vec4f(p.beta.xyz*m.emission*m.emissionWeight*emissionFactor(surface,-p.direction.xyz)*emitterMIS*emissionSidedness(materialID,outward,p.direction.xyz),0);

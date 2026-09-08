@@ -188,7 +188,9 @@ throughput on the accepted coverage branch. Chrome analytic emission tests
 verify fractional coverage and six transparent surfaces across dispatches.
 
 Path and raster shading derive tangent frames from world-space geometry and UV
-derivatives, including mirrored UV handedness and degenerate-UV fallbacks.
+derivatives, including mirrored UV handedness and degenerate-UV fallbacks. Path
+transport projects that frame onto the final shading normal before sampling,
+so anisotropic lobes retain authored tangent orientation after normal mapping.
 Chrome renders normal-as-emission fixtures for standard, rotated and mirrored
 UVs in both modes. MikkTSpace matching and arbitrary custom primvar maps remain
 separate work.
@@ -204,8 +206,8 @@ Implemented native nodes: `dielectric_bsdf` (R/T/RT, anisotropic GGX, smooth and
 rough refraction, exact Fresnel), `conductor_bsdf` (complex Fresnel), uncompensated
 `oren_nayar_diffuse_bsdf`, bounded `burley_diffuse_bsdf`, bounded
 `chiang_hair_bsdf`, homogeneous `absorption_vdf`, `uniform_edf`, and `surface`.
-Native closures currently
-use geometric normals and a generated tangent frame. Standard Surface/OpenPBR
+Native closures use the enclosing authored/geometric normal and its preserved
+tangent frame. Standard Surface/OpenPBR
 remain approximate mappings. BSDF add, mix, and scalar/color weighting preserve
 up to eight lobes with mixture evaluation and sampling PDFs; add/mix reject
 ambiguous combinations that carry two separate interiors. BSDF-over-VDF layer

@@ -74,9 +74,11 @@ fn dielectricEval(wo: vec3f, wi: vec3f, alpha: vec2f, eta: f32) -> vec2f {
   if(den2<1e-30) { return vec2f(0); }
   return vec2f((1.0-f)*d*g*abs(ih*oh/(wo.z*wi.z*den2))/(eta*eta),p*(1.0-f)*abs(ih)/den2);
 }
-fn transportFrame(n: vec3f) -> mat3x3f {
-  let t=normalize(cross(select(vec3f(0,1,0),vec3f(1,0,0),abs(n.y)>0.9),n));
-  return mat3x3f(t,cross(n,t),n);
+fn transportFrame(n: vec3f,tangent: vec3f,bitangent: vec3f) -> mat3x3f {
+  let fallback=normalize(cross(select(vec3f(0,1,0),vec3f(1,0,0),abs(n.y)>0.9),n));
+  let t=safeNormal(tangent-n*dot(n,tangent),fallback);
+  let handed=select(1.0,select(-1.0,1.0,dot(cross(n,t),bitangent)>=0.0),length(bitangent)>1e-5);
+  return mat3x3f(t,cross(n,t)*handed,n);
 }
 fn transportAlpha(m: Lobe) -> vec2f {
   let a=max(0.001,m.roughness*m.roughness);

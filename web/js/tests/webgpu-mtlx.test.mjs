@@ -560,6 +560,8 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   assert.match(compileGraph(normal,{material:true}).body,/normalize\(n/);
   assert.match(shaderSource([normal]),/surface\.normal/);
   assert.match(shaderSource([normal]),/var n=safeNormal\(surface\.normal/);
+  assert.match(shaderSource([normal]),/transportFrame\(ctx\.normal,ctx\.tangent,ctx\.bitangent\)/);
+  assert.match(shaderSource([normal]),/dot\(cross\(n,t\),bitangent\)>=0\.0/);
   const imageNormal=syntheticScene('normalmap-image').materials[1];
   const imageResources={};
   assert.match(shaderSource([imageNormal],imageResources),/imageSample\(0u/);
