@@ -134,6 +134,10 @@ export function compileGraph(document, { output, library = {}, material = false,
       result={type:value[0],code:value[1].replace(/\bctx\b/g,contextName)};
     } else {
       const type=p.type||wanted;let value=p.value;
+      if (String(p.unit || '').toLowerCase() === 'percent' && ['float','vector2','vector3','vector4','color3','color4'].includes(type)) {
+        const values = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',').map(v => Number(v.trim())) : [value];
+        value = values.map(v => Number(v) / 100);
+      }
       if(p.colorspace&&['color3','color4'].includes(type)) {
         literal(type,value,path);
         try{value=colorToLinearRec709(Array.isArray(value)?value:String(value).split(',').map(Number),p.colorspace);}catch(e){fail('SEMANTICS',path,e.message);}

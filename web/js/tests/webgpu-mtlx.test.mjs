@@ -130,6 +130,12 @@ test('MaterialX version gate accepts 1.39 documents and rejects newer semantics'
   assert.doesNotThrow(() => compileGraph({ version: '1.39.5', nodes: [node] }));
   assert.throws(() => compileGraph({ version: '1.40', nodes: [node] }), /unsupported MaterialX version/);
 });
+test('MaterialX percent units normalize authored factors', () => {
+  const doc = { nodes: [{ name: 'v', category: 'constant', type: 'float', inputs: { value: { type: 'float', value: 25, unit: 'percent' } } }] };
+  assert.match(compileGraph(doc).body, /0\.25/);
+  const color = { nodes: [{ name: 'v', category: 'constant', type: 'color3', inputs: { value: { type: 'color3', value: [25, 50, 100], unit: 'percent' } } }] };
+  assert.match(compileGraph(color).body, /vec3f\(0\.25,0\.5,1\.0\)/);
+});
 
 test('USD graph translation preserves interfaces and exact NodeDef typing', () => {
   const p = (type, value, connections = []) => ({ type, ...(value === undefined ? {} : { value }), connections, timeSampled: false });
