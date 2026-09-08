@@ -49,7 +49,7 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 - `generalized_schlick_bsdf` now carries the pinned `color82` control and
   Hoffman Schlick correction through RGB and spectral lobe evaluation. Its
   supported authored path is static GGX reflection; transmission,
-  retroreflection, thin film, custom distribution, and authored tangent
+  retroreflection, custom distribution, and authored tangent
   variants fail with structured diagnostics instead of being silently ignored;
   an authored normal propagates to the enclosing surface frame.
 - `translucent_bsdf` uses a bounded opposite-hemisphere diffuse transmission
@@ -750,7 +750,7 @@ it does not perform cross-surface random-walk BSSRDF transport.
 82, color-at-grazing, roughness and exponent controls in a bounded microfacet
 lobe rather than collapsing to the ordinary dielectric Fresnel curve. Its
 current implementation accepts GGX reflection only and diagnoses authored
-transmission, retroreflection, thin-film, custom-distribution, and
+transmission, retroreflection, custom-distribution, and
 authored tangent variants. An authored normal is propagated to the enclosing
 surface frame. The synthetic
 `generalized-schlick` scene passes the targeted Chrome hardware reference gate;

@@ -283,10 +283,13 @@ export function compileGraph(document, { output, library = {}, material = false,
           if (connected('retroreflective') || n.inputs?.retroreflective?.value===true || n.inputs?.retroreflective?.value==='true') fail('UNSUPPORTED',key,'generalized Schlick retroreflection is not implemented');
           if (connected('distribution') || n.inputs?.distribution?.value && n.inputs.distribution.value!=='ggx') fail('UNSUPPORTED',key,'generalized Schlick supports only GGX distribution');
           if (connected('scatter_mode') || n.inputs?.scatter_mode?.value && n.inputs.scatter_mode.value!=='R') fail('UNSUPPORTED',key,'generalized Schlick supports reflection scatter_mode R only');
-          if (connected('thinfilm_thickness') || connected('thinfilm_ior') || n.inputs?.thinfilm_thickness?.value && Number(n.inputs.thinfilm_thickness.value)!==0) fail('UNSUPPORTED',key,'generalized Schlick thin film is not implemented');
+          const filmThicknessInput=ins.thinfilm_thickness||ins.thin_film_thickness;
+          const filmIORInput=ins.thinfilm_IOR||ins.thinfilm_ior||ins.thin_film_IOR||ins.thin_film_ior;
+          const filmThickness=filmThicknessInput ? x(filmThicknessInput===ins.thinfilm_thickness?'thinfilm_thickness':'thin_film_thickness',0,'float') : '0.0';
+          const filmIOR=filmIORInput ? x(filmIORInput===ins.thinfilm_IOR?'thinfilm_IOR':filmIORInput===ins.thinfilm_ior?'thinfilm_ior':filmIORInput===ins.thin_film_IOR?'thin_film_IOR':'thin_film_ior',1.5,'float') : '1.5';
           if (n.inputs?.tangent && (n.inputs.tangent.nodename||n.inputs.tangent.nodegraph||n.inputs.tangent.interfacename||n.inputs.tangent.value!==undefined)) fail('UNSUPPORTED',key,'generalized Schlick authored tangent is not implemented');
           normal=n.inputs?.normal ? x('normal',undefined,'vector3') : null;
-          code=`closureLeaf(nativeGeneralizedSchlick(${x('color0',[1,1,1],'color3')},${x('color82',[1,1,1],'color3')},${x('color90',[1,1,1],'color3')},${x('roughness',[.05,.05],'vector2')},${x('weight',1,'float')},${x('exponent',5,'float')}))`;closureCount=1;break;
+          code=`closureLeaf(nativeGeneralizedSchlick(${x('color0',[1,1,1],'color3')},${x('color82',[1,1,1],'color3')},${x('color90',[1,1,1],'color3')},${x('roughness',[.05,.05],'vector2')},${x('weight',1,'float')},${x('exponent',5,'float')},${filmThickness},${filmIOR}))`;closureCount=1;break;
         }
         case 'layer': {
           const top=input('top',undefined,'BSDF'),base=input('base');
@@ -1302,7 +1305,7 @@ fn nativeSubsurface(color:vec3f,weight:f32,radius:vec3f)->Lobe {var m=makeMateri
 fn nativeTranslucent(color:vec3f,weight:f32)->Lobe {var m=makeMaterial(color,0,1.0,1.0,1,vec3f(0),0,0,vec3f(1),1u,0.0,1.5);m.kind=7u;m.weight=weight;return m;}
 fn nativeSheen(color:vec3f,weight:f32,roughness:f32,mode:u32)->Lobe {var m=makeMaterial(color,0,roughness,1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=8u;m.weight=weight;m.alpha=vec2f(clamp(roughness,.01,1.0),0.0);m.scatterMode=mode;return m;}
 fn nativeHair(color:vec3f,weight:f32,longitudinal:f32,azimuthal:f32,ior:f32)->Lobe {var m=makeMaterial(color,0,longitudinal,ior,0,vec3f(0),0,azimuthal,vec3f(1),0u,0.0,1.5);m.kind=4u;m.weight=weight;m.alpha=vec2f(max(.02,longitudinal),max(.02,azimuthal));return m;}
-fn nativeGeneralizedSchlick(color0:vec3f,color82:vec3f,color90:vec3f,alpha:vec2f,weight:f32,exponent:f32)->Lobe {var m=makeMaterial(color0,0,sqrt(max(alpha.x,alpha.y)),1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=5u;m.weight=weight;m.alpha=alpha;m.schlickColor82=max(vec3f(0),color82);m.schlickColor90=max(vec3f(0),color90);m.schlickExponent=max(.01,exponent);return m;}
+fn nativeGeneralizedSchlick(color0:vec3f,color82:vec3f,color90:vec3f,alpha:vec2f,weight:f32,exponent:f32,filmThickness:f32,filmIOR:f32)->Lobe {var m=makeMaterial(color0,0,sqrt(max(alpha.x,alpha.y)),1.5,0,vec3f(0),0,0,vec3f(1),0u,filmThickness,filmIOR);m.kind=5u;m.weight=weight;m.alpha=alpha;m.schlickColor82=max(vec3f(0),color82);m.schlickColor90=max(vec3f(0),color90);m.schlickExponent=max(.01,exponent);return m;}
 fn nativeDielectric(tint:vec3f,ior:f32,alpha:vec2f,weight:f32,mode:u32)->Lobe {var m=makeMaterial(tint,0,sqrt(max(alpha.x,alpha.y)),ior,1,vec3f(0),0,0,tint,0u,0.0,1.5);m.kind=1u;m.weight=weight;m.alpha=alpha;m.scatterMode=mode;return m;}
 fn nativeConductor(ior:vec3f,k:vec3f,alpha:vec2f,weight:f32)->Lobe {var m=makeMaterial(vec3f(1),1,sqrt(max(alpha.x,alpha.y)),1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=2u;m.complexIOR=ior;m.extinction=k;m.alpha=alpha;m.weight=weight;return m;}
 ${closureTypesWGSL}`;

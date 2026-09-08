@@ -299,7 +299,6 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
     ['retroreflective',{type:'boolean',value:true},/retroreflection/],
     ['distribution',{type:'string',value:'beckmann'},/distribution/],
     ['scatter_mode',{type:'string',value:'RT'},/scatter_mode/],
-    ['thinfilm_thickness',{type:'float',value:10},/thin film/],
     ['tangent',{type:'vector3',value:[1,0,0]},/tangent/]
   ]) {
     generalized.nodes[0].inputs[name]=input;
@@ -307,6 +306,13 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
     delete generalized.nodes[0].inputs[name];
   }
   const authoredNormal={type:'vector3',value:[0,1,0]};
+  generalized.nodes[0].inputs.thinfilm_thickness={type:'float',value:180};
+  generalized.nodes[0].inputs.thinfilm_ior={type:'float',value:1.4};
+  assert.match(compileGraph(generalized,{material:true}).body,/nativeGeneralizedSchlick\(.*180\.0,1\.4\)/);
+  const generalizedFilmSurface={nodes:[generalized.nodes[0],{name:'s',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'g'}}}],output:{nodename:'s'}};
+  assert.match(shaderSource([generalizedFilmSurface]),/generalizedSchlickFresnel/);
+  delete generalized.nodes[0].inputs.thinfilm_thickness;
+  delete generalized.nodes[0].inputs.thinfilm_ior;
   generalized.nodes[0].inputs.normal=authoredNormal;
   const generalizedSurface={nodes:[generalized.nodes[0],{name:'s',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'g'}}}],output:{nodename:'s'}};
   assert.match(compileGraph(generalizedSurface,{material:true}).body,/surfaceEmission\(n\d+,vec3f\(0\),clamp\(1\.0,0\.0,1\.0\),0u,vec3f\(0\.0,1\.0,0\.0\)/);
