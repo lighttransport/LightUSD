@@ -1462,6 +1462,16 @@ test('MaterialX point, directional, and spot lights preserve authored parameters
     color: { type: 'color3', value: [1, 1, 1] }
   } }] }, { output: { nodename: 'light' } }), /missing input/);
 });
+test('VDF add and mix compose medium coefficients', () => {
+  const doc={nodes:[
+    {name:'a',category:'absorption_vdf',type:'VDF',inputs:{absorption:{type:'color3',value:[.1,.2,.3]}}},
+    {name:'b',category:'anisotropic_vdf',type:'VDF',inputs:{scattering:{type:'color3',value:[.4,.5,.6]},anisotropy:{type:'float',value:.4}}},
+    {name:'sum',category:'add',type:'VDF',inputs:{in1:{nodename:'a'},in2:{nodename:'b'}}},
+    {name:'blend',category:'mix',type:'VDF',inputs:{bg:{nodename:'a'},fg:{nodename:'b'},mix:{type:'float',value:.25}}}
+  ]};
+  assert.match(compileGraph(doc,{output:{nodename:'sum'}}).body,/mediumBlend\(n0,n1/);
+  assert.match(compileGraph(doc,{output:{nodename:'blend'}}).body,/mediumBlend\(n0,n1/);
+});
 test('MaterialX volumematerial forwards its typed volume shader', () => {
   const empty = compileGraph({ nodes: [
     { name: 'vdf', category: 'absorption_vdf', type: 'VDF', inputs: { absorption: { type: 'vector3', value: [.1, .2, .3] } } },

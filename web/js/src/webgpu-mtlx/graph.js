@@ -635,6 +635,7 @@ export function compileGraph(document, { output, library = {}, material = false,
         }
         case 'add': {
           if(type==='BSDF') {const a=input('in1',undefined,'BSDF'),b=input('in2',undefined,'BSDF');if(a.hasInterior&&b.hasInterior)fail('SEMANTICS',key,'BSDF add cannot combine two interior-bearing closures');code=`${a.hasInterior||b.hasInterior?'closureAddPreservingInterior':'closureAdd'}(${a.code},${b.code})`;closureCount=(a.closureCount||0)+(b.closureCount||0);hasInterior=a.hasInterior||b.hasInterior;interiorCategories=a.hasInterior?a.interiorCategories:b.interiorCategories;}
+          else if(type==='VDF') {const a=input('in1',undefined,'VDF'),b=input('in2',undefined,'VDF');code=`mediumBlend(${a.code},${b.code},1.0,1.0)`;}
           else code = binary('+'); break;
         }
         case 'subtract': code = binary('-'); break;
@@ -708,6 +709,7 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'clamp': { const fallback=v=>widths[type]===1?v:Array(widths[type]).fill(v); code=`clamp(${same('in')},${scalarOrSame('low',fallback(0))},${scalarOrSame('high',fallback(1))})`; break; }
         case 'mix': {
           if(type==='BSDF'){const a=input('bg',undefined,'BSDF'),b=input('fg',undefined,'BSDF');if(a.hasInterior&&b.hasInterior)fail('SEMANTICS',key,'BSDF mix cannot combine two interior-bearing closures');code=`${a.hasInterior||b.hasInterior?'closureMixPreservingInterior':'closureMix'}(${a.code},${b.code},clamp(${x('mix',0,'float')},0.0,1.0))`;closureCount=(a.closureCount||0)+(b.closureCount||0);hasInterior=a.hasInterior||b.hasInterior;interiorCategories=a.hasInterior?a.interiorCategories:b.interiorCategories;}
+          else if(type==='VDF') {const a=input('bg',undefined,'VDF'),b=input('fg',undefined,'VDF'),w=`clamp(${x('mix',0,'float')},0.0,1.0)`;code=`mediumBlend(${a.code},${b.code},1.0-${w},${w})`;}
           else code = `mix(${same('bg')},${same('fg')},${x('mix',0,'float')})`; break;
         }
         case 'smoothstep': { const fallback=v=>widths[type]===1?v:Array(widths[type]).fill(v); code=`smoothstep(${scalarOrSame('low',fallback(0))},${scalarOrSame('high',fallback(1))},${same('in')})`; break; }
@@ -1436,6 +1438,7 @@ fn mxBlackbody(k:f32)->vec3f {
 struct Lobe { base: vec3f, metal: f32, roughness: f32, ior: f32, transmission: f32, emission: vec3f, emissionWeight: f32, anisotropy: f32, transmissionColor: vec3f, kind:u32, weight:f32, alpha:vec2f, complexIOR:vec3f, extinction:vec3f, scatterMode:u32, thinWalled:u32, thinFilmThickness:f32, thinFilmIOR:f32, transmissionDepth:f32, transmissionScatter:vec3f, schlickColor82:vec3f, schlickColor90:vec3f, schlickExponent:f32, subsurfaceRadius:vec3f, specularColor:vec3f, specularColorEnabled:u32 }
 struct Medium { absorption: vec3f, scattering: vec3f, anisotropy: f32, emission: vec3f }
 fn mediumWithEmission(input:Medium,emission:vec3f)->Medium {var m=input;m.emission=emission;return m;}
+fn mediumBlend(a:Medium,b:Medium,wa:f32,wb:f32)->Medium {var m:Medium;let aw=max(0.0,wa);let bw=max(0.0,wb);m.absorption=aw*a.absorption+bw*b.absorption;m.scattering=aw*a.scattering+bw*b.scattering;let aScatter=dot(a.scattering,vec3f(1.0))*aw;let bScatter=dot(b.scattering,vec3f(1.0))*bw;m.anisotropy=select(0.0,(a.anisotropy*aScatter+b.anisotropy*bScatter)/max(1e-6,aScatter+bScatter),aScatter+bScatter>0.0);m.emission=aw*a.emission+bw*b.emission;return m;}
 fn makeMaterial(base:vec3f,metal:f32,rough:f32,ior:f32,trans:f32,emission:vec3f,emissionWeight:f32,anisotropy:f32,tint:vec3f,thinWalled:u32,thinFilmThickness:f32,thinFilmIOR:f32)->Lobe {
  return Lobe(base,metal,rough,ior,trans,emission,emissionWeight,anisotropy,tint,0u,1.0,vec2f(rough*rough),vec3f(ior),vec3f(0),3u,thinWalled,thinFilmThickness,thinFilmIOR,0.0,vec3f(0),vec3f(1),vec3f(1),5.0,vec3f(1),vec3f(0),0u);
 }
