@@ -1020,6 +1020,15 @@ test('conical EDF preserves its bounded angular emission profile', () => {
   assert.match(source.body,/surfaceEmission\(/); assert.match(source.body,/cos\(radians\(max\(/);
   assert.match(shaderSource([doc],{}),/emissionFactor\(surface,-d\)/);
 });
+test('generalized Schlick EDF preserves directional color controls', () => {
+  const doc={nodes:[
+    {name:'edf',category:'generalized_schlick_edf',type:'EDF',inputs:{base:{type:'EDF',value:''},color0:{type:'color3',value:[.2,.3,.4]},color90:{type:'color3',value:[1,.8,.6]},exponent:{type:'float',value:3}}},
+    {name:'surface',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'edf'}}}
+  ],output:{nodename:'surface'}};
+  const source=compileGraph(doc,{material:true});
+  assert.match(source.body,/surfaceEmission\(/); assert.match(source.body,/vec3f\(0\.2,0\.3,0\.4\)/);
+  assert.match(source.body,/3\.0/); assert.match(shaderSource([doc],{}),/emissionSchlick/);
+});
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
   assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/);

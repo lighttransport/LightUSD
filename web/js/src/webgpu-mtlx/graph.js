@@ -182,7 +182,7 @@ export function compileGraph(document, { output, library = {}, material = false,
         fail('TYPE',key,`expected ${type} or scalar float for ${k}`);
       };
       const binary = op => `(${same('in1')} ${op} ${scalarOrSame('in2')})`;
-      let code, closureCount = 0, hasInterior = false, interiorCategories=[], emissionCone = null;
+      let code, closureCount = 0, hasInterior = false, interiorCategories=[], emissionCone = null, emissionSchlick = null;
       switch (n.category) {
         case 'uniform_edf': code = x('color',[1,1,1],'color3'); break;
         case 'conical_edf': {
@@ -192,15 +192,21 @@ export function compileGraph(document, { output, library = {}, material = false,
           emissionCone={direction,innerCos:`cos(radians(max(${inner},${outer})))`,outerCos:`cos(radians(min(${inner},${outer})))`};
           break;
         }
-        case 'generalized_schlick_edf': code = x('base',[0,0,0],'EDF'); break;
+        case 'generalized_schlick_edf': {
+          const base=ins.base?.value===''||!ins.base ? {type:'EDF',code:'vec3f(0)'} : input('base',undefined,'EDF');
+          code=base.code;
+          emissionCone=base.emissionCone||null;
+          emissionSchlick={color0:x('color0',[1,1,1],'color3'),color90:x('color90',[1,1,1],'color3'),exponent:x('exponent',5,'float')};
+          break;
+        }
         case 'surface': {
           const opacity = ins.opacity ? x('opacity', 1, 'float') : '1.0';
           const thin = ins.thin_walled ? `select(0u,1u,${x('thin_walled', false, 'boolean')})` : '0u';
           const bsdfValue=ins.bsdf?.value===''||!ins.bsdf ? null : input('bsdf',undefined,'BSDF');
           const bsdf=bsdfValue?.code||'emptyClosure()';hasInterior=bsdfValue?.hasInterior||false;interiorCategories=bsdfValue?.interiorCategories||[];
           const edfValue=ins.edf?.value===''||!ins.edf ? {code:'vec3f(0)'} : input('edf',undefined,'EDF');
-          const cone=edfValue.emissionCone;
-          code=`surfaceEmission(${bsdf},${edfValue.code},clamp(${opacity},0.0,1.0),${thin},ctx.normal,${cone?.direction||'ctx.normal'},${cone?.innerCos||'-1.0'},${cone?.outerCos||'-1.0'},${cone?'1u':'0u'})`;break;
+          const cone=edfValue.emissionCone, schlick=edfValue.emissionSchlick;
+          code=`surfaceEmission(${bsdf},${edfValue.code},clamp(${opacity},0.0,1.0),${thin},ctx.normal,${cone?.direction||'ctx.normal'},${cone?.innerCos||'-1.0'},${cone?.outerCos||'-1.0'},${schlick?.color0||'vec3f(1)'},${schlick?.color90||'vec3f(1)'},${schlick?.exponent||'5.0'},${cone?'1u':'0u'},${schlick?'1u':'0u'})`;break;
         }
         case 'dielectric_bsdf': case 'conductor_bsdf': case 'oren_nayar_diffuse_bsdf': case 'burley_diffuse_bsdf': {
           if(ins.retroreflective && ![false,'false'].includes(ins.retroreflective.value))fail('UNSUPPORTED',key,'retroreflection is not implemented');
@@ -1106,7 +1112,7 @@ export function compileGraph(document, { output, library = {}, material = false,
         const id = `n${serial++}`;
         if(serial>32768)fail('LIMIT',key,'expanded graph exceeds 32768 expressions');
         lines.push(`let ${id}: ${target} = ${code.replace(/\bctx\b/g,contextName)};`);
-        result = { type, code: id, closureCount, hasInterior, interiorCategories, categories:[...dependencies], ...(emissionCone ? { emissionCone: { direction: emissionCone.direction.replace(/\bctx\b/g, contextName), innerCos: emissionCone.innerCos.replace(/\bctx\b/g, contextName), outerCos: emissionCone.outerCos.replace(/\bctx\b/g, contextName) } } : {}) };
+        result = { type, code: id, closureCount, hasInterior, interiorCategories, categories:[...dependencies], ...(emissionCone ? { emissionCone: { direction: emissionCone.direction.replace(/\bctx\b/g, contextName), innerCos: emissionCone.innerCos.replace(/\bctx\b/g, contextName), outerCos: emissionCone.outerCos.replace(/\bctx\b/g, contextName) } } : {}), ...(emissionSchlick ? { emissionSchlick: { color0: emissionSchlick.color0.replace(/\bctx\b/g, contextName), color90: emissionSchlick.color90.replace(/\bctx\b/g, contextName), exponent: emissionSchlick.exponent.replace(/\bctx\b/g, contextName) } } : {}) };
       }
     }
     used.add(n.category); active.delete(key); cached.set(key, result); return result;

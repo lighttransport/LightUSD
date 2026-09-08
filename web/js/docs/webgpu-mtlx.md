@@ -44,6 +44,8 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   transport remains an explicitly bounded approximation.
 - `conical_edf` preserves its authored color, normal, inner/outer angles, and
   smooth angular falloff through surface, path, area-light, and raster emission.
+- `generalized_schlick_edf` preserves its base EDF and directional `color0`,
+  `color90`, and exponent controls through the same emission transport.
 - The pinned float, color3, and color4 `blur` overloads follow the MaterialX
   1.39.5 standard library implementation, which is currently a documented
   pass-through for box and gaussian filter types.
