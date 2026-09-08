@@ -216,6 +216,14 @@ test('USD rect lights preserve world-space area, radiance and negative-Z orienta
   assert.throws(()=>appendRectLights(scene,[{...light,textureFile:'light.exr'}]),/Unsupported/);
   assert.throws(()=>appendRectLights(scene,[{...light,width:0}]),/Invalid/);
 });
+test('authored distant lights preserve direction and radiance', () => {
+  const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
+  const r=appendRectLights(scene,[{type:'distant',direction:[0,0,2],intensity:4,exposure:1,color:[1,.5,.25]}]);
+  assert.deepEqual(r.lighting.directional.direction,[0,0,-1]);
+  assert.deepEqual(r.lighting.directional.radiance,[8,4,2]);
+  assert.equal(r.provenance.rectLights.length,0);
+  assert.throws(()=>appendRectLights(scene,[{type:'distant',direction:[0,0,1]},{type:'distant',direction:[1,0,0]}]),/nonmatching/);
+});
 test('resource fetch enforces streaming budgets and HTTP errors',async()=>{
   const fetcher=async()=>new Response(new Uint8Array([1,2,3,4]));
   assert.deepEqual(await fetchResource('test',{fetcher,maxBytes:4}),new Uint8Array([1,2,3,4]));

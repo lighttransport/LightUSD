@@ -12,7 +12,18 @@ export function appendRectLights(scene, lights) {
   else if(result.colors.length===result.positions.length/3*3){const rgb=result.colors;result.colors=[];for(let i=0;i<rgb.length;i+=3)result.colors.push(rgb[i],rgb[i+1],rgb[i+2],1);}
   if(result.colors.length!==result.positions.length/3*4)throw new Error('Light conversion color count mismatch');
   const imported=[];
+  let distant = null;
   for(const light of lights) {
+    if(light.type==='distant') {
+      if(light.textureFile||light.enableColorTemperature||light.shapingIesFile||light.shapingFocus>0||light.shapingConeAngle<90||light.diffuse!==undefined&&light.diffuse!==1||light.specular!==undefined&&light.specular!==1||light.shadowEnable===false)throw new Error('Unsupported distant light texture, shaping, temperature, or contribution controls');
+      const {intensity=1,exposure=0,color=[1,1,1]}=light;
+      const direction=Array.isArray(light.direction)&&light.direction.length===3?light.direction:null;
+      if(!direction||!direction.every(Number.isFinite)||Math.hypot(...direction)<1e-8||![intensity,exposure,...color].every(Number.isFinite)||intensity<0||color.length!==3||color.some(c=>c<0))throw new Error('Invalid distant light parameters');
+      const length=Math.hypot(...direction),towardLight=direction.map(v=>v===0?0:-v/length),radiance=color.map(c=>c*intensity*2**exposure);
+      if(!radiance.every(Number.isFinite))throw new Error('Invalid distant light radiance');
+      if(distant && (distant.direction.some((v,i)=>Math.abs(v-towardLight[i])>1e-6)||distant.radiance.some((v,i)=>Math.abs(v-radiance[i])>1e-6)))throw new Error('Multiple nonmatching distant lights are unsupported');
+      distant={direction:towardLight,radiance};continue;
+    }
     if(light.type!=='rect')throw new Error(`Unsupported authored light type: ${light.type}`);
     if(light.textureFile||light.enableColorTemperature||light.shapingIesFile||light.shapingFocus>0||light.shapingConeAngle<90||light.diffuse!==undefined&&light.diffuse!==1||light.specular!==undefined&&light.specular!==1||light.shadowEnable===false)throw new Error('Unsupported rect light texture, shaping, temperature, or contribution controls');
     const {width=1,height=1,intensity=1,exposure=0,color=[1,1,1]}=light;
@@ -36,7 +47,7 @@ export function appendRectLights(scene, lights) {
     result.indices.push(...winding.map(i=>i+offset));result.materialIds.push(material,material);
     imported.push({path:light.absPath,worldArea:area,radiance,materialId:material});
   }
-  result.lighting={environment:[0,0,0],directional:{radiance:[0,0,0]}};
-  result.provenance={...scene.provenance,lightingOverride:false,rectLights:imported};
+  result.lighting={environment:[0,0,0],directional:distant||{radiance:[0,0,0]}};
+  result.provenance={...scene.provenance,lightingOverride:false,rectLights:imported,distantLight:distant};
   return result;
 }

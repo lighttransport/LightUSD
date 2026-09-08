@@ -120,7 +120,9 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   triangulated variant (51,008 triangles in the pinned asset). It explicitly
   overrides materials and, by default, lighting. An optional checkbox imports
   the five authored RectLights for path modes. Asset provenance is retained across layer
-  loading to resolve relative references inside variants.
+  loading to resolve relative references inside variants. Authored distant
+  lights preserve their world direction and radiance; rect lights are imported
+  as emissive geometry.
 - Procedural synthetic sphere scenes and small MaterialX arithmetic/stripe
   fixtures, deterministic numeric GPU tests, scene validation and EXR roundtrip.
 
