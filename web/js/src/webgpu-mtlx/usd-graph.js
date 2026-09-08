@@ -151,13 +151,31 @@ export function materialXFromUSD(snapshot, materialPath, { library = {}, resolve
     fail(path, 'material terminal must connect to a shader output');
   }
   const terminal = own(material.properties, 'outputs:mtlx:surface') ? 'outputs:mtlx:surface' : own(material.properties, 'outputs:surface') ? 'outputs:surface' : null;
-  if (!terminal) fail(materialPath, 'missing MaterialX surface terminal');
-  const parts = materialParts(`${materialPath}.${terminal}`);
-  const output = parts.surface;
-  const displacementTerminal = own(material.properties, 'outputs:mtlx:displacement') ? 'outputs:mtlx:displacement' : own(material.properties, 'outputs:displacement') ? 'outputs:displacement' : null;
-  const displacementOutput = displacementTerminal ? port(`${materialPath}.${displacementTerminal}`, 'displacementshader') : parts.displacement;
   const volumeTerminal = own(material.properties, 'outputs:mtlx:volume') ? 'outputs:mtlx:volume' : own(material.properties, 'outputs:volume') ? 'outputs:volume' : null;
   const mediumOutput = volumeTerminal ? volumeVdf(`${materialPath}.${volumeTerminal}`) : undefined;
+  let output, parts = {};
+  if (terminal) {
+    parts = materialParts(`${materialPath}.${terminal}`);
+    output = parts.surface;
+  } else if (mediumOutput) {
+    const volumeNode = nodes.find(node => node.name === mediumOutput.nodename);
+    if (!volumeNode?.inputs?.vdf) fail(materialPath, 'volume-only material requires a volume constructor with a VDF input');
+    const boundary = `usd_volume_boundary_${nodes.length}`;
+    const surface = `usd_volume_surface_${nodes.length + 1}`;
+    nodes.push({ name: boundary, category: 'dielectric_bsdf', type: 'BSDF', inputs: {
+      tint: { type: 'color3', value: [1, 1, 1] }, ior: { type: 'float', value: 1 },
+      roughness: { type: 'vector2', value: [0, 0] }, scatter_mode: { type: 'string', value: 'RT' }
+    } });
+    nodes.push({ name: `usd_volume_layer_${nodes.length}`, category: 'layer', type: 'BSDF', inputs: {
+      top: { nodename: boundary }, base: volumeNode.inputs.vdf
+    } });
+    nodes.push({ name: surface, category: 'surface', type: 'surfaceshader', inputs: {
+      bsdf: { nodename: nodes.at(-1).name }, edf: { type: 'EDF', value: '' }
+    } });
+    output = { nodename: surface };
+  } else fail(materialPath, 'missing MaterialX surface or volume terminal');
+  const displacementTerminal = own(material.properties, 'outputs:mtlx:displacement') ? 'outputs:mtlx:displacement' : own(material.properties, 'outputs:displacement') ? 'outputs:displacement' : null;
+  const displacementOutput = displacementTerminal ? port(`${materialPath}.${displacementTerminal}`, 'displacementshader') : parts.displacement;
   return { version: '1.39', nodes, output, definitions, graphs: library.graphs || {},
     ...(displacementOutput ? { displacementOutput } : {}), ...(mediumOutput ? { mediumOutput } : {}), source: materialPath, provenance: { materialPath, source: 'USD layer snapshot', referenceReady: false } };
 }
