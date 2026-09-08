@@ -660,6 +660,12 @@ test('circle and line procedural masks use bounded UV distance tests', () => {
   const line=compileGraph({nodes:[{name:'l',category:'line',type:'float',inputs:{texcoord:{type:'vector2',value:[.5,.5]},point1:{type:'vector2',value:[0,0]},point2:{type:'vector2',value:[1,1]},radius:{type:'float',value:.1}}}]});
   assert.match(line.body,/clamp\(dot\(/);
 });
+test('grid and crosshatch patterns apply typed tiling, offset, thickness and staggering', () => {
+  const grid=compileGraph({nodes:[{name:'g',category:'grid',type:'color3',inputs:{texcoord:{type:'vector2',value:[.2,.3]},uvtiling:{type:'vector2',value:[4,4]},thickness:{type:'float',value:.1},staggered:{type:'boolean',value:true}}}]});
+  assert.match(grid.body,/fract\(/); assert.match(grid.body,/vec3f\(/);
+  const cross=compileGraph({nodes:[{name:'c',category:'crosshatch',type:'color3',inputs:{texcoord:{type:'vector2',value:[.2,.3]},thickness:{type:'float',value:.05}}}]});
+  assert.match(cross.body,/max\(/); assert.match(cross.body,/fract\(/);
+});
 test('cell-noise nodes hash integer cells without interpolation', () => {
   const doc={nodes:[
     {name:'uv',category:'texcoord',type:'vector2',inputs:{}},
