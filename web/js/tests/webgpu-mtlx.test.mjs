@@ -499,7 +499,7 @@ test('packed scene selects authored material UV slots per triangle', () => {
 test('triplanarprojection blends three typed image planes by normal weights', () => {
   const descriptor={x:{offset:0,width:2,height:2,levels:1,colorspace:'raw'},y:{offset:4,width:2,height:2,levels:1,colorspace:'raw'},z:{offset:8,width:2,height:2,levels:1,colorspace:'raw'}};
   const doc={nodes:[{name:'tri',category:'triplanarprojection',type:'color3',inputs:{filex:{type:'filename',value:'x'},filey:{type:'filename',value:'y'},filez:{type:'filename',value:'z'},normal:{type:'vector3',value:[1,0,0]},filtertype:{type:'string',value:'linear'}}}]};
-  const source=compileGraph(doc,{imageDescriptors:descriptor}); assert.equal((source.body.match(/imageSample\(/g)||[]).length,3); assert.match(source.body,/safeNormal\(vec3f\(1\.0,0\.0,0\.0\),vec3f\(0\.0,0\.0,1\.0\)\)/);
+  const source=compileGraph(doc,{imageDescriptors:descriptor}); assert.equal((source.body.match(/imageSample\(/g)||[]).length,3); assert.match(source.body,/imageSample\(0u[^\n]*log2\(/); assert.match(source.body,/safeNormal\(vec3f\(1\.0,0\.0,0\.0\),vec3f\(0\.0,0\.0,1\.0\)\)/);
   assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,filez:{type:'filename',value:'missing'}}}]},{imageDescriptors:descriptor}),/missing decoded image/);
   assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],colorspace:'acescg'}]},{imageDescriptors:descriptor}),/filex colorspace/);
 });
