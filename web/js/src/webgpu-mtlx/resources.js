@@ -85,7 +85,7 @@ export function expandMaterialXFrameFilename(pattern, frame) {
 
 function authoredSequenceRange(node) {
   const value = node.inputs?.framerange?.value;
-  const range = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',').map(Number) : null;
+  const range = Array.isArray(value) ? value : typeof value === 'string' ? value.replace(/[\[\]()]/g, '').split(',').map(Number) : null;
   if (!range || range.length !== 2 || !range.every(Number.isFinite) || !range.every(Number.isInteger) || range[1] < range[0]) {
     throw new Error('MaterialX image sequence requires a finite integer framerange');
   }
