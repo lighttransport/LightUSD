@@ -159,7 +159,8 @@ rough refraction, exact Fresnel), `conductor_bsdf` (complex Fresnel), uncompensa
 Native closures currently
 use geometric normals and a generated tangent frame. Standard Surface/OpenPBR
 remain approximate mappings. BSDF add, mix, and scalar/color weighting preserve
-up to eight lobes with mixture evaluation and sampling PDFs. BSDF-over-VDF layer
+up to eight lobes with mixture evaluation and sampling PDFs; add/mix reject
+ambiguous combinations that carry two separate interiors. BSDF-over-VDF layer
 attaches an interior after surface composition. Active transmissive lobes must
 agree on interface IOR. Realtime shading still uses a primary-lobe approximation.
 Thin film, sheen, coat, BSDF-over-BSDF layering and multiple-scattering microfacet

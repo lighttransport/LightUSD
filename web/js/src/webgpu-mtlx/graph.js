@@ -527,7 +527,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           code=x('in',widths[type]===1?0:Array(widths[type]).fill(0),type); break;
         }
         case 'add': {
-          if(type==='BSDF') {const a=input('in1',undefined,'BSDF'),b=input('in2',undefined,'BSDF');code=`${a.hasInterior||b.hasInterior?'closureAddPreservingInterior':'closureAdd'}(${a.code},${b.code})`;closureCount=(a.closureCount||0)+(b.closureCount||0);hasInterior=a.hasInterior||b.hasInterior;interiorCategories=a.hasInterior?a.interiorCategories:b.interiorCategories;}
+          if(type==='BSDF') {const a=input('in1',undefined,'BSDF'),b=input('in2',undefined,'BSDF');if(a.hasInterior&&b.hasInterior)fail('SEMANTICS',key,'BSDF add cannot combine two interior-bearing closures');code=`${a.hasInterior||b.hasInterior?'closureAddPreservingInterior':'closureAdd'}(${a.code},${b.code})`;closureCount=(a.closureCount||0)+(b.closureCount||0);hasInterior=a.hasInterior||b.hasInterior;interiorCategories=a.hasInterior?a.interiorCategories:b.interiorCategories;}
           else code = binary('+'); break;
         }
         case 'subtract': code = binary('-'); break;
@@ -599,7 +599,7 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'atan2': code = `atan2(${same('iny')},${same('inx')})`; break;
         case 'clamp': { const fallback=v=>widths[type]===1?v:Array(widths[type]).fill(v); code=`clamp(${same('in')},${scalarOrSame('low',fallback(0))},${scalarOrSame('high',fallback(1))})`; break; }
         case 'mix': {
-          if(type==='BSDF'){const a=input('bg',undefined,'BSDF'),b=input('fg',undefined,'BSDF');code=`${a.hasInterior||b.hasInterior?'closureMixPreservingInterior':'closureMix'}(${a.code},${b.code},${x('mix',0,'float')})`;closureCount=(a.closureCount||0)+(b.closureCount||0);hasInterior=a.hasInterior||b.hasInterior;interiorCategories=a.hasInterior?a.interiorCategories:b.interiorCategories;}
+          if(type==='BSDF'){const a=input('bg',undefined,'BSDF'),b=input('fg',undefined,'BSDF');if(a.hasInterior&&b.hasInterior)fail('SEMANTICS',key,'BSDF mix cannot combine two interior-bearing closures');code=`${a.hasInterior||b.hasInterior?'closureMixPreservingInterior':'closureMix'}(${a.code},${b.code},clamp(${x('mix',0,'float')},0.0,1.0))`;closureCount=(a.closureCount||0)+(b.closureCount||0);hasInterior=a.hasInterior||b.hasInterior;interiorCategories=a.hasInterior?a.interiorCategories:b.interiorCategories;}
           else code = `mix(${same('bg')},${same('fg')},${x('mix',0,'float')})`; break;
         }
         case 'smoothstep': { const fallback=v=>widths[type]===1?v:Array(widths[type]).fill(v); code=`smoothstep(${scalarOrSame('low',fallback(0))},${scalarOrSame('high',fallback(1))},${same('in')})`; break; }
