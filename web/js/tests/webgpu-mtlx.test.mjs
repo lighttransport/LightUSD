@@ -487,6 +487,11 @@ test('safepower preserves the sign of negative bases', () => {
   const source=compileGraph({nodes:[{name:'p',category:'safepower',type:'float',inputs:{in1:{type:'float',value:-2},in2:{type:'float',value:3}}}]});
   assert.match(source.body,/sign\(-2\.0\)\*pow\(abs\(-2\.0\),3\.0\)/);
 });
+test('place2d applies pivot, inverse scale, degree rotation and offset', () => {
+  const source=compileGraph({nodes:[{name:'p',category:'place2d',type:'vector2',inputs:{texcoord:{type:'vector2',value:[1,0]},pivot:{type:'vector2',value:[.5,.5]},scale:{type:'vector2',value:[2,2]},rotate:{type:'float',value:90},offset:{type:'vector2',value:[.1,.2]}}}]});
+  assert.match(source.body,/mat2x2f\(cos\(/); assert.match(source.body,/0\.017453292519943295/); assert.match(source.body,/vec2f\(0\.1,0\.2\)/);
+  assert.throws(()=>compileGraph({nodes:[{name:'p',category:'place2d',type:'color3',inputs:{}}]}),/place2d output must be vector2/);
+});
 test('ACEScg conversion node uses the pinned MaterialX matrix', () => {
   const doc={nodes:[{name:'aces',category:'acescg_to_lin_rec709',type:'color3',inputs:{in:{type:'color3',value:[1,0,0]}}}]};
   const source=compileGraph(doc); assert.match(source.body,/mxAcescgToLinRec709/); assert.match(contextWGSL,/1\.705050992658/);
