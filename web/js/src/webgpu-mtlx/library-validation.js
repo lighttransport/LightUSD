@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { parseMaterialX, compileGraph, contextWGSL } from './graph.js';
+import { measuredProfileWGSL } from './shaders.js';
 import { fetchResource } from './resources.js';
 
 /** Execute actual pinned graph implementations, rather than cataloguing names. */
@@ -30,7 +31,7 @@ export async function validateLibraryGraphs(device) {
     ]},{library,output:{nodename:'test',output:c.output||'out'}});
     return `{${graph.body}\nresult[${i}]=${graph.type==='color4'?graph.expression:graph.type==='vector2'?`vec4f(${graph.expression},0,1)`:`vec4f(${graph.expression},1)`};}`;
   });
-  const code=`${contextWGSL}\n@group(0) @binding(0) var<storage,read_write> result:array<vec4f>;
+  const code=`${contextWGSL}\n${measuredProfileWGSL([])}\n@group(0) @binding(0) var<storage,read_write> result:array<vec4f>;
   @compute @workgroup_size(1) fn main(){let ctx=ShadingContext(vec3f(0),vec3f(0,0,1),vec3f(1,0,0),vec3f(0,1,0),vec2f(0),0,0,vec2f(0),vec2f(0),vec3f(1,0,0),vec3f(0,1,0),vec3f(0,0,1),vec4f(0,0,0,1),vec4f(0),vec4f(0),vec4f(0),vec4f(0),vec4f(0),vec4f(0),vec4f(0),vec4f(0));${bodies.join('\n')}}`;
   const module=device.createShaderModule({code});const info=await module.getCompilationInfo();
   if(info.messages.some(m=>m.type==='error'))throw new Error(info.messages.map(m=>m.message).join('\n'));

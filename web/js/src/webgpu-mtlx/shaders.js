@@ -7,7 +7,7 @@ import { spectrumWGSL } from './spectrum.js';
 import { volumeWGSL } from './volume.js';
 import { closureTransportWGSL } from './closures.js';
 
-function measuredProfileWGSL(materials) {
+export function measuredProfileWGSL(materials) {
   const profiles = new Map(); let next = 1;
   for (const doc of materials) for (const [key, profile] of Object.entries(doc.measuredProfiles || {})) if (!profiles.has(key)) profiles.set(key, { id: next++, profile });
   const cases = [...profiles.values()].map(({ id, profile }) => {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { compileGraph, contextWGSL } from './graph.js';
 import { packImages, imageWGSL } from './textures.js';
+import { measuredProfileWGSL } from './shaders.js';
 import { cross, sub, normalize } from './scene.js';
 
 /** Linear triangle refinement, not Catmull-Clark subdivision. Material seams split. */
@@ -42,7 +43,7 @@ export async function bakeDisplacement(scene, device) {
   const count=refined.positions.length/3,data=new Float32Array(count*52);
   for(let i=0;i<count;i++){const mat=refined.materialIds[Math.floor(i/3)],names=scene.materials[mat]?.geompropNames||(scene.materials[mat]?.geompropName?[scene.materials[mat].geompropName]:[]),g=slot=>names[slot]&&refined.geompropSets?.[names[slot]]?.slice(i*4,i*4+4)||[0,0,0,0];data.set([...refined.positions.slice(i*3,i*3+3),0,...refined.normals.slice(i*3,i*3+3),0,...refined.uvs.slice(i*2,i*2+2),mat,0,...(refined.colors.length?refined.colors.slice(i*4,i*4+4):[0,0,0,1]),...(refined.tangents.length?refined.tangents.slice(i*4,i*4+4):[0,0,0,1]),...Array.from({length:8},(_,slot)=>g(slot)).flat()],i*52);}
   if(data.byteLength>device.limits.maxStorageBufferBindingSize)throw new Error('Displacement vertices exceed WebGPU buffer limit');
-  const module=device.createShaderModule({code:`${contextWGSL}\n${imageWGSL}\n${functions}
+  const module=device.createShaderModule({code:`${contextWGSL}\n${measuredProfileWGSL([])}\n${imageWGSL}\n${functions}
     struct BakeVertex {p:vec4f,n:vec4f,uv:vec4f,color:vec4f,tangent:vec4f,geomprop:vec4f,geomprop1:vec4f,geomprop2:vec4f,geomprop3:vec4f,geomprop4:vec4f,geomprop5:vec4f,geomprop6:vec4f,geomprop7:vec4f}
     @group(0) @binding(0) var<storage,read> source:array<BakeVertex>;
     @group(0) @binding(1) var<storage,read_write> result:array<vec4f>;

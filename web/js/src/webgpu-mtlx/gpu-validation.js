@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { compileGraph, contextWGSL, parseMaterialX } from './graph.js';
+import { measuredProfileWGSL } from './shaders.js';
 export async function validateValueKernels(device) {
   const value = v => ({ type: 'float', value: v });
   const binary = (category, a, b, expected) => ({ category, inputs: { in1: value(a), in2: value(b) }, expected });
@@ -96,7 +97,7 @@ export async function validateValueKernels(device) {
     const g = compileGraph({ nodes: c.nodes || [{ name: 'test', type: c.type||'float', category: c.category, inputs: c.inputs }] },{output:c.output});
     return `{ ${g.body}\nresult[${i}] = ${g.expression}${c.component===undefined?'':`[${c.component}]`}; }`;
   });
-  const module = device.createShaderModule({ code: `${contextWGSL}\n@group(0) @binding(0) var<storage,read_write> result: array<f32>; @compute @workgroup_size(1) fn main() { let ctx=ShadingContext(vec3f(0),vec3f(0,0,1),vec3f(1,0,0),vec3f(0,1,0),vec2f(0),0,0,vec2f(0),vec2f(0),vec3f(1,0,0),vec3f(0,1,0),vec3f(0,0,1),vec4f(0,0,0,1),vec4f(0),vec4f(0),vec4f(0),vec4f(0),vec4f(0),vec4f(0),vec4f(0),vec4f(0)); ${bodies.join('\n')} }` });
+  const module = device.createShaderModule({ code: `${contextWGSL}\n${measuredProfileWGSL([])}\n@group(0) @binding(0) var<storage,read_write> result: array<f32>; @compute @workgroup_size(1) fn main() { let ctx=ShadingContext(vec3f(0),vec3f(0,0,1),vec3f(1,0,0),vec3f(0,1,0),vec2f(0),0,0,vec2f(0),vec2f(0),vec3f(1,0,0),vec3f(0,1,0),vec3f(0,0,1),vec4f(0,0,0,1),vec4f(0),vec4f(0),vec4f(0),vec4f(0),vec4f(0),vec4f(0),vec4f(0),vec4f(0)); ${bodies.join('\n')} }` });
   const info = await module.getCompilationInfo();
   if (info.messages.some(m => m.type === 'error')) throw new Error(info.messages.map(m => m.message).join('\n'));
   const pipeline = await device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'main' } });
