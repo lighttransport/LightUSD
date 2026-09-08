@@ -827,6 +827,10 @@ roughness and IOR aliases. The synthetic `coat` scene is hardware-tested; exact
 layered energy compensation and multiple-scattering coat transport remain
 future work.
 
+`UsdPreviewSurface.clearcoat` uses the same bounded dielectric layer path,
+including coat-weight blending, while preserving the existing tangent-space
+normal conversion.
+
 Standard Surface `base` now scales the authored `base_color` contribution;
 `base=0` therefore removes the diffuse base while preserving the other authored
 lobes.
