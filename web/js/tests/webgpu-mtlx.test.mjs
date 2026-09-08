@@ -453,6 +453,11 @@ test('normalize uses finite fallbacks for vector widths', () => {
   assert.match(v4.body,/mxSafeNormalize4/); assert.match(contextWGSL,/fn mxSafeNormalize4/);
   assert.throws(()=>compileGraph({nodes:[{name:'n',category:'normalize',type:'float',inputs:{in:{type:'float',value:1}}}]}),/requires a vector/);
 });
+test('reorder remaps typed channels with the same bounds as swizzle', () => {
+  const source=compileGraph({nodes:[{name:'r',category:'reorder',type:'color3',inputs:{in:{type:'color4',value:[.1,.2,.3,.4]},channels:{type:'string',value:'bgr'}}}]});
+  assert.match(source.body,/vec3f\(vec4f\(0\.1,0\.2,0\.3,0\.4\)\[2\],vec4f\(0\.1,0\.2,0\.3,0\.4\)\[1\],vec4f\(0\.1,0\.2,0\.3,0\.4\)\[0\]\)/);
+  assert.throws(()=>compileGraph({nodes:[{name:'r',category:'reorder',type:'color3',inputs:{in:{type:'color3',value:[1,0,0]},channels:{type:'string',value:'rgba'}}}]}),/invalid channels/);
+});
 test('luminance and average nodes preserve explicit component semantics', () => {
   const doc={nodes:[
     {name:'color',category:'constant',type:'color3',inputs:{value:{type:'color3',value:[1,.5,0]}}},
