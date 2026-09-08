@@ -131,7 +131,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
       }
     }
     for (let i = 0; i < layer.numLights(); i++) authored.lights.push(layer.getLight(i));
-    const positions = [], normals = [], uvs = [], indices = [], materialIds = [];
+    const positions = [], normals = [], uvs = [], colors = [], indices = [], materialIds = [];
     const read = d => {
       if (!d?.length) return null;
       const C = ({ f32: Float32Array, u32: Uint32Array, snorm8: Int8Array, snorm16: Int16Array })[d.dtype];
@@ -153,12 +153,17 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
         if (!mesh.singleIndexable || !mesh.triangulated) throw new Error(`USD mesh is not triangulated/single-indexed: ${mesh.absPath}`);
         const p = read(mesh.points), ix = read(mesh.indices); if (!p?.length || !ix?.length) return;
         const geo = new BufferGeometry(); geo.setAttribute('position', new BufferAttribute(p, 3)); geo.setIndex(new BufferAttribute(ix, 1));
-        const n = read(mesh.normals), uv = read(mesh.uv0);
+        const n = read(mesh.normals), uv = read(mesh.uv0), color = read(mesh.colors || mesh.color);
         if (n?.length === p.length) geo.setAttribute('normal', new BufferAttribute(n, 3)); else geo.computeVertexNormals();
         geo.applyMatrix4(matrix);
         const ps = geo.attributes.position.array, ns = geo.attributes.normal.array, offset = positions.length / 3;
         for (let i = 0; i < ps.length; i++) { positions.push(ps[i]); normals.push(ns[i]); }
         for (let i = 0; i < ps.length / 3 * 2; i++) uvs.push(uv?.[i] ?? 0);
+        for (let i = 0; i < ps.length / 3; i++) {
+          if (color?.length === ps.length / 3 * 4) colors.push(color[i * 4], color[i * 4 + 1], color[i * 4 + 2], color[i * 4 + 3]);
+          else if (color?.length === ps.length / 3 * 3) colors.push(color[i * 3], color[i * 3 + 1], color[i * 3 + 2], 1);
+          else colors.push(0, 0, 0, 1);
+        }
         for (let i = 0; i < ix.length; i++) indices.push(ix[i] + offset);
         const mat = Number.isInteger(mesh.materialId) && mesh.materialId >= 0 ? mesh.materialId : 0;
         materialIds.push(...triangleMaterialIds(ix.length, mat, mesh.submeshes));
@@ -172,7 +177,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
     onStatus(`Prepared ${indices.length / 3} ShaderBall triangles; ${authoredMaterials ? `${Object.keys(authoredDocuments).length} compiled authored MaterialX slots enabled` : 'materials/lights are diagnostic overrides'}`);
     const materialCount = Math.max(2, ...materialIds.map(id => id + 1), ...authored.bindings.map(binding => Number.isInteger(binding.materialId) && binding.materialId >= 0 ? binding.materialId + 1 : 0));
     const materials = Array.from({ length: materialCount }, (_, id) => authoredDocuments[id] || (id === 1 ? surfaceDocument([0.8, 0.45, 0.15], 1, 0.25) : surfaceDocument([0.35, 0.35, 0.35], 0, 0.7)));
-    const scene={ positions, normals, uvs, indices, materialIds, authored, materials, camera, provenance: { asset: 'StandardShaderBall', commit: SHADERBALL_COMMIT, variant: 'triangulated', materialOverride: authoredMaterials ? 'partial-authored' : true, authoredMaterialCount: Object.keys(authoredDocuments).length, lightingOverride: true, referenceReady: false } };
+    const scene={ positions, normals, uvs, colors, indices, materialIds, authored, materials, camera, provenance: { asset: 'StandardShaderBall', commit: SHADERBALL_COMMIT, variant: 'triangulated', materialOverride: authoredMaterials ? 'partial-authored' : true, authoredMaterialCount: Object.keys(authoredDocuments).length, lightingOverride: true, referenceReady: false } };
     return authoredLights ? appendRectLights(scene,authored.lights) : scene;
   } finally { layer.delete(); }
 }

@@ -151,9 +151,9 @@ test('layered medium bounds follow interior dependencies, not unrelated surface 
 });
 test('emission sampling excludes proven dark surfaces but retains unknown and spectral emitters',()=>{
   const scene=syntheticScene();assert.equal(mayEmit(scene.materials[0]),false);
-  const packed=packScene(scene);assert.equal(packed.triangleData[(packed.triangleCount-1)*36+15],0);
+  const packed=packScene(scene);assert.equal(packed.triangleData[(packed.triangleCount-1)*48+19],0);
   scene.materials[1].nodes[0].inputs.emission={type:'float',value:1};assert.equal(mayEmit(scene.materials[1]),true);
-  assert.ok(packScene(scene).triangleData[(packed.triangleCount-1)*36+15]>0);
+  assert.ok(packScene(scene).triangleData[(packed.triangleCount-1)*48+19]>0);
   assert.equal(mayEmit({nodes:[{name:'custom',category:'custom'}]}),true);
   const doc=syntheticScene().materials[1];doc.spectra={emission_color:[[360,1],[830,1]]};assert.equal(mayEmit(doc),true);
 });
@@ -582,6 +582,8 @@ test('standard geometry aliases preserve facing ratio and uniform property seman
   const fallback=compileGraph({nodes:[{name:'u',category:'geompropvalueuniform',type:'float',inputs:{geomprop:{type:'string',value:'custom'},default:{type:'float',value:.25}}}]});
   assert.match(fallback.body,/0\.25/);
   assert.throws(()=>compileGraph({nodes:[{name:'u',category:'geompropvalueuniform',type:'float',inputs:{geomprop:{type:'string',value:'N'}}}]}),/has type vector3/);
+  const color=compileGraph({nodes:[{name:'c',category:'geomcolor',type:'color4',inputs:{index:{type:'integer',value:0}}}]});
+  assert.match(color.body,/ctx\.geomcolor/); assert.throws(()=>compileGraph({nodes:[{name:'c',category:'geomcolor',type:'color3',inputs:{index:{type:'integer',value:1}}}]}),/primary geometry color/);
 });
 test('viewdirection exposes the normalized outgoing shading direction', () => {
   const source=compileGraph({nodes:[{name:'v',category:'viewdirection',type:'vector3',inputs:{space:{type:'string',value:'world'}}}]});
@@ -894,7 +896,9 @@ test('BVH escape links progress, leaves cover every triangle exactly once', () =
     for (let k = 0; k < 3; k++) assert.ok(n[k] <= n[k + 4]);
   }
   assert.equal(leaves, scene.indices.length / 3);
-  assert.equal(packed.triangleData.length, leaves * 36);
+  assert.equal(packed.triangleData.length, leaves * 48);
+  const colored={...scene,colors:new Array(scene.positions.length/3*4).fill(0).map((v,i)=>i%4===0?1:i%4===3?1:0)};
+  assert.deepEqual(Array.from(packScene(colored).triangleData.slice(12,16)),[1,0,0,1]);
 });
 test('scene resource limits and indices validated before GPU allocation', () => {
   const scene = syntheticScene(); assert.throws(() => packScene(scene, { maxTriangles: 1 }), /budget/);

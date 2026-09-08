@@ -7,17 +7,17 @@ import { cross, sub, normalize } from './scene.js';
 export function refineDisplacementScene(scene, levels = 0, maxTriangles = 500_000) {
   if(!Number.isInteger(levels)||levels<0||levels>5)throw new Error('Displacement refinement must be 0..5');
   if(!scene.indices?.length || scene.indices.length%3 || scene.indices.length/3*4**levels>maxTriangles)throw new Error('Displacement triangle budget exceeded');
-  const result={...scene,positions:[],normals:[],uvs:[],indices:[],materialIds:[]};
+  const result={...scene,positions:[],normals:[],uvs:[],colors:[],indices:[],materialIds:[]};
   function vertex(i) {
     if(!Number.isInteger(i)||i<0||i*3+2>=scene.positions.length)throw new Error('Invalid displacement index');
-    const p=Array.from(scene.positions.slice(i*3,i*3+3)),n=scene.normals?Array.from(scene.normals.slice(i*3,i*3+3)):null,uv=scene.uvs?Array.from(scene.uvs.slice(i*2,i*2+2)):[0,0];
-    if(![...p,...(n||[]),...uv].every(v=>Number.isFinite(v)&&Number.isFinite(Math.fround(v))))throw new Error('Invalid displacement geometry');
-    return {p,n,uv};
+    const p=Array.from(scene.positions.slice(i*3,i*3+3)),n=scene.normals?Array.from(scene.normals.slice(i*3,i*3+3)):null,uv=scene.uvs?Array.from(scene.uvs.slice(i*2,i*2+2)):[0,0],color=scene.colors?.length===scene.positions.length/3*4?Array.from(scene.colors.slice(i*4,i*4+4)):scene.colors?.length===scene.positions.length/3*3?[...scene.colors.slice(i*3,i*3+3),1]:[0,0,0,1];
+    if(![...p,...(n||[]),...uv,...color].every(v=>Number.isFinite(v)&&Number.isFinite(Math.fround(v))))throw new Error('Invalid displacement geometry');
+    return {p,n,uv,color};
   }
-  const midpoint=(a,b)=>({p:a.p.map((v,k)=>(v+b.p[k])*.5),n:normalize(a.n.map((v,k)=>(v+b.n[k])*.5)),uv:a.uv.map((v,k)=>(v+b.uv[k])*.5)});
+  const midpoint=(a,b)=>({p:a.p.map((v,k)=>(v+b.p[k])*.5),n:normalize(a.n.map((v,k)=>(v+b.n[k])*.5)),uv:a.uv.map((v,k)=>(v+b.uv[k])*.5),color:a.color.map((v,k)=>(v+b.color[k])*.5)});
   function triangle(a,b,c,mat,depth) {
     if(depth) {const ab=midpoint(a,b),bc=midpoint(b,c),ca=midpoint(c,a);triangle(a,ab,ca,mat,depth-1);triangle(ab,b,bc,mat,depth-1);triangle(ca,bc,c,mat,depth-1);triangle(ab,bc,ca,mat,depth-1);return;}
-    for(const v of [a,b,c]){result.indices.push(result.positions.length/3);result.positions.push(...v.p);result.normals.push(...v.n);result.uvs.push(...v.uv);}result.materialIds.push(mat);
+    for(const v of [a,b,c]){result.indices.push(result.positions.length/3);result.positions.push(...v.p);result.normals.push(...v.n);result.uvs.push(...v.uv);result.colors.push(...v.color);}result.materialIds.push(mat);
   }
   for(let t=0;t<scene.indices.length/3;t++) {
     const mat=scene.materialIds?.[t]??0;if(!Number.isInteger(mat)||!scene.materials[mat])throw new Error('Invalid displacement material');
@@ -39,11 +39,11 @@ export async function bakeDisplacement(scene, device) {
     if(!['float','vector3'].includes(c.type))throw new Error('Displacement output must be float height or world-space vector3');
     return `fn displacement${i}(ctx:ShadingContext)->vec3f{${c.body}\nreturn ${c.type==='float'?`ctx.normal*${c.expression}`:c.expression};}`;
   }).join('\n');
-  const count=refined.positions.length/3,data=new Float32Array(count*12);
-  for(let i=0;i<count;i++)data.set([...refined.positions.slice(i*3,i*3+3),0,...refined.normals.slice(i*3,i*3+3),0,...refined.uvs.slice(i*2,i*2+2),refined.materialIds[Math.floor(i/3)],0],i*12);
+  const count=refined.positions.length/3,data=new Float32Array(count*16);
+  for(let i=0;i<count;i++)data.set([...refined.positions.slice(i*3,i*3+3),0,...refined.normals.slice(i*3,i*3+3),0,...refined.uvs.slice(i*2,i*2+2),refined.materialIds[Math.floor(i/3)],0,...(refined.colors.length?refined.colors.slice(i*4,i*4+4):[0,0,0,1])],i*16);
   if(data.byteLength>device.limits.maxStorageBufferBindingSize)throw new Error('Displacement vertices exceed WebGPU buffer limit');
   const module=device.createShaderModule({code:`${contextWGSL}\n${imageWGSL}\n${functions}
-    struct BakeVertex {p:vec4f,n:vec4f,uv:vec4f}
+    struct BakeVertex {p:vec4f,n:vec4f,uv:vec4f,color:vec4f}
     @group(0) @binding(0) var<storage,read> source:array<BakeVertex>;
     @group(0) @binding(1) var<storage,read_write> result:array<vec4f>;
     @compute @workgroup_size(64) fn bake(@builtin(global_invocation_id) id:vec3u){
@@ -51,7 +51,7 @@ export async function bakeDisplacement(scene, device) {
       let base=(id.x/3u)*3u;let a=source[base];let b=source[base+1u];let c=source[base+2u];
       let frame=mxSurfaceFrame(n,b.p.xyz-a.p.xyz,c.p.xyz-a.p.xyz,b.uv.xy-a.uv.xy,c.uv.xy-a.uv.xy);
       let derivatives=mxSurfaceDerivatives(n,b.p.xyz-a.p.xyz,c.p.xyz-a.p.xyz,b.uv.xy-a.uv.xy,c.uv.xy-a.uv.xy);
-      let ctx=ShadingContext(v.p.xyz,n,frame[0],frame[1],v.uv.xy,0,0,vec2f(0),vec2f(0),derivatives[0],derivatives[1],vec3f(0,0,1));var d=vec3f(0);
+      let ctx=ShadingContext(v.p.xyz,n,frame[0],frame[1],v.uv.xy,0,0,vec2f(0),vec2f(0),derivatives[0],derivatives[1],vec3f(0,0,1),v.color);var d=vec3f(0);
       switch u32(v.uv.z){${scene.materials.map((_,i)=>`case ${i}u:{d=displacement${i}(ctx);}`).join('')}default:{}}
       result[id.x]=vec4f(v.p.xyz+d,0);
     }`});

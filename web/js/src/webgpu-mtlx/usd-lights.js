@@ -6,8 +6,11 @@ import { Matrix4, Matrix3, Vector3 } from 'three';
  * Rectangles emit along local -Z. Unsupported nonphysical controls fail closed.
  */
 export function appendRectLights(scene, lights) {
-  const result={...scene,positions:Array.from(scene.positions),normals:Array.from(scene.normals||[]),uvs:Array.from(scene.uvs||[]),indices:Array.from(scene.indices),materialIds:Array.from(scene.materialIds||new Array(scene.indices.length/3).fill(0)),materials:scene.materials.slice()};
+  const result={...scene,positions:Array.from(scene.positions),normals:Array.from(scene.normals||[]),uvs:Array.from(scene.uvs||[]),colors:Array.from(scene.colors||[]),indices:Array.from(scene.indices),materialIds:Array.from(scene.materialIds||new Array(scene.indices.length/3).fill(0)),materials:scene.materials.slice()};
   if(result.normals.length!==result.positions.length||result.uvs.length!==result.positions.length/3*2)throw new Error('Light conversion requires scene normals and UVs');
+  if(!result.colors.length)result.colors=new Array(result.positions.length/3*4).fill(0).map((v,i)=>i%4===3?1:v);
+  else if(result.colors.length===result.positions.length/3*3){const rgb=result.colors;result.colors=[];for(let i=0;i<rgb.length;i+=3)result.colors.push(rgb[i],rgb[i+1],rgb[i+2],1);}
+  if(result.colors.length!==result.positions.length/3*4)throw new Error('Light conversion color count mismatch');
   const imported=[];
   for(const light of lights) {
     if(light.type!=='rect')throw new Error(`Unsupported authored light type: ${light.type}`);
@@ -27,7 +30,7 @@ export function appendRectLights(scene, lights) {
       {name:'emission',category:'uniform_edf',type:'EDF',inputs:{color:{type:'color3',value:radiance}}},
       {name:'surface',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'emission'}}}
     ]});
-    for(const v of vertices){result.positions.push(...v.toArray());result.normals.push(...normal.toArray());}
+    for(const v of vertices){result.positions.push(...v.toArray());result.normals.push(...normal.toArray());result.colors.push(0,0,0,1);}
     result.uvs.push(0,0,0,1,1,1,1,0);
     const winding=cross.dot(normal)>0?[0,1,2,0,2,3]:[0,2,1,0,3,2];
     result.indices.push(...winding.map(i=>i+offset));result.materialIds.push(material,material);
