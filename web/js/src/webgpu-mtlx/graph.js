@@ -11,9 +11,9 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 // Units are semantic annotations; implementations consume their authored
 // convention (for example degrees for rotate2d and nanometers for thin film).
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
-export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'saturate', 'contrast', 'premult', 'unpremult', 'ramp4', 'triplanarprojection', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
+export const valueCategories = new Set(['constant', 'add', 'subtract', 'plus', 'minus', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'fract', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'saturate', 'contrast', 'premult', 'unpremult', 'blackbody', 'ramp4', 'triplanarprojection', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'UsdPreviewSurface', 'surface_unlit', 'surfacematerial', 'surface']);
-for(const category of ['transformmatrix','normalmap','bump3','heighttonormal','rotate3d','reorder','fractal2d','fractal3d','worleynoise2d','worleynoise3d','unifiednoise2d','unifiednoise3d','latlongimage','splitlr','splittb','ramp','ramp_gradient','ramplr','ramptb','checkerboard','line','circle','grid','crosshatch','tiledcircles','randomfloat','randomcolor','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d'])valueCategories.add(category);
+for(const category of ['transformmatrix','normalmap','bump','bump3','heighttonormal','rotate3d','reorder','fractal2d','fractal3d','worleynoise2d','worleynoise3d','unifiednoise2d','unifiednoise3d','latlongimage','splitlr','splittb','ramp','ramp_gradient','ramplr','ramptb','checkerboard','line','circle','grid','crosshatch','tiledcircles','randomfloat','randomcolor','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
 export function literal(type, value, path = '') {
   if(value===''&&type==='BSDF')return 'emptyClosure()';
@@ -407,11 +407,11 @@ export function compileGraph(document, { output, library = {}, material = false,
           code=`select(${mapped},clamp(${mapped},min(${lo},${hi}),max(${lo},${hi})),${x('clampoutput',true,'boolean')})`; break;
         }
         case 'constant': code = same('value'); break;
-        case 'add': {
+        case 'add': case 'plus': {
           if(type==='BSDF') {const a=input('in1',undefined,'BSDF'),b=input('in2',undefined,'BSDF');code=`${a.hasInterior||b.hasInterior?'closureAddPreservingInterior':'closureAdd'}(${a.code},${b.code})`;closureCount=(a.closureCount||0)+(b.closureCount||0);hasInterior=a.hasInterior||b.hasInterior;interiorCategories=a.hasInterior?a.interiorCategories:b.interiorCategories;}
           else code = binary('+'); break;
         }
-        case 'subtract': code = binary('-'); break;
+        case 'subtract': case 'minus': code = binary('-'); break;
         case 'difference': code = `abs(${same('in1')}-${scalarOrSame('in2')})`; break;
         case 'screen': {
           const one=type==='float'?'1.0':`${types[type]}(1.0)`; code=`(${one}-(${one}-${same('in1')})*(${one}-${scalarOrSame('in2')}))`; break;
@@ -434,7 +434,7 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'modulo': code = `(${same('in1')} - ${same('in2')} * floor(${same('in1')} / ${same('in2')}))`; break;
         case 'power': case 'min': case 'max': code = `${n.category === 'power' ? 'pow' : n.category}(${same('in1')},${scalarOrSame('in2')})`; break;
         case 'safepower': { const base=same('in1'), exponent=scalarOrSame('in2'); code=`(sign(${base})*pow(abs(${base}),${exponent}))`; break; }
-        case 'absval': case 'sign': case 'floor': case 'ceil': case 'round': case 'sqrt': case 'ln': case 'exp': case 'exp2': case 'sin': case 'cos': case 'tan': case 'asin': case 'acos': case 'atan': code = `${({ absval: 'abs', ln: 'log' })[n.category] || n.category}(${same('in')})`; break;
+        case 'absval': case 'sign': case 'floor': case 'ceil': case 'round': case 'fract': case 'sqrt': case 'ln': case 'exp': case 'exp2': case 'sin': case 'cos': case 'tan': case 'asin': case 'acos': case 'atan': code = `${({ absval: 'abs', ln: 'log' })[n.category] || n.category}(${same('in')})`; break;
         case 'normalize': {
           const value = x('in', undefined, type), fallback = widths[type] === 2 ? 'vec2f(0.0,1.0)' : widths[type] === 3 ? 'vec3f(0.0,0.0,1.0)' : 'vec4f(0.0,0.0,0.0,1.0)';
           if (![2, 3, 4].includes(widths[type])) fail('TYPE', key, 'normalize requires a vector input');
@@ -511,6 +511,11 @@ export function compileGraph(document, { output, library = {}, material = false,
           const hsv=`mxRgbToHsv(${rgb})`, amount=x('amount',[0,1,1],'vector3');
           const adjusted=`mxHsvToRgb(vec3f(fract(${hsv}.x+${amount}.x),max(0.0,${hsv}.y*${amount}.y),max(0.0,${hsv}.z*${amount}.z)))`;
           code=type==='color4'?`vec4f(${adjusted},${value.code}.a)`:adjusted; break;
+        }
+        case 'blackbody': {
+          if (type !== 'color3') fail('TYPE', key, 'blackbody output must be color3');
+          const temperature = `clamp(${x('temperature',6500,'float')},1000.0,40000.0)`;
+          code = `mxBlackbody(${temperature})`; break;
         }
         case 'saturate': {
           if (!['color3','color4'].includes(type)) fail('TYPE', key, 'saturate output must be color3/color4');
@@ -611,8 +616,9 @@ export function compileGraph(document, { output, library = {}, material = false,
           if(!['color3','vector3'].includes(normalInput.type))fail('TYPE',key,'normalmap input must be color3/vector3');
           code=`mxNormalmap(${normalInput.code},vec2f(${scale.code}),${vector('normal','normal')},${vector('tangent','tangent')},${vector('bitangent','bitangent')})`;break;
         }
-        case 'bump3': case 'heighttonormal': {
-          const height=x('in',0,'float'), scale=x('scale',1,'float');
+        case 'bump': case 'bump3': case 'heighttonormal': {
+          if (type !== 'vector3') fail('TYPE', key, `${n.category} output must be vector3`);
+          const height=x(n.category==='bump'?'height':'in',0,'float'), scale=x('scale',1,'float');
           const vector=(k,field)=>ins[k]?x(k,undefined,'vector3'):`ctx.${field}`;
           code=`mxBumpHeight(${height},${scale},${vector('normal','normal')},${vector('tangent','tangent')},${vector('bitangent','bitangent')})`;break;
         }
@@ -844,6 +850,14 @@ fn mxBumpHeight(height:f32,scale:f32,n:vec3f,t:vec3f,b:vec3f)->vec3f {
   // supplied by normalmap/image graphs; this node keeps scalar bump graphs
   // explicit without silently turning them into geometric displacement.
   return safeNormal(n+t*(height*scale)+b*(height*scale),n);
+}
+fn mxBlackbody(k:f32)->vec3f {
+  // Bounded Planckian-locus approximation in the renderer's linear RGB space.
+  let t=clamp(k,1000.0,40000.0);
+  let r=select(1.0,329.698727446*pow(max(t-6000.0,1.0),-0.1332047592),t>6600.0);
+  let g=select(clamp(99.4708025861*log(max(t,1.0))-161.1195681661,0.0,255.0),288.1221695283*pow(max(t-6000.0,1.0),-0.0755148492),t>6600.0);
+  let b=select(0.0,138.5177312231*log(max(t-1000.0,1.0))-305.0447927307,t>1900.0);
+  return clamp(vec3f(r,g,b)/255.0,vec3f(0),vec3f(1));
 }
 struct Lobe { base: vec3f, metal: f32, roughness: f32, ior: f32, transmission: f32, emission: vec3f, emissionWeight: f32, anisotropy: f32, transmissionColor: vec3f, kind:u32, weight:f32, alpha:vec2f, complexIOR:vec3f, extinction:vec3f, scatterMode:u32, thinWalled:u32, thinFilmThickness:f32, thinFilmIOR:f32, transmissionDepth:f32, transmissionScatter:vec3f, schlickColor90:vec3f, schlickExponent:f32 }
 struct Medium { absorption: vec3f, scattering: vec3f, anisotropy: f32 }

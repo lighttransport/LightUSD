@@ -685,6 +685,16 @@ test('unified noise dispatches typed noise families and output remapping', () =>
   const source3=compileGraph({nodes:[{name:'u',category:'unifiednoise3d',type:'float',inputs:{position:{type:'vector3',value:[0,0,0]},type:{type:'integer',value:2}}}]});
   assert.match(source3.body,/mxWorley3/);
 });
+test('stdlib utility aliases, blackbody and bump compile with bounded controls', () => {
+  const plus=compileGraph({nodes:[{name:'p',category:'plus',type:'float',inputs:{in1:{type:'float',value:.25},in2:{type:'float',value:.5}}}]});
+  assert.match(plus.body,/0\.25 \+ 0\.5/);
+  const fract=compileGraph({nodes:[{name:'f',category:'fract',type:'vector3',inputs:{in:{type:'vector3',value:[-1.25,.25,2.5]}}}]});
+  assert.match(fract.body,/fract\(/);
+  const blackbody=compileGraph({nodes:[{name:'b',category:'blackbody',type:'color3',inputs:{temperature:{type:'float',value:3200}}}]});
+  assert.match(blackbody.body,/mxBlackbody/); assert.match(blackbody.body,/clamp\(/);
+  const bump=compileGraph({nodes:[{name:'b',category:'bump',type:'vector3',inputs:{height:{type:'float',value:.2},scale:{type:'float',value:1.5}}}]});
+  assert.match(bump.body,/mxBumpHeight/);
+});
 test('cell-noise nodes hash integer cells without interpolation', () => {
   const doc={nodes:[
     {name:'uv',category:'texcoord',type:'vector2',inputs:{}},

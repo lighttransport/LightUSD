@@ -38,6 +38,10 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 - Scalar/vector value emitters and an explicitly approximate Standard Surface /
   OpenPBR terminal mapping. The UI inventories 807 upstream NodeDefs, but this
   count is **not a supported-node count**; individual overloads remain unverified.
+- Common stdlib utility overloads `fract`, `plus`, `minus`, `blackbody`, and
+  `bump` compile with typed inputs, finite temperature bounds, and explicit
+  tangent-frame normal generation. The blackbody and scalar bump paths remain
+  bounded approximations rather than a claim of full physical conformance.
 - Image nodes backed by caller-decoded RGBA float resources in both modes:
   closest/linear filtering; constant/clamp/periodic/mirror addressing; float,
   vector and color outputs; default colors; linear-light area-filtered mip chains.
