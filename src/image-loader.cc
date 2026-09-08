@@ -2,11 +2,11 @@
 //
 // - OpenEXR(through TinyEXR). 16bit and 32bit
 // - HDR/RGBE (Radiance) through stb_image. float32
-// - TIFF/DNG(through TinyDNG). 8bit, 16bit and 32bit
+// - TIFF/DNG(through TinyDNG). 8bit, packed 10/12/14bit (expanded to 16bit),
+//   16bit and 32bit
 // - PNG(8bit, 16bit), Jpeg, bmp, tga, ...(through stb_image or wuffs).
 //
 // - [ ] Use fpng for 8bit PNG when `stb_image` is used
-// - [ ] 10bit, 12bit and 14bit DNG image
 // - [ ] Support LoD tile, multi-channel for TIFF image
 //
 
@@ -138,6 +138,7 @@ extern "C" {
 
 #include <cstring>  // for std::memcpy
 #include <cstdint>  // for SIZE_MAX
+#include <mutex>
 
 #include "image-loader.hh"
 #include "io-util.hh"
@@ -147,6 +148,38 @@ extern "C" {
 
 namespace lightusd {
 namespace image {
+
+namespace {
+std::mutex g_image_loader_mutex;
+LoadImageDataFunction g_image_loader = nullptr;
+void *g_image_loader_user_data = nullptr;
+GetImageInfoFunction g_image_info_loader = nullptr;
+void *g_image_info_loader_user_data = nullptr;
+
+void GetImageLoader(LoadImageDataFunction *loader, void **user_data) {
+  std::lock_guard<std::mutex> lock(g_image_loader_mutex);
+  *loader = g_image_loader;
+  *user_data = g_image_loader_user_data;
+}
+
+void GetImageInfoLoader(GetImageInfoFunction *loader, void **user_data) {
+  std::lock_guard<std::mutex> lock(g_image_loader_mutex);
+  *loader = g_image_info_loader;
+  *user_data = g_image_info_loader_user_data;
+}
+}  // namespace
+
+void SetImageLoader(LoadImageDataFunction loader, void *user_data) {
+  std::lock_guard<std::mutex> lock(g_image_loader_mutex);
+  g_image_loader = loader;
+  g_image_loader_user_data = user_data;
+}
+
+void SetImageInfoLoader(GetImageInfoFunction loader, void *user_data) {
+  std::lock_guard<std::mutex> lock(g_image_loader_mutex);
+  g_image_info_loader = loader;
+  g_image_info_loader_user_data = user_data;
+}
 
 namespace {
 
@@ -184,22 +217,146 @@ bool DecodeImageWUFF(const uint8_t *bytes, const size_t size,
                     const std::string &uri, Image *image, std::string *warn,
                     std::string *err) {
 
-  if (err) {
-    (*err) = "TODO: WUFF image loader.\n";
+  (void)warn;
+  if (!bytes || !image || size == 0) {
+    if (err) *err = "WUFFS: empty image input: " + uri + "\n";
+    return false;
   }
-
-  return false;
+  wuffs_base__image_decoder *decoder = nullptr;
+  if (size >= 8 && bytes[0] == 0x89 && bytes[1] == 'P' &&
+      bytes[2] == 'N' && bytes[3] == 'G') {
+    decoder = wuffs_png__decoder__alloc_as__wuffs_base__image_decoder();
+  } else if (size >= 2 && bytes[0] == 0xff && bytes[1] == 0xd8) {
+    decoder = wuffs_jpeg__decoder__alloc_as__wuffs_base__image_decoder();
+  } else if (size >= 2 && bytes[0] == 'B' && bytes[1] == 'M') {
+    decoder = wuffs_bmp__decoder__alloc_as__wuffs_base__image_decoder();
+  }
+  if (!decoder) {
+    if (err) *err = "WUFFS: unsupported image signature: " + uri + "\n";
+    return false;
+  }
+  wuffs_base__io_buffer source = wuffs_base__ptr_u8__reader(
+      const_cast<uint8_t *>(bytes), size, true);
+  wuffs_base__image_config config = wuffs_base__null_image_config();
+  wuffs_base__status status = decoder->decode_image_config(&config, &source);
+  if (status.is_error() || !config.is_valid()) {
+    if (err) *err = std::string("WUFFS: image header decode failed: ") +
+                    (status.message() ? status.message() : "invalid header") +
+                    " (" + uri + ")\n";
+    free(decoder);
+    return false;
+  }
+  source.meta.ri = static_cast<size_t>(config.first_frame_io_position());
+  const uint32_t width = config.pixcfg.width();
+  const uint32_t height = config.pixcfg.height();
+  size_t pixel_bytes = 0;
+  if (width == 0 || height == 0 || width > uint32_t(INT_MAX) ||
+      height > uint32_t(INT_MAX) ||
+      !safe::mul3(size_t(width), size_t(height), size_t(4), &pixel_bytes) ||
+      pixel_bytes > kMaxDecodedImageBytes) {
+    if (err) *err = "WUFFS: image dimensions exceed decode limits: " + uri +
+                    "\n";
+    free(decoder);
+    return false;
+  }
+  wuffs_base__pixel_config output_config = wuffs_base__null_pixel_config();
+  output_config.set(WUFFS_BASE__PIXEL_FORMAT__RGBA_NONPREMUL, 0, width,
+                    height);
+  if (!output_config.is_valid() || output_config.pixbuf_len() != pixel_bytes) {
+    if (err) *err = "WUFFS: failed to allocate output pixel format: " + uri +
+                    "\n";
+    free(decoder);
+    return false;
+  }
+  std::vector<uint8_t> pixels(pixel_bytes);
+  wuffs_base__pixel_buffer output = wuffs_base__null_pixel_buffer();
+  status = output.set_from_slice(&output_config,
+                                 wuffs_base__make_slice_u8(
+                                     pixels.data(), pixels.size()));
+  if (status.is_error()) {
+    if (err) *err = std::string("WUFFS: output buffer setup failed: ") +
+                    status.message() + "\n";
+    free(decoder);
+    return false;
+  }
+  const wuffs_base__range_ii_u64 work_range = decoder->workbuf_len();
+  if (work_range.min_incl > work_range.max_incl ||
+      work_range.min_incl > kMaxDecodedImageBytes) {
+    if (err) *err = "WUFFS: decoder work buffer exceeds limits: " + uri +
+                    "\n";
+    free(decoder);
+    return false;
+  }
+  std::vector<uint8_t> work(static_cast<size_t>(work_range.min_incl));
+  status = decoder->decode_frame(
+      &output, &source, WUFFS_BASE__PIXEL_BLEND__SRC,
+      wuffs_base__make_slice_u8(work.data(), work.size()), nullptr);
+  if (status.is_error()) {
+    if (err) *err = std::string("WUFFS: image decode failed: ") +
+                    status.message() + " (" + uri + ")\n";
+    free(decoder);
+    return false;
+  }
+  image->width = static_cast<int>(width);
+  image->height = static_cast<int>(height);
+  image->channels = 4;
+  image->bpp = 8;
+  image->format = Image::PixelFormat::UInt;
+  image->data = std::move(pixels);
+  free(decoder);
+  return true;
 
 }
 
 bool GetImageInfoWUFF(const uint8_t *bytes, const size_t size,
                     const std::string &uri, uint32_t *width, uint32_t *height, uint32_t *channels, std::string *warn,
                     std::string *err) {
-  if (err) {
-    (*err) = "TODO: WUFF image loader.\n";
+  (void)warn;
+  if (!bytes || !width || !height || !channels || size == 0) {
+    if (err) *err = "WUFFS: empty image input: " + uri + "\n";
+    return false;
   }
-
-  return false;
+  wuffs_base__image_decoder *decoder = nullptr;
+  if (size >= 8 && bytes[0] == 0x89 && bytes[1] == 'P' &&
+      bytes[2] == 'N' && bytes[3] == 'G') {
+    decoder = wuffs_png__decoder__alloc_as__wuffs_base__image_decoder();
+  } else if (size >= 2 && bytes[0] == 0xff && bytes[1] == 0xd8) {
+    decoder = wuffs_jpeg__decoder__alloc_as__wuffs_base__image_decoder();
+  } else if (size >= 2 && bytes[0] == 'B' && bytes[1] == 'M') {
+    decoder = wuffs_bmp__decoder__alloc_as__wuffs_base__image_decoder();
+  }
+  if (!decoder) {
+    if (err) *err = "WUFFS: unsupported image signature: " + uri + "\n";
+    return false;
+  }
+  wuffs_base__io_buffer source = wuffs_base__ptr_u8__reader(
+      const_cast<uint8_t *>(bytes), size, true);
+  wuffs_base__image_config config = wuffs_base__null_image_config();
+  const wuffs_base__status status =
+      decoder->decode_image_config(&config, &source);
+  if (status.is_error() || !config.is_valid()) {
+    if (err) *err = std::string("WUFFS: image header decode failed: ") +
+                    (status.message() ? status.message() : "invalid header") +
+                    " (" + uri + ")\n";
+    free(decoder);
+    return false;
+  }
+  source.meta.ri = static_cast<size_t>(config.first_frame_io_position());
+  *width = config.pixcfg.width();
+  *height = config.pixcfg.height();
+  const uint32_t format = config.pixcfg.pixel_format().repr;
+  *channels = (format == WUFFS_BASE__PIXEL_FORMAT__Y ||
+               format == WUFFS_BASE__PIXEL_FORMAT__A)
+                  ? 1
+                  : (format == WUFFS_BASE__PIXEL_FORMAT__YA_NONPREMUL ||
+                     format == WUFFS_BASE__PIXEL_FORMAT__YA_PREMUL)
+                        ? 2
+                        : (format == WUFFS_BASE__PIXEL_FORMAT__RGB ||
+                           format == WUFFS_BASE__PIXEL_FORMAT__BGR)
+                              ? 3
+                              : 4;
+  free(decoder);
+  return true;
 }
 
 
@@ -707,14 +864,113 @@ bool DecodeImageEXR(const uint8_t *bytes, const size_t size,
 
 #else  // legacy v1 backend
 
+static bool ExrChannelNameIs(const char *name, const char *channel) {
+  if (!name || !channel) return false;
+  const size_t name_len = std::strlen(name);
+  const size_t channel_len = std::strlen(channel);
+  return name_len >= channel_len &&
+         std::strcmp(name + name_len - channel_len, channel) == 0 &&
+         (name_len == channel_len ||
+          name[name_len - channel_len - 1] == '.');
+}
+
+static bool DecodeImageEXRUInt(const uint8_t *bytes, size_t size,
+                               const std::string &uri, Image *image,
+                               std::string *err) {
+  EXRVersion version;
+  if (ParseEXRVersionFromMemory(&version, bytes, size) != TINYEXR_SUCCESS ||
+      version.multipart || version.tiled || version.non_image) return false;
+  EXRHeader header;
+  InitEXRHeader(&header);
+  const char *exrerr = nullptr;
+  if (ParseEXRHeaderFromMemory(&header, &version, bytes, size, &exrerr) !=
+      TINYEXR_SUCCESS) {
+    if (exrerr) FreeEXRErrorMessage(exrerr);
+    FreeEXRHeader(&header);
+    return false;
+  }
+  bool all_uint = header.num_channels > 0;
+  for (int c = 0; c < header.num_channels; ++c) {
+    if (header.pixel_types[c] != TINYEXR_PIXELTYPE_UINT) {
+      all_uint = false;
+      break;
+    }
+    header.requested_pixel_types[c] = TINYEXR_PIXELTYPE_UINT;
+  }
+  if (!all_uint) {
+    FreeEXRHeader(&header);
+    return false;
+  }
+  EXRImage exr;
+  InitEXRImage(&exr);
+  if (LoadEXRImageFromMemory(&exr, &header, bytes, size, &exrerr) !=
+          TINYEXR_SUCCESS ||
+      !exr.images || exr.width <= 0 || exr.height <= 0) {
+    if (exrerr) FreeEXRErrorMessage(exrerr);
+    FreeEXRImage(&exr);
+    FreeEXRHeader(&header);
+    return false;
+  }
+  auto is_channel = [](const char *name, const char *channel) {
+    if (!name || !channel) return false;
+    const size_t n = std::strlen(name), c = std::strlen(channel);
+    return n >= c && std::strcmp(name + n - c, channel) == 0 &&
+           (n == c || name[n - c - 1] == '.');
+  };
+  int idx_r = -1, idx_g = -1, idx_b = -1, idx_a = -1, idx_y = -1;
+  for (int c = 0; c < header.num_channels; ++c) {
+    const char *name = header.channels[c].name;
+    if (is_channel(name, "R")) idx_r = c;
+    else if (is_channel(name, "G")) idx_g = c;
+    else if (is_channel(name, "B")) idx_b = c;
+    else if (is_channel(name, "A")) idx_a = c;
+    else if (is_channel(name, "Y")) idx_y = c;
+  }
+  if (idx_r < 0 && idx_g < 0 && idx_b < 0 && idx_y < 0) {
+    FreeEXRImage(&exr);
+    FreeEXRHeader(&header);
+    return false;
+  }
+  size_t pixels = 0, total = 0;
+  if (!safe::mul(size_t(exr.width), size_t(exr.height), &pixels) ||
+      !safe::mul(pixels, size_t(4 * sizeof(uint32_t)), &total) ||
+      total > kMaxDecodedImageBytes) {
+    if (err) *err += "Decoded UINT EXR image exceeds limits: " + uri + "\n";
+    FreeEXRImage(&exr);
+    FreeEXRHeader(&header);
+    return false;
+  }
+  auto channel = [&](int index) -> const uint32_t * {
+    return index >= 0 ? reinterpret_cast<const uint32_t *>(exr.images[index])
+                      : nullptr;
+  };
+  const uint32_t *r = channel(idx_r), *g = channel(idx_g), *b = channel(idx_b),
+                 *a = channel(idx_a), *y = channel(idx_y);
+  image->width = exr.width;
+  image->height = exr.height;
+  image->channels = 4;
+  image->bpp = 32;
+  image->format = Image::PixelFormat::UInt;
+  image->data.resize(total);
+  uint32_t *out = reinterpret_cast<uint32_t *>(image->data.data());
+  for (size_t p = 0; p < pixels; ++p) {
+    out[p * 4 + 0] = r ? r[p] : (y ? y[p] : 0u);
+    out[p * 4 + 1] = g ? g[p] : (y ? y[p] : 0u);
+    out[p * 4 + 2] = b ? b[p] : (y ? y[p] : 0u);
+    out[p * 4 + 3] = a ? a[p] : 0xffffffffu;
+  }
+  FreeEXRImage(&exr);
+  FreeEXRHeader(&header);
+  return true;
+}
+
 bool DecodeImageEXR(const uint8_t *bytes, const size_t size,
                     const std::string &uri, Image *image,
                     std::string *err) {
-  // TODO(syoyo):
-  // - [ ] Read fp16 image as fp16
-  // - [ ] Read int16 image as int16
-  // - [ ] Read int32 image as int32
-  // - [ ] Multi-channel EXR
+  std::string native_err;
+  if (DecodeImageEXRUInt(bytes, size, uri, image, &native_err)) {
+    return true;
+  }
 
   float *rgba = nullptr;
   int width;
@@ -851,7 +1107,7 @@ bool DecodeTiledTIFF(const uint8_t *bytes, size_t size, const std::string &uri,
   uint32_t width = 0, height = 0;
   bool ok = FindLargestTiffDirectory(tif, &directory, &width, &height);
   uint16_t bits = 0, samples = 0, planar = PLANARCONFIG_CONTIG;
-  uint16_t sampleFormat = 1;  // SAMPLEFORMAT_UINT
+  uint16_t sampleFormat = SAMPLEFORMAT_UINT;
   uint32_t tileWidth = 0, tileHeight = 0;
   ok = ok && TIFFGetField(tif, TIFFTAG_BITSPERSAMPLE, &bits) &&
        TIFFGetField(tif, TIFFTAG_SAMPLESPERPIXEL, &samples) &&
@@ -860,31 +1116,49 @@ bool DecodeTiledTIFF(const uint8_t *bytes, size_t size, const std::string &uri,
        TIFFGetField(tif, TIFFTAG_TILEWIDTH, &tileWidth) &&
        TIFFGetField(tif, TIFFTAG_TILELENGTH, &tileHeight) &&
        samples >= 1 && samples <= 4 && tileWidth && tileHeight;
-  if (!ok || bits != 32 || sampleFormat != 3 /* IEEE floating point */) {
+  if (!ok || (bits != 8 && bits != 16 && bits != 32) ||
+      (sampleFormat != SAMPLEFORMAT_UINT &&
+       sampleFormat != SAMPLEFORMAT_INT &&
+       sampleFormat != SAMPLEFORMAT_IEEEFP) ||
+      (planar != PLANARCONFIG_CONTIG && planar != PLANARCONFIG_SEPARATE)) {
     TIFFClose(tif);
     return false;
   }
   size_t pixels = 0, total = 0;
+  const size_t bytesPerSample = bits / 8;
   ok = safe::mul(static_cast<size_t>(width), height, &pixels) &&
        safe::mul(pixels, samples, &total) &&
-       safe::mul(total, sizeof(float), &total) &&
+       safe::mul(total, bytesPerSample, &total) &&
        total <= kMaxDecodedImageBytes;
   if (!ok) { TIFFClose(tif); return false; }
   const tsize_t tileBytes = TIFFTileSize(tif);
   if (tileBytes <= 0) { TIFFClose(tif); return false; }
-  if (static_cast<size_t>(tileBytes) % sizeof(float) != 0) {
+  const size_t sourceTileRowBytes =
+      size_t(tileWidth) * bytesPerSample *
+      (planar == PLANARCONFIG_CONTIG ? samples : 1);
+  size_t sourceTileBytes = 0;
+  if (sourceTileRowBytes == 0 ||
+      !safe::mul(sourceTileRowBytes, size_t(tileHeight), &sourceTileBytes) ||
+      static_cast<size_t>(tileBytes) < sourceTileBytes) {
     TIFFClose(tif);
     return false;
   }
-  std::vector<float> tile(static_cast<size_t>(tileBytes) / sizeof(float));
+  std::vector<uint8_t> tile(static_cast<size_t>(tileBytes));
   image->width = static_cast<int>(width);
   image->height = static_cast<int>(height);
   image->channels = static_cast<int>(samples);
-  image->bpp = 32;
-  image->format = Image::PixelFormat::Float;
+  image->bpp = bits;
+  image->format = sampleFormat == SAMPLEFORMAT_UINT
+                      ? Image::PixelFormat::UInt
+                      : sampleFormat == SAMPLEFORMAT_INT
+                            ? Image::PixelFormat::Int
+                            : Image::PixelFormat::Float;
   image->data.assign(total, 0);
-  const uint32_t xTiles = (width + tileWidth - 1u) / tileWidth;
-  const uint32_t yTiles = (height + tileHeight - 1u) / tileHeight;
+  // Avoid width + tileWidth - 1 overflow for hostile, near-uint32 TIFF
+  // dimensions. The decoded-byte limit above still rejects impractical
+  // rasters, but arithmetic must remain defined before that decision is used.
+  const uint32_t xTiles = width / tileWidth + (width % tileWidth != 0 ? 1u : 0u);
+  const uint32_t yTiles = height / tileHeight + (height % tileHeight != 0 ? 1u : 0u);
   for (uint16_t sample = 0; sample < samples; ++sample) {
     if (planar == PLANARCONFIG_CONTIG && sample != 0) break;
     for (uint32_t ty = 0; ty < yTiles; ++ty) {
@@ -894,20 +1168,25 @@ bool DecodeTiledTIFF(const uint8_t *bytes, size_t size, const std::string &uri,
                          planar == PLANARCONFIG_SEPARATE ? sample : 0) < 0) {
           ok = false; break;
         }
-        const float *src = tile.data();
         const uint32_t rows = (std::min)(tileHeight, height - y0);
         const uint32_t cols = (std::min)(tileWidth, width - x0);
         for (uint32_t y = 0; y < rows; ++y) {
           for (uint32_t x = 0; x < cols; ++x) {
-            const size_t dstPixel = (size_t(y0 + y) * width + x0 + x) * samples;
-            const size_t srcPixel = size_t(y) * tileWidth + x;
+            const size_t dstSample =
+                (size_t(y0 + y) * width + x0 + x) * samples +
+                (planar == PLANARCONFIG_SEPARATE ? sample : 0);
+            const size_t srcSample = size_t(y) * tileWidth + x;
+            const size_t srcOffset =
+                (planar == PLANARCONFIG_CONTIG
+                     ? srcSample * samples
+                     : srcSample) * bytesPerSample;
             if (planar == PLANARCONFIG_SEPARATE) {
-              std::memcpy(image->data.data() + (dstPixel + sample) * sizeof(float),
-                          src + srcPixel, sizeof(float));
+              std::memcpy(image->data.data() + dstSample * bytesPerSample,
+                          tile.data() + srcOffset, bytesPerSample);
             } else {
-              std::memcpy(image->data.data() + dstPixel * sizeof(float),
-                          src + srcPixel * samples,
-                          sizeof(float) * samples);
+              std::memcpy(image->data.data() + dstSample * bytesPerSample,
+                          tile.data() + srcOffset,
+                          bytesPerSample * samples);
             }
           }
         }
@@ -936,7 +1215,160 @@ bool GetTiledTIFFInfo(const uint8_t *bytes, size_t size, uint32_t *width,
   if (ok) *channels = samples;
   return ok;
 }
+
+// Decode strip/scanline TIFFs through libtiff. TinyDNG intentionally handles
+// the common contiguous path, but libtiff is needed for planar images and for
+// rows whose stored stride includes padding. TIFFReadScanline normalizes the
+// file byte order and compression details before we interleave the result.
+bool DecodeScanlineTIFF(const uint8_t *bytes, size_t size,
+                        const std::string &uri, Image *image,
+                        std::string *err) {
+  TiffMemory memory;
+  TIFF *tif = OpenMemoryTiff(bytes, size, &memory);
+  if (!tif) return false;
+  uint16_t directory = 0;
+  uint32_t width = 0, height = 0;
+  bool ok = FindLargestTiffDirectory(tif, &directory, &width, &height);
+  uint16_t bits = 0, samples = 0, planar = PLANARCONFIG_CONTIG;
+  uint16_t sample_format = SAMPLEFORMAT_UINT;
+  ok = ok && !TIFFIsTiled(tif) &&
+       TIFFGetField(tif, TIFFTAG_BITSPERSAMPLE, &bits) &&
+       TIFFGetField(tif, TIFFTAG_SAMPLESPERPIXEL, &samples) &&
+       TIFFGetFieldDefaulted(tif, TIFFTAG_PLANARCONFIG, &planar) &&
+       TIFFGetFieldDefaulted(tif, TIFFTAG_SAMPLEFORMAT, &sample_format) &&
+       samples >= 1 && samples <= 4 &&
+       (bits == 8 || bits == 16 || bits == 32) &&
+       (sample_format == SAMPLEFORMAT_UINT ||
+        sample_format == SAMPLEFORMAT_INT ||
+        sample_format == SAMPLEFORMAT_IEEEFP) &&
+       (planar == PLANARCONFIG_CONTIG || planar == PLANARCONFIG_SEPARATE);
+  size_t pixel_count = 0, row_bytes = 0, total = 0;
+  const size_t bytes_per_sample = bits / 8;
+  ok = ok && safe::mul(static_cast<size_t>(width), samples, &pixel_count) &&
+       safe::mul(pixel_count, bytes_per_sample, &row_bytes) &&
+       safe::mul(row_bytes, height, &total) && total <= kMaxDecodedImageBytes;
+  if (!ok) {
+    TIFFClose(tif);
+    return false;
+  }
+  const tsize_t scanline_size = TIFFScanlineSize(tif);
+  if (scanline_size <= 0 ||
+      static_cast<size_t>(scanline_size) <
+          (planar == PLANARCONFIG_CONTIG
+               ? row_bytes
+               : size_t(width) * bytes_per_sample)) {
+    TIFFClose(tif);
+    return false;
+  }
+  std::vector<uint8_t> scanline(static_cast<size_t>(scanline_size));
+  image->width = static_cast<int>(width);
+  image->height = static_cast<int>(height);
+  image->channels = static_cast<int>(samples);
+  image->bpp = bits;
+  image->format = sample_format == SAMPLEFORMAT_UINT
+                      ? Image::PixelFormat::UInt
+                      : sample_format == SAMPLEFORMAT_INT
+                            ? Image::PixelFormat::Int
+                            : Image::PixelFormat::Float;
+  image->data.assign(total, 0);
+  for (uint32_t y = 0; y < height && ok; ++y) {
+    const uint16_t plane_count =
+        planar == PLANARCONFIG_SEPARATE ? samples : uint16_t(1);
+    for (uint16_t sample = 0; sample < plane_count; ++sample) {
+      if (TIFFReadScanline(tif, scanline.data(), y,
+                           planar == PLANARCONFIG_SEPARATE ? sample : 0) < 0) {
+        ok = false;
+        break;
+      }
+      for (uint32_t x = 0; x < width; ++x) {
+        const size_t src = size_t(x) * bytes_per_sample *
+                           (planar == PLANARCONFIG_CONTIG ? samples : 1);
+        const size_t dst_sample =
+            (size_t(y) * width * samples) +
+            (size_t(x) * samples) +
+            (planar == PLANARCONFIG_SEPARATE ? sample : 0);
+        std::memcpy(image->data.data() + dst_sample * bytes_per_sample,
+                    scanline.data() + src, bytes_per_sample);
+      }
+    }
+  }
+  TIFFClose(tif);
+  if (!ok) {
+    image->data.clear();
+    if (err) *err += "Failed to decode scanline TIFF: " + uri + "\n";
+  }
+  return ok;
+}
 #endif
+
+// Expand a contiguous TIFF bit stream whose samples are not byte aligned.
+// TinyDNG exposes these samples in their stored packed form. Image uses a
+// byte-addressable bpp contract, so normalize them to unsigned/signed 16-bit
+// samples while retaining the original numeric range.
+static bool ExpandPackedTIFFSamples(const tinydng::DNGImage &source,
+                                    std::vector<uint8_t> *expanded,
+                                    std::string *err) {
+  const int bps = source.bits_per_sample;
+  if (bps != 10 && bps != 12 && bps != 14) return true;
+  if (source.sample_format != tinydng::SAMPLEFORMAT_UINT &&
+      source.sample_format != tinydng::SAMPLEFORMAT_INT) {
+    if (err) *err += "Packed TIFF samples must use integer sample format.\n";
+    return false;
+  }
+
+  size_t sample_count = 0;
+  size_t bit_count = 0;
+  size_t packed_bytes = 0;
+  if (!safe::mul3(size_t(source.width), size_t(source.height),
+                  size_t(source.samples_per_pixel), &sample_count) ||
+      !safe::mul(sample_count, size_t(bps), &bit_count) ||
+      !safe::add(bit_count, size_t(7), &bit_count)) {
+    if (err) *err += "Packed TIFF sample dimensions overflow.\n";
+    return false;
+  }
+  packed_bytes = bit_count / 8;
+  if (packed_bytes != source.data.size()) {
+    if (err) *err += "Packed TIFF data has unsupported row padding or layout.\n";
+    return false;
+  }
+
+  size_t expanded_bytes = 0;
+  if (!safe::mul(sample_count, sizeof(uint16_t), &expanded_bytes)) {
+    if (err) *err += "Packed TIFF expanded size overflow.\n";
+    return false;
+  }
+  expanded->resize(expanded_bytes);
+  const bool planar = source.planar_configuration == 2;
+  if (source.planar_configuration != 1 && !planar) {
+    if (err) *err += "Packed TIFF has an invalid planar configuration.\n";
+    return false;
+  }
+  const size_t pixels_per_plane = size_t(source.width) * size_t(source.height);
+  for (size_t output_index = 0; output_index < sample_count; ++output_index) {
+    // Packed planar TIFF stores one complete sample plane after another,
+    // while Image always exposes interleaved pixel/channel samples.
+    const size_t source_index =
+        planar ? (output_index % size_t(source.samples_per_pixel)) *
+                         pixels_per_plane +
+                     output_index / size_t(source.samples_per_pixel)
+               : output_index;
+    const size_t first_bit = source_index * size_t(bps);
+    uint32_t sample = 0;
+    for (int bit = 0; bit < bps; ++bit) {
+      const size_t source_bit = first_bit + size_t(bit);
+      sample = (sample << 1) |
+               ((source.data[source_bit / 8] >> (7 - source_bit % 8)) & 1u);
+    }
+    if (source.sample_format == tinydng::SAMPLEFORMAT_INT &&
+        (sample & (uint32_t(1) << (bps - 1))) != 0) {
+      sample |= ~((uint32_t(1) << bps) - 1u);
+    }
+    const uint16_t value = static_cast<uint16_t>(sample);
+    std::memcpy(expanded->data() + output_index * sizeof(value), &value,
+                sizeof(value));
+  }
+  return true;
+}
 
 bool DecodeImageTIFF(const uint8_t *bytes, const size_t size,
                     const std::string &uri, Image *image,
@@ -957,6 +1389,7 @@ bool DecodeImageTIFF(const uint8_t *bytes, const size_t size,
 
   if (!ret) {
 #if defined(LIGHTUSD_WITH_LIBTIFF)
+    if (DecodeScanlineTIFF(bytes, size, uri, image, err)) return true;
     if (DecodeTiledTIFF(bytes, size, uri, image, err)) return true;
 #endif
     (*err) += "Failed to load TIFF/DNG image: " + uri + "\n";
@@ -968,8 +1401,9 @@ bool DecodeImageTIFF(const uint8_t *bytes, const size_t size,
     return false;
   }
 
-  // TODO(syoyo): Multi-layer TIFF
-  // Use the largest image(based on width pixels).
+  // The single-image API selects the largest decoded directory
+  // deterministically. LoadImageLayersFromMemory below preserves every
+  // directory for callers that need multi-image TIFF/DNG data.
   size_t largest = 0;
   int largest_width = images[0].width;
   for (size_t i = 1; i < images.size(); i++) {
@@ -987,8 +1421,8 @@ bool DecodeImageTIFF(const uint8_t *bytes, const size_t size,
     return false;
   }
 
-  // TODO: Support 10, 12 and 14bit Image(e.g. Apple ProRAW 12bit)
-  if ((bps == 8) || (bps == 16) || (bps == 32)) {
+  const bool packed_integer = (bps == 10) || (bps == 12) || (bps == 14);
+  if ((bps == 8) || packed_integer || (bps == 16) || (bps == 32)) {
     // ok
   } else {
     (*err) += "Invalid or unsupported bits per sample " + std::to_string(bps) + " for image: " + uri + "\n";
@@ -1010,16 +1444,105 @@ bool DecodeImageTIFF(const uint8_t *bytes, const size_t size,
   image->width = images[largest].width;
   image->height = images[largest].height;
   image->channels = int(spp);
-  image->bpp = int(bps);
+  image->bpp = packed_integer ? 16 : int(bps);
 
-  image->data.swap(images[largest].data);
+  if (packed_integer) {
+    std::vector<uint8_t> expanded;
+    if (!ExpandPackedTIFFSamples(images[largest], &expanded, err)) {
+      (*err) += "Failed to normalize packed TIFF/DNG image: " + uri + "\n";
+      return false;
+    }
+    image->data = std::move(expanded);
+  } else {
+    image->data.swap(images[largest].data);
+  }
 
+  return true;
+}
+
+static bool DecodeTIFFImageRecord(const tinydng::DNGImage &source,
+                                  const std::string &uri, Image *image,
+                                  std::string *err) {
+  if (!image) {
+    if (err) *err += "TIFF image output is null.\n";
+    return false;
+  }
+  const size_t spp = size_t(source.samples_per_pixel);
+  const size_t bps = size_t(source.bits_per_sample);
+  if (spp == 0 || spp > 4) {
+    if (err) *err += "Samples per pixel must be 1 ~ 4 for image: " + uri + "\n";
+    return false;
+  }
+  const bool packed_integer = bps == 10 || bps == 12 || bps == 14;
+  if (bps != 8 && !packed_integer && bps != 16 && bps != 32) {
+    if (err) *err += "Invalid or unsupported bits per sample " +
+                    std::to_string(bps) + " for image: " + uri + "\n";
+    return false;
+  }
+  if (source.sample_format == tinydng::SAMPLEFORMAT_UINT) {
+    image->format = Image::PixelFormat::UInt;
+  } else if (source.sample_format == tinydng::SAMPLEFORMAT_INT) {
+    image->format = Image::PixelFormat::Int;
+  } else if (source.sample_format == tinydng::SAMPLEFORMAT_IEEEFP) {
+    image->format = Image::PixelFormat::Float;
+  } else {
+    if (err) *err += "Invalid sample format for image: " + uri + "\n";
+    return false;
+  }
+  image->width = source.width;
+  image->height = source.height;
+  image->channels = static_cast<int>(spp);
+  image->bpp = packed_integer ? 16 : static_cast<int>(bps);
+  if (packed_integer) {
+    std::vector<uint8_t> expanded;
+    if (!ExpandPackedTIFFSamples(source, &expanded, err)) return false;
+    image->data = std::move(expanded);
+  } else {
+    image->data = source.data;
+  }
   return true;
 }
 
 #endif
 
 }  // namespace
+
+nonstd::expected<std::vector<ImageResult>, std::string>
+LoadImageLayersFromMemory(const uint8_t *addr, size_t sz,
+                          const std::string &uri) {
+#if defined(LIGHTUSD_WITH_TIFF)
+  if (!addr || sz == 0) {
+    return nonstd::make_unexpected("TIFF layer input is empty: " + uri + "\n");
+  }
+  std::vector<tinydng::FieldInfo> custom_fields;
+  std::vector<tinydng::DNGImage> images;
+  std::string warn;
+  std::string dngerr;
+  if (!tinydng::LoadDNGFromMemory(reinterpret_cast<const char *>(addr), sz,
+                                  custom_fields, &images, &warn, &dngerr) ||
+      images.empty()) {
+    return nonstd::make_unexpected("Failed to load TIFF/DNG layers: " + uri +
+                                   "\n" + dngerr);
+  }
+  std::vector<ImageResult> result;
+  result.reserve(images.size());
+  for (const auto &source : images) {
+    ImageResult layer;
+    layer.warning = warn;
+    std::string err;
+    if (!DecodeTIFFImageRecord(source, uri, &layer.image, &err)) {
+      return nonstd::make_unexpected(err);
+    }
+    result.push_back(std::move(layer));
+  }
+  return result;
+#else
+  (void)addr;
+  (void)sz;
+  return nonstd::make_unexpected(
+      "TIFF support is disabled; cannot load image layers: " + uri + "\n");
+#endif
+}
 
 #if defined(LIGHTUSD_WITH_EXR)
 #if defined(LIGHTUSD_EXR_V3)
@@ -1404,6 +1927,20 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
   ret.image.uri = uri;
   std::string err;
 
+  LoadImageDataFunction user_loader = nullptr;
+  void *user_data = nullptr;
+  GetImageLoader(&user_loader, &user_data);
+  if (user_loader) {
+    if (user_loader(&ret, addr, sz, uri, user_data, &ret.warning, &err)) {
+      ret.image.uri = uri;
+      return std::move(ret);
+    }
+    // A custom loader may use the failed attempt to recognize its own format;
+    // do not leak that diagnostic into an independent built-in attempt.
+    ret.warning.clear();
+    err.clear();
+  }
+
 #if defined(LIGHTUSD_WITH_TEXTOOLS)
   // KTX2 (GPU-compressed / uni). Distinct 12-byte magic, checked first.
   if (IsKTX2FromMemory(addr, sz)) {
@@ -1417,6 +1954,14 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
 
 #if defined(LIGHTUSD_WITH_EXR)
   if (ExrIsEXR(addr, sz)) {
+
+    // Preserve the common all-half scanline case. The regular decoder remains
+    // the fallback for mixed channel types, tiled/deep images, and multipart
+    // files where the public Image contract is normalized to fp32 RGBA.
+    std::string half_err;
+    if (DecodeImageEXRHalf(addr, sz, uri, &ret.image, &half_err)) {
+      return std::move(ret);
+    }
 
     bool ok = DecodeImageEXR(addr, sz, uri, &ret.image, &err);
 
@@ -1476,12 +2021,11 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
 #elif !defined(LIGHTUSD_NO_BUILTIN_IMAGE_LOADER)
   bool ok = DecodeImageSTB(addr, sz, uri, &ret.image, &ret.warning, &err);
 #else
-  // TODO: Use user-supplied image loader
   (void)addr;
   (void)sz;
   (void)uri;
   bool ok = false;
-  err = "Image loading feature is disabled in this build. TODO: use user-supplied image loader\n";
+  err = "Image loading is disabled in this build and no user loader succeeded\n";
 #endif
   if (!ok) {
     return nonstd::make_unexpected(err);
@@ -1494,6 +2038,16 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
     const uint8_t *addr, size_t sz, const std::string &uri) {
   image::ImageInfoResult ret;
   std::string err;
+
+  GetImageInfoFunction user_loader = nullptr;
+  void *user_data = nullptr;
+  GetImageInfoLoader(&user_loader, &user_data);
+  if (user_loader) {
+    if (user_loader(&ret, addr, sz, uri, user_data)) {
+      return std::move(ret);
+    }
+    ret.warning.clear();
+  }
 
 #if defined(LIGHTUSD_WITH_EXR)
   if (ExrIsEXR(addr, sz)) {
@@ -1529,7 +2083,43 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
     ret.channels = uint32_t(nch);
     return std::move(ret);
 #else
-    return nonstd::make_unexpected("TODO: EXR format");
+    EXRVersion version;
+    const int version_ret = ParseEXRVersionFromMemory(
+        &version, reinterpret_cast<const unsigned char *>(addr), sz);
+    if (version_ret != TINYEXR_SUCCESS) {
+      return nonstd::make_unexpected("Failed to parse EXR version: " + uri +
+                                     "\n");
+    }
+    EXRHeader header;
+    InitEXRHeader(&header);
+    const char *exrerr = nullptr;
+    const int header_ret = ParseEXRHeaderFromMemory(
+        &header, &version, reinterpret_cast<const unsigned char *>(addr), sz,
+        &exrerr);
+    if (header_ret != TINYEXR_SUCCESS) {
+      std::string message = "Failed to parse EXR header: " + uri + "\n";
+      if (exrerr) {
+        message += exrerr;
+        message += "\n";
+        FreeEXRErrorMessage(exrerr);
+      }
+      FreeEXRHeader(&header);
+      return nonstd::make_unexpected(message);
+    }
+    const int64_t w = int64_t(header.data_window.max_x) -
+                      int64_t(header.data_window.min_x) + 1;
+    const int64_t hgt = int64_t(header.data_window.max_y) -
+                        int64_t(header.data_window.min_y) + 1;
+    const int nch = header.num_channels;
+    FreeEXRHeader(&header);
+    if (w <= 0 || hgt <= 0 || nch <= 0) {
+      return nonstd::make_unexpected("EXR has an invalid image window: " +
+                                     uri + "\n");
+    }
+    ret.width = static_cast<uint32_t>(w);
+    ret.height = static_cast<uint32_t>(hgt);
+    ret.channels = static_cast<uint32_t>(nch);
+    return std::move(ret);
 #endif
   }
 #endif
@@ -1595,7 +2185,7 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
   (void)sz;
   (void)uri;
   bool ok = false;
-  err = "Image loading feature is disabled in this build. TODO: use user-supplied image info function\n";
+  err = "Image info loading is disabled in this build and no user loader succeeded\n";
 #endif
   if (!ok) {
     return nonstd::make_unexpected(err);

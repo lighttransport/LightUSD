@@ -16,6 +16,11 @@
 #include "common-macros.inc"
 #include "pprint-enum.hh"
 #include "str-util.hh"
+#include "value-pprint.hh"
+#include "core/model-scope.hh"
+#if defined(LIGHTUSD_WITH_TYDRA)
+#include "tydra/value-to-json.hh"
+#endif
 
 #if defined(LIGHTUSD_ENABLE_NLOHMANN_JSON_COMPAT)
 #ifdef __clang__
@@ -31,6 +36,11 @@
 namespace lightusd {
 
 using json = minijson::Value;
+
+// Defined below with the context-aware array serializer. The declaration is
+// needed by the generic value dispatcher used for runtime Stage JSON.
+static json ToJSON(lightusd::GeomMesh& mesh);
+static json ToJSON(lightusd::Model& model);
 
 // Implementation of USDToJSONContext::AddArrayData
 size_t USDToJSONContext::AddArrayData(const void* data, size_t elementSize, size_t elementCount,
@@ -90,15 +100,15 @@ nlohmann::json ToNlohmannJSON(const json &value) {
     case minijson::Type::Null:
       return nullptr;
     case minijson::Type::Boolean:
-      return value.get<bool>();
+      return value.get_bool();
     case minijson::Type::SignedInteger:
-      return value.get<int64_t>();
+      return value.get_int64();
     case minijson::Type::UnsignedInteger:
-      return value.get<uint64_t>();
+      return value.get_uint64();
     case minijson::Type::Number:
-      return value.get<double>();
+      return value.get_double();
     case minijson::Type::String:
-      return value.get<std::string>();
+      return value.get_string();
     case minijson::Type::Array: {
       nlohmann::json arr = nlohmann::json::array();
       if (const auto *items = value.array_items()) {
@@ -164,16 +174,11 @@ bool SerializeJSONValue(const json &value, std::string *out, std::string *err,
   return true;
 }
 
-// Helper functions for array serialization to base64
-template<typename T>
-std::string SerializeArrayToBase64(const std::vector<T>& array) {
-  if (array.empty()) {
-    return "";
-  }
-
-  const unsigned char* bytes = reinterpret_cast<const unsigned char*>(array.data());
-  size_t byte_size;
-  if (!safe::mul(array.size(), sizeof(T), &byte_size)) {
+// Helper function for array serialization to base64. Keeping this byte-based
+// avoids instantiating one template per USD scalar type in this translation
+// unit.
+std::string SerializeBytesToBase64(const void *data, size_t byte_size) {
+  if (!data || byte_size == 0) {
     return "";
   }
 #if SIZE_MAX > UINT_MAX
@@ -182,55 +187,100 @@ std::string SerializeArrayToBase64(const std::vector<T>& array) {
   }
 #endif
 
-  return base64_encode(bytes, static_cast<unsigned int>(byte_size));
+  return base64_encode(static_cast<const unsigned char *>(data),
+                       static_cast<unsigned int>(byte_size));
 }
 
 // Specialized versions for different types
 std::string SerializeIntArrayToBase64(const std::vector<int>& array) {
-  return SerializeArrayToBase64(array);
+  size_t byte_size = 0;
+  if (!safe::mul(array.size(), sizeof(int), &byte_size)) return "";
+  return SerializeBytesToBase64(array.data(), byte_size);
 }
 
 std::string SerializeFloatArrayToBase64(const std::vector<float>& array) {
-  return SerializeArrayToBase64(array);
+  size_t byte_size = 0;
+  if (!safe::mul(array.size(), sizeof(float), &byte_size)) return "";
+  return SerializeBytesToBase64(array.data(), byte_size);
 }
 
 std::string SerializeDoubleArrayToBase64(const std::vector<double>& array) {
-  return SerializeArrayToBase64(array);
+  size_t byte_size = 0;
+  if (!safe::mul(array.size(), sizeof(double), &byte_size)) return "";
+  return SerializeBytesToBase64(array.data(), byte_size);
 }
 
 // Helper functions for mixed-mode serialization
-template<typename T>
-json SerializeArrayData(const std::vector<T>& array, USDToJSONContext* context,
-                        const std::string& componentType, const std::string& type) {
-  if (array.empty()) {
+json SerializeArrayData(const void *data, size_t element_size, size_t count,
+                        USDToJSONContext* context,
+                        const std::string& componentType,
+                        const std::string& type,
+                        const std::string& base64_data) {
+  if (!data || count == 0) {
     return json::object();
   }
 
   if (!context || context->options.arrayMode == ArraySerializationMode::Base64) {
     // Base64 mode
     return json{
-      {"data", SerializeArrayToBase64(array)},
-      {"count", array.size()},
+      {"data", base64_data},
+      {"count", count},
       {"type", type + "[]"}
     };
   } else {
     // Buffer/accessor mode
-    size_t accessorIndex = context->AddArrayData(array.data(), sizeof(T), array.size(), componentType, type);
+    size_t accessorIndex = context->AddArrayData(data, element_size, count,
+                                                 componentType, type);
     if (accessorIndex == SIZE_MAX) {
       // Fallback to base64 on error
       return json{
-        {"data", SerializeArrayToBase64(array)},
-        {"count", array.size()},
+        {"data", base64_data},
+        {"count", count},
         {"type", type + "[]"}
       };
     }
 
     return json{
       {"accessor", accessorIndex},
-      {"count", array.size()},
+      {"count", count},
       {"type", type + "[]"}
     };
   }
+}
+
+static json SerializeMetadataValue(const value::Value &value) {
+  if (const auto *v = value.as<bool>()) return *v;
+  if (const auto *v = value.as<int>()) return *v;
+  if (const auto *v = value.as<unsigned int>()) return *v;
+  if (const auto *v = value.as<int64_t>()) return *v;
+  if (const auto *v = value.as<uint64_t>()) return *v;
+  if (const auto *v = value.as<float>()) return *v;
+  if (const auto *v = value.as<double>()) return *v;
+  if (const auto *v = value.as<std::string>()) return *v;
+  if (const auto *v = value.as<value::StringData>()) return v->value;
+  if (const auto *v = value.as<value::token>()) return v->str();
+  if (const auto *v = value.as<value::AssetPath>()) return v->GetAssetPath();
+  if (const auto *v = value.as<Dictionary>()) {
+    json object = json::object();
+    object.reserve(v->size());
+    for (const auto &item : *v) {
+      object[item.first] = SerializeMetadataValue(item.second.get_raw_value());
+    }
+    return object;
+  }
+  // Preserve typed arrays, role values, matrices, quaternions, and other
+  // registered metadata values in a form JSONToMetadataValue can reconstruct.
+  // Scalars and dictionaries above intentionally remain plain JSON for
+  // compatibility with existing layer JSON consumers.
+#if defined(LIGHTUSD_WITH_TYDRA)
+  const json typed = tydra::ValueToMiniJSON(value);
+  if (typed.is_object() && typed.contains("type") &&
+      typed.contains("value")) {
+    return typed;
+  }
+#endif
+  // Unknown metadata remains inspectable in its canonical USDA spelling.
+  return value::pprint_value(value, 0, false);
 }
 
 // Helper function to serialize attribute metadata
@@ -312,10 +362,9 @@ json SerializeAttributeMetadata(const AttrMetas& metas) {
   if (metas.has_customData()) {
     json customDataJson;
     const auto& customData = metas.get_customData();
+    customDataJson.reserve(customData.size());
     for (const auto& item : customData) {
-      // For now, serialize as string representation
-      // TODO: Implement proper Dictionary to JSON conversion
-      customDataJson[item.first] = "[CustomData]";
+      customDataJson[item.first] = SerializeMetadataValue(item.second.get_raw_value());
     }
     if (!customDataJson.empty()) {
       metadata["customData"] = customDataJson;
@@ -326,10 +375,9 @@ json SerializeAttributeMetadata(const AttrMetas& metas) {
   if (metas.has_sdrMetadata()) {
     json sdrJson;
     const auto& sdrData = metas.get_sdrMetadata();
+    sdrJson.reserve(sdrData.size());
     for (const auto& item : sdrData) {
-      // For now, serialize as string representation
-      // TODO: Implement proper Dictionary to JSON conversion
-      sdrJson[item.first] = "[SdrMetadata]";
+      sdrJson[item.first] = SerializeMetadataValue(item.second.get_raw_value());
     }
     if (!sdrJson.empty()) {
       metadata["sdrMetadata"] = sdrJson;
@@ -339,13 +387,18 @@ json SerializeAttributeMetadata(const AttrMetas& metas) {
   // Serialize other custom metadata from the underlying dictionary
   for (const auto& item : metas.data()) {
     // Skip known keys that are already serialized above
-    // TODO: Implement proper MetaVariable to JSON conversion
-    metadata[item.first] = "[MetaVariable]";
+    if (item.first == AttrMetas::kCustomData ||
+        item.first == AttrMetas::kSdrMetadata) {
+      continue;
+    }
+    metadata[item.first] =
+        value::pprint_value(item.second.get_raw_value(), 0, false);
   }
 
   // Serialize string data
   if (!metas.stringData.empty()) {
     json stringArray = json::array();
+    stringArray.reserve(metas.stringData.size());
     for (const auto& str : metas.stringData) {
       stringArray.push_back(str.value);
     }
@@ -359,32 +412,41 @@ json SerializeAttributeMetadata(const AttrMetas& metas) {
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-function"
-#pragma clang diagnostic ignored "-Wunused-template"
 #elif defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"
 #endif
 
 json SerializeIntArray(const std::vector<int>& array, USDToJSONContext* context = nullptr) {
-  return SerializeArrayData(array, context, "UNSIGNED_INT", "SCALAR");
+  return SerializeArrayData(array.data(), sizeof(int), array.size(), context,
+                            "UNSIGNED_INT", "SCALAR",
+                            SerializeIntArrayToBase64(array));
 }
 
 json SerializeFloatArray(const std::vector<float>& array, USDToJSONContext* context = nullptr) {
-  return SerializeArrayData(array, context, "FLOAT", "SCALAR");
+  return SerializeArrayData(array.data(), sizeof(float), array.size(), context,
+                            "FLOAT", "SCALAR",
+                            SerializeFloatArrayToBase64(array));
 }
 
 json SerializeDoubleArray(const std::vector<double>& array, USDToJSONContext* context = nullptr) {
-  return SerializeArrayData(array, context, "FLOAT", "SCALAR");  // Note: JSON doesn't distinguish float/double
+  return SerializeArrayData(array.data(), sizeof(double), array.size(), context,
+                            "FLOAT", "SCALAR",
+                            SerializeDoubleArrayToBase64(array));  // JSON doesn't distinguish float/double
 }
 
 // Overloaded functions with attribute metadata support
-template<typename T>
-json SerializeArrayDataWithMetadata(const std::vector<T>& array, const AttrMetas* metas, USDToJSONContext* context,
-                                     const std::string& componentType, const std::string& type) {
-  json result = SerializeArrayData(array, context, componentType, type);
+json SerializeArrayDataWithMetadata(const void *data, size_t element_size,
+                                     size_t count, const std::string &base64_data,
+                                     const AttrMetas* metas,
+                                     USDToJSONContext* context,
+                                     const std::string& componentType,
+                                     const std::string& type) {
+  json result = SerializeArrayData(data, element_size, count, context,
+                                   componentType, type, base64_data);
 
   // Add metadata if present and array is not empty
-  if (metas && metas->authored() && !array.empty()) {
+  if (metas && metas->authored() && count != 0) {
     json metadata = SerializeAttributeMetadata(*metas);
     if (!metadata.empty()) {
       result["metadata"] = metadata;
@@ -396,15 +458,27 @@ json SerializeArrayDataWithMetadata(const std::vector<T>& array, const AttrMetas
 
 // Metadata-aware array serialization functions
 json SerializeIntArrayWithMetadata(const std::vector<int>& array, const AttrMetas* metas = nullptr, USDToJSONContext* context = nullptr) {
-  return SerializeArrayDataWithMetadata(array, metas, context, "UNSIGNED_INT", "SCALAR");
+  size_t bytes = 0;
+  if (!safe::mul(array.size(), sizeof(int), &bytes)) return json::object();
+  return SerializeArrayDataWithMetadata(array.data(), sizeof(int), array.size(),
+                                        SerializeIntArrayToBase64(array), metas,
+                                        context, "UNSIGNED_INT", "SCALAR");
 }
 
 json SerializeFloatArrayWithMetadata(const std::vector<float>& array, const AttrMetas* metas = nullptr, USDToJSONContext* context = nullptr) {
-  return SerializeArrayDataWithMetadata(array, metas, context, "FLOAT", "SCALAR");
+  size_t bytes = 0;
+  if (!safe::mul(array.size(), sizeof(float), &bytes)) return json::object();
+  return SerializeArrayDataWithMetadata(array.data(), sizeof(float), array.size(),
+                                        SerializeFloatArrayToBase64(array), metas,
+                                        context, "FLOAT", "SCALAR");
 }
 
 json SerializeDoubleArrayWithMetadata(const std::vector<double>& array, const AttrMetas* metas = nullptr, USDToJSONContext* context = nullptr) {
-  return SerializeArrayDataWithMetadata(array, metas, context, "FLOAT", "SCALAR");
+  size_t bytes = 0;
+  if (!safe::mul(array.size(), sizeof(double), &bytes)) return json::object();
+  return SerializeArrayDataWithMetadata(array.data(), sizeof(double), array.size(),
+                                        SerializeDoubleArrayToBase64(array), metas,
+                                        context, "FLOAT", "SCALAR");
 }
 
 // Vector serialization helpers
@@ -890,115 +964,6 @@ json SerializeNormal3fArrayWithMetadata(const std::vector<value::normal3f>& norm
   return result;
 }
 
-// Matrix array serialization
-template<typename MatrixType>
-std::string SerializeMatrixArrayToBase64(const std::vector<MatrixType>& array) {
-  return SerializeArrayToBase64(array);
-}
-
-// Specialized matrix serializers
-std::string SerializeMatrix2fArrayToBase64(const std::vector<value::matrix2f>& array) {
-  if (array.empty()) {
-    return "";
-  }
-
-  std::vector<float> float_data;
-  float_data.reserve(array.size() * 4);
-  for (const auto& mat : array) {
-    for (int i = 0; i < 2; ++i) {
-      for (int j = 0; j < 2; ++j) {
-        float_data.push_back(mat.m[i][j]);
-      }
-    }
-  }
-  return SerializeFloatArrayToBase64(float_data);
-}
-
-std::string SerializeMatrix3fArrayToBase64(const std::vector<value::matrix3f>& array) {
-  if (array.empty()) {
-    return "";
-  }
-
-  std::vector<float> float_data;
-  float_data.reserve(array.size() * 9);
-  for (const auto& mat : array) {
-    for (int i = 0; i < 3; ++i) {
-      for (int j = 0; j < 3; ++j) {
-        float_data.push_back(mat.m[i][j]);
-      }
-    }
-  }
-  return SerializeFloatArrayToBase64(float_data);
-}
-
-std::string SerializeMatrix4fArrayToBase64(const std::vector<value::matrix4f>& array) {
-  if (array.empty()) {
-    return "";
-  }
-
-  std::vector<float> float_data;
-  float_data.reserve(array.size() * 16);
-  for (const auto& mat : array) {
-    for (int i = 0; i < 4; ++i) {
-      for (int j = 0; j < 4; ++j) {
-        float_data.push_back(mat.m[i][j]);
-      }
-    }
-  }
-  return SerializeFloatArrayToBase64(float_data);
-}
-
-std::string SerializeMatrix2dArrayToBase64(const std::vector<value::matrix2d>& array) {
-  if (array.empty()) {
-    return "";
-  }
-
-  std::vector<double> double_data;
-  double_data.reserve(array.size() * 4);
-  for (const auto& mat : array) {
-    for (int i = 0; i < 2; ++i) {
-      for (int j = 0; j < 2; ++j) {
-        double_data.push_back(mat.m[i][j]);
-      }
-    }
-  }
-  return SerializeDoubleArrayToBase64(double_data);
-}
-
-std::string SerializeMatrix3dArrayToBase64(const std::vector<value::matrix3d>& array) {
-  if (array.empty()) {
-    return "";
-  }
-
-  std::vector<double> double_data;
-  double_data.reserve(array.size() * 9);
-  for (const auto& mat : array) {
-    for (int i = 0; i < 3; ++i) {
-      for (int j = 0; j < 3; ++j) {
-        double_data.push_back(mat.m[i][j]);
-      }
-    }
-  }
-  return SerializeDoubleArrayToBase64(double_data);
-}
-
-std::string SerializeMatrix4dArrayToBase64(const std::vector<value::matrix4d>& array) {
-  if (array.empty()) {
-    return "";
-  }
-
-  std::vector<double> double_data;
-  double_data.reserve(array.size() * 16);
-  for (const auto& mat : array) {
-    for (int i = 0; i < 4; ++i) {
-      for (int j = 0; j < 4; ++j) {
-        double_data.push_back(mat.m[i][j]);
-      }
-    }
-  }
-  return SerializeDoubleArrayToBase64(double_data);
-}
-
 #ifdef __clang__
 #pragma clang diagnostic pop
 #elif defined(__GNUC__)
@@ -1031,14 +996,74 @@ json ToJSON(lightusd::Xform& xform) {
   return j;
 }
 
+template <typename PrimT>
+json ToJSONScalarGeom(const PrimT &prim, const char *type_name) {
+  json j;
+  j["name"] = prim.name;
+  j["typeName"] = type_name;
+  return j;
+}
 
-json ToJSON(lightusd::GeomBasisCurves& curves) {
+json ToJSON(lightusd::GeomSphere& sphere) {
+  json j = ToJSONScalarGeom(sphere, "GeomSphere");
+  double radius = 0.0;
+  if (sphere.radius.get_value().get(value::TimeCode::Default(), &radius)) {
+    j["radius"] = radius;
+  }
+  return j;
+}
+
+json ToJSON(lightusd::GeomCube& cube) {
+  json j = ToJSONScalarGeom(cube, "GeomCube");
+  double size = 0.0;
+  if (cube.size.get_value().get(value::TimeCode::Default(), &size)) {
+    j["size"] = size;
+  }
+  return j;
+}
+
+json ToJSON(lightusd::GeomCone& cone) {
+  json j = ToJSONScalarGeom(cone, "GeomCone");
+  double value = 0.0;
+  if (cone.height.get_value().get(value::TimeCode::Default(), &value)) j["height"] = value;
+  if (cone.radius.get_value().get(value::TimeCode::Default(), &value)) j["radius"] = value;
+  j["axis"] = to_string(cone.axis.get_value());
+  return j;
+}
+
+json ToJSON(lightusd::GeomCylinder& cylinder) {
+  json j = ToJSONScalarGeom(cylinder, "GeomCylinder");
+  double value = 0.0;
+  if (cylinder.height.get_value().get(value::TimeCode::Default(), &value)) j["height"] = value;
+  if (cylinder.radius.get_value().get(value::TimeCode::Default(), &value)) j["radius"] = value;
+  j["axis"] = to_string(cylinder.axis.get_value());
+  return j;
+}
+
+json ToJSON(lightusd::GeomCapsule& capsule) {
+  json j = ToJSONScalarGeom(capsule, "GeomCapsule");
+  double value = 0.0;
+  if (capsule.height.get_value().get(value::TimeCode::Default(), &value)) j["height"] = value;
+  if (capsule.radius.get_value().get(value::TimeCode::Default(), &value)) j["radius"] = value;
+  j["axis"] = to_string(capsule.axis.get_value());
+  return j;
+}
+
+json ToJSON(lightusd::GeomPlane& plane) {
+  json j = ToJSONScalarGeom(plane, "GeomPlane");
+  double value = 0.0;
+  if (plane.width.get_value().get(value::TimeCode::Default(), &value)) j["width"] = value;
+  if (plane.length.get_value().get(value::TimeCode::Default(), &value)) j["length"] = value;
+  j["axis"] = to_string(plane.axis.get_value());
+  return j;
+}
+
+
+json ToJSON(lightusd::GeomBasisCurves& curves, USDToJSONContext *context) {
 
   json j;
   j["name"] = curves.name;
   j["typeName"] = "GeomBasisCurves";
-
-  USDToJSONContext *context = nullptr;
 
   // Points array (point3f[])
   if (curves.points.authored()) {
@@ -1051,13 +1076,78 @@ json ToJSON(lightusd::GeomBasisCurves& curves) {
     }
   }
 
-  // TODO: Serialize other attribs
+  // Normals (normal3f[])
+  if (curves.normals.authored()) {
+    auto normals_opt = curves.normals.get_value();
+    if (normals_opt) {
+      std::vector<value::normal3f> normals_data;
+      if (normals_opt.value().get(value::TimeCode::Default(), &normals_data)) {
+        j["normals"] = SerializeNormal3fArrayWithMetadata(
+            normals_data, &curves.normals.metas(), context);
+      }
+    }
+  }
+
+  // Curve vertex counts (int[])
+  if (curves.curveVertexCounts.authored()) {
+    auto counts_opt = curves.curveVertexCounts.get_value();
+    if (counts_opt) {
+      std::vector<int> counts_data;
+      if (counts_opt.value().get(value::TimeCode::Default(), &counts_data)) {
+        j["curveVertexCounts"] = SerializeIntArrayWithMetadata(
+            counts_data, &curves.curveVertexCounts.metas(), context);
+      }
+    }
+  }
+
+  // Widths (float[])
+  if (curves.widths.authored()) {
+    auto widths_opt = curves.widths.get_value();
+    if (widths_opt) {
+      std::vector<float> widths_data;
+      if (widths_opt.value().get(value::TimeCode::Default(), &widths_data)) {
+        j["widths"] = SerializeFloatArrayWithMetadata(
+            widths_data, &curves.widths.metas(), context);
+      }
+    }
+  }
 
   return j;
 }
 
+json ToJSON(lightusd::GeomBasisCurves& curves) {
+  return ToJSON(curves, nullptr);
+}
+
 json ToJSON(const lightusd::value::Value &v) {
   if (auto pv = v.get_value<lightusd::Xform>()) {
+    return ToJSON(pv.value());
+  }
+  if (auto pv = v.get_value<lightusd::GeomMesh>()) {
+    return ToJSON(pv.value());
+  }
+  if (auto pv = v.get_value<lightusd::GeomBasisCurves>()) {
+    return ToJSON(pv.value());
+  }
+  if (auto pv = v.get_value<lightusd::GeomSphere>()) {
+    return ToJSON(pv.value());
+  }
+  if (auto pv = v.get_value<lightusd::GeomCube>()) {
+    return ToJSON(pv.value());
+  }
+  if (auto pv = v.get_value<lightusd::GeomCone>()) {
+    return ToJSON(pv.value());
+  }
+  if (auto pv = v.get_value<lightusd::GeomCylinder>()) {
+    return ToJSON(pv.value());
+  }
+  if (auto pv = v.get_value<lightusd::GeomCapsule>()) {
+    return ToJSON(pv.value());
+  }
+  if (auto pv = v.get_value<lightusd::GeomPlane>()) {
+    return ToJSON(pv.value());
+  }
+  if (auto pv = v.get_value<lightusd::Model>()) {
     return ToJSON(pv.value());
   }
 
@@ -1075,26 +1165,42 @@ nonstd::expected<json, std::string> ToJSON(const lightusd::StageMetas& metas) {
   }
 
   if (metas.comment.value.size()) {
-    // TODO: escape and quote
+    // minijson performs JSON string escaping during serialization.
     j["comment"] = metas.comment.value;
   }
 
   return j;
 }
 
+json PrimDataToJSON(const lightusd::Prim &prim, USDToJSONContext *context) {
+  // Geometry arrays are the context-sensitive part of runtime Stage JSON.
+  // Preserve the iterative traversal while routing meshes through the same
+  // buffer/accessor serializer used by Layer JSON.
+  if (auto mesh = prim.data().get_value<lightusd::GeomMesh>()) {
+    return ToJSONValue(mesh.value(), context);
+  }
+  if (auto curves = prim.data().get_value<lightusd::GeomBasisCurves>()) {
+    return ToJSON(curves.value(), context);
+  }
+  return ToJSON(prim.data());
+}
+
 // Iterative version of PrimToJSON using explicit stack
-bool PrimToJSONIterative(json &root, const lightusd::Prim& root_prim) {
+bool PrimToJSONIterative(json &root, const lightusd::Prim& root_prim,
+                         USDToJSONContext *context = nullptr) {
   // Stack entry for iterative processing
   struct StackEntry {
     const lightusd::Prim *prim;
     size_t child_idx;
+    USDToJSONContext *context;
     json j;
     json jchildren;
 
-    explicit StackEntry(const lightusd::Prim *p)
-        : prim(p), child_idx(0), jchildren(json::object()) {
+    StackEntry(const lightusd::Prim *p, USDToJSONContext *ctx)
+        : prim(p), child_idx(0), context(ctx), jchildren(json::object()) {
       // Convert prim data to JSON immediately
-      j = ToJSON(p->data());
+      j = PrimDataToJSON(*p, context);
+      jchildren.reserve(p->children().size());
     }
   };
 
@@ -1102,7 +1208,7 @@ bool PrimToJSONIterative(json &root, const lightusd::Prim& root_prim) {
   stack.reserve(64);
 
   // Initialize with root prim
-  stack.emplace_back(&root_prim);
+  stack.emplace_back(&root_prim, context);
 
   size_t iter = 0;
   while (!stack.empty()) {
@@ -1117,7 +1223,7 @@ bool PrimToJSONIterative(json &root, const lightusd::Prim& root_prim) {
       const lightusd::Prim &child = children[curr.child_idx];
       curr.child_idx++;
 
-      stack.emplace_back(&child);
+      stack.emplace_back(&child, context);
     } else {
       // All children processed
       // Finalize this node's JSON
@@ -1156,6 +1262,7 @@ json SerializeContextToJSON(const USDToJSONContext& context) {
   // Serialize buffers
   if (!context.buffers.empty()) {
     json buffers_array = json::array();
+    buffers_array.reserve(context.buffers.size());
     for (size_t i = 0; i < context.buffers.size(); ++i) {
       const auto& buffer = context.buffers[i];
       json buffer_obj;
@@ -1178,6 +1285,7 @@ json SerializeContextToJSON(const USDToJSONContext& context) {
   // Serialize buffer views
   if (!context.bufferViews.empty()) {
     json bufferViews_array = json::array();
+    bufferViews_array.reserve(context.bufferViews.size());
     for (const auto& bufferView : context.bufferViews) {
       json bufferView_obj;
       bufferView_obj["buffer"] = bufferView.buffer;
@@ -1194,6 +1302,7 @@ json SerializeContextToJSON(const USDToJSONContext& context) {
   // Serialize accessors
   if (!context.accessors.empty()) {
     json accessors_array = json::array();
+    accessors_array.reserve(context.accessors.size());
     for (const auto& accessor : context.accessors) {
       json accessor_obj;
       accessor_obj["bufferView"] = accessor.bufferView;
@@ -1279,6 +1388,133 @@ json ToJSONValue(const lightusd::Layer& layer) {
   return ToJSONValue(layer, context);
 }
 
+// Preserve the complete low-level PrimSpec tree in layer JSON.  The legacy
+// implementation used to emit only {name, typeName}, which silently discarded
+// authored properties and nested prims whenever a Layer was converted.
+static json PrimSpecToJSONValue(const lightusd::PrimSpec &ps,
+                                USDToJSONContext *context) {
+  json j;
+  j["name"] = ps.name();
+  j["typeName"] = ps.typeName();
+  j["specifier"] = to_string(ps.specifier());
+
+  // Keep authored composition list-ops explicit.  A resolved-only array is
+  // insufficient for JSON -> layer round-trips because prepend/append/delete
+  // carry authoring semantics.
+  const auto list_qualifier = [](ListEditQual qual) {
+    return to_string(qual);
+  };
+  const auto path_list_ops = [&](const auto &ops) {
+    json result = json::array();
+    result.reserve(ops.size());
+    for (const auto &op : ops) {
+      json item = json::object();
+      item["op"] = list_qualifier(op.first);
+      json paths = json::array();
+      paths.reserve(op.second.size());
+      for (const auto &path : op.second) paths.push_back(path.full_path_name());
+      item["items"] = std::move(paths);
+      result.push_back(std::move(item));
+    }
+    return result;
+  };
+  const PrimMeta &meta = ps.metas();
+  if (meta.inherits) j["inherits"] = path_list_ops(*meta.inherits);
+  if (meta.specializes) j["specializes"] = path_list_ops(*meta.specializes);
+  if (meta.variantSets) {
+    json ops = json::array();
+    ops.reserve(meta.variantSets->size());
+    for (const auto &op : *meta.variantSets) {
+      json item = json::object();
+      item["op"] = list_qualifier(op.first);
+      json values = json::array();
+      values.reserve(op.second.size());
+      for (const auto &value : op.second) values.push_back(value);
+      item["items"] = std::move(values);
+      ops.push_back(std::move(item));
+    }
+    j["variantSets"] = std::move(ops);
+  }
+  if (meta.variants) {
+    json variants = json::object();
+    variants.reserve(meta.variants->size());
+    for (const auto &item : *meta.variants) variants[item.first] = item.second;
+    j["variants"] = std::move(variants);
+  }
+  const auto reference_list = [](const auto &ops) {
+    json result = json::array();
+    result.reserve(ops.size());
+    for (const auto &op : ops) {
+      json item = json::object();
+      item["op"] = to_string(op.first);
+      json refs = json::array();
+      refs.reserve(op.second.size());
+      for (const auto &ref : op.second) {
+        json value = json::object();
+        value["assetPath"] = ref.asset_path.GetAssetPath();
+        value["primPath"] = ref.prim_path.full_path_name();
+        if (ref.layerOffset._offset != 0.0 || ref.layerOffset._scale != 1.0) {
+          value["offset"] = ref.layerOffset._offset;
+          value["scale"] = ref.layerOffset._scale;
+        }
+        if (!ref.customData.empty()) {
+          json custom_data = json::object();
+          custom_data.reserve(ref.customData.size());
+          for (const auto &item : ref.customData) {
+            custom_data[item.first] =
+                SerializeMetadataValue(item.second.get_raw_value());
+          }
+          value["customData"] = std::move(custom_data);
+        }
+        refs.push_back(std::move(value));
+      }
+      item["items"] = std::move(refs);
+      result.push_back(std::move(item));
+    }
+    return result;
+  };
+  if (meta.references) j["references"] = reference_list(*meta.references);
+  if (meta.payload) {
+    json ops = json::array();
+    ops.reserve(meta.payload->size());
+    for (const auto &op : *meta.payload) {
+      json item = json::object();
+      item["op"] = to_string(op.first);
+      json payloads = json::array();
+      payloads.reserve(op.second.size());
+      for (const auto &payload : op.second) {
+        json value = json::object();
+        value["assetPath"] = payload.asset_path.GetAssetPath();
+        value["primPath"] = payload.prim_path.full_path_name();
+        if (payload.layerOffset._offset != 0.0 || payload.layerOffset._scale != 1.0) {
+          value["offset"] = payload.layerOffset._offset;
+          value["scale"] = payload.layerOffset._scale;
+        }
+        payloads.push_back(std::move(value));
+      }
+      item["items"] = std::move(payloads);
+      ops.push_back(std::move(item));
+    }
+    j["payloads"] = std::move(ops);
+  }
+
+  const json properties = PropertiesToJSONValue(ps.props(), context);
+  if (!properties.empty()) {
+    j["properties"] = properties;
+  }
+
+  if (!ps.children().empty()) {
+    json children = json::object();
+    children.reserve(ps.children().size());
+    for (const auto &child : ps.children()) {
+      children[child.name()] = PrimSpecToJSONValue(child, context);
+    }
+    j["children"] = children;
+  }
+
+  return j;
+}
+
 json ToJSONValue(const lightusd::Layer& layer, USDToJSONContext& context) {
   json j;
 
@@ -1326,16 +1562,17 @@ json ToJSONValue(const lightusd::Layer& layer, USDToJSONContext& context) {
   // SubLayers
   if (metas.subLayers.size() > 0) {
     json subLayersArray = json::array();
+    subLayersArray.reserve(metas.subLayers.size());
     for (const auto& subLayer : metas.subLayers) {
       json subLayerObj;
       subLayerObj["assetPath"] = subLayer.assetPath.GetAssetPath();
-      // TODO: layerOffset
-      //if (subLayer.layerOffset.offset != 0.0 || subLayer.layerOffset.scale != 1.0) {
-      //  json layerOffsetObj;
-      //  layerOffsetObj["offset"] = subLayer.layerOffset.offset;
-      //  layerOffsetObj["scale"] = subLayer.layerOffset.scale;
-      //  subLayerObj["layerOffset"] = layerOffsetObj;
-      //}
+      if (subLayer.layerOffset._offset != 0.0 ||
+          subLayer.layerOffset._scale != 1.0) {
+        json layerOffsetObj;
+        layerOffsetObj["offset"] = subLayer.layerOffset._offset;
+        layerOffsetObj["scale"] = subLayer.layerOffset._scale;
+        subLayerObj["layerOffset"] = layerOffsetObj;
+      }
       subLayersArray.push_back(subLayerObj);
     }
     layerMetas["subLayers"] = subLayersArray;
@@ -1353,11 +1590,53 @@ json ToJSONValue(const lightusd::Layer& layer, USDToJSONContext& context) {
   // Custom layer data
   if (metas.customLayerData.size() > 0) {
     json customData;
+    customData.reserve(metas.customLayerData.size());
     for (const auto& item : metas.customLayerData) {
-      // TODO: Implement proper custom data serialization
-      customData[item.first] = "[CustomData]";
+      customData[item.first] = SerializeMetadataValue(item.second.get_raw_value());
     }
     layerMetas["customLayerData"] = customData;
+  } else if (metas.customLayerDataAuthored) {
+    layerMetas["customLayerData"] = json::object();
+  }
+
+  if (metas.colorConfiguration) {
+    layerMetas["colorConfiguration"] = metas.colorConfiguration->GetAssetPath();
+  }
+  if (metas.colorManagementSystem) {
+    layerMetas["colorManagementSystem"] = metas.colorManagementSystem->str();
+  }
+  if (metas.renderSettingsPrimPath) {
+    layerMetas["renderSettingsPrimPath"] =
+        *metas.renderSettingsPrimPath;
+  }
+  if (metas.owner) layerMetas["owner"] = *metas.owner;
+  if (metas.hasOwnedSubLayers) {
+    layerMetas["hasOwnedSubLayers"] = *metas.hasOwnedSubLayers;
+  }
+  if (metas.expressionVariables) {
+    json variables;
+    variables.reserve(metas.expressionVariables->size());
+    for (const auto &item : *metas.expressionVariables) {
+      variables[item.first] = SerializeMetadataValue(item.second.get_raw_value());
+    }
+    layerMetas["expressionVariables"] = std::move(variables);
+  }
+  if (!metas.layerRelocates.empty()) {
+    json relocates = json::array();
+    relocates.reserve(metas.layerRelocates.size());
+    for (const auto &relocate : metas.layerRelocates) {
+      json item = json::object();
+      item["source"] = relocate.first.full_path_name();
+      item["target"] = relocate.second.full_path_name();
+      relocates.push_back(std::move(item));
+    }
+    layerMetas["layerRelocates"] = std::move(relocates);
+  }
+  if (!metas.unregisteredMetas.empty()) {
+    json unknown = json::object();
+    unknown.reserve(metas.unregisteredMetas.size());
+    for (const auto &item : metas.unregisteredMetas) unknown[item.first] = item.second;
+    layerMetas["unregisteredMetas"] = std::move(unknown);
   }
 
   // USDZ extensions
@@ -1377,6 +1656,7 @@ json ToJSONValue(const lightusd::Layer& layer, USDToJSONContext& context) {
   // PrimChildren
   if (metas.primChildren.size() > 0) {
     json primChildrenArray = json::array();
+    primChildrenArray.reserve(metas.primChildren.size());
     for (const auto& primChild : metas.primChildren) {
       primChildrenArray.push_back(primChild.str());
     }
@@ -1391,14 +1671,10 @@ json ToJSONValue(const lightusd::Layer& layer, USDToJSONContext& context) {
   // PrimSpecs
   const auto& primspecs = layer.primspecs();
   if (primspecs.size() > 0) {
-    json primSpecsObj;
+    json primSpecsObj = json::object();
+    primSpecsObj.reserve(primspecs.size());
     for (const auto& item : primspecs) {
-      // TODO: Implement PrimSpec to JSON conversion with context
-      json primSpecJson;
-      primSpecJson["name"] = item.first;
-      primSpecJson["typeName"] = "PrimSpec";
-      // Add basic PrimSpec info - would need ToJSON for PrimSpec
-      primSpecsObj[item.first] = primSpecJson;
+      primSpecsObj[item.first] = PrimSpecToJSONValue(item.second, &context);
     }
     j["primSpecs"] = primSpecsObj;
   }
@@ -1407,13 +1683,13 @@ json ToJSONValue(const lightusd::Layer& layer, USDToJSONContext& context) {
   if (context.options.arrayMode == ArraySerializationMode::Buffer) {
     json contextData = SerializeContextToJSON(context);
     if (contextData.contains("buffers")) {
-      j["buffers"] = contextData["buffers"];
+      j["buffers"] = std::move(contextData["buffers"]);
     }
     if (contextData.contains("bufferViews")) {
-      j["bufferViews"] = contextData["bufferViews"];
+      j["bufferViews"] = std::move(contextData["bufferViews"]);
     }
     if (contextData.contains("accessors")) {
-      j["accessors"] = contextData["accessors"];
+      j["accessors"] = std::move(contextData["accessors"]);
     }
   }
 
@@ -1436,7 +1712,8 @@ nonstd::expected<std::string, std::string> ToJSON(
 
   j["version"] = 1.0;
 
-  json cj;
+  json cj = json::object();
+  cj.reserve(stage.root_prims().size());
   for (const auto& item : stage.root_prims()) {
     if (!PrimToJSONRec(cj, item, 0)) {
       return nonstd::make_unexpected("Failed to convert Prim to JSON.");
@@ -1444,16 +1721,6 @@ nonstd::expected<std::string, std::string> ToJSON(
   }
 
   j["primChildren"] = cj;
-
-  lightusd::GeomMesh mesh;
-  json jmesh = ToJSON(mesh);
-
-  (void)jmesh;
-
-  lightusd::GeomBasisCurves curves;
-  json jcurves = ToJSON(curves);
-
-  (void)jcurves;
 
   return SerializeJSONValue(j, "Stage JSON", 2);
 }
@@ -1558,6 +1825,7 @@ json ToJSONValue(const lightusd::Attribute& attribute, USDToJSONContext* /* cont
       j["connection"] = connections[0].full_path_name();
     } else if (connections.size() > 1) {
       json connections_array = json::array();
+      connections_array.reserve(connections.size());
       for (const auto& conn : connections) {
         connections_array.push_back(conn.full_path_name());
       }
@@ -1579,9 +1847,14 @@ json ToJSONValue(const lightusd::Attribute& attribute, USDToJSONContext* /* cont
       j["hasValue"] = true;
       j["valueType"] = "data";
 
-      // For now, serialize as a string representation
-      // TODO: Implement proper value type serialization based on type_id
-      j["value"] = "[Attribute value - serialization not yet implemented]";
+      // Keep the value lossless for every USD value type, including custom
+      // value types not covered by the geometry fast paths above.  The USDA
+      // value printer is the canonical formatter used by the writers.
+      if (var.has_value()) {
+        j["value"] = value::pprint_value(var.value_raw(), 0, false);
+      } else {
+        j["value"] = nullptr;
+      }
 
       // Store type information for debugging
       j["valueTypeName"] = attribute.type_name();
@@ -1595,8 +1868,19 @@ json ToJSONValue(const lightusd::Attribute& attribute, USDToJSONContext* /* cont
   // Time samples information
   if (attribute.is_timesamples()) {
     j["hasTimeSamples"] = true;
-    // TODO: Serialize time sample data
-    j["timeSamples"] = "[TimeSamples data - not yet serialized]";
+    json samples = json::array();
+    const auto &raw_samples = attribute.get_var().ts_raw().get_samples();
+    samples.reserve(raw_samples.size());
+    for (const auto &sample : raw_samples) {
+      json item;
+      item["time"] = sample.t;
+      item["blocked"] = sample.blocked;
+      item["value"] = sample.blocked
+                           ? json(nullptr)
+                           : json(value::pprint_value(sample.value, 0, false));
+      samples.push_back(item);
+    }
+    j["timeSamples"] = samples;
   } else {
     j["hasTimeSamples"] = false;
   }
@@ -1769,14 +2053,27 @@ json PropertiesToJSONValue(const std::map<std::string, lightusd::Property>& prop
   return j;
 }
 
+// Unknown schemas are represented by Model in the core scene graph. Preserve
+// both their authored schema and generic properties in runtime JSON.
+static json ToJSON(lightusd::Model& model) {
+  json j;
+  j["name"] = model.name;
+  j["typeName"] = model.prim_type_name.empty() ? "Model" : model.prim_type_name;
+  j["specifier"] = model.spec == Specifier::Class
+                        ? "class"
+                        : model.spec == Specifier::Over ? "over" : "def";
+  if (!model.props.empty()) {
+    j["properties"] = PropertiesToJSONValue(model.props, nullptr);
+  }
+  return j;
+}
+
 // ================================================================
 // Additional Stage to JSON conversion support
 // ================================================================
 
 // Helper function to convert Stage to JSON object (for internal use)
 json ToJSONValue(const lightusd::Stage& stage, USDToJSONContext* context) {
-  (void)context; // Currently unused
-
   // Reuse existing implementation pattern but return json object instead of string
   json j;  // root
 
@@ -1790,15 +2087,29 @@ json ToJSONValue(const lightusd::Stage& stage, USDToJSONContext* context) {
 
   j["version"] = 1.0;
 
-  json cj;
+  json cj = json::object();
+  cj.reserve(stage.root_prims().size());
   for (const auto& item : stage.root_prims()) {
-    if (!PrimToJSONRec(cj, item, 0)) {
+    if (!PrimToJSONIterative(cj, item, context)) {
       j = json::object(); // Reset to empty on error
       return j;
     }
   }
 
   j["primChildren"] = cj;
+
+  if (context && context->options.arrayMode == ArraySerializationMode::Buffer) {
+    json contextData = SerializeContextToJSON(*context);
+    if (contextData.contains("buffers")) {
+      j["buffers"] = std::move(contextData["buffers"]);
+    }
+    if (contextData.contains("bufferViews")) {
+      j["bufferViews"] = std::move(contextData["bufferViews"]);
+    }
+    if (contextData.contains("accessors")) {
+      j["accessors"] = std::move(contextData["accessors"]);
+    }
+  }
 
   return j;
 }

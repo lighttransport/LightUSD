@@ -20,6 +20,8 @@ documents live in [archive/](archive/).
 - [mmap.md](mmap.md) — MMap-based USD loading and the mmap array fast path.
 - [unregistered-value.md](unregistered-value.md) — UnregisteredValue handling
   (type inference rules) in OpenUSD vs LightUSD.
+- [usd-json.md](usd-json.md) — minijson-backed USD layer/stage JSON conversion,
+  arrays, buffers, and round-trip behavior.
 - [signed-zero.md](signed-zero.md) — IEEE-754 signed-zero handling in OpenUSD,
   AOUSD Core requirements and ambiguities, and bit-exact round-trip guidance.
 - [ousd-vs-lightusd.md](ousd-vs-lightusd.md) — AOUSD Core 1.0.1 / OpenUSD review of
@@ -52,6 +54,8 @@ documents live in [archive/](archive/).
 - [threejs.md](threejs.md) — Three.js integration notes.
 - [texcomp.md](texcomp.md) — GPU texture compression (KTX2 / BC / ASTC / ETC2).
 - [udim.md](udim.md) — UDIM texture support.
+- [image-formats.md](image-formats.md) — Image writer/loader formats, bit depths,
+  and TIFF/DNG limitations.
 - [openusd-usdz.md](openusd-usdz.md) — USDZ creation and `usdchecker --arkit`
   validation.
 - [lusdzconvert.md](lusdzconvert.md) — `lusdzconvert` native USD → USDZ
@@ -69,6 +73,8 @@ documents live in [archive/](archive/).
 - [datarace.md](datarace.md) — Thread-safety and data-race notes.
 - [refactor-next.md](refactor-next.md) — `src/next` optimization & hardening
   roadmap (fuzzers, corpus gate, phase results).
+- [refactor-c-core.md](refactor-c-core.md) — C-style core consolidation,
+  compile/object/WASM measurements, API migration, and remaining parity gates.
 - [lightusd-next.md](lightusd-next.md) — `src/next`, Next IO, and Tydra Next
   overview.
 

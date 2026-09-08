@@ -60,5 +60,12 @@ nonstd::expected<bool, std::string> WriteImageToFile(
 nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
     const Image &image, const WriteOption option = WriteOption());
 
+/// Write multiple TIFF directories (layers/pages) into one baseline TIFF.
+/// Other formats are intentionally rejected because their memory writers have
+/// no portable multi-image representation.
+nonstd::expected<std::vector<uint8_t>, std::string> WriteImageLayersToMemory(
+    const std::vector<Image> &images,
+    const WriteOption option = WriteOption());
+
 }  // namespace image
 }  // namespace lightusd

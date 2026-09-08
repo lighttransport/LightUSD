@@ -24,6 +24,7 @@ void mcp_query_prims_by_type_test(void);
 void mcp_schema_list_types_test(void);
 void mcp_schema_get_type_test(void);
 void mcp_search_test(void);
+void mcp_tool_list_registration_test(void);
 
 // Validation
 void mcp_validate_data_test(void);

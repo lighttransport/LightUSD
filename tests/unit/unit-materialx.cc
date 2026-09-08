@@ -386,7 +386,7 @@ void nodegraph_support_test(void) {
   TEST_CHECK(!ng.nodedef.has_value());
   TEST_CHECK(!ng.nodegraph_type.has_value());
 
-  // TODO: Once NodeGraph reconstruction is implemented, add proper tests:
+  // NodeGraph reconstruction is covered by materialx_nodegraph_inputs_outputs_test.
   /*
   std::string usda = R"(#usda 1.0
 
@@ -472,6 +472,266 @@ void nodegraph_reconstruct_from_layer_test(void) {
       TEST_CHECK(result.value()->children()[0].data().as<Shader>() != nullptr);
     }
   }
+}
+
+// Nodegraph interface properties must survive MaterialX import as typed
+// values/connections. Previously <input> elements were silently ignored and
+// <output> connections were stored as strings.
+void materialx_nodegraph_inputs_outputs_test(void) {
+  const std::string xml = R"XML(
+<materialx version="1.39">
+  <nodegraph name="Graph&amp;Main">
+    <input name="gain" type="float" value="0.75" />
+    <input name="transform" type="matrix33" value="1, 0, 0, 0, 1, 0, 0, 0, 1" />
+    <input name="weights" type="floatarray" value="0.1, 0.2, 0.3" />
+    <input name="labels" type="stringarray" value="first, &quot;second, item&quot;" />
+    <image name="ImageNode" type="color3">
+      <input name="file" type="filename" value="albedo&amp;rough.jpg" />
+    </image>
+    <output name="outColor" type="color3" nodename="ImageNode" output="rgb" />
+  </nodegraph>
+  <open_pbr_surface name="Surface" type="surfaceshader">
+    <input name="base_color" type="color3" nodegraph="Graph&amp;Main" output="outColor" />
+  </open_pbr_surface>
+</materialx>
+)XML";
+
+  MtlxModel model;
+  std::string warn;
+  std::string err;
+  TEST_CHECK(ReadMaterialXFromString(xml, "nodegraph-inputs.mtlx", &model,
+                                     &warn, &err));
+  auto ng_it = model.nodegraphs.find("Graph&Main");
+  TEST_CHECK(ng_it != model.nodegraphs.end());
+  if (ng_it == model.nodegraphs.end()) return;
+
+  const PrimSpec &ng = ng_it->second;
+  auto input_it = ng.props().find("inputs:gain");
+  TEST_CHECK(input_it != ng.props().end());
+  if (input_it != ng.props().end() && input_it->second.is_attribute()) {
+    const auto value = input_it->second.get_attribute().get_value<float>();
+    TEST_CHECK(value.has_value());
+    if (value) TEST_CHECK(math::is_close(value.value(), 0.75f));
+  }
+
+  auto output_it = ng.props().find("outputs:outColor");
+  TEST_CHECK(output_it != ng.props().end());
+  if (output_it != ng.props().end() && output_it->second.is_attribute()) {
+    const Attribute &output = output_it->second.get_attribute();
+    TEST_CHECK(output.has_connections());
+    if (output.has_connections()) {
+      TEST_CHECK(output.connections()[0].full_path_name() ==
+                 "ImageNode.outputs:rgb");
+    }
+  }
+  auto transform_it = ng.props().find("inputs:transform");
+  TEST_CHECK(transform_it != ng.props().end());
+  if (transform_it != ng.props().end() && transform_it->second.is_attribute()) {
+    TEST_CHECK(transform_it->second.get_attribute().type_id() == value::TYPE_ID_MATRIX3F);
+  }
+  auto weights_it = ng.props().find("inputs:weights");
+  TEST_CHECK(weights_it != ng.props().end());
+  if (weights_it != ng.props().end() && weights_it->second.is_attribute()) {
+    const auto weights = weights_it->second.get_attribute().get_value<TypedArray<float>>();
+    TEST_CHECK(weights.has_value());
+    if (weights) TEST_CHECK(weights->size() == 3);
+  }
+  auto labels_it = ng.props().find("inputs:labels");
+  TEST_CHECK(labels_it != ng.props().end());
+  if (labels_it != ng.props().end() && labels_it->second.is_attribute()) {
+    const auto labels = labels_it->second.get_attribute().get_value<std::vector<std::string>>();
+    TEST_CHECK(labels.has_value());
+    if (labels) {
+      TEST_CHECK(labels->size() == 2);
+      if (labels->size() == 2) TEST_CHECK((*labels)[1] == "second, item");
+    }
+  }
+
+  std::string output_xml;
+  TEST_CHECK(WriteMaterialXToString(model, output_xml, &warn, &err));
+  TEST_CHECK(output_xml.find("nodegraph=\"Graph&amp;Main\" output=\"outColor\"") !=
+             std::string::npos);
+  TEST_CHECK(output_xml.find("name=\"transform\" type=\"matrix33\" value=\"1, 0, 0, 0, 1, 0, 0, 0, 1\"") !=
+             std::string::npos);
+  TEST_CHECK(output_xml.find("name=\"weights\" type=\"floatarray\" value=\"0.1, 0.2, 0.3\"") !=
+             std::string::npos);
+  TEST_CHECK(output_xml.find("name=\"labels\" type=\"stringarray\"") !=
+             std::string::npos);
+  TEST_CHECK(output_xml.find("name=\"labels\" type=\"stringarray\"") !=
+             std::string::npos);
+  TEST_CHECK(output_xml.find("<output name=\"outColor\" type=\"color3\" nodename=\"ImageNode\" output=\"rgb\" />") !=
+             std::string::npos);
+}
+
+void materialx_openpbr_extended_inputs_test(void) {
+  const std::string xml = R"XML(
+<materialx version="1.39">
+  <open_pbr_surface name="Extended" type="surfaceshader">
+    <input name="base_diffuse_roughness" type="float" value="0.09" />
+    <input name="specular_roughness_anisotropy" type="float" value="0.11" />
+    <input name="transmission_dispersion_abbe_number" type="float" value="42.0" />
+    <input name="transmission_dispersion_scale" type="float" value="0.25" />
+    <input name="subsurface_scatter_anisotropy" type="float" value="0.33" />
+    <input name="coat_roughness_anisotropy" type="float" value="0.44" />
+    <input name="coat_darkening" type="float" value="0.55" />
+    <input name="fuzz_weight" type="float" value="0.66" />
+    <input name="fuzz_color" type="color3" value="0.1, 0.2, 0.3" />
+    <input name="fuzz_roughness" type="float" value="0.77" />
+    <input name="thin_film_weight" type="float" value="0.88" />
+    <input name="coat_normal" type="vector3" value="0, 0, 1" />
+    <input name="coat_tangent" type="vector3" value="1, 0, 0" />
+    <input name="geometry_thin_walled" type="boolean" value="true" />
+    <input name="vendor_gain" type="float" value="0.125" />
+    <input name="vendor_texture" type="filename" nodegraph="VendorGraph"
+           output="out" />
+    <input name="normal" type="vector3" nodegraph="NormalGraph"
+           output="out" />
+  </open_pbr_surface>
+</materialx>
+)XML";
+
+  MtlxModel model;
+  std::string warn;
+  std::string err;
+  TEST_CHECK(ReadMaterialXFromString(xml, "openpbr-extended.mtlx", &model,
+                                     &warn, &err));
+  TEST_CHECK(warn.find("Unknown/unsupported OpenPBR input") == std::string::npos);
+  TEST_CHECK(model.shader.as<MtlxOpenPBRSurface>() != nullptr);
+  TEST_CHECK(model.custom_shader_inputs["Extended"].size() == 1);
+  TEST_CHECK(model.shader_connections["Extended"].size() == 2);
+  if (!model.custom_shader_inputs["Extended"].empty()) {
+    TEST_CHECK(model.custom_shader_inputs["Extended"][0].name == "vendor_gain");
+    TEST_CHECK(model.custom_shader_inputs["Extended"][0].value == "0.125");
+  }
+  std::string exported;
+  TEST_CHECK(WriteMaterialXToString(model, exported, &warn, &err));
+  TEST_CHECK(exported.find("name=\"vendor_gain\" type=\"float\" value=\"0.125\"") !=
+             std::string::npos);
+  TEST_CHECK(exported.find("name=\"vendor_texture\" type=\"filename\" nodegraph=\"VendorGraph\" output=\"out\"") !=
+             std::string::npos);
+  const std::string normal_input =
+      "name=\"normal\" type=\"vector3\" nodegraph=\"NormalGraph\"";
+  const size_t normal_first = exported.find(normal_input);
+  TEST_CHECK(normal_first != std::string::npos);
+  TEST_CHECK(exported.find(normal_input, normal_first + 1) == std::string::npos);
+  MtlxModel reparsed;
+  TEST_CHECK(ReadMaterialXFromString(exported, "openpbr-extended-roundtrip.mtlx",
+                                     &reparsed, &warn, &err));
+  TEST_CHECK(reparsed.custom_shader_inputs["Extended"].size() == 1);
+  TEST_CHECK(reparsed.shader_connections["Extended"].size() == 2);
+  if (const auto *surface = model.shader.as<MtlxOpenPBRSurface>()) {
+    float fuzz_weight = 0.0f;
+    float base_diffuse_roughness = 0.0f;
+    float thin_film_weight = 0.0f;
+    bool thin_walled = false;
+    value::normal3f coat_normal;
+    value::vector3f coat_tangent;
+    TEST_CHECK(surface->fuzz_weight.get_value().get_scalar(&fuzz_weight));
+    TEST_CHECK(surface->base_diffuse_roughness.get_value().get_scalar(
+        &base_diffuse_roughness));
+    TEST_CHECK(surface->thin_film_weight.get_value().get_scalar(&thin_film_weight));
+    TEST_CHECK(surface->geometry_thin_walled.get_value().get_scalar(&thin_walled));
+    if (surface->geometry_coat_normal.authored()) {
+      const auto anim = surface->geometry_coat_normal.get_value();
+      TEST_CHECK(anim && anim->get_scalar(&coat_normal));
+    }
+    if (surface->geometry_coat_tangent.authored()) {
+      const auto anim = surface->geometry_coat_tangent.get_value();
+      TEST_CHECK(anim && anim->get_scalar(&coat_tangent));
+    }
+    TEST_CHECK(math::is_close(fuzz_weight, 0.66f));
+    TEST_CHECK(math::is_close(base_diffuse_roughness, 0.09f));
+    TEST_CHECK(math::is_close(thin_film_weight, 0.88f));
+    TEST_CHECK(thin_walled);
+    TEST_CHECK(math::is_close(coat_normal[2], 1.0f));
+    TEST_CHECK(math::is_close(coat_tangent[0], 1.0f));
+  }
+}
+
+void materialx_look_roundtrip_test(void) {
+  const std::string xml = R"XML(
+<materialx version="1.39" colorspace="lin_rec709" cms="ocio" cmsconfig="config&amp;v2.ocio" namespace="Studio&amp;Main">
+  <open_pbr_surface name="LookShader" type="surfaceshader">
+    <input name="base_weight" type="float" value="0.8" />
+  </open_pbr_surface>
+  <look name="Hero&amp;Look">
+    <materialassign name="Assign" material="HeroMaterial" geom="/World/Body" />
+    <propertyassign property="inputs:base_weight" value="0.9" custom="a&amp;b" />
+    <assigngroup name="Group&amp;A"><propertyassign property="inputs:specular" value="0.4" /></assigngroup>
+  </look>
+</materialx>
+)XML";
+
+  MtlxModel model;
+  std::string warn;
+  std::string err;
+  TEST_CHECK(ReadMaterialXFromString(xml, "look.mtlx", &model, &warn, &err));
+  TEST_CHECK(model.looks.find("Hero&Look") != model.looks.end());
+  TEST_CHECK(model.version == "1.39");
+  TEST_CHECK(model.cms == "ocio");
+  TEST_CHECK(model.cmsconfig == "config&v2.ocio");
+  TEST_CHECK(model.name_space == "Studio&Main");
+  if (model.looks.find("Hero&Look") != model.looks.end()) {
+    const auto &elements = model.looks.at("Hero&Look").elements;
+    TEST_CHECK(elements.size() == 3);
+    if (elements.size() == 3) TEST_CHECK(elements[2].children.size() == 1);
+  }
+
+  std::string output;
+  TEST_CHECK(WriteMaterialXToString(model, output, &warn, &err));
+  TEST_CHECK(output.find("<look name=\"Hero&amp;Look\">") != std::string::npos);
+  TEST_CHECK(output.find("custom=\"a&amp;b\"") != std::string::npos);
+  TEST_CHECK(output.find("version=\"1.39\"") != std::string::npos);
+  TEST_CHECK(output.find("cms=\"ocio\"") != std::string::npos);
+  TEST_CHECK(output.find("cmsconfig=\"config&amp;v2.ocio\"") != std::string::npos);
+  TEST_CHECK(output.find("namespace=\"Studio&amp;Main\"") != std::string::npos);
+  TEST_CHECK(output.find("<assigngroup name=\"Group&amp;A\">") != std::string::npos);
+  TEST_CHECK(output.find("<propertyassign property=\"inputs:specular\" value=\"0.4\" />") != std::string::npos);
+}
+
+void materialx_light_shader_roundtrip_test(void) {
+  const std::string xml = R"XML(
+<materialx version="1.39">
+  <open_pbr_surface name="Surface" type="surfaceshader" />
+  <uniform_edf name="UniformEDF" type="EDF">
+    <input name="color" type="color3" value="0.2, 0.4, 0.6" />
+  </uniform_edf>
+  <conical_edf name="ConeEDF" type="EDF">
+    <input name="inner_angle" type="float" value="20.0" />
+    <input name="outer_angle" type="float" value="40.0" />
+  </conical_edf>
+  <measured_edf name="MeasuredEDF" type="EDF">
+    <input name="file" type="filename" value="profile.ies" />
+  </measured_edf>
+  <light name="Lamp" type="lightshader">
+    <input name="edf" type="EDF" nodename="UniformEDF" />
+    <input name="intensity" type="color3" value="1.0, 0.8, 0.5" />
+    <input name="exposure" type="float" value="2.0" />
+  </light>
+</materialx>
+)XML";
+
+  MtlxModel model;
+  std::string warn;
+  std::string err;
+  TEST_CHECK(ReadMaterialXFromString(xml, "lights.mtlx", &model, &warn, &err));
+  TEST_CHECK(model.light_shaders.size() == 4);
+  TEST_CHECK(model.light_shaders.find("UniformEDF") != model.light_shaders.end());
+  TEST_CHECK(model.light_shaders.find("Lamp") != model.light_shaders.end());
+
+  std::string output;
+  TEST_CHECK(WriteMaterialXToString(model, output, &warn, &err));
+  TEST_CHECK(output.find("<uniform_edf name=\"UniformEDF\" type=\"EDF\">") != std::string::npos);
+  TEST_CHECK(output.find("<conical_edf name=\"ConeEDF\" type=\"EDF\">") != std::string::npos);
+  TEST_CHECK(output.find("<measured_edf name=\"MeasuredEDF\" type=\"EDF\">") != std::string::npos);
+  TEST_CHECK(output.find("<light name=\"Lamp\" type=\"lightshader\">") != std::string::npos);
+  TEST_CHECK(output.find("nodename=\"UniformEDF\"") != std::string::npos);
+
+  MtlxModel reparsed;
+  TEST_CHECK(ReadMaterialXFromString(output, "lights-roundtrip.mtlx", &reparsed,
+                                     &warn, &err));
+  TEST_CHECK(reparsed.light_shaders.size() == 4);
+  TEST_CHECK(reparsed.light_shaders.find("Lamp") != reparsed.light_shaders.end());
 }
 
 // Test MaterialX shader type constants
@@ -847,6 +1107,8 @@ def Shader "S"
     uniform token info:id = "OpenPBRSurface"
     normal3f inputs:geometry_normal.connect = </N.outputs:rgb>
     vector3f inputs:geometry_tangent.connect = </T.outputs:rgb>
+    normal3f inputs:coat_normal.connect = </CN.outputs:rgb>
+    vector3f inputs:coat_tangent.connect = </CT.outputs:rgb>
     token outputs:surface
 }
 )";

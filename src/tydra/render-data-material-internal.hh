@@ -13,9 +13,19 @@
 
 #include "nonstd/expected.hpp"
 #include "core/prim.hh"     // Prim, Stage, Path
+#include "tydra/render-data.hh"
 
 namespace lightusd {
 namespace tydra {
+
+#if defined(LIGHTUSD_WITH_TEXTOOLS)
+bool IsKTX2AssetPath(const std::string &path);
+bool LoadKTX2CompressedBlocks(const AssetResolutionResolver &resolver,
+                              const value::AssetPath &assetPath,
+                              TextureImage *texImage,
+                              std::vector<uint8_t> *out_bytes,
+                              std::string *warn, std::string *err);
+#endif
 
 struct MtlxNodeGraphInfo {
   float tangent_rotation{0.0f};      // From ND_rotate3d_vector3 node's "amount" input (degrees)

@@ -487,9 +487,32 @@ bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
     memcpy(arr.data(), values.data(), sizeof(float) * values.size());
     (*value) = arr;
   } else if (typeName.compare("stringarray") == 0) {
-    // MaterialX string arrays are comma-separated strings
-    // For now, store as a single string (arrays in XML attributes are rare)
-    (*value) = str;
+    // MaterialX string arrays are comma-separated. Keep quoted commas inside
+    // one element; XML attributes commonly contain either bare identifiers or
+    // quoted strings.
+    std::vector<std::string> values;
+    std::string item;
+    char quote = 0;
+    for (const char c : str) {
+      if (c == '\'' || c == '"') {
+        if (quote == 0) quote = c;
+        else if (quote == c) quote = 0;
+        else item.push_back(c);
+      } else if (c == ',' && quote == 0) {
+        const size_t begin = item.find_first_not_of(" \t\r\n");
+        const size_t end = item.find_last_not_of(" \t\r\n");
+        values.push_back(begin == std::string::npos ? std::string() :
+                         item.substr(begin, end - begin + 1));
+        item.clear();
+      } else {
+        item.push_back(c);
+      }
+    }
+    const size_t begin = item.find_first_not_of(" \t\r\n");
+    const size_t end = item.find_last_not_of(" \t\r\n");
+    if (begin != std::string::npos) values.push_back(item.substr(begin, end - begin + 1));
+    else if (!str.empty()) values.emplace_back();
+    (*value) = std::move(values);
   } else {
     PUSH_ERROR_AND_RETURN("Unsupported type: " + typeName);
   }
@@ -760,6 +783,10 @@ static bool ParseInputElement(const lightusd::mtlx::pugi::xml_node &inp, PrimSpe
   if (nodename_attr || nodegraph_attr) {
     // This is a connection - store connection info
     Attribute attr;
+    lightusd::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
+    if (type_attr) {
+      attr.set_type_name(type_attr.as_string());
+    }
     if (nodename_attr) {
       std::string target = std::string(nodename_attr.as_string()) + ".outputs:out";
       attr.set_connections({Path(target, "")});
@@ -798,6 +825,13 @@ static bool ParseInputElement(const lightusd::mtlx::pugi::xml_node &inp, PrimSpe
     if (ParseMaterialXValue(input_value, &val, err)) {
       ps.props()[prop_name] = Property(Attribute::Uniform(val));
     }
+  } else if (type_str == "color4") {
+    value::Value parsed;
+    if (ParseMaterialXValue(type_str, input_value, &parsed, err)) {
+      if (auto val = parsed.as<value::color4f>()) {
+        ps.props()[prop_name] = Property(Attribute::Uniform(*val));
+      }
+    }
   } else if (type_str == "vector2") {
     value::float2 val;
     if (ParseMaterialXValue(input_value, &val, err)) {
@@ -813,6 +847,20 @@ static bool ParseInputElement(const lightusd::mtlx::pugi::xml_node &inp, PrimSpe
     if (ParseMaterialXValue(input_value, &val, err)) {
       ps.props()[prop_name] = Property(Attribute::Uniform(val));
     }
+  } else if (type_str == "matrix33") {
+    value::Value parsed;
+    if (ParseMaterialXValue(type_str, input_value, &parsed, err)) {
+      if (auto val = parsed.as<value::matrix3f>()) {
+        ps.props()[prop_name] = Property(Attribute::Uniform(*val));
+      }
+    }
+  } else if (type_str == "matrix44") {
+    value::Value parsed;
+    if (ParseMaterialXValue(type_str, input_value, &parsed, err)) {
+      if (auto val = parsed.as<value::matrix4f>()) {
+        ps.props()[prop_name] = Property(Attribute::Uniform(*val));
+      }
+    }
   } else if (type_str == "integer") {
     int val;
     if (ParseMaterialXValue(input_value, &val, err)) {
@@ -827,6 +875,46 @@ static bool ParseInputElement(const lightusd::mtlx::pugi::xml_node &inp, PrimSpe
     ps.props()[prop_name] = Property(Attribute::Uniform(input_value));
   } else if (type_str == "filename") {
     ps.props()[prop_name] = Property(Attribute::Uniform(value::AssetPath(input_value)));
+  } else if (type_str == "floatarray" || type_str == "integerarray" ||
+             type_str == "color3array" || type_str == "color4array" ||
+             type_str == "vector2array" || type_str == "vector3array" ||
+             type_str == "vector4array" || type_str == "stringarray") {
+    auto store_array = [&](auto &&array) {
+      primvar::PrimVar var;
+      var.set_value(std::forward<decltype(array)>(array));
+      Attribute attr;
+      attr.set_var(std::move(var));
+      attr.variability() = Variability::Uniform;
+      ps.props()[prop_name] = Property(std::move(attr));
+    };
+    value::Value parsed;
+    if (ParseMaterialXValue(type_str, input_value, &parsed, err)) {
+      if (type_str == "floatarray") {
+        if (auto val = parsed.as<std::vector<float>>())
+          store_array(TypedArray<float>(val->data(), val->size()));
+      } else if (type_str == "integerarray") {
+        if (auto val = parsed.as<std::vector<int>>())
+          store_array(TypedArray<int>(val->data(), val->size()));
+      } else if (type_str == "color3array") {
+        if (auto val = parsed.as<std::vector<value::color3f>>())
+          store_array(TypedArray<value::color3f>(val->data(), val->size()));
+      } else if (type_str == "color4array") {
+        if (auto val = parsed.as<std::vector<value::color4f>>())
+          store_array(TypedArray<value::color4f>(val->data(), val->size()));
+      } else if (type_str == "vector2array") {
+        if (auto val = parsed.as<std::vector<value::float2>>())
+          store_array(TypedArray<value::float2>(val->data(), val->size()));
+      } else if (type_str == "vector3array") {
+        if (auto val = parsed.as<std::vector<value::float3>>())
+          store_array(TypedArray<value::float3>(val->data(), val->size()));
+      } else if (type_str == "vector4array") {
+        if (auto val = parsed.as<std::vector<value::float4>>())
+          store_array(TypedArray<value::float4>(val->data(), val->size()));
+      } else if (type_str == "stringarray") {
+        if (auto val = parsed.as<std::vector<std::string>>())
+          store_array(*val);
+      }
+    }
   }
 
   // Apply per-input colorspace if present
@@ -1126,16 +1214,6 @@ static bool ConvertNodeGraphIterative(const lightusd::mtlx::pugi::xml_node &root
   return true;
 }
 
-// Legacy wrapper - forwards to iterative version
-// TODO: Remove this wrapper once all callers are updated to use ConvertNodeGraphIterative directly
-static bool ConvertNodeGraphRec(const uint32_t depth,
-                                const lightusd::mtlx::pugi::xml_node &node, PrimSpec &ps_out,
-                                const MtlxConfig &config,
-                                std::string *warn, std::string *err) {
-  (void)depth;  // Iterative version handles depth internally
-  return ConvertNodeGraphIterative(node, ps_out, config, warn, err);
-}
-
 // Process <include filename="..."/> elements by reading and merging included files.
 // Replaces each <include .../> with the children of the included document's <materialx> root.
 // @param[in] base_dir Base directory for resolving relative include paths.
@@ -1290,6 +1368,19 @@ static bool ProcessIncludes(const std::string &base_dir, std::string &xml_str,
 
 }  // namespace detail
 
+static MtlxLookElement ParseLookElement(
+    const lightusd::mtlx::pugi::xml_node &node) {
+  MtlxLookElement element;
+  element.name = node.name();
+  for (const auto &attr : node.attributes()) {
+    element.attributes[attr.first] = attr.second;
+  }
+  for (auto child : node) {
+    element.children.push_back(ParseLookElement(child));
+  }
+  return element;
+}
+
 bool ReadMaterialXFromString(const std::string &str,
                              const std::string &asset_path, MtlxModel *mtlx,
                              std::string *warn, std::string *err,
@@ -1415,6 +1506,7 @@ bool ReadMaterialXFromString(const std::string &str,
         std::string output_name;
         std::string output_type;
         std::string nodename_ref;
+        std::string output_ref = "out";
 
         lightusd::mtlx::pugi::xml_attribute out_name_attr = child.attribute("name");
         if (out_name_attr) {
@@ -1425,26 +1517,39 @@ bool ReadMaterialXFromString(const std::string &str,
         if (out_type_attr) {
           output_type = out_type_attr.as_string();
         }
+        lightusd::mtlx::pugi::xml_attribute output_attr = child.attribute("output");
+        if (output_attr) {
+          output_ref = output_attr.as_string();
+        }
 
         lightusd::mtlx::pugi::xml_attribute nodename_attr = child.attribute("nodename");
         if (nodename_attr) {
           nodename_ref = nodename_attr.as_string();
 
           // Create connection to the referenced node
-          std::string connection_path = nodename_ref + ".outputs:out";
+          std::string connection_path = nodename_ref + ".outputs:" + output_ref;
 
-          // Store output as a connection property
+          // Store output as a real USD connection, not a string-valued
+          // attribute. This preserves the edge when converting the PrimSpec
+          // back to MaterialX or through a USD roundtrip.
           std::string prop_name = "outputs:" + output_name;
-          // For now, store as a string connection path
-          ng_ps.props()[prop_name] = Property(Attribute::Uniform(connection_path));
+          Attribute output_attr;
+          if (!output_type.empty()) output_attr.set_type_name(output_type);
+          output_attr.set_connections({Path(connection_path, "")});
+          ng_ps.props()[prop_name] = Property(output_attr);
         }
       } else if (child_name == "input") {
-        // Handle nodegraph inputs
-        // TODO: Implement if needed
+        // Nodegraph inputs use the same value/connection representation as
+        // shader-node inputs. Keeping them in the PrimSpec lets the writer
+        // emit exposed graph inputs instead of silently dropping them.
+        if (!detail::ParseInputElement(child, ng_ps, err)) {
+          PUSH_WARN(fmt::format("Failed to parse input on nodegraph '{}'.\n",
+                                ng_name));
+        }
       } else {
         // Process shader nodes
         PrimSpec child_ps;
-        if (detail::ConvertNodeGraphRec(0, child, child_ps, config, warn, err)) {
+        if (detail::ConvertNodeGraphIterative(child, child_ps, config, warn, err)) {
           if (!child_ps.name().empty()) {
             ng_ps.children().emplace_back(std::move(child_ps));
           }
@@ -1515,6 +1620,7 @@ bool ReadMaterialXFromString(const std::string &str,
         // Store connection information
         MtlxShaderConnection conn;
         conn.input_name = name;
+        conn.type = typeName;
         conn.nodegraph = nodegraphRef;
         conn.output = outputRef;
         conn.nodename = nodenameRef;
@@ -1564,9 +1670,15 @@ bool ReadMaterialXFromString(const std::string &str,
       GET_SHADER_PARAM(name, typeName, "thin_walled", "boolean", bool, valueStr, surface.thin_walled)
       GET_SHADER_PARAM(name, typeName, "normal", "vector3", value::normal3f, valueStr, surface.normal)
       GET_SHADER_PARAM(name, typeName, "tangent", "vector3", value::vector3f, valueStr, surface.tangent)
+      GET_SHADER_PARAM(name, typeName, "coat_normal", "vector3", value::normal3f, valueStr, surface.coat_normal)
       GET_SHADER_PARAM(name, typeName, "displacement", "float", float, valueStr, surface.displacement)
       {
-        PUSH_WARN(fmt::format("Unknown/unsupported standard_surface input `{}`", name));
+        if (!valueStr.empty()) {
+          mtlx->custom_shader_inputs[surface_name].push_back(
+              {name, typeName, valueStr});
+        } else {
+          PUSH_WARN(fmt::format("Unknown/unsupported standard_surface input `{}`", name));
+        }
       }
     }
 
@@ -1803,6 +1915,7 @@ bool ReadMaterialXFromString(const std::string &str,
         // Store connection information
         MtlxShaderConnection conn;
         conn.input_name = name;
+        conn.type = typeName;
         conn.nodegraph = nodegraphRef;
         conn.output = outputRef;
         conn.nodename = nodenameRef;
@@ -1873,7 +1986,7 @@ bool ReadMaterialXFromString(const std::string &str,
       }
     }
 
-    OpenPBRSurface surface;
+    MtlxOpenPBRSurface surface;
     for (auto inp : openpbr_surface.children("input")) {
       std::string name;
       std::string typeName;
@@ -1914,6 +2027,7 @@ bool ReadMaterialXFromString(const std::string &str,
         // Store connection information
         MtlxShaderConnection conn;
         conn.input_name = name;
+        conn.type = typeName;
         conn.nodegraph = nodegraphRef;
         conn.output = outputRef;
         conn.nodename = nodenameRef;
@@ -1926,6 +2040,7 @@ bool ReadMaterialXFromString(const std::string &str,
       GET_SHADER_PARAM(name, typeName, "base_color", "color3", value::color3f, valueStr, surface.base_color)
       GET_SHADER_PARAM(name, typeName, "base_roughness", "float", float, valueStr, surface.base_roughness)
       GET_SHADER_PARAM(name, typeName, "base_metalness", "float", float, valueStr, surface.base_metalness)
+      GET_SHADER_PARAM(name, typeName, "base_diffuse_roughness", "float", float, valueStr, surface.base_diffuse_roughness)
       GET_SHADER_PARAM(name, typeName, "specular_weight", "float", float, valueStr, surface.specular_weight)
       GET_SHADER_PARAM(name, typeName, "specular_color", "color3", value::color3f, valueStr, surface.specular_color)
       GET_SHADER_PARAM(name, typeName, "specular_roughness", "float", float, valueStr, surface.specular_roughness)
@@ -1933,18 +2048,22 @@ bool ReadMaterialXFromString(const std::string &str,
       GET_SHADER_PARAM(name, typeName, "specular_ior_level", "float", float, valueStr, surface.specular_ior_level)
       GET_SHADER_PARAM(name, typeName, "specular_anisotropy", "float", float, valueStr, surface.specular_anisotropy)
       GET_SHADER_PARAM(name, typeName, "specular_rotation", "float", float, valueStr, surface.specular_rotation)
+      GET_SHADER_PARAM(name, typeName, "specular_roughness_anisotropy", "float", float, valueStr, surface.specular_roughness_anisotropy)
       GET_SHADER_PARAM(name, typeName, "transmission_weight", "float", float, valueStr, surface.transmission_weight)
       GET_SHADER_PARAM(name, typeName, "transmission_color", "color3", value::color3f, valueStr, surface.transmission_color)
       GET_SHADER_PARAM(name, typeName, "transmission_depth", "float", float, valueStr, surface.transmission_depth)
       GET_SHADER_PARAM(name, typeName, "transmission_scatter", "color3", value::color3f, valueStr, surface.transmission_scatter)
       GET_SHADER_PARAM(name, typeName, "transmission_scatter_anisotropy", "float", float, valueStr, surface.transmission_scatter_anisotropy)
       GET_SHADER_PARAM(name, typeName, "transmission_dispersion", "float", float, valueStr, surface.transmission_dispersion)
+      GET_SHADER_PARAM(name, typeName, "transmission_dispersion_abbe_number", "float", float, valueStr, surface.transmission_dispersion_abbe_number)
+      GET_SHADER_PARAM(name, typeName, "transmission_dispersion_scale", "float", float, valueStr, surface.transmission_dispersion_scale)
       GET_SHADER_PARAM(name, typeName, "subsurface_weight", "float", float, valueStr, surface.subsurface_weight)
       GET_SHADER_PARAM(name, typeName, "subsurface_color", "color3", value::color3f, valueStr, surface.subsurface_color)
       GET_SHADER_PARAM(name, typeName, "subsurface_radius", "float", float, valueStr, surface.subsurface_radius)
       GET_SHADER_PARAM(name, typeName, "subsurface_radius_scale", "color3", value::color3f, valueStr, surface.subsurface_radius_scale)
       GET_SHADER_PARAM(name, typeName, "subsurface_scale", "float", float, valueStr, surface.subsurface_scale)
       GET_SHADER_PARAM(name, typeName, "subsurface_anisotropy", "float", float, valueStr, surface.subsurface_anisotropy)
+      GET_SHADER_PARAM(name, typeName, "subsurface_scatter_anisotropy", "float", float, valueStr, surface.subsurface_scatter_anisotropy)
       GET_SHADER_PARAM(name, typeName, "sheen_weight", "float", float, valueStr, surface.sheen_weight)
       GET_SHADER_PARAM(name, typeName, "sheen_color", "color3", value::color3f, valueStr, surface.sheen_color)
       GET_SHADER_PARAM(name, typeName, "sheen_roughness", "float", float, valueStr, surface.sheen_roughness)
@@ -1953,16 +2072,33 @@ bool ReadMaterialXFromString(const std::string &str,
       GET_SHADER_PARAM(name, typeName, "coat_roughness", "float", float, valueStr, surface.coat_roughness)
       GET_SHADER_PARAM(name, typeName, "coat_anisotropy", "float", float, valueStr, surface.coat_anisotropy)
       GET_SHADER_PARAM(name, typeName, "coat_rotation", "float", float, valueStr, surface.coat_rotation)
+      GET_SHADER_PARAM(name, typeName, "coat_roughness_anisotropy", "float", float, valueStr, surface.coat_roughness_anisotropy)
       GET_SHADER_PARAM(name, typeName, "coat_ior", "float", float, valueStr, surface.coat_ior)
+      GET_SHADER_PARAM(name, typeName, "coat_darkening", "float", float, valueStr, surface.coat_darkening)
       GET_SHADER_PARAM(name, typeName, "coat_affect_color", "float", float, valueStr, surface.coat_affect_color)
       GET_SHADER_PARAM(name, typeName, "coat_affect_roughness", "float", float, valueStr, surface.coat_affect_roughness)
+      GET_SHADER_PARAM(name, typeName, "fuzz_weight", "float", float, valueStr, surface.fuzz_weight)
+      GET_SHADER_PARAM(name, typeName, "fuzz_color", "color3", value::color3f, valueStr, surface.fuzz_color)
+      GET_SHADER_PARAM(name, typeName, "fuzz_roughness", "float", float, valueStr, surface.fuzz_roughness)
+      GET_SHADER_PARAM(name, typeName, "thin_film_thickness", "float", float, valueStr, surface.thin_film_thickness)
+      GET_SHADER_PARAM(name, typeName, "thin_film_ior", "float", float, valueStr, surface.thin_film_ior)
+      GET_SHADER_PARAM(name, typeName, "thin_film_weight", "float", float, valueStr, surface.thin_film_weight)
       GET_SHADER_PARAM(name, typeName, "emission_luminance", "float", float, valueStr, surface.emission_luminance)
       GET_SHADER_PARAM(name, typeName, "emission_color", "color3", value::color3f, valueStr, surface.emission_color)
-      GET_SHADER_PARAM(name, typeName, "opacity", "float", float, valueStr, surface.opacity)
-      GET_SHADER_PARAM(name, typeName, "normal", "vector3", value::normal3f, valueStr, surface.normal)
-      GET_SHADER_PARAM(name, typeName, "tangent", "vector3", value::vector3f, valueStr, surface.tangent)
+      GET_SHADER_PARAM(name, typeName, "opacity", "float", float, valueStr, surface.geometry_opacity)
+      GET_SHADER_PARAM(name, typeName, "geometry_opacity", "float", float, valueStr, surface.geometry_opacity)
+      GET_SHADER_PARAM(name, typeName, "geometry_thin_walled", "boolean", bool, valueStr, surface.geometry_thin_walled)
+      GET_SHADER_PARAM(name, typeName, "normal", "vector3", value::normal3f, valueStr, surface.geometry_normal)
+      GET_SHADER_PARAM(name, typeName, "tangent", "vector3", value::vector3f, valueStr, surface.geometry_tangent)
+      GET_SHADER_PARAM(name, typeName, "coat_normal", "vector3", value::normal3f, valueStr, surface.geometry_coat_normal)
+      GET_SHADER_PARAM(name, typeName, "coat_tangent", "vector3", value::vector3f, valueStr, surface.geometry_coat_tangent)
       {
-        PUSH_WARN(fmt::format("TODO: OpenPBR input `{}`", name));
+        if (!valueStr.empty()) {
+          mtlx->custom_shader_inputs[surface_name].push_back(
+              {name, typeName, valueStr});
+        } else {
+          PUSH_WARN(fmt::format("Unknown/unsupported OpenPBR input `{}`", name));
+        }
       }
     }
 
@@ -2013,15 +2149,27 @@ bool ReadMaterialXFromString(const std::string &str,
 
     MtlxMaterial mat;
     mat.name = material_name;
-    mat.typeName = typeName;
+    // `typeName` above is the connected input type (`surfaceshader`), not
+    // the MaterialX element type. A surfacematerial element is always a
+    // `material`; retaining the input type makes our writer emit invalid XML.
+    mat.typeName = "material";
     mat.nodename = nodename;
     mtlx->surface_materials[material_name] = mat;
   }
 
-  // look.
+  // Preserve look assignments generically. MaterialX and renderer extensions
+  // add assignment attributes over time, so retaining the element/attribute
+  // pairs is more useful than rejecting or silently dropping the look.
   for (auto look : root.children("look")) {
-    PUSH_WARN("TODO: `look`");
-    (void)look;
+    MtlxLook parsed_look;
+    lightusd::mtlx::pugi::xml_attribute name_attr = look.attribute("name");
+    if (name_attr) parsed_look.name = name_attr.as_string();
+    for (auto child : look) {
+      parsed_look.elements.push_back(ParseLookElement(child));
+    }
+    if (!parsed_look.name.empty()) {
+      mtlx->looks[parsed_look.name] = std::move(parsed_look);
+    }
   }
 
 #undef GET_ATTR_VALUE

@@ -16,6 +16,8 @@
 #include "str-util.hh"
 #include "value-pprint.hh"
 #include "pprint-enum.hh"
+#include "usd-to-json.hh"
+#include "minijson.hh"
 
 namespace lightusd {
 
@@ -323,8 +325,22 @@ std::string InspectLayer(const Layer &layer, const InspectOptions &opts) {
   std::stringstream ss;
 
   if (opts.format == InspectOutputFormat::Json) {
-    // TODO: Implement JSON output
-    ss << "{ \"error\": \"JSON output not yet implemented\" }";
+    // Keep inspection JSON on the native minijson path.  Besides avoiding a
+    // second serializer, this gives callers the same bounded serialization
+    // behavior as the public USD-to-JSON API.
+    minijson::SerializeOptions json_opts;
+    json_opts.indent = static_cast<int>(opts.indent_width);
+    json_opts.sort_keys = true;
+    json_opts.max_depth = 256;
+    std::string json;
+    minijson::Error json_error;
+    const minijson::Value value = ToJSONValue(layer);
+    if (!minijson::Serialize(value, &json, &json_error, json_opts)) {
+      ss << "{\"error\":\"JSON serialization failed at offset "
+         << json_error.offset << "\"}";
+    } else {
+      ss << json;
+    }
     return ss.str();
   }
 
@@ -361,8 +377,19 @@ std::string InspectStage(const Stage &stage, const InspectOptions &opts) {
   std::stringstream ss;
 
   if (opts.format == InspectOutputFormat::Json) {
-    // TODO: Implement JSON output
-    ss << "{ \"error\": \"JSON output not yet implemented\" }";
+    minijson::SerializeOptions json_opts;
+    json_opts.indent = static_cast<int>(opts.indent_width);
+    json_opts.sort_keys = true;
+    json_opts.max_depth = 256;
+    std::string json;
+    minijson::Error json_error;
+    const minijson::Value value = ToJSONValue(stage, nullptr);
+    if (!minijson::Serialize(value, &json, &json_error, json_opts)) {
+      ss << "{\"error\":\"JSON serialization failed at offset "
+         << json_error.offset << "\"}";
+    } else {
+      ss << json;
+    }
     return ss.str();
   }
 

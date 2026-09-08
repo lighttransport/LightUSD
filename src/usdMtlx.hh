@@ -2,7 +2,7 @@
 // Copyright 2023 - Present, Light Transport Entertainment, Inc.
 //
 // Predefined MaterialX shadingmodel & Built-in MaterialX XML import plugIn.
-// Import only. Export is not supported(yet).
+// Supports both import and export.
 //
 // example usage
 //
@@ -17,7 +17,9 @@
 
 #pragma once
 
+#include <map>
 #include <string>
+#include <vector>
 
 #include "asset-resolution.hh"
 #include "usdShade.hh"
@@ -70,9 +72,19 @@ struct MtlxConfig {
 // MaterialX shader input connection information
 struct MtlxShaderConnection {
   std::string input_name;      // e.g., "base_color"
+  std::string type;            // Original MaterialX input type.
   std::string nodegraph;        // Reference to nodegraph name (if using nodegraph output)
   std::string output;           // Output name from nodegraph (e.g., "out_color")
   std::string nodename;         // Direct node reference (alternative to nodegraph)
+};
+
+// Renderer-specific direct inputs that are not part of the built-in carrier
+// structs. They are retained verbatim so importing and exporting a MaterialX
+// shader does not silently discard extension parameters.
+struct MtlxCustomShaderInput {
+  std::string name;
+  std::string type;
+  std::string value;
 };
 
 // <surfacematerial>
@@ -80,6 +92,20 @@ struct MtlxMaterial {
   std::string name;
   std::string typeName;
   std::string nodename;
+};
+
+// A MaterialX <look> child (materialassign/propertyassign/visibility, or an
+// extension element). Attributes are retained generically so importing a look
+// does not discard renderer-specific assignment metadata.
+struct MtlxLookElement {
+  std::string name;
+  std::map<std::string, std::string> attributes;
+  std::vector<MtlxLookElement> children;
+};
+
+struct MtlxLook {
+  std::string name;
+  std::vector<MtlxLookElement> elements;
 };
 
 struct MtlxModel {
@@ -100,14 +126,17 @@ struct MtlxModel {
   value::Value shader;
 
   std::map<std::string, MtlxMaterial> surface_materials;
+  std::map<std::string, MtlxLook> looks;
   std::map<std::string, value::Value> shaders; // MtlxUsdPreviewSurface, MtlxAutodeskStandardSurface, or OpenPBRSurface
   std::map<std::string, value::Value> light_shaders; // Light shaders (EDF nodes)
   std::map<std::string, PrimSpec> nodegraphs; // NodeGraph PrimSpecs
   std::map<std::string, std::vector<MtlxShaderConnection>> shader_connections; // Shader name -> list of connections
+  std::map<std::string, std::vector<MtlxCustomShaderInput>> custom_shader_inputs;
 };
 
 struct MtlxUsdPreviewSurface : UsdPreviewSurface {
-  //  TODO: add mtlx specific attribute.
+  // MaterialX currently has no additional UsdPreviewSurface fields in this
+  // adapter. The wrapper remains useful at the type-erased boundary.
 };
 
 // OpenPBR Surface Shader
@@ -118,6 +147,7 @@ struct MtlxOpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<float>> base_weight{1.0f};
   TypedAttributeWithFallback<Animatable<value::color3f>> base_color{
       value::color3f{0.8f, 0.8f, 0.8f}};
+  TypedAttributeWithFallback<Animatable<float>> base_roughness{0.0f};
   TypedAttributeWithFallback<Animatable<float>> base_metalness{0.0f};
   TypedAttributeWithFallback<Animatable<float>> base_diffuse_roughness{0.0f};
 
@@ -127,6 +157,7 @@ struct MtlxOpenPBRSurface : ShaderNode {
       value::color3f{1.0f, 1.0f, 1.0f}};
   TypedAttributeWithFallback<Animatable<float>> specular_roughness{0.3f};
   TypedAttributeWithFallback<Animatable<float>> specular_ior{1.5f};
+  TypedAttributeWithFallback<Animatable<float>> specular_ior_level{0.5f};
   TypedAttributeWithFallback<Animatable<float>> specular_anisotropy{0.0f};
   TypedAttributeWithFallback<Animatable<float>> specular_rotation{0.0f};
   TypedAttributeWithFallback<Animatable<float>> specular_roughness_anisotropy{0.0f};
@@ -153,6 +184,12 @@ struct MtlxOpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<float>> subsurface_scale{1.0f};
   TypedAttributeWithFallback<Animatable<float>> subsurface_anisotropy{0.0f};
   TypedAttributeWithFallback<Animatable<float>> subsurface_scatter_anisotropy{0.0f};
+
+  // Sheen properties
+  TypedAttributeWithFallback<Animatable<float>> sheen_weight{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> sheen_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> sheen_roughness{0.3f};
 
   // Coat properties
   TypedAttributeWithFallback<Animatable<float>> coat_weight{0.0f};
@@ -363,8 +400,6 @@ bool ReadMaterialXFromString(const std::string &str, const std::string &asset_na
 ///
 /// @return true upon success.
 ///
-/// TODO: Use FileSystem handler
-
 bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
                             const std::string &asset_path, MtlxModel *mtlx,
                             std::string *warn, std::string *err,

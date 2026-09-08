@@ -2,7 +2,6 @@
 // Copyright 2026 - Present Light Transport Entertainment Inc.
 
 #include "tydra/urdf-to-usd.hh"
-#include "tydra/urdf-payload.hh"
 
 #include <cctype>
 #include <cmath>
@@ -23,6 +22,7 @@
 #include "core/relationship.hh"
 #include "core/xform-op.hh"
 #include "mjcPhysics.hh"
+#include "minijson.hh"
 #include "nonstd/optional.hpp"
 #include "stage.hh"
 #include "usdGeom.hh"
@@ -32,20 +32,57 @@
 #include "value-types.hh"
 #include "xform.hh"
 
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Weverything"
-#endif
-
-#include "external/jsonhpp/nlohmann/json.hpp"
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
-
 namespace lightusd {
 namespace tydra {
 namespace {
+
+// Keep the established local spelling to minimize churn in this large
+// converter; this translation unit intentionally binds it to the bundled
+// minijson implementation and does not include nlohmann/json.hpp.
+namespace nlohmann {
+using json = ::lightusd::minijson::Value;
+}
+
+struct MiniURDFPayload {
+  nlohmann::json root;
+  nlohmann::json empty_array = minijson::Value::array();
+  bool mjcf_source{false};
+
+  const nlohmann::json &Array(const char *name) const {
+    if (root.contains(name) && root.at(name).is_array()) return root.at(name);
+    return empty_array;
+  }
+
+  static bool Parse(const std::string &text, MiniURDFPayload *out,
+                    std::string *err) {
+    if (!out) {
+      if (err) *err = "URDF payload output is null";
+      return false;
+    }
+    minijson::Error parse_err;
+    minijson::ParseOptions options;
+    if (!minijson::Parse(text, &out->root, &parse_err, options) ||
+        !out->root.is_object()) {
+      if (err) *err = "URDF export JSON parse failed: " + parse_err.message;
+      return false;
+    }
+    auto string_value = [&](const char *key) -> std::string {
+      if (!out->root.contains(key) || !out->root.at(key).is_string()) {
+        return std::string();
+      }
+      return out->root.at(key).get<std::string>();
+    };
+    const std::string source_format = string_value("sourceFormat");
+    const std::string input_format = string_value("inputFormat");
+    out->mjcf_source = source_format == "mjcf" || source_format == "MJCF" ||
+                       input_format == "mjcf" || input_format == "MJCF";
+    if (out->Array("links").empty()) {
+      if (err) *err = "URDF export JSON has no links";
+      return false;
+    }
+    return true;
+  }
+};
 
 constexpr int32_t kMjcfDefaultGroup = 0;
 constexpr int32_t kMjcfDefaultCondim = 3;
@@ -2214,8 +2251,8 @@ bool ConvertURDFJsonToUSDStage(
     err->clear();
   }
 
-  detail::URDFPayload payload;
-  if (!detail::URDFPayload::Parse(robot_json, &payload, err)) {
+  MiniURDFPayload payload;
+  if (!MiniURDFPayload::Parse(robot_json, &payload, err)) {
     return false;
   }
   const nlohmann::json &root = payload.root;
@@ -2784,10 +2821,11 @@ bool ConvertURDFJsonToUSDStage(
                 value::token(plugin_id));
       }
       if (p.contains("config") && p["config"].is_object()) {
-        for (auto it = p["config"].begin(); it != p["config"].end(); ++it) {
+        const auto *config = p["config"].object_items();
+        for (const auto &it : *config) {
           if (!it.value().is_string()) continue;
           AddAttr(scope.props,
-                  "mjc:plugin:" + inst + ":config:" + it.key(),
+                  "mjc:plugin:" + inst + ":config:" + it.key,
                   value::token(it.value().get<std::string>()));
         }
       }

@@ -62,6 +62,11 @@ public:
     return node_ ? node_->text.c_str() : "";
   }
 
+  const std::map<std::string, std::string> &attributes() const {
+    static const std::map<std::string, std::string> empty;
+    return node_ ? node_->attributes : empty;
+  }
+
   // Iterator support
   class iterator {
   public:

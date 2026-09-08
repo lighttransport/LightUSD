@@ -172,10 +172,10 @@ which groups actually ran, so a core-only `ok` is not mistaken for full coverage
 | `get_all_usd_descriptions` | Get descriptions of all loaded USD Layers |
 | `debug_primspec_dump` | Dump a loaded Layer PrimSpec as deterministic JSON for debugging | `path`, `max_depth` |
 
-> Note: `attr_connections`, `payload_list`, and `variant_define` have dispatch
-> entries in `src/tydra/mcp-tools.cc` but are **not registered** with `add_tool`,
-> so the server does not advertise them in `tools/list` — they are dead
-> documentation entries kept here for parity with the dispatch table.
+> Note: `attr_connections` has a dispatch entry but is not advertised because
+> the implementation currently returns an explicit “not implemented” error.
+> `payload_list` and `variant_define` are implemented and advertised in
+> `tools/list`.
 
 ## JavaScript Scripting
 

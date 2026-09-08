@@ -518,15 +518,18 @@ endif()
 option(LIGHTUSD_NEXT_BUILD_FUZZERS "Build libFuzzer harnesses for LightUSD Next (requires clang)" OFF)
 
 if(LIGHTUSD_NEXT_BUILD_FUZZERS)
-    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        message(FATAL_ERROR "LIGHTUSD_NEXT_BUILD_FUZZERS requires clang (-fsanitize=fuzzer)")
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang" OR
+       NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR
+            "LIGHTUSD_NEXT_BUILD_FUZZERS requires Clang for both C and C++ "
+            "(-fsanitize=fuzzer)")
     endif()
     # The library must carry fuzzer coverage instrumentation too (no-link
     # variant), otherwise only the tiny harness body is explored.
     set(NEXT_FUZZ_LIB_FLAGS -fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all)
     set(NEXT_FUZZ_BIN_FLAGS -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all)
     target_compile_options(lightusd_next PRIVATE ${NEXT_FUZZ_LIB_FLAGS})
-    foreach(fz next_usdc next_usda next_compose next_roundtrip)
+    foreach(fz next_usdc next_usda next_compose next_roundtrip minijson)
         add_executable(fuzz_${fz}
             ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fuzzer/${fz}_fuzzmain.cc
         )

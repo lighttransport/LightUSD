@@ -24,6 +24,7 @@ TEST_LIST = {
   { "mcp_schema_list_types", mcp_schema_list_types_test },
   { "mcp_schema_get_type", mcp_schema_get_type_test },
   { "mcp_search", mcp_search_test },
+  { "mcp_tool_list_registration", mcp_tool_list_registration_test },
 
   // Validation
   { "mcp_validate_data", mcp_validate_data_test },

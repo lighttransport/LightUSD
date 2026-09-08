@@ -1513,6 +1513,13 @@ class RenderSceneConverter {
                              size_t num_workers, MeshVisitorEnv *menv,
                              std::string *err);
 
+  void ExtractXformAnimations(const RenderSceneConverterEnv &env,
+                              const XformNode &xform_node);
+
+  double BuildStageInstances(
+      const RenderSceneConverterEnv &env,
+      const PathPrimMap<GeomPointInstancer> &point_instancers);
+
   ///
   /// Convert variability of vertex data to 'vertex' or 'facevarying'.
   ///
@@ -1713,6 +1720,23 @@ class RenderSceneConverter {
                          std::shared_ptr<Stage> *stage_out);
 
 };
+
+// Defined once in render-data-material.cc. Material assembly calls these
+// forms across translation units, so suppress implicit instantiation there.
+extern template bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam<
+    value::normal3f, value::color3f>(
+    const RenderSceneConverterEnv &, const Path &,
+    const TypedAttributeWithFallback<Animatable<value::normal3f>> &,
+    const std::string &, ShaderParam<value::color3f> &, bool);
+extern template bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam<
+    value::normal3f, value::float3>(
+    const RenderSceneConverterEnv &, const Path &,
+    const TypedAttributeWithFallback<Animatable<value::normal3f>> &,
+    const std::string &, ShaderParam<value::float3> &, bool);
+extern template bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam<float, float>(
+    const RenderSceneConverterEnv &, const Path &,
+    const TypedAttributeWithFallback<Animatable<float>> &, const std::string &,
+    ShaderParam<float> &, bool);
 
 } // namespace tydra
 } // namespace lightusd

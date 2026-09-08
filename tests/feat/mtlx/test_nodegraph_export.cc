@@ -10,9 +10,9 @@
 // MaterialX XML with nodegraph connections
 const char* test_mtlx_with_nodegraph = R"(<?xml version="1.0"?>
 <materialx version="1.38">
-  <nodegraph name="NG_marble">
+  <nodegraph name="NG_marble&amp;detail">
     <image name="marble_image" type="color3">
-      <input name="file" type="filename" value="marble.jpg" />
+      <input name="file" type="filename" value="marble&amp;diffuse.jpg" />
       <input name="uaddressmode" type="string" value="periodic" />
       <input name="vaddressmode" type="string" value="periodic" />
     </image>
@@ -24,7 +24,7 @@ const char* test_mtlx_with_nodegraph = R"(<?xml version="1.0"?>
   </nodegraph>
 
   <UsdPreviewSurface name="MarbleShader" type="surfaceshader">
-    <input name="diffuseColor" type="color3" nodegraph="NG_marble" output="out" />
+    <input name="diffuseColor" type="color3" nodegraph="NG_marble&amp;detail" output="out" />
     <input name="roughness" type="float" value="0.3" />
     <input name="metallic" type="float" value="0.0" />
   </UsdPreviewSurface>
@@ -122,13 +122,18 @@ int main(int argc, char** argv) {
   bool has_nodegraph_attr = xml_out.find("nodegraph=\"") != std::string::npos;
   bool has_output_attr = xml_out.find("output=\"") != std::string::npos;
   bool has_output_tag = xml_out.find("<output") != std::string::npos;
+  bool has_escaped_name = xml_out.find("name=\"NG_marble&amp;detail\"") != std::string::npos;
+  bool has_escaped_value = xml_out.find("marble&amp;diffuse.jpg") != std::string::npos;
 
   std::cout << "  <nodegraph> tag: " << (has_nodegraph_tag ? "✓" : "✗") << "\n";
   std::cout << "  nodegraph=\"\" attr: " << (has_nodegraph_attr ? "✓" : "✗") << "\n";
   std::cout << "  output=\"\" attr: " << (has_output_attr ? "✓" : "✗") << "\n";
   std::cout << "  <output> tag: " << (has_output_tag ? "✓" : "✗") << "\n";
+  std::cout << "  XML-escaped nodegraph name: " << (has_escaped_name ? "✓" : "✗") << "\n";
+  std::cout << "  XML-escaped filename: " << (has_escaped_value ? "✓" : "✗") << "\n";
 
-  if (has_nodegraph_tag && has_nodegraph_attr && has_output_attr) {
+  if (has_nodegraph_tag && has_nodegraph_attr && has_output_attr &&
+      has_escaped_name && has_escaped_value) {
     std::cout << "\n✓ NodeGraph structure verified in output\n";
   } else {
     std::cerr << "\n✗ WARNING: Some NodeGraph elements missing in output\n";

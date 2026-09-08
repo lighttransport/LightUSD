@@ -154,6 +154,18 @@ cmake -S src/next -B build-next -DLIGHTUSD_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYP
 cmake --build build-next -j16
 ctest --test-dir build-next --output-on-failure
 
+## JSON backend
+
+The internal USD-to-JSON converter uses the repository's `minijson`
+implementation as its canonical representation. Deprecated overloads that
+expose `nlohmann::json` are disabled by default; enable them explicitly with
+`-DLIGHTUSD_ENABLE_NLOHMANN_JSON_COMPAT=ON` when maintaining an application
+that still uses that API.
+
+Tydra/MCP JSON interfaces and vendored third-party readers currently retain
+their nlohmann-compatible boundary. They should be migrated through a typed
+minijson adapter before changing those public interfaces.
+
 # 3. Run the Node.js roundtrip/comparison suite against OpenUSD v26.05.
 #    Build it once with: scripts/build-openusd-usdcat.sh
 #    For headless environments lacking PySide, `--full` will retry with a reduced
@@ -905,13 +917,32 @@ node tests/compare-usda.js \
 
 ## Python Bindings Test
 
+CTest-integrated tool checks use the first `python3`/`python` found on `PATH`
+by default. Configure a specific interpreter when running from a virtualenv or
+when the build and test interpreters differ:
+
+```bash
+cmake -S . -B build_ninja -G Ninja \
+  -DLIGHTUSD_BUILD_TESTS=ON \
+  -DLIGHTUSD_PYTHON_EXECUTABLE="$VIRTUAL_ENV/bin/python"
+```
+
 `python/tests/` contains pytest-based tests for the pure CPython C-API Python
-binding. This is not integrated into `ctest` and requires the Python package
-to be built and installed separately.
+binding. They remain opt-in because the extension must be built and installed
+separately. After `pip install -e . --no-build-isolation`, register them in the
+native CTest tree with `-DLIGHTUSD_BUILD_PYTHON_TESTS=ON`; CMake registers the
+test only when the selected interpreter can import both `pytest` and `lightusd`.
+For the reproducible local setup, use the [`uv` workflow](python_binding.md#recommended-uv-workflow)
+and pass `.venv/bin/python` through `-DLIGHTUSD_PYTHON_EXECUTABLE`.
 
 ```bash
 pip install -e . --no-build-isolation
 python3 -m pytest python/tests -q
+
+# Equivalent opt-in CTest registration:
+cmake -S . -B build_ninja -G Ninja \
+  -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_PYTHON_TESTS=ON
+ctest --test-dir build_ninja -R '^python-lightusd-tests$' --output-on-failure
 ```
 
 ## Fuzzing

@@ -81,9 +81,8 @@ static void test_parse_openpbr_file(const std::string &data_dir) {
   CHECK(mtlx.shader_name == "OpenPBRSurface", "Expected shader name OpenPBRSurface, got: " + mtlx.shader_name);
   CHECK(!mtlx.shaders.empty(), "Expected at least one shader");
   CHECK(mtlx.surface_materials.count("Gold_Material") == 1, "Expected Gold_Material in surface_materials");
-  // Note: shader is stored as OpenPBRSurface (base type from usdShade.hh), not MtlxOpenPBRSurface
-  CHECK(mtlx.shader.type_name() == "OpenPBRSurface",
-        "Expected shader type OpenPBRSurface, got: " + mtlx.shader.type_name());
+  CHECK(mtlx.shader.type_name() == "MtlxOpenPBRSurface",
+        "Expected shader type MtlxOpenPBRSurface, got: " + mtlx.shader.type_name());
 
   TEST_PASS();
 }

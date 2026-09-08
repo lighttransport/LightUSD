@@ -65,6 +65,22 @@ $ cmake -S src/next -B build-fuzz -DLIGHTUSD_NEXT_BUILD_FUZZERS=ON \
 $ cmake --build build-fuzz -j
 ```
 
+The native minijson parser/serializer has a dedicated `fuzz_minijson` target.
+It applies bounded input, nesting, string, array, and object limits, then
+exercises the parse-to-serialize boundary:
+
+```sh
+cmake -S src/next -B build-fuzz -G Ninja \
+  -DLIGHTUSD_NEXT_BUILD_FUZZERS=ON \
+  -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+cmake --build build-fuzz --target fuzz_minijson -j
+build-fuzz/fuzz_minijson -runs=1000 tests/fuzzer/minijson-seeds
+```
+
+For containerized runs where LeakSanitizer is unavailable, use
+`LSAN_OPTIONS=detect_leaks=0`; sanitizer-enabled CI should keep leak checking
+enabled.
+
 The library itself is compiled with `-fsanitize=fuzzer-no-link,address,
 undefined`, so coverage-guided exploration reaches the reader and not just the
 harness body.

@@ -13,7 +13,9 @@ using ::lightusd::next::UsdPrim; using ::lightusd::next::Value;
 namespace {
 bool GetBool(const UsdPrim& prim, const char* name, bool* out) {
   const Value* value = prim.GetPropertyValue(name); const bool* result = value ? value->as_bool() : nullptr;
-  if (!result || !out) return false; *out = *result; return true;
+  if (!result || !out) return false;
+  *out = *result;
+  return true;
 }
 bool GetToken(const UsdPrim& prim, const char* name, std::string* out) {
   const Value* value = prim.GetPropertyValue(name); if (!value || !out) return false;

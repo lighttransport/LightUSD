@@ -5,30 +5,23 @@
 
 #include <string>
 
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Weverything"
-#endif
-
-#include "external/jsonhpp/nlohmann/json.hpp"
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
+#include "minijson.hh"
 
 namespace lightusd {
 namespace tydra {
 namespace detail {
 
+using JSONValue = ::lightusd::minijson::Value;
+
 // Schema-neutral, validated view of the JSON exchanged by the browser URDF
 // and MJCF frontends. Both legacy and next-core authors consume this object so
 // section defaults and source-format detection cannot drift.
 struct URDFPayload {
-  nlohmann::json root;
-  nlohmann::json empty_array = nlohmann::json::array();
+  JSONValue root;
+  JSONValue empty_array = JSONValue::array();
   bool mjcf_source{false};
 
-  const nlohmann::json &Array(const char *name) const {
+  const JSONValue &Array(const char *name) const {
     if (root.contains(name) && root.at(name).is_array()) {
       return root.at(name);
     }
@@ -41,9 +34,10 @@ struct URDFPayload {
       if (err) *err = "URDF payload output is null";
       return false;
     }
-    out->root = nlohmann::json::parse(text, nullptr, false);
-    if (out->root.is_discarded() || !out->root.is_object()) {
-      if (err) *err = "URDF export JSON parse failed";
+    minijson::Error parse_error;
+    if (!minijson::Parse(text, &out->root, &parse_error) ||
+        !out->root.is_object()) {
+      if (err) *err = "URDF export JSON parse failed: " + parse_error.message;
       return false;
     }
     auto string_value = [&](const char *key) -> std::string {

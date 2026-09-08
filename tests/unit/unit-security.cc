@@ -971,3 +971,50 @@ void security_findfile_absolute_traversal_test(void) {
   result = io::FindFile("valid.usd", search_paths);
   (void)result;
 }
+
+void security_usda_load_options_test(void) {
+  // Exercise the public USDA memory-loader options rather than the reader's
+  // standalone defaults. The callback must be installed on the USDA reader.
+  const std::string usda = "#usda 1.0\n def Xform \"Root\" {}\n";
+
+  Layer layer;
+  std::string warn;
+  std::string err;
+  USDLoadOptions options;
+  int callback_count = 0;
+  options.progress_callback = [&callback_count](float /*progress*/, void * /*userptr*/) {
+    callback_count++;
+    return false;
+  };
+
+  bool ok = LoadUSDALayerFromMemory(
+      reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+      "assets/large.usda", &layer, &warn, &err, options);
+  TEST_CHECK(!ok);
+  TEST_CHECK(callback_count > 0);
+  TEST_CHECK(!err.empty());
+
+  // Zero retains the documented unlimited-memory behavior.
+  layer = Layer();
+  warn.clear();
+  err.clear();
+  options.max_memory_limit_in_mb = 0;
+  options.progress_callback = nullptr;
+  ok = LoadUSDALayerFromMemory(
+      reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+      "assets/large.usda", &layer, &warn, &err, options);
+  TEST_CHECK(ok);
+  TEST_CHECK(err.empty());
+
+  // Negative values are invalid input and are clamped to the same unlimited
+  // behavior instead of wrapping into a huge unsigned budget.
+  layer = Layer();
+  warn.clear();
+  err.clear();
+  options.max_memory_limit_in_mb = -1;
+  ok = LoadUSDALayerFromMemory(
+      reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+      "assets/large.usda", &layer, &warn, &err, options);
+  TEST_CHECK(ok);
+  TEST_CHECK(err.empty());
+}

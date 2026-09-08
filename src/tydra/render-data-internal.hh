@@ -196,7 +196,7 @@ class SkelRootSkeletonResolver {
 // -----------------------------------------------------------------------
 // MeshVisitorEnv / MeshVisitor
 // Scene traversal visitor for mesh and material conversion.
-// Defined in render-data-material.cc, used in render-data.cc.
+// Defined in render-data-mesh-visitor.cc, used in render-data.cc.
 // -----------------------------------------------------------------------
 
 //
@@ -283,6 +283,9 @@ bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
 // Defined in render-data-material.cc, called from render-data.cc.
 // -----------------------------------------------------------------------
 void ResetConnectionResolveCache(const Stage &stage);
+
+// Worker-count policy shared by orchestration and deferred conversion.
+size_t ResolveGeometryWorkerCount(int config_threads);
 
 // -----------------------------------------------------------------------
 // RawAssetRead
