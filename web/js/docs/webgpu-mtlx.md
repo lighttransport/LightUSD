@@ -201,8 +201,9 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 - `cellnoise2d` and `cellnoise3d` provide non-interpolated integer-cell hash
   values for procedural masks.
 - Common color utility nodes `premult`, `unpremult`, `contrast`, and
-  `hsvadjust` now compile with typed ports and bounded alpha/value handling;
-  unpremultiplication clamps its divisor before WGSL conditional selection.
+  `hsvadjust` now compile with typed ports and bounded alpha/value handling.
+  `hsvadjust` follows the MaterialX `amount` vector3 contract and preserves
+  color4 alpha; unpremultiplication clamps its divisor before WGSL selection.
 - `screen` and `difference` compositing nodes compile for scalar, vector, and
   color values using explicit component-wise arithmetic.
 - Boolean `and`, `or`, `xor`, and `not` nodes now compile with strict boolean

@@ -352,9 +352,11 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'rgbtohsv': code=`mxRgbToHsv(${x('in',undefined,'color3')})`; break;
         case 'hsvtorgb': code=`mxHsvToRgb(${x('in',undefined,'color3')})`; break;
         case 'hsvadjust': {
-          if (type !== 'color3') fail('TYPE', key, 'hsvadjust output must be color3');
-          const hsv=`mxRgbToHsv(${x('in',undefined,'color3')})`, hue=x('hue',0,'float'), saturation=x('saturation',1,'float'), value=x('value',1,'float');
-          code=`mxHsvToRgb(vec3f(fract(${hsv}.x+${hue}),max(0.0,${hsv}.y*${saturation}),max(0.0,${hsv}.z*${value})))`; break;
+          if (!['color3','color4'].includes(type)) fail('TYPE', key, 'hsvadjust output must be color3/color4');
+          const value=input('in',undefined,type), rgb=type==='color4'?`${value.code}.rgb`:value.code;
+          const hsv=`mxRgbToHsv(${rgb})`, amount=x('amount',[0,1,1],'vector3');
+          const adjusted=`mxHsvToRgb(vec3f(fract(${hsv}.x+${amount}.x),max(0.0,${hsv}.y*${amount}.y),max(0.0,${hsv}.z*${amount}.z)))`;
+          code=type==='color4'?`vec4f(${adjusted},${value.code}.a)`:adjusted; break;
         }
         case 'contrast': {
           const amount=x('amount',1,'float'), pivot=x('pivot',.5,'float'), value=input('in',undefined,type);
