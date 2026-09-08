@@ -6,6 +6,12 @@ blank same-origin page and includes blackbody branch/clamp/HDR checks,
 color-correction operation ordering and alpha, compositing, and trianglewave.
 It does not replace the full renderer/ShaderBall gate below.
 
+`node tests/webgpu-mtlx-chrome.mjs --hardware --opacity-only` renders analytic
+emissive cutouts at opacity 0, .25, .5 and 1, plus six transparent planes
+crossing a dispatch boundary. It checks known Bernoulli expectations and exact
+transparent/opaque endpoints on the physical path tracer. The test server
+disables HMR so edits cannot reload a running validation page.
+
 The fresh WebGPU MaterialX baseline has a focused Windows/Chrome hardware gate:
 `node tests/webgpu-mtlx-chrome.mjs --hardware --shaderball --performance`.
 Use `--authored-lights` with `--shaderball` for the authored RectLight path-tracing

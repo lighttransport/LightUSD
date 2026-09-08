@@ -146,8 +146,9 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
     // event for the transparent branch.
     let surfaceOpacity=surface.opacity;
     if(!(surfaceOpacity>0.0)||surfaceOpacity<1.0){
-      if(!(surfaceOpacity>0.0)||random(&rng)>=surfaceOpacity){p.origin=vec4f(p.origin.xyz+p.direction.xyz*max(1e-5,length(ctx.position)*2e-6),0);continue;}
-      p.beta/=surfaceOpacity;
+      if(!(surfaceOpacity>0.0)||random(&rng)>=surfaceOpacity){p.origin=vec4f(ctx.position+p.direction.xyz*max(1e-5,length(ctx.position)*2e-6),0);continue;}
+      // Coverage and branch probability are both opacity; their ratio is one.
+      // Dividing beta by opacity here would over-brighten accepted surfaces.
     }
     let m=primaryLobe(surface);
     if(!validClosure(surface.bsdf)){atomicAdd(&pathCounters[2],1u);p.state.w=1u;break;}

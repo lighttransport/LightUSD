@@ -89,6 +89,10 @@ broad independent physical reference-image validation; complete ACEScg graph col
 unsupported surface inputs fail compilation. Transmissive materials select the
 resumable transport path instead of silently becoming opaque in path-preview.
 
+Physical cutout continuation advances past the hit point and preserves
+throughput on the accepted coverage branch. Chrome analytic emission tests
+verify fractional coverage and six transparent surfaces across dispatches.
+
 ## Experimental reference-transport work
 
 `path-physical` runs RGB transport; `path-spectral` samples one wavelength over

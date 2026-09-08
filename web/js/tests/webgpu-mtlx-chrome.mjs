@@ -11,7 +11,7 @@ const hardware = process.argv.includes('--hardware');
 const shaderball = process.argv.includes('--shaderball');
 const executablePath = process.env.CHROME_PATH || (process.platform === 'win32' ? 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe' : undefined);
 const port = Number(process.env.WEBGPU_MTLX_TEST_PORT || 5198);
-const server = await createServer({ configFile: false, ...viteConfig, server: { ...viteConfig.server, port } });
+const server = await createServer({ configFile: false, ...viteConfig, server: { ...viteConfig.server, port, hmr: false } });
 await server.listen();
 let browser, page; const browserLog=[];
 try {
@@ -22,7 +22,7 @@ try {
   page = await browser.newPage(); await page.setViewport({ width: 1100, height: 700 });
   page.on('console',msg=>{browserLog.push(msg.text());if(browserLog.length>30)browserLog.shift();});
   const errors = []; page.on('pageerror', e => errors.push(e.message));
-  if (process.argv.includes('--numeric-only')) {
+  if (process.argv.includes('--numeric-only') || process.argv.includes('--opacity-only')) {
     // Avoid renderer pipeline compilation: isolate graph/WGSL numeric failures.
     const numericURL = `http://127.0.0.1:${port}/__numeric_validation__.html`;
     await page.setRequestInterception(true);
@@ -31,7 +31,18 @@ try {
       else request.continue();
     });
     await page.goto(numericURL, { waitUntil: 'domcontentloaded' });
-    const numericReport = await page.evaluate(async () => {
+    const numericReport = await page.evaluate(async opacityOnly => {
+      if (opacityOnly) {
+        const { createRenderer } = await import('/src/webgpu-mtlx/renderer.js');
+        const { validateOpacityScenes } = await import('/src/webgpu-mtlx/reference-validation.js');
+        const canvas=document.createElement('canvas');document.body.append(canvas);
+        const renderer=await createRenderer(canvas);
+        try {
+          const opacity=await validateOpacityScenes(renderer);
+          if(renderer.errors.length)throw new Error(renderer.errors.join('\n'));
+          return {opacity,adapter:renderer.stats.adapter};
+        } finally { renderer.dispose(); }
+      }
       const adapter = await navigator.gpu?.requestAdapter();
       if (!adapter) throw new Error('WebGPU adapter unavailable');
       const device = await adapter.requestDevice();
@@ -44,7 +55,7 @@ try {
         if (gpuErrors.length) throw new Error(gpuErrors.join('\n'));
         return { numeric, adapter: { vendor: adapter.info.vendor, architecture: adapter.info.architecture, isFallbackAdapter: adapter.info.isFallbackAdapter } };
       } finally { device.destroy(); }
-    });
+    }, process.argv.includes('--opacity-only'));
     if (hardware) assert.equal(numericReport.adapter.isFallbackAdapter, false);
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ browser: await browser.version(), ...numericReport }, null, 2));

@@ -33,3 +33,34 @@ export async function validateReferenceScenes(renderer) {
     return results;
   }finally{renderer.canvas.width=width;renderer.canvas.height=height;renderer.setOptions({seed});}
 }
+
+/** Coverage of an emissive cutout has an analytic Bernoulli expectation. */
+export async function validateOpacityScenes(renderer) {
+  const emission=[2,3,4], background=[.1,.2,.3];
+  const emitter=opacity=>({nodes:[
+    {name:'e',category:'uniform_edf',type:'EDF',inputs:{color:{type:'color3',value:emission}}},
+    {name:'s',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'e'},opacity:{type:'float',value:opacity}}},
+  ]});
+  const fixtures=[0,.25,.5,1].map(opacity=>({name:`emissive cutout ${opacity}`,opacity,
+    scene:planeScene([emitter(opacity)],[[0,false,0]],background),
+    expected:emission.map((v,k)=>opacity*v+(1-opacity)*background[k])}));
+  fixtures.push({name:'six transparent planes across dispatches',opacity:1,
+    scene:planeScene([emitter(0),emitter(1)],Array.from({length:7},(_,i)=>[-i,false,i===6?1:0]),background),expected:emission});
+  const results=[];
+  renderer.canvas.width=16;renderer.canvas.height=16;renderer.setOptions({resolutionScale:1});
+  for(const fixture of fixtures){
+    await renderer.loadScene(fixture.scene);renderer.setMode('path-physical');renderer.setOptions({seed:173});
+    let dispatches=0;
+    while(renderer.samples<32&&dispatches++<128)await renderer.renderStep();
+    if(renderer.samples!==32)throw new Error(`${fixture.name}: cutout paths did not finish`);
+    const capture=await renderer.capture({format:'float32'}),count=capture.sampleCounts.length,mean=[0,0,0];
+    for(let i=0;i<count;i++)for(let k=0;k<3;k++)mean[k]+=capture.pixels[i*4+k]/count;
+    for(let k=0;k<3;k++){
+      // Known Bernoulli variance, independent of the renderer's variance buffer.
+      const error=Math.abs(emission[k]-background[k])*Math.sqrt(fixture.opacity*(1-fixture.opacity)/(count*32));
+      if(!Number.isFinite(mean[k])||Math.abs(mean[k]-fixture.expected[k])>5*error+1e-5)throw new Error(`${fixture.name}: ${mean} expected ${fixture.expected}`);
+    }
+    results.push({name:fixture.name,mean,expected:fixture.expected,dispatches,samples:renderer.samples});
+  }
+  return results;
+}
