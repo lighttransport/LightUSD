@@ -276,6 +276,9 @@ test('decoded authored dome textures feed latlong environment sampling', () => {
   assert.deepEqual(r.lighting.environmentTexture.scale,[1,2,2]);
   const source=shaderSource(syntheticScene('default').materials,{},r.lighting);
   assert.match(source,/imageSample\(0u,vec2u\(2u,1u\)/);assert.match(source,/\*vec3f\(1\.0,2\.0,2\.0\)/);
+  const udimImage={width:4,height:2,data:new Float32Array(4*2*4).fill(1),colorspace:'lin_rec709',udim:{columns:2,rows:1}};
+  const udimLights=appendRectLights(scene,[{type:'dome',textureFile:'env.<UDIM>.exr',textureImage:udimImage}]);
+  assert.match(shaderSource(syntheticScene('default').materials,{},udimLights.lighting),/imageSampleUDIM\(0u,vec2u\(4u,2u\),/);
   const mixed=appendRectLights(scene,[{type:'dome',textureImage:image},{type:'dome',intensity:2,color:[.5,.25,.125]}]);
   assert.match(shaderSource(syntheticScene('default').materials,{},mixed.lighting),/\+vec3f\(1\.0,0\.5,0\.25\)/);
   const multiple=appendRectLights(scene,[{type:'dome',textureImage:image},{type:'dome',textureImage:image,intensity:2,color:[.5,1,1]}]);

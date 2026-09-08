@@ -68,6 +68,10 @@ export function shaderSource(materials, resources = {}, lighting = {}, textureOp
     return `fn material${i}(ctx: ShadingContext) -> Material { ${c.body}\nreturn ${c.expression}; }\nfn medium${i}(ctx:ShadingContext)->Medium { ${medium ? `${medium.body}\nreturn ${medium.expression};` : `return material${i}(ctx).bsdf.interior;`} }`;
   }).join('\n');
   const environmentImage = environmentImageIndex >= 0 ? packed.descriptors[environmentImageIndex] : null;
+  if (environmentImage?.udim && (!Number.isInteger(environmentImage.udim.columns) || !Number.isInteger(environmentImage.udim.rows) || environmentImage.udim.columns < 1 || environmentImage.udim.rows < 1)) throw new Error('Invalid environment UDIM atlas descriptor');
+  const environmentSample = environmentImage?.udim
+    ? `imageSampleUDIM(${environmentImage.offset}u,vec2u(${environmentImage.width}u,${environmentImage.height}u),${environmentImage.levels}u,uv,vec2u(${environmentImage.udim.columns}u,${environmentImage.udim.rows}u),0.0,true,vec4f(0.0))`
+    : environmentImage ? `imageSample(${environmentImage.offset}u,vec2u(${environmentImage.width}u,${environmentImage.height}u),${environmentImage.levels}u,uv,0.0,vec2u(2u,1u),true,vec4f(0.0))` : '';
   const directionalFns = directionalLights.map((light,i)=>`case ${i}u:{return normalize(${literal('vector3',light.direction)});}`).join('');
   const directionalRadianceFns = directionalLights.map((light,i)=>`case ${i}u:{return ${literal('color3',light.radiance)};}`).join('');
   const authoredPointDirect = pointLights.map(light => {
@@ -165,7 +169,7 @@ fn getMedium(id:u32,ctx:ShadingContext)->Medium {
 }
 fn mediumMajorant(id:u32)->f32 {switch id {${materials.map((doc,i)=>`case ${i}u:{return ${literal('float',doc.mediumMajorant||0)};}`).join('\n')}default:{return 0.0;}}}
 fn environment(d: vec3f) -> vec3f {
-  ${environmentImage ? `let dir=safeNormal(d,vec3f(0.0,1.0,0.0));let uv=vec2f(fract(atan2(dir.z,dir.x)/(2.0*PI)+0.5),acos(clamp(dir.y,-1.0,1.0))/PI);return imageSample(${environmentImage.offset}u,vec2u(${environmentImage.width}u,${environmentImage.height}u),${environmentImage.levels}u,uv,0.0,vec2u(2u,1u),true,vec4f(0.0)).rgb*${literal('color3',lighting.environmentTexture.scale||[1,1,1])}+${literal('color3',lighting.environment||[0,0,0])};` : ''}
+  ${environmentImage ? `let dir=safeNormal(d,vec3f(0.0,1.0,0.0));let uv=vec2f(fract(atan2(dir.z,dir.x)/(2.0*PI)+0.5),acos(clamp(dir.y,-1.0,1.0))/PI);return ${environmentSample}.rgb*${literal('color3',lighting.environmentTexture.scale||[1,1,1])}+${literal('color3',lighting.environment||[0,0,0])};` : ''}
   ${lighting.environment ? `return ${literal('color3',lighting.environment)};` : ''}
   let sky = mix(vec3f(0.12,0.15,0.2),vec3f(0.55,0.66,0.85),smoothstep(-0.1,0.9,d.y));
   return sky;
