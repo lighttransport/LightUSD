@@ -290,6 +290,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           code=`surfaceEmission(${bsdf},${edfValue.code},clamp(${opacity},0.0,1.0),${thin},${surfaceNormal},${profile?.direction||cone?.direction||'ctx.normal'},${cone?.innerCos||'-1.0'},${cone?.outerCos||'-1.0'},${schlick?.color0||'vec3f(1)'},${schlick?.color90||'vec3f(1)'},${schlick?.exponent||'5.0'},${cone?'1u':'0u'},${schlick?'1u':'0u'},${profile ? `${profile.id}u` : '0u'})`; normal=surfaceNormal;break;
         }
         case 'dielectric_bsdf': case 'conductor_bsdf': case 'oren_nayar_diffuse_bsdf': case 'burley_diffuse_bsdf': {
+          normal = ins.normal ? x('normal', undefined, 'vector3') : null;
           if(ins.retroreflective && ![false,'false'].includes(ins.retroreflective.value))fail('UNSUPPORTED',key,'retroreflection is not implemented');
           const filmThicknessInput=ins.thinfilm_thickness||ins.thin_film_thickness;
           const filmIORInput=ins.thinfilm_IOR||ins.thinfilm_ior||ins.thin_film_IOR||ins.thin_film_ior;
@@ -308,6 +309,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           code=`closureLeaf(${code})`;closureCount=1;break;
         }
         case 'sheen_bsdf': {
+          normal = ins.normal ? x('normal', undefined, 'vector3') : null;
           if (ins.mode?.nodename || ins.mode?.nodegraph || ins.mode?.interfacename || (ins.mode?.value && !['conty_kulla', 'zeltner'].includes(ins.mode.value))) fail('UNSUPPORTED', key, 'dynamic or unknown sheen mode is not implemented');
           const mode=ins.mode?.value==='zeltner'?1:0;
           code=`closureLeaf(nativeSheen(${x('color',[1,1,1],'color3')},${x('weight',1,'float')},${x('roughness',.3,'float')},${mode}u))`;closureCount=1;break;
@@ -344,12 +346,13 @@ export function compileGraph(document, { output, library = {}, material = false,
           // MaterialX translucent_bsdf is a diffuse transmission closure.
           // The bounded transport lobe samples the opposite hemisphere and
           // carries the authored color and weight through direct/indirect paths.
-          if (ins.normal) x('normal',undefined,'vector3');
+          normal = ins.normal ? x('normal', undefined, 'vector3') : null;
           code=`closureLeaf(nativeTranslucent(${x('color',[1,1,1],'color3')},${x('weight',1,'float')}))`;closureCount=1;break;
         }
         case 'hair_bsdf': case 'chiang_hair_bsdf': {
           // Normalize legacy melanin and explicit-color forms into a bounded
           // fiber lobe; longitudinal and azimuthal roughness remain dynamic.
+          normal = ins.normal ? x('normal', undefined, 'vector3') : null;
           const color = ins.absorption_coefficient ? `exp(-${x('absorption_coefficient',[0,0,0],'vector3')})` : ins.color ? x('color',[.6,.25,.08],'color3') : ins.base_color ? x('base_color',[.6,.25,.08],'color3') : ins.tint_R ? x('tint_R',[1,1,1],'color3') :
             `mix(vec3f(.85,.55,.32),vec3f(.03,.008,.002),clamp(${x('melanin',0,'float')},0.0,1.0))`;
           const longitudinal = ins.longitudinal_roughness ? x('longitudinal_roughness',.35,'float') : ins.roughness_R ? `${x('roughness_R',[.1,.1],'vector2')}.x` : x('roughness',.35,'float');

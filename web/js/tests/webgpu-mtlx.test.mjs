@@ -638,6 +638,14 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   } }] };
   assert.match(compileGraph(diffuseRoughness,{material:true}).body,/0\.72/);
 });
+test('authored BSDF normals propagate through surface terminals', () => {
+  const doc={nodes:[
+    {name:'b',category:'dielectric_bsdf',type:'BSDF',inputs:{normal:{type:'vector3',value:[0,1,0]},ior:{type:'float',value:1.5}}},
+    {name:'s',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'b'}}}
+  ],output:{nodename:'s'}};
+  const source=compileGraph(doc,{material:true});
+  assert.match(source.body,/surfaceEmission\(.*vec3f\(0\.0,1\.0,0\.0\)/);
+});
 test('standard MaterialX Burley, Chiang hair, and absorption VDF nodes compile',()=>{
   const burley=compileGraph({nodes:[{name:'b',category:'burley_diffuse_bsdf',type:'BSDF',inputs:{color:{type:'color3',value:[.5,.4,.3]},roughness:{type:'float',value:.2}}}]});
   assert.match(burley.body,/nativeDiffuse/);
