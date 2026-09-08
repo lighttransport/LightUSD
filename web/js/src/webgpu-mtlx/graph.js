@@ -183,6 +183,11 @@ export function compileGraph(document, { output, library = {}, material = false,
         const code = x(k, fallback, 'float');
         return String(ins[k]?.unit || '').toLowerCase() === 'radian' ? `(${code}*57.29577951308232)` : code;
       };
+      const nanometer = (k, fallback) => {
+        const code = x(k, fallback, 'float');
+        const scale = ({ micrometer: 1e3, millimeter: 1e6, centimeter: 1e7, meter: 1e9, inch: 2.54e7 })[String(ins[k]?.unit || '').toLowerCase()];
+        return scale ? `(${code}*${scale})` : code;
+      };
       const same = k => x(k, undefined, type);
       const scalarOrSame = (k, fallback) => {
         const p=input(k,fallback);
@@ -291,11 +296,11 @@ export function compileGraph(document, { output, library = {}, material = false,
             code=`nativeDiffuse(${x('color',[.18,.18,.18],'color3')},${x('weight',1,'float')},${x('roughness',0,'float')})`;
           } else if(n.category==='conductor_bsdf') {
             const conductor=`nativeConductor(${x('ior',[.183,.421,1.373],'color3')},${x('extinction',[3.424,2.346,1.77],'color3')},${x('roughness',[.05,.05],'vector2')},${x('weight',1,'float')})`;
-            code=filmThicknessInput?`withThinFilm(${conductor},${x(filmThicknessInput===ins.thinfilm_thickness?'thinfilm_thickness':'thin_film_thickness',0,'float')},${filmIORInput?x(filmIORInput===ins.thinfilm_IOR?'thinfilm_IOR':filmIORInput===ins.thinfilm_ior?'thinfilm_ior':filmIORInput===ins.thin_film_IOR?'thin_film_IOR':'thin_film_ior',1.5,'float'):'1.5'})`:conductor;
+            code=filmThicknessInput?`withThinFilm(${conductor},${nanometer(filmThicknessInput===ins.thinfilm_thickness?'thinfilm_thickness':'thin_film_thickness',0)},${filmIORInput?x(filmIORInput===ins.thinfilm_IOR?'thinfilm_IOR':filmIORInput===ins.thinfilm_ior?'thinfilm_ior':filmIORInput===ins.thin_film_IOR?'thin_film_IOR':'thin_film_ior',1.5,'float'):'1.5'})`:conductor;
           } else {
             const mode=['R','T','RT'].indexOf(ins.scatter_mode?.value??'R');if(mode<0||ins.scatter_mode?.nodename||ins.scatter_mode?.nodegraph||ins.scatter_mode?.interfacename)fail('UNSUPPORTED',key,'invalid or connected scatter_mode');
             const dielectric=`nativeDielectric(${x('tint',[1,1,1],'color3')},${x('ior',1.5,'float')},${x('roughness',[.05,.05],'vector2')},${x('weight',1,'float')},${mode+1}u)`;
-            const film=filmThicknessInput?`withThinFilm(${dielectric},${x(filmThicknessInput===ins.thinfilm_thickness?'thinfilm_thickness':'thin_film_thickness',0,'float')},${filmIORInput?x(filmIORInput===ins.thinfilm_IOR?'thinfilm_IOR':filmIORInput===ins.thinfilm_ior?'thinfilm_ior':filmIORInput===ins.thin_film_IOR?'thin_film_IOR':'thin_film_ior',1.5,'float'):'1.5'})`:dielectric;
+            const film=filmThicknessInput?`withThinFilm(${dielectric},${nanometer(filmThicknessInput===ins.thinfilm_thickness?'thinfilm_thickness':'thin_film_thickness',0)},${filmIORInput?x(filmIORInput===ins.thinfilm_IOR?'thinfilm_IOR':filmIORInput===ins.thinfilm_ior?'thinfilm_ior':filmIORInput===ins.thin_film_IOR?'thin_film_IOR':'thin_film_ior',1.5,'float'):'1.5'})`:dielectric;
             code=film;
           }
           code=`closureLeaf(${code})`;closureCount=1;break;
@@ -356,7 +361,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           if (connected('scatter_mode') || n.inputs?.scatter_mode?.value && n.inputs.scatter_mode.value!=='R') fail('UNSUPPORTED',key,'generalized Schlick supports reflection scatter_mode R only');
           const filmThicknessInput=ins.thinfilm_thickness||ins.thin_film_thickness;
           const filmIORInput=ins.thinfilm_IOR||ins.thinfilm_ior||ins.thin_film_IOR||ins.thin_film_ior;
-          const filmThickness=filmThicknessInput ? x(filmThicknessInput===ins.thinfilm_thickness?'thinfilm_thickness':'thin_film_thickness',0,'float') : '0.0';
+          const filmThickness=filmThicknessInput ? nanometer(filmThicknessInput===ins.thinfilm_thickness?'thinfilm_thickness':'thin_film_thickness',0) : '0.0';
           const filmIOR=filmIORInput ? x(filmIORInput===ins.thinfilm_IOR?'thinfilm_IOR':filmIORInput===ins.thinfilm_ior?'thinfilm_ior':filmIORInput===ins.thin_film_IOR?'thin_film_IOR':'thin_film_ior',1.5,'float') : '1.5';
           if (n.inputs?.tangent && (n.inputs.tangent.nodename||n.inputs.tangent.nodegraph||n.inputs.tangent.interfacename||n.inputs.tangent.value!==undefined)) fail('UNSUPPORTED',key,'generalized Schlick authored tangent is not implemented');
           normal=n.inputs?.normal ? x('normal',undefined,'vector3') : null;
@@ -1202,7 +1207,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           const opacityInput = open ? 'geometry_opacity' : 'opacity';
           const opacity = ins[opacityInput] ? x(opacityInput, 1, 'float') : '1.0';
           const thin = open ? (ins.geometry_thin_walled ? `select(0u,1u,${x('geometry_thin_walled', false, 'boolean')})` : '0u') : (ins.thin_walled ? `select(0u,1u,${x('thin_walled', false, 'boolean')})` : '0u');
-          const filmThickness = open && ins.thin_film_weight && ins.thin_film_thickness ? `(${x('thin_film_thickness', 0, 'float')}*clamp(${x('thin_film_weight', 0, 'float')},0.0,1.0))` : !open && ins.thin_film_thickness ? x('thin_film_thickness', 0, 'float') : '0.0';
+          const filmThickness = open && ins.thin_film_weight && ins.thin_film_thickness ? `(${nanometer('thin_film_thickness', 0)}*clamp(${x('thin_film_weight', 0, 'float')},0.0,1.0))` : !open && ins.thin_film_thickness ? nanometer('thin_film_thickness', 0) : '0.0';
           const filmIOR = open && ins.thin_film_ior ? x('thin_film_ior', 1.5, 'float') : !open && ins.thin_film_IOR ? x('thin_film_IOR', 1.5, 'float') : '1.5';
           const specularWeight = open ? (ins.specular_weight ? x('specular_weight', 1, 'float') : '1.0') : (ins.specular ? x('specular', 1, 'float') : '1.0');
           const specularColor = ins.specular_color ? x('specular_color', [1, 1, 1], 'color3') : 'vec3f(1)';
