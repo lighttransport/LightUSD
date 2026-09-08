@@ -192,8 +192,8 @@ bool StoreNativeValue(const value::Value &source, value::any_value *out) {
   return true;
 }
 
-bool StoreNativeDictionaryValue(const value::Value &source,
-                                value::any_value *out) {
+static bool StoreNativeDictionaryValue(const value::Value &source,
+                                       value::any_value *out) {
   if (!out) return false;
   const std::string type_name = source.type_name();
   if (type_name == "float") return StoreNativeValue<float>(source, out);

@@ -654,9 +654,9 @@ bool JSONToUSDContext::GetIntArrayFromAccessor(size_t accessorIndex,
 namespace detail {
 
 // Helper functions for array deserialization from base64
-bool DeserializeBytesFromBase64(const std::string& base64_data,
-                                size_t element_size,
-                                std::vector<uint8_t>* result) {
+static bool DeserializeBytesFromBase64(const std::string& base64_data,
+                                       size_t element_size,
+                                       std::vector<uint8_t>* result) {
   if (!result || element_size == 0) {
     return false;
   }

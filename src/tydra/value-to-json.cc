@@ -2036,7 +2036,9 @@ minijson::Value ValueToMiniJSON(const value::Value &val, uint32_t depth) {
     return result;
   }
   minijson::Value native;
-  if (detail::NativeValueToMiniJSON(val, depth, &native)) return native;
+  if (detail::NativeValueToMiniJSON(val, depth, &native)) {
+    return static_cast<minijson::Value &&>(native);
+  }
   return NlohmannToMiniJSON(ValueToJSON(val, depth));
 }
 

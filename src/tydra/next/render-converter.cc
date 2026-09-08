@@ -74,30 +74,6 @@ bool JointTokenMatches(const SkeletonJoint& joint, const std::string& token) {
   return false;
 }
 
-std::string FirstValidBoundMaterialPath(const Stage& stage,
-                                        const ::lightusd::next::UsdPrim& prim,
-                                        const std::string& purpose) {
-  static const char* kPreviewOrder[] = {"material:binding:preview",
-                                        "material:binding",
-                                        "material:binding:full"};
-  static const char* kFullOrder[] = {"material:binding:full",
-                                     "material:binding",
-                                     "material:binding:preview"};
-  const char* const* bindingOrder = purpose == "full" ? kFullOrder
-                                                       : kPreviewOrder;
-  for (size_t i = 0; i < 3; ++i) {
-    const char* rel = bindingOrder[i];
-    const std::vector<::lightusd::next::Path>* targets =
-        prim.GetRelationship(rel);
-    if (!targets || targets->empty()) continue;
-    const std::string p = (*targets)[0].str();
-    if (!p.empty() && ::lightusd::tydra::next::IsMaterial(
-                          stage.GetPrimAtPath(p))) {
-      return p;
-    }
-  }
-  return "";
-}
 
 std::string FindInheritedMaterialBinding(const Stage& stage,
                                          const std::string& prim_path,
@@ -122,11 +98,6 @@ constexpr int kMaxMtlxConstantDepth = 64;
 
 
 
-const ::lightusd::next::PropNameId& kIdOutputsOut() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("outputs:out");
-  return id;
-}
 
 
 
@@ -206,167 +177,32 @@ const ::lightusd::next::PropNameId& kIdWidths() {
   return id;
 }
 
-const ::lightusd::next::PropNameId& kIdInputsColor() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:color");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsIntensity() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:intensity");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsExposure() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:exposure");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsNormalize() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:normalize");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsEnableColorTemperature() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:enableColorTemperature");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsColorTemperature() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:colorTemperature");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsDiffuse() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:diffuse");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsSpecular() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:specular");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsShapingConeAngle() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:shaping:cone:angle");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsShapingFocus() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:shaping:focus");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsShapingFocusTint() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:shaping:focusTint");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsShapingConeSoftness() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:shaping:cone:softness");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsShapingIesAngleScale() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:shaping:ies:angleScale");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsShapingIesNormalize() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:shaping:ies:normalize");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsShapingIesFile() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:shaping:ies:file");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsRadius() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:radius");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsWidth() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:width");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsHeight() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:height");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsLength() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:length");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsAngle() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:angle");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsTextureFormat() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:texture:format");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsShadowEnable() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:shadow:enable");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsEnableShadows() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:enableShadows");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsShadowColor() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:shadow:color");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsShadowDistance() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:shadow:distance");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsShadowFalloff() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:shadow:falloff");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdInputsShadowFalloffGamma() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:shadow:falloffGamma");
-  return id;
-}
 
 const ::lightusd::next::PropNameId& kIdInputsTextureFile() {
   static const ::lightusd::next::PropNameId id =
@@ -374,122 +210,17 @@ const ::lightusd::next::PropNameId& kIdInputsTextureFile() {
   return id;
 }
 
-const ::lightusd::next::PropNameId& kIdProjection() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("projection");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdFocalLength() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("focalLength");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdHorizontalAperture() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("horizontalAperture");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdVerticalAperture() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("verticalAperture");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdFocusDistance() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("focusDistance");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdShutterOpen() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("shutter:open");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdShutterClose() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("shutter:close");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdFStop() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("fStop");
-  return id;
-}
 
-bool GetBool(const UsdPrim& prim, const ::lightusd::next::PropNameId& name_id,
-             bool* out) {
-  if (!out) return false;
-  const Value* val = prim.GetPropertyValue(name_id);
-  if (!val) return false;
-  const bool* b = val->as_bool();
-  if (!b) return false;
-  *out = *b;
-  return true;
-}
 
-bool GetFloat(const UsdPrim& prim, const ::lightusd::next::PropNameId& name_id,
-              float* out) {
-  if (!out) return false;
-  const Value* val = prim.GetPropertyValue(name_id);
-  if (!val) return false;
-  const float* f = val->as_float();
-  if (f) {
-    *out = *f;
-    return true;
-  }
-  const double* d = val->as_double();
-  if (d) {
-    *out = static_cast<float>(*d);
-    return true;
-  }
-  return false;
-}
 
-bool GetFloat3(const UsdPrim& prim, const ::lightusd::next::PropNameId& name_id,
-               float* x, float* y, float* z) {
-  if (!x || !y || !z) return false;
-  const Value* val = prim.GetPropertyValue(name_id);
-  if (!val) return false;
-  const float* f3 = val->as_float3();
-  if (f3) {
-    x[0] = f3[0];
-    y[0] = f3[1];
-    z[0] = f3[2];
-    return true;
-  }
-  const double* d3 = val->as_double3();
-  if (d3) {
-    x[0] = static_cast<float>(d3[0]);
-    y[0] = static_cast<float>(d3[1]);
-    z[0] = static_cast<float>(d3[2]);
-    return true;
-  }
-  return false;
-}
 
-bool GetDouble(const UsdPrim& prim,
-               const ::lightusd::next::PropNameId& name_id, double* out) {
-  if (!out) return false;
-  const Value* val = prim.GetPropertyValue(name_id);
-  if (!val) return false;
-  const double* d = val->as_double();
-  if (d) {
-    *out = *d;
-    return true;
-  }
-  const float* f = val->as_float();
-  if (f) {
-    *out = *f;
-    return true;
-  }
-  return false;
-}
 
 bool GetToken(const UsdPrim& prim,
              const ::lightusd::next::PropNameId& name_id, std::string* out) {
@@ -507,23 +238,8 @@ bool GetToken(const UsdPrim& prim,
   return true;
 }
 
-bool GetBool(const UsdPrim& prim, const char* name, bool* out) {
-  const auto name_id = ::lightusd::next::GetPropNameTable().find(name);
-  if (!name_id.is_valid()) return false;
-  return GetBool(prim, name_id, out);
-}
 
-bool GetFloat(const UsdPrim& prim, const char* name, float* out) {
-  const auto name_id = ::lightusd::next::GetPropNameTable().find(name);
-  if (!name_id.is_valid()) return false;
-  return GetFloat(prim, name_id, out);
-}
 
-bool GetDouble(const UsdPrim& prim, const char* name, double* out) {
-  const auto name_id = ::lightusd::next::GetPropNameTable().find(name);
-  if (!name_id.is_valid()) return false;
-  return GetDouble(prim, name_id, out);
-}
 
 bool GetToken(const UsdPrim& prim, const char* name, std::string* out) {
   const auto name_id = ::lightusd::next::GetPropNameTable().find(name);
@@ -531,17 +247,8 @@ bool GetToken(const UsdPrim& prim, const char* name, std::string* out) {
   return GetToken(prim, name_id, out);
 }
 
-bool GetBool(const UsdPrim& prim, const std::string& name, bool* out) {
-  return GetBool(prim, name.c_str(), out);
-}
 
-bool GetDouble(const UsdPrim& prim, const std::string& name, double* out) {
-  return GetDouble(prim, name.c_str(), out);
-}
 
-bool GetToken(const UsdPrim& prim, const std::string& name, std::string* out) {
-  return GetToken(prim, name.c_str(), out);
-}
 
 size_t AuthoredArraySize(const UsdPrim& prim,
                         const ::lightusd::next::PropNameId& name_id) {
@@ -549,24 +256,7 @@ size_t AuthoredArraySize(const UsdPrim& prim,
   return value && value->is_array() ? value->array_size() : 0;
 }
 
-bool WouldOverflowSizeMul(size_t a, size_t b) {
-  if (a == 0 || b == 0) return false;
-  return a > (std::numeric_limits<size_t>::max() / b);
-}
 
-std::string SourcePrimPathFromConnection(const std::string& connection_path) {
-  size_t dot_pos = connection_path.find(".outputs:");
-  if (dot_pos == std::string::npos) {
-    dot_pos = connection_path.find(".inputs:");
-  }
-  if (dot_pos == std::string::npos) {
-    dot_pos = connection_path.rfind('.');
-  }
-  if (dot_pos == std::string::npos) {
-    return connection_path;
-  }
-  return connection_path.substr(0, dot_pos);
-}
 
 bool SplitConnectionPath(const std::string& connection_path,
                          std::string* prim_path,
@@ -586,360 +276,17 @@ bool SplitConnectionPath(const std::string& connection_path,
   return !prim_path->empty() && !prop_name->empty();
 }
 
-bool IsTextureEndpoint(const Stage& stage, const UsdPrim& prim,
-                       double time_code) {
-  if (!prim.IsValid()) return false;
-  std::string id;
-  GetToken(prim, "info:id", &id);
-  if (id == "UsdUVTexture" || id == "HwPtexTexture" ||
-      id.rfind("HwPtexTexture", 0) == 0 || id == "PxrPtexture" ||
-      id == "image" || id == "tiledimage" ||
-      id.rfind("ND_image_", 0) == 0 ||
-      id.rfind("ND_tiledimage_", 0) == 0) {
-    return true;
-  }
-  ::lightusd::next::AttributeEval eval(&stage);
-  eval.SetTime(time_code);
-  return eval.EvalAssetPath(prim, "inputs:file").has_value() ||
-         eval.EvalString(prim, "inputs:file").has_value() ||
-         eval.EvalAssetPath(prim, "inputs:filename").has_value() ||
-         eval.EvalString(prim, "inputs:filename").has_value();
-}
 
-const std::vector<::lightusd::next::Path>* PrimaryDataInputConnection(
-    const UsdPrim& prim) {
-  const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec();
-  if (!spec) return nullptr;
 
-  static const char* kPreferredInputs[] = {
-      "inputs:in", "inputs:in1", "inputs:dispScalar", "inputs:inputRGB",
-      "inputs:fg", "inputs:bg"};
-  for (const char* preferred : kPreferredInputs) {
-    const std::vector<::lightusd::next::Path>* connections =
-        spec->connection(preferred);
-    if (connections && !connections->empty()) return connections;
-  }
 
-  auto is_factor_input = [](const std::string& name) {
-    return name == "inputs:mix" || name == "inputs:amount" ||
-           name == "inputs:weight" || name == "inputs:factor" ||
-           name == "inputs:alpha" || name == "inputs:mask";
-  };
-  for (const std::string& property : prim.GetPropertyNames()) {
-    if (property.rfind("inputs:", 0) != 0 || is_factor_input(property)) {
-      continue;
-    }
-    const std::vector<::lightusd::next::Path>* connections =
-        spec->connection(property);
-    if (connections && !connections->empty()) return connections;
-  }
-  return nullptr;
-}
 
-bool ResolveConnectedEndpoint(const Stage& stage,
-                              const std::string& connection_path,
-                              double time_code,
-                              std::string* endpoint_path) {
-  if (!endpoint_path) return false;
-  std::string current = connection_path;
-  std::set<std::string> visited;
-  for (int depth = 0; depth <= kMaxMtlxConstantDepth; ++depth) {
-    if (!visited.insert(current).second) return false;
 
-    std::string prim_path;
-    std::string prop_name;
-    if (!SplitConnectionPath(current, &prim_path, &prop_name)) return false;
-    UsdPrim prim = stage.GetPrimAtPath(prim_path);
-    if (!prim.IsValid()) return false;
-    if (IsTextureEndpoint(stage, prim, time_code)) {
-      *endpoint_path = current;
-      return true;
-    }
 
-    const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec();
-    const std::vector<::lightusd::next::Path>* connections =
-        spec ? spec->connection(prop_name) : nullptr;
-    if (!connections || connections->empty()) {
-      connections = PrimaryDataInputConnection(prim);
-    }
-    if (!connections || connections->empty()) {
-      *endpoint_path = current;
-      return true;
-    }
-    current = (*connections)[0].str();
-  }
-  return false;
-}
 
-bool FindConnectedUtilityScalar(const Stage& stage, const UsdPrim& shader,
-                                const std::string& shader_input,
-                                const std::string& node_id_prefix,
-                                const std::string& node_input,
-                                double time_code, float* out) {
-  if (!out || !shader.IsValid()) return false;
-  ::lightusd::next::AttributeEval eval(&stage);
-  eval.SetTime(time_code);
-  const std::string property = "inputs:" + shader_input;
-  if (!eval.HasConnection(shader, property)) return false;
-  std::string current = eval.GetConnectionPath(shader, property);
-  std::set<std::string> visited;
-  for (int depth = 0; depth <= kMaxMtlxConstantDepth; ++depth) {
-    if (!visited.insert(current).second) return false;
-    std::string prim_path;
-    std::string prop_name;
-    if (!SplitConnectionPath(current, &prim_path, &prop_name)) return false;
-    const UsdPrim node = stage.GetPrimAtPath(prim_path);
-    if (!node.IsValid()) return false;
-    std::string id;
-    GetToken(node, "info:id", &id);
-    if (id.rfind(node_id_prefix, 0) == 0) {
-      if (std::optional<float> value =
-              eval.EvalFloat(node, "inputs:" + node_input)) {
-        *out = *value;
-        return true;
-      }
-      return false;
-    }
-    const ::lightusd::next::PrimSpec* spec = node.GetPrimSpec();
-    const std::vector<::lightusd::next::Path>* connections =
-        spec ? spec->connection(prop_name) : nullptr;
-    if (!connections || connections->empty()) {
-      connections = PrimaryDataInputConnection(node);
-    }
-    if (!connections || connections->empty()) return false;
-    current = (*connections)[0].str();
-  }
-  return false;
-}
 
-bool ResolveConnectedValue(const Stage& stage,
-                           const std::string& connection_path,
-                           double time_code,
-                           Value* out) {
-  if (!out) return false;
 
-  std::string endpoint;
-  if (!ResolveConnectedEndpoint(stage, connection_path, time_code, &endpoint)) {
-    return false;
-  }
-  std::string prim_path;
-  std::string prop_name;
-  if (!SplitConnectionPath(endpoint, &prim_path, &prop_name)) return false;
 
-  UsdPrim prim = stage.GetPrimAtPath(prim_path);
-  if (!prim.IsValid()) return false;
 
-  ::lightusd::next::AttributeEval eval(&stage);
-  eval.SetTime(time_code);
-  ::lightusd::next::EvalOptions opts = eval.GetOptions();
-  opts.follow_connections = false;
-  ::lightusd::next::EvalResult result = eval.EvalWith(prim, prop_name, opts);
-  if (result.success) {
-    *out = std::move(result.value);
-    return true;
-  }
-
-  return false;
-}
-
-RenderTexture::Channel ChannelFromConnection(
-    const std::string& connection_path, const UsdPrim& texture_prim) {
-  size_t pos = connection_path.find(".outputs:");
-  if (pos == std::string::npos) {
-    return RenderTexture::Channel::RGBA;
-  }
-
-  const std::string channel = connection_path.substr(pos + 9);
-  if (channel == "r" || channel == "x") return RenderTexture::Channel::R;
-  if (channel == "g" || channel == "y") return RenderTexture::Channel::G;
-  if (channel == "b" || channel == "z") return RenderTexture::Channel::B;
-  if (channel == "a" || channel == "w") return RenderTexture::Channel::A;
-  if (channel == "rgb" || channel == "xyz") return RenderTexture::Channel::RGB;
-
-  // MaterialX image nodes conventionally expose a generic `outputs:out`.
-  // Recover its scalar/vector shape from the synthesized output value/type so
-  // roughness and metallic maps sample R while color/normal maps sample RGB.
-  if (channel == "out" && texture_prim.IsValid()) {
-    std::string type;
-    if (const Value* value = texture_prim.GetPropertyValue(kIdOutputsOut())) {
-      if (const std::string* token = value->as_token()) type = *token;
-      else if (const std::string* str = value->as_string()) type = *str;
-    }
-    if (type.empty()) {
-      if (const ::lightusd::next::PrimSpec* spec =
-              texture_prim.GetPrimSpec()) {
-        if (const std::string* declared =
-                spec->property_type_name("outputs:out")) {
-          type = *declared;
-        }
-      }
-    }
-    if (type == "float" || type == "integer" || type == "boolean") {
-      return RenderTexture::Channel::R;
-    }
-    if (type == "color3" || type == "color3f" || type == "vector3" ||
-        type == "vector3f") {
-      return RenderTexture::Channel::RGB;
-    }
-  }
-  return RenderTexture::Channel::RGBA;
-}
-
-WrapMode ParseWrapMode(const std::string& token) {
-  // UsdUVTexture uses repeat/clamp/mirror/black, while MaterialX image nodes
-  // call the equivalent modes periodic/clamp/mirror/constant. Keep the
-  // translation at the RenderTexture boundary so every backend sees one
-  // canonical enum.
-  if (token == "repeat" || token == "periodic") return WrapMode::Repeat;
-  if (token == "clamp") return WrapMode::Clamp;
-  if (token == "mirror") return WrapMode::Mirror;
-  if (token == "black" || token == "constant") return WrapMode::Black;
-  // UsdUVTexture's wrapS/wrapT fallback is "useMetadata"; with no texture
-  // metadata the effective mode is clamp-to-edge (legacy tydra behavior) —
-  // NOT repeat, which visibly tiles textures authored to clamp.
-  return WrapMode::Clamp;
-}
-
-ColorSpace ParseColorSpace(const std::string& token) {
-  if (token == "raw") return ColorSpace::Raw;
-  if (token == "linear" || token == "Linear" || token == "lin_srgb" ||
-      token == "lin_rec709" || token == "scene-linear Rec.709-sRGB") {
-    return ColorSpace::Linear;
-  }
-  if (token == "sRGB" || token == "srgb" || token == "srgb_texture") {
-    return ColorSpace::sRGB;
-  }
-  if (token == "acescg" || token == "ACEScg") return ColorSpace::ACEScg;
-  if (token == "rec709" || token == "Rec709") return ColorSpace::Rec709;
-  if (token == "rec2020" || token == "Rec2020" ||
-      token == "lin_rec2020") return ColorSpace::Rec2020;
-  if (token == "displayP3" || token == "DisplayP3" ||
-      token == "lin_displayp3" || token == "srgb_displayp3") {
-    return ColorSpace::DisplayP3;
-  }
-  return ColorSpace::Unknown;
-}
-
-bool IsColorShaderInput(const UsdPrim& prim, const std::string& attr_name,
-                        const std::string& param_name) {
-  if (const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec()) {
-    if (const std::string* type = spec->property_type_name(attr_name)) {
-      if (type->rfind("color3", 0) == 0 || type->rfind("color4", 0) == 0) {
-        return true;
-      }
-    }
-  }
-  static const std::set<std::string> kColorInputs = {
-      "diffuseColor", "emissiveColor", "specularColor", "base_color",
-      "baseColor", "specular_color", "transmission_color",
-      "subsurface_color", "sheen_color", "coat_color", "emission_color"};
-  return kColorInputs.count(param_name) != 0;
-}
-
-bool MaterialXConfiguredColorSpace(const UsdPrim& prim, std::string* out) {
-  if (!out || !prim.IsValid()) return false;
-  std::string id;
-  if (!GetToken(prim, "info:id", &id) ||
-      (id.rfind("ND_", 0) != 0 && id != "image" &&
-       id != "tiledimage" && id != "open_pbr_surface" &&
-       id != "standard_surface")) {
-    return false;
-  }
-  for (UsdPrim current = prim; current.IsValid(); current = current.GetParent()) {
-    const Value* value =
-        current.GetPropertyValue("config:mtlx:colorspace");
-    if (!value) continue;
-    const std::string* token = value->as_token();
-    if (!token) token = value->as_string();
-    if (token && !token->empty()) {
-      *out = ::lightusd::color::CanonicalizeToken(*token);
-      return true;
-    }
-  }
-  return false;
-}
-
-bool ResolveConnectedColorSource(const Stage& stage,
-                                 const std::string& connection_path,
-                                 double time_code, UsdPrim* source_prim,
-                                 std::string* source_property) {
-  if (!source_prim || !source_property) return false;
-  std::string endpoint;
-  if (!ResolveConnectedEndpoint(stage, connection_path, time_code, &endpoint)) {
-    return false;
-  }
-  std::string prim_path;
-  std::string property;
-  if (!SplitConnectionPath(endpoint, &prim_path, &property)) return false;
-  UsdPrim prim = stage.GetPrimAtPath(prim_path);
-  if (!prim.IsValid()) return false;
-
-  // Prefer metadata on the resolved output itself. MaterialX constant and
-  // utility nodes usually put it on their value/data input instead, so scan
-  // those inputs before falling back to the terminal shader attribute.
-  if (const ::lightusd::next::PropMeta* meta =
-          prim.GetPropertyMeta(property)) {
-    if ((meta->authored & ::lightusd::next::PropMeta::kColorSpace) != 0u) {
-      *source_prim = prim;
-      *source_property = property;
-      return true;
-    }
-  }
-  std::string value_input;
-  for (const std::string& candidate : prim.GetPropertyNames()) {
-    if (candidate.rfind("inputs:", 0) != 0) continue;
-    if (value_input.empty() || candidate == "inputs:value" ||
-        candidate == "inputs:in") {
-      value_input = candidate;
-    }
-    if (const ::lightusd::next::PropMeta* meta =
-            prim.GetPropertyMeta(candidate)) {
-      if ((meta->authored & ::lightusd::next::PropMeta::kColorSpace) != 0u) {
-        *source_prim = prim;
-        *source_property = candidate;
-        return true;
-      }
-    }
-  }
-  if (!value_input.empty()) {
-    *source_prim = prim;
-    *source_property = value_input;
-    return true;
-  }
-  *source_prim = prim;
-  *source_property = property;
-  return true;
-}
-
-void ConvertShaderColorToWorking(const UsdPrim& prim,
-                                 const std::string& attr_name,
-                                 const std::string& param_name,
-                                 const RenderScene* scene,
-                                 ShaderParam* param) {
-  if (!scene || !param || param->is_texture() ||
-      !IsColorShaderInput(prim, attr_name, param_name)) {
-    return;
-  }
-  std::string source;
-  bool authored = false;
-  if (!::lightusd::next::color_management::ComputeColorSpaceName(
-          prim, attr_name, &source, &authored)) {
-    return;
-  }
-  if (!authored) {
-    (void)MaterialXConfiguredColorSpace(prim, &source);
-  }
-  ::lightusd::color::ColorTransform transform;
-  if (!::lightusd::next::color_management::BuildColorTransform(
-          prim, source, scene->working_color_space, &transform)) {
-    return;
-  }
-  float rgb[3] = {param->value.x, param->value.y, param->value.z};
-  ::lightusd::color::TransformRGB(transform, rgb);
-  param->value.x = rgb[0];
-  param->value.y = rgb[1];
-  param->value.z = rgb[2];
-}
 
 void SetParamFloat(ShaderParam* out, float x) {
   out->texture_id = -1;
@@ -1031,316 +378,15 @@ bool ValueToShaderParam(const Value& value, ShaderParam* out) {
   return false;
 }
 
-std::string JsonEscape(const std::string& value) {
-  std::string out;
-  out.reserve(value.size());
-  for (char c : value) {
-    if (c == '\\' || c == '"') out.push_back('\\');
-    if (static_cast<unsigned char>(c) >= 0x20) out.push_back(c);
-  }
-  return out;
-}
 
-std::string ConnectionNodeName(const std::string& path) {
-  const size_t slash = path.rfind('/');
-  const size_t dot = path.rfind('.');
-  if (slash == std::string::npos || dot == std::string::npos || dot <= slash)
-    return {};
-  return path.substr(slash + 1, dot - slash - 1);
-}
 
-std::string ConnectionOutputName(const std::string& path) {
-  const size_t dot = path.rfind('.');
-  if (dot == std::string::npos) return {};
-  std::string out = path.substr(dot + 1);
-  if (out.compare(0, 8, "outputs:") == 0) out.erase(0, 8);
-  return out;
-}
 
-std::string ConnectionPropertyName(const std::string& path) {
-  const size_t dot = path.rfind('.');
-  return dot == std::string::npos ? std::string() : path.substr(dot + 1);
-}
 
-void EmitNextGraphValue(std::ostream& os, const Value& value) {
-  if (const std::string* v = value.as_asset_path()) {
-    os << '"' << JsonEscape(*v) << '"';
-    return;
-  }
-  if (const std::string* v = value.as_string()) {
-    os << '"' << JsonEscape(*v) << '"';
-    return;
-  }
-  if (const std::string* v = value.as_token()) {
-    os << '"' << JsonEscape(*v) << '"';
-    return;
-  }
-  ShaderParam p;
-  if (!ValueToShaderParam(value, &p)) { os << "null"; return; }
-  int lanes = 1;
-  if (value.as_float2() || value.as_double2()) lanes = 2;
-  else if (value.as_float3() || value.as_double3()) lanes = 3;
-  else if (value.as_float4() || value.as_double4()) lanes = 4;
-  const float v[4] = {p.value.x, p.value.y, p.value.z, p.value.w};
-  if (lanes == 1) { os << v[0]; return; }
-  os << '[';
-  for (int i = 0; i < lanes; ++i) { if (i) os << ','; os << v[i]; }
-  os << ']';
-}
 
 // Preserve the programmable MaterialX graph in the same compact JSON schema
 // consumed by the shared lusdview graph compiler. The next converter already
 // resolves simple constants and images; this record retains the full utility
 // node topology for descriptor-backed renderers instead of silently baking it.
-std::string BuildNextMaterialXGraphJson(const Stage& stage,
-                                        const UsdPrim& shader,
-                                        bool volume_graph = false) {
-  const UsdPrim material = shader.GetParent();
-  if (!material.IsValid()) return {};
-  std::vector<UsdPrim> graphs;
-  ::lightusd::next::AttributeEval shader_connections(&stage);
-  for (const std::string& prop : shader.GetPropertyNames()) {
-    if (prop.compare(0, 7, "inputs:") != 0 ||
-        !shader_connections.HasConnection(shader, prop)) continue;
-    const std::string connection =
-        shader_connections.GetConnectionPath(shader, prop);
-    UsdPrim candidate = stage.GetPrimAtPath(
-        SourcePrimPathFromConnection(connection));
-    if (::lightusd::next::IsNodeGraph(candidate) &&
-        std::none_of(graphs.begin(), graphs.end(), [&](const UsdPrim& item) {
-          return item.GetPath() == candidate.GetPath();
-        })) {
-      graphs.push_back(candidate);
-    }
-  }
-  for (size_t i = 0; i < material.GetChildCount(); ++i) {
-    if (!graphs.empty()) break;
-    UsdPrim child = material.GetChildAt(i);
-    if (::lightusd::next::IsNodeGraph(child)) { graphs.push_back(child); break; }
-  }
-  const bool direct_graph = graphs.empty();
-  const bool graph_forest = graphs.size() > 1;
-  const std::string graph_name = direct_graph
-      ? material.GetName() + "_direct_graph"
-      : (graph_forest ? material.GetName() + "_graphs"
-                      : graphs.front().GetName());
-  std::vector<UsdPrim> graph_nodes;
-  std::function<void(const UsdPrim&)> collect_nodes = [&](const UsdPrim& parent) {
-    for (size_t ci = 0; ci < parent.GetChildCount(); ++ci) {
-      const UsdPrim child = parent.GetChildAt(ci);
-      if (::lightusd::next::IsShader(child)) graph_nodes.push_back(child);
-      else if (::lightusd::next::IsNodeGraph(child)) collect_nodes(child);
-    }
-  };
-  if (direct_graph) {
-    std::unordered_set<std::string> visited;
-    std::function<void(const UsdPrim&)> collect_upstream =
-        [&](const UsdPrim& node) {
-          if (!node.IsValid() || !::lightusd::next::IsShader(node) ||
-              node.GetPath() == shader.GetPath() ||
-              !visited.insert(node.GetPath().str()).second) return;
-          ::lightusd::next::AttributeEval eval(&stage);
-          for (const std::string& prop : node.GetPropertyNames()) {
-            if (prop.compare(0, 7, "inputs:") != 0 ||
-                !eval.HasConnection(node, prop)) continue;
-            collect_upstream(stage.GetPrimAtPath(SourcePrimPathFromConnection(
-                eval.GetConnectionPath(node, prop))));
-          }
-          graph_nodes.push_back(node);
-        };
-    for (const std::string& prop : shader.GetPropertyNames()) {
-      if (prop.compare(0, 7, "inputs:") != 0 ||
-          !shader_connections.HasConnection(shader, prop)) continue;
-      collect_upstream(stage.GetPrimAtPath(SourcePrimPathFromConnection(
-          shader_connections.GetConnectionPath(shader, prop))));
-    }
-  } else {
-    for (const UsdPrim& graph : graphs) collect_nodes(graph);
-  }
-  std::unordered_map<std::string, std::string> graph_node_names;
-  if (direct_graph) {
-    for (const UsdPrim& node : graph_nodes) {
-      std::string relative = node.GetPath().str();
-      const std::string material_path = material.GetPath().str();
-      if (relative.compare(0, material_path.size(), material_path) == 0)
-        relative.erase(0, material_path.size());
-      while (!relative.empty() && relative.front() == '/') relative.erase(0, 1);
-      std::replace(relative.begin(), relative.end(), '/', '_');
-      graph_node_names[node.GetPath().str()] =
-          relative.empty() ? node.GetName() : relative;
-    }
-  } else for (const UsdPrim& graph : graphs) {
-    const std::string graph_path = graph.GetPath().str();
-    for (const UsdPrim& node : graph_nodes) {
-      std::string relative = node.GetPath().str();
-      if (relative.compare(0, graph_path.size(), graph_path) != 0) continue;
-      relative.erase(0, graph_path.size());
-      while (!relative.empty() && relative.front() == '/') relative.erase(0, 1);
-      std::replace(relative.begin(), relative.end(), '/', '_');
-      if (graph_forest) relative = graph.GetName() + '_' + relative;
-      graph_node_names[node.GetPath().str()] =
-          relative.empty() ? node.GetName() : relative;
-    }
-  }
-  // A connection may target an output on a nested NodeGraph. Chase those
-  // forwarding outputs until the actual Shader output is reached; the packed
-  // runtime has no graph-boundary node and should see the flattened topology.
-  auto resolve_connection = [&](std::string connection) {
-    for (int depth = 0; depth < 16; ++depth) {
-      const UsdPrim source = stage.GetPrimAtPath(
-          SourcePrimPathFromConnection(connection));
-      if (!source.IsValid() || !::lightusd::next::IsNodeGraph(source)) break;
-      const std::string property = ConnectionPropertyName(connection);
-      if (property.empty()) break;
-      ::lightusd::next::AttributeEval eval(&stage);
-      if (!eval.HasConnection(source, property)) break;
-      const std::string forwarded = eval.GetConnectionPath(source, property);
-      if (forwarded.empty() || forwarded == connection) break;
-      connection = forwarded;
-    }
-    return connection;
-  };
-  // Unconnected surface inputs are already preserved by the typed material
-  // converter. Keep them out of the executable graph: synthesizing Constant
-  // nodes for every direct value duplicated work at each hit and could replace
-  // the authoritative typed block with graph-evaluator defaults. Only authored
-  // connections belong in this runtime record.
-  std::ostringstream os;
-  os << "{\"version\":\"1.39\",\"nodegraph\":{\"name\":\""
-     << JsonEscape(graph_name) << "\",\"inputs\":[],\"nodes\":[";
-  bool first_node = true;
-  for (const UsdPrim& node : graph_nodes) {
-    std::string node_id;
-    GetToken(node, "info:id", &node_id);
-    std::string category = node_id;
-    if (category.compare(0, 3, "ND_") == 0) {
-      category.erase(0, 3);
-      const size_t suffix = category.rfind('_');
-      if (suffix != std::string::npos) category.erase(suffix);
-    }
-    if (!first_node) os << ',';
-    first_node = false;
-    os << "{\"name\":\"" << JsonEscape(graph_node_names[node.GetPath().str()])
-       << "\",\"category\":\"" << JsonEscape(category)
-       << "\",\"type\":\"" << JsonEscape(node_id)
-       << "\",\"inputs\":[";
-    bool first_input = true;
-    ::lightusd::next::AttributeEval eval(&stage);
-    for (const std::string& prop : node.GetPropertyNames()) {
-      if (prop.compare(0, 7, "inputs:") != 0) continue;
-      if (!first_input) os << ',';
-      first_input = false;
-      os << "{\"name\":\"" << JsonEscape(prop.substr(7)) << '"';
-      if (eval.HasConnection(node, prop)) {
-        const std::string connection = resolve_connection(
-            eval.GetConnectionPath(node, prop));
-        const std::string source_path = SourcePrimPathFromConnection(connection);
-        const auto source_name = graph_node_names.find(source_path);
-        os << ",\"nodename\":\""
-           << JsonEscape(source_name == graph_node_names.end()
-                             ? ConnectionNodeName(connection)
-                             : source_name->second)
-           << "\",\"output\":\"" << JsonEscape(ConnectionOutputName(connection)) << '"';
-      } else if (const Value* value = node.GetPropertyValueOrEarliestTimeSample(prop)) {
-        os << ",\"value\":"; EmitNextGraphValue(os, *value);
-        if (const ::lightusd::next::PrimSpec* spec = node.GetPrimSpec()) {
-          if (const std::string* type = spec->property_type_name(prop))
-            os << ",\"type\":\"" << JsonEscape(*type) << '"';
-        }
-      }
-      os << '}';
-    }
-    os << "]}";
-  }
-  os << "],\"outputs\":[";
-  bool first_output = true;
-  ::lightusd::next::AttributeEval shader_eval(&stage);
-  auto runtime_input_name = [&](const std::string& name) {
-    if (!volume_graph) return name;
-    if (name == "density") return std::string("volume_density");
-    if (name == "scattering_color" || name == "scatter_color")
-      return std::string("volume_albedo");
-    if (name == "emission_color" || name == "emissionColor")
-      return std::string("volume_emission_color");
-    if (name == "emission" || name == "emission_intensity" ||
-        name == "emissionIntensity") return std::string("volume_emission_scale");
-    if (name == "anisotropy" || name == "scatter_anisotropy" ||
-        name == "scattering_anisotropy") return std::string("volume_anisotropy");
-    return name;
-  };
-  if (direct_graph) {
-    for (const std::string& prop : shader.GetPropertyNames()) {
-      if (prop.compare(0, 7, "inputs:") != 0 ||
-          !shader_eval.HasConnection(shader, prop)) continue;
-      const std::string connection = resolve_connection(
-          shader_eval.GetConnectionPath(shader, prop));
-      const std::string source_path = SourcePrimPathFromConnection(connection);
-      const auto source_name = graph_node_names.find(source_path);
-      if (source_name == graph_node_names.end()) continue;
-      if (!first_output) os << ',';
-      first_output = false;
-      os << "{\"name\":\"" << JsonEscape(runtime_input_name(prop.substr(7)))
-         << "\",\"nodename\":\"" << JsonEscape(source_name->second)
-         << "\",\"output\":\"" << JsonEscape(ConnectionOutputName(connection))
-         << "\"}";
-    }
-  } else for (const UsdPrim& graph : graphs) {
-    ::lightusd::next::AttributeEval graph_eval(&stage);
-    for (const std::string& prop : graph.GetPropertyNames()) {
-      if (prop.compare(0, 8, "outputs:") != 0 ||
-          !graph_eval.HasConnection(graph, prop)) continue;
-      const std::string connection = resolve_connection(
-          graph_eval.GetConnectionPath(graph, prop));
-      const std::string source_path = SourcePrimPathFromConnection(connection);
-      const auto source_name = graph_node_names.find(source_path);
-      if (!first_output) os << ',';
-      first_output = false;
-      os << "{\"name\":\""
-         << JsonEscape((graph_forest ? graph.GetName() + '_' : std::string()) +
-                       prop.substr(8))
-         << "\",\"nodename\":\""
-         << JsonEscape(source_name == graph_node_names.end()
-                           ? ConnectionNodeName(connection)
-                           : source_name->second)
-         << "\",\"output\":\"" << JsonEscape(ConnectionOutputName(connection)) << "\"}";
-    }
-  }
-  os << "]},\"connections\":[";
-  bool first_connection = true;
-  for (const std::string& prop : shader.GetPropertyNames()) {
-    if (prop.compare(0, 7, "inputs:") != 0 ||
-        !shader_eval.HasConnection(shader, prop)) continue;
-    const std::string connection = shader_eval.GetConnectionPath(shader, prop);
-    const UsdPrim source = stage.GetPrimAtPath(
-        SourcePrimPathFromConnection(connection));
-    if (direct_graph) {
-      if (!::lightusd::next::IsShader(source) ||
-          graph_node_names.find(source.GetPath().str()) == graph_node_names.end())
-        continue;
-      if (!first_connection) os << ',';
-      first_connection = false;
-      os << "{\"input\":\"" << JsonEscape(runtime_input_name(prop.substr(7)))
-         << "\",\"nodegraph\":\"" << JsonEscape(graph_name)
-         << "\",\"output\":\"" << JsonEscape(prop.substr(7)) << "\"}";
-      continue;
-    }
-    if (!::lightusd::next::IsNodeGraph(source)) continue;
-    const auto graph_it = std::find_if(
-        graphs.begin(), graphs.end(), [&](const UsdPrim& graph) {
-          return graph.GetPath() == source.GetPath();
-        });
-    if (graph_it == graphs.end()) continue;
-    if (!first_connection) os << ',';
-    first_connection = false;
-      os << "{\"input\":\"" << JsonEscape(runtime_input_name(prop.substr(7)))
-       << "\",\"nodegraph\":\"" << JsonEscape(graph_name)
-       << "\",\"output\":\""
-       << JsonEscape((graph_forest ? source.GetName() + '_' : std::string()) +
-                     ConnectionOutputName(connection)) << "\"}";
-  }
-  os << "]}";
-  return first_node || first_output || first_connection ? std::string() : os.str();
-}
 
 struct MtlxConstantValue {
   std::array<float, 4> value{{0.0f, 0.0f, 0.0f, 0.0f}};

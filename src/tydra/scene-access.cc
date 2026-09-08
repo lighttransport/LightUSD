@@ -27,8 +27,6 @@
 namespace lightusd {
 namespace tydra {
 
-constexpr auto kInfoId = "info:id";
-
 #include "tydra/scene-access-traverse-impl.inc"
 
 const Prim *GetParentPrim(const lightusd::Stage &stage,

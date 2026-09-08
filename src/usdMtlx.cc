@@ -1517,9 +1517,9 @@ bool ReadMaterialXFromString(const std::string &str,
         if (out_type_attr) {
           output_type = out_type_attr.as_string();
         }
-        lightusd::mtlx::pugi::xml_attribute output_attr = child.attribute("output");
-        if (output_attr) {
-          output_ref = output_attr.as_string();
+        lightusd::mtlx::pugi::xml_attribute output_attr_xml = child.attribute("output");
+        if (output_attr_xml) {
+          output_ref = output_attr_xml.as_string();
         }
 
         lightusd::mtlx::pugi::xml_attribute nodename_attr = child.attribute("nodename");
@@ -1533,10 +1533,10 @@ bool ReadMaterialXFromString(const std::string &str,
           // attribute. This preserves the edge when converting the PrimSpec
           // back to MaterialX or through a USD roundtrip.
           std::string prop_name = "outputs:" + output_name;
-          Attribute output_attr;
-          if (!output_type.empty()) output_attr.set_type_name(output_type);
-          output_attr.set_connections({Path(connection_path, "")});
-          ng_ps.props()[prop_name] = Property(output_attr);
+          Attribute output_attribute;
+          if (!output_type.empty()) output_attribute.set_type_name(output_type);
+          output_attribute.set_connections({Path(connection_path, "")});
+          ng_ps.props()[prop_name] = Property(output_attribute);
         }
       } else if (child_name == "input") {
         // Nodegraph inputs use the same value/connection representation as

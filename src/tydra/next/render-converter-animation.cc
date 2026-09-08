@@ -167,16 +167,6 @@ bool ValueToAnimationFloat4(const std::string& prop_name,
   return true;
 }
 
-void AssignNodeDataId(RenderScene* scene,
-                      const std::string& prim_path,
-                      int32_t data_id) {
-  if (!scene) return;
-  const auto node_it = scene->node_by_path.find(prim_path);
-  if (node_it == scene->node_by_path.end()) return;
-  const int32_t node_id = node_it->second;
-  if (node_id < 0 || static_cast<size_t>(node_id) >= scene->nodes.size()) return;
-  scene->nodes[static_cast<size_t>(node_id)].data_id = data_id;
-}
 
 void SetIdentity(Matrix4* m) {
   if (!m) return;

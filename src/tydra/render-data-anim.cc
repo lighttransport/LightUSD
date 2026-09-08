@@ -48,18 +48,6 @@
 #include "materialx-to-json.hh"
 #include "mmap-array-ref.hh"
 
-// Helper macros for iterating over TypedTimeSamples
-#define FOREACH_TIMESAMPLES_BEGIN(ts, var_t, var_value, var_blocked) \
-  for (const auto &_sample : (ts).get_samples()) { \
-    const double var_t = _sample.t; \
-    const auto &var_value = _sample.value; \
-    const bool var_blocked = _sample.blocked; \
-    if (!var_blocked) {
-
-#define FOREACH_TIMESAMPLES_END() \
-    } \
-  }
-
 //
 #include "common-macros.inc"
 #include "math-util.inc"

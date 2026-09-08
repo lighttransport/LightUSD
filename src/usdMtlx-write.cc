@@ -219,7 +219,8 @@ static void SerializeLooks(const std::map<std::string, MtlxLook> &looks,
   const auto serialize_element = [&](const auto &self,
                                      const MtlxLookElement &element,
                                      int indent) -> void {
-    ss << pprint::Indent(indent) << "<" << EscapeXML(element.name);
+    ss << pprint::Indent(static_cast<uint32_t>(indent)) << "<"
+       << EscapeXML(element.name);
     for (const auto &attribute : element.attributes) {
       ss << " " << EscapeXML(attribute.first) << "=\""
          << EscapeXML(attribute.second) << "\"";
@@ -230,7 +231,8 @@ static void SerializeLooks(const std::map<std::string, MtlxLook> &looks,
     }
     ss << ">\n";
     for (const auto &child : element.children) self(self, child, indent + 1);
-    ss << pprint::Indent(indent) << "</" << EscapeXML(element.name) << ">\n";
+    ss << pprint::Indent(static_cast<uint32_t>(indent)) << "</"
+       << EscapeXML(element.name) << ">\n";
   };
   for (const auto &item : looks) {
     const MtlxLook &look = item.second;
@@ -280,20 +282,20 @@ static void SerializeMtlxLightShaders(
          << "\" type=\"EDF\">\n";
       SerializeMtlxLightInput("color", "color3", edf->color, ss);
       ss << pprint::Indent(1) << "</uniform_edf>\n";
-    } else if (const auto *edf = item.second.as<MtlxConicalEdf>()) {
+    } else if (const auto *conical_edf = item.second.as<MtlxConicalEdf>()) {
       ss << pprint::Indent(1) << "<conical_edf name=\"" << EscapeXML(name)
          << "\" type=\"EDF\">\n";
-      SerializeMtlxLightInput("color", "color3", edf->color, ss);
-      SerializeMtlxLightInput("normal", "vector3", edf->normal, ss);
-      SerializeMtlxLightInput("inner_angle", "float", edf->inner_angle, ss);
-      SerializeMtlxLightInput("outer_angle", "float", edf->outer_angle, ss);
+      SerializeMtlxLightInput("color", "color3", conical_edf->color, ss);
+      SerializeMtlxLightInput("normal", "vector3", conical_edf->normal, ss);
+      SerializeMtlxLightInput("inner_angle", "float", conical_edf->inner_angle, ss);
+      SerializeMtlxLightInput("outer_angle", "float", conical_edf->outer_angle, ss);
       ss << pprint::Indent(1) << "</conical_edf>\n";
-    } else if (const auto *edf = item.second.as<MtlxMeasuredEdf>()) {
+    } else if (const auto *measured_edf = item.second.as<MtlxMeasuredEdf>()) {
       ss << pprint::Indent(1) << "<measured_edf name=\"" << EscapeXML(name)
          << "\" type=\"EDF\">\n";
-      SerializeMtlxLightInput("color", "color3", edf->color, ss);
-      if (edf->file.authored()) {
-        const auto file = edf->file.get_value();
+      SerializeMtlxLightInput("color", "color3", measured_edf->color, ss);
+      if (measured_edf->file.authored()) {
+        const auto file = measured_edf->file.get_value();
         value::AssetPath path;
         if (file && file.value().get_scalar(&path)) {
           ss << pprint::Indent(2) << "<input name=\"file\" type=\"filename\" value=\""

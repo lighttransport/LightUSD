@@ -276,7 +276,7 @@ static json SerializeMetadataValue(const value::Value &value) {
   const json typed = tydra::ValueToMiniJSON(value);
   if (typed.is_object() && typed.contains("type") &&
       typed.contains("value")) {
-    return typed;
+    return static_cast<const json &&>(typed);
   }
 #endif
   // Unknown metadata remains inspectable in its canonical USDA spelling.
@@ -1416,7 +1416,7 @@ static json PrimSpecToJSONValue(const lightusd::PrimSpec &ps,
       item["items"] = std::move(paths);
       result.push_back(std::move(item));
     }
-    return result;
+    return static_cast<json &&>(result);
   };
   const PrimMeta &meta = ps.metas();
   if (meta.inherits) j["inherits"] = path_list_ops(*meta.inherits);
@@ -1460,9 +1460,9 @@ static json PrimSpecToJSONValue(const lightusd::PrimSpec &ps,
         if (!ref.customData.empty()) {
           json custom_data = json::object();
           custom_data.reserve(ref.customData.size());
-          for (const auto &item : ref.customData) {
-            custom_data[item.first] =
-                SerializeMetadataValue(item.second.get_raw_value());
+          for (const auto &custom_item : ref.customData) {
+            custom_data[custom_item.first] =
+                SerializeMetadataValue(custom_item.second.get_raw_value());
           }
           value["customData"] = std::move(custom_data);
         }
@@ -1471,7 +1471,7 @@ static json PrimSpecToJSONValue(const lightusd::PrimSpec &ps,
       item["items"] = std::move(refs);
       result.push_back(std::move(item));
     }
-    return result;
+    return static_cast<json &&>(result);
   };
   if (meta.references) j["references"] = reference_list(*meta.references);
   if (meta.payload) {
