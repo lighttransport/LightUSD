@@ -203,7 +203,8 @@ is single-part scanline; browser bitmap decoding supplies other image formats.
 Caller-provided decoded data remains supported. Other color spaces fail.
 
 ShaderBall's 7500x7500 ground map exceeds the current full-resolution float-buffer
-budget. It is rejected, not silently downsampled. Native material serialization
+budget. It is decoded through the bounded EXR reduction path and retained at the
+configured pixel budget; native material serialization
 is explicitly recorded as lossy and is not treated as an authored graph import.
 
 Raster mip selection uses the base mesh UV derivatives, so transformed or

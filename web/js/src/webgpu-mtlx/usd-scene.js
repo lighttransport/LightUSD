@@ -180,14 +180,10 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
         if (!neededAssetKeys.has(key)) continue;
         try {
           const bytes = await fetchResource(request.url);
-          if (/\.exr(?:$|[?#])/i.test(request.url)) {
-            const dimensions = inspectEXRHeader(bytes, Number.MAX_SAFE_INTEGER).dimensions;
-            if (dimensions.width * dimensions.height > 8 * 1024 * 1024) {
-              textureDiagnostics.push({ key, url: request.url, error: 'EXR exceeds authored render preflight; scanline reduction required' });
-              continue;
-            }
-          }
+          let resizedFrom;
+          if (/\.exr(?:$|[?#])/i.test(request.url)) resizedFrom = inspectEXRHeader(bytes, Number.MAX_SAFE_INTEGER).dimensions;
           const image = await decodeImage(bytes, { filename: request.url, colorspace: request.colorspace, maxPixels: 256 * 1024, allowDownsample: true });
+          if (resizedFrom && (resizedFrom.width !== image.width || resizedFrom.height !== image.height)) textureDiagnostics.push({ key, url: request.url, diagnostic: 'bounded downsample applied', resizedFrom, size: { width: image.width, height: image.height } });
           authoredImages[key] = image;
           imageDescriptors[key] = { offset: 0, width: image.width, height: image.height, levels: 1, colorspace: request.colorspace };
         } catch (error) { textureDiagnostics.push({ key, url: request.url, error: String(error.message || error) }); }
