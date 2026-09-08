@@ -1204,6 +1204,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           code = `materialFromClosure(${finalClosure},${fields[5]}*${fields[6]},clamp(${opacity},0.0,1.0),normalize(${normal}))`; break;
         }
         case 'surfacematerial': result = input('surfaceshader'); break;
+        case 'volumematerial': result = input('volumeshader'); break;
         default: fail('UNSUPPORTED', key, `node ${n.category} (${type}) is not implemented`);
       }
       if (!result) {

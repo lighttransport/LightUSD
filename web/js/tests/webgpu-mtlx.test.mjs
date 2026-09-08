@@ -1324,6 +1324,21 @@ test('MaterialX point, directional, and spot lights preserve authored parameters
     color: { type: 'color3', value: [1, 1, 1] }
   } }] }, { output: { nodename: 'light' } }), /missing input/);
 });
+test('MaterialX volumematerial forwards its typed volume shader', () => {
+  const empty = compileGraph({ nodes: [
+    { name: 'vdf', category: 'absorption_vdf', type: 'VDF', inputs: { absorption: { type: 'vector3', value: [.1, .2, .3] } } },
+    { name: 'volume', category: 'volume', type: 'volumeshader', inputs: { vdf: { nodename: 'vdf' } } },
+    { name: 'material', category: 'volumematerial', type: 'material', inputs: { volumeshader: { nodename: 'volume' } } }
+  ] }, { output: { nodename: 'material' } });
+  assert.equal(empty.type, 'volumeshader'); assert.match(empty.body, /Medium\(/);
+  const emitted = compileGraph({ nodes: [
+    { name: 'vdf', category: 'absorption_vdf', type: 'VDF', inputs: { absorption: { type: 'vector3', value: [.1, .2, .3] } } },
+    { name: 'edf', category: 'uniform_edf', type: 'EDF', inputs: { color: { type: 'color3', value: [1, .5, .25] } } },
+    { name: 'volume', category: 'volume', type: 'volumeshader', inputs: { vdf: { nodename: 'vdf' }, edf: { nodename: 'edf' } } },
+    { name: 'material', category: 'volumematerial', type: 'material', inputs: { volumeshader: { nodename: 'volume' } } }
+  ] }, { output: { nodename: 'material' } });
+  assert.equal(emitted.type, 'volumeshader'); assert.match(emitted.body, /mediumWithEmission/); assert.equal(emitted.volumeEmission, true);
+});
 test('generalized Schlick EDF preserves directional color controls', () => {
   const doc={nodes:[
     {name:'edf',category:'generalized_schlick_edf',type:'EDF',inputs:{base:{type:'EDF',value:''},color0:{type:'color3',value:[.2,.3,.4]},color90:{type:'color3',value:[1,.8,.6]},exponent:{type:'float',value:3}}},

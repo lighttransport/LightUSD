@@ -51,7 +51,8 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   spot results retain their authored position/direction, color, intensity,
   decay, and cone-angle controls for scene-light integration; the generic
   `light` node applies nonnegative intensity and exposure in linear radiance
-  space. The `volume` constructor preserves its VDF and EDF; homogeneous volume emission
+  space. The `volume` and `volumematerial` constructors preserve their VDF/EDF
+  chain; homogeneous volume emission
   contributes along traveled segments, while spatially varying emission still
   fails explicitly until its estimator is implemented.
 - `measured_edf` accepts bounded LM-63 IES files from source-aware USD asset
