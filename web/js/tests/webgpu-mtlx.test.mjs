@@ -647,6 +647,18 @@ test('MaterialX cmlib Adobe RGB and Display P3 transforms use pinned matrices', 
   const linearP3=compileGraph({nodes:[{name:'p',category:'lin_displayp3_to_lin_rec709',type:'color3',inputs:{in:{type:'color3',value:[.25,.5,.75]}}}]});
   assert.match(linearP3.body,/1\.22493029/); assert.doesNotMatch(linearP3.body,/mxSrgbToLinRec709/);
 });
+test('matrix utility nodes preserve typed dimensions and vector columns', () => {
+  const matrix={type:'matrix33',value:[1,0,0,0,2,0,0,0,3]};
+  const transpose=compileGraph({nodes:[{name:'t',category:'transpose',type:'matrix33',inputs:{in:matrix}}]});
+  assert.match(transpose.body,/transpose\(mat3x3f\(/);
+  const determinant=compileGraph({nodes:[{name:'d',category:'determinant',type:'float',inputs:{in:matrix}}]});
+  assert.match(determinant.body,/determinant\(mat3x3f\(/);
+  const inverse=compileGraph({nodes:[{name:'i',category:'invertmatrix',type:'matrix33',inputs:{in:matrix}}]});
+  assert.match(inverse.body,/inverse\(mat3x3f\(/);
+  const create=compileGraph({nodes:[{name:'m',category:'creatematrix',type:'matrix44',inputs:{in1:{type:'vector3',value:[1,0,0]},in2:{type:'vector3',value:[0,1,0]},in3:{type:'vector3',value:[0,0,1]},in4:{type:'vector3',value:[2,3,4]}}}]});
+  assert.match(create.body,/mat4x4f\(vec4f\(vec3f\(1\.0,0\.0,0\.0\),0\.0\)/); assert.match(create.body,/vec4f\(vec3f\(2\.0,3\.0,4\.0\),1\.0\)/);
+  assert.throws(()=>compileGraph({nodes:[{name:'d',category:'determinant',type:'float',inputs:{in:{type:'vector3',value:[1,2,3]}}}]}),/matrix33\/matrix44/);
+});
 test('select node enforces boolean condition and matching branch types', () => {
   const doc={nodes:[
     {name:'condition',category:'constant',type:'boolean',inputs:{value:{type:'boolean',value:true}}},

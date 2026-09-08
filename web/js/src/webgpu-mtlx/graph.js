@@ -11,7 +11,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 // Units are semantic annotations; implementations consume their authored
 // convention (for example degrees for rotate2d and nanometers for thin film).
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
-export const valueCategories = new Set(['constant', 'add', 'subtract', 'plus', 'minus', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'burn', 'dodge', 'overlay', 'disjointover', 'in', 'mask', 'matte', 'out', 'over', 'inside', 'outside', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'fract', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'colorcorrect', 'saturate', 'contrast', 'premult', 'unpremult', 'blackbody', 'artistic_ior', 'roughness_anisotropy', 'glossiness_anisotropy', 'ramp4', 'triplanarprojection', 'g18_rec709_to_lin_rec709', 'g22_rec709_to_lin_rec709', 'rec709_display_to_lin_rec709', 'g22_ap1_to_lin_rec709', 'srgb_texture_to_lin_rec709', 'lin_adobergb_to_lin_rec709', 'adobergb_to_lin_rec709', 'srgb_displayp3_to_lin_rec709', 'lin_displayp3_to_lin_rec709', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'switch', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'viewdirection', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
+export const valueCategories = new Set(['constant', 'add', 'subtract', 'plus', 'minus', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'burn', 'dodge', 'overlay', 'disjointover', 'in', 'mask', 'matte', 'out', 'over', 'inside', 'outside', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'fract', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'colorcorrect', 'saturate', 'contrast', 'premult', 'unpremult', 'blackbody', 'artistic_ior', 'roughness_anisotropy', 'glossiness_anisotropy', 'ramp4', 'triplanarprojection', 'g18_rec709_to_lin_rec709', 'g22_rec709_to_lin_rec709', 'rec709_display_to_lin_rec709', 'g22_ap1_to_lin_rec709', 'srgb_texture_to_lin_rec709', 'lin_adobergb_to_lin_rec709', 'adobergb_to_lin_rec709', 'srgb_displayp3_to_lin_rec709', 'lin_displayp3_to_lin_rec709', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'transpose', 'determinant', 'invertmatrix', 'creatematrix', 'select', 'switch', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'viewdirection', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'UsdPreviewSurface', 'surface_unlit', 'surfacematerial', 'surface']);
 for(const category of ['transformmatrix','transformnormal','transformpoint','transformvector','trianglewave','normalmap','bump','bump3','heighttonormal','rotate3d','reorder','fractal2d','fractal3d','worleynoise2d','worleynoise3d','unifiednoise2d','unifiednoise3d','latlongimage','splitlr','splittb','ramp','ramp_gradient','ramplr','ramptb','checkerboard','line','circle','grid','crosshatch','tiledcircles','randomfloat','randomcolor','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d','facingratio','geompropvalueuniform'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
@@ -688,6 +688,25 @@ export function compileGraph(document, { output, library = {}, material = false,
           else if(to<=from)code=`${types[type]}(${p.code}.${'xyzw'.slice(0,to)})`;
           else code=`${types[type]}(${p.code},${Array.from({length:to-from},(_,i)=>from+i===3?'1.0':'0.0').join(',')})`;
           break;
+        }
+        case 'transpose': {
+          if (!['matrix33','matrix44'].includes(type)) fail('TYPE', key, 'transpose requires matrix33/matrix44 output');
+          const value=input('in',undefined,type); code=`transpose(${value.code})`; break;
+        }
+        case 'determinant': {
+          if (type !== 'float') fail('TYPE', key, 'determinant output must be float');
+          const value=input('in'); if (!['matrix33','matrix44'].includes(value.type)) fail('TYPE', key, 'determinant input must be matrix33/matrix44');
+          code=`determinant(${value.code})`; break;
+        }
+        case 'invertmatrix': {
+          if (!['matrix33','matrix44'].includes(type)) fail('TYPE', key, 'invertmatrix requires matrix33/matrix44 output');
+          const value=input('in',undefined,type); code=`inverse(${value.code})`; break;
+        }
+        case 'creatematrix': {
+          if (!['matrix33','matrix44'].includes(type)) fail('TYPE', key, 'creatematrix output must be matrix33/matrix44');
+          const count=type==='matrix33'?3:4, values=[];
+          for(let i=1;i<=count;i++){const value=input(`in${i}`);if(type==='matrix33'&&value.type!=='vector3')fail('TYPE',key,'matrix33 inputs must be vector3');if(type==='matrix44'&&!['vector3','vector4'].includes(value.type))fail('TYPE',key,'matrix44 inputs must be vector3/vector4');values.push(type==='matrix44'&&value.type==='vector3'?`vec4f(${value.code},${i===4?'1.0':'0.0'})`:value.code);}
+          code=`${types[type]}(${values.join(',')})`; break;
         }
         case 'combine2': case 'combine3': case 'combine4': {
           const values=Array.from({length:Number(n.category.at(-1))},(_,i)=>input(`in${i+1}`));
