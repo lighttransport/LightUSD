@@ -46,6 +46,10 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   smooth angular falloff through surface, path, area-light, and raster emission.
 - `generalized_schlick_edf` preserves its base EDF and directional `color0`,
   `color90`, and exponent controls through the same emission transport.
+- MaterialX `light` constructors now compile as typed light-shader values,
+  applying nonnegative intensity and exposure in linear radiance space. The
+  `volume` constructor preserves its VDF output; authored volume EDF emission
+  remains an explicit diagnostic until the volume emission transport is wired.
 - `measured_edf` accepts bounded LM-63 IES files from source-aware USD asset
   resolution. The supported profile is rotationally symmetric: the parser
   retains its normalized vertical candela profile and the shader interpolates

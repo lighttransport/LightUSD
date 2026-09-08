@@ -1272,6 +1272,19 @@ test('measured EDF parses bounded LM-63 profiles and reaches emission transport'
   assert.deepEqual(materialMeasuredProfileKeys(doc), ['ies']);
   assert.deepEqual(materialImageKeys(doc), []);
 });
+test('MaterialX light and volume constructors preserve typed outputs', () => {
+  const light = compileGraph({ nodes: [
+    { name: 'edf', category: 'uniform_edf', type: 'EDF', inputs: { color: { type: 'color3', value: [2, 1, .5] } } },
+    { name: 'light', category: 'light', type: 'lightshader', inputs: { edf: { nodename: 'edf' }, intensity: { type: 'float', value: 2 }, exposure: { type: 'float', value: 1 } } }
+  ] }, { output: { nodename: 'light' } });
+  assert.equal(light.type, 'lightshader'); assert.match(light.body, /max\(0\.0,2\.0\).*pow\(2\.0,1\.0\)/);
+  const volume = compileGraph({ nodes: [
+    { name: 'vdf', category: 'absorption_vdf', type: 'VDF', inputs: { absorption: { type: 'vector3', value: [.1, .2, .3] } } },
+    { name: 'volume', category: 'volume', type: 'volumeshader', inputs: { vdf: { nodename: 'vdf' }, edf: { type: 'EDF', value: '' } } }
+  ] }, { output: { nodename: 'volume' } });
+  assert.equal(volume.type, 'volumeshader'); assert.match(volume.body, /Medium\(/);
+  assert.throws(() => compileGraph({ nodes: [{ name: 'volume', category: 'volume', type: 'volumeshader', inputs: { edf: { type: 'EDF', value: [1, 1, 1] } } }] }, { output: { nodename: 'volume' } }), /volume EDF emission/);
+});
 test('generalized Schlick EDF preserves directional color controls', () => {
   const doc={nodes:[
     {name:'edf',category:'generalized_schlick_edf',type:'EDF',inputs:{base:{type:'EDF',value:''},color0:{type:'color3',value:[.2,.3,.4]},color90:{type:'color3',value:[1,.8,.6]},exponent:{type:'float',value:3}}},
