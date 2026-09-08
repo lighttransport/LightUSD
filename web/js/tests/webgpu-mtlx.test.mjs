@@ -379,6 +379,14 @@ test('standard MaterialX Burley, Chiang hair, and absorption VDF nodes compile',
   assert.match(burley.body,/nativeDiffuse/);
   const hair=compileGraph({nodes:[{name:'h',category:'chiang_hair_bsdf',type:'BSDF',inputs:{tint_R:{type:'color3',value:[.8,.7,.6]},roughness_R:{type:'vector2',value:[.1,.2]},roughness_TT:{type:'vector2',value:[.05,.1]}}}]});
   assert.match(hair.body,/nativeHair/); assert.match(hair.body,/\.x/);
+  const hairAbsorption=compileGraph({nodes:[{name:'a',category:'chiang_hair_absorption_from_color',type:'vector3',inputs:{color:{type:'color3',value:[.6,.3,.1]},azimuthal_roughness:{type:'float',value:.2}}}]});
+  assert.match(hairAbsorption.body,/log\(min\(max\(vec3f\(0\.6,0\.3,0\.1\)/);
+  const deon=compileGraph({nodes:[{name:'a',category:'deon_hair_absorption_from_melanin',type:'vector3',inputs:{melanin_concentration:{type:'float',value:.4},melanin_redness:{type:'float',value:.25}}}]});
+  assert.match(deon.body,/log\(max\(1\.0-0\.4/);
+  const hairRoughness={nodes:[{name:'r',category:'chiang_hair_roughness',type:'multioutput',outputs:{roughness_R:{type:'vector2'},roughness_TT:{type:'vector2'},roughness_TRT:{type:'vector2'}},inputs:{longitudinal:{type:'float',value:.2},azimuthal:{type:'float',value:.3}}}]};
+  assert.match(compileGraph(hairRoughness,{output:{nodename:'r',output:'roughness_R'}}).body,/vec2f\(/);
+  assert.match(compileGraph(hairRoughness,{output:{nodename:'r',output:'roughness_TT'}}).body,/0\.5\*0\.5/);
+  assert.match(compileGraph(hairRoughness,{output:{nodename:'r',output:'roughness_TRT'}}).body,/2\.0\*2\.0/);
   const medium=compileGraph({nodes:[{name:'m',category:'absorption_vdf',type:'VDF',inputs:{absorption:{type:'vector3',value:[.1,.2,.3]}}}]});
   assert.match(medium.body,/Medium\(vec3f\(0\.1,0\.2,0\.3\),vec3f\(0\),0\.0\)/);
 });

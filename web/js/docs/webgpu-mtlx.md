@@ -38,6 +38,10 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 - Scalar/vector value emitters and an explicitly approximate Standard Surface /
   OpenPBR terminal mapping. The UI inventories 807 upstream NodeDefs, but this
   count is **not a supported-node count**; individual overloads remain unverified.
+- Hair utility nodes `deon_hair_absorption_from_melanin`,
+  `chiang_hair_absorption_from_color`, and `chiang_hair_roughness` preserve the
+  pinned MaterialX formulas and named roughness outputs. The resulting hair
+  transport remains an explicitly bounded approximation.
 - `blackbody` matches the pinned GLSL Kelvin-to-xy-to-linear-Rec.709
   approximation, defaults to 5000 K, clamps temperature to 800–25000 K, and
   retains HDR RGB values. This is chromaticity with normalized Y, not spectral

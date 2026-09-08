@@ -214,6 +214,29 @@ export function compileGraph(document, { output, library = {}, material = false,
           if (ins.mode?.nodename || ins.mode?.nodegraph || ins.mode?.interfacename || (ins.mode?.value && !['conty_kulla', 'zeltner'].includes(ins.mode.value))) fail('UNSUPPORTED', key, 'dynamic or unknown sheen mode is not implemented');
           code=`closureLeaf(nativeDiffuse(${x('color',[1,1,1],'color3')},${x('weight',1,'float')},${x('roughness',.3,'float')}))`;closureCount=1;break;
         }
+        case 'deon_hair_absorption_from_melanin': {
+          if (type !== 'vector3') fail('TYPE', key, 'deon_hair_absorption_from_melanin output must be vector3');
+          const concentration=x('melanin_concentration',.25,'float'), redness=x('melanin_redness',.5,'float');
+          const melanin=`(-log(max(1.0-${concentration},0.0001)))`;
+          const eumelanin=`(${melanin}*(1.0-${redness}))`, pheomelanin=`(${melanin}*${redness})`;
+          const eumelaninColor=x('eumelanin_color',[.657704,.498077,.254107],'color3'), pheomelaninColor=x('pheomelanin_color',[.829444,.67032,.349938],'color3');
+          code=`max(${eumelanin}*(-log(${eumelaninColor}))+${pheomelanin}*(-log(${pheomelaninColor})),vec3f(0.0))`; break;
+        }
+        case 'chiang_hair_absorption_from_color': {
+          if (type !== 'vector3') fail('TYPE', key, 'chiang_hair_absorption_from_color output must be vector3');
+          const beta=x('azimuthal_roughness',.2,'float'), color=x('color',[1,1,1],'color3');
+          const b2=`(${beta}*${beta})`, b4=`(${b2}*${b2})`;
+          const factor=`(5.969-0.215*${beta}+2.532*${b2}-10.73*${b2}*${beta}+5.574*${b4}+0.245*${b4}*${beta})`;
+          const sigma=`(log(min(max(${color},vec3f(0.001)),vec3f(1.0)))/${factor})`;
+          code=`${sigma}*${sigma}`; break;
+        }
+        case 'chiang_hair_roughness': {
+          if (!['roughness_R','roughness_TT','roughness_TRT'].includes(out) || type !== 'vector2') fail('OUTPUT', key, 'chiang_hair_roughness output must be one of roughness_R, roughness_TT, or roughness_TRT');
+          const longitudinal=x('longitudinal',.1,'float'), azimuthal=x('azimuthal',.2,'float'), scaleTT=x('scale_TT',.5,'float'), scaleTRT=x('scale_TRT',2.0,'float');
+          const lr=`clamp(${longitudinal},0.001,1.0)`, ar=`clamp(${azimuthal},0.001,1.0)`;
+          const v=`pow(0.726*${lr}+0.812*${lr}*${lr}+3.7*pow(${lr},20.0),2.0)`, s=`0.265*${ar}+1.194*${ar}*${ar}+5.372*pow(${ar},22.0)`;
+          code=out==='roughness_R'?`vec2f(${v},${s})`:out==='roughness_TT'?`vec2f(${v}*${scaleTT}*${scaleTT},${s})`:`vec2f(${v}*${scaleTRT}*${scaleTRT},${s})`; break;
+        }
         case 'subsurface_bsdf': {
           // Approximate fallback: preserve weight/color and use a broad diffuse
           // lobe. Radius/anisotropy are retained as diagnostics until the true
