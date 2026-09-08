@@ -54,7 +54,9 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   space. The `volume` and `volumematerial` constructors preserve their VDF/EDF
   chain; homogeneous volume emission
   contributes along traveled segments, while spatially varying emission still
-  fails explicitly until its estimator is implemented.
+  fails explicitly until its estimator is implemented. Volume-only USD
+  materials receive a unit-IOR transmissive boundary so their mesh interior
+  enters the authored medium without inventing surface emission.
 - `measured_edf` accepts bounded LM-63 IES files from source-aware USD asset
   resolution. The parser retains bounded vertical and horizontal candela grids;
   the shader bilinearly interpolates both angles in a deterministic tangent
