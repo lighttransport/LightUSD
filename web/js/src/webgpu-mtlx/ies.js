@@ -28,8 +28,8 @@ export function parseIES(input) {
   if (values.length < i + count) throw new Error('IES candela table is truncated');
   const candela = values.slice(i, i + count).map(v => v * multiplier);
   if (candela.some(v => v < 0)) throw new Error('IES candela values must be nonnegative');
-  const max = Math.max(...candela);
-  if (!(max > 0)) throw new Error('IES profile has no positive candela values');
+  const rawMax = Math.max(...candela);
+  if (!(rawMax > 0)) throw new Error('IES profile has no positive candela values');
   if (tiltAngles) {
     const tiltFactor = angle => {
       if (angle <= tiltAngles[0]) return tiltMultipliers[0];
@@ -38,7 +38,9 @@ export function parseIES(input) {
     };
     for (let h = 0; h < horizontalCount; h++) for (let v = 0; v < verticalCount; v++) candela[h * verticalCount + v] *= tiltFactor(angles[v]);
   }
-  const normalized = candela.map(value => value / Math.max(...candela));
+  const max = Math.max(...candela);
+  if (!(max > 0)) throw new Error('IES tilt removes all positive candela values');
+  const normalized = candela.map(value => value / max);
   const samples = angles.map((angle, n) => [angle, normalized[n]]);
   return {
     // Keep the legacy vertical representation for callers that only need a
