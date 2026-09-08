@@ -150,7 +150,7 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 ## Not implemented
 
 Full MaterialX coverage; general BSDF/EDF/VDF closure composition/layering;
-measured IES EDF profiles and authored light shader constructors;
+full measured IES azimuthal EDF profiles and authored light-to-scene binding;
 MaterialX subsurface_bsdf albedo/radius conversion; hair and curves;
 arbitrary authored primvar/shading-property maps beyond the supported geometry
 aliases, UV slots, and eight bounded custom geomprop channels;
