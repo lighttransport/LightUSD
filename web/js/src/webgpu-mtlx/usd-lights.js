@@ -12,6 +12,7 @@ export function appendRectLights(scene, lights) {
   else if(result.colors.length===result.positions.length/3*3){const rgb=result.colors;result.colors=[];for(let i=0;i<rgb.length;i+=3)result.colors.push(rgb[i],rgb[i+1],rgb[i+2],1);}
   if(result.colors.length!==result.positions.length/3*4)throw new Error('Light conversion color count mismatch');
   const imported=[];
+  const areaLights=[];
   let distant = null;
   const environment=[0,0,0];
   const domes=[];
@@ -72,7 +73,8 @@ export function appendRectLights(scene, lights) {
       const offset=result.positions.length/3,material=result.materials.length;result.materials.push({twoSidedEmission:false,nodes:[{name:'emission',category:'uniform_edf',type:'EDF',inputs:{color:{type:'color3',value:radiance}}},{name:'surface',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'emission'}}}]});
       for(let i=0;i<vertices.length;i++){result.positions.push(...vertices[i].toArray());result.normals.push(...normal.toArray());result.uvs.push(i?0.5+0.5*Math.cos((i-1)*2*Math.PI/segments):0.5,i?0.5+0.5*Math.sin((i-1)*2*Math.PI/segments):0.5);result.colors.push(0,0,0,1);}
       for(let i=0;i<segments;i++){const a=offset,b=offset+1+i,c=offset+1+(i+1)%segments;result.indices.push(...(new Vector3().subVectors(vertices[b-offset],vertices[a-offset]).cross(new Vector3().subVectors(vertices[c-offset],vertices[a-offset])).dot(normal)>0?[a,b,c]:[a,c,b]));result.materialIds.push(material);}
-      disks.push({path:light.absPath,radius,worldArea:area,radiance,materialId:material});continue;
+      disks.push({path:light.absPath,radius,worldArea:area,radiance,materialId:material});
+      areaLights.push({path:light.absPath,position:vertices[0].toArray(),normal:normal.toArray(),worldArea:area,radiance,twoSided:false});continue;
     }
     if(light.type!=='rect')throw new Error(`Unsupported authored light type: ${light.type}`);
     if(light.textureFile||light.enableColorTemperature||light.shapingIesFile||light.shapingFocus>0||light.shapingConeAngle<90||light.diffuse!==undefined&&light.diffuse!==1||light.specular!==undefined&&light.specular!==1||light.shadowEnable===false)throw new Error('Unsupported rect light texture, shaping, temperature, or contribution controls');
@@ -95,9 +97,11 @@ export function appendRectLights(scene, lights) {
     result.uvs.push(0,0,0,1,1,1,1,0);
     const winding=cross.dot(normal)>0?[0,1,2,0,2,3]:[0,2,1,0,3,2];
     result.indices.push(...winding.map(i=>i+offset));result.materialIds.push(material,material);
+    const center=vertices.reduce((sum,v)=>sum.add(v),new Vector3()).multiplyScalar(.25);
     imported.push({path:light.absPath,worldArea:area,radiance,materialId:material});
+    areaLights.push({path:light.absPath,position:center.toArray(),normal:normal.toArray(),worldArea:area,radiance,twoSided:false});
   }
-  result.lighting={environment,directional:distant||{radiance:[0,0,0]},pointLights:points,...(environmentTexture?{environmentTexture}: {})};
+  result.lighting={environment,directional:distant||{radiance:[0,0,0]},pointLights:points,areaLights,...(environmentTexture?{environmentTexture}: {})};
   result.provenance={...scene.provenance,lightingOverride:false,rectLights:imported,pointLights:points,diskLights:disks,distantLight:distant,domeLights:domes};
   return result;
 }

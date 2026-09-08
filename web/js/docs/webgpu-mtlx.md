@@ -125,10 +125,11 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   contribute environment radiance, and rect lights are imported as emissive
   geometry. Point and sphere lights use bounded finite-radius emissive geometry
   to participate in path sampling, using the authored position or transform
-  translation; realtime shading also evaluates their bounded analytic direct
-  contribution with shadow checks. Disk lights preserve the emitted mesh area
-  and orientation under affine transforms. The point representation approximates
-  an ideal point source.
+  translation; realtime shading also evaluates bounded analytic direct
+  contributions for point, sphere, rect, and disk lights with shadow checks.
+  Rect and disk realtime lighting uses a center sample while path transport
+  preserves the finite emitter meshes and area sampling. The point representation
+  approximates an ideal point source.
   A single textured dome is decoded through the authored USD asset resolver and
   sampled as a bounded latlong environment; multiple textured domes remain an
   explicit unsupported case.

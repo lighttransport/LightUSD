@@ -216,6 +216,8 @@ test('USD rect lights preserve world-space area, radiance and negative-Z orienta
   const r=appendRectLights(scene,[light]);
   assert.equal(r.provenance.rectLights[0].worldArea,36);
   assert.deepEqual(r.provenance.rectLights[0].radiance,[2/3,1/3,1/6]);
+  assert.equal(r.lighting.areaLights.length,1);assert.deepEqual(r.lighting.areaLights[0].position,[1,2,3]);
+  assert.match(shaderSource(syntheticScene('default').materials,{},r.lighting),/authoredAreaDirect/);
   assert.equal(r.normals[2],-1);assert.equal(r.positions[2],3);assert.equal(scene.positions.length,0);
   assert.equal(r.materials[0].twoSidedEmission,false);
   assert.throws(()=>appendRectLights(scene,[{...light,textureFile:'light.exr'}]),/Unsupported/);
