@@ -649,9 +649,10 @@ roughness through its maximum channel, preserving a visible radius influence
 without claiming a true BSSRDF or radius-dependent exit profile.
 
 The bounded subsurface lobe now has a distinct diffusion-profile evaluation and
-cosine sampling branch, carrying authored radius into its profile width instead
-of reusing the ordinary diffuse closure. True random-walk BSSRDF transport,
-surface-distance coupling, and multiple scattering remain future work.
+cosine sampling branch, carrying authored radius and bounded anisotropy into
+its profile instead of reusing the ordinary diffuse closure. True random-walk
+BSSRDF transport, surface-distance coupling, and multiple scattering remain
+future work.
 
 The profile uses a bounded rational falloff to keep WGSL evaluation finite and
 portable across realtime and path pipelines; it is not a measured diffusion

@@ -320,11 +320,9 @@ export function compileGraph(document, { output, library = {}, material = false,
           code=out==='roughness_R'?`vec2f(${v},${s})`:out==='roughness_TT'?`vec2f(${v}*${scaleTT}*${scaleTT},${s})`:`vec2f(${v}*${scaleTRT}*${scaleTRT},${s})`; break;
         }
         case 'subsurface_bsdf': {
-          const connected=name=>ins[name]&&(ins[name].nodename||ins[name].nodegraph||ins[name].interfacename);
-          if (connected('anisotropy') || (ins.anisotropy?.value!==undefined && Number(ins.anisotropy.value)!==0)) fail('UNSUPPORTED',key,'subsurface anisotropy is not implemented');
-          if (connected('tangent') || ins.tangent?.value!==undefined) fail('UNSUPPORTED',key,'subsurface authored tangent is not implemented');
+          if (ins.tangent?.value!==undefined || ins.tangent?.nodename || ins.tangent?.nodegraph || ins.tangent?.interfacename) fail('UNSUPPORTED',key,'subsurface authored tangent is not implemented');
           normal=ins.normal ? x('normal',undefined,'vector3') : null;
-          code=`closureLeaf(nativeSubsurface(${x('color',[.18,.18,.18],'color3')},${x('weight',1,'float')},${x('radius',[1,1,1],'color3')}))`;closureCount=1;break;
+          code=`closureLeaf(nativeSubsurface(${x('color',[.18,.18,.18],'color3')},${x('weight',1,'float')},${x('radius',[1,1,1],'color3')},${x('anisotropy',0,'float')}))`;closureCount=1;break;
         }
         case 'translucent_bsdf': {
           // MaterialX translucent_bsdf is a diffuse transmission closure.
@@ -1191,7 +1189,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           const transmissionDepth = ins.transmission_depth ? x('transmission_depth', 0, 'float') : '0.0';
           const transmissionScatter = ins.transmission_scatter ? x('transmission_scatter', [0, 0, 0], 'color3') : 'vec3f(0)';
           const transmittedLobe = `withSpecularColor(withSpecular(withTransmission(${baseLobe},${transmissionDepth},${transmissionScatter}),${specularWeight}),${specularColor})`;
-          const closure = `closureMix(closureLeaf(${transmittedLobe}),closureLeaf(nativeSubsurface(${subsurfaceColor},1.0,${subsurfaceRadius})),clamp(${subsurfaceWeight},0.0,1.0))`;
+          const closure = `closureMix(closureLeaf(${transmittedLobe}),closureLeaf(nativeSubsurface(${subsurfaceColor},1.0,${subsurfaceRadius},0.0)),clamp(${subsurfaceWeight},0.0,1.0))`;
           const coatWeight = open ? (ins.coat_weight ? x('coat_weight', 0, 'float') : '0.0') : (ins.coat ? x('coat', 0, 'float') : '0.0');
           const coatColor = ins.coat_color ? x('coat_color', [1, 1, 1], 'color3') : 'vec3f(1)';
           const coatRoughness = ins.coat_roughness ? x('coat_roughness', .1, 'float') : '.1';
@@ -1390,7 +1388,7 @@ fn withThinFilm(lobe:Lobe,thickness:f32,ior:f32)->Lobe {var m=lobe;m.thinFilmThi
 fn withSpecular(lobe:Lobe,weight:f32)->Lobe {var m=lobe;m.weight=clamp(weight,0.0,1.0);return m;}
 fn withSpecularColor(lobe:Lobe,color:vec3f)->Lobe {var m=lobe;m.schlickColor90=max(vec3f(0),color);return m;}
 fn nativeDiffuse(color:vec3f,weight:f32,rough:f32)->Lobe {var m=makeMaterial(color,0,rough,1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=3u;m.weight=weight;return m;}
-fn nativeSubsurface(color:vec3f,weight:f32,radius:vec3f)->Lobe {var m=makeMaterial(color,0,1.0,1.3,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=6u;m.weight=weight;m.subsurfaceRadius=max(vec3f(.02),radius);m.alpha=vec2f(max(.02,max(m.subsurfaceRadius.x,max(m.subsurfaceRadius.y,m.subsurfaceRadius.z))),max(.02,m.subsurfaceRadius.x));return m;}
+fn nativeSubsurface(color:vec3f,weight:f32,radius:vec3f,anisotropy:f32)->Lobe {var m=makeMaterial(color,0,1.0,1.3,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=6u;m.weight=weight;m.anisotropy=clamp(anisotropy,-.9,.9);m.subsurfaceRadius=max(vec3f(.02),radius);m.alpha=vec2f(max(.02,max(m.subsurfaceRadius.x,max(m.subsurfaceRadius.y,m.subsurfaceRadius.z))),max(.02,m.subsurfaceRadius.x));return m;}
 fn nativeTranslucent(color:vec3f,weight:f32)->Lobe {var m=makeMaterial(color,0,1.0,1.0,1,vec3f(0),0,0,vec3f(1),1u,0.0,1.5);m.kind=7u;m.weight=weight;return m;}
 fn nativeSheen(color:vec3f,weight:f32,roughness:f32,mode:u32)->Lobe {var m=makeMaterial(color,0,roughness,1.5,0,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);m.kind=8u;m.weight=weight;m.alpha=vec2f(clamp(roughness,.01,1.0),0.0);m.scatterMode=mode;return m;}
 fn nativeHair(color:vec3f,weight:f32,longitudinal:f32,azimuthal:f32,ior:f32)->Lobe {var m=makeMaterial(color,0,longitudinal,ior,0,vec3f(0),0,azimuthal,vec3f(1),0u,0.0,1.5);m.kind=4u;m.weight=weight;m.alpha=vec2f(max(.02,longitudinal),max(.02,azimuthal));return m;}

@@ -474,7 +474,7 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   const subsurfaceNode={nodes:[{name:'s',category:'subsurface_bsdf',type:'BSDF',inputs:{radius:{type:'color3',value:[1,.35,.15]}}}]};
   assert.match(compileGraph(subsurfaceNode).body,/vec3f\(1\.0,0\.35,0\.15\)/);
   subsurfaceNode.nodes[0].inputs.anisotropy={type:'float',value:.2};
-  assert.throws(()=>compileGraph(subsurfaceNode),/anisotropy/);
+  assert.match(compileGraph(subsurfaceNode).body,/nativeSubsurface\(.*0\.2/);
   delete subsurfaceNode.nodes[0].inputs.anisotropy;
   subsurfaceNode.nodes[0].inputs.normal={type:'vector3',value:[0,1,0]};
   assert.match(compileGraph(subsurfaceNode).body,/nativeSubsurface/);
@@ -1344,6 +1344,13 @@ test('MaterialX volumematerial forwards its typed volume shader', () => {
     { name: 'material', category: 'volumematerial', type: 'material', inputs: { volumeshader: { nodename: 'volume' } } }
   ] }, { output: { nodename: 'material' } });
   assert.equal(emitted.type, 'volumeshader'); assert.match(emitted.body, /mediumWithEmission/); assert.equal(emitted.volumeEmission, true);
+});
+test('subsurface BSDF preserves bounded anisotropy', () => {
+  const doc={nodes:[{name:'sss',category:'subsurface_bsdf',type:'BSDF',inputs:{color:{type:'color3',value:[.8,.3,.1]},radius:{type:'color3',value:[1,.5,.25]},anisotropy:{type:'float',value:.6}}}],output:{nodename:'sss'}};
+  const graph=compileGraph(doc,{output:{nodename:'sss'}});
+  assert.match(graph.body,/nativeSubsurface/); assert.match(graph.body,/0\.6/);
+  const material={nodes:[{name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'sss'}}},...doc.nodes],output:{nodename:'surface'}};
+  assert.match(shaderSource([material],{}),/m\.anisotropy/);
 });
 test('generalized Schlick EDF preserves directional color controls', () => {
   const doc={nodes:[
