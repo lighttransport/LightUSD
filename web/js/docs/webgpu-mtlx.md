@@ -199,7 +199,7 @@ is explicitly recorded as lossy and is not treated as an authored graph import.
 Raster mip selection uses the base mesh UV derivatives, so transformed or
 procedural UV graph derivatives are approximate. Path preview currently uses
 level zero: ray differentials/cones remain outstanding. Cubic filtering,
-connected filename/sampler inputs, layers, image sequences, UDIM and full
+connected filename/sampler inputs, layers, image sequences and full
 MaterialX colorspace inheritance are not implemented. These images do not
 complete authored ShaderBall material support.
 
@@ -325,7 +325,7 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   `uvtiling` multipliers and `uvoffset` subtraction; paired static
   `realworldimagesize`/`realworldtilesize` values add their UV ratio, and that
   effective scale is also included in derivative-based mip LOD selection;
-  unpaired values and UDIM expansion remain explicit unsupported diagnostics.
+  bounded UDIM/UVTILE atlas expansion is supported for static filename inputs.
 - Image nodes now support MaterialX `filtertype="cubic"` through a bounded
   16-tap cubic sampler with trilinear mip selection.
 - `triplanarprojection` now resolves three image resources, projects them on
@@ -551,7 +551,8 @@ normal semantics.
 
 The synthetic `normalmap-image` fixture now exercises a raw-color image node
 feeding `normalmap`, including packed-resource binding and linear filtering;
-authored texture mip residency and UDIM streaming remain future work. Its
+authored texture mip residency and UDIM streaming remain future work; bounded
+UDIM atlases are decoded eagerly. Its
 focused spectral Chrome run currently stalls before a sample is reported, so
 it is intentionally not in the default reference matrix until image-backed
 spectral dispatch diagnostics are fixed. The fixture is available through the
