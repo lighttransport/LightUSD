@@ -232,22 +232,25 @@ export async function loadMaterialXResources(url, options = {}) {
   const nodes = [...document.nodes, ...Object.values(document.graphs).flatMap(g => g.nodes)];
   let decodedBytes = 0;
   for (const node of nodes) {
-    if (!['image', 'tiledimage'].includes(node.category)) continue;
-    const file = node.inputs?.file;
-    if (!file?.value || file.nodename || file.nodegraph || file.interfacename) continue;
-    if (/<UDIM>|<UVTILE>/.test(file.value)) throw new Error('UDIM resource loading is not implemented');
-    const resolved = new URL((node.fileprefix || '') + (file.fileprefix || '') + file.value, node.source || source);
-    allowed(resolved.href);
-    const colorspace = file.colorspace || node.colorspace || document.colorspace;
-    const key = `${resolved.href}#colorspace=${colorspace || 'auto'}`;
-    if (!document.images[key]) {
-      const imageBytes = await fetchResource(resolved.href, options);
-      const image = await decodeImage(imageBytes, { filename: resolved.href, colorspace, maxPixels: options.maxPixels, allowDownsample: options.allowDownsample === true });
-      decodedBytes += image.data.byteLength;
-      if (decodedBytes > (options.maxDecodedBytes || 48 * 1024 * 1024)) throw new Error('Material images exceed decoded byte budget');
-      document.images[key] = image;
+    if (!['image', 'tiledimage', 'triplanarprojection'].includes(node.category)) continue;
+    const fileNames = node.category === 'triplanarprojection' ? ['filex', 'filey', 'filez'] : ['file'];
+    for (const fileName of fileNames) {
+      const file = node.inputs?.[fileName];
+      if (!file?.value || file.nodename || file.nodegraph || file.interfacename) continue;
+      if (/<UDIM>|<UVTILE>/.test(file.value)) throw new Error('UDIM resource loading is not implemented');
+      const resolved = new URL((node.fileprefix || '') + (file.fileprefix || '') + file.value, node.source || source);
+      allowed(resolved.href);
+      const colorspace = file.colorspace || node.colorspace || document.colorspace;
+      const key = `${resolved.href}#colorspace=${colorspace || 'auto'}`;
+      if (!document.images[key]) {
+        const imageBytes = await fetchResource(resolved.href, options);
+        const image = await decodeImage(imageBytes, { filename: resolved.href, colorspace, maxPixels: options.maxPixels, allowDownsample: options.allowDownsample === true });
+        decodedBytes += image.data.byteLength;
+        if (decodedBytes > (options.maxDecodedBytes || 48 * 1024 * 1024)) throw new Error('Material images exceed decoded byte budget');
+        document.images[key] = image;
+      }
+      file.value = key;
     }
-    file.value = key;
   }
   document.resourceProvenance = { source, documents:[...loaded.keys()], textures: Object.keys(document.images) };
   return document;

@@ -390,6 +390,12 @@ test('image graph resource resolution and unsupported filtering diagnostics', ()
   image.inputs.filtertype = { value: 'cubic' }; assert.match(shaderSource([doc]), /imageSampleCubic\(0u/);
   image.inputs.file.value = ''; assert.match(shaderSource([doc]), /vec3f\(0.0,0.0,0.0\)/);
 });
+test('triplanarprojection blends three typed image planes by normal weights', () => {
+  const descriptor={x:{offset:0,width:2,height:2,levels:1,colorspace:'raw'},y:{offset:4,width:2,height:2,levels:1,colorspace:'raw'},z:{offset:8,width:2,height:2,levels:1,colorspace:'raw'}};
+  const doc={nodes:[{name:'tri',category:'triplanarprojection',type:'color3',inputs:{filex:{type:'filename',value:'x'},filey:{type:'filename',value:'y'},filez:{type:'filename',value:'z'},normal:{type:'vector3',value:[1,0,0]},filtertype:{type:'string',value:'linear'}}}]};
+  const source=compileGraph(doc,{imageDescriptors:descriptor}); assert.equal((source.body.match(/imageSample\(/g)||[]).length,3); assert.match(source.body,/abs\(vec3f\(1\.0,0\.0,0\.0\)\)/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,filez:{type:'filename',value:'missing'}}}]},{imageDescriptors:descriptor}),/missing decoded image/);
+});
 test('finite typed literals cannot inject shader code', () => {
   assert.equal(literal('color3', [1, 0.25, 0]), 'vec3f(1.0,0.25,0.0)');
   for (const v of [NaN, Infinity, '1.0); return;', [1, 2]]) assert.throws(() => literal('float', v), GraphError);

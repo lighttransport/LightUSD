@@ -224,6 +224,9 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   controls and UDIM expansion remain explicit unsupported diagnostics.
 - Image nodes now support MaterialX `filtertype="cubic"` through a bounded
   16-tap cubic sampler with trilinear mip selection.
+- `triplanarprojection` now resolves three image resources, projects them on
+  the X/Y/Z planes, and blends the samples by normalized authored normals;
+  its projection path currently uses base-level sampling.
 - URL resource tests cover includes, source-relative EXR paths, inherited image
   colorspace, cycle rejection and cross-origin rejection. ShaderBall's 2048x2048
   neutral EXR decodes successfully.
