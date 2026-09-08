@@ -218,7 +218,8 @@ The renderer packs resources into a storage buffer with a 64 MiB total mip
 budget, validates finite float32 values, and diagnoses missing files. Renderer
 image storage defaults to `textureStorage: 'half'`, packing RGBA mip texels into
 two 16-bit-float pairs and unpacking them in WGSL; `'float'` remains available
-when full float32 texture precision is required.
+when full float32 texture precision is required. Changing texture storage or
+texture budget options after a scene is loaded rebuilds the scene resources.
 The optional `loadMaterialXResources(url, options)` API and URL control fetch
 EXR/PNG/JPEG resources for image, tiledimage, gltf_image, gltf_normalmap,
 gltf_colorimage, gltf_iridescence_thickness, gltf_anisotropy_image, UsdUVTexture,

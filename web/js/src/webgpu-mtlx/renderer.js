@@ -151,6 +151,8 @@ class MaterialXRenderer extends EventTarget {
   }
   setOptions(options) {
     this.check();
+    const textureKeys = ['textureMaxDimension', 'textureMaxBytes', 'textureStorage'];
+    const textureChanged = textureKeys.some(k => Object.hasOwn(options, k) && options[k] !== this.options[k]);
     for (const [k, v] of Object.entries(options)) {
       if (k === 'autoResolution') { if (typeof v !== 'boolean') throw new Error('autoResolution must be boolean'); continue; }
       if (k === 'textureMaxDimension' || k === 'textureMaxBytes') {
@@ -168,7 +170,9 @@ class MaterialXRenderer extends EventTarget {
     }
     const reseed=options.seed!==undefined&&options.seed!==this.options.seed;
     const animationChanged=(options.time!==undefined&&options.time!==this.options.time)||(options.frame!==undefined&&options.frame!==this.options.frame);
-    Object.assign(this.options, options); if ('resolutionScale' in options) this.resize();if(reseed||animationChanged)this.resetAccumulation();
+    Object.assign(this.options, options);
+    if (textureChanged && this.scene && this.sourceScene) return this.loadScene({ ...this.sourceScene, camera: this.camera });
+    if ('resolutionScale' in options) this.resize();if(reseed||animationChanged)this.resetAccumulation();
   }
   resetAccumulation() { this.samples = 0; this.generation++; this.stats.samples = 0; this.transportError = null; }
   resize(force = false) {
