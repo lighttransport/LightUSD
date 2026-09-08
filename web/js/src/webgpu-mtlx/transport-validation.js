@@ -3,6 +3,12 @@ import { shaderSource } from './shaders.js';
 import { surfaceDocument } from './scene.js';
 
 export async function validateTransportKernels(device) {
+  const film = wavelength => {
+    const c = .8, base = 1.5, ior = 1.4, thickness = 180;
+    const phase = 4 * Math.PI * ior * thickness * c / wavelength;
+    const r01 = (1 - ior) / (1 + ior), r12 = (ior - base) / (ior + base);
+    return Math.max(0, Math.min(1, r01 * r01 + r12 * r12 + 2 * r01 * r12 * Math.cos(phase)));
+  };
   const analytic = [
     ['normal Fresnel', 'dielectricFresnel(1.0,1.5)', .04],
     ['normal exit Fresnel', 'dielectricFresnel(1.0,1.0/1.5)', .04],
@@ -12,6 +18,8 @@ export async function validateTransportKernels(device) {
     ['GGX peak', 'microfacetD(vec3f(0,0,1),vec2f(0.5))', 4 / Math.PI],
     ['GGX normal masking', 'microfacetG1(vec3f(0,0,1),vec2f(0.2,0.5))', 1],
     ['conductor normal Fresnel', 'conductorFresnel(1.0,vec3f(0.2),vec3f(3)).x', ((.2-1)**2+9)/((.2+1)**2+9)],
+    ['thin film 450nm', 'thinFilmFresnelLambda(.8,1.5,1.4,180.0,450.0)', film(450)],
+    ['thin film 650nm', 'thinFilmFresnelLambda(.8,1.5,1.4,180.0,650.0)', film(650)],
     ['closure weighted evaluation', 'closureEval(closureMix(closureLeaf(nativeDiffuse(vec3f(.2),1,0)),closureLeaf(nativeDiffuse(vec3f(.8),1,0)),.25),vec3f(0,0,1),vec3f(0,0,1),1.5,0.0).x', .35/Math.PI],
     ['closure mixture PDF', 'closureEval(closureMix(closureLeaf(nativeDiffuse(vec3f(.2),1,0)),closureLeaf(nativeDiffuse(vec3f(.8),1,0)),.25),vec3f(0,0,1),vec3f(0,0,1),1.5,0.0).w', 1/Math.PI],
     ['inactive transmission interface', 'primaryLobe(surfaceEmission(closureMix(closureLeaf(nativeDielectric(vec3f(1),1.8,vec2f(.1),1,3u)),closureLeaf(nativeDiffuse(vec3f(.5),1,0)),1.0),vec3f(0),1.0,0u,vec3f(0,0,1),vec3f(0,0,1),-1.0,-1.0,vec3f(1),vec3f(1),5.0,0u,0u)).transmission', 0],
