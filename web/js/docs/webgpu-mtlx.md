@@ -555,8 +555,9 @@ destination metadata must not recolor the connected source.
 Standard Surface/OpenPBR terminals now accept the canonical 1.39.5 input spellings,
 including Standard Surface's `specular_IOR` and OpenPBR's `specular_ior`, geometry
 opacity/thin-wall fields, and common authored defaults. The current terminal is
-still an approximate single-lobe mapping. Nonzero or connected subsurface, fuzz,
-sheen, coat and thin-film controls fail explicitly; they are not silently erased.
+still an approximate multi-lobe mapping. Subsurface, fuzz, sheen, coat and
+thin-film controls are carried through bounded approximations; exact layered
+energy compensation and reference closure semantics remain incomplete.
 
 `UsdPreviewSurface` maps diffuse/metallic/roughness/IOR, emissive, occlusion,
 opacity mode, normal, and bounded clearcoat inputs into the shared material
