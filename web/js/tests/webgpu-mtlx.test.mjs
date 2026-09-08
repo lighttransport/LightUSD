@@ -666,6 +666,10 @@ test('grid and crosshatch patterns apply typed tiling, offset, thickness and sta
   const cross=compileGraph({nodes:[{name:'c',category:'crosshatch',type:'color3',inputs:{texcoord:{type:'vector2',value:[.2,.3]},thickness:{type:'float',value:.05}}}]});
   assert.match(cross.body,/max\(/); assert.match(cross.body,/fract\(/);
 });
+test('tiledcircles generates cell-local circle masks with authored size', () => {
+  const source=compileGraph({nodes:[{name:'c',category:'tiledcircles',type:'color3',inputs:{texcoord:{type:'vector2',value:[.2,.3]},uvtiling:{type:'vector2',value:[2,3]},size:{type:'float',value:.6},staggered:{type:'boolean',value:true}}}]});
+  assert.match(source.body,/fract\(/); assert.match(source.body,/length\(/); assert.match(source.body,/vec3f\(/);
+});
 test('cell-noise nodes hash integer cells without interpolation', () => {
   const doc={nodes:[
     {name:'uv',category:'texcoord',type:'vector2',inputs:{}},

@@ -223,6 +223,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   tests for circles and rounded line segments.
 - `grid` and `crosshatch` provide typed color3 UV patterns with tiling, offset,
   thickness, and staggered-cell controls.
+- `tiledcircles` provides deterministic cell-local circle masks with authored
+  tiling, offset, diameter, and staggering.
 - `cellnoise2d` and `cellnoise3d` provide non-interpolated integer-cell hash
   values for procedural masks.
 - Common color utility nodes `premult`, `unpremult`, `contrast`, and
