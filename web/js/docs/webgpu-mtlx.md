@@ -382,10 +382,11 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   tests for circles and rounded line segments.
 - `hextiledimage` color3/color4 overloads implement the pinned three-sample
   hexagonal tile transform, randomized rotation/scale/offset ranges,
-  luminance-weighted falloff, and derivative-based mip selection.
+  luminance-weighted falloff, derivative-based mip selection, and bounded UDIM
+  atlas sampling.
 - `hextilednormalmap` applies the same tile transform to tangent-space normal
-  samples, including green-channel flipping, tangent rotation, strength, and
-  gradient-based normal blending.
+  samples, including green-channel flipping, tangent rotation, strength,
+  gradient-based normal blending, and bounded UDIM atlas sampling.
 - `flake2d` and `flake3d` expose the four MaterialX outputs (`id`, `rand`,
   `presence`, and `flakenormal`) from a bounded 3×3×3 priority search and GGX
   flake-normal construction.
@@ -694,7 +695,8 @@ reported as a resource error instead of being ignored.
 The synthetic `normalmap-image` fixture now exercises a raw-color image node
 feeding `normalmap`, including packed-resource binding and linear filtering;
 authored texture mip residency and UDIM streaming remain future work; USD and
-MaterialX UDIM atlases are decoded eagerly under bounded tile and byte limits. Its
+MaterialX UDIM atlases are decoded eagerly under bounded tile and byte limits,
+and hex-tiled nodes sample those packed atlases. Its
 focused spectral Chrome run currently stalls before a sample is reported, so
 it is intentionally not in the default reference matrix until image-backed
 spectral dispatch diagnostics are fixed. The fixture is available through the

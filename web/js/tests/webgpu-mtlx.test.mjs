@@ -1277,6 +1277,9 @@ test('hextiledimage preserves pinned hex-tile controls and derivative sampling',
   assert.match(source.body,/imageHextile\(0u/); assert.match(source.body,/ctx\.uvDx/); assert.match(source.body,/0\.8/);
   const color3=compileGraph({...doc,nodes:[{...doc.nodes[0],type:'color3',inputs:{...doc.nodes[0].inputs,default:{type:'color3',value:[.1,.2,.3]}}}]},{imageDescriptors:descriptor});
   assert.match(color3.body,/imageHextile\(0u/);
+  const udim={tile:{offset:0,width:8,height:4,levels:4,colorspace:'raw',udim:{columns:2,rows:1}}};
+  const udimSource=compileGraph(doc,{imageDescriptors:udim});
+  assert.match(udimSource.body,/imageHextileUDIM\(0u/); assert.match(udimSource.body,/vec2u\(2u,1u\)/);
   assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,filtertype:{type:'string',value:'cubic'}}}]},{imageDescriptors:descriptor}),/closest\/linear/);
   assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,file:{type:'filename',value:'missing'}}}]},{imageDescriptors:descriptor}),/missing decoded image/);
 });
@@ -1285,6 +1288,9 @@ test('hextilednormalmap preserves tangent rotation, flip and gradient blending',
   const doc={nodes:[{name:'normal',category:'hextilednormalmap',type:'vector3',inputs:{file:{type:'filename',value:'normal'},flip_g:{type:'boolean',value:true},strength:{type:'float',value:.8}}}]};
   const source=compileGraph(doc,{imageDescriptors:descriptor});
   assert.match(source.body,/imageHextileNormal\(0u/); assert.match(source.body,/ctx\.tangent/); assert.match(source.body,/0\.8/);
+  const udim={normal:{offset:0,width:8,height:4,levels:4,colorspace:'raw',udim:{columns:2,rows:1}}};
+  const udimSource=compileGraph(doc,{imageDescriptors:udim});
+  assert.match(udimSource.body,/imageHextileNormalUDIM\(0u/); assert.match(udimSource.body,/vec2u\(2u,1u\)/);
   assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,filtertype:{type:'string',value:'cubic'}}}]},{imageDescriptors:descriptor}),/closest\/linear/);
 });
 test('flake2d and flake3d expose pinned multi outputs', () => {
