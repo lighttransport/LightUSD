@@ -356,6 +356,9 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   const directSheen={nodes:[{name:'s',category:'sheen_bsdf',type:'BSDF',inputs:{color:{type:'color3',value:[.8,.7,.6]},weight:{type:'float',value:.75},roughness:{type:'float',value:.4}}}]};
   assert.match(compileGraph(directSheen).body,/nativeSheen/);
   assert.match(shaderSource([{nodes:[...directSheen.nodes,{name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'s'}}}],output:{nodename:'surface'}}]),/m\.kind==8u/);
+  const zeltner={...directSheen,nodes:[{...directSheen.nodes[0],inputs:{...directSheen.nodes[0].inputs,mode:{type:'string',value:'zeltner'}}}]};
+  const zeltnerSource=shaderSource([{nodes:[...zeltner.nodes,{name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'s'}}}],output:{nodename:'surface'}}]);
+  assert.match(zeltnerSource,/sheenZeltnerBRDF/); assert.match(zeltnerSource,/sheenZeltnerDirAlbedo/);
   const thin=syntheticScene('thin-walled').materials[1];
   assert.match(compileGraph(thin,{material:true}).body,/select\(0u,1u,true\)/);
   assert.match(shaderSource([thin]),/thinWalled/);

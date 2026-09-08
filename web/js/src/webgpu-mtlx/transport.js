@@ -122,6 +122,10 @@ fn transportSample(m: Lobe, wo: vec3f, eta: f32, rng: ptr<function,u32>) -> Scat
   return Scatter(wi,f.w,f.xyz*abs(wi.z)/max(1e-30,f.w),0u,select(eta,1.0,wi.z>0.0));
 }
 fn powerHeuristic(a: f32, b: f32) -> f32 { return a*a/max(1e-30,a*a+b*b); }
+fn sheenZeltnerDirAlbedo(nv:f32,r:f32)->f32 {let s=r*(.0206607+1.58491*r)/(.0379424+r*(1.32227+r));let mm=r*(-.193854+r*(-1.14885+r*(1.7932-.95943*r*r)))/(.046391+r);let o=r*(.000654023+(-.0207818+.119681*r)*r)/(1.26264+r*(-1.92021+r));return clamp(exp(-.5*pow((nv-mm)/max(1e-5,s),2.0))/(max(1e-5,s)*sqrt(2.0*PI))+o,0.0,1.0);}
+fn sheenZeltnerAInv(nv:f32,r:f32)->f32 {return (2.58126*nv+.813703*r)*r/(1.0+.310327*nv*nv+2.60994*nv*r);}
+fn sheenZeltnerBInv(nv:f32,r:f32)->f32 {return sqrt(max(0.0,1.0-nv))*(r-1.0)*r*r*r/(.0000254053+1.71228*nv-1.71506*nv*r+1.34174*r*r);}
+fn sheenZeltnerBRDF(wo:vec3f,wi:vec3f,r:f32)->f32 {let nv=clamp(wo.z,0.0,1.0);let tx=safeNormal(vec3f(wo.x,wo.y,0),vec3f(1,0,0));let ty=vec3f(-tx.y,tx.x,0);let l=vec3f(dot(wi,tx),dot(wi,ty),wi.z);let a=sheenZeltnerAInv(nv,r);let b=sheenZeltnerBInv(nv,r);let w=vec3f(a*l.x+b*l.z,a*l.y,l.z);let len2=max(1e-8,dot(w,w));return max(0.0,w.z)/PI*pow(a/len2,2.0);}
 fn nativeEval(m:Lobe,wo:vec3f,wi:vec3f,eta:f32)->vec4f {
   if(m.kind==5u) {
     if(wi.z<=0.0){return vec4f(0);}
@@ -150,7 +154,7 @@ fn nativeEval(m:Lobe,wo:vec3f,wi:vec3f,eta:f32)->vec4f {
   }
   if(m.kind==8u) {
     if(wi.z<=0.0){return vec4f(0);}
-    let ndv=max(1e-6,wo.z);let ndl=max(1e-6,wi.z);let h=normalize(wo+wi);let ndh=max(1e-6,h.z);let r=clamp(m.alpha.x,.01,1.0);let invR=1.0/max(r,.005);let d=(2.0+invR)*pow(max(0.0,1.0-ndh*ndh),invR*.5)/(2.0*PI);let value=d/(4.0*(ndl+ndv-ndl*ndv));return vec4f(m.weight*m.base*value,ndl/PI);
+    let ndv=max(1e-6,wo.z);let ndl=max(1e-6,wi.z);let h=normalize(wo+wi);let ndh=max(1e-6,h.z);let r=clamp(m.alpha.x,.01,1.0);var value=0.0;if(m.scatterMode==0u){let invR=1.0/max(r,.005);let d=(2.0+invR)*pow(max(0.0,1.0-ndh*ndh),invR*.5)/(2.0*PI);value=d/(4.0*(ndl+ndv-ndl*ndv));}else{value=sheenZeltnerDirAlbedo(ndv,r)*sheenZeltnerBRDF(wo,wi,r);}return vec4f(m.weight*m.base*value,ndl/PI);
   }
   if(m.kind==3u) {
     if(wi.z<=0.0){return vec4f(0);}
