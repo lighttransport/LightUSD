@@ -18,7 +18,7 @@ class MaterialXRenderer extends EventTarget {
     super(); this.canvas = canvas; this.device = device; this.adapter = adapter;
     this.context = canvas.getContext('webgpu'); this.format = navigator.gpu.getPreferredCanvasFormat();
     this.context.configure({ device, format: this.format, alphaMode: 'opaque' });
-    this.options = { exposure: 0, resolutionScale: 1, maxSamples: 4096, autoResolution: false, seed: 0, time: 0, frame: 0, textureMaxDimension: 0, textureMaxBytes: 64 * 1024 * 1024 };
+    this.options = { exposure: 0, resolutionScale: 1, maxSamples: 4096, autoResolution: false, seed: 0, time: 0, frame: 0, textureMaxDimension: 0, textureMaxBytes: 64 * 1024 * 1024, textureStorage: 'half' };
     this.mode = 'path-preview'; this.samples = 0; this.generation = 0; this.sceneGeneration = 0; this.disposed = false; this.busy = false;
     this.resources = []; this.errors = [];
     this.stats = { adapter: { vendor: adapter.info?.vendor, architecture: adapter.info?.architecture, device: adapter.info?.device, description: adapter.info?.description, isFallbackAdapter: adapter.info?.isFallbackAdapter }, referenceReady: false, samples: 0 };
@@ -62,7 +62,7 @@ class MaterialXRenderer extends EventTarget {
       try { worker.postMessage({ scene }); } catch (e) { worker.terminate(); reject(e); }
     });
     if (!packed || generation !== this.sceneGeneration || this.disposed) return { cancelled: true };
-    const textures = {}; const code = shaderSource(packed.materials, textures, packed.lighting, { maxDimension: this.options.textureMaxDimension || undefined, maxBytes: this.options.textureMaxBytes });
+    const textures = {}; const code = shaderSource(packed.materials, textures, packed.lighting, { maxDimension: this.options.textureMaxDimension || undefined, maxBytes: this.options.textureMaxBytes, compact: this.options.textureStorage === 'half' });
     const module = await this.module(code);
     const layout = this.device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout] });
     const [compute, raster, displayModule] = await Promise.all([
@@ -110,7 +110,7 @@ class MaterialXRenderer extends EventTarget {
     }
     const materials = this.scene.materials.slice(); materials[index] = document;
     const generation = ++this.sceneGeneration;
-    const textures = {}; const module = await this.module(shaderSource(materials, textures, this.scene.lighting, { maxDimension: this.options.textureMaxDimension || undefined, maxBytes: this.options.textureMaxBytes }));
+    const textures = {}; const module = await this.module(shaderSource(materials, textures, this.scene.lighting, { maxDimension: this.options.textureMaxDimension || undefined, maxBytes: this.options.textureMaxBytes, compact: this.options.textureStorage === 'half' }));
     const layout = this.device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout] });
     const [compute, raster] = await Promise.all([
       this.device.createComputePipelineAsync({ layout, compute: { module, entryPoint: 'trace' } }),
@@ -159,6 +159,7 @@ class MaterialXRenderer extends EventTarget {
         if (k === 'textureMaxBytes' && (v < 16 || v > 1024 * 1024 * 1024)) throw new Error('textureMaxBytes is out of range');
         continue;
       }
+      if (k === 'textureStorage') { if (!['float', 'half'].includes(v)) throw new Error('textureStorage must be float or half'); continue; }
       if (!['exposure', 'resolutionScale', 'maxSamples', 'seed', 'time', 'frame'].includes(k) || !Number.isFinite(v)) throw new Error(`Invalid option ${k}`);
       if(k==='seed'&&(!Number.isInteger(v)||v<0||v>0xffffffff))throw new Error('Seed must be a uint32');
       if (k === 'resolutionScale' && (v < 0.1 || v > 1)) throw new Error('Resolution scale must be 0.1–1');

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { compileGraph, contextWGSL, literal } from './graph.js';
-import { packImages, imageWGSL } from './textures.js';
+import { packImages, imageWGSL, imageWGSLCompact } from './textures.js';
 import { transportWGSL } from './transport.js';
 import { pathStateWGSL } from './path-state.js';
 import { spectrumWGSL } from './spectrum.js';
@@ -32,7 +32,7 @@ export function shaderSource(materials, resources = {}, lighting = {}, textureOp
   return /* wgsl */`
 ${contextWGSL}
 ${spectrumWGSL(materials, resources)}
-${imageWGSL}
+${textureOptions.compact ? imageWGSLCompact : imageWGSL}
 ${functions}
 fn emissionSidedness(id:u32,normal:vec3f,direction:vec3f)->f32 {
   switch id { ${materials.map((doc,i)=>doc.twoSidedEmission?`case ${i}u:{return 1.0;}`:'').join('\n')} default:{} }

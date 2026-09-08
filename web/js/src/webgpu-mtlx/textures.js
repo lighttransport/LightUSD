@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Decoded image resources: RGBA float data, row zero at MaterialX v=0.
 // Preview working space is linear Rec.709; ACEScg transport is a later milestone.
+import { DataUtils } from 'three';
 import { normalizeColorSpace } from './color.js';
 function resizeBox(image, maxDimension) {
   if (!maxDimension || Math.max(image.width, image.height) <= maxDimension) return image;
@@ -22,8 +23,9 @@ function resizeBox(image, maxDimension) {
   return { ...image, width, height, data, resizedFrom: [image.width, image.height] };
 }
 
-export function packImages(images, { maxBytes = 64 * 1024 * 1024, maxDimension } = {}) {
+export function packImages(images, { maxBytes = 64 * 1024 * 1024, maxDimension, compact = false } = {}) {
   const chunks = [], descriptors = []; let texels = 0;
+  const texelBytes = compact ? 8 : 16;
   const packOne = source => {
     const image = resizeBox(source, maxDimension);
     const { width, height, data } = image;
@@ -32,7 +34,7 @@ export function packImages(images, { maxBytes = 64 * 1024 * 1024, maxDimension }
     if (!data || data.length !== width * height * 4) throw new Error('Expected RGBA image data');
     let w = width, h = height, count = 0;
     do { count += w * h; if (w === 1 && h === 1) break; w = Math.max(1, Math.floor(w / 2)); h = Math.max(1, Math.floor(h / 2)); } while (true);
-    if ((texels + count) * 16 > maxBytes) throw new Error('Image mip chain exceeds texture budget');
+    if ((texels + count) * texelBytes > maxBytes) throw new Error('Image mip chain exceeds texture budget');
     let pixels = Float32Array.from(data);
     if (!pixels.every(Number.isFinite)) throw new Error('Image contains non-finite float32 values');
     if (colorspace === 'srgb_texture') for (let i = 0; i < pixels.length; i++) if (i % 4 !== 3) {
@@ -84,8 +86,19 @@ export function packImages(images, { maxBytes = 64 * 1024 * 1024, maxDimension }
     if (frames.some(frame => frame.width !== first.width || frame.height !== first.height || frame.levels !== first.levels)) throw new Error('Image sequence frames must have matching dimensions');
     descriptors.push({ ...first, frames });
   }
-  const data = new Float32Array(Math.max(4, texels * 4)); let offset = 0;
-  for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.length; }
+  if (!compact) {
+    const data = new Float32Array(Math.max(4, texels * 4)); let offset = 0;
+    for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.length; }
+    return { data, descriptors };
+  }
+  const data = new Uint32Array(Math.max(2, texels * 2)); let offset = 0;
+  for (const chunk of chunks) {
+    for (let i = 0; i < chunk.length; i += 4) {
+      const r = DataUtils.toHalfFloat(chunk[i]), g = DataUtils.toHalfFloat(chunk[i + 1]);
+      const b = DataUtils.toHalfFloat(chunk[i + 2]), a = DataUtils.toHalfFloat(chunk[i + 3]);
+      data[offset++] = r | (g << 16); data[offset++] = b | (a << 16);
+    }
+  }
   return { data, descriptors };
 }
 
@@ -183,3 +196,9 @@ fn imageHextileNormal(offset:u32,size:vec2u,levels:u32,coord:vec2f,ddx0:vec2f,dd
   let n=safeNormal(N,vec3f(0.0,0.0,1.0));let r1=-t.rotations.x;let r2=-t.rotations.y;let r3=-t.rotations.z;let t1=mxHextileAxisRotate(n,T,r1)*strength;let t2=mxHextileAxisRotate(n,T,r2)*strength;let t3=mxHextileAxisRotate(n,T,r3)*strength;let b1=mxHextileAxisRotate(n,B,r1)*strength;let b2=mxHextileAxisRotate(n,B,r2)*strength;let b3=mxHextileAxisRotate(n,B,r3)*strength;let n1w=safeNormal(t1*n1.x+b1*n1.y+n*n1.z,n);let n2w=safeNormal(t2*n2.x+b2*n2.y+n*n2.z,n);let n3w=safeNormal(t3*n3.x+b3*n3.y+n*n3.z,n);let w=mxHextileBlendWeights(vec3f(1.0),t.weights,falloff);let g=w.x*mxHextileNormalGradient(n,n1w)+w.y*mxHextileNormalGradient(n,n2w)+w.z*mxHextileNormalGradient(n,n3w);return safeNormal(n-g,n);
 }
 `;
+
+// Half-packed storage uses two uints per RGBA texel. `unpack2x16float` is a
+// core WGSL builtin and does not require shader-f16 support.
+export const imageWGSLCompact = imageWGSL
+  .replace('var<storage,read> imagePixels: array<vec4f>', 'var<storage,read> imagePixels: array<vec2u>')
+  .replace('return imagePixels[offset+u32(q.y)*size.x+u32(q.x)];', 'let packed=imagePixels[offset+u32(q.y)*size.x+u32(q.x)];return vec4f(unpack2x16float(packed.x),unpack2x16float(packed.y));');

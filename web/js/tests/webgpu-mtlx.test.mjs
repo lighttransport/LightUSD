@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { compileGraph, literal, GraphError, contextWGSL } from '../src/webgpu-mtlx/graph.js';
 import { packScene, syntheticScene } from '../src/webgpu-mtlx/scene.js';
 import { encodeEXR } from '../src/webgpu-mtlx/capture.js';
-import { packImages } from '../src/webgpu-mtlx/textures.js';
+import { packImages, imageWGSLCompact } from '../src/webgpu-mtlx/textures.js';
 import { shaderSource } from '../src/webgpu-mtlx/shaders.js';
 import { validateSpectrum, sampleSpectrum } from '../src/webgpu-mtlx/spectrum.js';
 import { cieXYZ } from '../src/webgpu-mtlx/cie-data.js';
@@ -518,6 +518,15 @@ test('image budgets, finite float32, dimensions and color interpretation are val
   assert.throws(() => packImages([{ ...image, width: .5 }]), /dimensions/);
   assert.throws(() => packImages([{ ...image, data: [1e100,0,0,1] }]), /non-finite/);
   assert.throws(() => packImages([{ ...image, colorspace: 'unknown' }]), /colorspace/);
+});
+test('image packing supports half-float storage without changing texel descriptors', () => {
+  const image = { width: 1, height: 1, data: [0.25, 0.5, 0.75, 1], colorspace: 'raw' };
+  const packed = packImages([image], { compact: true, maxBytes: 8 });
+  assert.ok(packed.data instanceof Uint32Array);
+  assert.equal(packed.data.byteLength, 8);
+  assert.deepEqual(packed.descriptors[0], { offset: 0, width: 1, height: 1, levels: 1 });
+  assert.match(imageWGSLCompact, /array<vec2u>/);
+  assert.match(imageWGSLCompact, /unpack2x16float/);
 });
 test('image graph resource resolution and unsupported filtering diagnostics', () => {
   const doc = syntheticScene().materials[1];
