@@ -167,10 +167,10 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 
 ## Not implemented
 
-Full MaterialX coverage; general EDF/VDF closure composition and exact layered
+Full MaterialX coverage; remaining EDF/VDF closure semantics and exact layered
 transport;
 complete authored light/material sync semantics;
-MaterialX subsurface_bsdf albedo/radius conversion; hair and curves;
+MaterialX subsurface_bsdf radius-to-transport conversion and true BSSRDF;
 arbitrary authored primvar/shading-property maps beyond the supported geometry
 aliases, UV slots, and eight bounded custom geomprop channels;
 Catmull-Clark displacement refinement; faithful authored ShaderBall material
@@ -209,13 +209,15 @@ rough refraction, exact Fresnel), `conductor_bsdf` (complex Fresnel), uncompensa
 `chiang_hair_bsdf`, homogeneous `absorption_vdf`, `uniform_edf`, and `surface`.
 Native closures use the enclosing authored/geometric normal and its preserved
 tangent frame. Standard Surface/OpenPBR
-remain approximate mappings. BSDF add, mix, and scalar/color weighting preserve
-up to sixteen lobes with mixture evaluation and sampling PDFs; bounded closure
-expression nodes retain nested add/mix structure and BSDF-over-BSDF layers use
-directional top-transmission weighting during evaluation. Add/mix reject
-ambiguous combinations that carry two separate interiors. BSDF-over-VDF layer
-attaches an interior after surface composition. Active transmissive lobes must
-agree on interface IOR. Realtime shading still uses a primary-lobe approximation.
+remain approximate mappings. BSDF add, mix, select, switch, and scalar/color
+weighting preserve up to sixteen lobes with mixture evaluation and sampling
+PDFs; bounded closure expression nodes retain nested add/mix structure and
+BSDF-over-BSDF layers use directional top-transmission weighting during
+evaluation. Add/mix reject ambiguous combinations that carry two separate
+interiors. BSDF-over-VDF layer attaches an interior after surface composition.
+VDF add, mix, select, switch and scalar/color weighting compose bounded medium
+coefficients. Active transmissive lobes must agree on interface IOR. Realtime
+shading still uses a primary-lobe approximation.
 Thin film, sheen, coat and multiple-scattering microfacet compensation remain
 approximate. Layered closure sampling still uses the bounded lobe mixture and
 does not yet provide full recursive interface continuation or exact layered
