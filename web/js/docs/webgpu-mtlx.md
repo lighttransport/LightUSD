@@ -201,7 +201,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 - `cellnoise2d` and `cellnoise3d` provide non-interpolated integer-cell hash
   values for procedural masks.
 - Common color utility nodes `premult`, `unpremult`, `contrast`, and
-  `hsvadjust` now compile with typed ports and bounded alpha/value handling.
+  `hsvadjust` now compile with typed ports and bounded alpha/value handling;
+  unpremultiplication clamps its divisor before WGSL conditional selection.
 - `tiledimage` accepts the validated single-tile resource path and applies
   static `uvtiling` multipliers; real-world image-size controls and UDIM
   expansion remain explicit unsupported diagnostics.

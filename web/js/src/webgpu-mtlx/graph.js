@@ -358,7 +358,7 @@ export function compileGraph(document, { output, library = {}, material = false,
         }
         case 'unpremult': {
           if (type !== 'color4') fail('TYPE', key, 'unpremult output must be color4');
-          const value=input('in',undefined,'color4'); code=`select(vec4f(0.0),vec4f(${value.code}.rgb/${value.code}.a,${value.code}.a),${value.code}.a>0.0)`; break;
+          const value=input('in',undefined,'color4'); code=`select(vec4f(0.0),vec4f(${value.code}.rgb/max(${value.code}.a,1e-6),${value.code}.a),${value.code}.a>0.0)`; break;
         }
         case 'acescg_to_lin_rec709': code=`mxAcescgToLinRec709(${x('in',undefined,'color3')})`; break;
         case 'lin_rec709_to_acescg': code=`mxLinRec709ToAcescg(${x('in',undefined,'color3')})`; break;
