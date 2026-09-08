@@ -42,6 +42,9 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   `bump` compile with typed inputs, finite temperature bounds, and explicit
   tangent-frame normal generation. The blackbody and scalar bump paths remain
   bounded approximations rather than a claim of full physical conformance.
+- `colorcorrect` applies bounded HSV hue/saturation, lift/gain, contrast,
+  exposure, and gamma controls; `switch` selects among ten typed value inputs
+  using the authored index and preserves explicit defaults.
 - Image nodes backed by caller-decoded RGBA float resources in both modes:
   closest/linear filtering; constant/clamp/periodic/mirror addressing; float,
   vector and color outputs; default colors; linear-light area-filtered mip chains.

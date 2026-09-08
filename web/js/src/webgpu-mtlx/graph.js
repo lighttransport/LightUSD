@@ -11,7 +11,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 // Units are semantic annotations; implementations consume their authored
 // convention (for example degrees for rotate2d and nanometers for thin film).
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
-export const valueCategories = new Set(['constant', 'add', 'subtract', 'plus', 'minus', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'fract', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'saturate', 'contrast', 'premult', 'unpremult', 'blackbody', 'ramp4', 'triplanarprojection', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
+export const valueCategories = new Set(['constant', 'add', 'subtract', 'plus', 'minus', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'fract', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'colorcorrect', 'saturate', 'contrast', 'premult', 'unpremult', 'blackbody', 'ramp4', 'triplanarprojection', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'switch', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'UsdPreviewSurface', 'surface_unlit', 'surfacematerial', 'surface']);
 for(const category of ['transformmatrix','normalmap','bump','bump3','heighttonormal','rotate3d','reorder','fractal2d','fractal3d','worleynoise2d','worleynoise3d','unifiednoise2d','unifiednoise3d','latlongimage','splitlr','splittb','ramp','ramp_gradient','ramplr','ramptb','checkerboard','line','circle','grid','crosshatch','tiledcircles','randomfloat','randomcolor','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
@@ -456,6 +456,13 @@ export function compileGraph(document, { output, library = {}, material = false,
           if(whenTrue.type!==whenFalse.type||whenTrue.type!==type)fail('TYPE',key,'select branches must match output type');
           code=`select(${whenFalse.code},${whenTrue.code},${condition})`; break;
         }
+        case 'switch': {
+          if (type === 'BSDF' || type === 'EDF' || type === 'VDF') fail('TYPE', key, 'switch requires a value type');
+          const fallback=widths[type]===1?0:Array(widths[type]).fill(0), which=x('which',0,'float');
+          let selected=x('in10',fallback,type);
+          for (let i=9;i>=1;i--) selected=`select(${x(`in${i}`,fallback,type)},${selected},${which}>=${i}.0)`;
+          code=selected; break;
+        }
         case 'noise2d': case 'noise3d': {
           const dimension = n.category === 'noise2d' ? 'vector2' : 'vector3';
           for (const name of Object.keys(ins)) if (!['in', 'scale', 'amplitude', 'pivot', 'octaves', 'lacunarity', 'diminish'].includes(name)) fail('UNSUPPORTED', key, `unsupported ${n.category} input ${name}`);
@@ -511,6 +518,14 @@ export function compileGraph(document, { output, library = {}, material = false,
           const hsv=`mxRgbToHsv(${rgb})`, amount=x('amount',[0,1,1],'vector3');
           const adjusted=`mxHsvToRgb(vec3f(fract(${hsv}.x+${amount}.x),max(0.0,${hsv}.y*${amount}.y),max(0.0,${hsv}.z*${amount}.z)))`;
           code=type==='color4'?`vec4f(${adjusted},${value.code}.a)`:adjusted; break;
+        }
+        case 'colorcorrect': {
+          if (type !== 'color3') fail('TYPE', key, 'colorcorrect output must be color3');
+          const value=x('in',[1,1,1],'color3'), hue=x('hue',0,'float'), saturation=x('saturation',1,'float');
+          const hsv=`mxRgbToHsv(${value})`, rgb=`mxHsvToRgb(vec3f(fract(${hsv}.x+${hue}),max(0.0,${hsv}.y*${saturation}),max(0.0,${hsv}.z)))`;
+          const lift=x('lift',0,'float'), gain=x('gain',1,'float'), contrast=x('contrast',1,'float'), pivot=x('contrastpivot',.5,'float'), exposure=x('exposure',0,'float'), gamma=x('gamma',1,'float');
+          const lifted=`(${rgb}+${lift}*(vec3f(1.0)-${rgb}))`, contrasted=`((${lifted}*${gain}-vec3f(${pivot}))*${contrast}+vec3f(${pivot}))`;
+          code=`pow(max(vec3f(0.0),${contrasted}*exp2(${exposure})),vec3f(1.0/max(abs(${gamma}),0.001)))`; break;
         }
         case 'blackbody': {
           if (type !== 'color3') fail('TYPE', key, 'blackbody output must be color3');

@@ -695,6 +695,12 @@ test('stdlib utility aliases, blackbody and bump compile with bounded controls',
   const bump=compileGraph({nodes:[{name:'b',category:'bump',type:'vector3',inputs:{height:{type:'float',value:.2},scale:{type:'float',value:1.5}}}]});
   assert.match(bump.body,/mxBumpHeight/);
 });
+test('stdlib color correction and switch preserve typed authored controls', () => {
+  const color=compileGraph({nodes:[{name:'c',category:'colorcorrect',type:'color3',inputs:{in:{type:'color3',value:[.2,.4,.8]},hue:{type:'float',value:.1},gamma:{type:'float',value:2},exposure:{type:'float',value:1}}}]});
+  assert.match(color.body,/mxRgbToHsv/); assert.match(color.body,/exp2\(/); assert.match(color.body,/pow\(/);
+  const selected=compileGraph({nodes:[{name:'s',category:'switch',type:'float',inputs:{in1:{type:'float',value:1},in2:{type:'float',value:2},in10:{type:'float',value:10},which:{type:'float',value:1}}}]});
+  assert.match(selected.body,/>=1\.0/); assert.match(selected.body,/10\.0/);
+});
 test('cell-noise nodes hash integer cells without interpolation', () => {
   const doc={nodes:[
     {name:'uv',category:'texcoord',type:'vector2',inputs:{}},
