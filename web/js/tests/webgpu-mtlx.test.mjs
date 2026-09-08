@@ -637,6 +637,16 @@ test('MaterialX cmlib gamma and texture transforms preserve color4 alpha', () =>
   assert.match(ap1.body,/mxAcescgToLinRec709/); assert.match(ap1.body,/vec3f\(2\.2\)/);
   assert.throws(()=>compileGraph({nodes:[{name:'g',category:'g18_rec709_to_lin_rec709',type:'float',inputs:{}}]}),/output must be color3\/color4/);
 });
+test('MaterialX cmlib Adobe RGB and Display P3 transforms use pinned matrices', () => {
+  const adobe=compileGraph({nodes:[{name:'a',category:'adobergb_to_lin_rec709',type:'color3',inputs:{in:{type:'color3',value:[.25,.5,.75]}}}]});
+  assert.match(adobe.body,/2\.19921875/); assert.match(adobe.body,/1\.39835574/);
+  const linearAdobe=compileGraph({nodes:[{name:'a',category:'lin_adobergb_to_lin_rec709',type:'color4',inputs:{in:{type:'color4',value:[.25,.5,.75,.4]}}}]});
+  assert.match(linearAdobe.body,/1\.39835574/); assert.match(linearAdobe.body,/\.a/);
+  const p3=compileGraph({nodes:[{name:'p',category:'srgb_displayp3_to_lin_rec709',type:'color3',inputs:{in:{type:'color3',value:[.25,.5,.75]}}}]});
+  assert.match(p3.body,/mxSrgbToLinRec709/); assert.match(p3.body,/1\.22493029/);
+  const linearP3=compileGraph({nodes:[{name:'p',category:'lin_displayp3_to_lin_rec709',type:'color3',inputs:{in:{type:'color3',value:[.25,.5,.75]}}}]});
+  assert.match(linearP3.body,/1\.22493029/); assert.doesNotMatch(linearP3.body,/mxSrgbToLinRec709/);
+});
 test('select node enforces boolean condition and matching branch types', () => {
   const doc={nodes:[
     {name:'condition',category:'constant',type:'boolean',inputs:{value:{type:'boolean',value:true}}},

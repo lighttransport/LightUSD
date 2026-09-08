@@ -237,6 +237,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 - The pinned cmlib gamma transforms cover 1.8/2.2 Rec.709, display Rec.709
   gamma 2.4, sRGB texture decoding, and gamma-encoded AP1 to linear Rec.709;
   color4 variants preserve alpha without applying color transforms to it.
+- Adobe RGB and Display P3 cmlib transforms use the pinned 3x3 matrices for
+  both linear and transfer-encoded inputs, with color4 alpha preserved.
 - Typed `select` branches enforce boolean conditions and matching output types,
   preserving MaterialX conditional graph semantics.
 - Deterministic bounded `noise2d` and `noise3d` value nodes are available for
