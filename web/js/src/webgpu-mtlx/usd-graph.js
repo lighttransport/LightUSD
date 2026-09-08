@@ -175,7 +175,25 @@ export function materialXFromUSD(snapshot, materialPath, { library = {}, resolve
     output = { nodename: surface };
   } else fail(materialPath, 'missing MaterialX surface or volume terminal');
   const displacementTerminal = own(material.properties, 'outputs:mtlx:displacement') ? 'outputs:mtlx:displacement' : own(material.properties, 'outputs:displacement') ? 'outputs:displacement' : null;
-  const displacementOutput = displacementTerminal ? port(`${materialPath}.${displacementTerminal}`, 'displacementshader') : parts.displacement;
+  let displacementOutput = displacementTerminal ? port(`${materialPath}.${displacementTerminal}`, 'displacementshader') : parts.displacement;
+  // USD Preview Surface authors commonly put a height expression directly on
+  // the surface shader. Promote that input to the renderer's displacement
+  // terminal so it reaches the existing bake/refinement path. Keeping it out
+  // of the surface node also prevents the two compilation contexts from
+  // interpreting the same value differently.
+  if (!displacementOutput && parts.surface?.nodename) {
+    const surfaceNode = nodes.find(node => node.name === parts.surface.nodename);
+    if (surfaceNode?.category === 'UsdPreviewSurface' && surfaceNode.inputs?.displacement &&
+        (surfaceNode.inputs.displacement.nodename || surfaceNode.inputs.displacement.nodegraph ||
+         surfaceNode.inputs.displacement.interfacename || Number(surfaceNode.inputs.displacement.value) !== 0)) {
+      const height = surfaceNode.inputs.displacement;
+      delete surfaceNode.inputs.displacement;
+      const displacementNode = { name: `usd_${nodes.length}`, category: 'displacement', type: 'displacementshader',
+        inputs: { displacement: height, scale: { type: 'float', value: 1 } }, source: `${surfaceNode.source}.inputs:displacement` };
+      nodes.push(displacementNode);
+      displacementOutput = { nodename: displacementNode.name, type: 'displacementshader' };
+    }
+  }
   return { version: '1.39', nodes, output, definitions, graphs: library.graphs || {},
     ...(displacementOutput ? { displacementOutput } : {}), ...(mediumOutput ? { mediumOutput } : {}), source: materialPath, provenance: { materialPath, source: 'USD layer snapshot', referenceReady: false } };
 }

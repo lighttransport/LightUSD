@@ -166,6 +166,19 @@ test('USD graph translation preserves interfaces and exact NodeDef typing', () =
   const wrapped = changed(); wrapped.prims.push({ path: '/M/SM', type: 'Shader', properties: { 'info:id': p('token', 'ND_surfacematerial'), 'inputs:surfaceshader': p('token', undefined, ['/M/S.outputs:out']), 'inputs:displacementshader': p('token', undefined, ['/M/D.outputs:out']), 'outputs:out': p('token') } }, { path: '/M/D', type: 'Shader', properties: { 'info:id': p('token', 'ND_displacement_float'), 'inputs:displacement': p('float', .1), 'outputs:out': p('token') } }); wrapped.prims[0].properties['outputs:mtlx:surface'] = p('token', undefined, ['/M/SM.outputs:out']);
   const wrappedDoc = materialXFromUSD(wrapped, '/M', { library });
   assert.equal(wrappedDoc.displacementOutput.type, 'displacementshader');
+  const previewDisplaced = changed();
+  previewDisplaced.prims[0].properties['outputs:mtlx:surface'] = p('token', undefined, ['/M/PS.outputs:out']);
+  previewDisplaced.prims.push({ path: '/M/PS', type: 'Shader', properties: {
+    'info:id': p('token', 'ND_preview_surface'), 'inputs:displacement': p('float', .35), 'outputs:out': p('token')
+  } });
+  const previewDisplacementLibrary = { definitions: {
+    ...library.definitions,
+    ND_preview_surface: { node: 'UsdPreviewSurface', inputs: { displacement: { type: 'float' } }, outputs: { out: { type: 'surfaceshader' } } }
+  } };
+  const previewDisplacementDoc = materialXFromUSD(previewDisplaced, '/M', { library: previewDisplacementLibrary });
+  assert.equal(previewDisplacementDoc.displacementOutput.type, 'displacementshader');
+  assert.equal(previewDisplacementDoc.nodes.find(node => node.category === 'UsdPreviewSurface').inputs.displacement, undefined);
+  assert.match(compileGraph(previewDisplacementDoc, { output: previewDisplacementDoc.displacementOutput }).body, /0\.35/);
   const colored = changed(); colored.colorSpaces = { '/M': { value: 'lin_ap1_scene', timeSampled: false } };
   assert.equal(materialXFromUSD(colored, '/M', { library }).nodes[0].inputs.base_color.colorspace, 'acescg');
   colored.prims[1].properties['inputs:color'].colorSpace = 'srgb_rec709_scene';
