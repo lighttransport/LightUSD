@@ -619,9 +619,11 @@ compile from the prior scene.
 
 MaterialX unit annotations are now validated against the supported vocabulary
 (`degree`, `radian`, metric length/time units, `nanometer`, and related unitless
-forms) instead of being rejected wholesale. Values remain in the authored
-convention consumed by each node implementation; unknown unit names still fail
-explicitly.
+forms) instead of being rejected wholesale. Percent literals normalize to
+unitless factors, radian annotations convert at angle-bearing nodes, and metric
+thin-film thickness converts to nanometers before spectral Fresnel evaluation.
+Other length/time values remain in the authored convention consumed by each
+node implementation; unknown unit names still fail explicitly.
 
 Path shading now supplies an isotropic UV ray-footprint estimate from camera
 pixel size, hit distance, and triangle UV/world scale. Image nodes can select a
