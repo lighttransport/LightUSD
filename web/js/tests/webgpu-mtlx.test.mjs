@@ -139,12 +139,13 @@ test('USD graph translation accepts common USD numeric aliases', () => {
   const p = (type, value, connections = []) => ({ type, ...(value === undefined ? {} : { value }), connections, timeSampled: false });
   const snapshot = { version: 1, prims: [
     { path: '/M', type: 'Material', properties: { 'outputs:surface': p('token', undefined, ['/S.outputs:out']) } },
-    { path: '/S', type: 'Shader', properties: { 'info:id': p('token', 'custom_surface'), 'inputs:amount': p('double', 1.25), 'inputs:direction': p('double3', [1, 2, 3]), 'outputs:out': p('token') } }
+    { path: '/S', type: 'Shader', properties: { 'info:id': p('token', 'custom_surface'), 'inputs:amount': p('double', 1.25), 'inputs:direction': p('double3', [1, 2, 3]), 'inputs:tint': p('color3h', [.2, .3, .4]), 'outputs:out': p('token') } }
   ] };
-  const library = { definitions: { custom_surface: { node: 'custom_surface', inputs: { amount: { type: 'float' }, direction: { type: 'vector3' } }, outputs: { out: { type: 'surfaceshader' } } } } };
+  const library = { definitions: { custom_surface: { node: 'custom_surface', inputs: { amount: { type: 'float' }, direction: { type: 'vector3' }, tint: { type: 'color3' } }, outputs: { out: { type: 'surfaceshader' } } } } };
   const doc = materialXFromUSD(snapshot, '/M', { library });
   assert.deepEqual(doc.nodes[0].inputs.amount, { type: 'float', value: 1.25 });
   assert.deepEqual(doc.nodes[0].inputs.direction, { type: 'vector3', value: [1, 2, 3] });
+  assert.deepEqual(doc.nodes[0].inputs.tint, { type: 'color3', value: [.2, .3, .4], colorspace: 'lin_rec709' });
 });
 
 test('USD graph asset resolution requires explicit source-aware ownership', () => {
