@@ -264,9 +264,17 @@ export function compileGraph(document, { output, library = {}, material = false,
         }
         case 'image': case 'tiledimage': {
           if (!['float', 'color3', 'color4', 'vector2', 'vector3', 'vector4'].includes(type)) fail('TYPE', key, 'invalid image output type');
-          for (const name of Object.keys(ins)) if (!['file', 'default', 'texcoord', 'uaddressmode', 'vaddressmode', 'filtertype', 'layer', 'framerange', 'frameoffset', 'frameendaction', 'uvtiling', 'uvoffset', 'realworldimagesize'].includes(name)) fail('UNSUPPORTED', key, `unsupported image input ${name}`);
+          for (const name of Object.keys(ins)) if (!['file', 'default', 'texcoord', 'uaddressmode', 'vaddressmode', 'filtertype', 'layer', 'framerange', 'frameoffset', 'frameendaction', 'uvtiling', 'uvoffset', 'realworldimagesize', 'realworldtilesize'].includes(name)) fail('UNSUPPORTED', key, `unsupported image input ${name}`);
           for (const name of ['layer', 'framerange', 'frameoffset']) if (ins[name] && !['', '0', 0].includes(ins[name].value)) fail('UNSUPPORTED', key, `image ${name} is not implemented`);
-          if (ins.realworldimagesize) { const value=Array.isArray(ins.realworldimagesize.value)?ins.realworldimagesize.value.join(','):ins.realworldimagesize.value; if (value !== undefined && !['0', 0, '0,0', '1,1'].includes(value)) fail('UNSUPPORTED', key, 'tiled image realworldimagesize is not implemented'); }
+          let realScale='vec2f(1.0)';
+          if (ins.realworldimagesize || ins.realworldtilesize) {
+            const imageSize=ins.realworldimagesize, tileSize=ins.realworldtilesize;
+            const vector=p=>Array.isArray(p?.value)?p.value:typeof p?.value==='string'?p.value.split(',').map(Number):null;
+            const imageValue=vector(imageSize), tileValue=vector(tileSize);
+            if (!imageSize || !tileSize || imageSize.nodename || imageSize.nodegraph || imageSize.interfacename || tileSize.nodename || tileSize.nodegraph || tileSize.interfacename || !imageValue || !tileValue || imageValue.length!==2 || tileValue.length!==2) fail('UNSUPPORTED', key, 'tiled image real-world sizes require paired static vector2 values');
+            if (imageValue.some(v=>typeof v!=='number'||!Number.isFinite(v)||v<=0) || tileValue.some(v=>typeof v!=='number'||!Number.isFinite(v)||v<=0)) fail('SEMANTICS', key, 'tiled image real-world sizes must be positive');
+            const format=v=>Number.isInteger(v)?`${v}.0`:String(v); realScale=`vec2f(${format(imageValue[0]/tileValue[0])},${format(imageValue[1]/tileValue[1])})`;
+          }
           const file = ins.file?.value ?? '';
           if (ins.file && (ins.file.nodename || ins.file.nodegraph || ins.file.interfacename)) fail('UNSUPPORTED', key, 'connected image filenames are not implemented');
           const fallback = x('default', widths[type] === 1 ? 0 : Array(widths[type]).fill(0), type);
@@ -282,7 +290,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           const filter = ins.filtertype?.value ?? 'linear';
           if (!['closest', 'linear', 'cubic'].includes(filter) || ins.filtertype?.nodename || ins.filtertype?.interfacename || ins.filtertype?.nodegraph) fail('UNSUPPORTED', key, 'only static closest/linear/cubic image filters are implemented');
           const uvBase = ins.texcoord ? x('texcoord', undefined, 'vector2') : 'ctx.uv';
-          const uvTiled = ins.uvtiling ? `(${uvBase}*${x('uvtiling',[1,1],'vector2')})` : uvBase;
+          const uvTiled = `(${uvBase}*${ins.uvtiling ? x('uvtiling',[1,1],'vector2') : 'vec2f(1.0)'}*${realScale})`;
           const uv = ins.uvoffset ? `(${uvTiled}-${x('uvoffset',[0,0],'vector2')})` : uvTiled;
           const fill = widths[type] === 4 ? fallback : widths[type] === 3 ? `vec4f(${fallback},0)` : widths[type] === 2 ? `vec4f(${fallback},0,0)` : `vec4f(${fallback})`;
           const swizzle = ({ float: 'r', vector2: 'rg', vector3: 'rgb', color3: 'rgb', vector4: 'rgba', color4: 'rgba' })[type];

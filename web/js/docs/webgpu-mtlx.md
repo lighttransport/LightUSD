@@ -220,8 +220,9 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 - Boolean `and`, `or`, `xor`, and `not` nodes now compile with strict boolean
   ports for graph control expressions.
 - `tiledimage` accepts the validated single-tile resource path, applies static
-  `uvtiling` multipliers and `uvoffset` subtraction; real-world image-size
-  controls and UDIM expansion remain explicit unsupported diagnostics.
+  `uvtiling` multipliers and `uvoffset` subtraction; paired static
+  `realworldimagesize`/`realworldtilesize` values add their UV ratio, while
+  unpaired values and UDIM expansion remain explicit unsupported diagnostics.
 - Image nodes now support MaterialX `filtertype="cubic"` through a bounded
   16-tap cubic sampler with trilinear mip selection.
 - `triplanarprojection` now resolves three image resources, projects them on
