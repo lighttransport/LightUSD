@@ -224,6 +224,12 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
       }
     }
     for (let i = 0; i < layer.numLights(); i++) authored.lights.push(layer.getLight(i));
+    for (const light of authored.lights.filter(light => light.type === 'dome' && light.textureFile)) {
+      const key = resolver.textures.resolveAsset(light.textureFile, { propertyPath: `${light.absPath || '/dome'}.textureFile`, colorspace: 'lin_rec709' });
+      const request = resolver.textures.requests.get(key);
+      const bytes = await fetchResource(request.url);
+      light.textureImage = await decodeImage(bytes, { filename: request.url, colorspace: request.colorspace, maxPixels: 256 * 1024, allowDownsample: true });
+    }
     const customGeompropNames = [...new Set(Object.values(authoredDocuments).flatMap(document => document.geompropNames || (document.geompropName ? [document.geompropName] : [])))];
     const geompropSets = Object.fromEntries(customGeompropNames.map(name => [name, []]));
     const positions = [], normals = [], uvs = [], uvSets = [], tangents = [], colors = [], indices = [], materialIds = [];

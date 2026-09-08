@@ -231,6 +231,16 @@ test('textureless authored domes contribute environment radiance', () => {
   assert.deepEqual(r.provenance.domeLights[0].radiance,[2,1,.5]);
   assert.throws(()=>appendRectLights(scene,[{type:'dome',textureFile:'env.exr'}]),/Textured/);
 });
+test('decoded authored dome textures feed latlong environment sampling', () => {
+  const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
+  const image={width:2,height:1,data:new Float32Array([1,0,0,1,0,1,0,1]),colorspace:'lin_rec709'};
+  const r=appendRectLights(scene,[{type:'dome',textureFile:'env.exr',textureImage:image,intensity:2,color:[.5,1,1]}]);
+  assert.equal(r.lighting.environmentTexture.width,2);
+  assert.deepEqual(r.lighting.environmentTexture.scale,[1,2,2]);
+  const source=shaderSource(syntheticScene('default').materials,{},r.lighting);
+  assert.match(source,/imageSample\(0u,vec2u\(2u,1u\)/);assert.match(source,/\*vec3f\(1\.0,2\.0,2\.0\)/);
+  assert.throws(()=>appendRectLights(scene,[{type:'dome',textureImage:image},{type:'dome',textureImage:image}]),/Multiple textured/);
+});
 test('authored point lights become bounded emissive geometry', () => {
   const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
   const r=appendRectLights(scene,[{type:'point',position:[1,2,3],radius:.5,intensity:4,exposure:0,color:[1,.5,.25]}]);

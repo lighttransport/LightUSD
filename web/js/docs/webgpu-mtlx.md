@@ -127,7 +127,9 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   to participate in path sampling, using the authored position or transform
   translation; disk lights preserve the emitted mesh area and orientation under
   affine transforms. The point representation approximates an ideal point source.
-  Textured domes still require latlong environment resource binding.
+  A single textured dome is decoded through the authored USD asset resolver and
+  sampled as a bounded latlong environment; multiple textured domes remain an
+  explicit unsupported case.
 - Procedural synthetic sphere scenes and small MaterialX arithmetic/stripe
   fixtures, deterministic numeric GPU tests, scene validation and EXR roundtrip.
 

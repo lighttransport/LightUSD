@@ -14,6 +14,8 @@ export function shaderSource(materials, resources = {}, lighting = {}, textureOp
   for(const color of [lighting.environment,lighting.directional?.radiance])if(color && (!Array.isArray(color)||color.length!==3||color.some(v=>!Number.isFinite(v)||v<0)))throw new Error('Invalid light radiance');
   resources.requiresPhysical = materials.some(doc => doc.mediumOutput || doc.nodes.some(n => ['transmission', 'transmission_weight'].some(k => n.inputs?.[k] && (n.inputs[k].value === undefined || Number(n.inputs[k].value) !== 0))));
   const images = materials.flatMap(doc => Object.values(doc.images || {}));
+  const environmentImageIndex = lighting.environmentTexture ? images.length : -1;
+  if (lighting.environmentTexture) images.push(lighting.environmentTexture);
   const packed = packImages(images, textureOptions); resources.imageData = packed.data;
   let imageIndex = 0;
   const functions = materials.map((doc, i) => {
@@ -29,6 +31,7 @@ export function shaderSource(materials, resources = {}, lighting = {}, textureOp
     if(!medium&&c.interiorCategories.some(c=>['position','normal','tangent','bitangent','texcoord','image'].includes(c))&&!doc.mediumMajorant)throw new Error('Spatially varying layered media require a conservative mediumMajorant');
     return `fn material${i}(ctx: ShadingContext) -> Material { ${c.body}\nreturn ${c.expression}; }\nfn medium${i}(ctx:ShadingContext)->Medium { ${medium ? `${medium.body}\nreturn ${medium.expression};` : `return material${i}(ctx).bsdf.interior;`} }`;
   }).join('\n');
+  const environmentImage = environmentImageIndex >= 0 ? packed.descriptors[environmentImageIndex] : null;
   return /* wgsl */`
 ${contextWGSL}
 ${spectrumWGSL(materials, resources)}
@@ -113,6 +116,7 @@ fn getMedium(id:u32,ctx:ShadingContext)->Medium {
 }
 fn mediumMajorant(id:u32)->f32 {switch id {${materials.map((doc,i)=>`case ${i}u:{return ${literal('float',doc.mediumMajorant||0)};}`).join('\n')}default:{return 0.0;}}}
 fn environment(d: vec3f) -> vec3f {
+  ${environmentImage ? `let dir=safeNormal(d,vec3f(0.0,1.0,0.0));let uv=vec2f(fract(atan2(dir.z,dir.x)/(2.0*PI)+0.5),acos(clamp(dir.y,-1.0,1.0))/PI);return imageSample(${environmentImage.offset}u,vec2u(${environmentImage.width}u,${environmentImage.height}u),${environmentImage.levels}u,uv,0.0,vec2u(2u,1u),true,vec4f(0.0)).rgb*${literal('color3',lighting.environmentTexture.scale||[1,1,1])};` : ''}
   ${lighting.environment ? `return ${literal('color3',lighting.environment)};` : ''}
   let sky = mix(vec3f(0.12,0.15,0.2),vec3f(0.55,0.66,0.85),smoothstep(-0.1,0.9,d.y));
   return sky;

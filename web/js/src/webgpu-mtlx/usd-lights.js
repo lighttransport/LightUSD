@@ -15,16 +15,25 @@ export function appendRectLights(scene, lights) {
   let distant = null;
   const environment=[0,0,0];
   const domes=[];
+  let environmentTexture=null;
   const points=[];
   const disks=[];
   for(const light of lights) {
     if(light.type==='dome') {
-      if(light.textureFile||Number.isInteger(light.envmapTextureId)&&light.envmapTextureId>=0||light.enableColorTemperature)throw new Error('Textured or temperature-controlled dome lights are unsupported');
+      if(Number.isInteger(light.envmapTextureId)&&light.envmapTextureId>=0||light.enableColorTemperature)throw new Error('Environment-map-ID or temperature-controlled dome lights are unsupported');
+      if(light.textureFile&&!light.textureImage)throw new Error('Textured dome requires a decoded environment image');
       const {intensity=1,exposure=0,color=[1,1,1]}=light;
       if(![intensity,exposure,...color].every(Number.isFinite)||intensity<0||color.length!==3||color.some(c=>c<0))throw new Error('Invalid dome light parameters');
       const radiance=color.map(c=>c*intensity*2**exposure);
       if(!radiance.every(Number.isFinite))throw new Error('Invalid dome light radiance');
-      radiance.forEach((v,i)=>environment[i]+=v);domes.push({path:light.absPath,radiance});continue;
+      if(light.textureImage) {
+        if(environmentTexture)throw new Error('Multiple textured dome lights are unsupported');
+        environmentTexture={...light.textureImage,colorspace:light.textureImage.colorspace||'lin_rec709',scale:radiance};
+        domes.push({path:light.absPath,radiance,texture:true});
+      } else {
+        radiance.forEach((v,i)=>environment[i]+=v);domes.push({path:light.absPath,radiance});
+      }
+      continue;
     }
     if(light.type==='distant') {
       if(light.textureFile||light.enableColorTemperature||light.shapingIesFile||light.shapingFocus>0||light.shapingConeAngle<90||light.diffuse!==undefined&&light.diffuse!==1||light.specular!==undefined&&light.specular!==1||light.shadowEnable===false)throw new Error('Unsupported distant light texture, shaping, temperature, or contribution controls');
@@ -88,7 +97,7 @@ export function appendRectLights(scene, lights) {
     result.indices.push(...winding.map(i=>i+offset));result.materialIds.push(material,material);
     imported.push({path:light.absPath,worldArea:area,radiance,materialId:material});
   }
-  result.lighting={environment,directional:distant||{radiance:[0,0,0]}};
+  result.lighting={environment,directional:distant||{radiance:[0,0,0]},...(environmentTexture?{environmentTexture}: {})};
   result.provenance={...scene.provenance,lightingOverride:false,rectLights:imported,pointLights:points,diskLights:disks,distantLight:distant,domeLights:domes};
   return result;
 }
