@@ -11,7 +11,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 // Units are semantic annotations; implementations consume their authored
 // convention (for example degrees for rotate2d and nanometers for thin film).
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
-export const valueCategories = new Set(['constant', 'add', 'subtract', 'plus', 'minus', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'fract', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'colorcorrect', 'saturate', 'contrast', 'premult', 'unpremult', 'blackbody', 'ramp4', 'triplanarprojection', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'switch', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
+export const valueCategories = new Set(['constant', 'add', 'subtract', 'plus', 'minus', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'fract', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'colorcorrect', 'saturate', 'contrast', 'premult', 'unpremult', 'blackbody', 'artistic_ior', 'roughness_anisotropy', 'glossiness_anisotropy', 'ramp4', 'triplanarprojection', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'switch', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'UsdPreviewSurface', 'surface_unlit', 'surfacematerial', 'surface']);
 for(const category of ['transformmatrix','normalmap','bump','bump3','heighttonormal','rotate3d','reorder','fractal2d','fractal3d','worleynoise2d','worleynoise3d','unifiednoise2d','unifiednoise3d','latlongimage','splitlr','splittb','ramp','ramp_gradient','ramplr','ramptb','checkerboard','line','circle','grid','crosshatch','tiledcircles','randomfloat','randomcolor','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
@@ -531,6 +531,19 @@ export function compileGraph(document, { output, library = {}, material = false,
           if (type !== 'color3') fail('TYPE', key, 'blackbody output must be color3');
           const temperature = `clamp(${x('temperature',6500,'float')},1000.0,40000.0)`;
           code = `mxBlackbody(${temperature})`; break;
+        }
+        case 'artistic_ior': {
+          if (type !== 'color3' || !['ior','extinction'].includes(out)) fail('TYPE', key, 'artistic_ior requires a color3 ior/extinction output');
+          const reflectivity=`clamp(${x('reflectivity',[.944,.776,.373],'color3')},vec3f(0.0),vec3f(.99))`, edge=x('edge_color',[.998,.981,.751],'color3');
+          const root=`sqrt(${reflectivity})`, nmin=`((vec3f(1.0)-${reflectivity})/(vec3f(1.0)+${reflectivity}))`, nmax=`((vec3f(1.0)+${root})/(vec3f(1.0)-${root}))`, ior=`mix(${nmax},${nmin},clamp(${edge},vec3f(0.0),vec3f(1.0)))`;
+          const np1=`(${ior}+vec3f(1.0))`, nm1=`(${ior}-vec3f(1.0))`, k2=`max((${np1}*${np1}*${reflectivity}-${nm1}*${nm1})/max(vec3f(1.0)-${reflectivity},vec3f(1e-6)),vec3f(0.0))`;
+          code=out==='ior'?ior:`sqrt(${k2})`; break;
+        }
+        case 'roughness_anisotropy': case 'glossiness_anisotropy': {
+          if (type !== 'vector2') fail('TYPE', key, `${n.category} output must be vector2`);
+          const source=n.category==='glossiness_anisotropy'?`(1.0-${x('glossiness',1,'float')})`:x('roughness',0,'float'), anisotropy=x('anisotropy',0,'float');
+          const roughness=`clamp(${source},0.0,1.0)`, squared=`clamp(${roughness}*${roughness},1e-6,1.0)`, aspect=`sqrt(1.0-clamp(${anisotropy},0.0,.98))`;
+          code=`select(vec2f(${squared}),vec2f(min(${squared}/max(${aspect},1e-6),1.0),${squared}*${aspect}),${anisotropy}>0.0)`; break;
         }
         case 'saturate': {
           if (!['color3','color4'].includes(type)) fail('TYPE', key, 'saturate output must be color3/color4');

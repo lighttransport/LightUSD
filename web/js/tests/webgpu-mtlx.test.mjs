@@ -701,6 +701,17 @@ test('stdlib color correction and switch preserve typed authored controls', () =
   const selected=compileGraph({nodes:[{name:'s',category:'switch',type:'float',inputs:{in1:{type:'float',value:1},in2:{type:'float',value:2},in10:{type:'float',value:10},which:{type:'float',value:1}}}]});
   assert.match(selected.body,/>=1\.0/); assert.match(selected.body,/10\.0/);
 });
+test('stdlib PBR conversion nodes preserve artistic IOR and anisotropic roughness', () => {
+  const outputs={ior:{type:'color3'},extinction:{type:'color3'}};
+  const ior=compileGraph({nodes:[{name:'a',category:'artistic_ior',type:'multioutput',outputs,inputs:{reflectivity:{type:'color3',value:[.9,.5,.2]},edge_color:{type:'color3',value:[1,.8,.4]}}}]},{output:{nodename:'a',output:'ior'}});
+  assert.match(ior.body,/mix\(/); assert.match(ior.body,/sqrt\(/);
+  const extinction=compileGraph({nodes:[{name:'a',category:'artistic_ior',type:'multioutput',outputs,inputs:{}}]},{output:{nodename:'a',output:'extinction'}});
+  assert.match(extinction.body,/max\(/); assert.match(extinction.body,/sqrt\(/);
+  const rough=compileGraph({nodes:[{name:'r',category:'roughness_anisotropy',type:'vector2',inputs:{roughness:{type:'float',value:.4},anisotropy:{type:'float',value:.5}}}]});
+  assert.match(rough.body,/min\(/); assert.match(rough.body,/vec2f/);
+  const gloss=compileGraph({nodes:[{name:'g',category:'glossiness_anisotropy',type:'vector2',inputs:{glossiness:{type:'float',value:.8},anisotropy:{type:'float',value:-.25}}}]});
+  assert.match(gloss.body,/1\.0-0\.8/);
+});
 test('cell-noise nodes hash integer cells without interpolation', () => {
   const doc={nodes:[
     {name:'uv',category:'texcoord',type:'vector2',inputs:{}},

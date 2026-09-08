@@ -45,6 +45,9 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 - `colorcorrect` applies bounded HSV hue/saturation, lift/gain, contrast,
   exposure, and gamma controls; `switch` selects among ten typed value inputs
   using the authored index and preserves explicit defaults.
+- PBR utility nodes `artistic_ior`, `roughness_anisotropy`, and
+  `glossiness_anisotropy` preserve the pinned MaterialX conversion formulas,
+  including multi-output artistic conductor IOR/extinction results.
 - Image nodes backed by caller-decoded RGBA float resources in both modes:
   closest/linear filtering; constant/clamp/periodic/mirror addressing; float,
   vector and color outputs; default colors; linear-light area-filtered mip chains.
