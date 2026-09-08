@@ -9,6 +9,7 @@ import { USDTextureSources } from './usd-texture-sources.js';
 import { loadUSDMaterialXLibrary, materialXFromUSD } from './usd-graph.js';
 import { compileGraph } from './graph.js';
 import { fetchResource, decodeImage, inspectEXRHeader, atlasUDIMImages } from './resources.js';
+import { parseIES } from './ies.js';
 export const SHADERBALL_COMMIT = '3b75c2dad6a494897557dcca0098257bcf42a8c6';
 function materialNodes(document) {
   const nodes = [...(document?.nodes || [])];
@@ -25,10 +26,15 @@ export function materialImageKeys(document) {
   for (const node of materialNodes(document)) {
     for (const input of ['file', 'filex', 'filey', 'filez']) {
       const port = node.inputs?.[input];
+      if (node.category === 'measured_edf' && input === 'file') continue;
       if (port?.type === 'filename' && typeof port.value === 'string' && port.value) keys.add(port.value);
     }
   }
   return [...keys];
+}
+/** Return resolved IES resources used by measured EDF nodes. */
+export function materialMeasuredProfileKeys(document) {
+  return [...new Set(materialNodes(document).filter(node => node.category === 'measured_edf').map(node => node.inputs?.file).filter(port => port?.type === 'filename' && typeof port.value === 'string' && port.value).map(port => port.value))];
 }
 /** Return the single authored UV slot used by a material graph. */
 export function materialUVIndex(document) {
@@ -187,8 +193,16 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
         } catch (error) { translationDiagnostics.push({ path: material.path, error: String(error.message || error) }); }
       }
       const neededAssetKeys = new Set(Object.values(translatedMaterials).flatMap(materialImageKeys));
+      const measuredProfileKeys = new Set(Object.values(translatedMaterials).flatMap(materialMeasuredProfileKeys));
       for (const [key, request] of resolver.textures.requests) {
-        if (!neededAssetKeys.has(key)) continue;
+        if (!neededAssetKeys.has(key) && !measuredProfileKeys.has(key)) continue;
+        if (measuredProfileKeys.has(key)) {
+          try {
+            const profile = parseIES(await fetchResource(request.url, { maxBytes: 4 * 1024 * 1024 }));
+            for (const document of Object.values(translatedMaterials)) if (materialMeasuredProfileKeys(document).includes(key)) (document.measuredProfiles ||= {})[key] = profile;
+          } catch (error) { textureDiagnostics.push({ key, url: request.url, error: String(error.message || error) }); }
+          if (!neededAssetKeys.has(key)) continue;
+        }
         try {
           const decode = async (bytes, filename) => {
             let resizedFrom;

@@ -68,7 +68,7 @@ export function parseMaterialX(xml, { source = '', parser = globalThis.DOMParser
 }
 
 /** Compile a normalized graph. Connections are {nodename, output} or {nodegraph, output}. */
-export function compileGraph(document, { output, library = {}, material = false, imageDescriptors = {}, uvIndex = 0, geompropName = '', geompropNames = undefined } = {}) {
+export function compileGraph(document, { output, library = {}, material = false, imageDescriptors = {}, uvIndex = 0, geompropName = '', geompropNames = undefined, measuredProfileIds = {} } = {}) {
   const customGeompropNames = (geompropNames ?? (geompropName ? [geompropName] : [])).slice(0, 8).map(name => String(name).toLowerCase().replace(/[_-]/g, ''));
   const customGeomprop = name => { const slot = customGeompropNames.indexOf(name); return slot < 0 ? null : `ctx.geomprop${slot ? slot : ''}`; };
   const rawDefinitions = Object.assign(Object.create(null), library.definitions, document.definitions), definitions = Object.create(null);
@@ -182,9 +182,20 @@ export function compileGraph(document, { output, library = {}, material = false,
         fail('TYPE',key,`expected ${type} or scalar float for ${k}`);
       };
       const binary = op => `(${same('in1')} ${op} ${scalarOrSame('in2')})`;
-      let code, closureCount = 0, hasInterior = false, interiorCategories=[], emissionCone = null, emissionSchlick = null, normal = null;
+      let code, closureCount = 0, hasInterior = false, interiorCategories=[], emissionCone = null, emissionSchlick = null, emissionProfile = null, normal = null;
       switch (n.category) {
         case 'uniform_edf': code = x('color',[1,1,1],'color3'); break;
+        case 'measured_edf': {
+          const file = ins.file?.value;
+          if (typeof file !== 'string' || !file) fail('RESOURCE', key, 'measured_edf requires a static filename');
+          const profile = document.measuredProfiles?.[file];
+          if (!profile || !Array.isArray(profile.samples)) fail('RESOURCE', key, `missing parsed IES profile ${file}`);
+          const id = Number(measuredProfileIds[file] || 1);
+          if (!Number.isInteger(id) || id < 1) fail('RESOURCE', key, `invalid IES profile id ${file}`);
+          emissionProfile = { direction: x('normal', undefined, 'vector3'), id };
+          code = x('color', [1, 1, 1], 'color3');
+          break;
+        }
         case 'displacement':
           if (type !== 'displacementshader') fail('TYPE', key, 'displacement output must be displacementshader');
           code=`${x('displacement',0,'float')}*${x('scale',1,'float')}`; break;
@@ -210,7 +221,8 @@ export function compileGraph(document, { output, library = {}, material = false,
           const surfaceNormal=ins.normal ? x('normal',undefined,'vector3') : (bsdfValue?.normal || 'ctx.normal');
           const edfValue=ins.edf?.value===''||!ins.edf ? {code:'vec3f(0)'} : input('edf',undefined,'EDF');
           const cone=edfValue.emissionCone, schlick=edfValue.emissionSchlick;
-          code=`surfaceEmission(${bsdf},${edfValue.code},clamp(${opacity},0.0,1.0),${thin},${surfaceNormal},${cone?.direction||'ctx.normal'},${cone?.innerCos||'-1.0'},${cone?.outerCos||'-1.0'},${schlick?.color0||'vec3f(1)'},${schlick?.color90||'vec3f(1)'},${schlick?.exponent||'5.0'},${cone?'1u':'0u'},${schlick?'1u':'0u'})`; normal=surfaceNormal;break;
+          const profile=edfValue.emissionProfile;
+          code=`surfaceEmission(${bsdf},${edfValue.code},clamp(${opacity},0.0,1.0),${thin},${surfaceNormal},${profile?.direction||cone?.direction||'ctx.normal'},${cone?.innerCos||'-1.0'},${cone?.outerCos||'-1.0'},${schlick?.color0||'vec3f(1)'},${schlick?.color90||'vec3f(1)'},${schlick?.exponent||'5.0'},${cone?'1u':'0u'},${schlick?'1u':'0u'},${profile ? `${profile.id}u` : '0u'})`; normal=surfaceNormal;break;
         }
         case 'dielectric_bsdf': case 'conductor_bsdf': case 'oren_nayar_diffuse_bsdf': case 'burley_diffuse_bsdf': {
           if(ins.retroreflective && ![false,'false'].includes(ins.retroreflective.value))fail('UNSUPPORTED',key,'retroreflection is not implemented');
@@ -1153,7 +1165,7 @@ export function compileGraph(document, { output, library = {}, material = false,
         const id = `n${serial++}`;
         if(serial>32768)fail('LIMIT',key,'expanded graph exceeds 32768 expressions');
         lines.push(`let ${id}: ${target} = ${code.replace(/\bctx\b/g,contextName)};`);
-        result = { type, code: id, closureCount, hasInterior, interiorCategories, categories:[...dependencies], ...(normal ? { normal: normal.replace(/\bctx\b/g, contextName) } : {}), ...(emissionCone ? { emissionCone: { direction: emissionCone.direction.replace(/\bctx\b/g, contextName), innerCos: emissionCone.innerCos.replace(/\bctx\b/g, contextName), outerCos: emissionCone.outerCos.replace(/\bctx\b/g, contextName) } } : {}), ...(emissionSchlick ? { emissionSchlick: { color0: emissionSchlick.color0.replace(/\bctx\b/g, contextName), color90: emissionSchlick.color90.replace(/\bctx\b/g, contextName), exponent: emissionSchlick.exponent.replace(/\bctx\b/g, contextName) } } : {}) };
+        result = { type, code: id, closureCount, hasInterior, interiorCategories, categories:[...dependencies], ...(normal ? { normal: normal.replace(/\bctx\b/g, contextName) } : {}), ...(emissionCone ? { emissionCone: { direction: emissionCone.direction.replace(/\bctx\b/g, contextName), innerCos: emissionCone.innerCos.replace(/\bctx\b/g, contextName), outerCos: emissionCone.outerCos.replace(/\bctx\b/g, contextName) } } : {}), ...(emissionSchlick ? { emissionSchlick: { color0: emissionSchlick.color0.replace(/\bctx\b/g, contextName), color90: emissionSchlick.color90.replace(/\bctx\b/g, contextName), exponent: emissionSchlick.exponent.replace(/\bctx\b/g, contextName) } } : {}), ...(emissionProfile ? { emissionProfile: { direction: emissionProfile.direction.replace(/\bctx\b/g, contextName), id: emissionProfile.id } } : {}) };
       }
     }
     used.add(n.category); active.delete(key); cached.set(key, result); return result;

@@ -7,6 +7,21 @@ import { spectrumWGSL } from './spectrum.js';
 import { volumeWGSL } from './volume.js';
 import { closureTransportWGSL } from './closures.js';
 
+function measuredProfileWGSL(materials) {
+  const profiles = new Map(); let next = 1;
+  for (const doc of materials) for (const [key, profile] of Object.entries(doc.measuredProfiles || {})) if (!profiles.has(key)) profiles.set(key, { id: next++, profile });
+  const cases = [...profiles.values()].map(({ id, profile }) => {
+    if (!Array.isArray(profile.samples) || profile.samples.length < 2 || profile.samples.length > 181) throw new Error('Invalid measured EDF profile');
+    const samples = profile.samples;
+    if (samples.some((p, i) => !Array.isArray(p) || p.length !== 2 || !p.every(Number.isFinite) || p[0] < 0 || p[0] > 180 || p[1] < 0 || i && p[0] <= samples[i - 1][0])) throw new Error('Invalid measured EDF samples');
+    const lines = [`let theta=degrees(acos(clamp(c,-1.0,1.0)));`];
+    for (let i = 1; i < samples.length; i++) { const a=samples[i-1], b=samples[i]; lines.push(`if(theta<=${b[0]}f){return mix(${a[1]}f,${b[1]}f,(theta-${a[0]}f)/max(1e-6,${b[0]-a[0]}f));}`); }
+    lines.push(`return ${samples.at(-1)[1]}f;`);
+    return `case ${id}u:{${lines.join('')}}`;
+  });
+  return `fn measuredProfile(id:u32,c:f32)->f32{switch id{${cases.join('')}default:{return 1.0;}}}`;
+}
+
 export function shaderSource(materials, resources = {}, lighting = {}, textureOptions = {}) {
   for(const doc of materials)if(doc.twoSidedEmission!==undefined&&typeof doc.twoSidedEmission!=='boolean')throw new Error('twoSidedEmission must be boolean');
   const lightDirection=lighting.directional?.direction||[-.5,.8,.4];
@@ -20,6 +35,7 @@ export function shaderSource(materials, resources = {}, lighting = {}, textureOp
   for(const light of areaLights)if(!Array.isArray(light.position)||light.position.length!==3||!light.position.every(Number.isFinite)||!Array.isArray(light.normal)||light.normal.length!==3||!light.normal.every(Number.isFinite)||!Array.isArray(light.radiance)||light.radiance.length!==3||!light.radiance.every(v=>Number.isFinite(v)&&v>=0)||!Number.isFinite(light.worldArea)||light.worldArea<=0||typeof light.twoSided!=='boolean')throw new Error('Invalid authored area light');
   resources.requiresPhysical = materials.some(doc => doc.mediumOutput || doc.nodes.some(n => ['transmission', 'transmission_weight'].some(k => n.inputs?.[k] && (n.inputs[k].value === undefined || Number(n.inputs[k].value) !== 0))));
   const images = materials.flatMap(doc => Object.values(doc.images || {}));
+  const measuredProfileIds = Object.fromEntries([...new Set(materials.flatMap(doc => Object.keys(doc.measuredProfiles || {})))].map((key, i) => [key, i + 1]));
   const environmentImageIndex = lighting.environmentTexture ? images.length : -1;
   if (lighting.environmentTexture) images.push(lighting.environmentTexture);
   const packed = packImages(images, textureOptions); resources.imageData = packed.data;
@@ -27,7 +43,7 @@ export function shaderSource(materials, resources = {}, lighting = {}, textureOp
   const functions = materials.map((doc, i) => {
     const imageDescriptors = Object.fromEntries(Object.entries(doc.images || {}).map(([name, image]) => [name, { ...packed.descriptors[imageIndex++], colorspace: image.colorspace || 'lin_rec709' }]));
     const uvIndex = Number.isInteger(doc.uvIndex) && doc.uvIndex >= 0 ? doc.uvIndex : 0;
-    const c = compileGraph(doc, { material: true, imageDescriptors, output: doc.output, uvIndex, geompropNames: doc.geompropNames || (doc.geompropName ? [doc.geompropName] : []) });
+    const c = compileGraph(doc, { material: true, imageDescriptors, output: doc.output, uvIndex, measuredProfileIds, geompropNames: doc.geompropNames || (doc.geompropName ? [doc.geompropName] : []) });
     if(c.categories.some(c=>['dielectric_bsdf','conductor_bsdf','oren_nayar_diffuse_bsdf'].includes(c)))resources.requiresPhysical=true;
     if (!['surfaceshader', 'material'].includes(c.type)) throw new Error('Material graph must produce a surface');
     const medium = doc.mediumOutput ? compileGraph(doc, { output: doc.mediumOutput, imageDescriptors, uvIndex, geompropNames: doc.geompropNames || (doc.geompropName ? [doc.geompropName] : []) }) : null;
@@ -53,6 +69,7 @@ ${contextWGSL}
 ${spectrumWGSL(materials, resources)}
 ${textureOptions.compact ? imageWGSLCompact : imageWGSL}
 ${functions}
+${measuredProfileWGSL(materials)}
 fn emissionSidedness(id:u32,normal:vec3f,direction:vec3f)->f32 {
   switch id { ${materials.map((doc,i)=>doc.twoSidedEmission?`case ${i}u:{return 1.0;}`:'').join('\n')} default:{} }
   return select(0.0,1.0,dot(normal,direction)<0.0);

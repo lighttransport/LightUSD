@@ -46,6 +46,11 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   smooth angular falloff through surface, path, area-light, and raster emission.
 - `generalized_schlick_edf` preserves its base EDF and directional `color0`,
   `color90`, and exponent controls through the same emission transport.
+- `measured_edf` accepts bounded LM-63 IES files from source-aware USD asset
+  resolution. The parser retains the normalized vertical candela profile and
+  the shader interpolates it against the authored EDF normal for path and
+  raster emission; malformed, oversized, empty, or ambiguous profiles fail
+  with diagnostics.
 - `generalized_schlick_bsdf` now carries the pinned `color82` control and
   Hoffman Schlick correction through RGB and spectral lobe evaluation. Its
   supported authored path is static GGX reflection; transmission,

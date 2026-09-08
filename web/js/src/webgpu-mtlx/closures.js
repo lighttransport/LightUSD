@@ -3,7 +3,7 @@
 export const MAX_CLOSURE_LOBES = 16;
 export const closureTypesWGSL = /* wgsl */`
 struct Closure { lobes:array<Lobe,16>, scales:array<vec3f,16>, count:u32, interior:Medium, hasInterior:u32 }
-struct Material { bsdf:Closure, emission:vec3f, opacity:f32, normal:vec3f, emissionDirection:vec3f, emissionInnerCos:f32, emissionOuterCos:f32, emissionColor0:vec3f, emissionColor90:vec3f, emissionExponent:f32, emissionCone:u32, emissionSchlick:u32 }
+struct Material { bsdf:Closure, emission:vec3f, opacity:f32, normal:vec3f, emissionDirection:vec3f, emissionInnerCos:f32, emissionOuterCos:f32, emissionColor0:vec3f, emissionColor90:vec3f, emissionExponent:f32, emissionCone:u32, emissionSchlick:u32, emissionProfile:u32 }
 fn closureImportance(c:Closure,index:u32)->f32 {
   let scale=c.scales[index];let weight=c.lobes[index].weight;
   return max(0.0,max(scale.x,max(scale.y,scale.z))*weight);
@@ -16,10 +16,10 @@ fn closureAddPreservingInterior(a:Closure,b:Closure)->Closure {var c=closureAdd(
 fn closureMix(bg:Closure,fg:Closure,weight:f32)->Closure {return closureAdd(closureScale(bg,vec3f(1.0-weight)),closureScale(fg,vec3f(weight)));}
 fn closureMixPreservingInterior(bg:Closure,fg:Closure,weight:f32)->Closure {return closureAddPreservingInterior(closureScale(bg,vec3f(1.0-weight)),closureScale(fg,vec3f(weight)));}
 fn closureInterior(top:Closure,base:Medium)->Closure {var c=top;c.interior=base;c.hasInterior=1u;return c;}
-fn surfaceEmission(bsdf:Closure,edf:vec3f,opacity:f32,thinWalled:u32,normal:vec3f,emissionDirection:vec3f,emissionInnerCos:f32,emissionOuterCos:f32,emissionColor0:vec3f,emissionColor90:vec3f,emissionExponent:f32,emissionCone:u32,emissionSchlick:u32)->Material {var c=bsdf;for(var i=0u;i<c.count;i++){c.lobes[i].thinWalled=thinWalled;}return Material(c,edf,opacity,normal,emissionDirection,emissionInnerCos,emissionOuterCos,emissionColor0,emissionColor90,emissionExponent,emissionCone,emissionSchlick);}
-fn materialFromLobe(lobe:Lobe,opacity:f32,normal:vec3f)->Material {return Material(closureLeaf(lobe),lobe.emission*lobe.emissionWeight,opacity,normal,normal,-1.0,-1.0,vec3f(1),vec3f(1),5.0,0u,0u);}
-fn materialFromClosure(bsdf:Closure,emission:vec3f,opacity:f32,normal:vec3f)->Material {return Material(bsdf,emission,opacity,normal,normal,-1.0,-1.0,vec3f(1),vec3f(1),5.0,0u,0u);}
-fn emissionFactor(m:Material,direction:vec3f)->vec3f {var factor=vec3f(1);if(m.emissionCone!=0u){let c=dot(normalize(m.emissionDirection),normalize(direction));factor*=vec3f(smoothstep(m.emissionOuterCos,m.emissionInnerCos,c));}if(m.emissionSchlick!=0u){let c=clamp(dot(normalize(m.emissionDirection),normalize(direction)),0.0,1.0);factor*=mix(m.emissionColor0,m.emissionColor90,vec3f(pow(1.0-c,max(.01,m.emissionExponent))));}return factor;}
+fn surfaceEmission(bsdf:Closure,edf:vec3f,opacity:f32,thinWalled:u32,normal:vec3f,emissionDirection:vec3f,emissionInnerCos:f32,emissionOuterCos:f32,emissionColor0:vec3f,emissionColor90:vec3f,emissionExponent:f32,emissionCone:u32,emissionSchlick:u32,emissionProfile:u32)->Material {var c=bsdf;for(var i=0u;i<c.count;i++){c.lobes[i].thinWalled=thinWalled;}return Material(c,edf,opacity,normal,emissionDirection,emissionInnerCos,emissionOuterCos,emissionColor0,emissionColor90,emissionExponent,emissionCone,emissionSchlick,emissionProfile);}
+fn materialFromLobe(lobe:Lobe,opacity:f32,normal:vec3f)->Material {return Material(closureLeaf(lobe),lobe.emission*lobe.emissionWeight,opacity,normal,normal,-1.0,-1.0,vec3f(1),vec3f(1),5.0,0u,0u,0u);}
+fn materialFromClosure(bsdf:Closure,emission:vec3f,opacity:f32,normal:vec3f)->Material {return Material(bsdf,emission,opacity,normal,normal,-1.0,-1.0,vec3f(1),vec3f(1),5.0,0u,0u,0u);}
+fn emissionFactor(m:Material,direction:vec3f)->vec3f {var factor=vec3f(1);if(m.emissionCone!=0u){let c=dot(normalize(m.emissionDirection),normalize(direction));factor*=vec3f(smoothstep(m.emissionOuterCos,m.emissionInnerCos,c));}if(m.emissionSchlick!=0u){let c=clamp(dot(normalize(m.emissionDirection),normalize(direction)),0.0,1.0);factor*=mix(m.emissionColor0,m.emissionColor90,vec3f(pow(1.0-c,max(.01,m.emissionExponent))));}if(m.emissionProfile!=0u){let c=dot(normalize(m.emissionDirection),normalize(direction));factor*=vec3f(measuredProfile(m.emissionProfile,c));}return factor;}
 fn primaryLobe(surface:Material)->Lobe {
   var m=nativeDiffuse(vec3f(0),0,0);
   for(var i=0u;i<surface.bsdf.count;i++){if(closureImportance(surface.bsdf,i)>0.0){m=surface.bsdf.lobes[i];break;}}
