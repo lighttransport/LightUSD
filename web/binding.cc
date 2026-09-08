@@ -4680,6 +4680,27 @@ class LightUSDLoaderNative {
               heapAttr_(reinterpret_cast<const float *>(uvit->second.data.data()),
                         uvn * 2, 2, "f32"));
     }
+
+    // Authored displayColor/displayOpacity streams. Keep these separate in
+    // the descriptor because RenderMesh stores color as float3 and opacity
+    // as a float attribute; the WebGPU MaterialX bridge combines them into
+    // the interpolated RGBA geometry-color channel.
+    if (!rmesh.vertex_colors.empty() &&
+        rmesh.vertex_colors.format == VertexAttributeFormat::Vec3) {
+      const size_t cv = rmesh.vertex_colors.vertex_count();
+      out.set("colors",
+              heapAttr_(reinterpret_cast<const float *>(
+                            rmesh.vertex_colors.data.data()),
+                        cv * 3, 3, "f32"));
+    }
+    if (!rmesh.vertex_opacities.empty() &&
+        rmesh.vertex_opacities.format == VertexAttributeFormat::Float) {
+      const size_t ov = rmesh.vertex_opacities.vertex_count();
+      out.set("colorOpacities",
+              heapAttr_(reinterpret_cast<const float *>(
+                            rmesh.vertex_opacities.data.data()),
+                        ov, 1, "f32"));
+    }
     return out;
   }
 

@@ -153,7 +153,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
         if (!mesh.singleIndexable || !mesh.triangulated) throw new Error(`USD mesh is not triangulated/single-indexed: ${mesh.absPath}`);
         const p = read(mesh.points), ix = read(mesh.indices); if (!p?.length || !ix?.length) return;
         const geo = new BufferGeometry(); geo.setAttribute('position', new BufferAttribute(p, 3)); geo.setIndex(new BufferAttribute(ix, 1));
-        const n = read(mesh.normals), uv = read(mesh.uv0), color = read(mesh.colors || mesh.color);
+        const n = read(mesh.normals), uv = read(mesh.uv0), color = read(mesh.colors || mesh.color), opacity = read(mesh.colorOpacities);
         if (n?.length === p.length) geo.setAttribute('normal', new BufferAttribute(n, 3)); else geo.computeVertexNormals();
         geo.applyMatrix4(matrix);
         const ps = geo.attributes.position.array, ns = geo.attributes.normal.array, offset = positions.length / 3;
@@ -161,7 +161,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
         for (let i = 0; i < ps.length / 3 * 2; i++) uvs.push(uv?.[i] ?? 0);
         for (let i = 0; i < ps.length / 3; i++) {
           if (color?.length === ps.length / 3 * 4) colors.push(color[i * 4], color[i * 4 + 1], color[i * 4 + 2], color[i * 4 + 3]);
-          else if (color?.length === ps.length / 3 * 3) colors.push(color[i * 3], color[i * 3 + 1], color[i * 3 + 2], 1);
+          else if (color?.length === ps.length / 3 * 3) colors.push(color[i * 3], color[i * 3 + 1], color[i * 3 + 2], opacity?.[i] ?? 1);
           else colors.push(0, 0, 0, 1);
         }
         for (let i = 0; i < ix.length; i++) indices.push(ix[i] + offset);
