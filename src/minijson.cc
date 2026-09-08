@@ -2,6 +2,7 @@
 #include "minijson.hh"
 
 #include <algorithm>
+#include <charconv>
 #include <cerrno>
 #include <cmath>
 #include <cstring>
@@ -13,17 +14,57 @@
 #endif
 
 #include "external/fast_float/include/fast_float/fast_float.h"
+#include "external/dragonbox/dragonbox.h"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
 
-#include "str-util.hh"
-
 namespace lightusd {
 namespace minijson {
 
 namespace {
+
+// Share Dragonbox's shortest-decimal machinery/tables with the USD writers.
+// libc++'s floating to_chars brings a separate large formatter into WASM.
+// JSON accepts this locale-independent notation; all finite values round-trip.
+void AppendJSONNumber(double value, std::string* out) {
+  if (std::signbit(value)) out->push_back('-');
+  if (value == 0.0) { out->push_back('0'); return; }
+  const auto decimal = jkj::dragonbox::to_decimal(value);
+  char digits[24];
+  const auto converted = std::to_chars(
+      digits, digits + sizeof(digits), decimal.significand);
+  const int count = static_cast<int>(converted.ptr - digits);
+  const int point = count + decimal.exponent;
+  // Match USD's fixed/scientific threshold. In particular, large integral
+  // doubles need an exponent so the JSON parser does not treat them as an
+  // out-of-range int64/uint64 literal.
+  if (point > 0 && point <= 15) {
+    if (decimal.exponent >= 0) {
+      out->append(digits, static_cast<size_t>(count));
+      out->append(static_cast<size_t>(decimal.exponent), '0');
+    } else {
+      out->append(digits, static_cast<size_t>(point));
+      out->push_back('.');
+      out->append(digits + point, static_cast<size_t>(count - point));
+    }
+  } else if (point <= 0 && point > -6) {
+    out->append("0.");
+    out->append(static_cast<size_t>(-point), '0');
+    out->append(digits, static_cast<size_t>(count));
+  } else {
+    out->push_back(digits[0]);
+    if (count > 1) {
+      out->push_back('.');
+      out->append(digits + 1, static_cast<size_t>(count - 1));
+    }
+    out->push_back('e');
+    char exponent[8];
+    const auto result = std::to_chars(exponent, exponent + sizeof(exponent), point - 1);
+    out->append(exponent, result.ptr);
+  }
+}
 
 bool IsSpace(char c) {
   return c == ' ' || c == '\n' || c == '\r' || c == '\t';
@@ -62,12 +103,12 @@ bool AppendUTF8(uint32_t cp, std::string *out) {
 }
 
 bool ReadUTF8(const char *data, size_t size, size_t *pos, std::string *out) {
-  if (!data || !pos || *pos >= size || !out) return false;
+  if (!data || !pos || *pos >= size) return false;
   const uint8_t c0 = static_cast<uint8_t>(data[*pos]);
 
   if (c0 <= 0x7f) {
     if (c0 < 0x20) return false;
-    out->push_back(static_cast<char>(c0));
+    if (out) out->push_back(static_cast<char>(c0));
     (*pos)++;
     return true;
   }
@@ -99,7 +140,7 @@ bool ReadUTF8(const char *data, size_t size, size_t *pos, std::string *out) {
   if (cp >= 0xd800 && cp <= 0xdfff) return false;
   if (cp > 0x10ffff) return false;
 
-  out->append(data + *pos, n);
+  if (out) out->append(data + *pos, n);
   *pos += n;
   return true;
 }
@@ -195,7 +236,12 @@ class Parser {
       *out = false;
       return true;
     }
-    if (c == '"') return ParseString(out, err);
+    if (c == '"') {
+      std::string s;
+      if (!ParseString(&s, err)) return false;
+      *out = std::move(s);
+      return true;
+    }
     if (c == '[') return ParseArray(depth, out, err);
     if (c == '{') return ParseObject(depth, out, err);
     if (c == '-' || IsDigit(c)) return ParseNumber(out, err);
@@ -223,9 +269,13 @@ class Parser {
     return true;
   }
 
-  bool ParseString(Value *out, Error *err) {
+  bool ParseString(std::string *out, Error *err) {
     const size_t string_begin = pos_;
     pos_++;
+    if (!out) {
+      SetError(err, "output string pointer is null", pos_);
+      return false;
+    }
     std::string s;
     while (pos_ < size_) {
       const char c = data_[pos_];
@@ -346,11 +396,9 @@ class Parser {
         SetError(err, "JSON object exceeds member limit", pos_);
         return false;
       }
-      Value key_value;
-      if (!ParseString(&key_value, err)) return false;
       std::string key;
-      key_value.as_string(&key);
-      if (options_.reject_duplicate_keys && obj.contains(key)) {
+      if (!ParseString(&key, err)) return false;
+      if (options_.reject_duplicate_keys && obj.find(key)) {
         SetError(err, "duplicate object key", pos_);
         return false;
       }
@@ -362,7 +410,7 @@ class Parser {
       pos_++;
       Value value;
       if (!ParseValue(depth + 1, &value, err)) return false;
-      obj.set(key, std::move(value));
+      obj.set(std::move(key), std::move(value));
       SkipSpaces();
       if (pos_ >= size_) break;
       if (data_[pos_] == '}') {
@@ -484,7 +532,6 @@ class Parser {
 
 bool ValidateUTF8String(const std::string &s) {
   size_t pos = 0;
-  std::string discard;
   while (pos < s.size()) {
     const uint8_t c0 = static_cast<uint8_t>(s[pos]);
     if (c0 <= 0x7f) {
@@ -492,7 +539,7 @@ bool ValidateUTF8String(const std::string &s) {
       continue;
     }
     const size_t before = pos;
-    if (!ReadUTF8(s.data(), s.size(), &pos, &discard)) return false;
+    if (!ReadUTF8(s.data(), s.size(), &pos, nullptr)) return false;
     if (pos <= before) return false;
   }
   return true;
@@ -530,6 +577,10 @@ bool SerializeString(const std::string &s, std::string *out) {
 bool SerializeValue(const Value &v, std::string *out, Error *err,
                     const SerializeOptions &options, size_t depth) {
   if (!out) return false;
+  if (depth > options.max_depth) {
+    SetError(err, "JSON nesting depth exceeds serialization limit", 0);
+    return false;
+  }
   const auto newline_indent = [&](size_t d) {
     if (options.indent >= 0) {
       out->push_back('\n');
@@ -550,13 +601,25 @@ bool SerializeValue(const Value &v, std::string *out, Error *err,
     case Type::SignedInteger: {
       int64_t i = 0;
       v.as_int64(&i);
-      out->append(std::to_string(i));
+      char buffer[32];
+      auto result = std::to_chars(buffer, buffer + sizeof(buffer), i);
+      if (result.ec != std::errc()) {
+        SetError(err, "failed to serialize signed integer", 0);
+        return false;
+      }
+      out->append(buffer, result.ptr);
       return true;
     }
     case Type::UnsignedInteger: {
       uint64_t u = 0;
       v.as_uint64(&u);
-      out->append(std::to_string(u));
+      char buffer[32];
+      auto result = std::to_chars(buffer, buffer + sizeof(buffer), u);
+      if (result.ec != std::errc()) {
+        SetError(err, "failed to serialize unsigned integer", 0);
+        return false;
+      }
+      out->append(buffer, result.ptr);
       return true;
     }
     case Type::Number: {
@@ -566,7 +629,7 @@ bool SerializeValue(const Value &v, std::string *out, Error *err,
         SetError(err, "non-finite number cannot be serialized as JSON", 0);
         return false;
       }
-      out->append(dtos(d));
+      AppendJSONNumber(d, out);
       return true;
     }
     case Type::String: {
@@ -597,26 +660,53 @@ bool SerializeValue(const Value &v, std::string *out, Error *err,
       const auto *items = v.object_items();
       out->push_back('{');
       if (items && !items->empty()) {
-        std::vector<size_t> order;
-        order.reserve(items->size());
-        for (size_t i = 0; i < items->size(); i++) order.push_back(i);
-        if (options.sort_keys) {
+        bool needs_sort = options.sort_keys;
+        if (needs_sort) {
+          // Most builders add fields in a stable order already. Avoid the
+          // temporary index vector and comparison sort in that common case.
+          for (size_t i = 1; i < items->size(); i++) {
+            if ((*items)[i].key < (*items)[i - 1].key) {
+              break;
+            }
+            if (i + 1 == items->size()) needs_sort = false;
+          }
+          if (items->size() < 2) needs_sort = false;
+        }
+        if (needs_sort) {
+          std::vector<size_t> order;
+          order.reserve(items->size());
+          for (size_t i = 0; i < items->size(); i++) order.push_back(i);
           std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
             return (*items)[a].key < (*items)[b].key;
           });
-        }
-        for (size_t n = 0; n < order.size(); n++) {
-          if (n > 0) out->push_back(',');
-          newline_indent(depth + 1);
-          const ObjectMember &m = (*items)[order[n]];
-          if (!SerializeString(m.key, out)) {
-            SetError(err, "invalid UTF-8 object key cannot be serialized", 0);
-            return false;
+          for (size_t n = 0; n < order.size(); n++) {
+            if (n > 0) out->push_back(',');
+            newline_indent(depth + 1);
+            const ObjectMember &m = (*items)[order[n]];
+            if (!SerializeString(m.key, out)) {
+              SetError(err, "invalid UTF-8 object key cannot be serialized", 0);
+              return false;
+            }
+            out->push_back(':');
+            if (options.indent >= 0) out->push_back(' ');
+            if (!SerializeValue(m.value(), out, err, options, depth + 1)) {
+              return false;
+            }
           }
-          out->push_back(':');
-          if (options.indent >= 0) out->push_back(' ');
-          if (!SerializeValue(m.value(), out, err, options, depth + 1)) {
-            return false;
+        } else {
+          for (size_t n = 0; n < items->size(); n++) {
+            if (n > 0) out->push_back(',');
+            newline_indent(depth + 1);
+            const ObjectMember &m = (*items)[n];
+            if (!SerializeString(m.key, out)) {
+              SetError(err, "invalid UTF-8 object key cannot be serialized", 0);
+              return false;
+            }
+            out->push_back(':');
+            if (options.indent >= 0) out->push_back(' ');
+            if (!SerializeValue(m.value(), out, err, options, depth + 1)) {
+              return false;
+            }
           }
         }
         newline_indent(depth);
@@ -802,6 +892,42 @@ bool Value::as_string(std::string *out) const {
   return true;
 }
 
+bool Value::get_bool() const {
+  bool ret = false;
+  as_bool(&ret);
+  return ret;
+}
+
+int Value::get_int() const {
+  int64_t ret = 0;
+  as_int64(&ret);
+  return static_cast<int>(ret);
+}
+
+int64_t Value::get_int64() const {
+  int64_t ret = 0;
+  as_int64(&ret);
+  return ret;
+}
+
+uint64_t Value::get_uint64() const {
+  uint64_t ret = 0;
+  as_uint64(&ret);
+  return ret;
+}
+
+double Value::get_double() const {
+  double ret = 0.0;
+  as_double(&ret);
+  return ret;
+}
+
+std::string Value::get_string() const {
+  std::string ret;
+  as_string(&ret);
+  return ret;
+}
+
 const std::string *Value::string_ptr() const {
   return type_ == Type::String ? &string_value_ : nullptr;
 }
@@ -847,6 +973,14 @@ Value &Value::operator[](const std::string &key) {
   return object_value_.back().value();
 }
 
+Value &Value::operator[](std::string &&key) {
+  make_object();
+  if (Value *v = find(key)) return *v;
+  object_value_.emplace_back();
+  object_value_.back().key = std::move(key);
+  return object_value_.back().value();
+}
+
 Value &Value::operator[](const char *key) {
   return (*this)[std::string(key ? key : "")];
 }
@@ -858,6 +992,14 @@ const Value &Value::operator[](const std::string &key) const {
 
 const Value &Value::operator[](const char *key) const {
   return (*this)[std::string(key ? key : "")];
+}
+
+const Value &Value::at(const std::string &key) const {
+  return (*this)[key];
+}
+
+Value &Value::at(const std::string &key) {
+  return (*this)[key];
 }
 
 const Value &Value::operator[](size_t idx) const {
@@ -881,9 +1023,28 @@ void Value::push_back(Value &&v) {
   array_value_.push_back(std::move(v));
 }
 
+void Value::reserve(size_t capacity) {
+  if (type_ == Type::Array) {
+    array_value_.reserve(capacity);
+  } else if (type_ == Type::Object) {
+    object_value_.reserve(capacity);
+  }
+}
+
 void Value::set(const std::string &key, const Value &v) { (*this)[key] = v; }
 
 void Value::set(const std::string &key, Value &&v) { (*this)[key] = std::move(v); }
+
+void Value::set(std::string &&key, Value &&v) {
+  make_object();
+  if (Value *existing = find(key)) {
+    *existing = std::move(v);
+    return;
+  }
+  object_value_.emplace_back();
+  object_value_.back().key = std::move(key);
+  object_value_.back().value() = std::move(v);
+}
 
 Value &Value::operator=(std::nullptr_t) {
   type_ = Type::Null;

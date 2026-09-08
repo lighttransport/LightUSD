@@ -158,6 +158,8 @@ const char* GetTypeName(TypeId id);
 /// Get TypeId from a USD type name string
 /// Returns TypeId::Invalid if the name is not recognized
 TypeId GetTypeIdFromName(const char* name);
+/// Look up a bounded name without allocating or requiring a NUL terminator.
+TypeId GetTypeIdFromName(const char* name, size_t size);
 
 /// Get the size in bytes of the type
 /// Returns 0 for variable-size types (String, Dictionary) or Invalid

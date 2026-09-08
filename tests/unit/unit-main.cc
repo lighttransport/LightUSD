@@ -84,6 +84,7 @@
 #include "unit-rb-collision.h"
 #include "unit-rb-dynamics.h"
 #include "unit-string-pool.h"
+#include "unit-minijson.h"
 
 #if defined(LIGHTUSD_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -92,6 +93,7 @@
 
 
 TEST_LIST = {
+  { "minijson_shortest_double_roundtrip_test", minijson_shortest_double_roundtrip_test },
   { "tinydng_classic_tiff_test", tinydng_classic_tiff_test },
   { "tinydng_bigtiff_test", tinydng_bigtiff_test },
   { "ptx_reader_rejects_invalid_input_test", ptx_reader_rejects_invalid_input_test },

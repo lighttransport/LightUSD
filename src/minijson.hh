@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace lightusd {
@@ -34,6 +35,8 @@ struct ParseOptions {
 struct SerializeOptions {
   int indent = -1;
   bool sort_keys = false;
+  // Protect callers that build JSON programmatically from unbounded nesting.
+  size_t max_depth = 256;
 };
 
 struct Error {
@@ -112,30 +115,78 @@ class Value {
   bool as_size_t(size_t *out) const;
   bool as_double(double *out) const;
   bool as_string(std::string *out) const;
+  // Non-template convenience accessors keep the small JSON API friendly to
+  // C++ callers without forcing template instantiations into every user.
+  bool get_bool() const;
+  int get_int() const;
+  int64_t get_int64() const;
+  uint64_t get_uint64() const;
+  double get_double() const;
+  std::string get_string() const;
   const std::string *string_ptr() const;
   const array_type *array_items() const;
   array_type *array_items();
   const object_type *object_items() const;
   object_type *object_items();
 
-  template <typename T>
-  T get() const;
-
   bool contains(const std::string &key) const;
   const Value *find(const std::string &key) const;
   Value *find(const std::string &key);
 
   Value &operator[](const std::string &key);
+  Value &operator[](std::string &&key);
   Value &operator[](const char *key);
   const Value &operator[](const std::string &key) const;
   const Value &operator[](const char *key) const;
+  const Value &at(const std::string &key) const;
+  Value &at(const std::string &key);
   const Value &operator[](size_t idx) const;
+  const Value &operator[](int idx) const {
+    return idx < 0 ? null_value() : (*this)[static_cast<size_t>(idx)];
+  }
   Value &operator[](size_t idx);
+  Value &operator[](int idx) {
+    return (*this)[static_cast<size_t>(idx < 0 ? 0 : idx)];
+  }
+
+  template <typename T>
+  T get() const {
+    T result{};
+    if constexpr (std::is_same<T, bool>::value) {
+      as_bool(&result);
+    } else if constexpr (std::is_same<T, std::string>::value) {
+      as_string(&result);
+    } else if constexpr (std::is_floating_point<T>::value) {
+      double value = 0.0;
+      as_double(&value);
+      result = static_cast<T>(value);
+    } else if constexpr (std::is_integral<T>::value &&
+                         std::is_signed<T>::value) {
+      int64_t value = 0;
+      if (as_int64(&value)) result = static_cast<T>(value);
+    } else if constexpr (std::is_integral<T>::value &&
+                         std::is_unsigned<T>::value) {
+      uint64_t value = 0;
+      if (as_uint64(&value)) result = static_cast<T>(value);
+    }
+    return result;
+  }
+
+  template <typename T>
+  T value(const std::string &key, const T &fallback) const {
+    const Value *found = find(key);
+    return found ? found->get<T>() : fallback;
+  }
 
   void push_back(const Value &v);
   void push_back(Value &&v);
+  // Reserve storage for array elements or object members. Calling reserve on
+  // another value kind is a no-op; this keeps builder code allocation-aware
+  // without exposing the underlying containers.
+  void reserve(size_t capacity);
   void set(const std::string &key, const Value &v);
   void set(const std::string &key, Value &&v);
+  void set(std::string &&key, Value &&v);
 
   Value &operator=(std::nullptr_t);
   Value &operator=(bool v);
@@ -183,71 +234,6 @@ bool Serialize(const Value &value, std::string *out, Error *err = nullptr,
                const SerializeOptions &options = SerializeOptions());
 
 const char *TypeName(Type type);
-
-template <>
-inline bool Value::get<bool>() const {
-  bool ret = false;
-  as_bool(&ret);
-  return ret;
-}
-
-template <>
-inline int Value::get<int>() const {
-  int64_t ret = 0;
-  as_int64(&ret);
-  return static_cast<int>(ret);
-}
-
-template <>
-inline int64_t Value::get<int64_t>() const {
-  int64_t ret = 0;
-  as_int64(&ret);
-  return ret;
-}
-
-template <>
-inline unsigned int Value::get<unsigned int>() const {
-  uint64_t ret = 0;
-  as_uint64(&ret);
-  return static_cast<unsigned int>(ret);
-}
-
-#if defined(__EMSCRIPTEN__) || defined(__APPLE__) || defined(_WIN32)
-template <>
-inline unsigned long Value::get<unsigned long>() const {
-  uint64_t ret = 0;
-  as_uint64(&ret);
-  return static_cast<unsigned long>(ret);
-}
-#endif
-
-template <>
-inline uint64_t Value::get<uint64_t>() const {
-  uint64_t ret = 0;
-  as_uint64(&ret);
-  return ret;
-}
-
-template <>
-inline float Value::get<float>() const {
-  double ret = 0.0;
-  as_double(&ret);
-  return static_cast<float>(ret);
-}
-
-template <>
-inline double Value::get<double>() const {
-  double ret = 0.0;
-  as_double(&ret);
-  return ret;
-}
-
-template <>
-inline std::string Value::get<std::string>() const {
-  std::string ret;
-  as_string(&ret);
-  return ret;
-}
 
 }  // namespace minijson
 }  // namespace lightusd

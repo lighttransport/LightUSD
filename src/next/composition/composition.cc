@@ -779,7 +779,7 @@ void Compositor::CopyLocalOpinions(
   };
   PropNameTable& name_table = GetPropNameTable();
   for (const auto& slot : source.properties().slots()) {
-    const std::string& pname = name_table.get(slot.name_id);
+    const std::string pname(name_table.get(slot.name_id));
     const PropSlot* tgt_slot = target.property(slot.name_id);
     if (tgt_slot) {
       const Value* target_value = target.property_value(slot.name_id);

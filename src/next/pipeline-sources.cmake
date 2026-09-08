@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: Apache-2.0
+# Common next pipeline sources shared by the standalone library and the
+# compatibility combined WASM module. Relative to src/next. Shared legacy
+# support (notably LZ4) is supplied by each parent, not duplicated here.
+set(LIGHTUSD_NEXT_PIPELINE_SOURCES
+    types/type-info.cc
+    types/value.cc
+    types/array-storage.cc
+    types/value-dict.cc
+    core/string-index.cc
+    types/spline.cc
+    types/interpolation.cc
+    writer/dtoa.cc
+    writer/value-printer.cc
+    prim/path.cc
+    prim/attribute.cc
+    prim/prim.cc
+    layer/array-edit.cc
+    layer/property-index.cc
+    layer/prim-spec.cc
+    layer/layer.cc
+    stage/stage.cc
+    crate/crate-format.cc
+    crate/crate-data-source.cc
+    crate/crate-reader-arrays.cc
+    crate/crate-reader-decode.cc
+    crate/crate-reader-api.cc
+    crate/crate-reader.cc
+    crate/crate-reader-sections.cc
+    crate/crate-reader-stage.cc
+    crate/crate-reader-unpack.cc
+    crate/crate-reader-vectors.cc
+    crate/crate-writer-types.cc
+    crate/crate-writer.cc
+    crate/variant-holders.cc
+    parser/lexer.cc
+    parser/value-parser.cc
+    parser/value-parser-types.cc
+    parser/ascii-parser.cc
+    parser/ascii-parser-metadata.cc
+    parser/ascii-parser-prim.cc
+    parser/ascii-parser-timesamples.cc
+    parser/ascii-parser-utils.cc
+    parser/ascii-parser-variants.cc
+    parser/simd-scan.cc
+    composition/composition.cc
+    resolver/asset-resolver.cc
+    pipeline/flatten.cc
+    pcp/layer-registry.cc
+    reader/usda-reader.cc
+    reader/usdc-reader.cc
+    reader/usdz-reader.cc
+    schema/geom-mesh.cc
+    schema/geom-xform.cc
+    schema/usd-shade.cc
+    eval/attribute-eval.cc
+    eval/value-clip.cc
+    schema/schema-registry.cc
+)

@@ -5,7 +5,7 @@
 // Included inside Cache::Impl.
 
   // --- spec lookup --------------------------------------------------------
-  // SpecRef is defined at file scope (see cache.cc) so Src can cache a pointer
+  // SpecRef is defined in cache-internal.hh so Src can cache a pointer
   // to a Specs() result.
 
   // Memoized spec resolution. The same (stack, site) is resolved 3-5x per

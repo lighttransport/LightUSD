@@ -1659,7 +1659,7 @@ def Scope "T" (
   PropNameTable& names = GetPropNameTable();
   size_t compared = 0;
   for (const auto& slot : sp->properties().slots()) {
-    const std::string& nm = names.get(slot.name_id);
+    const std::string nm(names.get(slot.name_id));
     const Value* sv = sp->property_value(slot.name_id);
     if (!sv || sv->is_empty()) continue;  // declared-only slots
     const Value* dv = dp->property_value(nm);
@@ -1740,7 +1740,7 @@ def Scope "T" (
     assert(rr3.success);
     const PrimSpec* p3 = MustPrim(rr3.stage.GetRootLayer(), "/T");
     for (const auto& slot : dp->properties().slots()) {
-      const std::string& nm = names.get(slot.name_id);
+      const std::string nm(names.get(slot.name_id));
       const Value* v2 = dp->property_value(slot.name_id);
       if (!v2 || v2->is_empty()) continue;
       const Value* v3 = p3->property_value(nm);

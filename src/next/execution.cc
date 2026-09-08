@@ -58,11 +58,11 @@ struct TaskArena::Impl {
     for (;;) {
       const size_t index = next.fetch_add(1, std::memory_order_relaxed);
       if (index >= count) return;
-      task(index);
+      task(context, index);
     }
   }
 
-  void Run(size_t item_count, const std::function<void(size_t)>& fn) {
+  void Run(size_t item_count, void* task_context, TaskFn fn) {
     if (item_count == 0) return;
 #if defined(LIGHTUSD_ENABLE_THREAD)
     if (!workers.empty() && item_count > 1) {
@@ -70,6 +70,7 @@ struct TaskArena::Impl {
       {
         std::lock_guard<std::mutex> lock(mu);
         count = item_count;
+        context = task_context;
         task = fn;
         next.store(0, std::memory_order_relaxed);
         active_workers = workers.size();
@@ -79,11 +80,12 @@ struct TaskArena::Impl {
       RunItems();
       std::unique_lock<std::mutex> lock(mu);
       done_cv.wait(lock, [&]() { return active_workers == 0; });
-      task = {};
+      task = nullptr;
+      context = nullptr;
       return;
     }
 #endif
-    for (size_t i = 0; i < item_count; ++i) fn(i);
+    for (size_t i = 0; i < item_count; ++i) fn(task_context, i);
   }
 
   size_t max_threads = 1;
@@ -96,16 +98,16 @@ struct TaskArena::Impl {
   size_t count = 0;
   size_t active_workers = 0;
   std::atomic<size_t> next{0};
-  std::function<void(size_t)> task;
+  void* context = nullptr;
+  TaskFn task = nullptr;
   std::vector<std::thread> workers;
 };
 
 TaskArena::TaskArena(size_t max_threads) : impl_(new Impl(max_threads)) {}
 TaskArena::~TaskArena() = default;
 
-void TaskArena::Run(size_t count,
-                    const std::function<void(size_t)>& task) {
-  impl_->Run(count, task);
+void TaskArena::Run(size_t count, void* context, TaskFn task) {
+  impl_->Run(count, context, task);
 }
 
 size_t TaskArena::max_threads() const { return impl_->max_threads; }

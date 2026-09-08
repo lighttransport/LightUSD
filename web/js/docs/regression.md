@@ -1,5 +1,29 @@
 # Web regression gate
 
+## Testing an isolated next WASM build
+
+The Node profile includes `tests/next-c-dispatch.test.mjs`: object-ID generation
+retirement, stale/wrong-class calls, explicit disposal, argument validation,
+numeric/Unicode JSON fidelity, and malformed validation options. Run it on both
+wasm32 and memory64 after changing the C dispatch or post-JS wrapper.
+
+To exercise an isolated measurement build without replacing generated app
+files, run from `web/js` (use an absolute module path):
+
+```sh
+LIGHTUSD_NEXT_MODULE="$PWD/../build_ninja/refactor-next/artifacts/lightusd_next.js" \
+  NODE_OPTIONS="--loader $PWD/tests/next-module-override.mjs" \
+  node tests/run-regression.mjs --profile node
+```
+
+For memory64, set `LIGHTUSD_WASM64=1` and select `lightusd_next_64.js` from its
+build directory. The override always loads the matching `.wasm`, even if a
+test supplies `locateFile` for the application's normal artifacts. This is a
+Node-only testing helper, not a production loader or a substitute for the
+browser/physics gates below.
+
+## Complete gate
+
 All web/WASM regression procedures live under `web/js`. The canonical gate is
 `npm test`; it runs the assertion-based Node/WASM suites, the physics-only
 MuJoCo binding smoke test, the USD Physics simulation, every pinned MuJoCo

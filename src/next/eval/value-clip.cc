@@ -261,7 +261,7 @@ bool ParseValueClipSets(const UsdPrim& prim, std::vector<ValueClipSet>* out,
   if (!out || !prim.GetPrimSpec()) return false;
   const Dict* clips = prim.GetPrimSpec()->meta().clips().as_dictionary();
   if (!clips) return false;
-  for (const auto& entry : clips->entries) {
+  for (const auto& entry : clips->entries()) {
     const Dict* dict = entry.second.as_dictionary();
     if (!dict) continue;
     ValueClipSet set;

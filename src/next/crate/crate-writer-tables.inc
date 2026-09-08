@@ -123,7 +123,7 @@
 
       PropNameTable& name_table = GetPropNameTable();
       for (const auto& slot : prim.properties().slots()) {
-        InternToken(name_table.get(slot.name_id));
+        InternToken(std::string(name_table.get(slot.name_id)));
       }
 
       // Metadata strings

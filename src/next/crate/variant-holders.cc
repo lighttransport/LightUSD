@@ -42,7 +42,7 @@ void MergeContentRootInto(const PrimSpec& src, PrimSpec* dst) {
   PropNameTable& names = GetPropNameTable();
   for (const PropSlot& slot : src.properties().slots()) {
     if (slot.is_relationship()) continue;
-    const std::string& pname = names.get(slot.name_id);
+    const std::string pname(names.get(slot.name_id));
     const Value* v = src.property_value(slot.name_id);
     if (v) {
       dst->add_property(pname, *v, slot.flags);

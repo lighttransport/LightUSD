@@ -1,535 +1,242 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
-//
-// LightUSD Next - Runtime type information implementation
-
+// Built-in USD layouts. Metadata only: no per-type executable callbacks.
 #include "type-info.hh"
 
 #include <cstring>
-#include <array>
 
 namespace lightusd {
 namespace next {
-
 namespace {
+constexpr uint8_t kScalar = 1;
+constexpr uint8_t kNumeric = 2;
+constexpr TypeInfo kTypes[] = {
+  {TypeId::Invalid, nullptr, nullptr, 0, 0,
+   TypeId::Invalid, 0, 0},
+  {TypeId::Bool, "bool", "bool", sizeof(bool) * 1, alignof(bool),
+   TypeId::Invalid, 1, kScalar | kNumeric},
+  {TypeId::Int, "int", "int32_t", sizeof(int32_t) * 1, alignof(int32_t),
+   TypeId::Invalid, 1, kScalar | kNumeric},
+  {TypeId::UInt, "uint", "uint32_t", sizeof(uint32_t) * 1, alignof(uint32_t),
+   TypeId::Invalid, 1, kScalar | kNumeric},
+  {TypeId::Int64, "int64", "int64_t", sizeof(int64_t) * 1, alignof(int64_t),
+   TypeId::Invalid, 1, kScalar | kNumeric},
+  {TypeId::UInt64, "uint64", "uint64_t", sizeof(uint64_t) * 1, alignof(uint64_t),
+   TypeId::Invalid, 1, kScalar | kNumeric},
+  {TypeId::Half, "half", "half", sizeof(uint16_t) * 1, alignof(uint16_t),
+   TypeId::Invalid, 1, kScalar | kNumeric},
+  {TypeId::Float, "float", "float", sizeof(float) * 1, alignof(float),
+   TypeId::Invalid, 1, kScalar | kNumeric},
+  {TypeId::Double, "double", "double", sizeof(double) * 1, alignof(double),
+   TypeId::Invalid, 1, kScalar | kNumeric},
+  {TypeId::String, "string", "std::string", 0, 1,
+   TypeId::Invalid, 0, 0},
+  {TypeId::Token, "token", "Token", 0, 1,
+   TypeId::Invalid, 0, 0},
+  {TypeId::AssetPath, "asset", "AssetPath", 0, 1,
+   TypeId::Invalid, 0, 0},
+  {TypeId::Int2, "int2", "int2", sizeof(int32_t) * 2, alignof(int32_t),
+   TypeId::Int, 2, kNumeric},
+  {TypeId::Int3, "int3", "int3", sizeof(int32_t) * 3, alignof(int32_t),
+   TypeId::Int, 3, kNumeric},
+  {TypeId::Int4, "int4", "int4", sizeof(int32_t) * 4, alignof(int32_t),
+   TypeId::Int, 4, kNumeric},
+  {TypeId::UInt2, "uint2", "uint2", sizeof(uint32_t) * 2, alignof(uint32_t),
+   TypeId::UInt, 2, kNumeric},
+  {TypeId::UInt3, "uint3", "uint3", sizeof(uint32_t) * 3, alignof(uint32_t),
+   TypeId::UInt, 3, kNumeric},
+  {TypeId::UInt4, "uint4", "uint4", sizeof(uint32_t) * 4, alignof(uint32_t),
+   TypeId::UInt, 4, kNumeric},
+  {TypeId::Half2, "half2", "half2", sizeof(uint16_t) * 2, alignof(uint16_t),
+   TypeId::Half, 2, kNumeric},
+  {TypeId::Half3, "half3", "half3", sizeof(uint16_t) * 3, alignof(uint16_t),
+   TypeId::Half, 3, kNumeric},
+  {TypeId::Half4, "half4", "half4", sizeof(uint16_t) * 4, alignof(uint16_t),
+   TypeId::Half, 4, kNumeric},
+  {TypeId::Float2, "float2", "float2", sizeof(float) * 2, alignof(float),
+   TypeId::Float, 2, kNumeric},
+  {TypeId::Float3, "float3", "float3", sizeof(float) * 3, alignof(float),
+   TypeId::Float, 3, kNumeric},
+  {TypeId::Float4, "float4", "float4", sizeof(float) * 4, alignof(float),
+   TypeId::Float, 4, kNumeric},
+  {TypeId::Double2, "double2", "double2", sizeof(double) * 2, alignof(double),
+   TypeId::Double, 2, kNumeric},
+  {TypeId::Double3, "double3", "double3", sizeof(double) * 3, alignof(double),
+   TypeId::Double, 3, kNumeric},
+  {TypeId::Double4, "double4", "double4", sizeof(double) * 4, alignof(double),
+   TypeId::Double, 4, kNumeric},
+  {TypeId::Quath, "quath", "quath", sizeof(uint16_t) * 4, alignof(uint16_t),
+   TypeId::Half, 4, kNumeric},
+  {TypeId::Quatf, "quatf", "quatf", sizeof(float) * 4, alignof(float),
+   TypeId::Float, 4, kNumeric},
+  {TypeId::Quatd, "quatd", "quatd", sizeof(double) * 4, alignof(double),
+   TypeId::Double, 4, kNumeric},
+  {TypeId::Point3h, "point3h", "point3h", sizeof(uint16_t) * 3, alignof(uint16_t),
+   TypeId::Half, 3, 0},
+  {TypeId::Point3f, "point3f", "point3f", sizeof(float) * 3, alignof(float),
+   TypeId::Float, 3, 0},
+  {TypeId::Point3d, "point3d", "point3d", sizeof(double) * 3, alignof(double),
+   TypeId::Double, 3, 0},
+  {TypeId::Vector3h, "vector3h", "vector3h", sizeof(uint16_t) * 3, alignof(uint16_t),
+   TypeId::Half, 3, 0},
+  {TypeId::Vector3f, "vector3f", "vector3f", sizeof(float) * 3, alignof(float),
+   TypeId::Float, 3, 0},
+  {TypeId::Vector3d, "vector3d", "vector3d", sizeof(double) * 3, alignof(double),
+   TypeId::Double, 3, 0},
+  {TypeId::Normal3h, "normal3h", "normal3h", sizeof(uint16_t) * 3, alignof(uint16_t),
+   TypeId::Half, 3, 0},
+  {TypeId::Normal3f, "normal3f", "normal3f", sizeof(float) * 3, alignof(float),
+   TypeId::Float, 3, 0},
+  {TypeId::Normal3d, "normal3d", "normal3d", sizeof(double) * 3, alignof(double),
+   TypeId::Double, 3, 0},
+  {TypeId::Color3h, "color3h", "color3h", sizeof(uint16_t) * 3, alignof(uint16_t),
+   TypeId::Half, 3, 0},
+  {TypeId::Color3f, "color3f", "color3f", sizeof(float) * 3, alignof(float),
+   TypeId::Float, 3, 0},
+  {TypeId::Color3d, "color3d", "color3d", sizeof(double) * 3, alignof(double),
+   TypeId::Double, 3, 0},
+  {TypeId::Color4h, "color4h", "color4h", sizeof(uint16_t) * 4, alignof(uint16_t),
+   TypeId::Half, 4, 0},
+  {TypeId::Color4f, "color4f", "color4f", sizeof(float) * 4, alignof(float),
+   TypeId::Float, 4, 0},
+  {TypeId::Color4d, "color4d", "color4d", sizeof(double) * 4, alignof(double),
+   TypeId::Double, 4, 0},
+  {TypeId::Matrix2f, "matrix2f", "matrix2f", sizeof(float) * 4, alignof(float),
+   TypeId::Float, 4, kNumeric},
+  {TypeId::Matrix2d, "matrix2d", "matrix2d", sizeof(double) * 4, alignof(double),
+   TypeId::Double, 4, kNumeric},
+  {TypeId::Matrix3f, "matrix3f", "matrix3f", sizeof(float) * 9, alignof(float),
+   TypeId::Float, 9, kNumeric},
+  {TypeId::Matrix3d, "matrix3d", "matrix3d", sizeof(double) * 9, alignof(double),
+   TypeId::Double, 9, kNumeric},
+  {TypeId::Matrix4f, "matrix4f", "matrix4f", sizeof(float) * 16, alignof(float),
+   TypeId::Float, 16, kNumeric},
+  {TypeId::Matrix4d, "matrix4d", "matrix4d", sizeof(double) * 16, alignof(double),
+   TypeId::Double, 16, kNumeric},
+  {TypeId::Texcoord2h, "texCoord2h", "texcoord2h", sizeof(uint16_t) * 2, alignof(uint16_t),
+   TypeId::Half, 2, 0},
+  {TypeId::Texcoord2f, "texCoord2f", "texcoord2f", sizeof(float) * 2, alignof(float),
+   TypeId::Float, 2, 0},
+  {TypeId::Texcoord2d, "texCoord2d", "texcoord2d", sizeof(double) * 2, alignof(double),
+   TypeId::Double, 2, 0},
+  {TypeId::Texcoord3h, "texCoord3h", "texcoord3h", sizeof(uint16_t) * 3, alignof(uint16_t),
+   TypeId::Half, 3, 0},
+  {TypeId::Texcoord3f, "texCoord3f", "texcoord3f", sizeof(float) * 3, alignof(float),
+   TypeId::Float, 3, 0},
+  {TypeId::Texcoord3d, "texCoord3d", "texcoord3d", sizeof(double) * 3, alignof(double),
+   TypeId::Double, 3, 0},
+  {TypeId::TimeCode, "timecode", "TimeCode", sizeof(double) * 1, alignof(double),
+   TypeId::Invalid, 1, kScalar},
+  {TypeId::Extent, "float3[]", "extent", sizeof(float) * 6, alignof(float),
+   TypeId::Invalid, 0, 0},
+  {TypeId::Dictionary, "dictionary", "Dictionary", 0, 1,
+   TypeId::Invalid, 0, 0},
+  {TypeId::Relationship, "rel", "Relationship", 0, 1,
+   TypeId::Invalid, 0, 0},
+  {TypeId::Reference, "reference", "Reference", 0, 1,
+   TypeId::Invalid, 0, 0},
+  {TypeId::UChar, "uchar", "uint8_t", sizeof(uint8_t) * 1, alignof(uint8_t),
+   TypeId::Invalid, 1, kScalar | kNumeric},
+  {TypeId::Frame4d, "frame4d", "frame4d", sizeof(double) * 16, alignof(double),
+   TypeId::Double, 16, kNumeric},
+  {TypeId::PathExpression, "pathExpression", "PathExpression", 0, 1,
+   TypeId::Invalid, 0, 0},
 
-// ============================================================
-// Half-precision float storage type
-// ============================================================
-struct half_t {
-  uint16_t bits;
 };
-
-// ============================================================
-// Basic type structs for memory layout
-// ============================================================
-
-template <typename T, size_t N>
-struct VecN {
-  T data[N];
-};
-
-template <typename T>
-struct Quat {
-  T x, y, z, w;
-};
-
-template <typename T, size_t N>
-struct MatrixNxN {
-  T data[N * N];
-};
-
-// Type aliases for clarity
-using int2 = VecN<int32_t, 2>;
-using int3 = VecN<int32_t, 3>;
-using int4 = VecN<int32_t, 4>;
-using uint2 = VecN<uint32_t, 2>;
-using uint3 = VecN<uint32_t, 3>;
-using uint4 = VecN<uint32_t, 4>;
-using half2 = VecN<half_t, 2>;
-using half3 = VecN<half_t, 3>;
-using half4 = VecN<half_t, 4>;
-using float2 = VecN<float, 2>;
-using float3 = VecN<float, 3>;
-using float4 = VecN<float, 4>;
-using double2 = VecN<double, 2>;
-using double3 = VecN<double, 3>;
-using double4 = VecN<double, 4>;
-
-using quath = Quat<half_t>;
-using quatf = Quat<float>;
-using quatd = Quat<double>;
-
-using matrix2f = MatrixNxN<float, 2>;
-using matrix2d = MatrixNxN<double, 2>;
-using matrix3f = MatrixNxN<float, 3>;
-using matrix3d = MatrixNxN<double, 3>;
-using matrix4f = MatrixNxN<float, 4>;
-using matrix4d = MatrixNxN<double, 4>;
-
-// Extent is float3[2]
-struct extent_t {
-  float3 min;
-  float3 max;
-};
-
-// ============================================================
-// Generic operation templates
-// ============================================================
-
-template <typename T>
-void GenericConstruct(void* dest) {
-  new (dest) T();
-}
-
-template <typename T>
-void GenericDestruct(void* obj) {
-  static_cast<T*>(obj)->~T();
-}
-
-template <typename T>
-void GenericCopy(void* dest, const void* src) {
-  *static_cast<T*>(dest) = *static_cast<const T*>(src);
-}
-
-template <typename T>
-void GenericMove(void* dest, void* src) {
-  *static_cast<T*>(dest) = static_cast<T&&>(*static_cast<T*>(src));
-}
-
-template <typename T>
-bool GenericEquals(const void* a, const void* b) {
-  return *static_cast<const T*>(a) == *static_cast<const T*>(b);
-}
-
-// POD-specific operations (faster, no constructor/destructor needed)
-template <typename T>
-void PodConstruct(void* dest) {
-  std::memset(dest, 0, sizeof(T));
-}
-
-template <typename T>
-void PodDestruct(void*) {
-  // No-op for POD types
-}
-
-template <typename T>
-void PodCopy(void* dest, const void* src) {
-  std::memcpy(dest, src, sizeof(T));
-}
-
-template <typename T>
-void PodMove(void* dest, void* src) {
-  std::memcpy(dest, src, sizeof(T));
-}
-
-template <typename T>
-bool PodEquals(const void* a, const void* b) {
-  return std::memcmp(a, b, sizeof(T)) == 0;
-}
-
-// ============================================================
-// Type info table
-// ============================================================
-
-constexpr size_t kTypeCount = static_cast<size_t>(TypeId::Count);
-
-// Macro to define POD type info entry
-#define POD_TYPE_INFO(id_val, usd_name, cpp_name_str, type) \
-  { TypeId::id_val, usd_name, cpp_name_str, sizeof(type), alignof(type), \
-    &PodConstruct<type>, &PodDestruct<type>, &PodCopy<type>, \
-    &PodMove<type>, &PodEquals<type> }
-
-// Macro to define complex type info entry (with constructor/destructor)
-#define COMPLEX_TYPE_INFO(id_val, usd_name, cpp_name_str, type) \
-  { TypeId::id_val, usd_name, cpp_name_str, sizeof(type), alignof(type), \
-    &GenericConstruct<type>, &GenericDestruct<type>, &GenericCopy<type>, \
-    &GenericMove<type>, &GenericEquals<type> }
-
-// Static type info array - indexed directly by TypeId
-std::array<TypeInfo, kTypeCount> g_type_info = {{
-  // Invalid
-  { TypeId::Invalid, nullptr, nullptr, 0, 0, nullptr, nullptr, nullptr, nullptr, nullptr },
-
-  // Scalars
-  POD_TYPE_INFO(Bool, "bool", "bool", bool),
-  POD_TYPE_INFO(Int, "int", "int32_t", int32_t),
-  POD_TYPE_INFO(UInt, "uint", "uint32_t", uint32_t),
-  POD_TYPE_INFO(Int64, "int64", "int64_t", int64_t),
-  POD_TYPE_INFO(UInt64, "uint64", "uint64_t", uint64_t),
-  POD_TYPE_INFO(Half, "half", "half", half_t),
-  POD_TYPE_INFO(Float, "float", "float", float),
-  POD_TYPE_INFO(Double, "double", "double", double),
-
-  // String types (variable size - use 0)
-  { TypeId::String, "string", "std::string", 0, 1, nullptr, nullptr, nullptr, nullptr, nullptr },
-  { TypeId::Token, "token", "Token", 0, 1, nullptr, nullptr, nullptr, nullptr, nullptr },
-  { TypeId::AssetPath, "asset", "AssetPath", 0, 1, nullptr, nullptr, nullptr, nullptr, nullptr },
-
-  // Integer vectors
-  POD_TYPE_INFO(Int2, "int2", "int2", int2),
-  POD_TYPE_INFO(Int3, "int3", "int3", int3),
-  POD_TYPE_INFO(Int4, "int4", "int4", int4),
-  POD_TYPE_INFO(UInt2, "uint2", "uint2", uint2),
-  POD_TYPE_INFO(UInt3, "uint3", "uint3", uint3),
-  POD_TYPE_INFO(UInt4, "uint4", "uint4", uint4),
-
-  // Half vectors
-  POD_TYPE_INFO(Half2, "half2", "half2", half2),
-  POD_TYPE_INFO(Half3, "half3", "half3", half3),
-  POD_TYPE_INFO(Half4, "half4", "half4", half4),
-
-  // Float vectors
-  POD_TYPE_INFO(Float2, "float2", "float2", float2),
-  POD_TYPE_INFO(Float3, "float3", "float3", float3),
-  POD_TYPE_INFO(Float4, "float4", "float4", float4),
-
-  // Double vectors
-  POD_TYPE_INFO(Double2, "double2", "double2", double2),
-  POD_TYPE_INFO(Double3, "double3", "double3", double3),
-  POD_TYPE_INFO(Double4, "double4", "double4", double4),
-
-  // Quaternions
-  POD_TYPE_INFO(Quath, "quath", "quath", quath),
-  POD_TYPE_INFO(Quatf, "quatf", "quatf", quatf),
-  POD_TYPE_INFO(Quatd, "quatd", "quatd", quatd),
-
-  // Point types (same storage as vectors)
-  POD_TYPE_INFO(Point3h, "point3h", "point3h", half3),
-  POD_TYPE_INFO(Point3f, "point3f", "point3f", float3),
-  POD_TYPE_INFO(Point3d, "point3d", "point3d", double3),
-
-  // Vector types
-  POD_TYPE_INFO(Vector3h, "vector3h", "vector3h", half3),
-  POD_TYPE_INFO(Vector3f, "vector3f", "vector3f", float3),
-  POD_TYPE_INFO(Vector3d, "vector3d", "vector3d", double3),
-
-  // Normal types
-  POD_TYPE_INFO(Normal3h, "normal3h", "normal3h", half3),
-  POD_TYPE_INFO(Normal3f, "normal3f", "normal3f", float3),
-  POD_TYPE_INFO(Normal3d, "normal3d", "normal3d", double3),
-
-  // Color types
-  POD_TYPE_INFO(Color3h, "color3h", "color3h", half3),
-  POD_TYPE_INFO(Color3f, "color3f", "color3f", float3),
-  POD_TYPE_INFO(Color3d, "color3d", "color3d", double3),
-  POD_TYPE_INFO(Color4h, "color4h", "color4h", half4),
-  POD_TYPE_INFO(Color4f, "color4f", "color4f", float4),
-  POD_TYPE_INFO(Color4d, "color4d", "color4d", double4),
-
-  // Matrices
-  POD_TYPE_INFO(Matrix2f, "matrix2f", "matrix2f", matrix2f),
-  POD_TYPE_INFO(Matrix2d, "matrix2d", "matrix2d", matrix2d),
-  POD_TYPE_INFO(Matrix3f, "matrix3f", "matrix3f", matrix3f),
-  POD_TYPE_INFO(Matrix3d, "matrix3d", "matrix3d", matrix3d),
-  POD_TYPE_INFO(Matrix4f, "matrix4f", "matrix4f", matrix4f),
-  POD_TYPE_INFO(Matrix4d, "matrix4d", "matrix4d", matrix4d),
-
-  // Texture coordinates
-  POD_TYPE_INFO(Texcoord2h, "texCoord2h", "texcoord2h", half2),
-  POD_TYPE_INFO(Texcoord2f, "texCoord2f", "texcoord2f", float2),
-  POD_TYPE_INFO(Texcoord2d, "texCoord2d", "texcoord2d", double2),
-  POD_TYPE_INFO(Texcoord3h, "texCoord3h", "texcoord3h", half3),
-  POD_TYPE_INFO(Texcoord3f, "texCoord3f", "texcoord3f", float3),
-  POD_TYPE_INFO(Texcoord3d, "texCoord3d", "texcoord3d", double3),
-
-  // Special types
-  POD_TYPE_INFO(TimeCode, "timecode", "TimeCode", double),
-  POD_TYPE_INFO(Extent, "float3[]", "extent", extent_t),
-  { TypeId::Dictionary, "dictionary", "Dictionary", 0, 1, nullptr, nullptr, nullptr, nullptr, nullptr },
-
-  // Relationship types
-  { TypeId::Relationship, "rel", "Relationship", 0, 1, nullptr, nullptr, nullptr, nullptr, nullptr },
-  { TypeId::Reference, "reference", "Reference", 0, 1, nullptr, nullptr, nullptr, nullptr, nullptr },
-
-  // uchar (appended; keep in enum order)
-  POD_TYPE_INFO(UChar, "uchar", "uint8_t", uint8_t),
-
-  // frame4d: matrix4d role (double[16] storage). Uses matrix4d's POD
-  // operations since the memory layout is identical.
-  POD_TYPE_INFO(Frame4d, "frame4d", "frame4d", matrix4d),
-  // pathExpression: string storage (variable size).
-  { TypeId::PathExpression, "pathExpression", "PathExpression", 0, 1,
-    nullptr, nullptr, nullptr, nullptr, nullptr },
-}};
-
-#undef POD_TYPE_INFO
-#undef COMPLEX_TYPE_INFO
-
-bool g_registry_initialized = false;
-
-}  // anonymous namespace
-
-const TypeInfo* GetTypeInfo(TypeId id) {
-  size_t idx = static_cast<size_t>(id);
-  if (idx >= kTypeCount) {
-    return nullptr;
+constexpr size_t kTypeCount = sizeof(kTypes) / sizeof(kTypes[0]);
+static_assert(kTypeCount == static_cast<size_t>(TypeId::Count), "Missing type metadata");
+constexpr bool TypesInOrder() {
+  for (size_t i = 0; i < kTypeCount; ++i) {
+    if (static_cast<size_t>(kTypes[i].id) != i) return false;
   }
-  const TypeInfo* info = &g_type_info[idx];
-  if (info->id == TypeId::Invalid && id != TypeId::Invalid) {
-    return nullptr;
-  }
-  return info;
-}
-
-bool RegisterTypeInfo(const TypeInfo& info) {
-  size_t idx = static_cast<size_t>(info.id);
-  if (idx >= kTypeCount) {
-    return false;
-  }
-  if (g_type_info[idx].id != TypeId::Invalid) {
-    return false;  // Already registered
-  }
-  g_type_info[idx] = info;
   return true;
 }
+static_assert(TypesInOrder(), "Type metadata must follow TypeId order");
 
-void InitTypeRegistry() {
-  if (g_registry_initialized) {
-    return;
+// Construct a fixed name index at compile time. No dynamic initialization,
+// allocation, locks, or templated hash containers on the parsing path.
+constexpr uint32_t NameHash(const char* name, size_t size) {
+  uint32_t hash = 2166136261u;
+  for (size_t i = 0; i < size; ++i) {
+    hash = (hash ^ static_cast<uint8_t>(name[i])) * 16777619u;
   }
-  // Currently all types are statically initialized
-  // This function exists for future dynamic registration
-  g_registry_initialized = true;
+  return hash;
+}
+constexpr size_t NameLength(const char* name) {
+  size_t n = 0;
+  while (name[n]) ++n;
+  return n;
+}
+constexpr size_t kNameSlots = 256;
+static_assert(kTypeCount < kNameSlots / 2, "Increase name table capacity");
+struct NameIndex { uint16_t slots[kNameSlots] = {}; };
+constexpr NameIndex MakeNameIndex() {
+  NameIndex index{};
+  for (size_t i = 1; i < kTypeCount; ++i) {
+    const char* name = kTypes[i].name;
+    if (!name) continue;
+    size_t slot = NameHash(name, NameLength(name)) % kNameSlots;
+    while (index.slots[slot]) slot = (slot + 1) % kNameSlots;
+    index.slots[slot] = static_cast<uint16_t>(i);
+  }
+  return index;
+}
+constexpr NameIndex kNames = MakeNameIndex();
+}  // namespace
+
+const TypeInfo* GetTypeInfo(TypeId id) {
+  const size_t index = static_cast<size_t>(id);
+  return index < kTypeCount ? &kTypes[index] : nullptr;
 }
 
-// ============================================================
-// type-id.hh function implementations
-// ============================================================
+void InitTypeRegistry() {}  // Built-in metadata is constant-initialized.
 
 const char* GetTypeName(TypeId id) {
   const TypeInfo* info = GetTypeInfo(id);
   return info ? info->name : nullptr;
 }
 
-TypeId GetTypeIdFromName(const char* name) {
-  if (!name) {
-    return TypeId::Invalid;
-  }
-  // Each USD type name maps to exactly one TypeId (e.g. "matrix4f" ->
-  // Matrix4f, "matrix4d" -> Matrix4d).
-  for (size_t i = 1; i < kTypeCount; ++i) {
-    if (g_type_info[i].name && std::strcmp(g_type_info[i].name, name) == 0) {
-      return static_cast<TypeId>(i);
-    }
+TypeId GetTypeIdFromName(const char* name, size_t size) {
+  if (!name || !size) return TypeId::Invalid;
+  size_t slot = NameHash(name, size) % kNameSlots;
+  for (size_t probe = 0; probe < kNameSlots; ++probe) {
+    const uint16_t index = kNames.slots[slot];
+    if (!index) return TypeId::Invalid;
+    const char* candidate = kTypes[index].name;
+    if (std::strlen(candidate) == size && std::memcmp(candidate, name, size) == 0)
+      return kTypes[index].id;
+    slot = (slot + 1) % kNameSlots;
   }
   return TypeId::Invalid;
+}
+
+TypeId GetTypeIdFromName(const char* name) {
+  return name ? GetTypeIdFromName(name, std::strlen(name)) : TypeId::Invalid;
 }
 
 size_t GetTypeSize(TypeId id) {
   const TypeInfo* info = GetTypeInfo(id);
   return info ? info->size : 0;
 }
-
 size_t GetTypeAlignment(TypeId id) {
   const TypeInfo* info = GetTypeInfo(id);
   return info ? info->alignment : 0;
 }
-
 bool IsScalarType(TypeId id) {
-  switch (id) {
-    case TypeId::Bool:
-    case TypeId::Int:
-    case TypeId::UInt:
-    case TypeId::Int64:
-    case TypeId::UInt64:
-    case TypeId::Half:
-    case TypeId::Float:
-    case TypeId::Double:
-    case TypeId::TimeCode:
-    case TypeId::UChar:
-      return true;
-    default:
-      return false;
-  }
+  const TypeInfo* info = GetTypeInfo(id);
+  return info && (info->flags & kScalar) != 0;
 }
-
 bool IsNumericType(TypeId id) {
-  switch (id) {
-    case TypeId::Bool:
-    case TypeId::UChar:
-    case TypeId::Int:
-    case TypeId::UInt:
-    case TypeId::Int64:
-    case TypeId::UInt64:
-    case TypeId::Half:
-    case TypeId::Float:
-    case TypeId::Double:
-    case TypeId::Int2:
-    case TypeId::Int3:
-    case TypeId::Int4:
-    case TypeId::UInt2:
-    case TypeId::UInt3:
-    case TypeId::UInt4:
-    case TypeId::Half2:
-    case TypeId::Half3:
-    case TypeId::Half4:
-    case TypeId::Float2:
-    case TypeId::Float3:
-    case TypeId::Float4:
-    case TypeId::Double2:
-    case TypeId::Double3:
-    case TypeId::Double4:
-    case TypeId::Quath:
-    case TypeId::Quatf:
-    case TypeId::Quatd:
-    case TypeId::Matrix2f:
-    case TypeId::Matrix2d:
-    case TypeId::Matrix3f:
-    case TypeId::Matrix3d:
-    case TypeId::Matrix4f:
-    case TypeId::Matrix4d:
-    case TypeId::Frame4d:
-      return true;
-    default:
-      return false;
-  }
+  const TypeInfo* info = GetTypeInfo(id);
+  return info && (info->flags & kNumeric) != 0;
 }
-
 TypeId GetComponentType(TypeId id) {
-  switch (id) {
-    case TypeId::Int2:
-    case TypeId::Int3:
-    case TypeId::Int4:
-      return TypeId::Int;
-
-    case TypeId::UInt2:
-    case TypeId::UInt3:
-    case TypeId::UInt4:
-      return TypeId::UInt;
-
-    case TypeId::Frame4d:
-      return TypeId::Double;
-
-    case TypeId::Half2:
-    case TypeId::Half3:
-    case TypeId::Half4:
-    case TypeId::Quath:
-    case TypeId::Point3h:
-    case TypeId::Vector3h:
-    case TypeId::Normal3h:
-    case TypeId::Color3h:
-    case TypeId::Color4h:
-    case TypeId::Texcoord2h:
-    case TypeId::Texcoord3h:
-      return TypeId::Half;
-
-    case TypeId::Float2:
-    case TypeId::Float3:
-    case TypeId::Float4:
-    case TypeId::Quatf:
-    case TypeId::Point3f:
-    case TypeId::Vector3f:
-    case TypeId::Normal3f:
-    case TypeId::Color3f:
-    case TypeId::Color4f:
-    case TypeId::Texcoord2f:
-    case TypeId::Texcoord3f:
-    case TypeId::Matrix2f:
-    case TypeId::Matrix3f:
-    case TypeId::Matrix4f:
-      return TypeId::Float;
-
-    case TypeId::Double2:
-    case TypeId::Double3:
-    case TypeId::Double4:
-    case TypeId::Quatd:
-    case TypeId::Point3d:
-    case TypeId::Vector3d:
-    case TypeId::Normal3d:
-    case TypeId::Color3d:
-    case TypeId::Color4d:
-    case TypeId::Texcoord2d:
-    case TypeId::Texcoord3d:
-    case TypeId::Matrix2d:
-    case TypeId::Matrix3d:
-    case TypeId::Matrix4d:
-      return TypeId::Double;
-
-    default:
-      return TypeId::Invalid;
-  }
+  const TypeInfo* info = GetTypeInfo(id);
+  return info ? info->component_type : TypeId::Invalid;
 }
-
 size_t GetComponentCount(TypeId id) {
-  switch (id) {
-    // Scalars
-    case TypeId::Bool:
-    case TypeId::UChar:
-    case TypeId::Int:
-    case TypeId::UInt:
-    case TypeId::Int64:
-    case TypeId::UInt64:
-    case TypeId::Half:
-    case TypeId::Float:
-    case TypeId::Double:
-    case TypeId::TimeCode:
-      return 1;
-
-    // 2-component
-    case TypeId::Int2:
-    case TypeId::UInt2:
-    case TypeId::Half2:
-    case TypeId::Float2:
-    case TypeId::Double2:
-    case TypeId::Texcoord2h:
-    case TypeId::Texcoord2f:
-    case TypeId::Texcoord2d:
-      return 2;
-
-    // 3-component
-    case TypeId::Int3:
-    case TypeId::UInt3:
-    case TypeId::Half3:
-    case TypeId::Float3:
-    case TypeId::Double3:
-    case TypeId::Point3h:
-    case TypeId::Point3f:
-    case TypeId::Point3d:
-    case TypeId::Vector3h:
-    case TypeId::Vector3f:
-    case TypeId::Vector3d:
-    case TypeId::Normal3h:
-    case TypeId::Normal3f:
-    case TypeId::Normal3d:
-    case TypeId::Color3h:
-    case TypeId::Color3f:
-    case TypeId::Color3d:
-    case TypeId::Texcoord3h:
-    case TypeId::Texcoord3f:
-    case TypeId::Texcoord3d:
-      return 3;
-
-    // 4-component
-    case TypeId::Int4:
-    case TypeId::UInt4:
-    case TypeId::Half4:
-    case TypeId::Float4:
-    case TypeId::Double4:
-    case TypeId::Quath:
-    case TypeId::Quatf:
-    case TypeId::Quatd:
-    case TypeId::Color4h:
-    case TypeId::Color4f:
-    case TypeId::Color4d:
-    case TypeId::Matrix2f:
-    case TypeId::Matrix2d:
-      return 4;
-
-    // 9-component (3x3 matrix)
-    case TypeId::Matrix3f:
-    case TypeId::Matrix3d:
-      return 9;
-
-    // 16-component (4x4 matrix)
-    case TypeId::Matrix4f:
-    case TypeId::Matrix4d:
-    case TypeId::Frame4d:
-      return 16;
-
-    default:
-      return 0;
-  }
+  const TypeInfo* info = GetTypeInfo(id);
+  return info ? info->component_count : 0;
 }
 
 }  // namespace next

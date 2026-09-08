@@ -5,8 +5,9 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <memory>
+#include <type_traits>
+#include <utility>
 
 namespace lightusd {
 namespace next {
@@ -36,12 +37,22 @@ struct ExecutionOptions {
 // phases of a top-level operation.
 class TaskArena {
  public:
+  using TaskFn = void (*)(void* context, size_t index);
   explicit TaskArena(size_t max_threads);
   ~TaskArena();
   TaskArena(const TaskArena&) = delete;
   TaskArena& operator=(const TaskArena&) = delete;
 
-  void Run(size_t count, const std::function<void(size_t)>& task);
+  void Run(size_t count, void* context, TaskFn task);
+
+  template <typename Fn>
+  void Run(size_t count, Fn&& task) {
+    using Task = typename std::decay<Fn>::type;
+    Task local(std::forward<Fn>(task));
+    Run(count, &local, [](void* context, size_t index) {
+      (*static_cast<Task*>(context))(index);
+    });
+  }
   size_t max_threads() const;
 
  private:

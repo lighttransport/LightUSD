@@ -9,8 +9,9 @@
 #include "type-id.hh"
 #include <cstddef>
 #include <string>
-#include <unordered_map>
+#include "../core/string-index.hh"
 #include <vector>
+#include <utility>
 
 namespace lightusd {
 namespace next {
@@ -377,78 +378,26 @@ private:
 /// Recursive USD dictionary. Entries are kept in insertion order so the writer
 /// re-emits them exactly as authored. A value may itself be a Dictionary.
 struct Dict {
-  std::vector<std::pair<std::string, Value>> entries;
-  // key -> position in `entries`. Maintained by set() and lazily repaired when
-  // legacy callers mutate the public entries vector directly. The implicit
-  // copy/move ctors carry the order-based index with the entries. This makes
-  // normal find()/set() calls O(1) instead of a linear scan: building a d-key
-  // dict (USDA parse, or per-reference expression-variable compose) used to
-  // cost O(d^2) string compares -- a hostile 100k-key metadata block is a
-  // parse-time DoS.
-  std::unordered_map<std::string, size_t> index_;
+  const std::vector<std::pair<std::string, Value>>& entries() const { return entries_; }
+  Dict();
+  ~Dict();
+  Dict(const Dict& other);
+  Dict(Dict&& other) noexcept;
+  Dict& operator=(const Dict& other);
+  Dict& operator=(Dict&& other) noexcept;
 
-  const Value* find(const std::string& key) const {
-    auto it = index_.find(key);
-    if (it != index_.end() && it->second < entries.size() &&
-        entries[it->second].first == key) {
-      return &entries[it->second].second;
-    }
-    // `entries` remains public for source compatibility. If legacy callers
-    // mutate it directly, repair the index lazily instead of returning a
-    // stale result.
-    for (size_t i = 0; i < entries.size(); ++i) {
-      if (entries[i].first == key) return &entries[i].second;
-    }
-    return nullptr;
-  }
-  Value* find(const std::string& key) {
-    auto it = index_.find(key);
-    if (it != index_.end() && it->second < entries.size() &&
-        entries[it->second].first == key) {
-      return &entries[it->second].second;
-    }
-    for (size_t i = 0; i < entries.size(); ++i) {
-      if (entries[i].first == key) {
-        index_[key] = i;
-        return &entries[i].second;
-      }
-    }
-    return nullptr;
-  }
-  /// Replace the value for an existing key, or append a new entry.
-  void set(std::string key, Value v) {
-    auto it = index_.find(key);
-    if (it != index_.end() && it->second < entries.size() &&
-        entries[it->second].first == key) {
-      entries[it->second].second = std::move(v);
-    } else {
-      // A missing key with matching map/vector sizes is the normal insertion
-      // path. Avoid scanning the whole vector here, or bulk construction would
-      // regress to O(N^2). A size mismatch indicates direct legacy mutation and
-      // enables the compatibility fallback below.
-      if (it == index_.end() && index_.size() == entries.size()) {
-        index_[key] = entries.size();
-        entries.emplace_back(std::move(key), std::move(v));
-        return;
-      }
-      size_t found = entries.size();
-      for (size_t i = 0; i < entries.size(); ++i) {
-        if (entries[i].first == key) {
-          found = i;
-          break;
-        }
-      }
-      if (found != entries.size()) {
-        index_[key] = found;
-        entries[found].second = std::move(v);
-      } else {
-        index_[key] = entries.size();
-        entries.emplace_back(std::move(key), std::move(v));
-      }
-    }
-  }
-  size_t size() const { return entries.size(); }
-  bool empty() const { return entries.empty(); }
+  const Value* find(const std::string& key) const;
+  Value* find(const std::string& key);
+  /// Replace in place, or append while preserving insertion order.
+  void set(std::string key, Value v);
+  size_t size() const { return entries_.size(); }
+  bool empty() const { return entries_.empty(); }
+ private:
+  friend class Value;  // Iterative destruction moves out nested Values.
+  std::vector<std::pair<std::string, Value>> entries_;
+  // Keys live only in entries_. Index allocation failure uses a correct linear
+  // fallback; it cannot discard an authored value. Keys change only via set().
+  detail::StringIndex index_;
 };
 
 /// Linearly interpolate between two values for time-sample evaluation.

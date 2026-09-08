@@ -10,6 +10,7 @@
 #include "minijson.hh"
 
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <string>
 
@@ -18,6 +19,39 @@ using lightusd::minijson::Parse;
 using lightusd::minijson::ParseOptions;
 using lightusd::minijson::Serialize;
 using lightusd::minijson::Value;
+
+void minijson_shortest_double_roundtrip_test(void) {
+  TEST_CHECK(Value(0.1).dump() == "0.1");
+  TEST_CHECK(Value(-0.0).dump() == "-0");
+  const double edges[] = {
+      std::numeric_limits<double>::denorm_min(),
+      std::numeric_limits<double>::min(),
+      (std::numeric_limits<double>::max)(),
+      std::nextafter(1.0, 2.0), std::nextafter(1.0, 0.0),
+      1.2345678901234567, -1.2345678901234567};
+  auto check = [](double input) {
+    std::string text;
+    Error error;
+    TEST_CHECK(Serialize(Value(input), &text, &error));
+    Value parsed;
+    TEST_CHECK(Parse(text, &parsed, &error));
+    double output = 0;
+    TEST_CHECK(parsed.as_double(&output));
+    TEST_CHECK(std::memcmp(&input, &output, sizeof(input)) == 0);
+  };
+  for (double input : edges) check(input);
+  // Cover exponent ranges and rounding boundaries without relying on a
+  // platform-specific random distribution or decimal reference formatter.
+  uint64_t state = UINT64_C(0xa13628b5e04d79cf);
+  for (int i = 0; i < 4096; ++i) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    double input;
+    std::memcpy(&input, &state, sizeof(input));
+    if (std::isfinite(input) && input != 0.0) check(input);
+  }
+}
 
 void minijson_parse_basic_test(void) {
   const std::string src =

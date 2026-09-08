@@ -7,10 +7,35 @@ cmake_minimum_required(VERSION 3.10)
 
 # Define tydra/next source files
 set(TYDRA_NEXT_SOURCES
+    chunk-storage.cc
     render-data.cc
     scene-access.cc
     render-extract.cc
     render-converter.cc
+    render-converter-points.cc
+    render-converter-curves.cc
+    render-converter-tangents.cc
+    render-converter-topology.cc
+    render-converter-mesh-data.cc
+    render-converter-primvars.cc
+    render-converter-triangulate.cc
+    render-converter-mesh.cc
+    render-converter-preview.cc
+    render-converter-animation.cc
+  render-converter-lights.cc
+  render-converter-camera.cc
+  render-converter-material.cc
+  render-converter-physics.cc
+  render-converter-hierarchy.cc
+  render-converter-bindings.cc
+  render-converter-instancer.cc
+  render-converter-assembly.cc
+  render-converter-images.cc
+  render-converter-instance-meshes.cc
+  render-converter-generated.cc
+  render-converter-bounds.cc
+  render-converter-material-finalize.cc
+  render-converter-light-linking.cc
     render-session.cc
     texture-cache.cc
     materialx.cc

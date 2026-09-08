@@ -21,6 +21,7 @@ const NODE_TESTS = [
   ['next usdzconvert', 'tests/usdzconvert-next.test.mjs'],
   ['next-only usdzconvert', 'tests/usdzconvert-next-only.test.mjs'],
   ['next USDA composition', 'tests/next-usda-composition.test.mjs'],
+  ['next C dispatch', 'tests/next-c-dispatch.test.mjs'],
   ['variant selection overloads', 'tests/apply-variant-selection-overload.test.mjs'],
   ['usdcat CLI helpers', 'tests/usdcat-cli.test.mjs'],
   ['URDF/MJCF CLI', 'tests/urdf-to-usd-cli.test.mjs'],

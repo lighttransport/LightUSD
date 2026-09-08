@@ -283,8 +283,10 @@ ParseArgsResult ParseArgs(int argc, char** argv, Args* args,
     } else if (arg == "-v" || arg == "--verbose") {
       args->verbose = true;
     } else if (arg == "-d" || arg == "--dump-rules" || arg == "--dumpRules") {
-      for (const lightusd::next::ValidationRuleInfo& rule :
-           lightusd::next::GetValidationRuleTable()) {
+      size_t count = 0;
+      const auto* rules = lightusd::next::GetValidationRuleTable(&count);
+      for (size_t i = 0; i < count; ++i) {
+        const lightusd::next::ValidationRuleInfo& rule = rules[i];
         std::cout << "[" << rule.group << ":" << rule.id << "]:\n"
                   << "\tDoc: " << rule.doc << "\n";
       }
@@ -922,7 +924,7 @@ void CollectValueDependencies(
     return;
   }
   if (const lightusd::next::Dict* dict = value.as_dictionary()) {
-    for (const auto& entry : dict->entries) {
+    for (const auto& entry : dict->entries()) {
       CollectValueDependencies(entry.second, dependencies);
     }
   }
@@ -1141,8 +1143,8 @@ std::string MapComposedPath(const std::string& source_path,
 
 std::string PropertyTypeName(const lightusd::next::PrimSpec& prim,
                              const lightusd::next::PropSlot& slot) {
-  const std::string& name =
-      lightusd::next::GetPropNameTable().get(slot.name_id);
+  const std::string name(
+      lightusd::next::GetPropNameTable().get(slot.name_id));
   if (const std::string* declared = prim.property_type_name(name)) {
     if (!declared->empty()) return *declared;
   }
@@ -1166,8 +1168,8 @@ void CompareLayerTypes(const Layer& stronger, const Layer& weaker,
       const lightusd::next::PropSlot* strong_slot =
           strong_prim->property(weak_slot.name_id);
       if (!strong_slot) continue;
-      const std::string& property =
-          lightusd::next::GetPropNameTable().get(weak_slot.name_id);
+      const std::string property(
+          lightusd::next::GetPropNameTable().get(weak_slot.name_id));
       const bool weak_rel = weak_slot.is_relationship();
       const bool strong_rel = strong_slot->is_relationship();
       if (weak_rel != strong_rel) {

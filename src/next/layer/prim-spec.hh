@@ -20,6 +20,7 @@
 #include <deque>
 #include <memory>
 #include <map>
+#include <unordered_map>
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include <shared_mutex>
 #endif
@@ -77,7 +78,8 @@ private:
   // deque, not vector: get() returns a `const std::string&` that callers may
   // hold after the lock is released; deque never relocates on push_back.
   std::deque<std::string> names_;
-  std::unordered_map<std::string, uint16_t> name_to_id_;
+  detail::StringIndex name_to_id_;
+  TypeNameId find_live(const std::string& name) const;
 #if defined(LIGHTUSD_ENABLE_THREAD)
   mutable std::shared_mutex mu_;
 #endif
@@ -287,12 +289,12 @@ inline void MergeWeakerDictionaryValue(
     Frame& frame = stack.back();
     Dict* destination = frame.destination_value->as_dictionary();
     const Dict* source = frame.source_value->as_dictionary();
-    if (!destination || !source || frame.next_entry >= source->entries.size()) {
+    if (!destination || !source || frame.next_entry >= source->entries().size()) {
       stack.pop_back();
       continue;
     }
 
-    const auto& entry = source->entries[frame.next_entry++];
+    const auto& entry = source->entries()[frame.next_entry++];
     Value* existing = destination->find(entry.first);
     if (!existing) {
       destination->set(entry.first, entry.second);
@@ -1465,7 +1467,9 @@ private:
   // while storing only two uint32s per property instead of two strings — the
   // "string pooling" of the original low-memory plan (typeNames are highly
   // repeated, so interning collapses ~150k strings to a few dozen).
-  std::unordered_map<uint32_t, uint32_t> prop_type_names_;
+  // Declared type spellings are cold metadata. Keep their ordinary strings
+  // here instead of pinning them in the hot global property-name pool.
+  std::unordered_map<uint32_t, std::string> prop_type_names_;
 
   // Per-property metadata, keyed by interned PropNameId.id (lazily allocated, so
   // ordinary properties cost nothing). Same side-table pattern as
