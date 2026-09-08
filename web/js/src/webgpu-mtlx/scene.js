@@ -264,9 +264,9 @@ export function packScene(scene, { maxTriangles = 2_000_000 } = {}) {
     const uvSlot = Number.isInteger(materials[mat]?.uvIndex) && materials[mat].uvIndex >= 0 ? materials[mat].uvIndex : 0;
     const selectedUVs = uvSets?.[uvSlot] || uvs;
     const geompropNames = materials[mat]?.geompropNames || (materials[mat]?.geompropName ? [materials[mat].geompropName] : []);
-    const selectedGeomprops = geompropNames.slice(0, 3).map(name => geompropSets?.[name]);
+    const selectedGeomprops = geompropNames.slice(0, 8).map(name => geompropSets?.[name]);
     const geomprop = slot => ids.map(i => selectedGeomprops[slot] ? Array.from(selectedGeomprops[slot].slice(i * 4, i * 4 + 4)) : [0, 0, 0, 0]);
-    tris.push({ p, n: ids.map(i => normals ? Array.from(normals.slice(i * 3, i * 3 + 3)) : geometric), uv: ids.map(i => selectedUVs ? Array.from(selectedUVs.slice(i * 2, i * 2 + 2)) : [0, 0]), tangent: ids.map(i => tangents ? Array.from(tangents.slice(i * 4, i * 4 + 4)) : [0, 0, 0, 1]), geomprop: geomprop(0), geomprop1: geomprop(1), geomprop2: geomprop(2), color: ids.map(i => hasColors ? (colors.length === positions.length / 3 * 4 ? Array.from(colors.slice(i * 4, i * 4 + 4)) : [...colors.slice(i * 3, i * 3 + 3), 1]) : [0, 0, 0, 1]), mat, center: [0, 1, 2].map(k => (p[0][k] + p[1][k] + p[2][k]) / 3) });
+    tris.push({ p, n: ids.map(i => normals ? Array.from(normals.slice(i * 3, i * 3 + 3)) : geometric), uv: ids.map(i => selectedUVs ? Array.from(selectedUVs.slice(i * 2, i * 2 + 2)) : [0, 0]), tangent: ids.map(i => tangents ? Array.from(tangents.slice(i * 4, i * 4 + 4)) : [0, 0, 0, 1]), geomprops: Array.from({ length: 8 }, (_, slot) => geomprop(slot)), color: ids.map(i => hasColors ? (colors.length === positions.length / 3 * 4 ? Array.from(colors.slice(i * 4, i * 4 + 4)) : [...colors.slice(i * 3, i * 3 + 3), 1]) : [0, 0, 0, 1]), mat, center: [0, 1, 2].map(k => (p[0][k] + p[1][k] + p[2][k]) / 3) });
   }
   const nodes = [], ordered = [];
   function build(items) {
@@ -284,13 +284,13 @@ export function packScene(scene, { maxTriangles = 2_000_000 } = {}) {
   build(tris);
   const nodeData = new Float32Array(nodes.length * 12);
   nodes.forEach((n, i) => nodeData.set([...n.lo, n.first, ...n.hi, n.count, n.escape, 0, 0, 0], i * 12));
-  const triangleData = new Float32Array(ordered.length * 96);
+  const triangleData = new Float32Array(ordered.length * 156);
   let areaCDF=0;
   const emitters=materials.map(mayEmit);
   ordered.forEach((t, i) => {
     const area=.5*Math.hypot(...cross(sub(t.p[1],t.p[0]),sub(t.p[2],t.p[0]))),start=areaCDF;areaCDF=Math.fround(areaCDF+(emitters[t.mat]?area:0));
     if(!Number.isFinite(areaCDF))throw new Error('Triangle area CDF exceeds float32');
-    for (let v = 0; v < 3; v++) triangleData.set([...t.p[v], [start,areaCDF,area][v], ...t.n[v], 0, ...t.uv[v], t.mat, 0, ...t.color[v], ...t.tangent[v], ...t.geomprop[v], ...t.geomprop1[v], ...t.geomprop2[v]], i * 96 + v * 32);
+    for (let v = 0; v < 3; v++) triangleData.set([...t.p[v], [start,areaCDF,area][v], ...t.n[v], 0, ...t.uv[v], t.mat, 0, ...t.color[v], ...t.tangent[v], ...t.geomprops.flatMap(g => g[v])], i * 156 + v * 52);
   });
   return { nodeData, triangleData, triangleCount: ordered.length, nodeCount: nodes.length, bounds: nodes[0], camera: scene.camera, lighting: scene.lighting, materials, provenance: scene.provenance || {} };
 }

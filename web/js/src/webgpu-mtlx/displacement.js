@@ -12,12 +12,12 @@ export function refineDisplacementScene(scene, levels = 0, maxTriangles = 500_00
     if(!Number.isInteger(i)||i<0||i*3+2>=scene.positions.length)throw new Error('Invalid displacement index');
     const p=Array.from(scene.positions.slice(i*3,i*3+3)),n=scene.normals?Array.from(scene.normals.slice(i*3,i*3+3)):null,uvSet=scene.uvSets?.[scene.materials[mat]?.uvIndex||0],uv=uvSet?Array.from(uvSet.slice(i*2,i*2+2)):scene.uvs?Array.from(scene.uvs.slice(i*2,i*2+2)):[0,0],t=scene.tangents?.length===scene.positions.length/3*4?Array.from(scene.tangents.slice(i*4,i*4+4)):[0,0,0,1],color=scene.colors?.length===scene.positions.length/3*4?Array.from(scene.colors.slice(i*4,i*4+4)):scene.colors?.length===scene.positions.length/3*3?[...scene.colors.slice(i*3,i*3+3),1]:[0,0,0,1],geompropNames=scene.materials[mat]?.geompropNames||(scene.materials[mat]?.geompropName?[scene.materials[mat].geompropName]:[]),geomprop=slot=>geompropNames[slot]&&scene.geompropSets?.[geompropNames[slot]]?Array.from(scene.geompropSets[geompropNames[slot]].slice(i*4,i*4+4)):[0,0,0,0];
     if(![...p,...(n||[]),...uv,...t,...color].every(v=>Number.isFinite(v)&&Number.isFinite(Math.fround(v))))throw new Error('Invalid displacement geometry');
-    return {p,n,uv,t,color,geomprop:geomprop(0),geomprop1:geomprop(1),geomprop2:geomprop(2)};
+    return {p,n,uv,t,color,geomprops:Array.from({length:8},(_,slot)=>geomprop(slot))};
   }
-  const midpoint=(a,b)=>({p:a.p.map((v,k)=>(v+b.p[k])*.5),n:normalize(a.n.map((v,k)=>(v+b.n[k])*.5)),uv:a.uv.map((v,k)=>(v+b.uv[k])*.5),t:[...normalize(a.t.slice(0,3).map((v,k)=>(v+b.t[k])*.5)),a.t[3]>=0?1:-1],color:a.color.map((v,k)=>(v+b.color[k])*.5),geomprop:a.geomprop.map((v,k)=>(v+b.geomprop[k])*.5),geomprop1:a.geomprop1.map((v,k)=>(v+b.geomprop1[k])*.5),geomprop2:a.geomprop2.map((v,k)=>(v+b.geomprop2[k])*.5)});
+  const midpoint=(a,b)=>({p:a.p.map((v,k)=>(v+b.p[k])*.5),n:normalize(a.n.map((v,k)=>(v+b.n[k])*.5)),uv:a.uv.map((v,k)=>(v+b.uv[k])*.5),t:[...normalize(a.t.slice(0,3).map((v,k)=>(v+b.t[k])*.5)),a.t[3]>=0?1:-1],color:a.color.map((v,k)=>(v+b.color[k])*.5),geomprops:a.geomprops.map((g,slot)=>g.map((v,k)=>(v+b.geomprops[slot][k])*.5))});
   function triangle(a,b,c,mat,depth) {
     if(depth) {const ab=midpoint(a,b),bc=midpoint(b,c),ca=midpoint(c,a);triangle(a,ab,ca,mat,depth-1);triangle(ab,b,bc,mat,depth-1);triangle(ca,bc,c,mat,depth-1);triangle(ab,bc,ca,mat,depth-1);return;}
-    for(const v of [a,b,c]){result.indices.push(result.positions.length/3);result.positions.push(...v.p);result.normals.push(...v.n);result.uvs.push(...v.uv);result.tangents.push(...v.t);result.colors.push(...v.color);const names=scene.materials[mat]?.geompropNames||(scene.materials[mat]?.geompropName?[scene.materials[mat].geompropName]:[]);for(const name of Object.keys(result.geompropSets)) { const slot=names.indexOf(name); result.geompropSets[name].push(...(slot===0?v.geomprop:slot===1?v.geomprop1:slot===2?v.geomprop2:[0,0,0,0])); }}result.materialIds.push(mat);
+    for(const v of [a,b,c]){result.indices.push(result.positions.length/3);result.positions.push(...v.p);result.normals.push(...v.n);result.uvs.push(...v.uv);result.tangents.push(...v.t);result.colors.push(...v.color);const names=scene.materials[mat]?.geompropNames||(scene.materials[mat]?.geompropName?[scene.materials[mat].geompropName]:[]);for(const name of Object.keys(result.geompropSets)) { const slot=names.indexOf(name); result.geompropSets[name].push(...(slot>=0&&slot<8?v.geomprops[slot]:[0,0,0,0])); }}result.materialIds.push(mat);
   }
   for(let t=0;t<scene.indices.length/3;t++) {
     const mat=scene.materialIds?.[t]??0;if(!Number.isInteger(mat)||!scene.materials[mat])throw new Error('Invalid displacement material');
@@ -39,11 +39,11 @@ export async function bakeDisplacement(scene, device) {
     if(!['float','vector3'].includes(c.type))throw new Error('Displacement output must be float height or world-space vector3');
     return `fn displacement${i}(ctx:ShadingContext)->vec3f{${c.body}\nreturn ${c.type==='float'?`ctx.normal*${c.expression}`:c.expression};}`;
   }).join('\n');
-  const count=refined.positions.length/3,data=new Float32Array(count*32);
-  for(let i=0;i<count;i++){const mat=refined.materialIds[Math.floor(i/3)],names=scene.materials[mat]?.geompropNames||(scene.materials[mat]?.geompropName?[scene.materials[mat].geompropName]:[]),g=slot=>names[slot]&&refined.geompropSets?.[names[slot]]?.slice(i*4,i*4+4)||[0,0,0,0];data.set([...refined.positions.slice(i*3,i*3+3),0,...refined.normals.slice(i*3,i*3+3),0,...refined.uvs.slice(i*2,i*2+2),mat,0,...(refined.colors.length?refined.colors.slice(i*4,i*4+4):[0,0,0,1]),...(refined.tangents.length?refined.tangents.slice(i*4,i*4+4):[0,0,0,1]),...g(0),...g(1),...g(2)],i*32);}
+  const count=refined.positions.length/3,data=new Float32Array(count*52);
+  for(let i=0;i<count;i++){const mat=refined.materialIds[Math.floor(i/3)],names=scene.materials[mat]?.geompropNames||(scene.materials[mat]?.geompropName?[scene.materials[mat].geompropName]:[]),g=slot=>names[slot]&&refined.geompropSets?.[names[slot]]?.slice(i*4,i*4+4)||[0,0,0,0];data.set([...refined.positions.slice(i*3,i*3+3),0,...refined.normals.slice(i*3,i*3+3),0,...refined.uvs.slice(i*2,i*2+2),mat,0,...(refined.colors.length?refined.colors.slice(i*4,i*4+4):[0,0,0,1]),...(refined.tangents.length?refined.tangents.slice(i*4,i*4+4):[0,0,0,1]),...Array.from({length:8},(_,slot)=>g(slot)).flat()],i*52);}
   if(data.byteLength>device.limits.maxStorageBufferBindingSize)throw new Error('Displacement vertices exceed WebGPU buffer limit');
   const module=device.createShaderModule({code:`${contextWGSL}\n${imageWGSL}\n${functions}
-    struct BakeVertex {p:vec4f,n:vec4f,uv:vec4f,color:vec4f,tangent:vec4f,geomprop:vec4f,geomprop1:vec4f,geomprop2:vec4f}
+    struct BakeVertex {p:vec4f,n:vec4f,uv:vec4f,color:vec4f,tangent:vec4f,geomprop:vec4f,geomprop1:vec4f,geomprop2:vec4f,geomprop3:vec4f,geomprop4:vec4f,geomprop5:vec4f,geomprop6:vec4f,geomprop7:vec4f}
     @group(0) @binding(0) var<storage,read> source:array<BakeVertex>;
     @group(0) @binding(1) var<storage,read_write> result:array<vec4f>;
     @compute @workgroup_size(64) fn bake(@builtin(global_invocation_id) id:vec3u){
@@ -52,7 +52,7 @@ export async function bakeDisplacement(scene, device) {
       let frame=mxSurfaceFrame(n,b.p.xyz-a.p.xyz,c.p.xyz-a.p.xyz,b.uv.xy-a.uv.xy,c.uv.xy-a.uv.xy);
       let derivatives=mxSurfaceDerivatives(n,b.p.xyz-a.p.xyz,c.p.xyz-a.p.xyz,b.uv.xy-a.uv.xy,c.uv.xy-a.uv.xy);
       let hasT=length(v.tangent.xyz)>1e-5;let t=safeNormal(v.tangent.xyz-n*dot(n,v.tangent.xyz),frame[0]);let handed=select(1.0,select(-1.0,1.0,v.tangent.w>=0.0),hasT);let bt=select(frame[1],normalize(cross(n,t))*handed,hasT);
-      let ctx=ShadingContext(v.p.xyz,n,select(frame[0],t,hasT),bt,v.uv.xy,0,0,vec2f(0),vec2f(0),derivatives[0],derivatives[1],vec3f(0,0,1),v.color,v.geomprop,v.geomprop1,v.geomprop2);var d=vec3f(0);
+      let ctx=ShadingContext(v.p.xyz,n,select(frame[0],t,hasT),bt,v.uv.xy,0,0,vec2f(0),vec2f(0),derivatives[0],derivatives[1],vec3f(0,0,1),v.color,v.geomprop,v.geomprop1,v.geomprop2,v.geomprop3,v.geomprop4,v.geomprop5,v.geomprop6,v.geomprop7);var d=vec3f(0);
       switch u32(v.uv.z){${scene.materials.map((_,i)=>`case ${i}u:{d=displacement${i}(ctx);}`).join('')}default:{}}
       result[id.x]=vec4f(v.p.xyz+d,0);
     }`});

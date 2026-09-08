@@ -56,7 +56,7 @@ export function materialGeompropNames(document) {
     const name = raw.toLowerCase().replace(/[_-]/g, '');
     return standard.has(name) || /^(?:uv|uvset)[0-9]+$/.test(name) ? [] : [raw];
   }))];
-  if (names.length > 3) throw new Error(`Material graph uses more than three custom geometry properties: ${names.join(', ')}`);
+  if (names.length > 8) throw new Error(`Material graph uses more than eight custom geometry properties: ${names.join(', ')}`);
   return names;
 }
 /** Return the first custom geometry property for compatibility with older callers. */

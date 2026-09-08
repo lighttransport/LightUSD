@@ -97,10 +97,11 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   raster and path shading; scene packing, displacement refinement, and authored
   mesh extraction preserve the interpolated channel. Nonzero color indices fail
   explicitly until additional primvar streams are available. One authored
-  float/vector2/vector3/vector4/color3/color4 custom geomprop channel is now snapshotted from
-  composed mesh primvars, carried through the packed vertex ABI, and exposed to
-  matching MaterialX `geompropvalue` readers; multiple custom channels and
-  unsupported interpolation/types remain diagnosed or use the graph fallback.
+  float/vector2/vector3/vector4/color3/color4 custom geomprop channels are now
+  snapshotted from composed mesh primvars, carried through the packed vertex ABI,
+  and exposed to matching MaterialX `geompropvalue` readers; more than eight
+  channels and unsupported interpolation/types remain diagnosed or use the graph
+  fallback.
 - Authored tangent streams are decoded from native packed or float formats,
   carried through the WebGPU triangle buffer and displacement bake, and used
   for MaterialX tangent/bitangent inputs with derivative frames as fallback.
@@ -126,7 +127,7 @@ Full MaterialX coverage; general BSDF/EDF/VDF closure composition/layering;
 measured IES EDF profiles and authored light shader constructors;
 MaterialX subsurface_bsdf albedo/radius conversion; hair and curves;
 arbitrary authored primvar/shading-property maps beyond the supported geometry
-aliases, UV slots, and three bounded custom geomprop channels;
+aliases, UV slots, and eight bounded custom geomprop channels;
 Catmull-Clark displacement refinement; faithful authored ShaderBall material
 graphs and full-resolution map storage;
 broad independent physical reference-image validation; complete ACEScg graph color management.

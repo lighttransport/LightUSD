@@ -69,7 +69,7 @@ export function parseMaterialX(xml, { source = '', parser = globalThis.DOMParser
 
 /** Compile a normalized graph. Connections are {nodename, output} or {nodegraph, output}. */
 export function compileGraph(document, { output, library = {}, material = false, imageDescriptors = {}, uvIndex = 0, geompropName = '', geompropNames = undefined } = {}) {
-  const customGeompropNames = (geompropNames ?? (geompropName ? [geompropName] : [])).slice(0, 3).map(name => String(name).toLowerCase().replace(/[_-]/g, ''));
+  const customGeompropNames = (geompropNames ?? (geompropName ? [geompropName] : [])).slice(0, 8).map(name => String(name).toLowerCase().replace(/[_-]/g, ''));
   const customGeomprop = name => { const slot = customGeompropNames.indexOf(name); return slot < 0 ? null : `ctx.geomprop${slot ? slot : ''}`; };
   const rawDefinitions = Object.assign(Object.create(null), library.definitions, document.definitions), definitions = Object.create(null);
   function inherit(name, chain = new Set()) {
@@ -1161,7 +1161,7 @@ export function compileGraph(document, { output, library = {}, material = false,
   return { body: lines.join('\n'), expression: value.code, type: value.type, categories: [...used].sort(), hasInterior:value.hasInterior||false,interiorCategories:value.interiorCategories||[],diagnostics: [], referenceReady: false };
 }
 
-export const contextWGSL = `struct ShadingContext { position: vec3f, normal: vec3f, tangent: vec3f, bitangent: vec3f, uv: vec2f, time: f32, frame: f32, uvDx: vec2f, uvDy: vec2f, dpdu:vec3f, dpdv:vec3f, viewdir:vec3f, geomcolor:vec4f, geomprop:vec4f, geomprop1:vec4f, geomprop2:vec4f }
+export const contextWGSL = `struct ShadingContext { position: vec3f, normal: vec3f, tangent: vec3f, bitangent: vec3f, uv: vec2f, time: f32, frame: f32, uvDx: vec2f, uvDy: vec2f, dpdu:vec3f, dpdv:vec3f, viewdir:vec3f, geomcolor:vec4f, geomprop:vec4f, geomprop1:vec4f, geomprop2:vec4f, geomprop3:vec4f, geomprop4:vec4f, geomprop5:vec4f, geomprop6:vec4f, geomprop7:vec4f }
 fn mxOffsetContext(ctx:ShadingContext,delta:vec2f)->ShadingContext {
   var shifted=ctx;shifted.uv+=delta;shifted.position+=ctx.dpdu*delta.x+ctx.dpdv*delta.y;return shifted;
 }

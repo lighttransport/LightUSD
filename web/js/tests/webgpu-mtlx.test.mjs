@@ -180,9 +180,9 @@ test('layered medium bounds follow interior dependencies, not unrelated surface 
 });
 test('emission sampling excludes proven dark surfaces but retains unknown and spectral emitters',()=>{
   const scene=syntheticScene();assert.equal(mayEmit(scene.materials[0]),false);
-  const packed=packScene(scene);assert.equal(packed.triangleData[(packed.triangleCount-1)*96+27],0);
+  const packed=packScene(scene);assert.equal(packed.triangleData[(packed.triangleCount-1)*156+27],0);
   scene.materials[1].nodes[0].inputs.emission={type:'float',value:1};assert.equal(mayEmit(scene.materials[1]),true);
-  assert.ok(packScene(scene).triangleData[(packed.triangleCount-1)*96+35]>0);
+  assert.ok(packScene(scene).triangleData[(packed.triangleCount-1)*156+55]>0);
   assert.equal(mayEmit({nodes:[{name:'custom',category:'custom'}]}),true);
   const doc=syntheticScene().materials[1];doc.spectra={emission_color:[[360,1],[830,1]]};assert.equal(mayEmit(doc),true);
 });
@@ -815,6 +815,9 @@ test('custom geometry properties select one bounded authored channel', () => {
   const multiGeomprop = {nodes:[{name:'a',category:'geompropvalue',type:'float',inputs:{geomprop:{type:'string',value:'temperature'}}},{name:'b',category:'geompropvalue',type:'float',inputs:{geomprop:{type:'string',value:'mask'}}}]};
   assert.match(compileGraph(multiGeomprop,{output:{nodename:'a'},geompropNames:['temperature','mask']}).body,/ctx\.geomprop\.r/);
   assert.match(compileGraph(multiGeomprop,{output:{nodename:'b'},geompropNames:['temperature','mask']}).body,/ctx\.geomprop1\.r/);
+  const extendedNames=Array.from({length:8},(_,i)=>`weight${i}`);
+  const extended={nodes:[{name:'w',category:'geompropvalue',type:'vector4',inputs:{geomprop:{type:'string',value:'weight7'}}}],output:{nodename:'w'}};
+  assert.match(compileGraph(extended,{geompropNames:extendedNames}).body,/ctx\.geomprop7\.rgba/);
   assert.deepEqual(materialGeompropNames(multiGeomprop), ['temperature','mask']);
   assert.deepEqual(materialGeompropNames({ nodes: [
     { category: 'geompropvalue', type: 'float', inputs: { geomprop: { type: 'string', value: 'temperatureA' } } },
@@ -1192,7 +1195,7 @@ test('BVH escape links progress, leaves cover every triangle exactly once', () =
     for (let k = 0; k < 3; k++) assert.ok(n[k] <= n[k + 4]);
   }
   assert.equal(leaves, scene.indices.length / 3);
-  assert.equal(packed.triangleData.length, leaves * 96);
+  assert.equal(packed.triangleData.length, leaves * 156);
   const colored={...scene,colors:new Array(scene.positions.length/3*4).fill(0).map((v,i)=>i%4===0?1:i%4===3?1:0)};
   assert.deepEqual(Array.from(packScene(colored).triangleData.slice(12,16)),[1,0,0,1]);
 });
