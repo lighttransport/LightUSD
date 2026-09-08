@@ -852,6 +852,30 @@ export function compileGraph(document, { output, library = {}, material = false,
             : (udim ? `imageSampleUDIM(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${grid},${lod},${filter === 'linear'},${fill})` : `imageSample(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${filter === 'linear'},${fill})`);
           code = normalMap(`${sample}.rgb`); break;
         }
+        case 'gltf_iridescence_thickness': {
+          if (type !== 'float') fail('TYPE', key, 'gltf_iridescence_thickness output must be float');
+          const wrapperInputs = new Set(['thicknessMin', 'thicknessMax']);
+          const imageInputs = Object.fromEntries(Object.entries(ins).filter(([name]) => !wrapperInputs.has(name)));
+          const imageNode = { ...n, name: `${n.name || key}_image`, category: 'gltf_image', type: 'vector3', inputs: imageInputs, outputs: undefined, nodedef: undefined, version: undefined };
+          const nested = compileGraph({ nodes: [imageNode] }, { output: { nodename: imageNode.name }, imageDescriptors, uvIndex, geompropName });
+          const prefix = `gltfit${serial++}_`, rename = source => source.replace(/\bn\d+\b/g, match => `${prefix}${match}`);
+          if (nested.body) lines.push(rename(nested.body));
+          const image = rename(nested.expression);
+          code = `mix(${x('thicknessMin',100,'float')},${x('thicknessMax',400,'float')},clamp(${image}.g,0.0,1.0))`;
+          break;
+        }
+        case 'gltf_anisotropy_image': {
+          if (!['anisotropy_strength_out', 'anisotropy_rotation_out'].includes(out)) fail('OUTPUT', key, 'gltf_anisotropy_image output must be anisotropy_strength_out or anisotropy_rotation_out');
+          const wrapperInputs = new Set(['anisotropy_strength', 'anisotropy_rotation']);
+          const imageInputs = Object.fromEntries(Object.entries(ins).filter(([name]) => !wrapperInputs.has(name)));
+          const imageNode = { ...n, name: `${n.name || key}_image`, category: 'gltf_image', type: 'vector3', inputs: imageInputs, outputs: undefined, nodedef: undefined, version: undefined };
+          const nested = compileGraph({ nodes: [imageNode] }, { output: { nodename: imageNode.name }, imageDescriptors, uvIndex, geompropName });
+          const prefix = `gltfani${serial++}_`, rename = source => source.replace(/\bn\d+\b/g, match => `${prefix}${match}`);
+          if (nested.body) lines.push(rename(nested.body));
+          const image = rename(nested.expression), strength = `${x('anisotropy_strength',1,'float')}*${image}.b`, rotation = `${x('anisotropy_rotation',0,'float')}+atan2(${image}.g*2.0-1.0,${image}.r*2.0-1.0)`;
+          code = out === 'anisotropy_strength_out' ? strength : rotation;
+          break;
+        }
         case 'gltf_colorimage': {
           if (!['outcolor', 'outa'].includes(out)) fail('OUTPUT', key, 'gltf_colorimage output must be outcolor or outa');
           const imageInputs = Object.fromEntries(Object.entries(ins).filter(([name]) => !['color', 'geomcolor'].includes(name)));

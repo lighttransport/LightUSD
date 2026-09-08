@@ -469,6 +469,20 @@ test('gltf_colorimage preserves RGB and alpha outputs', () => {
   assert.match(compileGraph(doc, { output: { nodename: 'color', output: 'outcolor' }, imageDescriptors: descriptor, library }).body, /imageSample\(/);
   assert.match(compileGraph(doc, { output: { nodename: 'color', output: 'outa' }, imageDescriptors: descriptor, library }).body, /\.a/);
 });
+test('gltf texture utility nodes preserve authored channel mappings', () => {
+  const descriptor = { tex: { offset: 0, width: 2, height: 2, levels: 1, colorspace: 'raw' } };
+  const thickness = { name: 'thickness', category: 'gltf_iridescence_thickness', type: 'float', inputs: {
+    file: { type: 'filename', value: 'tex' }, thicknessMin: { type: 'float', value: 100 }, thicknessMax: { type: 'float', value: 400 }
+  } };
+  const compiledThickness = compileGraph({ nodes: [thickness] }, { imageDescriptors: descriptor });
+  assert.match(compiledThickness.body, /mix\(100\.0,400\.0,clamp\(gltfit\d+_n0\.g/);
+  const anisotropy = { name: 'anisotropy', category: 'gltf_anisotropy_image', type: 'multioutput', outputs: { anisotropy_strength_out: { type: 'float' }, anisotropy_rotation_out: { type: 'float' } }, inputs: {
+    file: { type: 'filename', value: 'tex' }, anisotropy_strength: { type: 'float', value: .5 }, anisotropy_rotation: { type: 'float', value: .25 }
+  } };
+  const anisotropyDoc = { nodes: [anisotropy] };
+  assert.match(compileGraph(anisotropyDoc, { output: { nodename: 'anisotropy', output: 'anisotropy_strength_out' }, imageDescriptors: descriptor }).body, /0\.5\*gltfani\d+_n0\.b/);
+  assert.match(compileGraph(anisotropyDoc, { output: { nodename: 'anisotropy', output: 'anisotropy_rotation_out' }, imageDescriptors: descriptor }).body, /atan2\(gltfani\d+_n0\.g\*2\.0-1\.0,gltfani\d+_n0\.r\*2\.0-1\.0\)/);
+});
 test('UsdUVTexture maps st/fallback/scale/bias and named channel outputs', () => {
   const doc={images:{tex:{width:2,height:2,data:[1,0,0,1],colorspace:'raw'}},nodes:[{name:'tex',category:'UsdUVTexture',type:'multioutput',outputs:{rgb:{type:'color3'},r:{type:'float'}},inputs:{file:{type:'filename',value:'tex'},st:{type:'vector2',value:[.25,.5]},fallback:{type:'color4',value:[.1,.2,.3,1]},scale:{type:'color4',value:[2,2,2,1]},bias:{type:'color4',value:[.1,0,0,0]}}}]};
   const descriptor={tex:{offset:0,width:2,height:2,levels:1,colorspace:'raw'}};

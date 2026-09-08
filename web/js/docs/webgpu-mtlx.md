@@ -345,6 +345,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   the authored tangent basis with the same UV transform controls.
 - `gltf_colorimage` preserves the glTF color and geometry modulation inputs and
   exposes authored RGB and alpha outputs.
+- `gltf_iridescence_thickness` and `gltf_anisotropy_image` preserve their
+  authored channel extraction and utility output mappings.
 - Image nodes now support MaterialX `filtertype="cubic"` through a bounded
   16-tap cubic sampler with trilinear mip selection.
 - `triplanarprojection` now resolves three image resources, projects them on
