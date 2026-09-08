@@ -239,6 +239,12 @@ test('authored point lights become bounded emissive geometry', () => {
   assert.equal(r.materials[0].twoSidedEmission,true);
   assert.throws(()=>appendRectLights(scene,[{type:'point',position:[0,0,0],radius:0}]),/radius must be positive/);
 });
+test('authored sphere lights preserve finite emitter geometry', () => {
+  const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
+  const r=appendRectLights(scene,[{type:'sphere',position:[-1,0,2],radius:1,intensity:2,color:[.2,.4,.8]}]);
+  assert.equal(r.positions.length,18);assert.equal(r.provenance.pointLights[0].type,'sphere');
+  assert.equal(r.provenance.pointLights[0].worldArea,4*Math.sqrt(3));
+});
 test('resource fetch enforces streaming budgets and HTTP errors',async()=>{
   const fetcher=async()=>new Response(new Uint8Array([1,2,3,4]));
   assert.deepEqual(await fetchResource('test',{fetcher,maxBytes:4}),new Uint8Array([1,2,3,4]));
