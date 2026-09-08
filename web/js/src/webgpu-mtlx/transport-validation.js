@@ -51,7 +51,8 @@ export async function validateTransportKernels(device) {
     { name: 'surface', category: 'surface', type: 'surfaceshader', inputs: { bsdf: { nodename: 'switchedTop' } } },
   ], mediumOutput: { nodename: 'switchedMedium' }, output: { nodename: 'surface' } };
   const coatDocument = syntheticScene('coat').materials[1];
-  const module = device.createShaderModule({ code: shaderSource([surfaceDocument(), nestedLayer, volumeComposition, coatDocument]) + `
+  const previewCoatDocument = { nodes: [{ name: 'preview', category: 'UsdPreviewSurface', type: 'surfaceshader', inputs: { diffuseColor: { type: 'color3', value: [.3, .15, .05] }, clearcoat: { type: 'float', value: .5 }, clearcoatRoughness: { type: 'float', value: .08 } } }], output: { nodename: 'preview' } };
+  const module = device.createShaderModule({ code: shaderSource([surfaceDocument(), nestedLayer, volumeComposition, coatDocument, previewCoatDocument]) + `
     @group(0) @binding(9) var<storage,read_write> checks: array<vec4f>;
     @compute @workgroup_size(1) fn validateTransport() {
       ${analytic.map(([,expr], i) => `checks[${i}]=vec4f(${expr},0,0,0);`).join('\n')}
