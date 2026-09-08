@@ -332,7 +332,12 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'modulo': code = `(${same('in1')} - ${same('in2')} * floor(${same('in1')} / ${same('in2')}))`; break;
         case 'power': case 'min': case 'max': code = `${n.category === 'power' ? 'pow' : n.category}(${same('in1')},${scalarOrSame('in2')})`; break;
         case 'safepower': { const base=same('in1'), exponent=scalarOrSame('in2'); code=`(sign(${base})*pow(abs(${base}),${exponent}))`; break; }
-        case 'absval': case 'sign': case 'floor': case 'ceil': case 'round': case 'sqrt': case 'ln': case 'exp': case 'exp2': case 'sin': case 'cos': case 'tan': case 'asin': case 'acos': case 'atan': case 'normalize': code = `${({ absval: 'abs', ln: 'log' })[n.category] || n.category}(${same('in')})`; break;
+        case 'absval': case 'sign': case 'floor': case 'ceil': case 'round': case 'sqrt': case 'ln': case 'exp': case 'exp2': case 'sin': case 'cos': case 'tan': case 'asin': case 'acos': case 'atan': code = `${({ absval: 'abs', ln: 'log' })[n.category] || n.category}(${same('in')})`; break;
+        case 'normalize': {
+          const value = x('in', undefined, type), fallback = widths[type] === 2 ? 'vec2f(0.0,1.0)' : widths[type] === 3 ? 'vec3f(0.0,0.0,1.0)' : 'vec4f(0.0,0.0,0.0,1.0)';
+          if (![2, 3, 4].includes(widths[type])) fail('TYPE', key, 'normalize requires a vector input');
+          code = `mxSafeNormalize${widths[type]}(${value},${fallback})`; break;
+        }
         case 'log10': code=`log(${same('in')})*0.4342944819032518`; break;
         case 'radians': code=`${same('in')}*0.017453292519943295`; break;
         case 'degrees': code=`${same('in')}*57.29577951308232`; break;
@@ -639,6 +644,15 @@ fn mxNoise3(p:vec3f)->f32 {
   return mix(x0,x1,u.z);
 }
 fn safeNormal(v:vec3f,fallback:vec3f)->vec3f {
+  let l2=dot(v,v); let valid=l2>1e-20 && all(v==v);
+  return select(fallback,v*inverseSqrt(max(l2,1e-20)),valid);
+}
+fn mxSafeNormalize2(v:vec2f,fallback:vec2f)->vec2f {
+  let l2=dot(v,v); let valid=l2>1e-20 && all(v==v);
+  return select(fallback,v*inverseSqrt(max(l2,1e-20)),valid);
+}
+fn mxSafeNormalize3(v:vec3f,fallback:vec3f)->vec3f { return safeNormal(v,fallback); }
+fn mxSafeNormalize4(v:vec4f,fallback:vec4f)->vec4f {
   let l2=dot(v,v); let valid=l2>1e-20 && all(v==v);
   return select(fallback,v*inverseSqrt(max(l2,1e-20)),valid);
 }

@@ -206,6 +206,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   `hsvadjust` now compile with typed ports and bounded alpha/value handling.
   `hsvadjust` follows the MaterialX `amount` vector3 contract and preserves
   color4 alpha; unpremultiplication clamps its divisor before WGSL selection.
+- `normalize` uses finite fallback directions for vector2, vector3 and vector4
+  inputs, preventing zero or non-finite authored values from propagating NaNs.
 - `saturate` performs the specified luma interpolation with authored
   coefficients and preserves color4 alpha.
 - Supplemental `safepower` preserves the sign of negative bases while applying

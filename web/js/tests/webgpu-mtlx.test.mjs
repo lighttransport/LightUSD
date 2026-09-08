@@ -446,6 +446,13 @@ test('fresnel and facing-ratio nodes compile with safe vector normalization', ()
   ]};
   const source=compileGraph(doc); assert.match(source.body,/pow\(\(1\.5-1\.0\)/); assert.match(source.body,/normalize\(n1\)/);
 });
+test('normalize uses finite fallbacks for vector widths', () => {
+  const v2=compileGraph({nodes:[{name:'n',category:'normalize',type:'vector2',inputs:{in:{type:'vector2',value:[0,0]}}}]});
+  assert.match(v2.body,/mxSafeNormalize2\(vec2f\(0\.0,0\.0\),vec2f\(0\.0,1\.0\)\)/);
+  const v4=compileGraph({nodes:[{name:'n',category:'normalize',type:'vector4',inputs:{in:{type:'vector4',value:[1,2,3,4]}}}]});
+  assert.match(v4.body,/mxSafeNormalize4/); assert.match(contextWGSL,/fn mxSafeNormalize4/);
+  assert.throws(()=>compileGraph({nodes:[{name:'n',category:'normalize',type:'float',inputs:{in:{type:'float',value:1}}}]}),/requires a vector/);
+});
 test('luminance and average nodes preserve explicit component semantics', () => {
   const doc={nodes:[
     {name:'color',category:'constant',type:'color3',inputs:{value:{type:'color3',value:[1,.5,0]}}},
