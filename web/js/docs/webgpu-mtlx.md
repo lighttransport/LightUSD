@@ -221,7 +221,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   ports for graph control expressions.
 - `tiledimage` accepts the validated single-tile resource path, applies static
   `uvtiling` multipliers and `uvoffset` subtraction; paired static
-  `realworldimagesize`/`realworldtilesize` values add their UV ratio, while
+  `realworldimagesize`/`realworldtilesize` values add their UV ratio, and that
+  effective scale is also included in derivative-based mip LOD selection;
   unpaired values and UDIM expansion remain explicit unsupported diagnostics.
 - Image nodes now support MaterialX `filtertype="cubic"` through a bounded
   16-tap cubic sampler with trilinear mip selection.

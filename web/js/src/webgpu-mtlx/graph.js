@@ -290,12 +290,13 @@ export function compileGraph(document, { output, library = {}, material = false,
           const filter = ins.filtertype?.value ?? 'linear';
           if (!['closest', 'linear', 'cubic'].includes(filter) || ins.filtertype?.nodename || ins.filtertype?.interfacename || ins.filtertype?.nodegraph) fail('UNSUPPORTED', key, 'only static closest/linear/cubic image filters are implemented');
           const uvBase = ins.texcoord ? x('texcoord', undefined, 'vector2') : 'ctx.uv';
-          const uvTiled = `(${uvBase}*${ins.uvtiling ? x('uvtiling',[1,1],'vector2') : 'vec2f(1.0)'}*${realScale})`;
+          const uvScale = ins.uvtiling || realScale !== 'vec2f(1.0)' ? `(${ins.uvtiling ? x('uvtiling',[1,1],'vector2') : 'vec2f(1.0)'}*${realScale})` : 'vec2f(1.0)';
+          const uvTiled = `(${uvBase}*${uvScale})`;
           const uv = ins.uvoffset ? `(${uvTiled}-${x('uvoffset',[0,0],'vector2')})` : uvTiled;
           const fill = widths[type] === 4 ? fallback : widths[type] === 3 ? `vec4f(${fallback},0)` : widths[type] === 2 ? `vec4f(${fallback},0,0)` : `vec4f(${fallback})`;
           const swizzle = ({ float: 'r', vector2: 'rg', vector3: 'rgb', color3: 'rgb', vector4: 'rgba', color4: 'rgba' })[type];
           const size = `vec2f(${descriptor.width}.0,${descriptor.height}.0)`;
-          const lodScale = ins.uvtiling ? x('uvtiling',[1,1],'vector2') : 'vec2f(1.0)';
+          const lodScale = uvScale;
           const lod = `log2(max(1.0,max(length(ctx.uvDx*${size}*${lodScale}),length(ctx.uvDy*${size}*${lodScale}))))`;
           const sample = filter === 'cubic'
             ? `imageSampleCubic(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${fill})`

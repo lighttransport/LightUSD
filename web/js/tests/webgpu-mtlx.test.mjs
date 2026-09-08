@@ -566,10 +566,10 @@ test('tiledimage compiles the validated single-tile resource path', () => {
   const descriptor={tile:{offset:0,width:1,height:1,levels:1,colorspace:'raw'}};
   const source=compileGraph(doc,{imageDescriptors:descriptor}); assert.match(source.body,/imageSample\(0u/);
   const tiled=compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,uvtiling:{type:'vector2',value:[2,1]}}}]},{imageDescriptors:descriptor});
-  assert.match(tiled.body,/ctx\.uv\*vec2f\(2\.0,1\.0\)\*vec2f\(1\.0\)/);
-  assert.match(tiled.body,/ctx\.uvDx\*vec2f\(1\.0,1\.0\)\*vec2f\(2\.0,1\.0\)/);
+  assert.match(tiled.body,/ctx\.uv\*\(vec2f\(2\.0,1\.0\)\*vec2f\(1\.0\)\)/);
+  assert.match(tiled.body,/ctx\.uvDx\*vec2f\(1\.0,1\.0\)\*\(vec2f\(2\.0,1\.0\)\*vec2f\(1\.0\)\)/);
   const offset=compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,uvoffset:{type:'vector2',value:[.25,.5]}}}]},{imageDescriptors:descriptor});
-  assert.match(offset.body,/ctx\.uv\*vec2f\(1\.0,1\.0\)\*vec2f\(1\.0\)\)-vec2f\(0\.25,0\.5\)/);
+  assert.match(offset.body,/ctx\.uv\*\(vec2f\(1\.0,1\.0\)\*vec2f\(1\.0\)\)\)-vec2f\(0\.25,0\.5\)/);
   const real=compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,realworldimagesize:{type:'vector2',value:[2,1]},realworldtilesize:{type:'vector2',value:[1,1]}}}]},{imageDescriptors:descriptor});
   assert.match(real.body,/vec2f\(2\.0,1\.0\)/);
   assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,realworldimagesize:{type:'vector2',value:[2,1]}}}]},{imageDescriptors:descriptor}),/paired static/);
