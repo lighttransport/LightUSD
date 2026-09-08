@@ -69,6 +69,10 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 - USD preview `UsdPrimvarReader` resolves standard UV/geometry names with typed
   fallbacks, and `UsdTransform2d` applies scale, degree rotation, and translation.
   The image-node checker demo requires no downloaded textures.
+- `geomcolor` reads the normalized primary RGBA geometry-color stream in both
+  raster and path shading; scene packing, displacement refinement, and authored
+  mesh extraction preserve the interpolated channel. Nonzero color indices fail
+  explicitly until additional primvar streams are available.
 - Worker-built median triangle BVH, stackless compute traversal, per-hit UV/value
   evaluation, GGX/diffuse RGB path preview with progressive accumulation and a
   12-bounce limit. The preview uses a procedural sky and directional light.
