@@ -13,7 +13,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
 export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'saturate', 'contrast', 'premult', 'unpremult', 'ramp4', 'triplanarprojection', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'UsdPreviewSurface', 'surface_unlit', 'surfacematerial', 'surface']);
-for(const category of ['transformmatrix','normalmap','bump3','heighttonormal','rotate3d','reorder','fractal2d','fractal3d','worleynoise2d','worleynoise3d','latlongimage','splitlr','splittb','ramp','ramp_gradient','ramplr','ramptb','checkerboard','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d'])valueCategories.add(category);
+for(const category of ['transformmatrix','normalmap','bump3','heighttonormal','rotate3d','reorder','fractal2d','fractal3d','worleynoise2d','worleynoise3d','latlongimage','splitlr','splittb','ramp','ramp_gradient','ramplr','ramptb','checkerboard','line','circle','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
 export function literal(type, value, path = '') {
   if(value===''&&type==='BSDF')return 'emptyClosure()';
@@ -364,6 +364,15 @@ export function compileGraph(document, { output, library = {}, material = false,
           const uv=x('texcoord',[0,0],'vector2'), tiling=x('uvtiling',[8,8],'vector2'), offset=x('uvoffset',[0,0],'vector2'), c1=x('color1',[1,1,1],'color3'), c2=x('color2',[0,0,0],'color3');
           const point=`(${uv}*${tiling}+${offset})`, even=`fract((floor(${point}.x)+floor(${point}.y))*0.5)<0.5`;
           code=`select(${c2},${c1},${even})`; break;
+        }
+        case 'circle': {
+          const uv=x('texcoord',[0,0],'vector2'), center=x('center',[0,0],'vector2'), radius=x('radius',.5,'float');
+          code=`select(0.0,1.0,distance(${uv},${center})<=max(0.0,${radius}))`; break;
+        }
+        case 'line': {
+          const uv=x('texcoord',[0,0],'vector2'), center=x('center',[0,0],'vector2'), p1=x('point1',[.25,.25],'vector2'), p2=x('point2',[.75,.75],'vector2'), radius=x('radius',.1,'float');
+          const a=`(${uv}-(${p1}+${center}))`, b=`(${p2}-${p1})`, h=`clamp(dot(${a},${b})/max(dot(${b},${b}),1e-6),0.0,1.0)`, d=`length(${a}-${b}*${h})`;
+          code=`select(0.0,1.0,${d}<=max(0.0,${radius}))`; break;
         }
         case 'constant': code = same('value'); break;
         case 'add': {

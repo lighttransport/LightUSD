@@ -219,6 +219,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 - `ramplr` and `ramptb` provide typed left/right and top/bottom UV-axis ramps.
 - `checkerboard` applies authored UV tiling/offset and alternates two color3
   inputs with deterministic cell parity.
+- `circle` and `line` provide bounded scalar UV masks using analytic distance
+  tests for circles and rounded line segments.
 - `cellnoise2d` and `cellnoise3d` provide non-interpolated integer-cell hash
   values for procedural masks.
 - Common color utility nodes `premult`, `unpremult`, `contrast`, and

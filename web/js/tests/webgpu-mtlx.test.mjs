@@ -654,6 +654,12 @@ test('checkerboard applies UV tiling/offset and alternates typed colors', () => 
   const source=compileGraph({nodes:[{name:'c',category:'checkerboard',type:'color3',inputs:{texcoord:{type:'vector2',value:[.1,.2]},uvtiling:{type:'vector2',value:[4,4]},uvoffset:{type:'vector2',value:[.25,0]},color1:{type:'color3',value:[1,0,0]},color2:{type:'color3',value:[0,0,1]}}}]});
   assert.match(source.body,/floor\(\(vec2f\(0\.1,0\.2\)\*vec2f\(4\.0,4\.0\)\+vec2f\(0\.25,0\.0\)\)\.x\)/); assert.match(source.body,/select\(vec3f\(0\.0,0\.0,1\.0\)/);
 });
+test('circle and line procedural masks use bounded UV distance tests', () => {
+  const circle=compileGraph({nodes:[{name:'c',category:'circle',type:'float',inputs:{texcoord:{type:'vector2',value:[.5,.5]},center:{type:'vector2',value:[.5,.5]},radius:{type:'float',value:.25}}}]});
+  assert.match(circle.body,/distance\(vec2f\(0\.5,0\.5\),vec2f\(0\.5,0\.5\)\)<=max/);
+  const line=compileGraph({nodes:[{name:'l',category:'line',type:'float',inputs:{texcoord:{type:'vector2',value:[.5,.5]},point1:{type:'vector2',value:[0,0]},point2:{type:'vector2',value:[1,1]},radius:{type:'float',value:.1}}}]});
+  assert.match(line.body,/clamp\(dot\(/);
+});
 test('cell-noise nodes hash integer cells without interpolation', () => {
   const doc={nodes:[
     {name:'uv',category:'texcoord',type:'vector2',inputs:{}},
