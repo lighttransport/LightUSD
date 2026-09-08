@@ -159,8 +159,9 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   preserves that target path. Their realtime contribution remains a
   representative center sample.
   A single textured dome is decoded through the authored USD asset resolver and
-  sampled as a bounded latlong environment; multiple same-sized textured domes
-  are combined in linear RGB with their authored radiance scales.
+  sampled as a bounded latlong environment, including packed UDIM atlases;
+  multiple same-sized textured domes are combined in linear RGB with their
+  authored radiance scales.
 - Procedural synthetic sphere scenes and small MaterialX arithmetic/stripe
   fixtures, deterministic numeric GPU tests, scene validation and EXR roundtrip.
 
