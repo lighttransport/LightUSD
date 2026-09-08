@@ -52,7 +52,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
       let distance=-log(1.0-random(&rng))/majorant;
       if(distance<h.t) {
         let point=p.origin.xyz+p.direction.xyz*distance;
-        let ctx=ShadingContext(point,-p.direction.xyz,vec3f(1,0,0),vec3f(0,1,0),vec2f(0),0,0,vec2f(0),vec2f(0),vec3f(1,0,0),vec3f(0,1,0),-p.direction.xyz,vec4f(0,0,0,1),vec4f(0));
+        let ctx=ShadingContext(point,-p.direction.xyz,vec3f(1,0,0),vec3f(0,1,0),vec2f(0),0,0,vec2f(0),vec2f(0),vec3f(1,0,0),vec3f(0,1,0),-p.direction.xyz,vec4f(0,0,0,1),vec4f(0),vec4f(0),vec4f(0));
         let medium=mediumAt(mediumID,ctx,p.previous.x,true);
         let sigmaA=medium.absorption.x;let sigmaS=medium.scattering.x;
         if(sigmaA<0.0||sigmaS<0.0||sigmaA+sigmaS>majorant||abs(medium.anisotropy)>=1.0){atomicAdd(&pathCounters[2],1u);p.state.w=1u;break;}
@@ -84,7 +84,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
       }
     }
     if(mediumDepth>0u && homogeneous) {
-      let mediumContext=ShadingContext(p.origin.xyz,-p.direction.xyz,vec3f(1,0,0),vec3f(0,1,0),vec2f(0),0,0,vec2f(0),vec2f(0),vec3f(1,0,0),vec3f(0,1,0),-p.direction.xyz,vec4f(0,0,0,1),vec4f(0));
+      let mediumContext=ShadingContext(p.origin.xyz,-p.direction.xyz,vec3f(1,0,0),vec3f(0,1,0),vec2f(0),0,0,vec2f(0),vec2f(0),vec3f(1,0,0),vec3f(0,1,0),-p.direction.xyz,vec4f(0,0,0,1),vec4f(0),vec4f(0),vec4f(0));
       let medium=mediumAt(p.media[mediumDepth]-1u,mediumContext,p.previous.x,cfg.dimensions.w==2u);
       let sigmaT=medium.absorption+medium.scattering;
       if(any(medium.absorption<vec3f(0)) || any(medium.scattering<vec3f(0)) || abs(medium.anisotropy)>=1.0) { atomicAdd(&pathCounters[2],1u);p.state.w=1u;break; }

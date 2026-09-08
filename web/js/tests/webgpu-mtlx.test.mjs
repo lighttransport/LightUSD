@@ -14,7 +14,7 @@ import { appendRectLights } from '../src/webgpu-mtlx/usd-lights.js';
 import { mayEmit } from '../src/webgpu-mtlx/emission.js';
 import { materialXFromUSD } from '../src/webgpu-mtlx/usd-graph.js';
 import { USDTextureSources } from '../src/webgpu-mtlx/usd-texture-sources.js';
-import { triangleMaterialIds, materialImageKeys, materialUVIndex, materialGeompropName } from '../src/webgpu-mtlx/usd-scene.js';
+import { triangleMaterialIds, materialImageKeys, materialUVIndex, materialGeompropName, materialGeompropNames } from '../src/webgpu-mtlx/usd-scene.js';
 const constant = (name, value, type = 'float') => ({ name, category: 'constant', type, inputs: { value: { type, value } } });
 
 test('USD mesh submeshes preserve per-face material bindings', () => {
@@ -166,7 +166,7 @@ test('emission sampling excludes proven dark surfaces but retains unknown and sp
   const scene=syntheticScene();assert.equal(mayEmit(scene.materials[0]),false);
   const packed=packScene(scene);assert.equal(packed.triangleData[(packed.triangleCount-1)*96+27],0);
   scene.materials[1].nodes[0].inputs.emission={type:'float',value:1};assert.equal(mayEmit(scene.materials[1]),true);
-  assert.ok(packScene(scene).triangleData[(packed.triangleCount-1)*96+27]>0);
+  assert.ok(packScene(scene).triangleData[(packed.triangleCount-1)*96+35]>0);
   assert.equal(mayEmit({nodes:[{name:'custom',category:'custom'}]}),true);
   const doc=syntheticScene().materials[1];doc.spectra={emission_color:[[360,1],[830,1]]};assert.equal(mayEmit(doc),true);
 });
@@ -698,10 +698,14 @@ test('custom geometry properties select one bounded authored channel', () => {
   assert.equal(materialGeompropName(nested), 'weights');
   const color4 = { nodes: [{ name: 'mask', category: 'geompropvalue', type: 'color4', inputs: { geomprop: { type: 'string', value: 'mask' }, default: { type: 'color4', value: [0, 0, 0, 1] } } }], output: { nodename: 'mask' } };
   assert.match(compileGraph(color4, { geompropName: 'mask' }).body, /ctx\.geomprop\.rgba/);
-  assert.throws(() => materialGeompropName({ nodes: [
+  const multiGeomprop = {nodes:[{name:'a',category:'geompropvalue',type:'float',inputs:{geomprop:{type:'string',value:'temperature'}}},{name:'b',category:'geompropvalue',type:'float',inputs:{geomprop:{type:'string',value:'mask'}}}]};
+  assert.match(compileGraph(multiGeomprop,{output:{nodename:'a'},geompropNames:['temperature','mask']}).body,/ctx\.geomprop\.r/);
+  assert.match(compileGraph(multiGeomprop,{output:{nodename:'b'},geompropNames:['temperature','mask']}).body,/ctx\.geomprop1\.r/);
+  assert.deepEqual(materialGeompropNames(multiGeomprop), ['temperature','mask']);
+  assert.deepEqual(materialGeompropNames({ nodes: [
     { category: 'geompropvalue', type: 'float', inputs: { geomprop: { type: 'string', value: 'temperatureA' } } },
     { category: 'geompropvalue', type: 'float', inputs: { geomprop: { type: 'string', value: 'temperatureB' } } }
-  ] }), /multiple custom geometry properties/);
+  ] }), ['temperatureA', 'temperatureB']);
 });
 test('standard geometry aliases preserve facing ratio and uniform property semantics', () => {
   const facing=compileGraph({nodes:[{name:'f',category:'facingratio',type:'float',inputs:{viewdirection:{type:'vector3',value:[0,0,1]},normal:{type:'vector3',value:[0,0,1]},faceforward:{type:'boolean',value:true},invert:{type:'boolean',value:true}}}]});

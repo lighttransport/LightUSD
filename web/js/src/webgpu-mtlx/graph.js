@@ -68,7 +68,9 @@ export function parseMaterialX(xml, { source = '', parser = globalThis.DOMParser
 }
 
 /** Compile a normalized graph. Connections are {nodename, output} or {nodegraph, output}. */
-export function compileGraph(document, { output, library = {}, material = false, imageDescriptors = {}, uvIndex = 0, geompropName = '' } = {}) {
+export function compileGraph(document, { output, library = {}, material = false, imageDescriptors = {}, uvIndex = 0, geompropName = '', geompropNames = undefined } = {}) {
+  const customGeompropNames = (geompropNames ?? (geompropName ? [geompropName] : [])).slice(0, 3).map(name => String(name).toLowerCase().replace(/[_-]/g, ''));
+  const customGeomprop = name => { const slot = customGeompropNames.indexOf(name); return slot < 0 ? null : `ctx.geomprop${slot ? slot : ''}`; };
   const rawDefinitions = Object.assign(Object.create(null), library.definitions, document.definitions), definitions = Object.create(null);
   function inherit(name, chain = new Set()) {
     if (definitions[name]) return definitions[name];
@@ -733,10 +735,10 @@ export function compileGraph(document, { output, library = {}, material = false,
           }
           const property=properties[name];
           if (property) { if (property[0] !== type) fail('TYPE', key, `UsdPrimvarReader ${name} has type ${property[0]}, not ${type}`); code=property[1]; }
-          else if (geompropName && name === geompropName && ['float','vector2','vector3','vector4','color3','color4'].includes(type)) {
+          else if (customGeomprop(name) && ['float','vector2','vector3','vector4','color3','color4'].includes(type)) {
             const fallback=x('fallback',widths[type]===1?0:Array(widths[type]).fill(0),type);
-            const value=type==='float'?'ctx.geomprop.r':type==='vector2'?'ctx.geomprop.rg':type==='vector3'||type==='color3'?'ctx.geomprop.rgb':'ctx.geomprop.rgba';
-            code=`select(${fallback},${value},ctx.geomprop.a>0.5)`;
+            const prop=customGeomprop(name), value=type==='float'?`${prop}.r`:type==='vector2'?`${prop}.rg`:type==='vector3'||type==='color3'?`${prop}.rgb`:`${prop}.rgba`;
+            code=`select(${fallback},${value},${prop}.a>0.5)`;
           }
           else code=x('fallback',widths[type]===1?0:Array(widths[type]).fill(0),type);
           break;
@@ -770,10 +772,10 @@ export function compileGraph(document, { output, library = {}, material = false,
           if (property) {
             if (property[0] !== type) fail('TYPE', key, `geomprop ${name} has type ${property[0]}, not ${type}`);
             code = property[1];
-          } else if (geompropName && name === geompropName && ['float','vector2','vector3','vector4','color3','color4'].includes(type)) {
+          } else if (customGeomprop(name) && ['float','vector2','vector3','vector4','color3','color4'].includes(type)) {
             const fallback = x('default', widths[type] === 1 ? 0 : Array(widths[type]).fill(0), type);
-            const value = type === 'float' ? 'ctx.geomprop.r' : type === 'vector2' ? 'ctx.geomprop.rg' : type === 'vector3' || type === 'color3' ? 'ctx.geomprop.rgb' : 'ctx.geomprop.rgba';
-            code = `select(${fallback},${value},ctx.geomprop.a>0.5)`;
+            const prop=customGeomprop(name), value = type === 'float' ? `${prop}.r` : type === 'vector2' ? `${prop}.rg` : type === 'vector3' || type === 'color3' ? `${prop}.rgb` : `${prop}.rgba`;
+            code = `select(${fallback},${value},${prop}.a>0.5)`;
           } else {
             const fallback = widths[type] === 1 ? 0 : Array(widths[type]).fill(0);
             code = x('default', fallback, type);
@@ -887,7 +889,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           const wrapperInputs = new Set(['thicknessMin', 'thicknessMax']);
           const imageInputs = Object.fromEntries(Object.entries(ins).filter(([name]) => !wrapperInputs.has(name)));
           const imageNode = { ...n, name: `${n.name || key}_image`, category: 'gltf_image', type: 'vector3', inputs: imageInputs, outputs: undefined, nodedef: undefined, version: undefined };
-          const nested = compileGraph({ nodes: [imageNode] }, { output: { nodename: imageNode.name }, imageDescriptors, uvIndex, geompropName });
+          const nested = compileGraph({ nodes: [imageNode] }, { output: { nodename: imageNode.name }, imageDescriptors, uvIndex, geompropNames: customGeompropNames });
           const prefix = `gltfit${serial++}_`, rename = source => source.replace(/\bn\d+\b/g, match => `${prefix}${match}`);
           if (nested.body) lines.push(rename(nested.body));
           const image = rename(nested.expression);
@@ -899,7 +901,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           const wrapperInputs = new Set(['anisotropy_strength', 'anisotropy_rotation']);
           const imageInputs = Object.fromEntries(Object.entries(ins).filter(([name]) => !wrapperInputs.has(name)));
           const imageNode = { ...n, name: `${n.name || key}_image`, category: 'gltf_image', type: 'vector3', inputs: imageInputs, outputs: undefined, nodedef: undefined, version: undefined };
-          const nested = compileGraph({ nodes: [imageNode] }, { output: { nodename: imageNode.name }, imageDescriptors, uvIndex, geompropName });
+          const nested = compileGraph({ nodes: [imageNode] }, { output: { nodename: imageNode.name }, imageDescriptors, uvIndex, geompropNames: customGeompropNames });
           const prefix = `gltfani${serial++}_`, rename = source => source.replace(/\bn\d+\b/g, match => `${prefix}${match}`);
           if (nested.body) lines.push(rename(nested.body));
           const image = rename(nested.expression), strength = `${x('anisotropy_strength',1,'float')}*${image}.b`, rotation = `${x('anisotropy_rotation',0,'float')}+atan2(${image}.g*2.0-1.0,${image}.r*2.0-1.0)`;
@@ -910,7 +912,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           if (!['outcolor', 'outa'].includes(out)) fail('OUTPUT', key, 'gltf_colorimage output must be outcolor or outa');
           const imageInputs = Object.fromEntries(Object.entries(ins).filter(([name]) => !['color', 'geomcolor'].includes(name)));
           const imageNode = { ...n, name: `${n.name || key}_image`, category: 'gltf_image', type: 'color4', inputs: imageInputs, outputs: undefined, nodedef: undefined, version: undefined };
-          const nested = compileGraph({ nodes: [imageNode] }, { output: { nodename: imageNode.name }, imageDescriptors, uvIndex, geompropName });
+          const nested = compileGraph({ nodes: [imageNode] }, { output: { nodename: imageNode.name }, imageDescriptors, uvIndex, geompropNames: customGeompropNames });
           const prefix = `gci${serial++}_`;
           const rename = source => source.replace(/\bn\d+\b/g, match => `${prefix}${match}`);
           if (nested.body) lines.push(rename(nested.body));
@@ -1080,7 +1082,7 @@ export function compileGraph(document, { output, library = {}, material = false,
   return { body: lines.join('\n'), expression: value.code, type: value.type, categories: [...used].sort(), hasInterior:value.hasInterior||false,interiorCategories:value.interiorCategories||[],diagnostics: [], referenceReady: false };
 }
 
-export const contextWGSL = `struct ShadingContext { position: vec3f, normal: vec3f, tangent: vec3f, bitangent: vec3f, uv: vec2f, time: f32, frame: f32, uvDx: vec2f, uvDy: vec2f, dpdu:vec3f, dpdv:vec3f, viewdir:vec3f, geomcolor:vec4f, geomprop:vec4f }
+export const contextWGSL = `struct ShadingContext { position: vec3f, normal: vec3f, tangent: vec3f, bitangent: vec3f, uv: vec2f, time: f32, frame: f32, uvDx: vec2f, uvDy: vec2f, dpdu:vec3f, dpdv:vec3f, viewdir:vec3f, geomcolor:vec4f, geomprop:vec4f, geomprop1:vec4f, geomprop2:vec4f }
 fn mxOffsetContext(ctx:ShadingContext,delta:vec2f)->ShadingContext {
   var shifted=ctx;shifted.uv+=delta;shifted.position+=ctx.dpdu*delta.x+ctx.dpdv*delta.y;return shifted;
 }

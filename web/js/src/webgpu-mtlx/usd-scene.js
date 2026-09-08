@@ -46,8 +46,8 @@ export function materialUVIndex(document) {
   if (value !== undefined && (!Number.isInteger(value) || value < 0 || value > 31)) throw new Error('Material UV slot must be an integer in [0,31]');
   return value ?? 0;
 }
-/** Return one static non-standard geometry property used by a graph. */
-export function materialGeompropName(document) {
+/** Return static non-standard geometry properties used by a graph. */
+export function materialGeompropNames(document) {
   const standard = new Set(['st','uv','uv0','texcoord','texcoord0','p','position','n','normal','t','tangent','b','bitangent','color','displaycolor','opacity','displayopacity']);
   const names = [...new Set(materialNodes(document).flatMap(node => {
     if (!['UsdPrimvarReader','geompropvalue','geompropvalueuniform'].includes(node.category)) return [];
@@ -56,8 +56,12 @@ export function materialGeompropName(document) {
     const name = raw.toLowerCase().replace(/[_-]/g, '');
     return standard.has(name) || /^(?:uv|uvset)[0-9]+$/.test(name) ? [] : [raw];
   }))];
-  if (names.length > 1) throw new Error(`Material graph uses multiple custom geometry properties: ${names.join(', ')}`);
-  return names[0] || '';
+  if (names.length > 3) throw new Error(`Material graph uses more than three custom geometry properties: ${names.join(', ')}`);
+  return names;
+}
+/** Return the first custom geometry property for compatibility with older callers. */
+export function materialGeompropName(document) {
+  return materialGeompropNames(document)[0] || '';
 }
 function decodeCustomPrimvar(item, vertexCount) {
   if (!item?.value || item.error) return null;
@@ -170,8 +174,9 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
       for (const material of shadingGraph.prims.filter(prim => prim.type === 'Material')) {
         try {
           const document = materialXFromUSD(shadingGraph, material.path, { library: mtlxLibrary, resolveAsset: resolver.textures.resolveAsset });
-          const geompropName = materialGeompropName(document);
-          if (geompropName && availablePrimvars.has(geompropName)) document.geompropName = geompropName;
+          const geompropNames = materialGeompropNames(document).filter(name => availablePrimvars.has(name));
+          document.geompropNames = geompropNames;
+          document.geompropName = geompropNames[0] || '';
           translatedMaterials[material.path] = document;
         } catch (error) { translationDiagnostics.push({ path: material.path, error: String(error.message || error) }); }
       }
@@ -189,7 +194,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
         } catch (error) { textureDiagnostics.push({ key, url: request.url, error: String(error.message || error) }); }
       }
       for (const [path, document] of Object.entries(translatedMaterials)) {
-        try { document.uvIndex = materialUVIndex(document); compiledMaterials[path] = compileGraph(document, { material: true, output: document.output, imageDescriptors, uvIndex: document.uvIndex, geompropName: document.geompropName || '' }); }
+        try { document.uvIndex = materialUVIndex(document); compiledMaterials[path] = compileGraph(document, { material: true, output: document.output, imageDescriptors, uvIndex: document.uvIndex, geompropNames: document.geompropNames || [] }); }
         catch (error) { translationDiagnostics.push({ path, phase: 'compile', error: String(error.message || error) }); }
       }
     }
@@ -213,7 +218,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
       }
     }
     for (let i = 0; i < layer.numLights(); i++) authored.lights.push(layer.getLight(i));
-    const customGeompropNames = [...new Set(Object.values(authoredDocuments).map(document => document.geompropName).filter(Boolean))];
+    const customGeompropNames = [...new Set(Object.values(authoredDocuments).flatMap(document => document.geompropNames || (document.geompropName ? [document.geompropName] : [])))];
     const geompropSets = Object.fromEntries(customGeompropNames.map(name => [name, []]));
     const positions = [], normals = [], uvs = [], uvSets = [], tangents = [], colors = [], indices = [], materialIds = [];
     const read = d => {
