@@ -51,12 +51,14 @@ test('USD texture provenance keeps anchors and rejects ambiguous source layers',
 test('authored MaterialX image discovery covers translated texture node families', () => {
   const keys = materialImageKeys({ nodes: [
     { category: 'UsdUVTexture', inputs: { file: { type: 'filename', value: 'albedo' } } },
+    { category: 'gltf_image', inputs: { file: { type: 'filename', value: 'gltf-albedo' } } },
+    { category: 'gltf_normalmap', inputs: { file: { type: 'filename', value: 'gltf-normal' } } },
     { category: 'triplanarprojection', inputs: {
       filex: { type: 'filename', value: 'x' }, filey: { type: 'filename', value: 'y' }, filez: { type: 'filename', value: 'z' }
     } },
     { category: 'image', inputs: { file: { type: 'string', value: 'not-a-filename' } } }
   ] });
-  assert.deepEqual(keys.sort(), ['albedo', 'x', 'y', 'z']);
+  assert.deepEqual(keys.sort(), ['albedo', 'gltf-albedo', 'gltf-normal', 'x', 'y', 'z']);
 });
 
 test('standard and OpenPBR terminal aliases preserve authored graph inputs', () => {
