@@ -32,6 +32,32 @@ if (PROJECT_IS_TOP_LEVEL AND NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TY
 endif ()
 
 
+# Keep the compatibility default until the next product passes the full parity
+# gate. Select before configuring legacy dependencies or global compiler flags.
+set(LIGHTUSD_NATIVE_PRODUCT "legacy" CACHE STRING "Native implementation: legacy or next")
+set_property(CACHE LIGHTUSD_NATIVE_PRODUCT PROPERTY STRINGS legacy next)
+if(NOT LIGHTUSD_NATIVE_PRODUCT STREQUAL "legacy" AND
+   NOT LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
+  message(FATAL_ERROR "LIGHTUSD_NATIVE_PRODUCT must be legacy or next")
+endif()
+if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
+  option(LIGHTUSD_BUILD_TESTS "Build tests" OFF)
+  option(LIGHTUSD_ENABLE_THREAD "Enable optional parallel paths" OFF)
+  if(NOT DEFINED LIGHTUSD_NEXT_BUILD_TESTS)
+    set(LIGHTUSD_NEXT_BUILD_TESTS ${LIGHTUSD_BUILD_TESTS} CACHE BOOL "Build next tests")
+  endif()
+  if(NOT DEFINED LIGHTUSD_NEXT_ENABLE_THREAD)
+    set(LIGHTUSD_NEXT_ENABLE_THREAD ${LIGHTUSD_ENABLE_THREAD} CACHE BOOL "Enable next parallel paths")
+  endif()
+  if(LIGHTUSD_NEXT_BUILD_TESTS)
+    enable_testing()
+  endif()
+  add_subdirectory(src/next)
+  # Explicit next names prevent consumers from silently binding legacy APIs.
+  add_library(lightusd::next ALIAS lightusd_next)
+  return()
+endif()
+
 if (EMSCRIPTEN)
   set(LIGHTUSD_DEFAULT_NO_WERROR ON)
   set(LIGHTUSD_DEFAULT_PRODUCTION_BUILD On)
@@ -89,6 +115,11 @@ option(LIGHTUSD_ENABLE_THREAD "Enable optional std::thread parallel paths (defau
 option(LIGHTUSD_MSAN "Build with MSAN support(for developer only)" OFF)
 option(LIGHTUSD_WITH_C_API "Enable C API." ${LIGHTUSD_DEFAULT_WITH_C_API})
 option(LIGHTUSD_BUILD_TESTS "Build tests" ${LIGHTUSD_DEFAULT_BUILD_TESTS})
+option(LIGHTUSD_BUILD_PYTHON_TESTS
+       "Register the Python binding pytest suite with CTest (requires an installed editable package)"
+       OFF)
+set(LIGHTUSD_PYTHON_EXECUTABLE "" CACHE FILEPATH
+    "Python interpreter used by CTest-integrated tool checks")
 set(LIGHTUSD_TEST_FIXTURE_DIR "${PROJECT_SOURCE_DIR}" CACHE PATH
     "Root directory used to resolve relative C++ test fixtures")
 # Default external USD asset corpus for regression tests.  The repository-local
@@ -211,7 +242,7 @@ option(LIGHTUSD_CXX_RTTI
 option(LIGHTUSD_WITH_USDMTLX "Build with MaterialX support" ON)
 option(LIGHTUSD_WITH_JSON "Build with JSON support" ON)
 option(LIGHTUSD_ENABLE_NLOHMANN_JSON_COMPAT
-       "Build deprecated nlohmann::json object overloads for JSON APIs" ON)
+       "Build deprecated nlohmann::json object overloads for JSON APIs (minijson is the canonical backend)" OFF)
 option(LIGHTUSD_WITH_USD_TO_GLTF "Build with USD to glTF example" ON)
 option(LIGHTUSD_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
        ON)
@@ -670,6 +701,15 @@ if (LIGHTUSD_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-xform-node.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-skeleton.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-physics.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-collection.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-primvar.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-terminal.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-blendshape.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-property.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-property-names.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-listprims-inst.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-listshaders-inst.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.hh
@@ -688,11 +728,30 @@ if (LIGHTUSD_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-state.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-xform-anim.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-stage-instances.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-memory.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-texture.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-optimize.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-dedup.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-deferred.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-hierarchy.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-analytic-basic.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-analytic-solid.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-mesh.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-mesh-tangent.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-material.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-material-assembly.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-material-ktx2.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-mesh-visitor.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-material-signature.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-material-mtlx.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-anim.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-anim-light.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-anim-skeleton.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-anim-property.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-anim-value-clip.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-instancer.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-internal.hh
@@ -760,6 +819,8 @@ if (LIGHTUSD_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-js-bridge.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-js-bridge.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/value-to-json.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/value-to-json-native.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/value-to-json-native-decode.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/value-to-json.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/diff-and-compare.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/diff-and-compare.hh
@@ -2171,10 +2232,38 @@ if(LIGHTUSD_BUILD_TESTS)
   add_subdirectory(${PROJECT_SOURCE_DIR}/tests/pprint)
 
 
-  #
-  # TODO: Add feature to specify Python interpreter at ctest run
-  #
-  find_program(LUSDR_PYTHON NAMES python3 python)
+  # Prefer an explicitly configured interpreter so CTest can use a virtualenv,
+  # cross-build host Python, or another interpreter selected by CI. Keep the
+  # automatic lookup as the default for ordinary native builds.
+  if(LIGHTUSD_PYTHON_EXECUTABLE)
+    set(LUSDR_PYTHON "${LIGHTUSD_PYTHON_EXECUTABLE}")
+  else()
+    find_program(LUSDR_PYTHON NAMES python3 python)
+  endif()
+
+  if(LIGHTUSD_BUILD_PYTHON_TESTS AND LUSDR_PYTHON)
+    execute_process(
+      COMMAND ${LUSDR_PYTHON} -c "import pytest, lightusd"
+      WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+      RESULT_VARIABLE LIGHTUSD_PYTHON_TEST_DEPS_RESULT
+      OUTPUT_QUIET
+      ERROR_QUIET)
+    if(LIGHTUSD_PYTHON_TEST_DEPS_RESULT EQUAL 0)
+      add_test(
+        NAME python-lightusd-tests
+        COMMAND ${LUSDR_PYTHON} -m pytest
+                "${PROJECT_SOURCE_DIR}/python/tests"
+                -k "not slow and not large and not usd_assets and not aousd" -q)
+      set_tests_properties(
+        python-lightusd-tests
+        PROPERTIES WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+                   TIMEOUT 600
+                   LABELS "python;bindings")
+    else()
+      message(WARNING
+              "LIGHTUSD_BUILD_PYTHON_TESTS=ON but `${LUSDR_PYTHON}` cannot import pytest and lightusd; Python tests will not be registered")
+    endif()
+  endif()
   if(TARGET lusdrender AND LUSDR_PYTHON)
     add_test(
       NAME tool-lusdrender-smoke
@@ -2365,7 +2454,7 @@ if(LIGHTUSD_BUILD_TESTS)
   if(LIGHTUSD_WITH_MODULE_USDA_READER)
     add_test(
       NAME usda-parser-unit-test
-      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/unit-runner.py --app
+      COMMAND ${LUSDR_PYTHON} ${PROJECT_SOURCE_DIR}/tests/usda/unit-runner.py --app
               "$<TARGET_FILE:test_lightusd>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
       )
   endif()
@@ -2408,7 +2497,7 @@ if(LIGHTUSD_BUILD_TESTS)
 
     add_test(
       NAME validation-suite-test
-      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/validation/run-validation-suite.py
+      COMMAND ${LUSDR_PYTHON} ${PROJECT_SOURCE_DIR}/tests/usda/validation/run-validation-suite.py
               --app "$<TARGET_FILE:lusdcat>"
               --basedir "${PROJECT_SOURCE_DIR}/tests/usda/validation"
       )
@@ -2417,7 +2506,7 @@ if(LIGHTUSD_BUILD_TESTS)
     # tests/usda and fail only if the validator crashes or hangs.
     add_test(
       NAME validation-regression-test
-      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/validation/run-validation-regression.py
+      COMMAND ${LUSDR_PYTHON} ${PROJECT_SOURCE_DIR}/tests/usda/validation/run-validation-regression.py
               --app "$<TARGET_FILE:lusdcat>"
               --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
       )
@@ -2721,7 +2810,7 @@ if(LIGHTUSD_BUILD_TESTS)
     if(LIGHTUSD_XVFB_RUN)
       add_test(
         NAME lusdview-skinning-screenshot-diff
-        COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/lusdview/compare-skinning-screenshots.py
+        COMMAND ${LUSDR_PYTHON} ${PROJECT_SOURCE_DIR}/tests/lusdview/compare-skinning-screenshots.py
                 --app "$<TARGET_FILE:lusdview>"
                 --model "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
                 --out-dir "${CMAKE_BINARY_DIR}/Testing/lusdview-skinning"
@@ -2739,7 +2828,7 @@ if(LIGHTUSD_BUILD_TESTS)
       # without a HIP device.
       add_test(
         NAME lusdview-hip-bvh-refit
-        COMMAND python3
+        COMMAND ${LUSDR_PYTHON}
                 ${PROJECT_SOURCE_DIR}/tests/lusdview/check-hip-bvh-refit.py
                 "${LIGHTUSD_XVFB_RUN}"
                 "$<TARGET_FILE:lusdview>"
@@ -2755,7 +2844,7 @@ if(LIGHTUSD_BUILD_TESTS)
       # GPU-skinned prototype is de-instanced onto the material shader).
       add_test(
         NAME lusdview-instanced-prototype-skinning
-        COMMAND python3
+        COMMAND ${LUSDR_PYTHON}
                 ${PROJECT_SOURCE_DIR}/tests/lusdview/check-instanced-prototype-skinning.py
                 "$<TARGET_FILE:lusdview>"
                 "${PROJECT_SOURCE_DIR}/models/skintest-instanced.usda"
@@ -2771,7 +2860,7 @@ if(LIGHTUSD_BUILD_TESTS)
       # override the probe. Headless + tiny scene; skips without Vulkan.
       add_test(
         NAME lusdview-vram-budget
-        COMMAND python3
+        COMMAND ${LUSDR_PYTHON}
                 ${PROJECT_SOURCE_DIR}/tests/lusdview/check-vram-budget.py
                 "$<TARGET_FILE:lusdview>"
                 "${CMAKE_BINARY_DIR}/Testing/lusdview-vram-budget"
@@ -2784,7 +2873,7 @@ if(LIGHTUSD_BUILD_TESTS)
       # large-scene load. Headless + tiny scene; skips without Vulkan.
       add_test(
         NAME lusdview-texture-fit
-        COMMAND python3
+        COMMAND ${LUSDR_PYTHON}
                 ${PROJECT_SOURCE_DIR}/tests/lusdview/check-texture-fit.py
                 "$<TARGET_FILE:lusdview>"
                 "${CMAKE_BINARY_DIR}/Testing/lusdview-texture-fit"
@@ -2797,7 +2886,7 @@ if(LIGHTUSD_BUILD_TESTS)
       # (Vulkan); skips without a device.
       add_test(
         NAME lusdview-noninstanced-blendshape
-        COMMAND python3
+        COMMAND ${LUSDR_PYTHON}
                 ${PROJECT_SOURCE_DIR}/tests/lusdview/check-noninstanced-blendshape.py
                 "$<TARGET_FILE:lusdview>"
                 "${CMAKE_BINARY_DIR}/Testing/lusdview-noninstanced-blendshape"
@@ -2809,7 +2898,7 @@ if(LIGHTUSD_BUILD_TESTS)
       # to reach only the RT path; VK raster drew the flat material color).
       add_test(
         NAME lusdview-vertex-color
-        COMMAND python3
+        COMMAND ${LUSDR_PYTHON}
                 ${PROJECT_SOURCE_DIR}/tests/lusdview/check-vertex-color.py
                 "$<TARGET_FILE:lusdview>"
                 "${CMAKE_BINARY_DIR}/Testing/lusdview-vertex-color"
@@ -2820,7 +2909,7 @@ if(LIGHTUSD_BUILD_TESTS)
       # build ONE BLAS per prototype (not per instance), and must be image-neutral.
       add_test(
         NAME lusdview-blas-compaction
-        COMMAND python3
+        COMMAND ${LUSDR_PYTHON}
                 ${PROJECT_SOURCE_DIR}/tests/lusdview/check-blas-compaction.py
                 "$<TARGET_FILE:lusdview>"
                 "${PROJECT_SOURCE_DIR}/models/blastest-instanced-static.usda"
@@ -2834,7 +2923,7 @@ if(LIGHTUSD_BUILD_TESTS)
       # extracted), and nothing routed it even when it existed.
       add_test(
         NAME lusdview-uv-set-routing
-        COMMAND python3
+        COMMAND ${LUSDR_PYTHON}
                 ${PROJECT_SOURCE_DIR}/tests/lusdview/check-uv-set-routing.py
                 "$<TARGET_FILE:lusdview>"
                 "${PROJECT_SOURCE_DIR}/models/multi-uv-quad.usda"
@@ -2866,7 +2955,7 @@ if(LIGHTUSD_BUILD_TESTS)
       # scene-spanning box, disabling the per-mesh frustum cull along with it).
       add_test(
         NAME lusdview-noninstanced-lod
-        COMMAND python3
+        COMMAND ${LUSDR_PYTHON}
                 ${PROJECT_SOURCE_DIR}/tests/lusdview/check-noninst-lod.py
                 "$<TARGET_FILE:lusdview>"
                 "${CMAKE_BINARY_DIR}/Testing/lusdview-noninstanced-lod"
@@ -2878,7 +2967,7 @@ if(LIGHTUSD_BUILD_TESTS)
       # converter per time code; it now re-poses the retained rest vertices.
       add_test(
         NAME lusdview-rt-skinning
-        COMMAND python3
+        COMMAND ${LUSDR_PYTHON}
                 ${PROJECT_SOURCE_DIR}/tests/lusdview/check-rt-skinning.py
                 "$<TARGET_FILE:lusdview>"
                 "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
@@ -2892,7 +2981,7 @@ if(LIGHTUSD_BUILD_TESTS)
       # rebuild path (LUSDVIEW_NO_BLAS_REFIT=1) over the same --play run.
       add_test(
         NAME lusdview-rt-blas-refit
-        COMMAND python3
+        COMMAND ${LUSDR_PYTHON}
                 ${PROJECT_SOURCE_DIR}/tests/lusdview/check-rt-blas-refit.py
                 "$<TARGET_FILE:lusdview>"
                 "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
@@ -2905,7 +2994,7 @@ if(LIGHTUSD_BUILD_TESTS)
       # build no morph channels at all, so it rendered its rest shape forever.
       add_test(
         NAME lusdview-blendshape-morph
-        COMMAND python3
+        COMMAND ${LUSDR_PYTHON}
                 ${PROJECT_SOURCE_DIR}/tests/lusdview/check-blendshape-morph.py
                 "$<TARGET_FILE:lusdview>"
                 "${PROJECT_SOURCE_DIR}/models/blendshape-and-animation-test-001.usda"
@@ -2939,7 +3028,7 @@ if(LIGHTUSD_BUILD_TESTS)
                           pointinstancer)
         add_test(
           NAME lusdview-deform-${deform_case}
-          COMMAND python3
+          COMMAND ${LUSDR_PYTHON}
                   ${PROJECT_SOURCE_DIR}/tests/lusdview/check-deform-parity.py
                   "$<TARGET_FILE:lusdview>"
                   "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/deform-${deform_case}.usda"
@@ -2958,7 +3047,7 @@ if(LIGHTUSD_BUILD_TESTS)
       # Raster and RT therefore reach the same pixels by genuinely different routes.
       add_test(
         NAME lusdview-deform-instanced-proto-rt
-        COMMAND python3
+        COMMAND ${LUSDR_PYTHON}
                 ${PROJECT_SOURCE_DIR}/tests/lusdview/check-deform-parity.py
                 "$<TARGET_FILE:lusdview>"
                 "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/deform-instanced-proto.usda"
@@ -2974,7 +3063,7 @@ if(LIGHTUSD_BUILD_TESTS)
       # disagree with the shader's, and it did. Skips (77) where CUDA is absent.
       add_test(
         NAME lusdview-deform-cuda
-        COMMAND python3
+        COMMAND ${LUSDR_PYTHON}
                 ${PROJECT_SOURCE_DIR}/tests/lusdview/check-deform-parity.py
                 "$<TARGET_FILE:lusdview>"
                 "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/deform-morph-skin.usda"
@@ -3007,7 +3096,7 @@ if(LIGHTUSD_BUILD_TESTS)
       # the DEFAULT (auto) deformed twice.
       add_test(
         NAME lusdview-legacy-double-deform
-        COMMAND python3
+        COMMAND ${LUSDR_PYTHON}
                 ${PROJECT_SOURCE_DIR}/tests/lusdview/check-legacy-double-deform.py
                 "$<TARGET_FILE:lusdview>"
                 "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/deform-skin-xform.usda"
@@ -3543,14 +3632,14 @@ if(LIGHTUSD_BUILD_TESTS)
                                     LABELS "lusdview;vulkan;startup;transparency")
 
     add_test(NAME lusdview-vulkan-oit-promotion
-      COMMAND python3 "${PROJECT_SOURCE_DIR}/tests/lusdview/mcp_oit_promotion.py"
+      COMMAND ${LUSDR_PYTHON} "${PROJECT_SOURCE_DIR}/tests/lusdview/mcp_oit_promotion.py"
               "$<TARGET_FILE:lusdview>"
               "${PROJECT_SOURCE_DIR}/models/lusdview-transparency.usda" --scene-changes)
     set_tests_properties(lusdview-vulkan-oit-promotion PROPERTIES
       SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "lusdview;vulkan;transparency")
     if(LUSDVIEW_ENABLE_GL_THREAD)
       add_test(NAME lusdview-vulkan-oit-promotion-threaded
-        COMMAND python3 "${PROJECT_SOURCE_DIR}/tests/lusdview/mcp_oit_promotion.py"
+        COMMAND ${LUSDR_PYTHON} "${PROJECT_SOURCE_DIR}/tests/lusdview/mcp_oit_promotion.py"
                 "$<TARGET_FILE:lusdview>"
                 "${PROJECT_SOURCE_DIR}/models/lusdview-transparency.usda" --threaded)
       set_tests_properties(lusdview-vulkan-oit-promotion-threaded PROPERTIES
@@ -3759,7 +3848,7 @@ if(LIGHTUSD_BUILD_TESTS)
   #
   add_test(
     NAME preview-surface-schema-sync
-    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/gen-usd-preview-surface-inputs.py --check
+    COMMAND ${LUSDR_PYTHON} ${PROJECT_SOURCE_DIR}/scripts/gen-usd-preview-surface-inputs.py --check
     )
 
   # Offline pin/integrity gate for the generated OpenUSD compatibility
@@ -3767,13 +3856,13 @@ if(LIGHTUSD_BUILD_TESTS)
   # deliberately has no runtime or network dependency on OpenUSD.
   add_test(
     NAME openusd-schema-manifest
-    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check-openusd-schema-manifest.py
+    COMMAND ${LUSDR_PYTHON} ${PROJECT_SOURCE_DIR}/scripts/check-openusd-schema-manifest.py
             ${PROJECT_SOURCE_DIR}/doc/generated/openusd-schema-26.08.json
     )
 
   add_test(
     NAME openusd-capability-ledger
-    COMMAND python3
+    COMMAND ${LUSDR_PYTHON}
             ${PROJECT_SOURCE_DIR}/scripts/generate-lightusd-capability-ledger.py
             --check
             --manifest ${PROJECT_SOURCE_DIR}/doc/generated/openusd-schema-26.08.json
@@ -3782,7 +3871,7 @@ if(LIGHTUSD_BUILD_TESTS)
 
   add_test(
     NAME openusd-supported-schema-fixture
-    COMMAND python3
+    COMMAND ${LUSDR_PYTHON}
             ${PROJECT_SOURCE_DIR}/scripts/generate-openusd-supported-schema-fixture.py
             --check
             --ledger ${PROJECT_SOURCE_DIR}/doc/generated/lightusd-capabilities-openusd-26.08.json
@@ -3805,7 +3894,7 @@ if(LIGHTUSD_BUILD_TESTS)
 
     add_test(
       NAME usda-roundtrip-test
-      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/roundtrip-runner.py --app
+      COMMAND ${LUSDR_PYTHON} ${PROJECT_SOURCE_DIR}/tests/usda/roundtrip-runner.py --app
               "$<TARGET_FILE:usda_roundtrip>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
       )
   endif()
@@ -3825,7 +3914,7 @@ if(LIGHTUSD_BUILD_TESTS)
 
     add_test(
       NAME usdc-roundtrip-test
-      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/usdc-roundtrip-runner.py --app
+      COMMAND ${LUSDR_PYTHON} ${PROJECT_SOURCE_DIR}/tests/usda/usdc-roundtrip-runner.py --app
               "$<TARGET_FILE:usdc_roundtrip>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
       )
 
@@ -3837,7 +3926,7 @@ if(LIGHTUSD_BUILD_TESTS)
     if(TARGET lusddiff)
       add_test(
         NAME usdc-writer-diff-test
-        COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usdc-writer/usdc-writer-runner.py
+        COMMAND ${LUSDR_PYTHON} ${PROJECT_SOURCE_DIR}/tests/usdc-writer/usdc-writer-runner.py
                 --lusdcat "$<TARGET_FILE:lusdcat>"
                 --lusddiff "$<TARGET_FILE:lusddiff>"
                 --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
@@ -3875,7 +3964,7 @@ if(LIGHTUSD_BUILD_TESTS)
   if(LIGHTUSD_WITH_MODULE_USDC_READER)
     add_test(
       NAME usdc-parser-unit-test
-      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usdc/unit-runner.py --app
+      COMMAND ${LUSDR_PYTHON} ${PROJECT_SOURCE_DIR}/tests/usdc/unit-runner.py --app
               "$<TARGET_FILE:test_lightusd>" --basedir "${PROJECT_SOURCE_DIR}/tests/usdc"
       )
     # usdc-parser-unit-test globs all *.usdc in tests/usdc/, including

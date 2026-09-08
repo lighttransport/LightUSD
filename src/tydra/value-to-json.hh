@@ -6,6 +6,7 @@
 #include "../value-types.hh"
 #include "../core/prim-metas.hh"
 #include "../core/prim-spec.hh"
+#include "../minijson.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -20,6 +21,23 @@
 
 namespace lightusd {
 namespace tydra {
+
+/// Canonical minijson APIs. The nlohmann overloads below are retained only
+/// for source compatibility with older MCP/JavaScript integrations.
+minijson::Value ValueToMiniJSON(const value::Value &val, uint32_t depth = 0);
+nonstd::optional<value::Value> MiniJSONToValue(
+    const minijson::Value &j, std::string *err = nullptr,
+    uint32_t depth = 0);
+minijson::Value ValueToPlainMiniJSON(const value::Value &val);
+minijson::Value ValueTypeToMiniJSONSchema(const std::string &type_name,
+                                          uint32_t depth = 0);
+minijson::Value PrimMetaToMiniJSON(const PrimMeta &meta);
+minijson::Value PrimSpecToMiniJSON(const PrimSpec &ps,
+                                   uint32_t max_depth = 1,
+                                   uint32_t depth = 0);
+minijson::Value PropertyToMiniJSON(const Property &prop);
+minijson::Value AttributeToMiniJSON(const Attribute &attr);
+minijson::Value RelationshipToMiniJSON(const Relationship &rel);
 
 /// Convert a value::Value to structured JSON representation.
 ///
