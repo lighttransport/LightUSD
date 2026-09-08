@@ -43,6 +43,8 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   vector and color outputs; default colors; linear-light area-filtered mip chains.
   `UsdUVTexture` graphs additionally support static `st`, `fallback`, `scale`,
   `bias`, and named RGB/channel outputs through the same bounded sampler.
+- USD preview `UsdPrimvarReader` resolves standard UV/geometry names with typed
+  fallbacks, and `UsdTransform2d` applies scale, degree rotation, and translation.
   The image-node checker demo requires no downloaded textures.
 - Worker-built median triangle BVH, stackless compute traversal, per-hit UV/value
   evaluation, GGX/diffuse RGB path preview with progressive accumulation and a

@@ -406,6 +406,14 @@ test('UsdUVTexture maps st/fallback/scale/bias and named channel outputs', () =>
   const red=compileGraph(doc,{output:{nodename:'tex',output:'r'},imageDescriptors:descriptor}); assert.match(red.body,/\)\.r/);
   assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,sourceColorSpace:{type:'string',value:'srgb_texture'}}}]},{output:{nodename:'tex',output:'rgb'},imageDescriptors:descriptor}),/sourceColorSpace differs/);
 });
+test('USD primvar readers and transform2d resolve standard geometry inputs', () => {
+  const uv=compileGraph({nodes:[{name:'u',category:'UsdPrimvarReader',type:'vector2',inputs:{varname:{type:'string',value:'st'},fallback:{type:'vector2',value:[.2,.3]}}}]});
+  assert.match(uv.body,/ctx\.uv/);
+  const fallback=compileGraph({nodes:[{name:'c',category:'UsdPrimvarReader',type:'color3',inputs:{varname:{type:'string',value:'displayColor'},fallback:{type:'color3',value:[.2,.3,.4]}}}]});
+  assert.match(fallback.body,/vec3f\(0\.2,0\.3,0\.4\)/);
+  const transformed=compileGraph({nodes:[{name:'t',category:'UsdTransform2d',type:'vector2',inputs:{in:{type:'vector2',value:[1,0]},scale:{type:'vector2',value:[2,1]},rotation:{type:'float',value:90},translation:{type:'vector2',value:[.1,.2]}}}]});
+  assert.match(transformed.body,/mat2x2f\(cos\(/); assert.match(transformed.body,/vec2f\(0\.1,0\.2\)/);
+});
 test('triplanarprojection blends three typed image planes by normal weights', () => {
   const descriptor={x:{offset:0,width:2,height:2,levels:1,colorspace:'raw'},y:{offset:4,width:2,height:2,levels:1,colorspace:'raw'},z:{offset:8,width:2,height:2,levels:1,colorspace:'raw'}};
   const doc={nodes:[{name:'tri',category:'triplanarprojection',type:'color3',inputs:{filex:{type:'filename',value:'x'},filey:{type:'filename',value:'y'},filez:{type:'filename',value:'z'},normal:{type:'vector3',value:[1,0,0]},filtertype:{type:'string',value:'linear'}}}]};

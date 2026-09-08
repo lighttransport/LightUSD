@@ -13,7 +13,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
 export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'saturate', 'contrast', 'premult', 'unpremult', 'ramp4', 'triplanarprojection', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'surfacematerial', 'surface']);
-for(const category of ['transformmatrix','normalmap','bump3','heighttonormal','rotate3d','reorder','UsdUVTexture','usduvtexture'])valueCategories.add(category);
+for(const category of ['transformmatrix','normalmap','bump3','heighttonormal','rotate3d','reorder','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
 export function literal(type, value, path = '') {
   if(value===''&&type==='BSDF')return 'emptyClosure()';
@@ -271,7 +271,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           const usdTexture = n.category === 'UsdUVTexture' || n.category === 'usduvtexture';
           if (!['float', 'color3', 'color4', 'vector2', 'vector3', 'vector4'].includes(type)) fail('TYPE', key, 'invalid image output type');
           const allowedInputs = ['file', 'default', 'texcoord', 'uaddressmode', 'vaddressmode', 'filtertype', 'layer', 'framerange', 'frameoffset', 'frameendaction', 'uvtiling', 'uvoffset', 'realworldimagesize', 'realworldtilesize'];
-          if (usdTexture) allowedInputs.push('st', 'fallback', 'scale', 'bias', 'sourceColorSpace');
+          if (usdTexture) allowedInputs.push('st', 'fallback', 'scale', 'bias', 'sourceColorSpace', 'wrapS', 'wrapT');
           for (const name of Object.keys(ins)) if (!allowedInputs.includes(name)) fail('UNSUPPORTED', key, `unsupported image input ${name}`);
           for (const name of ['layer', 'framerange', 'frameoffset']) if (ins[name] && !['', '0', 0].includes(ins[name].value)) fail('UNSUPPORTED', key, `image ${name} is not implemented`);
           let realScale='vec2f(1.0)';
@@ -298,7 +298,7 @@ export function compileGraph(document, { output, library = {}, material = false,
             if (sourceSpace !== normalizeColorSpace(descriptor.colorspace)) fail('SEMANTICS', key, 'UsdUVTexture sourceColorSpace differs from decoded resource');
           }
           const address = name => {
-            const p = ins[name]; const mode = ['constant', 'clamp', 'periodic', 'mirror'].indexOf(p?.value ?? 'periodic');
+            const p = ins[name] || (usdTexture && name === 'uaddressmode' ? ins.wrapS : usdTexture && name === 'vaddressmode' ? ins.wrapT : undefined); const mode = ['constant', 'clamp', 'periodic', 'mirror'].indexOf(p?.value ?? 'periodic');
             if (mode < 0 || p?.nodename || p?.interfacename || p?.nodegraph) fail('UNSUPPORTED', key, 'invalid or connected image address mode');
             return `${mode}u`;
           };
@@ -449,6 +449,16 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'texcoord':
           if (ins.index && Number(ins.index.value) !== 0) fail('GEOMETRY', key, 'only texcoord index 0 is available');
           code = type === 'vector2' ? 'ctx.uv' : 'vec3f(ctx.uv,0.0)'; break;
+        case 'UsdPrimvarReader': {
+          const selector = ins.varname;
+          if (selector && (selector.nodename || selector.nodegraph || selector.interfacename)) fail('GEOMETRY', key, 'UsdPrimvarReader varname must be static');
+          const name = String(selector?.value ?? '').toLowerCase().replace(/[_-]/g, '');
+          const properties = {st:['vector2','ctx.uv'],uv:['vector2','ctx.uv'],uv0:['vector2','ctx.uv'],texcoord:['vector2','ctx.uv'],p:['vector3','ctx.position'],position:['vector3','ctx.position'],n:['vector3','ctx.normal'],normal:['vector3','ctx.normal'],t:['vector3','ctx.tangent'],tangent:['vector3','ctx.tangent'],b:['vector3','ctx.bitangent'],bitangent:['vector3','ctx.bitangent']};
+          const property=properties[name];
+          if (property) { if (property[0] !== type) fail('TYPE', key, `UsdPrimvarReader ${name} has type ${property[0]}, not ${type}`); code=property[1]; }
+          else code=x('fallback',widths[type]===1?0:Array(widths[type]).fill(0),type);
+          break;
+        }
         case 'geompropvalue': {
           const selector = ins.geomprop;
           if (selector && (selector.nodename || selector.nodegraph || selector.interfacename)) fail('GEOMETRY', key, 'geomprop must be a static token');
@@ -553,6 +563,11 @@ export function compileGraph(document, { output, library = {}, material = false,
           const v = x('in', undefined, 'vector3'), axis = `safeNormal(${x('axis', [0, 0, 1], 'vector3')},vec3f(0.0,0.0,1.0))`;
           const a = `(${x('amount', 0, 'float')} * 0.017453292519943295)`, c = `cos(${a})`, s = `sin(${a})`;
           code = `(${v}*${c}+cross(${axis},${v})*${s}+${axis}*dot(${axis},${v})*(1.0-${c}))`; break;
+        }
+        case 'UsdTransform2d': {
+          if (type !== 'vector2') fail('TYPE', key, 'UsdTransform2d output must be vector2');
+          const v=x('in',[0,0],'vector2'), scale=x('scale',[1,1],'vector2'), translation=x('translation',[0,0],'vector2'), a=`(${x('rotation',0,'float')}*0.017453292519943295)`;
+          code=`((mat2x2f(cos(${a}),sin(${a}),-sin(${a}),cos(${a})) * (${v}*${scale}))+${translation})`; break;
         }
         case 'place2d': {
           if (type !== 'vector2') fail('TYPE', key, 'place2d output must be vector2');
