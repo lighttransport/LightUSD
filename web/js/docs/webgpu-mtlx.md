@@ -110,7 +110,7 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 Full MaterialX coverage; general BSDF/EDF/VDF closure composition/layering;
 MaterialX subsurface_bsdf albedo/radius conversion; hair and curves;
 arbitrary authored primvar/shading-property maps beyond the supported geometry
-aliases, UV slots, and one bounded custom geomprop channel;
+aliases, UV slots, and three bounded custom geomprop channels;
 Catmull-Clark displacement refinement; faithful authored ShaderBall material
 graphs and full-resolution map storage;
 broad independent physical reference-image validation; complete ACEScg graph color management.
@@ -298,6 +298,9 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   inputs with deterministic cell parity.
 - `circle` and `line` provide bounded scalar UV masks using analytic distance
   tests for circles and rounded line segments.
+- `hextiledimage` color3/color4 overloads implement the pinned three-sample
+  hexagonal tile transform, randomized rotation/scale/offset ranges,
+  luminance-weighted falloff, and derivative-based mip selection.
 - `grid` and `crosshatch` provide typed color3 UV patterns with tiling, offset,
   thickness, and staggered-cell controls.
 - `tiledcircles` provides deterministic cell-local circle masks with authored

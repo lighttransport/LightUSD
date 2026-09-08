@@ -985,6 +985,16 @@ test('tiledimage compiles the validated single-tile resource path', () => {
   assert.match(real.body,/vec2f\(2\.0,1\.0\)/);
   assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,realworldimagesize:{type:'vector2',value:[2,1]}}}]},{imageDescriptors:descriptor}),/paired static/);
 });
+test('hextiledimage preserves pinned hex-tile controls and derivative sampling', () => {
+  const descriptor={tile:{offset:0,width:4,height:4,levels:3,colorspace:'raw'}};
+  const doc={nodes:[{name:'hex',category:'hextiledimage',type:'color4',inputs:{file:{type:'filename',value:'tile'},rotation:{type:'float',value:.8},falloff:{type:'float',value:.7}}}]};
+  const source=compileGraph(doc,{imageDescriptors:descriptor});
+  assert.match(source.body,/imageHextile\(0u/); assert.match(source.body,/ctx\.uvDx/); assert.match(source.body,/0\.8/);
+  const color3=compileGraph({...doc,nodes:[{...doc.nodes[0],type:'color3',inputs:{...doc.nodes[0].inputs,default:{type:'color3',value:[.1,.2,.3]}}}]},{imageDescriptors:descriptor});
+  assert.match(color3.body,/imageHextile\(0u/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,filtertype:{type:'string',value:'cubic'}}}]},{imageDescriptors:descriptor}),/closest\/linear/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,file:{type:'filename',value:'missing'}}}]},{imageDescriptors:descriptor}),/missing decoded image/);
+});
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
   assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/);
