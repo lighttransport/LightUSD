@@ -12,7 +12,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 // convention (for example degrees for rotate2d and nanometers for thin film).
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
 export const valueCategories = new Set(['constant', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'saturate', 'contrast', 'premult', 'unpremult', 'ramp4', 'triplanarprojection', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
-const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'UsdPreviewSurface', 'surfacematerial', 'surface']);
+const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'UsdPreviewSurface', 'surface_unlit', 'surfacematerial', 'surface']);
 for(const category of ['transformmatrix','normalmap','bump3','heighttonormal','rotate3d','reorder','fractal2d','fractal3d','worleynoise2d','worleynoise3d','latlongimage','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
 export function literal(type, value, path = '') {
@@ -611,6 +611,14 @@ export function compileGraph(document, { output, library = {}, material = false,
           const closure=`closureAdd(closureLeaf(${lobe}),${coat})`, opacity=x('opacity',1,'float'), mode=x('opacityMode',0,'integer'), threshold=x('opacityThreshold',0,'float');
           const alpha=`select(clamp(${opacity},0.0,1.0),select(0.0,1.0,${opacity}>=${threshold}),${mode}==1i)`;
           code=`materialFromClosure(${closure},${emission},${alpha},${x('normal',[0,0,1],'vector3')})`; break;
+        }
+        case 'surface_unlit': {
+          if (!material) fail('CONTEXT', key, 'surface_unlit requires material compilation');
+          const allowed=new Set(['emission','emission_color','transmission','transmission_color','opacity']);
+          for(const k of Object.keys(n.inputs||{})) if(!allowed.has(k)) fail('UNSUPPORTED',`${key}/${k}`,'surface_unlit input not implemented');
+          const emission=x('emission',1,'float'), emissionColor=x('emission_color',[1,1,1],'color3'), transmission=x('transmission',0,'float'), transmissionColor=x('transmission_color',[1,1,1],'color3');
+          const bsdf=`closureLeaf(nativeDielectric(${transmissionColor},1.0,vec2f(0.0),clamp(${transmission},0.0,1.0),2u))`;
+          code=`materialFromClosure(${bsdf},${emissionColor}*max(0.0,${emission}),clamp(${x('opacity',1,'float')},0.0,1.0),ctx.normal)`; break;
         }
         case 'standard_surface': case 'open_pbr_surface': {
           if (!material) fail('CONTEXT', key, 'surface requires material compilation');

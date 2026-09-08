@@ -357,6 +357,9 @@ sheen, coat and thin-film controls fail explicitly; they are not silently erased
 opacity mode, normal, and bounded clearcoat inputs into the shared material
 closure path. Nonzero displacement remains an explicit diagnostic.
 
+The stdlib `surface_unlit` shader now preserves authored emission, bounded
+transmission, and opacity without introducing direct-light shading.
+
 The ShaderBall geometry adapter now retains native material IDs, serialized
 material absolute paths, and subset-presence records per mesh binding. It creates
 diagnostic slots for all authored material IDs and no longer decides the gold
