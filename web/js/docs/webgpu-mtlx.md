@@ -369,7 +369,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 - Bounded `worleynoise2d`/`worleynoise3d` nodes provide deterministic distance,
   solid-style, and hash channels over a fixed 3x3/3x3x3 neighborhood.
 - `latlongimage` maps a normalized view direction to periodic longitude and
-  clamped latitude, with authored rotation and typed fallback color.
+  clamped latitude, with authored rotation, typed fallback color, and bounded
+  static or connected layer selection for decoded layered environment images.
 - `splitlr` and `splittb` provide typed left/right and top/bottom UV mattes with
   authored centers and value branches.
 - `ramp` and `ramp_gradient` support static color4 control points, standard/
