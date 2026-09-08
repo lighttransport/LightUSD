@@ -13,10 +13,10 @@ namespace mtlx {
 // Adapter to replace pugixml with our parser
 // This provides a pugixml-like interface for easy migration
 
-class XMLAttribute {
+class AdapterXMLAttribute {
 public:
-  XMLAttribute() : valid_(false) {}
-  XMLAttribute(const std::string& value) : value_(value), valid_(true) {}
+  AdapterXMLAttribute() : valid_(false) {}
+  AdapterXMLAttribute(const std::string& value) : value_(value), valid_(true) {}
 
   operator bool() const { return valid_; }
   const char* as_string() const { return value_.c_str(); }
@@ -26,32 +26,32 @@ private:
   bool valid_;
 };
 
-class XMLNode {
+class AdapterXMLNode {
 public:
-  XMLNode() : node_(nullptr) {}
-  explicit XMLNode(SimpleXMLNodePtr n) : node_(n) {}
+  AdapterXMLNode() : node_(nullptr) {}
+  explicit AdapterXMLNode(SimpleXMLNodePtr n) : node_(n) {}
 
   operator bool() const { return node_ != nullptr; }
 
-  XMLAttribute attribute(const char* name) const {
-    if (!node_) return XMLAttribute();
+  AdapterXMLAttribute attribute(const char* name) const {
+    if (!node_) return AdapterXMLAttribute();
 
     auto it = node_->attributes.find(name);
     if (it != node_->attributes.end()) {
-      return XMLAttribute(it->second);
+      return AdapterXMLAttribute(it->second);
     }
-    return XMLAttribute();
+    return AdapterXMLAttribute();
   }
 
-  XMLNode child(const char* name) const {
-    if (!node_) return XMLNode();
+  AdapterXMLNode child(const char* name) const {
+    if (!node_) return AdapterXMLNode();
 
     for (const auto& c : node_->children) {
       if (c && c->name == name) {
-        return XMLNode(c);
+        return AdapterXMLNode(c);
       }
     }
-    return XMLNode();
+    return AdapterXMLNode();
   }
 
   const char* name() const {
@@ -83,11 +83,11 @@ public:
       return pos_ != other.pos_;
     }
 
-    XMLNode operator*() const {
+    AdapterXMLNode operator*() const {
       if (children_ && pos_ < children_->size()) {
-        return XMLNode((*children_)[pos_]);
+        return AdapterXMLNode((*children_)[pos_]);
       }
-      return XMLNode();
+      return AdapterXMLNode();
     }
 
   private:
@@ -104,12 +104,12 @@ public:
   }
 
   // Get children with specific name
-  std::vector<XMLNode> children(const char* name) const {
-    std::vector<XMLNode> result;
+  std::vector<AdapterXMLNode> children(const char* name) const {
+    std::vector<AdapterXMLNode> result;
     if (node_) {
       for (const auto& c : node_->children) {
         if (c && c->name == name) {
-          result.push_back(XMLNode(c));
+          result.push_back(AdapterXMLNode(c));
         }
       }
     }
@@ -120,10 +120,10 @@ private:
   SimpleXMLNodePtr node_;
 };
 
-class XMLDocument {
+class AdapterXMLDocument {
 public:
   struct ParseResult {
-    bool success;
+    bool success = false;
     const char* description() const { return error_.c_str(); }
     operator bool() const { return success; }
     std::string error_;
@@ -134,7 +134,7 @@ public:
     SimpleXMLParser parser;
 
     if (parser.Parse(xml)) {
-      root_ = XMLNode(parser.GetRoot());
+      root_ = AdapterXMLNode(parser.GetRoot());
       result.success = true;
     } else {
       result.success = false;
@@ -144,26 +144,26 @@ public:
     return result;
   }
 
-  XMLNode child(const char* name) const {
+  AdapterXMLNode child(const char* name) const {
     if (root_) {
       if (std::string(root_.name()) == name) {
         return root_;
       }
       return root_.child(name);
     }
-    return XMLNode();
+    return AdapterXMLNode();
   }
 
 private:
-  XMLNode root_;
+  AdapterXMLNode root_;
 };
 
 // Namespace aliases to match pugixml
 namespace pugi = mtlx;
-using xml_document = XMLDocument;
-using xml_node = XMLNode;
-using xml_attribute = XMLAttribute;
-using xml_parse_result = XMLDocument::ParseResult;
+using xml_document = AdapterXMLDocument;
+using xml_node = AdapterXMLNode;
+using xml_attribute = AdapterXMLAttribute;
+using xml_parse_result = AdapterXMLDocument::ParseResult;
 
 } // namespace mtlx
 } // namespace lightusd
