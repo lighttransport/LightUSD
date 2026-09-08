@@ -103,7 +103,7 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 Full MaterialX coverage; general BSDF/EDF/VDF closure composition/layering;
 MaterialX subsurface_bsdf albedo/radius conversion; hair and curves;
 arbitrary authored primvar/shading-property maps beyond the supported geometry
-aliases and UV slots;
+aliases, UV slots, and one bounded custom geomprop channel;
 Catmull-Clark displacement refinement; faithful authored ShaderBall material
 graphs and full-resolution map storage;
 broad independent physical reference-image validation; complete ACEScg graph color management.
@@ -208,8 +208,8 @@ is explicitly recorded as lossy and is not treated as an authored graph import.
 
 Raster mip selection uses the base mesh UV derivatives, so transformed or
 procedural UV graph derivatives are approximate. Path preview currently uses
-level zero: ray differentials/cones remain outstanding. Cubic filtering,
-connected filename/sampler inputs, layers, image sequences and full
+level zero: ray differentials/cones remain outstanding. Connected
+filename/sampler inputs, layers, image sequences and full
 MaterialX colorspace inheritance are not implemented. These images do not
 complete authored ShaderBall material support.
 
