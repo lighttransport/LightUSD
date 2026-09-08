@@ -27,6 +27,14 @@ fn thinFilmFresnel(c0:f32,baseIOR:f32,filmIOR:f32,thickness:f32)->vec3f {
   let wavelengths=vec3f(650.0,510.0,475.0);let interference=2.0*r01*r12*cos(phase*1e-3*wavelengths);
   return clamp(vec3f(r01*r01)+vec3f(r12*r12)+vec3f(interference),vec3f(0),vec3f(1));
 }
+fn thinFilmFresnelLambda(c0:f32,baseIOR:f32,filmIOR:f32,thickness:f32,wavelength:f32)->f32 {
+  let c=clamp(abs(c0),0.0,1.0);let phase=4.0*PI*filmIOR*max(0.0,thickness)*c/max(1.0,wavelength);
+  let r01=(1.0-filmIOR)/(1.0+filmIOR);let r12=(filmIOR-baseIOR)/(filmIOR+baseIOR);
+  return clamp(r01*r01+r12*r12+2.0*r01*r12*cos(phase),0.0,1.0);
+}
+fn thinFilmAt(c0:f32,baseIOR:f32,filmIOR:f32,thickness:f32,wavelength:f32)->vec3f {
+  return select(thinFilmFresnel(c0,baseIOR,filmIOR,thickness),vec3f(thinFilmFresnelLambda(c0,baseIOR,filmIOR,thickness,wavelength)),wavelength>0.0);
+}
 fn transmissionAttenuation(m:Lobe)->vec3f { return exp(-max(vec3f(0),m.transmissionScatter)*max(0.0,m.transmissionDepth)); }
 fn mxPow6(v:f32)->f32 { let v2=v*v; return v2*v2*v2; }
 fn generalizedSchlickFresnel(m:Lobe,c:f32)->vec3f { let x=clamp(abs(c),0.0,1.0);let maxCos=1.0/7.0;let factor=1.0/(maxCos*pow(1.0-maxCos,6.0));let a=mix(m.base,m.schlickColor90,vec3f(pow(1.0-maxCos,m.schlickExponent)))*(vec3f(1)-m.schlickColor82)*factor;return mix(m.base,m.schlickColor90,vec3f(pow(1.0-x,m.schlickExponent)))-a*x*vec3f(mxPow6(1.0-x)); }
@@ -77,9 +85,9 @@ fn transportAlpha(m: Lobe) -> vec2f {
 }
 // A convex mixture of opaque metal/dielectric and transmissive dielectric.
 // Standard Surface layering and multiple-scattering compensation are separate.
-fn transportEval(m: Lobe, wo: vec3f, wi: vec3f, eta: f32) -> vec4f {
+fn transportEval(m: Lobe, wo: vec3f, wi: vec3f, eta: f32, wavelength:f32) -> vec4f {
   if(wo.z<=0.0 || wi.z==0.0) { return vec4f(0); }
-  if(m.kind!=0u){return nativeEval(m,wo,wi,eta);}
+  if(m.kind!=0u){return nativeEval(m,wo,wi,eta,wavelength);}
   let alpha=transportAlpha(m); let t=(1.0-m.metal)*m.transmission;
   let opaque=1.0-t; let specProbability=clamp(m.weight*mix(0.5,1.0,m.metal),0.0,1.0);
   var value=vec3f(0); var pdf=0.0;
@@ -87,7 +95,7 @@ fn transportEval(m: Lobe, wo: vec3f, wi: vec3f, eta: f32) -> vec4f {
     let h=normalize(wo+wi); let oh=max(1e-20,dot(wo,h));
     let fr=dielectricFresnel(oh,eta);
     let baseFresnel=mix(vec3f(fr),fresnel(oh,m.base),m.metal);
-    let f=select(baseFresnel,thinFilmFresnel(oh,m.ior,m.thinFilmIOR,m.thinFilmThickness),m.thinFilmThickness>0.0);
+    let f=select(baseFresnel,thinFilmAt(oh,m.ior,m.thinFilmIOR,m.thinFilmThickness,wavelength),m.thinFilmThickness>0.0);
     let spec=f*microfacetD(h,alpha)*microfacetG(wo,wi,alpha)/(4.0*wo.z*wi.z);
     let diff=(1.0-m.metal)*(1.0-fr)*m.base/PI;
     value=opaque*(m.weight*m.schlickColor90*spec+diff);
@@ -99,13 +107,13 @@ fn transportEval(m: Lobe, wo: vec3f, wi: vec3f, eta: f32) -> vec4f {
   }
   return vec4f(value,pdf);
 }
-fn transportSample(m: Lobe, wo: vec3f, eta: f32, rng: ptr<function,u32>) -> Scatter {
-  if(m.kind!=0u){return nativeSample(m,wo,eta,rng);}
+fn transportSample(m: Lobe, wo: vec3f, eta: f32, rng: ptr<function,u32>, wavelength:f32) -> Scatter {
+  if(m.kind!=0u){return nativeSample(m,wo,eta,rng,wavelength);}
   var wi=vec3f(0); let t=(1.0-m.metal)*m.transmission;
   let glass=random(rng)<t;
   let alpha=transportAlpha(m);
   if(glass && (m.roughness<=0.0001 || eta==1.0)) {
-    let f=dielectricFresnel(wo.z,eta);
+    let f=select(dielectricFresnel(wo.z,eta),dot(thinFilmAt(wo.z,m.ior,m.thinFilmIOR,m.thinFilmThickness,wavelength),vec3f(1.0/3.0)),m.thinFilmThickness>0.0);
     if(random(rng)<f) { return Scatter(vec3f(-wo.xy,wo.z),t*f,vec3f(1),1u,1.0); }
     wi=refract(-wo,vec3f(0,0,1),1.0/eta);
     return Scatter(wi,t*(1.0-f),m.transmissionColor*transmissionAttenuation(m)/(eta*eta),1u,eta);
@@ -118,7 +126,7 @@ fn transportSample(m: Lobe, wo: vec3f, eta: f32, rng: ptr<function,u32>) -> Scat
     let u=vec2f(random(rng),random(rng)); let r=sqrt(u.x); let phi=2.0*PI*u.y;
     wi=vec3f(r*cos(phi),r*sin(phi),sqrt(1.0-u.x));
   }
-  let f=transportEval(m,wo,wi,eta);
+  let f=transportEval(m,wo,wi,eta,wavelength);
   return Scatter(wi,f.w,f.xyz*abs(wi.z)/max(1e-30,f.w),0u,select(eta,1.0,wi.z>0.0));
 }
 fn powerHeuristic(a: f32, b: f32) -> f32 { return a*a/max(1e-30,a*a+b*b); }
@@ -129,7 +137,7 @@ fn sheenZeltnerTransform(wo:vec3f,wi:vec3f,r:f32)->vec4f {let nv=clamp(wo.z,0.0,
 fn sheenZeltnerBRDF(wo:vec3f,wi:vec3f,r:f32)->f32 {let t=sheenZeltnerTransform(wo,wi,r);return max(0.0,t.z)/PI*pow(sheenZeltnerAInv(clamp(wo.z,0.0,1.0),r)/t.w,2.0);}
 fn sheenZeltnerPDF(wo:vec3f,wi:vec3f,r:f32)->f32 {let t=sheenZeltnerTransform(wo,wi,r);let a=sheenZeltnerAInv(clamp(wo.z,0.0,1.0),r);let z=max(0.0,t.z/sqrt(t.w));return z/PI*pow(a*t.w,2.0);}
 fn sheenZeltnerSample(wo:vec3f,r:f32,rng:ptr<function,u32>)->vec3f {let nv=clamp(wo.z,0.0,1.0);let rr=sqrt(random(rng));let phi=2.0*PI*random(rng);let local=vec3f(rr*cos(phi),rr*sin(phi),sqrt(max(0.0,1.0-rr*rr)));let a=sheenZeltnerAInv(nv,r);let b=sheenZeltnerBInv(nv,r);let raw=vec3f(local.x/a-local.z*b/a,local.y/a,local.z);let w=raw/sqrt(max(1e-8,dot(raw,raw)));let tx=safeNormal(vec3f(wo.x,wo.y,0),vec3f(1,0,0));let ty=vec3f(-tx.y,tx.x,0);return tx*w.x+ty*w.y+vec3f(0,0,w.z);}
-fn nativeEval(m:Lobe,wo:vec3f,wi:vec3f,eta:f32)->vec4f {
+fn nativeEval(m:Lobe,wo:vec3f,wi:vec3f,eta:f32,wavelength:f32)->vec4f {
   if(m.kind==5u) {
     if(wi.z<=0.0){return vec4f(0);}
     let h=normalize(wo+wi);let oh=max(1e-6,dot(wo,h));let alpha=max(vec2f(.0001),m.alpha);
@@ -170,32 +178,32 @@ fn nativeEval(m:Lobe,wo:vec3f,wi:vec3f,eta:f32)->vec4f {
   if(m.kind==2u) {
     if(wi.z<=0.0){return vec4f(0);}
     let h=normalize(wo+wi);let oh=dot(wo,h);
-    var fres=conductorFresnel(oh,m.complexIOR,m.extinction);if(m.thinFilmThickness>0.0){fres*=thinFilmFresnel(oh,m.ior,m.thinFilmIOR,m.thinFilmThickness);}
+    var fres=conductorFresnel(oh,m.complexIOR,m.extinction);if(m.thinFilmThickness>0.0){fres*=thinFilmAt(oh,m.ior,m.thinFilmIOR,m.thinFilmThickness,wavelength);}
     return vec4f(m.weight*fres*microfacetD(h,alpha)*microfacetG(wo,wi,alpha)/(4.0*wo.z*wi.z),visibleNormalPDF(wo,h,alpha)/(4.0*oh));
   }
   if((wi.z>0.0&&m.scatterMode==2u)||(wi.z<0.0&&m.scatterMode==1u)){return vec4f(0);}
   let f=dielectricEval(wo,wi,alpha,eta);var value=f.x;var normalization=1.0;
-  if(wi.z>0.0&&m.thinFilmThickness>0.0){let h=normalize(wo+wi);value=dot(thinFilmFresnel(dot(wo,h),m.ior,m.thinFilmIOR,m.thinFilmThickness),vec3f(1.0/3.0));}
+  if(wi.z>0.0&&m.thinFilmThickness>0.0){let h=normalize(wo+wi);value=dot(thinFilmAt(dot(wo,h),m.ior,m.thinFilmIOR,m.thinFilmThickness,wavelength),vec3f(1.0/3.0));}
   if(m.scatterMode!=3u) {let sum=wo+wi*select(eta,1.0,wi.z>0.0);let h=normalize(sum);let fr=dielectricFresnel(abs(dot(wo,h)),eta);normalization=select(1.0-fr,fr,m.scatterMode==1u);}
   return vec4f(m.weight*m.transmissionColor*transmissionAttenuation(m)*value,f.y/max(1e-30,normalization));
 }
-fn nativeSample(m:Lobe,wo:vec3f,eta:f32,rng:ptr<function,u32>)->Scatter {
+fn nativeSample(m:Lobe,wo:vec3f,eta:f32,rng:ptr<function,u32>,wavelength:f32)->Scatter {
   var wi=vec3f(0);var delta=0u;
   if(m.kind==8u && m.scatterMode==1u) {wi=sheenZeltnerSample(wo,clamp(m.alpha.x,.01,1.0),rng);}
   else if(m.kind==3u || m.kind==4u || m.kind==6u || m.kind==8u) {let r=sqrt(random(rng));let phi=2.0*PI*random(rng);wi=vec3f(r*cos(phi),r*sin(phi),sqrt(max(0.0,1.0-r*r)));}
   else if(m.kind==7u) {let r=sqrt(random(rng));let phi=2.0*PI*random(rng);wi=vec3f(r*cos(phi),r*sin(phi),-sqrt(max(0.0,1.0-r*r)));}
   else {
     var h=vec3f(0,0,1);if(max(m.alpha.x,m.alpha.y)>0.0001 && (eta!=1.0||m.kind==2u)){h=visibleNormal(wo,max(vec2f(.0001),m.alpha),vec2f(random(rng),random(rng)));}else{delta=1u;}
-    if(m.kind==2u){wi=reflect(-wo,h);if(delta!=0u){var fres=conductorFresnel(wo.z,m.complexIOR,m.extinction);if(m.thinFilmThickness>0.0){fres*=thinFilmFresnel(wo.z,m.ior,m.thinFilmIOR,m.thinFilmThickness);}return Scatter(wi,1,m.weight*fres,1u,1);}}
+    if(m.kind==2u){wi=reflect(-wo,h);if(delta!=0u){var fres=conductorFresnel(wo.z,m.complexIOR,m.extinction);if(m.thinFilmThickness>0.0){fres*=thinFilmAt(wo.z,m.ior,m.thinFilmIOR,m.thinFilmThickness,wavelength);}return Scatter(wi,1,m.weight*fres,1u,1);}}
     else if(m.kind==5u){wi=reflect(-wo,h);if(wi.z<=0.0){return Scatter(wi,0,vec3f(0),0u,1);}if(delta!=0u){return Scatter(wi,1,m.weight*generalizedSchlickFresnel(m,dot(wo,h)),1u,1);}}
     else {
-      let fr0=dielectricFresnel(dot(wo,h),eta);let fr=select(fr0,dot(thinFilmFresnel(dot(wo,h),m.ior,m.thinFilmIOR,m.thinFilmThickness),vec3f(1.0/3.0)),m.thinFilmThickness>0.0);let pr=select(fr,0.0,m.scatterMode==2u);let pt=select(1.0-fr,0.0,m.scatterMode==1u);let total=pr+pt;
+      let fr0=dielectricFresnel(dot(wo,h),eta);let fr=select(fr0,dot(thinFilmAt(dot(wo,h),m.ior,m.thinFilmIOR,m.thinFilmThickness,wavelength),vec3f(1.0/3.0)),m.thinFilmThickness>0.0);let pr=select(fr,0.0,m.scatterMode==2u);let pt=select(1.0-fr,0.0,m.scatterMode==1u);let total=pr+pt;
       if(total<=0.0){return Scatter(vec3f(0),0,vec3f(0),0u,1);}
       if(random(rng)<pr/total){wi=reflect(-wo,h);if(wi.z<=0.0){return Scatter(wi,0,vec3f(0),0u,1);}if(delta!=0u){return Scatter(wi,pr/total,m.weight*m.transmissionColor*total,1u,1);}}
       else{wi=refract(-wo,h,1.0/eta);if(delta!=0u){return Scatter(wi,pt/total,m.weight*m.transmissionColor*transmissionAttenuation(m)*total/(eta*eta),1u,eta);}if(wi.z>=0.0){return Scatter(wi,0,vec3f(0),0u,1);}}
     }
   }
   if((m.kind!=1u&&m.kind!=7u&&wi.z<=0.0)||wo.z<=0.0){return Scatter(wi,0,vec3f(0),0u,1);}
-  let f=nativeEval(m,wo,wi,eta);return Scatter(wi,f.w,f.xyz*abs(wi.z)/max(1e-30,f.w),0u,select(eta,1.0,wi.z>0.0));
+  let f=nativeEval(m,wo,wi,eta,wavelength);return Scatter(wi,f.w,f.xyz*abs(wi.z)/max(1e-30,f.w),0u,select(eta,1.0,wi.z>0.0));
 }
 `;

@@ -367,6 +367,8 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   assert.match(compileGraph(edf,{material:true}).body,/vec3f\(2\.5,0\.8,0\.15\)/);
   const nativeFilm=syntheticScene('native-film').materials[1];
   assert.match(compileGraph(nativeFilm,{material:true}).body,/withThinFilm/);
+  assert.match(shaderSource([nativeFilm]),/thinFilmFresnelLambda/);
+  assert.match(shaderSource([nativeFilm]),/wavelength>0\.0/);
   const conductorFilm={nodes:[{name:'film',category:'conductor_bsdf',type:'BSDF',inputs:{thinfilm_thickness:{type:'float',value:120},thinfilm_IOR:{type:'float',value:1.4}}},{name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'film'}}}]};
   assert.match(compileGraph(conductorFilm,{material:true}).body,/withThinFilm/);
   const coat=syntheticScene('coat').materials[1];

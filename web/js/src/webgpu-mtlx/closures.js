@@ -30,21 +30,21 @@ fn primaryLobe(surface:Material)->Lobe {
 
 export const closureTransportWGSL = /* wgsl */`
 fn closureTotal(c:Closure)->f32 {var total=0.0;for(var i=0u;i<c.count;i++){total+=closureImportance(c,i);}return total;}
-fn closureEval(c:Closure,wo:vec3f,wi:vec3f,eta:f32)->vec4f {
+fn closureEval(c:Closure,wo:vec3f,wi:vec3f,eta:f32,wavelength:f32)->vec4f {
   let total=closureTotal(c);var f=vec3f(0);var pdf=0.0;
   if(total<=0.0){return vec4f(0);}
-  for(var i=0u;i<c.count;i++) {let l=transportEval(c.lobes[i],wo,wi,eta);f+=c.scales[i]*l.xyz;pdf+=closureImportance(c,i)/total*l.w;}
+  for(var i=0u;i<c.count;i++) {let l=transportEval(c.lobes[i],wo,wi,eta,wavelength);f+=c.scales[i]*l.xyz;pdf+=closureImportance(c,i)/total*l.w;}
   return vec4f(f,pdf);
 }
-fn closureSample(c:Closure,wo:vec3f,eta:f32,rng:ptr<function,u32>)->Scatter {
+fn closureSample(c:Closure,wo:vec3f,eta:f32,rng:ptr<function,u32>,wavelength:f32)->Scatter {
   let total=closureTotal(c);if(total<=0.0){return Scatter(vec3f(0),0,vec3f(0),0u,1);}
   let threshold=random(rng)*total;var cumulative=0.0;var selected=0u;
   for(var i=0u;i<c.count;i++){cumulative+=closureImportance(c,i);if(threshold<cumulative){selected=i;break;}}
   let probability=closureImportance(c,selected)/total;
-  var s=transportSample(c.lobes[selected],wo,eta,rng);
+  var s=transportSample(c.lobes[selected],wo,eta,rng,wavelength);
   if(s.pdf<=0.0){return s;}
   if(s.delta!=0u){s.weight*=c.scales[selected]/probability;s.pdf*=probability;return s;}
-  let f=closureEval(c,wo,s.wi,eta);s.pdf=f.w;s.weight=f.xyz*abs(s.wi.z)/max(1e-30,f.w);return s;
+  let f=closureEval(c,wo,s.wi,eta,wavelength);s.pdf=f.w;s.weight=f.xyz*abs(s.wi.z)/max(1e-30,f.w);return s;
 }
 fn validClosure(c:Closure)->bool {
   if(c.count>16u){return false;}

@@ -763,9 +763,10 @@ This is an approximation because the current lobe shares one roughness field;
 independent diffuse/specular roughness remains future work.
 
 OpenPBR `thin_film_weight`, `thin_film_thickness`, and `thin_film_ior` now map
-to the existing bounded RGB interference Fresnel path. The synthetic
-`open-pbr-film` scene is covered by the Chrome matrix; wavelength-dependent
-spectral film optics and full layered energy compensation remain future work.
+to the bounded interference Fresnel path. RGB renders retain the fixed
+three-channel approximation; spectral renders evaluate the film phase at the
+sampled hero wavelength. The synthetic `open-pbr-film` scene is covered by
+the Chrome matrix; full layered energy compensation remains future work.
 
 OpenPBR `specular_weight` and Standard Surface `specular` now scale the
 terminal microfacet contribution through the bounded lobe weight, while the

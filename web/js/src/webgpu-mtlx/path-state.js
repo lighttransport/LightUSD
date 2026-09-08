@@ -169,14 +169,15 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
     let eps=max(1e-5,length(ctx.position)*2e-6);
     let light=directionalDirection();
     let lightLocal=transpose(frame)*light;
-    let direct=closureEval(surface.bsdf,wo,lightLocal,eta);
+    let wavelength=select(0.0,p.previous.x,cfg.dimensions.w==2u);
+    let direct=closureEval(surface.bsdf,wo,lightLocal,eta,wavelength);
     let lightOrigin=ctx.position+gn*select(-eps,eps,lightLocal.z>0.0);
     var lightColor=directionalRadiance(); if(cfg.dimensions.w==2u) { lightColor=vec3f(rgbSpectrum(lightColor,p.previous.x,true)); }
     if(intersect(lightOrigin,light).id==0xffffffffu) { p.radiance+=vec4f(p.beta.xyz*direct.xyz*abs(lightLocal.z)*lightColor,0); }
     // Uniform environment sampling plus power-heuristic BSDF sampling.
     let z=1.0-2.0*random(&rng); let phi=2.0*PI*random(&rng); let rr=sqrt(max(0.0,1.0-z*z));
     let envDirection=vec3f(rr*cos(phi),z,rr*sin(phi)); let envLocal=transpose(frame)*envDirection;
-    let f=closureEval(surface.bsdf,wo,envLocal,eta); let envPDF=1.0/(4.0*PI);
+    let f=closureEval(surface.bsdf,wo,envLocal,eta,wavelength); let envPDF=1.0/(4.0*PI);
     let envOrigin=ctx.position+gn*select(-eps,eps,envLocal.z>0.0);
     if(f.w>0.0 && intersect(envOrigin,envDirection).id==0xffffffffu) {
       var sky=environment(envDirection); if(cfg.dimensions.w==2u) { sky=vec3f(rgbSpectrum(sky,p.previous.x,true)); }
@@ -194,7 +195,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
       if(distance>eps && lo!=h.id) {
         let direction=delta/distance;let local=transpose(frame)*direction;
         let pdf=triangleLightPDF(emitter,distance,direction);
-        let ev=closureEval(surface.bsdf,wo,local,eta);
+        let ev=closureEval(surface.bsdf,wo,local,eta,wavelength);
         let lightCtx=context(Hit(distance,b1,b2,lo),ctx.position,direction);
         var emission=getMaterial(u32(emitter.a.uv.z),lightCtx);
         let emissionSurface=getSurface(u32(emitter.a.uv.z),lightCtx);
@@ -207,7 +208,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
         }
       }
     }
-    let sample=closureSample(surface.bsdf,wo,eta,&rng);
+    let sample=closureSample(surface.bsdf,wo,eta,&rng,wavelength);
     if(sample.pdf<=0.0 || dot(sample.wi,sample.wi)<0.5 || all(sample.weight<=vec3f(0))) { finishPath(index,&p); break; }
     p.beta=vec4f(p.beta.xyz*sample.weight,p.beta.w*sample.eta*sample.eta);
     if(sample.wi.z<0.0 && m.thinWalled==0u) {

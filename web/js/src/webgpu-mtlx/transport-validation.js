@@ -12,8 +12,8 @@ export async function validateTransportKernels(device) {
     ['GGX peak', 'microfacetD(vec3f(0,0,1),vec2f(0.5))', 4 / Math.PI],
     ['GGX normal masking', 'microfacetG1(vec3f(0,0,1),vec2f(0.2,0.5))', 1],
     ['conductor normal Fresnel', 'conductorFresnel(1.0,vec3f(0.2),vec3f(3)).x', ((.2-1)**2+9)/((.2+1)**2+9)],
-    ['closure weighted evaluation', 'closureEval(closureMix(closureLeaf(nativeDiffuse(vec3f(.2),1,0)),closureLeaf(nativeDiffuse(vec3f(.8),1,0)),.25),vec3f(0,0,1),vec3f(0,0,1),1.5).x', .35/Math.PI],
-    ['closure mixture PDF', 'closureEval(closureMix(closureLeaf(nativeDiffuse(vec3f(.2),1,0)),closureLeaf(nativeDiffuse(vec3f(.8),1,0)),.25),vec3f(0,0,1),vec3f(0,0,1),1.5).w', 1/Math.PI],
+    ['closure weighted evaluation', 'closureEval(closureMix(closureLeaf(nativeDiffuse(vec3f(.2),1,0)),closureLeaf(nativeDiffuse(vec3f(.8),1,0)),.25),vec3f(0,0,1),vec3f(0,0,1),1.5,0.0).x', .35/Math.PI],
+    ['closure mixture PDF', 'closureEval(closureMix(closureLeaf(nativeDiffuse(vec3f(.2),1,0)),closureLeaf(nativeDiffuse(vec3f(.8),1,0)),.25),vec3f(0,0,1),vec3f(0,0,1),1.5,0.0).w', 1/Math.PI],
     ['inactive transmission interface', 'primaryLobe(surfaceEmission(closureMix(closureLeaf(nativeDielectric(vec3f(1),1.8,vec2f(.1),1,3u)),closureLeaf(nativeDiffuse(vec3f(.5),1,0)),1.0),vec3f(0),1.0,0u,vec3f(0,0,1),vec3f(0,0,1),-1.0,-1.0,vec3f(1),vec3f(1),5.0,0u,0u)).transmission', 0],
     ['secondary invalid lobe', 'select(0.0,1.0,validClosure(closureAdd(closureLeaf(nativeDiffuse(vec3f(1),1,0)),closureLeaf(nativeDiffuse(vec3f(-1),1,0)))))',0],
   ];
@@ -31,9 +31,9 @@ export async function validateTransportKernels(device) {
       var rng=123456u; var total=0.0; var error=0.0; var transmitted=0.0;
       let m=makeMaterial(vec3f(1),0,.3,1.5,1,vec3f(0),0,0,vec3f(1),0u,0.0,1.5);
       for(var i=0u;i<32768u;i++) {
-        let s=transportSample(m,wo,1.5,&rng);
+        let s=transportSample(m,wo,1.5,&rng,0.0);
         if(s.pdf>0.0) {
-          let f=transportEval(m,wo,s.wi,1.5);
+          let f=transportEval(m,wo,s.wi,1.5,0.0);
           error=max(error,abs(s.pdf-f.w));
           total+=s.weight.x*select(1.0,2.25,s.wi.z<0.0);
           if(s.wi.z<0.0) { transmitted+=1.0; }
