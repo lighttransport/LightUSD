@@ -9,7 +9,7 @@ import { shaderSource } from '../src/webgpu-mtlx/shaders.js';
 import { validateSpectrum, sampleSpectrum } from '../src/webgpu-mtlx/spectrum.js';
 import { cieXYZ } from '../src/webgpu-mtlx/cie-data.js';
 import { refineDisplacementScene } from '../src/webgpu-mtlx/displacement.js';
-import { fetchResource, inspectEXR, inspectEXRHeader, decodeImage, atlasUDIMImages, collectMaterialXNodes } from '../src/webgpu-mtlx/resources.js';
+import { fetchResource, inspectEXR, inspectEXRHeader, decodeImage, atlasUDIMImages, collectMaterialXNodes, expandMaterialXFrameFilename } from '../src/webgpu-mtlx/resources.js';
 import { appendRectLights } from '../src/webgpu-mtlx/usd-lights.js';
 import { mayEmit } from '../src/webgpu-mtlx/emission.js';
 import { materialXFromUSD } from '../src/webgpu-mtlx/usd-graph.js';
@@ -204,6 +204,13 @@ test('resource fetch enforces streaming budgets and HTTP errors',async()=>{
 test('resource discovery traverses nested MaterialX nodegraphs', () => {
   const nodes = collectMaterialXNodes({ nodes: [{ category: 'constant' }], graphs: { outer: { nodes: [], graphs: { inner: { nodes: [{ category: 'image' }] } } } } });
   assert.deepEqual(nodes.map(node => node.category), ['constant', 'image']);
+});
+test('MaterialX frame filename patterns expand with bounded padding', () => {
+  assert.equal(expandMaterialXFrameFilename('albedo.####.exr', 7), 'albedo.0007.exr');
+  assert.equal(expandMaterialXFrameFilename('albedo.%04d.exr', 12), 'albedo.0012.exr');
+  assert.equal(expandMaterialXFrameFilename('albedo.<FRAME>.exr', 3), 'albedo.3.exr');
+  assert.equal(expandMaterialXFrameFilename('albedo.exr', 3), null);
+  assert.throws(() => expandMaterialXFrameFilename('albedo.####.exr', 1.5), /integer/);
 });
 test('EXR resource preflight bounds allocation and decode preserves bottom-up rows',async()=>{
   const bytes=encodeEXR(1,2,new Float32Array([1,2,3,1,4,5,6,1]));

@@ -69,6 +69,29 @@ export function collectMaterialXNodes(document) {
   return nodes;
 }
 
+/** Expand one bounded MaterialX frame filename pattern. */
+export function expandMaterialXFrameFilename(pattern, frame) {
+  if (!Number.isInteger(frame)) throw new Error('MaterialX sequence frame must be an integer');
+  const text = String(pattern);
+  let matched = false;
+  const expanded = text.replace(/(#+|<FRAME>|%0?\d*d|%d)/ig, token => {
+    matched = true;
+    if (token[0] === '#') return String(frame).padStart(token.length, '0');
+    if (/^%0\d+d$/i.test(token)) return String(frame).padStart(Number(token.slice(2, -1)), '0');
+    return String(frame);
+  });
+  return matched ? expanded : null;
+}
+
+function authoredSequenceRange(node) {
+  const value = node.inputs?.framerange?.value;
+  const range = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',').map(Number) : null;
+  if (!range || range.length !== 2 || !range.every(Number.isFinite) || !range.every(Number.isInteger) || range[1] < range[0]) {
+    throw new Error('MaterialX image sequence requires a finite integer framerange');
+  }
+  return range;
+}
+
 // Header-only EXR inspection. Pixel payload is never touched, so this remains
 // safe for very large files. `colorSpace` is an authored header opinion only;
 // filenames are deliberately not consulted.
@@ -305,6 +328,24 @@ export async function loadMaterialXResources(url, options = {}) {
           decodedBytes += image.data.byteLength;
           if (decodedBytes > (options.maxDecodedBytes || 48 * 1024 * 1024)) throw new Error('Material images exceed decoded byte budget');
           document.images[key] = image;
+        } else if (expandMaterialXFrameFilename(file.value, 0) !== null) {
+          if (/<UDIM>|<UVTILE>|%\(UDIM\)d/i.test(file.value)) throw new Error('MaterialX image filename cannot combine sequence and UDIM patterns');
+          const [start, end] = authoredSequenceRange(node);
+          const maxFrames = Number.isInteger(options.maxSequenceFrames) ? options.maxSequenceFrames : 1024;
+          if (maxFrames < 1 || end - start + 1 > maxFrames) throw new Error('MaterialX image sequence exceeds frame budget');
+          const frames = [];
+          for (let frame = start; frame <= end; frame++) {
+            const frameName = expandMaterialXFrameFilename(file.value, frame);
+            const frameURL = new URL((node.fileprefix || '') + (file.fileprefix || '') + frameName, node.source || source);
+            allowed(frameURL.href);
+            const imageBytes = await fetchResource(frameURL.href, options);
+            const image = await decodeImage(imageBytes, { filename: frameURL.href, colorspace, maxPixels: options.maxPixels, allowDownsample: options.allowDownsample === true });
+            decodedBytes += image.data.byteLength;
+            if (decodedBytes > (options.maxDecodedBytes || 48 * 1024 * 1024)) throw new Error('Material images exceed decoded byte budget');
+            frames.push(image);
+          }
+          if (!frames.length) throw new Error(`No frames found for ${file.value}`);
+          document.images[key] = { ...frames[0], frames };
         } else {
           const imageBytes = await fetchResource(resolved.href, options);
           const image = await decodeImage(imageBytes, { filename: resolved.href, colorspace, maxPixels: options.maxPixels, allowDownsample: options.allowDownsample === true });

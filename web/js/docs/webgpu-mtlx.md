@@ -238,17 +238,18 @@ lookups now use the same bounded shading footprint for mip selection; this is
 an angular approximation because the context does not carry full direction
 derivatives. Path tracing carries a bounded ray-cone footprint through secondary
 bounces, while full ray differentials remain outstanding. Connected
-filename/sampler inputs, layers, image sequences and full
-MaterialX colorspace inheritance are not implemented. These images do not
+filename/sampler inputs, layers and full MaterialX colorspace inheritance are
+not implemented. These images do not
 complete authored ShaderBall material support.
 
 `setOptions({time, frame})` supplies animation values to raster, preview, and
 physical shading contexts. Changing either value resets accumulated path
 samples so animated graph evaluation cannot reuse samples from another time.
-Caller-provided decoded image resources may now use `frames: [...]`; image
-nodes select those frames from `frame`, `framerange`, and `frameoffset`, with
-bounded `constant`, `cycle`, and `mirror` end actions. URL filename expansion
-and automatic sequence frame fetching remain separate work.
+Caller-provided decoded image resources may use `frames: [...]`; the resource
+loader also expands bounded `####`, `<FRAME>`, and `%0Nd` filename patterns
+using an authored integer `framerange`. Image nodes select those frames from
+`frame`, `framerange`, and `frameoffset`, with bounded `constant`, `cycle`, and
+`mirror` end actions.
 
 ## Verification
 

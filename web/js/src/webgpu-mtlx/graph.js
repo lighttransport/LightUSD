@@ -373,9 +373,10 @@ export function compileGraph(document, { output, library = {}, material = false,
           const descriptor = Object.hasOwn(imageDescriptors, file) && imageDescriptors[file];
           if (!descriptor) fail('RESOURCE', key, `missing decoded image ${file}`);
           const frames=descriptor.frames;
-          if (!frames && (ins.framerange || ins.frameoffset || ins.frameendaction)) {
-            for (const name of ['framerange','frameoffset']) if (ins[name] && (ins[name].nodename || ins[name].nodegraph || ins[name].interfacename || !['', '0', 0].includes(ins[name].value))) fail('UNSUPPORTED', key, `image ${name} requires decoded sequence frames`);
-            if (ins.frameendaction && (ins.frameendaction.nodename || ins.frameendaction.nodegraph || ins.frameendaction.interfacename || ins.frameendaction.value !== undefined && ins.frameendaction.value !== 'constant')) fail('UNSUPPORTED', key, 'image frameendaction requires decoded sequence frames');
+          const authored = p => p && (p.value !== undefined || p.nodename || p.nodegraph || p.interfacename);
+          if (!frames && (authored(ins.framerange) || authored(ins.frameoffset) || authored(ins.frameendaction))) {
+            for (const name of ['framerange','frameoffset']) if (authored(ins[name]) && (ins[name].nodename || ins[name].nodegraph || ins[name].interfacename || !['', '0', 0].includes(ins[name].value))) fail('UNSUPPORTED', key, `image ${name} requires decoded sequence frames`);
+            if (authored(ins.frameendaction) && (ins.frameendaction.nodename || ins.frameendaction.nodegraph || ins.frameendaction.interfacename || ins.frameendaction.value !== undefined && ins.frameendaction.value !== 'constant')) fail('UNSUPPORTED', key, 'image frameendaction requires decoded sequence frames');
           }
           if (frames && frames.length > 0 && ins.frameendaction && (ins.frameendaction.nodename || ins.frameendaction.nodegraph || ins.frameendaction.interfacename || !['constant','cycle','mirror'].includes(ins.frameendaction.value ?? 'constant'))) fail('UNSUPPORTED', key, 'image frameendaction must be constant, cycle, or mirror');
           if (n.colorspace && normalizeColorSpace(n.colorspace) !== normalizeColorSpace(descriptor.colorspace)) fail('SEMANTICS', key, 'image colorspace differs from decoded resource');
