@@ -304,6 +304,9 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 - `hextilednormalmap` applies the same tile transform to tangent-space normal
   samples, including green-channel flipping, tangent rotation, strength, and
   gradient-based normal blending.
+- `flake2d` and `flake3d` expose the four MaterialX outputs (`id`, `rand`,
+  `presence`, and `flakenormal`) from a bounded 3×3×3 priority search and GGX
+  flake-normal construction.
 - `grid` and `crosshatch` provide typed color3 UV patterns with tiling, offset,
   thickness, and staggered-cell controls.
 - `tiledcircles` provides deterministic cell-local circle masks with authored

@@ -1002,6 +1002,15 @@ test('hextilednormalmap preserves tangent rotation, flip and gradient blending',
   assert.match(source.body,/imageHextileNormal\(0u/); assert.match(source.body,/ctx\.tangent/); assert.match(source.body,/0\.8/);
   assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,filtertype:{type:'string',value:'cubic'}}}]},{imageDescriptors:descriptor}),/closest\/linear/);
 });
+test('flake2d and flake3d expose pinned multi outputs', () => {
+  const outputs={id:{type:'integer'},rand:{type:'float'},presence:{type:'float'},flakenormal:{type:'vector3'}};
+  const flake2={nodes:[{name:'f',category:'flake2d',type:'multioutput',outputs,inputs:{size:{type:'float',value:.02},roughness:{type:'float',value:.15},coverage:{type:'float',value:.7}}}]};
+  for(const output of ['id','rand','presence','flakenormal']) {
+    const source=compileGraph(flake2,{output:{nodename:'f',output}}); assert.match(source.body,/mxFlake\(/); assert.match(source.body,new RegExp(`\.${output}`));
+  }
+  const flake3={nodes:[{name:'f',category:'flake3d',type:'multioutput',outputs,inputs:{position:{type:'vector3',value:[.1,.2,.3]}}}]};
+  assert.match(compileGraph(flake3,{output:{nodename:'f',output:'flakenormal'}}).body,/vec3f\(0\.1,0\.2,0\.3\)/);
+});
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
   assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/);
