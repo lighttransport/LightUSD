@@ -290,6 +290,9 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   const hair=syntheticScene('hair').materials[1];
   assert.match(compileGraph(hair,{material:true}).body,/nativeHair/);
   assert.match(shaderSource([hair]),/nativeHair/);
+  const translucent=compileGraph({nodes:[{name:'t',category:'translucent_bsdf',type:'BSDF',inputs:{color:{type:'color3',value:[.7,.5,.3]},weight:{type:'float',value:.65}}}]});
+  assert.match(translucent.body,/nativeTranslucent\(vec3f\(0\.7,0\.5,0\.3\),0\.65\)/);
+  assert.match(shaderSource([{nodes:[{name:'t',category:'translucent_bsdf',type:'BSDF',inputs:{color:{type:'color3',value:[.7,.5,.3]},weight:{type:'float',value:.65}}},{name:'s',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'t'}}}],output:{nodename:'s'}}]),/m\.kind==7u/);
   const film=syntheticScene().materials[1];
   film.nodes[0].inputs.thin_film_thickness={type:'float',value:180};
   film.nodes[0].inputs.thin_film_IOR={type:'float',value:1.4};

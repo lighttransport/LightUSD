@@ -48,6 +48,8 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   `color90`, and exponent controls through the same emission transport.
 - `generalized_schlick_bsdf` now carries the pinned `color82` control and
   Hoffman Schlick correction through RGB and spectral lobe evaluation.
+- `translucent_bsdf` uses a bounded opposite-hemisphere diffuse transmission
+  lobe and preserves its authored color and weight.
 - The pinned float, color3, and color4 `blur` overloads follow the MaterialX
   1.39.5 standard library implementation, which is currently a documented
   pass-through for box and gaussian filter types.

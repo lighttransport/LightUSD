@@ -144,6 +144,10 @@ fn nativeEval(m:Lobe,wo:vec3f,wi:vec3f,eta:f32)->vec4f {
     let value=m.weight*m.base*(.25/PI+.75*profile);
     return vec4f(value,wi.z/PI);
   }
+  if(m.kind==7u) {
+    if(wi.z>=0.0){return vec4f(0);}
+    return vec4f(m.weight*m.base*abs(wi.z)/PI,abs(wi.z)/PI);
+  }
   if(m.kind==3u) {
     if(wi.z<=0.0){return vec4f(0);}
     let s=dot(wo,wi)-wo.z*wi.z;let sigma=m.roughness*m.roughness;
@@ -167,6 +171,7 @@ fn nativeEval(m:Lobe,wo:vec3f,wi:vec3f,eta:f32)->vec4f {
 fn nativeSample(m:Lobe,wo:vec3f,eta:f32,rng:ptr<function,u32>)->Scatter {
   var wi=vec3f(0);var delta=0u;
   if(m.kind==3u || m.kind==4u || m.kind==6u) {let r=sqrt(random(rng));let phi=2.0*PI*random(rng);wi=vec3f(r*cos(phi),r*sin(phi),sqrt(max(0.0,1.0-r*r)));}
+  else if(m.kind==7u) {let r=sqrt(random(rng));let phi=2.0*PI*random(rng);wi=vec3f(r*cos(phi),r*sin(phi),-sqrt(max(0.0,1.0-r*r)));}
   else {
     var h=vec3f(0,0,1);if(max(m.alpha.x,m.alpha.y)>0.0001 && (eta!=1.0||m.kind==2u)){h=visibleNormal(wo,max(vec2f(.0001),m.alpha),vec2f(random(rng),random(rng)));}else{delta=1u;}
     if(m.kind==2u){wi=reflect(-wo,h);if(delta!=0u){var fres=conductorFresnel(wo.z,m.complexIOR,m.extinction);if(m.thinFilmThickness>0.0){fres*=thinFilmFresnel(wo.z,m.ior,m.thinFilmIOR,m.thinFilmThickness);}return Scatter(wi,1,m.weight*fres,1u,1);}}
@@ -178,7 +183,7 @@ fn nativeSample(m:Lobe,wo:vec3f,eta:f32,rng:ptr<function,u32>)->Scatter {
       else{wi=refract(-wo,h,1.0/eta);if(delta!=0u){return Scatter(wi,pt/total,m.weight*m.transmissionColor*transmissionAttenuation(m)*total/(eta*eta),1u,eta);}if(wi.z>=0.0){return Scatter(wi,0,vec3f(0),0u,1);}}
     }
   }
-  if((m.kind!=1u&&wi.z<=0.0)||wo.z<=0.0){return Scatter(wi,0,vec3f(0),0u,1);}
+  if((m.kind!=1u&&m.kind!=7u&&wi.z<=0.0)||wo.z<=0.0){return Scatter(wi,0,vec3f(0),0u,1);}
   let f=nativeEval(m,wo,wi,eta);return Scatter(wi,f.w,f.xyz*abs(wi.z)/max(1e-30,f.w),0u,select(eta,1.0,wi.z>0.0));
 }
 `;
