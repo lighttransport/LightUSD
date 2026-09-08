@@ -26,6 +26,33 @@ export async function fetchResource(url, { fetcher = fetch, maxBytes = 32 * 1024
   return bytes;
 }
 
+/** Build a bounded float RGBA atlas from decoded 1001-1100 UDIM tiles. */
+export function atlasUDIMImages(tiles) {
+  if (!Array.isArray(tiles) || tiles.length < 1 || tiles.length > 100) throw new Error('UDIM tile count exceeds budget');
+  const first = tiles[0]?.image;
+  if (!first || !Number.isInteger(first.width) || !Number.isInteger(first.height) || first.width < 1 || first.height < 1) throw new Error('Invalid UDIM tile image');
+  const tileWidth = first.width, tileHeight = first.height;
+  let columns = 1, rows = 1;
+  for (const tile of tiles) {
+    if (!Number.isInteger(tile.id) || tile.id < 1001 || tile.id > 1100 || tile.id % 1) throw new Error('Invalid UDIM tile id');
+    if (tile.image.width !== tileWidth || tile.image.height !== tileHeight || tile.image.data.length !== tileWidth * tileHeight * 4) throw new Error('UDIM tiles must have matching dimensions');
+    const u = (tile.id - 1001) % 10, v = Math.floor((tile.id - 1001) / 10);
+    columns = Math.max(columns, u + 1); rows = Math.max(rows, v + 1);
+  }
+  const data = new Float32Array(tileWidth * columns * tileHeight * rows * 4);
+  for (const tile of tiles) {
+    const u = (tile.id - 1001) % 10, v = Math.floor((tile.id - 1001) / 10), source = tile.image.data;
+    for (let y = 0; y < tileHeight; y++) {
+      const sourceOffset = y * tileWidth * 4;
+      const targetOffset = ((v * tileHeight + y) * tileWidth * columns + u * tileWidth) * 4;
+      data.set(source.subarray(sourceOffset, sourceOffset + tileWidth * 4), targetOffset);
+    }
+  }
+  return { width: tileWidth * columns, height: tileHeight * rows, data,
+    colorspace: normalizeColorSpace(first.colorspace || 'lin_rec709'),
+    udim: { columns, rows, tileIds: tiles.map(tile => tile.id) } };
+}
+
 // Bound EXR dimensions before the third-party decoder allocates pixel buffers.
 export function inspectEXR(bytes, maxPixels = 4 * 1024 * 1024) {
   return inspectEXRHeader(bytes, maxPixels).dimensions;
@@ -241,17 +268,39 @@ export async function loadMaterialXResources(url, options = {}) {
     for (const fileName of fileNames) {
       const file = node.inputs?.[fileName];
       if (!file?.value || file.nodename || file.nodegraph || file.interfacename) continue;
-      if (/<UDIM>|<UVTILE>/.test(file.value)) throw new Error('UDIM resource loading is not implemented');
       const resolved = new URL((node.fileprefix || '') + (file.fileprefix || '') + file.value, node.source || source);
       allowed(resolved.href);
       const colorspace = file.colorspace || node.colorspace || document.colorspace;
       const key = `${resolved.href}#colorspace=${colorspace || 'auto'}`;
       if (!document.images[key]) {
-        const imageBytes = await fetchResource(resolved.href, options);
-        const image = await decodeImage(imageBytes, { filename: resolved.href, colorspace, maxPixels: options.maxPixels, allowDownsample: options.allowDownsample === true });
-        decodedBytes += image.data.byteLength;
-        if (decodedBytes > (options.maxDecodedBytes || 48 * 1024 * 1024)) throw new Error('Material images exceed decoded byte budget');
-        document.images[key] = image;
+        const udim = /<UDIM>|<UVTILE>/i.test(file.value);
+        if (udim) {
+          const tiles = [];
+          for (let id = 1001; id <= 1100; id++) {
+            const u = (id - 1001) % 10, v = Math.floor((id - 1001) / 10);
+            const tileName = file.value.replace(/<UDIM>/ig, String(id)).replace(/<UVTILE>/ig, `u${u + 1}_v${v + 1}`);
+            const tileURL = new URL((node.fileprefix || '') + (file.fileprefix || '') + tileName, node.source || source);
+            allowed(tileURL.href);
+            try {
+              const imageBytes = await fetchResource(tileURL.href, options);
+              const image = await decodeImage(imageBytes, { filename: tileURL.href, colorspace, maxPixels: options.maxPixels, allowDownsample: options.allowDownsample === true });
+              tiles.push({ id, image });
+            } catch (error) {
+              if (!/HTTP 404\b/.test(String(error?.message || error))) throw error;
+            }
+          }
+          if (!tiles.length) throw new Error(`No UDIM tiles found for ${file.value}`);
+          const image = atlasUDIMImages(tiles);
+          decodedBytes += image.data.byteLength;
+          if (decodedBytes > (options.maxDecodedBytes || 48 * 1024 * 1024)) throw new Error('Material images exceed decoded byte budget');
+          document.images[key] = image;
+        } else {
+          const imageBytes = await fetchResource(resolved.href, options);
+          const image = await decodeImage(imageBytes, { filename: resolved.href, colorspace, maxPixels: options.maxPixels, allowDownsample: options.allowDownsample === true });
+          decodedBytes += image.data.byteLength;
+          if (decodedBytes > (options.maxDecodedBytes || 48 * 1024 * 1024)) throw new Error('Material images exceed decoded byte budget');
+          document.images[key] = image;
+        }
       }
       file.value = key;
     }

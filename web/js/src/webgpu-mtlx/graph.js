@@ -264,7 +264,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           const address=name=>{const p=ins[name];const mode=['constant','clamp','periodic','mirror'].indexOf(p?.value??'periodic');if(mode<0||p?.nodename||p?.interfacename||p?.nodegraph)fail('UNSUPPORTED',key,'invalid triplanar image address mode');return `${mode}u`;};
           const filter=ins.filtertype?.value??'linear';if(!['closest','linear','cubic'].includes(filter)||ins.filtertype?.nodename||ins.filtertype?.interfacename||ins.filtertype?.nodegraph)fail('UNSUPPORTED',key,'invalid triplanar image filter');
           const swizzle=({float:'r',vector2:'rg',vector3:'rgb',color3:'rgb',vector4:'rgba',color4:'rgba'})[type], pos=ins.position?x('position',undefined,'vector3'):'ctx.position', nrm=ins.normal?x('normal',undefined,'vector3'):'ctx.normal';
-          const uv=[`${pos}.yz`,`${pos}.xz`,`${pos}.xy`], samples=descriptor.map(({d},i)=>{const fill=widths[type]===4?fallback:widths[type]===3?`vec4f(${fallback},0)`:widths[type]===2?`vec4f(${fallback},0,0)`:`vec4f(${fallback})`;const call=filter==='cubic'?`imageSampleCubic(${d.offset}u,vec2u(${d.width}u,${d.height}u),${d.levels}u,${uv[i]},0.0,vec2u(${address('uaddressmode')},${address('vaddressmode')}),${fill})`: `imageSample(${d.offset}u,vec2u(${d.width}u,${d.height}u),${d.levels}u,${uv[i]},0.0,vec2u(${address('uaddressmode')},${address('vaddressmode')}),${filter==='linear'},${fill})`;return `${call}.${swizzle}`;});
+          const uv=[`${pos}.yz`,`${pos}.xz`,`${pos}.xy`], samples=descriptor.map(({d},i)=>{const fill=widths[type]===4?fallback:widths[type]===3?`vec4f(${fallback},0)`:widths[type]===2?`vec4f(${fallback},0,0)`:`vec4f(${fallback})`;const grid=d.udim&&`vec2u(${d.udim.columns}u,${d.udim.rows}u)`;const call=filter==='cubic'?(d.udim?`imageSampleCubicUDIM(${d.offset}u,vec2u(${d.width}u,${d.height}u),${d.levels}u,${uv[i]},${grid},0.0,${fill})`:`imageSampleCubic(${d.offset}u,vec2u(${d.width}u,${d.height}u),${d.levels}u,${uv[i]},0.0,vec2u(${address('uaddressmode')},${address('vaddressmode')}),${fill})`):(d.udim?`imageSampleUDIM(${d.offset}u,vec2u(${d.width}u,${d.height}u),${d.levels}u,${uv[i]},${grid},0.0,${filter==='linear'},${fill})`:`imageSample(${d.offset}u,vec2u(${d.width}u,${d.height}u),${d.levels}u,${uv[i]},0.0,vec2u(${address('uaddressmode')},${address('vaddressmode')}),${filter==='linear'},${fill})`);return `${call}.${swizzle}`;});
           const stableNormal=`safeNormal(${nrm},vec3f(0.0,0.0,1.0))`, weights=`abs(${stableNormal})/max(1e-6,dot(abs(${stableNormal}),vec3f(1.0)))`;code=`${samples[0]}*${weights}.x+${samples[1]}*${weights}.y+${samples[2]}*${weights}.z`;break;
         }
         case 'image': case 'tiledimage': case 'UsdUVTexture': case 'usduvtexture': {
@@ -313,9 +313,12 @@ export function compileGraph(document, { output, library = {}, material = false,
           const size = `vec2f(${descriptor.width}.0,${descriptor.height}.0)`;
           const lodScale = uvScale;
           const lod = `log2(max(1.0,max(length(ctx.uvDx*${size}*${lodScale}),length(ctx.uvDy*${size}*${lodScale}))))`;
+          const udim = descriptor.udim;
+          if (udim && (!Number.isInteger(udim.columns) || !Number.isInteger(udim.rows) || udim.columns < 1 || udim.rows < 1)) fail('RESOURCE', key, 'invalid UDIM atlas descriptor');
+          const grid = udim && `vec2u(${udim.columns}u,${udim.rows}u)`;
           const sample = filter === 'cubic'
-            ? `imageSampleCubic(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${fill})`
-            : `imageSample(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${filter === 'linear'},${fill})`;
+            ? (udim ? `imageSampleCubicUDIM(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${grid},${lod},${fill})` : `imageSampleCubic(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${fill})`)
+            : (udim ? `imageSampleUDIM(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${grid},${lod},${filter === 'linear'},${fill})` : `imageSample(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${filter === 'linear'},${fill})`);
           if (usdTexture) {
             const scale = x('scale', [1, 1, 1, 1], 'color4'), bias = x('bias', [0, 0, 0, 0], 'color4');
             code = `((${sample}*${scale}+${bias})).${swizzle}`;
@@ -332,7 +335,8 @@ export function compileGraph(document, { output, library = {}, material = false,
           if(n.colorspace&&normalizeColorSpace(n.colorspace)!==normalizeColorSpace(descriptor.colorspace)) fail('SEMANTICS',key,'latlongimage colorspace differs from decoded resource');
           const direction=`safeNormal(${x('viewdir',[0,0,1],'vector3')},vec3f(0.0,0.0,1.0))`, rotation=`(${x('rotation',0,'float')}*0.017453292519943295)`, pi='3.141592653589793';
           const uv=`vec2f(fract(atan2(${direction}.z,${direction}.x)/(2.0*${pi})+0.5+${rotation}/(2.0*${pi})),acos(clamp(${direction}.y,-1.0,1.0))/${pi})`;
-          code=`imageSample(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},0.0,vec2u(2u,1u),true,vec4f(${fallback},0)).rgb`; break;
+          const grid=descriptor.udim&&`vec2u(${descriptor.udim.columns}u,${descriptor.udim.rows}u)`;
+          code=(descriptor.udim?`imageSampleUDIM(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${grid},0.0,true,vec4f(${fallback},0))`:`imageSample(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},0.0,vec2u(2u,1u),true,vec4f(${fallback},0))`).concat('.rgb'); break;
         }
         case 'splitlr': case 'splittb': {
           const uv=x('texcoord',[0,0],'vector2'), center=x('center',.5,'float');

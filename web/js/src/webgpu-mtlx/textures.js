@@ -47,7 +47,10 @@ export function packImages(images, { maxBytes = 64 * 1024 * 1024, maxDimension }
       pixels[i + 2] = -.024003356805 * r - .128968976065 * g + 1.15297233287 * b;
     }
     if (!pixels.every(Number.isFinite)) throw new Error('Image colorspace conversion overflows float32');
-    const descriptor = { offset: texels, width, height, levels: 0, ...(image.resizedFrom ? { resizedFrom: image.resizedFrom } : {}) }; descriptors.push(descriptor);
+    const descriptor = { offset: texels, width, height, levels: 0,
+      ...(image.resizedFrom ? { resizedFrom: image.resizedFrom } : {}),
+      ...(image.udim ? { udim: { ...image.udim } } : {}) };
+    descriptors.push(descriptor);
     w = width; h = height;
     while (true) {
       chunks.push(pixels); texels += w * h; descriptor.levels++;
@@ -111,4 +114,15 @@ fn imageSample(offset: u32, size: vec2u, levels: u32, uv: vec2f, lod: f32, addre
   let l=clamp(lod,0.0,f32(levels-1u));
   if(!linear) { return imageLevel(offset,size,u32(round(l)),uv,address,false,fallback); }
   return mix(imageLevel(offset,size,u32(floor(l)),uv,address,true,fallback),imageLevel(offset,size,u32(ceil(l)),uv,address,true,fallback),fract(l));
-}`;
+}
+fn imageSampleUDIM(offset:u32,size:vec2u,levels:u32,uv:vec2f,grid:vec2u,lod:f32,linear:bool,fallback:vec4f)->vec4f {
+  let tile=clamp(floor(uv),vec2f(0.0),vec2f(grid)-vec2f(1.0));
+  let local=clamp(fract(uv),vec2f(0.5)/vec2f(size/grid),vec2f(1.0)-vec2f(0.5)/vec2f(size/grid));
+  return imageSample(offset,size,levels,(tile+local)/vec2f(grid),lod,vec2u(1u),linear,fallback);
+}
+fn imageSampleCubicUDIM(offset:u32,size:vec2u,levels:u32,uv:vec2f,grid:vec2u,lod:f32,fallback:vec4f)->vec4f {
+  let tile=clamp(floor(uv),vec2f(0.0),vec2f(grid)-vec2f(1.0));
+  let local=clamp(fract(uv),vec2f(0.5)/vec2f(size/grid),vec2f(1.0)-vec2f(0.5)/vec2f(size/grid));
+  return imageSampleCubic(offset,size,levels,(tile+local)/vec2f(grid),lod,vec2u(1u),fallback);
+}
+`;

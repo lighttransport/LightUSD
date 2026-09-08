@@ -9,7 +9,7 @@ import { shaderSource } from '../src/webgpu-mtlx/shaders.js';
 import { validateSpectrum, sampleSpectrum } from '../src/webgpu-mtlx/spectrum.js';
 import { cieXYZ } from '../src/webgpu-mtlx/cie-data.js';
 import { refineDisplacementScene } from '../src/webgpu-mtlx/displacement.js';
-import { fetchResource, inspectEXR, inspectEXRHeader, decodeImage } from '../src/webgpu-mtlx/resources.js';
+import { fetchResource, inspectEXR, inspectEXRHeader, decodeImage, atlasUDIMImages } from '../src/webgpu-mtlx/resources.js';
 import { appendRectLights } from '../src/webgpu-mtlx/usd-lights.js';
 import { mayEmit } from '../src/webgpu-mtlx/emission.js';
 import { materialXFromUSD } from '../src/webgpu-mtlx/usd-graph.js';
@@ -221,6 +221,17 @@ test('oversized uncompressed EXR uses scanline reduction without full-resolution
   assert.equal(image.data[3], 1);
   const acescg = await decodeImage(encodeEXR(4, 2, rgba, { colorspace: 'lin_ap1_scene' }), { filename: 'large.exr', maxPixels: 4, allowDownsample: true });
   assert.equal(acescg.colorspace, 'acescg');
+});
+
+test('UDIM tiles pack into a bounded atlas and emit tile-aware sampling', () => {
+  const tile = (id, value) => ({ id, image: { width: 1, height: 1, data: new Float32Array([value, 0, 0, 1]), colorspace: 'raw' } });
+  const atlas = atlasUDIMImages([tile(1001, .25), tile(1012, .75)]);
+  assert.deepEqual({ width: atlas.width, height: atlas.height, columns: atlas.udim.columns, rows: atlas.udim.rows }, { width: 2, height: 2, columns: 2, rows: 2 });
+  assert.equal(atlas.data[0], .25);
+  assert.equal(atlas.data[12], .75);
+  const packed = packImages([atlas]);
+  const compiled = compileGraph({ nodes: [{ name: 'tex', category: 'image', type: 'color3', inputs: { file: { type: 'filename', value: 'udim' } } }] }, { imageDescriptors: { udim: { ...packed.descriptors[0], colorspace: 'raw' } } });
+  assert.match(compiled.body, /imageSampleUDIM/);
 });
 
 test('EXR authored color-space metadata is read from the header, never filename', () => {
