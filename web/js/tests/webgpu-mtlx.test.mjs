@@ -478,6 +478,9 @@ test('closure composition preserves lobe bounds and interior ownership',()=>{
   const mixed={nodes:[leaf,{name:'other',category:'sheen_bsdf',type:'BSDF'},
     {name:'mix',category:'mix',type:'BSDF',inputs:{bg:{nodename:'leaf'},fg:{nodename:'other'},mix:{type:'float',value:.25}}}]};
   assert.match(compileGraph(mixed).body,/closureMix\(.*0\.25/);
+  const switched={nodes:[leaf,{name:'other',category:'sheen_bsdf',type:'BSDF'},
+    {name:'switch',category:'switch',type:'BSDF',inputs:{which:{type:'float',value:1},in1:{nodename:'leaf'},in2:{nodename:'other'}}}]};
+  assert.match(compileGraph(switched).body,/closureSelect/);
   const conflicting={nodes:[...layered.slice(0, 3),{name:'sum',category:'add',type:'BSDF',inputs:{in1:{nodename:'layer'},in2:{nodename:'layer'}}}]};
   assert.throws(()=>compileGraph(conflicting),/cannot combine two interior-bearing closures/);
   const unsupportedLayer={nodes:[leaf,{name:'other',category:'sheen_bsdf',type:'BSDF'},

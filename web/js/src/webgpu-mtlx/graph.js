@@ -724,7 +724,19 @@ export function compileGraph(document, { output, library = {}, material = false,
           code=type==='VDF'?`mediumSelect(${whenFalse.code},${whenTrue.code},${condition})`:`select(${whenFalse.code},${whenTrue.code},${condition})`; break;
         }
         case 'switch': {
-          if (type === 'BSDF') fail('TYPE', key, 'switch requires a value type');
+          if (type === 'BSDF') {
+            const which=x('which',0,'float');
+            const fallback={type:'BSDF',code:'emptyClosure()',closureCount:0,hasInterior:false,interiorCategories:[]};
+            const branch=k=>ins[k]?input(k,undefined,'BSDF'):fallback;
+            const branches=[branch('in10')];let selected=branches[0],maxCount=selected.closureCount||0,interior=selected.hasInterior||false;
+            for(let i=9;i>=1;i--){const value=branch(`in${i}`);branches.push(value);if(Boolean(value.hasInterior)!==interior)fail('SEMANTICS',key,'BSDF switch branches must agree on interior state');maxCount=Math.max(maxCount,value.closureCount||0);selected={...selected,code:`closureSelect(${value.code},${selected.code},${which}>=${i}.0)`};}
+            const interiorBranch=branches.find(value=>value.hasInterior);
+            code=selected.code;closureCount=maxCount;hasInterior=interior;interiorCategories=interiorBranch?.interiorCategories||[];
+            const normals=branches.map(value=>value.normal).filter(Boolean),tangents=branches.map(value=>value.tangent).filter(Boolean);
+            if(normals.length&&normals.every(value=>value===normals[0]))normal=normals[0];
+            if(tangents.length&&tangents.every(value=>value===tangents[0]))tangent=tangents[0];
+            break;
+          }
           if (type === 'EDF' || type === 'VDF') {
             const which=x('which',0,'float');
             const fallback=type==='EDF'?{type:'EDF',code:'vec3f(0)'}:{type:'VDF',code:'Medium(vec3f(0),vec3f(0),0.0,vec3f(0))'};

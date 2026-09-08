@@ -13,6 +13,7 @@ fn closureImportance(c:Closure,index:u32)->f32 {
 fn emptyClosure()->Closure {var c:Closure;c.rootKind=0u;c.root=0u;return c;}
 fn closureLeaf(lobe:Lobe)->Closure {var c:Closure;c.lobes[0]=lobe;c.scales[0]=vec3f(1);c.count=1u;c.rootKind=0u;c.root=0u;return c;}
 fn closureScale(input:Closure,scale:vec3f)->Closure {var c=input;for(var i=0u;i<c.count;i++){c.scales[i]*=scale;}return c;}
+fn closureSelect(falseValue:Closure,trueValue:Closure,condition:bool)->Closure {if(condition){return trueValue;}return falseValue;}
 fn closureCopyNodes(src:Closure,offset:u32,lobeOffset:u32,layerOffset:u32,dst:ptr<function,Closure>){for(var i=0u;i<src.nodeCount;i++){var n=src.nodes[i];if(n.aKind==0u){n.a+=lobeOffset;}else{n.a+=layerOffset;}n.aStart+=lobeOffset;if(n.bKind==0u){n.b+=lobeOffset;}else{n.b+=layerOffset;}n.bStart+=lobeOffset;(*dst).nodes[offset+i]=n;}}
 fn closureRootKind(c:Closure)->u32 {return c.rootKind;}
 fn closureRootIndex(c:Closure)->u32 {return c.root;}
