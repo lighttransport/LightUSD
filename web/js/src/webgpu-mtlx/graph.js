@@ -314,7 +314,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           const fill = usdTexture ? fallback4 : widths[type] === 4 ? fallback : widths[type] === 3 ? `vec4f(${fallback},0)` : widths[type] === 2 ? `vec4f(${fallback},0,0)` : `vec4f(${fallback})`;
           const swizzle = ({ float: 'r', vector2: 'rg', vector3: 'rgb', color3: 'rgb', vector4: 'rgba', color4: 'rgba' })[type];
           const size = `vec2f(${descriptor.width}.0,${descriptor.height}.0)`;
-          const lodScale = uvScale;
+          const lodScale = gltfTexture ? `(${uvScale}*abs(${x('scale',[1,1],'vector2')}))` : uvScale;
           const lod = `log2(max(1.0,max(length(ctx.uvDx*${size}*${lodScale}),length(ctx.uvDy*${size}*${lodScale}))))`;
           const udim = descriptor.udim;
           if (udim && (!Number.isInteger(udim.columns) || !Number.isInteger(udim.rows) || udim.columns < 1 || udim.rows < 1)) fail('RESOURCE', key, 'invalid UDIM atlas descriptor');
@@ -844,7 +844,8 @@ export function compileGraph(document, { output, library = {}, material = false,
           const uvBase = ins.texcoord ? x('texcoord', undefined, 'vector2') : 'ctx.uv';
           const uv = `((mat2x2f(cos(-${x('rotate',0,'float')}*0.017453292519943295),sin(-${x('rotate',0,'float')}*0.017453292519943295),-sin(-${x('rotate',0,'float')}*0.017453292519943295),cos(-${x('rotate',0,'float')}*0.017453292519943295)) * ((${uvBase}-${x('pivot',[0,1],'vector2')})*${x('scale',[1,1],'vector2')}))+${x('pivot',[0,1],'vector2')}+vec2f(${x('offset',[0,0],'vector2')}.x,-${x('offset',[0,0],'vector2')}.y))`;
           const fill = `vec4f(${fallback},0)`;
-          const lod = `log2(max(1.0,max(length(ctx.uvDx*vec2f(${descriptor.width}.0,${descriptor.height}.0)),length(ctx.uvDy*vec2f(${descriptor.width}.0,${descriptor.height}.0)))))`;
+          const lodScale = `abs(${x('scale',[1,1],'vector2')})`;
+          const lod = `log2(max(1.0,max(length(ctx.uvDx*vec2f(${descriptor.width}.0,${descriptor.height}.0)*${lodScale}),length(ctx.uvDy*vec2f(${descriptor.width}.0,${descriptor.height}.0)*${lodScale}))))`;
           const udim = descriptor.udim, grid = udim && `vec2u(${udim.columns}u,${udim.rows}u)`;
           const sample = filter === 'cubic'
             ? (udim ? `imageSampleCubicUDIM(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${grid},${lod},${fill})` : `imageSampleCubic(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${fill})`)

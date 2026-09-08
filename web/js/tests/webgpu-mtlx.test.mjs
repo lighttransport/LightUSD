@@ -444,6 +444,7 @@ test('gltf_image preserves authored UV transforms and factor modulation', () => 
   assert.match(compiled.body, /mat2x2f\(cos\(-/);
   assert.match(compiled.body, /\)\*vec2f\(2\.0,2\.0\)/);
   assert.match(compiled.body, /vec2f\(0\.1,0\.2\)\.x,-vec2f\(0\.1,0\.2\)\.y/);
+  assert.match(compiled.body, /length\(ctx\.uvDx\*vec2f\(2\.0,2\.0\)\*\(vec2f\(1\.0\)\*abs\(vec2f\(2\.0,2\.0\)\)\)\)/);
   assert.match(compiled.body, /vec4f\(0\.5,1\.0,1\.0,1\.0\)/);
 });
 test('gltf_normalmap samples the authored tangent space image', () => {
@@ -456,6 +457,7 @@ test('gltf_normalmap samples the authored tangent space image', () => {
   assert.match(compiled.body, /imageSample\(/);
   assert.match(compiled.body, /mxNormalmap\(/);
   assert.match(compiled.body, /mat2x2f\(cos\(-/);
+  assert.match(compiled.body, /length\(ctx\.uvDx\*vec2f\(2\.0,2\.0\)\*abs\(vec2f\(2\.0,2\.0\)\)\)/);
 });
 test('gltf_colorimage preserves RGB and alpha outputs', () => {
   const descriptor = { tex: { offset: 0, width: 2, height: 2, levels: 1, colorspace: 'raw' } };
