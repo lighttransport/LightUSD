@@ -274,7 +274,7 @@ export async function loadMaterialXResources(url, options = {}) {
   const nodes = collectMaterialXNodes(document);
   let decodedBytes = 0;
   for (const node of nodes) {
-    if (!['image', 'tiledimage', 'gltf_image', 'triplanarprojection', 'UsdUVTexture', 'usduvtexture', 'latlongimage'].includes(node.category)) continue;
+    if (!['image', 'tiledimage', 'gltf_image', 'gltf_normalmap', 'triplanarprojection', 'UsdUVTexture', 'usduvtexture', 'latlongimage'].includes(node.category)) continue;
     const fileNames = node.category === 'triplanarprojection' ? ['filex', 'filey', 'filez'] : ['file'];
     for (const fileName of fileNames) {
       const file = node.inputs?.[fileName];

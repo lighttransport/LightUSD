@@ -339,6 +339,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   bounded UDIM/UVTILE atlas expansion is supported for static filename inputs.
 - `gltf_image` supports the MaterialX glTF image resource path, factor
   modulation, and the authored pivot/scale/rotate/offset UV transform.
+- `gltf_normalmap` samples a bounded glTF normal image and applies it through
+  the authored tangent basis with the same UV transform controls.
 - Image nodes now support MaterialX `filtertype="cubic"` through a bounded
   16-tap cubic sampler with trilinear mip selection.
 - `triplanarprojection` now resolves three image resources, projects them on

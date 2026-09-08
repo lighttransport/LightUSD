@@ -823,6 +823,34 @@ export function compileGraph(document, { output, library = {}, material = false,
           if(!['color3','vector3'].includes(normalInput.type))fail('TYPE',key,'normalmap input must be color3/vector3');
           code=`mxNormalmap(${normalInput.code},vec2f(${scale.code}),${vector('normal','normal')},${vector('tangent','tangent')},${vector('bitangent','bitangent')})`;break;
         }
+        case 'gltf_normalmap': {
+          if (type !== 'vector3') fail('TYPE', key, 'gltf_normalmap output must be vector3');
+          const allowedInputs = ['file', 'default', 'texcoord', 'pivot', 'scale', 'rotate', 'offset', 'operationorder', 'uaddressmode', 'vaddressmode', 'filtertype'];
+          for (const name of Object.keys(ins)) if (!allowedInputs.includes(name)) fail('UNSUPPORTED', key, `unsupported gltf_normalmap input ${name}`);
+          const fallback = x('default', [.5, .5, 1], 'vector3');
+          const file = ins.file?.value ?? '';
+          const normal = ins.normal ? x('normal', undefined, 'vector3') : 'ctx.normal';
+          const tangent = ins.tangent ? x('tangent', undefined, 'vector3') : 'ctx.tangent';
+          const bitangent = ins.bitangent ? x('bitangent', undefined, 'vector3') : 'ctx.bitangent';
+          const normalMap = value => `mxNormalmap(${value},vec2f(1.0),${normal},${tangent},${bitangent})`;
+          if (!file) { code = normalMap(fallback); break; }
+          if (ins.file.nodename || ins.file.nodegraph || ins.file.interfacename) fail('UNSUPPORTED', key, 'connected gltf_normalmap filenames are not implemented');
+          const descriptor = Object.hasOwn(imageDescriptors, file) && imageDescriptors[file];
+          if (!descriptor) fail('RESOURCE', key, `missing decoded image ${file}`);
+          if (n.colorspace && normalizeColorSpace(n.colorspace) !== normalizeColorSpace(descriptor.colorspace)) fail('SEMANTICS', key, 'gltf_normalmap colorspace differs from decoded resource');
+          const address = name => { const p = ins[name]; const mode = ['constant', 'clamp', 'periodic', 'mirror'].indexOf(p?.value ?? 'periodic'); if (mode < 0 || p?.nodename || p?.interfacename || p?.nodegraph) fail('UNSUPPORTED', key, 'invalid or connected gltf_normalmap address mode'); return `${mode}u`; };
+          const filter = ins.filtertype?.value ?? 'linear';
+          if (!['closest', 'linear', 'cubic'].includes(filter) || ins.filtertype?.nodename || ins.filtertype?.interfacename || ins.filtertype?.nodegraph) fail('UNSUPPORTED', key, 'only static closest/linear/cubic gltf_normalmap filters are implemented');
+          const uvBase = ins.texcoord ? x('texcoord', undefined, 'vector2') : 'ctx.uv';
+          const uv = `((mat2x2f(cos(-${x('rotate',0,'float')}*0.017453292519943295),sin(-${x('rotate',0,'float')}*0.017453292519943295),-sin(-${x('rotate',0,'float')}*0.017453292519943295),cos(-${x('rotate',0,'float')}*0.017453292519943295)) * ((${uvBase}-${x('pivot',[0,1],'vector2')})*${x('scale',[1,1],'vector2')}))+${x('pivot',[0,1],'vector2')}+vec2f(${x('offset',[0,0],'vector2')}.x,-${x('offset',[0,0],'vector2')}.y))`;
+          const fill = `vec4f(${fallback},0)`;
+          const lod = `log2(max(1.0,max(length(ctx.uvDx*vec2f(${descriptor.width}.0,${descriptor.height}.0)),length(ctx.uvDy*vec2f(${descriptor.width}.0,${descriptor.height}.0)))))`;
+          const udim = descriptor.udim, grid = udim && `vec2u(${udim.columns}u,${udim.rows}u)`;
+          const sample = filter === 'cubic'
+            ? (udim ? `imageSampleCubicUDIM(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${grid},${lod},${fill})` : `imageSampleCubic(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${fill})`)
+            : (udim ? `imageSampleUDIM(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${grid},${lod},${filter === 'linear'},${fill})` : `imageSample(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${filter === 'linear'},${fill})`);
+          code = normalMap(`${sample}.rgb`); break;
+        }
         case 'bump': case 'bump3': case 'heighttonormal': {
           if (type !== 'vector3') fail('TYPE',key,'bump output must be vector3');
           const encoded=n.category==='heighttonormal';

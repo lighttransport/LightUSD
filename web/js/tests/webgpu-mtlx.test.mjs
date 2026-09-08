@@ -444,6 +444,17 @@ test('gltf_image preserves authored UV transforms and factor modulation', () => 
   assert.match(compiled.body, /vec2f\(0\.1,0\.2\)\.x,-vec2f\(0\.1,0\.2\)\.y/);
   assert.match(compiled.body, /vec4f\(0\.5,1\.0,1\.0,1\.0\)/);
 });
+test('gltf_normalmap samples the authored tangent space image', () => {
+  const descriptor = { normal: { offset: 0, width: 2, height: 2, levels: 1, colorspace: 'raw' } };
+  const doc = { nodes: [{ name: 'normal', category: 'gltf_normalmap', type: 'vector3', inputs: {
+    file: { type: 'filename', value: 'normal' }, texcoord: { type: 'vector2', value: [.25, .5] },
+    pivot: { type: 'vector2', value: [0, 1] }, scale: { type: 'vector2', value: [2, 2] }, rotate: { type: 'float', value: 15 }, offset: { type: 'vector2', value: [.1, .2] }
+  } }] };
+  const compiled = compileGraph(doc, { imageDescriptors: descriptor });
+  assert.match(compiled.body, /imageSample\(/);
+  assert.match(compiled.body, /mxNormalmap\(/);
+  assert.match(compiled.body, /mat2x2f\(cos\(-/);
+});
 test('UsdUVTexture maps st/fallback/scale/bias and named channel outputs', () => {
   const doc={images:{tex:{width:2,height:2,data:[1,0,0,1],colorspace:'raw'}},nodes:[{name:'tex',category:'UsdUVTexture',type:'multioutput',outputs:{rgb:{type:'color3'},r:{type:'float'}},inputs:{file:{type:'filename',value:'tex'},st:{type:'vector2',value:[.25,.5]},fallback:{type:'color4',value:[.1,.2,.3,1]},scale:{type:'color4',value:[2,2,2,1]},bias:{type:'color4',value:[.1,0,0,0]}}}]};
   const descriptor={tex:{offset:0,width:2,height:2,levels:1,colorspace:'raw'}};
