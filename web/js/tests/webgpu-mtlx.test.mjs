@@ -245,6 +245,12 @@ test('authored sphere lights preserve finite emitter geometry', () => {
   assert.equal(r.positions.length,18);assert.equal(r.provenance.pointLights[0].type,'sphere');
   assert.equal(r.provenance.pointLights[0].worldArea,4*Math.sqrt(3));
 });
+test('authored disk lights preserve transformed area emission', () => {
+  const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
+  const r=appendRectLights(scene,[{type:'disk',radius:2,intensity:3,normalize:true,color:[1,.5,.25],transform:[1,0,0,0,0,1,0,0,0,0,1,0,2,3,4,1]}]);
+  assert.equal(r.positions.length,51);assert.equal(r.indices.length,48);assert.equal(r.provenance.diskLights.length,1);
+  assert.ok(Math.abs(r.provenance.diskLights[0].worldArea-4*Math.PI)<1e-6);assert.equal(r.positions[2],4);
+});
 test('resource fetch enforces streaming budgets and HTTP errors',async()=>{
   const fetcher=async()=>new Response(new Uint8Array([1,2,3,4]));
   assert.deepEqual(await fetchResource('test',{fetcher,maxBytes:4}),new Uint8Array([1,2,3,4]));
