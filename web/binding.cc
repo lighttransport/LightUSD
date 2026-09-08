@@ -4714,6 +4714,16 @@ class LightUSDLoaderNative {
                             rmesh.vertex_opacities.data.data()),
                         ov, 1, "f32"));
     }
+    // Reuse the retain-safe tangent decoder used by getMeshCopy(). Tangents
+    // are copied here because packed/native formats need a stable float4
+    // representation (xyz direction, w handedness) for WebGPU.
+    {
+      emscripten::val copied = buildMeshVal_(mesh_id, /* copy_arrays */ true);
+      emscripten::val tangent = copied["tangents"];
+      if (!tangent.isUndefined() && !tangent.isNull()) {
+        out.set("tangents", tangent);
+      }
+    }
     return out;
   }
 

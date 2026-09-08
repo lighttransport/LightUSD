@@ -162,9 +162,9 @@ test('layered medium bounds follow interior dependencies, not unrelated surface 
 });
 test('emission sampling excludes proven dark surfaces but retains unknown and spectral emitters',()=>{
   const scene=syntheticScene();assert.equal(mayEmit(scene.materials[0]),false);
-  const packed=packScene(scene);assert.equal(packed.triangleData[(packed.triangleCount-1)*48+19],0);
+  const packed=packScene(scene);assert.equal(packed.triangleData[(packed.triangleCount-1)*80+23],0);
   scene.materials[1].nodes[0].inputs.emission={type:'float',value:1};assert.equal(mayEmit(scene.materials[1]),true);
-  assert.ok(packScene(scene).triangleData[(packed.triangleCount-1)*48+19]>0);
+  assert.ok(packScene(scene).triangleData[(packed.triangleCount-1)*80+23]>0);
   assert.equal(mayEmit({nodes:[{name:'custom',category:'custom'}]}),true);
   const doc=syntheticScene().materials[1];doc.spectra={emission_color:[[360,1],[830,1]]};assert.equal(mayEmit(doc),true);
 });
@@ -452,6 +452,8 @@ test('packed scene selects authored material UV slots per triangle', () => {
   const scene={positions:[0,0,0,1,0,0,0,1,0],normals:[0,0,1,0,0,1,0,0,1],uvs:[0,0,0,0,0,0],uvSets:[[0,0,0,0,0,0],[.2,.3,.4,.5,.6,.7]],indices:[0,1,2],materialIds:[1],materials:[{nodes:[]}, {nodes:[],uvIndex:1}]};
   const packed=packScene(scene);
   assert.ok(Math.abs(packed.triangleData[8] - .2) < 1e-6 && Math.abs(packed.triangleData[9] - .3) < 1e-6);
+  const tangentPacked=packScene({...scene,tangents:[1,0,0,-1,1,0,0,-1,1,0,0,-1]});
+  assert.deepEqual(Array.from(tangentPacked.triangleData.slice(16,20)),[1,0,0,-1]);
 });
 test('triplanarprojection blends three typed image planes by normal weights', () => {
   const descriptor={x:{offset:0,width:2,height:2,levels:1,colorspace:'raw'},y:{offset:4,width:2,height:2,levels:1,colorspace:'raw'},z:{offset:8,width:2,height:2,levels:1,colorspace:'raw'}};
@@ -934,7 +936,7 @@ test('BVH escape links progress, leaves cover every triangle exactly once', () =
     for (let k = 0; k < 3; k++) assert.ok(n[k] <= n[k + 4]);
   }
   assert.equal(leaves, scene.indices.length / 3);
-  assert.equal(packed.triangleData.length, leaves * 48);
+  assert.equal(packed.triangleData.length, leaves * 80);
   const colored={...scene,colors:new Array(scene.positions.length/3*4).fill(0).map((v,i)=>i%4===0?1:i%4===3?1:0)};
   assert.deepEqual(Array.from(packScene(colored).triangleData.slice(12,16)),[1,0,0,1]);
 });

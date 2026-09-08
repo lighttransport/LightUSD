@@ -158,9 +158,10 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
       }
     }
     for (let i = 0; i < layer.numLights(); i++) authored.lights.push(layer.getLight(i));
-    const positions = [], normals = [], uvs = [], uvSets = [], colors = [], indices = [], materialIds = [];
+    const positions = [], normals = [], uvs = [], uvSets = [], tangents = [], colors = [], indices = [], materialIds = [];
     const read = d => {
       if (!d?.length) return null;
+      if (ArrayBuffer.isView(d)) return d.slice();
       const C = ({ f32: Float32Array, u32: Uint32Array, snorm8: Int8Array, snorm16: Int16Array })[d.dtype];
       if (!C) throw new Error(`Unsupported USD attribute encoding ${d.dtype}`);
       const copy = new C(native.HEAPU8.buffer, d.ptr, d.length).slice();
@@ -180,7 +181,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
         if (!mesh.singleIndexable || !mesh.triangulated) throw new Error(`USD mesh is not triangulated/single-indexed: ${mesh.absPath}`);
         const p = read(mesh.points), ix = read(mesh.indices); if (!p?.length || !ix?.length) return;
         const geo = new BufferGeometry(); geo.setAttribute('position', new BufferAttribute(p, 3)); geo.setIndex(new BufferAttribute(ix, 1));
-        const n = read(mesh.normals), uv = read(mesh.uv0), color = read(mesh.colors || mesh.color), opacity = read(mesh.colorOpacities);
+        const n = read(mesh.normals), uv = read(mesh.uv0), tangent = read(mesh.tangents), color = read(mesh.colors || mesh.color), opacity = read(mesh.colorOpacities);
         const meshUVSets = [];
         for (const [slot, value] of Object.entries(mesh.uvSets || {})) meshUVSets[Number(slot)] = read(value);
         const uvSlotCount = Math.max(uvSets.length, meshUVSets.length, 1);
@@ -190,6 +191,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
         geo.applyMatrix4(matrix);
         const ps = geo.attributes.position.array, ns = geo.attributes.normal.array, offset = positions.length / 3;
         for (let i = 0; i < ps.length; i++) { positions.push(ps[i]); normals.push(ns[i]); }
+        for (let i = 0; i < ps.length / 3 * 4; i++) tangents.push(tangent?.[i] ?? (i % 4 === 3 ? 1 : 0));
         for (let i = 0; i < ps.length / 3 * 2; i++) uvs.push(uv?.[i] ?? 0);
         for (let slot = 0; slot < uvSets.length; slot++) {
           const values = meshUVSets[slot] || (slot === 0 ? uv : null);
@@ -213,7 +215,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
     onStatus(`Prepared ${indices.length / 3} ShaderBall triangles; ${authoredMaterials ? `${Object.keys(authoredDocuments).length} compiled authored MaterialX slots enabled` : 'materials/lights are diagnostic overrides'}`);
     const materialCount = Math.max(2, ...materialIds.map(id => id + 1), ...authored.bindings.map(binding => Number.isInteger(binding.materialId) && binding.materialId >= 0 ? binding.materialId + 1 : 0));
     const materials = Array.from({ length: materialCount }, (_, id) => authoredDocuments[id] || (id === 1 ? surfaceDocument([0.8, 0.45, 0.15], 1, 0.25) : surfaceDocument([0.35, 0.35, 0.35], 0, 0.7)));
-    const scene={ positions, normals, uvs, uvSets, colors, indices, materialIds, authored, materials, camera, provenance: { asset: 'StandardShaderBall', commit: SHADERBALL_COMMIT, variant: 'triangulated', materialOverride: authoredMaterials ? 'partial-authored' : true, authoredMaterialCount: Object.keys(authoredDocuments).length, lightingOverride: true, referenceReady: false } };
+    const scene={ positions, normals, uvs, uvSets, tangents, colors, indices, materialIds, authored, materials, camera, provenance: { asset: 'StandardShaderBall', commit: SHADERBALL_COMMIT, variant: 'triangulated', materialOverride: authoredMaterials ? 'partial-authored' : true, authoredMaterialCount: Object.keys(authoredDocuments).length, lightingOverride: true, referenceReady: false } };
     return authoredLights ? appendRectLights(scene,authored.lights) : scene;
   } finally { layer.delete(); }
 }

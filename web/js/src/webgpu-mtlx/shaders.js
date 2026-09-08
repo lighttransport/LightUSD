@@ -40,7 +40,7 @@ fn emissionSidedness(id:u32,normal:vec3f,direction:vec3f)->f32 {
 }
 struct Settings { origin: vec4f, forward: vec4f, right: vec4f, up: vec4f, dimensions: vec4u, display: vec4f, sampling:vec4u }
 struct Node { lo: vec4f, hi: vec4f, link: vec4f }
-struct Vertex { p: vec4f, n: vec4f, uv: vec4f, color: vec4f }
+struct Vertex { p: vec4f, n: vec4f, uv: vec4f, color: vec4f, tangent: vec4f }
 struct Triangle { a: Vertex, b: Vertex, c: Vertex }
 struct Hit { t: f32, u: f32, v: f32, id: u32 }
 @group(0) @binding(0) var<uniform> cfg: Settings;
@@ -96,7 +96,13 @@ fn context(h: Hit, o: vec3f, d: vec3f) -> ShadingContext {
   let uvScale=0.5*(length(uv1)/max(length(p1),1e-6)+length(uv2)/max(length(p2),1e-6));
   let pixelWorld=max(2.0*cfg.right.w/f32(cfg.dimensions.x),2.0*cfg.up.w/f32(cfg.dimensions.y))*max(h.t,1e-4);
   let footprint=max(1e-7,pixelWorld*uvScale);
-  return ShadingContext(o+d*h.t,n,frame[0],frame[1],tri.a.uv.xy*w+tri.b.uv.xy*h.u+tri.c.uv.xy*h.v,0,0,vec2f(footprint,0),vec2f(0,footprint),derivatives[0],derivatives[1],-d,tri.a.color*w+tri.b.color*h.u+tri.c.color*h.v);
+  let authoredT=tri.a.tangent*w+tri.b.tangent*h.u+tri.c.tangent*h.v;
+  let hasT=length(authoredT.xyz)>1e-5;
+  let t=normalize(authoredT.xyz-n*dot(n,authoredT.xyz));
+  let tangent=select(frame[0],safeNormal(t,frame[0]),hasT);
+  let handed=select(1.0,select(-1.0,1.0,authoredT.w>=0.0),hasT);
+  let bitangent=select(frame[1],normalize(cross(n,tangent))*handed,hasT);
+  return ShadingContext(o+d*h.t,n,tangent,bitangent,tri.a.uv.xy*w+tri.b.uv.xy*h.u+tri.c.uv.xy*h.v,0,0,vec2f(footprint,0),vec2f(0,footprint),derivatives[0],derivatives[1],-d,tri.a.color*w+tri.b.color*h.u+tri.c.color*h.v);
 }
 fn getSurface(id: u32, ctx: ShadingContext) -> Material {
   switch id { ${materials.map((_, i) => `case ${i}u: { return material${i}(ctx); }`).join('\n')} default: { return material0(ctx); } }
@@ -174,18 +180,19 @@ fn preview(o0: vec3f, d0: vec3f, rng: ptr<function,u32>, realtime: bool) -> vec3
   if (cfg.dimensions.z==0u || cfg.dimensions.w==1u) { accumulation[index] = vec4f(color,1); }
   else { accumulation[index] += vec4f(color,1); }
 }
-struct RasterVertex { @builtin(position) clip: vec4f, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) color: vec4f, @location(4) @interpolate(flat) material: u32 }
+struct RasterVertex { @builtin(position) clip: vec4f, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) color: vec4f, @location(4) tangent: vec4f, @location(5) @interpolate(flat) material: u32 }
 @vertex fn rasterVertex(@builtin(vertex_index) id: u32) -> RasterVertex {
   let tri = triangles[id/3u]; var v = tri.a;
   if (id%3u==1u) { v=tri.b; } else if (id%3u==2u) { v=tri.c; }
   let d = v.p.xyz-cfg.origin.xyz; let z = dot(d,cfg.forward.xyz);
-  return RasterVertex(vec4f(dot(d,cfg.right.xyz)/cfg.right.w,dot(d,cfg.up.xyz)/cfg.up.w,1.00001*z-0.0100001,z),v.p.xyz,v.n.xyz,v.uv.xy,v.color,u32(v.uv.z));
+  return RasterVertex(vec4f(dot(d,cfg.right.xyz)/cfg.right.w,dot(d,cfg.up.xyz)/cfg.up.w,1.00001*z-0.0100001,z),v.p.xyz,v.n.xyz,v.uv.xy,v.color,v.tangent,u32(v.uv.z));
 }
 @fragment fn rasterFragment(v: RasterVertex, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   let geomN = normalize(select(-v.normal,v.normal,front));
   let frame=mxSurfaceFrame(geomN,dpdx(v.position),dpdy(v.position),dpdx(v.uv),dpdy(v.uv));
   let derivatives=mxSurfaceDerivatives(geomN,dpdx(v.position),dpdy(v.position),dpdx(v.uv),dpdy(v.uv));
-  var ctx = ShadingContext(v.position,geomN,frame[0],frame[1],v.uv,0,0,dpdx(v.uv),dpdy(v.uv),derivatives[0],derivatives[1],normalize(cfg.origin.xyz-v.position),v.color);
+  let hasT=length(v.tangent.xyz)>1e-5;let t=safeNormal(v.tangent.xyz-geomN*dot(geomN,v.tangent.xyz),frame[0]);let handed=select(1.0,select(-1.0,1.0,v.tangent.w>=0.0),hasT);let bt=select(frame[1],normalize(cross(geomN,t))*handed,hasT);
+  var ctx = ShadingContext(v.position,geomN,select(frame[0],t,hasT),bt,v.uv,0,0,dpdx(v.uv),dpdy(v.uv),derivatives[0],derivatives[1],normalize(cfg.origin.xyz-v.position),v.color);
   let surface=getSurface(v.material,ctx); if(surface.opacity<=0.001){discard;} var n=safeNormal(surface.normal,geomN); if(dot(n,geomN)<0.0){n=-n;} ctx.normal=n; let m = primaryLobe(surface); let wo = normalize(cfg.origin.xyz-v.position); let light=directionalDirection();
   var color = m.emission*m.emissionWeight*emissionSidedness(v.material,geomN,-wo)+m.base*(1.0-m.metal)*0.22+fresnel(max(0.0,dot(n,wo)),mix(vec3f(0.04),m.base,m.metal))*environment(reflect(-wo,n));
   let transmission=clamp((1.0-m.metal)*m.transmission,0.0,1.0);

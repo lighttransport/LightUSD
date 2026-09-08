@@ -75,6 +75,9 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   raster and path shading; scene packing, displacement refinement, and authored
   mesh extraction preserve the interpolated channel. Nonzero color indices fail
   explicitly until additional primvar streams are available.
+- Authored tangent streams are decoded from native packed or float formats,
+  carried through the WebGPU triangle buffer and displacement bake, and used
+  for MaterialX tangent/bitangent inputs with derivative frames as fallback.
 - Worker-built median triangle BVH, stackless compute traversal, per-hit UV/value
   evaluation, GGX/diffuse RGB path preview with progressive accumulation and a
   12-bounce limit. The preview uses a procedural sky and directional light.
@@ -111,8 +114,8 @@ verify fractional coverage and six transparent surfaces across dispatches.
 Path and raster shading derive tangent frames from world-space geometry and UV
 derivatives, including mirrored UV handedness and degenerate-UV fallbacks.
 Chrome renders normal-as-emission fixtures for standard, rotated and mirrored
-UVs in both modes. Explicit authored tangent primvars and MikkTSpace matching
-are still separate work.
+UVs in both modes. MikkTSpace matching and arbitrary custom primvar maps remain
+separate work.
 
 ## Experimental reference-transport work
 
