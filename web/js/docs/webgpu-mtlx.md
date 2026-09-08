@@ -234,6 +234,9 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   inverse matrix for round-trip authored color graphs.
 - Piecewise signed `lin_rec709_to_srgb` and `srgb_to_lin_rec709` transfer nodes
   match the resource decoder thresholds.
+- The pinned cmlib gamma transforms cover 1.8/2.2 Rec.709, display Rec.709
+  gamma 2.4, sRGB texture decoding, and gamma-encoded AP1 to linear Rec.709;
+  color4 variants preserve alpha without applying color transforms to it.
 - Typed `select` branches enforce boolean conditions and matching output types,
   preserving MaterialX conditional graph semantics.
 - Deterministic bounded `noise2d` and `noise3d` value nodes are available for

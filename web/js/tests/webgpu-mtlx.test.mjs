@@ -626,6 +626,17 @@ test('sRGB transfer nodes preserve the signed piecewise transfer', () => {
   ]};
   const source=compileGraph(doc); assert.match(source.body,/mxLinRec709ToSrgb/); assert.match(source.body,/mxSrgbToLinRec709/); assert.match(contextWGSL,/(?:0)?\.0031308/);
 });
+test('MaterialX cmlib gamma and texture transforms preserve color4 alpha', () => {
+  const gamma=compileGraph({nodes:[{name:'g',category:'g22_rec709_to_lin_rec709',type:'color4',inputs:{in:{type:'color4',value:[.25,.5,.75,.4]}}}]});
+  assert.match(gamma.body,/pow\(max\(vec4f\(0\.25,0\.5,0\.75,0\.4\)\.rgb,vec3f\(0\.0\)\),vec3f\(2\.2\)\)/); assert.match(gamma.body,/\.a/);
+  const display=compileGraph({nodes:[{name:'d',category:'rec709_display_to_lin_rec709',type:'color3',inputs:{in:{type:'color3',value:[.25,.5,.75]}}}]});
+  assert.match(display.body,/vec3f\(2\.4\)/);
+  const texture=compileGraph({nodes:[{name:'s',category:'srgb_texture_to_lin_rec709',type:'color3',inputs:{in:{type:'color3',value:[.25,.5,.75]}}}]});
+  assert.match(texture.body,/mxSrgbToLinRec709/);
+  const ap1=compileGraph({nodes:[{name:'a',category:'g22_ap1_to_lin_rec709',type:'color3',inputs:{in:{type:'color3',value:[.25,.5,.75]}}}]});
+  assert.match(ap1.body,/mxAcescgToLinRec709/); assert.match(ap1.body,/vec3f\(2\.2\)/);
+  assert.throws(()=>compileGraph({nodes:[{name:'g',category:'g18_rec709_to_lin_rec709',type:'float',inputs:{}}]}),/output must be color3\/color4/);
+});
 test('select node enforces boolean condition and matching branch types', () => {
   const doc={nodes:[
     {name:'condition',category:'constant',type:'boolean',inputs:{value:{type:'boolean',value:true}}},
