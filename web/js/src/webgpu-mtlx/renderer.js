@@ -87,7 +87,7 @@ class MaterialXRenderer extends EventTarget {
     this.physical = null; this.physicalError = null; this.physicalPending = null; let physicalModule = null;
     this.ensurePhysicalPipeline = async () => {
       if (this.physical) return this.physical;
-      if (!this.physicalPending) this.physicalPending = (async () => { physicalModule = physicalModule || await this.module(shaderSource(packed.materials, {}, packed.lighting, { ...shaderOptions, physical: true })); return this.device.createComputePipelineAsync({ layout, compute: { module: physicalModule, entryPoint: 'tracePhysical' } }); })().then(p => { if (generation === this.sceneGeneration && !this.disposed) this.physical = p; return p; }, e => { if (generation === this.sceneGeneration) this.physicalError = e; return null; });
+      if (!this.physicalPending) this.physicalPending = (async () => { physicalModule = physicalModule || await this.module(shaderSource(packed.materials, {}, packed.lighting, { ...shaderOptions, physical: true, physicalOnly: true })); return this.device.createComputePipelineAsync({ layout, compute: { module: physicalModule, entryPoint: 'tracePhysical' } }); })().then(p => { if (generation === this.sceneGeneration && !this.disposed) this.physical = p; return p; }, e => { if (generation === this.sceneGeneration) this.physicalError = e; return null; });
       this.physical = await this.physicalPending;
       if (!this.physical) throw this.physicalError || new Error('Physical pipeline compilation failed');
       return this.physical;
@@ -124,7 +124,7 @@ class MaterialXRenderer extends EventTarget {
     this.compute = compute; this.physical = null; this.physicalError = null; this.physicalPending = null; let physicalModule = null; this.raster = raster; this.scene.materials = materials;
     this.ensurePhysicalPipeline = async () => {
       if (this.physical) return this.physical;
-      if (!this.physicalPending) this.physicalPending = (async () => { physicalModule = physicalModule || await this.module(shaderSource(materials, {}, this.scene.lighting, { ...shaderOptions, physical: true })); return this.device.createComputePipelineAsync({ layout, compute: { module: physicalModule, entryPoint: 'tracePhysical' } }); })().then(p => { if (generation === this.sceneGeneration && !this.disposed) this.physical = p; return p; }, e => { if (generation === this.sceneGeneration) this.physicalError = e; return null; });
+      if (!this.physicalPending) this.physicalPending = (async () => { physicalModule = physicalModule || await this.module(shaderSource(materials, {}, this.scene.lighting, { ...shaderOptions, physical: true, physicalOnly: true })); return this.device.createComputePipelineAsync({ layout, compute: { module: physicalModule, entryPoint: 'tracePhysical' } }); })().then(p => { if (generation === this.sceneGeneration && !this.disposed) this.physical = p; return p; }, e => { if (generation === this.sceneGeneration) this.physicalError = e; return null; });
       this.physical = await this.physicalPending;
       if (!this.physical) throw this.physicalError || new Error('Physical pipeline compilation failed');
       return this.physical;

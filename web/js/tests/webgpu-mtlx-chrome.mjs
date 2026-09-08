@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import puppeteer from 'puppeteer';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
@@ -13,12 +14,13 @@ const executablePath = process.env.CHROME_PATH || (process.platform === 'win32' 
 const port = Number(process.env.WEBGPU_MTLX_TEST_PORT || 5198);
 const server = await createServer({ configFile: false, ...viteConfig, server: { ...viteConfig.server, port, hmr: false } });
 await server.listen();
-let browser, page; const browserLog=[];
+let browser, page, profileDir; const browserLog=[];
 try {
   let started = false;
   for (let i = 0; i < 100; i++) { try { if ((await fetch(`http://127.0.0.1:${port}/webgpu-mtlx.html`)).ok) { started = true; break; } } catch {} await new Promise(r => setTimeout(r, 100)); }
   if (!started) throw new Error('Vite failed to serve webgpu-mtlx.html');
-  browser = await puppeteer.launch({ executablePath, headless: true, timeout: 60000, protocolTimeout: 600000, args: hardware ? [] : ['--enable-unsafe-webgpu', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+  profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'webgpu-mtlx-chrome-'));
+  browser = await puppeteer.launch({ executablePath, userDataDir: profileDir, headless: true, timeout: 60000, protocolTimeout: 600000, args: hardware ? ['--no-sandbox'] : ['--no-sandbox', '--enable-unsafe-webgpu', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   page = await browser.newPage(); await page.setViewport({ width: 1100, height: 700 });
   page.on('console',msg=>{browserLog.push(msg.text());if(browserLog.length>30)browserLog.shift();});
   const errors = []; page.on('pageerror', e => errors.push(e.message));
@@ -275,4 +277,4 @@ try {
 } catch(e) {
   const state=await page?.evaluate(()=>({url:location.href,status:document.getElementById('status')?.textContent,ready:window.__webgpuMtlx?.ready,errors:window.__webgpuMtlx?.errors})).catch(()=>null);
   console.error(JSON.stringify({failure:e.message,state,browserLog},null,2));throw e;
-} finally { await browser?.close(); await server?.close(); }
+} finally { await browser?.close(); await server?.close(); if (typeof profileDir === 'string') fs.rmSync(profileDir, { recursive: true, force: true }); }

@@ -35,6 +35,7 @@ export function measuredProfileWGSL(materials) {
 
 export function shaderSource(materials, resources = {}, lighting = {}, textureOptions = {}) {
   const includePhysical = textureOptions.physical !== false;
+  const physicalOnly = textureOptions.physicalOnly === true;
   for(const doc of materials)if(doc.twoSidedEmission!==undefined&&typeof doc.twoSidedEmission!=='boolean')throw new Error('twoSidedEmission must be boolean');
   const authoredDirectionalLights=lighting.directionalLights||[lighting.directional||{direction:[-.5,.8,.4],radiance:[3.5,3.2,2.8]}];
   if(!Array.isArray(authoredDirectionalLights)||authoredDirectionalLights.length<1||authoredDirectionalLights.length>256)throw new Error('Invalid authored directional-light list');
@@ -178,16 +179,16 @@ fn environment(d: vec3f) -> vec3f {
 fn directionalCount()->u32{return ${directionalLights.length}u;}
 fn directionalDirectionAt(i:u32)->vec3f{switch i{${directionalFns}default:{return vec3f(0,1,0);}}}
 fn directionalRadianceAt(i:u32)->vec3f{switch i{${directionalRadianceFns}default:{return vec3f(0);}}}
-fn basis(n: vec3f, v: vec3f) -> vec3f {
+${physicalOnly ? '' : `fn basis(n: vec3f, v: vec3f) -> vec3f {
   let t = normalize(cross(select(vec3f(0,1,0),vec3f(1,0,0),abs(n.y)>0.9),n));
   return t*v.x+cross(n,t)*v.y+n*v.z;
 }
 fn cosine(n: vec3f, rng: ptr<function,u32>) -> vec3f {
   let r = sqrt(random(rng)); let phi = 2.0*PI*random(rng);
   return basis(n,vec3f(r*cos(phi),r*sin(phi),sqrt(max(0.0,1.0-r*r))));
-}
+}`}
 fn fresnel(c: f32, f0: vec3f) -> vec3f { return f0+(1.0-f0)*pow(1.0-clamp(c,0.0,1.0),5.0); }
-fn distribution(nh: f32, a2: f32) -> f32 { let d = nh*nh*(a2-1.0)+1.0; return a2/(PI*d*d); }
+${physicalOnly ? '' : `fn distribution(nh: f32, a2: f32) -> f32 { let d = nh*nh*(a2-1.0)+1.0; return a2/(PI*d*d); }
 fn masking(nv: f32, a2: f32) -> f32 { return 2.0*nv/(nv+sqrt(a2+(1.0-a2)*nv*nv)); }
 fn bsdf(m: Lobe, n: vec3f, wo: vec3f, wi: vec3f) -> vec4f {
   let nv = dot(n,wo); let nl = dot(n,wi); if (nv <= 0.0 || nl <= 0.0) { return vec4f(0); }
@@ -241,8 +242,8 @@ fn preview(o0: vec3f, d0: vec3f, rng: ptr<function,u32>, realtime: bool) -> vec3
   let color = preview(cfg.origin.xyz,d,&rng,cfg.dimensions.w==1u);
   if (cfg.dimensions.z==0u || cfg.dimensions.w==1u) { accumulation[index] = vec4f(color,1); }
   else { accumulation[index] += vec4f(color,1); }
-}
-struct RasterVertex { @builtin(position) clip: vec4f, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) color: vec4f, @location(4) tangent: vec4f, @location(5) geomprop: vec4f, @location(6) geomprop1: vec4f, @location(7) geomprop2: vec4f, @location(8) geomprop3: vec4f, @location(9) geomprop4: vec4f, @location(10) geomprop5: vec4f, @location(11) geomprop6: vec4f, @location(12) geomprop7: vec4f, @location(13) @interpolate(flat) material: u32 }
+}`}
+${physicalOnly ? '' : `struct RasterVertex { @builtin(position) clip: vec4f, @location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) color: vec4f, @location(4) tangent: vec4f, @location(5) geomprop: vec4f, @location(6) geomprop1: vec4f, @location(7) geomprop2: vec4f, @location(8) geomprop3: vec4f, @location(9) geomprop4: vec4f, @location(10) geomprop5: vec4f, @location(11) geomprop6: vec4f, @location(12) geomprop7: vec4f, @location(13) @interpolate(flat) material: u32 }
 @vertex fn rasterVertex(@builtin(vertex_index) id: u32) -> RasterVertex {
   let tri = triangles[id/3u]; var v = tri.a;
   if (id%3u==1u) { v=tri.b; } else if (id%3u==2u) { v=tri.c; }
@@ -265,7 +266,7 @@ struct RasterVertex { @builtin(position) clip: vec4f, @location(0) position: vec
   for(var directionalIndex=0u;directionalIndex<directionalCount();directionalIndex++){let light=directionalDirectionAt(directionalIndex);if(intersect(v.position+geomN*max(1e-4,length(v.position)*1e-5),light).id==0xffffffffu){color+=bsdf(m,n,wo,light).xyz*max(0.0,dot(n,light))*directionalRadianceAt(directionalIndex)*clamp(surface.opacity,0.0,1.0);}}
   let linear = max(vec3f(0),color*exp2(cfg.display.x)); let mapped=linear/(1.0+linear);
   return vec4f(select(12.92*mapped,1.055*pow(mapped,vec3f(1.0/2.4))-0.055,mapped>vec3f(0.0031308)),1);
-}
+}`}
 `;
 }
 
