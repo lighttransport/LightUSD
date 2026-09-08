@@ -548,8 +548,9 @@ MaterialX fallback behavior; dynamic selectors remain explicit diagnostics
 because the current scene context has no arbitrary primvar map.
 
 The standard `geompropvalueuniform` alias uses the same typed geometry lookup
-and fallback behavior. `facingratio` is accepted as the library spelling of
-the existing bounded facing-ratio operation.
+and fallback behavior. `facingratio` follows the pinned NPR graph's
+view-direction, face-forward, and invert controls; the separate
+`facing_ratio` utility retains its exponent-based semantics.
 
 `rotate3d` now emits a normalized-axis Rodrigues rotation with MaterialX's
 degree-valued amount, including a stable fallback for degenerate axes.

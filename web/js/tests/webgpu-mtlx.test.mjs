@@ -575,8 +575,8 @@ test('geompropvalue maps standard authored geometry properties with typed fallba
   assert.throws(()=>compileGraph({nodes:[{name:'bad',category:'geompropvalue',type:'float',inputs:{geomprop:{type:'string',value:'P'}}}]}),/has type vector3/);
 });
 test('standard geometry aliases preserve facing ratio and uniform property semantics', () => {
-  const facing=compileGraph({nodes:[{name:'f',category:'facingratio',type:'float',inputs:{in:{type:'vector3',value:[0,0,1]},normal:{type:'vector3',value:[0,0,1]},exponent:{type:'float',value:2}}}]});
-  assert.match(facing.body,/pow\(1\.0-clamp\(/);
+  const facing=compileGraph({nodes:[{name:'f',category:'facingratio',type:'float',inputs:{viewdirection:{type:'vector3',value:[0,0,1]},normal:{type:'vector3',value:[0,0,1]},faceforward:{type:'boolean',value:true},invert:{type:'boolean',value:true}}}]});
+  assert.match(facing.body,/abs\(dot\(/); assert.match(facing.body,/1\.0-select\(/);
   const uniform=compileGraph({nodes:[{name:'u',category:'geompropvalueuniform',type:'vector3',inputs:{geomprop:{type:'string',value:'P'}}}]});
   assert.match(uniform.body,/ctx\.position/);
   const fallback=compileGraph({nodes:[{name:'u',category:'geompropvalueuniform',type:'float',inputs:{geomprop:{type:'string',value:'custom'},default:{type:'float',value:.25}}}]});

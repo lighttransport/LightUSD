@@ -534,9 +534,15 @@ export function compileGraph(document, { output, library = {}, material = false,
           const f0=`pow((${ior}-1.0)/(${ior}+1.0),2.0)`;
           code=`(${f0}+(1.0-${f0})*pow(1.0-clamp(${cosine},0.0,1.0),5.0))`; break;
         }
-        case 'facing_ratio': case 'facingratio': {
+        case 'facing_ratio': {
           const direction=x('in',undefined,'vector3'), normal=x('normal',undefined,'vector3'), exponent=x('exponent',1,'float');
           code=`pow(1.0-clamp(abs(dot(normalize(${direction}),normalize(${normal}))),0.0,1.0),max(0.0,${exponent}))`; break;
+        }
+        case 'facingratio': {
+          if (type !== 'float') fail('TYPE', key, 'facingratio output must be float');
+          const direction=ins.viewdirection?x('viewdirection',undefined,'vector3'):'ctx.viewdir', normal=ins.normal?x('normal',undefined,'vector3'):'ctx.normal';
+          const faceforward=x('faceforward',true,'boolean'), invert=x('invert',false,'boolean'), dot=`dot(${direction},${normal})`, facing=`select(-${dot},abs(${dot}),${faceforward})`;
+          code=`select(${facing},1.0-${facing},${invert})`; break;
         }
         case 'luminance': code=`dot(vec3f(0.2126,0.7152,0.0722),${x('in',undefined,'color3')})`; break;
         case 'average': {
