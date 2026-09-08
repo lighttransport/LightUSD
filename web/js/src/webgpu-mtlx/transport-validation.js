@@ -46,8 +46,9 @@ export async function validateTransportKernels(device) {
     { name: 'switchedMedium', category: 'switch', type: 'VDF', inputs: { which: { type: 'float', value: 1 }, in1: { nodename: 'selectedMedium' }, in2: { nodename: 'baseMedium' } } },
     { name: 'top', category: 'oren_nayar_diffuse_bsdf', type: 'BSDF', inputs: { color: { type: 'color3', value: [.4, .4, .4] } } },
     { name: 'topAlt', category: 'sheen_bsdf', type: 'BSDF', inputs: { color: { type: 'color3', value: [.2, .3, .4] } } },
-    { name: 'selectedTop', category: 'switch', type: 'BSDF', inputs: { which: { type: 'float', value: 1 }, in1: { nodename: 'top' }, in2: { nodename: 'topAlt' } } },
-    { name: 'surface', category: 'surface', type: 'surfaceshader', inputs: { bsdf: { nodename: 'selectedTop' } } },
+    { name: 'selectedTop', category: 'select', type: 'BSDF', inputs: { condition: { type: 'boolean', value: true }, truevalue: { nodename: 'top' }, falsevalue: { nodename: 'topAlt' } } },
+    { name: 'switchedTop', category: 'switch', type: 'BSDF', inputs: { which: { type: 'float', value: 1 }, in1: { nodename: 'selectedTop' }, in2: { nodename: 'topAlt' } } },
+    { name: 'surface', category: 'surface', type: 'surfaceshader', inputs: { bsdf: { nodename: 'switchedTop' } } },
   ], mediumOutput: { nodename: 'switchedMedium' }, output: { nodename: 'surface' } };
   const module = device.createShaderModule({ code: shaderSource([surfaceDocument(), nestedLayer, volumeComposition]) + `
     @group(0) @binding(9) var<storage,read_write> checks: array<vec4f>;

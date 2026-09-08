@@ -721,7 +721,12 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'select': {
           const condition=x('condition',undefined,'boolean'), whenTrue=input('truevalue'), whenFalse=input('falsevalue');
           if(whenTrue.type!==whenFalse.type||whenTrue.type!==type)fail('TYPE',key,'select branches must match output type');
-          code=type==='VDF'?`mediumSelect(${whenFalse.code},${whenTrue.code},${condition})`:`select(${whenFalse.code},${whenTrue.code},${condition})`; break;
+          if(type==='BSDF') {
+            if(Boolean(whenTrue.hasInterior)!==Boolean(whenFalse.hasInterior))fail('SEMANTICS',key,'BSDF select branches must agree on interior state');
+            code=`closureSelect(${whenFalse.code},${whenTrue.code},${condition})`;closureCount=Math.max(whenTrue.closureCount||0,whenFalse.closureCount||0);hasInterior=whenTrue.hasInterior||false;interiorCategories=(whenTrue.hasInterior?whenTrue:whenFalse).interiorCategories||[];
+            if(whenTrue.normal&&whenTrue.normal===whenFalse.normal)normal=whenTrue.normal;
+            if(whenTrue.tangent&&whenTrue.tangent===whenFalse.tangent)tangent=whenTrue.tangent;
+          } else code=type==='VDF'?`mediumSelect(${whenFalse.code},${whenTrue.code},${condition})`:`select(${whenFalse.code},${whenTrue.code},${condition})`; break;
         }
         case 'switch': {
           if (type === 'BSDF') {
