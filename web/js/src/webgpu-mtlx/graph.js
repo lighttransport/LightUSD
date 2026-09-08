@@ -291,6 +291,12 @@ export function compileGraph(document, { output, library = {}, material = false,
           const descriptor = Object.hasOwn(imageDescriptors, file) && imageDescriptors[file];
           if (!descriptor) fail('RESOURCE', key, `missing decoded image ${file}`);
           if (n.colorspace && normalizeColorSpace(n.colorspace) !== normalizeColorSpace(descriptor.colorspace)) fail('SEMANTICS', key, 'image colorspace differs from decoded resource');
+          if (usdTexture && ins.sourceColorSpace) {
+            if (ins.sourceColorSpace.nodename || ins.sourceColorSpace.nodegraph || ins.sourceColorSpace.interfacename) fail('UNSUPPORTED', key, 'connected sourceColorSpace is not supported');
+            let sourceSpace;
+            try { sourceSpace = normalizeColorSpace(ins.sourceColorSpace.value); } catch (e) { fail('SEMANTICS', key, e.message); }
+            if (sourceSpace !== normalizeColorSpace(descriptor.colorspace)) fail('SEMANTICS', key, 'UsdUVTexture sourceColorSpace differs from decoded resource');
+          }
           const address = name => {
             const p = ins[name]; const mode = ['constant', 'clamp', 'periodic', 'mirror'].indexOf(p?.value ?? 'periodic');
             if (mode < 0 || p?.nodename || p?.interfacename || p?.nodegraph) fail('UNSUPPORTED', key, 'invalid or connected image address mode');

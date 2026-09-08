@@ -404,6 +404,7 @@ test('UsdUVTexture maps st/fallback/scale/bias and named channel outputs', () =>
   const rgb=compileGraph(doc,{output:{nodename:'tex',output:'rgb'},imageDescriptors:descriptor});
   assert.match(rgb.body,/ctx\.uv/); assert.match(rgb.body,/\*vec4f\(2\.0,2\.0,2\.0,1\.0\)\+vec4f\(0\.1,0\.0,0\.0,0\.0\)/);
   const red=compileGraph(doc,{output:{nodename:'tex',output:'r'},imageDescriptors:descriptor}); assert.match(red.body,/\)\.r/);
+  assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,sourceColorSpace:{type:'string',value:'srgb_texture'}}}]},{output:{nodename:'tex',output:'rgb'},imageDescriptors:descriptor}),/sourceColorSpace differs/);
 });
 test('triplanarprojection blends three typed image planes by normal weights', () => {
   const descriptor={x:{offset:0,width:2,height:2,levels:1,colorspace:'raw'},y:{offset:4,width:2,height:2,levels:1,colorspace:'raw'},z:{offset:8,width:2,height:2,levels:1,colorspace:'raw'}};
