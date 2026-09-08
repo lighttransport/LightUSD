@@ -11,7 +11,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 // Units are semantic annotations; implementations consume their authored
 // convention (for example degrees for rotate2d and nanometers for thin film).
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
-export const valueCategories = new Set(['constant', 'add', 'subtract', 'plus', 'minus', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'burn', 'dodge', 'overlay', 'disjointover', 'in', 'mask', 'matte', 'out', 'over', 'inside', 'outside', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'fract', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'colorcorrect', 'saturate', 'contrast', 'premult', 'unpremult', 'blackbody', 'artistic_ior', 'roughness_anisotropy', 'glossiness_anisotropy', 'ramp4', 'triplanarprojection', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'switch', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
+export const valueCategories = new Set(['constant', 'add', 'subtract', 'plus', 'minus', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'burn', 'dodge', 'overlay', 'disjointover', 'in', 'mask', 'matte', 'out', 'over', 'inside', 'outside', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'fract', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'colorcorrect', 'saturate', 'contrast', 'premult', 'unpremult', 'blackbody', 'artistic_ior', 'roughness_anisotropy', 'glossiness_anisotropy', 'ramp4', 'triplanarprojection', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'switch', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'viewdirection', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'UsdPreviewSurface', 'surface_unlit', 'surfacematerial', 'surface']);
 for(const category of ['transformmatrix','transformnormal','transformpoint','transformvector','trianglewave','normalmap','bump','bump3','heighttonormal','rotate3d','reorder','fractal2d','fractal3d','worleynoise2d','worleynoise3d','unifiednoise2d','unifiednoise3d','latlongimage','splitlr','splittb','ramp','ramp_gradient','ramplr','ramptb','checkerboard','line','circle','grid','crosshatch','tiledcircles','randomfloat','randomcolor','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d','facingratio','geompropvalueuniform'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
@@ -651,6 +651,10 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'position': case 'normal': case 'tangent': case 'bitangent':
           if (ins.space?.value && ins.space.value !== 'world') fail('GEOMETRY', key, 'only world-space geometric vectors are available');
           code = `ctx.${n.category}`; break;
+        case 'viewdirection':
+          if (type !== 'vector3') fail('TYPE', key, 'viewdirection output must be vector3');
+          if (ins.space?.value && ins.space.value !== 'world') fail('GEOMETRY', key, 'only world-space view directions are available');
+          code = 'ctx.viewdir'; break;
         case 'time': code = 'ctx.time'; break;
         case 'frame': code = 'ctx.frame'; break;
         case 'convert': {
@@ -858,7 +862,7 @@ export function compileGraph(document, { output, library = {}, material = false,
   return { body: lines.join('\n'), expression: value.code, type: value.type, categories: [...used].sort(), hasInterior:value.hasInterior||false,interiorCategories:value.interiorCategories||[],diagnostics: [], referenceReady: false };
 }
 
-export const contextWGSL = `struct ShadingContext { position: vec3f, normal: vec3f, tangent: vec3f, bitangent: vec3f, uv: vec2f, time: f32, frame: f32, uvDx: vec2f, uvDy: vec2f, dpdu:vec3f, dpdv:vec3f }
+export const contextWGSL = `struct ShadingContext { position: vec3f, normal: vec3f, tangent: vec3f, bitangent: vec3f, uv: vec2f, time: f32, frame: f32, uvDx: vec2f, uvDy: vec2f, dpdu:vec3f, dpdv:vec3f, viewdir:vec3f }
 fn mxOffsetContext(ctx:ShadingContext,delta:vec2f)->ShadingContext {
   var shifted=ctx;shifted.uv+=delta;shifted.position+=ctx.dpdu*delta.x+ctx.dpdv*delta.y;return shifted;
 }

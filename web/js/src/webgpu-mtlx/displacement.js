@@ -51,7 +51,7 @@ export async function bakeDisplacement(scene, device) {
       let base=(id.x/3u)*3u;let a=source[base];let b=source[base+1u];let c=source[base+2u];
       let frame=mxSurfaceFrame(n,b.p.xyz-a.p.xyz,c.p.xyz-a.p.xyz,b.uv.xy-a.uv.xy,c.uv.xy-a.uv.xy);
       let derivatives=mxSurfaceDerivatives(n,b.p.xyz-a.p.xyz,c.p.xyz-a.p.xyz,b.uv.xy-a.uv.xy,c.uv.xy-a.uv.xy);
-      let ctx=ShadingContext(v.p.xyz,n,frame[0],frame[1],v.uv.xy,0,0,vec2f(0),vec2f(0),derivatives[0],derivatives[1]);var d=vec3f(0);
+      let ctx=ShadingContext(v.p.xyz,n,frame[0],frame[1],v.uv.xy,0,0,vec2f(0),vec2f(0),derivatives[0],derivatives[1],vec3f(0,0,1));var d=vec3f(0);
       switch u32(v.uv.z){${scene.materials.map((_,i)=>`case ${i}u:{d=displacement${i}(ctx);}`).join('')}default:{}}
       result[id.x]=vec4f(v.p.xyz+d,0);
     }`});

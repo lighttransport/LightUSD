@@ -583,6 +583,13 @@ test('standard geometry aliases preserve facing ratio and uniform property seman
   assert.match(fallback.body,/0\.25/);
   assert.throws(()=>compileGraph({nodes:[{name:'u',category:'geompropvalueuniform',type:'float',inputs:{geomprop:{type:'string',value:'N'}}}]}),/has type vector3/);
 });
+test('viewdirection exposes the normalized outgoing shading direction', () => {
+  const source=compileGraph({nodes:[{name:'v',category:'viewdirection',type:'vector3',inputs:{space:{type:'string',value:'world'}}}]});
+  assert.match(source.expression,/^n\d+$/);
+  assert.match(source.body,/ctx\.viewdir/);
+  assert.throws(()=>compileGraph({nodes:[{name:'v',category:'viewdirection',type:'float',inputs:{}}]}),/output must be vector3/);
+  assert.throws(()=>compileGraph({nodes:[{name:'v',category:'viewdirection',type:'vector3',inputs:{space:{type:'string',value:'tangent'}}}]}),/world-space/);
+});
 test('rotate3d uses a normalized axis and degree-valued Rodrigues rotation', () => {
   const source=compileGraph({nodes:[{name:'r',category:'rotate3d',type:'vector3',inputs:{in:{type:'vector3',value:[1,0,0]},axis:{type:'vector3',value:[0,0,1]},amount:{type:'float',value:90}}}]});
   assert.match(source.body,/safeNormal\(vec3f\(0\.0,0\.0,1\.0\)/);

@@ -262,6 +262,9 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   integer seed hashes, interpolated over the authored min/max range.
 - `randomcolor` derives deterministic hue, saturation, and brightness channels
   from the authored input/seed and converts them through the bounded HSV path.
+- `viewdirection` now resolves to the world-space outgoing direction in path
+  and raster shading contexts, with explicit stable fallbacks for displacement
+  and standalone validation contexts.
 - `unifiednoise2d`/`unifiednoise3d` dispatch among Perlin-like, cell, Worley,
   and fractal helpers with authored frequency, range, clamp, and octave controls.
 - `cellnoise2d` and `cellnoise3d` provide non-interpolated integer-cell hash
