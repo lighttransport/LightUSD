@@ -17,6 +17,7 @@ export function appendRectLights(scene, lights) {
   const environment=[0,0,0];
   const domes=[];
   let environmentTexture=null;
+  const texturedDomes=[];
   const points=[];
   const disks=[];
   const cylinders=[];
@@ -31,8 +32,8 @@ export function appendRectLights(scene, lights) {
       const radiance=color.map(c=>c*intensity*2**exposure);
       if(!radiance.every(Number.isFinite))throw new Error('Invalid dome light radiance');
       if(light.textureImage) {
-        if(environmentTexture)throw new Error('Multiple textured dome lights are unsupported');
         environmentTexture={...light.textureImage,colorspace:light.textureImage.colorspace||'lin_rec709',scale:radiance};
+        texturedDomes.push({image:light.textureImage,radiance});
         domes.push({path:light.absPath,radiance,texture:true});
       } else {
         radiance.forEach((v,i)=>environment[i]+=v);domes.push({path:light.absPath,radiance});
@@ -155,6 +156,16 @@ export function appendRectLights(scene, lights) {
     const center=vertices.reduce((sum,v)=>sum.add(v),new Vector3()).multiplyScalar(.25);
     imported.push({path:light.absPath,worldArea:area,radiance,materialId:material});
     areaLights.push({path:light.absPath,position:center.toArray(),normal:normal.toArray(),worldArea:area,radiance,twoSided:false});
+  }
+  if(texturedDomes.length>1) {
+    const first=texturedDomes[0].image, pixelCount=first.width*first.height;
+    if(!Number.isInteger(first.width)||!Number.isInteger(first.height)||first.width<1||first.height<1||first.data?.length!==pixelCount*4)throw new Error('Invalid textured dome image');
+    const data=new Float32Array(first.data.length);
+    for(const {image,radiance} of texturedDomes) {
+      if(image.width!==first.width||image.height!==first.height||image.data?.length!==data.length)throw new Error('Textured dome images must have matching dimensions');
+      for(let i=0;i<data.length;i+=4) { data[i]+=image.data[i]*radiance[0]; data[i+1]+=image.data[i+1]*radiance[1]; data[i+2]+=image.data[i+2]*radiance[2]; data[i+3]=Math.max(data[i+3],image.data[i+3]); }
+    }
+    environmentTexture={...first,data,colorspace:first.colorspace||'lin_rec709',scale:[1,1,1]};
   }
   result.lighting={environment,directional:distant||{radiance:[0,0,0]},pointLights:points,areaLights,...(environmentTexture?{environmentTexture}: {})};
   result.provenance={...scene.provenance,lightingOverride:false,rectLights:imported,pointLights:points,diskLights:disks,cylinderLights:cylinders,geometryLights,distantLight:distant,domeLights:domes};

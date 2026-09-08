@@ -265,7 +265,10 @@ test('decoded authored dome textures feed latlong environment sampling', () => {
   assert.match(source,/imageSample\(0u,vec2u\(2u,1u\)/);assert.match(source,/\*vec3f\(1\.0,2\.0,2\.0\)/);
   const mixed=appendRectLights(scene,[{type:'dome',textureImage:image},{type:'dome',intensity:2,color:[.5,.25,.125]}]);
   assert.match(shaderSource(syntheticScene('default').materials,{},mixed.lighting),/\+vec3f\(1\.0,0\.5,0\.25\)/);
-  assert.throws(()=>appendRectLights(scene,[{type:'dome',textureImage:image},{type:'dome',textureImage:image}]),/Multiple textured/);
+  const multiple=appendRectLights(scene,[{type:'dome',textureImage:image},{type:'dome',textureImage:image,intensity:2,color:[.5,1,1]}]);
+  assert.deepEqual(multiple.lighting.environmentTexture.scale,[1,1,1]);
+  assert.deepEqual(Array.from(multiple.lighting.environmentTexture.data.slice(0,4)),[2,0,0,1]);
+  assert.throws(()=>appendRectLights(scene,[{type:'dome',textureImage:image},{type:'dome',textureImage:{...image,width:1}}]),/matching dimensions/);
 });
 test('authored point lights become bounded emissive geometry', () => {
   const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
