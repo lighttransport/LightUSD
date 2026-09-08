@@ -139,7 +139,7 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   authored USD lights for path modes. Asset provenance is retained across layer
   loading to resolve relative references inside variants. Authored distant
   lights preserve their world direction and radiance, including multiple
-  nonmatching distant lights, textureless dome lights
+  nonmatching distant lights, external IES tilt files, and textureless dome lights
   contribute environment radiance, and rect lights are imported as emissive
   geometry. Point and sphere lights use bounded finite-radius emissive geometry
   to participate in path sampling, using the authored position or transform
@@ -163,7 +163,7 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 ## Not implemented
 
 Full MaterialX coverage; general BSDF/EDF/VDF closure composition/layering;
-external IES tilt files and complete authored light/material sync semantics;
+complete authored light/material sync semantics;
 MaterialX subsurface_bsdf albedo/radius conversion; hair and curves;
 arbitrary authored primvar/shading-property maps beyond the supported geometry
 aliases, UV slots, and eight bounded custom geomprop channels;

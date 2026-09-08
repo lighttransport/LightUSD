@@ -1,11 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 // Bounded LM-63 photometric profile reader used by measured_edf.
-export function parseIES(input) {
-  const text = typeof input === 'string' ? input : new TextDecoder().decode(input);
+function decode(input) { return typeof input === 'string' ? input : new TextDecoder().decode(input); }
+function tiltTable(input) {
+  const text=decode(input), match=text.match(/(?:^|\n)\s*\[?TILT\s*=\s*INCLUDE\s*\]?/i), start=match?text.indexOf('\n',match.index)+1:0;
+  const values=text.slice(Math.max(0,start)).match(/[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/g)?.map(Number)||[];
+  const count=values[0];
+  if(!Number.isInteger(count)||count<2||count>181||values.length<1+count*2)throw new Error('IES external tilt table exceeds bounds');
+  const angles=values.slice(1,1+count), multipliers=values.slice(1+count,1+count*2);
+  if(angles.some((v,i)=>!Number.isFinite(v)||v<0||v>180||i&&v<=angles[i-1])||multipliers.some(v=>!Number.isFinite(v)||v<0))throw new Error('Invalid IES external tilt table');
+  return { angles, multipliers };
+}
+export function iesTiltReference(input) {
+  const text=decode(input), match=text.match(/(?:^|\n)\s*\[?TILT\s*=\s*([^\]\r\n]+)/i);
+  if(!match)return null;
+  const mode=match[1].trim();
+  return mode&&!['NONE','INCLUDE'].includes(mode.toUpperCase())?mode:null;
+}
+export function parseIES(input, { externalTilt = null } = {}) {
+  const text = decode(input);
   const tiltMatch = text.match(/(?:^|\n)\s*\[?TILT\s*=\s*([^\]\r\n]+)/i);
   if (!tiltMatch) throw new Error('IES profile is missing TILT data');
   const tiltMode = tiltMatch[1].trim().toUpperCase();
-  if (!['NONE', 'INCLUDE'].includes(tiltMode)) throw new Error('IES external tilt profiles are unsupported');
+  if (!['NONE', 'INCLUDE'].includes(tiltMode) && externalTilt === null) throw new Error(`IES external tilt profile requires ${tiltMatch[1].trim()}`);
   const body = text.slice(text.indexOf('\n', tiltMatch.index) + 1);
   const values = body.match(/[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/g)?.map(Number) || [];
   if (values.length < 13 || values.some(v => !Number.isFinite(v))) throw new Error('Invalid IES numeric data');
@@ -16,6 +32,8 @@ export function parseIES(input) {
     if (!Number.isInteger(tiltCount) || tiltCount < 2 || tiltCount > 181 || values.length < 1 + tiltCount * 2 + 13) throw new Error('IES tilt table exceeds bounds');
     tiltAngles = values.slice(i, i += tiltCount); tiltMultipliers = values.slice(i, i += tiltCount);
     if (tiltAngles.some((v, n) => v < 0 || v > 180 || n && v <= tiltAngles[n - 1]) || tiltMultipliers.some(v => v < 0)) throw new Error('Invalid IES tilt table');
+  } else if (tiltMode !== 'NONE') {
+    ({ angles: tiltAngles, multipliers: tiltMultipliers } = tiltTable(externalTilt));
   }
   const lampCount = values[i++], lumens = values[i++], multiplier = values[i++];
   const verticalCount = values[i++], horizontalCount = values[i++];

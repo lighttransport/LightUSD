@@ -14,7 +14,7 @@ import { appendRectLights } from '../src/webgpu-mtlx/usd-lights.js';
 import { mayEmit } from '../src/webgpu-mtlx/emission.js';
 import { materialXFromUSD } from '../src/webgpu-mtlx/usd-graph.js';
 import { USDTextureSources } from '../src/webgpu-mtlx/usd-texture-sources.js';
-import { parseIES } from '../src/webgpu-mtlx/ies.js';
+import { parseIES, iesTiltReference } from '../src/webgpu-mtlx/ies.js';
 import { triangleMaterialIds, materialImageKeys, materialMeasuredProfileKeys, materialUVIndex, materialGeompropName, materialGeompropNames, decodeCustomPrimvar } from '../src/webgpu-mtlx/usd-scene.js';
 const constant = (name, value, type = 'float') => ({ name, category: 'constant', type, inputs: { value: { type, value } } });
 
@@ -1290,6 +1290,11 @@ test('measured EDF parses bounded LM-63 profiles and reaches emission transport'
   assert.deepEqual(azimuthal.horizontalAngles, [0, 180]); assert.deepEqual(azimuthal.values, [1, .5, 0, 0, .5, 1]);
   const tilted = parseIES(`IESNA:LM-63-2002\nTILT=INCLUDE\n2\n0 180\n1 .5\n1 1000 1 3 1 1 1 1 1 1 1 1 1\n0 90 180\n0\n100 100 100`);
   assert.deepEqual(tilted.samples, [[0, 1], [90, .75], [180, .5]]);
+  const external=`IESNA:LM-63-2002\nTILT=tilt.dat\n1 1000 1 3 1 1 1 1 1 1 1 1 1\n0 90 180\n0\n100 100 100`;
+  assert.equal(iesTiltReference(external),'tilt.dat');
+  const externalProfile=parseIES(external,{externalTilt:'2\n0 180\n1 .5'});
+  assert.deepEqual(externalProfile.samples, [[0, 1], [90, .75], [180, .5]]);
+  assert.throws(()=>parseIES(external),/requires tilt\.dat/);
   const doc={measuredProfiles:{ies:azimuthal},nodes:[
     {name:'edf',category:'measured_edf',type:'EDF',inputs:{file:{type:'filename',value:'ies'},normal:{type:'vector3',value:[0,1,0]}}},
     {name:'surface',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'edf'}}}

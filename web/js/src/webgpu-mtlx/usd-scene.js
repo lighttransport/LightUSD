@@ -9,7 +9,7 @@ import { USDTextureSources } from './usd-texture-sources.js';
 import { loadUSDMaterialXLibrary, materialXFromUSD } from './usd-graph.js';
 import { compileGraph } from './graph.js';
 import { fetchResource, decodeImage, inspectEXRHeader, atlasUDIMImages } from './resources.js';
-import { parseIES } from './ies.js';
+import { parseIES, iesTiltReference } from './ies.js';
 export const SHADERBALL_COMMIT = '3b75c2dad6a494897557dcca0098257bcf42a8c6';
 function materialNodes(document) {
   const nodes = [...(document?.nodes || [])];
@@ -198,7 +198,10 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
         if (!neededAssetKeys.has(key) && !measuredProfileKeys.has(key)) continue;
         if (measuredProfileKeys.has(key)) {
           try {
-            const profile = parseIES(await fetchResource(request.url, { maxBytes: 4 * 1024 * 1024 }));
+            const iesBytes = await fetchResource(request.url, { maxBytes: 4 * 1024 * 1024 });
+            const tiltReference = iesTiltReference(iesBytes);
+            const externalTilt = tiltReference ? await fetchResource(new URL(tiltReference, request.url).toString(), { maxBytes: 64 * 1024 }) : null;
+            const profile = parseIES(iesBytes, { externalTilt });
             for (const document of Object.values(translatedMaterials)) if (materialMeasuredProfileKeys(document).includes(key)) (document.measuredProfiles ||= {})[key] = profile;
           } catch (error) { textureDiagnostics.push({ key, url: request.url, error: String(error.message || error) }); }
           if (!neededAssetKeys.has(key)) continue;
