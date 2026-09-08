@@ -4680,6 +4680,19 @@ class LightUSDLoaderNative {
               heapAttr_(reinterpret_cast<const float *>(uvit->second.data.data()),
                         uvn * 2, 2, "f32"));
     }
+    // Preserve authored UV slots for MaterialX texcoord/UsdPrimvarReader
+    // routing. Slot 0 remains available as uv0 for compatibility.
+    if (!rmesh.texcoords.empty()) {
+      emscripten::val uvSets = emscripten::val::object();
+      for (const auto &uv_pair : rmesh.texcoords) {
+        const size_t uvn = uv_pair.second.vertex_count();
+        uvSets.set(std::to_string(uv_pair.first),
+                   heapAttr_(reinterpret_cast<const float *>(
+                                 uv_pair.second.data.data()),
+                             uvn * 2, 2, "f32"));
+      }
+      out.set("uvSets", uvSets);
+    }
 
     // Authored displayColor/displayOpacity streams. Keep these separate in
     // the descriptor because RenderMesh stores color as float3 and opacity

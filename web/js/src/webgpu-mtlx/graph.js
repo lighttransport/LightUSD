@@ -68,7 +68,7 @@ export function parseMaterialX(xml, { source = '', parser = globalThis.DOMParser
 }
 
 /** Compile a normalized graph. Connections are {nodename, output} or {nodegraph, output}. */
-export function compileGraph(document, { output, library = {}, material = false, imageDescriptors = {} } = {}) {
+export function compileGraph(document, { output, library = {}, material = false, imageDescriptors = {}, uvIndex = 0 } = {}) {
   const rawDefinitions = Object.assign(Object.create(null), library.definitions, document.definitions), definitions = Object.create(null);
   function inherit(name, chain = new Set()) {
     if (definitions[name]) return definitions[name];
@@ -685,13 +685,18 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'dotproduct': code = `dot(${x('in1')},${x('in2')})`; break;
         case 'crossproduct': code = `cross(${x('in1', undefined, 'vector3')},${x('in2', undefined, 'vector3')})`; break;
         case 'texcoord':
-          if (ins.index && Number(ins.index.value) !== 0) fail('GEOMETRY', key, 'only texcoord index 0 is available');
+          if (ins.index && Number(ins.index.value) !== uvIndex) fail('GEOMETRY', key, `texcoord index ${Number(ins.index.value)} does not match material UV slot ${uvIndex}`);
           code = type === 'vector2' ? 'ctx.uv' : 'vec3f(ctx.uv,0.0)'; break;
         case 'UsdPrimvarReader': {
           const selector = ins.varname;
           if (selector && (selector.nodename || selector.nodegraph || selector.interfacename)) fail('GEOMETRY', key, 'UsdPrimvarReader varname must be static');
           const name = String(selector?.value ?? '').toLowerCase().replace(/[_-]/g, '');
+          const uvName = name.match(/^(?:uv|uvset)([0-9]+)$/);
           const properties = {st:['vector2','ctx.uv'],uv:['vector2','ctx.uv'],uv0:['vector2','ctx.uv'],texcoord:['vector2','ctx.uv'],p:['vector3','ctx.position'],position:['vector3','ctx.position'],n:['vector3','ctx.normal'],normal:['vector3','ctx.normal'],t:['vector3','ctx.tangent'],tangent:['vector3','ctx.tangent'],b:['vector3','ctx.bitangent'],bitangent:['vector3','ctx.bitangent'],color:['color3','ctx.geomcolor.rgb'],displaycolor:['color3','ctx.geomcolor.rgb'],opacity:['float','ctx.geomcolor.a'],displayopacity:['float','ctx.geomcolor.a']};
+          if (uvName) {
+            if (Number(uvName[1]) !== uvIndex) fail('GEOMETRY', key, `UsdPrimvarReader ${name} does not match material UV slot ${uvIndex}`);
+            properties[name] = ['vector2', 'ctx.uv'];
+          }
           const property=properties[name];
           if (property) { if (property[0] !== type) fail('TYPE', key, `UsdPrimvarReader ${name} has type ${property[0]}, not ${type}`); code=property[1]; }
           else code=x('fallback',widths[type]===1?0:Array(widths[type]).fill(0),type);
@@ -717,6 +722,11 @@ export function compileGraph(document, { output, library = {}, material = false,
             color: ['color3', 'ctx.geomcolor.rgb'], displaycolor: ['color3', 'ctx.geomcolor.rgb'],
             opacity: ['float', 'ctx.geomcolor.a'], displayopacity: ['float', 'ctx.geomcolor.a']
           };
+          const uvName = name.match(/^(?:uv|uvset)([0-9]+)$/);
+          if (uvName) {
+            if (Number(uvName[1]) !== uvIndex) fail('GEOMETRY', key, `geompropvalue ${name} does not match material UV slot ${uvIndex}`);
+            properties[name] = ['vector2', 'ctx.uv'];
+          }
           const property = properties[name];
           if (property) {
             if (property[0] !== type) fail('TYPE', key, `geomprop ${name} has type ${property[0]}, not ${type}`);

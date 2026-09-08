@@ -240,13 +240,14 @@ export function syntheticScene(preset = 'copper') {
 
 /** Stackless median BVH. Immutable copied scene data, no references into WASM. */
 export function packScene(scene, { maxTriangles = 2_000_000 } = {}) {
-  const { positions, indices, normals, uvs, colors, materialIds, materials } = scene;
+  const { positions, indices, normals, uvs, uvSets, colors, materialIds, materials } = scene;
   const hasColors = !!colors?.length;
   if (!positions || !indices || positions.length % 3 || indices.length % 3 || indices.length === 0) throw new Error('Invalid triangle mesh');
   if (indices.length / 3 > maxTriangles) throw new Error(`Triangle budget exceeded (${maxTriangles})`);
   if (!materials?.length || materials.length > 64) throw new Error('Expected 1–64 materials');
   if (normals && normals.length !== positions.length) throw new Error('Normal count mismatch');
   if (uvs && uvs.length !== positions.length / 3 * 2) throw new Error('UV count mismatch');
+  if (uvSets) for (const set of uvSets) if (set && set.length !== positions.length / 3 * 2) throw new Error('UV set count mismatch');
   if (hasColors && colors.length !== positions.length / 3 * 3 && colors.length !== positions.length / 3 * 4) throw new Error('Color count mismatch');
   if (materialIds && materialIds.length !== indices.length / 3) throw new Error('Material count mismatch');
   for (const a of [positions, normals, uvs, hasColors ? colors : null]) if (a && !Array.from(a).every(v => Number.isFinite(v) && Number.isFinite(Math.fround(v)))) throw new Error('Non-finite float32 vertex attributes');
@@ -258,7 +259,9 @@ export function packScene(scene, { maxTriangles = 2_000_000 } = {}) {
     if (!Number.isInteger(mat) || mat < 0 || mat >= materials.length) throw new Error('Invalid material index');
     const p = ids.map(i => Array.from(positions.slice(i * 3, i * 3 + 3)));
     const geometric = normalize(cross(sub(p[1], p[0]), sub(p[2], p[0])));
-    tris.push({ p, n: ids.map(i => normals ? Array.from(normals.slice(i * 3, i * 3 + 3)) : geometric), uv: ids.map(i => uvs ? Array.from(uvs.slice(i * 2, i * 2 + 2)) : [0, 0]), color: ids.map(i => hasColors ? (colors.length === positions.length / 3 * 4 ? Array.from(colors.slice(i * 4, i * 4 + 4)) : [...colors.slice(i * 3, i * 3 + 3), 1]) : [0, 0, 0, 1]), mat, center: [0, 1, 2].map(k => (p[0][k] + p[1][k] + p[2][k]) / 3) });
+    const uvSlot = Number.isInteger(materials[mat]?.uvIndex) && materials[mat].uvIndex >= 0 ? materials[mat].uvIndex : 0;
+    const selectedUVs = uvSets?.[uvSlot] || uvs;
+    tris.push({ p, n: ids.map(i => normals ? Array.from(normals.slice(i * 3, i * 3 + 3)) : geometric), uv: ids.map(i => selectedUVs ? Array.from(selectedUVs.slice(i * 2, i * 2 + 2)) : [0, 0]), color: ids.map(i => hasColors ? (colors.length === positions.length / 3 * 4 ? Array.from(colors.slice(i * 4, i * 4 + 4)) : [...colors.slice(i * 3, i * 3 + 3), 1]) : [0, 0, 0, 1]), mat, center: [0, 1, 2].map(k => (p[0][k] + p[1][k] + p[2][k]) / 3) });
   }
   const nodes = [], ordered = [];
   function build(items) {

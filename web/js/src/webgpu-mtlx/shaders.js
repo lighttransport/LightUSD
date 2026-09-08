@@ -18,10 +18,11 @@ export function shaderSource(materials, resources = {}, lighting = {}, textureOp
   let imageIndex = 0;
   const functions = materials.map((doc, i) => {
     const imageDescriptors = Object.fromEntries(Object.entries(doc.images || {}).map(([name, image]) => [name, { ...packed.descriptors[imageIndex++], colorspace: image.colorspace || 'lin_rec709' }]));
-    const c = compileGraph(doc, { material: true, imageDescriptors, output: doc.output });
+    const uvIndex = Number.isInteger(doc.uvIndex) && doc.uvIndex >= 0 ? doc.uvIndex : 0;
+    const c = compileGraph(doc, { material: true, imageDescriptors, output: doc.output, uvIndex });
     if(c.categories.some(c=>['dielectric_bsdf','conductor_bsdf','oren_nayar_diffuse_bsdf'].includes(c)))resources.requiresPhysical=true;
     if (!['surfaceshader', 'material'].includes(c.type)) throw new Error('Material graph must produce a surface');
-    const medium = doc.mediumOutput ? compileGraph(doc, { output: doc.mediumOutput, imageDescriptors }) : null;
+    const medium = doc.mediumOutput ? compileGraph(doc, { output: doc.mediumOutput, imageDescriptors, uvIndex }) : null;
     if(medium && medium.type!=='VDF') throw new Error('mediumOutput must produce VDF');
     if(doc.mediumMajorant!==undefined && (!Number.isFinite(doc.mediumMajorant)||doc.mediumMajorant<=0))throw new Error('Medium majorant must be finite and positive');
     if(medium && medium.categories.some(c=>['position','normal','tangent','bitangent','texcoord','image'].includes(c)) && !doc.mediumMajorant) throw new Error('Spatially varying media require a conservative mediumMajorant');

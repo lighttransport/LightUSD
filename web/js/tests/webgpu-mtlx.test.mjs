@@ -14,7 +14,7 @@ import { appendRectLights } from '../src/webgpu-mtlx/usd-lights.js';
 import { mayEmit } from '../src/webgpu-mtlx/emission.js';
 import { materialXFromUSD } from '../src/webgpu-mtlx/usd-graph.js';
 import { USDTextureSources } from '../src/webgpu-mtlx/usd-texture-sources.js';
-import { triangleMaterialIds, materialImageKeys } from '../src/webgpu-mtlx/usd-scene.js';
+import { triangleMaterialIds, materialImageKeys, materialUVIndex } from '../src/webgpu-mtlx/usd-scene.js';
 const constant = (name, value, type = 'float') => ({ name, category: 'constant', type, inputs: { value: { type, value } } });
 
 test('USD mesh submeshes preserve per-face material bindings', () => {
@@ -444,6 +444,14 @@ test('USD primvar readers and transform2d resolve standard geometry inputs', () 
   assert.match(opacity.body,/ctx\.geomcolor\.a/);
   const transformed=compileGraph({nodes:[{name:'t',category:'UsdTransform2d',type:'vector2',inputs:{in:{type:'vector2',value:[1,0]},scale:{type:'vector2',value:[2,1]},rotation:{type:'float',value:90},translation:{type:'vector2',value:[.1,.2]}}}]});
   assert.match(transformed.body,/mat2x2f\(cos\(/); assert.match(transformed.body,/vec2f\(0\.1,0\.2\)/);
+  const uv1=compileGraph({nodes:[{name:'u',category:'UsdPrimvarReader',type:'vector2',inputs:{varname:{type:'string',value:'uvSet1'}}}]},{uvIndex:1});
+  assert.match(uv1.body,/ctx\.uv/); assert.equal(materialUVIndex({nodes:[{category:'texcoord',inputs:{index:{value:1}}}]}),1);
+  assert.throws(()=>compileGraph({nodes:[{name:'u',category:'texcoord',type:'vector2',inputs:{index:{type:'integer',value:1}}}]},{uvIndex:0}),/does not match/);
+});
+test('packed scene selects authored material UV slots per triangle', () => {
+  const scene={positions:[0,0,0,1,0,0,0,1,0],normals:[0,0,1,0,0,1,0,0,1],uvs:[0,0,0,0,0,0],uvSets:[[0,0,0,0,0,0],[.2,.3,.4,.5,.6,.7]],indices:[0,1,2],materialIds:[1],materials:[{nodes:[]}, {nodes:[],uvIndex:1}]};
+  const packed=packScene(scene);
+  assert.ok(Math.abs(packed.triangleData[8] - .2) < 1e-6 && Math.abs(packed.triangleData[9] - .3) < 1e-6);
 });
 test('triplanarprojection blends three typed image planes by normal weights', () => {
   const descriptor={x:{offset:0,width:2,height:2,levels:1,colorspace:'raw'},y:{offset:4,width:2,height:2,levels:1,colorspace:'raw'},z:{offset:8,width:2,height:2,levels:1,colorspace:'raw'}};

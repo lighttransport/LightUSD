@@ -21,6 +21,22 @@ export function materialImageKeys(document) {
   }
   return [...keys];
 }
+/** Return the single authored UV slot used by a material graph. */
+export function materialUVIndex(document) {
+  const slots = new Set();
+  for (const node of document?.nodes || []) {
+    if (node.category === 'texcoord' && node.inputs?.index?.value !== undefined) slots.add(Number(node.inputs.index.value));
+    if (node.category === 'UsdPrimvarReader' || node.category === 'geompropvalue' || node.category === 'geompropvalueuniform') {
+      const name = String(node.inputs?.varname?.value ?? node.inputs?.geomprop?.value ?? '').toLowerCase().replace(/[_-]/g, '');
+      const match = name.match(/^(?:uv|uvset)([0-9]+)$/);
+      if (match) slots.add(Number(match[1]));
+    }
+  }
+  if (slots.size > 1) throw new Error(`Material graph uses multiple UV slots: ${[...slots].join(', ')}`);
+  const value = slots.values().next().value;
+  if (value !== undefined && (!Number.isInteger(value) || value < 0 || value > 31)) throw new Error('Material UV slot must be an integer in [0,31]');
+  return value ?? 0;
+}
 /** Expand native index-range submeshes into one material ID per triangle. */
 export function triangleMaterialIds(indexCount, fallback, submeshes = []) {
   if (!Number.isInteger(indexCount) || indexCount < 0 || indexCount % 3) throw new Error('index count must be a nonnegative multiple of three');
@@ -117,7 +133,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
         } catch (error) { textureDiagnostics.push({ key, url: request.url, error: String(error.message || error) }); }
       }
       for (const [path, document] of Object.entries(translatedMaterials)) {
-        try { compiledMaterials[path] = compileGraph(document, { material: true, output: document.output, imageDescriptors }); }
+        try { document.uvIndex = materialUVIndex(document); compiledMaterials[path] = compileGraph(document, { material: true, output: document.output, imageDescriptors, uvIndex: document.uvIndex }); }
         catch (error) { translationDiagnostics.push({ path, phase: 'compile', error: String(error.message || error) }); }
       }
     }
@@ -142,7 +158,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
       }
     }
     for (let i = 0; i < layer.numLights(); i++) authored.lights.push(layer.getLight(i));
-    const positions = [], normals = [], uvs = [], colors = [], indices = [], materialIds = [];
+    const positions = [], normals = [], uvs = [], uvSets = [], colors = [], indices = [], materialIds = [];
     const read = d => {
       if (!d?.length) return null;
       const C = ({ f32: Float32Array, u32: Uint32Array, snorm8: Int8Array, snorm16: Int16Array })[d.dtype];
@@ -165,11 +181,20 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
         const p = read(mesh.points), ix = read(mesh.indices); if (!p?.length || !ix?.length) return;
         const geo = new BufferGeometry(); geo.setAttribute('position', new BufferAttribute(p, 3)); geo.setIndex(new BufferAttribute(ix, 1));
         const n = read(mesh.normals), uv = read(mesh.uv0), color = read(mesh.colors || mesh.color), opacity = read(mesh.colorOpacities);
+        const meshUVSets = [];
+        for (const [slot, value] of Object.entries(mesh.uvSets || {})) meshUVSets[Number(slot)] = read(value);
+        const uvSlotCount = Math.max(uvSets.length, meshUVSets.length, 1);
+        const priorVertexCount = positions.length / 3;
+        while (uvSets.length < uvSlotCount) uvSets.push(new Array(priorVertexCount * 2).fill(0));
         if (n?.length === p.length) geo.setAttribute('normal', new BufferAttribute(n, 3)); else geo.computeVertexNormals();
         geo.applyMatrix4(matrix);
         const ps = geo.attributes.position.array, ns = geo.attributes.normal.array, offset = positions.length / 3;
         for (let i = 0; i < ps.length; i++) { positions.push(ps[i]); normals.push(ns[i]); }
         for (let i = 0; i < ps.length / 3 * 2; i++) uvs.push(uv?.[i] ?? 0);
+        for (let slot = 0; slot < uvSets.length; slot++) {
+          const values = meshUVSets[slot] || (slot === 0 ? uv : null);
+          for (let i = 0; i < ps.length / 3 * 2; i++) uvSets[slot].push(values?.[i] ?? 0);
+        }
         for (let i = 0; i < ps.length / 3; i++) {
           if (color?.length === ps.length / 3 * 4) colors.push(color[i * 4], color[i * 4 + 1], color[i * 4 + 2], color[i * 4 + 3]);
           else if (color?.length === ps.length / 3 * 3) colors.push(color[i * 3], color[i * 3 + 1], color[i * 3 + 2], opacity?.[i] ?? 1);
@@ -188,7 +213,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
     onStatus(`Prepared ${indices.length / 3} ShaderBall triangles; ${authoredMaterials ? `${Object.keys(authoredDocuments).length} compiled authored MaterialX slots enabled` : 'materials/lights are diagnostic overrides'}`);
     const materialCount = Math.max(2, ...materialIds.map(id => id + 1), ...authored.bindings.map(binding => Number.isInteger(binding.materialId) && binding.materialId >= 0 ? binding.materialId + 1 : 0));
     const materials = Array.from({ length: materialCount }, (_, id) => authoredDocuments[id] || (id === 1 ? surfaceDocument([0.8, 0.45, 0.15], 1, 0.25) : surfaceDocument([0.35, 0.35, 0.35], 0, 0.7)));
-    const scene={ positions, normals, uvs, colors, indices, materialIds, authored, materials, camera, provenance: { asset: 'StandardShaderBall', commit: SHADERBALL_COMMIT, variant: 'triangulated', materialOverride: authoredMaterials ? 'partial-authored' : true, authoredMaterialCount: Object.keys(authoredDocuments).length, lightingOverride: true, referenceReady: false } };
+    const scene={ positions, normals, uvs, uvSets, colors, indices, materialIds, authored, materials, camera, provenance: { asset: 'StandardShaderBall', commit: SHADERBALL_COMMIT, variant: 'triangulated', materialOverride: authoredMaterials ? 'partial-authored' : true, authoredMaterialCount: Object.keys(authoredDocuments).length, lightingOverride: true, referenceReady: false } };
     return authoredLights ? appendRectLights(scene,authored.lights) : scene;
   } finally { layer.delete(); }
 }

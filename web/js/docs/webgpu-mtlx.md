@@ -68,6 +68,8 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   `bias`, and named RGB/channel outputs through the same bounded sampler.
 - USD preview `UsdPrimvarReader` resolves standard UV/geometry names with typed
   fallbacks, and `UsdTransform2d` applies scale, degree rotation, and translation.
+  Authored UV slots exposed by native meshes are preserved and selected per
+  material graph for `texcoord` indices and `uvN`/`uvSetN` readers.
   The image-node checker demo requires no downloaded textures.
 - `geomcolor` reads the normalized primary RGBA geometry-color stream in both
   raster and path shading; scene packing, displacement refinement, and authored
@@ -93,7 +95,8 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 
 Full MaterialX coverage; general BSDF/EDF/VDF closure composition/layering;
 MaterialX subsurface_bsdf albedo/radius conversion; hair and curves;
-arbitrary authored primvar/shading-property maps;
+arbitrary authored primvar/shading-property maps beyond the supported geometry
+aliases and UV slots;
 Catmull-Clark displacement refinement; faithful authored ShaderBall material
 graphs and full-resolution map storage;
 broad independent physical reference-image validation; complete ACEScg graph color management.
