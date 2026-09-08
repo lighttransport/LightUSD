@@ -11,6 +11,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const hardware = process.argv.includes('--hardware');
 const shaderball = process.argv.includes('--shaderball');
 const executablePath = process.env.CHROME_PATH || (process.platform === 'win32' ? 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe' : undefined);
+const extraChromeArgs = (process.env.WEBGPU_MTLX_CHROME_ARGS || '').split(/\s+/).filter(Boolean);
 const port = Number(process.env.WEBGPU_MTLX_TEST_PORT || 5198);
 const server = await createServer({ configFile: false, ...viteConfig, server: { ...viteConfig.server, port, hmr: false } });
 await server.listen();
@@ -20,7 +21,7 @@ try {
   for (let i = 0; i < 100; i++) { try { if ((await fetch(`http://127.0.0.1:${port}/webgpu-mtlx.html`)).ok) { started = true; break; } } catch {} await new Promise(r => setTimeout(r, 100)); }
   if (!started) throw new Error('Vite failed to serve webgpu-mtlx.html');
   profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'webgpu-mtlx-chrome-'));
-  browser = await puppeteer.launch({ executablePath, userDataDir: profileDir, headless: true, timeout: 60000, protocolTimeout: 600000, args: hardware ? ['--no-sandbox'] : ['--no-sandbox', '--enable-unsafe-webgpu', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+  browser = await puppeteer.launch({ executablePath, userDataDir: profileDir, headless: true, timeout: 60000, protocolTimeout: 600000, args: [...(hardware ? ['--no-sandbox'] : ['--no-sandbox', '--enable-unsafe-webgpu', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']), ...extraChromeArgs] });
   page = await browser.newPage(); await page.setViewport({ width: 1100, height: 700 });
   page.on('console',msg=>{browserLog.push(msg.text());if(browserLog.length>30)browserLog.shift();});
   const errors = []; page.on('pageerror', e => errors.push(e.message));
