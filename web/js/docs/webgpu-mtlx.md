@@ -208,9 +208,9 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   color values using explicit component-wise arithmetic.
 - Boolean `and`, `or`, `xor`, and `not` nodes now compile with strict boolean
   ports for graph control expressions.
-- `tiledimage` accepts the validated single-tile resource path and applies
-  static `uvtiling` multipliers; real-world image-size controls and UDIM
-  expansion remain explicit unsupported diagnostics.
+- `tiledimage` accepts the validated single-tile resource path, applies static
+  `uvtiling` multipliers and `uvoffset` subtraction; real-world image-size
+  controls and UDIM expansion remain explicit unsupported diagnostics.
 - URL resource tests cover includes, source-relative EXR paths, inherited image
   colorspace, cycle rejection and cross-origin rejection. ShaderBall's 2048x2048
   neutral EXR decodes successfully.

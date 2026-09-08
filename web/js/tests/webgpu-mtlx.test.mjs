@@ -533,6 +533,8 @@ test('tiledimage compiles the validated single-tile resource path', () => {
   const tiled=compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,uvtiling:{type:'vector2',value:[2,1]}}}]},{imageDescriptors:descriptor});
   assert.match(tiled.body,/ctx\.uv\*vec2f\(2\.0,1\.0\)/);
   assert.match(tiled.body,/ctx\.uvDx\*vec2f\(1\.0,1\.0\)\*vec2f\(2\.0,1\.0\)/);
+  const offset=compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,uvoffset:{type:'vector2',value:[.25,.5]}}}]},{imageDescriptors:descriptor});
+  assert.match(offset.body,/ctx\.uv\*vec2f\(1\.0,1\.0\)\)-vec2f\(0\.25,0\.5\)/);
   assert.throws(()=>compileGraph({...doc,nodes:[{...doc.nodes[0],inputs:{...doc.nodes[0].inputs,realworldimagesize:{type:'vector2',value:[2,1]}}}]},{imageDescriptors:descriptor}),/realworldimagesize/);
 });
 test('path shading carries a bounded UV ray footprint for image mips', () => {

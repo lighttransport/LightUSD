@@ -253,7 +253,7 @@ export function compileGraph(document, { output, library = {}, material = false,
         }
         case 'image': case 'tiledimage': {
           if (!['float', 'color3', 'color4', 'vector2', 'vector3', 'vector4'].includes(type)) fail('TYPE', key, 'invalid image output type');
-          for (const name of Object.keys(ins)) if (!['file', 'default', 'texcoord', 'uaddressmode', 'vaddressmode', 'filtertype', 'layer', 'framerange', 'frameoffset', 'frameendaction', 'uvtiling', 'realworldimagesize'].includes(name)) fail('UNSUPPORTED', key, `unsupported image input ${name}`);
+          for (const name of Object.keys(ins)) if (!['file', 'default', 'texcoord', 'uaddressmode', 'vaddressmode', 'filtertype', 'layer', 'framerange', 'frameoffset', 'frameendaction', 'uvtiling', 'uvoffset', 'realworldimagesize'].includes(name)) fail('UNSUPPORTED', key, `unsupported image input ${name}`);
           for (const name of ['layer', 'framerange', 'frameoffset']) if (ins[name] && !['', '0', 0].includes(ins[name].value)) fail('UNSUPPORTED', key, `image ${name} is not implemented`);
           if (ins.realworldimagesize) { const value=Array.isArray(ins.realworldimagesize.value)?ins.realworldimagesize.value.join(','):ins.realworldimagesize.value; if (value !== undefined && !['0', 0, '0,0', '1,1'].includes(value)) fail('UNSUPPORTED', key, 'tiled image realworldimagesize is not implemented'); }
           const file = ins.file?.value ?? '';
@@ -271,7 +271,8 @@ export function compileGraph(document, { output, library = {}, material = false,
           const filter = ins.filtertype?.value ?? 'linear';
           if (!['closest', 'linear'].includes(filter) || ins.filtertype?.nodename || ins.filtertype?.interfacename || ins.filtertype?.nodegraph) fail('UNSUPPORTED', key, 'only static closest/linear image filters are implemented');
           const uvBase = ins.texcoord ? x('texcoord', undefined, 'vector2') : 'ctx.uv';
-          const uv = ins.uvtiling ? `(${uvBase}*${x('uvtiling',[1,1],'vector2')})` : uvBase;
+          const uvTiled = ins.uvtiling ? `(${uvBase}*${x('uvtiling',[1,1],'vector2')})` : uvBase;
+          const uv = ins.uvoffset ? `(${uvTiled}-${x('uvoffset',[0,0],'vector2')})` : uvTiled;
           const fill = widths[type] === 4 ? fallback : widths[type] === 3 ? `vec4f(${fallback},0)` : widths[type] === 2 ? `vec4f(${fallback},0,0)` : `vec4f(${fallback})`;
           const swizzle = ({ float: 'r', vector2: 'rg', vector3: 'rgb', color3: 'rgb', vector4: 'rgba', color4: 'rgba' })[type];
           const size = `vec2f(${descriptor.width}.0,${descriptor.height}.0)`;
