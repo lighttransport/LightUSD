@@ -224,6 +224,13 @@ test('authored distant lights preserve direction and radiance', () => {
   assert.equal(r.provenance.rectLights.length,0);
   assert.throws(()=>appendRectLights(scene,[{type:'distant',direction:[0,0,1]},{type:'distant',direction:[1,0,0]}]),/nonmatching/);
 });
+test('textureless authored domes contribute environment radiance', () => {
+  const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
+  const r=appendRectLights(scene,[{type:'dome',intensity:2,exposure:1,color:[.5,.25,.125]}]);
+  assert.deepEqual(r.lighting.environment,[2,1,.5]);
+  assert.deepEqual(r.provenance.domeLights[0].radiance,[2,1,.5]);
+  assert.throws(()=>appendRectLights(scene,[{type:'dome',textureFile:'env.exr'}]),/Textured/);
+});
 test('resource fetch enforces streaming budgets and HTTP errors',async()=>{
   const fetcher=async()=>new Response(new Uint8Array([1,2,3,4]));
   assert.deepEqual(await fetchResource('test',{fetcher,maxBytes:4}),new Uint8Array([1,2,3,4]));
