@@ -126,9 +126,10 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   geometry. Point and sphere lights use bounded finite-radius emissive geometry
   to participate in path sampling, using the authored position or transform
   translation; realtime shading also evaluates bounded analytic direct
-  contributions for point, sphere, rect, disk, and cylinder lights with shadow checks.
+  contributions for point, sphere, spot, rect, disk, and cylinder lights with shadow checks.
   Cylinder lights use a bounded 24-segment side surface and a representative
-  center sample; rect, disk, and cylinder realtime lighting uses center samples while path transport
+  center sample; shaped sphere lights use a conical EDF and the same bounded
+  emitter geometry. Rect, disk, and cylinder realtime lighting uses center samples while path transport
   preserves the finite emitter meshes and area sampling. The point representation
   approximates an ideal point source.
   A single textured dome is decoded through the authored USD asset resolver and

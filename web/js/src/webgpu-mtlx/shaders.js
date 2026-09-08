@@ -14,7 +14,7 @@ export function shaderSource(materials, resources = {}, lighting = {}, textureOp
   for(const color of [lighting.environment,lighting.directional?.radiance])if(color && (!Array.isArray(color)||color.length!==3||color.some(v=>!Number.isFinite(v)||v<0)))throw new Error('Invalid light radiance');
   const pointLights=lighting.pointLights||[];
   if(!Array.isArray(pointLights)||pointLights.length>256)throw new Error('Invalid authored point-light list');
-  for(const light of pointLights)if(!Array.isArray(light.position)||light.position.length!==3||!light.position.every(Number.isFinite)||!Array.isArray(light.radiance)||light.radiance.length!==3||!light.radiance.every(v=>Number.isFinite(v)&&v>=0)||!Number.isFinite(light.worldArea)||light.worldArea<=0)throw new Error('Invalid authored point light');
+  for(const light of pointLights)if(!Array.isArray(light.position)||light.position.length!==3||!light.position.every(Number.isFinite)||!Array.isArray(light.radiance)||light.radiance.length!==3||!light.radiance.every(v=>Number.isFinite(v)&&v>=0)||!Number.isFinite(light.worldArea)||light.worldArea<=0||light.coneDirection&&(!Array.isArray(light.coneDirection)||light.coneDirection.length!==3||!light.coneDirection.every(Number.isFinite)||!Number.isFinite(light.coneInnerCos)||!Number.isFinite(light.coneOuterCos)))throw new Error('Invalid authored point light');
   const areaLights=lighting.areaLights||[];
   if(!Array.isArray(areaLights)||areaLights.length>256)throw new Error('Invalid authored area-light list');
   for(const light of areaLights)if(!Array.isArray(light.position)||light.position.length!==3||!light.position.every(Number.isFinite)||!Array.isArray(light.normal)||light.normal.length!==3||!light.normal.every(Number.isFinite)||!Array.isArray(light.radiance)||light.radiance.length!==3||!light.radiance.every(v=>Number.isFinite(v)&&v>=0)||!Number.isFinite(light.worldArea)||light.worldArea<=0||typeof light.twoSided!=='boolean')throw new Error('Invalid authored area light');
@@ -40,7 +40,8 @@ export function shaderSource(materials, resources = {}, lighting = {}, textureOp
   const environmentImage = environmentImageIndex >= 0 ? packed.descriptors[environmentImageIndex] : null;
   const authoredPointDirect = pointLights.map(light => {
     const position=literal('vector3',light.position), radiance=literal('color3',light.radiance.map(v=>v*light.worldArea*.5));
-    return `{let to=${position}-p;let d2=max(1e-8,dot(to,to));let dist=sqrt(d2);let wi=to/dist;if(dot(n,wi)>0.0&&intersect(p+n*max(1e-4,length(p)*1e-5),wi).id==0xffffffffu){let f=bsdf(m,n,wo,wi);value+=f.xyz*max(0.0,dot(n,wi))*${radiance}/d2;}}`;
+    const cone=light.coneDirection ? `let coneCos=dot(${literal('vector3',light.coneDirection)},-wi);let coneWeight=smoothstep(${Number(light.coneOuterCos)},${Number(light.coneInnerCos)},coneCos);` : 'let coneWeight=1.0;';
+    return `{let to=${position}-p;let d2=max(1e-8,dot(to,to));let dist=sqrt(d2);let wi=to/dist;${cone}if(dot(n,wi)>0.0&&coneWeight>0.0&&intersect(p+n*max(1e-4,length(p)*1e-5),wi).id==0xffffffffu){let f=bsdf(m,n,wo,wi);value+=f.xyz*max(0.0,dot(n,wi))*${radiance}*coneWeight/d2;}}`;
   }).join('');
   const authoredAreaDirect = areaLights.map(light => {
     const position=literal('vector3',light.position), normal=literal('vector3',light.normal), radiance=literal('color3',light.radiance.map(v=>v*light.worldArea));

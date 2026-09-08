@@ -62,6 +62,22 @@ export function appendRectLights(scene, lights) {
       for(const face of faces){result.indices.push(...face.map(i=>i+offset));result.materialIds.push(material);}
       points.push({path:light.absPath,type:light.type,position:[...position],radius,worldArea:area,radiance,materialId:material});continue;
     }
+    if(light.type==='spot') {
+      if(light.textureFile||light.enableColorTemperature||light.shapingIesFile||light.shapingFocus>0||light.diffuse!==undefined&&light.diffuse!==1||light.specular!==undefined&&light.specular!==1||light.shadowEnable===false)throw new Error('Unsupported spot light texture, shaping, temperature, focus, or contribution controls');
+      const {intensity=1,exposure=0,color=[1,1,1]}=light;
+      if(!Array.isArray(light.transform)||light.transform.length!==16||!light.transform.every(Number.isFinite)||light.transform[3]!==0||light.transform[7]!==0||light.transform[11]!==0||light.transform[15]!==1||![intensity,exposure,...color].every(Number.isFinite)||intensity<0||color.length!==3||color.some(c=>c<0))throw new Error('Invalid spot light parameters');
+      const matrix=new Matrix4().fromArray(light.transform);if(Math.abs(matrix.determinant())<1e-15)throw new Error('Singular spot light transform');
+      const position=[matrix.elements[12],matrix.elements[13],matrix.elements[14]],direction=new Vector3(0,0,-1).transformDirection(matrix).normalize();
+      const outerAngle=Number(light.angle)*180/Math.PI,softness=Number(light.shapingConeSoftness||0),innerAngle=outerAngle*Math.max(0,1-Math.min(1,softness));
+      const radius=light.radius===undefined?.01:Number(light.radius),area=4*Math.sqrt(3)*radius*radius;
+      if(!Number.isFinite(outerAngle)||outerAngle<=0||outerAngle>=180||!Number.isFinite(radius)||radius<=0||!Number.isFinite(softness)||softness<0||softness>1)throw new Error('Invalid spot light cone or radius');
+      const radiance=color.map(c=>c*intensity*2**exposure/area),offset=result.positions.length/3,material=result.materials.length;
+      result.materials.push({twoSidedEmission:false,nodes:[{name:'emission',category:'conical_edf',type:'EDF',inputs:{color:{type:'color3',value:radiance},normal:{type:'vector3',value:direction.toArray()},inner_angle:{type:'float',value:innerAngle},outer_angle:{type:'float',value:outerAngle}}},{name:'surface',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'emission'}}}]});
+      const verts=[[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]].map(v=>v.map(c=>c*radius)),faces=[[0,2,4],[2,1,4],[1,3,4],[3,0,4],[2,0,5],[1,2,5],[3,1,5],[0,3,5]];
+      for(const v of verts){const n=v.map(c=>c/radius);result.positions.push(position[0]+v[0],position[1]+v[1],position[2]+v[2]);result.normals.push(...n);result.uvs.push(0,0);result.colors.push(0,0,0,1);}
+      for(const face of faces){result.indices.push(...face.map(i=>i+offset));result.materialIds.push(material);}
+      points.push({path:light.absPath,type:light.type,position,radius,worldArea:area,radiance,materialId:material,coneDirection:direction.toArray(),coneInnerCos:Math.cos(innerAngle*Math.PI/180),coneOuterCos:Math.cos(outerAngle*Math.PI/180)});continue;
+    }
     if(light.type==='disk') {
       if(light.textureFile||light.enableColorTemperature||light.shapingIesFile||light.shapingFocus>0||light.shapingConeAngle<90||light.diffuse!==undefined&&light.diffuse!==1||light.specular!==undefined&&light.specular!==1||light.shadowEnable===false)throw new Error('Unsupported disk light texture, shaping, temperature, or contribution controls');
       const {intensity=1,exposure=0,color=[1,1,1]}=light,radius=light.radius===undefined?1:Number(light.radius);

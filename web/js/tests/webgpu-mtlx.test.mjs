@@ -287,6 +287,15 @@ test('authored cylinder lights preserve transformed side emission', () => {
   assert.equal(r.materials[0].twoSidedEmission,false);
   assert.throws(()=>appendRectLights(scene,[{type:'cylinder',radius:0,length:1}]),/Invalid cylinder/);
 });
+test('shaped sphere lights preserve spot cone emission', () => {
+  const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
+  const r=appendRectLights(scene,[{type:'spot',angle:Math.PI/3,shapingConeSoftness:.25,intensity:2,color:[1,.5,.25],transform:[1,0,0,0,0,1,0,0,0,0,1,0,1,2,3,1]}]);
+  assert.equal(r.positions.length,18);assert.equal(r.indices.length,24);assert.equal(r.provenance.pointLights[0].type,'spot');
+  assert.deepEqual(r.provenance.pointLights[0].coneDirection,[0,0,-1]);
+  assert.equal(r.materials[0].nodes[0].category,'conical_edf');
+  assert.match(shaderSource(syntheticScene('default').materials,{},r.lighting),/coneWeight/);
+  assert.throws(()=>appendRectLights(scene,[{type:'spot',angle:0,transform:[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]}]),/Invalid spot light cone/);
+});
 test('resource fetch enforces streaming budgets and HTTP errors',async()=>{
   const fetcher=async()=>new Response(new Uint8Array([1,2,3,4]));
   assert.deepEqual(await fetchResource('test',{fetcher,maxBytes:4}),new Uint8Array([1,2,3,4]));
