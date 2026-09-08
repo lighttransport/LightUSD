@@ -616,6 +616,8 @@ test('custom geometry properties select one bounded authored channel', () => {
   const document = { nodes: [{ name: 'temperature', category: 'geompropvalue', type: 'float', inputs: { geomprop: { type: 'string', value: 'temperature' }, default: { type: 'float', value: .25 } } }], output: { nodename: 'temperature' } };
   assert.equal(materialGeompropName(document), 'temperature');
   assert.match(compileGraph(document, { geompropName: 'temperature' }).body, /ctx\.geomprop/);
+  const color4 = { nodes: [{ name: 'mask', category: 'geompropvalue', type: 'color4', inputs: { geomprop: { type: 'string', value: 'mask' }, default: { type: 'color4', value: [0, 0, 0, 1] } } }], output: { nodename: 'mask' } };
+  assert.match(compileGraph(color4, { geompropName: 'mask' }).body, /ctx\.geomprop\.rgba/);
   assert.throws(() => materialGeompropName({ nodes: [
     { category: 'geompropvalue', type: 'float', inputs: { geomprop: { type: 'string', value: 'temperatureA' } } },
     { category: 'geompropvalue', type: 'float', inputs: { geomprop: { type: 'string', value: 'temperatureB' } } }

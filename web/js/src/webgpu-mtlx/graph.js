@@ -699,9 +699,9 @@ export function compileGraph(document, { output, library = {}, material = false,
           }
           const property=properties[name];
           if (property) { if (property[0] !== type) fail('TYPE', key, `UsdPrimvarReader ${name} has type ${property[0]}, not ${type}`); code=property[1]; }
-          else if (geompropName && name === geompropName && ['float','vector2','vector3','color3'].includes(type)) {
+          else if (geompropName && name === geompropName && ['float','vector2','vector3','vector4','color3','color4'].includes(type)) {
             const fallback=x('fallback',widths[type]===1?0:Array(widths[type]).fill(0),type);
-            const value=type==='float'?'ctx.geomprop.r':type==='vector2'?'ctx.geomprop.rg':type==='vector3'?'ctx.geomprop.rgb':'ctx.geomprop.rgb';
+            const value=type==='float'?'ctx.geomprop.r':type==='vector2'?'ctx.geomprop.rg':type==='vector3'||type==='color3'?'ctx.geomprop.rgb':'ctx.geomprop.rgba';
             code=`select(${fallback},${value},ctx.geomprop.a>0.5)`;
           }
           else code=x('fallback',widths[type]===1?0:Array(widths[type]).fill(0),type);
@@ -736,9 +736,9 @@ export function compileGraph(document, { output, library = {}, material = false,
           if (property) {
             if (property[0] !== type) fail('TYPE', key, `geomprop ${name} has type ${property[0]}, not ${type}`);
             code = property[1];
-          } else if (geompropName && name === geompropName && ['float','vector2','vector3','color3'].includes(type)) {
+          } else if (geompropName && name === geompropName && ['float','vector2','vector3','vector4','color3','color4'].includes(type)) {
             const fallback = x('default', widths[type] === 1 ? 0 : Array(widths[type]).fill(0), type);
-            const value = type === 'float' ? 'ctx.geomprop.r' : type === 'vector2' ? 'ctx.geomprop.rg' : 'ctx.geomprop.rgb';
+            const value = type === 'float' ? 'ctx.geomprop.r' : type === 'vector2' ? 'ctx.geomprop.rg' : type === 'vector3' || type === 'color3' ? 'ctx.geomprop.rgb' : 'ctx.geomprop.rgba';
             code = `select(${fallback},${value},ctx.geomprop.a>0.5)`;
           } else {
             const fallback = widths[type] === 1 ? 0 : Array(widths[type]).fill(0);

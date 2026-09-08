@@ -53,14 +53,14 @@ export function materialGeompropName(document) {
 function decodeCustomPrimvar(item, vertexCount) {
   if (!item?.value || item.error) return null;
   const type = String(item.value.type || item.type || '').replace(/\[\]$/, '').toLowerCase();
-  const components = type === 'float' ? 1 : ['float2','half2'].includes(type) ? 2 : ['float3','half3','color3f','normal3f','point3f','vector3f'].includes(type) ? 3 : 0;
+  const components = type === 'float' ? 1 : ['float2','half2'].includes(type) ? 2 : ['float3','half3','color3f','normal3f','point3f','vector3f'].includes(type) ? 3 : ['float4','half4','color4f','vector4f'].includes(type) ? 4 : 0;
   if (!components || !['constant','vertex','varying'].includes(item.interpolation)) return null;
   const raw = item.value.value;
   const values = Array.isArray(raw) ? raw : [raw];
   const one = value => {
     const a = Array.isArray(value) ? value.map(Number) : [Number(value)];
     if (a.length !== components || a.some(v => !Number.isFinite(v))) return null;
-    return [...a, 0, 0, 1].slice(0, 3).concat([1]);
+    return components === 4 ? a : [...a, 0, 0, 1].slice(0, 3).concat([1]);
   };
   const out = new Array(vertexCount * 4).fill(0);
   if (item.interpolation === 'constant') {
