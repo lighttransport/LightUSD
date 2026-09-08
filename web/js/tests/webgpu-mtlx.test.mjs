@@ -231,6 +231,14 @@ test('textureless authored domes contribute environment radiance', () => {
   assert.deepEqual(r.provenance.domeLights[0].radiance,[2,1,.5]);
   assert.throws(()=>appendRectLights(scene,[{type:'dome',textureFile:'env.exr'}]),/Textured/);
 });
+test('authored point lights become bounded emissive geometry', () => {
+  const scene={positions:[],normals:[],uvs:[],indices:[],materials:[]};
+  const r=appendRectLights(scene,[{type:'point',position:[1,2,3],radius:.5,intensity:4,exposure:0,color:[1,.5,.25]}]);
+  assert.equal(r.positions.length,18);assert.equal(r.indices.length,24);assert.equal(r.materialIds.length,8);
+  assert.deepEqual(r.provenance.pointLights[0].position,[1,2,3]);
+  assert.equal(r.materials[0].twoSidedEmission,true);
+  assert.throws(()=>appendRectLights(scene,[{type:'point',position:[0,0,0],radius:0}]),/radius must be positive/);
+});
 test('resource fetch enforces streaming budgets and HTTP errors',async()=>{
   const fetcher=async()=>new Response(new Uint8Array([1,2,3,4]));
   assert.deepEqual(await fetchResource('test',{fetcher,maxBytes:4}),new Uint8Array([1,2,3,4]));

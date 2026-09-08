@@ -15,6 +15,7 @@ export function appendRectLights(scene, lights) {
   let distant = null;
   const environment=[0,0,0];
   const domes=[];
+  const points=[];
   for(const light of lights) {
     if(light.type==='dome') {
       if(light.textureFile||Number.isInteger(light.envmapTextureId)&&light.envmapTextureId>=0||light.enableColorTemperature)throw new Error('Textured or temperature-controlled dome lights are unsupported');
@@ -33,6 +34,19 @@ export function appendRectLights(scene, lights) {
       if(!radiance.every(Number.isFinite))throw new Error('Invalid distant light radiance');
       if(distant && (distant.direction.some((v,i)=>Math.abs(v-towardLight[i])>1e-6)||distant.radiance.some((v,i)=>Math.abs(v-radiance[i])>1e-6)))throw new Error('Multiple nonmatching distant lights are unsupported');
       distant={direction:towardLight,radiance};continue;
+    }
+    if(light.type==='point') {
+      if(light.textureFile||light.enableColorTemperature||light.shapingIesFile||light.shapingFocus>0||light.shapingConeAngle<90||light.diffuse!==undefined&&light.diffuse!==1||light.specular!==undefined&&light.specular!==1||light.shadowEnable===false)throw new Error('Unsupported point light texture, shaping, temperature, or contribution controls');
+      const {intensity=1,exposure=0,color=[1,1,1]}=light,position=light.position;
+      const radius=light.radius===undefined?0.01:Number(light.radius);
+      if(!Array.isArray(position)||position.length!==3||!position.every(Number.isFinite)||![radius,intensity,exposure,...color].every(Number.isFinite)||radius<=0||intensity<0||color.length!==3||color.some(c=>c<0))throw new Error('Invalid point light parameters; radius must be positive');
+      const area=4*Math.sqrt(3)*radius*radius,radiance=color.map(c=>c*intensity*2**exposure/area);
+      if(!radiance.every(Number.isFinite))throw new Error('Invalid point light radiance');
+      const offset=result.positions.length/3,material=result.materials.length,verts=[[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]].map(v=>v.map(c=>c*radius)),faces=[[0,2,4],[2,1,4],[1,3,4],[3,0,4],[2,0,5],[1,2,5],[3,1,5],[0,3,5]];
+      result.materials.push({twoSidedEmission:true,nodes:[{name:'emission',category:'uniform_edf',type:'EDF',inputs:{color:{type:'color3',value:radiance}}},{name:'surface',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'emission'}}}]});
+      for(const v of verts){const n=v.map(c=>c/radius);result.positions.push(position[0]+v[0],position[1]+v[1],position[2]+v[2]);result.normals.push(...n);result.uvs.push(0,0);result.colors.push(0,0,0,1);}
+      for(const face of faces){result.indices.push(...face.map(i=>i+offset));result.materialIds.push(material);}
+      points.push({path:light.absPath,position:[...position],radius,worldArea:area,radiance,materialId:material});continue;
     }
     if(light.type!=='rect')throw new Error(`Unsupported authored light type: ${light.type}`);
     if(light.textureFile||light.enableColorTemperature||light.shapingIesFile||light.shapingFocus>0||light.shapingConeAngle<90||light.diffuse!==undefined&&light.diffuse!==1||light.specular!==undefined&&light.specular!==1||light.shadowEnable===false)throw new Error('Unsupported rect light texture, shaping, temperature, or contribution controls');
@@ -58,6 +72,6 @@ export function appendRectLights(scene, lights) {
     imported.push({path:light.absPath,worldArea:area,radiance,materialId:material});
   }
   result.lighting={environment,directional:distant||{radiance:[0,0,0]}};
-  result.provenance={...scene.provenance,lightingOverride:false,rectLights:imported,distantLight:distant,domeLights:domes};
+  result.provenance={...scene.provenance,lightingOverride:false,rectLights:imported,pointLights:points,distantLight:distant,domeLights:domes};
   return result;
 }
