@@ -108,6 +108,10 @@ test('USD graph translation preserves interfaces and exact NodeDef typing', () =
   assert.equal(doc.nodes.length, 1);
   assert.deepEqual(doc.nodes[0].inputs.base_color, { type: 'color3', value: [.2,.4,.6], colorspace: 'lin_rec709' });
   assert.doesNotThrow(() => compileGraph(doc, { material: true }));
+  const genericTerminal = structuredClone(snapshot);
+  genericTerminal.prims[0].properties['outputs:surface'] = genericTerminal.prims[0].properties['outputs:mtlx:surface'];
+  delete genericTerminal.prims[0].properties['outputs:mtlx:surface'];
+  assert.equal(materialXFromUSD(genericTerminal, '/M', { library }).nodes.length, 1);
   const changed = () => structuredClone(snapshot);
   let bad = changed(); bad.prims[1].properties['inputs:color'].connections = ['/M/S.inputs:base_color'];
   assert.throws(() => materialXFromUSD(bad, '/M', { library }), /cycle/);

@@ -116,8 +116,9 @@ export function materialXFromUSD(snapshot, materialPath, { library = {}, resolve
     }
     building.delete(prim.path); return node;
   }
-  if (!own(material.properties, 'outputs:mtlx:surface')) fail(materialPath, 'missing MaterialX surface terminal');
-  const output = port(`${materialPath}.outputs:mtlx:surface`, 'surfaceshader');
+  const terminal = own(material.properties, 'outputs:mtlx:surface') ? 'outputs:mtlx:surface' : own(material.properties, 'outputs:surface') ? 'outputs:surface' : null;
+  if (!terminal) fail(materialPath, 'missing MaterialX surface terminal');
+  const output = port(`${materialPath}.${terminal}`, 'surfaceshader');
   return { version: '1.39', nodes, output, definitions, graphs: library.graphs || {},
     source: materialPath, provenance: { materialPath, source: 'USD layer snapshot', referenceReady: false } };
 }

@@ -449,6 +449,9 @@ a synchronous caller-supplied resolver returning a resource key; no source-layer
 anchor is guessed. Color literals and asset resolver requests retain the source
 attribute's color space, with attribute overrides preceding inherited prim
 settings as described in the [OpenUSD color guide](https://openusd.org/release/user_guides/color_user_guide.html).
+Material prims may expose the translated surface through either
+`outputs:mtlx:surface` or the generic `outputs:surface` terminal; both still
+resolve through the exact MaterialX NodeDef path.
 Supported canonical names map to the existing Rec.709, sRGB, ACEScg and raw
 transforms; custom/unknown spaces fail explicitly. The graph working space is
 still Rec.709, not the planned ACEScg working pipeline.
