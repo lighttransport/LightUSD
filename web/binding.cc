@@ -52,6 +52,7 @@
 #include "tydra/tangent-quantize.hh"
 #include "tydra/scene-access.hh"
 #include "tydra/material-serializer.hh"
+#include "tydra/value-to-json.hh"
 #include "tydra/diff-and-compare.hh"
 
 // js-script.hh must precede mcp-context.hh: tydra::mcp::Context holds a
@@ -4725,6 +4726,68 @@ class LightUSDLoaderNative {
       }
     }
     return out;
+  }
+
+  // Return the composed authored primvars for one render mesh. Tydra's
+  // RenderMesh intentionally keeps only renderer-standard streams; this
+  // bounded bridge preserves typed custom primvars before that conversion is
+  // lost. Values are flattened once, including indices.
+  std::string getMeshPrimvarsJSON(int mesh_id) {
+    nlohmann::json root = nlohmann::json::object();
+    root["version"] = 1;
+    root["primvars"] = nlohmann::json::object();
+    if (!loaded_ || mesh_id < 0 ||
+        static_cast<size_t>(mesh_id) >= render_scene_.meshes.size()) {
+      root["error"] = "invalid mesh id";
+      return root.dump();
+    }
+    lightusd::Stage stage;
+    if (!getStageFromLayer(stage)) {
+      root["error"] = error_.empty() ? "stage unavailable" : error_;
+      return root.dump();
+    }
+    const auto &rmesh = render_scene_.meshes[size_t(mesh_id)];
+    root["primPath"] = rmesh.abs_path;
+    const lightusd::Prim *prim = nullptr;
+    std::string find_error;
+    if (!stage.find_prim_at_path(lightusd::Path(rmesh.abs_path, ""), prim,
+                                 &find_error) || !prim) {
+      root["error"] = find_error.empty() ? "mesh prim not found" : find_error;
+      return root.dump();
+    }
+    const auto *mesh = prim->as<lightusd::GeomMesh>();
+    if (!mesh) {
+      root["error"] = "render node is not a GeomMesh";
+      return root.dump();
+    }
+    size_t count = 0;
+    for (const auto &primvar : mesh->get_primvars()) {
+      if (count++ >= 256 || !primvar.has_value() || primvar.name().empty()) continue;
+      nlohmann::json item = nlohmann::json::object();
+      item["name"] = primvar.name();
+      item["type"] = primvar.get_type_name();
+      item["interpolation"] = primvar.has_interpolation()
+                                  ? to_string(primvar.get_interpolation())
+                                  : "unknown";
+      item["elementSize"] = primvar.has_elementSize()
+                                 ? primvar.get_elementSize()
+                                 : 1;
+      lightusd::value::Value value;
+      std::string value_error;
+      if (!primvar.flatten_with_indices(&value, &value_error)) {
+        item["error"] = value_error.empty() ? "unable to flatten primvar"
+                                             : value_error;
+      } else {
+        nlohmann::json encoded = lightusd::tydra::ValueToJSON(value);
+        if (encoded.dump().size() > 16u * 1024u * 1024u) {
+          item["error"] = "primvar exceeds JSON bridge budget";
+        } else {
+          item["value"] = encoded;
+        }
+      }
+      root["primvars"][primvar.name()] = std::move(item);
+    }
+    return root.dump();
   }
 
   // Owned, retain-safe drop-in for getMesh(): identical shape, copied arrays.
@@ -11688,6 +11751,8 @@ EMSCRIPTEN_BINDINGS(lightusd_module) {
       .function("getURI", &LightUSDLoaderNative::getURI)
       .function("getMesh", &LightUSDLoaderNative::getMesh)  // deprecated: use getMeshPtr/getMeshCopy
       .function("getMeshPtr", &LightUSDLoaderNative::getMeshPtr)
+      .function("getMeshPrimvarsJSON",
+                &LightUSDLoaderNative::getMeshPrimvarsJSON)
       .function("getMeshCopy", &LightUSDLoaderNative::getMeshCopy)
       .function("numMeshes", &LightUSDLoaderNative::numMeshes)
       .function("numInstances", &LightUSDLoaderNative::numInstances)

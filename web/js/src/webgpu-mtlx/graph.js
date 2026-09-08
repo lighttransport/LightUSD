@@ -68,7 +68,7 @@ export function parseMaterialX(xml, { source = '', parser = globalThis.DOMParser
 }
 
 /** Compile a normalized graph. Connections are {nodename, output} or {nodegraph, output}. */
-export function compileGraph(document, { output, library = {}, material = false, imageDescriptors = {}, uvIndex = 0 } = {}) {
+export function compileGraph(document, { output, library = {}, material = false, imageDescriptors = {}, uvIndex = 0, geompropName = '' } = {}) {
   const rawDefinitions = Object.assign(Object.create(null), library.definitions, document.definitions), definitions = Object.create(null);
   function inherit(name, chain = new Set()) {
     if (definitions[name]) return definitions[name];
@@ -699,6 +699,11 @@ export function compileGraph(document, { output, library = {}, material = false,
           }
           const property=properties[name];
           if (property) { if (property[0] !== type) fail('TYPE', key, `UsdPrimvarReader ${name} has type ${property[0]}, not ${type}`); code=property[1]; }
+          else if (geompropName && name === geompropName && ['float','vector2','vector3','color3'].includes(type)) {
+            const fallback=x('fallback',widths[type]===1?0:Array(widths[type]).fill(0),type);
+            const value=type==='float'?'ctx.geomprop.r':type==='vector2'?'ctx.geomprop.rg':type==='vector3'?'ctx.geomprop.rgb':'ctx.geomprop.rgb';
+            code=`select(${fallback},${value},ctx.geomprop.a>0.5)`;
+          }
           else code=x('fallback',widths[type]===1?0:Array(widths[type]).fill(0),type);
           break;
         }
@@ -731,6 +736,10 @@ export function compileGraph(document, { output, library = {}, material = false,
           if (property) {
             if (property[0] !== type) fail('TYPE', key, `geomprop ${name} has type ${property[0]}, not ${type}`);
             code = property[1];
+          } else if (geompropName && name === geompropName && ['float','vector2','vector3','color3'].includes(type)) {
+            const fallback = x('default', widths[type] === 1 ? 0 : Array(widths[type]).fill(0), type);
+            const value = type === 'float' ? 'ctx.geomprop.r' : type === 'vector2' ? 'ctx.geomprop.rg' : 'ctx.geomprop.rgb';
+            code = `select(${fallback},${value},ctx.geomprop.a>0.5)`;
           } else {
             const fallback = widths[type] === 1 ? 0 : Array(widths[type]).fill(0);
             code = x('default', fallback, type);
@@ -970,7 +979,7 @@ export function compileGraph(document, { output, library = {}, material = false,
   return { body: lines.join('\n'), expression: value.code, type: value.type, categories: [...used].sort(), hasInterior:value.hasInterior||false,interiorCategories:value.interiorCategories||[],diagnostics: [], referenceReady: false };
 }
 
-export const contextWGSL = `struct ShadingContext { position: vec3f, normal: vec3f, tangent: vec3f, bitangent: vec3f, uv: vec2f, time: f32, frame: f32, uvDx: vec2f, uvDy: vec2f, dpdu:vec3f, dpdv:vec3f, viewdir:vec3f, geomcolor:vec4f }
+export const contextWGSL = `struct ShadingContext { position: vec3f, normal: vec3f, tangent: vec3f, bitangent: vec3f, uv: vec2f, time: f32, frame: f32, uvDx: vec2f, uvDy: vec2f, dpdu:vec3f, dpdv:vec3f, viewdir:vec3f, geomcolor:vec4f, geomprop:vec4f }
 fn mxOffsetContext(ctx:ShadingContext,delta:vec2f)->ShadingContext {
   var shifted=ctx;shifted.uv+=delta;shifted.position+=ctx.dpdu*delta.x+ctx.dpdv*delta.y;return shifted;
 }

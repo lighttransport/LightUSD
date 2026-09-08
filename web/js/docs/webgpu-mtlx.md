@@ -74,7 +74,11 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 - `geomcolor` reads the normalized primary RGBA geometry-color stream in both
   raster and path shading; scene packing, displacement refinement, and authored
   mesh extraction preserve the interpolated channel. Nonzero color indices fail
-  explicitly until additional primvar streams are available.
+  explicitly until additional primvar streams are available. One authored
+  float/vector2/vector3/color3 custom geomprop channel is now snapshotted from
+  composed mesh primvars, carried through the packed vertex ABI, and exposed to
+  matching MaterialX `geompropvalue` readers; multiple custom channels and
+  unsupported interpolation/types remain diagnosed or use the graph fallback.
 - Authored tangent streams are decoded from native packed or float formats,
   carried through the WebGPU triangle buffer and displacement bake, and used
   for MaterialX tangent/bitangent inputs with derivative frames as fallback.

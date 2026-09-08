@@ -14,7 +14,7 @@ import { appendRectLights } from '../src/webgpu-mtlx/usd-lights.js';
 import { mayEmit } from '../src/webgpu-mtlx/emission.js';
 import { materialXFromUSD } from '../src/webgpu-mtlx/usd-graph.js';
 import { USDTextureSources } from '../src/webgpu-mtlx/usd-texture-sources.js';
-import { triangleMaterialIds, materialImageKeys, materialUVIndex } from '../src/webgpu-mtlx/usd-scene.js';
+import { triangleMaterialIds, materialImageKeys, materialUVIndex, materialGeompropName } from '../src/webgpu-mtlx/usd-scene.js';
 const constant = (name, value, type = 'float') => ({ name, category: 'constant', type, inputs: { value: { type, value } } });
 
 test('USD mesh submeshes preserve per-face material bindings', () => {
@@ -162,9 +162,9 @@ test('layered medium bounds follow interior dependencies, not unrelated surface 
 });
 test('emission sampling excludes proven dark surfaces but retains unknown and spectral emitters',()=>{
   const scene=syntheticScene();assert.equal(mayEmit(scene.materials[0]),false);
-  const packed=packScene(scene);assert.equal(packed.triangleData[(packed.triangleCount-1)*80+23],0);
+  const packed=packScene(scene);assert.equal(packed.triangleData[(packed.triangleCount-1)*96+27],0);
   scene.materials[1].nodes[0].inputs.emission={type:'float',value:1};assert.equal(mayEmit(scene.materials[1]),true);
-  assert.ok(packScene(scene).triangleData[(packed.triangleCount-1)*80+23]>0);
+  assert.ok(packScene(scene).triangleData[(packed.triangleCount-1)*96+27]>0);
   assert.equal(mayEmit({nodes:[{name:'custom',category:'custom'}]}),true);
   const doc=syntheticScene().materials[1];doc.spectra={emission_color:[[360,1],[830,1]]};assert.equal(mayEmit(doc),true);
 });
@@ -454,6 +454,8 @@ test('packed scene selects authored material UV slots per triangle', () => {
   assert.ok(Math.abs(packed.triangleData[8] - .2) < 1e-6 && Math.abs(packed.triangleData[9] - .3) < 1e-6);
   const tangentPacked=packScene({...scene,tangents:[1,0,0,-1,1,0,0,-1,1,0,0,-1]});
   assert.deepEqual(Array.from(tangentPacked.triangleData.slice(16,20)),[1,0,0,-1]);
+  const geompropPacked=packScene({...scene,materials:[{nodes:[]},{nodes:[],uvIndex:1,geompropName:'temperature'}],geompropSets:{temperature:[2,0,0,1,3,0,0,1,4,0,0,1]}});
+  assert.deepEqual(Array.from(geompropPacked.triangleData.slice(20,24)),[2,0,0,1]);
 });
 test('triplanarprojection blends three typed image planes by normal weights', () => {
   const descriptor={x:{offset:0,width:2,height:2,levels:1,colorspace:'raw'},y:{offset:4,width:2,height:2,levels:1,colorspace:'raw'},z:{offset:8,width:2,height:2,levels:1,colorspace:'raw'}};
@@ -609,6 +611,11 @@ test('geompropvalue maps standard authored geometry properties with typed fallba
   const fallback=compileGraph({nodes:[{name:'x',category:'geompropvalue',type:'color3',inputs:{geomprop:{type:'string',value:'custom'},default:{type:'color3',value:[.2,.3,.4]}}}]});
   assert.match(fallback.body,/vec3f\(0\.2,0\.3,0\.4\)/);
   assert.throws(()=>compileGraph({nodes:[{name:'bad',category:'geompropvalue',type:'float',inputs:{geomprop:{type:'string',value:'P'}}}]}),/has type vector3/);
+});
+test('custom geometry properties select one bounded authored channel', () => {
+  const document = { nodes: [{ name: 'temperature', category: 'geompropvalue', type: 'float', inputs: { geomprop: { type: 'string', value: 'temperature' }, default: { type: 'float', value: .25 } } }], output: { nodename: 'temperature' } };
+  assert.equal(materialGeompropName(document), 'temperature');
+  assert.match(compileGraph(document, { geompropName: 'temperature' }).body, /ctx\.geomprop/);
 });
 test('standard geometry aliases preserve facing ratio and uniform property semantics', () => {
   const facing=compileGraph({nodes:[{name:'f',category:'facingratio',type:'float',inputs:{viewdirection:{type:'vector3',value:[0,0,1]},normal:{type:'vector3',value:[0,0,1]},faceforward:{type:'boolean',value:true},invert:{type:'boolean',value:true}}}]});
@@ -936,7 +943,7 @@ test('BVH escape links progress, leaves cover every triangle exactly once', () =
     for (let k = 0; k < 3; k++) assert.ok(n[k] <= n[k + 4]);
   }
   assert.equal(leaves, scene.indices.length / 3);
-  assert.equal(packed.triangleData.length, leaves * 80);
+  assert.equal(packed.triangleData.length, leaves * 96);
   const colored={...scene,colors:new Array(scene.positions.length/3*4).fill(0).map((v,i)=>i%4===0?1:i%4===3?1:0)};
   assert.deepEqual(Array.from(packScene(colored).triangleData.slice(12,16)),[1,0,0,1]);
 });

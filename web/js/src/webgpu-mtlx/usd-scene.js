@@ -37,6 +37,45 @@ export function materialUVIndex(document) {
   if (value !== undefined && (!Number.isInteger(value) || value < 0 || value > 31)) throw new Error('Material UV slot must be an integer in [0,31]');
   return value ?? 0;
 }
+/** Return one static non-standard geometry property used by a graph. */
+export function materialGeompropName(document) {
+  const names = new Set();
+  const standard = new Set(['st','uv','uv0','texcoord','texcoord0','p','position','n','normal','t','tangent','b','bitangent','color','displaycolor','opacity','displayopacity']);
+  for (const node of document?.nodes || []) {
+    if (!['UsdPrimvarReader','geompropvalue','geompropvalueuniform'].includes(node.category)) continue;
+    const raw = node.category === 'UsdPrimvarReader' ? node.inputs?.varname?.value : node.inputs?.geomprop?.value;
+    if (typeof raw !== 'string') continue;
+    const name = raw.toLowerCase().replace(/[_-]/g, '');
+    if (!standard.has(name) && !/^(?:uv|uvset)[0-9]+$/.test(name)) names.add(raw);
+  }
+  if (names.size > 1) throw new Error(`Material graph uses multiple custom geometry properties: ${[...names].join(', ')}`);
+  return names.values().next().value || '';
+}
+function decodeCustomPrimvar(item, vertexCount) {
+  if (!item?.value || item.error) return null;
+  const type = String(item.value.type || item.type || '').replace(/\[\]$/, '').toLowerCase();
+  const components = type === 'float' ? 1 : ['float2','half2'].includes(type) ? 2 : ['float3','half3','color3f','normal3f','point3f','vector3f'].includes(type) ? 3 : 0;
+  if (!components || !['constant','vertex'].includes(item.interpolation)) return null;
+  const raw = item.value.value;
+  const values = Array.isArray(raw) ? raw : [raw];
+  const one = value => {
+    const a = Array.isArray(value) ? value.map(Number) : [Number(value)];
+    if (a.length !== components || a.some(v => !Number.isFinite(v))) return null;
+    return [...a, 0, 0, 1].slice(0, 3).concat([1]);
+  };
+  const out = new Array(vertexCount * 4).fill(0);
+  if (item.interpolation === 'constant') {
+    const value = one(values[0]); if (!value) return null;
+    for (let i = 0; i < vertexCount; i++) out.splice(i * 4, 4, ...value);
+    return out;
+  }
+  if (values.length !== vertexCount) return null;
+  for (let i = 0; i < vertexCount; i++) {
+    const value = one(values[i]); if (!value) return null;
+    out.splice(i * 4, 4, ...value);
+  }
+  return out;
+}
 /** Expand native index-range submeshes into one material ID per triangle. */
 export function triangleMaterialIds(indexCount, fallback, submeshes = []) {
   if (!Number.isInteger(indexCount) || indexCount < 0 || indexCount % 3) throw new Error('index count must be a nonnegative multiple of three');
@@ -107,12 +146,24 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
     const shadingGraphJSON = layer.getShadingGraphJSON();
     if (!shadingGraphJSON) throw new Error(layer.error());
     const shadingGraph = JSON.parse(shadingGraphJSON);
+    const primvarSnapshots = {};
+    const collectPrimvars = node => {
+      if (node.nodeType?.toLowerCase() === 'mesh' && layer.getMeshPrimvarsJSON) {
+        try { const snapshot = JSON.parse(layer.getMeshPrimvarsJSON(node.contentId)); if (snapshot?.primPath) primvarSnapshots[snapshot.primPath] = snapshot; } catch { /* keep mesh loading available */ }
+      }
+      for (const child of node.children || []) collectPrimvars(child);
+    };
+    if (layer.getMeshPrimvarsJSON) for (let i = 0; i < layer.numRootNodes(); i++) collectPrimvars(layer.getRootNode(i));
+    const availablePrimvars = new Set(Object.values(primvarSnapshots).flatMap(snapshot => Object.keys(snapshot.primvars || {})));
     let mtlxLibrary, translatedMaterials = {}, compiledMaterials = {}, authoredImages = {}, imageDescriptors = {}, textureDiagnostics = [], translationDiagnostics = [];
     if (authoredMaterials) {
       mtlxLibrary = await loadUSDMaterialXLibrary();
       for (const material of shadingGraph.prims.filter(prim => prim.type === 'Material')) {
         try {
-          translatedMaterials[material.path] = materialXFromUSD(shadingGraph, material.path, { library: mtlxLibrary, resolveAsset: resolver.textures.resolveAsset });
+          const document = materialXFromUSD(shadingGraph, material.path, { library: mtlxLibrary, resolveAsset: resolver.textures.resolveAsset });
+          const geompropName = materialGeompropName(document);
+          if (geompropName && availablePrimvars.has(geompropName)) document.geompropName = geompropName;
+          translatedMaterials[material.path] = document;
         } catch (error) { translationDiagnostics.push({ path: material.path, error: String(error.message || error) }); }
       }
       const neededAssetKeys = new Set(Object.values(translatedMaterials).flatMap(materialImageKeys));
@@ -133,14 +184,14 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
         } catch (error) { textureDiagnostics.push({ key, url: request.url, error: String(error.message || error) }); }
       }
       for (const [path, document] of Object.entries(translatedMaterials)) {
-        try { document.uvIndex = materialUVIndex(document); compiledMaterials[path] = compileGraph(document, { material: true, output: document.output, imageDescriptors, uvIndex: document.uvIndex }); }
+        try { document.uvIndex = materialUVIndex(document); compiledMaterials[path] = compileGraph(document, { material: true, output: document.output, imageDescriptors, uvIndex: document.uvIndex, geompropName: document.geompropName || '' }); }
         catch (error) { translationDiagnostics.push({ path, phase: 'compile', error: String(error.message || error) }); }
       }
     }
     if (!layer.layerToRenderScene()) throw new Error(layer.error());
     // Native material serialization is reduced, NOT an authored graph export.
     // Preserve this diagnostic snapshot without substituting it for source graphs.
-    const authored = { materialSerializationIsLossy: true, shadingGraph, translatedMaterials, compiledMaterials, translationDiagnostics, textureDiagnostics, textureSources: resolver.textures.snapshot(), materials: [], lights: [], bindings: [] };
+    const authored = { materialSerializationIsLossy: true, shadingGraph, translatedMaterials, compiledMaterials, translationDiagnostics, textureDiagnostics, textureSources: resolver.textures.snapshot(), primvarSnapshots, materials: [], lights: [], bindings: [] };
     for (let i = 0; i < layer.numMaterials(); i++) {
       const serialized = layer.getMaterialWithFormat(i, 'json');
       let material = serialized;
@@ -158,6 +209,8 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
       }
     }
     for (let i = 0; i < layer.numLights(); i++) authored.lights.push(layer.getLight(i));
+    const customGeompropNames = [...new Set(Object.values(authoredDocuments).map(document => document.geompropName).filter(Boolean))];
+    const geompropSets = Object.fromEntries(customGeompropNames.map(name => [name, []]));
     const positions = [], normals = [], uvs = [], uvSets = [], tangents = [], colors = [], indices = [], materialIds = [];
     const read = d => {
       if (!d?.length) return null;
@@ -192,6 +245,11 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
         const ps = geo.attributes.position.array, ns = geo.attributes.normal.array, offset = positions.length / 3;
         for (let i = 0; i < ps.length; i++) { positions.push(ps[i]); normals.push(ns[i]); }
         for (let i = 0; i < ps.length / 3 * 4; i++) tangents.push(tangent?.[i] ?? (i % 4 === 3 ? 1 : 0));
+        const vertexCount = ps.length / 3, snapshot = primvarSnapshots[mesh.absPath];
+        for (const name of customGeompropNames) {
+          const values = decodeCustomPrimvar(snapshot?.primvars?.[name], vertexCount) || new Array(vertexCount * 4).fill(0);
+          geompropSets[name].push(...values);
+        }
         for (let i = 0; i < ps.length / 3 * 2; i++) uvs.push(uv?.[i] ?? 0);
         for (let slot = 0; slot < uvSets.length; slot++) {
           const values = meshUVSets[slot] || (slot === 0 ? uv : null);
@@ -215,7 +273,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
     onStatus(`Prepared ${indices.length / 3} ShaderBall triangles; ${authoredMaterials ? `${Object.keys(authoredDocuments).length} compiled authored MaterialX slots enabled` : 'materials/lights are diagnostic overrides'}`);
     const materialCount = Math.max(2, ...materialIds.map(id => id + 1), ...authored.bindings.map(binding => Number.isInteger(binding.materialId) && binding.materialId >= 0 ? binding.materialId + 1 : 0));
     const materials = Array.from({ length: materialCount }, (_, id) => authoredDocuments[id] || (id === 1 ? surfaceDocument([0.8, 0.45, 0.15], 1, 0.25) : surfaceDocument([0.35, 0.35, 0.35], 0, 0.7)));
-    const scene={ positions, normals, uvs, uvSets, tangents, colors, indices, materialIds, authored, materials, camera, provenance: { asset: 'StandardShaderBall', commit: SHADERBALL_COMMIT, variant: 'triangulated', materialOverride: authoredMaterials ? 'partial-authored' : true, authoredMaterialCount: Object.keys(authoredDocuments).length, lightingOverride: true, referenceReady: false } };
+    const scene={ positions, normals, uvs, uvSets, tangents, colors, indices, materialIds, geompropSets, authored, materials, camera, provenance: { asset: 'StandardShaderBall', commit: SHADERBALL_COMMIT, variant: 'triangulated', materialOverride: authoredMaterials ? 'partial-authored' : true, authoredMaterialCount: Object.keys(authoredDocuments).length, lightingOverride: true, referenceReady: false } };
     return authoredLights ? appendRectLights(scene,authored.lights) : scene;
   } finally { layer.delete(); }
 }

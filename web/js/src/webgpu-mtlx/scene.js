@@ -240,7 +240,7 @@ export function syntheticScene(preset = 'copper') {
 
 /** Stackless median BVH. Immutable copied scene data, no references into WASM. */
 export function packScene(scene, { maxTriangles = 2_000_000 } = {}) {
-  const { positions, indices, normals, uvs, uvSets, tangents, colors, materialIds, materials } = scene;
+  const { positions, indices, normals, uvs, uvSets, tangents, colors, geompropSets, materialIds, materials } = scene;
   const hasColors = !!colors?.length;
   if (!positions || !indices || positions.length % 3 || indices.length % 3 || indices.length === 0) throw new Error('Invalid triangle mesh');
   if (indices.length / 3 > maxTriangles) throw new Error(`Triangle budget exceeded (${maxTriangles})`);
@@ -251,7 +251,8 @@ export function packScene(scene, { maxTriangles = 2_000_000 } = {}) {
   if (tangents && tangents.length !== positions.length / 3 * 4) throw new Error('Tangent count mismatch');
   if (hasColors && colors.length !== positions.length / 3 * 3 && colors.length !== positions.length / 3 * 4) throw new Error('Color count mismatch');
   if (materialIds && materialIds.length !== indices.length / 3) throw new Error('Material count mismatch');
-  for (const a of [positions, normals, uvs, tangents, hasColors ? colors : null]) if (a && !Array.from(a).every(v => Number.isFinite(v) && Number.isFinite(Math.fround(v)))) throw new Error('Non-finite float32 vertex attributes');
+  for (const [name, values] of Object.entries(geompropSets || {})) if (values.length !== positions.length / 3 * 4) throw new Error(`Geomprop ${name} count mismatch`);
+  for (const a of [positions, normals, uvs, tangents, hasColors ? colors : null, ...Object.values(geompropSets || {})]) if (a && !Array.from(a).every(v => Number.isFinite(v) && Number.isFinite(Math.fround(v)))) throw new Error('Non-finite float32 vertex attributes');
   const tris = [];
   for (let t = 0; t < indices.length / 3; t++) {
     const ids = Array.from(indices.slice(t * 3, t * 3 + 3));
@@ -262,7 +263,8 @@ export function packScene(scene, { maxTriangles = 2_000_000 } = {}) {
     const geometric = normalize(cross(sub(p[1], p[0]), sub(p[2], p[0])));
     const uvSlot = Number.isInteger(materials[mat]?.uvIndex) && materials[mat].uvIndex >= 0 ? materials[mat].uvIndex : 0;
     const selectedUVs = uvSets?.[uvSlot] || uvs;
-    tris.push({ p, n: ids.map(i => normals ? Array.from(normals.slice(i * 3, i * 3 + 3)) : geometric), uv: ids.map(i => selectedUVs ? Array.from(selectedUVs.slice(i * 2, i * 2 + 2)) : [0, 0]), tangent: ids.map(i => tangents ? Array.from(tangents.slice(i * 4, i * 4 + 4)) : [0, 0, 0, 1]), color: ids.map(i => hasColors ? (colors.length === positions.length / 3 * 4 ? Array.from(colors.slice(i * 4, i * 4 + 4)) : [...colors.slice(i * 3, i * 3 + 3), 1]) : [0, 0, 0, 1]), mat, center: [0, 1, 2].map(k => (p[0][k] + p[1][k] + p[2][k]) / 3) });
+    const geompropName = materials[mat]?.geompropName || '', selectedGeomprop = geompropSets?.[geompropName];
+    tris.push({ p, n: ids.map(i => normals ? Array.from(normals.slice(i * 3, i * 3 + 3)) : geometric), uv: ids.map(i => selectedUVs ? Array.from(selectedUVs.slice(i * 2, i * 2 + 2)) : [0, 0]), tangent: ids.map(i => tangents ? Array.from(tangents.slice(i * 4, i * 4 + 4)) : [0, 0, 0, 1]), geomprop: ids.map(i => selectedGeomprop ? Array.from(selectedGeomprop.slice(i * 4, i * 4 + 4)) : [0, 0, 0, 0]), color: ids.map(i => hasColors ? (colors.length === positions.length / 3 * 4 ? Array.from(colors.slice(i * 4, i * 4 + 4)) : [...colors.slice(i * 3, i * 3 + 3), 1]) : [0, 0, 0, 1]), mat, center: [0, 1, 2].map(k => (p[0][k] + p[1][k] + p[2][k]) / 3) });
   }
   const nodes = [], ordered = [];
   function build(items) {
@@ -280,13 +282,13 @@ export function packScene(scene, { maxTriangles = 2_000_000 } = {}) {
   build(tris);
   const nodeData = new Float32Array(nodes.length * 12);
   nodes.forEach((n, i) => nodeData.set([...n.lo, n.first, ...n.hi, n.count, n.escape, 0, 0, 0], i * 12));
-  const triangleData = new Float32Array(ordered.length * 80);
+  const triangleData = new Float32Array(ordered.length * 96);
   let areaCDF=0;
   const emitters=materials.map(mayEmit);
   ordered.forEach((t, i) => {
     const area=.5*Math.hypot(...cross(sub(t.p[1],t.p[0]),sub(t.p[2],t.p[0]))),start=areaCDF;areaCDF=Math.fround(areaCDF+(emitters[t.mat]?area:0));
     if(!Number.isFinite(areaCDF))throw new Error('Triangle area CDF exceeds float32');
-    for (let v = 0; v < 3; v++) triangleData.set([...t.p[v], [start,areaCDF,area][v], ...t.n[v], 0, ...t.uv[v], t.mat, 0, ...t.color[v], ...t.tangent[v]], i * 80 + v * 20);
+    for (let v = 0; v < 3; v++) triangleData.set([...t.p[v], [start,areaCDF,area][v], ...t.n[v], 0, ...t.uv[v], t.mat, 0, ...t.color[v], ...t.tangent[v], ...t.geomprop[v]], i * 96 + v * 24);
   });
   return { nodeData, triangleData, triangleCount: ordered.length, nodeCount: nodes.length, bounds: nodes[0], camera: scene.camera, lighting: scene.lighting, materials, provenance: scene.provenance || {} };
 }
