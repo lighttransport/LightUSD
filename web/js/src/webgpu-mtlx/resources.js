@@ -58,6 +58,17 @@ export function inspectEXR(bytes, maxPixels = 4 * 1024 * 1024) {
   return inspectEXRHeader(bytes, maxPixels).dimensions;
 }
 
+/** Flatten document and nested nodegraph nodes for resource discovery. */
+export function collectMaterialXNodes(document) {
+  const nodes = [...(document?.nodes || [])];
+  const visitGraph = graph => {
+    nodes.push(...(graph?.nodes || []));
+    for (const child of Object.values(graph?.graphs || {})) visitGraph(child);
+  };
+  for (const graph of Object.values(document?.graphs || {})) visitGraph(graph);
+  return nodes;
+}
+
 // Header-only EXR inspection. Pixel payload is never touched, so this remains
 // safe for very large files. `colorSpace` is an authored header opinion only;
 // filenames are deliberately not consulted.
@@ -260,12 +271,7 @@ export async function loadMaterialXResources(url, options = {}) {
     for(const kind of ['definitions','graphs'])for(const [name,value]of Object.entries(doc[kind])){if(document[kind][name])throw new Error(`Duplicate included ${kind}: ${name}`);document[kind][name]=value;}
   }
   document.images = Object.create(null);
-  const nodes = [...document.nodes];
-  const visitGraph = graph => {
-    nodes.push(...(graph?.nodes || []));
-    for (const child of Object.values(graph?.graphs || {})) visitGraph(child);
-  };
-  for (const graph of Object.values(document.graphs)) visitGraph(graph);
+  const nodes = collectMaterialXNodes(document);
   let decodedBytes = 0;
   for (const node of nodes) {
     if (!['image', 'tiledimage', 'triplanarprojection', 'UsdUVTexture', 'usduvtexture', 'latlongimage'].includes(node.category)) continue;

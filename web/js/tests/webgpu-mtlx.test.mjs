@@ -9,7 +9,7 @@ import { shaderSource } from '../src/webgpu-mtlx/shaders.js';
 import { validateSpectrum, sampleSpectrum } from '../src/webgpu-mtlx/spectrum.js';
 import { cieXYZ } from '../src/webgpu-mtlx/cie-data.js';
 import { refineDisplacementScene } from '../src/webgpu-mtlx/displacement.js';
-import { fetchResource, inspectEXR, inspectEXRHeader, decodeImage, atlasUDIMImages } from '../src/webgpu-mtlx/resources.js';
+import { fetchResource, inspectEXR, inspectEXRHeader, decodeImage, atlasUDIMImages, collectMaterialXNodes } from '../src/webgpu-mtlx/resources.js';
 import { appendRectLights } from '../src/webgpu-mtlx/usd-lights.js';
 import { mayEmit } from '../src/webgpu-mtlx/emission.js';
 import { materialXFromUSD } from '../src/webgpu-mtlx/usd-graph.js';
@@ -194,6 +194,10 @@ test('resource fetch enforces streaming budgets and HTTP errors',async()=>{
   assert.deepEqual(await fetchResource('test',{fetcher,maxBytes:4}),new Uint8Array([1,2,3,4]));
   await assert.rejects(fetchResource('test',{fetcher,maxBytes:3}),/budget/);
   await assert.rejects(fetchResource('test',{fetcher:async()=>new Response('',{status:404})}),/HTTP 404/);
+});
+test('resource discovery traverses nested MaterialX nodegraphs', () => {
+  const nodes = collectMaterialXNodes({ nodes: [{ category: 'constant' }], graphs: { outer: { nodes: [], graphs: { inner: { nodes: [{ category: 'image' }] } } } } });
+  assert.deepEqual(nodes.map(node => node.category), ['constant', 'image']);
 });
 test('EXR resource preflight bounds allocation and decode preserves bottom-up rows',async()=>{
   const bytes=encodeEXR(1,2,new Float32Array([1,2,3,1,4,5,6,1]));
