@@ -444,6 +444,16 @@ test('screen and difference compositing nodes preserve numeric types', () => {
   ]};
   const source=compileGraph(doc); assert.match(source.body,/vec3f\(1\.0\)-\(vec3f\(1\.0\)-n0\)/); assert.match(source.body,/abs\(/);
 });
+test('MaterialX compositing nodes preserve typed blend controls and alpha coverage', () => {
+  const burn=compileGraph({nodes:[{name:'b',category:'burn',type:'color3',inputs:{fg:{type:'color3',value:[.25,.5,.75]},bg:{type:'color3',value:[.8,.6,.4]},mix:{type:'float',value:.5}}}]});
+  assert.match(burn.body,/mix\(vec3f\(0\.8,0\.6,0\.4\)/); assert.match(burn.body,/max\(vec3f\(0\.25,0\.5,0\.75\),vec3f\(1e-6\)\)/);
+  const overlay=compileGraph({nodes:[{name:'o',category:'overlay',type:'float',inputs:{fg:{type:'float',value:.25},bg:{type:'float',value:.75}}}]});
+  assert.match(overlay.body,/select\(2\.0\*/); assert.match(overlay.body,/1\.0-2\.0/);
+  const disjoint=compileGraph({nodes:[{name:'d',category:'disjointover',type:'color4',inputs:{fg:{type:'color4',value:[1,0,0,.7]},bg:{type:'color4',value:[0,1,0,.6]}}}]});
+  assert.match(disjoint.body,/min\(.*\.a\+.*\.a,1\.0\)/); assert.match(disjoint.body,/max\(.*\.a,1e-6\)/);
+  assert.throws(()=>compileGraph({nodes:[{name:'d',category:'disjointover',type:'color3',inputs:{}}]}),/requires color4/);
+  assert.throws(()=>compileGraph({nodes:[{name:'b',category:'burn',type:'vector3',inputs:{}}]}),/requires float\/color3\/color4/);
+});
 test('boolean logic nodes enforce boolean ports', () => {
   const doc={nodes:[
     {name:'a',category:'constant',type:'boolean',inputs:{value:{type:'boolean',value:true}}},

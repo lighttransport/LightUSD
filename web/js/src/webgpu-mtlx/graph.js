@@ -11,7 +11,7 @@ const widths = { float: 1, integer: 1, boolean: 1, color3: 3, vector3: 3, color4
 // Units are semantic annotations; implementations consume their authored
 // convention (for example degrees for rotate2d and nanometers for thin film).
 const units = new Set(['none', 'unitless', 'degree', 'radian', 'nanometer', 'micrometer', 'millimeter', 'centimeter', 'meter', 'inch', 'second', 'millisecond', 'microsecond', 'percent']);
-export const valueCategories = new Set(['constant', 'add', 'subtract', 'plus', 'minus', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'fract', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'colorcorrect', 'saturate', 'contrast', 'premult', 'unpremult', 'blackbody', 'artistic_ior', 'roughness_anisotropy', 'glossiness_anisotropy', 'ramp4', 'triplanarprojection', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'switch', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
+export const valueCategories = new Set(['constant', 'add', 'subtract', 'plus', 'minus', 'multiply', 'divide', 'modulo', 'power', 'safepower', 'min', 'max', 'screen', 'difference', 'burn', 'dodge', 'overlay', 'disjointover', 'and', 'or', 'not', 'xor', 'absval', 'sign', 'floor', 'ceil', 'round', 'fract', 'sqrt', 'ln', 'log10', 'exp', 'exp2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'radians', 'degrees', 'clamp', 'mix', 'smoothstep', 'invert', 'normalize', 'magnitude', 'distance', 'reflect', 'refract', 'fresnel', 'facing_ratio', 'luminance', 'average', 'rgbtohsv', 'hsvtorgb', 'hsvadjust', 'colorcorrect', 'saturate', 'contrast', 'premult', 'unpremult', 'blackbody', 'artistic_ior', 'roughness_anisotropy', 'glossiness_anisotropy', 'ramp4', 'triplanarprojection', 'acescg_to_lin_rec709', 'lin_rec709_to_acescg', 'lin_rec709_to_srgb', 'srgb_to_lin_rec709', 'select', 'switch', 'noise2d', 'noise3d', 'cellnoise2d', 'cellnoise3d', 'dotproduct', 'crossproduct', 'texcoord', 'geompropvalue', 'position', 'normal', 'tangent', 'bitangent', 'time', 'frame', 'convert', 'combine2', 'combine3', 'combine4', 'extract', 'swizzle', 'ifequal', 'ifgreater', 'ifgreatereq', 'remap', 'range', 'rotate2d', 'place2d', 'dot', 'separate2', 'separate3', 'separate4']);
 const materialCategories = new Set(['standard_surface', 'open_pbr_surface', 'UsdPreviewSurface', 'surface_unlit', 'surfacematerial', 'surface']);
 for(const category of ['transformmatrix','transformnormal','transformpoint','transformvector','trianglewave','normalmap','bump','bump3','heighttonormal','rotate3d','reorder','fractal2d','fractal3d','worleynoise2d','worleynoise3d','unifiednoise2d','unifiednoise3d','latlongimage','splitlr','splittb','ramp','ramp_gradient','ramplr','ramptb','checkerboard','line','circle','grid','crosshatch','tiledcircles','randomfloat','randomcolor','UsdUVTexture','usduvtexture','UsdPrimvarReader','UsdTransform2d','facingratio','geompropvalueuniform'])valueCategories.add(category);
 function fail(code, path, message) { throw new GraphError(code, path, message); }
@@ -421,6 +421,20 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'difference': code = `abs(${same('in1')}-${scalarOrSame('in2')})`; break;
         case 'screen': {
           const one=type==='float'?'1.0':`${types[type]}(1.0)`; code=`(${one}-(${one}-${same('in1')})*(${one}-${scalarOrSame('in2')}))`; break;
+        }
+        case 'burn': case 'dodge': case 'overlay': {
+          if (!['float','color3','color4'].includes(type)) fail('TYPE', key, `${n.category} requires float/color3/color4`);
+          for (const name of Object.keys(ins)) if (!['fg','bg','mix'].includes(name)) fail('INPUT', key, `unsupported ${n.category} input`);
+          const fg=x('fg',type==='float'?0:Array(widths[type]).fill(0),type), bg=x('bg',type==='float'?0:Array(widths[type]).fill(0),type), amount=x('mix',1,'float');
+          const one=type==='float'?'1.0':`${types[type]}(1.0)`;
+          const raw=n.category==='burn'?`(${one}-(${one}-${bg})/max(${fg},${types[type]}(1e-6)))`:n.category==='dodge'?`${bg}/max(${one}-${fg},${types[type]}(1e-6))`:`select(2.0*${fg}*${bg},${one}-2.0*(${one}-${fg})*(${one}-${bg}),${bg}>=${types[type]}(.5))`;
+          code=`mix(${bg},${raw},${amount})`; break;
+        }
+        case 'disjointover': {
+          if (type !== 'color4') fail('TYPE', key, 'disjointover requires color4');
+          for (const name of Object.keys(ins)) if (!['fg','bg','mix'].includes(name)) fail('INPUT', key, 'unsupported disjointover input');
+          const fg=x('fg',[0,0,0,0],'color4'), bg=x('bg',[0,0,0,0],'color4'), amount=x('mix',1,'float'), alpha=`min(${fg}.a+${bg}.a,1.0)`, rgb=`select(${fg}.rgb+${bg}.rgb,${fg}.rgb+${bg}.rgb*(1.0-${fg}.a)/max(${bg}.a,1e-6),${fg}.a+${bg}.a>1.0)`;
+          code=`mix(${bg},vec4f(${rgb},${alpha}),${amount})`; break;
         }
         case 'not': if (type !== 'boolean') fail('TYPE', key, 'not requires boolean input'); code=`!${x('in',false,'boolean')}`; break;
         case 'and': case 'or': case 'xor': {
