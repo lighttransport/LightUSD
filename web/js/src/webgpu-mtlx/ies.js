@@ -19,6 +19,10 @@ export function parseIES(input) {
   const count = verticalCount * horizontalCount;
   if (values.length < i + count) throw new Error('IES candela table is truncated');
   const candela = values.slice(i, i + count).map(v => v * multiplier);
+  for (let h = 1; h < horizontalCount; h++) for (let v = 0; v < verticalCount; v++) {
+    const reference = candela[v], value = candela[h * verticalCount + v];
+    if (Math.abs(value - reference) > 1e-5 * Math.max(1, Math.abs(reference), Math.abs(value))) throw new Error('IES azimuthal profiles are unsupported');
+  }
   const samples = angles.map((angle, n) => {
     let peak = 0;
     for (let h = 0; h < horizontalCount; h++) peak = Math.max(peak, candela[h * verticalCount + n]);
