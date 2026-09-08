@@ -637,6 +637,13 @@ test('splitlr and splittb select typed matte values from UV coordinates', () => 
   const tb=compileGraph({nodes:[{name:'s',category:'splittb',type:'float',inputs:{valuet:{type:'float',value:1},valueb:{type:'float',value:2},texcoord:{type:'vector2',value:[.2,.8]}}}]});
   assert.match(tb.body,/\.y>=0\.5/);
 });
+test('ramp and ramp_gradient compile static control points and interpolation modes', () => {
+  const gradient=compileGraph({nodes:[{name:'g',category:'ramp_gradient',type:'color4',inputs:{x:{type:'float',value:.25},interval1:{type:'float',value:0},interval2:{type:'float',value:1},color1:{type:'color4',value:[0,0,0,1]},color2:{type:'color4',value:[1,0,0,1]},interpolation:{type:'integer',value:1}}}]});
+  assert.match(gradient.body,/smoothstep/);
+  const ramp=compileGraph({nodes:[{name:'r',category:'ramp',type:'color4',inputs:{texcoord:{type:'vector2',value:[.75,.5]},num_intervals:{type:'integer',value:3},interval1:{type:'float',value:0},color1:{type:'color4',value:[0,0,0,1]},interval2:{type:'float',value:.5},color2:{type:'color4',value:[1,0,0,1]},interval3:{type:'float',value:1},color3:{type:'color4',value:[1,1,1,1]}}}]});
+  assert.match(ramp.body,/select\(/); assert.match(ramp.body,/vec2f\(0\.75,0\.5\)\.x/);
+  assert.throws(()=>compileGraph({nodes:[{name:'r',category:'ramp',type:'color3',inputs:{}}]}),/ramp output must be color4/);
+});
 test('cell-noise nodes hash integer cells without interpolation', () => {
   const doc={nodes:[
     {name:'uv',category:'texcoord',type:'vector2',inputs:{}},

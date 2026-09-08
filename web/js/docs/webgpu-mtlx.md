@@ -214,6 +214,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   clamped latitude, with authored rotation and typed fallback color.
 - `splitlr` and `splittb` provide typed left/right and top/bottom UV mattes with
   authored centers and value branches.
+- `ramp` and `ramp_gradient` support static color4 control points, standard/
+  radial/circular/box coordinate shapes, and linear/smooth/step interpolation.
 - `cellnoise2d` and `cellnoise3d` provide non-interpolated integer-cell hash
   values for procedural masks.
 - Common color utility nodes `premult`, `unpremult`, `contrast`, and
