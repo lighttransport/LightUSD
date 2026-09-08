@@ -232,7 +232,7 @@ export async function loadMaterialXResources(url, options = {}) {
   const nodes = [...document.nodes, ...Object.values(document.graphs).flatMap(g => g.nodes)];
   let decodedBytes = 0;
   for (const node of nodes) {
-    if (!['image', 'tiledimage', 'triplanarprojection'].includes(node.category)) continue;
+    if (!['image', 'tiledimage', 'triplanarprojection', 'UsdUVTexture', 'usduvtexture', 'latlongimage'].includes(node.category)) continue;
     const fileNames = node.category === 'triplanarprojection' ? ['filex', 'filey', 'filez'] : ['file'];
     for (const fileName of fileNames) {
       const file = node.inputs?.[fileName];

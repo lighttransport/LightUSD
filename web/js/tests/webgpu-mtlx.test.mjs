@@ -14,7 +14,7 @@ import { appendRectLights } from '../src/webgpu-mtlx/usd-lights.js';
 import { mayEmit } from '../src/webgpu-mtlx/emission.js';
 import { materialXFromUSD } from '../src/webgpu-mtlx/usd-graph.js';
 import { USDTextureSources } from '../src/webgpu-mtlx/usd-texture-sources.js';
-import { triangleMaterialIds } from '../src/webgpu-mtlx/usd-scene.js';
+import { triangleMaterialIds, materialImageKeys } from '../src/webgpu-mtlx/usd-scene.js';
 const constant = (name, value, type = 'float') => ({ name, category: 'constant', type, inputs: { value: { type, value } } });
 
 test('USD mesh submeshes preserve per-face material bindings', () => {
@@ -46,6 +46,17 @@ test('USD texture provenance keeps anchors and rejects ambiguous source layers',
   sources.register({ assetPaths: [{ propertyPath: '/Override.inputs:file', authored: './override.exr' }] }, 'https://example.test/layer.usda');
   const override = sources.resolveAsset('./override.exr', context);
   assert.equal(sources.requests.get(override).url, 'https://example.test/override.exr');
+});
+
+test('authored MaterialX image discovery covers translated texture node families', () => {
+  const keys = materialImageKeys({ nodes: [
+    { category: 'UsdUVTexture', inputs: { file: { type: 'filename', value: 'albedo' } } },
+    { category: 'triplanarprojection', inputs: {
+      filex: { type: 'filename', value: 'x' }, filey: { type: 'filename', value: 'y' }, filez: { type: 'filename', value: 'z' }
+    } },
+    { category: 'image', inputs: { file: { type: 'string', value: 'not-a-filename' } } }
+  ] });
+  assert.deepEqual(keys.sort(), ['albedo', 'x', 'y', 'z']);
 });
 
 test('standard and OpenPBR terminal aliases preserve authored graph inputs', () => {

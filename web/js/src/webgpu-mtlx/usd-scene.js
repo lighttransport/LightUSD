@@ -10,6 +10,17 @@ import { loadUSDMaterialXLibrary, materialXFromUSD } from './usd-graph.js';
 import { compileGraph } from './graph.js';
 import { fetchResource, decodeImage, inspectEXRHeader } from './resources.js';
 export const SHADERBALL_COMMIT = '3b75c2dad6a494897557dcca0098257bcf42a8c6';
+/** Return static image resource keys used by translated MaterialX nodes. */
+export function materialImageKeys(document) {
+  const keys = new Set();
+  for (const node of document?.nodes || []) {
+    for (const input of ['file', 'filex', 'filey', 'filez']) {
+      const port = node.inputs?.[input];
+      if (port?.type === 'filename' && typeof port.value === 'string' && port.value) keys.add(port.value);
+    }
+  }
+  return [...keys];
+}
 /** Expand native index-range submeshes into one material ID per triangle. */
 export function triangleMaterialIds(indexCount, fallback, submeshes = []) {
   if (!Number.isInteger(indexCount) || indexCount < 0 || indexCount % 3) throw new Error('index count must be a nonnegative multiple of three');
@@ -88,7 +99,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
           translatedMaterials[material.path] = materialXFromUSD(shadingGraph, material.path, { library: mtlxLibrary, resolveAsset: resolver.textures.resolveAsset });
         } catch (error) { translationDiagnostics.push({ path: material.path, error: String(error.message || error) }); }
       }
-      const neededAssetKeys = new Set(Object.values(translatedMaterials).flatMap(document => document.nodes.filter(node => node.category === 'image').map(node => node.inputs?.file?.value).filter(Boolean)));
+      const neededAssetKeys = new Set(Object.values(translatedMaterials).flatMap(materialImageKeys));
       for (const [key, request] of resolver.textures.requests) {
         if (!neededAssetKeys.has(key)) continue;
         try {
@@ -125,7 +136,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
     if (authoredMaterials) for (const material of authored.materials) {
       const document = translatedMaterials[material.path];
       if (document && compiledMaterials[material.path]) {
-        const used = new Set(document.nodes.filter(node => node.category === 'image').map(node => node.inputs?.file?.value).filter(Boolean));
+        const used = new Set(materialImageKeys(document));
         document.images = Object.fromEntries([...used].filter(key => authoredImages[key]).map(key => [key, authoredImages[key]]));
         authoredDocuments[material.id] = document;
       }

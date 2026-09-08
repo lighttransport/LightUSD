@@ -184,7 +184,8 @@ and does not clamp out-of-gamut values.
 The renderer packs resources into a storage buffer with a 64 MiB total mip
 budget, validates finite float32 values, and diagnoses missing files.
 The optional `loadMaterialXResources(url, options)` API and URL control fetch
-EXR/PNG/JPEG resources. It resolves file prefixes and source layers, uses streaming
+EXR/PNG/JPEG resources for image, tiledimage, UsdUVTexture, latlongimage, and
+triplanarprojection nodes. It resolves file prefixes and source layers, uses streaming
 byte budgets, preflights EXR dimensions before decoder allocation, and rejects
 include cycles, cross-origin dependencies and redirects by default. EXR support
 is single-part scanline; browser bitmap decoding supplies other image formats.
