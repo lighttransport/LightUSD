@@ -305,7 +305,7 @@ const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
 const glueUrl = new URL(glue, import.meta.url).href;
 const wasmDir = new URL('../src/lightusd/', import.meta.url);
 const native = await loadWasm(() => import(glueUrl), {
-  locateFile: (file) => new URL(file, wasmDir).pathname,
+  locateFile: (file) => new URL(file, wasmDir).href,
 });
 
 await testAsync('next texture roles preserve linear wide-gamut inputs', async () => {

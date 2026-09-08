@@ -61,7 +61,7 @@ const native = await loadWasm(() => import(new URL(glue, import.meta.url).href))
 const nextGlue = wasm64 ? '../src/lightusd/lightusd_next_64.js' : '../src/lightusd/lightusd_next.js';
 const nextNative = await loadWasm(
   () => import(new URL(nextGlue, import.meta.url).href),
-  { locateFile: (file) => new URL('../src/lightusd/' + file, import.meta.url).pathname }
+  { locateFile: (file) => new URL('../src/lightusd/' + file, import.meta.url).href }
 );
 
 function makePngTexture() {

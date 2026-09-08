@@ -82,7 +82,7 @@ await testAsync('next-only module composes USDA root + USDA dependency', async (
   const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
                       : '../src/lightusd/lightusd_next.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
-    locateFile: (file) => new URL(file, wasmDir).pathname,
+    locateFile: (file) => new URL(file, wasmDir).href,
   });
   assert.equal(typeof native.NextFlattenSession, 'function',
     'next-only glue should expose NextFlattenSession');
@@ -150,7 +150,7 @@ await testAsync('next-only RenderStream applies variant selections', async () =>
   const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
                       : '../src/lightusd/lightusd_next.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
-    locateFile: (file) => new URL(file, wasmDir).pathname,
+    locateFile: (file) => new URL(file, wasmDir).href,
   });
 
   // Authored selection ("high") composes by default.
@@ -213,7 +213,7 @@ await testAsync('next-only module usddiff diffs USDA layers', async () => {
   const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
                       : '../src/lightusd/lightusd_next.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
-    locateFile: (file) => new URL(file, wasmDir).pathname,
+    locateFile: (file) => new URL(file, wasmDir).href,
   });
   assert.equal(typeof native.usddiff, 'function', 'next-only glue should expose usddiff');
 
@@ -242,7 +242,7 @@ await testAsync('next-only module validates USD from binary', async () => {
   const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
                       : '../src/lightusd/lightusd_next.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
-    locateFile: (file) => new URL(file, wasmDir).pathname,
+    locateFile: (file) => new URL(file, wasmDir).href,
   });
   assert.equal(typeof native.validateFromBinary, 'function',
     'next-only glue should expose validateFromBinary');
