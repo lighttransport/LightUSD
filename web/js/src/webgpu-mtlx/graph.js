@@ -269,7 +269,7 @@ export function compileGraph(document, { output, library = {}, material = false,
             return `${mode}u`;
           };
           const filter = ins.filtertype?.value ?? 'linear';
-          if (!['closest', 'linear'].includes(filter) || ins.filtertype?.nodename || ins.filtertype?.interfacename || ins.filtertype?.nodegraph) fail('UNSUPPORTED', key, 'only static closest/linear image filters are implemented');
+          if (!['closest', 'linear', 'cubic'].includes(filter) || ins.filtertype?.nodename || ins.filtertype?.interfacename || ins.filtertype?.nodegraph) fail('UNSUPPORTED', key, 'only static closest/linear/cubic image filters are implemented');
           const uvBase = ins.texcoord ? x('texcoord', undefined, 'vector2') : 'ctx.uv';
           const uvTiled = ins.uvtiling ? `(${uvBase}*${x('uvtiling',[1,1],'vector2')})` : uvBase;
           const uv = ins.uvoffset ? `(${uvTiled}-${x('uvoffset',[0,0],'vector2')})` : uvTiled;
@@ -278,7 +278,10 @@ export function compileGraph(document, { output, library = {}, material = false,
           const size = `vec2f(${descriptor.width}.0,${descriptor.height}.0)`;
           const lodScale = ins.uvtiling ? x('uvtiling',[1,1],'vector2') : 'vec2f(1.0)';
           const lod = `log2(max(1.0,max(length(ctx.uvDx*${size}*${lodScale}),length(ctx.uvDy*${size}*${lodScale}))))`;
-          code = `imageSample(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${filter === 'linear'},${fill}).${swizzle}`;
+          const sample = filter === 'cubic'
+            ? `imageSampleCubic(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${fill})`
+            : `imageSample(${descriptor.offset}u,vec2u(${descriptor.width}u,${descriptor.height}u),${descriptor.levels}u,${uv},${lod},vec2u(${address('uaddressmode')},${address('vaddressmode')}),${filter === 'linear'},${fill})`;
+          code = `${sample}.${swizzle}`;
           break;
         }
         case 'constant': code = same('value'); break;

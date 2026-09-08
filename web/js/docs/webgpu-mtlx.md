@@ -222,6 +222,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 - `tiledimage` accepts the validated single-tile resource path, applies static
   `uvtiling` multipliers and `uvoffset` subtraction; real-world image-size
   controls and UDIM expansion remain explicit unsupported diagnostics.
+- Image nodes now support MaterialX `filtertype="cubic"` through a bounded
+  16-tap cubic sampler with trilinear mip selection.
 - URL resource tests cover includes, source-relative EXR paths, inherited image
   colorspace, cycle rejection and cross-origin rejection. ShaderBall's 2048x2048
   neutral EXR decodes successfully.

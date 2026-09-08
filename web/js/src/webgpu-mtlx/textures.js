@@ -96,6 +96,17 @@ fn imageLevel(offset0: u32, size0: vec2u, level: u32, uv: vec2f, address: vec2u,
   if(!linear) { return imageTexel(offset,size,vec2i(floor(p+0.5)),address,fallback); }
   return mix(mix(imageTexel(offset,size,q,address,fallback),imageTexel(offset,size,q+vec2i(1,0),address,fallback),f.x),mix(imageTexel(offset,size,q+vec2i(0,1),address,fallback),imageTexel(offset,size,q+vec2i(1,1),address,fallback),f.x),f.y);
 }
+fn imageCubicWeight(x:f32)->f32 { let a=abs(x); if(a<=1.0){return 1.5*a*a*a-2.5*a*a+1.0;} if(a<2.0){return -0.5*a*a*a+2.5*a*a-4.0*a+2.0;} return 0.0; }
+fn imageCubicLevel(offset0:u32,size0:vec2u,level:u32,uv:vec2f,address:vec2u,fallback:vec4f)->vec4f {
+  var offset=offset0;var size=size0;for(var l=0u;l<level;l++){offset+=size.x*size.y;size=max(vec2u(1),size/2u);}
+  var st=uv;for(var a=0u;a<2u;a++){if(address[a]==2u){st[a]=st[a]-floor(st[a]);}else if(address[a]==3u){st[a]=1.0-abs(1.0-(st[a]-2.0*floor(st[a]/2.0)));}else{st[a]=clamp(st[a],-1.0,2.0);}}
+  let p=st*vec2f(size)-0.5;let q=vec2i(floor(p));var result=vec4f(0);var total=0.0;
+  for(var y=-1;y<=2;y++){let wy=imageCubicWeight(f32(y)-fract(p.y));for(var x=-1;x<=2;x++){let w=wy*imageCubicWeight(f32(x)-fract(p.x));result+=imageTexel(offset,size,q+vec2i(x,y),address,fallback)*w;total+=w;}}
+  return result/max(1e-6,total);
+}
+fn imageSampleCubic(offset:u32,size:vec2u,levels:u32,uv:vec2f,lod:f32,address:vec2u,fallback:vec4f)->vec4f {
+  let l=clamp(lod,0.0,f32(levels-1u));return mix(imageCubicLevel(offset,size,u32(floor(l)),uv,address,fallback),imageCubicLevel(offset,size,u32(ceil(l)),uv,address,fallback),fract(l));
+}
 fn imageSample(offset: u32, size: vec2u, levels: u32, uv: vec2f, lod: f32, address: vec2u, linear: bool, fallback: vec4f) -> vec4f {
   let l=clamp(lod,0.0,f32(levels-1u));
   if(!linear) { return imageLevel(offset,size,u32(round(l)),uv,address,false,fallback); }
