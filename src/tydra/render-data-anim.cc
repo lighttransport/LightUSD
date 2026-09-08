@@ -3417,6 +3417,7 @@ bool RenderSceneConverter::ConvertGeometryLight(
 
   // The actual mesh_id will be resolved during scene building.
   rlight.geometry_mesh_id = -1;
+  rlight.geometry_target_path = geometry_path;
 
   DCOUT("GeometryLight " << rlight.abs_path
         << " references geometry: " << geometry_path);

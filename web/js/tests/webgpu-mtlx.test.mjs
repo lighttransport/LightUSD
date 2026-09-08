@@ -310,6 +310,14 @@ test('shaped sphere lights preserve spot cone emission', () => {
   assert.match(shaderSource(syntheticScene('default').materials,{},r.lighting),/coneWeight/);
   assert.throws(()=>appendRectLights(scene,[{type:'spot',angle:0,transform:[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]}]),/Invalid spot light cone/);
 });
+test('geometry lights duplicate bounded target mesh emission', () => {
+  const scene={positions:[0,0,0,1,0,0,0,1,0],normals:[0,0,1,0,0,1,0,0,1],uvs:[0,0,1,0,0,1],indices:[0,1,2],materialIds:[0],materials:[{nodes:[{name:'surface',category:'surface',type:'surfaceshader',inputs:{}}]}],authored:{bindings:[{path:'/Target',vertexOffset:0,vertexCount:3,indexOffset:0,indexCount:3}]} };
+  const result=appendRectLights(scene,[{type:'Geometry',absPath:'/Light',properties:{geometryTargetPath:'/Target',materialSyncMode:'materialGlowTintsLight'},intensity:4,exposure:1,color:[1,.5,.25],normalize:true}]);
+  assert.equal(result.positions.length,18); assert.equal(result.indices.length,6); assert.equal(result.materialIds.length,2);
+  assert.equal(result.lighting.areaLights[0].shape,'geometry'); assert.equal(result.provenance.geometryLights[0].targetPath,'/Target');
+  assert.match(shaderSource(result.materials,{},result.lighting),/authoredAreaDirect/);
+  assert.throws(()=>appendRectLights(scene,[{type:'geometry',geometryTargetPath:'/Missing'}]),/bounded mesh target binding/);
+});
 test('resource fetch enforces streaming budgets and HTTP errors',async()=>{
   const fetcher=async()=>new Response(new Uint8Array([1,2,3,4]));
   assert.deepEqual(await fetchResource('test',{fetcher,maxBytes:4}),new Uint8Array([1,2,3,4]));

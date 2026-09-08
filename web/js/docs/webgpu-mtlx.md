@@ -142,6 +142,10 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   emitter geometry. Rect, disk, and cylinder realtime lighting uses center samples while path transport
   preserves the finite emitter meshes and area sampling. The point representation
   approximates an ideal point source.
+  Geometry lights duplicate a bounded authored mesh target when the composed
+  binding range and relationship target are available; the native light payload
+  preserves that target path. Their realtime contribution remains a
+  representative center sample.
   A single textured dome is decoded through the authored USD asset resolver and
   sampled as a bounded latlong environment; multiple textured domes remain an
   explicit unsupported case.
@@ -151,7 +155,8 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 ## Not implemented
 
 Full MaterialX coverage; general BSDF/EDF/VDF closure composition/layering;
-full measured IES azimuthal EDF profiles and authored light-to-scene binding;
+full measured IES azimuthal EDF profiles and complete authored light/material
+sync semantics;
 MaterialX subsurface_bsdf albedo/radius conversion; hair and curves;
 arbitrary authored primvar/shading-property maps beyond the supported geometry
 aliases, UV slots, and eight bounded custom geomprop channels;

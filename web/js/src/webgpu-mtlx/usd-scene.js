@@ -287,7 +287,8 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
       }
       if (node.nodeType?.toLowerCase() === 'mesh') {
         const mesh = layer.getMeshPtr(node.contentId);
-        authored.bindings.push({ path: mesh.absPath, materialId: mesh.materialId, submeshes: mesh.submeshes || [], hasSubmeshes: !!mesh.hasSubmeshes });
+        const binding = { path: mesh.absPath, materialId: mesh.materialId, submeshes: mesh.submeshes || [], hasSubmeshes: !!mesh.hasSubmeshes, vertexOffset: positions.length / 3, indexOffset: indices.length };
+        authored.bindings.push(binding);
         if (!mesh.singleIndexable || !mesh.triangulated) throw new Error(`USD mesh is not triangulated/single-indexed: ${mesh.absPath}`);
         const p = read(mesh.points), ix = read(mesh.indices); if (!p?.length || !ix?.length) return;
         const geo = new BufferGeometry(); geo.setAttribute('position', new BufferAttribute(p, 3)); geo.setIndex(new BufferAttribute(ix, 1));
@@ -318,6 +319,8 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
           else colors.push(0, 0, 0, 1);
         }
         for (let i = 0; i < ix.length; i++) indices.push(ix[i] + offset);
+        binding.vertexCount = ps.length / 3;
+        binding.indexCount = ix.length;
         const mat = Number.isInteger(mesh.materialId) && mesh.materialId >= 0 ? mesh.materialId : 0;
         materialIds.push(...triangleMaterialIds(ix.length, mat, mesh.submeshes));
         geo.dispose();
