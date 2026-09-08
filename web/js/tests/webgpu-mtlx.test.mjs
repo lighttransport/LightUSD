@@ -359,6 +359,7 @@ test('native closures compile and unsupported uniform inputs are diagnosed',()=>
   const zeltner={...directSheen,nodes:[{...directSheen.nodes[0],inputs:{...directSheen.nodes[0].inputs,mode:{type:'string',value:'zeltner'}}}]};
   const zeltnerSource=shaderSource([{nodes:[...zeltner.nodes,{name:'surface',category:'surface',type:'surfaceshader',inputs:{bsdf:{nodename:'s'}}}],output:{nodename:'surface'}}]);
   assert.match(zeltnerSource,/sheenZeltnerBRDF/); assert.match(zeltnerSource,/sheenZeltnerDirAlbedo/);
+  assert.match(zeltnerSource,/sheenZeltnerSample/); assert.match(zeltnerSource,/sheenZeltnerPDF/);
   const thin=syntheticScene('thin-walled').materials[1];
   assert.match(compileGraph(thin,{material:true}).body,/select\(0u,1u,true\)/);
   assert.match(shaderSource([thin]),/thinWalled/);
