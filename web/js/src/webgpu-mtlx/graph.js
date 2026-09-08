@@ -18,7 +18,7 @@ function fail(code, path, message) { throw new GraphError(code, path, message); 
 export function literal(type, value, path = '') {
   if(value===''&&type==='BSDF')return 'emptyClosure()';
   if(value===''&&type==='EDF')return 'vec3f(0)';
-  if(value===''&&type==='VDF')return 'Medium(vec3f(0),vec3f(0),0)';
+  if(value===''&&type==='VDF')return 'Medium(vec3f(0),vec3f(0),0,vec3f(0))';
   const t = types[type];
   if (!t) fail('TYPE', path, `unsupported value type ${type}`);
   if (type === 'boolean') {
@@ -182,18 +182,20 @@ export function compileGraph(document, { output, library = {}, material = false,
         fail('TYPE',key,`expected ${type} or scalar float for ${k}`);
       };
       const binary = op => `(${same('in1')} ${op} ${scalarOrSame('in2')})`;
-      let code, closureCount = 0, hasInterior = false, interiorCategories=[], emissionCone = null, emissionSchlick = null, emissionProfile = null, normal = null;
+      let code, closureCount = 0, hasInterior = false, interiorCategories=[], emissionCone = null, emissionSchlick = null, emissionProfile = null, volumeEmission = false, normal = null;
       switch (n.category) {
         case 'uniform_edf': code = x('color',[1,1,1],'color3'); break;
         case 'light': {
-          const edf = ins.edf?.value === '' || !ins.edf ? { type: 'EDF', code: 'vec3f(0)' } : input('edf', undefined, 'EDF');
+          const edf = !ins.edf || (!ins.edf.nodename && !ins.edf.nodegraph && !ins.edf.interfacename && (ins.edf.value === '' || ins.edf.value === undefined)) ? { type: 'EDF', code: 'vec3f(0)' } : input('edf', undefined, 'EDF');
           code = `${edf.code}*max(0.0,${x('intensity',1,'float')})*pow(2.0,${x('exposure',0,'float')})`;
           break;
         }
         case 'volume': {
-          const vdf = ins.vdf?.value === '' || !ins.vdf ? { type: 'VDF', code: 'Medium(vec3f(0),vec3f(0),0)' } : input('vdf', undefined, 'VDF');
-          if (ins.edf && ins.edf.value !== '') fail('UNSUPPORTED', key, 'volume EDF emission is not implemented');
-          code = vdf.code;
+          const vdf = ins.vdf?.value === '' || !ins.vdf ? { type: 'VDF', code: 'Medium(vec3f(0),vec3f(0),0,vec3f(0))' } : input('vdf', undefined, 'VDF');
+          const edfEmpty = !ins.edf || (!ins.edf.nodename && !ins.edf.nodegraph && !ins.edf.interfacename && (ins.edf.value === '' || ins.edf.value === undefined));
+          const edf = edfEmpty ? { type: 'EDF', code: 'vec3f(0)' } : input('edf', undefined, 'EDF');
+          volumeEmission = !edfEmpty;
+          code = `mediumWithEmission(${vdf.code},${edf.code})`;
           break;
         }
         case 'measured_edf': {
@@ -327,12 +329,12 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'anisotropic_vdf': {
           const absorption=ins.absorption ? input('absorption') : {type:'color3',code:'vec3f(0)'}, scattering=ins.scattering ? input('scattering') : {type:'color3',code:'vec3f(0)'};
           if(!['color3','vector3'].includes(absorption.type)||!['color3','vector3'].includes(scattering.type))fail('TYPE',key,'volume coefficients must be color3/vector3');
-          code=`Medium(${absorption.code},${scattering.code},${x('anisotropy',0,'float')})`; break;
+          code=`Medium(${absorption.code},${scattering.code},${x('anisotropy',0,'float')},vec3f(0))`; break;
         }
         case 'absorption_vdf': {
           const absorption=input('absorption', [0, 0, 0]);
           if (!['color3','vector3'].includes(absorption.type)) fail('TYPE', key, 'absorption coefficient must be color3/vector3');
-          code=`Medium(${absorption.code},vec3f(0),0.0)`; break;
+          code=`Medium(${absorption.code},vec3f(0),0.0,vec3f(0))`; break;
         }
         case 'triplanarprojection': {
           if (!['float','color3','color4','vector2','vector3','vector4'].includes(type)) fail('TYPE', key, 'triplanarprojection requires an image-compatible output type');
@@ -1176,14 +1178,14 @@ export function compileGraph(document, { output, library = {}, material = false,
         const id = `n${serial++}`;
         if(serial>32768)fail('LIMIT',key,'expanded graph exceeds 32768 expressions');
         lines.push(`let ${id}: ${target} = ${code.replace(/\bctx\b/g,contextName)};`);
-        result = { type, code: id, closureCount, hasInterior, interiorCategories, categories:[...dependencies], ...(normal ? { normal: normal.replace(/\bctx\b/g, contextName) } : {}), ...(emissionCone ? { emissionCone: { direction: emissionCone.direction.replace(/\bctx\b/g, contextName), innerCos: emissionCone.innerCos.replace(/\bctx\b/g, contextName), outerCos: emissionCone.outerCos.replace(/\bctx\b/g, contextName) } } : {}), ...(emissionSchlick ? { emissionSchlick: { color0: emissionSchlick.color0.replace(/\bctx\b/g, contextName), color90: emissionSchlick.color90.replace(/\bctx\b/g, contextName), exponent: emissionSchlick.exponent.replace(/\bctx\b/g, contextName) } } : {}), ...(emissionProfile ? { emissionProfile: { direction: emissionProfile.direction.replace(/\bctx\b/g, contextName), id: emissionProfile.id } } : {}) };
+        result = { type, code: id, closureCount, hasInterior, interiorCategories, categories:[...dependencies], ...(volumeEmission ? { volumeEmission: true } : {}), ...(normal ? { normal: normal.replace(/\bctx\b/g, contextName) } : {}), ...(emissionCone ? { emissionCone: { direction: emissionCone.direction.replace(/\bctx\b/g, contextName), innerCos: emissionCone.innerCos.replace(/\bctx\b/g, contextName), outerCos: emissionCone.outerCos.replace(/\bctx\b/g, contextName) } } : {}), ...(emissionSchlick ? { emissionSchlick: { color0: emissionSchlick.color0.replace(/\bctx\b/g, contextName), color90: emissionSchlick.color90.replace(/\bctx\b/g, contextName), exponent: emissionSchlick.exponent.replace(/\bctx\b/g, contextName) } } : {}), ...(emissionProfile ? { emissionProfile: { direction: emissionProfile.direction.replace(/\bctx\b/g, contextName), id: emissionProfile.id } } : {}) };
       }
     }
     used.add(n.category); active.delete(key); cached.set(key, result); return result;
   }
   const selected = output || { nodename: document.nodes.at(-1)?.name };
   const value = port(selected, root, {}, undefined, '$output');
-  return { body: lines.join('\n'), expression: value.code, type: value.type, categories: [...used].sort(), hasInterior:value.hasInterior||false,interiorCategories:value.interiorCategories||[],diagnostics: [], referenceReady: false };
+  return { body: lines.join('\n'), expression: value.code, type: value.type, categories: [...used].sort(), hasInterior:value.hasInterior||false,interiorCategories:value.interiorCategories||[], volumeEmission:value.volumeEmission||false, diagnostics: [], referenceReady: false };
 }
 
 export const contextWGSL = `struct ShadingContext { position: vec3f, normal: vec3f, tangent: vec3f, bitangent: vec3f, uv: vec2f, time: f32, frame: f32, uvDx: vec2f, uvDy: vec2f, dpdu:vec3f, dpdv:vec3f, viewdir:vec3f, geomcolor:vec4f, geomprop:vec4f, geomprop1:vec4f, geomprop2:vec4f, geomprop3:vec4f, geomprop4:vec4f, geomprop5:vec4f, geomprop6:vec4f, geomprop7:vec4f }
@@ -1340,7 +1342,8 @@ fn mxBlackbody(k:f32)->vec3f {
   return max(mat3x3f(vec3f(3.2406,-0.9689,0.0557),vec3f(-1.5372,1.8758,-0.2040),vec3f(-0.4986,0.0415,1.0570))*xyz,vec3f(0.0));
 }
 struct Lobe { base: vec3f, metal: f32, roughness: f32, ior: f32, transmission: f32, emission: vec3f, emissionWeight: f32, anisotropy: f32, transmissionColor: vec3f, kind:u32, weight:f32, alpha:vec2f, complexIOR:vec3f, extinction:vec3f, scatterMode:u32, thinWalled:u32, thinFilmThickness:f32, thinFilmIOR:f32, transmissionDepth:f32, transmissionScatter:vec3f, schlickColor82:vec3f, schlickColor90:vec3f, schlickExponent:f32, subsurfaceRadius:vec3f }
-struct Medium { absorption: vec3f, scattering: vec3f, anisotropy: f32 }
+struct Medium { absorption: vec3f, scattering: vec3f, anisotropy: f32, emission: vec3f }
+fn mediumWithEmission(input:Medium,emission:vec3f)->Medium {var m=input;m.emission=emission;return m;}
 fn makeMaterial(base:vec3f,metal:f32,rough:f32,ior:f32,trans:f32,emission:vec3f,emissionWeight:f32,anisotropy:f32,tint:vec3f,thinWalled:u32,thinFilmThickness:f32,thinFilmIOR:f32)->Lobe {
  return Lobe(base,metal,rough,ior,trans,emission,emissionWeight,anisotropy,tint,0u,1.0,vec2f(rough*rough),vec3f(ior),vec3f(0),3u,thinWalled,thinFilmThickness,thinFilmIOR,0.0,vec3f(0),vec3f(1),vec3f(1),5.0,vec3f(1));
 }

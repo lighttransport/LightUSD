@@ -47,7 +47,8 @@ export function shaderSource(materials, resources = {}, lighting = {}, textureOp
     if(c.categories.some(c=>['dielectric_bsdf','conductor_bsdf','oren_nayar_diffuse_bsdf'].includes(c)))resources.requiresPhysical=true;
     if (!['surfaceshader', 'material'].includes(c.type)) throw new Error('Material graph must produce a surface');
     const medium = doc.mediumOutput ? compileGraph(doc, { output: doc.mediumOutput, imageDescriptors, uvIndex, geompropNames: doc.geompropNames || (doc.geompropName ? [doc.geompropName] : []) }) : null;
-    if(medium && medium.type!=='VDF') throw new Error('mediumOutput must produce VDF');
+    if(medium && !['VDF', 'volumeshader'].includes(medium.type)) throw new Error('mediumOutput must produce VDF or volumeshader');
+    if(medium?.volumeEmission && medium.categories.some(c=>['position','normal','tangent','bitangent','texcoord','image'].includes(c))) throw new Error('Spatially varying volume emission is not implemented');
     if(doc.mediumMajorant!==undefined && (!Number.isFinite(doc.mediumMajorant)||doc.mediumMajorant<=0))throw new Error('Medium majorant must be finite and positive');
     if(medium && medium.categories.some(c=>['position','normal','tangent','bitangent','texcoord','image'].includes(c)) && !doc.mediumMajorant) throw new Error('Spatially varying media require a conservative mediumMajorant');
     if(!medium&&c.interiorCategories.some(c=>['position','normal','tangent','bitangent','texcoord','image'].includes(c))&&!doc.mediumMajorant)throw new Error('Spatially varying layered media require a conservative mediumMajorant');
@@ -145,7 +146,7 @@ fn getSurface(id: u32, ctx: ShadingContext) -> Material {
 }
 fn getMaterial(id:u32,ctx:ShadingContext)->Lobe {return primaryLobe(getSurface(id,ctx));}
 fn getMedium(id:u32,ctx:ShadingContext)->Medium {
-  switch id { ${materials.map((_,i)=>`case ${i}u: {return medium${i}(ctx);}`).join('\n')} default:{return Medium(vec3f(0),vec3f(0),0);} }
+  switch id { ${materials.map((_,i)=>`case ${i}u: {return medium${i}(ctx);}`).join('\n')} default:{return Medium(vec3f(0),vec3f(0),0,vec3f(0));} }
 }
 fn mediumMajorant(id:u32)->f32 {switch id {${materials.map((doc,i)=>`case ${i}u:{return ${literal('float',doc.mediumMajorant||0)};}`).join('\n')}default:{return 0.0;}}}
 fn environment(d: vec3f) -> vec3f {

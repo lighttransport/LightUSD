@@ -16,6 +16,7 @@ fn mediumAt(id:u32,ctx:ShadingContext,lambda:f32,spectral:bool)->Medium {
   if(spectral) {
     medium.absorption=vec3f(rgbSpectrum(medium.absorption,lambda,false));
     medium.scattering=vec3f(rgbSpectrum(medium.scattering,lambda,false));
+    medium.emission=vec3f(rgbSpectrum(medium.emission,lambda,true));
   }
   return medium;
 }

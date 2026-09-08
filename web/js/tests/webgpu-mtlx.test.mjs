@@ -147,10 +147,10 @@ test('USD graph translation preserves interfaces and exact NodeDef typing', () =
   assert.match(compileGraph(displacementDoc, { output: displacementDoc.displacementOutput }).body, /0\.25/);
   const volume = changed(); volume.prims.push({ path: '/M/V', type: 'Shader', properties: { 'info:id': p('token', 'ND_volume_volumeshader'), 'inputs:vdf': p('token', undefined, ['/M/VDF.outputs:out']), 'outputs:out': p('token') } }, { path: '/M/VDF', type: 'Shader', properties: { 'info:id': p('token', 'ND_anisotropic_vdf'), 'inputs:absorption': p('color3f', [.1,.2,.3]), 'inputs:scattering': p('color3f', [.4,.5,.6]), 'inputs:anisotropy': p('float', .2), 'outputs:out': p('token') } }); volume.prims[0].properties['outputs:volume'] = p('token', undefined, ['/M/V.outputs:out']);
   const volumeDoc = materialXFromUSD(volume, '/M', { library });
-  assert.equal(volumeDoc.mediumOutput.type, 'VDF');
+  assert.match(volumeDoc.mediumOutput.nodename, /usd_/);
   assert.match(compileGraph(volumeDoc, { output: volumeDoc.mediumOutput }).body, /Medium/);
   const volumeWrapped = changed(); volumeWrapped.prims.push({ path: '/M/VM', type: 'Shader', properties: { 'info:id': p('token', 'ND_volumematerial'), 'inputs:volumeshader': p('token', undefined, ['/M/V.outputs:out']), 'outputs:out': p('token') } }, { path: '/M/V', type: 'Shader', properties: { 'info:id': p('token', 'ND_volume_volumeshader'), 'inputs:vdf': p('token', undefined, ['/M/VDF.outputs:out']), 'outputs:out': p('token') } }, { path: '/M/VDF', type: 'Shader', properties: { 'info:id': p('token', 'ND_anisotropic_vdf'), 'inputs:absorption': p('color3f', [.1,.2,.3]), 'inputs:scattering': p('color3f', [.4,.5,.6]), 'inputs:anisotropy': p('float', .2), 'outputs:out': p('token') } }); volumeWrapped.prims[0].properties['outputs:volume'] = p('token', undefined, ['/M/VM.outputs:out']);
-  assert.equal(materialXFromUSD(volumeWrapped, '/M', { library }).mediumOutput.type, 'VDF');
+  assert.match(materialXFromUSD(volumeWrapped, '/M', { library }).mediumOutput.nodename, /usd_/);
   const wrapped = changed(); wrapped.prims.push({ path: '/M/SM', type: 'Shader', properties: { 'info:id': p('token', 'ND_surfacematerial'), 'inputs:surfaceshader': p('token', undefined, ['/M/S.outputs:out']), 'inputs:displacementshader': p('token', undefined, ['/M/D.outputs:out']), 'outputs:out': p('token') } }, { path: '/M/D', type: 'Shader', properties: { 'info:id': p('token', 'ND_displacement_float'), 'inputs:displacement': p('float', .1), 'outputs:out': p('token') } }); wrapped.prims[0].properties['outputs:mtlx:surface'] = p('token', undefined, ['/M/SM.outputs:out']);
   const wrappedDoc = materialXFromUSD(wrapped, '/M', { library });
   assert.equal(wrappedDoc.displacementOutput.type, 'displacementshader');
@@ -572,7 +572,7 @@ test('standard MaterialX Burley, Chiang hair, and absorption VDF nodes compile',
   assert.match(compileGraph(hairRoughness,{output:{nodename:'r',output:'roughness_TT'}}).body,/0\.5\*0\.5/);
   assert.match(compileGraph(hairRoughness,{output:{nodename:'r',output:'roughness_TRT'}}).body,/2\.0\*2\.0/);
   const medium=compileGraph({nodes:[{name:'m',category:'absorption_vdf',type:'VDF',inputs:{absorption:{type:'vector3',value:[.1,.2,.3]}}}]});
-  assert.match(medium.body,/Medium\(vec3f\(0\.1,0\.2,0\.3\),vec3f\(0\),0\.0\)/);
+  assert.match(medium.body,/Medium\(vec3f\(0\.1,0\.2,0\.3\),vec3f\(0\),0\.0,vec3f\(0\)\)/);
 });
 test('pinned blur node preserves the documented stdlib pass-through implementation',()=>{
   const blur={nodes:[{name:'b',category:'blur',type:'float',inputs:{in:{type:'float',value:.375},size:{type:'float',value:4},filtertype:{type:'string',value:'gaussian'}}}]};
@@ -1282,8 +1282,19 @@ test('MaterialX light and volume constructors preserve typed outputs', () => {
     { name: 'vdf', category: 'absorption_vdf', type: 'VDF', inputs: { absorption: { type: 'vector3', value: [.1, .2, .3] } } },
     { name: 'volume', category: 'volume', type: 'volumeshader', inputs: { vdf: { nodename: 'vdf' }, edf: { type: 'EDF', value: '' } } }
   ] }, { output: { nodename: 'volume' } });
-  assert.equal(volume.type, 'volumeshader'); assert.match(volume.body, /Medium\(/);
-  assert.throws(() => compileGraph({ nodes: [{ name: 'volume', category: 'volume', type: 'volumeshader', inputs: { edf: { type: 'EDF', value: [1, 1, 1] } } }] }, { output: { nodename: 'volume' } }), /volume EDF emission/);
+  assert.equal(volume.type, 'volumeshader'); assert.match(volume.body, /mediumWithEmission/); assert.equal(volume.volumeEmission, false);
+  const emitted = compileGraph({ nodes: [
+    { name: 'edf', category: 'uniform_edf', type: 'EDF', inputs: { color: { type: 'color3', value: [1, 1, 1] } } },
+    { name: 'volume', category: 'volume', type: 'volumeshader', inputs: { edf: { nodename: 'edf' } } }
+  ] }, { output: { nodename: 'volume' } });
+  assert.equal(emitted.volumeEmission, true); assert.match(emitted.body, /mediumWithEmission/);
+  const material = { nodes: [
+    { name: 'edf', category: 'uniform_edf', type: 'EDF', inputs: { color: { type: 'color3', value: [1, .5, .25] } } },
+    { name: 'surface', category: 'surface', type: 'surfaceshader', inputs: { edf: { nodename: 'edf' } } },
+    { name: 'vdf', category: 'absorption_vdf', type: 'VDF', inputs: { absorption: { type: 'vector3', value: [.1, .1, .1] } } },
+    { name: 'volume', category: 'volume', type: 'volumeshader', inputs: { vdf: { nodename: 'vdf' }, edf: { nodename: 'edf' } } }
+  ], output: { nodename: 'surface' }, mediumOutput: { nodename: 'volume' } };
+  assert.match(shaderSource([material], {}), /mediumWithEmission/);
 });
 test('generalized Schlick EDF preserves directional color controls', () => {
   const doc={nodes:[
@@ -1306,6 +1317,7 @@ test('volume transport includes direct HG light estimation at scattering events'
   assert.match(source,/envColor\*\(4\.0\*PI\)/);
   assert.match(source,/let tr=exp\(-sigmaT\*shadow\.t\)/);
   assert.match(source,/triangles\[shadow\.id\]\.a\.uv\.z\)==mediumId\(&p,mediumDepth\)-1u/);
+  assert.match(source,/medium\.emission\*\(vec3f\(1\)-tr\)/);
 });
 test('cycle, missing node, mismatch, duplicate, unknown operation fail', () => {
   assert.throws(() => compileGraph({ nodes: [{ name: 'x', category: 'absval', type: 'float', inputs: { in: { nodename: 'x' } } }] }), /cycle/);

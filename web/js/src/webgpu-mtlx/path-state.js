@@ -95,6 +95,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
       let channel=min(2u,u32(random(&rng)*3.0));
       var distance=1e30; if(sigmaT[channel]>0.0) {distance=-log(1.0-random(&rng))/sigmaT[channel];}
       let traveled=min(distance,h.t);let tr=exp(-sigmaT*traveled);
+      if(any(medium.emission>vec3f(0))){p.radiance+=vec4f(p.beta.xyz*medium.emission*(vec3f(1)-tr),0);}
       if(distance<h.t) {
         let pdf=dot(tr*sigmaT,vec3f(1.0/3.0));
         p.beta=vec4f(p.beta.xyz*tr*medium.scattering/max(1e-30,pdf),p.beta.w);

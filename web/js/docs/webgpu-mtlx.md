@@ -48,8 +48,9 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   `color90`, and exponent controls through the same emission transport.
 - MaterialX `light` constructors now compile as typed light-shader values,
   applying nonnegative intensity and exposure in linear radiance space. The
-  `volume` constructor preserves its VDF output; authored volume EDF emission
-  remains an explicit diagnostic until the volume emission transport is wired.
+  `volume` constructor preserves its VDF and EDF; homogeneous volume emission
+  contributes along traveled segments, while spatially varying emission still
+  fails explicitly until its estimator is implemented.
 - `measured_edf` accepts bounded LM-63 IES files from source-aware USD asset
   resolution. The supported profile is rotationally symmetric: the parser
   retains its normalized vertical candela profile and the shader interpolates
@@ -494,8 +495,9 @@ the reachable surface graph into a compiler document. It resolves graph outputs
 and interface inputs by absolute property path, selects exact library NodeDefs,
 and checks typed ports. Standard `surfacematerial` wrappers are unpacked into
 their surface and displacement terminals. Missing definitions, unknown inputs, cycles, time samples
-and authored volume terminals now preserve their VDF medium input; volume EDF
-emission remains an explicit unsupported diagnostic. Asset inputs require
+and authored volume terminals now preserve their typed volume constructor,
+including homogeneous EDF emission. Spatially varying volume emission remains
+an explicit unsupported diagnostic. Asset inputs require
 a synchronous caller-supplied resolver returning a resource key; no source-layer
 anchor is guessed. Color literals and asset resolver requests retain the source
 attribute's color space, with attribute overrides preceding inherited prim

@@ -124,16 +124,12 @@ export function materialXFromUSD(snapshot, materialPath, { library = {}, resolve
       if (def.node === 'volumematerial') {
         const volume = node.inputs.volumeshader, volumeNode = volume?.nodename && nodes.find(candidate => candidate.name === volume.nodename);
         if (!volumeNode || volumeNode.category !== 'volume') fail(`${prim.path}.inputs:volumeshader`, 'volume material requires a volume constructor');
-        const edf = volumeNode.inputs.edf;
-        if (edf && (edf.nodename || edf.nodegraph || edf.interfacename || edf.value !== '')) fail(`${volumeNode.source}.inputs:edf`, 'volume EDF emission is not implemented');
         if (!volumeNode.inputs.vdf) fail(`${volumeNode.source}.inputs:vdf`, 'volume constructor requires a VDF input');
-        return volumeNode.inputs.vdf;
+        return { nodename: volumeNode.name };
       }
       if (def.node !== 'volume') fail(path, `expected volume constructor, got ${def.node}`);
-      const edf = node.inputs.edf;
-      if (edf && (edf.nodename || edf.nodegraph || edf.interfacename || edf.value !== '')) fail(`${prim.path}.inputs:edf`, 'volume EDF emission is not implemented');
       if (!node.inputs.vdf) fail(`${prim.path}.inputs:vdf`, 'volume constructor requires a VDF input');
-      return node.inputs.vdf;
+      return { nodename: node.name };
     }
     fail(path, 'volume terminal must connect to a volume constructor');
   }
