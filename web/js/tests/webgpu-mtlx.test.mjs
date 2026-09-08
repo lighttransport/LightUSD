@@ -510,6 +510,12 @@ test('geompropvalue maps standard authored geometry properties with typed fallba
   assert.match(fallback.body,/vec3f\(0\.2,0\.3,0\.4\)/);
   assert.throws(()=>compileGraph({nodes:[{name:'bad',category:'geompropvalue',type:'float',inputs:{geomprop:{type:'string',value:'P'}}}]}),/has type vector3/);
 });
+test('rotate3d uses a normalized axis and degree-valued Rodrigues rotation', () => {
+  const source=compileGraph({nodes:[{name:'r',category:'rotate3d',type:'vector3',inputs:{in:{type:'vector3',value:[1,0,0]},axis:{type:'vector3',value:[0,0,1]},amount:{type:'float',value:90}}}]});
+  assert.match(source.body,/safeNormal\(vec3f\(0\.0,0\.0,1\.0\)/);
+  assert.match(source.body,/cross\(/); assert.match(source.body,/0\.017453292519943295/);
+  assert.throws(()=>compileGraph({nodes:[{name:'r',category:'rotate3d',type:'color3',inputs:{}}]}),/rotate3d output must be vector3/);
+});
 test('core math nodes honor MaterialX default bounds and amounts', () => {
   const doc={nodes:[
     {name:'x',category:'constant',type:'float',inputs:{value:{type:'float',value:.25}}},
