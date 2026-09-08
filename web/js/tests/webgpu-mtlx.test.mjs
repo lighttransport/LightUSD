@@ -1367,7 +1367,7 @@ test('conical EDF preserves its bounded angular emission profile', () => {
     {name:'surface',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'edf'}}}
   ],output:{nodename:'surface'}};
   const source=compileGraph(doc,{material:true});
-  assert.match(source.body,/surfaceEmission\(/); assert.match(source.body,/cos\(radians\(max\(/);
+  assert.match(source.body,/surfaceEmission\(/); assert.match(source.body,/cos\(radians\(max\(.*\)\)\*0\.5\)/);
   assert.match(shaderSource([doc],{}),/emissionFactor\(surface,-d\)/);
 });
 test('measured EDF parses bounded LM-63 profiles and reaches emission transport', () => {

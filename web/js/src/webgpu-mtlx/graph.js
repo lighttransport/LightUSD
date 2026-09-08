@@ -265,7 +265,9 @@ export function compileGraph(document, { output, library = {}, material = false,
           const direction=x('normal',undefined,'vector3');
           const inner=angle('inner_angle',60), outer=angle('outer_angle',0);
           code=x('color',[1,1,1],'color3');
-          emissionCone={direction,innerCos:`cos(radians(max(${inner},${outer})))`,outerCos:`cos(radians(min(${inner},${outer})))`};
+          // MaterialX specifies full cone angles; emissionFactor compares the
+          // direction cosine against the corresponding half-angle threshold.
+          emissionCone={direction,innerCos:`cos(radians(max(${inner},${outer}))*0.5)`,outerCos:`cos(radians(min(${inner},${outer}))*0.5)`};
           break;
         }
         case 'generalized_schlick_edf': {
