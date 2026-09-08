@@ -1351,6 +1351,16 @@ test('generalized Schlick EDF preserves directional color controls', () => {
   assert.match(source.body,/surfaceEmission\(/); assert.match(source.body,/vec3f\(0\.2,0\.3,0\.4\)/);
   assert.match(source.body,/3\.0/); assert.match(shaderSource([doc],{}),/emissionSchlick/);
 });
+test('generalized Schlick preserves a measured EDF profile', () => {
+  const profile = { samples: [[0, 1], [90, .5], [180, 0]], verticalAngles: [0, 90, 180], horizontalAngles: [0], values: [1, .5, 0] };
+  const doc={measuredProfiles:{ies:profile},nodes:[
+    {name:'measured',category:'measured_edf',type:'EDF',inputs:{file:{type:'filename',value:'ies'},normal:{type:'vector3',value:[0,1,0]}}},
+    {name:'edf',category:'generalized_schlick_edf',type:'EDF',inputs:{base:{nodename:'measured'},exponent:{type:'float',value:2}}},
+    {name:'surface',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'edf'}}}
+  ],output:{nodename:'surface'}};
+  const graph=compileGraph(doc,{material:true,measuredProfileIds:{ies:3}});
+  assert.match(graph.body, /surfaceEmission/); assert.match(shaderSource([doc],{}), /case 1u/); assert.match(shaderSource([doc],{}), /emissionProfile/);
+});
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
   assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/); assert.match(source, /rayCone/); assert.match(source, /previous\.y=min/); assert.match(source, /animation:vec4f/); assert.match(source, /cfg\.animation\.x/); assert.match(source, /cfg\.animation\.y/);

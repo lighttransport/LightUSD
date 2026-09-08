@@ -258,6 +258,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           const base=ins.base?.value===''||!ins.base ? {type:'EDF',code:'vec3f(0)'} : input('base',undefined,'EDF');
           code=base.code;
           emissionCone=base.emissionCone||null;
+          emissionProfile=base.emissionProfile||null;
           emissionSchlick={color0:x('color0',[1,1,1],'color3'),color90:x('color90',[1,1,1],'color3'),exponent:x('exponent',5,'float')};
           break;
         }
