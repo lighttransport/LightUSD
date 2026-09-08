@@ -219,6 +219,8 @@ test('oversized uncompressed EXR uses scanline reduction without full-resolution
   assert.ok(Math.abs(image.data[0] - 6) < 1e-5);
   assert.ok(Math.abs(image.data[4] - 10) < 1e-5);
   assert.equal(image.data[3], 1);
+  const acescg = await decodeImage(encodeEXR(4, 2, rgba, { colorspace: 'lin_ap1_scene' }), { filename: 'large.exr', maxPixels: 4, allowDownsample: true });
+  assert.equal(acescg.colorspace, 'acescg');
 });
 
 test('EXR authored color-space metadata is read from the header, never filename', () => {

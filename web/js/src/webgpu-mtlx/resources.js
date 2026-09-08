@@ -164,7 +164,11 @@ export async function decodeImage(bytes, { filename = '', colorspace, maxPixels 
     if (oversized && !allowDownsample) throw new Error('EXR exceeds decoded pixel budget');
     if (oversized && allowDownsample) {
       const streamed = downsampleEXRScanlines(bytes, maxPixels);
-      if (streamed) { if (colorspace) streamed.colorspace = normalizeColorSpace(colorspace); return streamed; }
+      if (streamed) {
+        streamed.colorspace = normalizeColorSpace(colorspace || header.colorSpace || streamed.colorspace || 'lin_rec709');
+        streamed.exrColorSpace = header.colorSpace;
+        return streamed;
+      }
     }
     const image = new EXRLoader().setDataType(oversized ? HalfFloatType : FloatType).parse(bytes.slice().buffer);
     if (image.width !== dimensions.width || image.height !== dimensions.height || image.data.length !== image.width * image.height * 4) throw new Error('Unexpected EXR decoded layout');
@@ -178,7 +182,7 @@ export async function decodeImage(bytes, { filename = '', colorspace, maxPixels 
         const si = (sy * dimensions.width + sx) * 4, di = (y * width + x) * 4;
         for (let c = 0; c < 4; c++) data[di + c] = DataUtils.fromHalfFloat(source[si + c]);
       }
-      return { width, height, data, colorspace: colorspace || header.colorSpace || 'lin_rec709', exrColorSpace: header.colorSpace, resizedFrom: dimensions };
+      return { width, height, data, colorspace: normalizeColorSpace(colorspace || header.colorSpace || 'lin_rec709'), exrColorSpace: header.colorSpace, resizedFrom: dimensions };
     }
     // EXRLoader returns bottom-up rows, matching MaterialX v=0.
     return { width: image.width, height: image.height, data: image.data, colorspace: normalizeColorSpace(colorspace || header.colorSpace || 'lin_rec709'), exrColorSpace: header.colorSpace };
