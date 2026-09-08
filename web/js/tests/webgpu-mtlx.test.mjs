@@ -1089,7 +1089,7 @@ test('generalized Schlick EDF preserves directional color controls', () => {
 });
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
-  assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/); assert.match(source, /rayCone/); assert.match(source, /previous\.y=min/);
+  assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/); assert.match(source, /rayCone/); assert.match(source, /previous\.y=min/); assert.match(source, /animation:vec4f/); assert.match(source, /cfg\.animation\.x/); assert.match(source, /cfg\.animation\.y/);
   assert.match(source, /iorsHi/); assert.match(source, /mediaHi/); assert.match(source, /depth>=7u/);
 });
 test('volume transport includes direct HG light estimation at scattering events', () => {

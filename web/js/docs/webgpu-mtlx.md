@@ -242,6 +242,12 @@ filename/sampler inputs, layers, image sequences and full
 MaterialX colorspace inheritance are not implemented. These images do not
 complete authored ShaderBall material support.
 
+`setOptions({time, frame})` supplies animation values to raster, preview, and
+physical shading contexts. Changing either value resets accumulated path
+samples so animated graph evaluation cannot reuse samples from another time.
+Image sequence resource selection remains separate work because decoded frame
+storage and filename expansion are not yet implemented.
+
 ## Verification
 
 ```sh

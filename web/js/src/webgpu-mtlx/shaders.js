@@ -38,7 +38,7 @@ fn emissionSidedness(id:u32,normal:vec3f,direction:vec3f)->f32 {
   switch id { ${materials.map((doc,i)=>doc.twoSidedEmission?`case ${i}u:{return 1.0;}`:'').join('\n')} default:{} }
   return select(0.0,1.0,dot(normal,direction)<0.0);
 }
-struct Settings { origin: vec4f, forward: vec4f, right: vec4f, up: vec4f, dimensions: vec4u, display: vec4f, sampling:vec4u }
+struct Settings { origin: vec4f, forward: vec4f, right: vec4f, up: vec4f, dimensions: vec4u, display: vec4f, sampling:vec4u, animation:vec4f }
 struct Node { lo: vec4f, hi: vec4f, link: vec4f }
 struct Vertex { p: vec4f, n: vec4f, uv: vec4f, color: vec4f, tangent: vec4f, geomprop: vec4f, geomprop1: vec4f, geomprop2: vec4f }
 struct Triangle { a: Vertex, b: Vertex, c: Vertex }
@@ -102,7 +102,7 @@ fn context(h: Hit, o: vec3f, d: vec3f, rayCone:f32) -> ShadingContext {
   let tangent=select(frame[0],safeNormal(t,frame[0]),hasT);
   let handed=select(1.0,select(-1.0,1.0,authoredT.w>=0.0),hasT);
   let bitangent=select(frame[1],normalize(cross(n,tangent))*handed,hasT);
-  return ShadingContext(o+d*h.t,n,tangent,bitangent,tri.a.uv.xy*w+tri.b.uv.xy*h.u+tri.c.uv.xy*h.v,0,0,vec2f(footprint,0),vec2f(0,footprint),derivatives[0],derivatives[1],-d,tri.a.color*w+tri.b.color*h.u+tri.c.color*h.v,tri.a.geomprop*w+tri.b.geomprop*h.u+tri.c.geomprop*h.v,tri.a.geomprop1*w+tri.b.geomprop1*h.u+tri.c.geomprop1*h.v,tri.a.geomprop2*w+tri.b.geomprop2*h.u+tri.c.geomprop2*h.v);
+  return ShadingContext(o+d*h.t,n,tangent,bitangent,tri.a.uv.xy*w+tri.b.uv.xy*h.u+tri.c.uv.xy*h.v,cfg.animation.x,cfg.animation.y,vec2f(footprint,0),vec2f(0,footprint),derivatives[0],derivatives[1],-d,tri.a.color*w+tri.b.color*h.u+tri.c.color*h.v,tri.a.geomprop*w+tri.b.geomprop*h.u+tri.c.geomprop*h.v,tri.a.geomprop1*w+tri.b.geomprop1*h.u+tri.c.geomprop1*h.v,tri.a.geomprop2*w+tri.b.geomprop2*h.u+tri.c.geomprop2*h.v);
 }
 fn getSurface(id: u32, ctx: ShadingContext) -> Material {
   switch id { ${materials.map((_, i) => `case ${i}u: { return material${i}(ctx); }`).join('\n')} default: { return material0(ctx); } }
@@ -192,7 +192,7 @@ struct RasterVertex { @builtin(position) clip: vec4f, @location(0) position: vec
   let frame=mxSurfaceFrame(geomN,dpdx(v.position),dpdy(v.position),dpdx(v.uv),dpdy(v.uv));
   let derivatives=mxSurfaceDerivatives(geomN,dpdx(v.position),dpdy(v.position),dpdx(v.uv),dpdy(v.uv));
   let hasT=length(v.tangent.xyz)>1e-5;let t=safeNormal(v.tangent.xyz-geomN*dot(geomN,v.tangent.xyz),frame[0]);let handed=select(1.0,select(-1.0,1.0,v.tangent.w>=0.0),hasT);let bt=select(frame[1],normalize(cross(geomN,t))*handed,hasT);
-  var ctx = ShadingContext(v.position,geomN,select(frame[0],t,hasT),bt,v.uv,0,0,dpdx(v.uv),dpdy(v.uv),derivatives[0],derivatives[1],normalize(cfg.origin.xyz-v.position),v.color,v.geomprop,v.geomprop1,v.geomprop2);
+  var ctx = ShadingContext(v.position,geomN,select(frame[0],t,hasT),bt,v.uv,cfg.animation.x,cfg.animation.y,dpdx(v.uv),dpdy(v.uv),derivatives[0],derivatives[1],normalize(cfg.origin.xyz-v.position),v.color,v.geomprop,v.geomprop1,v.geomprop2);
   let surface=getSurface(v.material,ctx); if(surface.opacity<=0.001){discard;} var n=safeNormal(surface.normal,geomN); if(dot(n,geomN)<0.0){n=-n;} ctx.normal=n; let m = primaryLobe(surface); let wo = normalize(cfg.origin.xyz-v.position); let light=directionalDirection();
   var color = m.emission*m.emissionWeight*emissionFactor(surface,wo)*emissionSidedness(v.material,geomN,-wo)+m.base*(1.0-m.metal)*0.22+fresnel(max(0.0,dot(n,wo)),mix(vec3f(0.04),m.base,m.metal))*environment(reflect(-wo,n));
   let transmission=clamp((1.0-m.metal)*m.transmission,0.0,1.0);
@@ -206,7 +206,7 @@ struct RasterVertex { @builtin(position) clip: vec4f, @location(0) position: vec
 }
 
 export const displayShader = /* wgsl */`
-struct Settings { origin: vec4f, forward: vec4f, right: vec4f, up: vec4f, dimensions: vec4u, display: vec4f, sampling:vec4u }
+struct Settings { origin: vec4f, forward: vec4f, right: vec4f, up: vec4f, dimensions: vec4u, display: vec4f, sampling:vec4u, animation:vec4f }
 @group(0) @binding(0) var<uniform> cfg: Settings;
 @group(0) @binding(1) var<storage,read> accumulation: array<vec4f>;
 @vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f { return vec4f(f32((i<<1u)&2u)*2.0-1.0,f32(i&2u)*2.0-1.0,0,1); }

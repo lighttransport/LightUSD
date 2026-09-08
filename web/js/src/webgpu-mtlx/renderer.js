@@ -18,13 +18,13 @@ class MaterialXRenderer extends EventTarget {
     super(); this.canvas = canvas; this.device = device; this.adapter = adapter;
     this.context = canvas.getContext('webgpu'); this.format = navigator.gpu.getPreferredCanvasFormat();
     this.context.configure({ device, format: this.format, alphaMode: 'opaque' });
-    this.options = { exposure: 0, resolutionScale: 1, maxSamples: 4096, autoResolution: false, seed: 0, textureMaxDimension: 0, textureMaxBytes: 64 * 1024 * 1024 };
+    this.options = { exposure: 0, resolutionScale: 1, maxSamples: 4096, autoResolution: false, seed: 0, time: 0, frame: 0, textureMaxDimension: 0, textureMaxBytes: 64 * 1024 * 1024 };
     this.mode = 'path-preview'; this.samples = 0; this.generation = 0; this.sceneGeneration = 0; this.disposed = false; this.busy = false;
     this.resources = []; this.errors = [];
     this.stats = { adapter: { vendor: adapter.info?.vendor, architecture: adapter.info?.architecture, device: adapter.info?.device, description: adapter.info?.description, isFallbackAdapter: adapter.info?.isFallbackAdapter }, referenceReady: false, samples: 0 };
     device.addEventListener('uncapturederror', e => this.report(e.error));
     device.lost.then(info => { if (!this.disposed) { this.lost = true; this.report(new Error(`WebGPU device lost: ${info.message}`)); } });
-    this.uniform = device.createBuffer({ size: 112, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.uniform = device.createBuffer({ size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.sceneLayout = device.createBindGroupLayout({ entries: [
       { binding: 0, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       { binding: 1, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
@@ -159,14 +159,15 @@ class MaterialXRenderer extends EventTarget {
         if (k === 'textureMaxBytes' && (v < 16 || v > 1024 * 1024 * 1024)) throw new Error('textureMaxBytes is out of range');
         continue;
       }
-      if (!['exposure', 'resolutionScale', 'maxSamples', 'seed'].includes(k) || !Number.isFinite(v)) throw new Error(`Invalid option ${k}`);
+      if (!['exposure', 'resolutionScale', 'maxSamples', 'seed', 'time', 'frame'].includes(k) || !Number.isFinite(v)) throw new Error(`Invalid option ${k}`);
       if(k==='seed'&&(!Number.isInteger(v)||v<0||v>0xffffffff))throw new Error('Seed must be a uint32');
       if (k === 'resolutionScale' && (v < 0.1 || v > 1)) throw new Error('Resolution scale must be 0.1–1');
       if (k === 'exposure' && Math.abs(v) > 32) throw new Error('Exposure must be within ±32 stops');
       if (k === 'maxSamples' && (!Number.isInteger(v) || v < 1 || v > 1_000_000)) throw new Error('Invalid sample limit');
     }
     const reseed=options.seed!==undefined&&options.seed!==this.options.seed;
-    Object.assign(this.options, options); if ('resolutionScale' in options) this.resize();if(reseed)this.resetAccumulation();
+    const animationChanged=(options.time!==undefined&&options.time!==this.options.time)||(options.frame!==undefined&&options.frame!==this.options.frame);
+    Object.assign(this.options, options); if ('resolutionScale' in options) this.resize();if(reseed||animationChanged)this.resetAccumulation();
   }
   resetAccumulation() { this.samples = 0; this.generation++; this.stats.samples = 0; this.transportError = null; }
   resize(force = false) {
@@ -199,10 +200,10 @@ class MaterialXRenderer extends EventTarget {
       const forward = normalize(sub(this.camera.target, this.camera.origin));
       const right = normalize(cross(forward, Math.abs(forward[1]) > 0.999 ? [0, 0, 1] : [0, 1, 0])); const up = cross(right, forward);
       const tan = Math.tan(this.camera.fov * Math.PI / 360);
-      const data = new ArrayBuffer(112), f = new Float32Array(data), u = new Uint32Array(data);
+      const data = new ArrayBuffer(128), f = new Float32Array(data), u = new Uint32Array(data);
       f.set([...this.camera.origin, 0, ...forward, 0, ...right, tan * this.width / this.height, ...up, tan]);
       u.set([this.width, this.height, this.samples, this.mode === 'realtime' ? 1 : this.mode === 'path-spectral' ? 2 : 0], 16);
-      f.set([this.options.exposure, this.canvas.width, this.canvas.height, this.generation], 20);u.set([this.options.seed,0,0,0],24); this.device.queue.writeBuffer(this.uniform, 0, data);
+      f.set([this.options.exposure, this.canvas.width, this.canvas.height, this.generation], 20);u.set([this.options.seed,0,0,0],24);f.set([this.options.time,this.options.frame,0,0],28); this.device.queue.writeBuffer(this.uniform, 0, data);
       const encoder = this.device.createCommandEncoder();
       const physical = ['path-physical', 'path-spectral'].includes(this.mode);
       const tracing = this.mode !== 'realtime' && this.samples < this.options.maxSamples;
