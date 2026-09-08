@@ -398,6 +398,10 @@ test('pinned blur node preserves the documented stdlib pass-through implementati
   const compiled=compileGraph(blur);
   assert.match(compiled.body,/let n0: f32 = 0\.375/);
   assert.equal(compiled.expression,'n0');
+  const color3=compileGraph({nodes:[{name:'b',category:'blur',type:'color3',inputs:{in:{type:'color3',value:[.1,.2,.3]},size:{type:'float',value:2}}}]});
+  assert.match(color3.body,/vec3f\(0\.1,0\.2,0\.3\)/);
+  const color4=compileGraph({nodes:[{name:'b',category:'blur',type:'color4',inputs:{in:{type:'color4',value:[.1,.2,.3,.4]},size:{type:'float',value:2}}}]});
+  assert.match(color4.body,/vec4f\(0\.1,0\.2,0\.3,0\.4\)/);
   assert.throws(()=>compileGraph({...blur,nodes:[{...blur.nodes[0],inputs:{...blur.nodes[0].inputs,filtertype:{type:'string',value:'triangle'}}}]}),/filtertype/);
 });
 test('displacement refinement preserves bounds, typed indices and material assignment',()=>{
