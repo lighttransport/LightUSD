@@ -546,6 +546,7 @@ test('image graph resource resolution and unsupported filtering diagnostics', ()
   assert.throws(() => shaderSource([doc]), /missing decoded image/);
   doc.images = { test: { width: 1, height: 1, data: [1,0,0,1] } };
   const resources = {}; assert.match(shaderSource([doc], resources), /imageSample\(0u/); assert.equal(resources.imageData.length, 4);
+  const compactResources = {}; assert.match(shaderSource([doc], compactResources, {}, { compact: true }), /array<vec2u>/); assert.equal(compactResources.imageData.byteLength, 8);
   image.colorspace = 'lin_ap1_scene'; doc.images.test.colorspace = 'acescg';
   assert.match(shaderSource([doc], {}), /imageSample\(0u/);
   image.inputs.filtertype = { value: 'cubic' }; assert.match(shaderSource([doc]), /imageSampleCubic\(0u/);
