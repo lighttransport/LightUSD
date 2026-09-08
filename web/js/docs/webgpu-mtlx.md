@@ -51,7 +51,8 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 - `translucent_bsdf` uses a bounded opposite-hemisphere diffuse transmission
   lobe and preserves its authored color and weight.
 - Direct `sheen_bsdf` nodes use the pinned Imageworks sheen NDF/BRDF with
-  bounded cosine sampling; Zeltner mode remains an explicitly bounded fallback.
+  bounded cosine sampling, or the pinned Zeltner LTC equations with matched
+  transformed-cosine sampling and PDF evaluation.
 - The pinned float, color3, and color4 `blur` overloads follow the MaterialX
   1.39.5 standard library implementation, which is currently a documented
   pass-through for box and gaussian filter types.
