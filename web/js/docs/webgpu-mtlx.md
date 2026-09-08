@@ -42,6 +42,8 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   `chiang_hair_absorption_from_color`, and `chiang_hair_roughness` preserve the
   pinned MaterialX formulas and named roughness outputs. The resulting hair
   transport remains an explicitly bounded approximation.
+- `conical_edf` preserves its authored color, normal, inner/outer angles, and
+  smooth angular falloff through surface, path, area-light, and raster emission.
 - The pinned float, color3, and color4 `blur` overloads follow the MaterialX
   1.39.5 standard library implementation, which is currently a documented
   pass-through for box and gaussian filter types.
@@ -108,6 +110,7 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 ## Not implemented
 
 Full MaterialX coverage; general BSDF/EDF/VDF closure composition/layering;
+measured IES EDF profiles and authored light shader constructors;
 MaterialX subsurface_bsdf albedo/radius conversion; hair and curves;
 arbitrary authored primvar/shading-property maps beyond the supported geometry
 aliases, UV slots, and three bounded custom geomprop channels;

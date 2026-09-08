@@ -165,7 +165,7 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
     let eta=select(etaT/etaI,m.ior,m.thinWalled!=0u); let frame=transportFrame(ctx.normal); let wo=transpose(frame)*(-p.direction.xyz);
     var emitterMIS=1.0;
     if(p.state.y>0u && p.direction.w>0.0){emitterMIS=powerHeuristic(p.direction.w,triangleLightPDF(tri,h.t,p.direction.xyz));}
-    p.radiance+=vec4f(p.beta.xyz*m.emission*m.emissionWeight*emitterMIS*emissionSidedness(materialID,outward,p.direction.xyz),0);
+    p.radiance+=vec4f(p.beta.xyz*m.emission*m.emissionWeight*emissionFactor(surface,-p.direction.xyz)*emitterMIS*emissionSidedness(materialID,outward,p.direction.xyz),0);
     let eps=max(1e-5,length(ctx.position)*2e-6);
     let light=directionalDirection();
     let lightLocal=transpose(frame)*light;
@@ -197,9 +197,10 @@ fn finishPath(index: u32, p: ptr<function,PathState>) {
         let ev=closureEval(surface.bsdf,wo,local,eta);
         let lightCtx=context(Hit(distance,b1,b2,lo),ctx.position,direction);
         var emission=getMaterial(u32(emitter.a.uv.z),lightCtx);
+        let emissionSurface=getSurface(u32(emitter.a.uv.z),lightCtx);
         if(cfg.dimensions.w==2u){emission=spectralMaterial(emission,u32(emitter.a.uv.z),p.previous.x);}
         let emitterNormal=normalize(cross(emitter.b.p.xyz-emitter.a.p.xyz,emitter.c.p.xyz-emitter.a.p.xyz));
-        emission.emission*=emissionSidedness(u32(emitter.a.uv.z),emitterNormal,direction);
+        emission.emission*=emissionFactor(emissionSurface,-direction)*emissionSidedness(u32(emitter.a.uv.z),emitterNormal,direction);
         if(pdf>0.0 && ev.w>0.0 && any(emission.emission*emission.emissionWeight>vec3f(0))) {
           let shadow=intersect(ctx.position+gn*select(-eps,eps,local.z>0.0),direction);
           if(shadow.id==lo||shadow.t>=distance-eps*2.0){p.radiance+=vec4f(p.beta.xyz*ev.xyz*abs(local.z)*emission.emission*emission.emissionWeight*(powerHeuristic(pdf,ev.w)/pdf),0);}

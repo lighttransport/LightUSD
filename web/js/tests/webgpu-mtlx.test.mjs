@@ -1011,6 +1011,15 @@ test('flake2d and flake3d expose pinned multi outputs', () => {
   const flake3={nodes:[{name:'f',category:'flake3d',type:'multioutput',outputs,inputs:{position:{type:'vector3',value:[.1,.2,.3]}}}]};
   assert.match(compileGraph(flake3,{output:{nodename:'f',output:'flakenormal'}}).body,/vec3f\(0\.1,0\.2,0\.3\)/);
 });
+test('conical EDF preserves its bounded angular emission profile', () => {
+  const doc={nodes:[
+    {name:'edf',category:'conical_edf',type:'EDF',inputs:{color:{type:'color3',value:[2,1,.5]},normal:{type:'vector3',value:[0,1,0]},inner_angle:{type:'float',value:45},outer_angle:{type:'float',value:75}}},
+    {name:'surface',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'edf'}}}
+  ],output:{nodename:'surface'}};
+  const source=compileGraph(doc,{material:true});
+  assert.match(source.body,/surfaceEmission\(/); assert.match(source.body,/cos\(radians\(max\(/);
+  assert.match(shaderSource([doc],{}),/emissionFactor\(surface,-d\)/);
+});
 test('path shading carries a bounded UV ray footprint for image mips', () => {
   const source = shaderSource(syntheticScene('ops').materials, {});
   assert.match(source, /uvScale/); assert.match(source, /tri\.b\.uv\.xy-tri\.a\.uv\.xy/); assert.match(source, /geometricNormal/); assert.match(source, /safeNormal/); assert.match(source, /pathCounters\[3\]/);

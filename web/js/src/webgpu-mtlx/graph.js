@@ -182,17 +182,25 @@ export function compileGraph(document, { output, library = {}, material = false,
         fail('TYPE',key,`expected ${type} or scalar float for ${k}`);
       };
       const binary = op => `(${same('in1')} ${op} ${scalarOrSame('in2')})`;
-      let code, closureCount = 0, hasInterior = false, interiorCategories=[];
+      let code, closureCount = 0, hasInterior = false, interiorCategories=[], emissionCone = null;
       switch (n.category) {
         case 'uniform_edf': code = x('color',[1,1,1],'color3'); break;
+        case 'conical_edf': {
+          const direction=x('normal',undefined,'vector3');
+          const inner=x('inner_angle',60,'float'), outer=x('outer_angle',0,'float');
+          code=x('color',[1,1,1],'color3');
+          emissionCone={direction,innerCos:`cos(radians(max(${inner},${outer})))`,outerCos:`cos(radians(min(${inner},${outer})))`};
+          break;
+        }
         case 'generalized_schlick_edf': code = x('base',[0,0,0],'EDF'); break;
         case 'surface': {
           const opacity = ins.opacity ? x('opacity', 1, 'float') : '1.0';
           const thin = ins.thin_walled ? `select(0u,1u,${x('thin_walled', false, 'boolean')})` : '0u';
           const bsdfValue=ins.bsdf?.value===''||!ins.bsdf ? null : input('bsdf',undefined,'BSDF');
           const bsdf=bsdfValue?.code||'emptyClosure()';hasInterior=bsdfValue?.hasInterior||false;interiorCategories=bsdfValue?.interiorCategories||[];
-          const edf=ins.edf?.value===''||!ins.edf ? 'vec3f(0)' : x('edf',undefined,'EDF');
-          code=`surfaceEmission(${bsdf},${edf},clamp(${opacity},0.0,1.0),${thin},ctx.normal)`;break;
+          const edfValue=ins.edf?.value===''||!ins.edf ? {code:'vec3f(0)'} : input('edf',undefined,'EDF');
+          const cone=edfValue.emissionCone;
+          code=`surfaceEmission(${bsdf},${edfValue.code},clamp(${opacity},0.0,1.0),${thin},ctx.normal,${cone?.direction||'ctx.normal'},${cone?.innerCos||'-1.0'},${cone?.outerCos||'-1.0'},${cone?'1u':'0u'})`;break;
         }
         case 'dielectric_bsdf': case 'conductor_bsdf': case 'oren_nayar_diffuse_bsdf': case 'burley_diffuse_bsdf': {
           if(ins.retroreflective && ![false,'false'].includes(ins.retroreflective.value))fail('UNSUPPORTED',key,'retroreflection is not implemented');
@@ -1098,7 +1106,7 @@ export function compileGraph(document, { output, library = {}, material = false,
         const id = `n${serial++}`;
         if(serial>32768)fail('LIMIT',key,'expanded graph exceeds 32768 expressions');
         lines.push(`let ${id}: ${target} = ${code.replace(/\bctx\b/g,contextName)};`);
-        result = { type, code: id, closureCount, hasInterior, interiorCategories, categories:[...dependencies] };
+        result = { type, code: id, closureCount, hasInterior, interiorCategories, categories:[...dependencies], ...(emissionCone ? { emissionCone: { direction: emissionCone.direction.replace(/\bctx\b/g, contextName), innerCos: emissionCone.innerCos.replace(/\bctx\b/g, contextName), outerCos: emissionCone.outerCos.replace(/\bctx\b/g, contextName) } } : {}) };
       }
     }
     used.add(n.category); active.delete(key); cached.set(key, result); return result;
