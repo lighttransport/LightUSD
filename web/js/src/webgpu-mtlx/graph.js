@@ -854,7 +854,7 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'gltf_colorimage': {
           if (!['outcolor', 'outa'].includes(out)) fail('OUTPUT', key, 'gltf_colorimage output must be outcolor or outa');
           const imageInputs = Object.fromEntries(Object.entries(ins).filter(([name]) => !['color', 'geomcolor'].includes(name)));
-          const imageNode = { ...n, name: `${n.name || key}_image`, category: 'gltf_image', type: 'color4', inputs: imageInputs, outputs: undefined };
+          const imageNode = { ...n, name: `${n.name || key}_image`, category: 'gltf_image', type: 'color4', inputs: imageInputs, outputs: undefined, nodedef: undefined, version: undefined };
           const nested = compileGraph({ nodes: [imageNode] }, { output: { nodename: imageNode.name }, imageDescriptors, uvIndex, geompropName });
           const prefix = `gci${serial++}_`;
           const rename = source => source.replace(/\bn\d+\b/g, match => `${prefix}${match}`);

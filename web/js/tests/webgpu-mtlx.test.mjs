@@ -459,12 +459,13 @@ test('gltf_normalmap samples the authored tangent space image', () => {
 });
 test('gltf_colorimage preserves RGB and alpha outputs', () => {
   const descriptor = { tex: { offset: 0, width: 2, height: 2, levels: 1, colorspace: 'raw' } };
-  const node = { name: 'color', category: 'gltf_colorimage', type: 'multioutput', outputs: { outcolor: { type: 'color3' }, outa: { type: 'float' } }, inputs: {
+  const node = { name: 'color', category: 'gltf_colorimage', nodedef: 'ND_gltf_colorimage', type: 'multioutput', outputs: { outcolor: { type: 'color3' }, outa: { type: 'float' } }, inputs: {
     file: { type: 'filename', value: 'tex' }, color: { type: 'color4', value: [.8, 1, 1, 1] }, geomcolor: { type: 'color4', value: [1, 1, 1, .5] }
   } };
   const doc = { nodes: [node] };
-  assert.match(compileGraph(doc, { output: { nodename: 'color', output: 'outcolor' }, imageDescriptors: descriptor }).body, /imageSample\(/);
-  assert.match(compileGraph(doc, { output: { nodename: 'color', output: 'outa' }, imageDescriptors: descriptor }).body, /\.a/);
+  const library = { definitions: { ND_gltf_colorimage: { node: 'gltf_colorimage', inputs: node.inputs, outputs: node.outputs } } };
+  assert.match(compileGraph(doc, { output: { nodename: 'color', output: 'outcolor' }, imageDescriptors: descriptor, library }).body, /imageSample\(/);
+  assert.match(compileGraph(doc, { output: { nodename: 'color', output: 'outa' }, imageDescriptors: descriptor, library }).body, /\.a/);
 });
 test('UsdUVTexture maps st/fallback/scale/bias and named channel outputs', () => {
   const doc={images:{tex:{width:2,height:2,data:[1,0,0,1],colorspace:'raw'}},nodes:[{name:'tex',category:'UsdUVTexture',type:'multioutput',outputs:{rgb:{type:'color3'},r:{type:'float'}},inputs:{file:{type:'filename',value:'tex'},st:{type:'vector2',value:[.25,.5]},fallback:{type:'color4',value:[.1,.2,.3,1]},scale:{type:'color4',value:[2,2,2,1]},bias:{type:'color4',value:[.1,0,0,0]}}}]};
