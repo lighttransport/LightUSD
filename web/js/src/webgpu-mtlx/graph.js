@@ -349,7 +349,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           if (gltfTexture) allowedInputs.push('factor', 'pivot', 'scale', 'rotate', 'offset', 'operationorder');
           if (usdTexture) allowedInputs.push('st', 'fallback', 'scale', 'bias', 'sourceColorSpace', 'wrapS', 'wrapT');
           for (const name of Object.keys(ins)) if (!allowedInputs.includes(name)) fail('UNSUPPORTED', key, `unsupported image input ${name}`);
-          for (const name of ['layer', 'framerange', 'frameoffset']) if (ins[name] && !['', '0', 0].includes(ins[name].value)) fail('UNSUPPORTED', key, `image ${name} is not implemented`);
+          for (const name of ['layer', 'framerange', 'frameoffset']) if (ins[name] && (ins[name].nodename || ins[name].nodegraph || ins[name].interfacename || !['', '0', 0].includes(ins[name].value))) fail('UNSUPPORTED', key, `image ${name} is not implemented`);
           let realScale='vec2f(1.0)';
           if (ins.realworldimagesize || ins.realworldtilesize) {
             const imageSize=ins.realworldimagesize, tileSize=ins.realworldtilesize;
