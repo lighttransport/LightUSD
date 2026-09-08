@@ -206,6 +206,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   color4 alpha; unpremultiplication clamps its divisor before WGSL selection.
 - `saturate` performs the specified luma interpolation with authored
   coefficients and preserves color4 alpha.
+- Supplemental `safepower` preserves the sign of negative bases while applying
+  the exponent to the absolute value.
 - `screen` and `difference` compositing nodes compile for scalar, vector, and
   color values using explicit component-wise arithmetic.
 - Boolean `and`, `or`, `xor`, and `not` nodes now compile with strict boolean

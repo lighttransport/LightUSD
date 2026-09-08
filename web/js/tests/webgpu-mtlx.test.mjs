@@ -483,6 +483,10 @@ test('common trigonometric and angle-unit nodes map to WGSL math', () => {
   ]};
   const source=compileGraph(doc); assert.match(source.body,/0\.017453292519943295/); assert.match(source.body,/log\(n0\)\*0\.4342944819032518/); assert.match(source.body,/exp2\(n0\)/);
 });
+test('safepower preserves the sign of negative bases', () => {
+  const source=compileGraph({nodes:[{name:'p',category:'safepower',type:'float',inputs:{in1:{type:'float',value:-2},in2:{type:'float',value:3}}}]});
+  assert.match(source.body,/sign\(-2\.0\)\*pow\(abs\(-2\.0\),3\.0\)/);
+});
 test('ACEScg conversion node uses the pinned MaterialX matrix', () => {
   const doc={nodes:[{name:'aces',category:'acescg_to_lin_rec709',type:'color3',inputs:{in:{type:'color3',value:[1,0,0]}}}]};
   const source=compileGraph(doc); assert.match(source.body,/mxAcescgToLinRec709/); assert.match(contextWGSL,/1\.705050992658/);
