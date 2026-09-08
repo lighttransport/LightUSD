@@ -814,11 +814,11 @@ attenuation to transmitted paths, including spectral conversion. The synthetic
 `transmission-depth` scene is hardware-tested; full distance-aware random-walk
 volumes remain a separate model.
 
-`subsurface_bsdf` now preserves all three authored radius channels in the
-bounded same-surface-point profile, propagates an authored normal to the
-enclosing surface frame, and rejects authored anisotropy or tangent controls
-that it cannot apply. This remains an approximation;
-it does not perform cross-surface random-walk BSSRDF transport.
+`subsurface_bsdf` now preserves all three authored radius channels and bounded
+anisotropy in the same-surface-point profile, propagates an authored normal to
+the enclosing surface frame, and rejects tangent controls that it cannot
+apply. This remains an approximation; it does not perform cross-surface
+random-walk BSSRDF transport.
 
 `generalized_schlick_bsdf` now preserves authored color-at-normal, color-at-
 82, color-at-grazing, roughness and exponent controls in a bounded microfacet
