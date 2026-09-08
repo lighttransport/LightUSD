@@ -659,6 +659,10 @@ bounded profile and are clamped to the same finite range as direct
 `subsurface_bsdf` anisotropy. This preserves the authored directional bias;
 true anisotropic random-walk BSSRDF transport remains future work.
 
+OpenPBR `subsurface_scale` now multiplies the authored radius channels before
+they reach the bounded profile. Negative scales are clamped to zero and the
+native lobe keeps its finite minimum radius.
+
 The profile uses a bounded rational falloff to keep WGSL evaluation finite and
 portable across realtime and path pipelines; it is not a measured diffusion
 profile.

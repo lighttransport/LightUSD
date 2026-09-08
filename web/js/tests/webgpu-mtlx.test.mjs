@@ -95,9 +95,11 @@ test('standard and OpenPBR terminal aliases preserve authored graph inputs', () 
     specular_weight: { type: 'float', value: 1 }, specular_ior: { type: 'float', value: 1.5 },
     specular_roughness_anisotropy: { type: 'float', value: 0 }, emission_luminance: { type: 'float', value: 0 },
     geometry_opacity: { type: 'float', value: 1 }, subsurface_weight: { type: 'float', value: .4 },
+    subsurface_radius: { type: 'color3', value: [1, .5, .25] }, subsurface_scale: { type: 'float', value: 2 },
     subsurface_anisotropy: { type: 'float', value: .35 }
   } }] };
-  assert.match(compileGraph(open, { material: true }).body, /nativeSubsurface\(.*0\.35/);
+  const openBody = compileGraph(open, { material: true }).body;
+  assert.match(openBody, /nativeSubsurface\(.*\*max\(0\.0,2\.0\).*0\.35/);
   const standardSubsurface = structuredClone(standard);
   standardSubsurface.nodes[0].inputs.subsurface = { type: 'float', value: .4 };
   standardSubsurface.nodes[0].inputs.subsurface_anisotropy = { type: 'float', value: -.25 };
