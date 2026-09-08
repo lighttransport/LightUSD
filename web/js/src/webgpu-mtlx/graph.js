@@ -688,6 +688,10 @@ export function compileGraph(document, { output, library = {}, material = false,
             if(n.category!=='multiply'||!['float','color3'].includes(b.type))fail('TYPE',key,'BSDF weighting requires float or color3 multiplication');
             code=`closureScale(${a.code},${b.type==='float'?`vec3f(${b.code})`:b.code})`;closureCount=a.closureCount||0;hasInterior=a.hasInterior||false;interiorCategories=a.interiorCategories||[];break;
           }
+          if(type==='VDF') {
+            if(n.category!=='multiply'||!['float','color3'].includes(b.type))fail('TYPE',key,'VDF weighting requires float or color3 multiplication');
+            code=`mediumScale(${a.code},${b.type==='float'?`vec3f(${b.code})`:b.code})`;break;
+          }
           if (b.type !== type && b.type !== 'float' && !(type==='EDF' && b.type==='color3')) fail('TYPE', key, 'invalid scalar/vector arithmetic');
           const rhs=b.type==='float'&&widths[type]>=2&&widths[type]<=4?`${types[type]}(${b.code})`:b.code;
           code = `(${a.code} ${n.category === 'multiply' ? '*' : '/'} ${rhs})`; break;
@@ -1438,6 +1442,7 @@ fn mxBlackbody(k:f32)->vec3f {
 struct Lobe { base: vec3f, metal: f32, roughness: f32, ior: f32, transmission: f32, emission: vec3f, emissionWeight: f32, anisotropy: f32, transmissionColor: vec3f, kind:u32, weight:f32, alpha:vec2f, complexIOR:vec3f, extinction:vec3f, scatterMode:u32, thinWalled:u32, thinFilmThickness:f32, thinFilmIOR:f32, transmissionDepth:f32, transmissionScatter:vec3f, schlickColor82:vec3f, schlickColor90:vec3f, schlickExponent:f32, subsurfaceRadius:vec3f, specularColor:vec3f, specularColorEnabled:u32 }
 struct Medium { absorption: vec3f, scattering: vec3f, anisotropy: f32, emission: vec3f }
 fn mediumWithEmission(input:Medium,emission:vec3f)->Medium {var m=input;m.emission=emission;return m;}
+fn mediumScale(input:Medium,scale:vec3f)->Medium {var m=input;m.absorption*=scale;m.scattering*=scale;m.emission*=scale;return m;}
 fn mediumBlend(a:Medium,b:Medium,wa:f32,wb:f32)->Medium {var m:Medium;let aw=max(0.0,wa);let bw=max(0.0,wb);m.absorption=aw*a.absorption+bw*b.absorption;m.scattering=aw*a.scattering+bw*b.scattering;let aScatter=dot(a.scattering,vec3f(1.0))*aw;let bScatter=dot(b.scattering,vec3f(1.0))*bw;m.anisotropy=select(0.0,(a.anisotropy*aScatter+b.anisotropy*bScatter)/max(1e-6,aScatter+bScatter),aScatter+bScatter>0.0);m.emission=aw*a.emission+bw*b.emission;return m;}
 fn makeMaterial(base:vec3f,metal:f32,rough:f32,ior:f32,trans:f32,emission:vec3f,emissionWeight:f32,anisotropy:f32,tint:vec3f,thinWalled:u32,thinFilmThickness:f32,thinFilmIOR:f32)->Lobe {
  return Lobe(base,metal,rough,ior,trans,emission,emissionWeight,anisotropy,tint,0u,1.0,vec2f(rough*rough),vec3f(ior),vec3f(0),3u,thinWalled,thinFilmThickness,thinFilmIOR,0.0,vec3f(0),vec3f(1),vec3f(1),5.0,vec3f(1),vec3f(0),0u);
