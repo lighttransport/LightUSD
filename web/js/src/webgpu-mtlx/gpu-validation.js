@@ -71,16 +71,29 @@ export async function validateValueKernels(device) {
     ]});
     cases.push({category:'bump constant',component,type:'vector3',expected:[0,0,1][component],nodes:[
       {name:'b',category:'bump',type:'vector3',inputs:{height:value(.7)}}]});
-    cases.push({category:'bump procedural',component,type:'vector3',expected:[-Math.SQRT1_2,0,Math.SQRT1_2][component],nodes:[
+    cases.push({category:'bump procedural',component,type:'vector3',expected:[-1/Math.sqrt(257),0,16/Math.sqrt(257)][component],nodes:[
       {name:'uv',category:'texcoord',type:'vector2'},
       {name:'height',category:'extract',type:'float',inputs:{in:{nodename:'uv'},index:{type:'integer',value:0}}},
       {name:'b',category:'bump',type:'vector3',inputs:{height:{nodename:'height'}}}]});
   }
+  for(const [roughness,anisotropy,expected] of [
+    [0,0,[1e-8,1e-8]],[-.5,0,[.25,.25]],[2,0,[1,1]],
+    [.5,-1,[.25,.25]],[.5,.75,[.5,.125]],[.5,1,[1,.25*Math.sqrt(.02)]],
+  ])for(let component=0;component<2;component++){
+    cases.push({category:'roughness_anisotropy',type:'vector2',component,inputs:{roughness:value(roughness),anisotropy:value(anisotropy)},expected:expected[component],absoluteTolerance:1e-10});
+    cases.push({category:'glossiness_anisotropy',type:'vector2',component,inputs:{glossiness:value(1-roughness),anisotropy:value(anisotropy)},expected:expected[component],absoluteTolerance:1e-10});
+  }
+  for(const [edge,ior,extinction] of [[0,3,0],[.5,1.8,Math.sqrt(1.76)],[1,.6,.8],[2,-1.8,0],[-1,5.4,0]]){
+    for(const [output,expected] of [['ior',ior],['extinction',extinction]])cases.push({category:`artistic_ior ${output} edge ${edge}`,type:'color3',component:0,expected,
+      nodes:[{name:'metal',category:'artistic_ior',type:'multioutput',outputs:{ior:{type:'color3'},extinction:{type:'color3'}},inputs:{reflectivity:{type:'color3',value:[.25,.25,.25]},edge_color:{type:'color3',value:[edge,edge,edge]}}}],output:{nodename:'metal',output}});
+  }
+  for(const input of [[0,0,0],[2,-3,4]])for(let component=0;component<3;component++)cases.push({category:'transformnormal',type:'vector3',component,inputs:{in:{type:'vector3',value:input}},expected:input[component]});
+  cases.push({category:'transformnormal',type:'vector3',component:2,inputs:{},expected:1});
   const bodies = cases.map((c, i) => {
     // Graphs below exercise re-evaluation at shifted contexts, not only the
     // normal reconstruction helper.
     if(c.expression)return `result[${i}] = ${c.expression};`;
-    const g = compileGraph({ nodes: c.nodes || [{ name: 'test', type: c.type||'float', category: c.category, inputs: c.inputs }] });
+    const g = compileGraph({ nodes: c.nodes || [{ name: 'test', type: c.type||'float', category: c.category, inputs: c.inputs }] },{output:c.output});
     return `{ ${g.body}\nresult[${i}] = ${g.expression}${c.component===undefined?'':`[${c.component}]`}; }`;
   });
   const module = device.createShaderModule({ code: `${contextWGSL}\n@group(0) @binding(0) var<storage,read_write> result: array<f32>; @compute @workgroup_size(1) fn main() { let ctx=ShadingContext(vec3f(0),vec3f(0,0,1),vec3f(1,0,0),vec3f(0,1,0),vec2f(0),0,0,vec2f(0),vec2f(0),vec3f(1,0,0),vec3f(0,1,0)); ${bodies.join('\n')} }` });
@@ -93,7 +106,7 @@ export async function validateValueKernels(device) {
     const group = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: output } }] });
     const encoder = device.createCommandEncoder(); const pass = encoder.beginComputePass(); pass.setPipeline(pipeline); pass.setBindGroup(0, group); pass.dispatchWorkgroups(1); pass.end(); encoder.copyBufferToBuffer(output, 0, readback, 0, output.size); device.queue.submit([encoder.finish()]);
     await readback.mapAsync(GPUMapMode.READ); const actual = new Float32Array(readback.getMappedRange());
-    const results = cases.map((c, i) => ({ category: c.category, expected: c.expected, actual: actual[i], pass: Number.isFinite(actual[i]) && Math.abs(actual[i] - c.expected) <= 1e-5 + 1e-4 * Math.abs(c.expected) }));
+    const results = cases.map((c, i) => ({ category: c.category, expected: c.expected, actual: actual[i], pass: Number.isFinite(actual[i]) && Math.abs(actual[i] - c.expected) <= (c.absoluteTolerance??1e-5) + 1e-4 * Math.abs(c.expected) }));
     if (results.some(r => !r.pass)) throw new Error(`GPU numeric mismatch: ${JSON.stringify(results.filter(r => !r.pass))}`);
     // Exercise actual XML parsing, a connected graph and entity rejection in Chrome.
     const doc = parseMaterialX('<materialx version="1.39"><constant name="a" type="float"><input name="value" type="float" value="2"/></constant><add name="b" type="float"><input name="in1" type="float" nodename="a"/><input name="in2" type="float" value="3"/></add></materialx>');

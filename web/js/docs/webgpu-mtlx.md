@@ -43,7 +43,9 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
   retains HDR RGB values. This is chromaticity with normalized Y, not spectral
   Planck radiance. `plus`/`minus` use `fg`, `bg`, and `mix` compositing ports.
   `bump`/`bump3` evaluate connected height graphs at four central-difference
-  offsets, using world/UV derivatives for the surface gradient. Constant heights
+  offsets. The direct emitter matches the pinned `NG_bump_vector3` composition
+  (heighttonormal followed by normalmap), including its UV-space 1/16 scale.
+  World derivatives offset position-dependent height graphs. Constant heights
   leave normals unchanged. `heighttonormal` separately emits encoded tangent-space
   normals with the pinned library's 1/16 scale and authored texcoord Jacobian.
 - `colorcorrect` applies hue, luminance saturation, signed gamma, lift, gain,
@@ -53,6 +55,9 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 - PBR utility nodes `artistic_ior`, `roughness_anisotropy`, and
   `glossiness_anisotropy` preserve the pinned MaterialX conversion formulas,
   including multi-output artistic conductor IOR/extinction results.
+  Numeric checks cover the square-before-clamp rule and 1e-8 roughness floor,
+  anisotropy bounds, and unclamped edge-color extrapolation. Identity normal
+  transforms preserve vector magnitude, including zero; they do not normalize.
 - Transform aliases `transformnormal`, `transformpoint`, and `transformvector`
   accept world-space identity aliases and reject unsupported non-world
   conversions; `trianglewave` has the library's period 1 and peak 0.5.
@@ -593,7 +598,10 @@ The synthetic bump scene uses a varying sinusoidal height instead of a constant.
 `--bump-only` verifies six analytic image chains (bump and
 image -> heighttonormal -> normalmap, each with three UV orientations) in both
 physical and raster modes. Chrome 152/NVIDIA Ampere passed these checks, plus
-123 numeric cases; focused Node tests pass 85/85.
+164 numeric cases and ten pinned-library cases; focused Node tests pass 85/85.
+The latest comprehensive Chrome run failed with a 120-second physical-render
+timeout and no reported GPU validation error. Focused passes do not supersede
+that failure or establish reference readiness.
 
 The Chrome harness accepts `--reference-samples=N` for bounded focused
 diagnostics; the default and pre-merge matrix remain 32 spp.

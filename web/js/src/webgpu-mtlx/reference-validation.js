@@ -76,7 +76,7 @@ export async function validateSurfaceFrameScenes(renderer, { bump = false, heigh
     {name:'s',category:'surface',type:'surfaceshader',inputs:{edf:{nodename:'e'}}},
   ]};
   if(bump){
-    material.nodes[0]={name:'n',category:'bump',type:'vector3',inputs:{height:{nodename:'height'}}};
+    material.nodes[0]={name:'n',category:'bump',type:'vector3',inputs:{height:{nodename:'height'},scale:{type:'float',value:8}}};
     material.nodes.unshift({name:'height',category:'image',type:'float',colorspace:'raw',inputs:{file:{type:'filename',value:'ramp'}}});
     material.images={ramp:{width:2,height:2,colorspace:'raw',data:new Float32Array([.25,0,0,1,.75,0,0,1,.25,0,0,1,.75,0,0,1])}};
     if(heightToNormal){

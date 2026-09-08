@@ -22,6 +22,11 @@ textured bump/height-to-normal scenes in physical and raster modes, including
 rotated/mirrored UVs. The numeric gate checks constant/procedural heights and
 height-to-normal scaling, transformed texcoords, encoding and degenerate UVs.
 
+`--library-only` executes ten cases through the pinned stdlib/cmlib/pbrlib
+definitions, including graph-expanded bump and glossiness, default geometry
+bindings, and both artistic IOR outputs. It complements the direct emitters
+tested by `--numeric-only`.
+
 The fresh WebGPU MaterialX baseline has a focused Windows/Chrome hardware gate:
 `node tests/webgpu-mtlx-chrome.mjs --hardware --shaderball --performance`.
 Use `--authored-lights` with `--shaderball` for the authored RectLight path-tracing

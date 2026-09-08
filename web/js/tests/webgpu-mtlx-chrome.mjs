@@ -22,7 +22,7 @@ try {
   page = await browser.newPage(); await page.setViewport({ width: 1100, height: 700 });
   page.on('console',msg=>{browserLog.push(msg.text());if(browserLog.length>30)browserLog.shift();});
   const errors = []; page.on('pageerror', e => errors.push(e.message));
-  if (process.argv.includes('--numeric-only') || process.argv.includes('--opacity-only') || process.argv.includes('--frames-only') || process.argv.includes('--bump-only')) {
+  if (process.argv.includes('--numeric-only') || process.argv.includes('--library-only') || process.argv.includes('--opacity-only') || process.argv.includes('--frames-only') || process.argv.includes('--bump-only')) {
     // Avoid renderer pipeline compilation: isolate graph/WGSL numeric failures.
     const numericURL = `http://127.0.0.1:${port}/__numeric_validation__.html`;
     await page.setRequestInterception(true);
@@ -31,7 +31,7 @@ try {
       else request.continue();
     });
     await page.goto(numericURL, { waitUntil: 'domcontentloaded' });
-    const numericReport = await page.evaluate(async renderValidation => {
+    const numericReport = await page.evaluate(async ({renderValidation,libraryOnly}) => {
       if (renderValidation) {
         const { createRenderer } = await import('/src/webgpu-mtlx/renderer.js');
         const { validateOpacityScenes, validateSurfaceFrameScenes } = await import('/src/webgpu-mtlx/reference-validation.js');
@@ -51,12 +51,13 @@ try {
       device.addEventListener('uncapturederror', e => gpuErrors.push(e.error.message));
       try {
         const { validateValueKernels } = await import('/src/webgpu-mtlx/gpu-validation.js');
-        const numeric = await validateValueKernels(device);
+        const numeric = libraryOnly?[]:await validateValueKernels(device);
+        const libraryGraphs = libraryOnly?await (await import('/src/webgpu-mtlx/library-validation.js')).validateLibraryGraphs(device):[];
         await device.queue.onSubmittedWorkDone();
         if (gpuErrors.length) throw new Error(gpuErrors.join('\n'));
-        return { numeric, adapter: { vendor: adapter.info.vendor, architecture: adapter.info.architecture, isFallbackAdapter: adapter.info.isFallbackAdapter } };
+        return { numeric, libraryGraphs, adapter: { vendor: adapter.info.vendor, architecture: adapter.info.architecture, isFallbackAdapter: adapter.info.isFallbackAdapter } };
       } finally { device.destroy(); }
-    }, process.argv.includes('--bump-only')?'bump':process.argv.includes('--frames-only')?'frames':process.argv.includes('--opacity-only')?'opacity':null);
+    }, {renderValidation:process.argv.includes('--bump-only')?'bump':process.argv.includes('--frames-only')?'frames':process.argv.includes('--opacity-only')?'opacity':null,libraryOnly:process.argv.includes('--library-only')});
     if (hardware) assert.equal(numericReport.adapter.isFallbackAdapter, false);
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ browser: await browser.version(), ...numericReport }, null, 2));
@@ -70,7 +71,14 @@ try {
     const state = window.__webgpuMtlx, r = state.renderer;
     const renderTimeout = Number(globalThis.__webgpuMtlxRenderTimeout || 120000);
     const renderStep = r.renderStep.bind(r);
-    r.renderStep = (...args) => Promise.race([renderStep(...args), new Promise((_, reject) => setTimeout(() => reject(new Error(`renderStep timeout after ${renderTimeout}ms`)), renderTimeout))]);
+    r.renderStep = async (...args) => {
+      let timer;
+      try {
+        return await Promise.race([renderStep(...args),new Promise((_,reject)=>{
+          timer=setTimeout(()=>reject(new Error(`renderStep timeout after ${renderTimeout}ms: ${JSON.stringify({mode:r.mode,samples:r.samples,triangles:r.scene?.triangleCount,physicalReady:!!r.physical,physicalPending:!!r.physicalPending,errors:r.errors})}`)),renderTimeout);
+        })]);
+      } finally {clearTimeout(timer);}
+    };
     const {validateResourceLoading}=await import('/src/webgpu-mtlx/resource-validation.js');
     const resourceLoading=await validateResourceLoading();
     const {validateLibraryGraphs}=await import('/src/webgpu-mtlx/library-validation.js');const libraryGraphs=await validateLibraryGraphs(r.device);

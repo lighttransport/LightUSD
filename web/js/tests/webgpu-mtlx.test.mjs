@@ -694,7 +694,7 @@ test('bump derivatives reevaluate shared height graphs in isolated contexts', ()
   const result=compileGraph({nodes});
   assert.equal((result.body.match(/mxOffsetContext\(/g)||[]).length,4);
   for(const m of result.body.matchAll(/let (bumpCtx\d+)=/g))assert.ok(result.body.includes(`${m[1]}.uv`));
-  assert.match(result.body,/ctx.dpdu,ctx.dpdv/);
+  assert.match(result.body,/ctx.tangent,ctx.bitangent/);
   const encoded=compileGraph({nodes:[...nodes.slice(0,2),{name:'encoded',category:'heighttonormal',type:'vector3',inputs:{in:{nodename:'h'}}}]});
   assert.match(encoded.body,/mxHeightToNormal/);
   assert.doesNotMatch(encoded.body,/mxBumpGradient/);
@@ -731,7 +731,8 @@ test('stdlib PBR conversion nodes preserve artistic IOR and anisotropic roughnes
 });
 test('stdlib transform aliases and trianglewave keep space semantics explicit', () => {
   const normal=compileGraph({nodes:[{name:'n',category:'transformnormal',type:'vector3',inputs:{in:{type:'vector3',value:[0,0,1]},fromspace:{type:'string',value:'world'},tospace:{type:'string',value:'world'}}}]});
-  assert.match(normal.body,/safeNormal/);
+  assert.match(normal.body,/vec3f\(0\.0,0\.0,1\.0\)/);
+  assert.doesNotMatch(normal.body,/safeNormal|normalize/);
   const point=compileGraph({nodes:[{name:'p',category:'transformpoint',type:'vector3',inputs:{in:{type:'vector3',value:[1,2,3]},fromspace:{type:'string',value:''},tospace:{type:'string',value:'world'}}}]});
   assert.match(point.body,/vec3f\(1\.0,2\.0,3\.0\)/);
   assert.throws(()=>compileGraph({nodes:[{name:'p',category:'transformpoint',type:'vector3',inputs:{fromspace:{type:'string',value:'object'},tospace:{type:'string',value:'world'}}}]}),/non-world/);

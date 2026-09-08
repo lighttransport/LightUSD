@@ -546,14 +546,14 @@ export function compileGraph(document, { output, library = {}, material = false,
         case 'artistic_ior': {
           if (type !== 'color3' || !['ior','extinction'].includes(out)) fail('TYPE', key, 'artistic_ior requires a color3 ior/extinction output');
           const reflectivity=`clamp(${x('reflectivity',[.944,.776,.373],'color3')},vec3f(0.0),vec3f(.99))`, edge=x('edge_color',[.998,.981,.751],'color3');
-          const root=`sqrt(${reflectivity})`, nmin=`((vec3f(1.0)-${reflectivity})/(vec3f(1.0)+${reflectivity}))`, nmax=`((vec3f(1.0)+${root})/(vec3f(1.0)-${root}))`, ior=`mix(${nmax},${nmin},clamp(${edge},vec3f(0.0),vec3f(1.0)))`;
+          const root=`sqrt(${reflectivity})`, nmin=`((vec3f(1.0)-${reflectivity})/(vec3f(1.0)+${reflectivity}))`, nmax=`((vec3f(1.0)+${root})/(vec3f(1.0)-${root}))`, ior=`mix(${nmax},${nmin},${edge})`;
           const np1=`(${ior}+vec3f(1.0))`, nm1=`(${ior}-vec3f(1.0))`, k2=`max((${np1}*${np1}*${reflectivity}-${nm1}*${nm1})/max(vec3f(1.0)-${reflectivity},vec3f(1e-6)),vec3f(0.0))`;
           code=out==='ior'?ior:`sqrt(${k2})`; break;
         }
         case 'roughness_anisotropy': case 'glossiness_anisotropy': {
           if (type !== 'vector2') fail('TYPE', key, `${n.category} output must be vector2`);
           const source=n.category==='glossiness_anisotropy'?`(1.0-${x('glossiness',1,'float')})`:x('roughness',0,'float'), anisotropy=x('anisotropy',0,'float');
-          const roughness=`clamp(${source},0.0,1.0)`, squared=`clamp(${roughness}*${roughness},1e-6,1.0)`, aspect=`sqrt(1.0-clamp(${anisotropy},0.0,.98))`;
+          const squared=`clamp(${source}*${source},1e-8,1.0)`, aspect=`sqrt(1.0-clamp(${anisotropy},0.0,.98))`;
           code=`select(vec2f(${squared}),vec2f(min(${squared}/max(${aspect},1e-6),1.0),${squared}*${aspect}),${anisotropy}>0.0)`; break;
         }
         case 'saturate': {
@@ -656,8 +656,7 @@ export function compileGraph(document, { output, library = {}, material = false,
           if (!known.has(from)||!known.has(to)) fail('GEOMETRY', key, `${n.category} has an unsupported space`);
           const worldAlias=(from===''||from==='world')&&(to===''||to==='world');
           if (from!==to && !worldAlias) fail('GEOMETRY', key, `${n.category} cannot transform between non-world spaces`);
-          const value=x('in',[0,0,0],'vector3');
-          if (n.category==='transformnormal') code=`safeNormal(${value},ctx.normal)`; else code=value;
+          code=x('in',n.category==='transformnormal'?[0,0,1]:[0,0,0],'vector3');
           break;
         }
         case 'trianglewave': {
@@ -692,8 +691,8 @@ export function compileGraph(document, { output, library = {}, material = false,
           if(encoded){
             code=`mxHeightToNormal(${gradient},(${coordinates[0]}-${coordinates[1]})/(2.0*${step}),(${coordinates[2]}-${coordinates[3]})/(2.0*${step}),${scale})`;break;
           }
-          const du=ins.tangent&&!ins.tangent.defaultgeomprop?`safeNormal(${x('tangent',undefined,'vector3')},ctx.tangent)*length(ctx.dpdu)`:'ctx.dpdu';
-          const dv=ins.bitangent&&!ins.bitangent.defaultgeomprop?`safeNormal(${x('bitangent',undefined,'vector3')},ctx.bitangent)*length(ctx.dpdv)`:'ctx.dpdv';
+          const du=ins.tangent?x('tangent',undefined,'vector3'):'ctx.tangent';
+          const dv=ins.bitangent?x('bitangent',undefined,'vector3'):'ctx.bitangent';
           code=`mxBumpGradient(${gradient},${scale},${normal},${du},${dv})`;break;
         }
         case 'open_pbr_anisotropy': {
@@ -836,9 +835,8 @@ fn mxOffsetContext(ctx:ShadingContext,delta:vec2f)->ShadingContext {
   var shifted=ctx;shifted.uv+=delta;shifted.position+=ctx.dpdu*delta.x+ctx.dpdv*delta.y;return shifted;
 }
 fn mxBumpGradient(gradient:vec2f,scale:f32,normal:vec3f,du:vec3f,dv:vec3f)->vec3f {
-  let n=safeNormal(normal,vec3f(0,0,1));let ru=cross(dv,n);let rv=cross(n,du);let det=dot(du,ru);
-  if(abs(det)<1e-20){return n;}
-  return safeNormal(n-scale*(ru*gradient.x+rv*gradient.y)/det,n);
+  // Match NG_bump_vector3: heighttonormal at default scale, then normalmap.
+  return mxNormalmap(mxHeightToNormal(gradient,vec2f(1,0),vec2f(0,1),1.0),vec2f(scale),normal,du,dv);
 }
 fn mxSurfaceDerivatives(n:vec3f,p1:vec3f,p2:vec3f,uv1:vec2f,uv2:vec2f)->mat2x3f {
   let det=uv1.x*uv2.y-uv1.y*uv2.x;
