@@ -129,11 +129,29 @@ export function materialXFromUSD(snapshot, materialPath, { library = {}, resolve
     }
     fail(path, 'volume terminal must connect to a volume constructor');
   }
+  function materialParts(path) {
+    const { prim, name, property: p } = split(path);
+    if (p.timeSampled) fail(path, 'time-sampled material terminals are not yet evaluated');
+    if (p.connections?.length === 1) return materialParts(p.connections[0]);
+    if (prim.type === 'Shader' && name.startsWith('outputs:')) {
+      const node = shader(prim), def = definition(node.nodedef);
+      if (def.node === 'surfacematerial') {
+        const back = node.inputs.backsurfaceshader;
+        if (back && (back.nodename || back.nodegraph || back.interfacename || back.value !== '')) fail(`${prim.path}.inputs:backsurfaceshader`, 'back surface shaders are not implemented');
+        if (!node.inputs.surfaceshader) fail(`${prim.path}.inputs:surfaceshader`, 'surface material requires a surface shader');
+        return { surface: node.inputs.surfaceshader, displacement: node.inputs.displacementshader };
+      }
+      if (def.node === 'volumematerial') fail(path, 'volume-only material cannot provide a surface terminal');
+      return { surface: port(path, 'surfaceshader') };
+    }
+    fail(path, 'material terminal must connect to a shader output');
+  }
   const terminal = own(material.properties, 'outputs:mtlx:surface') ? 'outputs:mtlx:surface' : own(material.properties, 'outputs:surface') ? 'outputs:surface' : null;
   if (!terminal) fail(materialPath, 'missing MaterialX surface terminal');
-  const output = port(`${materialPath}.${terminal}`, 'surfaceshader');
+  const parts = materialParts(`${materialPath}.${terminal}`);
+  const output = parts.surface;
   const displacementTerminal = own(material.properties, 'outputs:mtlx:displacement') ? 'outputs:mtlx:displacement' : own(material.properties, 'outputs:displacement') ? 'outputs:displacement' : null;
-  const displacementOutput = displacementTerminal ? port(`${materialPath}.${displacementTerminal}`, 'displacementshader') : undefined;
+  const displacementOutput = displacementTerminal ? port(`${materialPath}.${displacementTerminal}`, 'displacementshader') : parts.displacement;
   const volumeTerminal = own(material.properties, 'outputs:mtlx:volume') ? 'outputs:mtlx:volume' : own(material.properties, 'outputs:volume') ? 'outputs:volume' : null;
   const mediumOutput = volumeTerminal ? volumeVdf(`${materialPath}.${volumeTerminal}`) : undefined;
   return { version: '1.39', nodes, output, definitions, graphs: library.graphs || {},
