@@ -810,6 +810,10 @@ dielectric coat lobe (`coat`, `coat_weight`, color, roughness and IOR aliases).
 The synthetic `coat` scene is hardware-tested; exact layered energy
 compensation and multiple-scattering coat transport remain future work.
 
+Standard Surface `base` now scales the authored `base_color` contribution;
+`base=0` therefore removes the diffuse base while preserving the other authored
+lobes.
+
 Standard Surface `sheen` and OpenPBR `fuzz` controls now compile to the same
 bounded Imageworks sheen lobe used by direct `sheen_bsdf`, with authored color
 and weight aliases. The synthetic `sheen` scene is hardware-tested; exact
