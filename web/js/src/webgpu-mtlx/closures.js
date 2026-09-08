@@ -3,7 +3,7 @@
 export const MAX_CLOSURE_LOBES = 16;
 export const MAX_CLOSURE_NODES = 32;
 export const closureTypesWGSL = /* wgsl */`
-struct ClosureNode { kind:u32, aKind:u32, a:u32, aCount:u32, bKind:u32, b:u32, bCount:u32, mix:f32 }
+struct ClosureNode { kind:u32, aKind:u32, a:u32, aStart:u32, aCount:u32, bKind:u32, b:u32, bStart:u32, bCount:u32, mix:f32 }
 struct Closure { lobes:array<Lobe,16>, scales:array<vec3f,16>, count:u32, nodes:array<ClosureNode,32>, nodeCount:u32, rootKind:u32, root:u32, interior:Medium, hasInterior:u32 }
 struct Material { bsdf:Closure, emission:vec3f, opacity:f32, normal:vec3f, tangent:vec3f, bitangent:vec3f, emissionDirection:vec3f, emissionInnerCos:f32, emissionOuterCos:f32, emissionColor0:vec3f, emissionColor90:vec3f, emissionExponent:f32, emissionCone:u32, emissionSchlick:u32, emissionProfile:u32 }
 fn closureImportance(c:Closure,index:u32)->f32 {
@@ -13,11 +13,11 @@ fn closureImportance(c:Closure,index:u32)->f32 {
 fn emptyClosure()->Closure {var c:Closure;c.rootKind=0u;c.root=0u;return c;}
 fn closureLeaf(lobe:Lobe)->Closure {var c:Closure;c.lobes[0]=lobe;c.scales[0]=vec3f(1);c.count=1u;c.rootKind=0u;c.root=0u;return c;}
 fn closureScale(input:Closure,scale:vec3f)->Closure {var c=input;for(var i=0u;i<c.count;i++){c.scales[i]*=scale;}return c;}
-fn closureCopyNodes(src:Closure,offset:u32,lobeOffset:u32,layerOffset:u32,dst:ptr<function,Closure>){for(var i=0u;i<src.nodeCount;i++){var n=src.nodes[i];if(n.aKind==0u){n.a+=lobeOffset;}else{n.a+=layerOffset;}if(n.bKind==0u){n.b+=lobeOffset;}else{n.b+=layerOffset;}(*dst).nodes[offset+i]=n;}}
+fn closureCopyNodes(src:Closure,offset:u32,lobeOffset:u32,layerOffset:u32,dst:ptr<function,Closure>){for(var i=0u;i<src.nodeCount;i++){var n=src.nodes[i];if(n.aKind==0u){n.a+=lobeOffset;}else{n.a+=layerOffset;}n.aStart+=lobeOffset;if(n.bKind==0u){n.b+=lobeOffset;}else{n.b+=layerOffset;}n.bStart+=lobeOffset;(*dst).nodes[offset+i]=n;}}
 fn closureRootKind(c:Closure)->u32 {return c.rootKind;}
 fn closureRootIndex(c:Closure)->u32 {return c.root;}
 fn closureRootCount(c:Closure)->u32 {return select(c.count,0u,c.rootKind!=0u);}
-fn closureCombine(a:Closure,b:Closure,kind:u32,mix:f32)->Closure {var c=a;let nodeOffset=c.nodeCount;let lobeOffset=c.count;for(var i=0u;i<b.count;i++){c.lobes[c.count+i]=b.lobes[i];c.scales[c.count+i]=b.scales[i];}c.count+=b.count;closureCopyNodes(b,nodeOffset,lobeOffset,nodeOffset,&c);c.nodeCount+=b.nodeCount;let node=c.nodeCount;c.nodes[node]=ClosureNode(kind,a.rootKind,a.root,closureRootCount(a),b.rootKind,b.root+b.rootKind*nodeOffset,closureRootCount(b),mix);if(b.rootKind==0u){c.nodes[node].b=b.root+lobeOffset;}c.nodeCount++;c.rootKind=1u;c.root=node;return c;}
+fn closureCombine(a:Closure,b:Closure,kind:u32,mix:f32)->Closure {var c=a;let nodeOffset=c.nodeCount;let lobeOffset=c.count;for(var i=0u;i<b.count;i++){c.lobes[c.count+i]=b.lobes[i];c.scales[c.count+i]=b.scales[i];}c.count+=b.count;closureCopyNodes(b,nodeOffset,lobeOffset,nodeOffset,&c);c.nodeCount+=b.nodeCount;let node=c.nodeCount;c.nodes[node]=ClosureNode(kind,a.rootKind,a.root,a.rootKind*0u,a.count,b.rootKind,b.root+b.rootKind*nodeOffset,lobeOffset,b.count,mix);if(b.rootKind==0u){c.nodes[node].b=b.root+lobeOffset;}c.nodeCount++;c.rootKind=1u;c.root=node;return c;}
 fn closureAdd(a:Closure,b:Closure)->Closure {return closureCombine(a,b,1u,0.0);}
 fn closureAddPreservingInterior(a:Closure,b:Closure)->Closure {var c=closureAdd(a,b);if(a.hasInterior!=0u){c.interior=a.interior;c.hasInterior=1u;}else if(b.hasInterior!=0u){c.interior=b.interior;c.hasInterior=1u;}return c;}
 fn closureMix(bg:Closure,fg:Closure,weight:f32)->Closure {return closureCombine(closureScale(bg,vec3f(1.0-weight)),closureScale(fg,vec3f(weight)),2u,clamp(weight,0.0,1.0));}
@@ -40,6 +40,7 @@ export const closureTransportWGSL = /* wgsl */`
 fn closureTotal(c:Closure)->f32 {var total=0.0;for(var i=0u;i<c.count;i++){total+=closureImportance(c,i);}return total;}
 fn closureRangeEval(c:Closure,start:u32,count:u32,wo:vec3f,wi:vec3f,eta:f32,wavelength:f32)->vec4f {var f=vec3f(0);var pdf=0.0;let end=min(c.count,start+count);for(var i=start;i<end;i++){let l=transportEval(c.lobes[i],wo,wi,eta,wavelength);f+=c.scales[i]*l.xyz;pdf+=closureImportance(c,i)/max(1e-30,closureTotal(c))*l.w;}return vec4f(f,pdf);}
 fn closureRangeTransmission(c:Closure,start:u32,count:u32,wo:vec3f,eta:f32,wavelength:f32)->vec3f {var t=vec3f(0);let end=min(c.count,start+count);for(var i=start;i<end;i++){let m=c.lobes[i];var q=vec3f(0);if(m.kind==7u){q=m.weight*vec3f(1);}else if(m.kind==0u){q=(1.0-m.metal)*m.transmission*m.transmissionColor*transmissionAttenuation(m)*(1.0-dielectricFresnel(wo.z,m.ior));}else if(m.kind==1u&&m.scatterMode!=1u){q=m.weight*m.transmissionColor*transmissionAttenuation(m)*(1.0-dielectricFresnel(wo.z,m.ior));}t+=c.scales[i]*q;}return clamp(t,vec3f(0),vec3f(1));}
+fn closureLayerAttenuation(c:Closure,selected:u32,wo:vec3f,eta:f32,wavelength:f32)->vec3f {var nodeTransmission:array<vec3f,32>;var attenuation=vec3f(1);for(var i=0u;i<c.nodeCount;i++){let n=c.nodes[i];var at=vec3f(0);var bt=vec3f(0);if(n.aKind==0u){at=closureRangeTransmission(c,n.aStart,n.aCount,wo,eta,wavelength);}else{at=nodeTransmission[n.a];}if(n.bKind==0u){bt=closureRangeTransmission(c,n.bStart,n.bCount,wo,eta,wavelength);}else{bt=nodeTransmission[n.b];}if(n.kind==3u){if(selected>=n.bStart&&selected<n.bStart+n.bCount){attenuation*=at;}nodeTransmission[i]=clamp(at*bt,vec3f(0),vec3f(1));}else{nodeTransmission[i]=clamp(at+bt,vec3f(0),vec3f(1));}}return attenuation;}
 fn closureEval(c:Closure,wo:vec3f,wi:vec3f,eta:f32,wavelength:f32)->vec4f {
   var values:array<vec4f,32>;var transmission:array<vec3f,32>;
   for(var i=0u;i<c.nodeCount;i++) {let n=c.nodes[i];var a=vec4f(0);var b=vec4f(0);var at=vec3f(0);var bt=vec3f(0);
@@ -57,7 +58,7 @@ fn closureSample(c:Closure,wo:vec3f,eta:f32,rng:ptr<function,u32>,wavelength:f32
   let probability=closureImportance(c,selected)/total;
   var s=transportSample(c.lobes[selected],wo,eta,rng,wavelength);
   if(s.pdf<=0.0){return s;}
-  if(s.delta!=0u){s.weight*=c.scales[selected]/probability;s.pdf*=probability;return s;}
+  if(s.delta!=0u){s.weight*=c.scales[selected]*select(vec3f(1),closureLayerAttenuation(c,selected,wo,eta,wavelength),c.rootKind!=0u)/probability;s.pdf*=probability;return s;}
   let f=closureEval(c,wo,s.wi,eta,wavelength);s.pdf=f.w;s.weight=f.xyz*abs(s.wi.z)/max(1e-30,f.w);return s;
 }
 fn validClosure(c:Closure)->bool {
