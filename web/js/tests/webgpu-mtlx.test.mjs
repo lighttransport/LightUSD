@@ -679,6 +679,12 @@ test('randomcolor derives bounded HSV channels from input and seed', () => {
   const source=compileGraph({nodes:[{name:'r',category:'randomcolor',type:'color3',inputs:{in:{type:'float',value:2},huelow:{type:'float',value:.1},huehigh:{type:'float',value:.4},seed:{type:'integer',value:7},brightnesshigh:{type:'float',value:.8}}}]});
   assert.match(source.body,/mxHsvToRgb/); assert.match(source.body,/mxHash3\(vec3f\(2\.0,f32\(7i\),17\.0\)\)/);
 });
+test('unified noise dispatches typed noise families and output remapping', () => {
+  const source=compileGraph({nodes:[{name:'u',category:'unifiednoise2d',type:'float',inputs:{texcoord:{type:'vector2',value:[.1,.2]},freq:{type:'vector2',value:[2,3]},type:{type:'integer',value:3},octaves:{type:'integer',value:4},outmin:{type:'float',value:-1},outmax:{type:'float',value:2}}}]});
+  assert.match(source.body,/mxFractal2/); assert.match(source.body,/clamp\(/); assert.match(source.body,/select\(/);
+  const source3=compileGraph({nodes:[{name:'u',category:'unifiednoise3d',type:'float',inputs:{position:{type:'vector3',value:[0,0,0]},type:{type:'integer',value:2}}}]});
+  assert.match(source3.body,/mxWorley3/);
+});
 test('cell-noise nodes hash integer cells without interpolation', () => {
   const doc={nodes:[
     {name:'uv',category:'texcoord',type:'vector2',inputs:{}},

@@ -229,6 +229,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   integer seed hashes, interpolated over the authored min/max range.
 - `randomcolor` derives deterministic hue, saturation, and brightness channels
   from the authored input/seed and converts them through the bounded HSV path.
+- `unifiednoise2d`/`unifiednoise3d` dispatch among Perlin-like, cell, Worley,
+  and fractal helpers with authored frequency, range, clamp, and octave controls.
 - `cellnoise2d` and `cellnoise3d` provide non-interpolated integer-cell hash
   values for procedural masks.
 - Common color utility nodes `premult`, `unpremult`, `contrast`, and
