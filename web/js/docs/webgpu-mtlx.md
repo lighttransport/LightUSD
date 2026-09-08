@@ -225,6 +225,8 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
   thickness, and staggered-cell controls.
 - `tiledcircles` provides deterministic cell-local circle masks with authored
   tiling, offset, diameter, and staggering.
+- `randomfloat` produces deterministic bounded values from authored input and
+  integer seed hashes, interpolated over the authored min/max range.
 - `cellnoise2d` and `cellnoise3d` provide non-interpolated integer-cell hash
   values for procedural masks.
 - Common color utility nodes `premult`, `unpremult`, `contrast`, and

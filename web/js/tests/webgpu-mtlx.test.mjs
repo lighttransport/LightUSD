@@ -670,6 +670,11 @@ test('tiledcircles generates cell-local circle masks with authored size', () => 
   const source=compileGraph({nodes:[{name:'c',category:'tiledcircles',type:'color3',inputs:{texcoord:{type:'vector2',value:[.2,.3]},uvtiling:{type:'vector2',value:[2,3]},size:{type:'float',value:.6},staggered:{type:'boolean',value:true}}}]});
   assert.match(source.body,/fract\(/); assert.match(source.body,/length\(/); assert.match(source.body,/vec3f\(/);
 });
+test('randomfloat hashes input and seed within authored bounds', () => {
+  const source=compileGraph({nodes:[{name:'r',category:'randomfloat',type:'float',inputs:{in:{type:'float',value:2},min:{type:'float',value:-1},max:{type:'float',value:3},seed:{type:'integer',value:7}}}]});
+  assert.match(source.body,/mix\(-1\.0,3\.0,mxHash2\(vec2f\(2\.0,f32\(7i\)\)\)\)/);
+  assert.match(contextWGSL,/fn mxHash2/);
+});
 test('cell-noise nodes hash integer cells without interpolation', () => {
   const doc={nodes:[
     {name:'uv',category:'texcoord',type:'vector2',inputs:{}},
