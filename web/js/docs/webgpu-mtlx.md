@@ -167,7 +167,8 @@ Retain upstream license/attribution files. `USD_WG_ASSETS_DIR` and
 
 ## Not implemented
 
-Full MaterialX coverage; general BSDF/EDF/VDF closure composition/layering;
+Full MaterialX coverage; general EDF/VDF closure composition and exact layered
+transport;
 complete authored light/material sync semantics;
 MaterialX subsurface_bsdf albedo/radius conversion; hair and curves;
 arbitrary authored primvar/shading-property maps beyond the supported geometry
