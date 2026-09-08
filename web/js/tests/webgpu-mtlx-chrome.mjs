@@ -31,7 +31,7 @@ try {
       else request.continue();
     });
     await page.goto(numericURL, { waitUntil: 'domcontentloaded' });
-    const numericReport = await page.evaluate(async ({renderValidation,libraryOnly}) => {
+    const numericReport = await page.evaluate(async ({renderValidation,libraryOnly,transportOnlyFromHost}) => {
       if (renderValidation) {
         const { createRenderer } = await import('/src/webgpu-mtlx/renderer.js');
         const { validateOpacityScenes, validateSurfaceFrameScenes } = await import('/src/webgpu-mtlx/reference-validation.js');
@@ -50,7 +50,7 @@ try {
       const gpuErrors = [];
       device.addEventListener('uncapturederror', e => gpuErrors.push(e.error.message));
       try {
-        const transportOnly = process.argv.includes('--transport-only');
+        const transportOnly = transportOnlyFromHost;
         const numeric = transportOnly ? [] : (libraryOnly?[]:await (await import('/src/webgpu-mtlx/gpu-validation.js')).validateValueKernels(device));
         const libraryGraphs = transportOnly ? [] : (libraryOnly?await (await import('/src/webgpu-mtlx/library-validation.js')).validateLibraryGraphs(device):[]);
         const transport = transportOnly ? await (await import('/src/webgpu-mtlx/transport-validation.js')).validateTransportKernels(device) : null;
@@ -58,7 +58,7 @@ try {
         if (gpuErrors.length) throw new Error(gpuErrors.join('\n'));
         return { numeric, libraryGraphs, transport, adapter: { vendor: adapter.info.vendor, architecture: adapter.info.architecture, isFallbackAdapter: adapter.info.isFallbackAdapter } };
       } finally { device.destroy(); }
-    }, {renderValidation:process.argv.includes('--bump-only')?'bump':process.argv.includes('--frames-only')?'frames':process.argv.includes('--opacity-only')?'opacity':null,libraryOnly:process.argv.includes('--library-only')});
+    }, {renderValidation:process.argv.includes('--bump-only')?'bump':process.argv.includes('--frames-only')?'frames':process.argv.includes('--opacity-only')?'opacity':null,libraryOnly:process.argv.includes('--library-only'),transportOnlyFromHost:process.argv.includes('--transport-only')});
     if (hardware) assert.equal(numericReport.adapter.isFallbackAdapter, false);
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ browser: await browser.version(), ...numericReport }, null, 2));

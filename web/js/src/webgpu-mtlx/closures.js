@@ -46,7 +46,7 @@ fn closureEval(c:Closure,wo:vec3f,wi:vec3f,eta:f32,wavelength:f32)->vec4f {
   for(var i=0u;i<c.nodeCount;i++) {let n=c.nodes[i];var a=vec4f(0);var b=vec4f(0);var at=vec3f(0);var bt=vec3f(0);
     if(n.aKind==0u){a=closureRangeEval(c,n.a,n.aCount,wo,wi,eta,wavelength);at=closureRangeTransmission(c,n.a,n.aCount,wo,eta,wavelength);}else{a=values[n.a];at=transmission[n.a];}
     if(n.bKind==0u){b=closureRangeEval(c,n.b,n.bCount,wo,wi,eta,wavelength);bt=closureRangeTransmission(c,n.b,n.bCount,wo,eta,wavelength);}else{b=values[n.b];bt=transmission[n.b];}
-    if(n.kind==3u){let pass=select(vec3f(0),at,wi.z>0.0);values[i]=vec4f(a.xyz+b.xyz*pass,a.w+b.w);transmission[i]=clamp(at*bt,vec3f(0),vec3f(1));}
+    if(n.kind==3u){let baseTransmission=select(vec3f(0),at,wi.z>0.0);values[i]=vec4f(a.xyz+b.xyz*baseTransmission,a.w+b.w);transmission[i]=clamp(at*bt,vec3f(0),vec3f(1));}
     else{values[i]=a+b;transmission[i]=clamp(at+bt,vec3f(0),vec3f(1));}
   }
   if(c.rootKind==0u){return closureRangeEval(c,c.root,c.count,wo,wi,eta,wavelength);}return values[c.root];
