@@ -22,14 +22,36 @@ PropNameTable::PropNameTable() = default;
 
 PropNameTable::~PropNameTable() = default;
 
+namespace {
+const char* PropertyNameKey(const void* context, size_t index, size_t* length) {
+  const auto& names = *static_cast<const std::deque<std::string>*>(context);
+  if (index >= names.size()) return nullptr;
+  const std::string_view name = names[index];
+  *length = name.size();
+  return name.data();
+}
+}  // namespace
+
+PropNameId PropNameTable::find_live(std::string_view name) const {
+  // Empty string_view may have a null data pointer; empty names are still keys.
+  const size_t id = name_to_id_.find(name.empty() ? "" : name.data(), name.size(),
+                                   PropertyNameKey, &names_);
+  if (id < UINT32_MAX) return PropNameId{static_cast<uint32_t>(id)};
+  // The index is optional acceleration. An allocation failure must not lose
+  // an interned name or give it a second ID on a subsequent lookup.
+  if (name_to_id_.size() != names_.size()) {
+    for (size_t i = 0; i < names_.size(); ++i) {
+      if (names_[i] == name) return PropNameId{static_cast<uint32_t>(i)};
+    }
+  }
+  return PropNameId{};
+}
+
+
 #if defined(LIGHTUSD_ENABLE_THREAD)
 namespace {
 // Order the snapshot by the pointed-to name.
 struct FrozenLess {
-  bool operator()(const std::pair<const std::string*, uint32_t>& a,
-                  const std::string& b) const {
-    return *a.first < b;
-  }
   bool operator()(const std::pair<const std::string*, uint32_t>& a,
                   std::string_view b) const {
     return std::string_view(*a.first) < b;
@@ -48,10 +70,10 @@ void PropNameTable::freeze() {
   {
     std::unique_lock<std::shared_mutex> wlk(mu_);
     idx->by_id.reserve(names_.size());
-    for (const std::string& n : names_) idx->by_id.push_back(&n);
-    idx->by_name.reserve(name_to_id_.size());
-    for (const auto& kv : name_to_id_) {
-      idx->by_name.emplace_back(&kv.first, kv.second);
+    for (const std::string& name : names_) idx->by_id.push_back(&name);
+    idx->by_name.reserve(names_.size());
+    for (size_t i = 0; i < names_.size(); ++i) {
+      idx->by_name.emplace_back(&names_[i], static_cast<uint32_t>(i));
     }
     std::sort(idx->by_name.begin(), idx->by_name.end(), FrozenLess{});
   }
@@ -81,6 +103,7 @@ bool PropNameTable::is_frozen() const { return false; }
 #endif
 
 PropNameId PropNameTable::intern(const std::string& name) {
+  const std::string_view view(name.data(), name.size());
 #if defined(LIGHTUSD_ENABLE_THREAD)
   // Frozen fast path: the common compose-time intern is a HIT (every property
   // name was interned at parse), so answer it lock-free from the snapshot.
@@ -88,39 +111,30 @@ PropNameId PropNameTable::intern(const std::string& name) {
   // map — which the snapshot does not alias, so lock-free readers are
   // untouched and the snapshot stays valid (just missing this one name).
   if (const FrozenIndex* idx = frozen_ptr_.load(std::memory_order_acquire)) {
-    auto it = std::lower_bound(idx->by_name.begin(), idx->by_name.end(), name,
+    auto it = std::lower_bound(idx->by_name.begin(), idx->by_name.end(), view,
                                FrozenLess{});
-    if (it != idx->by_name.end() && *it->first == name) {
+    if (it != idx->by_name.end() && *it->first == view) {
       return PropNameId{it->second};
     }
   }
   {
     std::shared_lock<std::shared_mutex> rlk(mu_);
-    auto it = name_to_id_.find(name);
-    if (it != name_to_id_.end()) {
-      return PropNameId{it->second};
-    }
+    const PropNameId hit = find_live(view);
+    if (hit.is_valid()) return hit;
   }
   std::unique_lock<std::shared_mutex> wlk(mu_);
-  // Re-check: another thread may have inserted between the locks.
-  auto it = name_to_id_.find(name);
-  if (it != name_to_id_.end()) {
-    return PropNameId{it->second};
-  }
-  uint32_t id = static_cast<uint32_t>(names_.size());
-  names_.push_back(name);
-  name_to_id_[name] = id;
-  return PropNameId{id};
-#else
-  auto it = name_to_id_.find(name);
-  if (it != name_to_id_.end()) {
-    return PropNameId{it->second};
-  }
-  uint32_t id = static_cast<uint32_t>(names_.size());
-  names_.push_back(name);
-  name_to_id_[name] = id;
-  return PropNameId{id};
 #endif
+  // Recheck under the exclusive lock; another thread may have interned it.
+  const PropNameId hit = find_live(view);
+  if (hit.is_valid()) return hit;
+  if (names_.size() >= UINT32_MAX) return PropNameId{};
+  const uint32_t id = static_cast<uint32_t>(names_.size());
+  names_.push_back(name);
+  if (name_to_id_.size() + 1 == names_.size())
+    name_to_id_.insert(id, PropertyNameKey, &names_);
+  else
+    name_to_id_.rebuild(names_.size(), PropertyNameKey, &names_);
+  return PropNameId{id};
 }
 
 PropNameId PropNameTable::intern(const char* name) {
@@ -128,8 +142,7 @@ PropNameId PropNameTable::intern(const char* name) {
   return intern(std::string(name));
 }
 
-const std::string& PropNameTable::get(PropNameId id) const {
-  static const std::string empty;
+std::string_view PropNameTable::get(PropNameId id) const {
 #if defined(LIGHTUSD_ENABLE_THREAD)
   // Lock-free when the id is covered by the published snapshot. The deque
   // elements it points at never relocate, so the reference stays valid even if
@@ -141,54 +154,19 @@ const std::string& PropNameTable::get(PropNameId id) const {
     // Shared lock: a concurrent intern() on another thread may push_back names_
     // (parallel composition warms referenced layers on workers).
     std::shared_lock<std::shared_mutex> rlk(mu_);
-    if (id.id >= names_.size()) return empty;
+    if (id.id >= names_.size()) return {};
     return names_[id.id];
   }
 #endif
-  if (id.id >= names_.size()) return empty;
+  if (id.id >= names_.size()) return {};
   return names_[id.id];
 }
 
 PropNameId PropNameTable::find(const std::string& name) const {
-#if defined(LIGHTUSD_ENABLE_THREAD)
-  // Lock-free hit against the immutable snapshot -- this is what removes the
-  // rwlock cache-line contention that dominated multi-thread rendering. A miss
-  // still has to consult the live map (a name may have been interned after the
-  // snapshot was published).
-  if (const FrozenIndex* idx = frozen_ptr_.load(std::memory_order_acquire)) {
-    auto it = std::lower_bound(idx->by_name.begin(), idx->by_name.end(), name,
-                               FrozenLess{});
-    if (it != idx->by_name.end() && *it->first == name) {
-      return PropNameId{it->second};
-    }
-  }
-  {
-    // Shared lock vs. a concurrent intern() rehash of name_to_id_.
-    std::shared_lock<std::shared_mutex> rlk(mu_);
-    auto it = name_to_id_.find(name);
-    return it != name_to_id_.end() ? PropNameId{it->second} : PropNameId{};
-  }
-#endif
-  auto it = name_to_id_.find(name);
-  if (it != name_to_id_.end()) {
-    return PropNameId{it->second};
-  }
-  return PropNameId{};
+  return find(std::string_view(name.data(), name.size()));
 }
 
 PropNameId PropNameTable::find(std::string_view name) const {
-  // C++17's unordered_map has no heterogeneous find(). Probe the selected
-  // bucket directly so the string_view path stays allocation-free.
-  const auto lookup = [this](std::string_view view) -> PropNameId {
-    const size_t bucket_count = name_to_id_.bucket_count();
-    if (bucket_count == 0) return PropNameId{};
-    const size_t bucket = PropNameHash{}(view) % bucket_count;
-    for (auto it = name_to_id_.cbegin(bucket);
-         it != name_to_id_.cend(bucket); ++it) {
-      if (PropNameEqual{}(it->first, view)) return PropNameId{it->second};
-    }
-    return PropNameId{};
-  };
 #if defined(LIGHTUSD_ENABLE_THREAD)
   if (const FrozenIndex* idx = frozen_ptr_.load(std::memory_order_acquire)) {
     auto it = std::lower_bound(idx->by_name.begin(), idx->by_name.end(), name,
@@ -198,9 +176,9 @@ PropNameId PropNameTable::find(std::string_view name) const {
     }
   }
   std::shared_lock<std::shared_mutex> rlk(mu_);
-  return lookup(name);
+  return find_live(name);
 #else
-  return lookup(name);
+  return find_live(name);
 #endif
 }
 
@@ -438,7 +416,7 @@ const PropSlot* PropIndex::find(const std::string& name) const {
     // Name not in table - do linear search by string
     const auto& table = GetPropNameTable();
     for (const auto& slot : slots_) {
-      if (table.get(slot.name_id) == name) {
+      if (table.get(slot.name_id) == std::string_view(name.data(), name.size())) {
         return &slot;
       }
     }

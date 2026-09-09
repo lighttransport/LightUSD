@@ -8,7 +8,15 @@
 #endif
 
 #if defined(LIGHTUSD_WITH_TIFF)
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+#endif
+#define TINY_DNG_WRITER_IMPLEMENTATION
 #include "external/tiny_dng_writer.h"
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 #endif
 
 #ifndef LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION
@@ -45,6 +53,7 @@
 #endif
 
 #include <cstdlib>  // free (qoi_encode / turbojpeg buffers)
+#include <sstream>
 
 #include "image-writer.hh"
 #include "io-util.hh"
@@ -52,6 +61,7 @@
 #include "str-util.hh"
 
 #include <climits>
+#include <limits>
 
 namespace lightusd {
 namespace image {
@@ -138,6 +148,195 @@ bool ValidDims(const Image &image, std::string *err) {
   }
   return true;
 }
+
+#if defined(LIGHTUSD_WITH_TIFF)
+// TinyDNGWriter emits a baseline TIFF stream and is also suitable for the
+// simple, non-camera DNG payloads used by LightUSD. Image::bpp is bits per
+// channel (matching the loader), while TinyDNG expects one value per channel.
+bool EncodeTIFF(const Image &image, std::vector<uint8_t> *out,
+                std::string *err) {
+  if (!out || image.bpp <= 0 || image.bpp > 32 || image.bpp % 8 != 0) {
+    if (err) *err = "TIFF: unsupported bits per channel.";
+    return false;
+  }
+
+  const size_t bytes_per_channel = size_t(image.bpp / 8);
+  size_t expected = 0;
+  if (!safe::mul(size_t(image.width), size_t(image.height), &expected) ||
+      !safe::mul(expected, size_t(image.channels), &expected) ||
+      !safe::mul(expected, bytes_per_channel, &expected) ||
+      image.data.size() < expected) {
+    if (err) *err = "TIFF: image pixel buffer is too small.";
+    return false;
+  }
+
+  tinydngwriter::DNGImage dng_image;
+  dng_image.SetBigEndian(false);
+  if (!dng_image.SetImageWidth(static_cast<unsigned int>(image.width)) ||
+      !dng_image.SetImageLength(static_cast<unsigned int>(image.height)) ||
+      !dng_image.SetRowsPerStrip(static_cast<unsigned int>(image.height)) ||
+      !dng_image.SetSamplesPerPixel(static_cast<unsigned short>(image.channels))) {
+    if (err) *err = "TIFF: failed to set image dimensions.";
+    return false;
+  }
+
+  std::vector<unsigned short> bits(size_t(image.channels),
+                                   static_cast<unsigned short>(image.bpp));
+  if (!dng_image.SetBitsPerSample(static_cast<unsigned int>(bits.size()),
+                                  bits.data()) ||
+      !dng_image.SetPhotometric(image.channels == 1
+                                    ? tinydngwriter::PHOTOMETRIC_BLACK_IS_ZERO
+                                    : tinydngwriter::PHOTOMETRIC_RGB) ||
+      !dng_image.SetPlanarConfig(tinydngwriter::PLANARCONFIG_CONTIG) ||
+      !dng_image.SetCompression(tinydngwriter::COMPRESSION_NONE) ||
+      !dng_image.SetOrientation(tinydngwriter::ORIENTATION_TOPLEFT)) {
+    if (err) *err = "TIFF: failed to set image metadata.";
+    return false;
+  }
+
+  const int sample_format =
+      image.format == Image::PixelFormat::Float
+          ? tinydngwriter::SAMPLEFORMAT_IEEEFP
+          : image.format == Image::PixelFormat::Int
+                ? tinydngwriter::SAMPLEFORMAT_INT
+                : tinydngwriter::SAMPLEFORMAT_UINT;
+  std::vector<unsigned short> formats(size_t(image.channels),
+                                      static_cast<unsigned short>(sample_format));
+  if (!dng_image.SetSampleFormat(static_cast<unsigned int>(formats.size()),
+                                 formats.data()) ||
+      !dng_image.SetImageData(image.data.data(), expected)) {
+    if (err) *err = "TIFF: failed to encode image data: " + dng_image.Error();
+    return false;
+  }
+
+  // TinyDNG's public stream methods use the standard eight-byte TIFF header
+  // layout: byte order, version 42, and the first IFD offset (8).
+  std::ostringstream stream(std::ios::binary);
+  const char header[8] = {'I', 'I', 42, 0, 8, 0, 0, 0};
+  stream.write(header, sizeof(header));
+  if (!dng_image.WriteDataToStream(&stream) ||
+      !dng_image.WriteIFDToStream(0, 0, &stream)) {
+    if (err) *err = "TIFF: failed to write IFD: " + dng_image.Error();
+    return false;
+  }
+  const char next_ifd[4] = {0, 0, 0, 0};
+  stream.write(next_ifd, sizeof(next_ifd));
+  const std::string encoded = stream.str();
+  out->assign(encoded.begin(), encoded.end());
+  return true;
+}
+
+bool EncodeTIFFLayers(const std::vector<Image> &images,
+                      std::vector<uint8_t> *out, std::string *err) {
+  if (!out || images.empty()) {
+    if (err) *err = "TIFF: at least one image layer is required.";
+    return false;
+  }
+  std::vector<tinydngwriter::DNGImage> dng_images(images.size());
+  for (size_t i = 0; i < images.size(); ++i) {
+    const Image &image = images[i];
+    std::string validation_error;
+    if (!ValidDims(image, &validation_error) || image.bpp <= 0 ||
+        image.bpp > 32 || image.bpp % 8 != 0) {
+      if (err) *err = "TIFF layer " + std::to_string(i) + ": " +
+                      (validation_error.empty()
+                           ? "unsupported bits per channel."
+                           : validation_error);
+      return false;
+    }
+    const size_t bytes_per_channel = size_t(image.bpp / 8);
+    size_t expected = 0;
+    if (!safe::mul(size_t(image.width), size_t(image.height), &expected) ||
+        !safe::mul(expected, size_t(image.channels), &expected) ||
+        !safe::mul(expected, bytes_per_channel, &expected) ||
+        image.data.size() < expected) {
+      if (err) *err = "TIFF layer " + std::to_string(i) +
+                      ": image pixel buffer is too small.";
+      return false;
+    }
+    auto &dng = dng_images[i];
+    dng.SetBigEndian(false);
+    if (!dng.SetImageWidth(static_cast<unsigned int>(image.width)) ||
+        !dng.SetImageLength(static_cast<unsigned int>(image.height)) ||
+        !dng.SetRowsPerStrip(static_cast<unsigned int>(image.height)) ||
+        !dng.SetSamplesPerPixel(static_cast<unsigned short>(image.channels))) {
+      if (err) *err = "TIFF layer " + std::to_string(i) +
+                      ": failed to set image dimensions.";
+      return false;
+    }
+    std::vector<unsigned short> bits(size_t(image.channels),
+                                     static_cast<unsigned short>(image.bpp));
+    const int sample_format =
+        image.format == Image::PixelFormat::Float
+            ? tinydngwriter::SAMPLEFORMAT_IEEEFP
+            : image.format == Image::PixelFormat::Int
+                  ? tinydngwriter::SAMPLEFORMAT_INT
+                  : tinydngwriter::SAMPLEFORMAT_UINT;
+    std::vector<unsigned short> formats(size_t(image.channels),
+                                        static_cast<unsigned short>(sample_format));
+    if (!dng.SetBitsPerSample(static_cast<unsigned int>(bits.size()), bits.data()) ||
+        !dng.SetPhotometric(image.channels == 1
+                                ? tinydngwriter::PHOTOMETRIC_BLACK_IS_ZERO
+                                : tinydngwriter::PHOTOMETRIC_RGB) ||
+        !dng.SetPlanarConfig(tinydngwriter::PLANARCONFIG_CONTIG) ||
+        !dng.SetCompression(tinydngwriter::COMPRESSION_NONE) ||
+        !dng.SetOrientation(tinydngwriter::ORIENTATION_TOPLEFT) ||
+        !dng.SetSampleFormat(static_cast<unsigned int>(formats.size()),
+                             formats.data()) ||
+        !dng.SetImageData(image.data.data(), expected)) {
+      if (err) *err = "TIFF layer " + std::to_string(i) +
+                      ": failed to encode image data: " + dng.Error();
+      return false;
+    }
+  }
+  size_t data_len = 0;
+  std::vector<size_t> data_offsets, strip_offsets;
+  data_offsets.reserve(dng_images.size());
+  strip_offsets.reserve(dng_images.size());
+  for (const auto &dng : dng_images) {
+    data_offsets.push_back(data_len);
+    if (!safe::add(data_len, dng.GetStripOffset(), &data_len)) {
+      if (err) *err = "TIFF: layer data offset overflow.";
+      return false;
+    }
+    strip_offsets.push_back(data_len);
+    if (!safe::add(data_len, dng.GetDataSize(), &data_len) ||
+        data_len > static_cast<size_t>((std::numeric_limits<uint32_t>::max)())) {
+      if (err) *err = "TIFF: multi-layer stream is too large.";
+      return false;
+    }
+  }
+  std::ostringstream stream(std::ios::binary);
+  const char header[8] = {'I', 'I', 42, 0, 0, 0, 0, 0};
+  stream.write(header, sizeof(header));
+  const uint32_t first_ifd = static_cast<uint32_t>(8 + data_len);
+  stream.seekp(4);
+  stream.write(reinterpret_cast<const char *>(&first_ifd), sizeof(first_ifd));
+  stream.seekp(8);
+  for (const auto &dng : dng_images) {
+    if (!dng.WriteDataToStream(&stream)) {
+      if (err) *err = "TIFF: failed to write layer data: " + dng.Error();
+      return false;
+    }
+  }
+  for (size_t i = 0; i < dng_images.size(); ++i) {
+    if (!dng_images[i].WriteIFDToStream(
+            static_cast<unsigned int>(data_offsets[i]),
+            static_cast<unsigned int>(strip_offsets[i]), &stream)) {
+      if (err) *err = "TIFF: failed to write layer IFD: " +
+                      dng_images[i].Error();
+      return false;
+    }
+    uint32_t next = i + 1 == dng_images.size()
+                        ? 0u
+                        : static_cast<uint32_t>(stream.tellp()) + 4u;
+    stream.write(reinterpret_cast<const char *>(&next), sizeof(next));
+  }
+  const std::string encoded = stream.str();
+  out->assign(encoded.begin(), encoded.end());
+  return true;
+}
+#endif
 
 #if defined(LIGHTUSD_HAVE_FPNGE)
 bool EncodePNG_fpnge(const Image &image, std::vector<uint8_t> *out,
@@ -706,14 +905,46 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
 #endif
     }
     case lightusd::image::WriteImageFormat::TIFF:
-    case lightusd::image::WriteImageFormat::DNG:
+    case lightusd::image::WriteImageFormat::DNG: {
+#if defined(LIGHTUSD_WITH_TIFF)
+      if (!EncodeTIFF(image, &out, &err)) {
+        return nonstd::make_unexpected(err);
+      }
+      return out;
+#else
       return nonstd::make_unexpected(
-          "WriteImageToMemory: TIFF/DNG output is not implemented yet.");
+          "TIFF/DNG output requires building with LIGHTUSD_WITH_TIFF.");
+#endif
+    }
     case lightusd::image::WriteImageFormat::Autodetect:
       return nonstd::make_unexpected("Internal error in WriteImageToMemory.");
   }
   // Unreachable but needed for compilers that don't recognize exhaustive switches.
   return nonstd::make_unexpected("Internal error in WriteImageToMemory.");
+}
+
+nonstd::expected<std::vector<uint8_t>, std::string> WriteImageLayersToMemory(
+    const std::vector<Image> &images, const WriteOption option) {
+  if (images.empty()) {
+    return nonstd::make_unexpected("At least one image layer is required.");
+  }
+  if (option.format != WriteImageFormat::Autodetect &&
+      option.format != WriteImageFormat::TIFF &&
+      option.format != WriteImageFormat::DNG) {
+    return nonstd::make_unexpected(
+        "Multi-layer memory output supports only TIFF/DNG.");
+  }
+#if defined(LIGHTUSD_WITH_TIFF)
+  std::vector<uint8_t> out;
+  std::string err;
+  if (!EncodeTIFFLayers(images, &out, &err)) {
+    return nonstd::make_unexpected(err);
+  }
+  return out;
+#else
+  return nonstd::make_unexpected(
+      "TIFF/DNG output requires building with LIGHTUSD_WITH_TIFF.");
+#endif
 }
 
 nonstd::expected<bool, std::string> WriteImageToFile(

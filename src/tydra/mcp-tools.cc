@@ -648,7 +648,7 @@ bool DebugPrimSpecDump(Context &ctx, const nlohmann::json &args,
   nlohmann::json content;
   content["type"] = "text";
   content["mimeType"] = "application/json";
-  content["text"] = PrimSpecToJSON(*ps, max_depth).dump(2);
+    content["text"] = PrimSpecToMiniJSON(*ps, max_depth).dump(2);
 
   result["content"] = nlohmann::json::array();
   result["content"].push_back(content);
@@ -1213,6 +1213,14 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"]["path"] = str_prop("Prim path");
+    schema["required"] = nlohmann::json::array({"path"});
+    add_tool("payload_list", "List payload arcs on a prim", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Prim path");
     schema["properties"]["prim_path"] = str_prop("Prim path to inherit from");
     schema["required"] = nlohmann::json::array({"path", "prim_path"});
     add_tool("inherit_add", "Add an inherit arc to a prim", schema);
@@ -1257,6 +1265,17 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
         nlohmann::json::array({"path", "variant_set", "variant"});
     add_tool("variant_set_selection",
              "Set the variant selection for a variant set", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Prim path");
+    schema["properties"]["variant_set"] = str_prop("Variant set name");
+    schema["properties"]["variant_name"] = str_prop("Variant name to define");
+    schema["required"] =
+        nlohmann::json::array({"path", "variant_set", "variant_name"});
+    add_tool("variant_define", "Define a variant in a variant set", schema);
   }
 
   // =========================================================================

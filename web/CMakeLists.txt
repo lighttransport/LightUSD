@@ -292,6 +292,8 @@ endif()
 
 
 option(LIGHTUSD_WASM_DEMODEV "Demo developer mode(install WASM modules to demo/node_modules/lightusd." OFF)
+set(LIGHTUSD_WASM_OUTPUT_DIRECTORY "" CACHE PATH
+    "Override generated JS/WASM output directory (empty uses the product default)")
 if (LIGHTUSD_WASM_DEMODEV)
   message(STATUS "demodev build")
 endif()
@@ -309,7 +311,19 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
 
   add_subdirectory(${PROJECT_SOURCE_DIR}/../src/next lightusd_next_build EXCLUDE_FROM_ALL)
 
-  add_executable(lightusd_next_wasm binding-next.cc)
+  add_executable(lightusd_next_wasm binding-next.cc binding-next-scene.cc
+    binding-next-api.cc
+    binding-next-util.cc
+    binding-next-render-lifecycle.cc
+    binding-next-render-scene.cc
+    binding-next-render-animation.cc
+    binding-next-render-outputs.cc
+    binding-next-render-mesh-helpers.cc
+    binding-next-render-mesh.cc
+    binding-next-render-material-key.cc
+    binding-next-render-material.cc
+    binding-next-render-merge.cc
+    binding-next-render-material-output.cc)
   # tinysubdiv (tsd): dependency-free subdivision streaming for SubdivStreamer.
   target_sources(lightusd_next_wasm PRIVATE
     ${PROJECT_SOURCE_DIR}/lightrt-wasm.cc
@@ -327,6 +341,8 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
   target_link_libraries(lightusd_next_wasm PRIVATE tydra_next lightusd_next)
   target_include_directories(lightusd_next_wasm PRIVATE "${PROJECT_SOURCE_DIR}/../src/")
   target_compile_features(lightusd_next_wasm PRIVATE cxx_std_17)
+  set_property(TARGET lightusd_next_wasm APPEND PROPERTY LINK_DEPENDS
+    "${PROJECT_SOURCE_DIR}/next-api.js")
   target_compile_options(lightusd_next_wasm
                          PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
   target_compile_definitions(lightusd_next_wasm
@@ -340,6 +356,9 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/demo/node_modules/lightusd/)
   else()
     set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/js/src/lightusd/)
+  endif()
+  if(LIGHTUSD_WASM_OUTPUT_DIRECTORY)
+    set(OUTPUT_WASM_DIR "${LIGHTUSD_WASM_OUTPUT_DIRECTORY}")
   endif()
 
   if (CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -378,6 +397,8 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sASSERTIONS=1")
   endif()
   string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8']")
+  string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS
+    " --post-js \"${PROJECT_SOURCE_DIR}/next-api.js\"")
 
   set_target_properties(
       lightusd_next_wasm
@@ -391,68 +412,12 @@ endif()
 # [lightusd]
 add_subdirectory(../  lightusd)
 
-# [lightusd next] Low-memory lazy-ValueRep flatten pipeline. Compiled directly
-# into the WASM module (not the standalone next lib) so it shares the main lib's
-# lz4 (avoids duplicate LZ4_* symbols). Only the sources the flatten pipeline
-# needs are listed; unused code is stripped by wasm-ld DCE.
+# The combined compatibility module shares the pipeline source definition.
+# Its legacy library supplies LZ4 and the other shared support implementations.
 set(LIGHTUSD_NEXT_DIR "${PROJECT_SOURCE_DIR}/../src/next")
-list(
-  APPEND
-  NEXT_SOURCES
-  ${LIGHTUSD_NEXT_DIR}/types/type-info.cc
-  ${LIGHTUSD_NEXT_DIR}/types/value.cc
-  ${LIGHTUSD_NEXT_DIR}/types/spline.cc
-  ${LIGHTUSD_NEXT_DIR}/types/interpolation.cc
-  ${LIGHTUSD_NEXT_DIR}/writer/dtoa.cc
-  # value-printer defines next::PrintValue, referenced by the crate
-  # reader/writer (spline customData round-trip) — without it wasm-ld fails
-  # with an undefined-symbol error on a clean build.
-  ${LIGHTUSD_NEXT_DIR}/writer/value-printer.cc
-  ${LIGHTUSD_NEXT_DIR}/prim/path.cc
-  ${LIGHTUSD_NEXT_DIR}/prim/attribute.cc
-  ${LIGHTUSD_NEXT_DIR}/prim/prim.cc
-  ${LIGHTUSD_NEXT_DIR}/layer/array-edit.cc
-  ${LIGHTUSD_NEXT_DIR}/layer/property-index.cc
-  ${LIGHTUSD_NEXT_DIR}/layer/prim-spec.cc
-  ${LIGHTUSD_NEXT_DIR}/layer/layer.cc
-  ${LIGHTUSD_NEXT_DIR}/stage/stage.cc
-  ${LIGHTUSD_NEXT_DIR}/crate/crate-format.cc
-  ${LIGHTUSD_NEXT_DIR}/crate/crate-data-source.cc
-  ${LIGHTUSD_NEXT_DIR}/crate/crate-reader-arrays.cc
-  ${LIGHTUSD_NEXT_DIR}/crate/crate-reader-decode.cc
-  ${LIGHTUSD_NEXT_DIR}/crate/crate-reader-api.cc
-  ${LIGHTUSD_NEXT_DIR}/crate/crate-reader.cc
-  ${LIGHTUSD_NEXT_DIR}/crate/crate-reader-sections.cc
-  ${LIGHTUSD_NEXT_DIR}/crate/crate-reader-stage.cc
-  ${LIGHTUSD_NEXT_DIR}/crate/crate-reader-unpack.cc
-  ${LIGHTUSD_NEXT_DIR}/crate/crate-reader-vectors.cc
-  ${LIGHTUSD_NEXT_DIR}/crate/crate-writer-types.cc
-  ${LIGHTUSD_NEXT_DIR}/crate/crate-writer.cc
-  ${LIGHTUSD_NEXT_DIR}/crate/variant-holders.cc
-  ${LIGHTUSD_NEXT_DIR}/parser/lexer.cc
-  ${LIGHTUSD_NEXT_DIR}/parser/value-parser.cc
-  ${LIGHTUSD_NEXT_DIR}/parser/value-parser-types.cc
-  ${LIGHTUSD_NEXT_DIR}/parser/ascii-parser.cc
-  ${LIGHTUSD_NEXT_DIR}/parser/ascii-parser-metadata.cc
-  ${LIGHTUSD_NEXT_DIR}/parser/ascii-parser-prim.cc
-  ${LIGHTUSD_NEXT_DIR}/parser/ascii-parser-timesamples.cc
-  ${LIGHTUSD_NEXT_DIR}/parser/ascii-parser-utils.cc
-  ${LIGHTUSD_NEXT_DIR}/parser/ascii-parser-variants.cc
-  ${LIGHTUSD_NEXT_DIR}/parser/simd-scan.cc
-  ${LIGHTUSD_NEXT_DIR}/composition/composition.cc
-  ${LIGHTUSD_NEXT_DIR}/resolver/asset-resolver.cc
-  ${LIGHTUSD_NEXT_DIR}/pipeline/flatten.cc
-  ${LIGHTUSD_NEXT_DIR}/pcp/layer-registry.cc
-  ${LIGHTUSD_NEXT_DIR}/reader/usda-reader.cc
-  ${LIGHTUSD_NEXT_DIR}/reader/usdc-reader.cc
-  ${LIGHTUSD_NEXT_DIR}/reader/usdz-reader.cc
-  ${LIGHTUSD_NEXT_DIR}/schema/geom-mesh.cc
-  ${LIGHTUSD_NEXT_DIR}/schema/geom-xform.cc
-  ${LIGHTUSD_NEXT_DIR}/schema/usd-shade.cc
-  ${LIGHTUSD_NEXT_DIR}/eval/attribute-eval.cc
-  ${LIGHTUSD_NEXT_DIR}/eval/value-clip.cc
-  ${LIGHTUSD_NEXT_DIR}/schema/schema-registry.cc
-)
+include("${LIGHTUSD_NEXT_DIR}/pipeline-sources.cmake")
+set(NEXT_SOURCES ${LIGHTUSD_NEXT_PIPELINE_SOURCES})
+list(TRANSFORM NEXT_SOURCES PREPEND "${LIGHTUSD_NEXT_DIR}/")
 
 list(
   APPEND
@@ -523,6 +488,9 @@ if (EMSCRIPTEN)
       set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/demo/node_modules/lightusd/)
     else()
       set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/js/src/lightusd/)
+    endif()
+    if(LIGHTUSD_WASM_OUTPUT_DIRECTORY)
+      set(OUTPUT_WASM_DIR "${LIGHTUSD_WASM_OUTPUT_DIRECTORY}")
     endif()
 
     set_target_properties(

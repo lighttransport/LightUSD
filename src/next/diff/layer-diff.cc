@@ -217,7 +217,7 @@ bool CompareDicts(const Dict *lhs, const Dict *rhs, const DiffOptions &opts,
     return false;
   }
   bool equal = true;
-  for (const auto &kv : l.entries) {
+  for (const auto &kv : l.entries()) {
     const Value *rv = r.find(kv.first);
     if (!rv) {
       equal = false;
@@ -227,7 +227,7 @@ bool CompareDicts(const Dict *lhs, const Dict *rhs, const DiffOptions &opts,
       if (changed) changed->push_back("~" + kv.first); else return false;
     }
   }
-  for (const auto &kv : r.entries) {
+  for (const auto &kv : r.entries()) {
     if (!l.find(kv.first)) {
       equal = false;
       if (changed) changed->push_back("+" + kv.first); else return false;
@@ -245,7 +245,7 @@ bool DictsHaveTypeConflict(const Value &l, const Value &r) {
   const Dict *ld = l.as_dictionary();
   const Dict *rd = r.as_dictionary();
   if (!ld || !rd) return false;
-  for (const auto &e : ld->entries) {
+  for (const auto &e : ld->entries()) {
     const Value *o = rd->find(e.first);
     if (!o) continue;
     if (e.second.is_dictionary() != o->is_dictionary()) return true;
@@ -443,7 +443,7 @@ std::map<std::string, PropView> CollectProps(const PrimSpec &ps) {
     PropView v;
     v.slot = &slot;
     v.is_rel = slot.is_relationship();
-    out[names.get(slot.name_id)] = v;
+    out[std::string(names.get(slot.name_id))] = v;
   }
   for (const std::string &rel : ps.relationship_names()) {
     PropView &v = out[rel];

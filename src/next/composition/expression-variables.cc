@@ -519,10 +519,10 @@ Value ComposeExpressionVariables(const Value& weaker, const Value& stronger) {
   Value result = Value::MakeDictionary();
   Dict* out = result.as_dictionary();
   if (const Dict* d = weaker.as_dictionary()) {
-    for (const auto& entry : d->entries) out->set(entry.first, entry.second);
+    for (const auto& entry : d->entries()) out->set(entry.first, entry.second);
   }
   if (const Dict* d = stronger.as_dictionary()) {
-    for (const auto& entry : d->entries) out->set(entry.first, entry.second);
+    for (const auto& entry : d->entries()) out->set(entry.first, entry.second);
   }
   return result;
 }

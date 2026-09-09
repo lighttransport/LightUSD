@@ -638,6 +638,10 @@ static void RegisterAPISchemas(std::unordered_set<std::string> &d) {
   d.insert("MaterialXConfigAPI");  // usdMtlx: config:mtlx:* on Material
   d.insert("ColorSpaceAPI");
   d.insert("ColorSpaceDefinitionAPI");
+  // CollectionAPI is a supported multiple-apply schema.  The instance name
+  // (for example CollectionAPI:render) is retained in APISchemas and is
+  // validated separately from the base schema name.
+  d.insert("CollectionAPI");
   d.insert("NewtonSceneAPI");
   d.insert("NewtonXpbdSceneAPI");
   d.insert("NewtonKaminoSceneAPI");
@@ -659,10 +663,9 @@ static void RegisterAPISchemas(std::unordered_set<std::string> &d) {
   // d.insert("PhysicsCollisionAPI");
   // d.insert("PhysicsRigidBodyAPI");
 
-  // TODO: Support Multi-apply API(`CollectionAPI`)
-  // d.insert("PhysicsLimitAPI");
-  // d.insert("PhysicsDriveAPI");
-  // d.insert("CollectionAPI");
+  // PhysicsLimitAPI and PhysicsDriveAPI are also multi-apply schemas, but
+  // their typed schema properties are not yet reconstructed by the legacy
+  // Prim API. Keep them on the unknown-schema path until that support lands.
 }
 
 std::string AsciiParser::GetCurrentPrimPath() {

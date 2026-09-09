@@ -19,7 +19,7 @@ namespace tydra {
 namespace next {
 namespace {
 
-using Json = nlohmann::json;
+using Json = ::lightusd::tydra::detail::JSONValue;
 namespace tn = ::lightusd::next;
 
 std::string JsonString(const Json &j, const char *key,
@@ -217,15 +217,18 @@ bool JsonValue(const Json &source, tn::Value *value, std::string *type_name) {
 void AuthorObject(tn::PrimSpec *prim, const Json &object,
                   const std::string &prefix) {
   if (!prim || !object.is_object()) return;
-  for (auto it = object.begin(); it != object.end(); ++it) {
-    const std::string name = prefix + it.key();
-    if (it.value().is_object()) {
-      AuthorObject(prim, it.value(), name + ":");
+  const auto *members = object.object_items();
+  if (!members) return;
+  for (const auto &member : *members) {
+    const std::string name = prefix + member.key;
+    const Json &member_value = member.value();
+    if (member_value.is_object()) {
+      AuthorObject(prim, member_value, name + ":");
       continue;
     }
     tn::Value value;
     std::string type_name;
-    if (JsonValue(it.value(), &value, &type_name)) {
+    if (JsonValue(member_value, &value, &type_name)) {
       Set(prim, name, std::move(value), type_name, true);
     }
   }

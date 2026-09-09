@@ -468,10 +468,10 @@
     for (const KnotDict& item : custom) {
       append(&item.time, 8);
       const Dict* dict = item.value.as_dictionary();
-      const uint64_t entry_count = dict ? dict->entries.size() : 0;
+      const uint64_t entry_count = dict ? dict->entries().size() : 0;
       append(&entry_count, 8);
       if (!dict) continue;
-      for (const auto& entry : dict->entries) {
+      for (const auto& entry : dict->entries()) {
         const uint32_t key = InternString(entry.first);
         const int64_t recursive_offset = 8;
         const ValueRep rep = EncodeValue(entry.second);
@@ -692,7 +692,7 @@
     std::unordered_set<std::string> emitted;
 
     for (const auto& slot : prim.properties().slots()) {
-      const std::string& prop_name = name_table.get(slot.name_id);
+      const std::string prop_name(name_table.get(slot.name_id));
       // Defense against duplicate slots for one property (the parser now
       // upserts, but crate-read or API-built layers could still carry them):
       // two Attribute specs with the same path make pxr reject the layer.
@@ -784,7 +784,7 @@
     }
 
     for (auto prop_id : prim.time_sampled_properties()) {
-      const std::string& prop_name = name_table.get(prop_id);
+      const std::string prop_name(name_table.get(prop_id));
       if (emitted.count(prop_name)) continue;
       std::vector<CrateField> flds;
       const Value* sv = nullptr;

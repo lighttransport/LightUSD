@@ -133,7 +133,7 @@ inline StringListOpEdits ClipSetsNormalizedEdits(const PrimSpecMeta& meta) {
 inline std::vector<std::string> ClipSetsLocalNames(const PrimSpecMeta& meta) {
   std::vector<std::string> names;
   if (const Dict* d = meta.clips().as_dictionary()) {
-    for (const auto& entry : d->entries) names.push_back(entry.first);
+    for (const auto& entry : d->entries()) names.push_back(entry.first);
   }
   // Dictionary storage order is not strength order; name order is the
   // deterministic weaker baseline (see ParseValueClipSets).

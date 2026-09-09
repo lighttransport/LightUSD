@@ -585,10 +585,10 @@ lightusd_status lightusd_dict_entry(lightusd_dict_ref d, size_t index, lightusd_
                             lightusd_dict_ref* subdict) {
   const n::Dict* dict = static_cast<const n::Dict*>(d._dict);
   if (!dict) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid dict");
-  if (index >= dict->entries.size()) {
+  if (index >= dict->entries().size()) {
     return Fail(LIGHTUSD_ERR_NOT_FOUND, "dict index out of range");
   }
-  const auto& kv = dict->entries[index];
+  const auto& kv = dict->entries()[index];
   return DictOut(&kv.first, &kv.second, key, val, sval, subdict);
 }
 

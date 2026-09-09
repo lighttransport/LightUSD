@@ -15,15 +15,38 @@
 #endif
 
 #include "common-macros.inc"
+#include "value-to-json-internal.hh"
+
+// MiniJSON is the default backend. Define LIGHTUSD_VALUE_JSON_USE_NLOHMANN=1
+// only for builds that require the legacy template-heavy implementation.
+#ifndef LIGHTUSD_VALUE_JSON_USE_NLOHMANN
+#if defined(LIGHTUSD_ENABLE_NLOHMANN_JSON_COMPAT)
+#define LIGHTUSD_VALUE_JSON_USE_NLOHMANN 1
+#else
+#define LIGHTUSD_VALUE_JSON_USE_NLOHMANN 0
+#endif
+#endif
 
 namespace lightusd {
 namespace tydra {
 
+minijson::Value ValueToMiniJSON(const value::Value &, uint32_t);
+minijson::Value ValueToPlainMiniJSON(const value::Value &);
+nonstd::optional<value::Value> MiniJSONToValue(const minijson::Value &,
+                                                std::string *, uint32_t);
+
 namespace {
+minijson::Value NlohmannToMiniJSON(const nlohmann::json &);
+nlohmann::json MiniJSONToNlohmann(const minijson::Value &);
+}  // namespace
+
+namespace {
+
 
 // ---------------------------------------------------------------------------
 // Helper: append elements of any array-like compound type to a JSON array
 // ---------------------------------------------------------------------------
+#if LIGHTUSD_VALUE_JSON_USE_NLOHMANN
 template <typename T, size_t N>
 void AppendCompound(nlohmann::json &arr, const std::array<T, N> &v) {
   for (size_t i = 0; i < N; i++) {
@@ -1379,6 +1402,28 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
 // ===========================================================================
 // PrimMetaToJSON
 // ===========================================================================
+#else
+
+}  // namespace (nlohmann helper templates)
+
+// Compatibility bridge for consumers that still use the nlohmann API. The
+// conversion is intentionally routed through MiniJSON so the default build
+// does not instantiate the large type-dispatch templates above.
+nlohmann::json ValueToJSON(const value::Value &val, uint32_t depth) {
+  return MiniJSONToNlohmann(ValueToMiniJSON(val, depth));
+}
+
+nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
+                                           std::string *err, uint32_t depth) {
+  return MiniJSONToValue(NlohmannToMiniJSON(j), err, depth);
+}
+
+nlohmann::json ValueToPlainJSON(const value::Value &val) {
+  return MiniJSONToNlohmann(ValueToPlainMiniJSON(val));
+}
+
+#endif  // LIGHTUSD_VALUE_JSON_USE_NLOHMANN
+
 nlohmann::json PrimMetaToJSON(const PrimMeta &meta) {
   nlohmann::json j;
 
@@ -1438,25 +1483,23 @@ nlohmann::json ValueTypeToJSONSchema(const std::string &type_name,
   }
 
   nlohmann::json schema;
-  schema["type"] = is_array ? "array" : "object";
-
-  if (is_array) {
-    nlohmann::json items;
-    items["type"] = "object";
-    auto sub = ValueTypeToJSONSchema(base, depth + 1);
-    if (sub.contains("properties")) {
-      items["properties"] = sub["properties"];
-    }
-    schema["items"] = items;
-    return schema;
-  }
+  // Arrays are payloads of the same typed wrapper as scalar values:
+  // {"type":"float3[]", "value":[...]}.  The old schema incorrectly
+  // described the wrapper itself as an array.
+  schema["type"] = "object";
 
   // Build properties for the wrapped format: { type: string, value: ... }
   nlohmann::json props;
   props["type"] = {{"type", "string"}, {"enum", nlohmann::json::array({type_name})}};
 
   // Determine value property schema
-  if (base == "float" || base == "double" || base == "half" ||
+  if (is_array) {
+    props["value"] = {{"type", "array"}};
+    auto sub = ValueTypeToJSONSchema(base, depth + 1);
+    if (sub.contains("properties") && sub["properties"].contains("value")) {
+      props["value"]["items"] = sub["properties"]["value"];
+    }
+  } else if (base == "float" || base == "double" || base == "half" ||
       base == "int" || base == "uint" || base == "int64" || base == "uint64" ||
       base == "timecode") {
     props["value"] = {{"type", "number"}};
@@ -1479,7 +1522,10 @@ nlohmann::json ValueTypeToJSONSchema(const std::string &type_name,
   }
 
   schema["properties"] = props;
-  schema["required"] = nlohmann::json::array({"type", "value"});
+  schema["required"] = nlohmann::json::array({"type"});
+  if (base != "None" && base != "null") {
+    schema["required"].push_back("value");
+  }
 
   return schema;
 }
@@ -1664,6 +1710,210 @@ nlohmann::json PrimMetaCompositionToJSON(const PrimMeta &meta) {
 
 }  // namespace
 
+namespace {
+
+minijson::Value MiniPrimMeta(const PrimMeta &meta) {
+  minijson::Value result = minijson::Value::object();
+  if (meta.has_active()) result["active"] = meta.get_active();
+  if (meta.has_hidden()) result["hidden"] = meta.get_hidden();
+  if (meta.has_instanceable()) result["instanceable"] = meta.get_instanceable();
+  if (meta.has_kind()) result["kind"] = meta.get_kind();
+  if (meta.has_doc()) result["doc"] = meta.get_doc().value;
+  if (meta.has_comment()) result["comment"] = meta.get_comment().value;
+  if (meta.has_displayName()) result["displayName"] = meta.get_displayName();
+  if (meta.has_customData()) result["hasCustomData"] = true;
+  if (meta.has_assetInfo()) result["hasAssetInfo"] = true;
+  result["authored"] = meta.authored();
+  if (meta.references.has_value() && !meta.references.value().empty()) {
+    size_t count = 0;
+    for (const auto &item : meta.references.value()) count += item.second.size();
+    result["referenceCount"] = count;
+  }
+  if (meta.payload.has_value() && !meta.payload.value().empty()) {
+    size_t count = 0;
+    for (const auto &item : meta.payload.value()) count += item.second.size();
+    result["payloadCount"] = count;
+  }
+  if (meta.inherits.has_value() && !meta.inherits.value().empty()) {
+    size_t count = 0;
+    for (const auto &item : meta.inherits.value()) count += item.second.size();
+    result["inheritCount"] = count;
+  }
+  if (meta.specializes.has_value() && !meta.specializes.value().empty()) {
+    result["hasSpecializes"] = true;
+  }
+  result["unregisteredMetasCount"] = meta.unregisteredMetas.size();
+  return result;
+}
+
+minijson::Value MiniPathList(const std::vector<Path> &paths) {
+  minijson::Value result = minijson::Value::array();
+  result.reserve(paths.size());
+  for (const auto &path : paths) result.push_back(PathToString(path));
+  return result;
+}
+
+minijson::Value MiniAttribute(const Attribute &attr) {
+  minijson::Value result = minijson::Value::object();
+  result["kind"] = "attribute";
+  result["name"] = attr.name();
+  result["typeName"] = attr.type_name();
+  result["typeId"] = attr.type_id();
+  result["variability"] = VariabilityToString(attr.variability());
+  result["varyingAuthored"] = attr.is_varying_authored();
+  result["blocked"] = attr.is_blocked();
+  result["hasValue"] = attr.has_value();
+  result["hasTimeSamples"] = attr.has_timesamples();
+  result["connections"] = MiniPathList(attr.connections());
+  if (attr.has_value()) result["value"] = ValueToMiniJSON(attr.get_var().value_raw());
+  if (attr.has_timesamples()) {
+    minijson::Value samples = minijson::Value::array();
+    for (const auto &sample : attr.get_var().ts_raw().get_samples()) {
+      minijson::Value item = minijson::Value::object();
+      item["time"] = sample.t;
+      item["blocked"] = sample.blocked;
+      item["value"] = sample.blocked ? minijson::Value(nullptr)
+                                      : ValueToMiniJSON(sample.value);
+      samples.push_back(std::move(item));
+    }
+    result["timeSamples"] = std::move(samples);
+  }
+  return result;
+}
+
+minijson::Value MiniRelationship(const Relationship &rel) {
+  minijson::Value result = minijson::Value::object();
+  result["kind"] = "relationship";
+  result["listOp"] = ListEditQualToString(rel.get_listedit_qual());
+  result["varyingAuthored"] = rel.is_varying_authored();
+  result["blocked"] = rel.is_blocked();
+  minijson::Value targets = minijson::Value::array();
+  if (rel.is_path()) {
+    targets.push_back(PathToString(rel.targetPath));
+  } else if (rel.is_pathvector()) {
+    targets = MiniPathList(rel.targetPathVector);
+  }
+  result["targets"] = std::move(targets);
+  return result;
+}
+
+minijson::Value MiniProperty(const Property &prop) {
+  minijson::Value result = minijson::Value::object();
+  result["custom"] = prop.has_custom();
+  result["valueTypeName"] = prop.value_type_name();
+  if (prop.is_attribute()) {
+    minijson::Value attr = MiniAttribute(prop.get_attribute());
+    if (const auto *items = attr.object_items()) {
+      for (const auto &item : *items) result.set(item.key, item.value());
+    }
+  } else if (prop.is_relationship()) {
+    minijson::Value rel = MiniRelationship(prop.get_relationship());
+    if (const auto *items = rel.object_items()) {
+      for (const auto &item : *items) result.set(item.key, item.value());
+    }
+  } else {
+    result["kind"] = "empty";
+  }
+  return result;
+}
+
+minijson::Value MiniPathListOps(
+    const std::vector<std::pair<ListEditQual, std::vector<Path>>> &ops) {
+  minijson::Value result = minijson::Value::array();
+  result.reserve(ops.size());
+  for (const auto &op : ops) {
+    minijson::Value item = minijson::Value::object();
+    item["op"] = ListEditQualToString(op.first);
+    item["items"] = MiniPathList(op.second);
+    result.push_back(std::move(item));
+  }
+  return result;
+}
+
+template <typename Arc>
+minijson::Value MiniAssetArcs(
+    const std::vector<std::pair<ListEditQual, std::vector<Arc>>> &ops) {
+  minijson::Value result = minijson::Value::array();
+  result.reserve(ops.size());
+  for (const auto &op : ops) {
+    minijson::Value item = minijson::Value::object();
+    item["op"] = ListEditQualToString(op.first);
+    minijson::Value entries = minijson::Value::array();
+    entries.reserve(op.second.size());
+    for (const auto &arc : op.second) {
+      minijson::Value entry = minijson::Value::object();
+      entry["assetPath"] = arc.asset_path.GetAssetPath();
+      entry["primPath"] = PathToString(arc.prim_path);
+      minijson::Value offset = minijson::Value::object();
+      offset["offset"] = arc.layerOffset._offset;
+      offset["scale"] = arc.layerOffset._scale;
+      entry["layerOffset"] = std::move(offset);
+      entries.push_back(std::move(entry));
+    }
+    item["items"] = std::move(entries);
+    result.push_back(std::move(item));
+  }
+  return result;
+}
+
+minijson::Value MiniPrimMetaComposition(const PrimMeta &meta) {
+  minijson::Value result = minijson::Value::object();
+  if (meta.references) result["references"] = MiniAssetArcs(meta.references.value());
+  if (meta.payload) result["payload"] = MiniAssetArcs(meta.payload.value());
+  if (meta.inherits) result["inherits"] = MiniPathListOps(meta.inherits.value());
+  if (meta.specializes) result["specializes"] = MiniPathListOps(meta.specializes.value());
+  if (meta.inheritPaths) result["inheritPaths"] = MiniPathListOps(meta.inheritPaths.value());
+  if (meta.specializePaths) result["specializePaths"] = MiniPathListOps(meta.specializePaths.value());
+  if (!meta.arc_origins.empty()) {
+    minijson::Value origins = minijson::Value::array();
+    origins.reserve(meta.arc_origins.size());
+    for (const auto &origin : meta.arc_origins) {
+      minijson::Value item = minijson::Value::object();
+      item["sourceLayerId"] = origin.source_layer_id;
+      item["sourcePrimPath"] = PathToString(origin.source_prim_path);
+      origins.push_back(std::move(item));
+    }
+    result["arcOrigins"] = std::move(origins);
+  }
+  return result;
+}
+
+minijson::Value MiniPrimSpec(const PrimSpec &ps, uint32_t max_depth,
+                             uint32_t depth) {
+  minijson::Value result = minijson::Value::object();
+  result["name"] = ps.name();
+  result["typeName"] = ps.typeName();
+  result["specifier"] = SpecifierToString(ps.specifier());
+  result["currentWorkingPath"] = ps.get_current_working_path();
+  minijson::Value search_paths = minijson::Value::array();
+  for (const auto &path : ps.get_asset_search_paths()) search_paths.push_back(path);
+  result["assetSearchPaths"] = std::move(search_paths);
+  minijson::Value properties = minijson::Value::object();
+  properties.reserve(ps.props().size());
+  for (const auto &prop : ps.props()) properties[prop.first] = MiniProperty(prop.second);
+  result["properties"] = std::move(properties);
+  result["metadata"] = MiniPrimMetaComposition(ps.metas());
+  minijson::Value children = minijson::Value::array();
+  children.reserve(ps.children().size());
+  for (const PrimSpec &child : ps.children()) {
+    if (depth < max_depth) {
+      children.push_back(MiniPrimSpec(child, max_depth, depth + 1));
+    } else {
+      minijson::Value summary = minijson::Value::object();
+      summary["name"] = child.name();
+      summary["typeName"] = child.typeName();
+      summary["specifier"] = SpecifierToString(child.specifier());
+      summary["childCount"] = child.children().size();
+      summary["propertyCount"] = child.props().size();
+      children.push_back(std::move(summary));
+    }
+  }
+  result["children"] = std::move(children);
+  return result;
+}
+
+}  // namespace
+
 nlohmann::json AttributeToJSON(const Attribute &attr) {
   nlohmann::json j;
   j["kind"] = "attribute";
@@ -1708,6 +1958,195 @@ nlohmann::json RelationshipToJSON(const Relationship &rel) {
     j["targets"] = PathListToJSON(rel.targetPathVector);
   }
   return j;
+}
+
+namespace {
+
+minijson::Value NlohmannToMiniJSON(const nlohmann::json &source) {
+  if (source.is_null()) return nullptr;
+  if (source.is_boolean()) return source.get<bool>();
+  if (source.is_number_unsigned()) return source.get<uint64_t>();
+  if (source.is_number_integer()) return source.get<int64_t>();
+  if (source.is_number_float()) return source.get<double>();
+  if (source.is_string()) return source.get<std::string>();
+  if (source.is_array()) {
+    minijson::Value result = minijson::Value::array();
+    result.reserve(source.size());
+    for (const auto &item : source) result.push_back(NlohmannToMiniJSON(item));
+    return result;
+  }
+  if (source.is_object()) {
+    minijson::Value result = minijson::Value::object();
+    result.reserve(source.size());
+    for (const auto &item : source.items()) {
+      result.set(item.key(), NlohmannToMiniJSON(item.value()));
+    }
+    return result;
+  }
+  return nullptr;
+}
+
+nlohmann::json MiniJSONToNlohmann(const minijson::Value &source) {
+  if (source.is_null()) return nullptr;
+  if (source.is_boolean()) return source.get_bool();
+  if (source.type() == minijson::Type::UnsignedInteger) {
+    return source.get_uint64();
+  }
+  if (source.type() == minijson::Type::SignedInteger) {
+    return source.get_int64();
+  }
+  if (source.type() == minijson::Type::Number) return source.get_double();
+  if (source.is_string()) return source.get_string();
+  if (source.is_array()) {
+    nlohmann::json result = nlohmann::json::array();
+    if (const auto *items = source.array_items()) {
+      for (const auto &item : *items) result.push_back(MiniJSONToNlohmann(item));
+    }
+    return result;
+  }
+  if (source.is_object()) {
+    nlohmann::json result = nlohmann::json::object();
+    if (const auto *items = source.object_items()) {
+      for (const auto &item : *items) {
+        result[item.key] = MiniJSONToNlohmann(item.value());
+      }
+    }
+    return result;
+  }
+  return nullptr;
+}
+
+}  // namespace
+
+minijson::Value ValueToMiniJSON(const value::Value &val, uint32_t depth) {
+  if (depth > kMaxDefaultTraversalLimit) {
+    minijson::Value result = minijson::Value::object();
+    result["type"] = "error";
+    result["error"] = "max recursion depth exceeded";
+    return result;
+  }
+  if (val.is_empty()) {
+    minijson::Value result = minijson::Value::object();
+    result["type"] = "null";
+    return result;
+  }
+  if (val.is_none()) {
+    minijson::Value result = minijson::Value::object();
+    result["type"] = "None";
+    return result;
+  }
+  minijson::Value native;
+  if (detail::NativeValueToMiniJSON(val, depth, &native)) {
+    return static_cast<minijson::Value &&>(native);
+  }
+  return NlohmannToMiniJSON(ValueToJSON(val, depth));
+}
+
+nonstd::optional<value::Value> MiniJSONToValue(const minijson::Value &j,
+                                                std::string *err,
+                                                uint32_t depth) {
+  if (auto native = detail::NativeMiniJSONToValue(j, err, depth)) return native;
+  return JSONToValue(MiniJSONToNlohmann(j), err, depth);
+}
+
+minijson::Value ValueToPlainMiniJSON(const value::Value &val) {
+  const minijson::Value wrapped = ValueToMiniJSON(val);
+  if (wrapped.is_object()) {
+    if (const minijson::Value *payload = wrapped.find("value")) {
+      return *payload;
+    }
+  }
+  return minijson::Value(nullptr);
+}
+
+minijson::Value ValueTypeToMiniJSONSchema(const std::string &type_name,
+                                          uint32_t depth) {
+  if (depth > kMaxDefaultTraversalLimit) {
+    minijson::Value result = minijson::Value::object();
+    result["type"] = "error";
+    result["error"] = "max recursion depth exceeded";
+    return result;
+  }
+
+  const bool is_array = type_name.size() >= 2 &&
+                        type_name.compare(type_name.size() - 2, 2, "[]") == 0;
+  const std::string base = is_array
+                               ? type_name.substr(0, type_name.size() - 2)
+                               : type_name;
+
+  minijson::Value schema = minijson::Value::object();
+  schema["type"] = "object";
+  minijson::Value properties = minijson::Value::object();
+  minijson::Value type_schema = minijson::Value::object();
+  type_schema["type"] = "string";
+  minijson::Value type_enum = minijson::Value::array();
+  type_enum.push_back(type_name);
+  type_schema["enum"] = std::move(type_enum);
+  properties["type"] = std::move(type_schema);
+
+  minijson::Value value_schema = minijson::Value::object();
+  if (is_array) {
+    value_schema["type"] = "array";
+    minijson::Value item_schema = ValueTypeToMiniJSONSchema(base, depth + 1);
+    if (item_schema.is_object()) {
+      if (const minijson::Value *item_value = item_schema.find("properties")) {
+        if (const minijson::Value *item_payload = item_value->find("value")) {
+          value_schema["items"] = *item_payload;
+        }
+      }
+    }
+  } else if (base == "float" || base == "double" || base == "half" ||
+             base == "int" || base == "uint" || base == "int64" ||
+             base == "uint64" || base == "timecode") {
+    value_schema["type"] = "number";
+  } else if (base == "bool") {
+    value_schema["type"] = "boolean";
+  } else if (base == "string" || base == "token") {
+    value_schema["type"] = "string";
+  } else if (base == "asset" || base == "dictionary") {
+    value_schema["type"] = "object";
+  } else if (base != "None" && base != "null") {
+    value_schema["type"] = "array";
+    minijson::Value number_schema = minijson::Value::object();
+    number_schema["type"] = "number";
+    value_schema["items"] = std::move(number_schema);
+  }
+  if (base != "None" && base != "null") {
+    properties["value"] = std::move(value_schema);
+  }
+  schema["properties"] = std::move(properties);
+  minijson::Value required = minijson::Value::array();
+  required.push_back("type");
+  if (base != "None" && base != "null") required.push_back("value");
+  schema["required"] = std::move(required);
+  return schema;
+}
+
+minijson::Value PrimMetaToMiniJSON(const PrimMeta &meta) {
+  return MiniPrimMeta(meta);
+}
+
+minijson::Value PrimSpecToMiniJSON(const PrimSpec &ps, uint32_t max_depth,
+                                   uint32_t depth) {
+  if (depth > kMaxDefaultTraversalLimit) {
+    minijson::Value result = minijson::Value::object();
+    result["type"] = "error";
+    result["error"] = "max recursion depth exceeded";
+    return result;
+  }
+  return MiniPrimSpec(ps, max_depth, depth);
+}
+
+minijson::Value PropertyToMiniJSON(const Property &prop) {
+  return MiniProperty(prop);
+}
+
+minijson::Value AttributeToMiniJSON(const Attribute &attr) {
+  return MiniAttribute(attr);
+}
+
+minijson::Value RelationshipToMiniJSON(const Relationship &rel) {
+  return MiniRelationship(rel);
 }
 
 nlohmann::json PropertyToJSON(const Property &prop) {

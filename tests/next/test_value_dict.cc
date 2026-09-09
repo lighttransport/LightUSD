@@ -14,6 +14,8 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <type_traits>
+#include <utility>
 
 #include "next/types/value.hh"
 
@@ -29,9 +31,9 @@ static void TestSmallDict() {
   d->set("apple", Value(2));
   d->set("mango", Value(3));
   assert(d->size() == 3);
-  assert(d->entries[0].first == "zebra");
-  assert(d->entries[1].first == "apple");
-  assert(d->entries[2].first == "mango");
+  assert(d->entries()[0].first == "zebra");
+  assert(d->entries()[1].first == "apple");
+  assert(d->entries()[2].first == "mango");
 
   // find() hits and misses.
   assert(d->find("apple") && *d->find("apple")->as_int() == 2);
@@ -40,15 +42,15 @@ static void TestSmallDict() {
   // set() on an EXISTING key replaces in place (no reorder, no dup).
   d->set("apple", Value(20));
   assert(d->size() == 3);
-  assert(d->entries[1].first == "apple");
+  assert(d->entries()[1].first == "apple");
   assert(d->find("apple") && *d->find("apple")->as_int() == 20);
-  assert(d->entries[0].first == "zebra");  // order unchanged
+  assert(d->entries()[0].first == "zebra");  // order unchanged
 
   // Last-wins: a repeated key keeps the final value at its FIRST position.
   d->set("zebra", Value(100));
   assert(d->size() == 3);
   assert(d->find("zebra") && *d->find("zebra")->as_int() == 100);
-  assert(d->entries[0].first == "zebra");
+  assert(d->entries()[0].first == "zebra");
 }
 
 static void TestValueCowIndex() {
@@ -89,20 +91,73 @@ static void TestMoveIndex() {
   assert(d->find("x") && *d->find("x")->as_int() == 10);
   assert(d->find("y") && *d->find("y")->as_int() == 20);
   assert(d->size() == 2);
-  assert(d->entries[0].first == "x");
+  assert(d->entries()[0].first == "x");
 }
 
-static void TestLegacyEntriesMutation() {
-  // `entries` is public for source compatibility. Direct legacy mutation must
-  // not make the indexed lookup return stale data or create duplicate keys.
+static void TestControlledEntries() {
+  // Iteration cannot reorder/replace keys behind the index. Value mutation
+  // remains available through find(), and insertion goes through set().
+  static_assert(std::is_const<typename std::remove_reference<
+      decltype(std::declval<Dict&>().entries())>::type>::value,
+      "Dictionary entries must be read-only");
   Value v = Value::MakeDictionary();
   Dict* d = v.as_dictionary();
   d->set("a", Value(1));
-  d->entries.emplace_back("b", Value(2));
+  d->set("b", Value(2));
   assert(d->find("b") && *d->find("b")->as_int() == 2);
   d->set("b", Value(20));
   assert(d->size() == 2);
   assert(d->find("b") && *d->find("b")->as_int() == 20);
+}
+
+static const char* IndexedKey(const void* context, size_t index, size_t* length) {
+  const auto& keys = *static_cast<const std::vector<std::string>*>(context);
+  if (index >= keys.size()) return nullptr;
+  *length = keys[index].size();
+  return keys[index].data();
+}
+
+static void TestStringIndex() {
+  using detail::StringIndex;
+  std::vector<std::string> keys{"", std::string("embedded\0nul", 12), "same", "same"};
+  StringIndex index;
+  assert(index.rebuild(keys.size(), IndexedKey, &keys));
+  assert(index.size() == 3);  // duplicate keeps its first position
+  assert(index.find("same", 4, IndexedKey, &keys) == 2);
+  assert(index.find("", 0, IndexedKey, &keys) == 0);
+  assert(index.find(keys[1].data(), keys[1].size(), IndexedKey, &keys) == 1);
+  assert(index.find("embedded", 8, IndexedKey, &keys) == StringIndex::kMissing);
+  for (size_t i = 4; i < 4096; ++i) {
+    keys.push_back("index-key-" + std::to_string(i));
+    assert(index.insert(i, IndexedKey, &keys));
+  }
+  for (size_t i = 4; i < keys.size(); ++i)
+    assert(index.find(keys[i].data(), keys[i].size(), IndexedKey, &keys) == i);
+  // Arithmetic failure must not discard the existing table or consult keys
+  // outside the supplied range.
+  assert(!index.rebuild(StringIndex::kMissing, IndexedKey, &keys));
+  assert(!index.insert(StringIndex::kMissing, IndexedKey, &keys));
+  assert(!index.insert(keys.size(), IndexedKey, &keys));
+  assert(index.find("same", 4, IndexedKey, &keys) == 2);
+  StringIndex moved(std::move(index));
+  assert(index.size() == 0);
+  assert(moved.find("same", 4, IndexedKey, &keys) == 2);
+  assert(moved.rebuild(0, IndexedKey, &keys));
+  assert(moved.find("same", 4, IndexedKey, &keys) == StringIndex::kMissing);
+}
+
+static void TestDictAssignment() {
+  Dict a;
+  a.set("old", Value(1));
+  Dict b;
+  b.set("new", Value(2));
+  a = b;
+  b.set("new", Value(3));
+  assert(*a.find("new")->as_int() == 2 && !a.find("old"));
+  a = std::move(b);
+  assert(*a.find("new")->as_int() == 3);
+  b.set("reused", Value(4));
+  assert(b.find("reused") && !a.find("reused"));
 }
 
 static void TestLargeDict() {
@@ -133,10 +188,12 @@ static void TestLargeDict() {
 
 int main() {
   std::cout << "=== LightUSD Next Dict index test ===" << std::endl;
+  TestStringIndex();
+  TestDictAssignment();
   TestSmallDict();
   TestValueCowIndex();
   TestMoveIndex();
-  TestLegacyEntriesMutation();
+  TestControlledEntries();
   TestLargeDict();
   std::cout << "  Dict index test passed!" << std::endl;
   return 0;

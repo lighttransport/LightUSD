@@ -79,7 +79,7 @@ void PrintProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
                    int depth, const PrimPrintOptions& opts) {
   // Get property name
   PropNameTable& name_table = GetPropNameTable();
-  const std::string& name = name_table.get(slot.name_id);
+  const std::string name(name_table.get(slot.name_id));
 
   // Type name: prefer the declared type recorded on read (preserves role
   // types like `color3f`/`normal3f` and array `[]` that the raw TypeId loses),
@@ -151,7 +151,7 @@ void PrintRelationships(StreamWriter& os, const PrimSpec& spec,
       PrintIndent(os, depth, opts.indent);
 
       PropNameTable& name_table = GetPropNameTable();
-      const std::string& name = name_table.get(slot.name_id);
+      const std::string name(name_table.get(slot.name_id));
 
       // Get targets
       const std::vector<Path>* targets = spec.relationship(name);

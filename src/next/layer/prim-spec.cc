@@ -131,21 +131,37 @@ VariantData::~VariantData() {
 // TypeNameTable
 // ============================================================
 
+namespace {
+const char* TypeNameKey(const void* context, size_t index, size_t* length) {
+  const auto& names = *static_cast<const std::deque<std::string>*>(context);
+  if (index >= names.size()) return nullptr;
+  *length = names[index].size();
+  return names[index].data();
+}
+}  // namespace
+
+TypeNameId TypeNameTable::find_live(const std::string& name) const {
+  const size_t id = name_to_id_.find(name.data(), name.size(), TypeNameKey, &names_);
+  if (id < UINT16_MAX) return TypeNameId{static_cast<uint16_t>(id)};
+  if (name_to_id_.size() != names_.size()) {
+    for (size_t i = 0; i < names_.size(); ++i) {
+      if (names_[i] == name) return TypeNameId{static_cast<uint16_t>(i)};
+    }
+  }
+  return TypeNameId{};
+}
+
 TypeNameId TypeNameTable::intern(const std::string& name) {
 #if defined(LIGHTUSD_ENABLE_THREAD)
   {
     std::shared_lock<std::shared_mutex> rlk(mu_);
-    auto hit = name_to_id_.find(name);
-    if (hit != name_to_id_.end()) {
-      return TypeNameId{hit->second};
-    }
+    const TypeNameId hit = find_live(name);
+    if (hit.is_valid()) return hit;
   }
   std::unique_lock<std::shared_mutex> wlk(mu_);
 #endif
-  auto it = name_to_id_.find(name);
-  if (it != name_to_id_.end()) {
-    return TypeNameId{it->second};
-  }
+  const TypeNameId hit = find_live(name);
+  if (hit.is_valid()) return hit;
 
   if (names_.size() >= UINT16_MAX) {
     return TypeNameId{};  // Table full
@@ -153,7 +169,10 @@ TypeNameId TypeNameTable::intern(const std::string& name) {
 
   uint16_t id = static_cast<uint16_t>(names_.size());
   names_.push_back(name);
-  name_to_id_[name] = id;
+  if (name_to_id_.size() + 1 == names_.size())
+    name_to_id_.insert(id, TypeNameKey, &names_);
+  else
+    name_to_id_.rebuild(names_.size(), TypeNameKey, &names_);
   return TypeNameId{id};
 }
 
@@ -172,10 +191,8 @@ TypeNameId TypeNameTable::find(const std::string& name) const {
 #if defined(LIGHTUSD_ENABLE_THREAD)
   std::shared_lock<std::shared_mutex> rlk(mu_);
 #endif
-  auto it = name_to_id_.find(name);
-  if (it != name_to_id_.end()) {
-    return TypeNameId{it->second};
-  }
+  const TypeNameId hit = find_live(name);
+  if (hit.is_valid()) return hit;
   return TypeNameId{};
 }
 
@@ -1195,17 +1212,14 @@ PrimSpec::ColdData& PrimSpec::ensure_cold_data() {
 void PrimSpec::set_property_type_name(const std::string& prop_name,
                                       const std::string& type_name) {
   // Intern both name and typeName; typeNames are few and highly shared.
-  prop_type_names_[GetPropNameTable().intern(prop_name).id] =
-      GetPropNameTable().intern(type_name).id;
+  prop_type_names_[GetPropNameTable().intern(prop_name).id] = type_name;
 }
 
 const std::string* PrimSpec::property_type_name(PropNameId name_id) const {
   if (!name_id.is_valid()) return nullptr;
   auto it = prop_type_names_.find(name_id.id);
   if (it == prop_type_names_.end()) return nullptr;
-  PropNameId tn_id;
-  tn_id.id = it->second;
-  return &GetPropNameTable().get(tn_id);
+  return &it->second;
 }
 
 const std::string* PrimSpec::property_type_name(const std::string& prop_name) const {

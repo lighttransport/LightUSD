@@ -160,6 +160,63 @@ void TestChunkedArrayAllocFailure() {
   std::cout << "  ChunkedArray allocation failure: PASSED\n";
 }
 
+void TestChunkedArrayStorageEdges() {
+  // Repeated tail compaction must preserve capacity and budget accounting.
+  const size_t saved_cap = MemBudget::Get().Cap();
+  MemBudget::Get().InitBytes(size_t(1) << 30);
+  const size_t base = MemBudget::Get().Tracked();
+  MemBudget::InstallChunkedArrayTracking();
+  {
+    ChunkedArray<uint32_t> a;
+    assert(a.resize(17, 42));
+    a.shrink_to_fit();
+    const size_t compact = MemBudget::Get().Tracked();
+    a.shrink_to_fit();
+    assert(a.capacity() == 17);
+    assert(MemBudget::Get().Tracked() == compact);
+    assert(a.resize(9));
+    a.shrink_to_fit();
+    assert(a.capacity() == 9);
+    assert(MemBudget::Get().Tracked() == base + 9 * sizeof(uint32_t));
+
+    // An append source may be a borrowed view of the tail being expanded.
+    const auto& read = a;
+    assert(a.append(read.chunk_data(0), 9));
+    assert(a.size() == 18);
+    for (size_t i = 0; i < a.size(); ++i) assert(read[i] == 42);
+    ChunkedArray<uint32_t> b;
+    b.share_from(a);
+    const auto& shared = b;
+    assert(b.append(shared.chunk_data(0), 18));
+    assert(a.size() == 18 && b.size() == 36);
+    for (size_t i = 0; i < b.size(); ++i) assert(shared[i] == 42);
+
+    ChunkedArray<uint32_t> moved(std::move(b));
+    assert(b.empty() && b.capacity() == 0);
+    assert(b.push_back(7) == 0);
+    assert(moved.size() == 36 && moved[0] == 42);
+  }
+  assert(MemBudget::Get().Tracked() == base);
+  MemBudget::UninstallChunkedArrayTracking();
+  MemBudget::Get().InitBytes(saved_cap);
+
+  struct alignas(64) Wide { uint32_t values[16]; };
+  ChunkedArray<Wide, 256> aligned;
+  const Wide value{{123}};
+  assert(aligned.resize(5, value));
+  aligned.shrink_to_fit();
+  assert(reinterpret_cast<uintptr_t>(aligned.chunk_data(0)) % 64 == 0);
+  assert(reinterpret_cast<uintptr_t>(aligned.chunk_data(1)) % 64 == 0);
+  ChunkedArray<Wide, 256> copy;
+  copy.share_from(aligned);
+  assert(std::distance(copy.begin(), copy.end()) == 5);
+  assert(copy.is_shared());
+  copy.mutable_chunk_data(1)[0].values[0] = 234;
+  assert(aligned[4].values[0] == 123 && copy[4].values[0] == 234);
+  copy.mutable_at(4).values[0] = 456;
+  assert(aligned[4].values[0] == 123 && copy[4].values[0] == 456);
+}
+
 // Regression: `&arr[i]` followed by pointer indexing read past the chunk
 // allocation. FloatChunked holds 16384 elements per 64KB chunk and
 // 16384 % 3 == 1, so an xyz triple straddles a chunk boundary every ~5461
@@ -218,8 +275,7 @@ void TestChunkedArrayShareCow() {
   b.share_from(a);
   assert(b.size() == N);
   assert(a.is_shared() && b.is_shared());
-  // Same bytes, same buffers. NOTE: read through CONST refs -- the non-const
-  // chunk_data() hands out a writable pointer and so must detach.
+  // Read-only views never detach, even on a mutable array.
   {
     const ChunkedArray<uint32_t>& ca = a;
     const ChunkedArray<uint32_t>& cb = b;
@@ -228,7 +284,7 @@ void TestChunkedArrayShareCow() {
   for (size_t i = 0; i < N; i += 997) assert(b[i] == static_cast<uint32_t>(i));
 
   // Write through the clone: it detaches, the original keeps its values.
-  b[42] = 999999u;
+  b.mutable_at(42) = 999999u;
   assert(b[42] == 999999u);
   assert(a[42] == 42u);
   {
@@ -245,7 +301,7 @@ void TestChunkedArrayShareCow() {
   // Writing through the ORIGINAL of a live share must detach too.
   ChunkedArray<uint32_t> c;
   c.share_from(a);
-  a[7] = 12345u;
+  a.mutable_at(7) = 12345u;
   assert(a[7] == 12345u);
   assert(c[7] == 7u);
 
@@ -298,7 +354,7 @@ void TestChunkedArrayShareCowBudgetFailure() {
   MemBudget::Get().InitBytes(saved_cap);
 
   // The failed clone remains shareable and can detach once resources return.
-  copy[0] = 11u;
+  copy.mutable_at(0) = 11u;
   assert(copy[0] == 11u);
   assert(source[0] == 7u);
 
@@ -327,7 +383,9 @@ void TestChunkedArrayBudgetTracking() {
     ChunkedArray<float> b;
     b.share_from(a);                 // share: no new charge
     const size_t shared = MemBudget::Get().Tracked();
-    b[0] = 1.0f;                     // detach: takes a private copy
+    assert(b[0] == 0.0f && b.chunk_data(0) == a.chunk_data(0));
+    assert(MemBudget::Get().Tracked() == shared);
+    b.mutable_at(0) = 1.0f;                     // detach: takes a private copy
     assert(MemBudget::Get().Tracked() > shared);
 
     a.shrink_to_fit();
@@ -7185,6 +7243,7 @@ int main() {
   TestChunkedArrayShareCow();
   TestChunkedArrayShareCowBudgetFailure();
   TestChunkedArrayBudgetTracking();
+  TestChunkedArrayStorageEdges();
   TestChunkedArrayAppend();
   TestChunkedArrayIterator();
   TestRenderDataSafety();

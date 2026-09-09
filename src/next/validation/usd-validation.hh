@@ -140,7 +140,8 @@ struct ValidationRuleInfo {
 };
 
 // The full rule registry, ordered by (group, id).
-const std::vector<ValidationRuleInfo> &GetValidationRuleTable();
+// Borrowed immutable records with process lifetime; count may be null.
+const ValidationRuleInfo* GetValidationRuleTable(size_t* count);
 
 // usdchecker compatibility: OpenUSD reports several of these findings as
 // ERRORS where the lightusd defaults use warnings (and the presence rules

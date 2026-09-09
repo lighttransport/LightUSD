@@ -869,6 +869,26 @@ def Xform "Root"
 }
 
 int main() {
+  size_t rule_count = 0;
+  const ValidationRuleInfo* rules = GetValidationRuleTable(&rule_count);
+  CHECK(rules && rule_count > 100, "borrowed validation registry is populated");
+  CHECK(rules == GetValidationRuleTable(nullptr), "rule records have stable lifetime");
+  bool complete_records = true;
+  for (size_t i = 0; i < rule_count; ++i) {
+    complete_records = complete_records && rules[i].id && rules[i].id[0] &&
+        rules[i].group && rules[i].group[0] && rules[i].doc && rules[i].doc[0];
+  }
+  CHECK(complete_records, "rule records retain IDs, groups and descriptions");
+  USDValidationResult compat;
+  compat.issues.resize(2);
+  compat.issues[0].rule_id = "geom.stage.upAxis";
+  compat.issues[1].rule_id = "unlisted.rule";
+  for (auto& issue : compat.issues) issue.severity = USDValidationSeverity::Warning;
+  ApplyUsdcheckerCompatSeverities(&compat);
+  ApplyUsdcheckerCompatSeverities(&compat);
+  CHECK(compat.error_count() == 1 && compat.warning_count() == 1,
+        "compatibility upgrades remain selective and idempotent");
+  ApplyUsdcheckerCompatSeverities(nullptr);
   test_valid_usda_passes();
   test_layer_metadata_rules();
   test_xform_op_order();

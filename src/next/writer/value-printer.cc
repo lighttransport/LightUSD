@@ -1327,8 +1327,8 @@ std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
 
   while (!stack.empty()) {
     Frame& frame = stack.back();
-    if (frame.next_entry < frame.dict->entries.size()) {
-      const auto& kv = frame.dict->entries[frame.next_entry++];
+    if (frame.next_entry < frame.dict->entries().size()) {
+      const auto& kv = frame.dict->entries()[frame.next_entry++];
       const std::string& key = kv.first;
       const Value& val = kv.second;
       for (int i = 0; i <= frame.depth; ++i) s += opts.indent;

@@ -517,7 +517,7 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
                    int depth, const USDAWriteOptions& opts,
                    SegmentSink* segsink = nullptr) {
   PropNameTable& name_table = GetPropNameTable();
-  const std::string& name = name_table.get(slot.name_id);
+  const std::string name(name_table.get(slot.name_id));
 
   if (const std::string* raw = spec.raw_default_source(slot.name_id)) {
     WriteIndent(os, depth, opts.indent);
@@ -1079,7 +1079,7 @@ void WriteVariantSets(StreamWriter& os,
           for (const PropSlot& sslot : self->properties().slots()) {
             if (sslot.is_relationship()) continue;
             if (!sslot.is_time_sampled() &&
-                has_inline(stable.get(sslot.name_id))) {
+                has_inline(std::string(stable.get(sslot.name_id)))) {
               continue;
             }
             WriteProperty(os, sslot, *self, depth + 2, opts, segsink);
@@ -1102,7 +1102,7 @@ void WriteVariantSets(StreamWriter& os,
         PropNameTable& htable = GetPropNameTable();
         for (const PropSlot& hslot : holder->properties().slots()) {
           if (hslot.is_relationship()) continue;
-          if (has_inline_prop(htable.get(hslot.name_id))) continue;
+          if (has_inline_prop(std::string(htable.get(hslot.name_id)))) continue;
           WriteProperty(os, hslot, *holder, depth + 2, opts, segsink);
         }
         for (const std::string& rel_name : holder->relationship_names()) {

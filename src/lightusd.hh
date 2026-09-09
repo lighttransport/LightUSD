@@ -135,6 +135,15 @@ struct USDLoadOptions {
   ///
   bool strict_shader_type_check{false};
 
+  ///
+  /// Treat recoverable reader/reconstruction errors as load failures.
+  ///
+  /// The default remains permissive for compatibility: readers may return a
+  /// Stage/Layer while reporting diagnostics through `err`. Applications that
+  /// require a clean load can opt into hard-failure semantics.
+  ///
+  bool strict_loading{false};
+
   // ==========================================================================
   // MaterialX Validation Options
   // ==========================================================================

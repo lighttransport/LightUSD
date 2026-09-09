@@ -70,6 +70,10 @@ inline size_t MaxMemoryBytes(uint64_t limit_mb) {
   return static_cast<size_t>(limit_mb * kBytesPerMiB);
 }
 
+inline uint64_t EffectiveMemoryLimitMb(const USDLoadOptions &options) {
+  return static_cast<uint64_t>(std::max<int32_t>(0, options.max_memory_limit_in_mb));
+}
+
 FILE *ProfileOutput() {
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -189,7 +193,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
 
   bool swap_endian = false;  // @FIXME
 
-  size_t max_length = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
+  size_t max_length = MaxMemoryBytes(EffectiveMemoryLimitMb(options));
 
   DCOUT("Max length = " << max_length);
 
@@ -210,7 +214,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
   config.numThreads = options.num_threads;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
   config.strict_shader_type_check = options.strict_shader_type_check;
-  config.kMaxAllowedMemoryInMB = size_t(options.max_memory_limit_in_mb);
+  config.kMaxAllowedMemoryInMB = size_t(EffectiveMemoryLimitMb(options));
   config.mmap_zero_copy = options.mmap_zero_copy;
   usdc::USDCReader reader(&sr, config);
 
@@ -256,11 +260,18 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
     (*warn) += reader.GetWarning();
   }
 
-  // Reconstruct OK but may have some error.
-  // TODO(syoyo): Return false in strict mode.
-  if (err) {
-    DCOUT(reader.GetError());
-    (*err) += reader.GetError();
+  // Reconstruction may produce a usable Stage together with diagnostics.
+  // Preserve the historical permissive behavior unless strict loading was
+  // explicitly requested.
+  const std::string reader_error = reader.GetError();
+  if (!reader_error.empty()) {
+    DCOUT(reader_error);
+    if (err) {
+      (*err) += reader_error;
+    }
+    if (options.strict_loading) {
+      return false;
+    }
   }
 
   DCOUT("Reconstructed Stage from USDC file.");
@@ -318,7 +329,7 @@ bool LoadUSDCFromFile(const std::string &_filename, Stage *stage,
 
   } else {
     std::vector<uint8_t> data;
-    size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
+    size_t max_bytes = MaxMemoryBytes(EffectiveMemoryLimitMb(options));
     if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                            /* userdata */ nullptr)) {
       if (err) {
@@ -782,7 +793,7 @@ bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
     return ret;
   } else {
     std::vector<uint8_t> data;
-    size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
+    size_t max_bytes = MaxMemoryBytes(EffectiveMemoryLimitMb(options));
     if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                            /* userdata */ nullptr)) {
       return false;
@@ -843,7 +854,7 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
   config.strict_allowedToken_check = options.strict_allowedToken_check;
   config.strict_shader_type_check = options.strict_shader_type_check;
   config.allow_unknown_apiSchema = !options.strict_apiSchema_check;
-  config.max_memory_limit_in_mb = size_t(options.max_memory_limit_in_mb);
+  config.max_memory_limit_in_mb = size_t(EffectiveMemoryLimitMb(options));
   // MaterialX validation options
   config.strict_mtlx_check = options.strict_mtlx_check;
   config.validate_mtlx_info_id = options.validate_mtlx_info_id;
@@ -937,7 +948,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
     return ret;
   } else {
     std::vector<uint8_t> data;
-    size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
+    size_t max_bytes = MaxMemoryBytes(EffectiveMemoryLimitMb(options));
     if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                            /* userdata */ nullptr)) {
       if (err) {
@@ -1004,7 +1015,7 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
     return ret;
   } else {
     std::vector<uint8_t> data;
-    size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
+    size_t max_bytes = MaxMemoryBytes(EffectiveMemoryLimitMb(options));
     if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                            /* userdata */ nullptr)) {
       return false;
@@ -1049,7 +1060,7 @@ static bool LoadUSDFromMemoryImpl(const uint8_t *addr, const size_t length,
     }
 
     // Check against memory budget
-    size_t max_length = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
+    size_t max_length = MaxMemoryBytes(EffectiveMemoryLimitMb(options));
     if (decompressed_size > max_length) {
       if (err) {
         (*err) += "Decompressed USD size (" + std::to_string(decompressed_size) +
@@ -1339,7 +1350,7 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
 
   bool swap_endian = false;  // @FIXME
 
-  size_t max_length = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
+  size_t max_length = MaxMemoryBytes(EffectiveMemoryLimitMb(options));
 
   DCOUT("Max length = " << max_length);
 
@@ -1410,11 +1421,15 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
     (*warn) += reader.GetWarning();
   }
 
-  // Reconstruct OK but may have some error.
-  // TODO(syoyo): Return false in strict mode.
-  if (err) {
-    DCOUT(reader.GetError());
-    (*err) += reader.GetError();
+  const std::string reader_error = reader.GetError();
+  if (!reader_error.empty()) {
+    DCOUT(reader_error);
+    if (err) {
+      (*err) += reader_error;
+    }
+    if (options.strict_loading) {
+      return false;
+    }
   }
 
   DCOUT("Reconstructed Stage from USDC file.");
@@ -1426,9 +1441,6 @@ bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
                        const std::string &asset_name, Layer *dst_layer,
                        std::string *warn, std::string *err,
                        const USDLoadOptions &options) {
-
-  // TODO: options
-  (void)options;
 
   if (!addr) {
     if (err) {
@@ -1455,6 +1467,7 @@ bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
   lightusd::usda::USDAReader reader(&sr);
 
   lightusd::usda::USDAReaderConfig config;
+  config.max_memory_limit_in_mb = size_t(EffectiveMemoryLimitMb(options));
   config.strict_allowedToken_check = options.strict_allowedToken_check;
   config.strict_shader_type_check = options.strict_shader_type_check;
   // MaterialX validation options
@@ -1466,6 +1479,11 @@ bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
   config.validate_mtlx_index_bounds = options.validate_mtlx_index_bounds;
   config.error_detail = options.error_detail;
   reader.set_reader_config(config);
+  reader.set_base_dir(GetLayerBaseDirForAssetName(asset_name));
+  reader.set_filename(asset_name);
+  if (options.progress_callback) {
+    reader.SetProgressCallback(options.progress_callback, options.progress_userptr);
+  }
 
   uint32_t load_states = static_cast<uint32_t>(lightusd::LoadState::Toplevel);
 
@@ -1704,7 +1722,7 @@ bool LoadLayerFromFile(const std::string &_filename, Layer *stage,
   std::string base_dir = io::GetBaseDir(filepath);
 
   std::vector<uint8_t> data;
-  size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
+  size_t max_bytes = MaxMemoryBytes(EffectiveMemoryLimitMb(options));
   if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                          /* userdata */ nullptr)) {
     return false;

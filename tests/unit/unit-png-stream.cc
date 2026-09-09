@@ -387,9 +387,8 @@ void png_stream_exr_fp16_roundtrip_test(void) {
   TEST_CHECK(good);
 }
 
-// A fp16 EXR must decode consistently via both paths: DecodeImageEXRHalf (half,
-// no widening) and LoadImageFromMemory (fp32) — and the fp32 values must be the
-// exact float equivalents of the stored halfs (0x3C00=1.0, 0x3800=0.5).
+// A fp16 EXR must decode consistently via both paths. LoadImageFromMemory now
+// preserves the all-half case instead of widening it unnecessarily.
 void png_stream_exr_half_float_consistency_test(void) {
   const int W = 8, H = 6, ch = 4;
   lightusd::Image img;
@@ -417,18 +416,18 @@ void png_stream_exr_half_float_consistency_test(void) {
                                                  &e1);
   TEST_CHECK(okh && half.bpp == 16 && half.channels == 4 && half.width == W);
 
-  // (b) fp32 decode via LoadImageFromMemory -> exact float values.
+  // (b) LoadImageFromMemory preserves fp16 for the same input.
   auto dec = lightusd::image::LoadImageFromMemory(enc.value().data(),
                                                   enc.value().size(), "m.exr");
   TEST_CHECK(bool(dec));
   if (!dec) return;
   const auto &f = dec.value().image;
-  TEST_CHECK(f.bpp == 32 && f.format == lightusd::Image::PixelFormat::Float &&
+  TEST_CHECK(f.bpp == 16 && f.format == lightusd::Image::PixelFormat::Float &&
              f.channels == 4);
-  const float *fp = reinterpret_cast<const float *>(f.data.data());
-  bool good = f.data.size() >= (size_t)W * H * 4 * sizeof(float);
+  const uint16_t *fp = reinterpret_cast<const uint16_t *>(f.data.data());
+  bool good = f.data.size() == (size_t)W * H * 4 * sizeof(uint16_t);
   for (size_t i = 0; good && i < (size_t)W * H * 4; ++i) {
-    float expect = (i % 2) ? 0.5f : 1.0f;
+    const uint16_t expect = (i % 2) ? 0x3800 : 0x3C00;
     if (fp[i] != expect) good = false;
   }
   TEST_CHECK(good);

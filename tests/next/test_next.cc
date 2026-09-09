@@ -13,6 +13,9 @@
 #include <string>
 #include <utility>
 #include <vector>
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include <thread>
+#endif
 
 #include "next/types/type-id.hh"
 #include "next/types/type-info.hh"
@@ -92,6 +95,35 @@ void test_type_id() {
   assert(GetComponentCount(TypeId::Float) == 1);
   assert(GetComponentCount(TypeId::Float3) == 3);
   assert(GetComponentCount(TypeId::Matrix4d) == 16);
+
+  // Every built-in descriptor has an allocation-free bounded-name lookup.
+  // A span is not required to be terminated, and embedded NULs are significant.
+  for (uint16_t i = 1; i < static_cast<uint16_t>(TypeId::Count); ++i) {
+    const TypeId id = static_cast<TypeId>(i);
+    const TypeInfo* info = GetTypeInfo(id);
+    assert(info && info->id == id && info->name);
+    const std::string name(info->name);
+    assert(GetTypeIdFromName(name.data(), name.size()) == id);
+    bool array = true;
+    if (id != TypeId::Extent && id != TypeId::Reference) {
+      assert(ParseTypeName(name, array) == id && !array);
+      assert(ParseTypeName(name + "[]", array) == id && array);
+    }
+    if (info->component_type != TypeId::Invalid) {
+      assert(info->size == GetTypeSize(info->component_type) * info->component_count);
+      assert(info->alignment == GetTypeAlignment(info->component_type));
+    }
+  }
+  const char bounded[] = {'f', 'l', 'o', 'a', 't', 'x'};
+  assert(GetTypeIdFromName(bounded, 5) == TypeId::Float);
+  assert(GetTypeIdFromName(bounded, 6) == TypeId::Invalid);
+  assert(GetTypeIdFromName("float\0tail", 10) == TypeId::Invalid);
+  assert(GetTypeIdFromName(nullptr, 3) == TypeId::Invalid);
+  assert(GetTypeInfo(static_cast<TypeId>(65535)) == nullptr);
+  bool array = true;
+  assert(ParseTypeName("", array) == TypeId::Invalid && !array);
+  assert(ParseTypeName("[]", array) == TypeId::Invalid && !array);
+  assert(ParseTypeName("float[][]", array) == TypeId::Invalid && array);
 
   std::cout << "  TypeId tests passed!" << std::endl;
 }
@@ -342,7 +374,101 @@ void test_value() {
     assert(q1 != q2);
   }
 
+  // Ownership is shared for each backing kind, including string objects.
+  // Mutable raw access clones only the edited owner; moving a vector adopts
+  // its allocation rather than introducing an extra full-size copy.
+  {
+    std::vector<float> input{1, 2, 3};
+    const float* allocation = input.data();
+    const Value adopted = Value::MakeFloatArray(std::move(input));
+    assert(adopted.raw_data() == allocation);
+    Value arrays[] = {
+      adopted, Value::MakeIntArray(std::vector<int32_t>{1, 2}),
+      Value::MakeDoubleArray(std::vector<double>{1, 2}),
+      Value::MakeInt64Array(std::vector<int64_t>{1, 2}),
+      Value::MakeUIntArray(std::vector<uint32_t>{1, 2}),
+      Value::MakeUInt64Array(std::vector<uint64_t>{1, 2}),
+      Value::MakeBoolArray(std::vector<bool>{true, false}),
+      Value::MakeTokenArray(std::vector<std::string>{"owned string", "second"})
+    };
+    for (const Value& original : arrays) {
+      const void* before = original.raw_data();
+      Value copy = original;
+      const Value& read_copy = copy;
+      assert(read_copy.raw_data() == before);
+      assert(copy.raw_data() != before);  // detach all eight storage kinds
+      assert(copy == original);
+      Value moved = std::move(copy);
+      assert(copy.is_empty());
+      assert(moved == original);
+      copy = moved;
+      moved.clear();
+      assert(copy == original);
+    }
+    Value tokens = arrays[7];
+    auto* strings = static_cast<std::string*>(tokens.raw_data());
+    strings[0] = "edited";
+    assert((*arrays[7].as_token_array())[0] == "owned string");
+    Value bits = arrays[6];
+    static_cast<uint8_t*>(bits.raw_data())[0] = 0;
+    assert((*arrays[6].as_bool_array())[0] == 1);
+  }
+
   std::cout << "  Value tests passed!" << std::endl;
+}
+
+void test_shared_storage() {
+  PropNameTable properties;
+  const auto first = properties.intern("first");
+  const std::string_view stable = properties.get(first);
+  const auto empty = properties.intern("");
+  assert(properties.find(std::string_view{}).id == empty.id);
+  const std::string embedded("a\0b", 3);
+  const auto binary = properties.intern(embedded);
+  assert(properties.find(std::string_view(embedded)).id == binary.id);
+  assert(!properties.find("a").is_valid());
+  properties.freeze();
+  for (int i = 0; i < 8192; ++i) {
+    const std::string name = "property:" + std::to_string(i);
+    const auto id = properties.intern(name);
+    assert(id.is_valid() && properties.find(name).id == id.id);
+  }
+  assert(properties.get(first).data() == stable.data() && stable == "first");
+  assert(properties.find("first").id == first.id);
+  properties.unfreeze();
+  properties.freeze();
+  assert(properties.find("property:8191").is_valid());
+
+  TypeNameTable types;
+  const auto type = types.intern("FirstType");
+  const std::string* stable_type = &types.get(type);
+  for (int i = 0; i < 4096; ++i) {
+    const std::string name = "Type" + std::to_string(i);
+    const auto id = types.intern(name);
+    assert(id.is_valid() && types.find(name).id == id.id);
+  }
+  assert(&types.get(type) == stable_type && *stable_type == "FirstType");
+
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  const Value shared = Value::MakeFloatArray(std::vector<float>{1, 2, 3});
+  std::vector<std::thread> workers;
+  for (int worker = 0; worker < 4; ++worker) {
+    workers.emplace_back([&properties, &shared, first, stable, worker] {
+      for (int i = 0; i < 2000; ++i) {
+        assert(properties.find("first").id == first.id);
+        assert(properties.get(first).data() == stable.data());
+        const auto id = properties.intern("thread:" + std::to_string(worker) +
+                                         ":" + std::to_string(i));
+        assert(id.is_valid());
+        Value copy = shared;
+        (*copy.as_float_array())[0] = 42;
+        assert((*shared.as_float_array())[0] == 1);
+      }
+    });
+  }
+  for (auto& worker : workers) worker.join();
+  assert(properties.find("thread:3:1999").is_valid());
+#endif
 }
 
 // ============================================================
@@ -1387,21 +1513,15 @@ void test_matrix_type_name_lookup() {
 }
 
 // ============================================================
-// Regression: Frame4d Value operations (previously had null function
-// pointers, so construct/copy/move/equals would fail or crash).
+// Regression: Frame4d layout and Value copy/move/equality operations.
 // ============================================================
 
 void test_frame4d_value_ops() {
   std::cout << "Testing Frame4d Value operations regression..." << std::endl;
 
-  // Frame4d should have valid TypeInfo with non-null function pointers.
+  // Frame4d shares the matrix4d layout in the immutable metadata table.
   const TypeInfo* info = GetTypeInfo(TypeId::Frame4d);
   assert(info != nullptr);
-  assert(info->construct != nullptr);
-  assert(info->destruct != nullptr);
-  assert(info->copy != nullptr);
-  assert(info->move != nullptr);
-  assert(info->equals != nullptr);
   assert(info->size == sizeof(double) * 16);
   assert(std::strcmp(info->name, "frame4d") == 0);
 
@@ -1898,6 +2018,7 @@ int main() {
 
   try {
     test_type_id();
+    test_shared_storage();
     test_value();
     test_matrix_type_name_lookup();
     test_frame4d_value_ops();

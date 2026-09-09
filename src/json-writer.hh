@@ -29,6 +29,8 @@ class JsonWriter {
 
   void set_indent(uint32_t indent) { indent_ = indent; }
 
+  // Serialize through the canonical minijson USD representation. Returns
+  // false for a null output pointer or a serialization failure.
   bool to_json(const lightusd::Layer &layer, std::string *out_json);
   bool to_json(const lightusd::Stage &stage, std::string *out_json);
 

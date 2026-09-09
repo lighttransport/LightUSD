@@ -20,7 +20,6 @@
 #endif
 
 #include "external/quickjs-ng/quickjs.h"
-#include "external/jsonhpp/nlohmann/json.hpp"
 
 #if defined(__clang__)
 #pragma clang diagnostic pop
@@ -1038,7 +1037,7 @@ static std::string PrimSpecToJSON(const PrimSpec* ps, uint32_t max_depth = 1) {
     return "null";
   }
 
-  return lightusd::tydra::PrimSpecToJSON(*ps, max_depth).dump();
+  return lightusd::tydra::PrimSpecToMiniJSON(*ps, max_depth).dump();
 }
 
 static JSValue js_getLayerMetas(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv, int magic, JSValueConst *func_data) {

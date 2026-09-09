@@ -51,6 +51,39 @@ pip install -e .          # drives CMake on src/next, then builds the extension
 pytest python/tests -q
 ```
 
+### Recommended `uv` workflow
+
+`uv` is the preferred way to select the repository Python and keep build/test
+dependencies isolated. The interpreter selector may resolve to a free-threaded
+CPython build when one is installed; this exercises the same configuration as
+the free-threaded wheel job.
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv venv --python 3.14t .venv
+UV_CACHE_DIR=/tmp/uv-cache uv pip install \
+  --python .venv/bin/python setuptools setuptools_scm wheel pytest 'numpy>=2.2,<3'
+UV_CACHE_DIR=/tmp/uv-cache uv pip install \
+  --python .venv/bin/python -e '.[test]' --no-build-isolation
+UV_CACHE_DIR=/tmp/uv-cache .venv/bin/python -m pytest python/tests -q
+```
+
+The explicit build-tool install is needed because the editable install uses
+`--no-build-isolation`; it makes the procedure work in an offline or
+pre-provisioned build environment without relying on `pip` to create a second
+environment.
+
+If a 3.14 free-threaded interpreter is unavailable, replace `3.14t` with the
+CPython version selected by `uv python find` (3.10 or newer). Use the same
+`.venv/bin/python` path for CTest:
+
+```bash
+cmake -S . -B build_ninja -G Ninja \
+  -DLIGHTUSD_BUILD_TESTS=ON \
+  -DLIGHTUSD_PYTHON_EXECUTABLE="$PWD/.venv/bin/python" \
+  -DLIGHTUSD_BUILD_PYTHON_TESTS=ON
+ctest --test-dir build_ninja -R '^python-lightusd-tests$' --output-on-failure
+```
+
 Environment overrides: `LIGHTUSD_PY_LIMITED_API=0` (force a non-abi3 dev
 build), `LIGHTUSD_CMAKE_ARGS` (extra CMake args),
 `LIGHTUSD_TEST_ASSETS` (pytest asset dir).

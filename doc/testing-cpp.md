@@ -13,6 +13,26 @@ The C++ test infrastructure is split into four layers:
 
 Core functionality is tested by the parser, reader, writer, composition, and crate-writer coverage. Tydra is covered in both the Acutest suite and the manual `tydra_to_renderscene` corpus runner.
 
+## C-style core refactor checks
+
+The active migration and measurement procedure is in
+[refactor-c-core.md](refactor-c-core.md). Next's type/value tests cover every
+built-in type-name/layout descriptor, bounded name lookup, zero-copy vector
+adoption, all eight array backing kinds, and copy-on-write ownership. Dictionary
+tests also exercise the shared integer string index, growth, duplicate and
+embedded-NUL keys, overflow rejection without losing the old index, and
+copy/move assignment. Name-table tests retain references across rehashing and
+frozen-snapshot updates; threaded builds exercise concurrent interning and
+array detachment.
+
+Run standalone next tests with threading both off and on after primitive changes.
+For memory checks, use an optimized sanitizer build (for example Debug with
+`-g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer`): the large-instance
+suite has a wall-clock bound that an unoptimized sanitizer build can exceed.
+Keep assertions enabled. Run Python tests against an extension rebuilt from
+this checkout, and the web gate against freshly built next and combined modules;
+a legacy-only `lightusd.js` lacks APIs required by the combined-module tests.
+
 ## Reproducible verification entrypoint
 
 The repository-wide harness is `scripts/verify.sh`. Preparation downloads only
@@ -133,6 +153,18 @@ cd ..
 cmake -S src/next -B build-next -DLIGHTUSD_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build build-next -j16
 ctest --test-dir build-next --output-on-failure
+
+## JSON backend
+
+The internal USD-to-JSON converter uses the repository's `minijson`
+implementation as its canonical representation. Deprecated overloads that
+expose `nlohmann::json` are disabled by default; enable them explicitly with
+`-DLIGHTUSD_ENABLE_NLOHMANN_JSON_COMPAT=ON` when maintaining an application
+that still uses that API.
+
+Tydra/MCP JSON interfaces and vendored third-party readers currently retain
+their nlohmann-compatible boundary. They should be migrated through a typed
+minijson adapter before changing those public interfaces.
 
 # 3. Run the Node.js roundtrip/comparison suite against OpenUSD v26.05.
 #    Build it once with: scripts/build-openusd-usdcat.sh
@@ -703,22 +735,34 @@ python3 ../tests/tydra_to_renderscene/runner.py ../models
 
 ## Standalone and Manual Targets
 
-### Experimental `next` library tests
+### Stable `next` library tests
 
-`next` (`src/next/`, library `lightusd_next`) is an **experimental, under-construction**
-rewrite of the core with a new modular architecture. It is intentionally kept
-out of the main regression suite:
+`next` (`src/next/`, library `lightusd_next`) has a standalone regression suite.
+Run it explicitly when changing shared code or the next product:
 
 - It is a **standalone CMake project** (`src/next/CMakeLists.txt` with its own
-  `project()`), *not* added by the top-level `CMakeLists.txt`. The default
-  `build/` therefore does not compile it, and none of its tests appear in the
-  `build/` `ctest` run or the Pixar comparison runner.
+  `project()`). Its tests do not appear in the default legacy `ctest` tree.
+  The root build can also select it with `LIGHTUSD_NATIVE_PRODUCT=next`; use a
+  separate Ninja build tree for each product.
 - Its tests are gated behind `LIGHTUSD_NEXT_BUILD_TESTS` (**OFF by default**).
-- Treat its results as informational only — **not** a merge/regression gate.
-  Do not wire `next` into the full regression gate until the suite is hardened.
+- These checks are a required regression gate in addition to the default
+  native suite; passing one does not replace the other.
 
 Regression coverage to keep in mind when touching `next`:
 
+- `test_tydra_next.cc` also covers the compiled chunk-storage engine: exact-tail
+  compaction repeated under allocation accounting, self-append and COW,
+  over-aligned POD elements, move/reuse, allocation-budget refusal, and
+  read-only iteration/indexing without detachment. Writes now use
+  `mutable_at()` / `mutable_chunk_data()` explicitly.
+- `unit-test-lightusd` includes `minijson_shortest_double_roundtrip_test`:
+  finite binary64 boundary values and 4096 deterministic bit-pattern samples
+  must serialize/reparse exactly (with a separate signed-zero spelling check).
+  Run this legacy unit target as well as standalone next tests after changing
+  the shared MiniJSON serializer.
+- `test_validation.cc` covers the immutable rule table's pointer/count contract
+  and idempotent severity upgrades. Run the full PCP and threaded PCP tests
+  after changing the out-of-line cache implementation, not only validation.
 - `test_stage.cc` — PropNameId overloads must be invalid-id-safe, the
   stage-level `HasTimeSamples()` / `HasValueClips()` scans must match the
   flat root-layer prim array, and every schema-accessor name must be
@@ -892,13 +936,32 @@ node tests/compare-usda.js \
 
 ## Python Bindings Test
 
+CTest-integrated tool checks use the first `python3`/`python` found on `PATH`
+by default. Configure a specific interpreter when running from a virtualenv or
+when the build and test interpreters differ:
+
+```bash
+cmake -S . -B build_ninja -G Ninja \
+  -DLIGHTUSD_BUILD_TESTS=ON \
+  -DLIGHTUSD_PYTHON_EXECUTABLE="$VIRTUAL_ENV/bin/python"
+```
+
 `python/tests/` contains pytest-based tests for the pure CPython C-API Python
-binding. This is not integrated into `ctest` and requires the Python package
-to be built and installed separately.
+binding. They remain opt-in because the extension must be built and installed
+separately. After `pip install -e . --no-build-isolation`, register them in the
+native CTest tree with `-DLIGHTUSD_BUILD_PYTHON_TESTS=ON`; CMake registers the
+test only when the selected interpreter can import both `pytest` and `lightusd`.
+For the reproducible local setup, use the [`uv` workflow](python_binding.md#recommended-uv-workflow)
+and pass `.venv/bin/python` through `-DLIGHTUSD_PYTHON_EXECUTABLE`.
 
 ```bash
 pip install -e . --no-build-isolation
 python3 -m pytest python/tests -q
+
+# Equivalent opt-in CTest registration:
+cmake -S . -B build_ninja -G Ninja \
+  -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_PYTHON_TESTS=ON
+ctest --test-dir build_ninja -R '^python-lightusd-tests$' --output-on-failure
 ```
 
 ## Fuzzing

@@ -32,6 +32,15 @@ LightUSD provides MaterialX integration including parsing `.mtlx` files, color s
 
 (`info:id` constants: `kNdOpenPbrSurfaceSurfaceshader`, `kNdStandardSurfaceSurfaceshader` in `src/usdMtlx.hh`; `kUsdPreviewSurface` in `src/usdShade.hh`. Note lightusd uses the bare `UsdPreviewSurface` id, not `ND_UsdPreviewSurface_surfaceshader`.)
 
+Direct inputs on OpenPBR and StandardSurface that are not part of the built-in
+carrier structs are retained in `MtlxModel::custom_shader_inputs` and emitted
+again by the MaterialX writer. This preserves renderer-specific extension
+parameters while keeping typed built-in inputs available to the runtime.
+Unknown connected shader inputs are retained as `MtlxShaderConnection` records
+and are emitted with their original nodegraph/output information as well. Known
+inputs are emitted once through the typed shader writer, so extension inputs do
+not get silently dropped or duplicated during export.
+
 ### MaterialXConfigAPI
 
 ```cpp

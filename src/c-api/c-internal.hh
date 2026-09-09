@@ -78,6 +78,13 @@ inline lightusd_sv SV(const std::string& s) {
   return v;
 }
 
+inline lightusd_sv SV(std::string_view s) {
+  lightusd_sv v;
+  v.data = s.data();
+  v.len = s.size();
+  return v;
+}
+
 inline lightusd_sv EmptySV() {
   lightusd_sv v;
   v.data = "";

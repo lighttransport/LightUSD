@@ -12409,6 +12409,35 @@ static lightusd::Image floatImageTo8bit(const lightusd::Image& img) {
   return out;
 }
 
+// The EXR fast path keeps all-half images in fp16 form. Promote that compact
+// representation before resize/tone-map code that expects fp32 samples.
+static lightusd::Image halfImageToFloat(const lightusd::Image& img) {
+  using PF = lightusd::Image::PixelFormat;
+  if (!(img.bpp == 16 && img.format == PF::Float) || img.width <= 0 ||
+      img.height <= 0 || img.channels < 1 || img.channels > 4) {
+    return img;
+  }
+  const size_t npix = static_cast<size_t>(img.width) *
+                      static_cast<size_t>(img.height);
+  const size_t ch = static_cast<size_t>(img.channels);
+  if (npix > SIZE_MAX / ch || img.data.size() < npix * ch * sizeof(uint16_t)) {
+    return img;
+  }
+  lightusd::Image out;
+  out.width = img.width;
+  out.height = img.height;
+  out.channels = img.channels;
+  out.bpp = 32;
+  out.format = PF::Float;
+  out.colorspace = img.colorspace;
+  out.uri = img.uri;
+  out.data.resize(npix * ch * sizeof(float));
+  const uint16_t* src = reinterpret_cast<const uint16_t*>(img.data.data());
+  float* dst = reinterpret_cast<float*>(out.data.data());
+  for (size_t i = 0; i < npix * ch; ++i) dst[i] = float16ToFloat32(src[i]);
+  return out;
+}
+
 // Read a scalar token/string attribute from a PrimSpec (default time).
 static std::string psAttrStr(const lightusd::PrimSpec& ps, const char* name) {
   auto it = ps.props().find(name);
@@ -12600,6 +12629,7 @@ emscripten::val convertImage(const emscripten::val& data,
   const std::string format = optStr(opts, "format", "png");
   const std::string pngEnc = optStr(opts, "pngEncoder", "auto");
   const int jpegQ = optInt(opts, "jpegQuality", 90);
+  if (format != "exr") img = halfImageToFloat(img);
   // resizeColorspace:"srgb" resamples in linear light (correct for sRGB color
   // textures); default keeps gamma-space (Auto -> linear on colorspace-less
   // images), correct for linear data maps.

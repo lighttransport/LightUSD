@@ -17,7 +17,7 @@ namespace {
 bool IsStaticGeometryArray(const std::string& type,
                           const PropNameId property_id) {
   const auto& names = GetPropNameTable();
-  const std::string& property = names.get(property_id);
+  const std::string property(names.get(property_id));
   const bool primvar = property.compare(0, 9, "primvars:") == 0;
   if (type == "Mesh") {
     if (primvar) return true;
@@ -277,7 +277,7 @@ bool UsdPrim::HasProperty(PropNameId name_id) const {
   const PrimSpec* source = ChildSourceSpec();
   if (spec_->property(name_id) != nullptr) return true;
   if (source != spec_ && source->property(name_id) != nullptr) return true;
-  const std::string& name = GetPropNameTable().get(name_id);
+  const std::string name(GetPropNameTable().get(name_id));
   return GetSchemaRegistry().FindProperty(*source, name) != nullptr;
 }
 
@@ -317,7 +317,7 @@ const Value* UsdPrim::GetPropertyValue(PropNameId name_id) const {
       return value->is_block() ? nullptr : value;
     }
   }
-  const std::string& name = GetPropNameTable().get(name_id);
+  const std::string name(GetPropNameTable().get(name_id));
   if (const SchemaPropertyDefinition* def =
           GetSchemaRegistry().FindProperty(*source, name)) {
     if (def->has_fallback) return &def->fallback;
@@ -364,12 +364,12 @@ std::vector<std::string> UsdPrim::GetPropertyNames() const {
   std::unordered_set<std::string> seen;
   seen.reserve(names.capacity());
   for (const auto& slot : props.slots()) {
-    names.push_back(table.get(slot.name_id));
+    names.emplace_back(table.get(slot.name_id));
     seen.insert(names.back());
   }
   if (source != spec_) {
     for (const auto& slot : source->properties().slots()) {
-      const std::string& name = table.get(slot.name_id);
+      const std::string name(table.get(slot.name_id));
       if (seen.insert(name).second) {
         names.push_back(name);
       }

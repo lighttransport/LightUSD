@@ -8,85 +8,35 @@ cmake_minimum_required(VERSION 3.10)
 project(lightusd_next C CXX)
 
 # Define source files
+include("${CMAKE_CURRENT_LIST_DIR}/pipeline-sources.cmake")
 set(LIGHTUSD_NEXT_SOURCES
+    ${LIGHTUSD_NEXT_PIPELINE_SOURCES}
     execution.cc
+    # Shared bounded JSON parser used by the next-generation URDF bridge.
+    ../minijson.cc
     ../color-transform.cc
     # Shared SdfPathExpression parser/matcher. Kept stage-neutral so next
     # collection consumers do not need the legacy Stage representation.
     ../core/path-expression.cc
     ../core/path-expression-eval.cc
     # Type system
-    types/type-info.cc
-    types/value.cc
-    types/spline.cc
     types/value-view.cc
-    types/interpolation.cc
-
-    # Prim types
-    prim/path.cc
-    prim/attribute.cc
-    prim/prim.cc
 
     # Layer (unified PrimSpec storage)
-    layer/property-index.cc
-    layer/prim-spec.cc
-    layer/array-edit.cc
-    layer/layer.cc
     layer/asset-anchor.cc
 
-    # Stage (composed scene)
-    stage/stage.cc
-
-    # ASCII parser
-    parser/lexer.cc
-    parser/value-parser.cc
-    parser/value-parser-types.cc
-    parser/ascii-parser.cc
-    parser/ascii-parser-metadata.cc
-    parser/ascii-parser-prim.cc
-    parser/ascii-parser-timesamples.cc
-    parser/ascii-parser-utils.cc
-    parser/ascii-parser-variants.cc
-    parser/simd-scan.cc
-
-    # Crate (binary) reader/writer
-    crate/crate-format.cc
-    crate/crate-data-source.cc
-    crate/crate-reader-arrays.cc
-    crate/crate-reader-decode.cc
-    crate/crate-reader-api.cc
-    crate/crate-reader.cc
-    crate/crate-reader-sections.cc
-    crate/crate-reader-stage.cc
-    crate/crate-reader-unpack.cc
-    crate/crate-reader-vectors.cc
-    crate/crate-writer-types.cc
-    crate/crate-writer.cc
-    crate/variant-holders.cc
-
-    # High-level readers
-    reader/usda-reader.cc
-    reader/usdc-reader.cc
-    reader/usdz-reader.cc
-
     # Writers
-    writer/dtoa.cc
-    writer/value-printer.cc
     writer/prim-printer.cc
     writer/usda-writer.cc
     writer/usdc-writer.cc
     writer/usdz-writer.cc
 
     # Schema convenience APIs
-    schema/geom-mesh.cc
-    schema/schema-registry.cc
     schema/geom-point-instancer.cc
-    schema/geom-xform.cc
     schema/color-space.cc
     schema/usd-lux.cc
     schema/usd-geom-camera.cc
     schema/usd-geom-model.cc
-    schema/usd-shade.cc
     schema/usd-skel.cc
     schema/physics-scene.cc
     schema/physics-api.cc
@@ -99,25 +49,13 @@ set(LIGHTUSD_NEXT_SOURCES
     schema/usd-semantics.cc
     schema/usd-vol.cc
 
-    # Attribute evaluation
-    eval/attribute-eval.cc
-    eval/value-clip.cc
-
-    # Asset resolution
-    resolver/asset-resolver.cc
-
     # Composition
     composition/expression-variables.cc
-    composition/composition.cc
 
     # Layer / PrimSpec diff
     diff/layer-diff.cc
 
-    # Low-memory flatten pipeline
-    pipeline/flatten.cc
-
     # PCP-style lazy composition cache (native to next)
-    pcp/layer-registry.cc
     # MaterialX XML stack (dependency-free): layer-registry synthesizes
     # /MaterialX layers from referenced .mtlx documents.
     ../mtlx-xml-tokenizer.cc
@@ -125,9 +63,16 @@ set(LIGHTUSD_NEXT_SOURCES
     ../mtlx-dom.cc
     pcp/load-rules.cc
     pcp/cache.cc
+    pcp/cache-arcs.cc
+    pcp/cache-relocates.cc
+    pcp/cache-layers.cc
+    pcp/cache-opinions.cc
+    pcp/cache-storage.cc
 
     # AOUSD Core validation
     validation/usd-validation.cc
+    validation/usd-validation-report.cc
+    validation/usd-validation-physics.cc
 
     # High-level API
     lightusd-next.cc
@@ -573,15 +518,18 @@ endif()
 option(LIGHTUSD_NEXT_BUILD_FUZZERS "Build libFuzzer harnesses for LightUSD Next (requires clang)" OFF)
 
 if(LIGHTUSD_NEXT_BUILD_FUZZERS)
-    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        message(FATAL_ERROR "LIGHTUSD_NEXT_BUILD_FUZZERS requires clang (-fsanitize=fuzzer)")
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang" OR
+       NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR
+            "LIGHTUSD_NEXT_BUILD_FUZZERS requires Clang for both C and C++ "
+            "(-fsanitize=fuzzer)")
     endif()
     # The library must carry fuzzer coverage instrumentation too (no-link
     # variant), otherwise only the tiny harness body is explored.
     set(NEXT_FUZZ_LIB_FLAGS -fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all)
     set(NEXT_FUZZ_BIN_FLAGS -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all)
     target_compile_options(lightusd_next PRIVATE ${NEXT_FUZZ_LIB_FLAGS})
-    foreach(fz next_usdc next_usda next_compose next_roundtrip)
+    foreach(fz next_usdc next_usda next_compose next_roundtrip minijson)
         add_executable(fuzz_${fz}
             ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fuzzer/${fz}_fuzzmain.cc
         )

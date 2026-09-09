@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Runtime type information registry
-// Provides runtime type operations without virtual functions
+// LightUSD Next - Immutable built-in type metadata
 
 #pragma once
 
@@ -11,42 +10,25 @@
 namespace lightusd {
 namespace next {
 
-/// Function pointer types for type operations
-/// These replace virtual function calls with direct function pointer dispatch
-using ConstructFn = void (*)(void* dest);
-using DestructFn = void (*)(void* obj);
-using CopyFn = void (*)(void* dest, const void* src);
-using MoveFn = void (*)(void* dest, void* src);
-using EqualsFn = bool (*)(const void* a, const void* b);
-
-/// Runtime type information structure
-/// One instance exists per TypeId in a static array
+/// Immutable built-in type metadata. Variable-sized types have size == 0.
+/// Lifetime operations belong to Value, not a per-type callback table.
 struct TypeInfo {
   TypeId id;
-  const char* name;         // USD type name (e.g., "float3")
-  const char* cpp_name;     // C++ type name (e.g., "GfVec3f")
-  size_t size;              // sizeof(T)
-  size_t alignment;         // alignof(T)
-
-  // Operation function pointers
-  ConstructFn construct;    // Default constructor
-  DestructFn destruct;      // Destructor
-  CopyFn copy;              // Copy assignment
-  MoveFn move;              // Move assignment
-  EqualsFn equals;          // Equality comparison
+  const char* name;
+  const char* cpp_name;
+  size_t size;
+  size_t alignment;
+  TypeId component_type;
+  uint8_t component_count;
+  uint8_t flags;  // Internal scalar/numeric classification; use query functions.
 };
 
 /// Get type info by TypeId
-/// Returns nullptr for Invalid or out-of-range TypeId
+/// Returns nullptr for out-of-range TypeId; Invalid has a zero-size descriptor
 /// O(1) lookup via static array indexing
 const TypeInfo* GetTypeInfo(TypeId id);
 
-/// Register a custom type (for extension)
-/// Returns false if registration fails (e.g., ID already registered)
-bool RegisterTypeInfo(const TypeInfo& info);
-
-/// Initialize the type registry
-/// Called automatically on first use, but can be called explicitly
+/// Compatibility no-op: built-in metadata needs no runtime initialization.
 void InitTypeRegistry();
 
 }  // namespace next

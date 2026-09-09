@@ -8,10 +8,34 @@
 #include "tydra/mcp-context.hh"
 #include "tydra/mcp-tools-scene.hh"
 #include "tydra/mcp-tools-query.hh"
+#include "tydra/mcp-tools.hh"
 #include "tydra/js-script.hh"
 
 using namespace lightusd::tydra::mcp;
 using json = nlohmann::json;
+
+void mcp_tool_list_registration_test(void) {
+  Context ctx;
+  json result;
+
+  TEST_CHECK(GetToolsList(ctx, result));
+  TEST_CHECK(result.contains("tools"));
+  TEST_CHECK(result["tools"].is_array());
+
+  bool has_payload_list = false;
+  bool has_variant_define = false;
+  bool has_attr_connections = false;
+  for (const auto &tool : result["tools"]) {
+    const std::string name = tool.value("name", std::string{});
+    has_payload_list = has_payload_list || name == "payload_list";
+    has_variant_define = has_variant_define || name == "variant_define";
+    has_attr_connections = has_attr_connections || name == "attr_connections";
+  }
+
+  TEST_CHECK(has_payload_list);
+  TEST_CHECK(has_variant_define);
+  TEST_CHECK(!has_attr_connections);
+}
 
 // Helper: create a context with a variety of root-level prims
 // (non-root prim creation is not yet supported)

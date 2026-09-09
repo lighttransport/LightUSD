@@ -4,6 +4,7 @@
 // LightUSD Next - Value class implementation
 
 #include "value.hh"
+#include "array-storage.hh"
 #include "type-info.hh"
 #include "interpolation.hh"
 #include "../crate/lazy-array.hh"
@@ -30,52 +31,14 @@ struct StringStorage {
   std::string value;
 };
 
-// Array types are heap-allocated and held by a std::shared_ptr in the SBO slot,
-// giving copy-on-write: copying a Value bumps the refcount (no element copy);
-// the first mutable access detaches (clones) if the buffer is shared. This is
-// the VtArray _DetachIfNotUnique pattern — the dominant composition/flatten
-// memory win for materialized (USDA / eager-crate) arrays, which previously
-// deep-copied on every compose/Clone/CopyLocalOpinions.
-struct ArrayStorageBase {
-  virtual ~ArrayStorageBase() = default;
-  virtual std::shared_ptr<ArrayStorageBase> clone() const = 0;
-};
-
-template <class T>
-struct VecArrayStorage : ArrayStorageBase {
-  std::vector<T> data;
-  VecArrayStorage() = default;
-  explicit VecArrayStorage(const std::vector<T>& d) : data(d) {}
-  explicit VecArrayStorage(std::vector<T>&& d) : data(std::move(d)) {}
-  std::shared_ptr<ArrayStorageBase> clone() const override {
-    return std::make_shared<VecArrayStorage<T>>(data);
-  }
-};
-
-using FloatArrayStorage = VecArrayStorage<float>;
-using IntArrayStorage = VecArrayStorage<int32_t>;
-using DoubleArrayStorage = VecArrayStorage<double>;
-using Int64ArrayStorage = VecArrayStorage<int64_t>;
-using UIntArrayStorage = VecArrayStorage<uint32_t>;
-using UInt64ArrayStorage = VecArrayStorage<uint64_t>;
-using BoolArrayStorage = VecArrayStorage<uint8_t>;  // 0/1 values
-using TokenArrayStorage = VecArrayStorage<std::string>;
-
-// The SBO slot for an array Value holds this shared_ptr (placement-constructed).
-using ArrayHandle = std::shared_ptr<ArrayStorageBase>;
+using detail::ArrayHandle;
 inline ArrayHandle* ArraySlot(char* s) {
   return reinterpret_cast<ArrayHandle*>(s);
 }
 inline const ArrayHandle* ArraySlot(const char* s) {
   return reinterpret_cast<const ArrayHandle*>(s);
 }
-
-// Copy-on-write: before handing out a mutable view, clone the buffer if it is
-// shared with another Value so the mutation is private.
-inline void DetachArray(char* s) {
-  ArrayHandle& h = *ArraySlot(s);
-  if (h.use_count() > 1) h = h->clone();
-}
+inline void DetachArray(char* s) { ArraySlot(s)->detach(); }
 
 // Dictionary values are held by a shared_ptr<Dict> in the SBO slot — the same
 // copy-on-write model as arrays (cheap copy during composition; detach on first
@@ -99,7 +62,7 @@ bool UsesStringStorage(TypeId id) {
          id == TypeId::AssetPath || id == TypeId::PathExpression;
 }
 
-// Array element types stored as a flat std::vector<float> (FloatArrayStorage):
+// Array element types stored as flat float components:
 // scalar floats plus all float vector/quat/matrix/color types.
 bool IsFloatBackedArray(TypeId id) {
   switch (id) {
@@ -137,7 +100,7 @@ bool IsFloatBackedArray(TypeId id) {
   }
 }
 
-// Array element types stored as a flat std::vector<double> (DoubleArrayStorage).
+// Double-backed array types.
 // Int-vector element types share the flat int32 array storage with Int.
 bool IsIntBackedArray(TypeId id) {
   switch (id) {
@@ -596,7 +559,7 @@ Value Value::MakeFloatArray(const std::vector<float>& data) {
   v.type_id_ = TypeId::Float;
   v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<FloatArrayStorage>(data));
+  new (v.storage_) ArrayHandle(data);
   return v;
 }
 
@@ -606,7 +569,7 @@ Value Value::MakeFloatArray(std::vector<float>&& data) {
   v.type_id_ = TypeId::Float;
   v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<FloatArrayStorage>(std::move(data)));
+  new (v.storage_) ArrayHandle(std::move(data));
   return v;
 }
 
@@ -616,7 +579,7 @@ Value Value::MakeIntArray(const std::vector<int32_t>& data) {
   v.type_id_ = TypeId::Int;
   v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<IntArrayStorage>(data));
+  new (v.storage_) ArrayHandle(data);
   return v;
 }
 
@@ -626,7 +589,7 @@ Value Value::MakeIntArray(std::vector<int32_t>&& data) {
   v.type_id_ = TypeId::Int;
   v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<IntArrayStorage>(std::move(data)));
+  new (v.storage_) ArrayHandle(std::move(data));
   return v;
 }
 
@@ -638,7 +601,7 @@ Value Value::MakeFloat2Array(const std::vector<float>& data) {
   v.type_id_ = TypeId::Float2;
   v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size() / 2);
-  new (v.storage_) ArrayHandle(std::make_shared<FloatArrayStorage>(data));
+  new (v.storage_) ArrayHandle(data);
   return v;
 }
 
@@ -650,7 +613,7 @@ Value Value::MakeFloat2Array(std::vector<float>&& data) {
   v.type_id_ = TypeId::Float2;
   v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size() / 2);
-  new (v.storage_) ArrayHandle(std::make_shared<FloatArrayStorage>(std::move(data)));
+  new (v.storage_) ArrayHandle(std::move(data));
   return v;
 }
 
@@ -662,7 +625,7 @@ Value Value::MakeFloat3Array(const std::vector<float>& data) {
   v.type_id_ = TypeId::Float3;
   v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size() / 3);
-  new (v.storage_) ArrayHandle(std::make_shared<FloatArrayStorage>(data));
+  new (v.storage_) ArrayHandle(data);
   return v;
 }
 
@@ -674,7 +637,7 @@ Value Value::MakeFloat3Array(std::vector<float>&& data) {
   v.type_id_ = TypeId::Float3;
   v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size() / 3);
-  new (v.storage_) ArrayHandle(std::make_shared<FloatArrayStorage>(std::move(data)));
+  new (v.storage_) ArrayHandle(std::move(data));
   return v;
 }
 
@@ -683,49 +646,49 @@ Value Value::MakeDoubleArray(const std::vector<double>& data) {
   if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::Double; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<DoubleArrayStorage>(data)); return v;
+  new (v.storage_) ArrayHandle(data); return v;
 }
 Value Value::MakeDoubleArray(std::vector<double>&& data) {
   if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::Double; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<DoubleArrayStorage>(std::move(data))); return v;
+  new (v.storage_) ArrayHandle(std::move(data)); return v;
 }
 Value Value::MakeInt64Array(const std::vector<int64_t>& data) {
   if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::Int64; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<Int64ArrayStorage>(data)); return v;
+  new (v.storage_) ArrayHandle(data); return v;
 }
 Value Value::MakeInt64Array(std::vector<int64_t>&& data) {
   if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::Int64; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<Int64ArrayStorage>(std::move(data))); return v;
+  new (v.storage_) ArrayHandle(std::move(data)); return v;
 }
 Value Value::MakeUIntArray(const std::vector<uint32_t>& data) {
   if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::UInt; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<UIntArrayStorage>(data)); return v;
+  new (v.storage_) ArrayHandle(data); return v;
 }
 Value Value::MakeUIntArray(std::vector<uint32_t>&& data) {
   if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::UInt; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<UIntArrayStorage>(std::move(data))); return v;
+  new (v.storage_) ArrayHandle(std::move(data)); return v;
 }
 Value Value::MakeUInt64Array(const std::vector<uint64_t>& data) {
   if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::UInt64; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<UInt64ArrayStorage>(data)); return v;
+  new (v.storage_) ArrayHandle(data); return v;
 }
 Value Value::MakeUInt64Array(std::vector<uint64_t>&& data) {
   if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::UInt64; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<UInt64ArrayStorage>(std::move(data))); return v;
+  new (v.storage_) ArrayHandle(std::move(data)); return v;
 }
 Value Value::MakeBoolArray(const std::vector<bool>& data) {
   if (!FitsValueArraySize(data.size())) return Value();
@@ -733,19 +696,19 @@ Value Value::MakeBoolArray(const std::vector<bool>& data) {
   v.array_size_ = static_cast<uint32_t>(data.size());
   std::vector<uint8_t> tmp(data.size());
   for (size_t i = 0; i < data.size(); i++) tmp[i] = data[i] ? 1 : 0;
-  new (v.storage_) ArrayHandle(std::make_shared<BoolArrayStorage>(std::move(tmp))); return v;
+  new (v.storage_) ArrayHandle(std::move(tmp)); return v;
 }
 Value Value::MakeTokenArray(const std::vector<std::string>& data) {
   if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::Token; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<TokenArrayStorage>(data)); return v;
+  new (v.storage_) ArrayHandle(data); return v;
 }
 Value Value::MakeTokenArray(std::vector<std::string>&& data) {
   if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::Token; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<TokenArrayStorage>(std::move(data))); return v;
+  new (v.storage_) ArrayHandle(std::move(data)); return v;
 }
 
 Value Value::MakeFloatCompArray(std::vector<float>&& data, TypeId elem_type,
@@ -760,7 +723,7 @@ Value Value::MakeFloatCompArray(std::vector<float>&& data, TypeId elem_type,
   v.array_size_ = comps_per_elem
                       ? static_cast<uint32_t>(data.size() / comps_per_elem)
                       : 0;
-  new (v.storage_) ArrayHandle(std::make_shared<FloatArrayStorage>(std::move(data)));
+  new (v.storage_) ArrayHandle(std::move(data));
   return v;
 }
 
@@ -776,7 +739,7 @@ Value Value::MakeDoubleCompArray(std::vector<double>&& data, TypeId elem_type,
   v.array_size_ = comps_per_elem
                       ? static_cast<uint32_t>(data.size() / comps_per_elem)
                       : 0;
-  new (v.storage_) ArrayHandle(std::make_shared<DoubleArrayStorage>(std::move(data)));
+  new (v.storage_) ArrayHandle(std::move(data));
   return v;
 }
 
@@ -792,7 +755,7 @@ Value Value::MakeUIntCompArray(std::vector<uint32_t>&& data, TypeId elem_type,
   v.array_size_ = comps_per_elem
                       ? static_cast<uint32_t>(data.size() / comps_per_elem)
                       : 0;
-  new (v.storage_) ArrayHandle(std::make_shared<UIntArrayStorage>(std::move(data)));
+  new (v.storage_) ArrayHandle(std::move(data));
   return v;
 }
 
@@ -805,7 +768,7 @@ Value Value::MakeStringLikeArray(std::vector<std::string>&& data,
   v.type_id_ = elem_type;  // Token, String or AssetPath
   v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<TokenArrayStorage>(std::move(data)));
+  new (v.storage_) ArrayHandle(std::move(data));
   return v;
 }
 
@@ -821,7 +784,7 @@ Value Value::MakeIntCompArray(std::vector<int32_t>&& data, TypeId elem_type,
   v.array_size_ = comps_per_elem
                       ? static_cast<uint32_t>(data.size() / comps_per_elem)
                       : 0;
-  new (v.storage_) ArrayHandle(std::make_shared<IntArrayStorage>(std::move(data)));
+  new (v.storage_) ArrayHandle(std::move(data));
   return v;
 }
 
@@ -832,50 +795,9 @@ Value Value::MakeIntCompArray(std::vector<int32_t>&& data, TypeId elem_type,
 size_t Value::array_size() const {
   if (!is_array_) return 0;
   if (is_lazy_) return array_size_;
-
-  if (UsesStringStorage(type_id_)) {
-    const auto* storage = static_cast<const TokenArrayStorage*>(
-        ArraySlot(storage_)->get());
-    return storage->data.size();
-  }
-  const size_t components = GetComponentCount(type_id_);
-  if (components == 0) return 0;
-  if (IsFloatBackedArray(type_id_)) {
-    const auto* storage = static_cast<const FloatArrayStorage*>(
-        ArraySlot(storage_)->get());
-    return ComponentArraySize(storage->data.size(), components);
-  }
-  if (IsDoubleBackedArray(type_id_)) {
-    const auto* storage = static_cast<const DoubleArrayStorage*>(
-        ArraySlot(storage_)->get());
-    return ComponentArraySize(storage->data.size(), components);
-  }
-  if (IsIntBackedArray(type_id_)) {
-    const auto* storage = static_cast<const IntArrayStorage*>(
-        ArraySlot(storage_)->get());
-    return ComponentArraySize(storage->data.size(), components);
-  }
-  if (IsUIntBackedArray(type_id_)) {
-    const auto* storage = static_cast<const UIntArrayStorage*>(
-        ArraySlot(storage_)->get());
-    return ComponentArraySize(storage->data.size(), components);
-  }
-  if (type_id_ == TypeId::Int64) {
-    const auto* storage = static_cast<const Int64ArrayStorage*>(
-        ArraySlot(storage_)->get());
-    return storage->data.size();
-  }
-  if (type_id_ == TypeId::UInt64) {
-    const auto* storage = static_cast<const UInt64ArrayStorage*>(
-        ArraySlot(storage_)->get());
-    return storage->data.size();
-  }
-  if (type_id_ == TypeId::Bool) {
-    const auto* storage = static_cast<const BoolArrayStorage*>(
-        ArraySlot(storage_)->get());
-    return storage->data.size();
-  }
-  return 0;
+  const size_t size = ArraySlot(storage_)->size();
+  return UsesStringStorage(type_id_) ? size
+      : ComponentArraySize(size, GetComponentCount(type_id_));
 }
 
 void Value::retag_role(TypeId new_type) {
@@ -893,7 +815,7 @@ void Value::retag_role(TypeId new_type) {
   // Vec*i twin, so the reader must be able to restore uintN from the
   // declared type name. Without this, `uint3 v = (...,4294967295)` read
   // back Int3-typed and printed a negative lane that fails re-parse. Array
-  // storage is a distinct template instantiation per element type, so the
+  // storage retains distinct signed/unsigned vector objects, so the
   // buffer is REBUILT (bit-exact int32<->uint32) rather than reinterpreted.
   const TypeId oldc = comp(type_id_);
   const TypeId newc = comp(new_type);
@@ -908,13 +830,13 @@ void Value::retag_role(TypeId new_type) {
       ensure_materialized();
       ArrayHandle& h = *ArraySlot(storage_);
       if (oldc == TypeId::Int) {
-        auto* st = static_cast<IntArrayStorage*>(h.get());
-        std::vector<uint32_t> u(st->data.begin(), st->data.end());
-        h = std::make_shared<UIntArrayStorage>(std::move(u));
+        auto* st = static_cast<std::vector<int32_t>*>(h.vector_object());
+        std::vector<uint32_t> u(st->begin(), st->end());
+        h = ArrayHandle(std::move(u));
       } else {
-        auto* st = static_cast<UIntArrayStorage*>(h.get());
-        std::vector<int32_t> i(st->data.begin(), st->data.end());
-        h = std::make_shared<IntArrayStorage>(std::move(i));
+        auto* st = static_cast<std::vector<uint32_t>*>(h.vector_object());
+        std::vector<int32_t> i(st->begin(), st->end());
+        h = ArrayHandle(std::move(i));
       }
     } else if (GetTypeSize(type_id_) != GetTypeSize(new_type)) {
       return;  // SBO scalar/vector: same byte width required (it is, 4/lane)
@@ -967,7 +889,7 @@ void Value::destroy() {
   }
 
   if (is_array_) {
-    // Drop the shared_ptr reference (frees the buffer iff this was the last
+    // Drop the shared array reference (frees the buffer iff this was the last
     // owner — the copy-on-write release).
     ArraySlot(storage_)->~ArrayHandle();
   } else if (type_id_ == TypeId::Dictionary) {
@@ -988,7 +910,7 @@ void Value::destroy() {
         continue;
       }
 
-      for (auto &entry : current->entries) {
+      for (auto &entry : current->entries_) {
         Value &child = entry.second;
         if (child.type_id_ != TypeId::Dictionary || child.is_array_ ||
             child.is_lazy_) {
@@ -1159,49 +1081,9 @@ Value Value::materialized_copy() const {
 void* Value::data_ptr() {
   ensure_materialized();
   if (is_array_) {
-    const bool supported = IsFloatBackedArray(type_id_) ||
-                           IsDoubleBackedArray(type_id_) ||
-                           IsIntBackedArray(type_id_) ||
-                           IsUIntBackedArray(type_id_) ||
-                           type_id_ == TypeId::Int64 ||
-                           type_id_ == TypeId::UInt64 ||
-                           type_id_ == TypeId::Bool ||
-                           UsesStringStorage(type_id_);
-    if (!supported) return nullptr;
     dirty_ = true;
-    DetachArray(storage_);  // mutable raw access: privatize the buffer
-    ArrayStorageBase* ptr = ArraySlot(storage_)->get();
-    if (!ptr) return nullptr;
-    if (IsFloatBackedArray(type_id_)) {
-      auto& data = static_cast<FloatArrayStorage*>(ptr)->data;
-      return data.empty() ? nullptr : data.data();
-    }
-    if (IsDoubleBackedArray(type_id_)) {
-      auto& data = static_cast<DoubleArrayStorage*>(ptr)->data;
-      return data.empty() ? nullptr : data.data();
-    }
-    if (IsIntBackedArray(type_id_)) {
-      auto& data = static_cast<IntArrayStorage*>(ptr)->data;
-      return data.empty() ? nullptr : data.data();
-    }
-    if (IsUIntBackedArray(type_id_)) {
-      auto& data = static_cast<UIntArrayStorage*>(ptr)->data;
-      return data.empty() ? nullptr : data.data();
-    }
-    if (type_id_ == TypeId::Int64) {
-      auto& data = static_cast<Int64ArrayStorage*>(ptr)->data;
-      return data.empty() ? nullptr : data.data();
-    }
-    if (type_id_ == TypeId::UInt64) {
-      auto& data = static_cast<UInt64ArrayStorage*>(ptr)->data;
-      return data.empty() ? nullptr : data.data();
-    }
-    if (type_id_ == TypeId::Bool) {
-      auto& data = static_cast<BoolArrayStorage*>(ptr)->data;
-      return data.empty() ? nullptr : data.data();
-    }
-    auto& data = static_cast<TokenArrayStorage*>(ptr)->data;
-    return data.empty() ? nullptr : data.data();
+    DetachArray(storage_);
+    return ArraySlot(storage_)->data();
   }
   if (type_id_ == TypeId::Dictionary) {
     DetachDict(storage_);
@@ -1216,43 +1098,7 @@ void* Value::data_ptr() {
 
 const void* Value::data_ptr() const {
   ensure_materialized();
-  if (is_array_) {
-    const ArrayStorageBase* ptr = ArraySlot(storage_)->get();
-    if (!ptr) return nullptr;
-    if (IsFloatBackedArray(type_id_)) {
-      const auto& data = static_cast<const FloatArrayStorage*>(ptr)->data;
-      return data.empty() ? nullptr : data.data();
-    }
-    if (IsDoubleBackedArray(type_id_)) {
-      const auto& data = static_cast<const DoubleArrayStorage*>(ptr)->data;
-      return data.empty() ? nullptr : data.data();
-    }
-    if (IsIntBackedArray(type_id_)) {
-      const auto& data = static_cast<const IntArrayStorage*>(ptr)->data;
-      return data.empty() ? nullptr : data.data();
-    }
-    if (IsUIntBackedArray(type_id_)) {
-      const auto& data = static_cast<const UIntArrayStorage*>(ptr)->data;
-      return data.empty() ? nullptr : data.data();
-    }
-    if (type_id_ == TypeId::Int64) {
-      const auto& data = static_cast<const Int64ArrayStorage*>(ptr)->data;
-      return data.empty() ? nullptr : data.data();
-    }
-    if (type_id_ == TypeId::UInt64) {
-      const auto& data = static_cast<const UInt64ArrayStorage*>(ptr)->data;
-      return data.empty() ? nullptr : data.data();
-    }
-    if (type_id_ == TypeId::Bool) {
-      const auto& data = static_cast<const BoolArrayStorage*>(ptr)->data;
-      return data.empty() ? nullptr : data.data();
-    }
-    if (UsesStringStorage(type_id_)) {
-      const auto& data = static_cast<const TokenArrayStorage*>(ptr)->data;
-      return data.empty() ? nullptr : data.data();
-    }
-    return nullptr;
-  }
+  if (is_array_) return ArraySlot(storage_)->data();
   if (type_id_ == TypeId::Dictionary) {
     return DictSlot(storage_)->get();
   }
@@ -1554,8 +1400,8 @@ const double* Value::as_matrix4d() const {
 const std::vector<float>* Value::as_float_array() const {
   ensure_materialized();
   if (!is_array_ || !IsFloatBackedArray(type_id_)) return nullptr;
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
-  return &static_cast<FloatArrayStorage*>(ptr)->data;
+  void* ptr = ArraySlot(storage_)->vector_object();
+  return static_cast<std::vector<float>*>(ptr);
 }
 
 std::vector<float>* Value::as_float_array() {
@@ -1563,15 +1409,15 @@ std::vector<float>* Value::as_float_array() {
   if (!is_array_ || !IsFloatBackedArray(type_id_)) return nullptr;
   dirty_ = true;
   DetachArray(storage_);
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
-  return &static_cast<FloatArrayStorage*>(ptr)->data;
+  void* ptr = ArraySlot(storage_)->vector_object();
+  return static_cast<std::vector<float>*>(ptr);
 }
 
 const std::vector<int32_t>* Value::as_int_array() const {
   ensure_materialized();
   if (!is_array_ || !IsIntBackedArray(type_id_)) return nullptr;
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
-  return &static_cast<IntArrayStorage*>(ptr)->data;
+  void* ptr = ArraySlot(storage_)->vector_object();
+  return static_cast<std::vector<int32_t>*>(ptr);
 }
 
 std::vector<int32_t>* Value::as_int_array() {
@@ -1579,79 +1425,79 @@ std::vector<int32_t>* Value::as_int_array() {
   if (!is_array_ || !IsIntBackedArray(type_id_)) return nullptr;
   dirty_ = true;
   DetachArray(storage_);
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
-  return &static_cast<IntArrayStorage*>(ptr)->data;
+  void* ptr = ArraySlot(storage_)->vector_object();
+  return static_cast<std::vector<int32_t>*>(ptr);
 }
 
 const std::vector<double>* Value::as_double_array() const {
   ensure_materialized();
   if (!is_array_ || !IsDoubleBackedArray(type_id_)) return nullptr;
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
-  return &static_cast<DoubleArrayStorage*>(ptr)->data;
+  void* ptr = ArraySlot(storage_)->vector_object();
+  return static_cast<std::vector<double>*>(ptr);
 }
 std::vector<double>* Value::as_double_array() {
   ensure_materialized();
   if (!is_array_ || !IsDoubleBackedArray(type_id_)) return nullptr;
   dirty_ = true;
   DetachArray(storage_);
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
-  return &static_cast<DoubleArrayStorage*>(ptr)->data;
+  void* ptr = ArraySlot(storage_)->vector_object();
+  return static_cast<std::vector<double>*>(ptr);
 }
 const std::vector<int64_t>* Value::as_int64_array() const {
   ensure_materialized();
   if (type_id_ != TypeId::Int64 || !is_array_) return nullptr;
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
-  return &static_cast<Int64ArrayStorage*>(ptr)->data;
+  void* ptr = ArraySlot(storage_)->vector_object();
+  return static_cast<std::vector<int64_t>*>(ptr);
 }
 std::vector<int64_t>* Value::as_int64_array() {
   ensure_materialized();
   if (type_id_ != TypeId::Int64 || !is_array_) return nullptr;
   dirty_ = true;
   DetachArray(storage_);
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
-  return &static_cast<Int64ArrayStorage*>(ptr)->data;
+  void* ptr = ArraySlot(storage_)->vector_object();
+  return static_cast<std::vector<int64_t>*>(ptr);
 }
 const std::vector<uint32_t>* Value::as_uint_array() const {
   ensure_materialized();
   if (!is_array_ || !IsUIntBackedArray(type_id_)) return nullptr;
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
-  return &static_cast<UIntArrayStorage*>(ptr)->data;
+  void* ptr = ArraySlot(storage_)->vector_object();
+  return static_cast<std::vector<uint32_t>*>(ptr);
 }
 std::vector<uint32_t>* Value::as_uint_array() {
   ensure_materialized();
   if (!is_array_ || !IsUIntBackedArray(type_id_)) return nullptr;
   dirty_ = true;
   DetachArray(storage_);
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
-  return &static_cast<UIntArrayStorage*>(ptr)->data;
+  void* ptr = ArraySlot(storage_)->vector_object();
+  return static_cast<std::vector<uint32_t>*>(ptr);
 }
 const std::vector<uint64_t>* Value::as_uint64_array() const {
   ensure_materialized();
   if (type_id_ != TypeId::UInt64 || !is_array_) return nullptr;
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
-  return &static_cast<UInt64ArrayStorage*>(ptr)->data;
+  void* ptr = ArraySlot(storage_)->vector_object();
+  return static_cast<std::vector<uint64_t>*>(ptr);
 }
 std::vector<uint64_t>* Value::as_uint64_array() {
   ensure_materialized();
   if (type_id_ != TypeId::UInt64 || !is_array_) return nullptr;
   dirty_ = true;
   DetachArray(storage_);
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
-  return &static_cast<UInt64ArrayStorage*>(ptr)->data;
+  void* ptr = ArraySlot(storage_)->vector_object();
+  return static_cast<std::vector<uint64_t>*>(ptr);
 }
 const std::vector<uint8_t>* Value::as_bool_array() const {
   ensure_materialized();
   if (type_id_ != TypeId::Bool || !is_array_) return nullptr;
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
-  return &static_cast<BoolArrayStorage*>(ptr)->data;
+  void* ptr = ArraySlot(storage_)->vector_object();
+  return static_cast<std::vector<uint8_t>*>(ptr);
 }
 const std::vector<std::string>* Value::as_token_array() const {
   ensure_materialized();
   // Token / String / AssetPath / PathExpression arrays share the
   // string-vector storage.
   if (!is_array_ || !UsesStringStorage(type_id_)) return nullptr;
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
-  return &static_cast<TokenArrayStorage*>(ptr)->data;
+  void* ptr = ArraySlot(storage_)->vector_object();
+  return static_cast<std::vector<std::string>*>(ptr);
 }
 
 // ============================================================
@@ -1731,10 +1577,10 @@ bool Value::operator==(const Value& other) const {
       }
       if (a == b) continue;
       if (!compared_dicts.insert(DictPair{a, b}).second) continue;
-      if (a->entries.size() != b->entries.size()) return false;
-      for (size_t i = a->entries.size(); i > 0; --i) {
-        const auto& lhs_entry = a->entries[i - 1];
-        const auto& rhs_entry = b->entries[i - 1];
+      if (a->entries().size() != b->entries().size()) return false;
+      for (size_t i = a->entries().size(); i > 0; --i) {
+        const auto& lhs_entry = a->entries()[i - 1];
+        const auto& rhs_entry = b->entries()[i - 1];
         if (lhs_entry.first != rhs_entry.first) return false;
         pending.push_back(
             ValuePair{&lhs_entry.second, &rhs_entry.second});
@@ -1865,7 +1711,7 @@ uint64_t Value::hash() const {
 
     while (!pending.empty()) {
       HashFrame& frame = pending.back();
-      if (frame.next_entry == frame.dict->entries.size()) {
+      if (frame.next_entry == frame.dict->entries().size()) {
         const uint64_t child_hash = frame.hash;
         completed[frame.dict] = child_hash;
         active.erase(frame.dict);
@@ -1876,7 +1722,7 @@ uint64_t Value::hash() const {
         continue;
       }
 
-      const auto& kv = frame.dict->entries[frame.next_entry++];
+      const auto& kv = frame.dict->entries()[frame.next_entry++];
       frame.hash ^=
           fnv1a_hash(reinterpret_cast<const uint8_t*>(kv.first.data()),
                      kv.first.size());

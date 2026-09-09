@@ -10,8 +10,9 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <utility>
 #include <deque>
-#include <unordered_map>
+#include "../core/string-index.hh"
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include <atomic>
 #include <memory>
@@ -32,36 +33,6 @@ struct PropNameId {
   bool operator<(PropNameId other) const { return id < other.id; }
 };
 
-// Keep owned strings as map keys while allowing allocation-free read-only
-// probes from string_view callers.
-struct PropNameHash {
-  using is_transparent = void;
-
-  size_t operator()(const std::string& name) const noexcept {
-    return std::hash<std::string_view>{}(name);
-  }
-  size_t operator()(std::string_view name) const noexcept {
-    return std::hash<std::string_view>{}(name);
-  }
-};
-
-struct PropNameEqual {
-  using is_transparent = void;
-
-  bool operator()(const std::string& lhs, const std::string& rhs) const noexcept {
-    return lhs == rhs;
-  }
-  bool operator()(std::string_view lhs, std::string_view rhs) const noexcept {
-    return lhs == rhs;
-  }
-  bool operator()(const std::string& lhs, std::string_view rhs) const noexcept {
-    return std::string_view(lhs) == rhs;
-  }
-  bool operator()(std::string_view lhs, const std::string& rhs) const noexcept {
-    return lhs == std::string_view(rhs);
-  }
-};
-
 /// Property name interning table
 /// All property names are stored once and referenced by ID
 /// Thread-safe for reads after initial population
@@ -75,8 +46,9 @@ public:
   PropNameId intern(const std::string& name);
   PropNameId intern(const char* name);
 
-  /// Get name by ID (O(1))
-  const std::string& get(PropNameId id) const;
+  /// Get a stable name view by ID (O(1)). It remains valid for the table's
+  /// lifetime, including across intern() calls.
+  std::string_view get(PropNameId id) const;
 
   /// Try to find existing ID without creating (O(1) average)
   PropNameId find(const std::string& name) const;
@@ -135,13 +107,12 @@ public:
   PropNameId id_size;         // "size"
 
 private:
-  // deque, not vector: get() returns a `const std::string&` that a caller may use
-  // after the shared lock is released; a deque never relocates existing elements
-  // on push_back, so a concurrent intern() (parallel composition) cannot dangle
-  // that reference (a vector realloc would).
+  // A deque retains the address of existing strings while concurrent intern()
+  // calls append new names. StringIndex avoids a second key copy in the lookup
+  // table; the deque remains until all value-facing name storage is pooled.
   std::deque<std::string> names_;
-  std::unordered_map<std::string, uint32_t, PropNameHash, PropNameEqual>
-      name_to_id_;
+  detail::StringIndex name_to_id_;
+  PropNameId find_live(std::string_view name) const;
 #if defined(LIGHTUSD_ENABLE_THREAD)
   // The global table is interned into concurrently when referenced layers are
   // parsed on worker threads (parallel composition pre-warm). Read-mostly: a
@@ -150,9 +121,8 @@ private:
   mutable std::shared_mutex mu_;
 
   // Immutable lookup snapshot published by freeze(). `by_name` is sorted by
-  // name so a lookup is a branch-predictable binary search over flat storage
-  // (friendlier than unordered_map's pointer chase), and `by_id` indexes the
-  // stable deque elements. Nothing here is ever mutated after publication:
+  // name so a lookup is a binary search over flat storage, and `by_id` stores
+  // stable deque-backed views. Nothing here is ever mutated after publication:
   // intern() only touches names_/name_to_id_, so a lock-free reader holding a
   // FrozenIndex is isolated from it.
   struct FrozenIndex {

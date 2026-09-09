@@ -2123,12 +2123,18 @@ void usdz_convert_exr_roundtrip_test(void) {
   if (!dec) { TEST_MSG("EXR decode: %s", dec.error().c_str()); return; }
   const Image &out = dec.value().image;
   TEST_CHECK(out.width == 4 && out.height == 4);
-  TEST_CHECK(out.format == Image::PixelFormat::Float && out.bpp == 32);
-  const float *of = reinterpret_cast<const float *>(out.data.data());
-  // fp16 storage roundtrip — allow a small tolerance.
-  TEST_CHECK(std::fabs(of[0] - 0.25f) < 0.01f);
-  TEST_CHECK(std::fabs(of[1] - 0.5f) < 0.01f);
-  TEST_CHECK(std::fabs(of[2] - 0.75f) < 0.01f);
+  TEST_CHECK(out.format == Image::PixelFormat::Float &&
+             (out.bpp == 16 || out.bpp == 32));
+  if (out.bpp == 32) {
+    const float *of = reinterpret_cast<const float *>(out.data.data());
+    TEST_CHECK(std::fabs(of[0] - 0.25f) < 0.01f);
+    TEST_CHECK(std::fabs(of[1] - 0.5f) < 0.01f);
+    TEST_CHECK(std::fabs(of[2] - 0.75f) < 0.01f);
+  } else {
+    const uint16_t *of = reinterpret_cast<const uint16_t *>(out.data.data());
+    // The EXR writer stores float input as HALF; verify exact half payloads.
+    TEST_CHECK(of[0] == 0x3400 && of[1] == 0x3800 && of[2] == 0x3A00);
+  }
 }
 
 // fp32 (HDR) resize support in ResizeImage (previously 8-bit only).

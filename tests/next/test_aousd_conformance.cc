@@ -2512,7 +2512,7 @@ void TestFoundationalTypeMatrix() {
     assert(expected);
     bool authored = false;
     for (const PropSlot& slot : type_prim->properties().slots()) {
-      const std::string& name = GetPropNameTable().get(slot.name_id);
+      const std::string name(GetPropNameTable().get(slot.name_id));
       const std::string* declared = type_prim->property_type_name(name);
       if (declared && *declared == expected) {
         authored = true;

@@ -55,7 +55,7 @@
         }
         for (const PropSlot &slot : spec->properties().slots()) {
           if (slot.is_relationship()) continue;
-          const std::string &name = GetPropNameTable().get(slot.name_id);
+          const std::string name(GetPropNameTable().get(slot.name_id));
           if (!IsPreviewProperty(name) || out->property_value(slot.name_id)) {
             continue;
           }

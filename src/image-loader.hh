@@ -31,7 +31,8 @@ struct ImageInfoResult {
 ///
 /// User-defined Image asset loader
 ///
-/// TOOD: Use FileFormat API?
+/// Applications that need a format outside the built-in set can register a
+/// callback with SetImageLoader and SetImageInfoLoader.
 ///
 
 ///
@@ -61,6 +62,15 @@ typedef bool (*LoadImageDataFunction)(ImageResult *image, const uint8_t *addr, c
 /// @return true upon success.
 
 typedef bool (*GetImageInfoFunction)(ImageInfoResult *image, const uint8_t *addr, const size_t datasize, const std::string &asset_name, void *user_data);
+
+/// Install an optional application image decoder. The callback is tried before
+/// the built-in decoders and may handle formats unknown to LightUSD. Passing a
+/// null callback disables the override.
+void SetImageLoader(LoadImageDataFunction loader, void *user_data = nullptr);
+
+/// Install an optional application image-info decoder. The callback is tried
+/// before the built-in metadata readers. Passing a null callback disables it.
+void SetImageInfoLoader(GetImageInfoFunction loader, void *user_data = nullptr);
 
 
 ///
@@ -92,6 +102,15 @@ nonstd::expected<ImageInfoResult, std::string> GetImageInfoFromFile(const std::s
 /// @return ImageResult or error message(std::string)
 ///
 nonstd::expected<ImageResult, std::string> LoadImageFromMemory(const uint8_t *addr, const size_t datasize, const std::string &uri);
+
+/// Load every decoded TIFF/DNG directory as a separate image layer.
+///
+/// This is intentionally a TIFF/DNG-specific API. The regular single-image
+/// loader selects the largest directory for compatibility; this API preserves
+/// all directories returned by TinyDNG in file order.
+nonstd::expected<std::vector<ImageResult>, std::string>
+LoadImageLayersFromMemory(const uint8_t *addr, size_t datasize,
+                          const std::string &uri);
 
 ///
 /// Get Image info from a file.

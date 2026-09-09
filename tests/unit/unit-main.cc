@@ -84,6 +84,7 @@
 #include "unit-rb-collision.h"
 #include "unit-rb-dynamics.h"
 #include "unit-string-pool.h"
+#include "unit-minijson.h"
 
 #if defined(LIGHTUSD_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -92,8 +93,35 @@
 
 
 TEST_LIST = {
+  { "minijson_parse_basic_test", minijson_parse_basic_test },
+  { "minijson_shortest_double_roundtrip_test", minijson_shortest_double_roundtrip_test },
+  { "minijson_unicode_escape_test", minijson_unicode_escape_test },
+  { "minijson_reject_invalid_utf8_test", minijson_reject_invalid_utf8_test },
+  { "minijson_reject_duplicate_key_test", minijson_reject_duplicate_key_test },
+  { "minijson_reject_invalid_number_test", minijson_reject_invalid_number_test },
+  { "minijson_reject_depth_limit_test", minijson_reject_depth_limit_test },
+  { "minijson_reject_input_size_limit_test", minijson_reject_input_size_limit_test },
+  { "minijson_reject_string_size_limit_test", minijson_reject_string_size_limit_test },
+  { "minijson_reject_array_size_limit_test", minijson_reject_array_size_limit_test },
+  { "minijson_reject_object_size_limit_test", minijson_reject_object_size_limit_test },
+  { "minijson_reject_nonfinite_serialize_test", minijson_reject_nonfinite_serialize_test },
+  { "minijson_reject_serialize_depth_limit_test", minijson_reject_serialize_depth_limit_test },
+  { "minijson_serialize_escapes_control_chars_test", minijson_serialize_escapes_control_chars_test },
+  { "minijson_tydra_value_bridge_test", minijson_tydra_value_bridge_test },
   { "tinydng_classic_tiff_test", tinydng_classic_tiff_test },
+  { "tinydng_layers_api_test", tinydng_layers_api_test },
   { "tinydng_bigtiff_test", tinydng_bigtiff_test },
+  { "tinydng_writer_roundtrip_test", tinydng_writer_roundtrip_test },
+  { "tinydng_writer_bitdepth_roundtrip_test", tinydng_writer_bitdepth_roundtrip_test },
+  { "tinydng_packed_integer_test", tinydng_packed_integer_test },
+  { "tinydng_packed_planar_integer_test", tinydng_packed_planar_integer_test },
+  { "tiff_planar_scanline_test", tiff_planar_scanline_test },
+  { "tiff_tiled_test", tiff_tiled_test },
+  { "tinydng_tiled_packbits_test", tinydng_tiled_packbits_test },
+  { "tinydng_strip_packbits_test", tinydng_strip_packbits_test },
+  { "tinydng_planar_strip_packbits_test", tinydng_planar_strip_packbits_test },
+  { "tinydng_multi_layer_writer_test", tinydng_multi_layer_writer_test },
+  { "image_loader_callback_test", image_loader_callback_test },
   { "ptx_reader_rejects_invalid_input_test", ptx_reader_rejects_invalid_input_test },
   { "ptx_reader_island_fixture_test", ptx_reader_island_fixture_test },
   { "ptx_reader_synthetic_fixture_test", ptx_reader_synthetic_fixture_test },
@@ -198,6 +226,10 @@ TEST_LIST = {
   { "materialx_139_version_test", materialx_139_version_test },
   { "nodegraph_support_test", nodegraph_support_test },
   { "nodegraph_reconstruct_from_layer_test", nodegraph_reconstruct_from_layer_test },
+    { "materialx_nodegraph_inputs_outputs_test", materialx_nodegraph_inputs_outputs_test },
+    { "materialx_openpbr_extended_inputs_test", materialx_openpbr_extended_inputs_test },
+  { "materialx_look_roundtrip_test", materialx_look_roundtrip_test },
+  { "materialx_light_shader_roundtrip_test", materialx_light_shader_roundtrip_test },
   { "materialx_shader_constants_test", materialx_shader_constants_test },
   { "materialx_shader_fallback_values_test", materialx_shader_fallback_values_test },
   { "usdpreviewsurface_displacement_test", usdpreviewsurface_displacement_test },
@@ -478,6 +510,10 @@ TEST_LIST = {
   { "usda_roundtrip_mesh_test", usda_roundtrip_mesh_test },
   { "usda_roundtrip_material_test", usda_roundtrip_material_test },
   { "usda_roundtrip_timesamples_test", usda_roundtrip_timesamples_test },
+  { "json_layer_primspec_roundtrip_test", json_layer_primspec_roundtrip_test },
+  { "json_writer_facade_test", json_writer_facade_test },
+  { "json_stage_runtime_roundtrip_test", json_stage_runtime_roundtrip_test },
+  { "usd_dump_json_test", usd_dump_json_test },
   { "half_roundtrip_exhaustive_test", half_roundtrip_exhaustive_test },
   { "half_roundtrip_edge_cases_test", half_roundtrip_edge_cases_test },
   { "half_shortest_representation_test", half_shortest_representation_test },
@@ -842,6 +878,7 @@ TEST_LIST = {
   { "security_is_safe_asset_path_test", security_is_safe_asset_path_test },
   { "security_findfile_segment_traversal_test", security_findfile_segment_traversal_test },
   { "security_findfile_absolute_traversal_test", security_findfile_absolute_traversal_test },
+  { "security_usda_load_options_test", security_usda_load_options_test },
   // USDZ writer and validation tests
   { "usdz_writer_basic_roundtrip_test", usdz_writer_basic_roundtrip_test },
   { "usdz_writer_is_usdz_prefix_detection_test", usdz_writer_is_usdz_prefix_detection_test },

@@ -76,6 +76,7 @@ typedef enum {
 typedef enum {
   COMPRESSION_NONE = 1,
   COMPRESSION_LZW = 5,        // LZW
+  COMPRESSION_PACKBITS = 32773, // TIFF PackBits
   COMPRESSION_OLD_JPEG = 6,   // JPEG or lossless JPEG
   COMPRESSION_NEW_JPEG = 7,   // Usually lossles JPEG, may be JPEG
   COMPRESSION_ZIP = 8,        // ZIP
@@ -5217,6 +5218,38 @@ static int easyDecode(const unsigned char* compressed,
 
 }  // namespace lzw
 
+namespace packbits {
+
+// Decode one TIFF PackBits strip/tile with strict source and destination
+// bounds. Returns the number of output bytes, or -1 for malformed input.
+static int decode(const unsigned char *compressed, size_t compressed_size,
+                  unsigned char *uncompressed, size_t uncompressed_size) {
+  if (!compressed || !uncompressed) return -1;
+  size_t in = 0, out = 0;
+  while (in < compressed_size) {
+    const int8_t control = static_cast<int8_t>(compressed[in++]);
+    if (control >= 0) {
+      const size_t count = static_cast<size_t>(control) + 1u;
+      if (count > compressed_size - in || count > uncompressed_size - out) {
+        return -1;
+      }
+      std::memcpy(uncompressed + out, compressed + in, count);
+      in += count;
+      out += count;
+    } else if (control != -128) {
+      const size_t count = static_cast<size_t>(1 - control);
+      if (in >= compressed_size || count > uncompressed_size - out) return -1;
+      std::memset(uncompressed + out, compressed[in++], count);
+      out += count;
+    }
+  }
+  return out <= static_cast<size_t>((std::numeric_limits<int>::max)())
+             ? static_cast<int>(out)
+             : -1;
+}
+
+}  // namespace packbits
+
 // Decode a complete tiled TIFF image. TinyDNG historically handled only
 // strip-oriented images (and ZIP tiles with a few special layouts). Keep this
 // path deliberately byte-oriented: it works for UINT/IEEEFP samples and does
@@ -5292,6 +5325,8 @@ static bool DecodeTiledImage(StreamReader& sr, DNGImage* image,
               src, static_cast<int>(count), static_cast<int>(count * 8),
               decoded.data(), static_cast<int>(decoded.size()), swap_endian);
           ok = decodedBytes > 0;
+        } else if (image->compression == COMPRESSION_PACKBITS) {
+          ok = packbits::decode(src, count, decoded.data(), decoded.size()) >= 0;
         } else if (image->compression == COMPRESSION_ZIP) {
 #ifdef TINY_DNG_LOADER_ENABLE_ZIP
           unsigned long outSize = static_cast<unsigned long>(decoded.size());
@@ -5351,6 +5386,127 @@ static bool DecodeTiledImage(StreamReader& sr, DNGImage* image,
             std::memcpy(image->data.data() + dst, decoded.data() + srcBytes,
                         cols * spp * bytesPerSample);
           }
+        }
+      }
+    }
+  }
+  return true;
+}
+
+// Decode strip-oriented PackBits TIFF data. This keeps PackBits available in
+// builds without libtiff and uses the same bounded decoder as tiled TIFFs.
+static bool DecodePackBitsStrips(StreamReader &sr, DNGImage *image,
+                                 std::string *err) {
+  if (!image || image->bits_per_sample_original <= 0 ||
+      (image->bits_per_sample_original % 8) != 0 || image->width <= 0 ||
+      image->height <= 0 || image->rows_per_strip <= 0 ||
+      image->samples_per_pixel <= 0 || image->strip_offsets.empty() ||
+      image->strip_offsets.size() != image->strip_byte_counts.size()) {
+    if (err) (*err) += "Invalid PackBits TIFF strip layout.\n";
+    return false;
+  }
+  const size_t bytes_per_sample =
+      static_cast<size_t>(image->bits_per_sample_original / 8);
+  const uint64_t strip_pixels64 =
+      static_cast<uint64_t>(image->width) *
+      static_cast<uint64_t>(image->rows_per_strip);
+  const uint64_t strip_bytes64 =
+      strip_pixels64 * static_cast<uint64_t>(
+          image->planar_configuration == 2 ? 1 : image->samples_per_pixel) *
+      bytes_per_sample;
+  if (strip_bytes64 == 0 || strip_bytes64 > (std::numeric_limits<size_t>::max)()) {
+    if (err) (*err) += "PackBits TIFF strip is too large.\n";
+    return false;
+  }
+  const size_t strip_bytes = static_cast<size_t>(strip_bytes64);
+  if (strip_bytes > kMaxImageSizeInMB * 1024ull * 1024ull ||
+      image->strip_offsets.size() >
+          (std::numeric_limits<size_t>::max)() / strip_bytes) {
+    if (err) (*err) += "PackBits TIFF image is too large.\n";
+    return false;
+  }
+  image->bits_per_sample = image->bits_per_sample_original;
+  const size_t pixel_bytes = static_cast<size_t>(image->width) *
+                             static_cast<size_t>(image->height) *
+                             static_cast<size_t>(image->samples_per_pixel) *
+                             bytes_per_sample;
+  image->data.assign(pixel_bytes, 0);
+  const size_t strips_per_plane =
+      (static_cast<size_t>(image->height) +
+       static_cast<size_t>(image->rows_per_strip) - 1) /
+      static_cast<size_t>(image->rows_per_strip);
+  if (image->planar_configuration == 2 &&
+      (strips_per_plane == 0 ||
+       image->strip_offsets.size() !=
+           strips_per_plane * static_cast<size_t>(image->samples_per_pixel))) {
+    if (err) (*err) += "Invalid planar PackBits TIFF strip count.\n";
+    return false;
+  }
+  std::vector<unsigned char> decoded(strip_bytes);
+  for (size_t strip = 0; strip < image->strip_offsets.size(); ++strip) {
+    const uint64_t offset = image->strip_offsets[strip];
+    const uint64_t count = image->strip_byte_counts[strip];
+    if (offset > sr.size() || count > static_cast<uint64_t>(sr.size()) - offset) {
+      if (err) (*err) += "Invalid PackBits TIFF strip range.\n";
+      return false;
+    }
+    const uint8_t *src = sr.map_abs_addr(static_cast<size_t>(offset),
+                                         static_cast<size_t>(count));
+    const int decoded_bytes =
+        src ? packbits::decode(src, static_cast<size_t>(count), decoded.data(),
+                               decoded.size())
+            : -1;
+    if (decoded_bytes != static_cast<int>(decoded.size())) {
+      if (err) (*err) += "PackBits TIFF strip decode failed.\n";
+      return false;
+    }
+    if (image->predictor == 2) {
+      const size_t row_samples = static_cast<size_t>(image->width) *
+          static_cast<size_t>(image->planar_configuration == 2
+                                  ? 1 : image->samples_per_pixel);
+      const size_t row_bytes = row_samples * bytes_per_sample;
+      const size_t sample_stride = static_cast<size_t>(
+          image->planar_configuration == 2 ? 1 : image->samples_per_pixel) *
+          bytes_per_sample;
+      for (size_t row = 0; row < static_cast<size_t>(image->rows_per_strip);
+           ++row) {
+        unsigned char *row_data = decoded.data() + row * row_bytes;
+        for (size_t x = 1; x < static_cast<size_t>(image->width); ++x) {
+          for (size_t byte = 0; byte < sample_stride; ++byte) {
+            row_data[x * sample_stride + byte] = static_cast<unsigned char>(
+                row_data[x * sample_stride + byte] +
+                row_data[(x - 1) * sample_stride + byte]);
+          }
+        }
+      }
+    } else if (image->predictor != 0 && image->predictor != 1) {
+      if (err) (*err) += "Unsupported PackBits TIFF predictor.\n";
+      return false;
+    }
+    const size_t strip_in_plane = strip % strips_per_plane;
+    const size_t plane = image->planar_configuration == 2
+                             ? strip / strips_per_plane
+                             : 0;
+    const size_t y0 = strip_in_plane * static_cast<size_t>(image->rows_per_strip);
+    const size_t rows = (std::min)(static_cast<size_t>(image->rows_per_strip),
+                                   static_cast<size_t>(image->height) - y0);
+    if (image->planar_configuration != 2) {
+      std::memcpy(image->data.data() + y0 * static_cast<size_t>(image->width) *
+                                          static_cast<size_t>(image->samples_per_pixel) *
+                                          bytes_per_sample,
+                  decoded.data(), rows * static_cast<size_t>(image->width) *
+                                      static_cast<size_t>(image->samples_per_pixel) *
+                                      bytes_per_sample);
+    } else {
+      for (size_t y = 0; y < rows; ++y) {
+        for (size_t x = 0; x < static_cast<size_t>(image->width); ++x) {
+          const size_t dst_sample =
+              ((y0 + y) * static_cast<size_t>(image->width) + x) *
+                  static_cast<size_t>(image->samples_per_pixel) + plane;
+          const size_t src_sample = y * static_cast<size_t>(image->width) + x;
+          std::memcpy(image->data.data() + dst_sample * bytes_per_sample,
+                      decoded.data() + src_sample * bytes_per_sample,
+                      bytes_per_sample);
         }
       }
     }
@@ -5646,6 +5802,8 @@ static bool LoadDNGFromMemoryImpl(const char* mem, size_t size,
           return false;
         }
       }
+    } else if (image->compression == COMPRESSION_PACKBITS) {
+      if (!DecodePackBitsStrips(sr, image, err)) return false;
     } else if (image->compression == COMPRESSION_LZW) {  // lzw compression
 
       if (image->bits_per_sample_original <= 0) {

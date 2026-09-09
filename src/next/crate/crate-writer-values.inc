@@ -39,8 +39,8 @@
     auto put_u32 = [&](uint32_t v) {
       for (int i = 0; i < 4; ++i) blk.push_back(static_cast<uint8_t>(v >> (i * 8)));
     };
-    put_u64(static_cast<uint64_t>(d.entries.size()));
-    for (const auto& kv : d.entries) {
+    put_u64(static_cast<uint64_t>(d.entries().size()));
+    for (const auto& kv : d.entries()) {
       uint32_t kidx = InternString(kv.first);
       ValueRep vr = EncodeValue(kv.second);  // recursive (nested dicts/arrays)
       put_u32(kidx);
