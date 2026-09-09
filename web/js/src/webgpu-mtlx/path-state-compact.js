@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// Diagnostic physical kernel. This deliberately performs one bounce so that
-// shader compiler investigations have a small, physically meaningful target.
+// Diagnostic physical kernel. This deliberately limits transport to three
+// explicit events so shader compiler investigations have a small target.
 export const pathStateCompactWGSL = /* wgsl */`
 struct PathState { origin: vec4f, direction: vec4f, beta: vec4f, radiance: vec4f, state: vec4u, previous: vec4f, iorsLo: vec4f, iorsHi: vec4f, mediaLo: vec4u, mediaHi: vec4u }
 @group(0) @binding(5) var<storage,read_write> paths: array<PathState>;
@@ -30,6 +30,28 @@ struct PathState { origin: vec4f, direction: vec4f, beta: vec4f, radiance: vec4f
     if(f.w>0.0&&intersect(ctx.position+ctx.normal*1e-5,wi).id==0xffffffffu){p.radiance+=vec4f(f.xyz*abs(local.z)*environment(wi)/pdf,0);}
     let sample=closureSample(surface.bsdf,wo,m.ior,&rng,0.0);
     if(sample.pdf>0.0){p.beta=vec4f(p.beta.xyz*sample.weight,p.beta.w*sample.eta*sample.eta);p.direction=vec4f(normalize(frame*sample.wi),sample.pdf);p.origin=vec4f(ctx.position,0);}
+    // Keep the continuation explicit and shallow: this is a compiler probe,
+    // not the production path continuation.
+    let h2=intersect(ctx.position+ctx.normal*1e-5,normalize(frame*sample.wi));
+    if(h2.id!=0xffffffffu){
+      let ctx2=context(h2,ctx.position,normalize(frame*sample.wi),0.0);
+      let surface2=getSurface(u32(triangles[h2.id].a.uv.z),ctx2);
+      let m2=primaryLobe(surface2);
+      let frame2=transportFrame(ctx2.normal,surface2.tangent,surface2.bitangent);
+      let wo2=transpose(frame2)*(-normalize(frame*sample.wi));
+      p.radiance+=vec4f(m2.emission*m2.emissionWeight,0);
+      let z2=1.0-2.0*random(&rng);let phi2=2.0*PI*random(&rng);let rr2=sqrt(max(0.0,1.0-z2*z2));
+      let wi2=vec3f(rr2*cos(phi2),z2,rr2*sin(phi2));let local2=transpose(frame2)*wi2;
+      let f2=closureEval(surface2.bsdf,wo2,local2,m2.ior,0.0);let pdf2=1.0/(4.0*PI);
+      if(f2.w>0.0&&intersect(ctx2.position+ctx2.normal*1e-5,wi2).id==0xffffffffu){p.radiance+=vec4f(p.beta.xyz*f2.xyz*abs(local2.z)*environment(wi2)/pdf2,0);}
+      let h3=intersect(ctx2.position+ctx2.normal*1e-5,normalize(frame2*wi2));
+      if(h3.id!=0xffffffffu){
+        let ctx3=context(h3,ctx2.position,normalize(frame2*wi2),0.0);
+        let surface3=getSurface(u32(triangles[h3.id].a.uv.z),ctx3);
+        let m3=primaryLobe(surface3);
+        p.radiance+=vec4f(m3.emission*m3.emissionWeight,0);
+      }
+    }
   }
   accumulation[index]=vec4f(p.radiance.xyz,1.0);
   p.state.x=rng;p.state.w=1u;
