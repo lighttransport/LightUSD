@@ -904,3 +904,55 @@ Authored Standard Surface/OpenPBR `specular_color` now tints the kind-0
 microfacet response through the existing lobe storage, without changing the
 WGSL layout. This is an RGB tint approximation; measured spectral and layered
 specular semantics remain future work.
+
+## Resume tasks for the full physical pipeline
+
+The full reference-rendering objective remains incomplete. Chrome 152.0.7977.83
+on the NVIDIA hardware path reaches the full physical shader module, reports
+`physicalReady:true`, and then leaves `createComputePipelineAsync` pending with
+no GPU or page error. The source was restored after each probe. Early-return
+variants and the tracked compact kernel do compile and dispatch, so this is a
+compiler/CFG boundary in the full reachable transport body rather than a
+reported WGSL syntax error.
+
+Continue in this order:
+
+1. Split the physical transport into genuine shader phases with explicit
+   continuation records. Keep intersection/material evaluation, sampling,
+   continuation, and accumulation in separately compilable entry points or
+   modules. A helper extraction, moving the four-event loop into a function,
+   or removing only the outer loop was already tested and did not remove the
+   stall.
+2. Preserve the production `PathState` ABI and validate every generated phase
+   source before launching Chrome. The compact kernel in
+   `src/webgpu-mtlx/path-state-compact.js` is diagnostic only: it performs
+   three explicit events, uses `physicalKernel: 'compact'`, and is biased by
+   construction. The default `physicalKernel: 'full'` must remain unchanged
+   until the full path passes.
+3. Add a focused Chrome test for the phase-split path that proves pipeline
+   creation, one dispatch, finite capture, resumable accumulation, and a
+   multi-sample analytic scene. Do not treat compact-kernel success as full
+   reference acceptance.
+4. Revisit the remaining runtime stalls after the phase split, especially the
+   image-backed path case and the full spectral/physical reference matrix.
+   Record adapter, browser version, pipeline readiness, sample count, and
+   renderer/GPU diagnostics for every timeout.
+5. Resume the broader incomplete scope after physical compilation is stable:
+   faithful authored ShaderBall graph/material import and large texture
+   streaming, complete MaterialX overload/closure semantics, exact layered
+   energy compensation, true subsurface BSSRDF, heterogeneous volume and
+   hair transport, Catmull-Clark/displacement convergence, and independent
+   reference-image/statistical validation.
+
+Useful resume checks from `web/js` are:
+
+```sh
+node tests/webgpu-mtlx.test.mjs
+node tests/run-regression.mjs --profile node
+node tests/webgpu-mtlx-chrome.mjs --hardware --numeric-only
+node tests/webgpu-mtlx-chrome.mjs --hardware --frames-only
+```
+
+The latest tracked compact-kernel checkpoints are `a601ebea7` and
+`50066aae2`. The repository-root `webgpu-mtlx.md` remains a historical local
+handoff; this section is the maintained resume summary for future agents.
