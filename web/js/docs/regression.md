@@ -297,6 +297,11 @@ GPU/X11 prerequisites are unavailable. Use `--software` on
 `tests/run-regression.mjs` to force the fallback or `--hardware` to request the
 GPU path explicitly.
 
+Lucia Code browser smoke uses an ephemeral localhost port by default to avoid
+collisions between concurrent runs. Set `LUCIA_SMOKE_PORT` to a specific port
+when a CI environment requires fixed routing; the harness parses Vite's
+advertised URL and reports child-process startup diagnostics on failure.
+
 The regular browser check loads each MJCF into `urdf.html`, converts it to USD,
 and verifies both visible views. The OffscreenCanvas check uploads the converted
 USD to `offscreengl.html`, verifies the Worker message protocol and mesh count,

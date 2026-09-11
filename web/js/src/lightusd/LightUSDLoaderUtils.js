@@ -1769,6 +1769,14 @@ class LightUSDLoaderUtils extends LoaderUtils {
             geometry.computeVertexNormals();
         }
 
+        if (mesh.vertexColors) {
+            const colors = this._copyHeapAttribute(mesh.vertexColors);
+            if (colors) {
+                const normalized = mesh.vertexColors.dtype === 'u8' || mesh.vertexColors.dtype === 'i8';
+                geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3, normalized));
+            }
+        }
+
         if (options.computeMissingTangents &&
             geometry.attributes.uv &&
             geometry.attributes.normal) {
@@ -2074,6 +2082,15 @@ class LightUSDLoaderUtils extends LoaderUtils {
         };
 
         let mtl = null;
+        const displayColorValues = mesh.displayColor && typeof mesh.displayColor.length === 'number' && mesh.displayColor.length >= 3
+            ? Array.from(mesh.displayColor).slice(0, 3).map(Number) : null;
+        const displayColor = displayColorValues?.every(Number.isFinite) ? displayColorValues : null;
+        const applyDisplayColor = (material) => {
+            if (!displayColor || !material?.clone) return material;
+            const result = material.clone();
+            result.color?.setRGB(displayColor[0], displayColor[1], displayColor[2]);
+            return result;
+        };
 
         if (options.overrideMaterial) {
             mtl = defaultMtl || normalMtl
@@ -2105,7 +2122,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
               pbrMaterial.side = THREE.FrontSide;
             }
 
-            mtl = pbrMaterial || defaultMtl || normalMtl;
+            mtl = applyDisplayColor(pbrMaterial || defaultMtl || normalMtl);
         }
 
         // Handle GeomSubsets (per-face materials)
@@ -2134,9 +2151,9 @@ class LightUSDLoaderUtils extends LoaderUtils {
                     if (options._debugState) {
                         options._debugState.subsetMaterialRefs++;
                     }
-                    materials[matIndex] = await getMaterialForId(matId) || mtl;
+                    materials[matIndex] = applyDisplayColor(await getMaterialForId(matId) || mtl);
                 } else {
-                    materials[matIndex] = mtl; // Use default material
+                materials[matIndex] = mtl; // Use default material
                 }
             }
 
@@ -2167,6 +2184,9 @@ class LightUSDLoaderUtils extends LoaderUtils {
             if (mesh.materialId !== undefined) {
                 threeMesh.userData.materialId = mesh.materialId;
             }
+            if (displayColor) {
+                threeMesh.userData.luciaDisplayColor = displayColor.slice();
+            }
             if (options._debugState) {
                 options._debugState.meshCreateMs += performance.now() - meshCreateStart;
             }
@@ -2180,6 +2200,9 @@ class LightUSDLoaderUtils extends LoaderUtils {
             const threeMesh = new THREE.Mesh(geometry, mtl);
             if (mesh.materialId !== undefined) {
                 threeMesh.userData.materialId = mesh.materialId;
+            }
+            if (displayColor) {
+                threeMesh.userData.luciaDisplayColor = displayColor.slice();
             }
             if (options._debugState) {
                 options._debugState.meshCreateMs += performance.now() - meshCreateStart;

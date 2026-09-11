@@ -167,20 +167,23 @@ void mcp_prim_rename_test(void) {
   args["type_name"] = "Xform";
   TEST_CHECK(PrimCreate(ctx, args, result, err));
 
-  // Rename it — currently not implemented, so expect failure
+  // Rename it through the Stage namespace-edit API.
   result = json::object();
   args = {{"path", "/OldName"}, {"new_name", "NewName"}};
-  TEST_CHECK(!PrimRename(ctx, args, result, err));
-  TEST_CHECK(err.find("not") != std::string::npos || err.find("available") != std::string::npos);
+  TEST_CHECK(PrimRename(ctx, args, result, err));
+  TEST_CHECK(result["path"] == "/NewName");
 
-  // Old path still exists
+  // The old path is gone and the new path resolves.
   result = json::object();
   args = {{"path", "/OldName"}};
+  TEST_CHECK(!PrimGet(ctx, args, result, err));
+  result = json::object();
+  args = {{"path", "/NewName"}};
   TEST_CHECK(PrimGet(ctx, args, result, err));
 
   // Test error: missing new_name
   result = json::object();
-  args = {{"path", "/OldName"}};
+  args = {{"path", "/NewName"}};
   TEST_CHECK(!PrimRename(ctx, args, result, err));
 
   // Test error: non-existent prim
@@ -248,8 +251,20 @@ void mcp_prim_nested_test(void) {
   args["path"] = "/Parent/Child";
   args["type_name"] = "Sphere";
   result = json::object();
-  bool child_ok = PrimCreate(ctx, args, result, err);
-  (void)child_ok; // non-root prim creation returns false currently
+  TEST_CHECK(PrimCreate(ctx, args, result, err));
+
+  result = json::object();
+  args = {{"path", "/Parent/Child"}};
+  TEST_CHECK(PrimGet(ctx, args, result, err));
+
+  result = json::object();
+  args = {{"path", "/Parent/Child"}, {"new_name", "Renamed"}};
+  TEST_CHECK(PrimRename(ctx, args, result, err));
+  TEST_CHECK(result["path"] == "/Parent/Renamed");
+
+  result = json::object();
+  args = {{"path", "/Parent/Renamed"}};
+  TEST_CHECK(PrimRemove(ctx, args, result, err));
 }
 
 // ---------------------------------------------------------------------------

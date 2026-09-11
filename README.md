@@ -15,6 +15,11 @@ for untrusted assets. MCP interface provided.
 [![PyPI version](https://img.shields.io/pypi/v/lightusd.svg)](https://pypi.org/project/lightusd/)
 [![npm version](https://img.shields.io/npm/v/lightusd.svg)](https://www.npmjs.com/package/lightusd)
 
+## Releases
+
+* v1.0.0 RC (main)
+  * Will be 26.09 or 26.10
+
 ## Packages
 
 Python:

@@ -3978,6 +3978,24 @@ if(LIGHTUSD_BUILD_TESTS)
   # Feature tests as CTest targets (Phase 0B)
   #
   if(LIGHTUSD_WITH_MODULE_USDA_READER)
+    # Native counterpart to the WASM Lucia UV/LightRT parity fixtures. Keep
+    # this independent of the main library so the vendored C BVH ABI and the
+    # deterministic center-sample barycentric policy are tested directly.
+    add_executable(feat-lightrt-uv
+      tests/feat/lightrt-uv/test-lightrt-uv.cc
+      ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_tri.c)
+    add_sanitizers(feat-lightrt-uv)
+    target_include_directories(feat-lightrt-uv PRIVATE
+      ${PROJECT_SOURCE_DIR}/src/external/lightrt)
+    if(UNIX AND NOT APPLE)
+      find_package(Threads REQUIRED)
+      target_link_libraries(feat-lightrt-uv PRIVATE Threads::Threads m)
+    elseif(UNIX)
+      target_link_libraries(feat-lightrt-uv PRIVATE m)
+    endif()
+    add_test(NAME feat-lightrt-uv COMMAND feat-lightrt-uv
+      WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     add_executable(feat-value-clip tests/feat/value-clip/test-value-clip.cc)
     add_sanitizers(feat-value-clip)
     target_link_libraries(feat-value-clip PRIVATE ${LIGHTUSD_TARGET_STATIC})

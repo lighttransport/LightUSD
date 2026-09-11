@@ -32,3 +32,4 @@ tests/bench-usdzconvert/
 
 # Local model assets
 models
+dist/

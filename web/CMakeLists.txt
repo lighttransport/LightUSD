@@ -12,6 +12,7 @@ option(LIGHTUSD_WASM_DEBUG "Enable WASM debug mode with source maps and assertio
 option(LIGHTUSD_WASM_SIMD "Enable WebAssembly SIMD (128-bit, widely supported since 2021)" ON)
 option(LIGHTUSD_WASM_RELAXED_SIMD "Enable WebAssembly Relaxed SIMD (requires recent browsers)" OFF)
 option(LIGHTUSD_WASM_COROUTINE "Enable C++20 coroutine-based async loading (allows browser repaint during loading)" ON)
+option(LIGHTUSD_WITH_XATLAS "Include the vendored xatlas UV atlas generator" ON)
 set(LIGHTUSD_WASM_PRODUCT "legacy" CACHE STRING
     "WASM product to build: legacy, next, or combined (combined is compatibility-only)")
 set_property(CACHE LIGHTUSD_WASM_PRODUCT PROPERTY STRINGS legacy next combined)
@@ -329,6 +330,22 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     ${PROJECT_SOURCE_DIR}/lightrt-wasm.cc
     ${PROJECT_SOURCE_DIR}/../src/external/lightrt/lightrt_c.c
     ${PROJECT_SOURCE_DIR}/../src/external/lightrt/lightrt_c_tri.c
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/allocator.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/clusterizer.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/indexanalyzer.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/indexcodec.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/indexgenerator.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/overdrawoptimizer.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/partition.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/quantization.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/rasterizer.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/simplifier.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/spatialorder.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/stripifier.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vcacheoptimizer.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vertexcodec.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vertexfilter.cpp
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vfetchoptimizer.cpp
     ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-validate.cc
     ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-topology.cc
     ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-bilinear.cc
@@ -424,9 +441,35 @@ list(
   SOURCES
   binding.cc
   lightrt-wasm.cc
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/allocator.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/clusterizer.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/indexanalyzer.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/indexcodec.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/indexgenerator.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/overdrawoptimizer.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/partition.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/quantization.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/rasterizer.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/simplifier.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/spatialorder.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/stripifier.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vcacheoptimizer.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vertexcodec.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vertexfilter.cpp
+  ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vfetchoptimizer.cpp
   ${PROJECT_SOURCE_DIR}/../src/external/lightrt/lightrt_c.c
   ${PROJECT_SOURCE_DIR}/../src/external/lightrt/lightrt_c_tri.c
 )
+if (LIGHTUSD_WITH_XATLAS)
+  list(APPEND SOURCES ${PROJECT_SOURCE_DIR}/../src/external/xatlas/xatlas.cpp)
+  # xatlas has an internal task scheduler, but the default WASM product does
+  # not enable Emscripten pthreads/SharedArrayBuffer. Keep the worker boundary
+  # at the JS level and compile the library's scheduler deterministically.
+  set_source_files_properties(
+    ${PROJECT_SOURCE_DIR}/../src/external/xatlas/xatlas.cpp
+    PROPERTIES COMPILE_DEFINITIONS "XA_MULTITHREADED=0")
+  add_compile_definitions(LIGHTUSD_WITH_XATLAS=1)
+endif()
 # The legacy product deliberately excludes the next core. The combined product
 # remains available for compatibility testing, but is not the shipped default.
 if (LIGHTUSD_WASM_PRODUCT STREQUAL "combined")

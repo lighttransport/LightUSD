@@ -93,6 +93,9 @@
 #include "safe-arithmetic.hh"
 #include "tydra/texture-util.hh"
 #include "usdz-convert.hh"
+#if defined(LIGHTUSD_WITH_XATLAS)
+#include "external/xatlas/xatlas.h"
+#endif
 #if defined(LIGHTUSD_WITH_TEXTOOLS)
 #include "texcomp.h"
 #endif
@@ -2539,6 +2542,179 @@ static std::unique_ptr<lightusd::next::Layer> ParseNextLayerBytes(
 
 }  // namespace
 
+// Small, copy-out binding for the dependency-free xatlas core. The returned
+// arrays are owned JavaScript typed arrays; no view aliases the temporary
+// xatlas allocation after this call returns.
+#if defined(LIGHTUSD_WITH_XATLAS)
+class XAtlasNative {
+ public:
+  XAtlasNative() = default;
+
+  emscripten::val generate(const emscripten::val &positions,
+                           const emscripten::val &indices,
+                           const emscripten::val &options) {
+    std::vector<float> pos;
+    std::vector<uint32_t> idx;
+    detail::copyTypedArray<float>(positions, pos, "Float32Array");
+    detail::copyTypedArray<uint32_t>(indices, idx, "Uint32Array");
+
+    emscripten::val result = emscripten::val::object();
+    if (pos.size() < 9 || pos.size() % 3 != 0 || idx.size() < 3 ||
+        idx.size() % 3 != 0) {
+      result.set("error", "xatlas requires a non-empty triangular mesh.");
+      return result;
+    }
+    const size_t vertex_count = pos.size() / 3;
+    for (uint32_t i : idx) {
+      if (static_cast<size_t>(i) >= vertex_count) {
+        result.set("error", "xatlas input index is out of range.");
+        return result;
+      }
+    }
+    if (vertex_count > UINT32_MAX || idx.size() > UINT32_MAX) {
+      result.set("error", "xatlas input mesh is too large.");
+      return result;
+    }
+
+    xatlas::Atlas *atlas = xatlas::Create();
+    if (!atlas) {
+      result.set("error", "xatlas allocation failed.");
+      return result;
+    }
+    xatlas::MeshDecl decl;
+    decl.vertexPositionData = pos.data();
+    decl.vertexPositionStride = sizeof(float) * 3;
+    decl.vertexCount = static_cast<uint32_t>(vertex_count);
+    decl.indexData = idx.data();
+    decl.indexCount = static_cast<uint32_t>(idx.size());
+    decl.faceCount = static_cast<uint32_t>(idx.size() / 3);
+    decl.indexFormat = xatlas::IndexFormat::UInt32;
+    const xatlas::AddMeshError add_error = xatlas::AddMesh(atlas, decl);
+    if (add_error != xatlas::AddMeshError::Success) {
+      result.set("error", xatlas::StringForEnum(add_error));
+      xatlas::Destroy(atlas);
+      return result;
+    }
+
+    xatlas::ChartOptions chart_options;
+    chart_options.fixWinding = true;
+    if (!options.isUndefined() && !options.isNull()) {
+      if (!options["maxIterations"].isUndefined())
+        chart_options.maxIterations = options["maxIterations"].as<uint32_t>();
+      if (!options["maxCost"].isUndefined())
+        chart_options.maxCost = options["maxCost"].as<float>();
+      if (!options["textureSeamWeight"].isUndefined())
+        chart_options.textureSeamWeight =
+            options["textureSeamWeight"].as<float>();
+    }
+    xatlas::PackOptions pack_options;
+    pack_options.bilinear = true;
+    pack_options.rotateChartsToAxis = true;
+    pack_options.rotateCharts = true;
+    if (!options.isUndefined() && !options.isNull()) {
+      if (!options["resolution"].isUndefined())
+        pack_options.resolution = options["resolution"].as<uint32_t>();
+      if (!options["padding"].isUndefined())
+        pack_options.padding = options["padding"].as<uint32_t>();
+      if (!options["texelsPerUnit"].isUndefined())
+        pack_options.texelsPerUnit = options["texelsPerUnit"].as<float>();
+      if (!options["maxChartSize"].isUndefined())
+        pack_options.maxChartSize = options["maxChartSize"].as<uint32_t>();
+      if (!options["rotateChartsToAxis"].isUndefined())
+        pack_options.rotateChartsToAxis =
+            options["rotateChartsToAxis"].as<bool>();
+      if (!options["rotateCharts"].isUndefined())
+        pack_options.rotateCharts = options["rotateCharts"].as<bool>();
+      if (!options["blockAlign"].isUndefined())
+        pack_options.blockAlign = options["blockAlign"].as<bool>();
+      if (!options["bruteForce"].isUndefined())
+        pack_options.bruteForce = options["bruteForce"].as<bool>();
+    }
+    xatlas::Generate(atlas, chart_options, pack_options);
+    if (atlas->meshCount == 0 || atlas->width == 0 || atlas->height == 0 ||
+        !atlas->meshes || !atlas->meshes[0].vertexArray ||
+        !atlas->meshes[0].indexArray) {
+      result.set("error", "xatlas could not generate an atlas.");
+      xatlas::Destroy(atlas);
+      return result;
+    }
+
+    const xatlas::Mesh &mesh = atlas->meshes[0];
+    std::vector<float> out_pos(static_cast<size_t>(mesh.vertexCount) * 3);
+    std::vector<float> out_uv(static_cast<size_t>(mesh.vertexCount) * 2);
+    std::vector<uint32_t> out_xref(static_cast<size_t>(mesh.vertexCount));
+    std::vector<int32_t> out_chart_index(static_cast<size_t>(mesh.vertexCount));
+    std::vector<int32_t> out_atlas_index(static_cast<size_t>(mesh.vertexCount));
+    for (uint32_t i = 0; i < mesh.vertexCount; ++i) {
+      const xatlas::Vertex &v = mesh.vertexArray[i];
+      out_xref[static_cast<size_t>(i)] = v.xref;
+      out_chart_index[static_cast<size_t>(i)] = v.chartIndex;
+      out_atlas_index[static_cast<size_t>(i)] = v.atlasIndex;
+      const size_t src = static_cast<size_t>(v.xref) * 3;
+      const size_t dst = static_cast<size_t>(i) * 3;
+      out_pos[dst + 0] = pos[src + 0];
+      out_pos[dst + 1] = pos[src + 1];
+      out_pos[dst + 2] = pos[src + 2];
+      out_uv[static_cast<size_t>(i) * 2 + 0] =
+          v.uv[0] / static_cast<float>(atlas->width);
+      out_uv[static_cast<size_t>(i) * 2 + 1] =
+          v.uv[1] / static_cast<float>(atlas->height);
+    }
+    std::vector<uint32_t> out_idx(mesh.indexArray,
+                                  mesh.indexArray + mesh.indexCount);
+
+    auto copy_float_array = [](const std::vector<float> &src) {
+      emscripten::val dst = emscripten::val::global("Float32Array").new_(
+          emscripten::val(static_cast<double>(src.size())));
+      if (!src.empty()) {
+        dst.call<void>("set", emscripten::val(emscripten::typed_memory_view(
+                                  src.size(), src.data())));
+      }
+      return dst;
+    };
+    auto copy_uint_array = [](const std::vector<uint32_t> &src) {
+      emscripten::val dst = emscripten::val::global("Uint32Array").new_(
+          emscripten::val(static_cast<double>(src.size())));
+      if (!src.empty()) {
+        dst.call<void>("set", emscripten::val(emscripten::typed_memory_view(
+                                  src.size(), src.data())));
+      }
+      return dst;
+    };
+    auto copy_int_array = [](const std::vector<int32_t> &src) {
+      emscripten::val dst = emscripten::val::global("Int32Array").new_(
+          emscripten::val(static_cast<double>(src.size())));
+      if (!src.empty()) {
+        dst.call<void>("set", emscripten::val(emscripten::typed_memory_view(
+                                  src.size(), src.data())));
+      }
+      return dst;
+    };
+    result.set("positions", copy_float_array(out_pos));
+    result.set("uvs", copy_float_array(out_uv));
+    result.set("indices", copy_uint_array(out_idx));
+    result.set("xref", copy_uint_array(out_xref));
+    result.set("sourceVertexCount", static_cast<uint32_t>(vertex_count));
+    result.set("chartIndices", copy_int_array(out_chart_index));
+    result.set("atlasIndices", copy_int_array(out_atlas_index));
+    result.set("width", atlas->width);
+    result.set("height", atlas->height);
+    result.set("atlasCount", atlas->atlasCount);
+    result.set("chartCount", atlas->chartCount);
+    result.set("vertexCount", mesh.vertexCount);
+    result.set("indexCount", mesh.indexCount);
+    xatlas::Destroy(atlas);
+    return result;
+  }
+};
+
+EMSCRIPTEN_BINDINGS(xatlas_module) {
+  emscripten::class_<XAtlasNative>("XAtlasNative")
+      .constructor<>()
+      .function("generate", &XAtlasNative::generate);
+}
+#endif
+
 ///
 /// Simple C++ wrapper class for Emscripten
 ///
@@ -4591,6 +4767,13 @@ class LightUSDLoaderNative {
     out.set("primName", rmesh.prim_name);
     out.set("displayName", rmesh.display_name);
     out.set("absPath", rmesh.abs_path);
+    if (rmesh.has_authored_displayColor) {
+      emscripten::val display_color = emscripten::val::array();
+      display_color.set(0, rmesh.displayColor[0]);
+      display_color.set(1, rmesh.displayColor[1]);
+      display_color.set(2, rmesh.displayColor[2]);
+      out.set("displayColor", display_color);
+    }
     out.set("hasSubmeshes", !rmesh.material_subsetMap.empty());
     out.set("singleIndexable", rmesh.is_single_indexable);
 
@@ -4680,6 +4863,18 @@ class LightUSDLoaderNative {
       out.set("uv0",
               heapAttr_(reinterpret_cast<const float *>(uvit->second.data.data()),
                         uvn * 2, 2, "f32"));
+    }
+    if (!rmesh.vertex_colors.empty()) {
+      const auto &colors = rmesh.vertex_colors;
+      const size_t nv = colors.vertex_count();
+      using lightusd::tydra::VertexAttributeFormat;
+      if (colors.format == VertexAttributeFormat::Vec3) {
+        out.set("vertexColors", heapAttr_(reinterpret_cast<const float *>(colors.data.data()), nv * 3, 3, "f32"));
+      } else if (colors.format == VertexAttributeFormat::Byte3) {
+        out.set("vertexColors", heapAttr_(colors.data.data(), nv * 3, 3, "u8"));
+      } else if (colors.format == VertexAttributeFormat::Char3) {
+        out.set("vertexColors", heapAttr_(colors.data.data(), nv * 3, 3, "i8"));
+      }
     }
     // Preserve authored UV slots for MaterialX texcoord/UsdPrimvarReader
     // routing. Slot 0 remains available as uv0 for compatibility.
@@ -4948,6 +5143,13 @@ class LightUSDLoaderNative {
     mesh.set("primName", rmesh.prim_name);
     mesh.set("displayName", rmesh.display_name);
     mesh.set("absPath", rmesh.abs_path);
+    if (rmesh.has_authored_displayColor) {
+      emscripten::val display_color = emscripten::val::array();
+      display_color.set(0, rmesh.displayColor[0]);
+      display_color.set(1, rmesh.displayColor[1]);
+      display_color.set(2, rmesh.displayColor[2]);
+      mesh.set("displayColor", display_color);
+    }
     //mesh.set("hasIndices", rmesh.has_indices());
 
 
@@ -5000,6 +5202,28 @@ class LightUSDLoaderNative {
       }
     }
 
+    // Display colors are optional vertex/face-varying data.  Keep the JS
+    // contract stable as Float32 RGB even when the low-memory render path has
+    // quantized the source colors to unsigned bytes.
+    if (!rmesh.vertex_colors.empty()) {
+      const auto &colors = rmesh.vertex_colors;
+      const size_t nv = colors.vertex_count();
+      auto &cache = vertex_colors_cache_[mesh_id];
+      cache.resize(nv * 3);
+      if (colors.format == lightusd::tydra::VertexAttributeFormat::Vec3) {
+        const float *src = reinterpret_cast<const float *>(colors.data.data());
+        std::copy(src, src + cache.size(), cache.begin());
+      } else if (colors.format == lightusd::tydra::VertexAttributeFormat::Byte3) {
+        const uint8_t *src = reinterpret_cast<const uint8_t *>(colors.data.data());
+        for (size_t i = 0; i < cache.size(); i++) cache[i] = static_cast<float>(src[i]) / 255.0f;
+      } else if (colors.format == lightusd::tydra::VertexAttributeFormat::Char3) {
+        const int8_t *src = reinterpret_cast<const int8_t *>(colors.data.data());
+        for (size_t i = 0; i < cache.size(); i++) cache[i] = std::max(0.0f, static_cast<float>(src[i]) / 127.0f);
+      } else {
+        cache.clear();
+      }
+      if (!cache.empty()) mesh.set("vertexColors", typedArray_(cache.size(), cache.data(), copy_arrays));
+    }
     // Keep copied mesh access consistent with getMeshPtr(): RenderMesh stores
     // authored displayColor as float3 and displayOpacity as a float stream.
     {
@@ -6342,6 +6566,7 @@ class LightUSDLoaderNative {
     // Invalidate caches for this mesh since we just computed new data
     tangents4_cache_.erase(mesh_index);
     normals_cache_.erase(mesh_index);
+    vertex_colors_cache_.erase(mesh_index);
     reordered_mesh_cache_.erase(mesh_index);
 
     return ok;
@@ -6805,6 +7030,7 @@ class LightUSDLoaderNative {
     // Clear reordered mesh cache
     reordered_mesh_cache_.clear();
     normals_cache_.clear();
+    vertex_colors_cache_.clear();
 
     // Reset parsing progress
     parsing_progress_.reset();
@@ -9658,6 +9884,7 @@ class LightUSDLoaderNative {
 
   // Cache for unpacked float3 normals (used when format is Uint/1010102)
   mutable std::unordered_map<int, std::vector<float>> normals_cache_;
+  mutable std::unordered_map<int, std::vector<float>> vertex_colors_cache_;
 
   // Cache for vec4 tangents (xyz=tangent, w=handedness) in the non-reordered path
   mutable std::unordered_map<int, std::vector<float>> tangents4_cache_;

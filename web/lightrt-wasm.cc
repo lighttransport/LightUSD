@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "external/lightrt/lightrt_c_tri.h"
+#include "external/meshoptimizer/meshoptimizer.h"
 
 namespace {
 
@@ -122,6 +123,68 @@ class LightRTPathTracer {
     out.call<void>("set", emscripten::val(emscripten::typed_memory_view(pixels.size(),pixels.data())));
     return out;
   }
+  // Batched visibility queries for UV-space baking. Origins and directions
+  // are xyz-packed object-space arrays; the returned bytes are 1 for an
+  // occluded ray and 0 for a miss. Keeping this operation batched avoids a
+  // JS/WASM call for every texel while reusing the resident LightRT BVH.
+  emscripten::val occluded(const emscripten::val &origins,
+                           const emscripten::val &directions,
+                           float max_distance = 1.0e30f) const {
+    if (!scene_) return emscripten::val::undefined();
+    const size_t origin_count = origins["length"].as<size_t>();
+    const size_t direction_count = directions["length"].as<size_t>();
+    if (!origin_count || origin_count != direction_count || origin_count % 3 != 0 || origin_count > (size_t(1) << 26)) return emscripten::val::undefined();
+    const auto org = CopyArray<float>(origins, "Float32Array"), dir = CopyArray<float>(directions, "Float32Array");
+    const size_t ray_count = origin_count / 3;
+    std::vector<lrt_ray> rays(ray_count);
+    for (size_t i = 0; i < ray_count; i++) {
+      lrt_ray &ray = rays[i];
+      ray.org[0] = org[i * 3]; ray.org[1] = org[i * 3 + 1]; ray.org[2] = org[i * 3 + 2];
+      ray.dir[0] = dir[i * 3]; ray.dir[1] = dir[i * 3 + 1]; ray.dir[2] = dir[i * 3 + 2];
+      ray.tmin = 1.0e-5f; ray.tmax = std::isfinite(max_distance) && max_distance > 0 ? max_distance : 1.0e30f;
+    }
+    std::vector<uint8_t> result(ray_count, 0);
+    lrt_tri_occluded1N(scene_, rays.data(), result.data(), ray_count,
+                       LRT_TRI_BATCH_INCOHERENT);
+    return TypedArrayCopy("Uint8Array", result.data(), result.size());
+  }
+  // Batched closest-hit queries for high-to-low texture projection. The
+  // returned barycentrics are ordered (w, u, v), matching LightRT's
+  // hit-point convention: p = w*a + u*b + v*c.
+  emscripten::val raycast(const emscripten::val &origins,
+                          const emscripten::val &directions,
+                          float max_distance = 1.0e30f) const {
+    if (!scene_) return emscripten::val::undefined();
+    const size_t origin_count = origins["length"].as<size_t>();
+    const size_t direction_count = directions["length"].as<size_t>();
+    if (!origin_count || origin_count != direction_count || origin_count % 3 != 0 || origin_count > (size_t(1) << 26)) return emscripten::val::undefined();
+    const auto org = CopyArray<float>(origins, "Float32Array"), dir = CopyArray<float>(directions, "Float32Array");
+    const size_t ray_count = origin_count / 3;
+    std::vector<lrt_ray> rays(ray_count);
+    for (size_t i = 0; i < ray_count; i++) {
+      const float ox = org[i * 3], oy = org[i * 3 + 1], oz = org[i * 3 + 2];
+      const float dx = dir[i * 3], dy = dir[i * 3 + 1], dz = dir[i * 3 + 2];
+      lrt_ray &ray = rays[i];
+      ray.org[0] = ox; ray.org[1] = oy; ray.org[2] = oz;
+      ray.dir[0] = dx; ray.dir[1] = dy; ray.dir[2] = dz;
+      ray.tmin = 1.0e-5f; ray.tmax = std::isfinite(max_distance) && max_distance > 0 ? max_distance : 1.0e30f;
+    }
+    std::vector<lrt_hit> hits(ray_count);
+    lrt_tri_intersect1N(scene_, rays.data(), hits.data(), ray_count,
+                        LRT_TRI_BATCH_INCOHERENT);
+    std::vector<float> distance(ray_count, 0.0f), barycentrics(ray_count * 3, 0.0f);
+    std::vector<int32_t> triangle(ray_count, -1);
+    for (size_t i = 0; i < ray_count; i++) {
+      const lrt_hit &hit = hits[i];
+      if (hit.prim_id == LRT_TRI_NO_HIT || hit.prim_id >= triangles_) continue;
+      distance[i] = hit.t; triangle[i] = static_cast<int32_t>(hit.prim_id); barycentrics[i * 3] = 1.0f - hit.u - hit.v; barycentrics[i * 3 + 1] = hit.u; barycentrics[i * 3 + 2] = hit.v;
+    }
+    emscripten::val result = emscripten::val::object();
+    result.set("distance", TypedArrayCopy("Float32Array", distance.data(), distance.size()));
+    result.set("triangle", TypedArrayCopy("Int32Array", triangle.data(), triangle.size()));
+    result.set("barycentrics", TypedArrayCopy("Float32Array", barycentrics.data(), barycentrics.size()));
+    return result;
+  }
   std::string error() const { return error_; }
   double triangleCount() const { return double(triangles_); }
   emscripten::val webGPUScene() const {
@@ -143,12 +206,87 @@ class LightRTPathTracer {
   lrt_tri_scene *scene_{nullptr}; size_t triangles_{0}; std::string error_;
   std::vector<float> positions_,normals_,colors_,vertex_params_,materials_; std::vector<int32_t> material_ids_;
 };
+
+// Error-driven mesh reduction for Lucia's worker-side retopology/LOD path.
+// The binding deliberately returns an index buffer that references the input
+// vertices; JS can then compact all aligned USD/render attributes together.
+class MeshoptSimplifier {
+ public:
+  emscripten::val simplify(const emscripten::val &positions,
+                           const emscripten::val &indices,
+                           const emscripten::val &normals,
+                           const emscripten::val &uvs,
+                           const emscripten::val &locks,
+                           size_t target_index_count, float target_error,
+                           unsigned int options) const {
+    const std::vector<float> pos = CopyArray<float>(positions, "Float32Array");
+    const std::vector<uint32_t> idx = CopyArray<uint32_t>(indices, "Uint32Array");
+    const std::vector<float> nrm = CopyArray<float>(normals, "Float32Array");
+    const std::vector<float> tex = CopyArray<float>(uvs, "Float32Array");
+    const std::vector<uint8_t> lock = CopyArray<uint8_t>(locks, "Uint8Array");
+    const size_t vertex_count = pos.size() / 3;
+    if (!vertex_count || pos.size() % 3 || idx.empty() || idx.size() % 3 ||
+        idx.size() > (size_t(1) << 27) || target_index_count < 3 ||
+        target_index_count > idx.size() || target_index_count % 3 ||
+        target_error < 0 || !std::isfinite(target_error)) {
+      return emscripten::val::undefined();
+    }
+    for (uint32_t i : idx) if (i >= vertex_count) return emscripten::val::undefined();
+    if (!lock.empty() && lock.size() != vertex_count) return emscripten::val::undefined();
+    const bool with_attributes = nrm.size() == vertex_count * 3 &&
+                                 tex.size() == vertex_count * 2;
+    const bool with_locks = !lock.empty();
+    std::vector<unsigned int> out(idx.size());
+    float result_error = 0.0f;
+    size_t count = 0;
+    if (with_attributes || with_locks) {
+      const size_t attribute_count = with_attributes ? 5 : 1;
+      const size_t attribute_stride = attribute_count * sizeof(float);
+      std::vector<float> attributes(vertex_count * attribute_count, 0.0f);
+      for (size_t i = 0; i < vertex_count; ++i) {
+        if (with_attributes) {
+          attributes[i * 5 + 0] = nrm[i * 3 + 0];
+          attributes[i * 5 + 1] = nrm[i * 3 + 1];
+          attributes[i * 5 + 2] = nrm[i * 3 + 2];
+          attributes[i * 5 + 3] = tex[i * 2 + 0];
+          attributes[i * 5 + 4] = tex[i * 2 + 1];
+        }
+      }
+      const float weights[5] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+      count = meshopt_simplifyWithAttributes(out.data(), idx.data(), idx.size(),
+          pos.data(), vertex_count, sizeof(float) * 3, attributes.data(),
+          attribute_stride, weights, attribute_count, lock.empty() ? nullptr : lock.data(), target_index_count,
+          target_error, options, &result_error);
+    } else {
+      count = meshopt_simplify(out.data(), idx.data(), idx.size(), pos.data(),
+          vertex_count, sizeof(float) * 3, target_index_count, target_error,
+          options, &result_error);
+    }
+    // Keep the reduced triangle order friendly to the post-transform cache.
+    // The JS worker compacts vertices in this final order, which also gives a
+    // deterministic vertex-fetch order without copying arbitrary attributes
+    // through this ABI.
+    if (count >= 3) meshopt_optimizeVertexCache(out.data(), out.data(), count, vertex_count);
+    emscripten::val result = emscripten::val::object();
+    result.set("indices", TypedArrayCopy("Uint32Array", out.data(), count));
+    result.set("error", result_error);
+    result.set("sourceVertexCount", vertex_count);
+    result.set("vertexCacheOptimized", true);
+    return result;
+  }
+};
 }
 
 EMSCRIPTEN_BINDINGS(lightusd_lightrt_path_tracer) {
   emscripten::class_<LightRTPathTracer>("LightRTPathTracer")
     .constructor<>().function("build",&LightRTPathTracer::build)
-    .function("trace",&LightRTPathTracer::trace).function("clear",&LightRTPathTracer::clear)
+    .function("trace",&LightRTPathTracer::trace).function("occluded",&LightRTPathTracer::occluded).function("raycast",&LightRTPathTracer::raycast).function("clear",&LightRTPathTracer::clear)
     .function("error",&LightRTPathTracer::error).function("triangleCount",&LightRTPathTracer::triangleCount)
     .function("webGPUScene",&LightRTPathTracer::webGPUScene);
+}
+
+EMSCRIPTEN_BINDINGS(lightusd_meshoptimizer) {
+  emscripten::class_<MeshoptSimplifier>("MeshoptSimplifier")
+      .constructor<>()
+      .function("simplify", &MeshoptSimplifier::simplify);
 }

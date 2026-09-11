@@ -931,6 +931,7 @@ export class NextRenderSceneAdapter {
             points: copy(mesh.points, Float32Array),
             indices: copy(mesh.indices, Uint32Array),
             normals: copy(mesh.normals, Float32Array),
+            vertexColors: copy(mesh.vertexColors, Float32Array),
             tangents: copy(mesh.tangents, Float32Array),
             tangentMethod: mesh.tangentMethod || '',
             uv0: copy(mesh.uv0, Float32Array),
@@ -1196,6 +1197,7 @@ export class NextRenderSceneAdapter {
             vertices: mesh.points ? new Float32Array(mesh.points) : null,
             indices: mesh.indices ? new Uint32Array(mesh.indices) : null,
             normals: mesh.normals ? new Float32Array(mesh.normals) : null,
+            vertexColors: mesh.vertexColors ? new Float32Array(mesh.vertexColors) : null,
             uv0: mesh.uv0 ? new Float32Array(mesh.uv0) : null,
             uvs: mesh.uv0 ? new Float32Array(mesh.uv0) : null,
             texcoords: mesh.uv0 ? new Float32Array(mesh.uv0) : null,
@@ -1767,7 +1769,7 @@ class LightUSDLoader extends Loader {
                 this.nextOnlyNative_ = true;
             } else if (use_memory64) {
                 try {
-                    const wasm64Url = new URL('./lightusd_64.js', import.meta.url).href;
+                    const wasm64Url = new URL(/* @vite-ignore */ './lightusd_64.js', import.meta.url).href;
                     const module = await import(/* @vite-ignore */ wasm64Url);
                     initLightUSDNative = module.default;
                     this.nextOnlyNative_ = false;

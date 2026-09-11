@@ -640,19 +640,24 @@ bool PrimCreate(Context &ctx, const nlohmann::json &args,
   new_prim.specifier() = spec_enum;
 
   if (parent_path_str.empty() || parent_path_str == "/") {
-    if (!ctx.stage->add_root_prim(std::move(new_prim), true)) {
+    if (!ctx.stage->add_root_prim(std::move(new_prim), false)) {
       err = "Failed to add root prim";
       return false;
     }
   } else {
     lightusd::Path parent_path(parent_path_str, "");
-    const Prim *parent_prim = nullptr;
-    if (!ctx.stage->find_prim_at_path(parent_path, parent_prim, &err)) {
+    const Prim *parent_prim_const = nullptr;
+    if (!ctx.stage->find_prim_at_path(parent_path, parent_prim_const, &err)) {
       err = "Parent prim not found: " + parent_path_str;
       return false;
     }
-    err = "Adding non-root prims not yet supported, use root path";
-    return false;
+    // Stage currently exposes a const path lookup. The stage itself is mutable
+    // and owns this Prim for the duration of the call, so it is safe to use the
+    // located node as the mutation target here.
+    Prim *parent_prim = const_cast<Prim *>(parent_prim_const);
+    if (!parent_prim->add_child(std::move(new_prim), false, &err)) {
+      return false;
+    }
   }
 
   ctx.stage->commit();
@@ -684,31 +689,11 @@ bool PrimRemove(Context &ctx, const nlohmann::json &args,
     return false;
   }
 
-  // Find the prim and remove it from parent
-  // For root prims: remove from root_prims()
-  // For children: find parent, remove from children
-
-  // Check if root prim
-  auto &root_prims = ctx.stage->root_prims();
-  for (auto it = root_prims.begin(); it != root_prims.end(); ++it) {
-    if (it->absolute_path().full_path_name() == path_str) {
-      root_prims.erase(it);
-      ctx.stage->commit();
-      result["success"] = true;
-      result["removed"] = path_str;
-      return true;
-    }
-  }
-
-  // Not a root prim, try to find parent and remove child
-  std::string parent_str = path.get_parent_path().full_path_name();
-  lightusd::Path parent_path(parent_str, "");
-
-  // For deeply nested prims, we need a recursive approach
-  // For now, return error with guidance
-  err = "Prim " + path_str +
-        " not found as root prim. Non-root removal not yet supported.";
-  return false;
+  if (!ctx.stage->RemovePrim(path, &err)) return false;
+  ctx.stage->commit();
+  result["success"] = true;
+  result["removed"] = path_str;
+  return true;
 }
 
 // ===========================================================================
@@ -716,7 +701,6 @@ bool PrimRemove(Context &ctx, const nlohmann::json &args,
 // ===========================================================================
 bool PrimRename(Context &ctx, const nlohmann::json &args,
                 nlohmann::json &result, std::string &err) {
-  (void)result;
   if (!ctx.stage || !ctx.stage_loaded) {
     err = "No stage loaded";
     return false;
@@ -732,7 +716,6 @@ bool PrimRename(Context &ctx, const nlohmann::json &args,
 
   std::string path_str = args["path"].get<std::string>();
   std::string new_name = args["new_name"].get<std::string>();
-  (void)new_name;
 
   lightusd::Path path(path_str, "");
   if (!path.is_valid()) {
@@ -740,27 +723,17 @@ bool PrimRename(Context &ctx, const nlohmann::json &args,
     return false;
   }
 
-  const Prim *prim = nullptr;
-  if (!ctx.stage->find_prim_at_path(path, prim, &err)) {
-    err = "Prim not found: " + path_str;
-    return false;
+  if (!ctx.stage->RenamePrim(path, new_name, &err)) return false;
+  ctx.stage->commit();
+  std::string parent = path.get_parent_path().full_path_name();
+  if (parent.empty() || parent == "/") {
+    result["path"] = "/" + new_name;
+  } else {
+    result["path"] = parent + "/" + new_name;
   }
-  (void)prim;
-
-  // const_cast to modify element name
-  // Prim element_name() returns const ref, so this requires mutable access
-  // For now, use root_prims() to find and modify
-  auto &root_prims = ctx.stage->root_prims();
-  for (auto &rp : root_prims) {
-    if (rp.absolute_path().full_path_name() == path_str) {
-      // We'd need Prim::set_element_name() or similar
-      err = "Rename requires Prim::set_element_name() - not available in current API";
-      return false;
-    }
-  }
-
-  err = "Rename not yet supported for non-root prims";
-  return false;
+  result["success"] = true;
+  result["old_path"] = path_str;
+  return true;
 }
 
 // ===========================================================================
