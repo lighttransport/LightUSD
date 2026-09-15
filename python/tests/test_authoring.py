@@ -416,3 +416,15 @@ def Xform "p" (
     flat = lightusd.load(dst)
     assert flat.prim_at("/p").get("va") == 1.0
     assert flat.prim_at("/p").get("vb") == 4.0
+
+
+def test_token_array_metadata_and_usdz_assets(tmp_path):
+    st = lightusd.Stage.create()
+    prim = st.define_prim("/World/Body", "Xform")
+    prim.set_metadata("apiSchemas", ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    assert prim.metadata("apiSchemas") == ("PhysicsRigidBodyAPI", "PhysicsCollisionAPI")
+    out = tmp_path / "scene.usdz"
+    st.save_usdz(str(out), {"textures/albedo.bin": b"fixture"})
+    import zipfile
+    with zipfile.ZipFile(out) as archive:
+        assert set(archive.namelist()) == {"root.usdc", "textures/albedo.bin"}

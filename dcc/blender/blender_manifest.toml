@@ -1,0 +1,10 @@
+schema_version = "1.0.0"
+id = "lightusd_blender"
+version = "0.1.0"
+name = "LightUSD USD Bridge"
+tagline = "USD import/export with LightUSD, MaterialX, hair, and physics"
+maintainer = "Light Transport Entertainment Inc."
+type = "add-on"
+blender_version_min = "5.2.0"
+license = ["SPDX:Apache-2.0"]
+permissions = ["files"]

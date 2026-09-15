@@ -298,6 +298,10 @@ LIGHTUSD_API void lightusd_save_options_init(lightusd_save_options* opts);
 LIGHTUSD_API lightusd_status lightusd_stage_save(const lightusd_stage* stage,
                                      const char* filename,
                                      const lightusd_save_options* opts /* nullable */);
+LIGHTUSD_API lightusd_status lightusd_stage_save_usdz_with_assets(
+    const lightusd_stage* stage, const char* filename,
+    const char* const* asset_names, const uint8_t* const* asset_data,
+    const size_t* asset_sizes, size_t asset_count);
 LIGHTUSD_API lightusd_status lightusd_stage_export_usda(const lightusd_stage* stage,
                                             lightusd_string** out);
 /* Crate bytes; use lightusd_string_view() for (data, len). */
@@ -580,6 +584,9 @@ LIGHTUSD_API lightusd_status lightusd_prim_set_metadata(lightusd_stage* stage,
                                             const char* prim_path,
                                             const char* key, lightusd_type type,
                                             const void* data, size_t count);
+LIGHTUSD_API lightusd_status lightusd_prim_set_metadata_token_array(
+    lightusd_stage* stage, const char* prim_path, const char* key,
+    const char* const* items, size_t count);
 
 /* Variant authoring. */
 LIGHTUSD_API lightusd_status lightusd_prim_add_variant_set(lightusd_stage* stage,

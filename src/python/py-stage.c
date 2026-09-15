@@ -591,6 +591,74 @@ static PyObject* Stage_save(PyObject* self, PyObject* args, PyObject* kwargs) {
   Py_RETURN_NONE;
 }
 
+static PyObject* Stage_save_usdz(PyObject* self, PyObject* args,
+                                 PyObject* kwargs) {
+  static char* kwlist[] = {"path", "assets", NULL};
+  const char* path;
+  PyObject* assets_obj = Py_None;
+  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|O:save_usdz", kwlist,
+                                   &path, &assets_obj)) return NULL;
+  lightusd_stage* stage;
+  lightusd_state* st = stage_context(self, &stage);
+  if (!st) return NULL;
+  PyObject* items = NULL;
+  Py_ssize_t count = 0;
+  if (assets_obj != Py_None) {
+    if (!PyDict_Check(assets_obj)) {
+      PyErr_SetString(PyExc_TypeError, "assets must be a dict of path: bytes");
+      return NULL;
+    }
+    count = PyDict_Size(assets_obj);
+    items = PyDict_Items(assets_obj);
+    if (!items) return NULL;
+  }
+  const char** names = (const char**)PyMem_Calloc(
+      (size_t)count ? (size_t)count : 1, sizeof(*names));
+  const uint8_t** data = (const uint8_t**)PyMem_Calloc(
+      (size_t)count ? (size_t)count : 1, sizeof(*data));
+  size_t* sizes = (size_t*)PyMem_Calloc(
+      (size_t)count ? (size_t)count : 1, sizeof(*sizes));
+  PyObject** name_refs = (PyObject**)PyMem_Calloc(
+      (size_t)count ? (size_t)count : 1, sizeof(*name_refs));
+  if (!names || !data || !sizes || !name_refs) {
+    Py_XDECREF(items);
+    PyMem_Free(names); PyMem_Free(data); PyMem_Free(sizes); PyMem_Free(name_refs);
+    return PyErr_NoMemory();
+  }
+  int ok = 1;
+  for (Py_ssize_t i = 0; i < count; ++i) {
+    PyObject* pair = PyList_GetItem(items, i);
+    PyObject* name = PyTuple_GetItem(pair, 0);
+    PyObject* bytes = PyTuple_GetItem(pair, 1);
+    if (!PyUnicode_Check(name) || !PyBytes_Check(bytes)) {
+      PyErr_SetString(PyExc_TypeError, "USDZ assets require str keys and bytes values");
+      ok = 0;
+      break;
+    }
+    name_refs[i] = PyUnicode_AsUTF8String(name);
+    if (!name_refs[i]) { ok = 0; break; }
+    names[i] = PyBytes_AsString(name_refs[i]);
+    char* raw = NULL;
+    Py_ssize_t raw_size = 0;
+    if (PyBytes_AsStringAndSize(bytes, &raw, &raw_size) != 0) { ok = 0; break; }
+    data[i] = (const uint8_t*)raw;
+    sizes[i] = (size_t)raw_size;
+  }
+  lightusd_status status = LIGHTUSD_ERR_INVALID_ARG;
+  if (ok) {
+    Py_BEGIN_ALLOW_THREADS
+    status = lightusd_stage_save_usdz_with_assets(
+        stage, path, names, data, sizes, (size_t)count);
+    Py_END_ALLOW_THREADS
+  }
+  Py_XDECREF(items);
+  for (Py_ssize_t i = 0; i < count; ++i) Py_XDECREF(name_refs[i]);
+  PyMem_Free(names); PyMem_Free(data); PyMem_Free(sizes); PyMem_Free(name_refs);
+  if (!ok) return NULL;
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, path);
+  Py_RETURN_NONE;
+}
+
 static PyObject* Stage_export_usda(PyObject* self, PyObject* noargs) {
   (void)noargs;
   lightusd_stage* stage;
@@ -679,6 +747,9 @@ static PyMethodDef Stage_methods[] = {
     {"save", (PyCFunction)(void (*)(void))Stage_save,
      METH_VARARGS | METH_KEYWORDS,
      "save(path, *, format=None)\nWrite USDA/USDC/USDZ (by extension)."},
+    {"save_usdz", (PyCFunction)(void (*)(void))Stage_save_usdz,
+     METH_VARARGS | METH_KEYWORDS,
+     "save_usdz(path, assets=None)\nWrite a USDZ with package assets."},
     {"export_usda", Stage_export_usda, METH_NOARGS,
      "Serialize to a USDA string."},
     {"export_usdc", Stage_export_usdc, METH_NOARGS,

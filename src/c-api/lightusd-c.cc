@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <fstream>
+#include <map>
 
 #include "next/prim/identifier.hh"
 #include "next/lightusd-next.hh"
@@ -758,6 +760,39 @@ lightusd_status lightusd_stage_save(const lightusd_stage* stage, const char* fil
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "unknown save format");
   }
   if (!ok) return Fail(LIGHTUSD_ERR_IO, err);
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_stage_save_usdz_with_assets(
+    const lightusd_stage* stage, const char* filename,
+    const char* const* asset_names, const uint8_t* const* asset_data,
+    const size_t* asset_sizes, size_t asset_count) {
+  if (!stage || !filename || (asset_count && (!asset_names || !asset_data || !asset_sizes))) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid USDZ asset arguments");
+  }
+  std::vector<uint8_t> usdc;
+  n::USDCWriteResult usdc_result = n::WriteUSDCToMemory(usdc, stage->stage);
+  if (!usdc_result.success) return Fail(LIGHTUSD_ERR_IO, usdc_result.error);
+  std::map<std::string, std::vector<uint8_t>> assets;
+  for (size_t i = 0; i < asset_count; ++i) {
+    if (!asset_names[i] || (!asset_data[i] && asset_sizes[i] != 0)) {
+      return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid USDZ asset");
+    }
+    std::vector<uint8_t> bytes;
+    if (asset_sizes[i]) {
+      bytes.assign(asset_data[i], asset_data[i] + asset_sizes[i]);
+    }
+    assets.emplace(asset_names[i], std::move(bytes));
+  }
+  std::vector<uint8_t> buffer;
+  n::USDZWriteResult result = n::WriteUSDZFromUSDCAndAssetsToMemory(
+      buffer, usdc.data(), usdc.size(), assets);
+  if (!result.success) return Fail(LIGHTUSD_ERR_IO, result.error);
+  std::ofstream ofs(filename, std::ios::binary);
+  if (!ofs) return Fail(LIGHTUSD_ERR_IO, "failed to open USDZ output");
+  ofs.write(reinterpret_cast<const char*>(buffer.data()),
+            static_cast<std::streamsize>(buffer.size()));
+  if (!ofs) return Fail(LIGHTUSD_ERR_IO, "failed to write USDZ output");
   return LIGHTUSD_OK;
 }
 
@@ -1959,6 +1994,29 @@ lightusd_status lightusd_prim_set_metadata(lightusd_stage* stage, const char* pr
   } else {
     return Fail(LIGHTUSD_ERR_NOT_FOUND, "unknown prim metadata key: " + k);
   }
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_prim_set_metadata_token_array(
+    lightusd_stage* stage, const char* prim_path, const char* key,
+    const char* const* items, size_t count) {
+  if (!key || (count && !items)) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid token-array arguments");
+  }
+  if (std::string(key) != "apiSchemas") {
+    return Fail(LIGHTUSD_ERR_NOT_FOUND, "unknown token-array metadata key");
+  }
+  lightusd_status st;
+  n::PrimSpec* spec = MutablePrimAt(stage, prim_path, &st);
+  if (!spec) return st;
+  std::vector<std::string> values;
+  values.reserve(count);
+  for (size_t i = 0; i < count; ++i) {
+    if (!items[i]) return Fail(LIGHTUSD_ERR_INVALID_ARG, "null token-array item");
+    values.emplace_back(items[i]);
+  }
+  spec->meta().apiSchemas() = std::move(values);
+  spec->meta().setApiSchemasAuthored();
   return LIGHTUSD_OK;
 }
 

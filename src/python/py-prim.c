@@ -1744,9 +1744,43 @@ static PyObject* Prim_set_metadata(PyObject* self, PyObject* args) {
     status = lightusd_prim_set_metadata(stage, path, key, LIGHTUSD_TYPE_TOKEN, s, 1);
     Py_XDECREF(tmp);
   } else if (PyList_Check(value) || PyTuple_Check(value)) {
-    PyErr_SetString(PyExc_TypeError,
-                    "token-array prim metadata is not supported here yet");
-    return NULL;
+    Py_ssize_t n = PySequence_Size(value);
+    if (n < 0) return NULL;
+    const char** items = (const char**)PyMem_Calloc(
+        (size_t)n ? (size_t)n : 1, sizeof(*items));
+    PyObject** refs = (PyObject**)PyMem_Calloc(
+        (size_t)n ? (size_t)n : 1, sizeof(*refs));
+    if (!items || !refs) {
+      PyMem_Free(items);
+      PyMem_Free(refs);
+      return PyErr_NoMemory();
+    }
+    int ok = 1;
+    for (Py_ssize_t i = 0; i < n; ++i) {
+      PyObject* item = PySequence_GetItem(value, i);
+      if (!item || !PyUnicode_Check(item)) {
+        Py_XDECREF(item);
+        PyErr_SetString(PyExc_TypeError,
+                        "token-array prim metadata items must be strings");
+        ok = 0;
+        break;
+      }
+      refs[i] = NULL;
+      items[i] = lightusd_utf8(item, &refs[i]);
+      Py_DECREF(item);
+      if (!items[i]) {
+        ok = 0;
+        break;
+      }
+    }
+    if (ok) {
+      status = lightusd_prim_set_metadata_token_array(
+          stage, path, key, items, (size_t)n);
+    }
+    for (Py_ssize_t i = 0; i < n; ++i) Py_XDECREF(refs[i]);
+    PyMem_Free(items);
+    PyMem_Free(refs);
+    if (!ok) return NULL;
   } else {
     PyErr_SetString(PyExc_TypeError, "metadata value must be bool or str");
     return NULL;
