@@ -74,6 +74,35 @@ bool CrateWriter::ExtractMaterialProperties(
     }
   }
 
+  if (material->materialUEConfig) {
+    const auto &cfg = *material->materialUEConfig;
+    auto add_string = [&fields](const char *name, const std::string &value,
+                                bool authored) {
+      if (!authored) return;
+      crate::CrateValue cv;
+      cv.Set(value);
+      fields.push_back({name, cv});
+    };
+    add_string("config:unreal:version", cfg.version.get_value(), cfg.version.authored());
+    add_string("config:unreal:engineVersion", cfg.engineVersion.get_value(), cfg.engineVersion.authored());
+    add_string("config:unreal:sourceAsset", cfg.sourceAsset.get_value(), cfg.sourceAsset.authored());
+    add_string("config:unreal:graphAuthority", cfg.graphAuthority.get_value(), cfg.graphAuthority.authored());
+    add_string("config:unreal:materialDomain", cfg.materialDomain.get_value(), cfg.materialDomain.authored());
+    add_string("config:unreal:blendMode", cfg.blendMode.get_value(), cfg.blendMode.authored());
+    add_string("config:unreal:shadingModels", cfg.shadingModels.get_value(), cfg.shadingModels.authored());
+    if (cfg.twoSided.authored()) {
+      crate::CrateValue cv;
+      cv.Set(cfg.twoSided.get_value());
+      fields.push_back({"config:unreal:twoSided", cv});
+    }
+    if (cfg.opacityMaskClipValue.authored()) {
+      crate::CrateValue cv;
+      cv.Set(cfg.opacityMaskClipValue.get_value());
+      fields.push_back({"config:unreal:opacityMaskClipValue", cv});
+    }
+    add_string("config:unreal:propertyArchive", cfg.propertyArchive.get_value(), cfg.propertyArchive.authored());
+  }
+
   return true;
 }
 

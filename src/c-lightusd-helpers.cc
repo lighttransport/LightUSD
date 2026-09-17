@@ -581,16 +581,41 @@ static bool lookup_shade_typed(const Prim &prim, const std::string &name,
   uint32_t tid = prim.data().type_id();
   if (tid == value::TYPE_ID_MATERIAL) {
     const auto *m = prim.data().as<Material>();
-    if (!m || !m->materialXConfig.has_value()) return false;
-    const auto &cfg = m->materialXConfig.value();
-    if (name == "config:mtlx:version")
-      return fill_attr_from_typed_fb(cfg.mtlx_version, "string", name, out);
-    if (name == "config:mtlx:namespace")
-      return fill_attr_from_typed_fb(cfg.mtlx_namespace, "string", name, out);
-    if (name == "config:mtlx:colorspace")
-      return fill_attr_from_typed_fb(cfg.mtlx_colorspace, "string", name, out);
-    if (name == "config:mtlx:sourceUri")
-      return fill_attr_from_typed_fb(cfg.mtlx_sourceUri, "string", name, out);
+    if (!m) return false;
+    if (m->materialXConfig.has_value()) {
+      const auto &cfg = m->materialXConfig.value();
+      if (name == "config:mtlx:version")
+        return fill_attr_from_typed_fb(cfg.mtlx_version, "string", name, out);
+      if (name == "config:mtlx:namespace")
+        return fill_attr_from_typed_fb(cfg.mtlx_namespace, "string", name, out);
+      if (name == "config:mtlx:colorspace")
+        return fill_attr_from_typed_fb(cfg.mtlx_colorspace, "string", name, out);
+      if (name == "config:mtlx:sourceUri")
+        return fill_attr_from_typed_fb(cfg.mtlx_sourceUri, "string", name, out);
+    }
+    if (m->materialUEConfig.has_value()) {
+      const auto &cfg = m->materialUEConfig.value();
+      if (name == "config:unreal:version")
+        return fill_attr_from_typed_fb(cfg.version, "string", name, out);
+      if (name == "config:unreal:engineVersion")
+        return fill_attr_from_typed_fb(cfg.engineVersion, "string", name, out);
+      if (name == "config:unreal:sourceAsset")
+        return fill_attr_from_typed_fb(cfg.sourceAsset, "string", name, out);
+      if (name == "config:unreal:graphAuthority")
+        return fill_attr_from_typed_fb(cfg.graphAuthority, "string", name, out);
+      if (name == "config:unreal:materialDomain")
+        return fill_attr_from_typed_fb(cfg.materialDomain, "string", name, out);
+      if (name == "config:unreal:blendMode")
+        return fill_attr_from_typed_fb(cfg.blendMode, "string", name, out);
+      if (name == "config:unreal:shadingModels")
+        return fill_attr_from_typed_fb(cfg.shadingModels, "string", name, out);
+      if (name == "config:unreal:twoSided")
+        return fill_attr_from_typed_fb(cfg.twoSided, "bool", name, out);
+      if (name == "config:unreal:opacityMaskClipValue")
+        return fill_attr_from_typed_fb(cfg.opacityMaskClipValue, "float", name, out);
+      if (name == "config:unreal:propertyArchive")
+        return fill_attr_from_typed_fb(cfg.propertyArchive, "string", name, out);
+    }
   }
   return false;
 }

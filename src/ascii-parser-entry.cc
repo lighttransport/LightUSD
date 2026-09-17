@@ -636,6 +636,7 @@ static void RegisterAPISchemas(std::unordered_set<std::string> &d) {
   d.insert("MaterialBindingAPI");
   d.insert("SkelBindingAPI");
   d.insert("MaterialXConfigAPI");  // usdMtlx: config:mtlx:* on Material
+  d.insert("MaterialUEConfigAPI"); // LightUSD UE material bridge
   d.insert("ColorSpaceAPI");
   d.insert("ColorSpaceDefinitionAPI");
   // CollectionAPI is a supported multiple-apply schema.  The instance name

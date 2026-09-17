@@ -72,6 +72,10 @@ std::string to_string(const APISchemas::APIName &name) {
       s = "MaterialXConfigAPI";
       break;
     }
+    case APISchemas::APIName::MaterialUEConfigAPI: {
+      s = "MaterialUEConfigAPI";
+      break;
+    }
     case APISchemas::APIName::MaterialBindingAPI: {
       s = "MaterialBindingAPI";
       break;

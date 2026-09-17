@@ -191,6 +191,47 @@ static bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue*
   CONVERT_CRATE_VALUE(std::vector<value::int2>)
   CONVERT_CRATE_VALUE(std::vector<value::int3>)
   CONVERT_CRATE_VALUE(std::vector<value::int4>)
+
+  // USD role arrays (point3f[], normal3f[], vector3f[], color3f[], and
+  // texCoord3f[]) share the float3 wire representation in Crate.  They can
+  // still retain their authored role in the attribute typeName; the sample
+  // payload itself must be packed as the underlying float3 array.  This is
+  // especially important for animated BasisCurves points and animated mesh
+  // primvars, where the TimeSamples path calls this helper directly.
+  if (type_name == "point3f[]" || type_name == "normal3f[]" ||
+      type_name == "vector3f[]" || type_name == "color3f[]" ||
+      type_name == "texCoord3f[]") {
+    if (auto v = val.get_value<std::vector<value::float3>>(false)) {
+      out->Set(*v);
+      return true;
+    }
+
+    // The reconstructed binary TimeSamples may carry the authored role as
+    // the concrete C++ element type (e.g. vector<point3f>) rather than the
+    // underlying vector<float3>.  Do the role-to-wire conversion explicitly;
+    // relying on any_value's non-strict raw cast is not sufficient for every
+    // role-backed storage path.
+#define CONVERT_FLOAT3_ROLE_ARRAY(RoleType)                                    \
+    if (auto v = val.get_value<std::vector<value::RoleType>>(true)) {          \
+      std::vector<value::float3> base;                                         \
+      base.reserve(v->size());                                                 \
+      for (const auto &item : *v) {                                            \
+        value::float3 converted;                                               \
+        converted[0] = item[0];                                                \
+        converted[1] = item[1];                                                \
+        converted[2] = item[2];                                                \
+        base.push_back(converted);                                             \
+      }                                                                        \
+      out->Set(std::move(base));                                               \
+      return true;                                                             \
+    }
+    CONVERT_FLOAT3_ROLE_ARRAY(point3f)
+    CONVERT_FLOAT3_ROLE_ARRAY(normal3f)
+    CONVERT_FLOAT3_ROLE_ARRAY(vector3f)
+    CONVERT_FLOAT3_ROLE_ARRAY(color3f)
+    CONVERT_FLOAT3_ROLE_ARRAY(texcoord3f)
+#undef CONVERT_FLOAT3_ROLE_ARRAY
+  }
   // Token/String/AssetPath types
   CONVERT_CRATE_VALUE(value::token)
   CONVERT_CRATE_VALUE(std::string)

@@ -1090,9 +1090,6 @@ bool CrateWriter::ExtractBasisCurvesProperties(
     if (err) *err = "Failed to cast prim to GeomBasisCurves";
     return false;
   }
-
-
-
   // Extract type enum (Cubic/Linear) only if authored on the typed field;
   // otherwise let any props-map value flow through.
   if (basis_curves->type.authored()) {
@@ -1141,6 +1138,48 @@ bool CrateWriter::ExtractBasisCurvesProperties(
           }
         }
       }
+      if (points_anim.has_timesamples()) {
+        if (const value::TimeSamples *ts = points_anim.get_timesamples_ptr()) {
+          value::TimeSamples wire_ts;
+          std::string ts_err;
+          for (const auto &sample : ts->get_samples()) {
+            if (sample.blocked) {
+              if (!wire_ts.add_blocked_sample<std::vector<value::float3>>(
+                      sample.t, &ts_err)) {
+                if (err) *err = ts_err;
+                return false;
+              }
+              continue;
+            }
+            auto points_sample =
+                sample.value.get_value<std::vector<value::point3f>>(false);
+            if (!points_sample) {
+              if (err) *err = "Failed to read BasisCurves point time sample";
+              return false;
+            }
+            std::vector<value::float3> wire_points;
+            wire_points.reserve(points_sample->size());
+            for (const auto &point : *points_sample) {
+              value::float3 wire_point;
+              wire_point[0] = point[0];
+              wire_point[1] = point[1];
+              wire_point[2] = point[2];
+              wire_points.push_back(wire_point);
+            }
+            if (!wire_ts.add_sample(sample.t, value::Value(std::move(wire_points)),
+                                    &ts_err)) {
+              if (err) *err = ts_err;
+              return false;
+            }
+          }
+          crate::CrateValue ts_value;
+          ts_value.Set(wire_ts);
+          fields.push_back({"points.timeSamples", ts_value});
+          crate::CrateValue type_value;
+          type_value.Set(value::token("point3f[]"));
+          fields.push_back({"points.typeName", type_value});
+        }
+      }
     }
   }
 
@@ -1172,12 +1211,28 @@ bool CrateWriter::ExtractBasisCurvesProperties(
         std::vector<float> widths_val;
         if (widths_anim.get_default(&widths_val)) {
           value::Value widths_value(widths_val);
-          if (!AddArrayAttributeWithMetas("widths", widths_value,
-                                          basis_curves->widths.metas(),
-                                          prim_path, err)) {
+          if (!AddArrayAttribute("widths", widths_value, fields, err)) {
             return false;
           }
         }
+      }
+      if (widths_anim.has_timesamples()) {
+        if (const value::TimeSamples *ts = widths_anim.get_timesamples_ptr()) {
+          crate::CrateValue ts_value;
+          ts_value.Set(*ts);
+          fields.push_back({"widths.timeSamples", ts_value});
+        }
+      }
+
+      // Preserve the metadata needed by groom importers.  The time-sample
+      // field must be assembled on the same attribute spec as the default;
+      // emitting the default through AddArrayAttributeWithMetas would create
+      // that spec immediately and leave the animation in a duplicate field.
+      const auto &width_metas = basis_curves->widths.metas();
+      if (width_metas.has_interpolation()) {
+        crate::CrateValue v;
+        v.Set(width_metas.get_interpolation());
+        fields.push_back({"widths.interpolation", v});
       }
     }
   }

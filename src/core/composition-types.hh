@@ -36,6 +36,7 @@ struct APISchemas {
     CoordSysAPI, // "CoordSysAPI"
     NodeDefAPI, // "NodeDefAPI"
     MaterialXConfigAPI, // "MaterialXConfigAPI" (usdMtlx: config:mtlx:*)
+    MaterialUEConfigAPI, // "MaterialUEConfigAPI" (LightUSD UE material bridge)
 
     CollectionAPI,      // "CollectionAPI"
     ColorSpaceAPI,      // "ColorSpaceAPI"

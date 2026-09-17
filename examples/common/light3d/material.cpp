@@ -1240,7 +1240,7 @@ void main() {
             return;
         }
         if (uRenderMode == 5) { fragColor = vec4(fract(vUV), 0.0, 1.0); return; }      // uv set 0
-        if (uRenderMode == 7) { fragColor = vec4(displayColor, 1.0); return; }   // albedo (unlit)
+        if (uRenderMode == 7) { fragColor = vec4(baseColor, 1.0); return; }     // albedo (unlit)
         if (uRenderMode == 8) {                                                        // facing
             fragColor = gl_FrontFacing ? vec4(0.1, 0.7, 0.1, 1.0) : vec4(0.7, 0.1, 0.1, 1.0);
             return;
@@ -1685,6 +1685,7 @@ uniform sampler2D uNormalTex;
 uniform sampler2D uEmissiveTex;
 uniform sampler2D uOpacityTex;
 uniform int uRenderMode;
+uniform int uMatId;
 uniform sampler2D uBaseColorTex;
 uniform bool uHasBaseColorTex;
 uniform bool uHasMetallicTex;
@@ -1740,6 +1741,12 @@ vec3 linearToSrgb(vec3 c) {
     vec3 lo = c * 12.92;
     vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
     return mix(lo, hi, vec3(greaterThan(c, vec3(0.0031308))));
+}
+vec3 idColor(int id) {
+    if (id < 0) return vec3(0.45);
+    uint h = (uint(id) + 1u) * 2654435761u;
+    return vec3(float(h & 255u), float((h >> 8) & 255u),
+                float((h >> 16) & 255u)) * (1.0 / 255.0);
 }
 vec2 applyUv(vec2 uv, vec3 row0, vec3 row1) {
     return vec2(dot(vec3(uv, 1.0), row0),
@@ -1810,6 +1817,7 @@ void main() {
     float displayOpacity = vColor.a;
     vec3 N = normalize(vNormal);
     if (uRenderMode == 2) { fragColor = vec4(N * 0.5 + 0.5, 1.0); return; }
+    if (uRenderMode == 3) { fragColor = vec4(idColor(uMatId), 1.0); return; }
     vec3 base = uBaseColor * displayColor;
     vec3 emissive = uEmissive;
     float opacity = clamp(uAlpha * displayOpacity, 0.0, 1.0);

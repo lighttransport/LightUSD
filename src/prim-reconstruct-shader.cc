@@ -473,19 +473,34 @@ bool ReconstructPrim<Material>(
 
   // Check if MaterialXConfigAPI is applied
   bool hasMaterialXConfig = false;
+  bool hasMaterialUEConfig = false;
   for (auto &prop : properties) {
     if (prop.first == "config:mtlx:version" ||
         prop.first == "config:mtlx:namespace" ||
         prop.first == "config:mtlx:colorspace" ||
-        prop.first == "config:mtlx:sourceUri") {
+      prop.first == "config:mtlx:sourceUri") {
       hasMaterialXConfig = true;
-      break;
+    }
+    if (prop.first == "config:unreal:version" ||
+        prop.first == "config:unreal:engineVersion" ||
+        prop.first == "config:unreal:sourceAsset" ||
+        prop.first == "config:unreal:graphAuthority" ||
+        prop.first == "config:unreal:materialDomain" ||
+        prop.first == "config:unreal:blendMode" ||
+        prop.first == "config:unreal:shadingModels" ||
+        prop.first == "config:unreal:twoSided" ||
+        prop.first == "config:unreal:opacityMaskClipValue" ||
+        prop.first == "config:unreal:propertyArchive") {
+      hasMaterialUEConfig = true;
     }
   }
 
   // Initialize MaterialXConfigAPI if needed
   if (hasMaterialXConfig) {
     material->materialXConfig = MaterialXConfigAPI();
+  }
+  if (hasMaterialUEConfig) {
+    material->materialUEConfig = MaterialUEConfigAPI();
   }
 
   // For `Material`, `outputs` are terminal attribute and treated as input attribute with connection(Should be "token output:surface.connect = </path/to/shader>").
@@ -500,6 +515,29 @@ bool ReconstructPrim<Material>(
                            material->materialXConfig->mtlx_colorspace)
       PARSE_TYPED_ATTRIBUTE(table, prop, "config:mtlx:sourceUri", Material,
                            material->materialXConfig->mtlx_sourceUri)
+    }
+
+    if (hasMaterialUEConfig) {
+      PARSE_TYPED_ATTRIBUTE(table, prop, "config:unreal:version", Material,
+                           material->materialUEConfig->version)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "config:unreal:engineVersion", Material,
+                           material->materialUEConfig->engineVersion)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "config:unreal:sourceAsset", Material,
+                           material->materialUEConfig->sourceAsset)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "config:unreal:graphAuthority", Material,
+                           material->materialUEConfig->graphAuthority)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "config:unreal:materialDomain", Material,
+                           material->materialUEConfig->materialDomain)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "config:unreal:blendMode", Material,
+                           material->materialUEConfig->blendMode)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "config:unreal:shadingModels", Material,
+                           material->materialUEConfig->shadingModels)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "config:unreal:twoSided", Material,
+                           material->materialUEConfig->twoSided)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "config:unreal:opacityMaskClipValue", Material,
+                           material->materialUEConfig->opacityMaskClipValue)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "config:unreal:propertyArchive", Material,
+                           material->materialUEConfig->propertyArchive)
     }
 
     PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:surface",

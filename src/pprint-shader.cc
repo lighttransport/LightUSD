@@ -589,6 +589,51 @@ std::string to_string(const Material &material, const uint32_t indent,
     }
   }
 
+  // LightUSD Unreal material preservation layer.
+  if (material.materialUEConfig) {
+    const auto &ue = material.materialUEConfig.value();
+    if (ue.version.authored()) {
+      ss << pprint::Indent(indent + 1) << "string config:unreal:version = "
+         << buildEscapedAndQuotedStringForUSDA(ue.version.get_value()) << "\n";
+    }
+    if (ue.engineVersion.authored()) {
+      ss << pprint::Indent(indent + 1) << "string config:unreal:engineVersion = "
+         << buildEscapedAndQuotedStringForUSDA(ue.engineVersion.get_value()) << "\n";
+    }
+    if (ue.sourceAsset.authored()) {
+      ss << pprint::Indent(indent + 1) << "string config:unreal:sourceAsset = "
+         << buildEscapedAndQuotedStringForUSDA(ue.sourceAsset.get_value()) << "\n";
+    }
+    if (ue.graphAuthority.authored()) {
+      ss << pprint::Indent(indent + 1) << "string config:unreal:graphAuthority = "
+         << buildEscapedAndQuotedStringForUSDA(ue.graphAuthority.get_value()) << "\n";
+    }
+    if (ue.materialDomain.authored()) {
+      ss << pprint::Indent(indent + 1) << "string config:unreal:materialDomain = "
+         << buildEscapedAndQuotedStringForUSDA(ue.materialDomain.get_value()) << "\n";
+    }
+    if (ue.blendMode.authored()) {
+      ss << pprint::Indent(indent + 1) << "string config:unreal:blendMode = "
+         << buildEscapedAndQuotedStringForUSDA(ue.blendMode.get_value()) << "\n";
+    }
+    if (ue.shadingModels.authored()) {
+      ss << pprint::Indent(indent + 1) << "string config:unreal:shadingModels = "
+         << buildEscapedAndQuotedStringForUSDA(ue.shadingModels.get_value()) << "\n";
+    }
+    if (ue.twoSided.authored()) {
+      ss << pprint::Indent(indent + 1) << "bool config:unreal:twoSided = "
+         << (ue.twoSided.get_value() ? "true" : "false") << "\n";
+    }
+    if (ue.opacityMaskClipValue.authored()) {
+      ss << pprint::Indent(indent + 1) << "float config:unreal:opacityMaskClipValue = "
+         << ue.opacityMaskClipValue.get_value() << "\n";
+    }
+    if (ue.propertyArchive.authored()) {
+      ss << pprint::Indent(indent + 1) << "string config:unreal:propertyArchive = "
+         << buildEscapedAndQuotedStringForUSDA(ue.propertyArchive.get_value()) << "\n";
+    }
+  }
+
   ss << print_props(material.props, indent + 1);
 
   if (closing_brace) {

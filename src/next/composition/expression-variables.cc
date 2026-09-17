@@ -18,6 +18,7 @@
 #include "expression-variables.hh"
 
 #include <cerrno>
+#include <charconv>
 #include <cstdlib>
 
 namespace lightusd {
@@ -257,10 +258,9 @@ class ExpressionEvaluator {
     }
     if (!digits) return Fail("malformed integer literal");
     const std::string token = text_->substr(start, pos_ - start);
-    errno = 0;
-    char* endp = nullptr;
-    const long long v = std::strtoll(token.c_str(), &endp, 10);
-    if (errno == ERANGE || !endp || *endp != '\0') {
+    long long v = 0;
+    const auto parsed = std::from_chars(token.data(), token.data() + token.size(), v, 10);
+    if (parsed.ec != std::errc{} || parsed.ptr != token.data() + token.size()) {
       return Fail("integer literal out of int64 range: " + token);
     }
     *out = ExprValue::MakeInt(static_cast<int64_t>(v));

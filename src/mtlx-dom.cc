@@ -4,6 +4,7 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <charconv>
 
 namespace lightusd {
 namespace mtlx {
@@ -42,9 +43,9 @@ static std::vector<int> ParseIntVector(const std::string& str) {
     token.erase(token.find_last_not_of(" \t") + 1);
 
     if (!token.empty()) {
-      char* endptr;
-      long val = std::strtol(token.c_str(), &endptr, 10);
-      if (*endptr == '\0') {
+      long val = 0;
+      const auto parsed = std::from_chars(token.data(), token.data() + token.size(), val, 10);
+      if (parsed.ec == std::errc{} && parsed.ptr == token.data() + token.size()) {
         result.push_back(static_cast<int>(val));
       }
     }
@@ -96,9 +97,9 @@ bool MtlxInput::ParseFromXML(XMLNodePtr xml_node) {
         value_ = MtlxValue(val);
       }
     } else if (type_ == "integer") {
-      char* endptr;
-      long val = std::strtol(value_str.c_str(), &endptr, 10);
-      if (*endptr == '\0') {
+      long val = 0;
+      const auto parsed = std::from_chars(value_str.data(), value_str.data() + value_str.size(), val, 10);
+      if (parsed.ec == std::errc{} && parsed.ptr == value_str.data() + value_str.size()) {
         value_ = MtlxValue(static_cast<int>(val));
       }
     } else if (type_ == "boolean") {
@@ -338,9 +339,9 @@ MtlxValue MtlxDocument::ParseValue(const std::string& type, const std::string& v
       return MtlxValue(val);
     }
   } else if (type == "integer") {
-    char* endptr;
-    long val = std::strtol(value_str.c_str(), &endptr, 10);
-    if (*endptr == '\0') {
+    long val = 0;
+    const auto parsed = std::from_chars(value_str.data(), value_str.data() + value_str.size(), val, 10);
+    if (parsed.ec == std::errc{} && parsed.ptr == value_str.data() + value_str.size()) {
       return MtlxValue(static_cast<int>(val));
     }
   } else if (type == "boolean") {

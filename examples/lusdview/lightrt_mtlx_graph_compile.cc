@@ -2361,6 +2361,34 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
   for (int output : graph.output) {
     if (output >= 0) roots.push_back(output);
   }
+  // Flake is a multi-output MaterialX node.  Its lowering emits a shared
+  // input table plus four flakecore nodes, while the packed runtime ABI keeps
+  // those relationships in auxValue rather than ordinary input edges.  A
+  // surface may select only flakenormal even though another authored node
+  // consumes presence/rand/id, so ordinary reachability would discard part
+  // of the lowered group (and change its stable ABI indices).  Keep the
+  // authored/lowered sequence intact for this operator; this is bounded by
+  // the same 64-node check below and preserves all multi-output consumers.
+  const bool hasFlake = std::any_of(
+      graph.nodes.begin(), graph.nodes.end(), [](const MaterialXGraphNodeCPU& node) {
+        return node.op == MaterialXGraphOpCPU::Flake;
+      });
+  if (hasFlake) {
+    roots.clear();
+    roots.reserve(graph.nodes.size());
+    for (size_t i = 0; i < graph.nodes.size(); ++i)
+      roots.push_back(static_cast<int>(i));
+  }
+  // A standalone node graph may intentionally have no surface outputs (for
+  // example, a graph inspection or interchange test).  In that case there is
+  // no reachability root, so retain every authored node instead of silently
+  // producing an empty runtime graph.
+  if (roots.empty()) {
+    roots.reserve(graph.nodes.size());
+    for (size_t i = 0; i < graph.nodes.size(); ++i) {
+      roots.push_back(static_cast<int>(i));
+    }
+  }
   for (int root : roots) {
     if (!emitDependencyFirst(root)) {
       if (err) *err = "MaterialX graph contains a dependency cycle";

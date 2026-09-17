@@ -3095,6 +3095,47 @@ void ValidateMaterialXConfig(const PrimSpec &ps,
   }
 }
 
+void ValidateMaterialUEConfig(const PrimSpec &ps,
+                              const std::vector<AppliedSchema> &applied_schemas,
+                              const std::string &prim_location,
+                              USDValidationResult *result) {
+  bool has_config_property = false;
+  for (const auto &prop_entry : ps.props()) {
+    if (prop_entry.first.rfind("config:unreal:", 0) == 0) {
+      has_config_property = true;
+      break;
+    }
+  }
+
+  const bool has_config_api =
+      HasAppliedSchema(applied_schemas, "MaterialUEConfigAPI");
+  if (has_config_property && !has_config_api) {
+    AddWarning(result, "shade.materialUE.configAPI", prim_location,
+               "config:unreal:* properties are authored without applying "
+               "MaterialUEConfigAPI");
+  }
+  if (has_config_api && ps.typeName() != "Material") {
+    AddWarning(result, "shade.materialUE.configAPI", prim_location,
+               "MaterialUEConfigAPI is expected on Material prims");
+  }
+
+  std::string version;
+  if (GetStringProperty(ps, "config:unreal:version", &version) &&
+      version != "1") {
+    AddWarning(result, "shade.materialUE.version",
+               MakePropertyLocation(prim_location, "config:unreal:version"),
+               "MaterialUEConfigAPI version is not the supported version `1`");
+  }
+  std::string authority;
+  if (GetStringProperty(ps, "config:unreal:graphAuthority", &authority) &&
+      authority.empty()) {
+    AddWarning(result, "shade.materialUE.graphAuthority",
+               MakePropertyLocation(prim_location,
+                                    "config:unreal:graphAuthority"),
+               "graphAuthority should not be empty");
+  }
+}
+
 void ValidateMaterialXShader(const PrimSpec &ps,
                              const std::string &shader_id,
                              const std::string &prim_location,
@@ -5062,6 +5103,7 @@ void ValidatePrimSpecRecursive(const PrimSpec &ps, const Path &prim_path,
   }
   if (options.shade) {
     ValidateMaterialXConfig(ps, applied_schemas, prim_location, result);
+    ValidateMaterialUEConfig(ps, applied_schemas, prim_location, result);
     if (type_name == "Shader") {
       ValidateMaterialXShader(ps, shader_id, prim_location, result);
     }
