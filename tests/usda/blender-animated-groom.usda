@@ -1,0 +1,15 @@
+#usda 1.0
+
+def BasisCurves "AnimatedGroom" {
+    token type = "linear"
+    token wrap = "nonperiodic"
+    int[] curveVertexCounts = [3, 3]
+    point3f[] points.timeSamples = {
+        0: [(0, 0, 0), (0, 0.1, 1), (0, 0, 2), (1, 0, 0), (1, 0.1, 1), (1, 0, 2)],
+        1: [(0, 0, 0), (0.1, 0.1, 1), (0.2, 0, 2), (1, 0, 0), (1.1, 0.1, 1), (1.2, 0, 2)]
+    }
+    float[] widths.timeSamples = {
+        0: [0.02, 0.02, 0.02, 0.02, 0.02, 0.02],
+        1: [0.02, 0.025, 0.03, 0.02, 0.025, 0.03]
+    }
+}

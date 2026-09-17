@@ -1,0 +1,62 @@
+#usda 1.0
+(
+    defaultPrim = "Character"
+    startTimeCode = 1
+    endTimeCode = 2
+    framesPerSecond = 30
+)
+
+def SkelRoot "Character" (
+    prepend apiSchemas = ["SkelBindingAPI"]
+)
+{
+    rel skel:skeleton = </Character/Skeleton>
+    def Skeleton "Skeleton"
+    {
+        uniform token[] joints = ["root"]
+        uniform matrix4d[] restTransforms = [
+            ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+        ]
+        uniform matrix4d[] bindTransforms = [
+            ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+        ]
+        rel skel:animationSource = </Character/Animation>
+    }
+
+    def SkelAnimation "Animation"
+    {
+        uniform token[] joints = ["root"]
+        quatf[] rotations.timeSamples = {
+            1: [(1, 0, 0, 0)],
+            2: [(0.968912, 0, 0.247404, 0)]
+        }
+        float3[] translations = [(0, 0, 0)]
+        half3[] scales = [(1, 1, 1)]
+        uniform token[] blendShapes = ["Smile"]
+        float[] blendShapeWeights.timeSamples = {
+            1: [0.0],
+            2: [1.0]
+        }
+    }
+
+    def Mesh "Body" (
+        prepend apiSchemas = ["SkelBindingAPI"]
+    )
+    {
+        point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel skel:skeleton = </Character/Skeleton>
+        uniform token[] skel:joints = ["root"]
+        int[] primvars:skel:jointIndices = [0, 0, 0, 0]
+        float[] primvars:skel:jointWeights = [1, 1, 1, 1]
+        uniform token[] skel:blendShapes = ["Smile"]
+        rel skel:blendShapeTargets = [</Character/Smile>]
+    }
+
+    def BlendShape "Smile"
+    {
+        uniform int[] pointIndices = [0, 1, 2, 3]
+        uniform vector3f[] offsets = [(0, 0.2, 0), (0, 0.2, 0), (0, 0.2, 0), (0, 0.2, 0)]
+    }
+}
