@@ -78,6 +78,60 @@ Python bridge. The Python wheel itself should be built with the Windows CPython
 headers/interpreter; the llvm-mingw build supplies the native LightUSD DLL,
 not a Linux-hosted CPython extension.
 
+### Verified UE 5.8 Windows build
+
+The verified UE installation used:
+
+```text
+C:\Program Files\Epic Games\UE_5.8
+C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat
+```
+
+Stage the Windows LightUSD runtime in the full plugin:
+
+```powershell
+$plugin = "D:\work\lightusd\UBTFullTest\Plugins\LightUSDUE"
+New-Item -ItemType Directory -Force -Path @(
+  "$plugin\ThirdParty\Win64\include",
+  "$plugin\ThirdParty\Win64\lib",
+  "$plugin\Binaries\Win64"
+) | Out-Null
+Copy-Item "D:\path\to\include\*" "$plugin\ThirdParty\Win64\include\"
+Copy-Item "D:\path\to\lightusd_c.lib" "$plugin\ThirdParty\Win64\lib\"
+Copy-Item "D:\path\to\bin\*" "$plugin\Binaries\Win64\"
+```
+
+Create a minimal project enabling `LightUSDUE`:
+
+```json
+{
+  "FileVersion": 3,
+  "EngineAssociation": "5.8",
+  "Plugins": [{ "Name": "LightUSDUE", "Enabled": true }]
+}
+```
+
+Build with UnrealBuildTool through the project context:
+
+```powershell
+$build = "C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat"
+$project = "D:\work\lightusd\UBTFullTest\UBTFullTest.uproject"
+& $build UnrealEditor Win64 Development `
+  "-Project=$project" -NoHotReloadFromIDE -NoUBA
+```
+
+`-NoUBA` is recommended for this UE 5.8 installation because it avoids the
+UBA shared-PCH rename race. A successful build produces:
+
+```text
+Plugins\LightUSDUE\Binaries\Win64\UnrealEditor-LightUSDUE.dll
+Plugins\LightUSDUE\Binaries\Win64\lightusd_c.dll
+```
+
+For the minimal Python-only profile, enable `LightUSDUEPython` in the project
+and use the same command. It requires only `PythonScriptPlugin` and produces
+`UnrealEditor-LightUSDUEPython.dll`.
+
 ## Python-first UE profile
 
 When the UE-side C++ ABI should be minimized, use the staged
