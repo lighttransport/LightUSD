@@ -18,7 +18,8 @@ root.innerHTML = `
       <h1>USD Physics + MuJoCo</h1>
       <p>Robotic arm simulated with MuJoCo WASM physics. Joint targets are
         tracked via PD servos in real time. <span class="hint">USDZ wireframe
-        overlay shows the original USD rest pose.</span></p>
+        overlay shows the original USD rest pose. Click or drag the arm to
+        push it.</span></p>
     </div>
     <div class="demo-actions">
       <button id="play-pause" type="button">Pause</button>
@@ -43,12 +44,15 @@ root.innerHTML = `
         <dt>Time</dt><dd id="sim-time">0.000 s</dd>
         <dt>Model</dt><dd id="model-stats">-</dd>
         <dt>USD</dt><dd id="usd-stats">-</dd>
+        <dt>Impulse</dt><dd id="impulse-status">Click or drag the arm</dd>
       </dl>
       <h2>Notes</h2>
       <div id="notes">
         <p>Use the sliders to set joint targets. MuJoCo runs a PD servo
           controller at 200 Hz (5 ms timestep). Switch to <em>Passive</em>
           mode to let the arm fall freely under gravity.</p>
+        <p>Drag a link to apply a directional force. The root-yaw control rotates
+          the arm around the USD scene's Z-up axis.</p>
         <p><strong>Legend:</strong>
           <span style="color:#38bdf8">●</span> simulation &nbsp;
           <span style="color:#f59e0b;opacity:0.5">●</span> USD rest pose</p>
@@ -75,20 +79,27 @@ const modelStats = $('model-stats');
 const usdStats = $('usd-stats');
 const physicsJson = $('physics-json');
 const usdaSource = $('usda-source');
+const impulseStatus = $('impulse-status');
 
 function setStatus(s) { statusEl.textContent = s; }
 
 // ── MuJoCo model configuration extracted from USD physics data ──
 
 const JOINT_CONFIG = {
+  RootYawJoint: {
+    label: 'Root yaw', target: 'rootYaw', index: 0,
+    axis: [0, 0, 1],
+    range: [-180, 180],
+    damping: 4, kp: 46, kd: 11, default: 0,
+  },
   ShoulderJoint: {
-    label: 'Shoulder',
+    label: 'Shoulder', target: 'shoulder', index: 1,
     axis: [0, 1, 0],
     range: [-130, 130],
     damping: 5, kp: 58, kd: 13, default: 34,
   },
   ElbowJoint: {
-    label: 'Elbow',
+    label: 'Elbow', target: 'elbow', index: 2,
     axis: [0, 1, 0],
     range: [-135, 135],
     damping: 3, kp: 72, kd: 11, default: -52,
@@ -113,7 +124,7 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 viewport.appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -170,27 +181,77 @@ function jointMarker(parent) {
   return m;
 }
 
+const interactiveMeshes = [];
+
+function makeInteractive(mesh, jointIndex, label, bodyIndex) {
+  mesh.userData.impulseJoint = jointIndex;
+  mesh.userData.impulseLabel = label;
+  mesh.userData.physicsBody = bodyIndex;
+  interactiveMeshes.push(mesh);
+  return mesh;
+}
+
 // ── Simulation display (programmatic arm matching USD physics) ──
 
 function buildSimDisplay() {
   addBox(simRoot, [0.62, 0.62, 0.28], [0, 0, 0.14], matBase);
+  const rootYaw = new THREE.Group();
+  rootYaw.name = 'sim_root_yaw';
+  simRoot.add(rootYaw);
+  const turret = addBox(rootYaw, [0.42, 0.42, 0.1], [0, 0, 0.43], matJoint);
+  makeInteractive(turret, 0, 'Root yaw', 2);
   const shoulder = new THREE.Group();
   shoulder.name = 'sim_shoulder';
   shoulder.position.set(0, 0, 0.52);
-  simRoot.add(shoulder);
-  jointMarker(shoulder);
-  addBox(shoulder, [0.9, 0.16, 0.16], [0.45, 0, 0], matUpper);
+  rootYaw.add(shoulder);
+  makeInteractive(jointMarker(shoulder), 1, 'Shoulder', 3);
+  makeInteractive(addBox(shoulder, [0.9, 0.16, 0.16], [0.45, 0, 0], matUpper), 1, 'Shoulder', 3);
   const elbow = new THREE.Group();
   elbow.name = 'sim_elbow';
   elbow.position.set(0.9, 0, 0);
   shoulder.add(elbow);
-  jointMarker(elbow);
-  addBox(elbow, [0.7, 0.12, 0.12], [0.35, 0, 0], matLower);
-  addBox(elbow, [0.13, 0.28, 0.1], [0.77, 0, 0], matGripper);
-  return { shoulder, el: elbow };
+  makeInteractive(jointMarker(elbow), 2, 'Elbow', 4);
+  makeInteractive(addBox(elbow, [0.7, 0.12, 0.12], [0.35, 0, 0], matLower), 2, 'Elbow', 4);
+  makeInteractive(addBox(elbow, [0.13, 0.28, 0.1], [0.77, 0, 0], matGripper), 2, 'Elbow', 4);
+  return { rootYaw, shoulder, el: elbow };
 }
 
 const simParts = buildSimDisplay();
+
+const impulseMarker = new THREE.Mesh(
+  new THREE.RingGeometry(0.045, 0.065, 24),
+  new THREE.MeshBasicMaterial({
+    color: 0x42d6ff,
+    transparent: true,
+    opacity: 0,
+    depthTest: false,
+    side: THREE.DoubleSide,
+  }),
+);
+impulseMarker.visible = false;
+impulseMarker.renderOrder = 20;
+scene.add(impulseMarker);
+let impulseFeedbackStart = -Infinity;
+
+function showImpulseFeedback(point) {
+  impulseMarker.position.copy(point);
+  impulseMarker.lookAt(camera.position);
+  impulseMarker.scale.setScalar(1);
+  impulseMarker.material.opacity = 1;
+  impulseMarker.visible = true;
+  impulseFeedbackStart = performance.now();
+}
+
+function updateImpulseFeedback(now) {
+  const age = (now - impulseFeedbackStart) / 520;
+  if (age >= 1) {
+    impulseMarker.visible = false;
+  } else if (age >= 0) {
+    impulseMarker.lookAt(camera.position);
+    impulseMarker.scale.setScalar(1 + age * 2.4);
+    impulseMarker.material.opacity = 1 - age;
+  }
+}
 
 // ── USD rest-pose display ──
 
@@ -230,7 +291,13 @@ const mjState = {
   paused: false,
   driveMode: 'servo',
   speed: 1,
-  targets: { shoulder: rad(34), elbow: rad(-52) },
+  targets: { rootYaw: 0, shoulder: rad(34), elbow: rad(-52) },
+  dragForce: {
+    bodyIndex: -1,
+    force: new THREE.Vector3(),
+    torque: new THREE.Vector3(),
+    strength: 0,
+  },
 };
 
 // ── Fit ──
@@ -282,13 +349,28 @@ function buildMuJoCoModel(mj) {
   mj.MjsGeom.setRGBA(baseGeom, 0.42, 0.45, 0.5, 1);
   mj.MjsGeom.setMass(baseGeom, 8);
 
+  // Root yaw. USD is Z-up, so this is the asset's vertical/up axis.
+  const rootYaw = mj.MjsBody.add(base, 'RootYaw');
+  mj.MjsBody.setPos(rootYaw, 0, 0, 0);
+  const rj = mj.MjsJoint.add(rootYaw, 'RootYawJoint');
+  mj.MjsJoint.setType(rj, mj.JNT_HINGE);
+  mj.MjsJoint.setAxis(rj, 0, 0, 1);
+  // mjSpec authors angular ranges in degrees; compiled qpos is radians.
+  mj.MjsJoint.setRange(rj, -180, 180);
+  mj.MjsJoint.setDamping(rj, 4.0);
+  const turretGeom = mj.MjsGeom.add(rootYaw, 'RootTurret');
+  mj.MjsGeom.setType(turretGeom, mj.GEOM_BOX);
+  mj.MjsGeom.setSize(turretGeom, 0.21, 0.21, 0.05);
+  mj.MjsGeom.setPos(turretGeom, 0, 0, 0.43);
+  mj.MjsGeom.setMass(turretGeom, 1.0);
+
   // shoulder
-  const shoulder = mj.MjsBody.add(base, 'Shoulder');
+  const shoulder = mj.MjsBody.add(rootYaw, 'Shoulder');
   mj.MjsBody.setPos(shoulder, 0, 0, 0.52);
   const sj = mj.MjsJoint.add(shoulder, 'ShoulderJoint');
   mj.MjsJoint.setType(sj, mj.JNT_HINGE);
   mj.MjsJoint.setAxis(sj, 0, 1, 0);
-  mj.MjsJoint.setRange(sj, rad(-130), rad(130));
+  mj.MjsJoint.setRange(sj, -130, 130);
   mj.MjsJoint.setDamping(sj, 5.0);
   const upperGeom = mj.MjsGeom.add(shoulder, 'UpperArm');
   mj.MjsGeom.setType(upperGeom, mj.GEOM_BOX);
@@ -303,7 +385,7 @@ function buildMuJoCoModel(mj) {
   const ej = mj.MjsJoint.add(elbow, 'ElbowJoint');
   mj.MjsJoint.setType(ej, mj.JNT_HINGE);
   mj.MjsJoint.setAxis(ej, 0, 1, 0);
-  mj.MjsJoint.setRange(ej, rad(-135), rad(135));
+  mj.MjsJoint.setRange(ej, -135, 135);
   mj.MjsJoint.setDamping(ej, 3.0);
   const foreGeom = mj.MjsGeom.add(elbow, 'Forearm');
   mj.MjsGeom.setType(foreGeom, mj.GEOM_BOX);
@@ -331,9 +413,13 @@ function resetMuJoCo() {
   if (!mj || !mjState.model || !mjState.data) return;
   mj.mj_resetData(mjState.model, mjState.data);
   const qpos = mjState.data.qpos();
-  qpos[0] = mjState.targets.shoulder;
-  qpos[1] = mjState.targets.elbow;
+  qpos[0] = mjState.targets.rootYaw;
+  qpos[1] = mjState.targets.shoulder;
+  qpos[2] = mjState.targets.elbow;
   mjState.data.qvel().fill(0);
+  mjState.dragForce.bodyIndex = -1;
+  mjState.dragForce.strength = 0;
+  mjState.data.xfrc_applied?.().fill(0);
   mj.mj_forward(mjState.model, mjState.data);
   updateDisplay();
 }
@@ -342,12 +428,28 @@ function applyServo(dt) {
   if (mjState.driveMode !== 'servo') return;
   const qpos = mjState.data.qpos();
   const qvel = mjState.data.qvel();
-  const cfg = [JOINT_CONFIG.ShoulderJoint, JOINT_CONFIG.ElbowJoint];
-  const targets = [mjState.targets.shoulder, mjState.targets.elbow];
-  for (let i = 0; i < 2; i++) {
+  const cfg = Object.values(JOINT_CONFIG);
+  const targets = cfg.map((joint) => mjState.targets[joint.target]);
+  for (let i = 0; i < cfg.length; i++) {
     const err = targets[i] - qpos[i];
     qvel[i] += (err * cfg[i].kp - qvel[i] * cfg[i].kd) * dt;
   }
+}
+
+function applyDragForce() {
+  const applied = mjState.data?.xfrc_applied?.();
+  if (!applied) return;
+  applied.fill(0);
+  const drag = mjState.dragForce;
+  if (drag.bodyIndex < 0 || drag.strength <= 0.001) return;
+  const offset = drag.bodyIndex * 6;
+  applied[offset] = drag.force.x * drag.strength;
+  applied[offset + 1] = drag.force.y * drag.strength;
+  applied[offset + 2] = drag.force.z * drag.strength;
+  applied[offset + 3] = drag.torque.x * drag.strength;
+  applied[offset + 4] = drag.torque.y * drag.strength;
+  applied[offset + 5] = drag.torque.z * drag.strength;
+  drag.strength *= impulseDrag ? 0.96 : 0.82;
 }
 
 function stepPhysics(dt) {
@@ -358,6 +460,7 @@ function stepPhysics(dt) {
   const steps = Math.max(1, Math.min(12, Math.ceil(scaled / baseDt)));
   for (let i = 0; i < steps; i++) {
     applyServo(baseDt);
+    applyDragForce();
     mj.mj_step(mjState.model, mjState.data);
   }
   updateDisplay();
@@ -366,10 +469,103 @@ function stepPhysics(dt) {
 function updateDisplay() {
   if (!mjState.data || !simParts) return;
   const qpos = mjState.data.qpos();
-  simParts.shoulder.rotation.y = qpos[0] || 0;
-  simParts.el.rotation.y = qpos[1] || 0;
+  simParts.rootYaw.rotation.z = qpos[0] || 0;
+  simParts.shoulder.rotation.y = qpos[1] || 0;
+  simParts.el.rotation.y = qpos[2] || 0;
   simTime.textContent = `${mjState.data.time().toFixed(3)} s`;
 }
+
+// ── Direct manipulation ──
+
+const raycaster = new THREE.Raycaster();
+const pointerNdc = new THREE.Vector2();
+let impulseDrag = null;
+
+function hitTest(event) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointerNdc.set(
+    ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    -((event.clientY - rect.top) / rect.height) * 2 + 1,
+  );
+  raycaster.setFromCamera(pointerNdc, camera);
+  return raycaster.intersectObjects(interactiveMeshes, false)[0] || null;
+}
+
+function applyPointerForce(dx, dy) {
+  if (!mjState.data || !impulseDrag) return;
+  const cameraRight = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+  const cameraUp = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+  const screenForce = cameraRight.multiplyScalar(dx).addScaledVector(cameraUp, -dy);
+  if (screenForce.lengthSq() < 0.001) return;
+  screenForce.normalize();
+
+  const signedMotion = dx * 0.45 - dy;
+  const hingeAxis = impulseDrag.jointIndex === 0
+    ? new THREE.Vector3(0, 0, 1)
+    : new THREE.Vector3(0, 1, 0).applyQuaternion(simParts.rootYaw.quaternion);
+  hingeAxis.multiplyScalar(Math.sign(signedMotion || 1) * 0.18);
+
+  const drag = mjState.dragForce;
+  drag.bodyIndex = impulseDrag.bodyIndex;
+  drag.force.copy(screenForce);
+  drag.torque.copy(hingeAxis);
+  drag.strength = THREE.MathUtils.clamp(Math.hypot(dx, dy) * 9, 8, 90);
+  mjState.paused = false;
+  $('play-pause').textContent = 'Pause';
+  impulseStatus.textContent = `${impulseDrag.label}: ${drag.strength.toFixed(0)} N drag force`;
+  showImpulseFeedback(impulseDrag.point);
+}
+
+function beginImpulse(event) {
+  if (event.button !== 0) return;
+  const hit = hitTest(event);
+  if (!hit) return;
+  event.preventDefault();
+  event.stopPropagation();
+  renderer.domElement.setPointerCapture(event.pointerId);
+  controls.enabled = false;
+  impulseDrag = {
+    pointerId: event.pointerId,
+    x: event.clientX,
+    y: event.clientY,
+    distance: 0,
+    jointIndex: hit.object.userData.impulseJoint,
+    label: hit.object.userData.impulseLabel,
+    bodyIndex: hit.object.userData.physicsBody,
+    point: hit.point.clone(),
+  };
+  renderer.domElement.style.cursor = 'grabbing';
+  showImpulseFeedback(hit.point);
+}
+
+function moveImpulse(event) {
+  if (!impulseDrag || event.pointerId !== impulseDrag.pointerId) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const dx = event.clientX - impulseDrag.x;
+  const dy = event.clientY - impulseDrag.y;
+  impulseDrag.x = event.clientX;
+  impulseDrag.y = event.clientY;
+  impulseDrag.distance += Math.hypot(dx, dy);
+  applyPointerForce(dx, dy);
+}
+
+function endImpulse(event) {
+  if (!impulseDrag || event.pointerId !== impulseDrag.pointerId) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (impulseDrag.distance < 5) impulseStatus.textContent = 'Drag a link to apply force';
+  renderer.domElement.releasePointerCapture?.(event.pointerId);
+  renderer.domElement.style.cursor = 'grab';
+  controls.enabled = true;
+  impulseDrag = null;
+}
+
+renderer.domElement.style.cursor = 'grab';
+renderer.domElement.addEventListener('pointerdown', beginImpulse, true);
+renderer.domElement.addEventListener('pointermove', moveImpulse, true);
+renderer.domElement.addEventListener('pointerup', endImpulse, true);
+renderer.domElement.addEventListener('pointercancel', endImpulse, true);
 
 // ── Joint controls ──
 
@@ -396,7 +592,6 @@ function buildJointControls() {
     slider.value = cfg.default;
     slider.style.cssText = 'flex:1;min-width:0';
 
-    const targetKey = key.charAt(0).toLowerCase() + key.slice(1).replace('Joint', '');
     row.appendChild(label);
     row.appendChild(number);
     row.appendChild(slider);
@@ -405,7 +600,14 @@ function buildJointControls() {
       const num = Number(v);
       slider.value = String(num);
       number.value = String(num);
-      mjState.targets[targetKey.startsWith('shoulder') ? 'shoulder' : 'elbow'] = rad(num);
+      mjState.targets[cfg.target] = rad(num);
+      mjState.driveMode = 'servo';
+      $('drive-mode').value = 'servo';
+      if (mjState.paused && mjState.data) {
+        mjState.data.qpos()[cfg.index] = mjState.targets[cfg.target];
+        mjState.module.mj_forward(mjState.model, mjState.data);
+        updateDisplay();
+      }
     };
     const syncDeg = (v) => sync(Math.round(Number(v)));
     slider.addEventListener('input', () => syncDeg(slider.value));
@@ -486,7 +688,7 @@ async function main() {
   buildMuJoCoModel(mj);
 
   fit();
-  setStatus('Simulating. Drag to orbit, scroll to zoom.');
+  setStatus('Simulating. Drag the arm to push it; drag empty space to orbit.');
 
   let lastTime = performance.now();
   function anim(now) {
@@ -494,6 +696,7 @@ async function main() {
     const dt = Math.min(0.05, (now - lastTime) / 1000);
     lastTime = now;
     stepPhysics(dt);
+    updateImpulseFeedback(now);
     controls.update();
     renderer.render(scene, camera);
   }
@@ -501,12 +704,18 @@ async function main() {
 }
 
 function onResize() {
-  const rect = viewport.getBoundingClientRect();
-  camera.aspect = Math.max(1, rect.width) / Math.max(1, rect.height);
+  const width = Math.max(1, Math.floor(viewport.clientWidth));
+  const height = Math.max(1, Math.floor(viewport.clientHeight));
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  renderer.setPixelRatio(pixelRatio);
+  camera.aspect = width / height;
   camera.updateProjectionMatrix();
-  renderer.setSize(Math.max(1, rect.width), Math.max(1, rect.height), false);
+  renderer.setSize(width, height, false);
 }
 window.addEventListener('resize', onResize);
+const resizeObserver = new ResizeObserver(onResize);
+resizeObserver.observe(viewport);
+onResize();
 
 main().catch((err) => {
   console.error(err);
