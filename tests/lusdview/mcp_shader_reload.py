@@ -24,8 +24,15 @@ def wait_reload(client, backend, predicate, timeout=180.0):
     while time.monotonic() < deadline:
         last = backend_state(client.call("shader_reload", {"action": "status"}),
                              backend)
-        if not last.get("pending") and predicate(last):
-            return last
+        if not last.get("pending"):
+            if predicate(last):
+                return last
+            # A failed first compile can never satisfy a success predicate.
+            # Return the compiler error immediately instead of waiting for the
+            # full polling timeout and making an ordinary compile failure look
+            # like an MCP/Vulkan deadlock.
+            if last.get("last_error"):
+                raise RuntimeError(f"shader reload failed: {last}")
         time.sleep(0.05)
     raise RuntimeError(f"shader reload timed out: {last}")
 
@@ -77,6 +84,19 @@ def main():
     client = McpClient(command)
     try:
         wait_loaded(client)
+        if args.backend == "vulkan" and source.name == "raytrace.comp":
+            # This case exercises the hardware ray-query shader.  A cold RT
+            # pipeline may deliberately fall back to compute-BVH, and CPU
+            # Vulkan implementations can advertise ray-query extensions while
+            # still being unsuitable for this long-running regression.  The
+            # SWBVH test covers the fallback shader separately.
+            startup = client.stderr_text().lower()
+            if ("rt=software" in startup or
+                    "compute-bvh fallback" in startup or
+                    "device=cpu" in startup):
+                print("SKIP: Vulkan hardware ray-query path unavailable; "
+                      "use the SWBVH live-reload test", file=sys.stderr)
+                return SKIP
         initial_info = client.call("get_scene_info")
         lifecycle = (initial_info.get("window_generation"),
                      initial_info.get("renderer_generation"))
