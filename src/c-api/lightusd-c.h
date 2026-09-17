@@ -35,7 +35,15 @@ extern "C" {
 #endif
 
 #ifndef LIGHTUSD_API
+#if defined(_WIN32) && defined(LIGHTUSD_C_BUILD_SHARED)
+#define LIGHTUSD_API __declspec(dllexport)
+#elif defined(_WIN32) && defined(LIGHTUSD_C_USE_SHARED)
+#define LIGHTUSD_API __declspec(dllimport)
+#elif defined(__GNUC__) || defined(__clang__)
+#define LIGHTUSD_API __attribute__((visibility("default")))
+#else
 #define LIGHTUSD_API
+#endif
 #endif
 
 #define LIGHTUSD_API_VERSION_MAJOR 1

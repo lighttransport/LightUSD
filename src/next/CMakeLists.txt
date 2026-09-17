@@ -550,12 +550,19 @@ endif()
 # C API (lightusd_c): FFI layer over lightusd_next + tydra_next.
 # Used by the Python binding and any other language binding.
 # ============================================================
-add_library(lightusd_c STATIC
+option(LIGHTUSD_NEXT_BUILD_SHARED_C_API
+       "Build lightusd_c as a Windows/FFI shared library in addition to the static target"
+       OFF)
+
+set(LIGHTUSD_C_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/lightusd-c.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/lightusd-render-c.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/lightusd-c.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/lightusd-render-c.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/c-internal.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/c-internal.hh)
+
+add_library(lightusd_c STATIC
+    ${LIGHTUSD_C_SOURCES}
 )
 target_link_libraries(lightusd_c PUBLIC lightusd_next tydra_next)
 target_compile_features(lightusd_c PUBLIC cxx_std_17)
@@ -582,6 +589,32 @@ if(NOT LIGHTUSD_CXX_EXCEPTIONS)
     else()
         target_compile_options(lightusd_c PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
     endif()
+endif()
+
+if(LIGHTUSD_NEXT_BUILD_SHARED_C_API)
+    add_library(lightusd_c_shared SHARED ${LIGHTUSD_C_SOURCES})
+    target_link_libraries(lightusd_c_shared PRIVATE lightusd_next tydra_next)
+    target_compile_features(lightusd_c_shared PRIVATE cxx_std_17)
+    target_include_directories(lightusd_c_shared PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../c-api>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
+    target_compile_definitions(lightusd_c_shared PRIVATE
+        LIGHTUSD_C_BUILD_SHARED=1)
+    if(NOT LIGHTUSD_CXX_RTTI)
+        if(MSVC)
+            target_compile_options(lightusd_c_shared PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
+        else()
+            target_compile_options(lightusd_c_shared PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+        endif()
+    endif()
+    if(NOT LIGHTUSD_CXX_EXCEPTIONS)
+        if(MSVC)
+            target_compile_options(lightusd_c_shared PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
+        else()
+            target_compile_options(lightusd_c_shared PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+        endif()
+    endif()
+    set_target_properties(lightusd_c_shared PROPERTIES OUTPUT_NAME lightusd_c)
 endif()
 
 # Tydra Next test
@@ -617,7 +650,12 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     add_executable(test_lightusd_c
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/c-api/test_lightusd_c.c
     )
-    target_link_libraries(test_lightusd_c PRIVATE lightusd_c)
+    if(LIGHTUSD_NEXT_BUILD_SHARED_C_API)
+        target_link_libraries(test_lightusd_c PRIVATE lightusd_c_shared)
+        target_compile_definitions(test_lightusd_c PRIVATE LIGHTUSD_C_USE_SHARED=1)
+    else()
+        target_link_libraries(test_lightusd_c PRIVATE lightusd_c)
+    endif()
     set_target_properties(test_lightusd_c PROPERTIES C_STANDARD 11)
     add_test(NAME next_test_c_api COMMAND test_lightusd_c
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/usda/cube.usda
