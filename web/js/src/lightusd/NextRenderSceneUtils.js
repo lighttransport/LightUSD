@@ -891,6 +891,11 @@ export function createNextMaterial(entry, adapter, textureManager, skipTextures)
     // time even though their final composited contribution is zero.
     alphaTest: authoredAlphaTest || (hasOpacityMap ? 1 / 255 : 0)
   });
+  if (paths.emissive && !skipTextures && material.emissive.getHex() === 0) {
+    material.emissive.setRGB(1, 1, 1);
+    material.emissiveIntensity = 1;
+  }
+  if (hasOpacityMap) material.depthWrite = false;
   if (!isDefaultMaterial) {
     const openPBR = rawData.openPBR || {};
     const scalar = (name, fallback) => {

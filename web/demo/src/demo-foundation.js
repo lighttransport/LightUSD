@@ -27,6 +27,7 @@ import {
   readNextSceneMeta
 } from 'lightusd-next-demo-utils';
 import { Report } from './app-report.js';
+import { applyUSDMaterialFeatures } from './usd-material-features.js';
 
 RectAreaLightUniformsLib.init();
 
@@ -99,6 +100,7 @@ class DemoApp {
     this.currentSourceUrl = '';
     this.envMap = null;
     this.environmentSource = null;
+    this.domeEnvironment = null;
     this.mixer = null;
     this.actions = [];
     this.skeletonHelpers = [];
@@ -115,6 +117,7 @@ class DemoApp {
       speed: 1.0,
       showSkeleton: !!this.config.showSkeleton
     };
+    this.params.environment = this.config.defaultEnvironment || 'goegap';
     this.params.backend = this.config.requiredBackend || selectedBackend();
   }
 
@@ -292,6 +295,13 @@ class DemoApp {
     this.gui.add(this.params, 'envIntensity', 0, 8, 0.01).name('Env intensity').onChange(() => {
       this.applyEnvironmentToMaterials();
     });
+    if (this.config.environmentSelector) {
+      this.gui.add(this.params, 'environment', {
+        'Off': 'off',
+        'USD DomeLight': 'dome',
+        'Goegap HDRI': 'goegap'
+      }).name('Environment').onChange(() => this.applySelectedEnvironment());
+    }
 
     if (this.config.enableSkinning) {
       this.gui.add(this.params, 'showSkeleton').name('Skeleton').onChange((value) => {
@@ -347,8 +357,12 @@ class DemoApp {
       this.envMap?.dispose?.();
       this.environmentSource = texture;
       this.envMap = this.pmremGenerator.fromEquirectangular(texture).texture;
-      this.scene.environment = this.envMap;
-      this.scene.background = this.environmentSource;
+      if (!this.config.environmentSelector || this.params.environment === 'goegap') {
+        this.scene.environment = this.envMap;
+        this.scene.background = this.environmentSource;
+      } else {
+        this.applySelectedEnvironment();
+      }
     } catch (error) {
       console.warn('Default HDR environment unavailable:', error);
     }
@@ -666,20 +680,29 @@ class DemoApp {
         await built.textureManager.startLoading({
           concurrency: LightUSDLoaderUtils.defaultTextureConcurrency(),
           yieldInterval: 16,
+          onTextureLoaded: (material, texture, task) => {
+            for (const binding of task?.bindings || []) {
+              if (binding.material === material) applyUSDMaterialFeatures(material, binding.mapProperty);
+            }
+          },
           onProgress: (info) => this.setStatus(
             `Loading textures ${info.loaded + info.failed}/${info.total}`)
         });
       }
+      built.node.traverse((object) => {
+        const materials = object.material ? (Array.isArray(object.material) ? object.material : [object.material]) : [];
+        materials.forEach((material) => applyUSDMaterialFeatures(material));
+      });
       return built;
     }
     const root = new THREE.Group();
     root.name = 'USD Scene';
     const defaultMaterial = LightUSDLoaderUtils.createDefaultMaterial();
-    defaultMaterial.envMap = this.scene.environment || this.envMap;
+    defaultMaterial.envMap = this.config.environmentSelector ? this.scene.environment : (this.scene.environment || this.envMap);
     const options = {
       overrideMaterial: false,
       preferredMaterialType: this.config.preferredMaterialType,
-      envMap: this.scene.environment || this.envMap,
+      envMap: this.config.environmentSelector ? this.scene.environment : (this.scene.environment || this.envMap),
       envMapIntensity: this.params.envIntensity,
       textureCache: new Map(),
       onProgress: (info) => this.setStatus(info.message || 'Building scene...')
@@ -691,6 +714,10 @@ class DemoApp {
       const threeNode = await LightUSDLoaderUtils.buildThreeNode(usdNode, defaultMaterial, usd, options);
       root.add(threeNode);
     }
+    root.traverse((object) => {
+      const materials = object.material ? (Array.isArray(object.material) ? object.material : [object.material]) : [];
+      materials.forEach((material) => applyUSDMaterialFeatures(material));
+    });
     return { node: root, nodeIndexMap: null };
   }
 
@@ -790,7 +817,7 @@ class DemoApp {
         convertedMaterial.name = material.name || convertedMaterial.name;
         convertedMaterial.side = material.side;
         this.copyTextureMaps(material, convertedMaterial);
-        if ('envMap' in convertedMaterial) convertedMaterial.envMap = this.scene.environment || this.envMap;
+        if ('envMap' in convertedMaterial) convertedMaterial.envMap = this.config.environmentSelector ? this.scene.environment : (this.scene.environment || this.envMap);
         if ('envMapIntensity' in convertedMaterial) convertedMaterial.envMapIntensity = this.params.envIntensity;
         convertedMaterial.userData = {
           ...material.userData,
@@ -893,16 +920,42 @@ class DemoApp {
     try {
       const dome = await LightUSDLoaderUtils.loadDomeLightFromUSD(usd, this.pmremGenerator);
       if (dome?.texture) {
+        this.domeEnvironment = dome;
+        if (this.config.environmentSelector) {
+          this.applySelectedEnvironment();
+          return;
+        }
         this.scene.environment = dome.texture;
-        this.scene.background = dome.texture;
+        this.scene.background = dome.sourceTexture || dome.texture;
         this.params.envIntensity = dome.intensity || this.params.envIntensity;
         return;
       }
     } catch (error) {
       console.warn('DomeLight load failed:', error);
     }
-    this.scene.environment = this.envMap;
-    this.scene.background = this.environmentSource || new THREE.Color(0x0e0e10);
+    this.domeEnvironment = null;
+    if (this.config.environmentSelector) this.applySelectedEnvironment();
+    else {
+      this.scene.environment = this.envMap;
+      this.scene.background = this.environmentSource || new THREE.Color(0x0e0e10);
+    }
+  }
+
+  applySelectedEnvironment() {
+    if (!this.config.environmentSelector) return;
+    const mode = this.params.environment;
+    if (mode === 'dome' && this.domeEnvironment?.texture) {
+      this.scene.environment = this.domeEnvironment.texture;
+      this.scene.background = this.domeEnvironment.sourceTexture || new THREE.Color(0x0e0e10);
+      this.params.envIntensity = this.domeEnvironment.intensity || 1;
+    } else if (mode === 'goegap' && this.envMap) {
+      this.scene.environment = this.envMap;
+      this.scene.background = this.environmentSource || new THREE.Color(0x0e0e10);
+    } else {
+      this.scene.environment = null;
+      this.scene.background = new THREE.Color(0x0e0e10);
+    }
+    this.applyEnvironmentToMaterials();
   }
 
   addUSDLights(usd) {
@@ -1086,7 +1139,7 @@ class DemoApp {
   }
 
   applyEnvironmentToMaterials() {
-    const env = this.scene.environment || this.envMap;
+    const env = this.config.environmentSelector ? this.scene.environment : (this.scene.environment || this.envMap);
     this.world.traverse((object) => {
       const materials = object.material ? (Array.isArray(object.material) ? object.material : [object.material]) : [];
       for (const material of materials) {
@@ -1116,7 +1169,7 @@ class DemoApp {
     this.mixer = null;
     this.actions = [];
     this.scene.background = new THREE.Color(0x0e0e10);
-    this.scene.environment = this.envMap;
+    this.scene.environment = this.config.environmentSelector ? null : this.envMap;
   }
 
   updateStats(usd, label) {

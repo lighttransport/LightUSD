@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360">
+  <defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="#131b2d"/><stop offset="1" stop-color="#2b1550"/></linearGradient></defs>
+  <rect width="640" height="360" fill="url(#g)"/><path d="M0 286 148 170l80 45 115-96 92 54 205-113v300H0Z" fill="#38bdf8" opacity=".16"/>
+  <g fill="none" stroke="#a5f3fc" stroke-width="4" opacity=".9"><path d="m176 235 83-82 83 82-83 82z"/><path d="m259 153 69-39 83 80-69 41z"/><path d="m176 235 83 43 69-41"/></g>
+  <text x="28" y="45" fill="#fff" font-family="sans-serif" font-size="24" font-weight="700">ONLINE USD VIEWER</text>
+  <text x="29" y="75" fill="#b9d7e6" font-family="sans-serif" font-size="14">references · payloads · MaterialX · animation</text>
+</svg>

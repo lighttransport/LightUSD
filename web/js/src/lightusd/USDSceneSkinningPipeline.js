@@ -240,6 +240,7 @@ export function applyUSDSceneSkinningPipeline(options = {}) {
   const capSkeletonTips = !!options.capSkeletonTips;
   const skeletonTipMaxLength = options.skeletonTipMaxLength || 120;
   const useWASMBoneTexture = !!options.useWASMBoneTexture;
+  const textureLoadingManager = options.textureLoadingManager || null;
 
   if (!threeNode || !characterGroup) {
     throw new Error('applyUSDSceneSkinningPipeline requires threeNode and characterGroup');
@@ -418,7 +419,21 @@ export function applyUSDSceneSkinningPipeline(options = {}) {
           }
         }
 
+        const previousMaterial = newSkinnedMesh.material;
         if (applyExtendedSkinningIfNeeded(newSkinnedMesh, { wasmBoneTexture })) {
+          const replacementMaterial = newSkinnedMesh.material;
+          if (textureLoadingManager?.rebindMaterial) {
+            const previousMaterials = Array.isArray(previousMaterial)
+              ? previousMaterial : [previousMaterial];
+            const replacementMaterials = Array.isArray(replacementMaterial)
+              ? replacementMaterial : [replacementMaterial];
+            previousMaterials.forEach((item, index) => {
+              textureLoadingManager.rebindMaterial(
+                item,
+                replacementMaterials[index] || replacementMaterials[0]
+              );
+            });
+          }
           logger.log('  Extended skinning material applied');
         }
 

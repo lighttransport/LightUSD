@@ -49,6 +49,8 @@ export const DEMOS = [
     materialBackend: 'meshphysical',
     materialModeLabel: 'MeshPhysicalMaterial',
     useUsdLux: true,
+    environmentSelector: true,
+    defaultEnvironment: 'off',
     image: './assets/previews/materialx-physical.jpg',
     href: './materialx-physical.html'
   },
@@ -219,6 +221,15 @@ export const DEMOS = [
     preferredMaterialType: 'auto',
     image: './assets/previews/viewer-toolkit.svg',
     href: './viewer-toolkit.html'
+  },
+  {
+    id: 'usd-viewer',
+    title: 'Online USD Viewer',
+    subtitle: 'Drag a USD file or folder, compose references first, defer payloads, and preview UsdPreviewSurface or MaterialX shading with animation playback.',
+    defaultAsset: '',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/usd-viewer.svg',
+    href: './usd-viewer.html'
   },
   {
     id: 'animation-blending',

@@ -153,6 +153,32 @@ function makeMaterial(color) {
 }
 
 {
+  const manager = new TextureLoadingManager();
+  const usdScene = {
+    getTexture() {
+      return { textureImageId: 4, wrapS: 'repeat', wrapT: 'repeat' };
+    },
+    getImageCopy() {
+      return { uri: 'packed-metal-roughness.png', colorSpace: 'raw' };
+    },
+  };
+  const material = new THREE.MeshPhysicalMaterial();
+  let loads = 0;
+  manager.queueTexture(material, 'metalnessMap', 4, usdScene);
+  manager.queueTexture(material, 'roughnessMap', 3, usdScene);
+  await manager.startLoading({
+    loadTexture: async () => {
+      loads++;
+      return new THREE.Texture();
+    },
+  });
+  assert.equal(loads, 1, 'packed data texture should decode once');
+  assert.ok(material.metalnessMap, 'packed texture should bind metalness');
+  assert.ok(material.roughnessMap, 'packed texture should bind roughness');
+  assert.equal(material.metalnessMap, material.roughnessMap);
+}
+
+{
   const usdScene = {
     getTexture(id) {
       return { textureImageId: id < 10 ? 4 : 5, wrapS: 'repeat', wrapT: 'repeat' };

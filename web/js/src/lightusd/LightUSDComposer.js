@@ -262,7 +262,7 @@ class LightUSDComposer {
         }));
     }
 
-    async progressiveComposition() {
+    async progressiveComposition(options = {}) {
 
         if (!this.usdLayer_) {
             throw new Error("LightUSDComposer: setLayer() is not called.");
@@ -278,6 +278,8 @@ class LightUSDComposer {
         }
 
         this.usdLayer_.setBaseWorkingPath(this.baseWorkingPath_);
+
+        const composePayload = options.composePayload !== false;
 
         // LIVRPS
         // [x] local(subLayer)
@@ -315,7 +317,7 @@ class LightUSDComposer {
             //console.log("hasVariants:", LightUSDComposer.hasVariants(this.usdLayer_));
 
             if (!LightUSDComposer.hasReferences(this.usdLayer_) &&
-                !LightUSDComposer.hasPayload(this.usdLayer_) &&
+                (!composePayload || !LightUSDComposer.hasPayload(this.usdLayer_)) &&
                 !LightUSDComposer.hasInherits(this.usdLayer_) &&
                 !LightUSDComposer.hasVariants(this.usdLayer_)) {
                 break;
@@ -359,7 +361,7 @@ class LightUSDComposer {
                 }
             }
 
-            if (LightUSDComposer.hasPayload(this.usdLayer_)) {
+            if (composePayload && LightUSDComposer.hasPayload(this.usdLayer_)) {
                 const payloadAssetPaths = LightUSDComposer.extractPayloadAssetPaths(this.usdLayer_);
 
                 await Promise.all(payloadAssetPaths.map(async (assetPath) => {

@@ -242,6 +242,21 @@ xvfb-run -a node generate-previews.js --output ./previews --timeout 180000
 Camera positions and clear colors are controlled by
 `../batch-runner/usd-assets-settings.json`. Resolution defaults to 1280×720.
 
+## Online USD Viewer
+
+`usd-viewer.html` accepts USD/USDA/USDC/USDZ files, folder uploads, and direct
+HTTP URLs. Folder uploads preserve relative asset paths and prefer `root.*`,
+`default.*`, `scene.*`, or `main.*` as the root. Each load is capped at 200 MiB
+of unique USD and asset bytes across layers, references, payloads, and textures.
+
+References compose first. Deferred payloads are exposed through a button, and
+the material selector can rebuild the current scene with automatic,
+UsdPreviewSurface, or MaterialX/OpenPBR shading. Animation clips expose a
+small playback timeline. GitHub-hosted files are rewritten to the GitHub
+Contents API, which works from GitHub Pages without a proxy; unauthenticated
+GitHub API usage is still subject to rate limits. Other remote hosts must allow
+CORS, and 403/429 responses are reported in the viewer.
+
 ## Demo List
 
 | # | Demo | Key Feature |
@@ -269,3 +284,4 @@ Camera positions and clear colors are controlled by
 | 21 | USDZ Packager | Export with bundle visualization |
 | 22 | USD Diff | Side-by-side comparison |
 | 23 | Backend Comparison | Legacy vs next rendering comparison |
+| 24 | Online USD Viewer | File/folder upload, deferred payloads, materials, and animation |

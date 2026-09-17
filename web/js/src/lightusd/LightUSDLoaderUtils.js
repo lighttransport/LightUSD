@@ -69,8 +69,28 @@ class TextureLoadingManager {
             this.taskMap.set(key, task);
             this.queue.push(task);
         }
-        task.bindings.push({ material, options });
+        // Multiple map properties may intentionally share one packed source
+        // image (for example roughness=G and metallic=B). Keep the decode task
+        // deduplicated, but retain the destination property per binding.
+        task.bindings.push({ material, mapProperty, options });
         this.total = this.queue.length;
+    }
+
+    /**
+     * Redirect queued texture bindings when a rendering pipeline replaces a
+     * material (for example, to install extended skinning shaders).
+     */
+    rebindMaterial(previousMaterial, replacementMaterial) {
+        if (!previousMaterial || !replacementMaterial || previousMaterial === replacementMaterial) {
+            return;
+        }
+        for (const task of this.queue) {
+            for (const binding of task.bindings) {
+                if (binding.material === previousMaterial) {
+                    binding.material = replacementMaterial;
+                }
+            }
+        }
     }
 
     /**
@@ -123,6 +143,7 @@ class TextureLoadingManager {
         const {
             onProgress = null,
             onTextureLoaded = null,
+            loadTexture = null,
             concurrency = LightUSDLoaderUtils.defaultTextureConcurrency(),
             yieldInterval = 16
         } = options;
@@ -157,7 +178,7 @@ class TextureLoadingManager {
         const pendingTasks = [...this.queue];
         const activeTasks = new Set();
 
-        const loadTexture = async (task) => {
+        const processTextureTask = async (task) => {
             if (this.aborted) return;
 
             task.status = 'loading';
@@ -168,8 +189,9 @@ class TextureLoadingManager {
                     LightUSDLoaderUtils.textureCacheKey(textureId, usdScene, mapProperty, this.textureSignatureCache);
                 let promise = this.promiseCache.get(cacheKey);
                 if (!promise) {
-                    promise = LightUSDLoaderUtils.getTextureFromUSD(
-                        usdScene, textureId, mapProperty);
+                    promise = loadTexture
+                        ? loadTexture(textureId, usdScene, mapProperty)
+                        : LightUSDLoaderUtils.getTextureFromUSD(usdScene, textureId, mapProperty);
                     this.promiseCache.set(cacheKey, promise);
                 }
                 const texture = await promise;
@@ -183,19 +205,20 @@ class TextureLoadingManager {
                         texture, mapProperty, authoredColorSpace, colorMetadata);
                     for (const binding of task.bindings) {
                         const { material, options: bindingOptions } = binding;
-                        material[mapProperty] = texture;
-                        installTextureColorTransform(material, mapProperty,
+                        const bindingMapProperty = binding.mapProperty || mapProperty;
+                        material[bindingMapProperty] = texture;
+                        installTextureColorTransform(material, bindingMapProperty,
                             textureColorTransform(authoredColorSpace,
                                 'lin_rec709_scene', colorMetadata));
 
                         // Apply special options (e.g., normal map scale)
-                        if (bindingOptions.normalScale !== undefined && mapProperty === 'normalMap' && material.normalScale) {
+                        if (bindingOptions.normalScale !== undefined && bindingMapProperty === 'normalMap' && material.normalScale) {
                             material.normalScale.set(bindingOptions.normalScale, bindingOptions.normalScale);
                         }
 
                         material.needsUpdate = true;
                         if (onTextureLoaded) {
-                            onTextureLoaded(material, mapProperty, texture);
+                            onTextureLoaded(material, bindingMapProperty, texture);
                         }
                     }
                     task.status = 'loaded';
@@ -249,7 +272,7 @@ class TextureLoadingManager {
             // Start new tasks up to concurrency limit
             while (pendingTasks.length > 0 && activeTasks.size < concurrency) {
                 const task = pendingTasks.shift();
-                const promise = loadTexture(task).then(() => {
+                const promise = processTextureTask(task).then(() => {
                     activeTasks.delete(promise);
                 });
                 activeTasks.add(promise);
@@ -1249,7 +1272,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
             'roughness', 'roughnessTextureId',
             'clearcoat', 'clearcoatTextureId',
             'clearcoatRoughness', 'clearcoatRoughnessTextureId',
-            'opacity', 'opacityTextureId',
+            'opacity', 'opacityTextureId', 'opacityThreshold',
             'ior', 'iorTextureId',
             'normalTextureId',
             'occlusionTextureId',
@@ -1288,6 +1311,9 @@ class LightUSDLoaderUtils extends LoaderUtils {
     //
     static convertUsdMaterialToMeshPhysicalMaterial(usdMaterial, usdScene, options = {}) {
         const material = new THREE.MeshPhysicalMaterial();
+        material.envMap = options.envMap || null;
+        material.envMapIntensity = options.envMapIntensity ?? 1.0;
+        material.userData.usdPreviewSurface = true;
         const textureManager = options.textureLoadingManager || null;
         const materialName = usdMaterial?.name || usdMaterial?.primName ||
             usdMaterial?.displayName || usdMaterial?.absPath ||
@@ -1382,10 +1408,18 @@ class LightUSDLoaderUtils extends LoaderUtils {
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'clearcoat')) {
             material.clearcoat = usdMaterial.clearcoat;
         }
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'clearcoatTextureId')) {
+            material.clearcoat = 1.0;
+            loadOrQueueTexture('clearcoatMap', usdMaterial.clearcoatTextureId);
+        }
 
         material.clearcoatRoughness = 0.0;
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'clearcoatRoughness')) {
             material.clearcoatRoughness = usdMaterial.clearcoatRoughness;
+        }
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'clearcoatRoughnessTextureId')) {
+            material.clearcoatRoughness = 1.0;
+            loadOrQueueTexture('clearcoatRoughnessMap', usdMaterial.clearcoatRoughnessTextureId);
         }
 
         // Workflow selection
@@ -1402,6 +1436,8 @@ class LightUSDLoaderUtils extends LoaderUtils {
                 material.specularColor = new THREE.Color(color[0], color[1], color[2]);
             }
             if (Object.prototype.hasOwnProperty.call(usdMaterial, 'specularColorTextureId')) {
+                material.specularColor = new THREE.Color(1, 1, 1);
+                material.specularIntensity = 1.0;
                 loadOrQueueTexture('specularColorMap', usdMaterial.specularColorTextureId);
             }
         } else {
@@ -1410,6 +1446,11 @@ class LightUSDLoaderUtils extends LoaderUtils {
                 material.metalness = usdMaterial.metallic;
             }
             if (Object.prototype.hasOwnProperty.call(usdMaterial, 'metallicTextureId')) {
+                // Three.js multiplies metalnessMap by material.metalness.
+                // USD materials commonly author only the connected texture;
+                // keep that texture's authored values instead of multiplying
+                // them by the MeshPhysicalMaterial default of zero.
+                material.metalness = 1.0;
                 loadOrQueueTexture('metalnessMap', usdMaterial.metallicTextureId);
             }
         }
@@ -1420,6 +1461,10 @@ class LightUSDLoaderUtils extends LoaderUtils {
             material.roughness = usdMaterial.roughness;
         }
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'roughnessTextureId')) {
+            // Likewise, a connected USD roughness map already contains the
+            // scalar roughness values and should not be halved by Three.js's
+            // default scalar of 0.5.
+            material.roughness = 1.0;
             loadOrQueueTexture('roughnessMap', usdMaterial.roughnessTextureId);
         }
 
@@ -1430,6 +1475,9 @@ class LightUSDLoaderUtils extends LoaderUtils {
             material.emissive = new THREE.Color(color[0], color[1], color[2]);
         }
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'emissiveColorTextureId')) {
+            // Three.js multiplies emissiveMap by the emissive color.
+            material.emissive = new THREE.Color(1, 1, 1);
+            material.emissiveIntensity = 1.0;
             loadOrQueueTexture('emissiveMap', usdMaterial.emissiveColorTextureId);
         }
 
@@ -1441,12 +1489,22 @@ class LightUSDLoaderUtils extends LoaderUtils {
                 material.transparent = true;
             }
         }
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'opacityThreshold')) {
+            material.alphaTest = Math.max(0, Number(usdMaterial.opacityThreshold) || 0);
+        }
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'opacityTextureId')) {
+            // Three.js otherwise treats alphaMap as an unused texture until
+            // transparent is enabled.  Set the render state up front so the
+            // first async texture upload is already rendered correctly.
+            material.transparent = true;
+            material.alphaTest = Math.max(material.alphaTest || 0, 0.01);
+            material.depthWrite = false;
             loadOrQueueTexture('alphaMap', usdMaterial.opacityTextureId);
         }
 
         // Ambient Occlusion
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'occlusionTextureId')) {
+            material.aoMapIntensity = 1.0;
             loadOrQueueTexture('aoMap', usdMaterial.occlusionTextureId);
         }
 

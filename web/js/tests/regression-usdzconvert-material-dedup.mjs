@@ -479,6 +479,22 @@ await test('next materials preserve opacity maps without double-applying RGBA al
     'a distinct opacity texture should be queued as alphaMap');
 });
 
+await test('next connected emissive textures replace black PreviewSurface fallbacks', () => {
+  const queued = [];
+  const material = createNextMaterial({
+    material: { emissive: [0, 0, 0] },
+    texturePaths: { emissive: 'emissive.png' },
+  }, {}, {
+    queueTexture(_material, property, _adapter, assetPath) {
+      queued.push([property, assetPath]);
+    },
+  }, false);
+  assert.equal(material.emissive.getHex(), 0xffffff,
+    'Three.js must multiply a connected emissive texture by white');
+  assert.equal(material.emissiveIntensity, 1);
+  assert.deepEqual(queued, [['emissiveMap', 'emissive.png']]);
+});
+
 await test('next textures preserve authored USD wrap modes', () => {
   assert.equal(nextTextureWrapMode('black'), THREE.ClampToEdgeWrapping);
   assert.equal(nextTextureWrapMode('clamp'), THREE.ClampToEdgeWrapping);

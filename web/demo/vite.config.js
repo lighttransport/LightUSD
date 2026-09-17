@@ -60,6 +60,7 @@ export default defineConfig(({ command, mode }) => {
             composition_viz: path.resolve(__dirname, 'composition-viz.html'),
             streaming_viz: path.resolve(__dirname, 'streaming-viz.html'),
             viewer_toolkit: path.resolve(__dirname, 'viewer-toolkit.html'),
+            usd_viewer: path.resolve(__dirname, 'usd-viewer.html'),
             animation_blending: path.resolve(__dirname, 'animation-blending.html'),
             procedural_usd: path.resolve(__dirname, 'procedural-usd.html'),
             usdz_packager: path.resolve(__dirname, 'usdz-packager.html'),
