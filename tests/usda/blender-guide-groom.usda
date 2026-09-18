@@ -1,0 +1,30 @@
+#usda 1.0
+(
+    startTimeCode = 0
+    endTimeCode = 1
+    timeCodesPerSecond = 24
+)
+
+def BasisCurves "GuideGroom" {
+    token type = "linear"
+    token wrap = "nonperiodic"
+    int[] curveVertexCounts = [3, 3]
+    point3f[] points.timeSamples = {
+        0: [(0, 0, 0), (0, 0, 1), (0, 0, 2), (1, 0, 0), (1, 0, 1), (1, 0, 2)],
+        1: [(0, 0, 0), (0.1, 0, 1), (0.2, 0, 2), (1, 0, 0), (1.1, 0, 1), (1.2, 0, 2)]
+    }
+    float[] widths.timeSamples = {
+        0: [0.02, 0.02, 0.02, 0.02, 0.02, 0.02],
+        1: [0.02, 0.025, 0.03, 0.02, 0.025, 0.03]
+    }
+    uniform int[] primvars:groom_group_id = [0, 0]
+    uniform int[] primvars:groom_guide = [1, 1]
+    uniform int[] primvars:groom_id = [10, 11]
+    uniform float2[] primvars:groom_root_uv = [(0.1, 0.2), (0.8, 0.2)]
+    color3f[] primvars:groom_color = [(1, 0.5, 0.2), (1, 0.5, 0.2), (1, 0.5, 0.2), (0.2, 0.5, 1), (0.2, 0.5, 1), (0.2, 0.5, 1)] (
+        interpolation = "vertex"
+    )
+    float[] primvars:groom_roughness = [0.3, 0.3, 0.3, 0.4, 0.4, 0.4] (
+        interpolation = "vertex"
+    )
+}

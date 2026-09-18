@@ -54,6 +54,53 @@ def make_material():
     sample.set_editor_property("texture", texture)
     unreal.MaterialEditingLibrary.connect_material_property(
         sample, "RGB", unreal.MaterialProperty.MP_ROUGHNESS)
+
+    scalar = unreal.MaterialEditingLibrary.create_material_expression(
+        material, unreal.MaterialExpressionScalarParameter, -700, 650)
+    scalar.set_editor_property("parameter_name", "NormalStrength")
+    scalar.set_editor_property("default_value", 0.75)
+    one_minus = unreal.MaterialEditingLibrary.create_material_expression(
+        material, unreal.MaterialExpressionOneMinus, -400, 650)
+    unreal.MaterialEditingLibrary.connect_material_expressions(
+        scalar, "", one_minus, "Input")
+    unreal.MaterialEditingLibrary.connect_material_property(
+        one_minus, "", unreal.MaterialProperty.MP_METALLIC)
+
+    static_bool = unreal.MaterialEditingLibrary.create_material_expression(
+        material, unreal.MaterialExpressionStaticBoolParameter, -700, 820)
+    static_bool.set_editor_property("parameter_name", "UseDetail")
+    static_bool.set_editor_property("default_value", True)
+
+    static_switch = unreal.MaterialEditingLibrary.create_material_expression(
+        material, unreal.MaterialExpressionStaticSwitchParameter, -150, 800)
+    static_switch.set_editor_property("parameter_name", "UseAlternateColor")
+    static_switch.set_editor_property("default_value", False)
+    unreal.MaterialEditingLibrary.connect_material_expressions(
+        color_a, "", static_switch, "A")
+    unreal.MaterialEditingLibrary.connect_material_expressions(
+        color_b, "", static_switch, "B")
+
+    normalize = unreal.MaterialEditingLibrary.create_material_expression(
+        material, unreal.MaterialExpressionNormalize, -150, 980)
+    unreal.MaterialEditingLibrary.connect_material_expressions(
+        color_a, "", normalize, "VectorInput")
+    unreal.MaterialEditingLibrary.connect_material_property(
+        normalize, "", unreal.MaterialProperty.MP_NORMAL)
+
+    unreal.MaterialEditingLibrary.create_material_expression(
+        material, unreal.MaterialExpressionRuntimeVirtualTextureSample, 100, 800)
+    unreal.MaterialEditingLibrary.create_material_expression(
+        material, unreal.MaterialExpressionMaterialFunctionCall, 100, 950)
+    unreal.MaterialEditingLibrary.create_material_expression(
+        material, unreal.MaterialExpressionMakeMaterialAttributes, 350, 800)
+    unreal.MaterialEditingLibrary.create_material_expression(
+        material, unreal.MaterialExpressionBlendMaterialAttributes, 350, 1000)
+
+    try:
+        material.set_editor_property(
+            "shading_model", unreal.MaterialShadingModel.MSM_CLEAR_COAT)
+    except Exception:
+        pass
     unreal.MaterialEditingLibrary.recompile_material(material)
     unreal.EditorAssetLibrary.save_loaded_asset(material)
     return material
@@ -68,7 +115,8 @@ def main():
         fail(f"Material export failed: {exported.error}")
 
     text = open(usd_file, encoding="utf-8").read()
-    for marker in ("MaterialXGraph", "ND_mix_color3", "MaterialUEConfigAPI"):
+    for marker in ("MaterialXGraph", "ND_mix_color3", "ND_invert_float",
+                   "ND_constant_boolean", "MaterialUEConfigAPI"):
         if marker not in text:
             fail(f"Expected material graph marker is missing: {marker}")
 
@@ -83,10 +131,15 @@ def main():
         PACKAGE + "Imported/M_GraphRoundtrip")
     if not imported_material:
         fail("Imported material asset was not created")
+    source_shading_model = material.get_editor_property("shading_model")
+    imported_shading_model = imported_material.get_editor_property("shading_model")
+    if str(imported_shading_model) != str(source_shading_model):
+        fail(f"Shading model was not restored: {source_shading_model} -> "
+             f"{imported_shading_model}")
 
     expressions = unreal.MaterialEditingLibrary.get_material_expressions(imported_material)
-    if len(expressions) != 5:
-        fail(f"Expected five reconstructed expressions, got {len(expressions)}")
+    if len(expressions) != 14:
+        fail(f"Expected fourteen reconstructed expressions, got {len(expressions)}")
     base_color = unreal.MaterialEditingLibrary.get_material_property_input_node(
         imported_material, unreal.MaterialProperty.MP_BASE_COLOR)
     if not base_color or "LinearInterpolate" not in base_color.get_class().get_name():
@@ -95,6 +148,25 @@ def main():
                      if "TextureSample" in e.get_class().get_name()]
     if not texture_nodes or not texture_nodes[0].get_editor_property("texture"):
         fail("Texture2D property was not restored")
+    parameter_names = {
+        str(expression.get_editor_property("parameter_name"))
+        for expression in expressions
+        if "Parameter" in expression.get_class().get_name()
+    }
+    if not {"NormalStrength", "UseDetail"}.issubset(parameter_names):
+        fail(f"Material parameters were not restored: {sorted(parameter_names)}")
+    restored_classes = {expression.get_class().get_name() for expression in expressions}
+    expected_classes = {
+        "MaterialExpressionStaticSwitchParameter",
+        "MaterialExpressionNormalize",
+        "MaterialExpressionRuntimeVirtualTextureSample",
+        "MaterialExpressionMaterialFunctionCall",
+        "MaterialExpressionMakeMaterialAttributes",
+        "MaterialExpressionBlendMaterialAttributes",
+    }
+    if not expected_classes.issubset(restored_classes):
+        fail(f"Extended material nodes were not restored: "
+             f"{sorted(expected_classes - restored_classes)}")
 
     report = {
         "source_material": material.get_path_name(),
@@ -102,6 +174,7 @@ def main():
         "expression_count": len(expressions),
         "base_color_node": base_color.get_path_name(),
         "lightusd_prim_count": len(validation.prim_paths),
+        "shading_model": str(imported_shading_model),
         "export_file": usd_file,
     }
     report_file = os.path.join(OUT_DIR, "report.json")

@@ -16,6 +16,7 @@
 #include "Materials/Material.h"
 #include "Misc/Paths.h"
 #include "UObject/Package.h"
+#include "UObject/MetaData.h"
 #include <limits>
 
 THIRD_PARTY_INCLUDES_START
@@ -220,7 +221,8 @@ static bool TessellateNurbs(const FArrayView& Points, const FArrayView& Counts,
 }
 
 static bool BuildHairDescription(lightusd_prim Prim, double TimeCode,
-    FHairDescription& OutDescription, FLightUSDUEResult& Result, bool bNurbs)
+    FHairDescription& OutDescription, FLightUSDUEResult& Result, bool bNurbs,
+    bool bPromoteGuides = false)
 {
     FArrayView Points, Counts, Widths, Groups, Guides, IDs, RootUV, Colors, Roughness;
     lightusd_value* PointValue = nullptr;
@@ -338,7 +340,7 @@ static bool BuildHairDescription(lightusd_prim Prim, double TimeCode,
         const FStrandID StrandID(static_cast<int32>(StrandIndex));
         const int32 GroupID = Groups.Count > static_cast<uint64>(StrandIndex)
             ? static_cast<int32>(Number(Groups, StrandIndex)) : 0;
-        const int32 Guide = Guides.Count > static_cast<uint64>(StrandIndex)
+        const int32 Guide = bPromoteGuides ? 0 : Guides.Count > static_cast<uint64>(StrandIndex)
             ? static_cast<int32>(Number(Guides, StrandIndex)) : 0;
         const int32 StrandIDValue = IDs.Count > static_cast<uint64>(StrandIndex)
             ? static_cast<int32>(Number(IDs, StrandIndex)) : StrandIndex;
@@ -384,7 +386,8 @@ static bool BuildHairDescription(lightusd_prim Prim, double TimeCode,
 }
 
 static bool ImportGroomCache(lightusd_prim Prim, UGroomAsset* Groom,
-    const FLightUSDUEOptions& Options, FLightUSDUEResult& Result, bool bNurbs)
+    const FLightUSDUEOptions& Options, FLightUSDUEResult& Result, bool bNurbs,
+    bool bPromoteGuides)
 {
     const size_t SampleCount = lightusd_attr_timesample_count(Prim, "points");
     if (SampleCount < 2)
@@ -402,7 +405,8 @@ static bool ImportGroomCache(lightusd_prim Prim, UGroomAsset* Groom,
     for (size_t SampleIndex = 0; SampleIndex < SampleCount; ++SampleIndex)
     {
         FHairDescription FrameDescription;
-        if (!BuildHairDescription(Prim, Times[SampleIndex], FrameDescription, Result, bNurbs))
+        if (!BuildHairDescription(Prim, Times[SampleIndex], FrameDescription, Result,
+            bNurbs, bPromoteGuides))
         {
             bValid = false;
             break;
@@ -451,11 +455,16 @@ static bool ImportGroomCache(lightusd_prim Prim, UGroomAsset* Groom,
 static bool ImportOne(lightusd_prim Prim, const FLightUSDUEOptions& Options,
     FLightUSDUEResult& Result, bool bNurbs)
 {
+    FArrayView GuideValues;
+    bool bGuideOnly = GetArray(Prim, "primvars:groom_guide", GuideValues) &&
+        GuideValues.Count > 0;
+    for (uint64 Index = 0; bGuideOnly && Index < GuideValues.Count; ++Index)
+        bGuideOnly = Number(GuideValues, Index) != 0.0;
     FHairDescription Description;
     double StaticTime = std::numeric_limits<double>::quiet_NaN();
     if (lightusd_attr_timesample_count(Prim, "points") > 0)
         lightusd_attr_timesample_times(Prim, "points", &StaticTime, 1);
-    if (!BuildHairDescription(Prim, StaticTime, Description, Result, bNurbs))
+    if (!BuildHairDescription(Prim, StaticTime, Description, Result, bNurbs, bGuideOnly))
         return false;
     FHairDescriptionGroups GroupsDescription;
     FGroomBuilder::BuildHairDescriptionGroups(Description, GroupsDescription);
@@ -476,9 +485,14 @@ static bool ImportOne(lightusd_prim Prim, const FLightUSDUEOptions& Options,
         return true;
     }
     Groom->MarkPackageDirty();
+    if (bGuideOnly)
+    {
+        Package->GetMetaData().SetValue(Groom, TEXT("LightUSDGuideOnly"), TEXT("1"));
+        Result.Warnings.Add(TEXT("Guide-only BasisCurves were promoted to render strands for UE HairStrands and retain their USD guide role on export."));
+    }
     Result.CreatedAssets.Add(Groom->GetPathName());
     if (lightusd_attr_timesample_count(Prim, "points") > 1 &&
-        !ImportGroomCache(Prim, Groom, Options, Result, bNurbs))
+        !ImportGroomCache(Prim, Groom, Options, Result, bNurbs, bGuideOnly))
         Result.Warnings.Add(TEXT("Animated groom cache import failed; static groom was retained."));
 
     // Keep imported static grooms renderable even when the USD layer has no
@@ -596,10 +610,12 @@ bool ExportGroom(UGroomAsset* Groom, const FString& Filename, FLightUSDUEResult&
     TArray<FVector2f> RootUVs;
     TArray<FVector3f> Colors;
     TArray<float> Roughness;
+    const bool bGuideOnly = Groom->GetOutermost()->GetMetaData().HasValue(
+        Groom, TEXT("LightUSDGuideOnly"));
     for (const FEditableGroomGroup& Group : Editable.Groups)
     {
         for (const FEditableHairStrand& Strand : Group.Strands)
-            AppendStrand(Strand, Group.GroupID, false, Points, Widths, Counts,
+            AppendStrand(Strand, Group.GroupID, bGuideOnly, Points, Widths, Counts,
                 GroupIDs, Guides, StrandIDs, RootUVs, Colors, Roughness);
         // HairStrands derives guides from render strands during import. Those
         // derived guides are not additional authored groom curves and would
@@ -732,6 +748,12 @@ bool ExportGroomCache(UGroomCache* Cache, UGroomAsset* Groom, const FString& Fil
     }
 
     TArray<int32> Counts;
+    TArray<int32> GroupIDs;
+    TArray<int32> Guides;
+    TArray<int32> StrandIDs;
+    TArray<FVector2f> RootUVs;
+    const bool bGuideOnly = Groom->GetOutermost()->GetMetaData().HasValue(
+        Groom, TEXT("LightUSDGuideOnly"));
     FEditableGroom StaticGroom;
     ConvertFromGroomAsset(Groom, &StaticGroom, false, false, false);
     if (StaticGroom.Groups.Num() == 0)
@@ -767,14 +789,41 @@ bool ExportGroomCache(UGroomCache* Cache, UGroomAsset* Groom, const FString& Fil
             int32 ExpectedPointCount = 0;
             if (FrameIndex == 0)
             {
-                for (const FEditableHairStrand& Strand : StaticGroup.Strands)
+                if (StaticGroup.Strands.Num() > 0)
                 {
-                    Counts.Add(Strand.ControlPoints.Num());
-                    ExpectedPointCount += Strand.ControlPoints.Num();
+                    for (const FEditableHairStrand& Strand : StaticGroup.Strands)
+                    {
+                        Counts.Add(Strand.ControlPoints.Num());
+                        GroupIDs.Add(StaticGroup.GroupID);
+                        Guides.Add(bGuideOnly ? 1 : 0);
+                        StrandIDs.Add(Strand.StrandID);
+                        RootUVs.Add(Strand.RootUV);
+                        ExpectedPointCount += Strand.ControlPoints.Num();
+                    }
+                }
+                else
+                {
+                    for (const FEditableHairGuide& Guide : StaticGroup.Guides)
+                    {
+                        Counts.Add(Guide.ControlPoints.Num());
+                        GroupIDs.Add(StaticGroup.GroupID);
+                        Guides.Add(1);
+                        StrandIDs.Add(Guide.GuideID);
+                        RootUVs.Add(Guide.RootUV);
+                        ExpectedPointCount += Guide.ControlPoints.Num();
+                    }
                 }
             }
-            for (const FEditableHairStrand& Strand : StaticGroup.Strands)
-                ExpectedPointCount += FrameIndex == 0 ? 0 : Strand.ControlPoints.Num();
+            else if (StaticGroup.Strands.Num() > 0)
+            {
+                for (const FEditableHairStrand& Strand : StaticGroup.Strands)
+                    ExpectedPointCount += Strand.ControlPoints.Num();
+            }
+            else
+            {
+                for (const FEditableHairGuide& Guide : StaticGroup.Guides)
+                    ExpectedPointCount += Guide.ControlPoints.Num();
+            }
             if (Group.VertexData.PointsPosition.Num() != ExpectedPointCount ||
                 Group.VertexData.PointsRadius.Num() != ExpectedPointCount)
             {
@@ -813,6 +862,24 @@ bool ExportGroomCache(UGroomCache* Cache, UGroomAsset* Groom, const FString& Fil
         {
             Result.Error = FString::Printf(TEXT("Unable to author groom cache curve counts (%d): %s"),
                 Counts.Num(), UTF8_TO_TCHAR(lightusd_last_error()));
+        }
+        const bool bGroups = SetArray(Stage, PrimPath, "primvars:groom_group_id",
+            LIGHTUSD_TYPE_INT, GroupIDs.GetData(), GroupIDs.Num()) &&
+            SetUniform(Stage, PrimPath, "primvars:groom_group_id");
+        const bool bGuides = SetArray(Stage, PrimPath, "primvars:groom_guide",
+            LIGHTUSD_TYPE_INT, Guides.GetData(), Guides.Num()) &&
+            SetUniform(Stage, PrimPath, "primvars:groom_guide");
+        const bool bIDs = SetArray(Stage, PrimPath, "primvars:groom_id",
+            LIGHTUSD_TYPE_INT, StrandIDs.GetData(), StrandIDs.Num()) &&
+            SetUniform(Stage, PrimPath, "primvars:groom_id");
+        const bool bRootUVs = SetArray(Stage, PrimPath, "primvars:groom_root_uv",
+            LIGHTUSD_TYPE_FLOAT2, RootUVs.GetData(), RootUVs.Num()) &&
+            SetUniform(Stage, PrimPath, "primvars:groom_root_uv");
+        bOk &= bGroups && bGuides && bIDs && bRootUVs;
+        if (!bGroups || !bGuides || !bIDs || !bRootUVs)
+        {
+            Result.Error = FString::Printf(TEXT("Unable to author groom cache curve metadata: %s"),
+                UTF8_TO_TCHAR(lightusd_last_error()));
         }
     }
     // LightUSD's groom schema requires these per-vertex attributes on a

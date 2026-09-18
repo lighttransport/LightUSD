@@ -95,6 +95,9 @@ def _expression_archive(expr: Any) -> str:
         "coordinate_index", "desc", "const_a", "const_b", "const_c", "const_value",
         "font", "font_texture", "material_function", "function", "function_output_index",
         "channel_mask", "red", "green", "blue", "alpha", "use_alpha",
+        "a_const", "b_const", "default_a", "default_b", "static_switch_parameter",
+        "normal_map_texture", "height_map_texture", "virtual_texture", "mip_value_mode",
+        "texture_address_mode", "blend_type", "quality", "feature_level",
         "material_expression_editor_x", "material_expression_editor_y",
         "code", "description", "output_name", "input_name",
     )
@@ -113,6 +116,9 @@ def _material_state(material: Any) -> dict[str, Any]:
         "material_domain", "blend_mode", "two_sided", "opacity_mask_clip_value",
         "decal_response", "translucency_lighting_mode", "translucency_pass",
         "use_material_attributes", "subsurface_profile",
+        "shading_model", "shading_models", "d3d11_tessellation_mode",
+        "allow_negative_emissive_color", "cast_dynamic_shadow_as_masked",
+        "num_customized_u_vs", "is_blendable",
     ):
         value = _get(material, name, default=None)
         if value is not None:
@@ -186,6 +192,7 @@ def _materialx_node_id(expr: Any) -> str | None:
         "MaterialExpressionScalarParameter": "ND_constant_float",
         "MaterialExpressionVectorParameter": "ND_constant_color3",
         "MaterialExpressionStaticBoolParameter": "ND_constant_boolean",
+        "MaterialExpressionStaticSwitchParameter": "ND_ifgreater",
         "MaterialExpressionTextureCoordinate": "ND_texcoord_vector2",
         "MaterialExpressionLinearInterpolate": "ND_mix_color3",
         "MaterialExpressionMultiply": "ND_multiply_float",
@@ -195,6 +202,19 @@ def _materialx_node_id(expr: Any) -> str | None:
         "MaterialExpressionComponentMask": "ND_extract",
         "MaterialExpressionClamp": "ND_clamp",
         "MaterialExpressionPower": "ND_power",
+        "MaterialExpressionOneMinus": "ND_invert_float",
+        "MaterialExpressionAbs": "ND_absval_float",
+        "MaterialExpressionSine": "ND_sin_float",
+        "MaterialExpressionCosine": "ND_cos_float",
+        "MaterialExpressionSquareRoot": "ND_sqrt_float",
+        "MaterialExpressionNormalize": "ND_normalize_vector3",
+        "MaterialExpressionDotProduct": "ND_dotproduct_vector3",
+        "MaterialExpressionCrossProduct": "ND_crossproduct_vector3",
+        "MaterialExpressionAppendVector": "ND_combine2_vector2",
+        "MaterialExpressionFresnel": "ND_fresnel",
+        "MaterialExpressionDesaturation": "ND_luminance_color3",
+        "MaterialExpressionNormalFromHeightmap": "ND_normalmap",
+        "MaterialExpressionRuntimeVirtualTextureSample": "ND_image_color3",
     }.get(name)
 
 
@@ -205,6 +225,10 @@ def _materialx_input_name(pin_name: str) -> str:
         "Alpha": "mix",
         "UVs": "texcoord",
         "Tex": "file",
+        "Value": "in",
+        "Input": "in",
+        "True": "in1",
+        "False": "in2",
     }.get(pin_name, re.sub(r"[^A-Za-z0-9_]", "_", pin_name).lower())
 
 
@@ -312,8 +336,9 @@ def export_material(material: Any, filename: str, *, preserve_ue_config: bool = 
             elif class_name == "MaterialExpressionStaticBoolParameter":
                 value = bool(_get(expr, "default_value", default=False))
                 lines.append(f"            boolean inputs:value = {'true' if value else 'false'}")
-            elif class_name.startswith("MaterialExpressionTextureSample"):
-                texture = _get(expr, "texture", default=None)
+            elif (class_name.startswith("MaterialExpressionTextureSample") or
+                  class_name == "MaterialExpressionRuntimeVirtualTextureSample"):
+                texture = _get(expr, "texture", "virtual_texture", default=None)
                 if texture:
                     asset_path = _path(texture)
                     # Keep the standard MaterialX/USD representation in

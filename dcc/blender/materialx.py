@@ -38,9 +38,16 @@ def export_material(stage, material, material_path, preserve=True):
         "base_metalness": (["Metallic"], "float"),
         "specular_roughness": (["Roughness"], "float"),
         "specular_ior": (["IOR"], "float"),
+        "specular_weight": (["Specular IOR Level", "Specular"], "float"),
         "coat_weight": (["Coat Weight"], "float"),
         "coat_roughness": (["Coat Roughness"], "float"),
+        "coat_ior": (["Coat IOR"], "float"),
+        "sheen_weight": (["Sheen Weight"], "float"),
+        "anisotropy": (["Anisotropic"], "float"),
         "transmission_weight": (["Transmission Weight", "Transmission"], "float"),
+        "subsurface_weight": (["Subsurface Weight"], "float"),
+        "emission_color": (["Emission Color", "Emission"], "color3f"),
+        "emission_strength": (["Emission Strength"], "float"),
         "opacity": (["Alpha"], "float"),
     }
     if principled:
@@ -51,6 +58,7 @@ def export_material(stage, material, material_path, preserve=True):
             "base_metalness": ("MetallicTexture", ["Metallic"], "float", "float"),
             "specular_roughness": ("RoughnessTexture", ["Roughness"], "float", "float"),
             "opacity": ("OpacityTexture", ["Alpha"], "float", "float"),
+            "emission_color": ("EmissionTexture", ["Emission Color", "Emission"], "color3f", "color3f"),
         }
         for target, (node_name, socket_names, input_type, output_type) in linked_textures.items():
             linked_socket = _socket(principled, socket_names)
@@ -69,15 +77,27 @@ def export_material(stage, material, material_path, preserve=True):
     if preserve and material:
         graph = [{"name": n.name, "type": n.bl_idname} for n in nodes]
         shader.set("userProperties:lightusd:originalNodeGraph", json.dumps(graph), type="string", custom=True)
-    mprim.set("outputs:surface", "surface", type="token")
+        supported = {"ShaderNodeBsdfPrincipled", "ShaderNodeTexImage",
+                     "ShaderNodeOutputMaterial", "ShaderNodeTexCoord",
+                     "ShaderNodeMapping", "ShaderNodeNormalMap"}
+        unsupported = [{"name": n.name, "type": n.bl_idname}
+                       for n in nodes if n.bl_idname not in supported]
+        shader.set("userProperties:lightusd:unsupportedNodes",
+                   json.dumps(unsupported, sort_keys=True), type="string",
+                   custom=True)
+    # The Python binding creates attributes through ``set``; the empty
+    # declaration is paired with the authored connection and is accepted by
+    # USD readers that preserve both parts of the output declaration.
+    mprim.set("outputs:surface", "", type="token")
     mprim.attribute("outputs:surface").connect(shader_path + ".outputs:out")
     shader.set("outputs:out", "out", type="token")
     return material_path
 
 
-def import_material(stage, prim, name):
+def import_material(stage, prim, name, asset_dir=None):
     import bpy
-    shader = next((child for child in prim.children if child.type_name == "Shader"), prim)
+    children = list(prim.children)
+    shader = next((child for child in children if child.type_name == "Shader"), prim)
     material = bpy.data.materials.get(name) or bpy.data.materials.new(name)
     material.use_nodes = True
     tree = material.node_tree
@@ -87,6 +107,13 @@ def import_material(stage, prim, name):
     for source, targets in {
         "base_color": ["Base Color"], "base_metalness": ["Metallic"],
         "specular_roughness": ["Roughness"], "specular_ior": ["IOR"],
+        "specular_weight": ["Specular IOR Level", "Specular"],
+        "coat_weight": ["Coat Weight"], "coat_roughness": ["Coat Roughness"],
+        "coat_ior": ["Coat IOR"], "sheen_weight": ["Sheen Weight"],
+        "anisotropy": ["Anisotropic"], "transmission_weight": ["Transmission Weight", "Transmission"],
+        "subsurface_weight": ["Subsurface Weight"],
+        "emission_color": ["Emission Color", "Emission"],
+        "emission_strength": ["Emission Strength"],
         "opacity": ["Alpha"],
     }.items():
         value = shader.get("inputs:" + source)
@@ -100,6 +127,7 @@ def import_material(stage, prim, name):
         "base_color": ("BaseColorTexture", "Base Color"),
         "base_metalness": ("MetallicTexture", "Metallic"),
         "specular_roughness": ("RoughnessTexture", "Roughness"),
+        "emission_color": ("EmissionTexture", "Emission Color"),
         "opacity": ("OpacityTexture", "Alpha"),
     }
     serialized = stage.export_usda()
@@ -107,7 +135,22 @@ def import_material(stage, prim, name):
         texture_shader = next((child for child in shader.children
                                if child.type_name == "Shader" and
                                child.path.endswith("/" + node_name)), None)
-        texture_path = texture_shader.get("inputs:file") if texture_shader else None
+        # Accept ordinary UsdShade/UsdUVTexture materials as well as the
+        # LightUSD OpenPBR naming convention. This is especially important
+        # for UDIM materials authored by UE, where the texture shader is often
+        # a sibling of PreviewSurface named simply "UDIMTexture".
+        texture_path = None
+        if texture_shader is None and source == "base_color":
+            for child in children:
+                value = child.get("inputs:file")
+                value_text = str(value) if value is not None else ""
+                if child.type_name == "Shader" and value_text:
+                    texture_shader = child
+                    texture_path = value_text
+                    break
+        if texture_path is None:
+            texture_value = texture_shader.get("inputs:file") if texture_shader else None
+            texture_path = str(texture_value) if texture_value is not None else None
         if not texture_path:
             match = re.search(r'def Shader "' + re.escape(node_name) +
                               r'".*?asset inputs:file = @([^@]+)@', serialized, re.DOTALL)
@@ -115,7 +158,9 @@ def import_material(stage, prim, name):
         if not texture_path:
             continue
         image = None
-        load_path = str(texture_path)
+        load_path = str(texture_path).replace("\\", os.sep)
+        if asset_dir and not os.path.isabs(load_path):
+            load_path = os.path.join(asset_dir, load_path)
         if "<UDIM>" in load_path and not os.path.exists(load_path):
             load_path = load_path.replace("<UDIM>", "1001")
         if os.path.exists(load_path):
@@ -125,7 +170,7 @@ def import_material(stage, prim, name):
                 image = None
         if image is None:
             image = bpy.data.images.new(name + "_Texture", 1, 1)
-        image.filepath = str(texture_path)
+        image.filepath = load_path
         if "<UDIM>" in str(texture_path):
             image.source = "TILED"
         image_node = tree.nodes.new("ShaderNodeTexImage")

@@ -206,6 +206,9 @@ FLightUSDUEResult ULightUSDUEBlueprintLibrary::ImportUSD(const FString& Filename
         MaterialLayer.Contains(TEXT("MaterialUEConfigAPI")) &&
         MaterialLayer.Contains(TEXT("def Material")) &&
         !MaterialLayer.Contains(TEXT("def Mesh"));
+    const bool bGroomCardLayer =
+        MaterialLayer.Contains(TEXT("groom_card")) &&
+        MaterialLayer.Contains(TEXT("def Mesh"));
     if (bMaterialGraphLayer &&
         (Options.Backend == ELightUSDUEBackend::NativeUE ||
          Options.Backend == ELightUSDUEBackend::Auto)) {
@@ -261,6 +264,26 @@ FLightUSDUEResult ULightUSDUEBlueprintLibrary::ImportUSD(const FString& Filename
     }
     if (Options.bImportPhysics)
         Result.Warnings.Add(TEXT("Physics API schemas are preserved for the UE physics adapter."));
+
+    // Groom cards are ordinary USD Mesh prims. Keep LightUSD authoritative for
+    // curves/cache data, while handing card geometry to UE's native USD mesh
+    // importer so the result is a usable StaticMesh rather than metadata only.
+    if (bGroomCardLayer && Options.bImportGeometry)
+    {
+        FLightUSDUEOptions CardOptions = Options;
+        CardOptions.bImportGroom = false;
+        CardOptions.bImportSkeletalAnimation = false;
+        FLightUSDUEResult CardResult = ImportWithNativeUE(Filename, CardOptions);
+        if (CardResult.bSucceeded)
+        {
+            Result.CreatedAssets.Append(CardResult.CreatedAssets);
+            Result.Warnings.Add(TEXT("Groom card Mesh prims were imported through UE native USD geometry handoff."));
+        }
+        else
+        {
+            Result.Warnings.Add(TEXT("Groom card native geometry handoff failed: ") + CardResult.Error);
+        }
+    }
 
     lightusd_render_scene_destroy(RenderScene);
     lightusd_stage_destroy(Stage);

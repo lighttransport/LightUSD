@@ -7,6 +7,7 @@ from .api import (export_usd, export_groom, export_groom_cache,
                   compose_skeletal_animation,
                   validate_usd, capabilities,
                   export_material, import_material)
+from .transfer import upload_file, download_file, download_bundle
 
 __all__ = ["export_usd", "export_groom", "export_groom_cache",
            "export_skeletal_mesh", "export_skeletal_animation",
@@ -15,3 +16,4 @@ __all__ = ["export_usd", "export_groom", "export_groom_cache",
            "add_skeletal_animation_curves",
            "compose_skeletal_animation", "validate_usd", "capabilities",
            "export_material", "import_material"]
+__all__ += ["upload_file", "download_file", "download_bundle"]

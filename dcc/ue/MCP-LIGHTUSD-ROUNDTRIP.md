@@ -4,6 +4,64 @@ This procedure uses the experimental Unreal Engine 5.8 MCP HTTP server and the
 LightUSDUE plugin's own MCP tool. It is intended for the Linux source build
 used by this project.
 
+## Windows UE 5.8 MCP
+
+The same workflow works with UE running on Windows and the client running on
+Linux. No manual editor interaction is required when the project already has
+the MCP plugin enabled. Add `ModelContextProtocol` to the project plugin list,
+then put the settings in the editor's generated per-project location (not the
+source `Config` directory):
+
+```text
+<Project>/Saved/Config/WindowsEditor/EditorPerProjectUserSettings.ini
+```
+
+```ini
+[/Script/ModelContextProtocolEngine.ModelContextProtocolSettings]
+bAutoStartServer=True
+ServerPortNumber=8000
+ServerUrlPath=/mcp
+bEnableToolSearch=True
+```
+
+Launch `UnrealEditor.exe` with `-ModelContextProtocolStartServer` and, for a
+headless automation run, `-nullrhi -NoUBA`. The Windows package must contain
+the LightUSD runtime DLL beside `UnrealEditor-LightUSDUE.dll`; the MinGW-built
+module imports it as `liblightusd_c.dll`, so retain that exact filename (the
+other runtime DLLs such as `libc++.dll`, `libunwind.dll`, and
+`libwinpthread-1.dll` must be colocated there as well).
+
+From Linux, use an SSH local forward when TCP forwarding is permitted:
+
+```sh
+ssh -N -L 18000:127.0.0.1:8000 <windows-host>
+```
+
+Then send the normal MCP `initialize`, `notifications/initialized`, and
+`tools/list` requests to `http://127.0.0.1:18000/mcp`. If the Windows SSH
+service disallows local forwarding, issue the same HTTP requests with
+PowerShell `Invoke-WebRequest` (or `curl.exe`) on the Windows host through
+SSH. The protocol and session handling are unchanged.
+
+The verified Windows path exposed `LightUSDRunPython`; it exported the UE
+built-in cube with the native USD exporter, validated the USDA with LightUSD,
+and imported it with the native UE USD importer, creating `SM_Cube` and
+`MI_DisplayColor`. A MetaHuman identity-template path was also queried and
+correctly reported missing when the project did not contain the local
+MetaHuman template assets; EOS/MetaHuman Creator authorization is not needed
+for this basic mesh round-trip.
+
+For a fresh Windows UE project with `MetaHumanCharacter` enabled, run
+`dcc/ue/tests/ue_metahuman_template_scene_roundtrip.py` with
+`UnrealEditor-Cmd.exe -ExecutePythonScript`. The script spawns face and body
+skeletal actors from the local identity templates, saves
+`/Game/LightUSD/MetaHumanTemplateScene`, exports `face.usda` and `body.usda`,
+validates both with LightUSD, imports through the LightUSD backend, and also
+checks native UE import. The verified UE 5.8 run used no EOS and no
+auto-rigging: LightUSD reported 30 face prims and 5 body prims, while native
+import created skeletal meshes, skeletons, physics assets, and materials for
+both templates.
+
 ## 1. Enable the UE MCP server
 
 Add the following project plugin entry to `MhUsdTest.uproject`:
@@ -145,9 +203,9 @@ The exported Material applies both `MaterialXConfigAPI` and
 `MaterialUEConfigAPI`. Portable nodes are represented by an OpenPBR surface;
 UE expressions are represented as typed `Shader` prims under `UEGraph`, using
 `info:id = "UnrealMaterialExpression.<class>"`. UE class paths, editor layout,
-connections, and a JSON property archive are preserved. The corresponding
-import path recreated all five test expressions and their classes through the
-MCP bridge.
+connections, and a JSON property archive are preserved. The extended import
+regression recreates all 14 test expressions and their classes through the
+same bridge.
 
 Common UE expressions also receive a portable MaterialX representation:
 `Constant`, `Constant3Vector`, `TextureSample`, `TextureCoordinate`,
@@ -156,6 +214,13 @@ Common UE expressions also receive a portable MaterialX representation:
 lossless fallback. Canonical OpenPBR inputs are reconnected on import, and
 texture paths stored in the UE archive are resolved back to UE `Texture2D`
 assets when available.
+
+The UE 5.8 extended regression also covers scalar/vector/static parameters,
+static switches, normalize/normal chains, runtime virtual-texture samples,
+material-function calls, Make/Blend Material Attributes, and Clear Coat
+shading-model restoration. Nodes with a direct MaterialX equivalent receive a
+portable `ND_*` node; function/layer nodes without a lossless portable
+equivalent remain reconstructable through the adjacent `UEGraph` archive.
 
 `MaterialUEConfigAPI` is the explicit fallback for UE-only settings and future
 engine-specific properties. It is intentionally additive: consumers that do
@@ -173,6 +238,76 @@ graph reconstruction.
 For MetaHuman data, repeat the same sequence with the body/face skeletal mesh,
 then add the MetaHuman asset path and enable physics, groom, and relinking
 options. Auto-rigging is not required for the template roundtrip.
+
+### Windows UE <-> Linux Blender asset bridge
+
+When the two MCP endpoints cannot directly share a filesystem, use the
+dependency-free base64 bridge in `dcc/bridge/asset_bridge.py`. Start it on
+the Linux host, upload a Blender USDA, then run the UE-side launcher on
+Windows:
+
+```sh
+python3 -m dcc.bridge.asset_bridge --root /tmp/lightusd-bridge-live \
+  --host 0.0.0.0 --port 8765 --token bridge-test-20260918
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File dcc/ue/tests/run_asset_bridge.ps1 `
+  -BridgeUrl http://<linux-host>:8765 `
+  -BridgeToken bridge-test-20260918 -AssetId <blender-upload-id>
+```
+
+The UE script downloads the asset, imports it through the native UE backend,
+exports the first skeletal mesh, validates that export with LightUSD, and
+uploads the result. The report is written to
+`D:\work\lightusd\UBTFullTest\BlenderBridge\report.json`. The 2026-09-18
+live test passed with UE 5.8: native import created a skeletal mesh, skeleton,
+physics asset, and material; LightUSD counted 6 output prims; Blender MCP
+re-imported the returned USDA with one armature, one skinned mesh, and two
+bones.
+
+For a single machine-readable run, use `dcc/run_interop_regressions.py` with
+`dcc/interop-regression.example.json`. The runner starts the local bridge,
+runs the Blender 5.2 regression matrix, uploads a checksummed dependency
+bundle, establishes configured background transports such as an SSH reverse
+tunnel, invokes UE 5.8, and embeds UE's verified JSON result in its own report.
+Commands are argument arrays rather than shell strings, and bridge tokens are
+redacted from the report.
+
+Dependency bundles use `lightusd-asset-bundle-v1`: every USDA/USDC layer,
+MaterialX document, texture, and UDIM tile has a relative path, byte size, and
+SHA-256 entry. Both the desktop and UE clients reject absolute paths, parent
+traversal, drive names, checksum mismatches, and oversized expanded bundles.
+
+Windows can run the complete UE-only matrix directly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File dcc/ue/tests/run_headless_regressions.ps1 `
+  -Editor "C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
+  -Project D:\work\lightusd\UBTFullTest\UBTFullTest.uproject `
+  -RepoRoot D:\work\lightusd -OutRoot C:\tmp\lightusd-regressions -MetaHuman
+```
+
+The suite requires a fresh `report.json` from every editor process and writes
+an aggregate `summary.json`. Without `-MetaHuman` it covers physics, extended
+materials, rigged mesh/animation, UsdSkel facial blendshapes, static and
+animated groom, NURBS, guide-only groom, and groom cards. `-MetaHuman` adds
+template, material/UDIM, and scene roundtrips.
+
+### UE 5.8 Windows verification (2026-09-18)
+
+The selected regression targets were run against the Windows UE 5.8 editor
+through the headless commandlet/MCP automation path:
+
+| Target | Result |
+| --- | --- |
+| Material graph | 14 UE expressions reconstructed; Base Color, parameters, function/layer nodes, virtual texture and Clear Coat settings restored; LightUSD validation counted 29 prims. |
+| Groom | Static and animated BasisCurves imported as GroomAsset + GroomBindingAsset + GroomCache + hair material, exported, and re-imported. The NURBS fixture was tessellated and retained the required warning. |
+| UE ↔ Linux bridge | Native UE import created skeletal mesh, skeleton, physics asset, and material; UE export uploaded successfully; LightUSD validation counted 6 prims. |
+
+These runs produced reports under the UE test project's `Regressions` and
+`BlenderBridge` folders. The only command-line warnings were UBT SDK checks
+for non-Win64 target platforms; they did not affect the Win64 editor runs.
 
 ### Repeatable material regression
 
@@ -211,6 +346,17 @@ body mesh and material, validates a `UsdUVTexture` asset path containing
 `<UDIM>`, and imports both the native UE USD material and a LightUSD-authored
 preview-surface material:
 
+The UE-side tile import assigns explicit destination names (`T_*_1001` and
+`T_*_1002`). This is required because UE's dotted filename normalization can
+otherwise strip the UDIM suffix and collapse both source files to one Content
+Browser asset. The native USD material importer continues to create its
+consolidated UDIM texture asset from the `<UDIM>` path.
+
+The bound-material fixture `tests/usda/udim-material-bound.usda` verifies the
+full dependency case: UE creates and saves `T_lightusd_skin`, and a fresh UE
+process reloads the imported material instance with a `BaseColorTexture`
+parameter referencing that texture asset.
+
 ```sh
 /mnt/disk1/local/ue/Engine/Binaries/Linux/UnrealEditor-Cmd \
   /mnt/disk1/work/ue/MhUsdTest/MhUsdTest.uproject \
@@ -241,8 +387,7 @@ the checked-in headless UE test consumes that file:
 
 The test writes /tmp/lightusd_ue_groom/report.json and verifies both the
 native groom asset and its binding against
-/MetaHumanCharacter/Face/SKM_Face. Groom caches, animation, cards, and NURBS
-curves remain outside this static BasisCurves path.
+/MetaHumanCharacter/Face/SKM_Face.
 
 The same test then exports the resulting UGroomAsset back to
 /tmp/lightusd_ue_groom/ue_groom_export.usda, validates /World/Groom, and
@@ -252,7 +397,7 @@ Blender animated curve objects author `points` and `widths` time samples and
 preserve the stage frame range. The LightUSD UE adapter now builds a native
 `UGroomCache` from those samples, validates fixed topology, and keeps the first
 sample as the static groom source. It records position, width, and color cache
-attributes; guide-only cache authoring remains a separate extension.
+attributes plus stable group, guide, strand-ID, and root-UV topology metadata.
 `export_groom` exports a static `UGroomAsset`. For animation, use
 `export_groom_cache(cache, groom_asset, filename)`: the cache supplies animated
 point/radius samples while the source `UGroomAsset` supplies stable curve
@@ -264,4 +409,11 @@ control points, knots, order, ranges, and optional weights to linear
 HairStrands curves. The Blender bridge can export/import NURBS splines. Groom
 cards are represented as ordinary USD `Mesh` prims with `groom_card` and
 `groom_card_id` metadata, so they retain geometry, materials, and card identity
-through the existing mesh path.
+through the existing mesh path. On UE import, LightUSD remains authoritative
+for strands and caches while card Mesh prims are handed to UE's native USD
+geometry importer and become native StaticMesh assets.
+
+Guide-only BasisCurves require render strands internally in UE HairStrands.
+The adapter promotes them internally, marks the groom package with their
+original role, and restores `primvars:groom_guide = 1` on static and animated
+USD export. This path is covered by `tests/usda/blender-guide-groom.usda`.

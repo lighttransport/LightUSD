@@ -170,7 +170,7 @@ def _basis_curves_from_object(stage, obj, path):
         prim.attribute("primvars:groom_roughness").set_metadata("interpolation", "vertex")
     prim.set("xformOp:transform", tuple(v for row in obj.matrix_world for v in row),
              type="matrix4d")
-    prim.set("xformOpOrder", ["xformOp:transform"], type="token[]")
+    prim.set("xformOpOrder", ["xformOp:transform"], type="token[]", uniform=True)
     scene = bpy.context.scene
     if (obj.animation_data or getattr(obj.data, "animation_data", None)) \
             and scene.frame_end > scene.frame_start:
@@ -225,7 +225,7 @@ def _nurbs_curves_from_object(stage, obj, path):
     prim.set("widths", [0.02] * len(points), type="float[]")
     prim.set("xformOp:transform", tuple(v for row in obj.matrix_world for v in row),
              type="matrix4d")
-    prim.set("xformOpOrder", ["xformOp:transform"], type="token[]")
+    prim.set("xformOpOrder", ["xformOp:transform"], type="token[]", uniform=True)
     obj["lightusd_usd_path"] = path
     return path
 
@@ -236,8 +236,9 @@ def import_file(filepath):
     limit = pref.max_memory_mb * 1024 * 1024
     stage = lightusd.load(filepath, composed=True, load_payloads=True, max_memory=limit)
     collection = _new_collection(Path(filepath).stem)
+    asset_dir = str(Path(filepath).resolve().parent)
     materials = {
-        prim.path: materialx.import_material(stage, prim, prim.name)
+        prim.path: materialx.import_material(stage, prim, prim.name, asset_dir)
         for prim in stage.prims_of_type("Material")
     }
     objects = {}
@@ -251,10 +252,16 @@ def import_file(filepath):
             continue
         parent = objects.get(prim.parent.path if prim.parent else "")
         obj = None
-        if prim.type_name == "Mesh":
-            points = _attr(prim, "points") or []
-            counts = _attr(prim, "faceVertexCounts") or []
-            indices = _attr(prim, "faceVertexIndices") or []
+        # Some UE skeletal-mesh LOD variants compose as Xform prims in
+        # LightUSD while retaining the complete Mesh attribute set. Treat
+        # those geometry-bearing Xforms as meshes so skin bindings survive
+        # UE -> Blender -> USD round trips.
+        points = _attr(prim, "points") or []
+        counts = _attr(prim, "faceVertexCounts") or []
+        indices = _attr(prim, "faceVertexIndices") or []
+        is_geometry_mesh = prim.type_name == "Mesh" or (
+            prim.type_name == "Xform" and points and counts and indices)
+        if is_geometry_mesh:
             faces, offset = [], 0
             for count in counts:
                 faces.append(indices[offset:offset + count])
@@ -392,7 +399,7 @@ def _export_object(stage, obj, parent_path, armature_exports=None):
         return _nurbs_curves_from_object(stage, obj, path)
     prim = stage.define_prim(path, "Mesh" if obj.type == "MESH" else "Xform")
     prim.set("xformOp:transform", tuple(v for row in obj.matrix_world for v in row), type="matrix4d")
-    prim.set("xformOpOrder", ["xformOp:transform"], type="token[]")
+    prim.set("xformOpOrder", ["xformOp:transform"], type="token[]", uniform=True)
     obj["lightusd_usd_path"] = path
     if obj.type == "MESH":
         mesh = obj.data

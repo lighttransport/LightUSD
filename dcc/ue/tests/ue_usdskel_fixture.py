@@ -8,10 +8,14 @@ import unreal
 import lightusd_ue
 
 
+ROOT = os.environ.get(
+    "LIGHTUSD_REPO_ROOT",
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 FIXTURE = os.environ.get(
     "LIGHTUSD_USDSKEL_FIXTURE",
-    "/mnt/nvme02/work/tinyusdz-repo/dev/tests/usda/ue-skinned-blendshape.usda")
+    os.path.join(ROOT, "tests/usda/ue-skinned-blendshape.usda"))
 OUT = os.environ.get("LIGHTUSD_UE_TEST_OUT", "/tmp/lightusd_ue_usdskel_fixture")
+PACKAGE = os.environ.get("LIGHTUSD_UE_TEST_PACKAGE", "/Game/LightUSD/UsdSkelFixture")
 
 
 def main():
@@ -21,7 +25,7 @@ def main():
         raise RuntimeError(f"Fixture LightUSD validation failed: {validation.error}")
     result = lightusd_ue.import_usd(
         FIXTURE, backend="native", import_skeletal_animation=True,
-        import_groom=False, import_physics=False)
+        import_groom=False, import_physics=False, package_path=PACKAGE)
     if not result.succeeded:
         raise RuntimeError(f"UE native UsdSkel fixture import failed: {result.error}")
     skeletal_mesh = next((unreal.load_asset(path) for path in result.created_assets
@@ -48,7 +52,7 @@ def main():
     if skeleton_path and os.path.basename(FIXTURE) == "ue-skinned-blendshape.usda":
         facial_animation = lightusd_ue.import_skeletal_animation(
             FIXTURE, "AN_Character_Facial", skeleton_path,
-            package_path="/Game/LightUSD/UsdSkelFixture/Animation",
+            package_path=PACKAGE + "/Animation",
             preview_mesh=skeletal_mesh)
         if not facial_animation.succeeded:
             raise RuntimeError(

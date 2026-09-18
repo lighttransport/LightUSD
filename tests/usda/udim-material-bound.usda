@@ -1,0 +1,36 @@
+#usda 1.0
+
+def Xform "World"
+{
+    def Mesh "Quad"
+    {
+        point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </World/Materials/UDIMMaterial>
+    }
+
+    def Scope "Materials"
+    {
+        def Material "UDIMMaterial"
+        {
+            token outputs:surface.connect = </World/Materials/UDIMMaterial/PreviewSurface.outputs:surface>
+
+            def Shader "PreviewSurface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor.connect = </World/Materials/UDIMMaterial/UDIMTexture.outputs:rgb>
+                float inputs:roughness = 0.5
+                token outputs:surface
+            }
+
+            def Shader "UDIMTexture"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @lightusd_skin.<UDIM>.png@
+                texCoord2f inputs:st = (0, 0)
+                float3 outputs:rgb
+            }
+        }
+    }
+}

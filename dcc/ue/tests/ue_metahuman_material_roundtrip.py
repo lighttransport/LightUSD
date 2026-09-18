@@ -51,6 +51,10 @@ def import_udim_tiles():
         task = unreal.AssetImportTask()
         task.filename = os.path.join(source_dir, f"lightusd_skin.{tile}.png")
         task.destination_path = f"{PACKAGE}/Textures"
+        # UE's image importer strips the dotted UDIM suffix when deriving an
+        # asset name. Set an explicit per-tile destination name so 1001 and
+        # 1002 cannot collide in the Content Browser.
+        task.destination_name = f"T_lightusd_skin_{tile}"
         task.automated = True
         task.replace_existing = True
         task.save = True
@@ -61,6 +65,8 @@ def import_udim_tiles():
         assets.extend(task.imported_object_paths)
     if not assets:
         fail("UE imported no UDIM texture assets")
+    if len(set(assets)) != 2:
+        fail(f"UDIM tiles collapsed to duplicate UE assets: {assets}")
     return assets
 
 

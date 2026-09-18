@@ -66,9 +66,13 @@ def main():
     with open(USD_FILE, "r", encoding="utf-8") as stream:
         source_text = stream.read()
     is_nurbs = "NurbsCurves" in source_text
+    is_guide_only = "primvars:groom_guide = [1" in source_text
     if is_nurbs and not any("NurbsCurves were tessellated" in warning
                             for warning in result.warnings):
         fail(f"NurbsCurves input was not tessellated: {result.warnings}")
+    if is_guide_only and not any("Guide-only BasisCurves were promoted" in warning
+                                 for warning in result.warnings):
+        fail(f"Guide-only groom role was not preserved: {result.warnings}")
     if ".timeSamples" in source_text and not groom_caches:
         fail(f"Animated groom did not create a UGroomCache: {result.created_assets}")
     exported_usd = os.path.join(OUT_DIR, "ue_groom_export.usda")
@@ -88,6 +92,8 @@ def main():
             fail(f"Exported groom is missing {primvar}")
     if "BasisCurves" not in exported_text:
         fail("Exported groom did not use BasisCurves")
+    if is_guide_only and "primvars:groom_guide = [1" not in exported_text:
+        fail("Exported groom lost the guide-only curve role")
     if not is_nurbs and "1, 0, 2" not in exported_text:
         fail("Exported groom lost non-zero source point coordinates")
     exported_cache_usd = None
@@ -106,6 +112,12 @@ def main():
         for animated_attr in ("points.timeSamples", "widths.timeSamples"):
             if animated_attr not in exported_cache_text:
                 fail(f"Exported groom cache is missing {animated_attr}")
+        for topology_attr in ("primvars:groom_group_id", "primvars:groom_guide",
+                              "primvars:groom_id", "primvars:groom_root_uv"):
+            if topology_attr not in exported_cache_text:
+                fail(f"Exported groom cache is missing {topology_attr}")
+        if is_guide_only and "primvars:groom_guide = [1" not in exported_cache_text:
+            fail("Exported groom cache lost the guide-only curve role")
         if "0.2" not in exported_cache_text:
             fail("Exported groom cache lost non-zero animated point coordinates")
         cache_reimport = lightusd_ue.import_usd(

@@ -1,0 +1,25 @@
+{
+  "blender": "/path/to/blender-5.2/blender",
+  "output": "/tmp/lightusd-interop",
+  "bridge_url": "http://127.0.0.1:18765",
+  "background_commands": [
+    ["ssh", "-N", "-R", "18765:127.0.0.1:{bridge_port}", "windows-ue-host"]
+  ],
+  "ue_commands": [
+    [
+      "ssh",
+      "windows-ue-host",
+      "powershell",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      "D:\\work\\lightusd\\dcc\\ue\\tests\\run_asset_bridge.ps1",
+      "-BridgeUrl",
+      "{bridge_url}",
+      "-BridgeToken",
+      "{bridge_token}",
+      "-AssetId",
+      "{asset_id}"
+    ]
+  ]
+}

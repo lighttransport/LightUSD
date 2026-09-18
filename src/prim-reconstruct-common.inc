@@ -505,7 +505,8 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 {
   ParseResult ret;
 
-  if (prop_name.compare(name) == 0) {
+  if (prop_name.compare(name) == 0 ||
+      prop_name.compare(name + ".connect") == 0) {
     if (table.count(name)) {
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       return ret;
