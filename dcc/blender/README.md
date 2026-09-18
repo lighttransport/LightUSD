@@ -155,6 +155,12 @@ download_file("http://bridge-host:8765", asset["id"], "/tmp/scene-copy.usda",
               "<shared-secret>")
 ```
 
+Use `upload_asset_bundle()` for a complete scene transfer. It discovers text
+USD and binary USDC composition/asset references, USDZ external references,
+MaterialX includes and textures, and all matching `<UDIM>` tiles. Discovery is
+confined to the supplied root and the resulting ZIP manifest checksums every
+relative file.
+
 The verified Windows UE 5.8 fallback test uses the checked-in launch script:
 
 ```powershell

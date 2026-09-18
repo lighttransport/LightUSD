@@ -21,6 +21,39 @@ def _value(socket):
     return value
 
 
+def _plain(value):
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if hasattr(value, "tolist"):
+        return value.tolist()
+    if isinstance(value, (tuple, list)):
+        return [_plain(item) for item in value]
+    return str(value)
+
+
+def _portable_graph(prim):
+    """Serialize imported UsdShade topology for Blender-side preservation."""
+    result = []
+    pending = list(prim.children)
+    while pending:
+        node = pending.pop(0)
+        pending[0:0] = list(node.children)
+        if node.type_name not in ("Shader", "NodeGraph"):
+            continue
+        attributes = {}
+        connections = {}
+        for name in node.attributes:
+            attr = node.attribute(name)
+            if attr.connections:
+                connections[name] = list(attr.connections)
+            value = node.get(name)
+            if value is not None:
+                attributes[name] = _plain(value)
+        result.append({"path": node.path, "type": node.type_name,
+                       "attributes": attributes, "connections": connections})
+    return result
+
+
 def _set_input(prim, name, socket, type_name=None):
     if socket and not socket.is_linked:
         prim.set("inputs:" + name, _value(socket), type=type_name)
@@ -99,6 +132,10 @@ def import_material(stage, prim, name, asset_dir=None):
     children = list(prim.children)
     shader = next((child for child in children if child.type_name == "Shader"), prim)
     material = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    portable_graph = _portable_graph(prim)
+    if portable_graph:
+        material["lightusd_materialx_graph"] = json.dumps(
+            portable_graph, sort_keys=True, separators=(",", ":"))
     material.use_nodes = True
     tree = material.node_tree
     tree.nodes.clear()

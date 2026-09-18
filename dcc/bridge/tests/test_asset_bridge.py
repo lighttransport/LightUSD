@@ -7,6 +7,7 @@ import os
 import socket
 import tempfile
 import unittest
+import zipfile
 
 from dcc.bridge.asset_bridge import (BridgeError, BridgeServer, build_bundle,
                                      discover_asset_dependencies,
@@ -161,6 +162,45 @@ class AssetBridgeTest(unittest.TestCase):
             stream.write(b'#usda 1.0\nasset missing = @missing.png@\n')
         with self.assertRaises(BridgeError):
             discover_asset_dependencies(scene, root)
+
+    def test_discovers_binary_usdc_dependencies(self):
+        import lightusd
+        root = os.path.join(self.temp.name, "binary")
+        os.makedirs(root)
+        dependency = os.path.join(root, "payload.usda")
+        with open(dependency, "wb") as stream:
+            stream.write(b'#usda 1.0\ndef Xform "Payload" {}\n')
+        stage = lightusd.Stage.create()
+        stage.add_sublayer("payload.usda")
+        usdc = os.path.join(root, "scene.usdc")
+        with open(usdc, "wb") as stream:
+            stream.write(stage.export_usdc())
+        paths = discover_asset_dependencies(usdc, root)
+        self.assertEqual(["payload.usda", "scene.usdc"],
+                         [path.relative_to(root).as_posix() for path in paths])
+
+    def test_discovers_usdz_external_and_materialx_include(self):
+        root = os.path.join(self.temp.name, "package")
+        os.makedirs(os.path.join(root, "shared"))
+        external = os.path.join(root, "external.usda")
+        include = os.path.join(root, "shared", "library.mtlx")
+        with open(external, "wb") as stream:
+            stream.write(b'#usda 1.0\ndef Xform "External" {}\n')
+        with open(include, "wb") as stream:
+            stream.write(b'<materialx version="1.39"/>')
+        package = os.path.join(root, "scene.usdz")
+        with zipfile.ZipFile(package, "w") as archive:
+            archive.writestr("root.usda",
+                             '#usda 1.0\nasset local = @textures/a.png@\n'
+                             'asset external = @external.usda@\n'
+                             'asset remote = @https://example.invalid/a.usd@\n')
+            archive.writestr("textures/a.png", b"image")
+            archive.writestr("looks/look.mtlx",
+                             '<materialx><xi:include href="../shared/library.mtlx"/>'
+                             '</materialx>')
+        paths = discover_asset_dependencies(package, root)
+        self.assertEqual(["external.usda", "scene.usdz", "shared/library.mtlx"],
+                         [path.relative_to(root).as_posix() for path in paths])
 
 
 if __name__ == "__main__":

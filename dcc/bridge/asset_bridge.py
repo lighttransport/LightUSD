@@ -35,12 +35,62 @@ _NAME_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 _BUNDLE_MANIFEST = "lightusd-bundle.json"
 _USD_ASSET_RE = re.compile(r"@((?:\\@|[^@])+)@")
 _MTLX_FILE_RE = re.compile(
-    r"(?:file|filename|sourceuri)\s*=\s*(['\"])(.*?)\1", re.IGNORECASE)
+    r"(?:file|filename|sourceuri|href)\s*=\s*(['\"])(.*?)\1", re.IGNORECASE)
 _TEXT_DEPENDENCY_SUFFIXES = {".usd", ".usda", ".usdc", ".mtlx"}
 
 
 class BridgeError(ValueError):
     """A client-visible transfer error."""
+
+
+def _dependency_text(data: bytes, suffix: str, label: str) -> str:
+    """Return inspectable text, decoding Crate through LightUSD when needed."""
+    is_binary_usd = data.startswith(b"PXR-USDC") or b"\x00" in data[:4096]
+    if not is_binary_usd:
+        return data.decode("utf-8", errors="replace")
+    if suffix not in {".usd", ".usdc"}:
+        return ""
+    try:
+        import lightusd
+        return lightusd.load_bytes(data, format="usdc").export_usda()
+    except (ImportError, RuntimeError, ValueError) as exc:
+        raise BridgeError("cannot inspect binary USD dependencies: " + label) from exc
+
+
+def _dependency_references(data: bytes, suffix: str, label: str) -> list[str]:
+    text = _dependency_text(data, suffix, label)
+    references = [match.replace("\\@", "@")
+                  for match in _USD_ASSET_RE.findall(text)]
+    if suffix == ".mtlx":
+        references.extend(html.unescape(match[1])
+                          for match in _MTLX_FILE_RE.findall(text))
+    return references
+
+
+def _usdz_external_references(source: Path) -> list[str]:
+    """Inspect USDZ members and return references not stored in the package."""
+    try:
+        with zipfile.ZipFile(source, "r") as archive:
+            names = {_bundle_path(name) for name in archive.namelist()
+                     if not name.endswith("/")}
+            references = []
+            for name in sorted(names):
+                suffix = Path(name).suffix.lower()
+                if suffix not in _TEXT_DEPENDENCY_SUFFIXES:
+                    continue
+                for reference in _dependency_references(
+                        archive.read(name), suffix, f"{source}[{name}]"):
+                    outer = reference.split("[", 1)[0]
+                    if not outer or "://" in outer or outer.startswith("/"):
+                        continue
+                    package_relative = str(
+                        Path(name).parent.joinpath(outer)).replace("\\", "/")
+                    package_relative = os.path.normpath(package_relative).replace("\\", "/")
+                    if package_relative not in names and outer not in names:
+                        references.append(package_relative)
+            return references
+    except zipfile.BadZipFile as exc:
+        raise BridgeError("invalid USDZ package: " + str(source)) from exc
 
 
 class BridgeStore:
@@ -362,20 +412,13 @@ def discover_asset_dependencies(root_layer: str | os.PathLike[str],
             continue
         found.add(source)
         suffix = source.suffix.lower()
-        if suffix not in _TEXT_DEPENDENCY_SUFFIXES:
+        if suffix == ".usdz":
+            references = _usdz_external_references(source)
+        elif suffix in _TEXT_DEPENDENCY_SUFFIXES:
+            references = _dependency_references(
+                source.read_bytes(), suffix, str(source))
+        else:
             continue
-        data = source.read_bytes()
-        if data.startswith(b"PXR-USDC") or b"\x00" in data[:4096]:
-            if strict and suffix in {".usd", ".usdc"}:
-                raise BridgeError(
-                    "cannot discover dependencies in binary USD: " + str(source))
-            continue
-        text = data.decode("utf-8", errors="replace")
-        references = [match.replace("\\@", "@")
-                      for match in _USD_ASSET_RE.findall(text)]
-        if suffix == ".mtlx":
-            references.extend(html.unescape(match[1])
-                              for match in _MTLX_FILE_RE.findall(text))
         for reference in references:
             # Package members, URLs and UE object paths are not filesystem
             # dependencies transported by this bridge.

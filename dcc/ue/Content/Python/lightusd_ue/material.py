@@ -11,12 +11,19 @@ from __future__ import annotations
 import json
 import os
 import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
 import unreal
 
 from .api import Result
+
+
+_FUNCTION_TRANSLATORS = {
+    "/Engine/Functions/Engine_MaterialFunctions02/Utility/MakeFloat3.MakeFloat3":
+        "combine3",
+}
 
 
 def _q(value: Any) -> str:
@@ -221,6 +228,12 @@ def _materialx_node_id(expr: Any) -> str | None:
         "MaterialExpressionMakeMaterialAttributes": "ND_open_pbr_surface_surfaceshader",
         "MaterialExpressionSetMaterialAttributes": "ND_open_pbr_surface_surfaceshader",
         "MaterialExpressionBlendMaterialAttributes": "ND_mix_surfaceshader",
+        "MaterialExpressionBreakMaterialAttributes": "ND_lightusd_material_attributes_extract",
+        "MaterialExpressionGetMaterialAttributes": "ND_lightusd_material_attributes_extract",
+        "MaterialExpressionSubstrateShadingModels": "ND_open_pbr_surface_surfaceshader",
+        "MaterialExpressionSubstrateSlabBSDF": "ND_open_pbr_surface_surfaceshader",
+        "MaterialExpressionSubstrateHorizontalMixing": "ND_mix_surfaceshader",
+        "MaterialExpressionSubstrateVerticalLayering": "ND_layer_surfaceshader",
         # A function call names its MaterialX nodedef below from the referenced
         # UE function. The fallback id also gives unassigned calls a stable,
         # explicitly namespaced semantic placeholder.
@@ -229,8 +242,13 @@ def _materialx_node_id(expr: Any) -> str | None:
 
 
 def _materialx_input_name(pin_name: str, class_name: str = "") -> str:
-    if class_name == "MaterialExpressionBlendMaterialAttributes":
+    if class_name in ("MaterialExpressionBlendMaterialAttributes",
+                      "MaterialExpressionSubstrateHorizontalMixing"):
         return {"A": "bg", "B": "fg", "Alpha": "mix"}.get(
+            pin_name, {"Background": "bg", "Foreground": "fg", "Mix": "mix"}.get(
+                pin_name, re.sub(r"[^A-Za-z0-9_]", "_", pin_name).lower()))
+    if class_name == "MaterialExpressionSubstrateVerticalLayering":
+        return {"Top": "top", "Base": "base"}.get(
             pin_name, re.sub(r"[^A-Za-z0-9_]", "_", pin_name).lower())
     if class_name in ("MaterialExpressionMakeMaterialAttributes",
                       "MaterialExpressionSetMaterialAttributes"):
@@ -254,6 +272,40 @@ def _materialx_input_name(pin_name: str, class_name: str = "") -> str:
     }.get(pin_name, re.sub(r"[^A-Za-z0-9_]", "_", pin_name).lower())
 
 
+def _function_nodedef(function_path: str) -> str:
+    return "ND_ue_" + _name(function_path.rsplit("/", 1)[-1])
+
+
+def _write_function_library(filename: str, functions: dict[str, str]) -> str | None:
+    """Write portable implementations for recognized UE material functions."""
+    supported = {path: nodedef for path, nodedef in functions.items()
+                 if path in _FUNCTION_TRANSLATORS}
+    if not supported:
+        return None
+    document = ET.Element("materialx", {"version": "1.39"})
+    for function_path, nodedef in sorted(supported.items()):
+        node = "ue_" + _name(function_path.rsplit("/", 1)[-1]).lower()
+        definition = ET.SubElement(document, "nodedef", {
+            "name": nodedef, "node": node, "nodegroup": "math",
+        })
+        for name in ("x", "y", "z"):
+            ET.SubElement(definition, "input", {
+                "name": name, "type": "float", "value": "0.0"})
+        ET.SubElement(definition, "output", {"name": "out", "type": "vector3"})
+        graph = ET.SubElement(document, "nodegraph", {
+            "name": "NG_" + nodedef, "nodedef": nodedef})
+        combine = ET.SubElement(graph, "combine3", {
+            "name": "combine", "type": "vector3"})
+        for index, name in enumerate(("x", "y", "z"), 1):
+            ET.SubElement(combine, "input", {
+                "name": f"in{index}", "type": "float", "interfacename": name})
+        ET.SubElement(graph, "output", {
+            "name": "out", "type": "vector3", "nodename": "combine"})
+    library = str(Path(filename).with_suffix(".functions.mtlx"))
+    ET.ElementTree(document).write(library, encoding="utf-8", xml_declaration=True)
+    return library
+
+
 def export_material(material: Any, filename: str, *, preserve_ue_config: bool = True,
                     prefer_materialx: bool = True) -> Result:
     if isinstance(material, str):
@@ -273,10 +325,16 @@ def export_material(material: Any, filename: str, *, preserve_ue_config: bool = 
     ids = {_path(expr): f"Expr_{index:04d}_{_name(expr.get_name(), 'Node')}"
            for index, expr in enumerate(expressions)}
     mtlx_ids = {}
+    function_defs = {}
     if prefer_materialx:
         for expr in expressions:
             if _materialx_node_id(expr):
                 mtlx_ids[_path(expr)] = f"Mtlx_{ids[_path(expr)]}"
+            if expr.get_class().get_name() == "MaterialExpressionMaterialFunctionCall":
+                function_path = _path(_get(expr, "material_function", "function", default=None))
+                if function_path:
+                    function_defs[function_path] = _function_nodedef(function_path)
+    function_library = _write_function_library(filename, function_defs) if prefer_materialx else None
     lines = ["#usda 1.0", "", f'def Material "{root}" (']
     schemas = []
     if prefer_materialx:
@@ -351,16 +409,27 @@ def export_material(material: Any, filename: str, *, preserve_ue_config: bool = 
                 function = _get(expr, "material_function", "function", default=None)
                 function_path = _path(function)
                 if function_path:
-                    nodedef = "ND_ue_" + _name(function_path.rsplit("/", 1)[-1])
+                    nodedef = function_defs[function_path]
                     lines[-2] = f'            uniform token info:id = "{nodedef}"'
-                    lines.append(f'            asset info:sourceAsset = {_asset(function_path)}')
-                    lines.append('            token info:implementationSource = "sourceAsset"')
+                    lines.append(f'            string unreal:functionAsset = {_q(function_path)}')
+                    if function_library and function_path in _FUNCTION_TRANSLATORS:
+                        lines.append(f'            asset info:sourceAsset = '
+                                     f'{_asset(Path(function_library).name)}')
+                        lines.append('            token info:implementationSource = "sourceAsset"')
+                        lines.append('            string lightusd:functionStatus = "translated"')
+                    else:
+                        lines.append('            string lightusd:functionStatus = "ue-only"')
                 lines.append('            string lightusd:semantic = "material_function"')
             elif class_name in ("MaterialExpressionMakeMaterialAttributes",
                                 "MaterialExpressionSetMaterialAttributes"):
                 lines.append('            string lightusd:semantic = "material_attributes"')
             elif class_name == "MaterialExpressionBlendMaterialAttributes":
                 lines.append('            string lightusd:semantic = "layered_material_mix"')
+            elif class_name in ("MaterialExpressionBreakMaterialAttributes",
+                                "MaterialExpressionGetMaterialAttributes"):
+                lines.append('            string lightusd:semantic = "material_attributes_extract"')
+            elif class_name.startswith("MaterialExpressionSubstrate"):
+                lines.append('            string lightusd:semantic = "substrate_portable"')
             if class_name in ("MaterialExpressionConstant", "MaterialExpressionScalarParameter"):
                 value = _get(expr, "r", "default_value", "default_scalar_value", default=0.0)
                 value = float(value or 0.0)
@@ -371,7 +440,7 @@ def export_material(material: Any, filename: str, *, preserve_ue_config: bool = 
                     lines.append(f"            color3f inputs:value = ({float(value.r)}, {float(value.g)}, {float(value.b)})")
             elif class_name == "MaterialExpressionStaticBoolParameter":
                 value = bool(_get(expr, "default_value", default=False))
-                lines.append(f"            boolean inputs:value = {'true' if value else 'false'}")
+                lines.append(f"            bool inputs:value = {'true' if value else 'false'}")
             elif (class_name.startswith("MaterialExpressionTextureSample") or
                   class_name == "MaterialExpressionRuntimeVirtualTextureSample"):
                 texture = _get(expr, "texture", "virtual_texture", default=None)
@@ -446,7 +515,10 @@ def export_material(material: Any, filename: str, *, preserve_ue_config: bool = 
         lines.append("        }")
     lines.extend(["    }", "}", ""])
     Path(filename).write_text("\n".join(lines), encoding="utf-8")
-    return Result(True, "LIGHTUSD", created_assets=[str(filename)],
+    created_assets = [str(filename)]
+    if function_library:
+        created_assets.append(function_library)
+    return Result(True, "LIGHTUSD", created_assets=created_assets,
                   prim_paths=[f"/{root}", f"/{root}/OpenPBRSurface", f"/{root}/UEGraph"],
                   root_layer=str(filename))
 

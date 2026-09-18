@@ -221,11 +221,19 @@ material-function calls, Make/Blend Material Attributes, and Clear Coat
 shading-model restoration. Make/Set Material Attributes export as
 `ND_open_pbr_surface_surfaceshader`; Blend Material Attributes exports as
 `ND_mix_surfaceshader`, with UE pins translated to OpenPBR and surface-mix
-inputs. Material-function calls export a nodedef identity derived from the
-referenced function plus `info:sourceAsset`/`info:implementationSource` and a
-stable semantic tag. A non-UE MaterialX consumer can therefore retain the
-function and layered topology; the adjacent `UEGraph` remains authoritative
-for exact UE reconstruction where the referenced implementation is UE-only.
+inputs. Recognized material functions also produce a sibling
+`.functions.mtlx` library containing a real MaterialX `nodedef` and
+`nodegraph`; the shader's `info:sourceAsset` points at that implementation.
+`MakeFloat3` currently translates to a `combine3` graph. Unsupported functions
+are marked `lightusd:functionStatus = "ue-only"` instead of claiming portable
+behavior. The original object path remains in `unreal:functionAsset`.
+
+Break/Get Material Attributes retain an extraction semantic. UE 5.8 Substrate
+Slab/Shading Models map to OpenPBR, Horizontal Mixing maps to
+`ND_mix_surfaceshader`, and Vertical Layering maps to
+`ND_layer_surfaceshader`. Operators without a faithful MaterialX equivalent
+remain UE-only. The adjacent `UEGraph` stays authoritative for exact UE
+reconstruction.
 
 `MaterialUEConfigAPI` is the explicit fallback for UE-only settings and future
 engine-specific properties. It is intentionally additive: consumers that do
@@ -286,10 +294,14 @@ traversal, drive names, checksum mismatches, and oversized expanded bundles.
 
 `upload_asset_bundle_http()` and `dcc.bridge.transfer.upload_asset_bundle()`
 discover the closure automatically. They recursively follow `@asset@`
-references in text USD layers, `file`/`filename`/`sourceuri` attributes in
+references in USD layers, `file`/`filename`/`sourceuri`/`href` attributes in
 MaterialX documents, and expand every matching `<UDIM>` tile. Discovery stays
 inside the selected bundle root and is strict by default: missing files, root
-escapes, and binary USDC layers that cannot be inspected fail before upload.
+escapes, and malformed containers fail before upload. Binary USDC is decoded
+through LightUSD without composition, preserving discoverable sublayers,
+references, payloads, value clips, and asset properties. USDZ members are
+inspected in place; packaged files stay in the archive and external references
+are added to the transfer bundle.
 Explicit `bundle_dependencies` remain available in the unified runner for
 generated files that are intentionally not referenced by the root layer.
 

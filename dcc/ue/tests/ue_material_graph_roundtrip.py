@@ -24,6 +24,12 @@ def fail(message):
 
 
 def make_material():
+    material_path = f"{PACKAGE}/M_GraphRoundtrip"
+    imported_path = f"{PACKAGE}Imported/M_GraphRoundtrip"
+    for existing in (material_path, imported_path):
+        if unreal.EditorAssetLibrary.does_asset_exist(existing):
+            if not unreal.EditorAssetLibrary.delete_asset(existing):
+                fail(f"Unable to remove stale test asset: {existing}")
     tools = unreal.AssetToolsHelpers.get_asset_tools()
     material = tools.create_asset(
         "M_GraphRoundtrip", PACKAGE, unreal.Material, unreal.MaterialFactoryNew())
@@ -91,6 +97,11 @@ def make_material():
         material, unreal.MaterialExpressionRuntimeVirtualTextureSample, 100, 800)
     function_call = unreal.MaterialEditingLibrary.create_material_expression(
         material, unreal.MaterialExpressionMaterialFunctionCall, 100, 950)
+    material_function = unreal.EditorAssetLibrary.load_asset(
+        "/Engine/Functions/Engine_MaterialFunctions02/Utility/MakeFloat3.MakeFloat3")
+    if not material_function:
+        fail("Unable to load the engine MakeFloat3 material function")
+    function_call.set_editor_property("material_function", material_function)
     attributes = unreal.MaterialEditingLibrary.create_material_expression(
         material, unreal.MaterialExpressionMakeMaterialAttributes, 350, 800)
     layered = unreal.MaterialEditingLibrary.create_material_expression(
@@ -103,6 +114,21 @@ def make_material():
         attributes, "", layered, "B")
     unreal.MaterialEditingLibrary.connect_material_expressions(
         alpha, "", layered, "Alpha")
+    unreal.MaterialEditingLibrary.create_material_expression(
+        material, unreal.MaterialExpressionBreakMaterialAttributes, 600, 800)
+    unreal.MaterialEditingLibrary.create_material_expression(
+        material, unreal.MaterialExpressionGetMaterialAttributes, 600, 1000)
+    # Substrate is optional at project level, but its expression classes are
+    # reflected in UE 5.8. Disconnected nodes safely exercise interchange
+    # mappings without requiring the project to compile a Substrate material.
+    for class_name in (
+            "MaterialExpressionSubstrateSlabBSDF",
+            "MaterialExpressionSubstrateHorizontalMixing",
+            "MaterialExpressionSubstrateVerticalLayering"):
+        expression_class = getattr(unreal, class_name, None)
+        if expression_class:
+            unreal.MaterialEditingLibrary.create_material_expression(
+                material, expression_class, 850, 800)
 
     try:
         material.set_editor_property(
@@ -126,9 +152,22 @@ def main():
     for marker in ("MaterialXGraph", "ND_mix_color3", "ND_invert_float",
                    "ND_constant_boolean", "ND_open_pbr_surface_surfaceshader",
                    "ND_mix_surfaceshader", 'lightusd:semantic = "material_function"',
+                   'lightusd:semantic = "material_attributes_extract"',
+                   'lightusd:semantic = "substrate_portable"',
+                   "ND_layer_surfaceshader",
+                   'info:implementationSource = "sourceAsset"',
+                   "ND_ue_MakeFloat3_MakeFloat3",
+                   'lightusd:functionStatus = "translated"',
                    "MaterialUEConfigAPI"):
         if marker not in text:
             fail(f"Expected material graph marker is missing: {marker}")
+    function_library = os.path.splitext(usd_file)[0] + ".functions.mtlx"
+    if not os.path.isfile(function_library):
+        fail("Translated material function library was not written")
+    function_text = open(function_library, encoding="utf-8").read()
+    for marker in ("<nodedef", "<nodegraph", "combine3", "ND_ue_MakeFloat3_MakeFloat3"):
+        if marker not in function_text:
+            fail(f"Material function implementation marker is missing: {marker}")
 
     validation = lightusd_ue.validate_usd(usd_file)
     if not validation.succeeded:
@@ -147,9 +186,10 @@ def main():
         fail(f"Shading model was not restored: {source_shading_model} -> "
              f"{imported_shading_model}")
 
+    source_expressions = unreal.MaterialEditingLibrary.get_material_expressions(material)
     expressions = unreal.MaterialEditingLibrary.get_material_expressions(imported_material)
-    if len(expressions) != 14:
-        fail(f"Expected fourteen reconstructed expressions, got {len(expressions)}")
+    if len(expressions) != len(source_expressions):
+        fail(f"Expression count changed: {len(source_expressions)} -> {len(expressions)}")
     base_color = unreal.MaterialEditingLibrary.get_material_property_input_node(
         imported_material, unreal.MaterialProperty.MP_BASE_COLOR)
     if not base_color or "LinearInterpolate" not in base_color.get_class().get_name():
@@ -173,7 +213,16 @@ def main():
         "MaterialExpressionMaterialFunctionCall",
         "MaterialExpressionMakeMaterialAttributes",
         "MaterialExpressionBlendMaterialAttributes",
+        "MaterialExpressionBreakMaterialAttributes",
+        "MaterialExpressionGetMaterialAttributes",
     }
+    source_classes = {expression.get_class().get_name()
+                      for expression in source_expressions}
+    expected_classes.update(source_classes.intersection({
+        "MaterialExpressionSubstrateSlabBSDF",
+        "MaterialExpressionSubstrateHorizontalMixing",
+        "MaterialExpressionSubstrateVerticalLayering",
+    }))
     if not expected_classes.issubset(restored_classes):
         fail(f"Extended material nodes were not restored: "
              f"{sorted(expected_classes - restored_classes)}")
