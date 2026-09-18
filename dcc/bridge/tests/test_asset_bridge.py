@@ -123,6 +123,9 @@ class AssetBridgeTest(unittest.TestCase):
         for path in ("../escape.usda", "/absolute.usda", "C:/drive.usda"):
             with self.subTest(path=path), self.assertRaises(BridgeError):
                 build_bundle({path: b"unsafe"})
+        with self.assertRaises(BridgeError):
+            build_bundle({"Textures/Skin.png": b"a",
+                          "textures/skin.png": b"b"})
 
     def test_discovers_recursive_materialx_and_udim_dependencies(self):
         root = os.path.join(self.temp.name, "closure")
@@ -162,6 +165,36 @@ class AssetBridgeTest(unittest.TestCase):
             stream.write(b'#usda 1.0\nasset missing = @missing.png@\n')
         with self.assertRaises(BridgeError):
             discover_asset_dependencies(scene, root)
+
+    def test_dependency_cycles_limits_and_case_collisions(self):
+        root = os.path.join(self.temp.name, "limits")
+        os.makedirs(os.path.join(root, "Textures"))
+        os.makedirs(os.path.join(root, "textures"))
+        a = os.path.join(root, "a.usda")
+        b = os.path.join(root, "b.usda")
+        with open(a, "wb") as stream:
+            stream.write(b'#usda 1.0\n( subLayers = [@b.usda@] )\n')
+        with open(b, "wb") as stream:
+            stream.write(b'#usda 1.0\n( subLayers = [@a.usda@] )\n')
+        self.assertEqual(["a.usda", "b.usda"], [
+            path.relative_to(root).as_posix()
+            for path in discover_asset_dependencies(a, root)])
+        with self.assertRaises(BridgeError):
+            discover_asset_dependencies(a, root, max_files=1)
+        with self.assertRaises(BridgeError):
+            discover_asset_dependencies(a, root, max_total_bytes=8)
+
+        upper = os.path.join(root, "Textures", "Skin.png")
+        lower = os.path.join(root, "textures", "skin.png")
+        for path in (upper, lower):
+            with open(path, "wb") as stream:
+                stream.write(b"x")
+        with open(a, "wb") as stream:
+            stream.write(
+                b'#usda 1.0\nasset a = @Textures/Skin.png@\n'
+                b'asset b = @textures/skin.png@\n')
+        with self.assertRaises(BridgeError):
+            discover_asset_dependencies(a, root)
 
     def test_discovers_binary_usdc_dependencies(self):
         import lightusd

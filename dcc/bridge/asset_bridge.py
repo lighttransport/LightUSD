@@ -320,10 +320,14 @@ def build_bundle(files: dict[str, bytes]) -> bytes:
     """Build a deterministic ZIP bundle with a checksummed JSON manifest."""
     entries = []
     normalized: dict[str, bytes] = {}
+    portable_names: set[str] = set()
     for relative, payload in files.items():
         name = _bundle_path(relative)
-        if name == _BUNDLE_MANIFEST or name in normalized:
+        portable_name = name.casefold()
+        if (name == _BUNDLE_MANIFEST or name in normalized or
+                portable_name in portable_names):
             raise BridgeError("duplicate or reserved bundle path")
+        portable_names.add(portable_name)
         data = bytes(payload)
         normalized[name] = data
         entries.append({"path": name, "size": len(data),
@@ -347,6 +351,7 @@ def read_bundle(payload: bytes, max_bytes: int = 2 * 1024 * 1024 * 1024) -> tupl
             if manifest.get("format") != "lightusd-asset-bundle-v1":
                 raise BridgeError("unsupported bundle format")
             files: dict[str, bytes] = {}
+            portable_names: set[str] = set()
             total = 0
             for entry in manifest.get("files", []):
                 name = _bundle_path(entry["path"])
@@ -360,6 +365,10 @@ def read_bundle(payload: bytes, max_bytes: int = 2 * 1024 * 1024 * 1024) -> tupl
                     raise BridgeError("bundle entry checksum mismatch: " + name)
                 if name in files:
                     raise BridgeError("duplicate bundle entry: " + name)
+                portable_name = name.casefold()
+                if portable_name in portable_names:
+                    raise BridgeError("portable bundle path collision: " + name)
+                portable_names.add(portable_name)
                 files[name] = data
     except (KeyError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
         raise BridgeError("invalid LightUSD asset bundle") from exc
@@ -386,7 +395,10 @@ def upload_bundle_http(url: str, paths: list[str | os.PathLike[str]],
 
 def discover_asset_dependencies(root_layer: str | os.PathLike[str],
                                 root: str | os.PathLike[str] | None = None,
-                                *, strict: bool = True) -> list[Path]:
+                                *, strict: bool = True,
+                                max_files: int = 10000,
+                                max_total_bytes: int = 8 * 1024 * 1024 * 1024
+                                ) -> list[Path]:
     """Return a deterministic transitive dependency closure for an asset.
 
     USDA/USD text asset paths and MaterialX file attributes are followed
@@ -405,12 +417,26 @@ def discover_asset_dependencies(root_layer: str | os.PathLike[str],
         raise BridgeError("root layer does not exist: " + str(entry))
 
     found: set[Path] = set()
+    portable_paths: dict[str, Path] = {}
+    total_bytes = 0
     pending = [entry]
     while pending:
         source = pending.pop()
         if source in found:
             continue
+        relative = source.relative_to(base).as_posix()
+        portable_key = relative.casefold()
+        previous = portable_paths.get(portable_key)
+        if previous is not None and previous != source:
+            raise BridgeError(
+                f"dependency paths collide on Windows: {previous} and {source}")
+        portable_paths[portable_key] = source
         found.add(source)
+        if len(found) > int(max_files):
+            raise BridgeError("dependency closure exceeds file-count limit")
+        total_bytes += source.stat().st_size
+        if total_bytes > int(max_total_bytes):
+            raise BridgeError("dependency closure exceeds byte-size limit")
         suffix = source.suffix.lower()
         if suffix == ".usdz":
             references = _usdz_external_references(source)
@@ -456,14 +482,27 @@ def upload_asset_bundle_http(url: str, root_layer: str | os.PathLike[str],
                              token: str = "",
                              name: str = "lightusd-assets.lusdbundle",
                              *, strict: bool = True,
-                             additional_paths: list[str | os.PathLike[str]] | None = None
+                             additional_paths: list[str | os.PathLike[str]] | None = None,
+                             max_files: int = 10000,
+                             max_total_bytes: int = 8 * 1024 * 1024 * 1024
                              ) -> dict[str, Any]:
     """Discover and upload a root USD/MaterialX asset and its dependencies."""
     source = Path(root_layer).resolve()
     base = Path(root).resolve() if root is not None else source.parent
-    paths = discover_asset_dependencies(source, base, strict=strict)
+    paths = discover_asset_dependencies(
+        source, base, strict=strict, max_files=max_files,
+        max_total_bytes=max_total_bytes)
     paths.extend(Path(item).resolve() for item in (additional_paths or []))
     paths = sorted(set(paths))
+    for path in paths:
+        try:
+            path.relative_to(base)
+        except ValueError as exc:
+            raise BridgeError("bundle source is outside root: " + str(path)) from exc
+    if len(paths) > int(max_files):
+        raise BridgeError("asset bundle exceeds file-count limit")
+    if sum(path.stat().st_size for path in paths) > int(max_total_bytes):
+        raise BridgeError("asset bundle exceeds byte-size limit")
     result = upload_bundle_http(url, paths, base, token, name)
     result["root_layer"] = source.relative_to(base).as_posix()
     return result

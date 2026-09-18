@@ -47,8 +47,10 @@ def download_bundle(url: str, asset_id: str, destination: str | os.PathLike[str]
 def upload_asset_bundle(url: str, root_layer: str | os.PathLike[str],
                         root: str | os.PathLike[str] | None = None,
                         token: str = "", strict: bool = True,
-                        additional_paths=None):
+                        additional_paths=None, max_files: int = 10000,
+                        max_total_bytes: int = 8 * 1024 * 1024 * 1024):
     """Discover and upload a USD/MaterialX dependency closure."""
     _, _, _, _, upload = _bridge()
     return upload(url, root_layer, root, token, strict=strict,
-                  additional_paths=additional_paths)
+                  additional_paths=additional_paths, max_files=max_files,
+                  max_total_bytes=max_total_bytes)

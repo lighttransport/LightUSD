@@ -302,6 +302,10 @@ through LightUSD without composition, preserving discoverable sublayers,
 references, payloads, value clips, and asset properties. USDZ members are
 inspected in place; packaged files stay in the archive and external references
 are added to the transfer bundle.
+Discovery terminates cyclic layer graphs and defaults to 10,000 files and
+8 GiB total source data. Both limits are configurable. Bundle creation also
+rejects case-only path collisions, preventing two Linux paths from overwriting
+one another when extracted on case-insensitive Windows filesystems.
 Explicit `bundle_dependencies` remain available in the unified runner for
 generated files that are intentionally not referenced by the root layer.
 

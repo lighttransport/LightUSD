@@ -159,7 +159,9 @@ Use `upload_asset_bundle()` for a complete scene transfer. It discovers text
 USD and binary USDC composition/asset references, USDZ external references,
 MaterialX includes and textures, and all matching `<UDIM>` tiles. Discovery is
 confined to the supplied root and the resulting ZIP manifest checksums every
-relative file.
+relative file. Cycles terminate safely; configurable file-count and byte-size
+limits bound closure traversal, and case-only path collisions are rejected for
+portable extraction on Windows.
 
 The verified Windows UE 5.8 fallback test uses the checked-in launch script:
 
