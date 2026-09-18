@@ -132,20 +132,21 @@ python3 -m dcc.bridge.asset_bridge \
   --token "<shared-secret>"
 ```
 
-The HTTP API is `POST /v1/upload` and `GET /v1/download/<sha256>`. Requests
-carry JSON with base64 `data`, `name`, and optional `sha256`, and authenticate
-with `X-LightUSD-Bridge-Token`. `/health` is available for connectivity
-checks. The same upload/download messages are supported by the WebSocket
-endpoint `GET /v1/ws`; use this only on a trusted network and always set a
-token when binding beyond localhost.
+The preferred HTTP API is streaming `PUT /v1/upload-raw?name=<name>` and
+`GET /v1/download-raw/<sha256>`. The legacy `POST /v1/upload` and
+`GET /v1/download/<sha256>` JSON/base64 endpoints remain available for small
+or older clients. Requests authenticate with `X-LightUSD-Bridge-Token` and
+`/health` is available for connectivity checks. The WebSocket endpoint
+`GET /v1/ws` supports the legacy messages; use it only on a trusted network
+and always set a token when binding beyond localhost.
 
 The store is content-addressed, rejects path traversal, verifies SHA-256, and
 enforces a configurable decoded-size limit. `dcc.bridge.asset_bridge` also
 exports `upload_http()` and `download_http()` for small UE/Blender automation
 scripts.
 
-For DCC scripts, use the file helpers so the bridge handles base64 encoding,
-checksums, and atomic writes:
+For DCC scripts, use the file helpers so the bridge streams file contents and
+handles checksums and atomic writes:
 
 ```python
 from dcc.bridge.transfer import download_file, upload_file

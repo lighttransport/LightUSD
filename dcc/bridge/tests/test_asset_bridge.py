@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+import http.client
 import json
 import os
 import socket
@@ -44,7 +45,7 @@ class AssetBridgeTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.server = BridgeServer(self.temp.name, host="127.0.0.1", port=0,
-                                   token="secret", max_bytes=4096)
+                                   token="secret", max_bytes=4 * 1024 * 1024)
         self.server.start()
         self.url = f"http://127.0.0.1:{self.server.address[1]}"
 
@@ -94,6 +95,31 @@ class AssetBridgeTest(unittest.TestCase):
         with open(destination, "rb") as stream:
             self.assertEqual(stream.read(), payload)
 
+    def test_streams_large_file_and_rejects_bad_checksum(self):
+        source = os.path.join(self.temp.name, "large.bin")
+        destination = os.path.join(self.temp.name, "large-copy.bin")
+        payload = (bytes(range(256)) * 8193) + b"tail"
+        with open(source, "wb") as stream:
+            stream.write(payload)
+        uploaded = upload_file_http(self.url, source, "secret")
+        download_file_http(self.url, uploaded["id"], destination, "secret")
+        with open(destination, "rb") as stream:
+            self.assertEqual(hashlib.sha256(stream.read()).hexdigest(),
+                             uploaded["sha256"])
+
+        host, port = self.server.address
+        connection = http.client.HTTPConnection(host, port, timeout=30)
+        connection.request(
+            "PUT", "/v1/upload-raw?name=bad.bin", b"bad",
+            {"Content-Length": "3", "X-LightUSD-SHA256": "0" * 64,
+             "X-LightUSD-Bridge-Token": "secret"})
+        response = connection.getresponse()
+        self.assertEqual(response.status, 400)
+        response.read()
+        self.assertFalse(any(
+            name.endswith(".part")
+            for _, _, names in os.walk(self.temp.name) for name in names))
+
     def test_dependency_bundle_roundtrip(self):
         source_root = os.path.join(self.temp.name, "source")
         destination = os.path.join(self.temp.name, "extracted")
@@ -118,6 +144,12 @@ class AssetBridgeTest(unittest.TestCase):
         for relative, payload in assets.items():
             with open(os.path.join(destination, *relative.split("/")), "rb") as stream:
                 self.assertEqual(stream.read(), payload)
+
+        rejected = os.path.join(self.temp.name, "rejected")
+        with self.assertRaises(BridgeError):
+            download_bundle_http(
+                self.url, uploaded["id"], rejected, "secret", max_bytes=5)
+        self.assertEqual([], os.listdir(rejected))
 
     def test_dependency_bundle_rejects_unsafe_paths(self):
         for path in ("../escape.usda", "/absolute.usda", "C:/drive.usda"):

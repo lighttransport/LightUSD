@@ -255,7 +255,7 @@ options. Auto-rigging is not required for the template roundtrip.
 ### Windows UE <-> Linux Blender asset bridge
 
 When the two MCP endpoints cannot directly share a filesystem, use the
-dependency-free base64 bridge in `dcc/bridge/asset_bridge.py`. Start it on
+dependency-free streaming bridge in `dcc/bridge/asset_bridge.py`. Start it on
 the Linux host, upload a Blender USDA, then run the UE-side launcher on
 Windows:
 
@@ -291,6 +291,8 @@ Dependency bundles use `lightusd-asset-bundle-v1`: every USDA/USDC layer,
 MaterialX document, texture, and UDIM tile has a relative path, byte size, and
 SHA-256 entry. Both the desktop and UE clients reject absolute paths, parent
 traversal, drive names, checksum mismatches, and oversized expanded bundles.
+Bundle upload, download, and extraction use bounded chunks, so large scenes
+do not require a second base64 or ZIP-sized allocation in either DCC process.
 
 `upload_asset_bundle_http()` and `dcc.bridge.transfer.upload_asset_bundle()`
 discover the closure automatically. They recursively follow `@asset@`
@@ -323,6 +325,13 @@ an aggregate `summary.json`. Without `-MetaHuman` it covers physics, extended
 materials, rigged mesh/animation, UsdSkel facial blendshapes, static and
 animated groom, NURBS, guide-only groom, and groom cards. `-MetaHuman` adds
 template, material/UDIM, and scene roundtrips.
+
+For opt-in CI, dispatch `.github/workflows/dcc_interop.yml`. Its hosted job
+tests the streaming bridge, while runners labeled `lightusd-blender-5.2` and
+`lightusd-ue-5.8` execute the DCC suites and retain their JSON reports. Supply
+the Blender executable, UE commandlet, and test-project paths as dispatch
+inputs. The UE CI job intentionally omits `-MetaHuman`, so it does not require
+a fully assembled MetaHuman installation.
 
 ### UE 5.8 Windows verification (2026-09-18)
 

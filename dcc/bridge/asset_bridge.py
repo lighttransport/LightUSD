@@ -23,6 +23,7 @@ import secrets
 import socket
 import socketserver
 import struct
+import tempfile
 import threading
 import urllib.parse
 import zipfile
@@ -126,20 +127,71 @@ class BridgeStore:
                 temp.replace(path)
         return {"id": digest, "name": safe_name, "size": len(payload), "sha256": digest}
 
-    def get(self, asset_id: str) -> tuple[dict[str, Any], bytes]:
+    def put_stream(self, name: str, stream: Any, length: int,
+                   sha256: str | None = None) -> dict[str, Any]:
+        """Store an exact-length stream without buffering the asset in RAM."""
+        if length < 0 or length > self.max_bytes:
+            raise BridgeError("asset exceeds bridge size limit")
+        safe_name = self._safe_name(name)
+        digest_state = hashlib.sha256()
+        remaining = length
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                    dir=self.root, prefix="upload-", suffix=".part",
+                    delete=False) as temporary:
+                temporary_path = Path(temporary.name)
+                while remaining:
+                    chunk = stream.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        raise BridgeError("stream ended before Content-Length")
+                    temporary.write(chunk)
+                    digest_state.update(chunk)
+                    remaining -= len(chunk)
+            digest = digest_state.hexdigest()
+            if sha256 and sha256.lower() != digest:
+                raise BridgeError("sha256 does not match asset data")
+            asset_dir = self.root / digest
+            destination = asset_dir / safe_name
+            with self._lock:
+                asset_dir.mkdir(exist_ok=True)
+                if destination.exists():
+                    temporary_path.unlink()
+                else:
+                    temporary_path.replace(destination)
+            temporary_path = None
+            return {"id": digest, "name": safe_name, "size": length,
+                    "sha256": digest}
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+
+    def get_path(self, asset_id: str) -> tuple[dict[str, Any], Path]:
+        """Resolve and verify an asset without loading it into memory."""
         if not _ID_RE.match(asset_id):
             raise BridgeError("invalid asset id")
         asset_dir = self.root / asset_id
-        candidates = [p for p in asset_dir.iterdir() if p.is_file() and not p.name.endswith(".part")] \
+        candidates = [p for p in asset_dir.iterdir()
+                      if p.is_file() and not p.name.endswith(".part")] \
             if asset_dir.is_dir() else []
         if len(candidates) != 1:
             raise BridgeError("asset not found")
         path = candidates[0]
-        payload = path.read_bytes()
-        actual = hashlib.sha256(payload).hexdigest()
+        digest_state = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest_state.update(chunk)
+        actual = digest_state.hexdigest()
         if actual != asset_id:
             raise BridgeError("stored asset checksum mismatch")
-        return {"id": asset_id, "name": path.name, "size": len(payload), "sha256": actual}, payload
+        size = path.stat().st_size
+        return {"id": asset_id, "name": path.name, "size": size,
+                "sha256": actual}, path
+
+    def get(self, asset_id: str) -> tuple[dict[str, Any], bytes]:
+        meta, path = self.get_path(asset_id)
+        payload = path.read_bytes()
+        return meta, payload
 
 
 def _json_response(handler: http.server.BaseHTTPRequestHandler, status: int, value: Any) -> None:
@@ -195,7 +247,42 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             except BridgeError as exc:
                 _json_response(self, 404, {"error": str(exc)})
             return
+        raw_prefix = "/v1/download-raw/"
+        if parsed.path.startswith(raw_prefix):
+            try:
+                meta, path = self.server.store.get_path(
+                    parsed.path[len(raw_prefix):])
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(meta["size"]))
+                self.send_header("X-LightUSD-Name", meta["name"])
+                self.send_header("X-LightUSD-SHA256", meta["sha256"])
+                self.end_headers()
+                with path.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        self.wfile.write(chunk)
+            except BridgeError as exc:
+                _json_response(self, 404, {"error": str(exc)})
+            return
         _json_response(self, 404, {"error": "not found"})
+
+    def do_PUT(self) -> None:
+        if not self._authorized():
+            _json_response(self, 401, {"error": "unauthorized"})
+            return
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path != "/v1/upload-raw":
+            _json_response(self, 404, {"error": "not found"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "-1"))
+            query = urllib.parse.parse_qs(parsed.query)
+            result = self.server.store.put_stream(
+                query.get("name", ["asset.usda"])[0], self.rfile, length,
+                self.headers.get("X-LightUSD-SHA256"))
+            _json_response(self, 201, result)
+        except (BridgeError, ValueError) as exc:
+            _json_response(self, 400, {"error": str(exc)})
 
     def do_POST(self) -> None:
         if not self._authorized():
@@ -288,21 +375,76 @@ def download_http(url: str, asset_id: str, token: str = "") -> tuple[dict[str, A
     return value, payload
 
 
-def upload_file_http(url: str, path: str | os.PathLike[str], token: str = "") -> dict[str, Any]:
-    """Upload a file and return its content-addressed metadata."""
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def upload_file_http(url: str, path: str | os.PathLike[str], token: str = "",
+                     *, upload_name: str | None = None) -> dict[str, Any]:
+    """Stream a file upload and return its content-addressed metadata."""
     source = Path(path)
-    return upload_http(url, source.name, source.read_bytes(), token)
+    digest = _file_sha256(source)
+    target = url.rstrip("/") + "/v1/upload-raw?" + urllib.parse.urlencode(
+        {"name": upload_name or source.name})
+    parsed = urllib.parse.urlparse(target)
+    conn = http.client.HTTPConnection(parsed.hostname, parsed.port or 80, timeout=30)
+    headers = {"Content-Type": "application/octet-stream",
+               "Content-Length": str(source.stat().st_size),
+               "X-LightUSD-SHA256": digest}
+    if token:
+        headers["X-LightUSD-Bridge-Token"] = token
+    with source.open("rb") as stream:
+        conn.request("PUT", parsed.path + "?" + parsed.query, stream, headers)
+        response = conn.getresponse()
+        value = json.loads(response.read())
+    if response.status >= 300:
+        raise BridgeError(value.get("error", f"HTTP {response.status}"))
+    return value
 
 
 def download_file_http(url: str, asset_id: str, path: str | os.PathLike[str], token: str = "") -> dict[str, Any]:
-    """Download an asset, verify it, and atomically write it to ``path``."""
-    metadata, payload = download_http(url, asset_id, token)
+    """Stream, checksum-verify, and atomically store an asset."""
+    parsed = urllib.parse.urlparse(
+        url.rstrip("/") + "/v1/download-raw/" + asset_id)
+    conn = http.client.HTTPConnection(parsed.hostname, parsed.port or 80, timeout=30)
+    headers = {}
+    if token:
+        headers["X-LightUSD-Bridge-Token"] = token
+    conn.request("GET", parsed.path, headers=headers)
+    response = conn.getresponse()
+    if response.status >= 300:
+        value = json.loads(response.read())
+        raise BridgeError(value.get("error", f"HTTP {response.status}"))
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(destination.name + ".part")
-    temporary.write_bytes(payload)
-    temporary.replace(destination)
-    return metadata
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with temporary.open("wb") as stream:
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                stream.write(chunk)
+                digest.update(chunk)
+                size += len(chunk)
+        expected = response.getheader("X-LightUSD-SHA256", "")
+        if digest.hexdigest() != expected or expected != asset_id:
+            raise BridgeError("download checksum mismatch")
+        declared_size = int(response.getheader("Content-Length", "-1"))
+        if declared_size != size:
+            raise BridgeError("download size mismatch")
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return {"id": asset_id,
+            "name": response.getheader("X-LightUSD-Name", destination.name),
+            "size": size, "sha256": expected}
 
 
 def _bundle_path(path: str) -> str:
@@ -380,17 +522,43 @@ def upload_bundle_http(url: str, paths: list[str | os.PathLike[str]],
                        name: str = "lightusd-assets.lusdbundle") -> dict[str, Any]:
     """Upload files with paths relative to ``root`` as one verified bundle."""
     base = Path(root).resolve()
-    files: dict[str, bytes] = {}
+    sources: dict[str, Path] = {}
+    portable_names: set[str] = set()
     for source_value in paths:
         source = Path(source_value).resolve()
         try:
             relative = source.relative_to(base).as_posix()
         except ValueError as exc:
             raise BridgeError("bundle source is outside root: " + str(source)) from exc
-        files[relative] = source.read_bytes()
-    result = upload_http(url, name, build_bundle(files), token)
-    result["bundle_files"] = sorted(files)
-    return result
+        portable_name = relative.casefold()
+        if portable_name in portable_names:
+            raise BridgeError("portable bundle path collision: " + relative)
+        portable_names.add(portable_name)
+        sources[relative] = source
+    entries = [{"path": relative, "size": source.stat().st_size,
+                "sha256": _file_sha256(source)}
+               for relative, source in sorted(sources.items())]
+    manifest = {"format": "lightusd-asset-bundle-v1", "files": entries}
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                prefix="lightusd-bundle-", suffix=".lusdbundle",
+                delete=False) as temporary:
+            temporary_path = Path(temporary.name)
+        with zipfile.ZipFile(temporary_path, "w",
+                             compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(
+                _BUNDLE_MANIFEST,
+                json.dumps(manifest, sort_keys=True, separators=(",", ":")))
+            for relative, source in sorted(sources.items()):
+                archive.write(source, "files/" + relative)
+        result = upload_file_http(
+            url, temporary_path, token, upload_name=name)
+        result["bundle_files"] = sorted(sources)
+        return result
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def discover_asset_dependencies(root_layer: str | os.PathLike[str],
@@ -511,18 +679,94 @@ def upload_asset_bundle_http(url: str, root_layer: str | os.PathLike[str],
 def download_bundle_http(url: str, asset_id: str, destination: str | os.PathLike[str],
                          token: str = "", max_bytes: int = 2 * 1024 * 1024 * 1024) -> dict[str, Any]:
     """Download, verify, and safely extract a LightUSD asset bundle."""
-    metadata, payload = download_http(url, asset_id, token)
-    manifest, files = read_bundle(payload, max_bytes)
     root = Path(destination)
     root.mkdir(parents=True, exist_ok=True)
-    for relative, data in files.items():
-        target = root.joinpath(*relative.split("/"))
-        target.parent.mkdir(parents=True, exist_ok=True)
-        temporary = target.with_name(target.name + ".part")
-        temporary.write_bytes(data)
-        temporary.replace(target)
-    metadata["bundle"] = manifest
-    return metadata
+    bundle_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                dir=root, prefix="bundle-", suffix=".part",
+                delete=False) as temporary:
+            bundle_path = Path(temporary.name)
+        metadata = download_file_http(url, asset_id, bundle_path, token)
+        metadata["bundle"] = extract_bundle_file(
+            bundle_path, root, max_bytes)
+        return metadata
+    finally:
+        if bundle_path is not None:
+            bundle_path.unlink(missing_ok=True)
+
+
+def extract_bundle_file(path: str | os.PathLike[str],
+                        destination: str | os.PathLike[str],
+                        max_bytes: int = 2 * 1024 * 1024 * 1024
+                        ) -> dict[str, Any]:
+    """Validate and stream-extract a bundle without buffering its entries."""
+    root = Path(destination)
+    root.mkdir(parents=True, exist_ok=True)
+    try:
+        with zipfile.ZipFile(path, "r") as archive:
+            manifest_info = archive.getinfo(_BUNDLE_MANIFEST)
+            if manifest_info.file_size > min(max_bytes, 16 * 1024 * 1024):
+                raise BridgeError("bundle manifest exceeds size limit")
+            manifest = json.loads(archive.read(manifest_info))
+            if manifest.get("format") != "lightusd-asset-bundle-v1":
+                raise BridgeError("unsupported bundle format")
+            validated: list[tuple[dict[str, Any], str]] = []
+            portable_names: set[str] = set()
+            declared_total = 0
+            for entry in manifest.get("files", []):
+                name = _bundle_path(entry["path"])
+                portable_name = name.casefold()
+                if portable_name in portable_names:
+                    raise BridgeError("portable bundle path collision: " + name)
+                portable_names.add(portable_name)
+                declared_size = int(entry["size"])
+                if declared_size < 0:
+                    raise BridgeError("bundle entry has negative size: " + name)
+                declared_total += declared_size
+                if declared_total > max_bytes:
+                    raise BridgeError("expanded bundle exceeds size limit")
+                info = archive.getinfo("files/" + name)
+                if info.file_size != declared_size:
+                    raise BridgeError("bundle entry size mismatch: " + name)
+                validated.append((entry, name))
+
+            extracted_total = 0
+            with tempfile.TemporaryDirectory(
+                    dir=root, prefix="extract-") as staging_value:
+                staging = Path(staging_value)
+                for entry, name in validated:
+                    temporary = staging.joinpath(*name.split("/"))
+                    temporary.parent.mkdir(parents=True, exist_ok=True)
+                    digest = hashlib.sha256()
+                    size = 0
+                    with archive.open("files/" + name, "r") as source, \
+                            temporary.open("wb") as output:
+                        while True:
+                            chunk = source.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            size += len(chunk)
+                            extracted_total += len(chunk)
+                            if extracted_total > max_bytes:
+                                raise BridgeError(
+                                    "expanded bundle exceeds size limit")
+                            output.write(chunk)
+                            digest.update(chunk)
+                    if size != int(entry["size"]):
+                        raise BridgeError("bundle entry size mismatch: " + name)
+                    if digest.hexdigest() != entry["sha256"]:
+                        raise BridgeError(
+                            "bundle entry checksum mismatch: " + name)
+                for _, name in validated:
+                    source = staging.joinpath(*name.split("/"))
+                    target = root.joinpath(*name.split("/"))
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    source.replace(target)
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError,
+            zipfile.BadZipFile) as exc:
+        raise BridgeError("invalid LightUSD asset bundle") from exc
+    return manifest
 
 
 def _ws_frame(payload: bytes, opcode: int = 1) -> bytes:
