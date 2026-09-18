@@ -3,12 +3,14 @@
 import base64
 import hashlib
 import http.client
+import importlib.util
 import json
 import os
 import socket
 import tempfile
 import unittest
 import zipfile
+from pathlib import Path
 
 from dcc.bridge.asset_bridge import (BridgeError, BridgeServer, build_bundle,
                                      discover_asset_dependencies,
@@ -17,6 +19,14 @@ from dcc.bridge.asset_bridge import (BridgeError, BridgeServer, build_bundle,
                                      upload_asset_bundle_http,
                                      upload_bundle_http, upload_file_http,
                                      upload_http)
+
+
+_UE_TRANSFER_PATH = (Path(__file__).resolve().parents[2] / "ue" / "Content" /
+                     "Python" / "lightusd_ue" / "transfer.py")
+_UE_TRANSFER_SPEC = importlib.util.spec_from_file_location(
+    "lightusd_ue_transfer_test", _UE_TRANSFER_PATH)
+ue_transfer = importlib.util.module_from_spec(_UE_TRANSFER_SPEC)
+_UE_TRANSFER_SPEC.loader.exec_module(ue_transfer)
 
 
 def client_frame(payload: bytes) -> bytes:
@@ -119,6 +129,32 @@ class AssetBridgeTest(unittest.TestCase):
         self.assertFalse(any(
             name.endswith(".part")
             for _, _, names in os.walk(self.temp.name) for name in names))
+
+    def test_ue_embedded_streaming_client(self):
+        source = os.path.join(self.temp.name, "ue-source.bin")
+        destination = os.path.join(self.temp.name, "ue-copy.bin")
+        payload = bytes(range(251)) * 9000
+        with open(source, "wb") as stream:
+            stream.write(payload)
+        uploaded = ue_transfer.upload_file(self.url, source, "secret")
+        downloaded = ue_transfer.download_file(
+            self.url, uploaded["id"], destination, "secret")
+        self.assertEqual(downloaded["size"], len(payload))
+        with open(destination, "rb") as stream:
+            self.assertEqual(stream.read(), payload)
+
+        bundle = build_bundle({"scene.usda": b"#usda 1.0\n",
+                               "textures/tile.1001.png": b"tile"})
+        bundle_asset = upload_http(
+            self.url, "ue-test.lusdbundle", bundle, "secret")
+        bundle_root = os.path.join(self.temp.name, "ue-bundle")
+        metadata = ue_transfer.download_bundle(
+            self.url, bundle_asset["id"], bundle_root, "secret")
+        self.assertEqual(metadata["bundle"]["format"],
+                         "lightusd-asset-bundle-v1")
+        with open(os.path.join(bundle_root, "textures", "tile.1001.png"),
+                  "rb") as stream:
+            self.assertEqual(stream.read(), b"tile")
 
     def test_dependency_bundle_roundtrip(self):
         source_root = os.path.join(self.temp.name, "source")

@@ -1,5 +1,6 @@
 """Validate a skeletal USD exported back from UE through Blender MCP."""
 
+import json
 import os
 import sys
 
@@ -34,3 +35,4 @@ def main():
 
 
 result = main()
+print("LIGHTUSD_BLENDER_UE_REPORT=" + json.dumps(result, sort_keys=True))

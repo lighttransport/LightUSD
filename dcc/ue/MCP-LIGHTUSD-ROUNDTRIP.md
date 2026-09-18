@@ -283,9 +283,10 @@ For a single machine-readable run, use `dcc/run_interop_regressions.py` with
 `dcc/interop-regression.example.json`. The runner starts the local bridge,
 runs the Blender 5.2 regression matrix, uploads a checksummed dependency
 bundle, establishes configured background transports such as an SSH reverse
-tunnel, invokes UE 5.8, and embeds UE's verified JSON result in its own report.
-Commands are argument arrays rather than shell strings, and bridge tokens are
-redacted from the report.
+tunnel, invokes UE 5.8, downloads UE's returned asset, and re-imports it into
+Blender to require an armature and skinned mesh. It embeds both DCC results in
+its own report. Commands are argument arrays rather than shell strings, and
+bridge tokens are redacted from the report.
 
 Dependency bundles use `lightusd-asset-bundle-v1`: every USDA/USDC layer,
 MaterialX document, texture, and UDIM tile has a relative path, byte size, and
@@ -293,6 +294,8 @@ SHA-256 entry. Both the desktop and UE clients reject absolute paths, parent
 traversal, drive names, checksum mismatches, and oversized expanded bundles.
 Bundle upload, download, and extraction use bounded chunks, so large scenes
 do not require a second base64 or ZIP-sized allocation in either DCC process.
+The embedded `lightusd_ue` Python client uses the same raw streaming endpoints
+inside UE 5.8; legacy JSON/base64 endpoints remain available for older tools.
 
 `upload_asset_bundle_http()` and `dcc.bridge.transfer.upload_asset_bundle()`
 discover the closure automatically. They recursively follow `@asset@`

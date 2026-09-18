@@ -21,7 +21,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from dcc.bridge.asset_bridge import BridgeServer, upload_asset_bundle_http
+from dcc.bridge.asset_bridge import (BridgeServer, download_file_http,
+                                     upload_asset_bundle_http)
 
 
 DEFAULT_BLENDER_TESTS = (
@@ -111,6 +112,24 @@ def main(argv=None):
                     result["ue_report"] = json.loads(line[len(marker):])
             if config.get("ue_commands") and "ue_report" not in result:
                 raise RuntimeError(f"ue:{index + 1} produced no verified UE report")
+        if config.get("ue_commands"):
+            ue_report = report["steps"][-1]["ue_report"]
+            returned = ue_report.get("output_asset", {})
+            returned_id = returned.get("id", "")
+            if not returned_id:
+                raise RuntimeError("UE report contains no returned asset id")
+            returned_path = output / "ue-return.usda"
+            returned_metadata = download_file_http(
+                local_url, returned_id, returned_path, token)
+            environment["LIGHTUSD_BLENDER_UE_INPUT"] = str(returned_path)
+            verification_script = config.get(
+                "blender_return_test",
+                "dcc/blender/tests/mcp_ue_skinned_import.py")
+            _run("blender:ue-return", [
+                blender, "--background", "--python",
+                str(ROOT / verification_script)], environment,
+                args.timeout, report)
+            report["returned_asset"] = returned_metadata
         report["succeeded"] = True
     except Exception as exc:
         report["error"] = str(exc)
