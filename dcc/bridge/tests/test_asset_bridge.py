@@ -9,8 +9,10 @@ import tempfile
 import unittest
 
 from dcc.bridge.asset_bridge import (BridgeError, BridgeServer, build_bundle,
+                                     discover_asset_dependencies,
                                      download_file_http,
                                      download_bundle_http, download_http,
+                                     upload_asset_bundle_http,
                                      upload_bundle_http, upload_file_http,
                                      upload_http)
 
@@ -120,6 +122,45 @@ class AssetBridgeTest(unittest.TestCase):
         for path in ("../escape.usda", "/absolute.usda", "C:/drive.usda"):
             with self.subTest(path=path), self.assertRaises(BridgeError):
                 build_bundle({path: b"unsafe"})
+
+    def test_discovers_recursive_materialx_and_udim_dependencies(self):
+        root = os.path.join(self.temp.name, "closure")
+        os.makedirs(os.path.join(root, "looks"))
+        os.makedirs(os.path.join(root, "textures"))
+        files = {
+            "scene.usda": b'#usda 1.0\n( subLayers = [@layout.usda@] )\nasset mtlx = @looks/skin.mtlx@\n',
+            "layout.usda": b'#usda 1.0\ndef Xform "Root" {}\n',
+            "looks/skin.mtlx": b'<materialx><image file="../textures/skin.&lt;UDIM&gt;.png"/></materialx>',
+            "textures/skin.1001.png": b"one",
+            "textures/skin.1002.png": b"two",
+        }
+        for relative, payload in files.items():
+            path = os.path.join(root, relative)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as stream:
+                stream.write(payload)
+        paths = discover_asset_dependencies(os.path.join(root, "scene.usda"), root)
+        self.assertEqual(sorted(files), [path.relative_to(root).as_posix() for path in paths])
+        uploaded = upload_asset_bundle_http(
+            self.url, os.path.join(root, "scene.usda"), root, "secret")
+        self.assertEqual("scene.usda", uploaded["root_layer"])
+        self.assertEqual(sorted(files), uploaded["bundle_files"])
+
+    def test_dependency_discovery_rejects_escape_and_missing(self):
+        root = os.path.join(self.temp.name, "safe")
+        os.makedirs(root)
+        outside = os.path.join(self.temp.name, "outside.usda")
+        with open(outside, "wb") as stream:
+            stream.write(b"#usda 1.0\n")
+        scene = os.path.join(root, "scene.usda")
+        with open(scene, "wb") as stream:
+            stream.write(b'#usda 1.0\nasset bad = @../outside.usda@\n')
+        with self.assertRaises(BridgeError):
+            discover_asset_dependencies(scene, root)
+        with open(scene, "wb") as stream:
+            stream.write(b'#usda 1.0\nasset missing = @missing.png@\n')
+        with self.assertRaises(BridgeError):
+            discover_asset_dependencies(scene, root)
 
 
 if __name__ == "__main__":

@@ -89,12 +89,20 @@ def make_material():
 
     unreal.MaterialEditingLibrary.create_material_expression(
         material, unreal.MaterialExpressionRuntimeVirtualTextureSample, 100, 800)
-    unreal.MaterialEditingLibrary.create_material_expression(
+    function_call = unreal.MaterialEditingLibrary.create_material_expression(
         material, unreal.MaterialExpressionMaterialFunctionCall, 100, 950)
-    unreal.MaterialEditingLibrary.create_material_expression(
+    attributes = unreal.MaterialEditingLibrary.create_material_expression(
         material, unreal.MaterialExpressionMakeMaterialAttributes, 350, 800)
-    unreal.MaterialEditingLibrary.create_material_expression(
+    layered = unreal.MaterialEditingLibrary.create_material_expression(
         material, unreal.MaterialExpressionBlendMaterialAttributes, 350, 1000)
+    unreal.MaterialEditingLibrary.connect_material_expressions(
+        color_a, "", attributes, "BaseColor")
+    unreal.MaterialEditingLibrary.connect_material_expressions(
+        attributes, "", layered, "A")
+    unreal.MaterialEditingLibrary.connect_material_expressions(
+        attributes, "", layered, "B")
+    unreal.MaterialEditingLibrary.connect_material_expressions(
+        alpha, "", layered, "Alpha")
 
     try:
         material.set_editor_property(
@@ -116,7 +124,9 @@ def main():
 
     text = open(usd_file, encoding="utf-8").read()
     for marker in ("MaterialXGraph", "ND_mix_color3", "ND_invert_float",
-                   "ND_constant_boolean", "MaterialUEConfigAPI"):
+                   "ND_constant_boolean", "ND_open_pbr_surface_surfaceshader",
+                   "ND_mix_surfaceshader", 'lightusd:semantic = "material_function"',
+                   "MaterialUEConfigAPI"):
         if marker not in text:
             fail(f"Expected material graph marker is missing: {marker}")
 

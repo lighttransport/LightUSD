@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from dcc.bridge.asset_bridge import BridgeServer, upload_bundle_http
+from dcc.bridge.asset_bridge import BridgeServer, upload_asset_bundle_http
 
 
 DEFAULT_BLENDER_TESTS = (
@@ -81,13 +81,13 @@ def main(argv=None):
                  [blender, "--background", "--python", str(ROOT / relative)],
                  environment, args.timeout, report)
 
-        bundle_paths = [output / "usdskel" / "usdskel_roundtrip.usda"]
-        bundle_paths.extend(Path(item) for item in config.get("bundle_dependencies", []))
-        bundle_paths = [path for path in bundle_paths if path.is_file()]
-        bundle_root = Path(config.get(
-            "bundle_root", os.path.commonpath([str(path.parent) for path in bundle_paths])))
-        uploaded = upload_bundle_http(local_url, bundle_paths, bundle_root,
-                                      token, "blender-to-ue.lusdbundle")
+        root_layer = output / "usdskel" / "usdskel_roundtrip.usda"
+        bundle_root = Path(config.get("bundle_root", root_layer.parent))
+        uploaded = upload_asset_bundle_http(
+            local_url, root_layer, bundle_root, token,
+            "blender-to-ue.lusdbundle",
+            strict=bool(config.get("strict_dependencies", True)),
+            additional_paths=config.get("bundle_dependencies", []))
         report["input_bundle"] = uploaded
         values = {"bridge_url": advertised_url, "bridge_token": token,
                   "asset_id": uploaded["id"], "repo": str(ROOT),

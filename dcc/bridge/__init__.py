@@ -1,7 +1,9 @@
 """Small cross-DCC asset transfer bridge used by the UE/Blender workflow."""
 
 __all__ = ["BridgeServer", "BridgeStore", "download_http", "upload_http",
-           "download_file_http", "upload_file_http"]
+           "download_file_http", "upload_file_http", "download_bundle_http",
+           "upload_bundle_http", "discover_asset_dependencies",
+           "upload_asset_bundle_http"]
 
 
 def __getattr__(name):

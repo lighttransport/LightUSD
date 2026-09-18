@@ -215,10 +215,32 @@ def _materialx_node_id(expr: Any) -> str | None:
         "MaterialExpressionDesaturation": "ND_luminance_color3",
         "MaterialExpressionNormalFromHeightmap": "ND_normalmap",
         "MaterialExpressionRuntimeVirtualTextureSample": "ND_image_color3",
+        # Material attributes are a surface-shader value in MaterialX. These
+        # mappings let non-UE consumers retain layered-material topology while
+        # UEGraph keeps the exact engine node and pin archive.
+        "MaterialExpressionMakeMaterialAttributes": "ND_open_pbr_surface_surfaceshader",
+        "MaterialExpressionSetMaterialAttributes": "ND_open_pbr_surface_surfaceshader",
+        "MaterialExpressionBlendMaterialAttributes": "ND_mix_surfaceshader",
+        # A function call names its MaterialX nodedef below from the referenced
+        # UE function. The fallback id also gives unassigned calls a stable,
+        # explicitly namespaced semantic placeholder.
+        "MaterialExpressionMaterialFunctionCall": "ND_lightusd_unreal_material_function",
     }.get(name)
 
 
-def _materialx_input_name(pin_name: str) -> str:
+def _materialx_input_name(pin_name: str, class_name: str = "") -> str:
+    if class_name == "MaterialExpressionBlendMaterialAttributes":
+        return {"A": "bg", "B": "fg", "Alpha": "mix"}.get(
+            pin_name, re.sub(r"[^A-Za-z0-9_]", "_", pin_name).lower())
+    if class_name in ("MaterialExpressionMakeMaterialAttributes",
+                      "MaterialExpressionSetMaterialAttributes"):
+        return {
+            "BaseColor": "base_color", "Metallic": "base_metalness",
+            "Specular": "specular_weight", "Roughness": "base_roughness",
+            "EmissiveColor": "emission_color", "Opacity": "geometry_opacity",
+            "Normal": "geometry_normal", "SubsurfaceColor": "subsurface_color",
+            "ClearCoat": "coat_weight", "ClearCoatRoughness": "coat_roughness",
+        }.get(pin_name, re.sub(r"[^A-Za-z0-9_]", "_", pin_name).lower())
     return {
         "A": "in1",
         "B": "in2",
@@ -319,12 +341,26 @@ def export_material(material: Any, filename: str, *, preserve_ue_config: bool = 
             if not mtlx_id:
                 continue
             mtlx_node = _materialx_node_id(expr)
+            class_name = expr.get_class().get_name()
             lines.extend([
                 f'        def Shader "{mtlx_id}" {{',
                 f'            uniform token info:id = "{mtlx_node}"',
                 '            token outputs:out',
             ])
-            class_name = expr.get_class().get_name()
+            if class_name == "MaterialExpressionMaterialFunctionCall":
+                function = _get(expr, "material_function", "function", default=None)
+                function_path = _path(function)
+                if function_path:
+                    nodedef = "ND_ue_" + _name(function_path.rsplit("/", 1)[-1])
+                    lines[-2] = f'            uniform token info:id = "{nodedef}"'
+                    lines.append(f'            asset info:sourceAsset = {_asset(function_path)}')
+                    lines.append('            token info:implementationSource = "sourceAsset"')
+                lines.append('            string lightusd:semantic = "material_function"')
+            elif class_name in ("MaterialExpressionMakeMaterialAttributes",
+                                "MaterialExpressionSetMaterialAttributes"):
+                lines.append('            string lightusd:semantic = "material_attributes"')
+            elif class_name == "MaterialExpressionBlendMaterialAttributes":
+                lines.append('            string lightusd:semantic = "layered_material_mix"')
             if class_name in ("MaterialExpressionConstant", "MaterialExpressionScalarParameter"):
                 value = _get(expr, "r", "default_value", "default_scalar_value", default=0.0)
                 value = float(value or 0.0)
@@ -361,7 +397,7 @@ def export_material(material: Any, filename: str, *, preserve_ue_config: bool = 
                     source = _node_input(expr, str(pin_name))
                 if source is None or _path(source) not in mtlx_ids:
                     continue
-                input_name = _materialx_input_name(str(pin_name))
+                input_name = _materialx_input_name(str(pin_name), class_name)
                 lines.append(
                     f'            token inputs:{input_name}.connect = '
                     f'</{root}/MaterialXGraph/{mtlx_ids[_path(source)]}.outputs:out>')

@@ -218,9 +218,14 @@ assets when available.
 The UE 5.8 extended regression also covers scalar/vector/static parameters,
 static switches, normalize/normal chains, runtime virtual-texture samples,
 material-function calls, Make/Blend Material Attributes, and Clear Coat
-shading-model restoration. Nodes with a direct MaterialX equivalent receive a
-portable `ND_*` node; function/layer nodes without a lossless portable
-equivalent remain reconstructable through the adjacent `UEGraph` archive.
+shading-model restoration. Make/Set Material Attributes export as
+`ND_open_pbr_surface_surfaceshader`; Blend Material Attributes exports as
+`ND_mix_surfaceshader`, with UE pins translated to OpenPBR and surface-mix
+inputs. Material-function calls export a nodedef identity derived from the
+referenced function plus `info:sourceAsset`/`info:implementationSource` and a
+stable semantic tag. A non-UE MaterialX consumer can therefore retain the
+function and layered topology; the adjacent `UEGraph` remains authoritative
+for exact UE reconstruction where the referenced implementation is UE-only.
 
 `MaterialUEConfigAPI` is the explicit fallback for UE-only settings and future
 engine-specific properties. It is intentionally additive: consumers that do
@@ -278,6 +283,15 @@ Dependency bundles use `lightusd-asset-bundle-v1`: every USDA/USDC layer,
 MaterialX document, texture, and UDIM tile has a relative path, byte size, and
 SHA-256 entry. Both the desktop and UE clients reject absolute paths, parent
 traversal, drive names, checksum mismatches, and oversized expanded bundles.
+
+`upload_asset_bundle_http()` and `dcc.bridge.transfer.upload_asset_bundle()`
+discover the closure automatically. They recursively follow `@asset@`
+references in text USD layers, `file`/`filename`/`sourceuri` attributes in
+MaterialX documents, and expand every matching `<UDIM>` tile. Discovery stays
+inside the selected bundle root and is strict by default: missing files, root
+escapes, and binary USDC layers that cannot be inspected fail before upload.
+Explicit `bundle_dependencies` remain available in the unified runner for
+generated files that are intentionally not referenced by the root layer.
 
 Windows can run the complete UE-only matrix directly:
 

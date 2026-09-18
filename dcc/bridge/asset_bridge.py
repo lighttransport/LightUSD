@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import argparse
 import base64
+import glob
 import hashlib
+import html
 import http.client
 import http.server
 import io
@@ -31,6 +33,10 @@ from typing import Any
 _ID_RE = re.compile(r"^[0-9a-f]{64}$")
 _NAME_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 _BUNDLE_MANIFEST = "lightusd-bundle.json"
+_USD_ASSET_RE = re.compile(r"@((?:\\@|[^@])+)@")
+_MTLX_FILE_RE = re.compile(
+    r"(?:file|filename|sourceuri)\s*=\s*(['\"])(.*?)\1", re.IGNORECASE)
+_TEXT_DEPENDENCY_SUFFIXES = {".usd", ".usda", ".usdc", ".mtlx"}
 
 
 class BridgeError(ValueError):
@@ -325,6 +331,98 @@ def upload_bundle_http(url: str, paths: list[str | os.PathLike[str]],
         files[relative] = source.read_bytes()
     result = upload_http(url, name, build_bundle(files), token)
     result["bundle_files"] = sorted(files)
+    return result
+
+
+def discover_asset_dependencies(root_layer: str | os.PathLike[str],
+                                root: str | os.PathLike[str] | None = None,
+                                *, strict: bool = True) -> list[Path]:
+    """Return a deterministic transitive dependency closure for an asset.
+
+    USDA/USD text asset paths and MaterialX file attributes are followed
+    recursively. ``<UDIM>`` references expand to every four-digit tile. All
+    resolved files must remain below ``root`` so a bundle cannot accidentally
+    capture unrelated host files. Binary USDC dependency discovery requires a
+    text sidecar/export and is rejected in strict mode.
+    """
+    entry = Path(root_layer).resolve()
+    base = Path(root).resolve() if root is not None else entry.parent
+    try:
+        entry.relative_to(base)
+    except ValueError as exc:
+        raise BridgeError("root layer is outside dependency root: " + str(entry)) from exc
+    if not entry.is_file():
+        raise BridgeError("root layer does not exist: " + str(entry))
+
+    found: set[Path] = set()
+    pending = [entry]
+    while pending:
+        source = pending.pop()
+        if source in found:
+            continue
+        found.add(source)
+        suffix = source.suffix.lower()
+        if suffix not in _TEXT_DEPENDENCY_SUFFIXES:
+            continue
+        data = source.read_bytes()
+        if data.startswith(b"PXR-USDC") or b"\x00" in data[:4096]:
+            if strict and suffix in {".usd", ".usdc"}:
+                raise BridgeError(
+                    "cannot discover dependencies in binary USD: " + str(source))
+            continue
+        text = data.decode("utf-8", errors="replace")
+        references = [match.replace("\\@", "@")
+                      for match in _USD_ASSET_RE.findall(text)]
+        if suffix == ".mtlx":
+            references.extend(html.unescape(match[1])
+                              for match in _MTLX_FILE_RE.findall(text))
+        for reference in references:
+            # Package members, URLs and UE object paths are not filesystem
+            # dependencies transported by this bridge.
+            if not reference or "://" in reference or reference.startswith("/"):
+                continue
+            outer = reference.split("[", 1)[0]
+            candidate_text = os.path.normpath(os.path.join(source.parent, outer))
+            candidates = []
+            if "<UDIM>" in candidate_text:
+                pattern = glob.escape(candidate_text).replace(
+                    glob.escape("<UDIM>"), "[0-9][0-9][0-9][0-9]")
+                candidates = [Path(item).resolve() for item in glob.glob(pattern)]
+            else:
+                candidates = [Path(candidate_text).resolve()]
+            if not candidates:
+                if strict:
+                    raise BridgeError("dependency has no matching UDIM tiles: " + reference)
+                continue
+            for candidate in candidates:
+                try:
+                    candidate.relative_to(base)
+                except ValueError as exc:
+                    raise BridgeError("dependency is outside root: " + str(candidate)) from exc
+                if not candidate.is_file():
+                    if strict:
+                        raise BridgeError("dependency does not exist: " + str(candidate))
+                    continue
+                if candidate not in found:
+                    pending.append(candidate)
+    return sorted(found, key=lambda path: path.relative_to(base).as_posix())
+
+
+def upload_asset_bundle_http(url: str, root_layer: str | os.PathLike[str],
+                             root: str | os.PathLike[str] | None = None,
+                             token: str = "",
+                             name: str = "lightusd-assets.lusdbundle",
+                             *, strict: bool = True,
+                             additional_paths: list[str | os.PathLike[str]] | None = None
+                             ) -> dict[str, Any]:
+    """Discover and upload a root USD/MaterialX asset and its dependencies."""
+    source = Path(root_layer).resolve()
+    base = Path(root).resolve() if root is not None else source.parent
+    paths = discover_asset_dependencies(source, base, strict=strict)
+    paths.extend(Path(item).resolve() for item in (additional_paths or []))
+    paths = sorted(set(paths))
+    result = upload_bundle_http(url, paths, base, token, name)
+    result["root_layer"] = source.relative_to(base).as_posix()
     return result
 
 
