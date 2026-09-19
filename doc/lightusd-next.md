@@ -60,7 +60,7 @@ int main() {
   std::string err;
 
   lightusd::next::LoadUSDOptions opts;
-  opts.max_memory = 1024ull * 1024ull * 1024ull;
+  opts.limits.max_resident_bytes = 1024ull * 1024ull * 1024ull;
 
   if (!lightusd::next::LoadUSDComposed("scene.usdc", &stage, opts, &warn, &err)) {
     // handle err
@@ -98,6 +98,12 @@ if (!edit) return 1;
 lightusd::next::StageSnapshot current = edit.snapshot;
 ```
 
+All public next loaders default to `InputPolicy::Untrusted` and finite
+`ResourceLimits`. Zero-valued limits are rejected. Trusted applications that
+deliberately need no shared load/session/render ceiling must opt in with
+`InputPolicy::Trusted` and `ResourceLimits::Unlimited()`; lower-level
+format-specific structural guards remain in force unless separately raised.
+
 Variant overrides are scoped by prim path, so identically named variant sets on
 different prims do not interfere. Diagnostics and deferred-payload state remain
 available on the session after each rebuild. Successful edits atomically publish
@@ -105,6 +111,10 @@ a monotonically revisioned, immutable `StageSnapshot` and a typed
 `StageChangeSet`; retained older snapshots remain coherent. `ReloadLayer()`
 re-reads an edited dependency and publishes the resulting stage transactionally.
 Array-backed geometry remains copy-on-write across snapshots.
+Concurrent snapshot reads are supported with one serialized writer. Mutations
+attempted reentrantly from progress, preview, or render-sink callbacks fail with
+`OperationStatus::Busy`. `CloseAndTakeStage()` transfers without cloning only
+after all published snapshots have been released.
 
 Persistent render consumers can feed those snapshots and change sets to
 `tydra::next::RenderSession`. Its `SceneUpdateSink` transaction reports stable

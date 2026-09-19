@@ -2955,14 +2955,16 @@ static void test_usdz_package_layers() {
       assert(session.IsComposed());
       assert(session.GetDeferredPayloadPaths().size() == 1);
       assert(session.GetDeferredPayloadPaths()[0] == Path("/World/P"));
-      UsdPrim deferred = session.GetStage().GetPrimAtPath("/World/P");
+      StageSnapshot deferred_snapshot = session.GetSnapshot();
+      UsdPrim deferred = deferred_snapshot->GetPrimAtPath("/World/P");
       assert(deferred.IsValid());
       assert(deferred.GetPropertyValue("siblingVal") == nullptr &&
              "deferred package payload was composed eagerly");
 
       assert(session.LoadPayload(Path("/World/P")) &&
              "package-internal deferred payload failed to load");
-      UsdPrim loaded = session.GetStage().GetPrimAtPath("/World/P");
+      StageSnapshot loaded_snapshot = session.GetSnapshot();
+      UsdPrim loaded = loaded_snapshot->GetPrimAtPath("/World/P");
       assert(loaded.IsValid());
       assert(loaded.GetPropertyValue("siblingVal") != nullptr &&
              "loaded package payload opinion is missing");
@@ -2973,8 +2975,8 @@ static void test_usdz_package_layers() {
       assert(session.GetDeferredPayloadPaths().size() == 1);
       assert(session.LoadPayload(Path("/World/P")) &&
              "cached package payload failed to reload");
-      assert(session.GetStage()
-                 .GetPrimAtPath("/World/P")
+      assert(session.GetSnapshot()
+                 ->GetPrimAtPath("/World/P")
                  .GetPropertyValue("siblingVal") != nullptr);
     }
 

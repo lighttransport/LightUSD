@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "render-converter.hh"
+#include "next/operation-status.hh"
 #include "next/stage/change-set.hh"
 
 namespace lightusd {
@@ -70,6 +71,8 @@ class SceneUpdateSink {
 
 struct RenderUpdateResult {
   bool success = false;
+  ::lightusd::next::OperationStatus status =
+      ::lightusd::next::OperationStatus::InvalidData;
   bool cancelled = false;
   uint64_t revision = 0;
   size_t upsert_count = 0;
@@ -84,6 +87,15 @@ struct RenderUpdateResult {
   std::vector<std::string> warnings;
 
   explicit operator bool() const { return success; }
+};
+
+struct RenderSceneSnapshot {
+  uint64_t revision = 0;
+  std::shared_ptr<const RenderScene> scene;
+
+  explicit operator bool() const { return static_cast<bool>(scene); }
+  const RenderScene* operator->() const { return scene.get(); }
+  const RenderScene& operator*() const { return *scene; }
 };
 
 /// Owns stable resource IDs and the last committed retained RenderScene.
@@ -103,8 +115,8 @@ class RenderSession {
                            const ::lightusd::next::StageChangeSet& changes,
                            SceneUpdateSink* sink);
 
+  RenderSceneSnapshot GetSnapshot() const;
   uint64_t revision() const;
-  const RenderScene* scene() const;
   void Reset();
 
  private:

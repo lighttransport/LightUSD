@@ -183,13 +183,13 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
       refine_uniform(&out->colors, out->colors_interp, color_stride);
       refine_uniform(&out->opacities, out->opacities_interp, 1);
       out->points.clear();
-      out->points.append(refined.points.data(), refined.points.size());
+      out->points.append_exact(refined.points.data(), refined.points.size());
       out->face_vertex_counts.clear();
-      out->face_vertex_counts.append(refined.face_vertex_counts.data(),
-                                     refined.face_vertex_counts.size());
+      out->face_vertex_counts.append_exact(refined.face_vertex_counts.data(),
+                                           refined.face_vertex_counts.size());
       out->face_vertex_indices.clear();
-      out->face_vertex_indices.append(refined.face_vertex_indices.data(),
-                                      refined.face_vertex_indices.size());
+      out->face_vertex_indices.append_exact(refined.face_vertex_indices.data(),
+                                            refined.face_vertex_indices.size());
       for (size_t i = 0; i < refined.fvar.size(); ++i) {
         RefinedChannel& channel = channels[fvar_channel[i]];
         channel.data->clear();
@@ -365,7 +365,8 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
                             prim.GetPath().str());
       } else {
       out->skin = std::make_unique<RenderMesh::SkinBinding>();
-      out->skin->joint_indices.reserve(sb.joint_indices.size());
+      out->skin->joint_indices.reserve_exact(sb.joint_indices.size());
+      out->skin->joint_weights.reserve_exact(sb.joint_weights.size());
       for (int32_t ji : sb.joint_indices) {
         out->skin->joint_indices.push_back(
             ji < 0 ? uint16_t(0)
@@ -456,10 +457,10 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
             static_cast<uint32_t>(bd.pointIndices[k]));
       }
     } else {
-      shape.point_offsets.append(bd.offsets.data(), bd.offsets.size());
+      shape.point_offsets.append_exact(bd.offsets.data(), bd.offsets.size());
       if (bd.hasNormalOffsets && !bd.normalOffsets.empty()) {
-        shape.normal_offsets.append(bd.normalOffsets.data(),
-                                    bd.normalOffsets.size());
+        shape.normal_offsets.append_exact(bd.normalOffsets.data(),
+                                          bd.normalOffsets.size());
       }
     }
     for (const ::lightusd::next::BlendShapeData::Inbetween& source :
@@ -483,8 +484,8 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
       if (bd.hasPointIndices) {
         append_kept(source.offsets, &inbetween.point_offsets);
       } else {
-        inbetween.point_offsets.append(source.offsets.data(),
-                                       source.offsets.size());
+        inbetween.point_offsets.append_exact(source.offsets.data(),
+                                             source.offsets.size());
       }
       shape.inbetweens.push_back(std::move(inbetween));
     }

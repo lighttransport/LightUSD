@@ -6,15 +6,66 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
+#include <memory>
 
 namespace lightusd {
 namespace tydra {
 namespace next {
 
-using ChunkAllocHook = bool (*)(size_t bytes);
-using ChunkFreeHook = void (*)(size_t bytes);
-// Install/uninstall on the conversion thread, with both hooks set or both null.
-void SetChunkAllocHooks(ChunkAllocHook alloc, ChunkFreeHook free_hook);
+/// Thread-safe accounting object owned by one conversion. Chunk storage keeps
+/// it alive for as long as the resulting scene retains any accounted arrays.
+class ChunkAllocationBudget {
+ public:
+  explicit ChunkAllocationBudget(
+      size_t cap = (std::numeric_limits<size_t>::max)()) : cap_(cap) {}
+
+  bool TryAdd(size_t bytes) {
+    size_t current = tracked_.load(std::memory_order_relaxed);
+    for (;;) {
+      if (bytes > cap_ || current > cap_ - bytes) return false;
+      const size_t next = current + bytes;
+      if (tracked_.compare_exchange_weak(current, next,
+                                         std::memory_order_relaxed)) {
+        size_t peak = peak_.load(std::memory_order_relaxed);
+        while (next > peak && !peak_.compare_exchange_weak(
+                                  peak, next, std::memory_order_relaxed)) {}
+        return true;
+      }
+    }
+  }
+
+  void Sub(size_t bytes) {
+    const size_t previous = tracked_.fetch_sub(bytes, std::memory_order_relaxed);
+    if (previous < bytes) std::abort();
+  }
+
+  size_t Cap() const { return cap_; }
+  size_t Tracked() const { return tracked_.load(std::memory_order_relaxed); }
+  size_t PeakTracked() const { return peak_.load(std::memory_order_relaxed); }
+
+ private:
+  size_t cap_;
+  std::atomic<size_t> tracked_{0};
+  std::atomic<size_t> peak_{0};
+};
+
+/// Installs an allocation budget for arrays constructed on the current thread.
+/// The captured shared object, rather than this thread-local scope, is retained
+/// by their storage and is safe to charge from worker threads.
+class ScopedChunkAllocationBudget {
+ public:
+  explicit ScopedChunkAllocationBudget(
+      std::shared_ptr<ChunkAllocationBudget> budget);
+  ~ScopedChunkAllocationBudget();
+  ScopedChunkAllocationBudget(const ScopedChunkAllocationBudget&) = delete;
+  ScopedChunkAllocationBudget& operator=(const ScopedChunkAllocationBudget&) =
+      delete;
+
+ private:
+  std::shared_ptr<ChunkAllocationBudget> previous_;
+};
+
 bool ProbeAlloc(size_t bytes);
 
 namespace detail {
@@ -43,8 +94,16 @@ class ChunkStorage {
   void share_from(const ChunkStorage& other);
   bool is_shared() const;
   bool reserve(size_t count);
+  bool reserve_exact(size_t count);
   bool resize(size_t count) {
     if ((maybe_shared_ || count > capacity()) && !reserve(count)) return false;
+    size_ = count;
+    return true;
+  }
+  bool resize_exact(size_t count) {
+    if ((maybe_shared_ || count > capacity()) && !reserve_exact(count)) {
+      return false;
+    }
     size_ = count;
     return true;
   }
@@ -74,6 +133,7 @@ class ChunkStorage {
  private:
   struct Control {
     std::atomic<size_t> references{1};
+    std::shared_ptr<ChunkAllocationBudget> budget;
     void** chunks = nullptr;
     size_t count = 0;
     size_t slots = 0;
@@ -81,7 +141,7 @@ class ChunkStorage {
   };
   void release();
   void require_unique();
-  bool ensure_capacity(size_t count);
+  bool ensure_capacity(size_t count, bool exact_tail = false);
   void* allocate_chunk(size_t count) const;
   void free_chunk(void* data, size_t count) const;
   bool fail() { alloc_failed_ = true; return false; }

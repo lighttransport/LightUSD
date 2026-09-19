@@ -34,6 +34,14 @@ bool CrateReader::Impl::ResolveFieldset(uint32_t fieldset_index,
 
       std::string name;
       if (GetToken(field.token_index.value, name)) {
+        // variantSelection has a dedicated raw decoder in BuildStage because
+        // it is not representable by Value. Do not report the expected
+        // generic-decoder miss as an unsupported field in strict mode.
+        if (name == "variantSelection" &&
+            field.value_rep.type_id() == CrateTypeId::VariantSelectionMap) {
+          ++start;
+          continue;
+        }
         Value value;
         if (UnpackValue(field.value_rep, value)) {
           out.emplace_back(std::move(name), std::move(value));

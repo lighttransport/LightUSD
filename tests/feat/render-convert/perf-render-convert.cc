@@ -471,10 +471,11 @@ BenchResult Bench(const std::string &path, int iters, int threads) {
     res.err = "next StageSession open failed: " + session.GetError();
     return res;
   }
-  const lightusd::next::Stage &stage = session.GetStage();
+  const lightusd::next::StageSnapshot stage_snapshot = session.GetSnapshot();
+  const lightusd::next::Stage &stage = *stage_snapshot;
 
   lightusd::tydra::next::ConverterConfig cfg;
-  cfg.max_worker_threads = (threads > 0) ? size_t(threads) : 0;
+  cfg.execution.max_threads = threads > 0 ? threads : 0;
   cfg.mesh.compute_normals = true;
   cfg.mesh.triangulate = true;
   cfg.mesh.build_vertex_indices = true;

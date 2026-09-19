@@ -10,6 +10,7 @@
 #include "reader/usdz-reader.hh"
 #include "resolver/asset-resolver.hh"
 #include "../logger.hh"
+#include "../safe-arithmetic.hh"
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -17,6 +18,7 @@
 #include <fstream>
 #include <memory>
 #include <map>
+#include <mutex>
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include <thread>
 #endif
@@ -26,18 +28,25 @@ namespace next {
 
 StageSessionOptions MakeHardenedStageSessionOptions(size_t max_memory) {
   StageSessionOptions options;
-  // Zero must never turn a hardened request into the legacy unlimited mode.
+  // Zero must never turn a hardened request into an unlimited mode.
   max_memory = std::max<size_t>(max_memory, 1);
-  options.load.strict_aousd_conformance = true;
-  options.load.max_memory = max_memory;
+  options.load.input_policy = InputPolicy::Untrusted;
+  options.load.limits.max_input_bytes = max_memory;
+  options.load.limits.max_asset_bytes = max_memory;
+  options.load.limits.max_resident_bytes = max_memory;
   options.load.usda_options.parse_options.strict_aousd_conformance = true;
   options.load.usda_options.parse_options.max_file_size = max_memory;
+  options.load.usda_options.parse_options.max_usda_lazy_array_elements =
+      std::min(options.load.limits.max_array_elements, max_memory);
   options.load.usdc_options.crate_options.strict_aousd_conformance = true;
   options.load.usdc_options.crate_options.max_memory = max_memory;
+  options.load.usdc_options.crate_options.max_array_elements =
+      options.load.limits.max_array_elements;
   options.load.usdc_options.crate_options.use_mmap = false;
   options.load.usdz_options.max_archive_size = max_memory;
   options.load.usdz_options.max_entry_size = max_memory;
-  options.max_total_memory = max_memory;
+  options.load.usdz_options.max_entries =
+      options.load.limits.max_archive_entries;
   options.composition.strict_aousd_conformance = true;
   options.composition.error_when_asset_not_found = true;
   options.composition.max_layer_memory = max_memory;
@@ -52,6 +61,34 @@ StageSessionOptions MakeHardenedStageSessionOptions(size_t max_memory) {
 }
 
 namespace {
+
+class StageOperationScope;
+thread_local const StageOperationScope* active_stage_operation = nullptr;
+
+class StageOperationScope {
+ public:
+  explicit StageOperationScope(const void* session)
+      : session_(session), previous_(active_stage_operation) {
+    active_stage_operation = this;
+  }
+  ~StageOperationScope() { active_stage_operation = previous_; }
+
+  bool Contains(const void* session) const {
+    for (const StageOperationScope* scope = this; scope;
+         scope = scope->previous_) {
+      if (scope->session_ == session) return true;
+    }
+    return false;
+  }
+
+ private:
+  const void* session_;
+  const StageOperationScope* previous_;
+};
+
+bool StageOperationActive(const void* session) {
+  return active_stage_operation && active_stage_operation->Contains(session);
+}
 
 // File format detection
 enum class FileFormat {
@@ -135,28 +172,41 @@ size_t MinNonZero(size_t a, size_t b) {
 
 LoadOptions EffectiveUSDAOptions(const LoadUSDOptions& options) {
   LoadOptions out = options.usda_options;
-  if (options.strict_aousd_conformance) {
+  if (options.input_policy == InputPolicy::Untrusted) {
     out.parse_options.strict_aousd_conformance = true;
   }
   out.parse_options.max_file_size =
-      MinNonZero(out.parse_options.max_file_size, options.max_memory);
+      MinNonZero(out.parse_options.max_file_size,
+                 options.limits.max_input_bytes);
+  out.parse_options.max_usda_lazy_array_elements = MinNonZero(
+      out.parse_options.max_usda_lazy_array_elements,
+      options.limits.max_array_elements);
+  out.parse_options.max_depth = MinNonZero(
+      out.parse_options.max_depth, options.limits.max_parse_depth);
   return out;
 }
 
 USDCLoadOptions EffectiveUSDCOptions(const LoadUSDOptions& options) {
   USDCLoadOptions out = options.usdc_options;
-  if (options.strict_aousd_conformance) {
+  if (options.input_policy == InputPolicy::Untrusted) {
     out.crate_options.strict_aousd_conformance = true;
+    out.crate_options.use_mmap = false;
   }
   out.crate_options.max_memory =
-      MinNonZero(out.crate_options.max_memory, options.max_memory);
+      MinNonZero(out.crate_options.max_memory, options.limits.max_input_bytes);
+  out.crate_options.max_array_elements = MinNonZero(
+      out.crate_options.max_array_elements, options.limits.max_array_elements);
   return out;
 }
 
 USDZReadOptions EffectiveUSDZOptions(const LoadUSDOptions& options) {
   USDZReadOptions out = options.usdz_options;
-  out.max_archive_size = MinNonZero(out.max_archive_size, options.max_memory);
-  out.max_entry_size = MinNonZero(out.max_entry_size, options.max_memory);
+  out.max_archive_size = MinNonZero(out.max_archive_size,
+                                    options.limits.max_input_bytes);
+  out.max_entry_size = MinNonZero(out.max_entry_size,
+                                  options.limits.max_asset_bytes);
+  out.max_entries = MinNonZero(out.max_entries,
+                               options.limits.max_archive_entries);
   return out;
 }
 
@@ -172,6 +222,10 @@ bool LoadUSD(const std::string& filename, Stage* stage,
              std::string* err) {
   if (!stage) {
     if (err) *err = "stage is null";
+    return false;
+  }
+  if (!options.limits.valid()) {
+    if (err) *err = "invalid resource limits: zero is not unlimited";
     return false;
   }
 
@@ -422,6 +476,8 @@ StageChangeSet BuildStageChangeSet(const Stage* previous, const Stage& next,
 }  // namespace
 
 struct StageSession::Impl {
+  mutable std::recursive_mutex operation_mu;
+  mutable std::mutex publication_mu;
   StageSessionOptions options;
   std::string root_identifier;
   // For packaged files this includes the selected root entry, e.g.
@@ -436,6 +492,7 @@ struct StageSession::Impl {
   std::vector<Diagnostic> diagnostics;
   std::string warning;
   std::string error;
+  OperationStatus operation_status = OperationStatus::InvalidData;
   StageSessionMemoryStats memory_stats;
   pcp::LoadRules released_load_rules;
   pcp::CompositionOptions::VariantSelectionMap released_variant_selections;
@@ -448,6 +505,40 @@ struct StageSession::Impl {
   bool open = false;
 
   ~Impl() { WaitForRetiringCache(); }
+
+  void BeginOperation() {
+    operation_status = OperationStatus::InvalidData;
+    warning.clear();
+    error.clear();
+  }
+
+  void AdoptState(Impl&& other) {
+    WaitForRetiringCache();
+    options = std::move(other.options);
+    root_identifier = std::move(other.root_identifier);
+    composition_identifier = std::move(other.composition_identifier);
+    resolver = std::move(other.resolver);
+    cache = std::move(other.cache);
+    stage = std::move(other.stage);
+    revision = other.revision;
+    last_changes = std::move(other.last_changes);
+    diagnostics = std::move(other.diagnostics);
+    warning = std::move(other.warning);
+    error = std::move(other.error);
+    operation_status = other.operation_status;
+    memory_stats = other.memory_stats;
+    released_load_rules = std::move(other.released_load_rules);
+    released_variant_selections =
+        std::move(other.released_variant_selections);
+    released_deferred_payloads = std::move(other.released_deferred_payloads);
+    released_composition_issues =
+        std::move(other.released_composition_issues);
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    retiring_cache_thread = std::move(other.retiring_cache_thread);
+#endif
+    composition_cache_released = other.composition_cache_released;
+    open = other.open;
+  }
 
   void WaitForRetiringCache() {
 #if defined(LIGHTUSD_ENABLE_THREAD)
@@ -468,9 +559,10 @@ struct StageSession::Impl {
     next.composed_stage_bytes = known_stage_bytes
                                     ? *known_stage_bytes
                                     : (stage ? stage->GetMemoryUsage() : 0);
-    next.estimated_total_bytes = next.source_layer_bytes +
-                                 next.transient_cache_bytes +
-                                 next.composed_stage_bytes;
+    next.estimated_total_bytes = safe::saturating_add(
+        safe::saturating_add(next.source_layer_bytes,
+                             next.transient_cache_bytes),
+        next.composed_stage_bytes);
     next.peak_estimated_total_bytes = std::max(
         memory_stats.peak_estimated_total_bytes, next.estimated_total_bytes);
     memory_stats = next;
@@ -478,14 +570,16 @@ struct StageSession::Impl {
 
   bool CheckMemoryBudget(DiagnosticDomain domain) {
     UpdateMemoryStats();
-    if (options.max_total_memory == 0 ||
-        memory_stats.estimated_total_bytes <= options.max_total_memory) {
+    if (memory_stats.estimated_total_bytes <=
+        options.load.limits.max_resident_bytes) {
       return true;
     }
     error = "aggregate memory budget exceeded: estimated " +
             std::to_string(memory_stats.estimated_total_bytes) +
-            " bytes, limit " + std::to_string(options.max_total_memory) +
+            " bytes, limit " +
+            std::to_string(options.load.limits.max_resident_bytes) +
             " bytes";
+    operation_status = OperationStatus::ResourceLimit;
     AddDiagnostic(DiagnosticSeverity::Error, domain, "memory_budget", error,
                   root_identifier);
     return false;
@@ -503,11 +597,12 @@ struct StageSession::Impl {
       projected.composed_prim_count = cache_stats.composed_prim_count;
     }
     projected.composed_stage_bytes = candidate.GetMemoryUsage();
-    projected.estimated_total_bytes = projected.source_layer_bytes +
-                                      projected.transient_cache_bytes +
-                                      projected.composed_stage_bytes;
-    if (options.max_total_memory == 0 ||
-        projected.estimated_total_bytes <= options.max_total_memory) {
+    projected.estimated_total_bytes = safe::saturating_add(
+        safe::saturating_add(projected.source_layer_bytes,
+                             projected.transient_cache_bytes),
+        projected.composed_stage_bytes);
+    if (projected.estimated_total_bytes <=
+        options.load.limits.max_resident_bytes) {
       projected.peak_estimated_total_bytes = std::max(
           memory_stats.peak_estimated_total_bytes,
           projected.estimated_total_bytes);
@@ -516,8 +611,10 @@ struct StageSession::Impl {
     }
     error = "aggregate memory budget exceeded: estimated " +
             std::to_string(projected.estimated_total_bytes) +
-            " bytes, limit " + std::to_string(options.max_total_memory) +
+            " bytes, limit " +
+            std::to_string(options.load.limits.max_resident_bytes) +
             " bytes";
+    operation_status = OperationStatus::ResourceLimit;
     AddDiagnostic(DiagnosticSeverity::Error, domain, "memory_budget", error,
                   root_identifier);
     return false;
@@ -534,12 +631,26 @@ struct StageSession::Impl {
   StageEditResult EditResult(bool success) const {
     StageEditResult result;
     result.success = success;
-    result.snapshot.revision = revision;
-    result.snapshot.stage = stage;
+    result.status = success ? OperationStatus::Ok : operation_status;
+    {
+      std::lock_guard<std::mutex> lock(publication_mu);
+      result.snapshot.revision = revision;
+      result.snapshot.stage = stage;
+    }
     if (success) result.changes = last_changes;
     result.diagnostics = diagnostics;
     result.warning = warning;
     result.error = error;
+    return result;
+  }
+
+  StageEditResult BusyResult() const {
+    StageEditResult result;
+    result.status = OperationStatus::Busy;
+    result.error = "stage session mutation is already in progress";
+    std::lock_guard<std::mutex> lock(publication_mu);
+    result.snapshot.revision = revision;
+    result.snapshot.stage = stage;
     return result;
   }
 
@@ -553,6 +664,7 @@ struct StageSession::Impl {
     event.estimated_resident_bytes = memory_stats.estimated_total_bytes;
     if (options.progress_callback(event)) return true;
     error = "operation cancelled";
+    operation_status = OperationStatus::Cancelled;
     AddDiagnostic(DiagnosticSeverity::Error, DiagnosticDomain::Load,
                   "cancelled", error, root_identifier);
     return false;
@@ -580,8 +692,8 @@ struct StageSession::Impl {
     }
 
     pcp::CompositionOptions composition = options.composition;
-    composition.max_layer_memory =
-        MinNonZero(composition.max_layer_memory, options.load.max_memory);
+    composition.max_layer_memory = MinNonZero(
+        composition.max_layer_memory, options.load.limits.max_asset_bytes);
     composition.usda_parse_options = options.load.usda_options.parse_options;
     std::shared_ptr<Layer> root_layer(root.ReleaseRootLayer());
     const std::string &identifier = composition_identifier.empty()
@@ -645,6 +757,7 @@ struct StageSession::Impl {
         preview.snapshot.stage.reset(new Stage(std::move(preview_stage)));
         if (!options.preview_callback(preview)) {
           error = "stage preview callback cancelled";
+          operation_status = OperationStatus::Cancelled;
           AddDiagnostic(DiagnosticSeverity::Error, DiagnosticDomain::Load,
                         "cancelled", error, root_identifier);
           return false;
@@ -662,12 +775,19 @@ struct StageSession::Impl {
                               &accepted_memory)) {
       return false;
     }
-    const uint64_t next_revision = revision + 1;
-    StageChangeSet changes = BuildStageChangeSet(
-        revision ? stage.get() : nullptr, next_stage, revision, next_revision);
-    stage.reset(new Stage(std::move(next_stage)));
-    revision = next_revision;
-    last_changes = std::move(changes);
+    // A completion callback may still cancel. Run it before publication so a
+    // failed operation never exposes a new revision or stage.
+    if (!Progress(phase, 1.0f, "stage ready")) return false;
+    {
+      std::lock_guard<std::mutex> lock(publication_mu);
+      const uint64_t next_revision = revision + 1;
+      StageChangeSet changes = BuildStageChangeSet(
+          revision ? stage.get() : nullptr, next_stage, revision,
+          next_revision);
+      stage.reset(new Stage(std::move(next_stage)));
+      revision = next_revision;
+      last_changes = std::move(changes);
+    }
     RecordMessages(DiagnosticDomain::Compose);
     memory_stats = accepted_memory;
     if (options.cache_retention == CacheRetention::LayersOnly) {
@@ -675,7 +795,7 @@ struct StageSession::Impl {
       const size_t composed_stage_bytes = memory_stats.composed_stage_bytes;
       UpdateMemoryStats(&composed_stage_bytes);
     }
-    return Progress(phase, 1.0f, "stage ready");
+    return true;
   }
 };
 
@@ -684,19 +804,84 @@ StageSession::~StageSession() = default;
 StageSession::StageSession(StageSession&&) noexcept = default;
 StageSession& StageSession::operator=(StageSession&&) noexcept = default;
 
-bool StageSession::OpenFile(const std::string& filename,
-                            const StageSessionOptions& options) {
+StageOperationResult StageSession::OpenFile(
+    const std::string& filename, const StageSessionOptions& options) {
+  if (StageOperationActive(impl_.get())) return impl_->BusyResult();
+  std::lock_guard<std::recursive_mutex> operation_lock(impl_->operation_mu);
+  StageOperationScope operation_scope(impl_.get());
   using Clock = std::chrono::steady_clock;
   const auto open_begin = Clock::now();
   StageSessionOptions normalized = options;
-  if (normalized.execution.max_threads >= 0) {
-    const int threads = normalized.execution.max_threads == 0
-                            ? -1
-                            : ClampExecutionThreads(
-                                  normalized.execution.max_threads);
-    normalized.composition.num_threads = threads;
-    normalized.load.usda_options.parse_options.num_threads = threads;
-    normalized.composition.usda_parse_options.num_threads = threads;
+  auto finish = [&](std::unique_ptr<Impl> candidate,
+                    bool success) -> StageOperationResult {
+    if (success) {
+      impl_->WaitForRetiringCache();
+      {
+        std::lock_guard<std::mutex> publish_lock(impl_->publication_mu);
+        impl_->AdoptState(std::move(*candidate));
+      }
+      return impl_->EditResult(true);
+    }
+    // Preserve the last committed stage, cache, and revision. Diagnostics from
+    // the failed transaction remain observable through both the result and the
+    // value-returning compatibility getters.
+    StageOperationResult result = candidate->EditResult(false);
+    {
+      std::lock_guard<std::mutex> publish_lock(impl_->publication_mu);
+      result.snapshot.revision = impl_->revision;
+      result.snapshot.stage = impl_->stage;
+    }
+    impl_->warning = candidate->warning;
+    impl_->error = candidate->error;
+    impl_->diagnostics = candidate->diagnostics;
+    return result;
+  };
+  if (filename.empty() || !normalized.load.limits.valid() ||
+      normalized.execution.max_threads < 0) {
+    std::unique_ptr<Impl> failed(new Impl());
+    failed->operation_status = OperationStatus::InvalidArgument;
+    failed->error = filename.empty() ? "empty stage filename"
+                                     : "invalid session options";
+    failed->AddDiagnostic(DiagnosticSeverity::Error, DiagnosticDomain::Load,
+                          "invalid_argument", failed->error, filename);
+    return finish(std::move(failed), false);
+  }
+  normalized.load.usda_options.parse_options.max_depth = MinNonZero(
+      normalized.load.usda_options.parse_options.max_depth,
+      normalized.load.limits.max_parse_depth);
+  normalized.composition.max_layer_memory = MinNonZero(
+      normalized.composition.max_layer_memory,
+      normalized.load.limits.max_asset_bytes);
+  normalized.composition.max_array_elements = MinNonZero(
+      normalized.composition.max_array_elements,
+      normalized.load.limits.max_array_elements);
+  normalized.composition.max_archive_entries = MinNonZero(
+      normalized.composition.max_archive_entries,
+      normalized.load.limits.max_archive_entries);
+  normalized.composition.max_depth = static_cast<uint32_t>(
+      std::min<size_t>(normalized.composition.max_depth,
+                       normalized.load.limits.max_composition_depth));
+  normalized.composition.max_namespace_depth = static_cast<uint32_t>(
+      std::min<size_t>(normalized.composition.max_namespace_depth,
+                       normalized.load.limits.max_namespace_depth));
+  const int threads = normalized.execution.max_threads == 0
+                          ? -1
+                          : ClampExecutionThreads(
+                                normalized.execution.max_threads);
+  normalized.composition.num_threads = threads;
+  normalized.load.usda_options.parse_options.num_threads = threads;
+  normalized.composition.usda_parse_options.num_threads = threads;
+  if (normalized.load.input_policy == InputPolicy::Untrusted) {
+    normalized.load.usda_options.parse_options.strict_aousd_conformance = true;
+    normalized.load.usdc_options.crate_options.strict_aousd_conformance = true;
+    normalized.load.usdc_options.crate_options.use_mmap = false;
+    normalized.composition.strict_aousd_conformance = true;
+    normalized.composition.error_when_asset_not_found = true;
+    normalized.composition.usdc_use_mmap = false;
+    normalized.resolver.allow_absolute_paths = false;
+    normalized.resolver.allow_parent_paths = false;
+    normalized.resolver.search_recursively = false;
+    normalized.resolver.enable_suffix_fallback = false;
   }
   if (normalized.composition.num_threads > 1) {
     normalized.composition.num_threads =
@@ -718,15 +903,13 @@ bool StageSession::OpenFile(const std::string& filename,
     next->resolver.SetWorkingDirectory(DirOfPath(filename));
   }
   if (!next->Progress(ProgressPhase::RootLoad, 0.0f, "loading root layer")) {
-    impl_ = std::move(next);
-    return false;
+    return finish(std::move(next), false);
   }
 
   Stage root;
   if (!LoadUSD(filename, &root, normalized.load, &next->warning, &next->error)) {
     next->RecordMessages(DiagnosticDomain::Load);
-    impl_ = std::move(next);
-    return false;
+    return finish(std::move(next), false);
   }
   const auto root_loaded = Clock::now();
   if (normalized.early_preview_callback) {
@@ -739,8 +922,10 @@ bool StageSession::OpenFile(const std::string& filename,
     preview.authoritative = false;
     if (!normalized.early_preview_callback(preview)) {
       next->error = "stage early preview callback cancelled";
-      impl_ = std::move(next);
-      return false;
+      next->operation_status = OperationStatus::Cancelled;
+      next->AddDiagnostic(DiagnosticSeverity::Error, DiagnosticDomain::Load,
+                          "cancelled", next->error, filename);
+      return finish(std::move(next), false);
     }
   }
   // Composition arcs in a package are relative to its root entry, not to the
@@ -759,8 +944,7 @@ bool StageSession::OpenFile(const std::string& filename,
   }
   next->composition_identifier = composition_identifier;
   if (!next->Progress(ProgressPhase::RootLoad, 1.0f, "root layer loaded")) {
-    impl_ = std::move(next);
-    return false;
+    return finish(std::move(next), false);
   }
 
   if (!normalized.compose || !StageNeedsComposition(root)) {
@@ -774,18 +958,21 @@ bool StageSession::OpenFile(const std::string& filename,
     root_change.flags = StageChangeFlag::Resync;
     next->last_changes.prims.push_back(std::move(root_change));
     if (!next->CheckMemoryBudget(DiagnosticDomain::Load)) {
-      impl_ = std::move(next);
-      return false;
+      return finish(std::move(next), false);
     }
     next->open = true;
     next->RecordMessages(DiagnosticDomain::Load);
-    impl_ = std::move(next);
-    return true;
+    return finish(std::move(next), true);
   }
 
   pcp::CompositionOptions composition = normalized.composition;
-  composition.max_layer_memory =
-      MinNonZero(composition.max_layer_memory, normalized.load.max_memory);
+  composition.max_layer_memory = MinNonZero(
+      composition.max_layer_memory, normalized.load.limits.max_asset_bytes);
+  composition.max_depth = static_cast<uint32_t>(std::min<size_t>(
+      composition.max_depth, normalized.load.limits.max_composition_depth));
+  composition.max_namespace_depth = static_cast<uint32_t>(std::min<size_t>(
+      composition.max_namespace_depth,
+      normalized.load.limits.max_namespace_depth));
   composition.usda_parse_options = normalized.load.usda_options.parse_options;
   std::shared_ptr<Layer> root_layer(root.ReleaseRootLayer());
   auto opened = pcp::Cache::Open(next->resolver, std::move(root_layer),
@@ -793,14 +980,12 @@ bool StageSession::OpenFile(const std::string& filename,
   if (!opened) {
     next->error = opened.error();
     next->RecordMessages(DiagnosticDomain::Compose);
-    impl_ = std::move(next);
-    return false;
+    return finish(std::move(next), false);
   }
   const auto cache_opened = Clock::now();
   next->cache.reset(new pcp::Cache(std::move(*opened)));
   if (!next->Rebuild(ProgressPhase::Compose)) {
-    impl_ = std::move(next);
-    return false;
+    return finish(std::move(next), false);
   }
   const auto stage_built = Clock::now();
   if (normalized.composition.enable_timing) {
@@ -816,20 +1001,28 @@ bool StageSession::OpenFile(const std::string& filename,
                 "ms");
   }
   next->open = true;
-  impl_ = std::move(next);
-  return true;
+  return finish(std::move(next), true);
 }
 
 StageSnapshot StageSession::GetSnapshot() const {
   StageSnapshot snapshot;
   if (!impl_) return snapshot;
+  std::lock_guard<std::mutex> lock(impl_->publication_mu);
   snapshot.revision = impl_->revision;
   snapshot.stage = impl_->stage;
   return snapshot;
 }
-const Stage& StageSession::GetStage() const { return *impl_->stage; }
-Stage StageSession::TakeStage() {
-  if (!impl_) return Stage();
+nonstd::expected<Stage, OperationStatus> StageSession::CloseAndTakeStage() {
+  if (!impl_) return nonstd::make_unexpected(OperationStatus::InvalidArgument);
+  if (StageOperationActive(impl_.get())) {
+    return nonstd::make_unexpected(OperationStatus::Busy);
+  }
+  std::lock_guard<std::recursive_mutex> operation_lock(impl_->operation_mu);
+  StageOperationScope operation_scope(impl_.get());
+  std::lock_guard<std::mutex> publish_lock(impl_->publication_mu);
+  if (!impl_->stage || impl_->stage.use_count() != 1) {
+    return nonstd::make_unexpected(OperationStatus::Busy);
+  }
   impl_->open = false;
   impl_->cache.reset();
   impl_->composition_cache_released = false;
@@ -839,30 +1032,39 @@ Stage StageSession::TakeStage() {
   impl_->released_composition_issues.clear();
   Stage out;
   if (impl_->stage) {
-    if (impl_->stage.use_count() == 1) {
-      out = std::move(*impl_->stage);
-    } else {
-      out = impl_->stage->Clone();
-    }
+    out = std::move(*impl_->stage);
     impl_->stage.reset(new Stage());
   }
-  return out;
+  return nonstd::expected<Stage, OperationStatus>(std::move(out));
 }
-const StageSessionOptions& StageSession::GetOptions() const {
+StageSessionOptions StageSession::GetOptions() const {
+  if (!impl_) return {};
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
   return impl_->options;
 }
-const std::string& StageSession::GetRootIdentifier() const {
+std::string StageSession::GetRootIdentifier() const {
+  if (!impl_) return {};
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
   return impl_->root_identifier;
 }
-bool StageSession::IsOpen() const { return impl_ && impl_->open; }
+bool StageSession::IsOpen() const {
+  if (!impl_) return false;
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  return impl_->open;
+}
 bool StageSession::IsComposed() const {
-  return impl_ && impl_->open &&
+  if (!impl_) return false;
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  return impl_->open &&
          (impl_->cache != nullptr || impl_->composition_cache_released);
 }
 StageEditResult StageSession::Rebuild() {
-  if (!impl_ || !impl_->open) {
-    return impl_ ? impl_->EditResult(false) : StageEditResult{};
-  }
+  if (!impl_) return {};
+  if (StageOperationActive(impl_.get())) return impl_->BusyResult();
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  StageOperationScope operation_scope(impl_.get());
+  impl_->BeginOperation();
+  if (!impl_->open) return impl_->EditResult(false);
   if (impl_->composition_cache_released &&
       !impl_->RestoreCompositionCache()) {
     return impl_->EditResult(false);
@@ -873,58 +1075,90 @@ StageEditResult StageSession::Rebuild() {
 
 StageEditResult StageSession::LoadPayload(const Path& prim_path,
                                           pcp::Cache::LoadPolicy policy) {
-  if (!impl_ || !impl_->RestoreCompositionCache()) {
-    return impl_ ? impl_->EditResult(false) : StageEditResult{};
-  }
-  impl_->warning.clear();
-  impl_->error.clear();
+  if (!impl_) return {};
+  if (StageOperationActive(impl_.get())) return impl_->BusyResult();
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  StageOperationScope operation_scope(impl_.get());
+  impl_->BeginOperation();
+  if (!impl_->RestoreCompositionCache()) return impl_->EditResult(false);
+  const pcp::LoadRules prior_rules = impl_->cache->GetLoadRules();
   if (!impl_->cache->LoadPayload(prim_path, policy, &impl_->warning,
                                  &impl_->error)) {
+    impl_->cache->SetLoadRules(prior_rules);
     impl_->RecordMessages(DiagnosticDomain::Compose);
     return impl_->EditResult(false);
   }
   const bool success = impl_->Rebuild(ProgressPhase::Recompose);
+  if (!success) impl_->cache->SetLoadRules(prior_rules);
   return impl_->EditResult(success);
 }
 
 StageEditResult StageSession::UnloadPayload(const Path& prim_path) {
-  if (!impl_ || !impl_->RestoreCompositionCache() ||
-      !impl_->cache->UnloadPayload(prim_path)) {
-    return impl_ ? impl_->EditResult(false) : StageEditResult{};
+  if (!impl_) return {};
+  if (StageOperationActive(impl_.get())) return impl_->BusyResult();
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  StageOperationScope operation_scope(impl_.get());
+  impl_->BeginOperation();
+  if (!impl_->RestoreCompositionCache()) {
+    return impl_->EditResult(false);
+  }
+  const pcp::LoadRules prior_rules = impl_->cache->GetLoadRules();
+  if (!impl_->cache->UnloadPayload(prim_path)) {
+    impl_->cache->SetLoadRules(prior_rules);
+    return impl_->EditResult(false);
   }
   const bool success = impl_->Rebuild(ProgressPhase::Recompose);
+  if (!success) impl_->cache->SetLoadRules(prior_rules);
   return impl_->EditResult(success);
 }
 
 StageEditResult StageSession::LoadPayloads(
     const std::vector<Path>& prim_paths, pcp::Cache::LoadPolicy policy) {
-  if (!impl_ || !impl_->RestoreCompositionCache()) {
-    return impl_ ? impl_->EditResult(false) : StageEditResult{};
-  }
+  if (!impl_) return {};
+  if (StageOperationActive(impl_.get())) return impl_->BusyResult();
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  StageOperationScope operation_scope(impl_.get());
+  impl_->BeginOperation();
+  if (!impl_->RestoreCompositionCache()) return impl_->EditResult(false);
+  const pcp::LoadRules prior_rules = impl_->cache->GetLoadRules();
   if (!impl_->cache->LoadPayloads(prim_paths, policy)) {
+    impl_->cache->SetLoadRules(prior_rules);
     return impl_->EditResult(false);
   }
   const bool success = impl_->Rebuild(ProgressPhase::Recompose);
+  if (!success) impl_->cache->SetLoadRules(prior_rules);
   return impl_->EditResult(success);
 }
 
 StageEditResult StageSession::SetVariantSelection(
     const Path& prim_path, const std::string& variant_set,
     const std::string& selection) {
-  if (!impl_ || prim_path.empty() || variant_set.empty() || selection.empty() ||
+  if (!impl_) return {};
+  if (StageOperationActive(impl_.get())) return impl_->BusyResult();
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  StageOperationScope operation_scope(impl_.get());
+  impl_->BeginOperation();
+  if (prim_path.empty() || variant_set.empty() || selection.empty() ||
       !impl_->RestoreCompositionCache()) {
-    return impl_ ? impl_->EditResult(false) : StageEditResult{};
+    return impl_->EditResult(false);
   }
   auto selections = impl_->cache->GetVariantSelections();
   selections[prim_path.str()][variant_set] = selection;
-  return SetVariantSelections(selections);
+  const auto prior = impl_->cache->GetVariantSelections();
+  impl_->cache->SetVariantSelections(selections);
+  const bool success = impl_->Rebuild(ProgressPhase::Recompose);
+  if (!success) impl_->cache->SetVariantSelections(prior);
+  return impl_->EditResult(success);
 }
 
 StageEditResult StageSession::ClearVariantSelection(
     const Path& prim_path, const std::string& variant_set) {
-  if (!impl_ || !impl_->RestoreCompositionCache()) {
-    return impl_ ? impl_->EditResult(false) : StageEditResult{};
-  }
+  if (!impl_) return {};
+  if (StageOperationActive(impl_.get())) return impl_->BusyResult();
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  StageOperationScope operation_scope(impl_.get());
+  impl_->BeginOperation();
+  if (!impl_->RestoreCompositionCache()) return impl_->EditResult(false);
   auto selections = impl_->cache->GetVariantSelections();
   auto path_it = selections.find(prim_path.str());
   if (path_it == selections.end()) {
@@ -935,38 +1169,57 @@ StageEditResult StageSession::ClearVariantSelection(
   }
   path_it->second.erase(variant_set);
   if (path_it->second.empty()) selections.erase(path_it);
-  return SetVariantSelections(selections);
+  const auto prior = impl_->cache->GetVariantSelections();
+  impl_->cache->SetVariantSelections(selections);
+  const bool success = impl_->Rebuild(ProgressPhase::Recompose);
+  if (!success) impl_->cache->SetVariantSelections(prior);
+  return impl_->EditResult(success);
 }
 
 StageEditResult StageSession::SetVariantSelections(
     const pcp::CompositionOptions::VariantSelectionMap& selections) {
-  if (!impl_ || !impl_->RestoreCompositionCache()) {
-    return impl_ ? impl_->EditResult(false) : StageEditResult{};
-  }
+  if (!impl_) return {};
+  if (StageOperationActive(impl_.get())) return impl_->BusyResult();
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  StageOperationScope operation_scope(impl_.get());
+  impl_->BeginOperation();
+  if (!impl_->RestoreCompositionCache()) return impl_->EditResult(false);
+  const auto prior = impl_->cache->GetVariantSelections();
   impl_->cache->SetVariantSelections(selections);
   const bool success = impl_->Rebuild(ProgressPhase::Recompose);
+  if (!success) impl_->cache->SetVariantSelections(prior);
   return impl_->EditResult(success);
 }
 
 StageEditResult StageSession::ReloadLayer(
     const std::string& resolved_layer_id) {
-  if (!impl_ || !impl_->open || resolved_layer_id.empty()) {
-    return impl_ ? impl_->EditResult(false) : StageEditResult{};
-  }
+  if (!impl_) return {};
+  if (StageOperationActive(impl_.get())) return impl_->BusyResult();
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  StageOperationScope operation_scope(impl_.get());
+  impl_->BeginOperation();
+  if (!impl_->open || resolved_layer_id.empty())
+    return impl_->EditResult(false);
 
   if (resolved_layer_id == impl_->root_identifier) {
     StageSession replacement;
-    if (!replacement.OpenFile(impl_->root_identifier, impl_->options)) {
-      StageEditResult failed = replacement.impl_->EditResult(false);
+    StageOperationResult opened =
+        replacement.OpenFile(impl_->root_identifier, impl_->options);
+    if (!opened) {
+      StageEditResult failed = std::move(opened);
       failed.snapshot = GetSnapshot();
       return failed;
     }
-    const uint64_t next_revision = impl_->revision + 1;
-    replacement.impl_->last_changes = BuildStageChangeSet(
-        impl_->stage.get(), *replacement.impl_->stage, impl_->revision,
-        next_revision);
-    replacement.impl_->revision = next_revision;
-    impl_ = std::move(replacement.impl_);
+    impl_->WaitForRetiringCache();
+    {
+      std::lock_guard<std::mutex> publish_lock(impl_->publication_mu);
+      const uint64_t next_revision = impl_->revision + 1;
+      replacement.impl_->last_changes = BuildStageChangeSet(
+          impl_->stage.get(), *replacement.impl_->stage, impl_->revision,
+          next_revision);
+      replacement.impl_->revision = next_revision;
+      impl_->AdoptState(std::move(*replacement.impl_));
+    }
     return impl_->EditResult(true);
   }
 
@@ -981,12 +1234,16 @@ StageEditResult StageSession::ReloadLayer(
 
 pcp::CompositionOptions::VariantSelectionMap
 StageSession::GetVariantSelections() const {
-  return impl_ && impl_->cache
+  if (!impl_) return {};
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  return impl_->cache
              ? impl_->cache->GetVariantSelections()
              : (impl_ ? impl_->released_variant_selections
                       : pcp::CompositionOptions::VariantSelectionMap());
 }
 std::vector<Path> StageSession::GetDeferredPayloadPaths() const {
+  if (!impl_) return {};
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
   return impl_ && impl_->cache
              ? impl_->cache->GetDeferredPayloadPaths()
              : (impl_ ? impl_->released_deferred_payloads
@@ -994,6 +1251,8 @@ std::vector<Path> StageSession::GetDeferredPayloadPaths() const {
 }
 std::vector<pcp::Cache::CompositionIssue>
 StageSession::GetCompositionIssues() const {
+  if (!impl_) return {};
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
   return impl_ && impl_->cache
              ? impl_->cache->GetCompositionIssues()
              : (impl_ ? impl_->released_composition_issues
@@ -1001,23 +1260,36 @@ StageSession::GetCompositionIssues() const {
 }
 
 std::vector<std::string> StageSession::GetLayerDependencies() const {
+  if (!impl_) return {};
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
   if (!impl_ || !impl_->cache) return {};
   return impl_->cache->GetLayerDependencies();
 }
-const std::vector<Diagnostic>& StageSession::GetDiagnostics() const {
+std::vector<Diagnostic> StageSession::GetDiagnostics() const {
+  if (!impl_) return {};
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
   return impl_->diagnostics;
 }
 StageSessionMemoryStats StageSession::GetMemoryStats() const {
   if (!impl_) return {};
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
   impl_->UpdateMemoryStats();
   return impl_->memory_stats;
 }
 void StageSession::TrimCaches() {
+  if (!impl_) return;
+  if (StageOperationActive(impl_.get())) return;
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  StageOperationScope operation_scope(impl_.get());
   if (!impl_ || !impl_->cache) return;
   impl_->cache->TrimTransientCaches();
   impl_->UpdateMemoryStats();
 }
 void StageSession::ReleaseCompositionCache() {
+  if (!impl_) return;
+  if (StageOperationActive(impl_.get())) return;
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  StageOperationScope operation_scope(impl_.get());
   if (!impl_ || !impl_->cache) return;
   impl_->WaitForRetiringCache();
   impl_->released_load_rules = impl_->cache->GetLoadRules();
@@ -1036,7 +1308,13 @@ void StageSession::ReleaseCompositionCache() {
 }
 Stage::StaticGeometryReleaseStats StageSession::ReleaseStaticGeometryArrays(
     size_t min_array_elements) {
-  if (!impl_ || !IsComposed()) return {};
+  if (!impl_) return {};
+  if (StageOperationActive(impl_.get())) return {};
+  std::lock_guard<std::recursive_mutex> operation_lock(impl_->operation_mu);
+  StageOperationScope operation_scope(impl_.get());
+  if (!impl_->open ||
+      (!impl_->cache && !impl_->composition_cache_released)) return {};
+  std::lock_guard<std::mutex> publish_lock(impl_->publication_mu);
   impl_->EnsureUniqueStage();
   Stage::StaticGeometryReleaseStats stats =
       impl_->stage->ReleaseStaticGeometryArrays(min_array_elements);
@@ -1046,7 +1324,13 @@ Stage::StaticGeometryReleaseStats StageSession::ReleaseStaticGeometryArrays(
 Stage::StaticGeometryReleaseStats
 StageSession::ReleaseStaticGeometryArraysForPrim(
     const UsdPrim& prim, size_t min_array_elements) {
-  if (!impl_ || !IsComposed()) return {};
+  if (!impl_) return {};
+  if (StageOperationActive(impl_.get())) return {};
+  std::lock_guard<std::recursive_mutex> operation_lock(impl_->operation_mu);
+  StageOperationScope operation_scope(impl_.get());
+  if (!impl_->open ||
+      (!impl_->cache && !impl_->composition_cache_released)) return {};
+  std::lock_guard<std::mutex> publish_lock(impl_->publication_mu);
   impl_->EnsureUniqueStage();
   // Do not rescan stage memory here: the streaming converter calls this for
   // every last-use prim while worker threads are active. A final bulk release
@@ -1054,8 +1338,16 @@ StageSession::ReleaseStaticGeometryArraysForPrim(
   return impl_->stage->ReleaseStaticGeometryArraysForPrim(
       prim, min_array_elements);
 }
-const std::string& StageSession::GetWarning() const { return impl_->warning; }
-const std::string& StageSession::GetError() const { return impl_->error; }
+std::string StageSession::GetWarning() const {
+  if (!impl_) return {};
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  return impl_->warning;
+}
+std::string StageSession::GetError() const {
+  if (!impl_) return {};
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  return impl_->error;
+}
 
 bool LoadUSDComposed(const std::string& filename, Stage* stage,
                      std::string* warn, std::string* err,
@@ -1076,6 +1368,10 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
                         const pcp::CompositionOptions* comp_opts) {
   if (!stage) {
     if (err) *err = "composition failed: null stage";
+    return false;
+  }
+  if (!load_options.limits.valid()) {
+    if (err) *err = "invalid resource limits: zero is not unlimited";
     return false;
   }
   Layer* root = stage->GetRootLayer();
@@ -1114,8 +1410,17 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
 #else
   copts.num_threads = 1;
 #endif
-  copts.max_layer_memory = load_options.max_memory;
-  copts.strict_aousd_conformance = load_options.strict_aousd_conformance;
+  copts.max_layer_memory = load_options.limits.max_asset_bytes;
+  copts.max_array_elements = load_options.limits.max_array_elements;
+  copts.max_archive_entries = load_options.limits.max_archive_entries;
+  copts.max_depth = static_cast<uint32_t>(std::min<size_t>(
+      copts.max_depth, load_options.limits.max_composition_depth));
+  copts.max_namespace_depth = static_cast<uint32_t>(std::min<size_t>(
+      copts.max_namespace_depth, load_options.limits.max_namespace_depth));
+  copts.strict_aousd_conformance =
+      load_options.input_policy == InputPolicy::Untrusted;
+  copts.error_when_asset_not_found = copts.strict_aousd_conformance;
+  copts.usdc_use_mmap = !copts.strict_aousd_conformance;
   copts.usda_parse_options = load_options.usda_options.parse_options;
   // Merge caller-supplied composition options (e.g. variant_overrides) into our
   // defaults. Caller-populated fields take precedence.
@@ -1155,6 +1460,34 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
         MinNonZero(copts.max_layer_memory, comp_opts->max_layer_memory);
     copts.usdc_lazy_arrays = comp_opts->usdc_lazy_arrays;
     copts.usdc_use_mmap = comp_opts->usdc_use_mmap;
+  }
+  // Resource limits and the untrusted policy are authoritative even when a
+  // caller also supplies legacy CompositionOptions. Re-apply them after the
+  // merge so compatibility knobs cannot accidentally weaken the boundary.
+  copts.max_depth = static_cast<uint32_t>(std::min<size_t>(
+      copts.max_depth, load_options.limits.max_composition_depth));
+  copts.max_namespace_depth = static_cast<uint32_t>(std::min<size_t>(
+      copts.max_namespace_depth, load_options.limits.max_namespace_depth));
+  copts.max_layer_memory = MinNonZero(
+      copts.max_layer_memory, load_options.limits.max_asset_bytes);
+  copts.max_array_elements = MinNonZero(
+      copts.max_array_elements, load_options.limits.max_array_elements);
+  copts.max_archive_entries = MinNonZero(
+      copts.max_archive_entries, load_options.limits.max_archive_entries);
+  copts.usda_parse_options.max_file_size = MinNonZero(
+      copts.usda_parse_options.max_file_size,
+      load_options.limits.max_asset_bytes);
+  copts.usda_parse_options.max_usda_lazy_array_elements = MinNonZero(
+      copts.usda_parse_options.max_usda_lazy_array_elements,
+      load_options.limits.max_array_elements);
+  copts.usda_parse_options.max_depth = MinNonZero(
+      copts.usda_parse_options.max_depth,
+      load_options.limits.max_parse_depth);
+  if (load_options.input_policy == InputPolicy::Untrusted) {
+    copts.strict_aousd_conformance = true;
+    copts.error_when_asset_not_found = true;
+    copts.usdc_use_mmap = false;
+    copts.usda_parse_options.strict_aousd_conformance = true;
   }
 
   Stage composed;
@@ -1229,6 +1562,10 @@ bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
   }
   if (!data || size == 0) {
     if (err) *err = "input buffer is empty";
+    return false;
+  }
+  if (!options.limits.valid()) {
+    if (err) *err = "invalid resource limits: zero is not unlimited";
     return false;
   }
 
@@ -1324,6 +1661,10 @@ bool LoadUSDFromMemoryOwned(std::string&& data, Stage* stage,
   }
   if (data.empty()) {
     if (err) *err = "input buffer is empty";
+    return false;
+  }
+  if (!options.limits.valid()) {
+    if (err) *err = "invalid resource limits: zero is not unlimited";
     return false;
   }
 

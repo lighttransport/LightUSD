@@ -62,12 +62,12 @@ void FillProxyMesh(const UsdPrim& prim,
                    const std::vector<int>& face_indices, RenderMesh* out) {
   out->name = prim.GetName();
   out->prim_path = prim.GetPath().str();
-  out->face_vertex_counts.reserve(face_counts.size());
+  out->face_vertex_counts.reserve_exact(face_counts.size());
   for (int count : face_counts) {
     out->face_vertex_counts.push_back(
         count < 0 ? uint32_t{0} : static_cast<uint32_t>(count));
   }
-  out->face_vertex_indices.reserve(face_indices.size());
+  out->face_vertex_indices.reserve_exact(face_indices.size());
   for (int index : face_indices) {
     out->face_vertex_indices.push_back(
         index < 0 ? uint32_t{0} : static_cast<uint32_t>(index));

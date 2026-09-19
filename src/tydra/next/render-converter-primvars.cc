@@ -165,7 +165,7 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
       const Interpolation ni = ParsePrimvarInterp(interp_tok);
       const size_t elems = normals.view.size / 3;
       if (elems == expected_elems(ni)) {
-        mesh->normals.append(normals.view.data, normals.view.size);
+        mesh->normals.append_exact(normals.view.data, normals.view.size);
         mesh->normals_interp = ni;
       } else {
         AddWarning("Mesh '" + mesh->prim_path +
@@ -217,7 +217,7 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
       attr.format = VertexFormat::Int;
       attr.interpolation = resolve_interp(
           pv.indices().empty() ? ia->size() : pv.indices().size());
-      attr.int_data.append(ia->data(), ia->size());
+      attr.int_data.append_exact(ia->data(), ia->size());
       bool idx_ok = true;
       for (int32_t raw : pv.indices()) {
         if (raw < 0 || static_cast<size_t>(raw) >= ia->size()) {
@@ -259,25 +259,25 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
         continue;
       }
       if (is_uv0 && comps == 2) {
-        mesh->texcoords_0.append(fdata->data(), fdata->size());
+        mesh->texcoords_0.append_exact(fdata->data(), fdata->size());
         mesh->texcoords_0_interp = interp;
         mesh->texcoords_0_name = pv.name;
       } else if (is_uv1 && comps == 2) {
-        mesh->texcoords_1.append(fdata->data(), fdata->size());
+        mesh->texcoords_1.append_exact(fdata->data(), fdata->size());
         mesh->texcoords_1_interp = interp;
         mesh->texcoords_1_name = pv.name;
       } else if (is_color && (comps == 3 || comps == 4)) {
-        mesh->colors.append(fdata->data(), fdata->size());
+        mesh->colors.append_exact(fdata->data(), fdata->size());
         mesh->colors_interp = interp;
       } else if (is_opacity && comps == 1) {
         // displayOpacity as a render channel (legacy exposes it alongside
         // displayColor; consumers combine it as the vertex-color alpha).
-        mesh->opacities.append(fdata->data(), fdata->size());
+        mesh->opacities.append_exact(fdata->data(), fdata->size());
         mesh->opacities_interp = interp;
       } else if (is_normals && comps == 3) {
         // primvars:normals takes precedence over the raw `normals` attribute.
         mesh->normals.clear();
-        mesh->normals.append(fdata->data(), fdata->size());
+        mesh->normals.append_exact(fdata->data(), fdata->size());
         mesh->normals_interp = interp;
       }
       continue;
@@ -297,7 +297,7 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
         comps != 9 && comps != 16) continue;
     attr.interpolation = resolve_interp(
         pv.indices().empty() ? (fdata->size() / comps) : pv.indices().size());
-    attr.float_data.append(fdata->data(), fdata->size());
+    attr.float_data.append_exact(fdata->data(), fdata->size());
     bool idx_ok = true;
     const size_t elems = fdata->size() / comps;
     for (int32_t raw : pv.indices()) {

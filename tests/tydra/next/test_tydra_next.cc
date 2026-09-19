@@ -23,7 +23,6 @@
 #include "tydra/next/scene-access.hh"
 #include "tydra/next/render-extract.hh"
 #include "tydra/next/render-converter.hh"
-#include "tydra/next/mem-budget.hh"
 #include "tydra/next/usdz-entry-match.hh"
 #include "tydra/next/render-session.hh"
 #include "tydra/next/resource-budget.hh"
@@ -162,22 +161,20 @@ void TestChunkedArrayAllocFailure() {
 
 void TestChunkedArrayStorageEdges() {
   // Repeated tail compaction must preserve capacity and budget accounting.
-  const size_t saved_cap = MemBudget::Get().Cap();
-  MemBudget::Get().InitBytes(size_t(1) << 30);
-  const size_t base = MemBudget::Get().Tracked();
-  MemBudget::InstallChunkedArrayTracking();
+  auto budget = std::make_shared<ChunkAllocationBudget>(size_t(1) << 30);
+  ScopedChunkAllocationBudget budget_scope(budget);
   {
     ChunkedArray<uint32_t> a;
     assert(a.resize(17, 42));
     a.shrink_to_fit();
-    const size_t compact = MemBudget::Get().Tracked();
+    const size_t compact = budget->Tracked();
     a.shrink_to_fit();
     assert(a.capacity() == 17);
-    assert(MemBudget::Get().Tracked() == compact);
+    assert(budget->Tracked() == compact);
     assert(a.resize(9));
     a.shrink_to_fit();
     assert(a.capacity() == 9);
-    assert(MemBudget::Get().Tracked() == base + 9 * sizeof(uint32_t));
+    assert(budget->Tracked() == 9 * sizeof(uint32_t));
 
     // An append source may be a borrowed view of the tail being expanded.
     const auto& read = a;
@@ -196,9 +193,7 @@ void TestChunkedArrayStorageEdges() {
     assert(b.push_back(7) == 0);
     assert(moved.size() == 36 && moved[0] == 42);
   }
-  assert(MemBudget::Get().Tracked() == base);
-  MemBudget::UninstallChunkedArrayTracking();
-  MemBudget::Get().InitBytes(saved_cap);
+  assert(budget->Tracked() == 0);
 
   struct alignas(64) Wide { uint32_t values[16]; };
   ChunkedArray<Wide, 256> aligned;
@@ -328,35 +323,29 @@ void TestChunkedArrayShareCow() {
 void TestChunkedArrayShareCowBudgetFailure() {
   std::cout << "Testing ChunkedArray copy-on-write budget failure...\n";
 
-  ChunkedArray<uint32_t> source;
-  if (source.push_back(7u) != 0) std::abort();
   ChunkedArray<uint32_t> copy;
-  copy.share_from(source);
-  assert(source.is_shared() && copy.is_shared());
-
-  const size_t saved_cap = MemBudget::Get().Cap();
-  MemBudget::Get().InitBytes(1);
-  MemBudget::InstallChunkedArrayTracking();
-
-  const uint32_t appended = 9u;
-  const bool append_ok = copy.append(&appended, 1);
-  if (append_ok) std::abort();
-  assert(copy.alloc_failed());
-  assert(copy.size() == 1);
   {
+    auto budget = std::make_shared<ChunkAllocationBudget>(kDefaultChunkSize);
+    ScopedChunkAllocationBudget budget_scope(budget);
+    ChunkedArray<uint32_t> source;
+    if (source.push_back(7u) != 0) std::abort();
+    copy.share_from(source);
+    assert(source.is_shared() && copy.is_shared());
+
+    const uint32_t appended = 9u;
+    const bool append_ok = copy.append(&appended, 1);
+    if (append_ok) std::abort();
+    assert(copy.alloc_failed());
+    assert(copy.size() == 1);
     const ChunkedArray<uint32_t>& source_read = source;
     const ChunkedArray<uint32_t>& copy_read = copy;
     assert(source_read[0] == 7u);
     assert(copy_read[0] == 7u);
   }
 
-  MemBudget::UninstallChunkedArrayTracking();
-  MemBudget::Get().InitBytes(saved_cap);
-
-  // The failed clone remains shareable and can detach once resources return.
+  // Once the other owner releases the backing store, mutation needs no copy.
   copy.mutable_at(0) = 11u;
   assert(copy[0] == 11u);
-  assert(source[0] == 7u);
 
   std::cout << "  ChunkedArray copy-on-write budget failure: PASSED\n";
 }
@@ -368,35 +357,33 @@ void TestChunkedArrayShareCowBudgetFailure() {
 void TestChunkedArrayBudgetTracking() {
   std::cout << "Testing ChunkedArray budget tracking...\n";
 
-  const size_t saved_cap = MemBudget::Get().Cap();
-  MemBudget::Get().InitBytes(size_t(1) << 30);   // generous
-  const size_t base = MemBudget::Get().Tracked();
-  MemBudget::InstallChunkedArrayTracking();
-
+  auto budget = std::make_shared<ChunkAllocationBudget>(size_t(1) << 30);
   {
+    ScopedChunkAllocationBudget budget_scope(budget);
     ChunkedArray<float> a;
     for (size_t i = 0; i < 200000; ++i) a.push_back(float(i));
     assert(!a.alloc_failed());
     // The budget now sees the geometry, which is the whole point.
-    assert(MemBudget::Get().Tracked() > base);
+    assert(budget->Tracked() > 0);
 
     ChunkedArray<float> b;
     b.share_from(a);                 // share: no new charge
-    const size_t shared = MemBudget::Get().Tracked();
+    const size_t shared = budget->Tracked();
     assert(b[0] == 0.0f && b.chunk_data(0) == a.chunk_data(0));
-    assert(MemBudget::Get().Tracked() == shared);
+    assert(budget->Tracked() == shared);
     b.mutable_at(0) = 1.0f;                     // detach: takes a private copy
-    assert(MemBudget::Get().Tracked() > shared);
+    assert(budget->Tracked() > shared);
 
     a.shrink_to_fit();
     b.shrink_to_fit();
   }
   // Everything destroyed -> every charge released.
-  assert(MemBudget::Get().Tracked() == base);
+  assert(budget->Tracked() == 0);
 
   // A cap that cannot be met must be reported, not crashed through.
-  MemBudget::Get().InitBytes(1);
   {
+    auto tiny_budget = std::make_shared<ChunkAllocationBudget>(1);
+    ScopedChunkAllocationBudget budget_scope(tiny_budget);
     ChunkedArray<float> tiny;
     for (size_t i = 0; i < 100000; ++i) tiny.push_back(float(i));
     assert(tiny.alloc_failed());
@@ -404,9 +391,7 @@ void TestChunkedArrayBudgetTracking() {
     for (size_t i = 0; i < tiny.size(); ++i) (void)tiny[i];
   }
 
-  MemBudget::UninstallChunkedArrayTracking();
-  MemBudget::Get().InitBytes(saved_cap);
-  // With the hooks removed, allocation is unaffected again.
+  // Without a scope, allocation is unaffected again.
   {
     ChunkedArray<float> c;
     for (size_t i = 0; i < 100000; ++i) c.push_back(float(i));
@@ -886,6 +871,11 @@ void TestRenderConverter() {
          (std::numeric_limits<uint64_t>::max)());
   assert(extreme_budget.gpu_texture_limit <=
          (std::numeric_limits<uint64_t>::max)());
+  TextureFit texture_fit;
+  assert(ParseTextureFit("64M", &texture_fit));
+  assert(texture_fit.absolute_bytes == MiB(64));
+  assert(!ParseTextureFit("18446744073709551616", &texture_fit));
+  assert(!ParseTextureFit("18446744073709551615G", &texture_fit));
 
   const char* usda = R"(#usda 1.0
 (
@@ -3433,7 +3423,7 @@ void TestLargeMeshTangents() {
   std::cout << "  multi-chunk mesh tangents passed!\n";
 }
 
-// MemBudget wiring: with a cap below what the scene needs, conversion must
+// Per-conversion accounting: with a cap below what the scene needs, conversion must
 // degrade gracefully (warn + stop adding geometry) instead of running to OOM.
 // The converter's other limits are all per-prim, so this specifically covers
 // MANY small meshes summing past the cap -- the case none of them can see.
@@ -3453,8 +3443,6 @@ void TestConverterMemoryBudget() {
   LoadResult lr = LoadUSDAFromString(usda.c_str(), usda.size());
   assert(lr.success);
 
-  const size_t saved_cap = MemBudget::Get().Cap();
-
   // Baseline: the generous default cap converts everything.
   {
     ConverterConfig cfg;
@@ -3464,37 +3452,32 @@ void TestConverterMemoryBudget() {
     assert(res.scene.meshes.size() == static_cast<size_t>(kMeshes));
   }
 
-  // A cap far below current RSS trips the guard on the first check.
+  // An unsatisfiable per-conversion cap trips the guard on the first check.
   {
-    MemBudget::Get().InitBytes(1);  // 1 byte: unsatisfiable by construction
-    ConverterConfig cfg;
+    ConverterConfig cfg = MakeHardenedConverterConfig(1);
     RenderSceneConverter conv(cfg);
     ConvertResult res = conv.Convert(lr.stage);
     // Graceful: no crash, fewer meshes than authored, and a diagnostic.
     assert(res.scene.meshes.size() < static_cast<size_t>(kMeshes));
     bool warned = false;
     for (const std::string& w : res.warnings) {
-      if (w.find("Memory budget reached") != std::string::npos) warned = true;
+      if (w.find("Operation memory limit reached") != std::string::npos) {
+        warned = true;
+      }
     }
     assert(warned);
   }
 
-  MemBudget::Get().InitBytes(saved_cap);
-
   // A converter reused across APIs must not retain a previous operation's
-  // latched budget state. Trip the global guard in Convert(), restore it, then
-  // stream the same stage through the same converter.
+  // latched budget state.
   {
-    ConverterConfig cfg;
+    ConverterConfig cfg = MakeHardenedConverterConfig(1);
     RenderSceneConverter conv(cfg);
-    MemBudget::Get().InitBytes(1);
     ConvertResult limited = conv.Convert(lr.stage);
     assert(limited.scene.meshes.size() < static_cast<size_t>(kMeshes));
-    MemBudget::Get().InitBytes(saved_cap);
     RetainedStreamSink sink;
     StreamConvertResult streamed = conv.ConvertToSink(lr.stage, &sink);
-    assert(streamed.success);
-    assert(streamed.mesh_count == static_cast<size_t>(kMeshes));
+    assert(streamed.mesh_count == limited.scene.meshes.size());
   }
 
   // The hardened, operation-owned cap must work without mutating the global
@@ -6900,6 +6883,11 @@ class RecordingSceneUpdateSink final : public SceneUpdateSink {
     mesh_upserts = 0;
     removes = 0;
     mesh_removes = 0;
+    if (begin_callback && !inside_callback) {
+      inside_callback = true;
+      begin_callback();
+      inside_callback = false;
+    }
     return true;
   }
   bool Remove(const RemovedRenderResource& removed) override {
@@ -6913,7 +6901,8 @@ class RecordingSceneUpdateSink final : public SceneUpdateSink {
     if (!mesh.points.empty()) last_mesh_x = mesh.points[0];
     return true;
   }
-  bool EndUpdate() override { return true; }
+  bool EndUpdate() override { return !reject_end; }
+  void AbortUpdate() override { ++aborts; }
 
   uint64_t base_revision = 0;
   uint64_t new_revision = 0;
@@ -6923,6 +6912,10 @@ class RecordingSceneUpdateSink final : public SceneUpdateSink {
   size_t mesh_removes = 0;
   float last_mesh_x = 0.0f;
   std::map<std::string, RenderId> mesh_ids;
+  std::function<void()> begin_callback;
+  bool inside_callback = false;
+  bool reject_end = false;
+  size_t aborts = 0;
 };
 
 void TestIncrementalRenderSession() {
@@ -6953,6 +6946,9 @@ void TestIncrementalRenderSession() {
   assert(initial.converted_scene_bytes > 0);
   assert(sink.full_resync);
   assert(sink.mesh_upserts == 1);
+  RenderSceneSnapshot retained_render_snapshot = render_session.GetSnapshot();
+  assert(retained_render_snapshot.revision == 1);
+  assert(retained_render_snapshot.scene);
   const RenderId mesh_id = sink.mesh_ids.at("/M");
   assert(std::fabs(sink.last_mesh_x) < 1.0e-6f);
 
@@ -7020,6 +7016,58 @@ void TestIncrementalRenderSession() {
   assert(sink.mesh_upserts == 0);
   assert(sink.removes == 0);
   assert(render_session.revision() == 4);
+
+  // Sink callbacks may read snapshots, while reentrant writes fail fast.
+  RenderUpdateResult nested;
+  sink.begin_callback = [&]() {
+    (void)render_session.GetSnapshot();
+    nested = render_session.Apply(no_op_snapshot, no_op, &sink);
+  };
+  StageSnapshot callback_snapshot = no_op_snapshot;
+  callback_snapshot.revision = 5;
+  StageChangeSet callback_no_op;
+  callback_no_op.base_revision = 4;
+  callback_no_op.new_revision = 5;
+  assert(render_session.Apply(callback_snapshot, callback_no_op, &sink));
+  assert(!nested && nested.status == OperationStatus::Busy);
+  sink.begin_callback = {};
+
+  // A rejected transaction must not publish its scene/revision or consume
+  // stable IDs. Retrying the same update receives exactly the same IDs.
+  RenderSession retry_session;
+  RecordingSceneUpdateSink retry_sink;
+  assert(retry_session.Initialize(first_snapshot, &retry_sink));
+  const RenderSceneSnapshot before_reject = retry_session.GetSnapshot();
+  std::string expanded = source(3.0f);
+  expanded += R"(def Mesh "N" {
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+}
+)";
+  LoadResult expanded_load = LoadUSDAFromString(expanded);
+  assert(expanded_load.success);
+  StageSnapshot expanded_snapshot;
+  expanded_snapshot.revision = 2;
+  expanded_snapshot.stage.reset(new Stage(std::move(expanded_load.stage)));
+  StageChangeSet expanded_changes;
+  expanded_changes.base_revision = 1;
+  expanded_changes.new_revision = 2;
+  expanded_changes.full_resync = true;
+  retry_sink.reject_end = true;
+  RenderUpdateResult rejected =
+      retry_session.Apply(expanded_snapshot, expanded_changes, &retry_sink);
+  assert(!rejected && rejected.status == OperationStatus::SinkRejected);
+  const RenderId rejected_n_id = retry_sink.mesh_ids.at("/N");
+  const RenderSceneSnapshot after_reject = retry_session.GetSnapshot();
+  assert(after_reject.revision == before_reject.revision);
+  assert(after_reject.scene == before_reject.scene);
+  retry_sink.reject_end = false;
+  RenderUpdateResult retried =
+      retry_session.Apply(expanded_snapshot, expanded_changes, &retry_sink);
+  assert(retried);
+  assert(retry_sink.mesh_ids.at("/N") == rejected_n_id);
+
   std::cout << "  incremental RenderSession: PASSED\n";
 }
 
@@ -7227,7 +7275,7 @@ def Xform "World" {
   ConverterConfig hardened = MakeHardenedConverterConfig(size_t(64) << 20);
   assert(hardened.execution.max_threads == 1);
   assert(hardened.execution.max_in_flight_bytes == (size_t(64) << 20));
-  assert(hardened.max_render_records != 0);
+  assert(hardened.limits.max_render_records != 0);
   std::cout << "  parallel material texture remap/callback policy: PASSED\n";
 }
 

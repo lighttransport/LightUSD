@@ -40,7 +40,15 @@ typedef struct lightusd_render_config {
   uint8_t target_color_space; /* 0=srgb 1=linear 2=raw (tydra ColorSpace) */
   /* point instancer */
   uint8_t duplicate_instance_meshes;
+  uint8_t _pad0[4];
   double time_code;
+  /* execution/resource controls; zero limits are invalid */
+  int32_t max_threads; /* 0=bounded auto, 1=serial, >1=fixed */
+  uint32_t _pad1;
+  uint64_t max_resident_bytes;
+  uint64_t max_render_records;
+  uint64_t max_render_depth;
+  uint64_t max_value_clip_samples;
 } lightusd_render_config;
 
 LIGHTUSD_API void lightusd_render_config_init(lightusd_render_config* cfg);

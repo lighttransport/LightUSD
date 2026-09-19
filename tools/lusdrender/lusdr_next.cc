@@ -6247,7 +6247,8 @@ bool LoadNextStageBudgeted(const Options &opt, lightusd::next::Stage *stage,
           return PayloadIntersectsMask(prim_path.str(), payload_mask);
         };
   }
-  session_options.max_total_memory = MemBudget::Get().Cap() * 55 / 100;
+  session_options.load.limits.max_resident_bytes =
+      MemBudget::Get().Cap() * 55 / 100;
   session_options.cache_retention = lightusd::next::CacheRetention::LayersOnly;
   lightusd::next::StageSession session;
   if (!session.OpenFile(opt.input, session_options)) {
@@ -6305,11 +6306,21 @@ bool LoadNextStageBudgeted(const Options &opt, lightusd::next::Stage *stage,
         if (clip_err) *clip_err = clip_session.GetError();
         return false;
       }
-      *clip_stage = clip_session.TakeStage();
+      auto taken = clip_session.CloseAndTakeStage();
+      if (!taken) {
+        if (clip_err) *clip_err = "clip stage is still retained";
+        return false;
+      }
+      *clip_stage = std::move(*taken);
       return true;
     };
   }
-  *stage = session.TakeStage();
+  auto taken = session.CloseAndTakeStage();
+  if (!taken) {
+    if (err) *err = "stage is still retained";
+    return false;
+  }
+  *stage = std::move(*taken);
   if (warn) *warn = session.GetWarning();
   if (err) err->clear();
   return true;

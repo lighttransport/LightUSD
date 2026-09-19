@@ -271,7 +271,7 @@ void test_usdz_memory_caps() {
   }
 
   LoadUSDOptions load_opts;
-  load_opts.max_memory = 1;
+  load_opts.limits.max_input_bytes = 1;
   Stage loaded_stage;
   std::string warn, err;
   if (LoadUSD("/tmp/test_usdz_next.usdz", &loaded_stage, load_opts, &warn, &err)) {

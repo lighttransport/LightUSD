@@ -521,7 +521,7 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
         }
 
         const std::vector<double> sample_times = ValueClipSampleTimes(
-            stage, clip_set, config_.animation.max_value_clip_samples);
+            stage, clip_set, config_.limits.max_value_clip_samples);
         for (const std::string& property : properties) {
           if (!baked_properties.insert(property).second) continue;
           const auto prop_id =

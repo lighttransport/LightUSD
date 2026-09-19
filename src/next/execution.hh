@@ -14,6 +14,12 @@ namespace next {
 
 constexpr int kMaxExecutionThreads = 16;
 
+#if defined(LIGHTUSD_ENABLE_THREAD)
+constexpr bool kExecutionThreadsEnabled = true;
+#else
+constexpr bool kExecutionThreadsEnabled = false;
+#endif
+
 inline int ClampExecutionThreads(int requested) {
   return requested > kMaxExecutionThreads ? kMaxExecutionThreads : requested;
 }
@@ -23,18 +29,20 @@ enum class CallbackConcurrency : uint8_t {
   Concurrent
 };
 
-// Common execution policy for next and tydra/next operations. A value of -1
-// leaves an older API's thread-count field authoritative during the migration;
-// 0 selects a bounded hardware-derived count, and 1 forces serial execution.
+// Common execution policy for next and tydra/next operations. 0 selects a
+// bounded hardware-derived count, 1 forces serial execution, and >1 requests a
+// fixed count (clamped to kMaxExecutionThreads).
 struct ExecutionOptions {
-  int max_threads = -1;
+  int max_threads = 0;
   size_t max_in_flight_bytes = 0;
   CallbackConcurrency callback_concurrency = CallbackConcurrency::Serialized;
 };
 
 // Reusable bounded worker arena. Run() is synchronous and preserves ownership
 // of task state in the caller; one arena amortizes thread creation across all
-// phases of a top-level operation.
+// phases of a top-level operation. In a thread-disabled build this is a small
+// serial executor: it does not instantiate std::thread/mutex/condition_variable
+// and max_threads() reports the actual value 1.
 class TaskArena {
  public:
   using TaskFn = void (*)(void* context, size_t index);

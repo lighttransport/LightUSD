@@ -507,7 +507,16 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
     std::string anchor_package;
     std::string anchor_entry;
     if (ParsePackagePath(anchor_path, &anchor_package, &anchor_entry)) {
-      ResolvedAsset pkg = ResolveInternal(anchor_package, "");
+      ResolvedAsset pkg;
+      if (!config_.allow_absolute_paths && IsAbsolutePath(anchor_package)) {
+        // The package path is not newly-authored input: it is the already
+        // resolved container portion of `anchor_path`. Reusing that exact
+        // container does not grant access to another absolute path.
+        pkg.resolved_path = NormalizePath(anchor_package);
+        pkg.exists = FileExists(pkg.resolved_path);
+      } else {
+        pkg = ResolveInternal(anchor_package, "");
+      }
       if (pkg.exists) {
         const std::string entry_dir = GetDirectory(anchor_entry);
         std::string entry = (entry_dir == "." || entry_dir.empty())

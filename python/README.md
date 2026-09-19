@@ -67,5 +67,8 @@ for mesh in scene.meshes:
   pipeline that streams large arrays through without decoding them.
 - Free-threaded CPython: concurrent reads of one `Stage` are safe; do not
   author to a stage while other threads read it.
+- Source builds can set `LIGHTUSD_PY_ENABLE_THREAD=0` to omit optional
+  parser/composition/render worker threads while retaining API-level
+  synchronization and free-threaded-CPython safety.
 
 Apache 2.0. Part of [LightUSD](https://github.com/lighttransport/LightUSD).

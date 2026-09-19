@@ -133,7 +133,11 @@ bool ReadSourceBytes(const TextureDecodeOptions& opt, const std::string& asset,
       if (!UsdzEntryMatches(opt.usdz->EntryName(i), asset)) continue;
       const uint8_t* p = opt.usdz->EntryData(i);
       const size_t n = opt.usdz->EntrySize(i);
-      if (!p || !n) return false;
+      if (!p || !n ||
+          (opt.max_source_bytes != 0 &&
+           static_cast<uint64_t>(n) > opt.max_source_bytes)) {
+        return false;
+      }
       out->assign(p, p + n);
       return true;
     }
@@ -147,6 +151,10 @@ bool ReadSourceBytes(const TextureDecodeOptions& opt, const std::string& asset,
   if (!f) return false;
   size_t n = 0;
   if (!::lightusd::next::SafeStreamSize(f, 0, &n)) return false;
+  if (opt.max_source_bytes != 0 &&
+      static_cast<uint64_t>(n) > opt.max_source_bytes) {
+    return false;
+  }
   f.seekg(0, std::ios::beg);
   out->resize(n);
   return bool(f.read(reinterpret_cast<char*>(out->data()),

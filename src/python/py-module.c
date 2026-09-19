@@ -197,7 +197,11 @@ static PyObject* mod_load(PyObject* module, PyObject* args, PyObject* kwargs) {
   if (parse_format(format, &opts.format) != 0) return NULL;
   opts.composed = composed ? 1 : 0;
   opts.load_payloads = load_payloads ? 1 : 0;
-  opts.max_memory = max_memory;
+  if (max_memory) {
+    opts.max_input_bytes = max_memory;
+    opts.max_asset_bytes = max_memory;
+    opts.max_resident_bytes = max_memory;
+  }
 
   variant_overrides vo;
   if (variants_from_dict(variants, &vo) != 0) return NULL;
@@ -221,7 +225,11 @@ static PyObject* load_from_buffer(lightusd_state* st, const uint8_t* data,
   lightusd_load_options opts;
   lightusd_load_options_init(&opts);
   if (parse_format(format, &opts.format) != 0) return NULL;
-  opts.max_memory = max_memory;
+  if (max_memory) {
+    opts.max_input_bytes = max_memory;
+    opts.max_asset_bytes = max_memory;
+    opts.max_resident_bytes = max_memory;
+  }
 
   lightusd_stage* stage = NULL;
   lightusd_status status;
@@ -290,7 +298,11 @@ static PyObject* mod_flatten_file(PyObject* module, PyObject* args,
   if (!st) return NULL;
   lightusd_load_options opts;
   lightusd_load_options_init(&opts);
-  opts.max_memory = max_memory;
+  if (max_memory) {
+    opts.max_input_bytes = max_memory;
+    opts.max_asset_bytes = max_memory;
+    opts.max_resident_bytes = max_memory;
+  }
   lightusd_status status;
   Py_BEGIN_ALLOW_THREADS
   status = lightusd_flatten_file_to_usdc(src, dst, &opts);

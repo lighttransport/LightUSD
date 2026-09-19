@@ -82,13 +82,13 @@ bool RenderSceneConverter::ConvertPoints(const Stage& stage,
 
   out->name = prim.GetName();
   out->prim_path = prim.GetPath().str();
-  out->points.append(points.view.data, points.view.size);
+  out->points.append_exact(points.view.data, points.view.size);
 
   if (!gaussian) {
     ValueArrayRead<float> normals;
     if (ReadFloatArray(prim, "normals", config_.time_code, &normals) &&
         normals.view.size == out->point_count() * 3) {
-      out->normals.append(normals.view.data, normals.view.size);
+      out->normals.append_exact(normals.view.data, normals.view.size);
     } else if (normals.view.size != 0) {
       AddWarning("Points '" + out->prim_path +
                           "': ignoring normals with mismatched element count");
@@ -108,7 +108,7 @@ bool RenderSceneConverter::ConvertPoints(const Stage& stage,
       // Gaussian scales are one standard deviation per local axis. The
       // raster carrier is isotropic, so retain a conservative diameter using
       // the largest authored axis; RT backends consume the full ellipse data.
-      out->widths.reserve(n);
+      out->widths.reserve_exact(n);
       for (size_t i = 0; i < n; ++i) {
         const float* s = widths.view.data + i * 3;
         out->widths.push_back(2.0f * std::max(std::fabs(s[0]),
@@ -116,7 +116,7 @@ bool RenderSceneConverter::ConvertPoints(const Stage& stage,
                                                         std::fabs(s[2]))));
       }
     } else if (!gaussian && (widths.view.size == 1 || widths.view.size == n)) {
-      out->widths.append(widths.view.data, widths.view.size);
+      out->widths.append_exact(widths.view.data, widths.view.size);
     } else {
       AddWarning("Points '" + out->prim_path +
                           "': ignoring widths with mismatched element count");
@@ -151,7 +151,7 @@ bool RenderSceneConverter::ConvertPoints(const Stage& stage,
                                 ? 1
                                 : out->point_count();
     if ((colors.view.size % 3) == 0 && elems == expected) {
-      out->colors.append(colors.view.data, colors.view.size);
+      out->colors.append_exact(colors.view.data, colors.view.size);
       out->colors_interp = interp;
     } else {
       AddWarning("Points '" + out->prim_path +
@@ -185,7 +185,7 @@ bool RenderSceneConverter::ConvertPoints(const Stage& stage,
                                 ? 1
                                 : out->point_count();
     if (elems == expected) {
-      out->opacities.append(opacities.view.data, elems);
+      out->opacities.append_exact(opacities.view.data, elems);
       out->opacities_interp = interp;
     } else {
       AddWarning(

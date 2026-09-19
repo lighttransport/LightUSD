@@ -729,7 +729,7 @@ void test_high_level_memory_caps() {
   }
 
   LoadUSDOptions load_opts;
-  load_opts.max_memory = 1;
+  load_opts.limits.max_input_bytes = 1;
   Stage limited_stage;
   std::string warn, err;
   bool ok = LoadUSD(usdc_file, &limited_stage, load_opts, &warn, &err);
@@ -778,9 +778,10 @@ void test_high_level_memory_caps() {
   }
 
   LoadUSDOptions composed_opts;
-  composed_opts.max_memory = root_text.size() + 8;
-  assert(root_text.size() <= composed_opts.max_memory);
-  assert(asset_text.size() > composed_opts.max_memory);
+  composed_opts.limits.max_input_bytes = root_text.size() + 8;
+  composed_opts.limits.max_asset_bytes = root_text.size() + 8;
+  assert(root_text.size() <= composed_opts.limits.max_input_bytes);
+  assert(asset_text.size() > composed_opts.limits.max_asset_bytes);
   warn.clear();
   err.clear();
   pcp::CompositionOptions comp_opts;

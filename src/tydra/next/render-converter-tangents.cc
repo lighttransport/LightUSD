@@ -148,7 +148,7 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
     out_tan[v * 4 + 3] = w;
   }
   mesh->tangents.clear();
-  mesh->tangents.append(out_tan.data(), out_tan.size());
+  mesh->tangents.append_exact(out_tan.data(), out_tan.size());
   mesh->tangents_interp = Interpolation::Vertex;
   return true;
   }
@@ -283,11 +283,11 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
       vertex_out[size_t(point_id) * 4 + 3] = fv_out[c * 4 + 3];
     }
     mesh->tangents.clear();
-    mesh->tangents.append(vertex_out.data(), vertex_out.size());
+    mesh->tangents.append_exact(vertex_out.data(), vertex_out.size());
     mesh->tangents_interp = Interpolation::Vertex;
   } else {
     mesh->tangents.clear();
-    mesh->tangents.append(fv_out.data(), fv_out.size());
+    mesh->tangents.append_exact(fv_out.data(), fv_out.size());
     mesh->tangents_interp = Interpolation::FaceVarying;
   }
   return true;

@@ -5,6 +5,7 @@
 
 #include "layer.hh"
 #include "../prim/identifier.hh"
+#include "../../safe-arithmetic.hh"
 #include <algorithm>
 #include <unordered_set>
 
@@ -325,28 +326,33 @@ std::vector<const PrimSpec*> Layer::children(uint32_t prim_index) const {
 
 size_t Layer::memory_usage() const {
   size_t size = sizeof(Layer);
+  auto add = [&size](size_t bytes) {
+    size = safe::saturating_add(size, bytes);
+  };
 
   // Prims vector
-  size += prims_.capacity() * sizeof(PrimSpec);
+  add(safe::saturating_mul(prims_.capacity(), sizeof(PrimSpec)));
   for (const auto& prim : prims_) {
-    size += prim.memory_usage() - sizeof(PrimSpec);  // Don't double count
+    const size_t prim_bytes = prim.memory_usage();
+    add(prim_bytes >= sizeof(PrimSpec) ? prim_bytes - sizeof(PrimSpec) : 0);
   }
 
   // Root indices
-  size += root_indices_.capacity() * sizeof(uint32_t);
+  add(safe::saturating_mul(root_indices_.capacity(), sizeof(uint32_t)));
 
   // Path index map (estimate)
   for (const auto& kv : path_to_index_) {
-    size += kv.first.capacity() + sizeof(uint32_t) + sizeof(void*) * 2;  // Rough hash map overhead
+    add(kv.first.capacity());
+    add(sizeof(uint32_t) + sizeof(void*) * 2);  // Rough hash map overhead
   }
 
   // Metadata
-  size += meta_.defaultPrim.capacity();
-  size += meta_.upAxis.capacity();
-  size += meta_.doc.capacity();
-  size += meta_.comment.capacity();
+  add(meta_.defaultPrim.capacity());
+  add(meta_.upAxis.capacity());
+  add(meta_.doc.capacity());
+  add(meta_.comment.capacity());
   for (const auto& s : meta_.subLayers) {
-    size += s.capacity();
+    add(s.capacity());
   }
 
   return size;

@@ -63,12 +63,12 @@ void FillGeneratedMesh(const UsdPrim& prim,
                        RenderMesh* out) {
   out->name = prim.GetName();
   out->prim_path = prim.GetPath().str();
-  out->face_vertex_counts.reserve(face_counts.size());
+  out->face_vertex_counts.reserve_exact(face_counts.size());
   for (int c : face_counts) {
     out->face_vertex_counts.push_back(c < 0 ? uint32_t{0}
                                             : static_cast<uint32_t>(c));
   }
-  out->face_vertex_indices.reserve(face_indices.size());
+  out->face_vertex_indices.reserve_exact(face_indices.size());
   for (int idx : face_indices) {
     out->face_vertex_indices.push_back(idx < 0 ? uint32_t{0}
                                                : static_cast<uint32_t>(idx));

@@ -13,15 +13,17 @@ namespace lightusd {
 namespace tydra {
 namespace next {
 namespace {
-ChunkAllocHook alloc_hook = nullptr;
-ChunkFreeHook free_hook = nullptr;
+thread_local std::shared_ptr<ChunkAllocationBudget> current_budget;
 }
 
-void SetChunkAllocHooks(ChunkAllocHook alloc, ChunkFreeHook release) {
-  // An allocation charge must always have a matching release operation.
-  if ((alloc == nullptr) != (release == nullptr)) std::abort();
-  alloc_hook = alloc;
-  free_hook = release;
+ScopedChunkAllocationBudget::ScopedChunkAllocationBudget(
+    std::shared_ptr<ChunkAllocationBudget> budget)
+    : previous_(std::move(current_budget)) {
+  current_budget = std::move(budget);
+}
+
+ScopedChunkAllocationBudget::~ScopedChunkAllocationBudget() {
+  current_budget = std::move(previous_);
 }
 
 bool ProbeAlloc(size_t bytes) {
@@ -67,11 +69,12 @@ ChunkStorage& ChunkStorage::operator=(ChunkStorage&& other) noexcept {
 
 void* ChunkStorage::allocate_chunk(size_t count) const {
   const size_t bytes = count * element_size_;
-  if (alloc_hook && !alloc_hook(bytes)) return nullptr;
+  const std::shared_ptr<ChunkAllocationBudget>& budget = control_->budget;
+  if (budget && !budget->TryAdd(bytes)) return nullptr;
   void* data = alignment_ > alignof(std::max_align_t)
       ? ::operator new(bytes, std::align_val_t(alignment_), std::nothrow)
       : std::malloc(bytes);
-  if (!data && free_hook) free_hook(bytes);
+  if (!data && budget) budget->Sub(bytes);
   return data;
 }
 
@@ -80,7 +83,7 @@ void ChunkStorage::free_chunk(void* data, size_t count) const {
     ::operator delete(data, std::align_val_t(alignment_));
   else
     std::free(data);
-  if (free_hook) free_hook(count * element_size_);
+  if (control_->budget) control_->budget->Sub(count * element_size_);
 }
 
 void ChunkStorage::release() {
@@ -119,6 +122,7 @@ bool ChunkStorage::make_unique() {
   ChunkStorage copy(element_size_, alignment_, chunk_elements_);
   copy.control_ = new (std::nothrow) Control;
   if (!copy.control_) return fail();
+  copy.control_->budget = control_->budget;
   const size_t count = control_->count;
   if (count) {
     copy.control_->chunks = static_cast<void**>(std::malloc(count * sizeof(void*)));
@@ -146,7 +150,7 @@ void ChunkStorage::require_unique() {
   }
 }
 
-bool ChunkStorage::ensure_capacity(size_t count) {
+bool ChunkStorage::ensure_capacity(size_t count, bool exact_tail) {
   if (count <= capacity()) return true;
   const size_t max_elements =
       size_t((std::numeric_limits<std::ptrdiff_t>::max)()) / element_size_;
@@ -159,6 +163,7 @@ bool ChunkStorage::ensure_capacity(size_t count) {
   if (!control_) {
     control_ = new (std::nothrow) Control;
     if (!control_) return fail();
+    control_->budget = current_budget;
   }
   if (needed > control_->slots) {
     void* table = std::realloc(control_->chunks, needed * sizeof(void*));
@@ -176,16 +181,24 @@ bool ChunkStorage::ensure_capacity(size_t count) {
     control_->tail = chunk_elements_;
   }
   while (control_->count < needed) {
-    void* p = allocate_chunk(chunk_elements_);
+    const bool final_partial = exact_tail && control_->count + 1 == needed &&
+                               count % chunk_elements_ != 0;
+    const size_t chunk_count = final_partial ? count % chunk_elements_
+                                             : chunk_elements_;
+    void* p = allocate_chunk(chunk_count);
     if (!p) return fail();
     control_->chunks[control_->count++] = p;
-    control_->tail = chunk_elements_;
+    control_->tail = chunk_count;
   }
   return true;
 }
 
 bool ChunkStorage::reserve(size_t count) {
   return make_unique() && ensure_capacity(count);
+}
+
+bool ChunkStorage::reserve_exact(size_t count) {
+  return make_unique() && ensure_capacity(count, true);
 }
 
 bool ChunkStorage::append(const void* data, size_t count) {

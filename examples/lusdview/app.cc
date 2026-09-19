@@ -4003,15 +4003,18 @@ void App::startLoadAsync(const std::string& path) {
       // Surface the stage's animation range so --next gets a timeline (the Tydra
       // RenderScene meta is otherwise empty here). readAnimationRange reads these.
       if (pendingNextSession_) {
-        const lightusd::next::Stage& stage = pendingNextSession_->GetStage();
-        lp->render.meta.upAxis = stage.GetUpAxis();
-        const double s = stage.GetStartTimeCode();
-        const double e = stage.GetEndTimeCode();
-        const double fps = stage.GetTimeCodesPerSecond();
-        if (fps > 0.0) lp->render.meta.timeCodesPerSecond = fps;
-        if (e > s) {
-          lp->render.meta.startTimeCode = s;
-          lp->render.meta.endTimeCode = e;
+        const lightusd::next::StageSnapshot snapshot =
+            pendingNextSession_->GetSnapshot();
+        if (snapshot) {
+          lp->render.meta.upAxis = snapshot->GetUpAxis();
+          const double s = snapshot->GetStartTimeCode();
+          const double e = snapshot->GetEndTimeCode();
+          const double fps = snapshot->GetTimeCodesPerSecond();
+          if (fps > 0.0) lp->render.meta.timeCodesPerSecond = fps;
+          if (e > s) {
+            lp->render.meta.startTimeCode = s;
+            lp->render.meta.endTimeCode = e;
+          }
         }
       }
     } else {

@@ -299,7 +299,7 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
     out->curve_vertex_counts.push_back(static_cast<uint32_t>(c));
   }
   if (config_.curves.retain_control_points) {
-    out->points.append(points.view.data, points.view.size);
+    out->points.append_exact(points.view.data, points.view.size);
   }
 
   // type / basis / wrap tokens (BasisCurves; NurbsCurves have order/knots).
@@ -506,16 +506,16 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
       !widths.empty()) {
     const size_t m = widths.view.size;
     if (m == 1) {
-      out->widths.append(widths.view.data, m);
+      out->widths.append_exact(widths.view.data, m);
       out->widths_interp = Interpolation::Constant;
     } else if (m == ncurves) {
-      out->widths.append(widths.view.data, m);
+      out->widths.append_exact(widths.view.data, m);
       out->widths_interp = Interpolation::Uniform;
     } else if (m == total_cp) {
-      out->widths.append(widths.view.data, m);
+      out->widths.append_exact(widths.view.data, m);
       out->widths_interp = Interpolation::Vertex;
     } else if (m == varying_total) {
-      out->widths.append(widths.view.data, m);
+      out->widths.append_exact(widths.view.data, m);
       out->widths_interp = Interpolation::Varying;
     } else {
       AddWarning("Curves '" + out->prim_path +
@@ -564,7 +564,7 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
       }
     }
     if (elems == expected(interp)) {
-      out->colors.append(colors.view.data, colors.view.size);
+      out->colors.append_exact(colors.view.data, colors.view.size);
       out->colors_interp = interp;
     }
   }
@@ -601,7 +601,7 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
       else if (elems == varying_total) interp = Interpolation::Varying;
     }
     if (elems == expected(interp)) {
-      out->opacities.append(opacities.view.data, elems);
+      out->opacities.append_exact(opacities.view.data, elems);
       out->opacities_interp = interp;
     } else {
       AddWarning(
@@ -738,7 +738,7 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
     const size_t emit_count = emitted.size() / 3;
     out->tessellated_vertex_counts.push_back(
         static_cast<uint32_t>(emit_count));
-    out->tessellated_points.append(emitted.data(), emitted.size());
+    out->tessellated_points.append_exact(emitted.data(), emitted.size());
 
     if (emit_widths) {
       const float* wvals = nullptr;

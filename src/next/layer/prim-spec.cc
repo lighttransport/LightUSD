@@ -5,6 +5,7 @@
 
 #include "prim-spec.hh"
 #include "../prim/identifier.hh"
+#include "../../safe-arithmetic.hh"
 #include <algorithm>
 #include <cstring>
 #if defined(LIGHTUSD_ENABLE_THREAD)
@@ -299,10 +300,11 @@ Value* ValueStorage::get(uint32_t offset) {
 }
 
 size_t ValueStorage::memory_usage() const {
-  size_t size = values_.capacity() * sizeof(Value);
+  size_t size = safe::saturating_mul(values_.capacity(), sizeof(Value));
   for (const auto& v : values_) {
     if (v.is_array()) {
-      size += v.array_size() * 4;  // Approximate (element payload)
+      size = safe::saturating_add(
+          size, safe::saturating_mul(v.array_size(), size_t{4}));
     }
   }
   return size;
@@ -472,24 +474,28 @@ std::vector<PropNameId> TimeSampleStorage::properties() const {
 
 size_t TimeSampleStorage::memory_usage() const {
   size_t size = sizeof(*this);
+  auto add = [&size](size_t bytes) {
+    size = safe::saturating_add(size, bytes);
+  };
 
   // Values
-  size += values_.capacity() * sizeof(Value);
+  add(safe::saturating_mul(values_.capacity(), sizeof(Value)));
   for (const auto& v : values_) {
     // Add array storage size if applicable
     if (v.is_array()) {
-      size += v.array_size() * 4;  // Approximate
+      add(safe::saturating_mul(v.array_size(), size_t{4}));
     }
   }
 
   // Samples map
   for (const auto& kv : samples_) {
-    size += kv.second.capacity() * sizeof(std::pair<double, uint32_t>);
+    add(safe::saturating_mul(kv.second.capacity(),
+                             sizeof(std::pair<double, uint32_t>)));
   }
 
   // Hash table
   for (const auto& kv : hash_to_offsets_) {
-    size += kv.second.capacity() * sizeof(uint32_t);
+    add(safe::saturating_mul(kv.second.capacity(), sizeof(uint32_t)));
   }
 
   return size;
@@ -1260,43 +1266,46 @@ bool PrimSpec::remove_child_index(uint32_t index) {
 
 size_t PrimSpec::memory_usage() const {
   size_t size = sizeof(PrimSpec);
-  size += name_.capacity();
-  size += path_.str().capacity();
+  auto add = [&size](size_t bytes) {
+    size = safe::saturating_add(size, bytes);
+  };
+  add(name_.capacity());
+  add(path_.str().capacity());
 
   // Properties
-  size += props_.slots().capacity() * sizeof(PropSlot);
+  add(safe::saturating_mul(props_.slots().capacity(), sizeof(PropSlot)));
   if (values_) {
-    size += values_->memory_usage();
+    add(values_->memory_usage());
   }
 
   // Time samples (use TimeSampleStorage's memory tracking)
   if (time_samples_) {
-    size += time_samples_->memory_usage();
+    add(time_samples_->memory_usage());
   }
-  if (cold_data_) size += sizeof(ColdData);
+  if (cold_data_) add(sizeof(ColdData));
 
   // Relationships
   for (const auto& rel : relationships_) {
-    size += rel.first.capacity();
-    size += rel.second.capacity() * sizeof(Path);
+    add(rel.first.capacity());
+    add(safe::saturating_mul(rel.second.capacity(), sizeof(Path)));
   }
 
   // Children
-  size += child_indices_.capacity() * sizeof(uint32_t);
+  add(safe::saturating_mul(child_indices_.capacity(), sizeof(uint32_t)));
 
   // Metadata (inline hot fields)
-  for (const auto& s : meta_.references) size += s.capacity();
-  for (const auto& s : meta_.payloads) size += s.capacity();
-  for (const auto& s : meta_.inherits) size += s.capacity();
-  for (const auto& s : meta_.specializes) size += s.capacity();
-  size += meta_.variantSelection.capacity();
+  for (const auto& s : meta_.references) add(s.capacity());
+  for (const auto& s : meta_.payloads) add(s.capacity());
+  for (const auto& s : meta_.inherits) add(s.capacity());
+  for (const auto& s : meta_.specializes) add(s.capacity());
+  add(meta_.variantSelection.capacity());
   // Cold fields only cost anything when the ext was allocated.
   if (const PrimSpecMetaExt* ext = meta_.ext()) {
-    size += sizeof(PrimSpecMetaExt);
-    size += ext->doc.capacity();
-    size += ext->comment.capacity();
-    size += ext->instance_prototype.capacity();
-    for (const auto& s : ext->apiSchemas) size += s.capacity();
+    add(sizeof(PrimSpecMetaExt));
+    add(ext->doc.capacity());
+    add(ext->comment.capacity());
+    add(ext->instance_prototype.capacity());
+    for (const auto& s : ext->apiSchemas) add(s.capacity());
   }
 
   return size;

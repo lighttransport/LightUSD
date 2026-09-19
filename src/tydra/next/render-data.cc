@@ -15,19 +15,17 @@ namespace {
 
 template <typename T>
 size_t VectorBytes(const std::vector<T>& v) {
-  size_t bytes;
-  if (!safe::mul(v.capacity(), sizeof(T), &bytes)) return 0;
-  return bytes;
+  return safe::saturating_mul(v.capacity(), sizeof(T));
+}
+
+void AddBytes(size_t* total, size_t bytes) {
+  *total = safe::saturating_add(*total, bytes);
 }
 
 size_t StringVectorBytes(const std::vector<std::string>& v) {
-  size_t cap_bytes;
-  if (!safe::mul(v.capacity(), sizeof(std::string), &cap_bytes)) return 0;
-  size_t total = cap_bytes;
+  size_t total = safe::saturating_mul(v.capacity(), sizeof(std::string));
   for (const std::string& s : v) {
-    size_t sum;
-    if (!safe::add(total, s.capacity(), &sum)) return total;
-    total = sum;
+    AddBytes(&total, s.capacity());
   }
   return total;
 }
@@ -105,33 +103,33 @@ bool RenderMesh::has_alloc_failure() const {
 
 size_t RenderMesh::memory_usage() const {
   size_t total = sizeof(*this);
-  total += face_vertex_counts.memory_usage();
-  total += face_vertex_indices.memory_usage();
-  total += points.memory_usage();
-  total += normals.memory_usage();
-  total += tangents.memory_usage();
-  total += texcoords_0.memory_usage();
-  total += texcoords_1.memory_usage();
-  total += colors.memory_usage();
-  total += opacities.memory_usage();
-  total += triangulated_indices.memory_usage();
-  total += triangulated_face_vertex_indices.memory_usage();
+  AddBytes(&total, face_vertex_counts.memory_usage());
+  AddBytes(&total, face_vertex_indices.memory_usage());
+  AddBytes(&total, points.memory_usage());
+  AddBytes(&total, normals.memory_usage());
+  AddBytes(&total, tangents.memory_usage());
+  AddBytes(&total, texcoords_0.memory_usage());
+  AddBytes(&total, texcoords_1.memory_usage());
+  AddBytes(&total, colors.memory_usage());
+  AddBytes(&total, opacities.memory_usage());
+  AddBytes(&total, triangulated_indices.memory_usage());
+  AddBytes(&total, triangulated_face_vertex_indices.memory_usage());
 
   for (const auto& pv : primvars) {
-    total += pv.memory_usage();
+    AddBytes(&total, pv.memory_usage());
   }
 
   if (skin) {
-    total += skin->joint_indices.memory_usage();
-    total += skin->joint_weights.memory_usage();
+    AddBytes(&total, skin->joint_indices.memory_usage());
+    AddBytes(&total, skin->joint_weights.memory_usage());
   }
 
   for (const auto& bs : blend_shapes) {
-    total += bs.point_offsets.memory_usage();
-    total += bs.normal_offsets.memory_usage();
+    AddBytes(&total, bs.point_offsets.memory_usage());
+    AddBytes(&total, bs.normal_offsets.memory_usage());
     for (const auto& inbetween : bs.inbetweens) {
-      total += inbetween.name.capacity();
-      total += inbetween.point_offsets.memory_usage();
+      AddBytes(&total, inbetween.name.capacity());
+      AddBytes(&total, inbetween.point_offsets.memory_usage());
     }
   }
 
@@ -157,13 +155,13 @@ bool RenderPoints::has_alloc_failure() const {
 
 size_t RenderPoints::memory_usage() const {
   size_t total = sizeof(*this);
-  total += name.capacity();
-  total += prim_path.capacity();
-  total += points.memory_usage();
-  total += normals.memory_usage();
-  total += widths.memory_usage();
-  total += colors.memory_usage();
-  total += opacities.memory_usage();
+  AddBytes(&total, name.capacity());
+  AddBytes(&total, prim_path.capacity());
+  AddBytes(&total, points.memory_usage());
+  AddBytes(&total, normals.memory_usage());
+  AddBytes(&total, widths.memory_usage());
+  AddBytes(&total, colors.memory_usage());
+  AddBytes(&total, opacities.memory_usage());
   return total;
 }
 
@@ -193,18 +191,18 @@ bool RenderCurves::has_alloc_failure() const {
 
 size_t RenderCurves::memory_usage() const {
   size_t total = sizeof(*this);
-  total += name.capacity();
-  total += prim_path.capacity();
-  total += VectorBytes(curve_vertex_counts);
-  total += points.memory_usage();
-  total += widths.memory_usage();
-  total += colors.memory_usage();
-  total += opacities.memory_usage();
-  total += VectorBytes(tessellated_vertex_counts);
-  total += tessellated_points.memory_usage();
-  total += tessellated_widths.memory_usage();
-  total += tessellated_colors.memory_usage();
-  total += tessellated_opacities.memory_usage();
+  AddBytes(&total, name.capacity());
+  AddBytes(&total, prim_path.capacity());
+  AddBytes(&total, VectorBytes(curve_vertex_counts));
+  AddBytes(&total, points.memory_usage());
+  AddBytes(&total, widths.memory_usage());
+  AddBytes(&total, colors.memory_usage());
+  AddBytes(&total, opacities.memory_usage());
+  AddBytes(&total, VectorBytes(tessellated_vertex_counts));
+  AddBytes(&total, tessellated_points.memory_usage());
+  AddBytes(&total, tessellated_widths.memory_usage());
+  AddBytes(&total, tessellated_colors.memory_usage());
+  AddBytes(&total, tessellated_opacities.memory_usage());
   return total;
 }
 
@@ -214,26 +212,26 @@ size_t RenderCurves::memory_usage() const {
 
 size_t RenderPointInstancer::memory_usage() const {
   size_t total = sizeof(*this);
-  total += StringVectorBytes(prototype_paths);
-  total += VectorBytes(prototype_node_ids);
-  total += VectorBytes(prototype_mesh_offsets);
-  total += VectorBytes(prototype_mesh_ids);
-  total += VectorBytes(prototype_mesh_transforms);
-  total += VectorBytes(proto_indices);
-  total += VectorBytes(positions);
-  total += VectorBytes(orientations);
-  total += VectorBytes(scales);
-  total += VectorBytes(velocities);
-  total += VectorBytes(angular_velocities);
-  total += VectorBytes(ids);
-  total += VectorBytes(invisible_ids);
-  total += VectorBytes(inactive_ids);
-  total += VectorBytes(transforms);
-  total += VectorBytes(instance_visible);
-  total += VectorBytes(compact_instances);
-  total += name.capacity();
-  total += prim_path.capacity();
-  total += validation_error.capacity();
+  AddBytes(&total, StringVectorBytes(prototype_paths));
+  AddBytes(&total, VectorBytes(prototype_node_ids));
+  AddBytes(&total, VectorBytes(prototype_mesh_offsets));
+  AddBytes(&total, VectorBytes(prototype_mesh_ids));
+  AddBytes(&total, VectorBytes(prototype_mesh_transforms));
+  AddBytes(&total, VectorBytes(proto_indices));
+  AddBytes(&total, VectorBytes(positions));
+  AddBytes(&total, VectorBytes(orientations));
+  AddBytes(&total, VectorBytes(scales));
+  AddBytes(&total, VectorBytes(velocities));
+  AddBytes(&total, VectorBytes(angular_velocities));
+  AddBytes(&total, VectorBytes(ids));
+  AddBytes(&total, VectorBytes(invisible_ids));
+  AddBytes(&total, VectorBytes(inactive_ids));
+  AddBytes(&total, VectorBytes(transforms));
+  AddBytes(&total, VectorBytes(instance_visible));
+  AddBytes(&total, VectorBytes(compact_instances));
+  AddBytes(&total, name.capacity());
+  AddBytes(&total, prim_path.capacity());
+  AddBytes(&total, validation_error.capacity());
   return total;
 }
 
@@ -313,32 +311,28 @@ size_t RenderScene::memory_usage() const {
   size_t total = sizeof(*this);
 
   for (const auto& mesh : meshes) {
-    total += mesh.memory_usage();
+    AddBytes(&total, mesh.memory_usage());
   }
 
   for (const auto& point_cloud : points) {
-    total += point_cloud.memory_usage();
+    AddBytes(&total, point_cloud.memory_usage());
   }
 
   for (const auto& curve : curves) {
-    total += curve.memory_usage();
+    AddBytes(&total, curve.memory_usage());
   }
 
   for (const auto& instancer : point_instancers) {
-    total += instancer.memory_usage();
+    AddBytes(&total, instancer.memory_usage());
   }
 
   for (const auto& img : images) {
-    total += img.memory_usage();
+    AddBytes(&total, img.memory_usage());
   }
 
   // Estimate for other containers (saturating on overflow)
   auto add_size = [&total](size_t count, size_t elem_size) {
-    size_t bytes;
-    if (safe::mul(count, elem_size, &bytes)) {
-      size_t sum;
-      if (safe::add(total, bytes, &sum)) total = sum;
-    }
+    AddBytes(&total, safe::saturating_mul(count, elem_size));
   };
   add_size(nodes.size(), sizeof(SceneNode));
   add_size(point_instance_draws.size(), sizeof(RenderPointInstanceDraw));

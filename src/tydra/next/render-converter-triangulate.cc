@@ -70,8 +70,8 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
                           "' triangulated index allocation too large; skipping");
       return false;
     }
-    if (!mesh->triangulated_indices.resize(n) ||
-        !mesh->triangulated_face_vertex_indices.resize(n)) {
+    if (!mesh->triangulated_indices.resize_exact(n) ||
+        !mesh->triangulated_face_vertex_indices.resize_exact(n)) {
       AddWarning("Out of memory triangulating mesh '" +
                           mesh->prim_path + "'");
       return false;
@@ -117,8 +117,8 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
     return false;
   }
 
-  if (!mesh->triangulated_indices.reserve(tri_corner_count) ||
-      !mesh->triangulated_face_vertex_indices.reserve(tri_corner_count)) {
+  if (!mesh->triangulated_indices.reserve_exact(tri_corner_count) ||
+      !mesh->triangulated_face_vertex_indices.reserve_exact(tri_corner_count)) {
     AddWarning("Out of memory triangulating mesh '" +
                         mesh->prim_path + "'");
     return false;
@@ -411,7 +411,7 @@ bool RenderSceneConverter::ComputeVertexNormals(RenderMesh* mesh) {
   size_t num_tris = mesh->triangulated_indices.size() / 3;
 
   // Initialize normals to zero
-  if (!mesh->normals.resize(num_points * 3, 0.0f)) {
+  if (!mesh->normals.resize_exact(num_points * 3, 0.0f)) {
     AddWarning("Out of memory computing normals for mesh '" +
                         mesh->prim_path + "'");
     return false;

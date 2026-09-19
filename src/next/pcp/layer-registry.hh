@@ -13,6 +13,7 @@
 #include "../parser/ascii-parser.hh"
 #include "../resolver/asset-resolver.hh"
 #include "../../security-policy.hh"
+#include "../../safe-arithmetic.hh"
 
 #include <cstddef>
 #include <memory>
@@ -36,6 +37,10 @@ struct LayerLoadOptions {
   bool usdc_use_mmap = true;
   /// Maximum file/input bytes for each loaded external layer (0 = no limit).
   size_t max_memory = security_policy::kDefaultInputLimitBytes;
+  /// Maximum elements in one USDC value array.
+  size_t max_array_elements = size_t(16) * 1024 * 1024;
+  /// Maximum number of entries accepted in an external USDZ package.
+  size_t max_archive_entries = security_policy::kDefaultArchiveEntryCount;
 
   /// USDA parser options applied to each external USDA layer.
   ParseOptions usda_parse_options = {};
@@ -105,8 +110,10 @@ class LayerRegistry {
 #endif
     size_t bytes = 0;
     for (const auto &entry : by_resolved_) {
-      bytes += entry.first.capacity();
-      if (entry.second) bytes += entry.second->memory_usage();
+      bytes = safe::saturating_add(bytes, entry.first.capacity());
+      if (entry.second) {
+        bytes = safe::saturating_add(bytes, entry.second->memory_usage());
+      }
     }
     return bytes;
   }

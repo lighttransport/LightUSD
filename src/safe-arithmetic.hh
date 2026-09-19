@@ -13,6 +13,31 @@
 namespace lightusd {
 namespace safe {
 
+template <typename T>
+inline bool to_size(T value, size_t* out) {
+  static_assert(std::is_integral<T>::value, "to_size requires an integer");
+  if (!out) return false;
+  using RawT = typename std::remove_cv<T>::type;
+  if constexpr (std::is_same<RawT, bool>::value) {
+    *out = value ? size_t{1} : size_t{0};
+    return true;
+  } else {
+    if constexpr (std::is_signed<T>::value) {
+      if (value < 0) return false;
+    }
+    using UnsignedT = typename std::make_unsigned<RawT>::type;
+    const UnsignedT unsigned_value = static_cast<UnsignedT>(value);
+    if constexpr (sizeof(UnsignedT) > sizeof(size_t)) {
+      if (unsigned_value > static_cast<UnsignedT>(
+                               (std::numeric_limits<size_t>::max)())) {
+        return false;
+      }
+    }
+    *out = static_cast<size_t>(unsigned_value);
+    return true;
+  }
+}
+
 ///
 /// Safe multiplication: a * b -> result (as size_t)
 /// Works with any integer types that can be converted to size_t.
@@ -22,8 +47,10 @@ template <typename A, typename B>
 inline bool mul(A a, B b, size_t* out) {
   static_assert(std::is_integral<A>::value && std::is_integral<B>::value,
                 "mul requires integral types");
-  size_t sa = static_cast<size_t>(a);
-  size_t sb = static_cast<size_t>(b);
+  if (!out) return false;
+  size_t sa = 0;
+  size_t sb = 0;
+  if (!to_size(a, &sa) || !to_size(b, &sb)) return false;
   if ((sb != 0) && (sa > (std::numeric_limits<size_t>::max)() / sb)) {
     return false;  // overflow would occur
   }
@@ -52,13 +79,29 @@ template <typename A, typename B>
 inline bool add(A a, B b, size_t* out) {
   static_assert(std::is_integral<A>::value && std::is_integral<B>::value,
                 "add requires integral types");
-  size_t sa = static_cast<size_t>(a);
-  size_t sb = static_cast<size_t>(b);
+  if (!out) return false;
+  size_t sa = 0;
+  size_t sb = 0;
+  if (!to_size(a, &sa) || !to_size(b, &sb)) return false;
   if (sa > (std::numeric_limits<size_t>::max)() - sb) {
     return false;  // overflow would occur
   }
   *out = sa + sb;
   return true;
+}
+
+template <typename A, typename B>
+inline size_t saturating_add(A a, B b) {
+  size_t result = 0;
+  return add(a, b, &result) ? result
+                            : (std::numeric_limits<size_t>::max)();
+}
+
+template <typename A, typename B>
+inline size_t saturating_mul(A a, B b) {
+  size_t result = 0;
+  return mul(a, b, &result) ? result
+                            : (std::numeric_limits<size_t>::max)();
 }
 
 ///

@@ -18,6 +18,7 @@
 #include "load-rules.hh"
 #include "../resolver/asset-resolver.hh"
 #include "../stage/stage.hh"
+#include "../../safe-arithmetic.hh"
 
 #include <cstdint>
 #include <functional>
@@ -47,7 +48,8 @@ class Cache {
     size_t composed_prim_count = 0;
 
     size_t total_bytes() const {
-      return source_layer_bytes + transient_cache_bytes;
+      return safe::saturating_add(source_layer_bytes,
+                                  transient_cache_bytes);
     }
   };
 

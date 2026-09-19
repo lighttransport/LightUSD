@@ -81,6 +81,7 @@ set(LIGHTUSD_NEXT_SOURCES
 # Define header files (for IDE project generation)
 set(LIGHTUSD_NEXT_HEADERS
     execution.hh
+    resource-limits.hh
     # Type system
     types/type-id.hh
     types/type-info.hh
@@ -198,6 +199,7 @@ set(LIGHTUSD_NEXT_HEADERS
 
     # High-level API
     lightusd-next.hh
+    operation-status.hh
     compat.hh
 )
 

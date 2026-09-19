@@ -146,6 +146,7 @@ std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
   if (is_usdc) {
     USDCLoadOptions lopts;
     lopts.crate_options.max_memory = options.max_memory;
+    lopts.crate_options.max_array_elements = options.max_array_elements;
     lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
     lopts.crate_options.use_mmap = options.usdc_use_mmap;
     lopts.crate_options.strict_aousd_conformance =
@@ -171,6 +172,7 @@ std::shared_ptr<Layer> LoadLayerFromUSDZ(const std::string &package_file,
   USDZReadOptions zopts;
   zopts.max_archive_size = options.max_memory;
   zopts.max_entry_size = options.max_memory;
+  zopts.max_entries = options.max_archive_entries;
 
   USDZReader reader;
   if (!reader.OpenFile(package_file, zopts)) {
@@ -275,6 +277,7 @@ std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
     lopts.crate_options.strict_aousd_conformance =
         options.strict_aousd_conformance;
     lopts.crate_options.max_memory = options.max_memory;
+    lopts.crate_options.max_array_elements = options.max_array_elements;
     lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
     lopts.crate_options.use_mmap = options.usdc_use_mmap;
     return ConvertLoadedUSDC(LoadUSDCFromFile(resolved_path, lopts),
@@ -660,6 +663,7 @@ std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
   if (size >= 8 && std::memcmp(data, "PXR-USDC", 8) == 0) {
     USDCLoadOptions lopts;
     lopts.crate_options.max_memory = options.max_memory;
+    lopts.crate_options.max_array_elements = options.max_array_elements;
     lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
     lopts.crate_options.strict_aousd_conformance =
         options.strict_aousd_conformance;
@@ -677,6 +681,7 @@ std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
     USDZReadOptions zopts;
     zopts.max_archive_size = options.max_memory;
     zopts.max_entry_size = options.max_memory;
+    zopts.max_entries = options.max_archive_entries;
     USDZReader reader;
     if (!reader.Open(data, size, zopts)) {
       if (err) {
@@ -719,6 +724,7 @@ std::shared_ptr<Layer> LoadLayerFromMemoryOwned(const std::string &key,
   if (data.size() >= 8 && std::memcmp(data.data(), "PXR-USDC", 8) == 0) {
     USDCLoadOptions lopts;
     lopts.crate_options.max_memory = options.max_memory;
+    lopts.crate_options.max_array_elements = options.max_array_elements;
     lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
     lopts.crate_options.strict_aousd_conformance =
         options.strict_aousd_conformance;

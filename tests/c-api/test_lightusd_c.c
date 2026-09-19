@@ -222,6 +222,16 @@ static int test_error_handling(void) {
   st = lightusd_stage_load_from_memory(garbage, sizeof(garbage), NULL, &stage);
   CHECK(st == LIGHTUSD_ERR_PARSE && stage == NULL);
 
+  {
+    static const char usda[] = "#usda 1.0\ndef Xform \"A\" {}\n";
+    lightusd_load_options limited;
+    lightusd_load_options_init(&limited);
+    limited.max_input_bytes = 1;
+    st = lightusd_stage_load_from_memory(
+        (const uint8_t*)usda, sizeof(usda) - 1, &limited, &stage);
+    CHECK(st == LIGHTUSD_ERR_RESOURCE_LIMIT && stage == NULL);
+  }
+
   CHECK_OK(lightusd_stage_create(&stage));
   lightusd_prim invalid = lightusd_stage_prim_at_path(stage, "/Nope");
   CHECK(!lightusd_prim_is_valid(invalid));
@@ -310,8 +320,8 @@ static int test_usda_lazy_load_options(void) {
   lightusd_load_options_init(&eager);
   eager.format = LIGHTUSD_FORMAT_USDA;
   eager.enable_usda_lazy_arrays = 1;
-  eager.max_usda_lazy_array_elements = 1;
-  eager.usda_num_threads = 1;
+  eager.max_array_elements = 1;
+  eager.max_threads = 1;
   lightusd_stage* eager_stage = NULL;
   CHECK_OK(lightusd_stage_load_from_memory((const uint8_t*)data, len, &eager, &eager_stage));
   lightusd_stage_stats eager_before = {0}, eager_after = {0};
@@ -332,7 +342,7 @@ static int test_usda_lazy_load_options(void) {
   lightusd_load_options_init(&lazy);
   lazy.format = LIGHTUSD_FORMAT_USDA;
   lazy.enable_usda_lazy_arrays = 1;
-  lazy.max_usda_lazy_array_elements = (1ull << 60);
+  lazy.max_array_elements = (1ull << 60);
   lightusd_stage* lazy_stage = NULL;
   CHECK_OK(lightusd_stage_load_from_memory((const uint8_t*)data, len, &lazy, &lazy_stage));
   lightusd_stage_stats lazy_before = {0}, lazy_after = {0};
@@ -358,7 +368,7 @@ static int test_usda_lazy_load_options(void) {
 }
 
 int main(int argc, char** argv) {
-  CHECK(lightusd_api_version() == ((1u << 16) | (0u << 8) | 0u));
+  CHECK(lightusd_api_version() == ((2u << 16) | (0u << 8) | 0u));
   CHECK(strcmp(lightusd_version_string(), "1.0.0-rc4") == 0);
   CHECK(strcmp(lightusd_type_name(LIGHTUSD_TYPE_POINT3F), "point3f") == 0);
   CHECK(lightusd_type_from_name("float3") == LIGHTUSD_TYPE_FLOAT3);

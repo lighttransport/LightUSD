@@ -11,7 +11,6 @@
 #include "render-converter-assembly.hh"
 #include "render-converter-material-finalize.hh"
 #include "render-converter-light-linking.hh"
-#include "mem-budget.hh"
 #include "next/schema/color-space.hh"
 #include "next/eval/value-clip.hh"
 #include "next/resolver/asset-resolver.hh"
@@ -954,14 +953,9 @@ GeometryInfo BuildGeometryInfo(const UsdPrim& prim, GeometryKind kind,
 
 ConverterConfig MakeHardenedConverterConfig(size_t max_memory) {
   ConverterConfig config;
-  // Zero must never turn a hardened request into the legacy unlimited mode.
+  // Zero must never turn a hardened request into an unlimited mode.
   max_memory = std::max<size_t>(max_memory, 1);
-  config.max_render_depth = 256;
-  // A finite record ceiling prevents adversarial programmatic stages from
-  // turning the catalog itself into an unbounded allocation. Applications may
-  // raise it deliberately after constructing the preset.
-  config.max_render_records = 1u << 20;
-  config.animation.max_value_clip_samples = 10000;
+  config.limits.max_resident_bytes = max_memory;
   config.execution.max_threads = 1;
   config.execution.max_in_flight_bytes = max_memory;
   config.execution.callback_concurrency =
@@ -1036,7 +1030,20 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(Stage& stage,
   StreamConvertResult result;
   ResetOperationState();
   ResetImageIdCache();
+  if (!config_.limits.valid() || config_.execution.max_threads < 0) {
+    result.status = ::lightusd::next::OperationStatus::InvalidArgument;
+    result.error = "invalid converter limits or execution policy";
+    return result;
+  }
+  size_t chunk_limit = config_.limits.max_resident_bytes;
+  if (config_.execution.max_in_flight_bytes) {
+    chunk_limit = std::min(chunk_limit,
+                           config_.execution.max_in_flight_bytes);
+  }
+  auto chunk_budget = std::make_shared<ChunkAllocationBudget>(chunk_limit);
+  ScopedChunkAllocationBudget chunk_budget_scope(chunk_budget);
   if (!sink) {
+    result.status = ::lightusd::next::OperationStatus::InvalidArgument;
     result.error = "ConvertToSink: null scene sink";
     return result;
   }
@@ -1044,6 +1051,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(Stage& stage,
     return config_.cancel_callback && config_.cancel_callback();
   };
   if (cancellation_requested()) {
+    result.status = ::lightusd::next::OperationStatus::Cancelled;
     result.cancelled = true;
     result.error = "conversion cancelled";
     return result;
@@ -1081,12 +1089,13 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(Stage& stage,
 
   RenderExtractOptions xopts;
   xopts.time_code = config_.time_code;
-  xopts.max_depth = config_.max_render_depth;
-  xopts.max_records = config_.max_render_records;
+  xopts.max_depth = config_.limits.max_namespace_depth;
+  xopts.max_records = config_.limits.max_render_records;
   xopts.collect_other = true;
   RenderExtractResult extracted;
   CollectRenderPrims(stage, xopts, &extracted);
   if (extracted.limit_exceeded) {
+    result.status = ::lightusd::next::OperationStatus::ResourceLimit;
     result.error = "render extraction limit exceeded";
     return result;
   }
@@ -1095,6 +1104,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(Stage& stage,
       (stage.HasTimeSamples() || stage.HasValueClips());
   const bool has_time_samples = emit_animations;
   if (cancellation_requested()) {
+    result.status = ::lightusd::next::OperationStatus::Cancelled;
     result.cancelled = true;
     result.error = "conversion cancelled";
     return result;
@@ -1267,6 +1277,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(Stage& stage,
   }
 
   if (!sink->BeginScene(std::move(catalog))) {
+    result.status = ::lightusd::next::OperationStatus::SinkRejected;
     result.error = "scene sink rejected catalog";
     return result;
   }
@@ -1278,6 +1289,9 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(Stage& stage,
 
   const auto abort = [&](const std::string& error, bool cancelled) {
     sink->AbortScene();
+    result.status = cancelled
+                        ? ::lightusd::next::OperationStatus::Cancelled
+                        : ::lightusd::next::OperationStatus::SinkRejected;
     result.cancelled = cancelled;
     result.error = error;
     result.warnings = std::move(warnings_);
@@ -1424,6 +1438,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(Stage& stage,
     return result;
   }
   result.success = true;
+  result.status = ::lightusd::next::OperationStatus::Ok;
   result.warnings = std::move(warnings_);
   return result;
 }
@@ -1447,24 +1462,11 @@ bool RenderSceneConverter::ConvertRenderableMesh(const Stage& stage,
 
 
 
-// Cumulative memory guard for the expensive conversion phases.
-//
-// The converter's own limits (ProbeAlloc, kMaxTempAllocBytes,
-// kMaxTriangulationCornerCount) are all PER-PRIM and fixed, so they cannot see
-// a scene of 100k individually-small meshes summing past the cap: every prim
-// passes its probe and the process still OOMs. MemBudget::WouldExceed() is
-// RSS-based, so it observes everything actually resident -- including every
-// ChunkedArray chunk -- without routing the converter's allocations through a
-// throwing allocator (the wasm build is -fno-exceptions).
-//
-// Throttled: WouldExceed() reads /proc/self/statm, far too expensive per mesh.
-// A cheap running total triggers a real check only once enough new bytes have
-// been requested, or every kBudgetCheckStride calls.
+// Cumulative memory guard for expensive conversion phases. This is an
+// estimate-based early gate; ChunkAllocationBudget enforces actual retained
+// chunk bytes independently for every concurrent conversion.
 bool RenderSceneConverter::BudgetWouldExceed(size_t estimate,
                                              const char* phase) {
-  constexpr size_t kBudgetCheckStride = 256;
-  constexpr size_t kBudgetCheckBytes = 8u * 1024u * 1024u;
-
   // Callable from the parallel per-record conversion phases (e.g. mesh
   // conversion, see ConvertMeshesParallel), so budget_*_ bookkeeping and the
   // resulting warning are both taken under state_mu_. Locks warnings_
@@ -1474,38 +1476,25 @@ bool RenderSceneConverter::BudgetWouldExceed(size_t estimate,
 
   if (budget_exceeded_) return true;  // latched: stay degraded for this run
 
-  const size_t operation_limit = config_.execution.max_in_flight_bytes;
-  if (operation_limit != 0 &&
-      (estimate > operation_limit ||
-       budget_accounted_bytes_ > operation_limit - estimate)) {
+  size_t operation_limit = config_.limits.max_resident_bytes;
+  if (config_.execution.max_in_flight_bytes) {
+    operation_limit = std::min(operation_limit,
+                               config_.execution.max_in_flight_bytes);
+  }
+  if (estimate > operation_limit ||
+      budget_accounted_bytes_ > operation_limit - estimate) {
     budget_exceeded_ = true;
     warnings_.push_back(std::string("Operation memory limit reached during ") +
                         phase + "; remaining geometry is skipped");
     return true;
   }
   budget_accounted_bytes_ = SaturatingAdd(budget_accounted_bytes_, estimate);
-
-  budget_pending_bytes_ = SaturatingAdd(budget_pending_bytes_, estimate);
-  const bool due = (++budget_check_counter_ % kBudgetCheckStride == 0) ||
-                   budget_pending_bytes_ >= kBudgetCheckBytes;
-  if (!due) return false;
-
-  const size_t pending = budget_pending_bytes_;
-  budget_pending_bytes_ = 0;
-  std::string why;
-  if (!MemBudget::Get().WouldExceed(pending, &why)) return false;
-
-  budget_exceeded_ = true;
-  warnings_.push_back(std::string("Memory budget reached during ") + phase +
-                      "; remaining geometry is skipped (" + why + ")");
-  return true;
+  return false;
 }
 
 void RenderSceneConverter::ResetOperationState() {
   warnings_.clear();
   budget_accounted_bytes_ = 0;
-  budget_pending_bytes_ = 0;
-  budget_check_counter_ = 0;
   budget_exceeded_ = false;
 }
 
@@ -1576,6 +1565,18 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
   ConvertResult result;
   ResetOperationState();
   ResetImageIdCache();
+  if (!config_.limits.valid() || config_.execution.max_threads < 0) {
+    result.status = ::lightusd::next::OperationStatus::InvalidArgument;
+    result.error = "invalid converter limits or execution policy";
+    return result;
+  }
+  size_t chunk_limit = config_.limits.max_resident_bytes;
+  if (config_.execution.max_in_flight_bytes) {
+    chunk_limit = std::min(chunk_limit,
+                           config_.execution.max_in_flight_bytes);
+  }
+  auto chunk_budget = std::make_shared<ChunkAllocationBudget>(chunk_limit);
+  ScopedChunkAllocationBudget chunk_budget_scope(chunk_budget);
 
   // Built with -fno-exceptions: the conversion helpers report failures via
   // return codes / the warnings_ list rather than throwing, so no try/catch.
@@ -1618,12 +1619,13 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
 
     RenderExtractOptions xopts;
     xopts.time_code = config_.time_code;
-    xopts.max_depth = config_.max_render_depth;
-    xopts.max_records = config_.max_render_records;
+    xopts.max_depth = config_.limits.max_namespace_depth;
+    xopts.max_records = config_.limits.max_render_records;
     xopts.collect_other = true;
     RenderExtractResult extracted;
     CollectRenderPrims(stage, xopts, &extracted);
     if (extracted.limit_exceeded) {
+      result.status = ::lightusd::next::OperationStatus::ResourceLimit;
       result.error = "render extraction limit exceeded";
       return result;
     }
@@ -1713,24 +1715,14 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     const size_t mesh_count = extracted.meshes.size();
     size_t mesh_workers = 1;
 #if defined(LIGHTUSD_ENABLE_THREAD)
-    if (config_.execution.max_threads >= 0) {
-      if (config_.execution.max_threads == 0) {
-        const unsigned hw_threads = std::thread::hardware_concurrency();
-        mesh_workers = std::max<size_t>(
-            1, std::min<size_t>(hw_threads ? hw_threads : 4, 16));
-      } else {
-        mesh_workers = std::min<size_t>(
-            static_cast<size_t>(config_.execution.max_threads),
-            static_cast<size_t>(::lightusd::next::kMaxExecutionThreads));
-      }
-    } else if (config_.max_worker_threads > 0) {
-      mesh_workers = std::min<size_t>(
-          config_.max_worker_threads,
-          static_cast<size_t>(::lightusd::next::kMaxExecutionThreads));
-    } else {
+    if (config_.execution.max_threads == 0) {
       const unsigned hw_threads = std::thread::hardware_concurrency();
-      mesh_workers =
-          std::max<size_t>(1, std::min<size_t>(hw_threads ? hw_threads : 4, 16));
+      mesh_workers = std::max<size_t>(
+          1, std::min<size_t>(hw_threads ? hw_threads : 4, 16));
+    } else {
+      mesh_workers = std::min<size_t>(
+          static_cast<size_t>(config_.execution.max_threads),
+          static_cast<size_t>(::lightusd::next::kMaxExecutionThreads));
     }
 #endif
     ::lightusd::next::TaskArena task_arena(mesh_workers);
@@ -1758,6 +1750,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     std::atomic<bool> mesh_budget_hit{false};
 
     task_arena.Run(mesh_count, [&](size_t mi) {
+      ScopedChunkAllocationBudget worker_budget_scope(chunk_budget);
       if (mesh_budget_hit.load(std::memory_order_relaxed)) {
         return;
       }
@@ -1838,6 +1831,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       std::vector<RenderPoints> points_out(n_points);
       std::vector<uint8_t> points_ok(n_points, 0);
       task_arena.Run(n_points, [&](size_t bi) {
+        ScopedChunkAllocationBudget worker_budget_scope(chunk_budget);
         points_ok[bi] = ConvertPoints(stage,
                                       extracted.points[bi].prim,
                                       &points_out[bi]) ? 1 : 0;
@@ -1867,6 +1861,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       std::vector<RenderCurves> curves_out(n_curves);
       std::vector<uint8_t> curves_ok(n_curves, 0);
       task_arena.Run(n_curves, [&](size_t bi) {
+        ScopedChunkAllocationBudget worker_budget_scope(chunk_budget);
         curves_ok[bi] =
             ConvertCurves(extracted.curves[bi].prim, &curves_out[bi]) ? 1 : 0;
       });
@@ -1903,6 +1898,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       std::vector<RenderPointInstancer> batch_inst(n);
       std::vector<uint8_t> batch_ok(n, 0);
       task_arena.Run(n, [&](size_t bi) {
+        ScopedChunkAllocationBudget worker_budget_scope(chunk_budget);
         batch_ok[bi] = ConvertPointInstancer(
                            extracted.point_instancers[batch_start + bi].prim,
                            &batch_inst[bi]) ? 1 : 0;
@@ -1982,6 +1978,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
         }
       }
       auto convert_one = [&](size_t bi) {
+        ScopedChunkAllocationBudget worker_budget_scope(chunk_budget);
         MaterialLocalScope scope;
         const UsdPrim& mat_prim = extracted.materials[batch_start + bi].prim;
         batch_ok[bi] = ConvertMaterial(stage, mat_prim, &batch_material[bi],
@@ -2088,6 +2085,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       std::vector<RenderLight> batch_light(n);
       std::vector<uint8_t> batch_ok(n, 0);
       task_arena.Run(n, [&](size_t bi) {
+        ScopedChunkAllocationBudget worker_budget_scope(chunk_budget);
         batch_ok[bi] = ConvertLight(
                            extracted.lights[batch_start + bi].prim,
                            &batch_light[bi]) ? 1 : 0;
@@ -2131,6 +2129,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       std::vector<RenderCamera> batch_camera(n);
       std::vector<uint8_t> batch_ok(n, 0);
       task_arena.Run(n, [&](size_t bi) {
+        ScopedChunkAllocationBudget worker_budget_scope(chunk_budget);
         batch_ok[bi] = ConvertCamera(
                            stage, extracted.cameras[batch_start + bi].prim,
                            &batch_camera[bi]) ? 1 : 0;
@@ -2160,6 +2159,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       std::vector<Skeleton> batch_skel(n);
       std::vector<uint8_t> batch_ok(n, 0);
       task_arena.Run(n, [&](size_t bi) {
+        ScopedChunkAllocationBudget worker_budget_scope(chunk_budget);
         batch_ok[bi] = ConvertSkeleton(
                            extracted.skeletons[batch_start + bi].prim,
                            &batch_skel[bi]) ? 1 : 0;
@@ -2282,6 +2282,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     }
 
     result.success = true;
+    result.status = ::lightusd::next::OperationStatus::Ok;
     result.warnings = std::move(warnings_);
   }
 

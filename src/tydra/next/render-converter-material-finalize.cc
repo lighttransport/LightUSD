@@ -116,7 +116,7 @@ void PromoteMaterialUVPrimvarsImpl(RenderScene* scene,
           const size_t elems = attr.float_data.size() / 2;
           // Both counts are known up front; without reserve() a 1M-vertex UV
           // set grows 122 chunks one push_back at a time.
-          promoted.reserve(attr.indices.size() * 2);
+          promoted.reserve_exact(attr.indices.size() * 2);
           for (size_t k = 0; k < attr.indices.size(); ++k) {
             const uint32_t idx = attr.indices[k];
             if (idx >= elems) {
@@ -129,7 +129,7 @@ void PromoteMaterialUVPrimvarsImpl(RenderScene* scene,
           }
         } else {
           // Straight copy: go chunk-at-a-time rather than element-at-a-time.
-          promoted.reserve(attr.float_data.size());
+          promoted.reserve_exact(attr.float_data.size());
           for (size_t c = 0; c < attr.float_data.chunk_count(); ++c) {
             const size_t n = attr.float_data.chunk_size(c);
             if (n == 0) break;

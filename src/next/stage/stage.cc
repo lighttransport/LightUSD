@@ -6,6 +6,7 @@
 #include "stage.hh"
 #include "../composition/composition.hh"
 #include "../schema/schema-registry.hh"
+#include "../../safe-arithmetic.hh"
 #include <algorithm>
 #include <unordered_set>
 
@@ -1044,19 +1045,22 @@ size_t Stage::GetPrimCount() const {
 
 size_t Stage::GetMemoryUsage() const {
   size_t size = sizeof(Stage);
-  size += sizeof(StageMeta);
-  size += meta_.defaultPrim.capacity();
-  size += meta_.upAxis.capacity();
-  size += meta_.doc.capacity();
-  size += meta_.owner.capacity();
+  auto add = [&size](size_t bytes) {
+    size = safe::saturating_add(size, bytes);
+  };
+  add(sizeof(StageMeta));
+  add(meta_.defaultPrim.capacity());
+  add(meta_.upAxis.capacity());
+  add(meta_.doc.capacity());
+  add(meta_.owner.capacity());
 
   if (root_layer_) {
-    size += root_layer_->memory_usage();
+    add(root_layer_->memory_usage());
   }
 
   for (const auto& sub : sub_layers_) {
     if (sub) {
-      size += sub->memory_usage();
+      add(sub->memory_usage());
     }
   }
 

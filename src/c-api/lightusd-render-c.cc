@@ -6,6 +6,7 @@
 #include "lightusd-render-c.h"
 
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -37,6 +38,38 @@ uint64_t CacheKey(uint8_t domain, int32_t id, uint32_t sub, uint8_t which) {
          (uint64_t(sub & 0xFFFF) << 8) | which;
 }
 
+bool ToSizeLimit(uint64_t value, size_t* out) {
+  if (!out || value == 0) return false;
+  if (value == LIGHTUSD_LIMIT_UNLIMITED) {
+    *out = (std::numeric_limits<size_t>::max)();
+    return true;
+  }
+#if SIZE_MAX < UINT64_MAX
+  if (value > static_cast<uint64_t>(SIZE_MAX)) return false;
+#endif
+  *out = static_cast<size_t>(value);
+  return true;
+}
+
+lightusd_status ToCStatus(::lightusd::next::OperationStatus status) {
+  using Status = ::lightusd::next::OperationStatus;
+  switch (status) {
+    case Status::Ok: return LIGHTUSD_OK;
+    case Status::InvalidArgument: return LIGHTUSD_ERR_INVALID_ARG;
+    case Status::Unsupported: return LIGHTUSD_ERR_UNSUPPORTED;
+    case Status::ResourceLimit: return LIGHTUSD_ERR_RESOURCE_LIMIT;
+    case Status::IntegerOverflow: return LIGHTUSD_ERR_OVERFLOW;
+    case Status::AllocationFailure: return LIGHTUSD_ERR_OUT_OF_MEMORY;
+    case Status::Busy: return LIGHTUSD_ERR_BUSY;
+    case Status::StaleRevision: return LIGHTUSD_ERR_STALE_REVISION;
+    case Status::InvalidData:
+    case Status::Cancelled:
+    case Status::SinkRejected:
+      return LIGHTUSD_ERR_INTERNAL;
+  }
+  return LIGHTUSD_ERR_INTERNAL;
+}
+
 // Fill a buffer view from a ChunkedArray: zero-copy when contiguous, else
 // flatten once into the scene cache.
 template <typename T, size_t ChunkBytes>
@@ -52,7 +85,7 @@ lightusd_status ViewFromChunked(lightusd_render_scene* scene,
   out->count = n / components;
   size_t nbytes;
   if (!safe::mul(n, sizeof(T), &nbytes)) {
-    return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "buffer size overflow");
+    return Fail(LIGHTUSD_ERR_OVERFLOW, "buffer size overflow");
   }
   out->nbytes = nbytes;
   if (n == 0) return LIGHTUSD_OK;
@@ -83,6 +116,7 @@ lightusd_status ViewFromVector(const std::vector<T>& v, uint8_t comp_type,
   out->data = v.empty() ? nullptr : v.data();
   if (!safe::mul(v.size(), sizeof(T), &out->nbytes)) {
     out->nbytes = 0;
+    return Fail(LIGHTUSD_ERR_OVERFLOW, "buffer size overflow");
   }
   return LIGHTUSD_OK;
 }
@@ -97,6 +131,7 @@ lightusd_status ViewFromMatrixVector(const std::vector<td::Matrix4>& v,
   // Matrix4 is alignas(64) but sizeof is exactly 16 floats.
   if (!safe::mul(v.size(), sizeof(td::Matrix4), &out->nbytes)) {
     out->nbytes = 0;
+    return Fail(LIGHTUSD_ERR_OVERFLOW, "matrix buffer size overflow");
   }
   return LIGHTUSD_OK;
 }
@@ -172,6 +207,11 @@ void lightusd_render_config_init(lightusd_render_config* cfg) {
   cfg->target_color_space = 1; /* linear */
   cfg->duplicate_instance_meshes = 0;
   cfg->time_code = 0.0;
+  cfg->max_threads = 0;
+  cfg->max_resident_bytes = 1024ull * 1024ull * 1024ull;
+  cfg->max_render_records = 1024ull * 1024ull;
+  cfg->max_render_depth = 1024;
+  cfg->max_value_clip_samples = 10000;
 }
 
 lightusd_status lightusd_render_convert(const lightusd_stage* stage,
@@ -183,6 +223,18 @@ lightusd_status lightusd_render_convert(const lightusd_stage* stage,
   td::ConverterConfig config;
   config.asset_base_dir = stage->source_dir;
   if (cfg) {
+    if (cfg->struct_size < sizeof(lightusd_render_config) ||
+        cfg->max_threads < 0 ||
+        !ToSizeLimit(cfg->max_resident_bytes,
+                     &config.limits.max_resident_bytes) ||
+        !ToSizeLimit(cfg->max_render_records,
+                     &config.limits.max_render_records) ||
+        !ToSizeLimit(cfg->max_render_depth,
+                     &config.limits.max_namespace_depth) ||
+        !ToSizeLimit(cfg->max_value_clip_samples,
+                     &config.limits.max_value_clip_samples)) {
+      return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid render config");
+    }
     config.mesh.triangulate = cfg->triangulate != 0;
     config.mesh.compute_normals = cfg->compute_normals != 0;
     config.mesh.compute_tangents = cfg->compute_tangents != 0;
@@ -194,12 +246,13 @@ lightusd_status lightusd_render_convert(const lightusd_stage* stage,
     config.point_instancer.duplicate_meshes =
         cfg->duplicate_instance_meshes != 0;
     config.time_code = cfg->time_code;
+    config.execution.max_threads = cfg->max_threads;
   }
 
   td::RenderSceneConverter converter(config);
   td::ConvertResult result = converter.Convert(stage->stage);
   if (!result.success) {
-    return Fail(LIGHTUSD_ERR_INTERNAL,
+    return Fail(ToCStatus(result.status),
                 result.error.empty() ? "render conversion failed"
                                      : result.error);
   }

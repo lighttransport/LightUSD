@@ -20,6 +20,7 @@
 #include "../layer/layer.hh"
 #include "../prim/path.hh"
 #include "../strfmt.hh"
+#include "../../security-policy.hh"
 
 #include <deque>
 #include <functional>
@@ -208,6 +209,8 @@ struct CompositionOptions {
   // Per-layer file/input memory cap for layers loaded by the compositor
   // (sublayers, references, payloads). 0 = no limit.
   size_t max_layer_memory = 0;
+  size_t max_array_elements = size_t(16) * 1024 * 1024;
+  size_t max_archive_entries = security_policy::kDefaultArchiveEntryCount;
 
   // USDC backing policy for every file-backed layer loaded by PCP. With both
   // enabled, lazy array Values retain shared mmap-backed CrateDataSources as

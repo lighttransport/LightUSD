@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import pathlib
 import platform
+import shlex
 import shutil
 import subprocess
 import sysconfig
@@ -32,7 +33,30 @@ from setuptools.command.build_ext import build_ext
 
 
 ROOT = pathlib.Path(__file__).parent.resolve()
-CMAKE_BUILD_DIR = ROOT / "build_py_ext_next"
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "on", "true", "yes"}:
+        return True
+    if normalized in {"0", "off", "false", "no"}:
+        return False
+    raise RuntimeError(
+        f"{name} must be one of 1/0, on/off, true/false, or yes/no")
+
+
+# Worker-thread parallelism is enabled for published wheels. It can be disabled
+# for constrained native targets without changing the C/Python API; internal
+# synchronization required by free-threaded CPython remains available.
+PY_ENABLE_THREAD = _env_flag("LIGHTUSD_PY_ENABLE_THREAD", True)
+_default_build_dir = ("build_py_ext_next" if PY_ENABLE_THREAD else
+                      "build_py_ext_next_nothread")
+CMAKE_BUILD_DIR = pathlib.Path(
+    os.environ.get("LIGHTUSD_PY_BUILD_DIR", str(ROOT / _default_build_dir))
+).resolve()
 
 PY_LIMITED_API = 0x030A0000  # CPython 3.10 floor for the abi3 wheel
 
@@ -51,9 +75,9 @@ def _cmake_configure_and_build() -> None:
         "-B", str(CMAKE_BUILD_DIR),
         "-DCMAKE_BUILD_TYPE=MinSizeRel",
         "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
-        "-DLIGHTUSD_NEXT_ENABLE_THREAD=ON",
+        ("-DLIGHTUSD_NEXT_ENABLE_THREAD=" +
+         ("ON" if PY_ENABLE_THREAD else "OFF")),
         "-DLIGHTUSD_NEXT_BUILD_TESTS=OFF",
-        "-DLIGHTUSD_NEXT_BUILD_PYTHON=OFF",
     ]
     is_windows = platform.system() == "Windows"
 
@@ -67,7 +91,8 @@ def _cmake_configure_and_build() -> None:
 
     extra = os.environ.get("LIGHTUSD_CMAKE_ARGS", "")
     if extra:
-        cmake_args.extend(extra.split())
+        cmake_args.extend(
+            shlex.split(extra, posix=platform.system() != "Windows"))
 
     env = os.environ.copy()
     subprocess.check_call(cmake_args, env=env)
@@ -115,6 +140,11 @@ class CMakeBuildExt(build_ext):
         for ext in self.extensions:
             ext.extra_objects = [str(c_api), str(tydra), str(core)] + list(
                 ext.extra_objects)
+        # setuptools does not reliably treat a changed static-archive path or
+        # CMake build flavor as an extension dependency. Always relink the tiny
+        # C shim so switching LIGHTUSD_PY_ENABLE_THREAD cannot leave a stale
+        # threaded/non-threaded module in place.
+        self.force = True
         super().run()
 
 

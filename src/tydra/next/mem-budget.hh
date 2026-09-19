@@ -220,27 +220,6 @@ class MemBudget {
 #endif
   }
 
-  /// Route ChunkedArray chunk allocations through this budget.
-  ///
-  /// Without it the budget only sees the process RSS at phase boundaries
-  /// (WouldExceed); the geometry buffers themselves are invisible to
-  /// Tracked()/PeakTracked(), and an allocation that busts the cap between two
-  /// phase checks is an OOM rather than a clean skip. With it installed, a
-  /// refused chunk makes ChunkedArray latch alloc_failed(), which every
-  /// converter path already treats as "drop this prim with a warning".
-  ///
-  /// Non-throwing by construction, so it is usable from the -fno-exceptions
-  /// wasm build -- unlike PoolAlloc, which reports exhaustion by throwing.
-  /// Process-wide and not thread-safe to install; call once at startup.
-  static void InstallChunkedArrayTracking() {
-    SetChunkAllocHooks(
-        [](size_t bytes) -> bool { return MemBudget::Get().TryAdd(bytes); },
-        [](size_t bytes) { MemBudget::Get().Sub(bytes); });
-  }
-  static void UninstallChunkedArrayTracking() {
-    SetChunkAllocHooks(nullptr, nullptr);
-  }
-
   static std::string GiB(size_t bytes) {
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%.2f GiB",

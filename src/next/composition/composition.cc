@@ -653,6 +653,9 @@ void Compositor::CopyLocalOpinions(
     double time_scale,
     const std::function<std::string(const std::string&)>& remap_path,
     std::vector<std::string>* dict_conflicts) {
+  // PrimSpecMeta's mutable cold-field accessors allocate. Keep a const view
+  // for all gap tests so metadata-free prims stay allocation-free.
+  const PrimSpecMeta& target_meta = target.meta();
   // Remap a relationship/connection target. An empty remap result means the
   // target is not expressible in the composed namespace (outside the arc's
   // scope) and must be DROPPED, not copied verbatim.
@@ -1107,7 +1110,7 @@ void Compositor::CopyLocalOpinions(
   // Copy metadata fields (fill-absent: a stronger/earlier opinion already on the
   // target wins; weaker opinions only fill gaps).
   if ((source.meta().doc_authored() || !source.meta().doc().empty()) &&
-      !target.meta().doc_authored() && target.meta().doc().empty()) {
+      !target_meta.doc_authored() && target_meta.doc().empty()) {
     target.meta().doc() = source.meta().doc();
     target.meta().set_doc_authored();
   }
@@ -1130,24 +1133,24 @@ void Compositor::CopyLocalOpinions(
         source.meta().instanceable_authored || source.meta().instanceable;
   }
   if ((source.meta().comment_authored() ||
-       !source.meta().comment().empty()) &&
-      !target.meta().comment_authored() && target.meta().comment().empty()) {
+      !source.meta().comment().empty()) &&
+      !target_meta.comment_authored() && target_meta.comment().empty()) {
     target.meta().comment() = source.meta().comment();
     target.meta().set_comment_authored();
   }
   if ((source.meta().kindAuthored() || !source.meta().kind().empty()) &&
-      !target.meta().kindAuthored() && target.meta().kind().empty()) {
+      !target_meta.kindAuthored() && target_meta.kind().empty()) {
     target.meta().kind() = source.meta().kind();
     target.meta().setKindAuthored();
   }
   if (!source.meta().permission().empty() &&
-      target.meta().permission().empty()) {
+      target_meta.permission().empty()) {
     target.meta().permission() = source.meta().permission();
   }
   if ((source.meta().displayNameAuthored() ||
-       !source.meta().displayName().empty()) &&
-      !target.meta().displayNameAuthored() &&
-      target.meta().displayName().empty()) {
+      !source.meta().displayName().empty()) &&
+      !target_meta.displayNameAuthored() &&
+      target_meta.displayName().empty()) {
     target.meta().displayName() = source.meta().displayName();
     target.meta().setDisplayNameAuthored();
   }
@@ -1700,11 +1703,12 @@ void Compositor::ApplyOneVariant(PrimSpec& prim, const Layer& layer,
       }
     }
   }
-  if (!variant.doc.empty() && prim.meta().doc().empty()) {
+  const PrimSpecMeta& prim_meta = prim.meta();
+  if (!variant.doc.empty() && prim_meta.doc().empty()) {
     prim.meta().doc() = variant.doc;
   }
   if (!variant.kind.empty() && !prim.meta().kindAuthored() &&
-      prim.meta().kind().empty()) {
+      prim_meta.kind().empty()) {
     prim.meta().kind() = variant.kind;
     prim.meta().setKindAuthored();
   }
@@ -1775,6 +1779,7 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
                                const std::string& anchor_path, int depth,
                                size_t pending_graft_begin) {
   if (!options_.resolve_variants) return true;
+  const PrimSpecMeta& prim_meta = prim.meta();
 
   // Apply EACH variant set's selected variant (a prim may select several sets).
   // Variant opinions are weaker than local opinions already on the prim, so use
@@ -1793,14 +1798,14 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
   // the pass are deliberately not applied here — the caller runs a second
   // ApplyVariants pass for arcs merged by references.
   std::vector<std::string> set_names;
-  set_names.reserve(prim.meta().variantSets().size());
-  for (const auto& vs : prim.meta().variantSets()) set_names.push_back(vs.name);
+  set_names.reserve(prim_meta.variantSets().size());
+  for (const auto& vs : prim_meta.variantSets()) set_names.push_back(vs.name);
 
   for (const std::string& set_name : set_names) {
     // Re-look up the set each iteration; a prior iteration may have
     // reallocated the vector.
-    auto find_set = [&prim](const std::string& n) -> const VariantSetData* {
-      for (const auto& s : prim.meta().variantSets()) {
+    auto find_set = [&prim_meta](const std::string& n) -> const VariantSetData* {
+      for (const auto& s : prim_meta.variantSets()) {
         if (s.name == n) return &s;
       }
       return nullptr;

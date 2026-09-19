@@ -614,7 +614,16 @@ class NextUSDZConverterNative {
     if (!options.isNull() && !options.isUndefined()) {
       emscripten::val max_memory = options["maxMemory"];
       if (!max_memory.isUndefined() && !max_memory.isNull()) {
-        load_opts.max_memory = max_memory.as<size_t>();
+        const size_t limit = max_memory.as<size_t>();
+        // Keep the finite library defaults when callers use the historical
+        // zero sentinel for "no override".  Unlimited input is an explicit
+        // policy choice now, not an accidental consequence of zeroing a
+        // resource limit.
+        if (limit != 0) {
+          load_opts.limits.max_input_bytes = limit;
+          load_opts.limits.max_asset_bytes = limit;
+          load_opts.limits.max_resident_bytes = limit;
+        }
       }
       emscripten::val usda_lazy = options["usdaLazy"];
       if (!usda_lazy.isUndefined() && !usda_lazy.isNull()) {

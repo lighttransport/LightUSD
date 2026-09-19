@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <map>
 #include <limits>
+#include <mutex>
+#include <new>
 #include <set>
 #include <utility>
 
@@ -15,6 +17,33 @@ namespace next {
 namespace {
 
 using IdMap = std::unordered_map<std::string, RenderId>;
+class RenderOperationScope;
+thread_local const RenderOperationScope* active_render_operation = nullptr;
+
+class RenderOperationScope {
+ public:
+  explicit RenderOperationScope(const void* session)
+      : session_(session), previous_(active_render_operation) {
+    active_render_operation = this;
+  }
+  ~RenderOperationScope() { active_render_operation = previous_; }
+
+  bool Contains(const void* session) const {
+    for (const RenderOperationScope* scope = this; scope;
+         scope = scope->previous_) {
+      if (scope->session_ == session) return true;
+    }
+    return false;
+  }
+
+ private:
+  const void* session_;
+  const RenderOperationScope* previous_;
+};
+
+bool RenderOperationActive(const void* session) {
+  return active_render_operation && active_render_operation->Contains(session);
+}
 
 bool PathRelated(const std::string& key, const std::string& changed) {
   if (changed.empty() || changed == "/") return true;
@@ -78,11 +107,12 @@ bool KindAffected(RenderResourceKind kind,
 struct RenderSession::Impl {
   explicit Impl(const ConverterConfig& config) : converter(config) {}
 
+  mutable std::recursive_mutex operation_mu;
+  mutable std::mutex publication_mu;
   RenderSceneConverter converter;
-  RenderScene scene;
+  std::shared_ptr<RenderScene> scene;
   uint64_t revision = 0;
   RenderId next_id = 1;
-  bool id_exhausted = false;
   std::map<RenderResourceKind, IdMap> ids;
 
   bool IsAffected(RenderResourceKind kind, const std::string& key,
@@ -126,28 +156,36 @@ struct RenderSession::Impl {
     out.revision = revision;
     out.full_resync = false;
     if (!sink->BeginUpdate(revision, snapshot.revision, false) ||
-        !sink->UpdateCatalog(scene) || !sink->EndUpdate()) {
+        !scene || !sink->UpdateCatalog(*scene) || !sink->EndUpdate()) {
       out.error = "RenderSession: sink rejected no-op update";
+      out.status = ::lightusd::next::OperationStatus::SinkRejected;
       sink->AbortUpdate();
       return out;
     }
-    revision = snapshot.revision;
-    out.revision = revision;
+    {
+      std::lock_guard<std::mutex> lock(publication_mu);
+      revision = snapshot.revision;
+      out.revision = revision;
+    }
     out.success = true;
+    out.status = ::lightusd::next::OperationStatus::Ok;
     return out;
   }
 
   RenderId IdFor(RenderResourceKind kind, const std::string& key,
-                 IdMap* next_keys) {
-    IdMap& current = ids[kind];
-    auto found = current.find(key);
-    RenderId id = found == current.end() ? kInvalidRenderId : found->second;
-    if (found == current.end()) {
-      if (next_id == (std::numeric_limits<RenderId>::max)()) {
-        id_exhausted = true;
+                 IdMap* next_keys, RenderId* candidate_next_id,
+                 bool* candidate_exhausted) const {
+    const auto kind_it = ids.find(kind);
+    const IdMap* current = kind_it == ids.end() ? nullptr : &kind_it->second;
+    const auto found = current ? current->find(key) : IdMap::const_iterator{};
+    RenderId id = current && found != current->end() ? found->second
+                                                     : kInvalidRenderId;
+    if (!current || found == current->end()) {
+      if (*candidate_next_id == (std::numeric_limits<RenderId>::max)()) {
+        *candidate_exhausted = true;
         return kInvalidRenderId;
       }
-      id = next_id++;
+      id = (*candidate_next_id)++;
     }
     (*next_keys)[key] = id;
     return id;
@@ -157,7 +195,9 @@ struct RenderSession::Impl {
   bool EmitVector(RenderResourceKind kind, const std::vector<T>& values,
                   const ::lightusd::next::StageChangeSet& changes,
                   KeyFn key_fn, EmitFn emit,
-                  IdMap* next_keys, size_t* upserts) {
+                  IdMap* next_keys, size_t* upserts,
+                  RenderId* candidate_next_id,
+                  bool* candidate_exhausted) {
     std::unordered_map<std::string, size_t> occurrences;
     for (size_t i = 0; i < values.size(); ++i) {
       std::string key = key_fn(values[i], i);
@@ -165,7 +205,8 @@ struct RenderSession::Impl {
       if (occurrence != 0) {
         key += "#" + std::to_string(occurrence);
       }
-      const RenderId id = IdFor(kind, key, next_keys);
+      const RenderId id = IdFor(kind, key, next_keys, candidate_next_id,
+                                candidate_exhausted);
       if (id == kInvalidRenderId) return false;
       if (IsAffected(kind, key, changes)) {
         if (!emit(id, values[i])) return false;
@@ -183,10 +224,12 @@ struct RenderSession::Impl {
     if (!snapshot || !sink) {
       out.error = !snapshot ? "RenderSession: invalid stage snapshot"
                             : "RenderSession: null update sink";
+      out.status = ::lightusd::next::OperationStatus::InvalidArgument;
       return out;
     }
     if (revision != 0 && snapshot.revision <= revision) {
       out.error = "RenderSession: snapshot revision is not newer";
+      out.status = ::lightusd::next::OperationStatus::StaleRevision;
       return out;
     }
 
@@ -211,9 +254,17 @@ struct RenderSession::Impl {
     out.warnings = converted.warnings;
     if (!converted.success) {
       out.error = converted.error;
+      out.status = converted.status;
       return out;
     }
-    RenderScene& next = converted.scene;
+    std::shared_ptr<RenderScene> committed(
+        new (std::nothrow) RenderScene(std::move(converted.scene)));
+    if (!committed) {
+      out.error = "RenderSession: unable to prepare render scene";
+      out.status = ::lightusd::next::OperationStatus::AllocationFailure;
+      return out;
+    }
+    RenderScene& next = *committed;
     out.converted_resource_count =
         next.images.size() + next.textures.size() + next.materials.size() +
         next.meshes.size() + next.points.size() + next.curves.size() +
@@ -224,11 +275,14 @@ struct RenderSession::Impl {
     if (!sink->BeginUpdate(revision, snapshot.revision, changes.full_resync) ||
         !sink->UpdateCatalog(next)) {
       out.error = "RenderSession: sink rejected update start/catalog";
+      out.status = ::lightusd::next::OperationStatus::SinkRejected;
       sink->AbortUpdate();
       return out;
     }
 
     std::map<RenderResourceKind, IdMap> next_ids;
+    RenderId candidate_next_id = next_id;
+    bool candidate_exhausted = false;
     bool ok = true;
 #define EMIT_VECTOR(KIND, MEMBER, KEY, METHOD)                                  \
     ok = ok && EmitVector(RenderResourceKind::KIND, next.MEMBER, changes,       \
@@ -236,7 +290,8 @@ struct RenderSession::Impl {
         return KeyOrIndex(value.KEY, index, #KIND ":");                        \
       },                                                                        \
       [&](RenderId id, const auto& value) { return sink->METHOD(id, value); },   \
-      &next_ids[RenderResourceKind::KIND], &out.upsert_count)
+      &next_ids[RenderResourceKind::KIND], &out.upsert_count,                   \
+      &candidate_next_id, &candidate_exhausted)
 
     EMIT_VECTOR(Image, images, resolved_path, UpsertImage);
     EMIT_VECTOR(Texture, textures, prim_path, UpsertTexture);
@@ -272,18 +327,26 @@ struct RenderSession::Impl {
       }
     }
     if (!ok || !sink->EndUpdate()) {
-      out.error = id_exhausted
+      out.error = candidate_exhausted
           ? "RenderSession: stable resource ID space exhausted"
           : "RenderSession: sink rejected resource update";
+      out.status = candidate_exhausted
+          ? ::lightusd::next::OperationStatus::ResourceLimit
+          : ::lightusd::next::OperationStatus::SinkRejected;
       sink->AbortUpdate();
       return out;
     }
 
-    scene = std::move(next);
-    ids = std::move(next_ids);
-    revision = snapshot.revision;
-    out.revision = revision;
+    {
+      std::lock_guard<std::mutex> lock(publication_mu);
+      scene = std::move(committed);
+      ids = std::move(next_ids);
+      next_id = candidate_next_id;
+      revision = snapshot.revision;
+      out.revision = revision;
+    }
     out.success = true;
+    out.status = ::lightusd::next::OperationStatus::Ok;
     return out;
   }
 };
@@ -296,6 +359,15 @@ RenderSession& RenderSession::operator=(RenderSession&&) noexcept = default;
 
 RenderUpdateResult RenderSession::Initialize(
     const ::lightusd::next::StageSnapshot& snapshot, SceneUpdateSink* sink) {
+  if (RenderOperationActive(impl_.get())) {
+    RenderUpdateResult result;
+    result.status = ::lightusd::next::OperationStatus::Busy;
+    result.error = "render session update is already in progress";
+    result.revision = GetSnapshot().revision;
+    return result;
+  }
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  RenderOperationScope operation_scope(impl_.get());
   ::lightusd::next::StageChangeSet full;
   full.new_revision = snapshot.revision;
   full.full_resync = true;
@@ -305,18 +377,34 @@ RenderUpdateResult RenderSession::Initialize(
 RenderUpdateResult RenderSession::Apply(
     const ::lightusd::next::StageSnapshot& snapshot,
     const ::lightusd::next::StageChangeSet& changes, SceneUpdateSink* sink) {
+  if (RenderOperationActive(impl_.get())) {
+    RenderUpdateResult result;
+    result.status = ::lightusd::next::OperationStatus::Busy;
+    result.error = "render session update is already in progress";
+    result.revision = GetSnapshot().revision;
+    return result;
+  }
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  RenderOperationScope operation_scope(impl_.get());
   return impl_->Apply(snapshot, changes, sink);
 }
 
-uint64_t RenderSession::revision() const { return impl_->revision; }
-const RenderScene* RenderSession::scene() const {
-  return impl_->revision ? &impl_->scene : nullptr;
+RenderSceneSnapshot RenderSession::GetSnapshot() const {
+  RenderSceneSnapshot snapshot;
+  std::lock_guard<std::mutex> lock(impl_->publication_mu);
+  snapshot.revision = impl_->revision;
+  snapshot.scene = impl_->scene;
+  return snapshot;
 }
+uint64_t RenderSession::revision() const { return GetSnapshot().revision; }
 void RenderSession::Reset() {
-  impl_->scene = RenderScene();
+  if (RenderOperationActive(impl_.get())) return;
+  std::lock_guard<std::recursive_mutex> operation_lock(impl_->operation_mu);
+  RenderOperationScope operation_scope(impl_.get());
+  std::lock_guard<std::mutex> publish_lock(impl_->publication_mu);
+  impl_->scene.reset();
   impl_->revision = 0;
   impl_->next_id = 1;
-  impl_->id_exhausted = false;
   impl_->ids.clear();
 }
 

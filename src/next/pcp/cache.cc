@@ -103,61 +103,73 @@ std::vector<std::string> Cache::GetLayerDependencies() const {
 Cache::MemoryStats Cache::GetMemoryStats() const {
   NEXT_PCP_READ_LOCK(impl_->api_mu_);
   MemoryStats stats;
+  auto add_source = [&stats](size_t bytes) {
+    stats.source_layer_bytes =
+        safe::saturating_add(stats.source_layer_bytes, bytes);
+  };
+  auto add_transient = [&stats](size_t bytes) {
+    stats.transient_cache_bytes =
+        safe::saturating_add(stats.transient_cache_bytes, bytes);
+  };
   std::unordered_set<const Layer *> layers;
   for (const LayerStack &stack : impl_->layer_stacks) {
     for (const std::shared_ptr<Layer> &layer : stack.layers) {
       if (layer && layers.insert(layer.get()).second) {
-        stats.source_layer_bytes += layer->memory_usage();
+        add_source(layer->memory_usage());
       }
     }
-    stats.transient_cache_bytes += stack.identifier.capacity();
-    stats.transient_cache_bytes +=
-        stack.layers.capacity() * sizeof(stack.layers[0]);
-    stats.transient_cache_bytes +=
-        stack.layer_identifiers.capacity() * sizeof(stack.layer_identifiers[0]);
+    add_transient(stack.identifier.capacity());
+    add_transient(safe::saturating_mul(stack.layers.capacity(),
+                                      sizeof(stack.layers[0])));
+    add_transient(safe::saturating_mul(
+        stack.layer_identifiers.capacity(), sizeof(stack.layer_identifiers[0])));
     for (const std::string &id : stack.layer_identifiers) {
-      stats.transient_cache_bytes += id.capacity();
+      add_transient(id.capacity());
     }
-    stats.transient_cache_bytes +=
-        stack.layer_offsets.capacity() * sizeof(stack.layer_offsets[0]);
+    add_transient(safe::saturating_mul(
+        stack.layer_offsets.capacity(), sizeof(stack.layer_offsets[0])));
   }
   stats.layer_count = layers.size();
   stats.prim_index_count = impl_->index_cache.size();
   stats.composed_prim_count = impl_->composed_cache_.size();
 
   for (const std::string &path : impl_->path_table) {
-    stats.transient_cache_bytes += sizeof(path) + path.capacity();
+    add_transient(safe::saturating_add(sizeof(path), path.capacity()));
   }
   for (const auto &entry : impl_->index_cache) {
-    stats.transient_cache_bytes += sizeof(entry) + entry.first.capacity();
+    add_transient(safe::saturating_add(sizeof(entry),
+                                      entry.first.capacity()));
     if (!entry.second) continue;
     const std::vector<CompNode> &nodes = entry.second->GetNodes();
-    stats.transient_cache_bytes += nodes.capacity() * sizeof(CompNode);
+    add_transient(safe::saturating_mul(nodes.capacity(), sizeof(CompNode)));
     for (const CompNode &node : nodes) {
-      stats.transient_cache_bytes +=
-          node.children.capacity() * sizeof(node.children[0]);
+      add_transient(safe::saturating_mul(
+          node.children.capacity(), sizeof(node.children[0])));
     }
-    stats.transient_cache_bytes +=
-        entry.second->GetStrengthOrder().capacity() * sizeof(uint16_t);
+    add_transient(safe::saturating_mul(
+        entry.second->GetStrengthOrder().capacity(), sizeof(uint16_t)));
   }
   impl_->sources_cache.for_each([&](const std::string &key,
                                     std::vector<Src> &srcs) {
-    stats.transient_cache_bytes += key.capacity() + sizeof(std::vector<Src>);
-    stats.transient_cache_bytes += srcs.capacity() * sizeof(Src);
+    add_transient(safe::saturating_add(key.capacity(),
+                                      sizeof(std::vector<Src>)));
+    add_transient(safe::saturating_mul(srcs.capacity(), sizeof(Src)));
     for (const Src &source : srcs) {
-      stats.transient_cache_bytes += source.site.capacity();
+      add_transient(source.site.capacity());
     }
   });
   for (const auto &entry : impl_->composed_cache_) {
-    stats.transient_cache_bytes += sizeof(entry) + entry.first.capacity();
-    if (entry.second) stats.transient_cache_bytes += entry.second->memory_usage();
+    add_transient(safe::saturating_add(sizeof(entry),
+                                      entry.first.capacity()));
+    if (entry.second) add_transient(entry.second->memory_usage());
   }
   for (const auto &entry : impl_->composed_children_) {
-    stats.transient_cache_bytes += sizeof(entry) + entry.first.capacity();
-    stats.transient_cache_bytes +=
-        entry.second.capacity() * sizeof(entry.second[0]);
+    add_transient(safe::saturating_add(sizeof(entry),
+                                      entry.first.capacity()));
+    add_transient(safe::saturating_mul(entry.second.capacity(),
+                                      sizeof(entry.second[0])));
     for (const std::string &child : entry.second) {
-      stats.transient_cache_bytes += child.capacity();
+      add_transient(child.capacity());
     }
   }
   return stats;
@@ -391,6 +403,8 @@ bool ComposeStageFromFile(const std::string &filename, AssetResolver &resolver,
                           std::string *warn, std::string *err) {
   LayerLoadOptions lopts;
   lopts.max_memory = options.max_layer_memory;
+  lopts.max_array_elements = options.max_array_elements;
+  lopts.max_archive_entries = options.max_archive_entries;
   lopts.usdc_lazy_arrays = options.usdc_lazy_arrays;
   lopts.usdc_use_mmap = options.usdc_use_mmap;
   lopts.strict_aousd_conformance = options.strict_aousd_conformance;

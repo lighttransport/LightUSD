@@ -587,7 +587,8 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
 
   std::vector<VcharControl> authoredControls;
   if (nextSession_) {
-    authoredControls = ReadVcharControls(nextSession_->GetStage());
+    const lightusd::next::StageSnapshot snapshot = nextSession_->GetSnapshot();
+    if (snapshot) authoredControls = ReadVcharControls(*snapshot);
   } else if (loaded_.ok) {
     authoredControls = ReadVcharControls(loaded_.stage);
   }
@@ -1579,11 +1580,14 @@ json App::mcpListPrims(const json& args, std::string&) {
   }
   json paths = json::array();
   if (nextSession_) {
-    nextSession_->GetStage().Traverse([&](const lightusd::next::UsdPrim& prim) {
-      if (paths.size() >= cap) return false;
-      paths.push_back(prim.GetPath().str());
-      return true;
-    });
+    const lightusd::next::StageSnapshot snapshot = nextSession_->GetSnapshot();
+    if (snapshot) {
+      snapshot->Traverse([&](const lightusd::next::UsdPrim& prim) {
+        if (paths.size() >= cap) return false;
+        paths.push_back(prim.GetPath().str());
+        return true;
+      });
+    }
   } else {
     for (const auto& m : draw_.meshes) {
       if (paths.size() >= cap) break;
@@ -1596,7 +1600,12 @@ json App::mcpListPrims(const json& args, std::string&) {
 json App::mcpCallLibraryTool(const std::string& name, const json& args,
                              std::string& err) {
   if (nextSession_) {
-    const lightusd::next::Stage& stage = nextSession_->GetStage();
+    const lightusd::next::StageSnapshot snapshot = nextSession_->GetSnapshot();
+    if (!snapshot) {
+      err = "next session has no published stage";
+      return json();
+    }
+    const lightusd::next::Stage& stage = *snapshot;
     if (name == "stage_info") {
       const lightusd::next::StageMeta& meta = stage.GetMeta();
       return json{{"loaded", true},

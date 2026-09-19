@@ -46,7 +46,7 @@ extern "C" {
 #endif
 #endif
 
-#define LIGHTUSD_API_VERSION_MAJOR 1
+#define LIGHTUSD_API_VERSION_MAJOR 2
 #define LIGHTUSD_API_VERSION_MINOR 0
 #define LIGHTUSD_API_VERSION_PATCH 0
 
@@ -64,6 +64,10 @@ typedef enum lightusd_status {
   LIGHTUSD_ERR_OUT_OF_MEMORY = -6,
   LIGHTUSD_ERR_UNSUPPORTED = -7,
   LIGHTUSD_ERR_COMPOSITION = -8,
+  LIGHTUSD_ERR_RESOURCE_LIMIT = -9,
+  LIGHTUSD_ERR_OVERFLOW = -10,
+  LIGHTUSD_ERR_BUSY = -11,
+  LIGHTUSD_ERR_STALE_REVISION = -12,
   LIGHTUSD_ERR_INTERNAL = -99
 } lightusd_status;
 
@@ -252,20 +256,31 @@ typedef enum lightusd_format {
   LIGHTUSD_FORMAT_USDZ = 3
 } lightusd_format;
 
+typedef enum lightusd_input_policy {
+  LIGHTUSD_INPUT_UNTRUSTED = 0,
+  LIGHTUSD_INPUT_TRUSTED = 1
+} lightusd_input_policy;
+
+#define LIGHTUSD_LIMIT_UNLIMITED UINT64_MAX
+
 typedef struct lightusd_load_options {
   uint32_t struct_size; /* = sizeof(lightusd_load_options); enables ABI growth */
   uint32_t format;      /* lightusd_format; AUTO sniffs extension + content */
-  uint64_t max_memory;  /* per-input memory cap in bytes; 0 = unlimited */
+  uint32_t input_policy; /* lightusd_input_policy */
+  int32_t max_threads;   /* 0 = bounded auto; 1 = serial; >1 = fixed */
+  uint64_t max_input_bytes;
+  uint64_t max_asset_bytes;
+  uint64_t max_resident_bytes;
+  uint64_t max_array_elements;
+  uint64_t max_archive_entries;
+  uint32_t max_parse_depth;
+  uint32_t max_composition_depth;
+  uint32_t max_namespace_depth;
   uint8_t composed;     /* 1: resolve composition arcs (LoadUSDComposed) */
   uint8_t load_payloads;
   /* USDA array parsing policy */
   uint8_t enable_usda_lazy_arrays; /* 1: enable lazy USDA array materialization */
-  uint8_t _pad_usda[5];
-  uint64_t max_usda_lazy_array_elements; /* 0 = parser disables lazy cap */
-  int32_t usda_num_threads;             /* 0 = auto; 1 = serial */
-  uint8_t _pad_compose[6];
-  uint32_t max_depth; /* composition recursion limit; 0 = default */
-  uint32_t _pad2;
+  uint8_t _pad[5];
   /* Variant selection overrides (set name -> variant name), applied on every
    * prim defining that set; stronger than authored selections. Parallel
    * arrays of length variant_override_count. */

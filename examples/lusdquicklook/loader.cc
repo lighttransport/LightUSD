@@ -1228,7 +1228,9 @@ void RunLoad(const std::string& path, const Options& opts,
   // ---- Load + compose ------------------------------------------------------
   tnext::StageSessionOptions sopts;
   sopts.compose = opts.compose;
-  sopts.max_total_memory = static_cast<size_t>(budget.stage);
+  if (budget.stage > 0) {
+    sopts.load.limits.max_resident_bytes = static_cast<size_t>(budget.stage);
+  }
   // The composed stage is all we need; dropping the parsed dependency layers
   // and the PCP cache afterwards is a large part of staying inside the budget.
   sopts.cache_retention = tnext::CacheRetention::LayersOnly;
@@ -1378,8 +1380,14 @@ void RunLoad(const std::string& path, const Options& opts,
   tyn::RenderSceneConverter converter(cfg);
 
   tyn::StreamConvertResult result;
+  auto taken_stage = session.CloseAndTakeStage();
+  if (!taken_stage) {
+    fail("stage is still retained by an active snapshot");
+    return;
+  }
+  tnext::Stage conversion_stage = std::move(*taken_stage);
   try {
-    result = converter.ConvertToSink(session.GetStage(), &sink);
+    result = converter.ConvertToSink(conversion_stage, &sink);
   } catch (const std::bad_alloc&) {
     result.success = false;
     result.error = "out of budget during scene conversion";
@@ -1389,10 +1397,6 @@ void RunLoad(const std::string& path, const Options& opts,
     ctrl->phase.store(LoadPhase::Cancelled);
     return;
   }
-
-  // The stage is no longer needed once the geometry has been copied out.
-  session.ReleaseCompositionCache();
-  session.TrimCaches();
 
   if (!result.success && sink.stats().mesh_count == 0) {
     fail(result.error.empty() ? "no renderable geometry" : result.error);

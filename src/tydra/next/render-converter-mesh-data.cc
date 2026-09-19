@@ -41,7 +41,7 @@ bool RenderSceneConverter::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* 
     return false;
   }
 
-  mesh->face_vertex_counts.reserve(face_counts.size());
+  mesh->face_vertex_counts.reserve_exact(face_counts.size());
   for (int32_t c : face_counts) {
     mesh->face_vertex_counts.push_back(static_cast<uint32_t>(c));
   }
@@ -54,7 +54,7 @@ bool RenderSceneConverter::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* 
     return false;
   }
 
-  mesh->face_vertex_indices.reserve(indices.size());
+  mesh->face_vertex_indices.reserve_exact(indices.size());
   for (int32_t i : indices) {
     mesh->face_vertex_indices.push_back(static_cast<uint32_t>(i));
   }
@@ -89,7 +89,7 @@ bool RenderSceneConverter::ExtractMeshGeometry(const UsdPrim& prim, RenderMesh* 
   }
 
   // Copy directly to chunked array
-  mesh->points.append(points.view.data, points.view.size);
+  mesh->points.append_exact(points.view.data, points.view.size);
 
   // Compute bounding box
   size_t num_points = mesh->point_count();

@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 #if defined(LIGHTUSD_ENABLE_THREAD)
+#include <atomic>
 #include <thread>
 #endif
 
@@ -1192,6 +1193,15 @@ def Xform "root" {
   ok = LoadUSDFromMemory(nullptr, 0, &stage3, &warn, &err);
   assert(!ok && "empty input should fail");
 
+  // The common high-level limit must remain authoritative even when the
+  // nested parser options retain their broader defaults.
+  LoadUSDOptions shallow;
+  shallow.limits.max_parse_depth = 1;
+  err.clear();
+  ok = LoadUSDFromMemory(reinterpret_cast<const uint8_t*>(usda),
+                         std::strlen(usda), &stage3, shallow, &warn, &err);
+  assert(!ok && "high-level parse depth limit must be enforced");
+
   std::cout << "  LoadUSDFromMemory tests passed!" << std::endl;
 }
 
@@ -1240,12 +1250,13 @@ def Mesh "M" {
          *initial_level->as_int() == 1);
   session.ReleaseCompositionCache();
   assert(session.IsComposed());
-  assert(session.GetStage().GetPrimAtPath("/A").IsValid());
+  assert(session.GetSnapshot()->GetPrimAtPath("/A").IsValid());
   Stage::StaticGeometryReleaseStats released =
       session.ReleaseStaticGeometryArrays(1);
   assert(released.property_count == 3);
   assert(released.stage_bytes_after < released.stage_bytes_before);
-  UsdPrim compact_mesh = session.GetStage().GetPrimAtPath("/M");
+  StageSnapshot compact_snapshot = session.GetSnapshot();
+  UsdPrim compact_mesh = compact_snapshot->GetPrimAtPath("/M");
   assert(compact_mesh.HasProperty("points"));
   assert(compact_mesh.GetPropertyValue("points") == nullptr);
   assert(compact_mesh.GetPropertyValue("labels") != nullptr);
@@ -1275,16 +1286,40 @@ def Mesh "M" {
       initial_snapshot->GetPrimAtPath("/A").GetPropertyValue("level");
   assert(initial_level && initial_level->as_int() &&
          *initial_level->as_int() == 1);
-  const Value* a = session.GetStage().GetPrimAtPath("/A").GetPropertyValue("level");
-  const Value* b = session.GetStage().GetPrimAtPath("/B").GetPropertyValue("level");
+  StageSnapshot edited_snapshot = session.GetSnapshot();
+  const Value* a = edited_snapshot->GetPrimAtPath("/A").GetPropertyValue("level");
+  const Value* b = edited_snapshot->GetPrimAtPath("/B").GetPropertyValue("level");
   assert(a && a->as_int() && *a->as_int() == 2);
   assert(b && b->as_int() && *b->as_int() == 1);
   const Value* restored_points =
-      session.GetStage().GetPrimAtPath("/M").GetPropertyValue("points");
+      edited_snapshot->GetPrimAtPath("/M").GetPropertyValue("points");
   assert(restored_points && restored_points->array_size() == 3);
   assert(session.ClearVariantSelection(Path("/A"), "model"));
-  a = session.GetStage().GetPrimAtPath("/A").GetPropertyValue("level");
+  a = session.GetSnapshot()->GetPrimAtPath("/A").GetPropertyValue("level");
   assert(a && a->as_int() && *a->as_int() == 1);
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  std::atomic<bool> stop_reader{false};
+  std::atomic<bool> reader_ok{true};
+  std::thread reader([&]() {
+    uint64_t previous = 0;
+    while (!stop_reader.load(std::memory_order_relaxed)) {
+      StageSnapshot snapshot = session.GetSnapshot();
+      if (!snapshot || snapshot.revision < previous ||
+          !snapshot->GetPrimAtPath("/A").IsValid()) {
+        reader_ok.store(false, std::memory_order_relaxed);
+        break;
+      }
+      previous = snapshot.revision;
+    }
+  });
+  for (int i = 0; i < 8; ++i) {
+    assert(session.SetVariantSelection(Path("/A"), "model", "high"));
+    assert(session.ClearVariantSelection(Path("/A"), "model"));
+  }
+  stop_reader.store(true, std::memory_order_relaxed);
+  reader.join();
+  assert(reader_ok.load(std::memory_order_relaxed));
+#endif
   std::remove(path);
   std::cout << "  StageSession variant tests passed!" << std::endl;
 }
@@ -1315,7 +1350,7 @@ void test_stage_session_payloads_and_cancel() {
   assert(initial_stats.source_layer_bytes > 0);
   assert(initial_stats.composed_stage_bytes > 0);
   assert(initial_stats.prim_index_count == 0);
-  assert(session.GetStage().GetPrimAtPath("/P").GetPropertyValue("loadedValue") ==
+  assert(session.GetSnapshot()->GetPrimAtPath("/P").GetPropertyValue("loadedValue") ==
          nullptr);
   assert(!session.GetDeferredPayloadPaths().empty());
   session.ReleaseCompositionCache();
@@ -1323,10 +1358,11 @@ void test_stage_session_payloads_and_cancel() {
   assert(!session.GetDeferredPayloadPaths().empty());
   assert(session.GetMemoryStats().source_layer_bytes == 0);
   assert(session.LoadPayloads({Path("/P"), Path("/Q")}));
+  StageSnapshot loaded_snapshot = session.GetSnapshot();
   const Value* loaded =
-      session.GetStage().GetPrimAtPath("/P").GetPropertyValue("loadedValue");
+      loaded_snapshot->GetPrimAtPath("/P").GetPropertyValue("loadedValue");
   assert(loaded && loaded->as_int() && *loaded->as_int() == 7);
-  loaded = session.GetStage().GetPrimAtPath("/Q").GetPropertyValue("loadedValue");
+  loaded = loaded_snapshot->GetPrimAtPath("/Q").GetPropertyValue("loadedValue");
   assert(loaded && loaded->as_int() && *loaded->as_int() == 7);
   StageSnapshot before_reload = session.GetSnapshot();
   {
@@ -1346,16 +1382,28 @@ void test_stage_session_payloads_and_cancel() {
     }
   }
   assert(reload_classified);
-  loaded = session.GetStage().GetPrimAtPath("/P").GetPropertyValue("loadedValue");
+  loaded_snapshot = session.GetSnapshot();
+  loaded = loaded_snapshot->GetPrimAtPath("/P").GetPropertyValue("loadedValue");
   assert(loaded && loaded->as_int() && *loaded->as_int() == 8);
   const Value* old_loaded =
       before_reload->GetPrimAtPath("/P").GetPropertyValue("loadedValue");
   assert(old_loaded && old_loaded->as_int() && *old_loaded->as_int() == 7);
   assert(session.GetMemoryStats().prim_index_count == 0);
   assert(session.UnloadPayload(Path("/P")));
-  assert(session.GetStage().GetPrimAtPath("/P").GetPropertyValue("loadedValue") ==
+  assert(session.GetSnapshot()->GetPrimAtPath("/P").GetPropertyValue("loadedValue") ==
          nullptr);
-  Stage taken = session.TakeStage();
+  loaded_snapshot = {};
+  before_reload = {};
+  StageSnapshot retained_for_take = session.GetSnapshot();
+  nonstd::expected<Stage, OperationStatus> busy_take =
+      session.CloseAndTakeStage();
+  assert(!busy_take && busy_take.error() == OperationStatus::Busy);
+  assert(session.IsOpen());
+  retained_for_take = {};
+  nonstd::expected<Stage, OperationStatus> taken_result =
+      session.CloseAndTakeStage();
+  assert(taken_result);
+  Stage taken = std::move(*taken_result);
   assert(!session.IsOpen());
   assert(!session.IsComposed());
   loaded = taken.GetPrimAtPath("/Q").GetPropertyValue("loadedValue");
@@ -1369,8 +1417,45 @@ void test_stage_session_payloads_and_cancel() {
   assert(!cancelled.IsOpen());
   assert(!cancelled.GetDiagnostics().empty());
 
+  StageSession reentrant;
+  OperationStatus reentrant_status = OperationStatus::Ok;
+  StageSessionOptions reentrant_options;
+  reentrant_options.progress_callback = [&](const ProgressEvent&) {
+    const StageEditResult nested = reentrant.Rebuild();
+    reentrant_status = nested.status;
+    (void)reentrant.GetSnapshot();
+    return true;
+  };
+  assert(reentrant.OpenFile(root_path, reentrant_options));
+  assert(reentrant_status == OperationStatus::Busy);
+
+  // Cancellation at the final progress notification is still transactional:
+  // no candidate stage/revision is published after the callback rejects it.
+  bool cancel_recompose_at_completion = false;
+  StageSessionOptions transactional_options;
+  transactional_options.composition.load_payloads = false;
+  transactional_options.progress_callback =
+      [&](const ProgressEvent& event) {
+        return !(cancel_recompose_at_completion &&
+                 event.phase == ProgressPhase::Recompose &&
+                 event.progress >= 1.0f);
+      };
+  StageSession transactional;
+  assert(transactional.OpenFile(root_path, transactional_options));
+  const StageSnapshot before_cancelled_edit = transactional.GetSnapshot();
+  cancel_recompose_at_completion = true;
+  const StageEditResult cancelled_edit =
+      transactional.LoadPayload(Path("/P"));
+  assert(!cancelled_edit &&
+         cancelled_edit.status == OperationStatus::Cancelled);
+  const StageSnapshot after_cancelled_edit = transactional.GetSnapshot();
+  assert(after_cancelled_edit.revision == before_cancelled_edit.revision);
+  assert(after_cancelled_edit.stage == before_cancelled_edit.stage);
+  assert(after_cancelled_edit->GetPrimAtPath("/P")
+             .GetPropertyValue("loadedValue") == nullptr);
+
   StageSessionOptions tiny_budget;
-  tiny_budget.max_total_memory = 1;
+  tiny_budget.load.limits.max_resident_bytes = 1;
   StageSession budgeted;
   assert(!budgeted.OpenFile(root_path, tiny_budget));
   bool saw_memory_budget = false;
@@ -1448,7 +1533,7 @@ def Mesh "FromSub" {
   assert(preview_calls == 1);
   assert(retained_preview);
   const Value* final_value =
-      session.GetStage().GetPrimAtPath("/FromSub").GetPropertyValue("expensive");
+      session.GetSnapshot()->GetPrimAtPath("/FromSub").GetPropertyValue("expensive");
   assert(final_value && final_value->as_int() && *final_value->as_int() == 7);
   // Completion must not mutate the separately-owned preview.
   assert(retained_preview->GetPrimAtPath("/FromSub")
@@ -1993,9 +2078,9 @@ def Xform "Parent" {
 void test_hardened_session_profile() {
   const size_t cap = size_t(64) << 20;
   StageSessionOptions opts = MakeHardenedStageSessionOptions(cap);
-  assert(opts.load.strict_aousd_conformance);
-  assert(opts.load.max_memory == cap);
-  assert(opts.max_total_memory == cap);
+  assert(opts.load.input_policy == InputPolicy::Untrusted);
+  assert(opts.load.limits.max_input_bytes == cap);
+  assert(opts.load.limits.max_resident_bytes == cap);
   assert(!opts.load.usdc_options.crate_options.use_mmap);
   assert(opts.composition.error_when_asset_not_found);
   assert(!opts.composition.usdc_use_mmap);
@@ -2006,10 +2091,16 @@ void test_hardened_session_profile() {
   assert(opts.execution.max_threads == 1);
   assert(opts.execution.callback_concurrency ==
          CallbackConcurrency::Serialized);
-  assert(MakeHardenedStageSessionOptions(0).max_total_memory == 1);
+  assert(MakeHardenedStageSessionOptions(0)
+             .load.limits.max_resident_bytes == 1);
   assert(ClampExecutionThreads(1000) == kMaxExecutionThreads);
   TaskArena arena(1000);
-  assert(arena.max_threads() == static_cast<size_t>(kMaxExecutionThreads));
+  const size_t expected_threads =
+      kExecutionThreadsEnabled ? static_cast<size_t>(kMaxExecutionThreads) : 1;
+  assert(arena.max_threads() == expected_threads);
+  std::vector<uint8_t> visits(7, 0);
+  arena.Run(visits.size(), [&](size_t index) { visits[index] = 1; });
+  for (uint8_t visited : visits) assert(visited == 1);
 }
 
 int main() {

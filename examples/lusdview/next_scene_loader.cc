@@ -5772,14 +5772,16 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   }
   tnext::StageSessionOptions session_options;
   session_options.compose = opts.composition;
-  session_options.max_total_memory = opts.maxMemoryBytes;
+  if (opts.maxMemoryBytes > 0) {
+    session_options.load.limits.max_resident_bytes = opts.maxMemoryBytes;
+  }
   // The viewer build enables next's thread-safe PCP paths. Large payload scenes
   // have tens of thousands of independent prim opinion records, so fill those
   // concurrently instead of leaving CompositionOptions at its serial default.
   const unsigned compositionThreads = opts.compositionThreads
       ? opts.compositionThreads
       : std::min(8u, std::max(1u, std::thread::hardware_concurrency()));
-  session_options.composition.num_threads =
+  session_options.execution.max_threads =
       static_cast<int>(std::min(64u, compositionThreads));
   session_options.composition.opinion_batch_size =
       opts.compositionOpinionBatch;
@@ -5940,7 +5942,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   }
   if (out_session) *out_session = session;
   if (warn && !session->GetWarning().empty()) *warn = session->GetWarning();
-  const tnext::Stage& stage = session->GetStage();
+  const tnext::StageSnapshot stage_snapshot = session->GetSnapshot();
+  if (!stage_snapshot) {
+    if (err) *err = "next session did not publish a stage";
+    return false;
+  }
+  const tnext::Stage& stage = *stage_snapshot;
   if (ctrl) ctrl->detailPhase.store(static_cast<int>(LoadDetailPhase::Converting));
   const std::vector<tnext::Path> deferredPayloads =
       session->GetDeferredPayloadPaths();
@@ -6032,7 +6039,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           if (clipErr) *clipErr = clipSession.GetError();
           return false;
         }
-        *clipStage = clipSession.TakeStage();
+        auto taken = clipSession.CloseAndTakeStage();
+        if (!taken) {
+          if (clipErr) *clipErr = "clip stage is still retained";
+          return false;
+        }
+        *clipStage = std::move(*taken);
         (void)clipWarn;
         return true;
       };

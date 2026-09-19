@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <fstream>
+#include <limits>
 #include <map>
 
 #include "next/prim/identifier.hh"
@@ -485,18 +486,86 @@ bool HasSuffixCI(const std::string& s, const char* suffix) {
   return true;
 }
 
-void ApplyLoadOptions(const lightusd_load_options* opts, n::LoadUSDOptions* lo,
+bool ToSizeLimit(uint64_t value, size_t* out) {
+  if (!out || value == 0) return false;
+  if (value == LIGHTUSD_LIMIT_UNLIMITED) {
+    *out = (std::numeric_limits<size_t>::max)();
+    return true;
+  }
+#if SIZE_MAX < UINT64_MAX
+  if (value > static_cast<uint64_t>(SIZE_MAX)) return false;
+#endif
+  *out = static_cast<size_t>(value);
+  return true;
+}
+
+lightusd_status LoadFailureStatus(const std::string& error,
+                                  lightusd_status fallback) {
+  if (error.find("overflow") != std::string::npos ||
+      error.find("Overflow") != std::string::npos) {
+    return LIGHTUSD_ERR_OVERFLOW;
+  }
+  if (error.find("exceeds max") != std::string::npos ||
+      error.find("exceeded") != std::string::npos ||
+      error.find("memory limit") != std::string::npos ||
+      error.find("memory budget") != std::string::npos ||
+      error.find("resource limit") != std::string::npos) {
+    return LIGHTUSD_ERR_RESOURCE_LIMIT;
+  }
+  return fallback;
+}
+
+bool ApplyLoadOptions(const lightusd_load_options* opts, n::LoadUSDOptions* lo,
                       lightusd::next::pcp::CompositionOptions* co) {
-  if (!opts) return;
-  lo->max_memory = static_cast<size_t>(opts->max_memory);
+  if (!opts) return true;
+  if (!lo || opts->struct_size < sizeof(lightusd_load_options) ||
+      opts->format > LIGHTUSD_FORMAT_USDZ ||
+      opts->input_policy > LIGHTUSD_INPUT_TRUSTED ||
+      opts->max_threads < 0 ||
+      !ToSizeLimit(opts->max_input_bytes, &lo->limits.max_input_bytes) ||
+      !ToSizeLimit(opts->max_asset_bytes, &lo->limits.max_asset_bytes) ||
+      !ToSizeLimit(opts->max_resident_bytes, &lo->limits.max_resident_bytes) ||
+      !ToSizeLimit(opts->max_array_elements, &lo->limits.max_array_elements) ||
+      !ToSizeLimit(opts->max_archive_entries,
+                   &lo->limits.max_archive_entries) ||
+      opts->max_parse_depth == 0 || opts->max_composition_depth == 0 ||
+      opts->max_namespace_depth == 0) {
+    return false;
+  }
+  lo->input_policy = opts->input_policy == LIGHTUSD_INPUT_TRUSTED
+                         ? n::InputPolicy::Trusted
+                         : n::InputPolicy::Untrusted;
+  const bool untrusted = lo->input_policy == n::InputPolicy::Untrusted;
+  lo->limits.max_parse_depth = opts->max_parse_depth;
+  lo->limits.max_composition_depth = opts->max_composition_depth;
+  lo->limits.max_namespace_depth = opts->max_namespace_depth;
+  lo->usda_options.parse_options.max_file_size =
+      lo->limits.max_input_bytes;
   lo->usda_options.parse_options.enable_usda_lazy_arrays =
       opts->enable_usda_lazy_arrays != 0;
   lo->usda_options.parse_options.max_usda_lazy_array_elements =
-      static_cast<size_t>(opts->max_usda_lazy_array_elements);
-  lo->usda_options.parse_options.num_threads = opts->usda_num_threads;
+      lo->limits.max_array_elements;
+  lo->usda_options.parse_options.max_depth = lo->limits.max_parse_depth;
+  lo->usda_options.parse_options.num_threads = opts->max_threads;
+  lo->usda_options.parse_options.strict_aousd_conformance = untrusted;
+  lo->usdc_options.crate_options.max_memory = lo->limits.max_input_bytes;
+  lo->usdc_options.crate_options.max_array_elements =
+      lo->limits.max_array_elements;
+  lo->usdc_options.crate_options.strict_aousd_conformance = untrusted;
+  lo->usdc_options.crate_options.use_mmap = !untrusted;
+  lo->usdz_options.max_archive_size = lo->limits.max_input_bytes;
+  lo->usdz_options.max_entry_size = lo->limits.max_asset_bytes;
+  lo->usdz_options.max_entries = lo->limits.max_archive_entries;
   if (co) {
     co->load_payloads = opts->load_payloads != 0;
-    if (opts->max_depth) co->max_depth = opts->max_depth;
+    co->max_depth = opts->max_composition_depth;
+    co->max_namespace_depth = opts->max_namespace_depth;
+    co->max_array_elements = lo->limits.max_array_elements;
+    co->max_archive_entries = lo->limits.max_archive_entries;
+    co->num_threads = opts->max_threads == 0 ? -1 : opts->max_threads;
+    co->strict_aousd_conformance = untrusted;
+    co->error_when_asset_not_found = untrusted;
+    co->usdc_use_mmap = !untrusted;
     for (size_t i = 0; i < opts->variant_override_count; ++i) {
       if (opts->variant_sets && opts->variant_names && opts->variant_sets[i] &&
           opts->variant_names[i]) {
@@ -504,6 +573,7 @@ void ApplyLoadOptions(const lightusd_load_options* opts, n::LoadUSDOptions* lo,
       }
     }
   }
+  return true;
 }
 
 }  // namespace
@@ -613,11 +683,19 @@ void lightusd_load_options_init(lightusd_load_options* opts) {
   std::memset(opts, 0, sizeof(*opts));
   opts->struct_size = sizeof(*opts);
   opts->format = LIGHTUSD_FORMAT_AUTO;
+  opts->input_policy = LIGHTUSD_INPUT_UNTRUSTED;
+  opts->max_threads = 0;
+  opts->max_input_bytes = 512ull * 1024ull * 1024ull;
+  opts->max_asset_bytes = 512ull * 1024ull * 1024ull;
+  opts->max_resident_bytes = 1024ull * 1024ull * 1024ull;
+  opts->max_array_elements = 16ull * 1024ull * 1024ull;
+  opts->max_archive_entries = 65536;
+  opts->max_parse_depth = 256;
+  opts->max_composition_depth = 256;
+  opts->max_namespace_depth = 1024;
   opts->composed = 1;
   opts->load_payloads = 1;
   opts->enable_usda_lazy_arrays = 0;
-  opts->max_usda_lazy_array_elements = (static_cast<size_t>(1) << 30);
-  opts->usda_num_threads = 0;
 }
 
 void lightusd_save_options_init(lightusd_save_options* opts) {
@@ -643,7 +721,10 @@ lightusd_status lightusd_stage_load(const char* filename,
   // other members reference it internally.
   co.flatten_instances = true;
   co.instance_flatten_mode = lightusd::next::pcp::InstanceFlattenMode::Holder;
-  ApplyLoadOptions(opts, &lo, &co);
+  if (!ApplyLoadOptions(opts, &lo, &co)) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG,
+                "invalid v2 load options or zero resource limit");
+  }
   const bool composed = opts ? opts->composed != 0 : true;
   const uint32_t format =
       opts ? opts->format : uint32_t(LIGHTUSD_FORMAT_AUTO);
@@ -672,7 +753,8 @@ lightusd_status lightusd_stage_load(const char* filename,
     const bool io = err.find("Failed to open") != std::string::npos ||
                     err.find("not found") != std::string::npos ||
                     err.find("Failed to read") != std::string::npos;
-    return Fail(io ? LIGHTUSD_ERR_IO : LIGHTUSD_ERR_PARSE, err);
+    const lightusd_status fallback = io ? LIGHTUSD_ERR_IO : LIGHTUSD_ERR_PARSE;
+    return Fail(LoadFailureStatus(err, fallback), err);
   }
   stage->warnings = std::move(warn);
   *out = stage.release();
@@ -688,14 +770,17 @@ lightusd_status lightusd_stage_load_from_memory(const uint8_t* data, size_t size
   *out = nullptr;
 
   n::LoadUSDOptions lo;
-  ApplyLoadOptions(opts, &lo, nullptr);
+  if (!ApplyLoadOptions(opts, &lo, nullptr)) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG,
+                "invalid v2 load options or zero resource limit");
+  }
 
   auto stage = std::unique_ptr<lightusd_stage>(new (std::nothrow) lightusd_stage());
   if (!stage) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "alloc failed");
 
   std::string warn, err;
   if (!n::LoadUSDFromMemory(data, size, &stage->stage, lo, &warn, &err)) {
-    return Fail(LIGHTUSD_ERR_PARSE, err);
+    return Fail(LoadFailureStatus(err, LIGHTUSD_ERR_PARSE), err);
   }
   stage->warnings = std::move(warn);
   *out = stage.release();
@@ -837,10 +922,33 @@ lightusd_status lightusd_flatten_file_to_usdc(const char* in_filename,
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "filenames are null");
   }
   n::pipeline::FlattenOptions fo;
-  if (opts && opts->max_memory) {
-    fo.read.max_memory = static_cast<size_t>(opts->max_memory);
+  n::LoadUSDOptions load_options;
+  if (!ApplyLoadOptions(opts, &load_options, nullptr)) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG,
+                "invalid v2 load options or zero resource limit");
   }
-  if (opts) fo.composition.load_payloads = opts->load_payloads != 0;
+  fo.read.max_memory = load_options.limits.max_input_bytes;
+  fo.read.max_array_elements = load_options.limits.max_array_elements;
+  fo.read.strict_aousd_conformance =
+      load_options.input_policy == n::InputPolicy::Untrusted;
+  fo.read.use_mmap = load_options.input_policy == n::InputPolicy::Trusted;
+  fo.composition.strict_aousd_conformance =
+      load_options.input_policy == n::InputPolicy::Untrusted;
+  fo.composition.max_layer_memory = load_options.limits.max_asset_bytes;
+  fo.composition.max_array_elements = load_options.limits.max_array_elements;
+  fo.composition.max_archive_entries =
+      load_options.limits.max_archive_entries;
+  fo.composition.max_depth = static_cast<int>(std::min<size_t>(
+      load_options.limits.max_composition_depth,
+      static_cast<size_t>((std::numeric_limits<int>::max)())));
+  fo.composition.usda_parse_options.max_file_size =
+      load_options.limits.max_asset_bytes;
+  fo.composition.usda_parse_options.max_usda_lazy_array_elements =
+      load_options.limits.max_array_elements;
+  fo.composition.usda_parse_options.max_depth =
+      load_options.limits.max_parse_depth;
+  fo.composition.usda_parse_options.strict_aousd_conformance =
+      load_options.input_policy == n::InputPolicy::Untrusted;
 
   std::FILE* fp = std::fopen(out_filename, "wb");
   if (!fp) {
@@ -848,12 +956,15 @@ lightusd_status lightusd_flatten_file_to_usdc(const char* in_filename,
                 std::string("failed to open for write: ") + out_filename);
   }
   if (opts) {
-    fo.composition.max_layer_memory = static_cast<size_t>(opts->max_memory);
+    fo.composition.load_payloads = opts->load_payloads != 0;
+    fo.composition.max_layer_memory = load_options.limits.max_asset_bytes;
     fo.composition.usda_parse_options.enable_usda_lazy_arrays =
         opts->enable_usda_lazy_arrays != 0;
     fo.composition.usda_parse_options.max_usda_lazy_array_elements =
-        static_cast<size_t>(opts->max_usda_lazy_array_elements);
-    fo.composition.usda_parse_options.num_threads = opts->usda_num_threads;
+        load_options.limits.max_array_elements;
+    fo.composition.usda_parse_options.max_depth =
+        load_options.limits.max_parse_depth;
+    fo.composition.usda_parse_options.num_threads = opts->max_threads;
   }
   auto sink = [fp](const uint8_t* data, size_t size) -> bool {
     return std::fwrite(data, 1, size, fp) == size;
@@ -864,7 +975,7 @@ lightusd_status lightusd_flatten_file_to_usdc(const char* in_filename,
   std::fclose(fp);
   if (!ok) {
     std::remove(out_filename);
-    return Fail(LIGHTUSD_ERR_PARSE, err);
+    return Fail(LoadFailureStatus(err, LIGHTUSD_ERR_PARSE), err);
   }
   return LIGHTUSD_OK;
 }

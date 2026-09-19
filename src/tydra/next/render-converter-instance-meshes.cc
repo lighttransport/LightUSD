@@ -124,7 +124,7 @@ bool CloneMeshForPointInstance(const RenderMesh& src,
                    std::to_string(draw.instance_index) + "]";
   CopyRenderMeshCommon(src, dst);
 
-  dst->points.reserve(src.points.size());
+  dst->points.reserve_exact(src.points.size());
   for (size_t i = 0; i + 2 < src.points.size(); i += 3) {
     const Float3 p = TransformPoint(draw.transform, src.points[i],
                                     src.points[i + 1], src.points[i + 2]);
@@ -133,7 +133,7 @@ bool CloneMeshForPointInstance(const RenderMesh& src,
     dst->points.push_back(p.z);
   }
 
-  dst->normals.reserve(src.normals.size());
+  dst->normals.reserve_exact(src.normals.size());
   for (size_t i = 0; i + 2 < src.normals.size(); i += 3) {
     const Float3 n = TransformDirection(draw.transform, src.normals[i],
                                         src.normals[i + 1], src.normals[i + 2]);
@@ -142,7 +142,7 @@ bool CloneMeshForPointInstance(const RenderMesh& src,
     dst->normals.push_back(n.z);
   }
 
-  dst->tangents.reserve(src.tangents.size());
+  dst->tangents.reserve_exact(src.tangents.size());
   for (size_t i = 0; i + 3 < src.tangents.size(); i += 4) {
     const Float3 t = TransformDirection(draw.transform, src.tangents[i],
                                         src.tangents[i + 1], src.tangents[i + 2]);

@@ -94,8 +94,8 @@ def load(
     With ``composed=True`` (default) composition arcs — sublayers,
     references, payloads, inherits, specializes and variants — are resolved.
     ``variants`` maps variant-set names to selections, overriding authored
-    selections. ``max_memory`` caps per-input memory use in bytes (0 =
-    unlimited).
+    selections. A positive ``max_memory`` caps input, asset, and aggregate
+    resident estimates in bytes. Zero keeps the library's finite safe defaults.
     """
     return _core.load(
         _os.fspath(path),

@@ -11,6 +11,7 @@
 #include "expression-variables.hh"
 #include "../parser/ascii-parser.hh"
 #include "../resolver/asset-resolver.hh"
+#include "../../security-policy.hh"
 #include <string>
 #include <vector>
 #include <map>
@@ -66,6 +67,8 @@ struct CompositionOptions {
   // Flatten pipeline memory/parse policy for external USDA layers loaded by the
   // low-memory compositing path.
   size_t max_layer_memory = 0;
+  size_t max_array_elements = size_t(16) * 1024 * 1024;
+  size_t max_archive_entries = security_policy::kDefaultArchiveEntryCount;
   ParseOptions usda_parse_options = {};
 
   // Strongest variant selections for flattening. Keys are either a bare

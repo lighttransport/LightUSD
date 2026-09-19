@@ -292,7 +292,8 @@ int main(int argc, char **argv) {
     ok = pcp::ComposeStageFromFile(filename, resolver, &stage, opts, &warn, &err);
   } else {
     LoadUSDOptions load_opts;
-    load_opts.strict_aousd_conformance = aousd_strict;
+    load_opts.input_policy = aousd_strict ? InputPolicy::Untrusted
+                                          : InputPolicy::Trusted;
     ok = LoadUSD(filename, &stage, load_opts, &warn, &err);
   }
   const auto t_loaded = Clock::now();

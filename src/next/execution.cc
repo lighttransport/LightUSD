@@ -4,27 +4,33 @@
 #include "execution.hh"
 
 #include <algorithm>
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
 #include <vector>
+#endif
 
 namespace lightusd {
 namespace next {
 
 struct TaskArena::Impl {
   explicit Impl(size_t requested)
+#if defined(LIGHTUSD_ENABLE_THREAD)
       : max_threads(std::min<size_t>(
             std::max<size_t>(1, requested),
             static_cast<size_t>(kMaxExecutionThreads))) {
-#if defined(LIGHTUSD_ENABLE_THREAD)
     workers.reserve(max_threads - 1);
     for (size_t i = 1; i < max_threads; ++i) {
       workers.emplace_back([this]() { WorkerLoop(); });
     }
-#endif
   }
+#else
+      : max_threads(1) {
+    (void)requested;
+  }
+#endif
 
   ~Impl() {
 #if defined(LIGHTUSD_ENABLE_THREAD)
@@ -38,6 +44,7 @@ struct TaskArena::Impl {
 #endif
   }
 
+#if defined(LIGHTUSD_ENABLE_THREAD)
   void WorkerLoop() {
     size_t observed_generation = 0;
     for (;;) {
@@ -61,6 +68,7 @@ struct TaskArena::Impl {
       task(context, index);
     }
   }
+#endif
 
   void Run(size_t item_count, void* task_context, TaskFn fn) {
     if (item_count == 0) return;
@@ -89,6 +97,7 @@ struct TaskArena::Impl {
   }
 
   size_t max_threads = 1;
+#if defined(LIGHTUSD_ENABLE_THREAD)
   std::mutex run_mu;
   std::mutex mu;
   std::condition_variable work_cv;
@@ -101,6 +110,7 @@ struct TaskArena::Impl {
   void* context = nullptr;
   TaskFn task = nullptr;
   std::vector<std::thread> workers;
+#endif
 };
 
 TaskArena::TaskArena(size_t max_threads) : impl_(new Impl(max_threads)) {}

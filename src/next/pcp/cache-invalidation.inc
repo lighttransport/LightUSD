@@ -109,17 +109,49 @@
                    std::string *err) {
     NEXT_PCP_LOCK(api_mu_);
 
+    bool known_dependency = layer_id == root_identifier;
+    for (const LayerStack &stack : layer_stacks) {
+      for (const std::string &identifier : stack.layer_identifiers) {
+        if (identifier == layer_id) {
+          known_dependency = true;
+          break;
+        }
+      }
+      if (known_dependency) break;
+    }
+    if (!known_dependency) {
+      if (err) *err += "Cannot reload a non-dependency layer: " + layer_id + "\n";
+      return false;
+    }
+
     LayerLoadOptions load_opts;
     load_opts.max_memory = options.max_layer_memory;
+    load_opts.max_array_elements = options.max_array_elements;
+    load_opts.max_archive_entries = options.max_archive_entries;
     load_opts.usdc_lazy_arrays = options.usdc_lazy_arrays;
     load_opts.usdc_use_mmap = options.usdc_use_mmap;
     load_opts.usda_parse_options = options.usda_parse_options;
     load_opts.strict_aousd_conformance = options.strict_aousd_conformance;
 
-    reg_->Drop(layer_id);
-    std::shared_ptr<Layer> replacement = reg_->GetOrLoad(
-        *resolver, layer_id, std::string(), warn, err, load_opts);
+    std::shared_ptr<Layer> replacement;
+    if (!AssetResolver::GetIdentifierScheme(layer_id).empty() ||
+        resolver->HasAssetReader()) {
+      std::vector<uint8_t> bytes;
+      if (resolver->ReadAsset(layer_id, &bytes, err)) {
+        replacement = LoadLayerFromMemory(layer_id, bytes.data(), bytes.size(),
+                                          warn, err, load_opts);
+      }
+    } else {
+      // `layer_id` was previously resolved and is already part of this cache's
+      // dependency set. Reload it directly: applying the untrusted resolver's
+      // absolute-path rejection a second time would make safe reloads
+      // impossible even though no new filesystem authority is being granted.
+      replacement = LoadLayerFromFile(layer_id, warn, err, load_opts);
+    }
     if (!replacement) return false;
+    // Keep the previously registered dependency intact until parsing the
+    // replacement succeeds. Preload atomically replaces the registry entry.
+    reg_->Preload(layer_id, replacement);
 
     if (layer_id == root_identifier) root_layer = replacement;
 

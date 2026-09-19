@@ -47,9 +47,36 @@ class ChunkedArray {
     maybe_shared_ = false;
     return true;
   }
+  // Reserve a known final element count without allocating a full-size tail.
+  // Subsequent growth is supported, but may expand that tail first.
+  bool reserve_exact(size_t n) {
+    if (!storage_.reserve_exact(n)) return false;
+    maybe_shared_ = false;
+    return true;
+  }
   bool resize(size_t n) {
     if (!storage_.resize(n)) return false;
     maybe_shared_ = false;
+    return true;
+  }
+  bool resize_exact(size_t n) {
+    if (!storage_.resize_exact(n)) return false;
+    maybe_shared_ = false;
+    return true;
+  }
+  bool resize_exact(size_t n, const T& value) {
+    const T fill = value;
+    const size_t previous = size();
+    if (!resize_exact(n)) return false;
+    size_t i = previous;
+    while (i < n) {
+      const size_t offset = i % kElementsPerChunk;
+      const size_t space = kElementsPerChunk - offset;
+      const size_t count = n - i < space ? n - i : space;
+      T* dest = const_cast<T*>(chunk_data(i / kElementsPerChunk)) + offset;
+      for (size_t j = 0; j < count; ++j) dest[j] = fill;
+      i += count;
+    }
     return true;
   }
   bool resize(size_t n, const T& value) {
@@ -96,6 +123,10 @@ class ChunkedArray {
     if (!storage_.append(data, count)) return false;
     if (count) maybe_shared_ = false;
     return true;
+  }
+  bool append_exact(const T* data, size_t count) {
+    if (empty() && count && !reserve_exact(count)) return false;
+    return append(data, count);
   }
   bool alloc_failed() const { return storage_.alloc_failed(); }
   void clear() { storage_.clear(); }

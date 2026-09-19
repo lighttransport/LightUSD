@@ -23,6 +23,8 @@
 
 #include "../security-policy.hh"
 #include "execution.hh"
+#include "operation-status.hh"
+#include "resource-limits.hh"
 
 // Core types
 #include "types/type-id.hh"
@@ -101,15 +103,14 @@ constexpr const char* version_string = "1.0.0-rc4";
 
 /// Options for high-level USD loading.
 struct LoadUSDOptions {
-  /// Fail closed on unsupported/invalid AOUSD-authored data across USDA and
-  /// USDC. Compatibility mode (false) preserves legacy permissive ingestion.
-  bool strict_aousd_conformance = false;
+  /// Untrusted is the fail-closed default. Trusted restores compatibility
+  /// parsing and permits mmap/broader filesystem resolution when requested by
+  /// the containing StageSession.
+  InputPolicy input_policy = InputPolicy::Untrusted;
 
-  /// Global per-input memory cap in bytes (0 = no limit). Applied to USDA file
-  /// size, USDC crate input/allocation checks, USDZ archive/entry size, and
-  /// composed external layer loads. Nested format-specific caps are combined
-  /// with this cap by taking the stricter non-zero value.
-  size_t max_memory = security_policy::kDefaultInputLimitBytes;
+  /// Common finite limits. Zero-valued members are invalid; use
+  /// ResourceLimits::Unlimited() for an intentional trusted opt-out.
+  ResourceLimits limits;
 
   /// Format-specific USDA options.
   LoadOptions usda_options;
@@ -174,13 +175,8 @@ struct StageSessionOptions {
   pcp::CompositionOptions composition;
   ResolverConfig resolver;
   bool compose = true;
-  // Aggregate logical residency cap for parsed layers, composition caches and
-  // the composed Stage. Unlike LoadUSDOptions::max_memory this is not a
-  // per-file input limit. Zero means unlimited.
-  size_t max_total_memory = 0;
   CacheRetention cache_retention = CacheRetention::Full;
-  // Unified execution policy. max_threads == -1 preserves the legacy
-  // CompositionOptions/ParseOptions thread fields during migration.
+  // Unified execution policy. 0=bounded auto, 1=serial, >1=fixed.
   ExecutionOptions execution;
   using ProgressCallback = std::function<bool(const ProgressEvent&)>;
   ProgressCallback progress_callback;
@@ -194,13 +190,13 @@ struct StageSessionOptions {
   PreviewCallback preview_callback;
 };
 
-/// Fail-closed preset for untrusted assets. `max_memory` is applied to both
-/// individual inputs and aggregate session residency; zero clamps to one byte
-/// instead of selecting the legacy unlimited convention.
+/// Convenience for a caller-selected untrusted cap. New code can configure
+/// `load.limits` directly; ordinary defaults are already fail closed.
 StageSessionOptions MakeHardenedStageSessionOptions(size_t max_memory);
 
-struct StageEditResult {
+struct StageOperationResult {
   bool success = false;
+  OperationStatus status = OperationStatus::InvalidData;
   StageSnapshot snapshot;
   StageChangeSet changes;
   std::vector<Diagnostic> diagnostics;
@@ -210,6 +206,8 @@ struct StageEditResult {
   // Implicit for source compatibility with the former bool edit API.
   operator bool() const { return success; }
 };
+
+using StageEditResult = StageOperationResult;
 
 /// Persistent next-core document. It keeps the resolver and PCP cache alive so
 /// payload and variant edits reuse parsed dependency layers.
@@ -222,19 +220,16 @@ class StageSession {
   StageSession(const StageSession&) = delete;
   StageSession& operator=(const StageSession&) = delete;
 
-  bool OpenFile(const std::string& filename,
-                const StageSessionOptions& options = {});
+  StageOperationResult OpenFile(const std::string& filename,
+                                const StageSessionOptions& options = {});
 
   StageSnapshot GetSnapshot() const;
-  /// Compatibility view. The reference is invalidated by the next successful
-  /// edit; new persistent consumers should retain GetSnapshot() instead.
-  const Stage& GetStage() const;
-  // Transfer the composed Stage out of a one-shot session and release its PCP
-  // cache. The session becomes closed; payload/variant edits are no longer
-  // available. This avoids copying Stage, which is intentionally move-only.
-  Stage TakeStage();
-  const StageSessionOptions& GetOptions() const;
-  const std::string& GetRootIdentifier() const;
+  // Transfer the composed Stage out of a one-shot session. This fails with
+  // Busy when an external snapshot still owns the Stage instead of silently
+  // cloning a potentially huge scene.
+  nonstd::expected<Stage, OperationStatus> CloseAndTakeStage();
+  StageSessionOptions GetOptions() const;
+  std::string GetRootIdentifier() const;
   bool IsOpen() const;
   bool IsComposed() const;
 
@@ -262,7 +257,7 @@ class StageSession {
   std::vector<Path> GetDeferredPayloadPaths() const;
   std::vector<pcp::Cache::CompositionIssue> GetCompositionIssues() const;
   std::vector<std::string> GetLayerDependencies() const;
-  const std::vector<Diagnostic>& GetDiagnostics() const;
+  std::vector<Diagnostic> GetDiagnostics() const;
   StageSessionMemoryStats GetMemoryStats() const;
   void TrimCaches();
   // Drop parsed dependency layers and the PCP cache while keeping the composed
@@ -276,8 +271,8 @@ class StageSession {
       size_t min_array_elements = 256);
   Stage::StaticGeometryReleaseStats ReleaseStaticGeometryArraysForPrim(
       const UsdPrim& prim, size_t min_array_elements = 256);
-  const std::string& GetWarning() const;
-  const std::string& GetError() const;
+  std::string GetWarning() const;
+  std::string GetError() const;
 
   struct Impl;
 

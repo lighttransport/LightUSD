@@ -17,6 +17,8 @@
 #include "scene-access.hh"
 #include "next/stage/stage.hh"
 #include "next/execution.hh"
+#include "next/operation-status.hh"
+#include "next/resource-limits.hh"
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include "tsa-mutex.hh"
 #endif
@@ -181,9 +183,6 @@ struct AnimationConfig {
       std::string* warn, std::string* err)>;
   ClipStageLoader clip_stage_loader;
 
-  // Maximum number of samples generated for a clip set. The authored stage
-  // timeCodesPerSecond is used as the sampling rate.
-  uint32_t max_value_clip_samples = 10000;
 };
 
 struct ConverterConfig {
@@ -193,23 +192,11 @@ struct ConverterConfig {
   PointInstancerConfig point_instancer;
   AnimationConfig animation;
 
-  // Defensive namespace limits for composed/programmatically-created stages.
-  // Zero disables the corresponding limit; depth defaults to the core's
-  // 256-level safety ceiling.
-  size_t max_render_depth = 256;
-  size_t max_render_records = 0;
+  // Shared finite resource ceilings. Zero-valued fields are invalid; use
+  // ResourceLimits::Unlimited() only for an intentional trusted opt-out.
+  ::lightusd::next::ResourceLimits limits;
 
-  // Worker threads for the per-record conversion batches (mesh/points/
-  // curves/cameras/skeletons/lights/point_instancers). 0 = auto
-  // (std::thread::hardware_concurrency(), capped at 16). 1 forces fully
-  // serial conversion -- useful for deterministic/single-threaded test
-  // builds or to cap CPU usage in a server context; WASM/single-thread
-  // targets should set this to 1 explicitly rather than relying on
-  // hardware_concurrency() (which may over-report on some runtimes).
-  size_t max_worker_threads = 0;
-
-  // Unified execution policy. max_threads == -1 preserves
-  // max_worker_threads above; otherwise 0=auto, 1=serial, >1=fixed.
+  // Unified execution policy: 0=bounded auto, 1=serial, >1=fixed.
   ::lightusd::next::ExecutionOptions execution;
 
   // Time code for evaluation
@@ -246,6 +233,8 @@ ConverterConfig MakeHardenedConverterConfig(size_t max_memory);
 
 struct ConvertResult {
   bool success = false;
+  ::lightusd::next::OperationStatus status =
+      ::lightusd::next::OperationStatus::InvalidData;
   std::string error;
   std::vector<std::string> warnings;
 
@@ -270,6 +259,8 @@ struct GeometryInfo {
 
 struct StreamConvertResult {
   bool success = false;
+  ::lightusd::next::OperationStatus status =
+      ::lightusd::next::OperationStatus::InvalidData;
   bool cancelled = false;
   std::string error;
   std::vector<std::string> warnings;
@@ -431,15 +422,11 @@ class RenderSceneConverter {
   /// material.
   const RenderScene* color_config_scene_ = nullptr;
 
-  /// Cumulative (RSS-based) memory guard for the expensive phases; the
-  /// converter's other limits are all per-prim and cannot see a scene of many
-  /// small meshes summing past the cap. Latches once tripped so the rest of
-  /// the conversion degrades consistently rather than thrashing.
+  /// Cumulative per-operation memory guard for expensive phases. Chunked
+  /// geometry has an additional exact per-conversion allocation budget.
   bool BudgetWouldExceed(size_t estimate, const char* phase);
   void ResetOperationState();
   size_t budget_accounted_bytes_ = 0;
-  size_t budget_pending_bytes_ = 0;
-  size_t budget_check_counter_ = 0;
   bool budget_exceeded_ = false;
 
   // Material extraction
