@@ -30,6 +30,7 @@ function parseArgs(argv) {
     exrCompression: 'zips',
     prefilter: null,
     timeSequence: null,
+    previewHtml: null,
     presetOptions: {},
     rotation: 0,
     intensityScale: 1.0,
@@ -80,6 +81,8 @@ function parseArgs(argv) {
     } else if (arg === '--time-sequence') {
       const fields = argv[++i].split(':').map(Number);
       args.timeSequence = { start: fields[0], end: fields[1], step: fields[2] ?? 1 };
+    } else if (arg === '--preview-html') {
+      args.previewHtml = argv[++i];
     }
     // Transform options
     else if (arg === '--rotation' || arg === '--rotate') {
@@ -149,6 +152,7 @@ OPTIONS:
   --prefilter-levels <n>   Number of GGX roughness levels [default: 6]
   --prefilter-samples <n>  Samples per output texel [default: 64]
   --time-sequence <a:b:s> Generate inclusive solar-hour range start:end:step
+  --preview-html <path>   Write a self-contained draggable panorama preview
 
 TRANSFORM OPTIONS:
   --rotation <deg>        Rotate environment map (degrees, +CCW) [default: 0]
@@ -285,7 +289,8 @@ async function main() {
       tonemapOptions: args.tonemapOptions,
       importanceMap: args.importanceMap,
       exrCompression: args.exrCompression,
-      prefilter: args.prefilter
+      prefilter: args.prefilter,
+      previewHtml: args.previewHtml
     };
     if (args.timeSequence) {
       HDRGenerator.generateTimeSequence({

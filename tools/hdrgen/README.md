@@ -81,6 +81,7 @@ hdrgen [OPTIONS]
 | `--prefilter-levels <n>` | GGX roughness mip count | `6` |
 | `--prefilter-samples <n>` | Deterministic samples per output texel | `64` |
 | `--time-sequence <a:b:s>` | Inclusive solar-hour range (`start:end:step`) | disabled |
+| `--preview-html <path>` | Write a self-contained draggable panorama preview | disabled |
 
 The importance-map JSON contains a normalized `rowCdf` with `height + 1`
 entries and row-major `conditionalCdf` data with
@@ -108,6 +109,14 @@ manifest. Runs use a simple 06:00 sunrise, 12:00 zenith, 18:00 sunset arc:
 ```bash
 hdrgen -p sun-sky --time-sequence 6:18:0.5 -w 1024 --height 512 \
   -f exr -o output/day/sky-####.exr
+```
+
+Create a dependency-free browser preview. The HTML embeds a tone-mapped PNG and
+supports horizontal pointer dragging without a server or external assets:
+
+```bash
+hdrgen -i input/studio.exr -o output/studio.exr -f exr \
+  --preview-html output/studio-preview.html
 ```
 
 IBL prefiltering writes cosine-convolved diffuse irradiance, GGX specular
@@ -579,7 +588,7 @@ Ensure DCC is using OpenGL convention (+Y up). Some DCCs (DirectX convention) ma
 - [x] Deterministic diffuse irradiance and GGX specular pre-filtering
 - [x] HDR/EXR panorama loading, rotation, and intensity/exposure scaling
 - [x] Deterministic time-of-day sequence with numbered outputs and manifest
-- [ ] Web-based visualizer
+- [x] Self-contained draggable web panorama preview
 
 ## License
 

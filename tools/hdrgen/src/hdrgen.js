@@ -458,9 +458,12 @@ class LDRWriter {
    * Simple implementation without compression
    */
   static writePNG(ldrData, width, height, filepath) {
-    // For production, use a PNG library. This is a simplified implementation.
-    // We'll write an uncompressed PNG using filter type 0 (None)
+    const pngBuffer = LDRWriter.encodePNG(ldrData, width, height);
+    fs.writeFileSync(filepath, pngBuffer);
+    console.log(`✓ Wrote PNG file: ${filepath}`);
+  }
 
+  static encodePNG(ldrData, width, height) {
     const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
     // IHDR chunk
@@ -489,20 +492,12 @@ class LDRWriter {
       }
     }
 
-    // Simple zlib compression would go here, but for now use uncompressed
-    // For production, use zlib or a PNG library
-    console.warn('PNG: Using simplified format (consider using sharp/pngjs for production)');
-
-    // Build PNG file
     const chunks = [];
     chunks.push(pngSignature);
     chunks.push(LDRWriter.createPNGChunk('IHDR', ihdr));
-    chunks.push(LDRWriter.createPNGChunk('IDAT', idatRaw));
+    chunks.push(LDRWriter.createPNGChunk('IDAT', zlib.deflateSync(idatRaw)));
     chunks.push(LDRWriter.createPNGChunk('IEND', Buffer.alloc(0)));
-
-    const pngBuffer = Buffer.concat(chunks);
-    fs.writeFileSync(filepath, pngBuffer);
-    console.log(`✓ Wrote PNG file: ${filepath}`);
+    return Buffer.concat(chunks);
   }
 
   /**
@@ -543,6 +538,42 @@ class LDRWriter {
     console.warn('Converting to BMP instead');
     const bmpPath = filepath.replace(/\.jpe?g$/i, '.bmp');
     LDRWriter.writeBMP(ldrData, width, height, bmpPath);
+  }
+}
+
+class PreviewWriter {
+  static writeHTML(image, filepath, tonemapOptions = {}) {
+    const previewWidth = Math.min(image.width, 2048);
+    const previewHeight = Math.max(1, Math.round(image.height * previewWidth / image.width));
+    const preview = previewWidth === image.width ? image : PreviewWriter._resize(image,
+      previewWidth, previewHeight);
+    const ldr = ToneMapper.tonemapToLDR(preview, tonemapOptions);
+    const png = LDRWriter.encodePNG(ldr, preview.width, preview.height).toString('base64');
+    const html = `<!doctype html>
+<meta charset="utf-8"><title>HDRGen panorama preview</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#111}canvas{width:100%;height:100%;cursor:grab}canvas:active{cursor:grabbing}</style>
+<canvas id="view"></canvas><img id="source" hidden src="data:image/png;base64,${png}">
+<script>
+const canvas=document.getElementById('view'),ctx=canvas.getContext('2d'),image=document.getElementById('source');
+let offset=0,drag=false,last=0;
+function draw(){canvas.width=innerWidth*devicePixelRatio;canvas.height=innerHeight*devicePixelRatio;const h=canvas.height,w=h*2,x=((offset%w)+w)%w;ctx.fillStyle='#111';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(image,-x,0,w,h);ctx.drawImage(image,w-x,0,w,h)}
+image.onload=draw;addEventListener('resize',draw);canvas.onpointerdown=e=>{drag=true;last=e.clientX;canvas.setPointerCapture(e.pointerId)};canvas.onpointermove=e=>{if(drag){offset+=(last-e.clientX)*devicePixelRatio;last=e.clientX;draw()}};canvas.onpointerup=()=>drag=false;
+</script>\n`;
+    fs.mkdirSync(path.dirname(filepath), { recursive: true });
+    fs.writeFileSync(filepath, html);
+    console.log(`✓ Wrote panorama preview: ${filepath}`);
+  }
+
+  static _resize(image, width, height) {
+    const output = new HDRImage(width, height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const color = CubemapGenerator.sampleBilinear(
+          image, (x + 0.5) / width, (y + 0.5) / height);
+        output.setPixel(x, y, color.r, color.g, color.b);
+      }
+    }
+    return output;
   }
 }
 
@@ -1406,6 +1437,7 @@ export class HDRGenerator {
    * @param {string} options.exrCompression - 'zips' or 'none'
    * @param {Object} options.prefilter - Optional IBL prefilter options
    * @param {string} options.input - Optional existing HDR/EXR panorama
+   * @param {string} options.previewHtml - Optional self-contained preview path
    */
   static generate(options) {
     const {
@@ -1422,7 +1454,8 @@ export class HDRGenerator {
       importanceMap = null,
       exrCompression = 'zips',
       prefilter = null,
-      input = null
+      input = null,
+      previewHtml = null
     } = options;
 
     console.log('\n=== HDR Environment Map Generator ===');
@@ -1481,6 +1514,7 @@ export class HDRGenerator {
     const prefiltered = prefilter ? EnvironmentPrefilter.generate(latLongImage, {
       ...prefilter, exrCompression
     }) : null;
+    if (previewHtml) PreviewWriter.writeHTML(latLongImage, previewHtml, tonemapOptions);
 
     // Determine if output is LDR or HDR
     const isLDR = ['png', 'bmp', 'jpg', 'jpeg'].includes(format.toLowerCase());
@@ -1561,5 +1595,6 @@ export {
   ImageTransform,
   ImportanceMap,
   EnvironmentPrefilter,
+  PreviewWriter,
   Vec3
 };

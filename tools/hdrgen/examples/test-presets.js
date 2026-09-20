@@ -338,6 +338,20 @@ test('Time-of-day sequence generation', () => {
   if (!fs.existsSync(sequence.manifest)) throw new Error('Time sequence manifest is missing');
 });
 
+test('Self-contained panorama preview', () => {
+  const preview = path.join(outputDir, 'preview', 'index.html');
+  HDRGenerator.generate({
+    preset: 'studio', width: 32, height: 16, previewHtml: preview
+  });
+  const html = fs.readFileSync(preview, 'utf8');
+  if (!html.includes('data:image/png;base64,') || !html.includes('<canvas')) {
+    throw new Error('Panorama preview is not self-contained');
+  }
+  const encoded = /data:image\/png;base64,([^"']+)/.exec(html)?.[1];
+  const png = Buffer.from(encoded, 'base64');
+  if (png.readUInt32BE(0) !== 0x89504e47) throw new Error('Preview PNG is invalid');
+});
+
 // Summary
 console.log('='.repeat(60));
 console.log(`Test Results: ${passed} passed, ${failed} failed`);
