@@ -49,13 +49,6 @@ bool ApplyToMaterialBinding(
   const Stage &stage, const Prim &prim,
   std::function<bool(const Stage &stage, const MaterialBinding *mb)> fn) {
 
-  if ((value::TypeId::TYPE_ID_GPRIM <= prim.type_id() &&
-      (value::TypeId::TYPE_ID_GEOM_END > prim.type_id()))) {
-    // gprim or geomsubset
-  } else {
-    return false;
-  }
-
 #define APPLY_FUN(__ty) { \
   const auto *v = prim.as<__ty>(); \
   if (v) { \
@@ -63,7 +56,6 @@ bool ApplyToMaterialBinding(
   } \
   }
 
-  // TODO: Model/Scope
   APPLY_FUN(Model)
   APPLY_FUN(Scope)
   APPLY_FUN(GPrim)
@@ -86,16 +78,6 @@ bool ApplyToMaterialBinding(
 bool ApplyToCollection(
   const Prim &prim,
   std::function<bool(const Collection *col)> fn) {
-
-  if ((value::TypeId::TYPE_ID_GPRIM <= prim.type_id() &&
-      (value::TypeId::TYPE_ID_GEOM_END > prim.type_id()))) {
-    // gprim or geomsubset
-  } else if ((value::TypeId::TYPE_ID_LUX_BEGIN <= prim.type_id() &&
-      (value::TypeId::TYPE_ID_LUX_END > prim.type_id()))) {
-    // usdLux
-  } else {
-    return false;
-  }
 
 #define APPLY_FUN(__ty) { \
   const auto *v = prim.as<__ty>(); \

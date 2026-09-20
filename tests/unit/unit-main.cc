@@ -847,6 +847,8 @@ TEST_LIST = {
   { "tydra_shader_list_shaders_test", tydra_shader_list_shaders_test },
   { "tydra_shader_get_bound_material_test",
     tydra_shader_get_bound_material_test },
+  { "tydra_shader_collection_material_binding_test",
+    tydra_shader_collection_material_binding_test },
   { "tydra_shader_property_access_test", tydra_shader_property_access_test },
   { "tydra_shader_xform_node_build_test",
     tydra_shader_xform_node_build_test },

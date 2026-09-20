@@ -12,8 +12,8 @@ Currently Tydra is considering following three usecases in mind:
 - Runtime publishment(e.g. to glTF), DCC conversion and exchange for realtime graphics(AR, VR, MR, games, etc).
 - [x] Scene conversion to GL/Vulkan renderer(e.g. WebGL rendering)
   See `../../examples/tydra_to_renderscene`
-- [ ] Scene conversion to Ray tracing renderer(e.g. Vulkan/OptiX ray tracing)
-  See `../../examples/sdlviewer/` for SW raytracing example.
+- [x] Scene conversion to ray-tracing renderers through `RenderScene` and the
+  shared LightRT host-scene conversion used by `lusdview` and `lusdrender`.
 
 ## Status
 
@@ -27,10 +27,11 @@ Scene graph representation suited for OpenGL/Vulkan/WebGL renderer.
 
 * [x] Node xform
 * [x] Triangulate mesh
-* [ ] Subdivision surface support(subdivide mesh using OpenSubdiv)
+* [x] Subdivision surface tessellation through dependency-free `tinysubdiv`
+  (Catmull-Clark, Loop, and bilinear schemes)
 * [x] Resolve Material binding
   * [x] GeomSubset material binding
-  * [ ] Collection material binding
+  * [x] Collection material binding, including inherited collection membership
 * [x] Load and setup Texture
   * Colorspace conversion
     * [x] sRGB <-> Linear

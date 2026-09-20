@@ -432,19 +432,63 @@ bool GetBoundMaterial(
         }
       }
 
+      // Collection bindings on this ancestor are ordered by collection name.
+      // The first matching binding is strongest at this namespace level.
+      // A strongerThanDescendants collection may replace a descendant result;
+      // otherwise it fills only an as-yet-unbound result.
+      const MaterialBinding *material_binding = nullptr;
+      ApplyToMaterialBinding(
+          _stage, *prim,
+          [&](const Stage &stage, const MaterialBinding *mb) -> bool {
+            material_binding = mb;
+            return true;
+          });
+      const Collection *collection = nullptr;
+      if (material_binding && GetCollection(*prim, &collection) && collection) {
+        for (const auto &binding :
+             material_binding->materialBindingCollectionMap()) {
+          const Relationship *relationship = nullptr;
+          if (!binding.second.at(purpose.str(), &relationship) ||
+              !relationship) {
+            continue;
+          }
+          const CollectionInstance *instance = nullptr;
+          if (!collection->get_instance(binding.first, &instance) || !instance) {
+            continue;
+          }
+          const CollectionMembershipQuery query =
+              BuildCollectionMembershipQuery(
+                  _stage, *instance, prim->absolute_path().prim_part());
+          if (!IsPathIncluded(query, _stage, abs_path)) continue;
+
+          const bool stronger =
+              relationship->metas().has_bindMaterialAs() &&
+              relationship->metas().get_bindMaterialAs().str() ==
+                  kStrongerThanDescendants;
+          if (boundMaterial && !stronger) break;
+
+          Path collectionMaterialPath;
+          if (!GetSinglePath(*relationship, &collectionMaterialPath)) continue;
+          const Prim *materialPrim = nullptr;
+          std::string lookupError;
+          if (!_stage.find_prim_at_path(collectionMaterialPath, materialPrim,
+                                        &lookupError) ||
+              !materialPrim || !materialPrim->is<Material>()) {
+            continue;
+          }
+          boundMaterialPath = collectionMaterialPath;
+          boundMaterial = materialPrim->as<Material>();
+          break;
+        }
+      }
+
       Path parentPath = currentPath.get_parent_prim_path();
       DCOUT("search parent: " << parentPath.full_path_name());
 
       currentPath = parentPath;
 
-      if (currentPath.is_root_prim()) {
-        // parent is root('/'), so no need to follow the parent path anymore.
-        break;
-      }
-
       depth++;
 
-      // TODO: collection
     }
 
     if (boundMaterial) {

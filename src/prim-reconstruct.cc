@@ -786,6 +786,14 @@ bool ReconstructPrim<Model>(
   (void)options;
 
   std::set<std::string> table;
+  if (!ReconstructMaterialBindingProperties(table, properties, model, err)) {
+    return false;
+  }
+  if (!ReconstructCollectionProperties(
+          table, properties, model, warn, err,
+          options.strict_allowedToken_check)) {
+    return false;
+  }
   for (auto &prop : properties) {  // Non-const to allow move from property metadata
     ADD_PROPERTY(table, prop, Model, model->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
@@ -813,6 +821,14 @@ bool ReconstructPrim<Scope>(
 
   DCOUT("Scope");
   std::set<std::string> table;
+  if (!ReconstructMaterialBindingProperties(table, properties, scope, err)) {
+    return false;
+  }
+  if (!ReconstructCollectionProperties(
+          table, properties, scope, warn, err,
+          options.strict_allowedToken_check)) {
+    return false;
+  }
   for (auto &prop : properties) {  // Non-const to allow move from property metadata
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, Scope,
                    scope->visibility, options.strict_allowedToken_check)
