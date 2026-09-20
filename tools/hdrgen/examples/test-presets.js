@@ -3,7 +3,7 @@
  * Quick test script for validating all presets
  */
 
-import { HDRGenerator, HDRImage, ImportanceMap, Vec3 } from '../src/hdrgen.js';
+import { EnvironmentPrefilter, HDRGenerator, HDRImage, ImportanceMap, Vec3 } from '../src/hdrgen.js';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import * as fs from 'fs';
@@ -244,8 +244,52 @@ test('OpenEXR scanline output', () => {
   if (!bytes.includes(Buffer.from('channels\0chlist\0', 'ascii'))) {
     throw new Error('OpenEXR channel list is missing');
   }
+  if (!bytes.includes(Buffer.from('compression\0compression\0\x01\0\0\0\x02', 'binary'))) {
+    throw new Error('OpenEXR ZIPS compression attribute is missing');
+  }
   if (fs.existsSync(path.join(outputDir, 'test.hdr'))) {
     throw new Error('OpenEXR output unexpectedly fell back to HDR');
+  }
+});
+
+test('OpenEXR uncompressed compatibility mode', () => {
+  const output = path.join(outputDir, 'test-uncompressed.exr');
+  HDRGenerator.generate({
+    preset: 'white-furnace', width: 5, height: 2,
+    projection: 'latlong', format: 'exr', output,
+    exrCompression: 'none'
+  });
+  const bytes = fs.readFileSync(output);
+  if (!bytes.includes(Buffer.from('compression\0compression\0\x01\0\0\0\0', 'binary'))) {
+    throw new Error('OpenEXR uncompressed attribute is missing');
+  }
+});
+
+test('Diffuse and GGX environment prefiltering', () => {
+  const source = new HDRImage(16, 8);
+  for (let y = 0; y < source.height; y++) {
+    for (let x = 0; x < source.width; x++) source.setPixel(x, y, 2, 2, 2);
+  }
+  const directory = path.join(outputDir, 'prefilter');
+  const result = EnvironmentPrefilter.generate(source, {
+    directory, width: 8, height: 4, levels: 3, samples: 16
+  });
+  const diffuse = result.diffuse.getPixel(0, 0);
+  if (Math.abs(diffuse.r - 2.0 * Math.PI) > 0.001) {
+    throw new Error(`Diffuse furnace integral is incorrect: ${diffuse.r}`);
+  }
+  if (result.specular.length !== 3 || result.specular[2].image.width !== 2) {
+    throw new Error('Specular mip chain dimensions are incorrect');
+  }
+  for (const level of result.specular) {
+    const pixel = level.image.getPixel(0, 0);
+    if (Math.abs(pixel.r - 2.0) > 0.001) {
+      throw new Error(`Specular furnace changed at roughness ${level.roughness}`);
+    }
+  }
+  if (!fs.existsSync(path.join(directory, 'manifest.json')) ||
+      !fs.existsSync(path.join(directory, 'diffuse.exr'))) {
+    throw new Error('Prefilter outputs are missing');
   }
 });
 

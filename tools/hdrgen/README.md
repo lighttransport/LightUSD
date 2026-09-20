@@ -74,6 +74,11 @@ hdrgen [OPTIONS]
 | `-f, --format <fmt>` | Output format (hdr, exr) | `hdr` |
 | `-o, --output <path>` | Output file path | `output/<preset>_<proj>.<fmt>` |
 | `--importance-map <path>` | Write luminance/solid-angle sampling CDFs as JSON | disabled |
+| `--exr-compression <mode>` | OpenEXR compression (`zips` or `none`) | `zips` |
+| `--prefilter-dir <path>` | Write diffuse/GGX IBL maps and a manifest | disabled |
+| `--prefilter-size <px>` | Specular level-0 width | `64` |
+| `--prefilter-levels <n>` | GGX roughness mip count | `6` |
+| `--prefilter-samples <n>` | Deterministic samples per output texel | `64` |
 
 The importance-map JSON contains a normalized `rowCdf` with `height + 1`
 entries and row-major `conditionalCdf` data with
@@ -85,6 +90,16 @@ its schema `version`, projection, dimensions, and unnormalized `totalWeight`.
 ```bash
 hdrgen -p sun-sky -w 1024 --height 512 \
   -o output/sky.hdr --importance-map output/sky.importance.json
+```
+
+IBL prefiltering writes cosine-convolved diffuse irradiance, GGX specular
+roughness levels, and `manifest.json`. All maps use lat-long projection and
+float EXR so they can be consumed without RGBE quantization.
+
+```bash
+hdrgen -p studio -o output/studio.exr -f exr \
+  --prefilter-dir output/studio-ibl --prefilter-size 128 \
+  --prefilter-levels 7 --prefilter-samples 128
 ```
 
 ### White Furnace Options
@@ -297,8 +312,9 @@ Standard format for HDR images. Widely supported, compact, 8-bit per channel wit
 
 ### EXR (OpenEXR)
 
-High-precision format from ILM. HDRGen writes OpenEXR v2 uncompressed scanlines
-with 32-bit floating-point B, G, and R channels.
+High-precision format from ILM. HDRGen writes OpenEXR v2 scanlines with 32-bit
+floating-point B, G, and R channels. Per-scanline ZIPS compression is enabled
+by default; use `--exr-compression none` for uncompressed compatibility output.
 
 **Specifications:**
 - Format: Float (32-bit) per channel
@@ -531,18 +547,18 @@ Ensure DCC is using OpenGL convention (+Y up). Some DCCs (DirectX convention) ma
 
 ## Limitations
 
-- **EXR Compression:** Float scanlines are currently uncompressed
+- **EXR Compression:** ZIPS and uncompressed scanlines are supported; ZIP/PIZ are not
 - **Sky Model:** Simplified procedural sky (not full Hosek-Wilkie or Nishita)
 - **Compression:** HDR files are uncompressed (no RLE compression)
 - **Metadata:** Minimal file metadata (no custom tags)
 
 ## Roadmap
 
-- [x] Proper uncompressed float OpenEXR writing
-- [ ] ZIP/PIZ EXR compression
+- [x] Proper float OpenEXR writing with ZIPS compression
+- [ ] Multi-scanline ZIP and wavelet-based PIZ EXR compression
 - [x] Sunset and overcast presets
 - [x] Importance sampling map generation (`--importance-map` JSON row/column CDFs)
-- [ ] Diffuse/specular pre-filtering
+- [x] Deterministic diffuse irradiance and GGX specular pre-filtering
 - [ ] HDRI panorama manipulation (rotate, exposure)
 - [ ] Animation (time-of-day sequence)
 - [ ] Web-based visualizer

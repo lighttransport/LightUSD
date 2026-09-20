@@ -26,6 +26,8 @@ function parseArgs(argv) {
     format: 'hdr',
     output: null,
     importanceMap: null,
+    exrCompression: 'zips',
+    prefilter: null,
     presetOptions: {},
     rotation: 0,
     intensityScale: 1.0,
@@ -56,6 +58,21 @@ function parseArgs(argv) {
       args.output = argv[++i];
     } else if (arg === '--importance-map') {
       args.importanceMap = argv[++i];
+    } else if (arg === '--exr-compression') {
+      args.exrCompression = argv[++i];
+    } else if (arg === '--prefilter-dir') {
+      args.prefilter = args.prefilter || {};
+      args.prefilter.directory = argv[++i];
+    } else if (arg === '--prefilter-size') {
+      args.prefilter = args.prefilter || {};
+      args.prefilter.width = parseInt(argv[++i]);
+      args.prefilter.height = Math.max(1, Math.floor(args.prefilter.width / 2));
+    } else if (arg === '--prefilter-levels') {
+      args.prefilter = args.prefilter || {};
+      args.prefilter.levels = parseInt(argv[++i]);
+    } else if (arg === '--prefilter-samples') {
+      args.prefilter = args.prefilter || {};
+      args.prefilter.samples = parseInt(argv[++i]);
     }
     // Transform options
     else if (arg === '--rotation' || arg === '--rotate') {
@@ -118,6 +135,11 @@ OPTIONS:
   -f, --format <fmt>      Output format (hdr, exr, png, bmp, jpg) [default: hdr]
   -o, --output <path>     Output file path [default: output/<preset>_<proj>.<fmt>]
   --importance-map <path> Write lat-long luminance/solid-angle CDFs as JSON
+  --exr-compression <mode> OpenEXR compression: zips or none [default: zips]
+  --prefilter-dir <path>   Write diffuse/GGX IBL maps and manifest to directory
+  --prefilter-size <px>    Specular level-0 width [default: 64]
+  --prefilter-levels <n>   Number of GGX roughness levels [default: 6]
+  --prefilter-samples <n>  Samples per output texel [default: 64]
 
 TRANSFORM OPTIONS:
   --rotation <deg>        Rotate environment map (degrees, +CCW) [default: 0]
@@ -179,7 +201,7 @@ PRESETS:
 FORMATS:
   HDR Formats:
     hdr          - Radiance RGBE format (.hdr)
-    exr          - OpenEXR v2 uncompressed float scanlines (.exr)
+    exr          - OpenEXR v2 float scanlines (.exr; ZIPS by default)
 
   LDR Formats (with automatic tone mapping):
     png          - PNG format (.png) [uncompressed]
@@ -252,7 +274,9 @@ async function main() {
       rotation: args.rotation,
       intensityScale: args.intensityScale,
       tonemapOptions: args.tonemapOptions,
-      importanceMap: args.importanceMap
+      importanceMap: args.importanceMap,
+      exrCompression: args.exrCompression,
+      prefilter: args.prefilter
     });
 
     console.log('\n✓ Generation complete!');
