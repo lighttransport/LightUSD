@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <new>
 #include <optional>
 #include <string>
 #include <system_error>
@@ -30,9 +31,11 @@
 #endif
 
 #include "cascadia_mono.h"  // CascadiaMono_compressed_data / _size
+#include "camera_stereo.hh"
 #include "config.hh"
 #include "dome_light.hh"
 #include "gpu_budget_lod.hh"
+#include "incremental_scene_update.hh"
 #include "lod_stream.hh"
 #include "gui_style.hh"
 #include "image-writer.hh"
@@ -46,6 +49,7 @@
 #include "mesh_build.hh"
 #include "next_scene_loader.hh"
 #include "next/lightusd-next.hh"  // tnext::Stage (per-frame --next morph weights)
+#include "tydra/next/render-session.hh"
 #include "scene_validation.hh"
 #include "skinning.hh"
 #include "texture_residency_policy.hh"
@@ -61,6 +65,31 @@
 namespace lusdview {
 
 namespace {
+class AcceptPreparedSceneSink final
+    : public lightusd::tydra::next::SceneUpdateSink {
+ public:
+  bool BeginUpdate(uint64_t, uint64_t, bool) override { return true; }
+  bool EndUpdate() override { return true; }
+};
+
+class DrawSceneCommitSink final
+    : public lightusd::tydra::next::SceneUpdateSink {
+ public:
+  explicit DrawSceneCommitSink(std::function<bool()> commit)
+      : commit_(std::move(commit)) {}
+  bool BeginUpdate(uint64_t, uint64_t, bool) override { return true; }
+  bool EndUpdate() override {
+    committed_ = commit_ && commit_();
+    return committed_;
+  }
+  void AbortUpdate() override { committed_ = false; }
+  bool committed() const { return committed_; }
+
+ private:
+  std::function<bool()> commit_;
+  bool committed_{false};
+};
+
 bool AppendPtexFaceTableUpdates(
     const DrawTextureCPU& texture, uint32_t face,
     const DrawPtexFaceRectCPU& rect,
@@ -104,6 +133,7 @@ void AppendMaterialTextureSlots(const DrawMaterialCPU& material,
 
 void ReleaseOrdinaryTexturePayload(DrawTextureCPU* texture) {
   if (!texture || texture->isUdim || texture->isPtex) return;
+  CaptureTextureUploadIdentity(texture);
   texture->image.data.clear();
   texture->image.data.shrink_to_fit();
   texture->mipImages.clear();
@@ -130,6 +160,167 @@ bool TextureCanRedecodeFromSource(const DrawTextureCPU& texture) {
   std::error_code ec;
   const bool exists = std::filesystem::exists(texture.assetIdentifier, ec);
   return exists && !ec;
+}
+
+bool SceneHasAnimatedWorlds(const DrawScene& draw) {
+  return std::any_of(draw.meshes.begin(), draw.meshes.end(),
+                     [](const DrawMeshCPU& mesh) {
+                       return mesh.animatedWorld;
+                     });
+}
+
+void ApplyAuthoredCameraPose(const NextCameraPose& pose,
+                             const DrawScene& draw, OrbitCamera* camera) {
+  if (!camera) return;
+  const int upAxis = draw.upAxis == "Z" ? 2 : 1;
+  camera->setUpAxis(upAxis);
+  const float cx = 0.5f * (draw.aabbMin[0] + draw.aabbMax[0]);
+  const float cy = 0.5f * (draw.aabbMin[1] + draw.aabbMax[1]);
+  const float cz = 0.5f * (draw.aabbMin[2] + draw.aabbMax[2]);
+  const float* eye = pose.eye;
+  const float* forward = pose.forward;
+  float distance = std::sqrt((cx - eye[0]) * (cx - eye[0]) +
+                             (cy - eye[1]) * (cy - eye[1]) +
+                             (cz - eye[2]) * (cz - eye[2]));
+  if (!(distance > 1.0e-3f)) distance = std::max(1.0f, camera->distance());
+  const float dir[3] = {-forward[0], -forward[1], -forward[2]};
+  float yaw = 0.0f, pitch = 0.0f;
+  if (upAxis == 2) {
+    pitch = std::asin(std::clamp(dir[2], -1.0f, 1.0f));
+    yaw = std::atan2(dir[0], dir[1]);
+  } else {
+    pitch = std::asin(std::clamp(dir[1], -1.0f, 1.0f));
+    yaw = std::atan2(dir[0], dir[2]);
+  }
+  const light3d::Vec3 target{eye[0] + forward[0] * distance,
+                             eye[1] + forward[1] * distance,
+                             eye[2] + forward[2] * distance};
+  camera->setFovYDeg(pose.fovYDeg);
+  camera->setProjection(pose.projection);
+  camera->setOrthographicHeight(
+      std::max(pose.verticalAperture * 0.1f, 1.0e-5f));
+  camera->setLensShift(
+      2.0f * pose.horizontalApertureOffset /
+          std::max(pose.horizontalAperture, 1.0e-5f),
+      2.0f * pose.verticalApertureOffset /
+          std::max(pose.verticalAperture, 1.0e-5f));
+  camera->setExposure(pose.exposure);
+  camera->setAspectOverride(
+      pose.horizontalAperture / std::max(pose.verticalAperture, 1.0e-5f));
+  camera->setAspectOverrideEnabled(true);
+  camera->setAutoClip(false);
+  camera->setClipPlanes(pose.zNear, pose.zFar);
+  camera->setOrbit(target, yaw, pitch, distance);
+}
+
+bool CameraPoseDiffers(const NextCameraPose& a, const NextCameraPose& b) {
+  constexpr float kEpsilon = 1.0e-6f;
+  for (int i = 0; i < 3; ++i) {
+    if (std::fabs(a.eye[i] - b.eye[i]) > kEpsilon ||
+        std::fabs(a.forward[i] - b.forward[i]) > kEpsilon ||
+        std::fabs(a.up[i] - b.up[i]) > kEpsilon) {
+      return true;
+    }
+  }
+  return std::fabs(a.fovYDeg - b.fovYDeg) > kEpsilon ||
+         std::fabs(a.horizontalApertureOffset - b.horizontalApertureOffset) >
+             kEpsilon ||
+         std::fabs(a.verticalApertureOffset - b.verticalApertureOffset) >
+             kEpsilon ||
+         a.projection != b.projection;
+}
+
+bool FindCameraPoseAtTime(const lightusd::next::Stage* stage,
+                          const lightusd::Stage* legacyStage,
+                          const std::string& cameraName, double time,
+                          NextCameraPose* out) {
+  if (!out || cameraName.empty()) return false;
+  if (stage) return FindNextCamera(*stage, cameraName, time, out);
+  return legacyStage &&
+         FindLegacyCameraAtTime(*legacyStage, cameraName, time, out);
+}
+
+struct ShutterMotionPlan {
+  double frameTime{0.0};
+  RtCameraShutter shutter;
+  uint32_t sampleCount{1};
+  bool sceneMotion{false};
+  bool cameraMotion{false};
+
+  double sampleTime(uint32_t index) const {
+    return sampleCount > 1
+               ? RtShutterSampleTime(frameTime, shutter, index, sampleCount)
+               : frameTime;
+  }
+};
+
+ShutterMotionPlan MakeShutterMotionPlan(
+    const DrawScene& draw, const lightusd::next::Stage* stage,
+    const std::string& cameraName, double frameTime,
+    const RtCameraShutter& shutter, uint32_t requestedSamples,
+    const lightusd::Stage* legacyStage = nullptr) {
+  ShutterMotionPlan plan;
+  plan.frameTime = frameTime;
+  plan.shutter = shutter;
+  if ((!stage && !legacyStage) || !shutter.enabled()) return plan;
+  // The retained `next` stage can re-pose geometry in the caller. Legacy
+  // temporal support here is deliberately camera-only: its converted geometry
+  // remains at the loaded time while the lightweight Stage xform evaluator
+  // supplies authored camera poses at each midpoint.
+  plan.sceneMotion = stage && std::any_of(
+      draw.meshes.begin(), draw.meshes.end(), [](const DrawMeshCPU& mesh) {
+        return mesh.animatedWorld || !mesh.jointIdx.empty() ||
+               !mesh.morphDeltaHalf.empty();
+      });
+  if (!cameraName.empty()) {
+    NextCameraPose openPose, closePose;
+    const bool haveOpen =
+        stage ? FindNextCamera(*stage, cameraName, frameTime + shutter.open,
+                               &openPose)
+              : FindLegacyCameraAtTime(*legacyStage, cameraName,
+                                       frameTime + shutter.open, &openPose);
+    const bool haveClose =
+        stage ? FindNextCamera(*stage, cameraName, frameTime + shutter.close,
+                               &closePose)
+              : FindLegacyCameraAtTime(*legacyStage, cameraName,
+                                       frameTime + shutter.close, &closePose);
+    if (haveOpen && haveClose) {
+      plan.cameraMotion = CameraPoseDiffers(openPose, closePose);
+    }
+  }
+  if (plan.sceneMotion || plan.cameraMotion)
+    plan.sampleCount = std::max(1u, requestedSamples);
+  return plan;
+}
+
+struct InteractiveCameraSample {
+  OrbitCamera camera;
+  RtCameraLens lens;
+  double time{0.0};
+};
+
+InteractiveCameraSample MakeInteractiveCameraSample(
+    const OrbitCamera& baseCamera, const RtCameraLens& baseLens,
+    const DrawScene& draw, const lightusd::next::Stage* stage,
+    const std::string& cameraName, double frameTime,
+    const RtCameraShutter& shutter, uint32_t motionSegments,
+    uint32_t accumulatedSamples) {
+  InteractiveCameraSample sample{baseCamera, baseLens, frameTime};
+  if (!stage || cameraName.empty() || !shutter.enabled()) return sample;
+  const uint32_t segmentCount = std::max(1u, motionSegments);
+  sample.time = RtShutterSampleTime(frameTime, shutter,
+                                    accumulatedSamples % segmentCount,
+                                    segmentCount);
+  NextCameraPose pose;
+  if (!FindNextCamera(*stage, cameraName, sample.time, &pose)) {
+    sample.time = frameTime;
+    return sample;
+  }
+  ApplyAuthoredCameraPose(pose, draw, &sample.camera);
+  sample.lens = MakeRtCameraLens(
+      pose.focalLength, pose.focusDistance, pose.fStop,
+      pose.projection == CameraProjection::Perspective);
+  return sample;
 }
 
 }  // anonymous namespace
@@ -482,17 +673,76 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
   report["scene"] = scenePath;
   report["profile"] = largeSceneProfile_;
   report["camera"] = cameraName_.empty() ? "auto" : cameraName_;
+  nlohmann::json stereo = {{"requested", stereoRequested_},
+                           {"resolved", false}};
+  if (stereoRequested_) {
+    StereoCameraPair pair;
+    std::string stereoError;
+    if (ResolveStereoCameraPair(draw_.cameras, cameraName_, &pair,
+                                &stereoError)) {
+      const DrawCameraCPU& left = draw_.cameras[static_cast<size_t>(pair.left)];
+      const DrawCameraCPU& right =
+          draw_.cameras[static_cast<size_t>(pair.right)];
+      stereo["resolved"] = true;
+      stereo["left"] = left.absPath.empty() ? left.name : left.absPath;
+      stereo["right"] = right.absPath.empty() ? right.name : right.absPath;
+      stereo["rendering"] =
+          stereoCaptureComposed_ ? "side-by-side-capture" : "selected-eye";
+    } else {
+      stereo["error"] = stereoError;
+    }
+  }
+  stereo["live_viewport"] = stereoLiveComposed_;
+  report["stereo"] = std::move(stereo);
   report["camera_lens"] = {
       {"depth_of_field", cameraLens_.enabled()},
       {"focus_distance", cameraLens_.focusDistance},
       {"aperture_radius", cameraLens_.apertureRadius}};
-  const LoadDiagnostics diagnostics =
+  report["camera_shutter"] = {
+      {"enabled", cameraShutter_.enabled()},
+      {"open", cameraShutter_.open},
+      {"close", cameraShutter_.close},
+      {"width", cameraShutter_.width()}};
+  report["camera_shutter"]["motion_sample_times"] = json::array();
+  if (cameraShutter_.enabled()) {
+    for (uint32_t i = 0; i < pathTrace_.motionSegments; ++i) {
+      report["camera_shutter"]["motion_sample_times"].push_back(
+          RtShutterSampleTime(animTime_, cameraShutter_, i,
+                              pathTrace_.motionSegments));
+    }
+  }
+  auto sampledSegmentCount = [](uint64_t mask) {
+    uint32_t count = 0;
+    while (mask) {
+      count += static_cast<uint32_t>(mask & 1u);
+      mask >>= 1u;
+    }
+    return count;
+  };
+  report["camera_shutter"]["cuda_interactive_segments_sampled"] =
+      sampledSegmentCount(cudaPathAccum_.shutterSegmentMask);
+  report["camera_shutter"]["hip_interactive_segments_sampled"] =
+      sampledSegmentCount(hipPathAccum_.shutterSegmentMask);
+  report["camera_shutter"]["cuda_interactive_scene_segments_sampled"] =
+      sampledSegmentCount(cudaPathAccum_.sceneShutterSegmentMask);
+  report["camera_shutter"]["hip_interactive_scene_segments_sampled"] =
+      sampledSegmentCount(hipPathAccum_.sceneShutterSegmentMask);
+  report["camera_shutter"]["raster_interactive_segments_sampled"] =
+      sampledSegmentCount(rasterMotionAccum_.sampledMask);
+  report["camera_shutter"]["vulkan_interactive_segments_sampled"] =
+      sampledSegmentCount(vulkanRtMotionAccum_.sampledMask);
+  LoadDiagnostics diagnostics =
       CategorizeLoadWarnings(loaded_.warn, draw_.skipped);
+  AddLightDiagnostics(draw_, &diagnostics);
   report["load_diagnostics"] = {
       {"degraded_materials", diagnostics.degraded_material},
       {"missing_textures", diagnostics.missing_texture},
       {"unsupported_mtlx", diagnostics.unsupported_mtlx},
       {"unsupported_lobes", diagnostics.unsupported_lobes},
+      {"geometry_lights", diagnostics.geometry_lights},
+      {"portal_lights", diagnostics.portal_lights},
+      {"ies_profiles", diagnostics.ies_profiles},
+      {"emissive_mesh_lights", diagnostics.emissive_mesh_lights},
       {"skipped", diagnostics.skipped},
       {"other", diagnostics.other},
       {"actionable", diagnostics.actionable()}};
@@ -1926,6 +2176,7 @@ static bool MeshIsDeformable(const DrawMeshCPU& m) {
 }
 
 static void FreeMeshSurfaceCPU(DrawMeshCPU& m) {
+  CaptureMeshUploadIdentity(&m);
   // Preserve enough geometry for pixel-accurate picking before dropping the
   // much wider render vertices. Static meshes never change shape, so a UNORM16
   // position copy is both stable and substantially smaller than DrawVertex.
@@ -2498,7 +2749,9 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
       ++prototypeLodGeneration_;
       queuedPrototypeLods_.clear();
       size_t vtot = 0;
-      for (const DrawMeshCPU& m : draw_.meshes) vtot += m.vertices.size();
+      for (DrawMeshCPU& m : draw_.meshes) {
+        vtot += m.vertices.size();
+      }
       draw_.vertexCount = vtot;
     }
     // Record in the recent-scenes list (interactive only -- headless screenshot
@@ -2536,6 +2789,11 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
       ApplyGpuBudgetLOD(&draw_, gpuMemBudgetBytes_, maxFullMeshes_, &rep);
       if (!rep.empty()) LOGI("%s", rep.c_str());
     }
+    // Capture after scene optimization/LOD rewriting so the identity describes
+    // the buffers the renderer will actually receive.
+    if (!alreadyUploaded) {
+      for (DrawMeshCPU& mesh : draw_.meshes) CaptureMeshUploadIdentity(&mesh);
+    }
     // --next GPU morph: detect instanced prototypes carrying morph channels so
     // the per-frame coefficient upload runs (independent of Tydra GPU skinning).
     hasNextMorph_ = false;
@@ -2553,6 +2811,8 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     const std::string& up = loaded_.render.meta.upAxis;
     camera_.setUpAxis((up == "Z" || up == "z") ? 2 : 1);
   }
+
+  if (ok) PrepareRasterGeometryLightSamples(&draw_.lights, draw_.meshes);
 
   if (ok && hipInteractive_) {
     // Windowed --hip: no raster upload (the HIP tracer renders the viewport from
@@ -2721,14 +2981,19 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
           c.clippingPlanes.size() / 4, clippingChecksum);
       }
     }
-    const LoadDiagnostics diag =
+    LoadDiagnostics diag =
         CategorizeLoadWarnings(loaded_.warn, draw_.skipped);
+    AddLightDiagnostics(draw_, &diag);
     if (diag.actionable() > 0) {
       LOGW(
           "load summary: degraded_materials=%d missing_textures=%d "
-          "unsupported_mtlx=%d unsupported_lobes=%d skipped=%d other=%d",
+          "unsupported_mtlx=%d unsupported_lobes=%d geometry_lights=%d "
+          "portal_lights=%d ies_profiles=%d emissive_mesh_lights=%d "
+          "skipped=%d other=%d",
           diag.degraded_material, diag.missing_texture, diag.unsupported_mtlx,
-          diag.unsupported_lobes, diag.skipped, diag.other);
+          diag.unsupported_lobes, diag.geometry_lights, diag.portal_lights,
+          diag.ies_profiles, diag.emissive_mesh_lights, diag.skipped,
+          diag.other);
       for (const std::string& ex : diag.examples) {
         LOGW("  - %s", ex.c_str());
       }
@@ -2758,6 +3023,26 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     camera_.setUpAxis(upAxis);
     NextCameraPose campose;
     cameraLens_ = RtCameraLens{};
+    cameraShutter_ = RtCameraShutter{};
+    gui_.setCameraClippingPlanes({});
+    if (stereoRequested_) {
+      StereoCameraPair stereoPair;
+      std::string stereoError;
+      if (ResolveStereoCameraPair(draw_.cameras, cameraName_, &stereoPair,
+                                  &stereoError)) {
+        const DrawCameraCPU& left =
+            draw_.cameras[static_cast<size_t>(stereoPair.left)];
+        const DrawCameraCPU& right =
+            draw_.cameras[static_cast<size_t>(stereoPair.right)];
+        if (cameraName_.empty())
+          cameraName_ = left.absPath.empty() ? left.name : left.absPath;
+        LOGI("stereo: resolved left '%s', right '%s' (selected-eye preview)",
+             left.absPath.c_str(), right.absPath.c_str());
+      } else {
+        LOGW("stereo: %s; rendering selected camera as mono",
+             stereoError.c_str());
+      }
+    }
     // Either loader can be framed on a named USD camera. The legacy path reads the
     // camera out of the converted RenderScene (FindLegacyCamera); it used to just
     // warn "need --next" and auto-fit instead, which meant the two loaders could
@@ -2768,59 +3053,29 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
              ? FindNextCamera(*nextStageSnapshot_, cameraName_, animTime_,
                               &campose)
              : (loaded_.ok &&
-                FindLegacyCamera(loaded_.render, cameraName_, &campose)));
+                FindLegacyCameraAtTime(loaded_.stage, cameraName_, animTime_,
+                                       &campose)));
     framedAuthoredCamera = haveCamera;
     if (haveCamera) framedFocalLength = campose.focalLength;
     if (framedAuthoredCamera) {
       // Drive the orbit rig from a scene camera. The auto-fit framing is useless
       // on vast scenes (Caldera's 8 km map frames to a sub-pixel speck); a named
       // USD camera gives a meaningful district view across raster / --rt / --cuda.
-      const float* E = campose.eye;
-      const float* F = campose.forward;
-      const float cx = 0.5f * (draw_.aabbMin[0] + draw_.aabbMax[0]);
-      const float cy = 0.5f * (draw_.aabbMin[1] + draw_.aabbMax[1]);
-      const float cz = 0.5f * (draw_.aabbMin[2] + draw_.aabbMax[2]);
-      float d = std::sqrt((cx - E[0]) * (cx - E[0]) + (cy - E[1]) * (cy - E[1]) +
-                          (cz - E[2]) * (cz - E[2]));
-      if (!(d > 1e-3f)) d = std::max(1.0f, camera_.distance());
-      // eye = target + dirToEye*distance with dirToEye = -forward; invert the
-      // OrbitCamera DirFromAngles convention (camera_nav.cc) to recover yaw/pitch.
-      const float dir[3] = {-F[0], -F[1], -F[2]};
-      float yaw, pitch;
-      if (upAxis == 2) {  // +Z up: dirToEye = (sy*cp, cy*cp, sp)
-        pitch = std::asin(std::max(-1.0f, std::min(1.0f, dir[2])));
-        yaw = std::atan2(dir[0], dir[1]);
-      } else {  // +Y up: dirToEye = (sy*cp, sp, cy*cp)
-        pitch = std::asin(std::max(-1.0f, std::min(1.0f, dir[1])));
-        yaw = std::atan2(dir[0], dir[2]);
-      }
-      const light3d::Vec3 target{E[0] + F[0] * d, E[1] + F[1] * d,
-                                 E[2] + F[2] * d};
-      camera_.setFovYDeg(campose.fovYDeg);
-      camera_.setProjection(campose.projection);
-      camera_.setOrthographicHeight(
-          std::max(campose.verticalAperture * 0.1f, 1e-5f));
-      const float shiftX = 2.0f * campose.horizontalApertureOffset /
-                           std::max(campose.horizontalAperture, 1e-5f);
-      const float shiftY = 2.0f * campose.verticalApertureOffset /
-                           std::max(campose.verticalAperture, 1e-5f);
-      camera_.setLensShift(shiftX, shiftY);
-      camera_.setExposure(campose.exposure);
-      camera_.setAspectOverride(
-          campose.horizontalAperture /
-          std::max(campose.verticalAperture, 1e-5f));
-      camera_.setAspectOverrideEnabled(true);
-      // Use the camera's authored clip range, not the auto-clip derived from the
-      // (huge) whole-scene radius -- on Caldera the far-flung guide bounds push
-      // the auto near plane out past the nearby district, clipping it away.
-      camera_.setAutoClip(false);
-      camera_.setClipPlanes(campose.zNear, campose.zFar);
-      camera_.setOrbit(target, yaw, pitch, d);
+      ApplyAuthoredCameraPose(campose, draw_, &camera_);
       // USD camera optics are authored in tenths of a scene unit. The physical
       // aperture radius is focalLength / (2 * fStop).
       cameraLens_ = MakeRtCameraLens(
           campose.focalLength, campose.focusDistance, campose.fStop,
           campose.projection == CameraProjection::Perspective);
+      cameraShutter_.open = campose.shutterOpen;
+      cameraShutter_.close = campose.shutterClose;
+      gui_.setCameraClippingPlanes(campose.clippingPlanes);
+      if (campose.clippingPlanes.size() / 4 >
+          static_cast<size_t>(RenderFrameParams::kMaxClippingPlanes)) {
+        LOGW("camera: %zu clipping planes authored; raster uses the first %d",
+             campose.clippingPlanes.size() / 4,
+             RenderFrameParams::kMaxClippingPlanes);
+      }
       LOGI("camera: framing USD camera '%s' (%s, fovY %.1f deg, clip %.2f..%.0f)",
            cameraName_.c_str(),
            campose.projection == CameraProjection::Orthographic ? "orthographic"
@@ -2939,6 +3194,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
                                        .apertureRadius;
   }
   gui_.setCameraLens(cameraLens_);
+  gui_.setCameraShutter(cameraShutter_);
   gui_.setNextStage(nextStageSnapshot_.get());
   {
     std::vector<std::string> deferred;
@@ -3815,8 +4071,31 @@ void App::loadFileBlocking(const std::string& path) {
     loaded_ = std::move(tmp);
     draw_ = ok ? std::move(drawTmp) : DrawScene{};
     nextSession_ = ok ? std::move(session) : nullptr;
-    nextStageSnapshot_ = nextSession_ ? nextSession_->GetSnapshot().stage
-                                      : nullptr;
+    nextRenderSession_.reset();
+    if (ok && nextSession_) {
+      pendingNextSession_ = nextSession_;
+      pendingNextRenderSession_.reset();
+      pendingNextChanges_ = {};
+      prepareNextRenderTransaction(draw_);
+      if (pendingNextRenderSession_ && pendingNextRenderUpdate_) {
+        AcceptPreparedSceneSink sink;
+        const auto committed = pendingNextRenderSession_->Commit(
+            std::move(*pendingNextRenderUpdate_), &sink);
+        if (committed) {
+          nextRenderSession_ = std::move(pendingNextRenderSession_);
+        } else {
+          LOGI("RenderSession synchronous bootstrap rejected: %s",
+               committed.error.c_str());
+        }
+      }
+      pendingNextSession_.reset();
+      pendingNextRenderSession_.reset();
+      pendingNextRenderUpdate_.reset();
+    }
+    const auto snapshot = nextSession_ ? nextSession_->GetSnapshot()
+                                       : lightusd::next::StageSnapshot{};
+    nextStageSnapshot_ = snapshot.stage;
+    nextStageRevision_ = snapshot.revision;
     applyLoaded(ok, /*progressive=*/false);
     return;
   }
@@ -3911,6 +4190,9 @@ void App::startLoadAsync(const std::string& path) {
   loadActive_ = true;
   pendingLoaded_ = std::make_unique<LoadedScene>();
   pendingDraw_ = std::make_unique<DrawScene>();
+  pendingNextChanges_ = {};
+  pendingNextRenderSession_.reset();
+  pendingNextRenderUpdate_.reset();
   LoadedScene* lp = pendingLoaded_.get();
   DrawScene* dp = pendingDraw_.get();
   // Worker touches only CPU data (no GL/VK), so this is thread-safe. The
@@ -3998,7 +4280,9 @@ void App::startLoadAsync(const std::string& path) {
                              rendererExtendedGpuSkinning]() {
     if (useNext) {
       lp->ok = LoadUSDViaNext(path, opts, dp, &lp->warn, &lp->err, &loadCtrl_,
-                              &pendingNextSession_, stream.get());
+                              &pendingNextSession_, &pendingNextChanges_,
+                              stream.get());
+      if (lp->ok) prepareNextRenderTransaction(*dp);
       lp->filepath = path;
       // Surface the stage's animation range so --next gets a timeline (the Tydra
       // RenderScene meta is otherwise empty here). readAnimationRange reads these.
@@ -4051,6 +4335,38 @@ void App::startLoadAsync(const std::string& path) {
   });
 }
 
+void App::startLayerReloadAsync(const std::string& resolvedLayerId) {
+  if (!useNextLoader_ || !nextSession_ || resolvedLayerId.empty()) return;
+  cancelAndJoinLoad();
+  loadCtrl_.resetProgress();
+  loadingPath_ = loaded_.filepath;
+  loadStart_ = std::chrono::steady_clock::now();
+  loadFinished_.store(false);
+  loadActive_ = true;
+  pendingLoaded_ = std::make_unique<LoadedScene>();
+  pendingDraw_ = std::make_unique<DrawScene>();
+  pendingNextChanges_ = {};
+  pendingNextSession_ = nextSession_;
+  pendingNextRenderSession_ = nextRenderSession_;
+  pendingNextRenderUpdate_.reset();
+  LoadedScene* loaded = pendingLoaded_.get();
+  DrawScene* draw = pendingDraw_.get();
+  LoadOptions options = loadOpts_;
+  options.gpuSkinning = wantsNextGpuSkinning();
+  const std::string path = loaded_.filepath;
+  loadThread_ = std::thread(
+      [this, path, resolvedLayerId, options, loaded, draw]() {
+        loaded->ok = LoadUSDViaNext(
+            path, options, draw, &loaded->warn, &loaded->err, &loadCtrl_,
+            &pendingNextSession_, &pendingNextChanges_, nullptr,
+            resolvedLayerId);
+        if (loaded->ok) prepareNextRenderTransaction(*draw);
+        loaded->filepath = path;
+        loaded->render.meta.upAxis = draw->upAxis;
+        loadFinished_.store(true, std::memory_order_release);
+      });
+}
+
 void App::startRecomposeAsync(const std::set<std::string>& addPrimPaths) {
   if (useNextLoader_ && nextSession_) {
     if (addPrimPaths.empty() && loadOpts_.variantOverrides.empty()) return;
@@ -4062,7 +4378,10 @@ void App::startRecomposeAsync(const std::set<std::string>& addPrimPaths) {
     loadActive_ = true;
     pendingLoaded_ = std::make_unique<LoadedScene>();
     pendingDraw_ = std::make_unique<DrawScene>();
+    pendingNextChanges_ = {};
     pendingNextSession_ = nextSession_;
+    pendingNextRenderSession_ = nextRenderSession_;
+    pendingNextRenderUpdate_.reset();
     LoadedScene* lp = pendingLoaded_.get();
     DrawScene* dp = pendingDraw_.get();
     LoadOptions opts = loadOpts_;
@@ -4098,7 +4417,8 @@ void App::startRecomposeAsync(const std::set<std::string>& addPrimPaths) {
     const std::string path = loaded_.filepath;
     loadThread_ = std::thread([this, path, opts, lp, dp]() {
       lp->ok = LoadUSDViaNext(path, opts, dp, &lp->warn, &lp->err, &loadCtrl_,
-                              &pendingNextSession_);
+                              &pendingNextSession_, &pendingNextChanges_);
+      if (lp->ok) prepareNextRenderTransaction(*dp);
       lp->filepath = path;
       lp->render.meta.upAxis = dp->upAxis;
       loadFinished_.store(true, std::memory_order_release);
@@ -4143,6 +4463,167 @@ void App::startRecomposeAsync(const std::set<std::string>& addPrimPaths) {
   });
 }
 
+void App::prepareNextRenderTransaction(const DrawScene& next) {
+  pendingNextRenderUpdate_.reset();
+  if (!pendingNextSession_) return;
+
+  size_t estimated_bytes = 0;
+  for (const DrawMeshCPU& mesh : next.meshes) {
+    estimated_bytes += mesh.vertices.size() * sizeof(DrawVertex);
+    estimated_bytes += mesh.indices.size() * sizeof(uint32_t);
+    estimated_bytes += mesh.instanceXforms.size() * sizeof(float);
+  }
+  size_t max_bytes = size_t(256) << 20;
+  if (const char* value = std::getenv("LUSDVIEW_RENDER_SESSION_MAX_MB")) {
+    char* end = nullptr;
+    const unsigned long long mb = std::strtoull(value, &end, 10);
+    if (end != value && *end == '\0') {
+      max_bytes = mb > (std::numeric_limits<size_t>::max() >> 20)
+                      ? std::numeric_limits<size_t>::max()
+                      : static_cast<size_t>(mb) << 20;
+    }
+  }
+  if (max_bytes == 0 || estimated_bytes > max_bytes) {
+    LOGI("RenderSession preparation skipped: estimated DrawScene geometry "
+         "%.1f MiB exceeds %.1f MiB limit",
+         static_cast<double>(estimated_bytes) / (1024.0 * 1024.0),
+         static_cast<double>(max_bytes) / (1024.0 * 1024.0));
+    return;
+  }
+
+  if (!pendingNextRenderSession_) {
+    pendingNextRenderSession_ =
+        std::make_shared<lightusd::tydra::next::RenderSession>();
+  }
+  const lightusd::next::StageSnapshot snapshot =
+      pendingNextSession_->GetSnapshot();
+  if (!snapshot) return;
+  std::unique_ptr<lightusd::tydra::next::PreparedRenderUpdate> prepared(
+      new (std::nothrow) lightusd::tydra::next::PreparedRenderUpdate());
+  if (!prepared) return;
+  lightusd::tydra::next::RenderUpdateResult result;
+  if (pendingNextRenderSession_->revision() == 0) {
+    result = pendingNextRenderSession_->PrepareInitialize(snapshot,
+                                                          prepared.get());
+  } else {
+    result = pendingNextRenderSession_->Prepare(snapshot, pendingNextChanges_,
+                                                prepared.get());
+  }
+  if (!result) {
+    LOGI("RenderSession preparation rejected: %s", result.error.c_str());
+    return;
+  }
+  LOGI("RenderSession prepared revision %llu off-thread: %zu resources, "
+       "%.2f MiB converted",
+       static_cast<unsigned long long>(result.revision),
+       result.converted_resource_count,
+       static_cast<double>(result.converted_scene_bytes) /
+           (1024.0 * 1024.0));
+  pendingNextRenderUpdate_ = std::move(prepared);
+}
+
+bool App::tryApplyNextSceneUpdate(
+    DrawScene* next, const lightusd::next::StageChangeSet& changes) {
+  if (!next || !renderer_ || renderThreadActive_) return false;
+  IncrementalSceneUpdatePlan plan = PlanIncrementalSceneUpdate(
+      draw_, next, changes, nextStageRevision_, renderer_->meshCount());
+  if (!plan.compatible) {
+    LOGI("incremental scene update rejected: %s", plan.reason.c_str());
+    return false;
+  }
+
+  // Validation above is side-effect free. Submit one backend transaction so a
+  // failed map/capability check cannot leave only the first few slots updated.
+  std::vector<uint8_t> vertex_changed(next->meshes.size(), 0);
+  std::vector<uint8_t> world_changed(next->meshes.size(), 0);
+  std::vector<uint8_t> instances_changed(next->meshes.size(), 0);
+  for (size_t index : plan.vertexUpdates) vertex_changed[index] = 1;
+  for (size_t index : plan.worldUpdates) world_changed[index] = 1;
+  for (size_t index : plan.instanceUpdates) instances_changed[index] = 1;
+  std::vector<MeshSlotUpdate> updates;
+  updates.reserve(plan.vertexUpdates.size() + plan.worldUpdates.size() +
+                  plan.instanceUpdates.size());
+  for (size_t i = 0; i < next->meshes.size(); ++i) {
+    if (!vertex_changed[i] && !world_changed[i] && !instances_changed[i]) continue;
+    MeshSlotUpdate update;
+    update.meshIndex = i;
+    if (vertex_changed[i]) update.vertices = &next->meshes[i].vertices;
+    if (world_changed[i]) update.world = next->meshes[i].world;
+    if (instances_changed[i]) {
+      update.instanceXforms = &next->meshes[i].instanceXforms;
+      update.instanceColors = &next->meshes[i].instanceColors;
+      update.instanceOpacities = &next->meshes[i].instanceOpacities;
+    }
+    updates.push_back(update);
+  }
+  std::string transaction_error;
+  bool transaction_ok = false;
+  const auto transaction_begin = std::chrono::steady_clock::now();
+  if (!plan.materialUpdates.empty()) {
+    std::vector<MaterialSlotUpdate> material_updates;
+    material_updates.reserve(plan.materialUpdates.size());
+    for (size_t index : plan.materialUpdates) {
+      material_updates.push_back({index, &next->materials[index]});
+    }
+    transaction_ok = renderer_->applyMaterialUpdatesTransactional(
+        material_updates, &transaction_error);
+  } else if (!plan.textureUpdates.empty()) {
+    std::vector<TextureSlotReplacement> replacements;
+    replacements.reserve(plan.textureUpdates.size());
+    for (size_t index : plan.textureUpdates) {
+      replacements.push_back({index, &next->textures[index]});
+    }
+    transaction_ok = renderer_->replaceTextureSlotsTransactional(
+        replacements, &transaction_error);
+  } else if (!plan.replacementUpdates.empty()) {
+    std::vector<MeshSlotReplacement> replacements;
+    replacements.reserve(plan.replacementUpdates.size());
+    for (size_t index : plan.replacementUpdates) {
+      replacements.push_back({index, &next->meshes[index]});
+    }
+    transaction_ok = renderer_->replaceMeshSlotsTransactional(
+        replacements, &transaction_error);
+  } else {
+    transaction_ok = renderer_->applyMeshSlotUpdatesTransactional(
+        updates, &transaction_error);
+  }
+  if (!transaction_ok) {
+    LOGI("incremental scene update transaction rejected: %s",
+         transaction_error.c_str());
+    return false;
+  }
+  const double transaction_ms = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - transaction_begin).count();
+  size_t next_vertex_count = 0;
+  for (const DrawMeshCPU& mesh : next->meshes) {
+    next_vertex_count += mesh.vertices.size();
+  }
+  if (!needsMeshCpuGeometryForRT()) {
+    for (DrawMeshCPU& mesh : next->meshes) {
+      if (!MeshIsDeformable(mesh)) FreeMeshGeometryCPU(mesh);
+    }
+  }
+  next->vertexCount = next_vertex_count;
+  std::vector<uint8_t> replaced(next->meshes.size(), 0);
+  for (size_t index : plan.replacementUpdates) replaced[index] = 1;
+  for (size_t i = 0; i < next->meshes.size() && i < draw_.meshes.size(); ++i) {
+    if (!replaced[i]) {
+      next->meshes[i].prototypeLods = draw_.meshes[i].prototypeLods;
+    }
+  }
+  LOGI("incremental scene update: retained %zu/%zu mesh GPU slots; "
+       "replaced %zu meshes, updated %zu vertex buffers, %zu transforms, "
+       "%zu instance buffers, %zu materials, and %zu textures; %.3f ms, "
+       "%.2f MiB uploaded",
+       next->meshes.size() - plan.replacementUpdates.size(),
+       next->meshes.size(), plan.replacementUpdates.size(),
+       plan.vertexUpdates.size(), plan.worldUpdates.size(),
+       plan.instanceUpdates.size(), plan.materialUpdates.size(),
+       plan.textureUpdates.size(), transaction_ms,
+       static_cast<double>(plan.estimatedUploadBytes) / (1024.0 * 1024.0));
+  return true;
+}
+
 void App::finishLoadIfReady() {
   if (!loadActive_) return;
   if (!loadFinished_.load(std::memory_order_acquire)) return;
@@ -4151,7 +4632,47 @@ void App::finishLoadIfReady() {
   clearPtexDecode();  // readers point into the outgoing draw_'s source bytes
   loaded_ = std::move(*pendingLoaded_);
   const bool ok = loaded_.ok;
-  const bool alreadyUploaded = streamLoadActive_ && ok;
+  bool incrementalUploaded = false;
+  bool renderSessionCommitted = false;
+  const bool render_session_bootstrap =
+      pendingNextRenderUpdate_ &&
+      pendingNextRenderUpdate_->base_revision() == 0;
+  if (!streamLoadActive_ && ok && nextSession_ && pendingDraw_ &&
+      pendingNextRenderSession_ && pendingNextRenderUpdate_ &&
+      !render_session_bootstrap) {
+    DrawSceneCommitSink sink([&]() {
+      return tryApplyNextSceneUpdate(pendingDraw_.get(), pendingNextChanges_);
+    });
+    const lightusd::tydra::next::RenderUpdateResult committed =
+        pendingNextRenderSession_->Commit(std::move(*pendingNextRenderUpdate_),
+                                          &sink);
+    incrementalUploaded = committed && sink.committed();
+    renderSessionCommitted = static_cast<bool>(committed);
+    if (!committed) {
+      LOGI("RenderSession commit rejected; using full-scene fallback: %s",
+           committed.error.c_str());
+    }
+  } else if (!streamLoadActive_ && ok && nextSession_ && pendingDraw_ &&
+             !render_session_bootstrap) {
+    incrementalUploaded =
+        tryApplyNextSceneUpdate(pendingDraw_.get(), pendingNextChanges_);
+  }
+  // Bootstrap the retained RenderSession after an initial load. The GPU upload
+  // still follows the normal full/progressive path; this commit publishes only
+  // the stable-ID catalog prepared by the worker.
+  if (ok && render_session_bootstrap && pendingNextRenderSession_ &&
+      pendingNextRenderUpdate_) {
+    AcceptPreparedSceneSink sink;
+    const lightusd::tydra::next::RenderUpdateResult committed =
+        pendingNextRenderSession_->Commit(std::move(*pendingNextRenderUpdate_),
+                                          &sink);
+    renderSessionCommitted = static_cast<bool>(committed);
+    if (!committed) {
+      LOGI("RenderSession bootstrap commit rejected: %s",
+           committed.error.c_str());
+    }
+  }
+  const bool alreadyUploaded = (streamLoadActive_ || incrementalUploaded) && ok;
   if (!streamLoadActive_) {
     // The async cull worker may still be iterating the outgoing scene (non-
     // streaming loads do not suspend culling). Join it + invalidate its grids
@@ -4166,9 +4687,18 @@ void App::finishLoadIfReady() {
     draw_ = DrawScene{};
   }
   nextSession_ = ok ? std::move(pendingNextSession_) : nullptr;
-  nextStageSnapshot_ = nextSession_ ? nextSession_->GetSnapshot().stage
-                                    : nullptr;
+  if (!ok || (!renderSessionCommitted && !pendingNextRenderSession_)) {
+    nextRenderSession_.reset();
+  } else if (renderSessionCommitted) {
+    nextRenderSession_ = std::move(pendingNextRenderSession_);
+  }
+  const auto snapshot = nextSession_ ? nextSession_->GetSnapshot()
+                                     : lightusd::next::StageSnapshot{};
+  nextStageSnapshot_ = snapshot.stage;
+  nextStageRevision_ = snapshot.revision;
   pendingNextSession_.reset();
+  pendingNextRenderSession_.reset();
+  pendingNextRenderUpdate_.reset();
   pendingLoaded_.reset();
   pendingDraw_.reset();
   loadActive_ = false;
@@ -4192,6 +4722,8 @@ void App::cancelAndJoinLoad() {
   pendingLoaded_.reset();
   pendingDraw_.reset();
   pendingNextSession_.reset();
+  pendingNextRenderSession_.reset();
+  pendingNextRenderUpdate_.reset();
   loadStream_.reset();
   streamLoadActive_ = false;
   streamCompleteSeen_ = false;
@@ -5006,6 +5538,8 @@ static std::uint64_t FrameSceneKey(const FramePacket& p) {
   bytes(p.proj, sizeof(p.proj));
   bytes(p.cameraPos, sizeof(p.cameraPos));
   bytes(&p.exposure, sizeof(p.exposure));
+  bytes(&p.cameraLens, sizeof(p.cameraLens));
+  bytes(&p.cameraShutter, sizeof(p.cameraShutter));
   bytes(&p.mode, sizeof(p.mode));
   bytes(p.clearColor, sizeof(p.clearColor));
   bytes(p.lightDir, sizeof(p.lightDir));
@@ -5444,7 +5978,8 @@ bool App::renderHipViewport() {
       // those re-poses REFIT the BVH in place instead of paying a full rebuild.
       // (The builder refuses the refit map when displacement is actually live
       // on some mesh -- a displaced flatten re-samples textures per pose.)
-      const bool retainForRefit = sceneIsNextDeformable();
+      const bool retainForRefit =
+          sceneIsNextDeformable() || SceneHasAnimatedWorlds(draw_);
       hipBuildThread_ = std::thread([this, dispScale, retainForRefit, purposeMask] {
         std::string e;
         const bool ok = hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
@@ -5473,7 +6008,7 @@ bool App::renderHipViewport() {
          hipTracer_.deviceName(), backend_ == Backend::Vulkan ? "Vulkan" : "OpenGL");
     // A deformable scene keeps its CPU geometry: the timeline re-poses it and
     // rebuilds the BVH below, so draw_ is read again on every new time code.
-    if (sceneIsNextDeformable()) return true;
+    if (sceneIsNextDeformable() || SceneHasAnimatedWorlds(draw_)) return true;
     // Otherwise the scene now lives entirely in the GPU BVH; reclaim the (large)
     // CPU geometry -- the interactive trace never reads draw_ geometry again.
     // Skipped once live technique switching is enabled: switching back to a
@@ -5509,8 +6044,15 @@ bool App::renderHipViewport() {
   // trips) it falls back to the full rebuild -- still far cheaper than the
   // whole-converter re-run this path originally needed. Synchronous: the
   // timeline should not run ahead of what is on screen.
-  if (sceneIsNextDeformable() && animTime_ != nextTracerPosedTime_) {
-    if (poseNextDrawForTracer(animTime_)) {
+  const bool hipSceneDynamic =
+      sceneIsNextDeformable() || SceneHasAnimatedWorlds(draw_);
+  if (hipSceneDynamic &&
+      (!pathTrace_.enabled || !cameraShutter_.enabled()) &&
+      animTime_ != nextTracerPosedTime_) {
+    if (nextStageSnapshot_) {
+      if (sceneIsNextDeformable()) restoreNextDrawRestPose();
+      UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_, animTime_);
+      if (sceneIsNextDeformable()) poseNextDrawForTracer(animTime_);
       std::string e;
       const float dispScale = gui_.displacementScale();
       // LUSDVIEW_NO_BVH_REFIT=1 restores the rebuild-per-pose path (A/B lever:
@@ -5525,6 +6067,7 @@ bool App::renderHipViewport() {
                                    gui_.purposeVisibleMask())) {
         LOGW("HIP re-pose rebuild failed: %s", e.c_str());
       }
+      nextTracerPosedTime_ = animTime_;
     }
   }
 
@@ -5534,9 +6077,6 @@ bool App::renderHipViewport() {
 
   camera_.setAspect(static_cast<float>(w) / static_cast<float>(h));
   const light3d::Mat4 pv = camera_.proj(/*zeroToOneDepth=*/true) * camera_.view();
-  const light3d::Mat4 inv = pv.inverse();
-  const light3d::Vec3 eye = camera_.eye();
-  const float camPos[3] = {eye.x, eye.y, eye.z};
   float lightDir[3];
   CopyPreviewLightDir(draw_, lightDir);
   const float clear[3] = {0.12f, 0.12f, 0.13f};
@@ -5569,6 +6109,8 @@ bool App::renderHipViewport() {
                 state->maxSubsurfaceEvents == pathTrace_.maxSubsurfaceEvents &&
                 state->maxVolumeEvents == pathTrace_.maxVolumeEvents &&
                 state->motionSegments == pathTrace_.motionSegments &&
+                state->shutterOpen == cameraShutter_.open &&
+                state->shutterClose == cameraShutter_.close &&
                 state->seed == pathTrace_.seed &&
                 state->kernelGeneration == kernelGeneration &&
                 std::memcmp(state->viewProj.data(), pv.m, sizeof(pv.m)) == 0;
@@ -5588,6 +6130,8 @@ bool App::renderHipViewport() {
     state->maxSubsurfaceEvents = pathTrace_.maxSubsurfaceEvents;
     state->maxVolumeEvents = pathTrace_.maxVolumeEvents;
     state->motionSegments = pathTrace_.motionSegments;
+    state->shutterOpen = cameraShutter_.open;
+    state->shutterClose = cameraShutter_.close;
     state->seed = pathTrace_.seed;
     state->kernelGeneration = kernelGeneration;
     state->valid = true;
@@ -5602,11 +6146,40 @@ bool App::renderHipViewport() {
     renderer_->uploadViewportImage(hipPathAccum_.lastRgba.data(), w, h);
     return true;
   }
+  const InteractiveCameraSample hipCameraSample = MakeInteractiveCameraSample(
+      camera_, cameraLens_, draw_, nextStageSnapshot_.get(), cameraName_,
+      animTime_, cameraShutter_, pathTrace_.motionSegments,
+      pathTrace_.enabled ? hipPathAccum_.samples : 0u);
+  OrbitCamera hipTraceCamera = hipCameraSample.camera;
+  hipTraceCamera.setAspect(static_cast<float>(w) / static_cast<float>(h));
+  const light3d::Mat4 hipTracePv =
+      hipTraceCamera.proj(/*zeroToOneDepth=*/true) * hipTraceCamera.view();
+  const light3d::Mat4 hipTraceInv = hipTracePv.inverse();
+  const light3d::Vec3 hipTraceEye = hipTraceCamera.eye();
+  const float hipTraceCamPos[3] = {hipTraceEye.x, hipTraceEye.y,
+                                   hipTraceEye.z};
+  const float hipTraceExposure = hipTraceCamera.exposure();
+  if (pathTrace_.enabled && cameraShutter_.enabled() && hipSceneDynamic &&
+      hipCameraSample.time != nextTracerPosedTime_ && nextStageSnapshot_) {
+    if (sceneIsNextDeformable()) restoreNextDrawRestPose();
+    UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_,
+                                 hipCameraSample.time);
+    if (sceneIsNextDeformable()) poseNextDrawForTracer(hipCameraSample.time);
+    std::string refitError;
+    if (!hipTracer_.refit(draw_, &refitError)) {
+      LOGW("HIP shutter-pose refit failed: %s", refitError.c_str());
+      hipPathAccum_.invalidate();
+    } else {
+      hipPathAccum_.noteSceneShutterSegment(
+          hipPathAccum_.samples, pathTrace_.motionSegments, cameraShutter_);
+    }
+    nextTracerPosedTime_ = hipCameraSample.time;
+  }
   // Static production views trace on a worker. The GPU stream still owns
   // ordering; this keeps its synchronization and the cross-device readback off
   // the UI thread. Animated scenes retain the synchronous path below so a refit
   // can never race an in-flight traversal.
-  if (pathTrace_.enabled && !sceneIsNextDeformable()) {
+  if (pathTrace_.enabled && !hipSceneDynamic) {
     if (hipTraceFuture_.valid()) {
       if (hipTraceFuture_.wait_for(std::chrono::seconds(0)) !=
           std::future_status::ready) {
@@ -5634,26 +6207,42 @@ bool App::renderHipViewport() {
     }
     if (pathTrace_.targetSamples == 0 ||
         hipPathAccum_.samples < pathTrace_.targetSamples) {
+      const InteractiveCameraSample asyncCameraSample =
+          MakeInteractiveCameraSample(
+              camera_, cameraLens_, draw_, nextStageSnapshot_.get(),
+              cameraName_, animTime_, cameraShutter_,
+              pathTrace_.motionSegments, hipPathAccum_.samples);
+      OrbitCamera asyncTraceCamera = asyncCameraSample.camera;
+      asyncTraceCamera.setAspect(static_cast<float>(w) /
+                                 static_cast<float>(h));
+      const light3d::Mat4 asyncPv =
+          asyncTraceCamera.proj(/*zeroToOneDepth=*/true) *
+          asyncTraceCamera.view();
+      const light3d::Mat4 asyncInv = asyncPv.inverse();
+      const light3d::Vec3 asyncEye = asyncTraceCamera.eye();
+      const float asyncCamPos[3] = {asyncEye.x, asyncEye.y, asyncEye.z};
       std::array<float, 16> invCopy{}, pvCopy{};
       std::array<float, 3> camCopy{}, lightCopy{}, clearCopy{}, minCopy{}, extentCopy{};
-      std::copy(inv.m, inv.m + 16, invCopy.begin());
-      std::copy(pv.m, pv.m + 16, pvCopy.begin());
-      std::copy(camPos, camPos + 3, camCopy.begin());
+      std::copy(asyncInv.m, asyncInv.m + 16, invCopy.begin());
+      std::copy(asyncPv.m, asyncPv.m + 16, pvCopy.begin());
+      std::copy(asyncCamPos, asyncCamPos + 3, camCopy.begin());
       std::copy(lightDir, lightDir + 3, lightCopy.begin());
       std::copy(clear, clear + 3, clearCopy.begin());
       std::copy(sceneMin, sceneMin + 3, minCopy.begin());
       std::copy(sceneExtent, sceneExtent + 3, extentCopy.begin());
-      const RtCameraLens lensCopy = cameraLens_;
+      const RtCameraLens lensCopy = asyncCameraSample.lens;
       const PathTraceSettings settingsCopy = pathTrace_;
       const uint64_t generation = hipPathAccum_.generation;
       const uint32_t start = hipPathAccum_.samples;
+      hipPathAccum_.noteShutterSegment(
+          start, pathTrace_.motionSegments, cameraShutter_);
       const uint32_t nextSample = start + 1u;
       const bool wantLinear = nextSample >= 8u &&
           (((nextSample & (nextSample - 1u)) == 0u) || nextSample % 64u == 0u);
-      const float exposure = camera_.exposure();
+      const float exposure = asyncTraceCamera.exposure();
       const float sceneSeconds = static_cast<float>(
-          animFps_ > 0.0 ? animTime_ / animFps_ : 0.0);
-      const float sceneFrame = static_cast<float>(animTime_);
+          animFps_ > 0.0 ? asyncCameraSample.time / animFps_ : 0.0);
+      const float sceneFrame = static_cast<float>(asyncCameraSample.time);
       hipTraceFuture_ = std::async(std::launch::async,
           [this, invCopy, pvCopy, camCopy, lightCopy, clearCopy, minCopy,
            extentCopy, lensCopy, settingsCopy, generation, start, exposure,
@@ -5679,19 +6268,27 @@ bool App::renderHipViewport() {
   }
   uint32_t accumulatedSamples = 0;
   // spp=1: single sample for interactive frame rate (no supersampled AA).
-  if (hipTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
+  if (pathTrace_.enabled) {
+    hipPathAccum_.noteShutterSegment(
+        hipPathAccum_.samples, pathTrace_.motionSegments, cameraShutter_);
+  }
+  if (hipTracer_.trace(hipTraceInv.m, hipTracePv.m, hipTraceCamPos, lightDir,
+                       clear, hipTraceExposure, rmode, depthScale, sceneMin,
                        sceneExtent, w, h, &rgba, &cerr, /*spp=*/1,
-                       &cameraLens_, pathTrace_.enabled ? &pathTrace_ : nullptr,
+                       &hipCameraSample.lens,
+                       pathTrace_.enabled ? &pathTrace_ : nullptr,
                        pathTrace_.enabled ? &linear : nullptr,
                        pathTrace_.enabled ? &accumulatedSamples : nullptr,
-                       static_cast<float>(animFps_ > 0.0 ? animTime_ / animFps_ : 0.0),
-                       static_cast<float>(animTime_),
+                       static_cast<float>(animFps_ > 0.0
+                                              ? hipCameraSample.time / animFps_
+                                              : 0.0),
+                       static_cast<float>(hipCameraSample.time),
                        pathTrace_.enabled ? hipPathAccum_.samples : 0u)) {
     if (pathTrace_.enabled) {
       hipPathAccum_.samples = accumulatedSamples;
       rgba = ToneMapPathDisplay(
           PreparePathDisplay(linear, w, h, pathTrace_, accumulatedSamples), w, h,
-          camera_.exposure());
+          hipTraceExposure);
       hipPathAccum_.lastRgba = rgba;
     }
     renderer_->uploadViewportImage(rgba.data(), w, h);
@@ -5739,7 +6336,8 @@ bool App::renderCudaViewport() {
       const uint32_t purposeMask = gui_.purposeVisibleMask();
       poseNextDrawForTracer(animTime_);  // on the main thread, before the worker reads draw_
       ensureRtTexturePayloads();         // ditto: re-decode raster-released texture payloads
-      const bool retainForRefit = sceneIsNextDeformable();
+      const bool retainForRefit =
+          sceneIsNextDeformable() || SceneHasAnimatedWorlds(draw_);
       cudaBuildThread_ = std::thread([this, dispScale, purposeMask,
                                       retainForRefit] {
         std::string e;
@@ -5769,8 +6367,15 @@ bool App::renderCudaViewport() {
     // animation (liveSwitchEnabled_ also requires raster switch-back data).
   }
 
-  if (sceneIsNextDeformable() && animTime_ != nextTracerPosedTime_) {
-    if (poseNextDrawForTracer(animTime_)) {
+  const bool cudaSceneDynamic =
+      sceneIsNextDeformable() || SceneHasAnimatedWorlds(draw_);
+  if (cudaSceneDynamic &&
+      (!pathTrace_.enabled || !cameraShutter_.enabled()) &&
+      animTime_ != nextTracerPosedTime_) {
+    if (nextStageSnapshot_) {
+      if (sceneIsNextDeformable()) restoreNextDrawRestPose();
+      UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_, animTime_);
+      if (sceneIsNextDeformable()) poseNextDrawForTracer(animTime_);
       std::string e;
       const float dispScale = gui_.displacementScale();
       static const bool kNoCudaRefit =
@@ -5783,6 +6388,7 @@ bool App::renderCudaViewport() {
                                     gui_.purposeVisibleMask())) {
         LOGW("CUDA re-pose rebuild failed: %s", e.c_str());
       }
+      nextTracerPosedTime_ = animTime_;
     }
   }
 
@@ -5792,9 +6398,6 @@ bool App::renderCudaViewport() {
 
   camera_.setAspect(static_cast<float>(w) / static_cast<float>(h));
   const light3d::Mat4 pv = camera_.proj(/*zeroToOneDepth=*/true) * camera_.view();
-  const light3d::Mat4 inv = pv.inverse();
-  const light3d::Vec3 eye = camera_.eye();
-  const float camPos[3] = {eye.x, eye.y, eye.z};
   float lightDir[3];
   CopyPreviewLightDir(draw_, lightDir);
   const float clear[3] = {0.12f, 0.12f, 0.13f};
@@ -5824,7 +6427,10 @@ bool App::renderCudaViewport() {
       accum.rouletteDepth == pathTrace_.russianRouletteDepth &&
       accum.maxSubsurfaceEvents == pathTrace_.maxSubsurfaceEvents &&
       accum.maxVolumeEvents == pathTrace_.maxVolumeEvents &&
-      accum.motionSegments == pathTrace_.motionSegments && accum.seed == pathTrace_.seed &&
+      accum.motionSegments == pathTrace_.motionSegments &&
+      accum.shutterOpen == cameraShutter_.open &&
+      accum.shutterClose == cameraShutter_.close &&
+      accum.seed == pathTrace_.seed &&
       accum.kernelGeneration == cudaTracer_.kernelGeneration() &&
       std::memcmp(accum.viewProj.data(), pv.m, sizeof(pv.m)) == 0;
   if (!pathTrace_.enabled) accum.invalidate();
@@ -5842,7 +6448,10 @@ bool App::renderCudaViewport() {
     accum.rouletteDepth = pathTrace_.russianRouletteDepth;
     accum.maxSubsurfaceEvents = pathTrace_.maxSubsurfaceEvents;
     accum.maxVolumeEvents = pathTrace_.maxVolumeEvents;
-    accum.motionSegments = pathTrace_.motionSegments; accum.seed = pathTrace_.seed;
+    accum.motionSegments = pathTrace_.motionSegments;
+    accum.shutterOpen = cameraShutter_.open;
+    accum.shutterClose = cameraShutter_.close;
+    accum.seed = pathTrace_.seed;
     accum.kernelGeneration = cudaTracer_.kernelGeneration(); accum.valid = true;
     if (pathTrace_.targetSamples > 0 && accum.samples >= pathTrace_.targetSamples &&
         !accum.lastRgba.empty()) {
@@ -5850,7 +6459,36 @@ bool App::renderCudaViewport() {
       return true;
     }
   }
-  if (pathTrace_.enabled && !sceneIsNextDeformable()) {
+  const InteractiveCameraSample cudaCameraSample = MakeInteractiveCameraSample(
+      camera_, cameraLens_, draw_, nextStageSnapshot_.get(), cameraName_,
+      animTime_, cameraShutter_, pathTrace_.motionSegments,
+      pathTrace_.enabled ? accum.samples : 0u);
+  OrbitCamera cudaTraceCamera = cudaCameraSample.camera;
+  cudaTraceCamera.setAspect(static_cast<float>(w) / static_cast<float>(h));
+  const light3d::Mat4 cudaTracePv =
+      cudaTraceCamera.proj(/*zeroToOneDepth=*/true) * cudaTraceCamera.view();
+  const light3d::Mat4 cudaTraceInv = cudaTracePv.inverse();
+  const light3d::Vec3 cudaTraceEye = cudaTraceCamera.eye();
+  const float cudaTraceCamPos[3] = {cudaTraceEye.x, cudaTraceEye.y,
+                                    cudaTraceEye.z};
+  const float cudaTraceExposure = cudaTraceCamera.exposure();
+  if (pathTrace_.enabled && cameraShutter_.enabled() && cudaSceneDynamic &&
+      cudaCameraSample.time != nextTracerPosedTime_ && nextStageSnapshot_) {
+    if (sceneIsNextDeformable()) restoreNextDrawRestPose();
+    UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_,
+                                 cudaCameraSample.time);
+    if (sceneIsNextDeformable()) poseNextDrawForTracer(cudaCameraSample.time);
+    std::string refitError;
+    if (!cudaTracer_.refit(draw_, &refitError)) {
+      LOGW("CUDA shutter-pose refit failed: %s", refitError.c_str());
+      accum.invalidate();
+    } else {
+      accum.noteSceneShutterSegment(
+          accum.samples, pathTrace_.motionSegments, cameraShutter_);
+    }
+    nextTracerPosedTime_ = cudaCameraSample.time;
+  }
+  if (pathTrace_.enabled && !cudaSceneDynamic) {
     if (cudaTraceFuture_.valid()) {
       if (cudaTraceFuture_.wait_for(std::chrono::seconds(0)) !=
           std::future_status::ready) {
@@ -5877,26 +6515,42 @@ bool App::renderCudaViewport() {
       }
     }
     if (pathTrace_.targetSamples == 0 || accum.samples < pathTrace_.targetSamples) {
+      const InteractiveCameraSample asyncCameraSample =
+          MakeInteractiveCameraSample(
+              camera_, cameraLens_, draw_, nextStageSnapshot_.get(),
+              cameraName_, animTime_, cameraShutter_,
+              pathTrace_.motionSegments, accum.samples);
+      OrbitCamera asyncTraceCamera = asyncCameraSample.camera;
+      asyncTraceCamera.setAspect(static_cast<float>(w) /
+                                 static_cast<float>(h));
+      const light3d::Mat4 asyncPv =
+          asyncTraceCamera.proj(/*zeroToOneDepth=*/true) *
+          asyncTraceCamera.view();
+      const light3d::Mat4 asyncInv = asyncPv.inverse();
+      const light3d::Vec3 asyncEye = asyncTraceCamera.eye();
+      const float asyncCamPos[3] = {asyncEye.x, asyncEye.y, asyncEye.z};
       std::array<float, 16> invCopy{}, pvCopy{};
       std::array<float, 3> camCopy{}, lightCopy{}, clearCopy{}, minCopy{}, extentCopy{};
-      std::copy(inv.m, inv.m + 16, invCopy.begin());
-      std::copy(pv.m, pv.m + 16, pvCopy.begin());
-      std::copy(camPos, camPos + 3, camCopy.begin());
+      std::copy(asyncInv.m, asyncInv.m + 16, invCopy.begin());
+      std::copy(asyncPv.m, asyncPv.m + 16, pvCopy.begin());
+      std::copy(asyncCamPos, asyncCamPos + 3, camCopy.begin());
       std::copy(lightDir, lightDir + 3, lightCopy.begin());
       std::copy(clear, clear + 3, clearCopy.begin());
       std::copy(sceneMin, sceneMin + 3, minCopy.begin());
       std::copy(sceneExtent, sceneExtent + 3, extentCopy.begin());
-      const RtCameraLens lensCopy = cameraLens_;
+      const RtCameraLens lensCopy = asyncCameraSample.lens;
       const PathTraceSettings settingsCopy = pathTrace_;
       const uint64_t generation = accum.generation;
       const uint32_t start = accum.samples;
+      accum.noteShutterSegment(start, pathTrace_.motionSegments,
+                               cameraShutter_);
       const uint32_t nextSample = start + 1u;
       const bool wantLinear = nextSample >= 8u &&
           (((nextSample & (nextSample - 1u)) == 0u) || nextSample % 64u == 0u);
-      const float exposure = camera_.exposure();
+      const float exposure = asyncTraceCamera.exposure();
       const float sceneSeconds = static_cast<float>(
-          animFps_ > 0.0 ? animTime_ / animFps_ : 0.0);
-      const float sceneFrame = static_cast<float>(animTime_);
+          animFps_ > 0.0 ? asyncCameraSample.time / animFps_ : 0.0);
+      const float sceneFrame = static_cast<float>(asyncCameraSample.time);
       cudaTraceFuture_ = std::async(std::launch::async,
           [this, invCopy, pvCopy, camCopy, lightCopy, clearCopy, minCopy,
            extentCopy, lensCopy, settingsCopy, generation, start, exposure,
@@ -5921,19 +6575,28 @@ bool App::renderCudaViewport() {
     return true;
   }
   uint32_t accumulatedSamples = 0;
-  if (cudaTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
+  if (pathTrace_.enabled) {
+    accum.noteShutterSegment(accum.samples, pathTrace_.motionSegments,
+                             cameraShutter_);
+  }
+  if (cudaTracer_.trace(cudaTraceInv.m, cudaTracePv.m, cudaTraceCamPos,
+                        lightDir, clear, cudaTraceExposure, rmode, depthScale,
+                        sceneMin,
                         sceneExtent, w, h, &rgba, &cerr, /*spp=*/1,
-                        &cameraLens_, pathTrace_.enabled ? &pathTrace_ : nullptr,
+                        &cudaCameraSample.lens,
+                        pathTrace_.enabled ? &pathTrace_ : nullptr,
                         pathTrace_.enabled ? &linear : nullptr,
                         pathTrace_.enabled ? &accumulatedSamples : nullptr,
-                        static_cast<float>(animFps_ > 0.0 ? animTime_ / animFps_ : 0.0),
-                        static_cast<float>(animTime_),
+                        static_cast<float>(animFps_ > 0.0
+                                               ? cudaCameraSample.time / animFps_
+                                               : 0.0),
+                        static_cast<float>(cudaCameraSample.time),
                         pathTrace_.enabled ? accum.samples : 0u)) {
     if (pathTrace_.enabled) {
       accum.samples = accumulatedSamples;
       rgba = ToneMapPathDisplay(
           PreparePathDisplay(linear, w, h, pathTrace_, accumulatedSamples), w, h,
-          camera_.exposure());
+          cudaTraceExposure);
       accum.lastRgba = rgba;
     }
     renderer_->uploadViewportImage(rgba.data(), w, h);
@@ -7372,6 +8035,12 @@ int App::run(const std::string& initialFile, int maxFrames,
         const int materialId = pendingOpenPbrEdit_.materialId;
         DrawMaterialCPU& material =
             draw_.materials[static_cast<size_t>(materialId)];
+        // A held native shutter image must never survive a live material
+        // mutation. The Vulkan temporal flag intentionally ignores renderer
+        // accumulation generations while a pose sequence is active, so the
+        // App-side sequence is the authoritative invalidation point here.
+        rasterMotionAccum_.reset();
+        vulkanRtMotionAccum_.reset();
         if (pendingOpenPbrEdit_.makeConstant) {
           MakeConstantOpenPBRMaterial(&material);
         }
@@ -7460,6 +8129,174 @@ int App::run(const std::string& initialFile, int maxFrames,
         requestReconvert(animTime_);
       }
     }
+
+    bool vulkanRtMotionFrame = false;
+    const double vulkanRtMotionBaseTime = animTime_;
+    const OrbitCamera vulkanRtMotionBaseCamera = camera_;
+    const RtCameraLens vulkanRtMotionBaseLens = cameraLens_;
+#if defined(LUSDVIEW_ENABLE_GL_THREAD)
+    const bool vulkanRtMotionInline = !renderThreadActive_;
+#else
+    const bool vulkanRtMotionInline = true;
+#endif
+    int vulkanRtMotionWidth = 0, vulkanRtMotionHeight = 0;
+    gui_.viewportPixelSize(&vulkanRtMotionWidth, &vulkanRtMotionHeight);
+    const ShutterMotionPlan vulkanRtMotion = MakeShutterMotionPlan(
+        draw_, useNextLoader_ ? nextStageSnapshot_.get() : nullptr, cameraName_,
+        animTime_,
+        cameraShutter_, pathTrace_.motionSegments,
+        useNextLoader_ ? nullptr : (loaded_.ok ? &loaded_.stage : nullptr));
+    if (vulkanRtMotionInline && renderer_ && renderer_->rayTracingActive() &&
+        !hipInteractive_ && !cudaInteractive_ && !cpuInteractive_ &&
+        !animPlaying_ &&
+        ((useNextLoader_ && nextStageSnapshot_) ||
+         (!useNextLoader_ && loaded_.ok)) &&
+        !cameraName_.empty() && vulkanRtMotion.sampleCount > 1 &&
+        vulkanRtMotionWidth > 0 && vulkanRtMotionHeight > 0) {
+      OrbitCamera identityCamera = camera_;
+      identityCamera.setAspect(static_cast<float>(vulkanRtMotionWidth) /
+                               static_cast<float>(vulkanRtMotionHeight));
+      const light3d::Mat4 identityPv =
+          identityCamera.proj(renderer_->caps().usesZeroToOneDepth) *
+          identityCamera.view();
+      VulkanRtMotionAccumulation& accum = vulkanRtMotionAccum_;
+      const bool same =
+          accum.valid && accum.sceneGeneration == sceneGen_ &&
+          accum.baseTime == animTime_ &&
+          accum.shutterOpen == cameraShutter_.open &&
+          accum.shutterClose == cameraShutter_.close &&
+          accum.segmentCount == vulkanRtMotion.sampleCount &&
+          accum.width == vulkanRtMotionWidth &&
+          accum.height == vulkanRtMotionHeight &&
+          accum.baseLens.focusDistance == cameraLens_.focusDistance &&
+          accum.baseLens.apertureRadius == cameraLens_.apertureRadius &&
+          accum.pathEnabled == pathTrace_.enabled &&
+          accum.pathMaxDepth == pathTrace_.maxDepth &&
+          accum.pathRouletteDepth == pathTrace_.russianRouletteDepth &&
+          accum.pathSeed == pathTrace_.seed &&
+          std::memcmp(accum.baseViewProj.data(), identityPv.m,
+                      sizeof(identityPv.m)) == 0;
+      if (!same) {
+        accum.reset();
+        std::copy(identityPv.m, identityPv.m + 16,
+                  accum.baseViewProj.begin());
+        accum.baseLens = cameraLens_;
+        accum.baseTime = animTime_;
+        accum.shutterOpen = cameraShutter_.open;
+        accum.shutterClose = cameraShutter_.close;
+        accum.sceneGeneration = sceneGen_;
+        accum.segmentCount = vulkanRtMotion.sampleCount;
+        accum.width = vulkanRtMotionWidth;
+        accum.height = vulkanRtMotionHeight;
+        accum.pathEnabled = pathTrace_.enabled;
+        accum.pathMaxDepth = pathTrace_.maxDepth;
+        accum.pathRouletteDepth = pathTrace_.russianRouletteDepth;
+        accum.pathSeed = pathTrace_.seed;
+        accum.valid = true;
+      }
+      const uint32_t segment = accum.nextSegment % accum.segmentCount;
+      const double sampleTime = vulkanRtMotion.sampleTime(segment);
+      NextCameraPose samplePose;
+      if (FindCameraPoseAtTime(
+              useNextLoader_ ? nextStageSnapshot_.get() : nullptr,
+              useNextLoader_ ? nullptr : (loaded_.ok ? &loaded_.stage : nullptr),
+              cameraName_, sampleTime, &samplePose)) {
+        ApplyAuthoredCameraPose(samplePose, draw_, &camera_);
+        cameraLens_ = MakeRtCameraLens(
+            samplePose.focalLength, samplePose.focusDistance, samplePose.fStop,
+            samplePose.projection == CameraProjection::Perspective);
+        gui_.setCameraLens(cameraLens_);
+      }
+      animTime_ = sampleTime;
+      if (segment < 64u) accum.sampledMask |= uint64_t{1} << segment;
+      ++accum.nextSegment;
+      gui_.setRtTemporalAccumulation(true, !same);
+      vulkanRtMotionFrame = true;
+    } else {
+      vulkanRtMotionAccum_.reset();
+      gui_.setRtTemporalAccumulation(false, false);
+    }
+
+    bool rasterMotionFrame = false;
+    bool rasterMotionHold = false;
+    const double rasterMotionBaseTime = animTime_;
+    const OrbitCamera rasterMotionBaseCamera = camera_;
+    const RtCameraLens rasterMotionBaseLens = cameraLens_;
+#if defined(LUSDVIEW_ENABLE_GL_THREAD)
+    const bool rasterMotionInline = !renderThreadActive_;
+#else
+    const bool rasterMotionInline = true;
+#endif
+    int rasterMotionWidth = 0, rasterMotionHeight = 0;
+    gui_.viewportPixelSize(&rasterMotionWidth, &rasterMotionHeight);
+    const ShutterMotionPlan rasterMotion = MakeShutterMotionPlan(
+        draw_, useNextLoader_ ? nextStageSnapshot_.get() : nullptr, cameraName_,
+        animTime_,
+        cameraShutter_, pathTrace_.motionSegments,
+        useNextLoader_ ? nullptr : (loaded_.ok ? &loaded_.stage : nullptr));
+    if (rasterMotionEnabled_ && rasterMotionInline && renderer_ &&
+        !renderer_->rayTracingActive() &&
+        !pathTrace_.enabled && !hipInteractive_ && !cudaInteractive_ &&
+        !cpuInteractive_ && !animPlaying_ &&
+        ((useNextLoader_ && nextStageSnapshot_) ||
+         (!useNextLoader_ && loaded_.ok)) &&
+        !cameraName_.empty() &&
+        rasterMotion.sampleCount > 1 && rasterMotionWidth > 0 &&
+        rasterMotionHeight > 0) {
+      OrbitCamera identityCamera = camera_;
+      identityCamera.setAspect(static_cast<float>(rasterMotionWidth) /
+                               static_cast<float>(rasterMotionHeight));
+      const light3d::Mat4 identityPv =
+          identityCamera.proj(renderer_->caps().usesZeroToOneDepth) *
+          identityCamera.view();
+      RasterMotionAccumulation& accum = rasterMotionAccum_;
+      const bool same =
+          accum.valid && accum.sceneGeneration == sceneGen_ &&
+          accum.baseTime == animTime_ &&
+          accum.shutterOpen == cameraShutter_.open &&
+          accum.shutterClose == cameraShutter_.close &&
+          accum.segmentCount == rasterMotion.sampleCount &&
+          accum.width == rasterMotionWidth &&
+          accum.height == rasterMotionHeight &&
+          std::memcmp(accum.baseViewProj.data(), identityPv.m,
+                      sizeof(identityPv.m)) == 0;
+      if (!same) {
+        accum.reset();
+        std::copy(identityPv.m, identityPv.m + 16,
+                  accum.baseViewProj.begin());
+        accum.baseTime = animTime_;
+        accum.shutterOpen = cameraShutter_.open;
+        accum.shutterClose = cameraShutter_.close;
+        accum.sceneGeneration = sceneGen_;
+        accum.segmentCount = rasterMotion.sampleCount;
+        accum.width = rasterMotionWidth;
+        accum.height = rasterMotionHeight;
+        accum.valid = true;
+      }
+      if (accum.nextSegment >= accum.segmentCount && !accum.lastRgba.empty()) {
+        rasterMotionHold = true;
+      } else {
+        const uint32_t segment = accum.nextSegment % accum.segmentCount;
+        const double sampleTime = rasterMotion.sampleTime(segment);
+        NextCameraPose samplePose;
+        if (FindCameraPoseAtTime(
+                useNextLoader_ ? nextStageSnapshot_.get() : nullptr,
+                useNextLoader_ ? nullptr : (loaded_.ok ? &loaded_.stage : nullptr),
+                cameraName_, sampleTime, &samplePose)) {
+          ApplyAuthoredCameraPose(samplePose, draw_, &camera_);
+          cameraLens_ = MakeRtCameraLens(
+              samplePose.focalLength, samplePose.focusDistance,
+              samplePose.fStop,
+              samplePose.projection == CameraProjection::Perspective);
+          gui_.setCameraLens(cameraLens_);
+        }
+        animTime_ = sampleTime;
+        rasterMotionFrame = true;
+      }
+    } else if (!rasterMotionEnabled_ || !cameraShutter_.enabled() ||
+               rasterMotion.sampleCount <= 1) {
+      rasterMotionAccum_.reset();
+    }
     updateGpuSkinningFrameIfNeeded();
     // Keep the camera's auto-clip scene bounds in step with the CURRENT pose.
     // updateGpuSkinningFrameIfNeeded() (via updateNextDeformFrameIfNeeded's
@@ -7501,7 +8338,103 @@ int App::run(const std::string& initialFile, int maxFrames,
       // owns the screenshot -- only the cheap ImGui composite needs to run.
       // Windowed --hip/--cuda (or a live switch to HipRT/CudaRT) traces the
       // viewport with the HIP/CUDA path instead of raster.
-      if (hipInteractive_) {
+      bool stereoLiveRendered = false;
+      bool imguiRenderedBeforeStereo = false;
+      if (!headless_ && stereoRequested_ && renderer_ &&
+          !renderer_->rayTracingActive() && !pathTrace_.enabled &&
+          !hipInteractive_ && !cudaInteractive_ && !cpuInteractive_) {
+        StereoCameraPair pair;
+        std::string stereoError;
+        int stereoViewportWidth = 0, stereoViewportHeight = 0;
+        gui_.viewportPixelSize(&stereoViewportWidth, &stereoViewportHeight);
+        const int eyeWidth = stereoViewportWidth / 2;
+        const OrbitCamera savedCamera = camera_;
+        const RtCameraLens savedLens = gui_.cameraLens();
+        const RtCameraShutter savedShutter = gui_.cameraShutter();
+        const std::vector<float> savedClipping = gui_.cameraClippingPlanes();
+        std::vector<uint8_t> eyePixels[2];
+        int eyeWidths[2] = {0, 0};
+        int eyeHeights[2] = {0, 0};
+        bool eyesOk = eyeWidth > 0 && stereoViewportHeight > 0 &&
+                      ResolveStereoCameraPair(draw_.cameras, cameraName_, &pair,
+                                              &stereoError);
+        const int eyeIndices[2] = {pair.left, pair.right};
+        if (eyesOk) {
+          // present() also composites ImGui. Finalize the UI draw list before
+          // the first eye; the eye passes themselves only update the viewport
+          // render target and do not add more ImGui commands.
+          ImGui::Render();
+          imguiRenderedBeforeStereo = true;
+          gui_.setStereoEyeViewportWidth(eyeWidth);
+          for (int eyeIndex = 0; eyeIndex < 2 && eyesOk; ++eyeIndex) {
+            const DrawCameraCPU& eyeCamera =
+                draw_.cameras[static_cast<size_t>(eyeIndices[eyeIndex])];
+            const std::string eyeName =
+                eyeCamera.absPath.empty() ? eyeCamera.name : eyeCamera.absPath;
+            NextCameraPose eyePose;
+            const bool havePose =
+                useNextLoader_ && nextStageSnapshot_
+                    ? FindNextCamera(*nextStageSnapshot_, eyeName, animTime_,
+                                     &eyePose)
+                    : (loaded_.ok &&
+                       FindLegacyCameraAtTime(loaded_.stage, eyeName, animTime_,
+                                              &eyePose));
+            if (!havePose) {
+              stereoError = "could not evaluate eye camera '" + eyeName + "'";
+              eyesOk = false;
+              break;
+            }
+            camera_ = savedCamera;
+            ApplyAuthoredCameraPose(eyePose, draw_, &camera_);
+            gui_.setCameraLens(MakeRtCameraLens(
+                eyePose.focalLength, eyePose.focusDistance, eyePose.fStop,
+                eyePose.projection == CameraProjection::Perspective));
+            RtCameraShutter eyeShutter;
+            eyeShutter.open = eyePose.shutterOpen;
+            eyeShutter.close = eyePose.shutterClose;
+            gui_.setCameraShutter(eyeShutter);
+            gui_.setCameraClippingPlanes(eyePose.clippingPlanes);
+            gui_.renderViewportScene();
+            renderer_->present();
+            eyesOk = renderer_->captureViewport(
+                &eyePixels[eyeIndex], &eyeWidths[eyeIndex],
+                &eyeHeights[eyeIndex]);
+          }
+        }
+        gui_.setStereoEyeViewportWidth(0);
+        camera_ = savedCamera;
+        gui_.setCameraLens(savedLens);
+        gui_.setCameraShutter(savedShutter);
+        gui_.setCameraClippingPlanes(savedClipping);
+        if (eyesOk && eyeWidths[0] > 0 && eyeWidths[0] == eyeWidths[1] &&
+            eyeHeights[0] > 0 && eyeHeights[0] == eyeHeights[1]) {
+          const int stereoWidth = eyeWidths[0] * 2;
+          const int stereoHeight = eyeHeights[0];
+          std::vector<uint8_t> stereoPixels(
+              static_cast<size_t>(stereoWidth) *
+              static_cast<size_t>(stereoHeight) * 4u);
+          const size_t eyeRowBytes = static_cast<size_t>(eyeWidths[0]) * 4u;
+          const size_t rowBytes = eyeRowBytes * 2u;
+          for (int y = 0; y < stereoHeight; ++y) {
+            uint8_t* dst = stereoPixels.data() + static_cast<size_t>(y) * rowBytes;
+            std::copy_n(eyePixels[0].data() + static_cast<size_t>(y) * eyeRowBytes,
+                        eyeRowBytes, dst);
+            std::copy_n(eyePixels[1].data() + static_cast<size_t>(y) * eyeRowBytes,
+                        eyeRowBytes, dst + eyeRowBytes);
+          }
+          renderer_->uploadViewportImage(stereoPixels.data(), stereoWidth,
+                                         stereoHeight);
+          stereoLiveComposed_ = true;
+          stereoLiveRendered = true;
+        } else if (!stereoError.empty()) {
+          LOGW("stereo live viewport: %s", stereoError.c_str());
+        }
+      }
+      if (stereoLiveRendered) {
+        // The two eye passes were presented above to make their offscreen
+        // captures current. The uploaded side-by-side image is presented once
+        // more below with the current ImGui frame.
+      } else if (hipInteractive_) {
         if (!renderHipViewport()) {
           // Device unavailable / build failed: renderHipViewport() already
           // cleared hipInteractive_ -- sync the technique state (menu, probe
@@ -7524,6 +8457,10 @@ int App::run(const std::string& initialFile, int maxFrames,
           activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
                                                         : RenderTechnique::VulkanRaster;
         }
+      } else if (rasterMotionHold) {
+        renderer_->uploadViewportImage(rasterMotionAccum_.lastRgba.data(),
+                                       rasterMotionAccum_.width,
+                                       rasterMotionAccum_.height);
       } else if (!rtOwnsScreenshot_ &&
                  !(quitAfterFullUpload_ && streamFirstFrameLogged_ &&
                    loadActive_)) {
@@ -7558,10 +8495,69 @@ int App::run(const std::string& initialFile, int maxFrames,
       }
       if (streamSend) renderer_->requestWindowCapture();
 
-      ImGui::Render();
+      if (!imguiRenderedBeforeStereo) ImGui::Render();
       static const bool timeFrame = std::getenv("LUSDVIEW_TIME_FRAME") != nullptr;
       const auto tp0 = std::chrono::steady_clock::now();
       renderer_->present();
+
+      if (rasterMotionFrame) {
+        RasterMotionAccumulation& accum = rasterMotionAccum_;
+        std::vector<uint8_t> sample;
+        int sampleWidth = 0, sampleHeight = 0;
+        if (renderer_->captureViewport(&sample, &sampleWidth, &sampleHeight) &&
+            sampleWidth == accum.width && sampleHeight == accum.height &&
+            sample.size() == static_cast<size_t>(sampleWidth) *
+                                 static_cast<size_t>(sampleHeight) * 4u) {
+          if (accum.linearSum.size() != sample.size())
+            accum.linearSum.assign(sample.size(), 0.0f);
+          for (size_t i = 0; i < sample.size(); ++i) {
+            const float encoded = static_cast<float>(sample[i]) / 255.0f;
+            const float linear =
+                (i & 3u) == 3u
+                    ? encoded
+                    : (encoded <= 0.04045f
+                           ? encoded / 12.92f
+                           : std::pow((encoded + 0.055f) / 1.055f, 2.4f));
+            accum.linearSum[i] += linear;
+          }
+          const uint32_t segment = accum.nextSegment;
+          if (segment < 64u) accum.sampledMask |= uint64_t{1} << segment;
+          ++accum.nextSegment;
+          if (accum.nextSegment >= accum.segmentCount) {
+            accum.lastRgba.resize(sample.size());
+            const float invCount = 1.0f / static_cast<float>(accum.segmentCount);
+            for (size_t i = 0; i < accum.linearSum.size(); ++i) {
+              float value = accum.linearSum[i] * invCount;
+              if ((i & 3u) != 3u) {
+                value = value <= 0.0031308f
+                            ? 12.92f * value
+                            : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
+              }
+              accum.lastRgba[i] = static_cast<uint8_t>(
+                  std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
+            }
+            renderer_->uploadViewportImage(accum.lastRgba.data(), accum.width,
+                                           accum.height);
+            LOGI("raster motion: accumulated %u shutter poses over %.6f..%.6f",
+                 accum.segmentCount, accum.baseTime + accum.shutterOpen,
+                 accum.baseTime + accum.shutterClose);
+          }
+        } else {
+          accum.reset();
+        }
+      }
+      if (rasterMotionFrame || rasterMotionHold) {
+        animTime_ = rasterMotionBaseTime;
+        camera_ = rasterMotionBaseCamera;
+        cameraLens_ = rasterMotionBaseLens;
+        gui_.setCameraLens(cameraLens_);
+      }
+      if (vulkanRtMotionFrame) {
+        animTime_ = vulkanRtMotionBaseTime;
+        camera_ = vulkanRtMotionBaseCamera;
+        cameraLens_ = vulkanRtMotionBaseLens;
+        gui_.setCameraLens(cameraLens_);
+      }
 
       const bool usefulGeometryThreshold =
           streamUploadedEffectiveTriangles_ >= 100000 ||
@@ -7653,7 +8649,12 @@ int App::run(const std::string& initialFile, int maxFrames,
 #endif
     pollLiveShaderReload();
     if (cancelLoad) loadCtrl_.cancel.store(true);
-    if (reload && !loaded_.filepath.empty()) startLoadAsync(loaded_.filepath);
+    if (reload && !loaded_.filepath.empty()) {
+      if (useNextLoader_ && nextSession_)
+        startLayerReloadAsync(loaded_.filepath);
+      else
+        startLoadAsync(loaded_.filepath);
+    }
     if (open && !headless_) openFileDialog();
     if (openRecent && !headless_ && !recentPath.empty()) {
       startLoadAsync(recentPath);
@@ -7862,7 +8863,17 @@ int App::run(const std::string& initialFile, int maxFrames,
     std::string cerr;
     // The tracer builds from draw_ geometry, which the next loader hands over in
     // its REST pose (the deform lives in the GPU skin/morph channels). Pose it.
-    poseNextDrawForTracer(animTime_);
+    const ShutterMotionPlan cudaMotion = MakeShutterMotionPlan(
+        draw_, useNextLoader_ ? nextStageSnapshot_.get() : nullptr, cameraName_,
+        animTime_, cameraShutter_, pathTrace_.motionSegments,
+        useNextLoader_ ? nullptr : (loaded_.ok ? &loaded_.stage : nullptr));
+    const uint32_t cudaMotionSamples = cudaMotion.sampleCount;
+    const double cudaFirstTime = cudaMotion.sampleTime(0);
+    if (nextStageSnapshot_) {
+      restoreNextDrawRestPose();
+      UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_, cudaFirstTime);
+      poseNextDrawForTracer(cudaFirstTime);
+    }
     ensureRtTexturePayloads();  // raster frames may have released them
     auto buildCudaScene = [&]() {
       BuildProgress progress;
@@ -7909,10 +8920,6 @@ int App::run(const std::string& initialFile, int maxFrames,
       }
       if (w <= 0 || h <= 0) { w = 1024; h = 768; }
       camera_.setAspect(static_cast<float>(w) / static_cast<float>(h));
-      const light3d::Mat4 pv = camera_.proj(/*zeroToOneDepth=*/true) * camera_.view();
-      const light3d::Mat4 inv = pv.inverse();
-      const light3d::Vec3 eye = camera_.eye();
-      const float camPos[3] = {eye.x, eye.y, eye.z};
       float lightDir[3];
       CopyPreviewLightDir(draw_, lightDir);
       const float clear[3] = {0.12f, 0.12f, 0.13f};
@@ -7932,13 +8939,115 @@ int App::run(const std::string& initialFile, int maxFrames,
       std::vector<uint8_t> rgba;
       std::vector<float> linear;
       pathTraceRenderedSamples_ = 0;
-      if (cudaTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
-                            sceneExtent, w, h, &rgba, &cerr, rtSamples_,
-                            &cameraLens_, pathTrace_.enabled ? &pathTrace_ : nullptr,
-                            pathTrace_.enabled ? &linear : nullptr,
-                            pathTrace_.enabled ? &pathTraceRenderedSamples_ : nullptr,
-                            static_cast<float>(animFps_ > 0.0 ? animTime_ / animFps_ : 0.0),
-                            static_cast<float>(animTime_))) {
+      std::vector<float> motionAccum;
+      uint32_t totalPathSamples = 0;
+      bool traced = true;
+      for (uint32_t sampleIndex = 0; sampleIndex < cudaMotionSamples;
+           ++sampleIndex) {
+        const double sampleTime = cudaMotion.sampleTime(sampleIndex);
+        if (sampleIndex > 0) {
+          restoreNextDrawRestPose();
+          UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_, sampleTime);
+          poseNextDrawForTracer(sampleTime);
+          if (!buildCudaScene()) {
+            LOGW("CUDA ray tracing build failed at shutter time %.6f: %s",
+                 sampleTime, cerr.c_str());
+            traced = false;
+            break;
+          }
+        }
+        OrbitCamera sampleCamera = camera_;
+        RtCameraLens sampleLens = cameraLens_;
+        if ((nextStageSnapshot_ || (!useNextLoader_ && loaded_.ok)) &&
+            !cameraName_.empty()) {
+          NextCameraPose samplePose;
+          if (FindCameraPoseAtTime(
+                  useNextLoader_ ? nextStageSnapshot_.get() : nullptr,
+                  useNextLoader_ ? nullptr
+                                 : (loaded_.ok ? &loaded_.stage : nullptr),
+                  cameraName_, sampleTime, &samplePose)) {
+            ApplyAuthoredCameraPose(samplePose, draw_, &sampleCamera);
+            sampleLens = MakeRtCameraLens(
+                samplePose.focalLength, samplePose.focusDistance,
+                samplePose.fStop,
+                samplePose.projection == CameraProjection::Perspective);
+          }
+        }
+        sampleCamera.setAspect(static_cast<float>(w) / static_cast<float>(h));
+        const light3d::Mat4 pv = sampleCamera.proj(true) * sampleCamera.view();
+        const light3d::Mat4 inv = pv.inverse();
+        const light3d::Vec3 eye = sampleCamera.eye();
+        const float camPos[3] = {eye.x, eye.y, eye.z};
+        std::vector<uint8_t> sampleRgba;
+        std::vector<float> sampleLinear;
+        uint32_t samplePathCount = 0;
+        if (!cudaTracer_.trace(
+                inv.m, pv.m, camPos, lightDir, clear, sampleCamera.exposure(),
+                rmode, depthScale, sceneMin, sceneExtent, w, h, &sampleRgba,
+                &cerr, rtSamples_, &sampleLens,
+                pathTrace_.enabled ? &pathTrace_ : nullptr,
+                pathTrace_.enabled ? &sampleLinear : nullptr,
+                pathTrace_.enabled ? &samplePathCount : nullptr,
+                static_cast<float>(animFps_ > 0.0
+                                       ? sampleTime / animFps_
+                                       : 0.0),
+                static_cast<float>(sampleTime))) {
+          LOGW("CUDA ray trace failed at shutter time %.6f: %s", sampleTime,
+               cerr.c_str());
+          traced = false;
+          break;
+        }
+        totalPathSamples += samplePathCount;
+        if (cudaMotionSamples == 1) {
+          rgba = std::move(sampleRgba);
+          linear = std::move(sampleLinear);
+          continue;
+        }
+        const size_t valueCount = pathTrace_.enabled
+                                      ? sampleLinear.size()
+                                      : sampleRgba.size();
+        if (motionAccum.empty()) motionAccum.assign(valueCount, 0.0f);
+        if (valueCount != motionAccum.size()) {
+          cerr = "CUDA shutter samples produced different image sizes";
+          traced = false;
+          break;
+        }
+        for (size_t p = 0; p < valueCount; ++p) {
+          float value = pathTrace_.enabled
+                            ? sampleLinear[p]
+                            : static_cast<float>(sampleRgba[p]) / 255.0f;
+          if (!pathTrace_.enabled && (p & 3u) != 3u) {
+            value = value <= 0.04045f
+                        ? value / 12.92f
+                        : std::pow((value + 0.055f) / 1.055f, 2.4f);
+          }
+          motionAccum[p] += value;
+        }
+      }
+      if (traced && cudaMotionSamples > 1) {
+        for (float& value : motionAccum)
+          value /= static_cast<float>(cudaMotionSamples);
+        if (pathTrace_.enabled) {
+          linear = std::move(motionAccum);
+        } else {
+          rgba.resize(motionAccum.size());
+          for (size_t p = 0; p < motionAccum.size(); ++p) {
+            float value = motionAccum[p];
+            if ((p & 3u) != 3u) {
+              value = value <= 0.0031308f
+                          ? 12.92f * value
+                          : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
+            }
+            rgba[p] = static_cast<uint8_t>(
+                std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
+          }
+        }
+        LOGI("CUDA motion blur: %u shutter samples over %.6f..%.6f",
+             cudaMotionSamples, animTime_ + cameraShutter_.open,
+             animTime_ + cameraShutter_.close);
+      }
+      pathTraceRenderedSamples_ = totalPathSamples;
+      if (traced) {
         // CUDA/OptiX initializes after the renderer's startup capability line.
         // Re-emit the stable line now that effective transport and acceleration
         // memory are authoritative for automation consumers.
@@ -7964,8 +9073,6 @@ int App::run(const std::string& initialFile, int maxFrames,
           else
             LOGW("CUDA linear EXR write failed: %s", werr.c_str());
         }
-      } else {
-        LOGW("CUDA ray trace failed: %s", cerr.c_str());
       }
     }
     return finishRun(0);  // CUDA owns the screenshot.
@@ -7975,7 +9082,17 @@ int App::run(const std::string& initialFile, int maxFrames,
   // hiprtc loaded at runtime via hipew). Same scene flatten / BVH / kernel.
   if (hipRt_ && !screenshot.empty() && !draw_.empty()) {
     std::string cerr;
-    poseNextDrawForTracer(animTime_);  // as CUDA above
+    const ShutterMotionPlan hipMotion = MakeShutterMotionPlan(
+        draw_, useNextLoader_ ? nextStageSnapshot_.get() : nullptr, cameraName_,
+        animTime_, cameraShutter_, pathTrace_.motionSegments,
+        useNextLoader_ ? nullptr : (loaded_.ok ? &loaded_.stage : nullptr));
+    const uint32_t hipMotionSamples = hipMotion.sampleCount;
+    const double hipFirstTime = hipMotion.sampleTime(0);
+    if (nextStageSnapshot_) {
+      restoreNextDrawRestPose();
+      UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_, hipFirstTime);
+      poseNextDrawForTracer(hipFirstTime);
+    }
     ensureRtTexturePayloads();         // as CUDA above
     // A windowed --frames run already built (and per-pose refit/rebuilt) the
     // interactive scene at this very time code: trace THAT instead of paying a
@@ -7988,7 +9105,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     // exact timestamp here rebuilt the whole scene after every windowed
     // --frames capture even though the HIP viewport had just traced it.
     const bool reuseInteractive =
-        hipInteractiveBuilt_ &&
+        hipMotionSamples == 1 && hipInteractiveBuilt_ &&
         (!sceneIsNextDeformable() || animTime_ == nextTracerPosedTime_);
     if (!hipTracer_.init(&cerr)) {
       LOGW("HIP ray tracing unavailable: %s", cerr.c_str());
@@ -8010,10 +9127,6 @@ int App::run(const std::string& initialFile, int maxFrames,
       }
       if (w <= 0 || h <= 0) { w = 1024; h = 768; }
       camera_.setAspect(static_cast<float>(w) / static_cast<float>(h));
-      const light3d::Mat4 pv = camera_.proj(/*zeroToOneDepth=*/true) * camera_.view();
-      const light3d::Mat4 inv = pv.inverse();
-      const light3d::Vec3 eye = camera_.eye();
-      const float camPos[3] = {eye.x, eye.y, eye.z};
       float lightDir[3];
       CopyPreviewLightDir(draw_, lightDir);
       const float clear[3] = {0.12f, 0.12f, 0.13f};
@@ -8033,13 +9146,117 @@ int App::run(const std::string& initialFile, int maxFrames,
       std::vector<uint8_t> rgba;
       std::vector<float> linear;
       pathTraceRenderedSamples_ = 0;
-      if (hipTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
-                           sceneExtent, w, h, &rgba, &cerr, rtSamples_,
-                           &cameraLens_, pathTrace_.enabled ? &pathTrace_ : nullptr,
-                           pathTrace_.enabled ? &linear : nullptr,
-                           pathTrace_.enabled ? &pathTraceRenderedSamples_ : nullptr,
-                           static_cast<float>(animFps_ > 0.0 ? animTime_ / animFps_ : 0.0),
-                           static_cast<float>(animTime_))) {
+      std::vector<float> motionAccum;
+      uint32_t totalPathSamples = 0;
+      bool traced = true;
+      for (uint32_t sampleIndex = 0; sampleIndex < hipMotionSamples;
+           ++sampleIndex) {
+        const double sampleTime = hipMotion.sampleTime(sampleIndex);
+        if (sampleIndex > 0) {
+          restoreNextDrawRestPose();
+          UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_, sampleTime);
+          poseNextDrawForTracer(sampleTime);
+          if (!hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
+                                gui_.displacementScale(), nullptr, false,
+                                gui_.purposeVisibleMask())) {
+            LOGW("HIP ray tracing build failed at shutter time %.6f: %s",
+                 sampleTime, cerr.c_str());
+            traced = false;
+            break;
+          }
+        }
+        OrbitCamera sampleCamera = camera_;
+        RtCameraLens sampleLens = cameraLens_;
+        if ((nextStageSnapshot_ || (!useNextLoader_ && loaded_.ok)) &&
+            !cameraName_.empty()) {
+          NextCameraPose samplePose;
+          if (FindCameraPoseAtTime(
+                  useNextLoader_ ? nextStageSnapshot_.get() : nullptr,
+                  useNextLoader_ ? nullptr
+                                 : (loaded_.ok ? &loaded_.stage : nullptr),
+                  cameraName_, sampleTime, &samplePose)) {
+            ApplyAuthoredCameraPose(samplePose, draw_, &sampleCamera);
+            sampleLens = MakeRtCameraLens(
+                samplePose.focalLength, samplePose.focusDistance,
+                samplePose.fStop,
+                samplePose.projection == CameraProjection::Perspective);
+          }
+        }
+        sampleCamera.setAspect(static_cast<float>(w) / static_cast<float>(h));
+        const light3d::Mat4 pv = sampleCamera.proj(true) * sampleCamera.view();
+        const light3d::Mat4 inv = pv.inverse();
+        const light3d::Vec3 eye = sampleCamera.eye();
+        const float camPos[3] = {eye.x, eye.y, eye.z};
+        std::vector<uint8_t> sampleRgba;
+        std::vector<float> sampleLinear;
+        uint32_t samplePathCount = 0;
+        if (!hipTracer_.trace(
+                inv.m, pv.m, camPos, lightDir, clear, sampleCamera.exposure(),
+                rmode, depthScale, sceneMin, sceneExtent, w, h, &sampleRgba,
+                &cerr, rtSamples_, &sampleLens,
+                pathTrace_.enabled ? &pathTrace_ : nullptr,
+                pathTrace_.enabled ? &sampleLinear : nullptr,
+                pathTrace_.enabled ? &samplePathCount : nullptr,
+                static_cast<float>(animFps_ > 0.0
+                                       ? sampleTime / animFps_
+                                       : 0.0),
+                static_cast<float>(sampleTime))) {
+          LOGW("HIP ray trace failed at shutter time %.6f: %s", sampleTime,
+               cerr.c_str());
+          traced = false;
+          break;
+        }
+        totalPathSamples += samplePathCount;
+        if (hipMotionSamples == 1) {
+          rgba = std::move(sampleRgba);
+          linear = std::move(sampleLinear);
+          continue;
+        }
+        const size_t valueCount = pathTrace_.enabled
+                                      ? sampleLinear.size()
+                                      : sampleRgba.size();
+        if (motionAccum.empty()) motionAccum.assign(valueCount, 0.0f);
+        if (valueCount != motionAccum.size()) {
+          cerr = "HIP shutter samples produced different image sizes";
+          traced = false;
+          break;
+        }
+        for (size_t p = 0; p < valueCount; ++p) {
+          float value = pathTrace_.enabled
+                            ? sampleLinear[p]
+                            : static_cast<float>(sampleRgba[p]) / 255.0f;
+          if (!pathTrace_.enabled && (p & 3u) != 3u) {
+            value = value <= 0.04045f
+                        ? value / 12.92f
+                        : std::pow((value + 0.055f) / 1.055f, 2.4f);
+          }
+          motionAccum[p] += value;
+        }
+      }
+      if (traced && hipMotionSamples > 1) {
+        for (float& value : motionAccum)
+          value /= static_cast<float>(hipMotionSamples);
+        if (pathTrace_.enabled) {
+          linear = std::move(motionAccum);
+        } else {
+          rgba.resize(motionAccum.size());
+          for (size_t p = 0; p < motionAccum.size(); ++p) {
+            float value = motionAccum[p];
+            if ((p & 3u) != 3u) {
+              value = value <= 0.0031308f
+                          ? 12.92f * value
+                          : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
+            }
+            rgba[p] = static_cast<uint8_t>(
+                std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
+          }
+        }
+        LOGI("HIP motion blur: %u shutter samples over %.6f..%.6f",
+             hipMotionSamples, animTime_ + cameraShutter_.open,
+             animTime_ + cameraShutter_.close);
+      }
+      pathTraceRenderedSamples_ = totalPathSamples;
+      if (traced) {
         reportCaptureWidth_ = w;
         reportCaptureHeight_ = h;
         std::string werr;
@@ -8061,8 +9278,6 @@ int App::run(const std::string& initialFile, int maxFrames,
           else
             LOGW("HIP linear EXR write failed: %s", werr.c_str());
         }
-      } else {
-        LOGW("HIP ray trace failed: %s", cerr.c_str());
       }
     }
     return finishRun(0);  // HIP owns the screenshot.
@@ -8073,22 +9288,12 @@ int App::run(const std::string& initialFile, int maxFrames,
   // compositor available to deterministic, display-free regression tests.
   if (cpuRt_ && headless_ && !screenshot.empty() && !draw_.empty()) {
     std::string cerr;
-    poseNextDrawForTracer(animTime_);
     ensureRtTexturePayloads();
-    if (!cpuTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
-                          gui_.displacementScale(), nullptr,
-                          gui_.purposeVisibleMask())) {
-      LOGW("CPU ray tracing build failed: %s", cerr.c_str());
-    } else {
+    {
       int w = 0, h = 0;
       getRequestedWindowSize(&w, &h);
       if (w <= 0 || h <= 0) { w = 1024; h = 768; }
       camera_.setAspect(static_cast<float>(w) / static_cast<float>(h));
-      const light3d::Mat4 pv =
-          camera_.proj(/*zeroToOneDepth=*/true) * camera_.view();
-      const light3d::Mat4 inv = pv.inverse();
-      const light3d::Vec3 eye = camera_.eye();
-      const float camPos[3] = {eye.x, eye.y, eye.z};
       float lightDir[3];
       CopyPreviewLightDir(draw_, lightDir);
       const float clear[3] = {0.12f, 0.12f, 0.13f};
@@ -8108,10 +9313,106 @@ int App::run(const std::string& initialFile, int maxFrames,
         }
       }
       std::vector<uint8_t> rgba;
-      if (cpuTracer_.trace(inv.m, pv.m, camPos, lightDir, clear,
-                           camera_.exposure(), rmode, depthScale, sceneMin,
-                           sceneExtent, w, h, &rgba, &cerr, rtSamples_,
-                           &cameraLens_)) {
+      // The CPU preview tracer owns a complete immutable BVH for each build.
+      // Rebuilding it at deterministic shutter midpoints gives this backend a
+      // simple, reference-quality motion-blur path and, more importantly, an
+      // oracle for the GPU backends.  The stage evaluator supplies both animated
+      // object transforms and skinned/morphed vertices at the same sample time.
+      // A closed shutter, legacy-loader scene, or static next scene keeps the
+      // original one-build/one-trace behavior.
+      const ShutterMotionPlan cpuMotion = MakeShutterMotionPlan(
+          draw_, useNextLoader_ ? nextStageSnapshot_.get() : nullptr,
+          cameraName_, animTime_, cameraShutter_, pathTrace_.motionSegments,
+          useNextLoader_ ? nullptr : (loaded_.ok ? &loaded_.stage : nullptr));
+      const uint32_t motionSamples = cpuMotion.sampleCount;
+      std::vector<float> motionAccum;
+      bool traced = true;
+      for (uint32_t sampleIndex = 0; sampleIndex < motionSamples;
+           ++sampleIndex) {
+        const double sampleTime = cpuMotion.sampleTime(sampleIndex);
+        if (nextStageSnapshot_) {
+          restoreNextDrawRestPose();
+          UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_, sampleTime);
+          poseNextDrawForTracer(sampleTime);
+        }
+        OrbitCamera sampleCamera = camera_;
+        RtCameraLens sampleLens = cameraLens_;
+        if ((nextStageSnapshot_ || (!useNextLoader_ && loaded_.ok)) &&
+            !cameraName_.empty()) {
+          NextCameraPose samplePose;
+          if (FindCameraPoseAtTime(
+                  useNextLoader_ ? nextStageSnapshot_.get() : nullptr,
+                  useNextLoader_ ? nullptr
+                                 : (loaded_.ok ? &loaded_.stage : nullptr),
+                  cameraName_, sampleTime, &samplePose)) {
+            ApplyAuthoredCameraPose(samplePose, draw_, &sampleCamera);
+            sampleLens = MakeRtCameraLens(
+                samplePose.focalLength, samplePose.focusDistance,
+                samplePose.fStop,
+                samplePose.projection == CameraProjection::Perspective);
+          }
+        }
+        sampleCamera.setAspect(static_cast<float>(w) / static_cast<float>(h));
+        const light3d::Mat4 pv =
+            sampleCamera.proj(/*zeroToOneDepth=*/true) * sampleCamera.view();
+        const light3d::Mat4 inv = pv.inverse();
+        const light3d::Vec3 eye = sampleCamera.eye();
+        const float camPos[3] = {eye.x, eye.y, eye.z};
+        if (!cpuTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
+                              gui_.displacementScale(), nullptr,
+                              gui_.purposeVisibleMask())) {
+          LOGW("CPU ray tracing build failed at shutter time %.6f: %s",
+               sampleTime, cerr.c_str());
+          traced = false;
+          break;
+        }
+        std::vector<uint8_t> sampleRgba;
+        if (!cpuTracer_.trace(inv.m, pv.m, camPos, lightDir, clear,
+                              sampleCamera.exposure(), rmode, depthScale, sceneMin,
+                              sceneExtent, w, h, &sampleRgba, &cerr, rtSamples_,
+                              &sampleLens)) {
+          LOGW("CPU ray trace failed at shutter time %.6f: %s", sampleTime,
+               cerr.c_str());
+          traced = false;
+          break;
+        }
+        if (motionSamples == 1) {
+          rgba = std::move(sampleRgba);
+          continue;
+        }
+        if (motionAccum.empty()) motionAccum.assign(sampleRgba.size(), 0.0f);
+        if (sampleRgba.size() != motionAccum.size()) {
+          cerr = "shutter samples produced different image sizes";
+          traced = false;
+          break;
+        }
+        for (size_t p = 0; p < sampleRgba.size(); ++p) {
+          float value = static_cast<float>(sampleRgba[p]) / 255.0f;
+          if ((p & 3u) != 3u) {
+            value = value <= 0.04045f
+                        ? value / 12.92f
+                        : std::pow((value + 0.055f) / 1.055f, 2.4f);
+          }
+          motionAccum[p] += value;
+        }
+      }
+      if (traced && motionSamples > 1) {
+        rgba.resize(motionAccum.size());
+        for (size_t p = 0; p < motionAccum.size(); ++p) {
+          float value = motionAccum[p] / static_cast<float>(motionSamples);
+          if ((p & 3u) != 3u) {
+            value = value <= 0.0031308f
+                        ? 12.92f * value
+                        : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
+          }
+          rgba[p] = static_cast<uint8_t>(
+              std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
+        }
+        LOGI("CPU motion blur: %u shutter samples over %.6f..%.6f",
+             motionSamples, animTime_ + cameraShutter_.open,
+             animTime_ + cameraShutter_.close);
+      }
+      if (traced) {
         reportCaptureWidth_ = w;
         reportCaptureHeight_ = h;
         std::string werr;
@@ -8123,8 +9424,6 @@ int App::run(const std::string& initialFile, int maxFrames,
         } else {
           LOGW("CPU RT screenshot write failed: %s", werr.c_str());
         }
-      } else {
-        LOGW("CPU ray trace failed: %s", cerr.c_str());
       }
     }
     return finishRun(0);
@@ -8161,7 +9460,115 @@ int App::run(const std::string& initialFile, int maxFrames,
       LOGW("Vulkan linear EXR write failed: %s", linearErr.c_str());
     }
   }
-  if (modeSweep_.empty() && !wrotePathDisplay)
+  bool wroteStereoCapture = false;
+  if (stereoRequested_ && !screenshot.empty() && modeSweep_.empty() &&
+      !pathTrace_.enabled) {
+#if defined(LUSDVIEW_ENABLE_GL_THREAD)
+    const bool canRenderStereoInline = !renderThreadActive_;
+#else
+    const bool canRenderStereoInline = true;
+#endif
+    StereoCameraPair pair;
+    std::string stereoError;
+    if (canRenderStereoInline &&
+        ResolveStereoCameraPair(draw_.cameras, cameraName_, &pair,
+                                &stereoError)) {
+      const OrbitCamera savedCamera = camera_;
+      const RtCameraLens savedLens = gui_.cameraLens();
+      const RtCameraShutter savedShutter = gui_.cameraShutter();
+      const std::vector<float> savedClipping = gui_.cameraClippingPlanes();
+      std::vector<uint8_t> eyePixels[2];
+      int eyeWidth[2] = {0, 0};
+      int eyeHeight[2] = {0, 0};
+      bool eyesOk = true;
+      const int eyeIndices[2] = {pair.left, pair.right};
+      for (int eyeIndex = 0; eyeIndex < 2 && eyesOk; ++eyeIndex) {
+        const DrawCameraCPU& eyeCamera =
+            draw_.cameras[static_cast<size_t>(eyeIndices[eyeIndex])];
+        const std::string eyeName =
+            eyeCamera.absPath.empty() ? eyeCamera.name : eyeCamera.absPath;
+        NextCameraPose eyePose;
+        const bool havePose =
+            useNextLoader_ && nextStageSnapshot_
+                ? FindNextCamera(*nextStageSnapshot_, eyeName, animTime_,
+                                 &eyePose)
+                : (loaded_.ok &&
+                   FindLegacyCameraAtTime(loaded_.stage, eyeName, animTime_,
+                                          &eyePose));
+        if (!havePose) {
+          LOGW("stereo: could not evaluate eye camera '%s'", eyeName.c_str());
+          eyesOk = false;
+          break;
+        }
+        camera_ = savedCamera;
+        ApplyAuthoredCameraPose(eyePose, draw_, &camera_);
+        gui_.setCameraLens(MakeRtCameraLens(
+            eyePose.focalLength, eyePose.focusDistance, eyePose.fStop,
+            eyePose.projection == CameraProjection::Perspective));
+        RtCameraShutter eyeShutter;
+        eyeShutter.open = eyePose.shutterOpen;
+        eyeShutter.close = eyePose.shutterClose;
+        gui_.setCameraShutter(eyeShutter);
+        gui_.setCameraClippingPlanes(eyePose.clippingPlanes);
+        gui_.renderViewportScene();
+        // OpenGL renders the viewport immediately, while Vulkan records these
+        // parameters and executes the raster pass from present(). Re-presenting
+        // the already finalized ImGui draw data here makes captureViewport()
+        // observe this eye on both backends.
+        renderer_->present();
+        eyesOk = renderer_->captureViewport(
+            &eyePixels[eyeIndex], &eyeWidth[eyeIndex], &eyeHeight[eyeIndex]);
+      }
+
+      camera_ = savedCamera;
+      gui_.setCameraLens(savedLens);
+      gui_.setCameraShutter(savedShutter);
+      gui_.setCameraClippingPlanes(savedClipping);
+      gui_.renderViewportScene();
+      renderer_->present();
+
+      if (eyesOk && eyeWidth[0] > 0 && eyeHeight[0] > 0 &&
+          eyeWidth[0] == eyeWidth[1] && eyeHeight[0] == eyeHeight[1]) {
+        const int stereoWidth = eyeWidth[0] * 2;
+        const int stereoHeight = eyeHeight[0];
+        std::vector<uint8_t> stereoPixels(
+            static_cast<size_t>(stereoWidth) * static_cast<size_t>(stereoHeight) *
+            4u);
+        const size_t eyeRowBytes = static_cast<size_t>(eyeWidth[0]) * 4u;
+        const size_t stereoRowBytes = eyeRowBytes * 2u;
+        for (int y = 0; y < stereoHeight; ++y) {
+          uint8_t* dst = stereoPixels.data() +
+                         static_cast<size_t>(y) * stereoRowBytes;
+          std::copy_n(eyePixels[0].data() +
+                          static_cast<size_t>(y) * eyeRowBytes,
+                      eyeRowBytes, dst);
+          std::copy_n(eyePixels[1].data() +
+                          static_cast<size_t>(y) * eyeRowBytes,
+                      eyeRowBytes, dst + eyeRowBytes);
+        }
+        std::string shotError;
+        wroteStereoCapture = WriteScreenshotImage(
+            screenshot, stereoPixels, stereoWidth, stereoHeight, &shotError);
+        if (wroteStereoCapture) {
+          stereoCaptureComposed_ = true;
+          reportCaptureWidth_ = stereoWidth;
+          reportCaptureHeight_ = stereoHeight;
+          LOGI("stereo: wrote side-by-side capture %s (%dx%d)",
+               screenshot.c_str(), stereoWidth, stereoHeight);
+        } else {
+          LOGW("stereo capture write failed: %s", shotError.c_str());
+        }
+      } else if (eyesOk) {
+        LOGW("stereo: eye capture dimensions differ (%dx%d vs %dx%d)",
+             eyeWidth[0], eyeHeight[0], eyeWidth[1], eyeHeight[1]);
+      }
+    } else if (!canRenderStereoInline) {
+      LOGW("stereo: native capture is unavailable with the threaded renderer");
+    } else {
+      LOGW("stereo: %s", stereoError.c_str());
+    }
+  }
+  if (modeSweep_.empty() && !wrotePathDisplay && !wroteStereoCapture)
     shot(screenshot, /*window=*/false);
   shot(windowShot_, /*window=*/true);
   return finishRun(0);

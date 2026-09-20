@@ -13,6 +13,8 @@
 #include <vector>
 #include <string>
 #include <cstring>
+#include <sstream>
+#include "minijson.hh"
 
 // LightUSD reader headers
 #include "lightusd.hh"
@@ -170,7 +172,7 @@ public:
       DumpJSON(reader, data.data(), file_size);
     }
 
-    return true;
+    return static_cast<bool>(std::cout);
   }
 
 private:
@@ -615,8 +617,122 @@ private:
   }
 
   void DumpJSON(const CrateReader& reader, const uint8_t* data, size_t size) {
-    // JSON implementation (simplified for now)
-    std::cerr << "JSON output not yet implemented" << std::endl;
+    using Json = lightusd::minijson::Value;
+    Json root = Json::object();
+    root["schemaVersion"] = 1;
+    root["file"] = filename_;
+    root["size"] = uint64_t(size);
+    // Values are serialized as structural records, never decoded into large
+    // arrays. Hex strings retain all 64 bits for JavaScript consumers.
+    auto hex = [](uint64_t v) {
+      std::ostringstream s;
+      s << "0x" << std::hex << v;
+      return s.str();
+    };
+    auto u64 = [&](size_t offset) {
+      uint64_t v = 0;
+      if (offset <= size && size - offset >= 8) {
+        for (unsigned i = 0; i < 8; ++i)
+          v |= uint64_t(data[offset + i]) << (i * 8);
+      }
+      return v;
+    };
+    if (opts_.show_bootstrap && size >= 24) {
+      root["bootstrap"] = Json{{"magic", std::string(reinterpret_cast<const char*>(data), 8)},
+          {"version", Json::array({data[8], data[9], data[10]})},
+          {"toc_offset", u64(16)}};
+      if (opts_.show_hex) {
+        std::ostringstream s;
+        for (size_t i = 0; i < 16; ++i)
+          s << std::hex << std::setw(2) << std::setfill('0') << unsigned(data[i]);
+        root["bootstrap"]["hex"] = s.str();
+      }
+    }
+    if (opts_.show_toc) {
+      const uint64_t offset = u64(16);
+      Json sections = Json::array();
+      if (offset <= size && size - size_t(offset) >= 8) {
+        const uint64_t count = u64(size_t(offset));
+        size_t pos = size_t(offset) + 8;
+        for (uint64_t i = 0; i < count && size - pos >= 32; ++i, pos += 32) {
+          size_t n = 0;
+          while (n < 16 && data[pos + n]) ++n;
+          sections.push_back(Json{{"name", std::string(reinterpret_cast<const char*>(data + pos), n)},
+              {"byte_offset", u64(pos + 16)}, {"size", u64(pos + 24)}});
+        }
+        root["table_of_contents"] = Json{{"byte_offset", offset},
+            {"num_sections", count}, {"sections", sections}};
+      }
+    }
+    auto table = [&](const char* name, size_t count, int limit, auto record) {
+      Json values = Json::array();
+      size_t matched = 0;
+      for (size_t i = 0; i < count; ++i) {
+        Json item = record(i);
+        if (item.is_null()) continue;
+        ++matched;
+        if (limit <= 0 || values.size() < size_t(limit))
+          values.push_back(std::move(item));
+      }
+      root[name] = Json{{"count", uint64_t(count)}, {"matched", uint64_t(matched)},
+          {"truncated", values.size() < matched}, {"values", values}};
+    };
+    const auto& tokens = reader.GetTokens();
+    const auto& paths = reader.GetPaths();
+    if (opts_.show_tokens) table("tokens", tokens.size(), opts_.max_tokens, [&](size_t i) -> Json {
+      if (!ContainsFilter(tokens[i].str(), opts_.token_filter)) return nullptr;
+      return Json{{"index", uint64_t(i)}, {"value", tokens[i].str()}};
+    });
+    const auto& strings = reader.GetStringIndices();
+    if (opts_.show_strings) table("strings", strings.size(), opts_.max_strings, [&](size_t i) {
+      Json item{{"index", uint64_t(i)}, {"token_index", strings[i].value}};
+      if (strings[i].value < tokens.size()) item["value"] = tokens[strings[i].value].str();
+      return item;
+    });
+    const auto& fields = reader.GetFields();
+    if (opts_.show_fields) table("fields", fields.size(), opts_.max_fields, [&](size_t i) -> Json {
+      const auto& f = fields[i];
+      const std::string name = f.token_index.value < tokens.size() ? tokens[f.token_index.value].str() : "";
+      if (!ContainsFilter(name, opts_.token_filter)) return nullptr;
+      const auto& r = f.value_rep;
+      const auto type = GetCrateDataType(r.GetType());
+      return Json{{"index", uint64_t(i)}, {"token_index", f.token_index.value}, {"name", name},
+          {"value_rep", Json{{"data", hex(r.GetData())}, {"type_code", r.GetType()},
+              {"type_info", type && type.value().name ? type.value().name : "unknown"},
+              {"is_inlined", r.IsInlined()}, {"is_compressed", r.IsCompressed()},
+              {"is_array", r.IsArray()}, {"payload", r.GetPayload()}}}};
+    });
+    if (opts_.show_fieldsets) {
+      Json values = Json::array(), current = Json::array();
+      const auto& indices = reader.GetFieldsetIndices();
+      size_t count = 0, offset = 0;
+      for (size_t i = 0; i < indices.size(); ++i) {
+        if (indices[i].value != ~0u) { current.push_back(indices[i].value); continue; }
+        if (opts_.max_fieldsets <= 0 || count < size_t(opts_.max_fieldsets))
+          values.push_back(Json{{"index", uint64_t(count)}, {"offset", uint64_t(offset)},
+              {"field_count", uint64_t(current.size())}, {"field_indices", current}});
+        ++count;
+        offset = i + 1;
+        current = Json::array();
+      }
+      root["fieldsets"] = Json{{"raw_count", uint64_t(indices.size())},
+          {"fieldset_count", uint64_t(count)}, {"truncated", values.size() < count}, {"values", values}};
+    }
+    if (opts_.show_paths) table("paths", paths.size(), opts_.max_paths, [&](size_t i) -> Json {
+      if (!ContainsFilter(CratePathString(paths[i]), opts_.path_filter)) return nullptr;
+      return Json{{"index", uint64_t(i)}, {"prim", paths[i].full_path_name()},
+          {"property", std::string(paths[i].prop_part())}, {"path", CratePathString(paths[i])}};
+    });
+    const auto& specs = reader.GetSpecs();
+    if (opts_.show_specs) table("specs", specs.size(), opts_.max_specs, [&](size_t i) -> Json {
+      const auto& s = specs[i];
+      const std::string path = s.path_index.value < paths.size() ? CratePathString(paths[s.path_index.value]) : "";
+      if (!ContainsFilter(path, opts_.path_filter)) return nullptr;
+      return Json{{"index", uint64_t(i)}, {"path_index", s.path_index.value}, {"path", path},
+          {"fieldset_index", s.fieldset_index.value}, {"spec_type", int(s.spec_type)},
+          {"spec_type_name", GetSpecTypeName(s.spec_type)}};
+    });
+    std::cout << root.dump(2) << '\n';
   }
 
   std::ostream& out() {

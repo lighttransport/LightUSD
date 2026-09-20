@@ -462,8 +462,9 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
       mb.instTint.push_back(std::max(0.0f, std::min(1.0f, opacity)));
     }
   } else {
-    float o2w[12];
-    Mat4ToO2W(m.world, o2w);
+    const float o2w[12] = {1.0f, 0.0f, 0.0f, 0.0f,
+                           0.0f, 1.0f, 0.0f, 0.0f,
+                           0.0f, 0.0f, 1.0f, 0.0f};
     mb.instO2W.insert(mb.instO2W.end(), o2w, o2w + 12);
     mb.instTint.push_back(1.0f); mb.instTint.push_back(1.0f);
     mb.instTint.push_back(1.0f); mb.instTint.push_back(1.0f);
@@ -1424,6 +1425,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   if (refitOut) {
     refitOut->valid = false;
     refitOut->meshes.clear();
+    refitOut->instances.clear();
   }
   // Refit rewrites positions/normals only, so it cannot reproduce a DISPLACED
   // flatten (it re-samples textures per pose). displacementScale alone is not
@@ -1839,6 +1841,16 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
       s.proto = proto;
       s.meshIndex = sourceSceneMesh[mbi];
       isrc.push_back(s);
+      if (recordRefit) {
+        RefitInstanceMap im;
+        if (sourceSceneMesh[mbi] >= 0)
+          im.sceneMesh = static_cast<size_t>(sourceSceneMesh[mbi]);
+        im.sceneInstance = k;
+        im.instanced = sourceSceneMesh[mbi] >= 0 &&
+            !scene.meshes[static_cast<size_t>(sourceSceneMesh[mbi])]
+                 .instanceXforms.empty();
+        refitOut->instances.push_back(im);
+      }
     }
     if (np > 0 && isrc.size() >= instCap) out->truncated = true;
     }
@@ -2133,6 +2145,10 @@ bool RefitHostScene(const DrawScene& scene, const RefitMap& map, HostScene* hs,
       return false;
     }
   }
+  if (map.instances.size() != hs->instances.size()) {
+    if (err) *err = "refit: instance list changed";
+    return false;
+  }
 
   // 1. Rewrite positions + normals in the recorded leaf order (same values a
   //    fresh flatten would emit for this pose; everything else -- uvs, colors,
@@ -2140,6 +2156,10 @@ bool RefitHostScene(const DrawScene& scene, const RefitMap& map, HostScene* hs,
   ParallelFor(map.meshes.size(), [&](size_t i) {
     const RefitMeshMap& rm = map.meshes[i];
     const DrawMeshCPU& m = scene.meshes[rm.sceneMesh];
+    float worldO2W[12];
+    float worldW2O[12];
+    Mat4ToO2W(m.world, worldO2W);
+    const bool invertible = Affine3x4Inverse(worldO2W, worldW2O);
     const size_t triCount = rm.leafOrder.size();
     for (size_t o = 0; o < triCount; ++o) {
       const size_t s = static_cast<size_t>(rm.leafOrder[o]);
@@ -2147,8 +2167,27 @@ bool RefitHostScene(const DrawScene& scene, const RefitMap& map, HostScene* hs,
       float* np = &hs->nrms[(rm.triOffset + o) * 9];
       for (int k = 0; k < 3; ++k) {
         const DrawVertex& vtx = m.vertices[m.indices[s * 3 + k]];
-        tp[k * 3 + 0] = vtx.px; tp[k * 3 + 1] = vtx.py; tp[k * 3 + 2] = vtx.pz;
-        np[k * 3 + 0] = vtx.nx; np[k * 3 + 1] = vtx.ny; np[k * 3 + 2] = vtx.nz;
+        tp[k * 3 + 0] = m.world[0] * vtx.px + m.world[4] * vtx.py +
+                        m.world[8] * vtx.pz + m.world[12];
+        tp[k * 3 + 1] = m.world[1] * vtx.px + m.world[5] * vtx.py +
+                        m.world[9] * vtx.pz + m.world[13];
+        tp[k * 3 + 2] = m.world[2] * vtx.px + m.world[6] * vtx.py +
+                        m.world[10] * vtx.pz + m.world[14];
+        if (invertible) {
+          np[k * 3 + 0] = worldW2O[0] * vtx.nx + worldW2O[4] * vtx.ny +
+                          worldW2O[8] * vtx.nz;
+          np[k * 3 + 1] = worldW2O[1] * vtx.nx + worldW2O[5] * vtx.ny +
+                          worldW2O[9] * vtx.nz;
+          np[k * 3 + 2] = worldW2O[2] * vtx.nx + worldW2O[6] * vtx.ny +
+                          worldW2O[10] * vtx.nz;
+        } else {
+          np[k * 3 + 0] = m.world[0] * vtx.nx + m.world[4] * vtx.ny +
+                          m.world[8] * vtx.nz;
+          np[k * 3 + 1] = m.world[1] * vtx.nx + m.world[5] * vtx.ny +
+                          m.world[9] * vtx.nz;
+          np[k * 3 + 2] = m.world[2] * vtx.nx + m.world[6] * vtx.ny +
+                          m.world[10] * vtx.nz;
+        }
       }
     }
   });
@@ -2180,12 +2219,21 @@ bool RefitHostScene(const DrawScene& scene, const RefitMap& map, HostScene* hs,
     }
   }
 
-  // 3. Instance world AABBs: each Inst's blasRoot node now carries the mesh's
-  //    refit prototype bounds; worlds are static on this path (the deform is
-  //    vertex-level), so o2w is reused as-is.
+  // 3. Refresh instance transforms and world AABBs. Animated ordinary meshes
+  //    use DrawMeshCPU::world; PointInstancer placements use instanceXforms.
   std::vector<float> instAabb(hs->instances.size() * 6);
   ParallelFor(hs->instances.size(), [&](size_t i) {
-    const Inst& I = hs->instances[i];
+    Inst& I = hs->instances[i];
+    const RefitInstanceMap& im = map.instances[i];
+    if (im.sceneMesh != ~size_t(0) && im.sceneMesh < scene.meshes.size()) {
+      const DrawMeshCPU& mesh = scene.meshes[im.sceneMesh];
+      if (im.instanced) {
+        const size_t begin = im.sceneInstance * 12;
+        if (begin + 12 <= mesh.instanceXforms.size())
+          std::copy_n(mesh.instanceXforms.data() + begin, 12, I.o2w);
+      }
+      Affine3x4Inverse(I.o2w, I.w2o);
+    }
     const Node& root = hs->blas[static_cast<size_t>(I.blasRoot)];
     float wlo[3], whi[3];
     O2WAabb(I.o2w, root.bmin, root.bmax, wlo, whi);

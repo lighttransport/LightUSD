@@ -97,6 +97,7 @@ set(LUSDVIEW_SOURCES
     config.cc
     scene_loader.cc
     scene_optimize.cc
+    incremental_scene_update.cc
     next_scene_loader.cc
     preview_cache.cc
     texture_residency_policy.cc
@@ -110,6 +111,7 @@ set(LUSDVIEW_SOURCES
     ${PROJECT_SOURCE_DIR}/examples/vchar/autorigger_client.cc
     vchar_control_map.cc
     camera_nav.cc
+    camera_stereo.cc
     frame_packet.cc
     gui.cc
     gui_stringify.cc
@@ -224,6 +226,7 @@ set(LIGHTUSD_GPU_RT_COMMON_SOURCES
     texture_tools.cc
     lightrt_mtlx_bridge.cc
     lightrt_mtlx_graph_compile.cc
+    lightrt_mtlx_graph_phases.cc
     lightrt_mtlx_pack.cc
     displacement_bake.cc
     rt_bvh.cc
@@ -405,6 +408,7 @@ if(LIGHTUSD_BUILD_TESTS)
       tests/lightrt_bridge_test.cc
       lightrt_mtlx_bridge.cc
       lightrt_mtlx_graph_compile.cc
+      lightrt_mtlx_graph_phases.cc
       lightrt_mtlx_pack.cc
       lighting_ies.cc
       rt_scene_build.cc
@@ -435,6 +439,7 @@ if(LIGHTUSD_BUILD_TESTS)
       texture_tools.cc
       lightrt_mtlx_bridge.cc
       lightrt_mtlx_graph_compile.cc
+      lightrt_mtlx_graph_phases.cc
       lightrt_mtlx_pack.cc
       lighting_ies.cc
       displacement_bake.cc
@@ -463,6 +468,7 @@ if(LIGHTUSD_BUILD_TESTS)
       texture_tools.cc
       lightrt_mtlx_bridge.cc
       lightrt_mtlx_graph_compile.cc
+      lightrt_mtlx_graph_phases.cc
       lightrt_mtlx_pack.cc
       rt_scene_build.cc
       rt_bvh.cc
@@ -490,6 +496,7 @@ if(LIGHTUSD_BUILD_TESTS)
       texture_tools.cc
       lightrt_mtlx_bridge.cc
       lightrt_mtlx_graph_compile.cc
+      lightrt_mtlx_graph_phases.cc
       lightrt_mtlx_pack.cc
       lighting_ies.cc
       displacement_bake.cc
@@ -515,6 +522,7 @@ if(LIGHTUSD_BUILD_TESTS)
       texture_tools.cc
       lightrt_mtlx_bridge.cc
       lightrt_mtlx_graph_compile.cc
+      lightrt_mtlx_graph_phases.cc
       lightrt_mtlx_pack.cc
       lighting_ies.cc
       displacement_bake.cc
@@ -578,6 +586,17 @@ if(LIGHTUSD_BUILD_TESTS)
       ${CMAKE_CURRENT_SOURCE_DIR}
       ${COMMON_DIR})
 
+  add_executable(lusdview_camera_stereo_test
+      tests/camera_stereo_test.cc
+      camera_stereo.cc)
+  target_compile_features(lusdview_camera_stereo_test PRIVATE cxx_std_17)
+  lusdview_set_warning_flags(lusdview_camera_stereo_test)
+  target_include_directories(lusdview_camera_stereo_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+
   add_executable(lusdview_preview_cache_test
       tests/preview_cache_test.cc
       preview_cache.cc)
@@ -597,6 +616,19 @@ if(LIGHTUSD_BUILD_TESTS)
   target_include_directories(lusdview_texture_residency_policy_test PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR})
 
+  add_executable(lusdview_incremental_scene_update_test
+      tests/incremental_scene_update_test.cc
+      incremental_scene_update.cc)
+  target_compile_features(lusdview_incremental_scene_update_test PRIVATE cxx_std_17)
+  lusdview_set_warning_flags(lusdview_incremental_scene_update_test)
+  target_include_directories(lusdview_incremental_scene_update_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+  target_link_libraries(lusdview_incremental_scene_update_test PRIVATE
+      lightusd_next)
+
   add_executable(lusdview_rt_lod_test
       tests/rt_lod_test.cc
       rt_lod.cc
@@ -613,6 +645,7 @@ if(LIGHTUSD_BUILD_TESTS)
       scene_optimize.cc
       lightrt_mtlx_bridge.cc
       lightrt_mtlx_graph_compile.cc
+      lightrt_mtlx_graph_phases.cc
       lightrt_mtlx_pack.cc
       ${LUSDVIEW_LIGHTRT_MTLX_DIR}/bsdf.c
       $<TARGET_OBJECTS:lusdview_lightrt_mtlx_const>)
@@ -645,8 +678,10 @@ if(LIGHTUSD_BUILD_TESTS)
       lusdview_lightrt_mtlx_graph_connection_test
       lusdview_lightrt_mtlx_graph_evaluation_test
       lusdview_camera_nav_test
+      lusdview_camera_stereo_test
       lusdview_preview_cache_test
       lusdview_texture_residency_policy_test
+      lusdview_incremental_scene_update_test
       lusdview_rt_lod_test
       lusdview_scene_safety_test)
     add_test(NAME ${tv_test} COMMAND ${tv_test})
@@ -936,9 +971,11 @@ set_source_files_properties(
 set_target_properties(${EXAMPLE_TARGET} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  # GCC spends minutes in IPA/PTA when optimizing the large MaterialX graph
-  # compiler at -O2/-O3. Keep the runtime renderer fully optimized while
-  # bounding this editor/compiler-oriented TU's build cost.
+  # The closure-lowering function is dominated by compiler-generated control
+  # flow and GCC still spends over a minute optimizing it at -O1. It runs only
+  # while importing MaterialX graphs, so keep that TU at -O0. The independently
+  # compiled packing/order phase is small enough to use the target's normal
+  # Release optimization level.
   set_source_files_properties(lightrt_mtlx_graph_compile.cc PROPERTIES
-    COMPILE_OPTIONS "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:-O1>")
+    COMPILE_OPTIONS "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:-O0>")
 endif()

@@ -361,14 +361,18 @@ StageChangeFlag ClassifyPropertyChange(const Stage& stage,
     flags |= StageChangeFlag::Visibility;
   }
   if (contains(property, "xformOp") || property == "xformOpOrder" ||
-      property == "resetXformStack") {
+      property == "resetXformStack" || property == "positions" ||
+      property == "orientations" || property == "scales" ||
+      property == "velocities" || property == "angularVelocities") {
     flags |= StageChangeFlag::Transform;
   }
   if (property == "points" || property == "faceVertexCounts" ||
       property == "faceVertexIndices" || property == "curveVertexCounts" ||
-      property == "protoIndices" || property == "prototypes") {
+      property == "protoIndices" || property == "prototypes" ||
+      property == "ids") {
     flags |= StageChangeFlag::Topology;
   }
+  if (property == "invisibleIds") flags |= StageChangeFlag::Visibility;
   if (contains(property, "primvars:") || property == "normals" ||
       property == "widths" || property == "displayColor" ||
       property == "displayOpacity") {
@@ -484,7 +488,9 @@ struct StageSession::Impl {
   // `scene.usdz[root.usda]`.  Keep it separate from the public filename so a
   // released composition cache can be restored against the same package root.
   std::string composition_identifier;
-  AssetResolver resolver;
+  // Cache borrows this object. Transactional Open/Reload moves Impl state;
+  // keep the resolver's address stable across AdoptState.
+  std::unique_ptr<AssetResolver> resolver{new AssetResolver()};
   std::unique_ptr<pcp::Cache> cache;
   std::shared_ptr<Stage> stage{new Stage()};
   uint64_t revision = 0;
@@ -498,6 +504,7 @@ struct StageSession::Impl {
   pcp::CompositionOptions::VariantSelectionMap released_variant_selections;
   std::vector<Path> released_deferred_payloads;
   std::vector<pcp::Cache::CompositionIssue> released_composition_issues;
+  std::vector<std::string> released_layer_dependencies;
 #if defined(LIGHTUSD_ENABLE_THREAD)
   std::thread retiring_cache_thread;
 #endif
@@ -517,6 +524,7 @@ struct StageSession::Impl {
     options = std::move(other.options);
     root_identifier = std::move(other.root_identifier);
     composition_identifier = std::move(other.composition_identifier);
+    cache.reset();  // Destroy borrowers before replacing their resolver.
     resolver = std::move(other.resolver);
     cache = std::move(other.cache);
     stage = std::move(other.stage);
@@ -533,6 +541,8 @@ struct StageSession::Impl {
     released_deferred_payloads = std::move(other.released_deferred_payloads);
     released_composition_issues =
         std::move(other.released_composition_issues);
+    released_layer_dependencies =
+        std::move(other.released_layer_dependencies);
 #if defined(LIGHTUSD_ENABLE_THREAD)
     retiring_cache_thread = std::move(other.retiring_cache_thread);
 #endif
@@ -699,7 +709,7 @@ struct StageSession::Impl {
     const std::string &identifier = composition_identifier.empty()
                                         ? root_identifier
                                         : composition_identifier;
-    auto restored = pcp::Cache::Open(resolver, std::move(root_layer),
+    auto restored = pcp::Cache::Open(*resolver, std::move(root_layer),
                                      identifier, composition);
     if (!restored) {
       error = restored.error();
@@ -898,9 +908,9 @@ StageOperationResult StageSession::OpenFile(
   std::unique_ptr<Impl> next(new Impl());
   next->options = normalized;
   next->root_identifier = filename;
-  next->resolver.SetConfig(normalized.resolver);
-  if (next->resolver.GetWorkingDirectory().empty()) {
-    next->resolver.SetWorkingDirectory(DirOfPath(filename));
+  next->resolver->SetConfig(normalized.resolver);
+  if (next->resolver->GetWorkingDirectory().empty()) {
+    next->resolver->SetWorkingDirectory(DirOfPath(filename));
   }
   if (!next->Progress(ProgressPhase::RootLoad, 0.0f, "loading root layer")) {
     return finish(std::move(next), false);
@@ -975,7 +985,7 @@ StageOperationResult StageSession::OpenFile(
       normalized.load.limits.max_namespace_depth));
   composition.usda_parse_options = normalized.load.usda_options.parse_options;
   std::shared_ptr<Layer> root_layer(root.ReleaseRootLayer());
-  auto opened = pcp::Cache::Open(next->resolver, std::move(root_layer),
+  auto opened = pcp::Cache::Open(*next->resolver, std::move(root_layer),
                                  composition_identifier, composition);
   if (!opened) {
     next->error = opened.error();
@@ -1012,6 +1022,12 @@ StageSnapshot StageSession::GetSnapshot() const {
   snapshot.stage = impl_->stage;
   return snapshot;
 }
+StageChangeSet StageSession::GetLastChangeSet() const {
+  if (!impl_) return {};
+  std::lock_guard<std::recursive_mutex> operation_lock(impl_->operation_mu);
+  std::lock_guard<std::mutex> lock(impl_->publication_mu);
+  return impl_->last_changes;
+}
 nonstd::expected<Stage, OperationStatus> StageSession::CloseAndTakeStage() {
   if (!impl_) return nonstd::make_unexpected(OperationStatus::InvalidArgument);
   if (StageOperationActive(impl_.get())) {
@@ -1030,6 +1046,7 @@ nonstd::expected<Stage, OperationStatus> StageSession::CloseAndTakeStage() {
   impl_->released_variant_selections.clear();
   impl_->released_deferred_payloads.clear();
   impl_->released_composition_issues.clear();
+  impl_->released_layer_dependencies.clear();
   Stage out;
   if (impl_->stage) {
     out = std::move(*impl_->stage);
@@ -1262,8 +1279,9 @@ StageSession::GetCompositionIssues() const {
 std::vector<std::string> StageSession::GetLayerDependencies() const {
   if (!impl_) return {};
   std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
-  if (!impl_ || !impl_->cache) return {};
-  return impl_->cache->GetLayerDependencies();
+  if (!impl_) return {};
+  return impl_->cache ? impl_->cache->GetLayerDependencies()
+                      : impl_->released_layer_dependencies;
 }
 std::vector<Diagnostic> StageSession::GetDiagnostics() const {
   if (!impl_) return {};
@@ -1296,6 +1314,7 @@ void StageSession::ReleaseCompositionCache() {
   impl_->released_variant_selections = impl_->cache->GetVariantSelections();
   impl_->released_deferred_payloads = impl_->cache->GetDeferredPayloadPaths();
   impl_->released_composition_issues = impl_->cache->GetCompositionIssues();
+  impl_->released_layer_dependencies = impl_->cache->GetLayerDependencies();
   std::unique_ptr<pcp::Cache> retiring = std::move(impl_->cache);
   impl_->composition_cache_released = true;
   impl_->UpdateMemoryStats();

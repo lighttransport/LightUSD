@@ -384,6 +384,8 @@ int main(int argc, char** argv) {
   bool showSkeleton = true;                // --no-skeleton: hide skeleton helpers
   float camDolly = 1.0f;                    // --cam-dolly: fitted-distance scale
   std::string cameraName;                   // --camera: USD camera to frame (--next)
+  bool stereoRequested = false;             // --stereo: authored left/right pair
+  bool rasterMotionEnabled = true;           // native raster shutter accumulation
   lusdview::CameraConform cameraConform{lusdview::CameraConform::Fit};
   bool cameraConformExplicit = false;
   bool viewDirExplicit = false;              // --view-dir: deterministic auto-fit view
@@ -695,6 +697,10 @@ int main(int argc, char** argv) {
       camDolly = static_cast<float>(std::atof(argv[++i]));
     } if (std::strcmp(argv[i], "--camera") == 0 && (i + 1) < argc) {
       cameraName = argv[++i];
+    } if (std::strcmp(argv[i], "--stereo") == 0) {
+      stereoRequested = true;
+    } if (std::strcmp(argv[i], "--no-raster-motion") == 0) {
+      rasterMotionEnabled = false;
     } if (std::strcmp(argv[i], "--camera-conform") == 0 &&
                (i + 1) < argc) {
       cameraConformExplicit = true;
@@ -1247,9 +1253,14 @@ int main(int argc, char** argv) {
           "lower is stronger, 0 disables; EXR is unaffected).\n"
           "  --pt-denoise off|auto|on  Built-in edge-aware denoising policy.\n"
           "  --pt-motion-segments N  Stratified shutter snapshots.\n"
+          "  --no-raster-motion  Render only the selected timeline pose in "
+          "raster mode (for external sampling and debugging).\n"
           "  --pt-seed N  Deterministic sampling seed.\n"
           "  --linear-output out.exr  Write unfiltered scene-linear half EXR.\n"
           "  --f-stop F / --focus-distance D  Override USD camera lens values.\n"
+          "  --stereo      Resolve authored stereoRole left/right cameras; "
+          "headless raster screenshots are side-by-side (use --camera when "
+          "multiple pairs exist).\n"
           "  --cuda        Ray-trace the screenshot on CUDA (driver API + NVRTC "
           "loaded at runtime via cuew; falls back if no CUDA device).\n"
           "  --cuda-rt-backend MODE  CUDA traversal: auto, optix, or software.\n"
@@ -2131,6 +2142,8 @@ int main(int argc, char** argv) {
   app.setLodMaxMemGiB(lodMaxMem);
   app.setLodMaxVramGiB(lodMaxVram);
   app.setCameraName(cameraName);
+  app.setStereoRequested(stereoRequested);
+  app.setRasterMotionEnabled(rasterMotionEnabled);
   app.setCameraConform(cameraConform);
   if (viewDirExplicit) app.setViewDirection(viewDir[0], viewDir[1], viewDir[2]);
   if (wantWireframe) app.setRenderMode(lusdview::RenderMode::Wireframe);

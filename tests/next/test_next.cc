@@ -1205,6 +1205,44 @@ def Xform "root" {
   std::cout << "  LoadUSDFromMemory tests passed!" << std::endl;
 }
 
+void test_stage_change_set_aggregation() {
+  StageChangeSet aggregate;
+  aggregate.base_revision = 4;
+  aggregate.new_revision = 4;
+
+  StageChangeSet first;
+  first.base_revision = 4;
+  first.new_revision = 5;
+  first.prims.push_back(
+      {Path("/Model"), StageChangeFlag::Transform, {"xformOp:translate"}});
+  assert(AppendStageChangeSet(first, &aggregate));
+
+  StageChangeSet second;
+  second.base_revision = 5;
+  second.new_revision = 6;
+  second.prims.push_back(
+      {Path("/Model"), StageChangeFlag::Visibility,
+       {"visibility", "xformOp:translate"}});
+  second.prims.push_back(
+      {Path("/Payload"), StageChangeFlag::Resync, {"payload"}});
+  assert(AppendStageChangeSet(second, &aggregate));
+  assert(aggregate.base_revision == 4);
+  assert(aggregate.new_revision == 6);
+  assert(aggregate.prims.size() == 2);
+  assert(HasStageChange(aggregate.prims[0].flags,
+                        StageChangeFlag::Transform));
+  assert(HasStageChange(aggregate.prims[0].flags,
+                        StageChangeFlag::Visibility));
+  assert(aggregate.prims[0].properties.size() == 2);
+
+  StageChangeSet gap;
+  gap.base_revision = 8;
+  gap.new_revision = 9;
+  assert(!AppendStageChangeSet(gap, &aggregate));
+  assert(aggregate.full_resync);
+  assert(aggregate.new_revision == 9);
+}
+
 void test_stage_session_variants() {
   std::cout << "Testing StageSession path-scoped variants..." << std::endl;
   const char* path = "/tmp/lightusd_next_stage_session.usda";
@@ -1272,6 +1310,9 @@ def Mesh "M" {
   assert(edit.snapshot.revision == 2);
   assert(edit.changes.base_revision == 1);
   assert(edit.changes.new_revision == 2);
+  const StageChangeSet published_changes = session.GetLastChangeSet();
+  assert(published_changes.base_revision == edit.changes.base_revision);
+  assert(published_changes.new_revision == edit.changes.new_revision);
   bool found_a_change = false;
   for (const PrimChange& change : edit.changes.prims) {
     if (change.path == Path("/A")) {
@@ -1353,9 +1394,11 @@ void test_stage_session_payloads_and_cancel() {
   assert(session.GetSnapshot()->GetPrimAtPath("/P").GetPropertyValue("loadedValue") ==
          nullptr);
   assert(!session.GetDeferredPayloadPaths().empty());
+  const std::vector<std::string> dependencies = session.GetLayerDependencies();
   session.ReleaseCompositionCache();
   assert(session.IsComposed());
   assert(!session.GetDeferredPayloadPaths().empty());
+  assert(session.GetLayerDependencies() == dependencies);
   assert(session.GetMemoryStats().source_layer_bytes == 0);
   assert(session.LoadPayloads({Path("/P"), Path("/Q")}));
   StageSnapshot loaded_snapshot = session.GetSnapshot();
@@ -1373,6 +1416,8 @@ void test_stage_session_payloads_and_cancel() {
   assert(reload);
   assert(reload.changes.base_revision == before_reload.revision);
   assert(reload.changes.new_revision == before_reload.revision + 1);
+  assert(session.GetLastChangeSet().new_revision ==
+         reload.changes.new_revision);
   bool reload_classified = false;
   for (const PrimChange& change : reload.changes.prims) {
     if ((change.path == Path("/P") || change.path == Path("/Q")) &&
@@ -1548,6 +1593,8 @@ def Mesh "FromSub" {
          dependencies.end());
   assert(std::find(dependencies.begin(), dependencies.end(), sub_path) !=
          dependencies.end());
+  session.ReleaseCompositionCache();
+  assert(session.GetLayerDependencies() == dependencies);
 
   std::remove(root_path);
   std::remove(sub_path);
@@ -2131,6 +2178,7 @@ int main() {
     test_arc_layer_offset_parse();
     test_physics_schema();
     test_load_usd_from_memory();
+    test_stage_change_set_aggregation();
     test_stage_session_variants();
     test_stage_session_payloads_and_cancel();
     test_stage_session_preview_and_dependencies();

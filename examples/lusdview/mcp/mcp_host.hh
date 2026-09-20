@@ -34,6 +34,8 @@ class McpHost {
   virtual nlohmann::json mcpPick(const nlohmann::json& args, std::string& err) = 0;
   virtual nlohmann::json mcpListPrims(const nlohmann::json& args, std::string& err) = 0;
   virtual nlohmann::json mcpLoadPayloads(const nlohmann::json& args, std::string& err) = 0;
+  virtual nlohmann::json mcpReloadLayer(const nlohmann::json& args,
+                                        std::string& err) = 0;
   virtual nlohmann::json mcpTimeline(const nlohmann::json& args, std::string& err) = 0;
   virtual nlohmann::json mcpSkinning(const nlohmann::json& args, std::string& err) = 0;
   // Change resettable, per-capture state without restarting the viewer.

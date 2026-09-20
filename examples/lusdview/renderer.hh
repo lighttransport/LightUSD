@@ -53,6 +53,34 @@ struct TransparencyStatus {
   uint64_t attachmentBytes{0};
 };
 
+// Existing-slot update prepared by the application. Pointers remain valid for
+// the duration of applyMeshSlotUpdatesTransactional(). A backend must validate
+// the complete batch before changing any slot and return false without visible
+// mutation when it cannot commit the batch.
+struct MeshSlotUpdate {
+  size_t meshIndex{0};
+  const std::vector<DrawVertex>* vertices{nullptr};
+  const float* world{nullptr};
+  const std::vector<float>* instanceXforms{nullptr};
+  const std::vector<float>* instanceColors{nullptr};
+  const std::vector<float>* instanceOpacities{nullptr};
+};
+
+struct MeshSlotReplacement {
+  size_t meshIndex{0};
+  const DrawMeshCPU* mesh{nullptr};
+};
+
+struct MaterialSlotUpdate {
+  size_t materialIndex{0};
+  const DrawMaterialCPU* material{nullptr};
+};
+
+struct TextureSlotReplacement {
+  size_t textureIndex{0};
+  const DrawTextureCPU* texture{nullptr};
+};
+
 // Return the logical dimensions addressed by a streamed texture-region update
 // at mipLevel. Keeping this calculation in the renderer ABI makes the Vulkan
 // bounds checks and CPU-side regression tests agree on NPOT dimensions.
@@ -242,6 +270,7 @@ struct RendererCaps {
 };
 
 struct RenderFrameParams {
+  static constexpr int kMaxClippingPlanes = 8;
   const float* view{nullptr};  // column-major 4x4 (light3d::Mat4 layout)
   const float* proj{nullptr};  // column-major 4x4 (GL: Z[-1,1]; VK: Z[0,1])
   float cameraPos[3]{0, 0, 0};
@@ -249,6 +278,18 @@ struct RenderFrameParams {
   float materialXTime{0.0f};   // MaterialX time in seconds
   float materialXFrame{0.0f};  // MaterialX frame/timeCode
   RtCameraLens cameraLens;
+  RtCameraShutter cameraShutter;
+  // A deterministic shutter pose selected by the application for this Vulkan
+  // RT frame. While active, camera/pose-driven PV and acceleration-generation
+  // changes extend one accumulation instead of resetting it. `reset` starts a
+  // new base-view sequence when the timeline/view/shutter contract changes.
+  bool rtTemporalPose{false};
+  bool rtTemporalReset{false};
+  // Authored UsdGeomCamera world-space clipping-plane equations. A fragment is
+  // retained when dot(vec4(worldPosition, 1), plane) >= 0. Raster backends
+  // support the same portable bounded set; zero disables user clipping.
+  float clippingPlanes[kMaxClippingPlanes * 4]{};
+  int clippingPlaneCount{0};
   PathTraceSettings pathTrace;
   RenderMode mode{RenderMode::Shaded};
   // Wireframe overlay state, cycled with the 'v' key (GL backend):
@@ -515,6 +556,31 @@ class Renderer {
   // for per-frame node/xform animation alongside GPU skinning. No-op if
   // unsupported.
   virtual void updateMeshWorld(int /*meshIndex*/, const float /*world*/[16]) {}
+  virtual bool applyMeshSlotUpdatesTransactional(
+      const std::vector<MeshSlotUpdate>& /*updates*/, std::string* error) {
+    if (error) *error = "transactional mesh updates are unsupported";
+    return false;
+  }
+  virtual bool replaceMeshSlotsTransactional(
+      const std::vector<MeshSlotReplacement>& /*replacements*/,
+      std::string* error) {
+    if (error) *error = "transactional mesh replacement is unsupported";
+    return false;
+  }
+  virtual bool applyMaterialUpdatesTransactional(
+      const std::vector<MaterialSlotUpdate>& /*updates*/, std::string* error) {
+    if (error) *error = "transactional material updates are unsupported";
+    return false;
+  }
+  // Stage every replacement allocation before publishing any texture slot.
+  // The first implementation covers ordinary 2D textures; shared UDIM/Ptex
+  // lookup resources remain eligible for the full-scene fallback.
+  virtual bool replaceTextureSlotsTransactional(
+      const std::vector<TextureSlotReplacement>& /*replacements*/,
+      std::string* error) {
+    if (error) *error = "transactional texture replacement is unsupported";
+    return false;
+  }
   // Replace an entire mesh (vertices + indices + submeshes) — used by adaptive
   // re-tessellation where the vertex/index count may change. The mesh at
   // `meshIndex` is deleted and re-created with the new data.

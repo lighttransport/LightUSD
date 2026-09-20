@@ -101,6 +101,8 @@ void PrintUsage(const char *prog) {
       << "  -height <N>            Output height (default from aspect or 540).\n"
       << "  -camera <path|name>    Camera absolute path or camera name.\n"
       << "  -renderSettings <path> Select a UsdRender RenderSettings prim.\n"
+      << "  --aov <color|depth|worldNormal|primId> CPU capture (data AOVs require .pfm)\n"
+      << "  --all-products        Render settings products; output is a filename prefix.\n"
       << "  -renderProduct <path>  Select one product from the settings.\n"
       << "  -renderPass <path>     Apply a local RenderPass render source/visibility.\n"
       << "  -fitScale <value>      Auto-fit camera distance multiplier (default 1.8).\n"
@@ -287,6 +289,22 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       if (!v) return false;
       opt->camera = v;
       opt->camera_explicit = true;
+    }
+    OPT_MATCH(a == "--aov") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      const std::string name(v);
+      if (name == "color") opt->aov = CaptureAov::Color;
+      else if (name == "depth") opt->aov = CaptureAov::Depth;
+      else if (name == "worldNormal") opt->aov = CaptureAov::WorldNormal;
+      else if (name == "primId") opt->aov = CaptureAov::PrimId;
+      else { std::cerr << "Unknown AOV: " << name << "\n"; return false; }
+      opt->aov_explicit = true;
+      opt->rt_preview = true;
+    }
+    OPT_MATCH(a == "--all-products") {
+      opt->all_render_products = true;
+      opt->rt_preview = true;
     }
     OPT_MATCH(a == "-renderSettings" || a == "--renderSettings") {
       const char *v = need_value(a.c_str());

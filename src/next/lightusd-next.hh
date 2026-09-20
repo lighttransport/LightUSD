@@ -224,6 +224,9 @@ class StageSession {
                                 const StageSessionOptions& options = {});
 
   StageSnapshot GetSnapshot() const;
+  /// Change record that produced the currently published snapshot. The value
+  /// is copied under the publication lock and remains valid after later edits.
+  StageChangeSet GetLastChangeSet() const;
   // Transfer the composed Stage out of a one-shot session. This fails with
   // Busy when an external snapshot still owns the Stage instead of silently
   // cloning a potentially huge scene.

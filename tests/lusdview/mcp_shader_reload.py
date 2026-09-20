@@ -18,7 +18,8 @@ def backend_state(status, backend):
     raise RuntimeError(f"shader_reload status omitted {backend}: {status}")
 
 
-def wait_reload(client, backend, predicate, timeout=180.0):
+def wait_reload(client, backend, predicate, timeout=180.0,
+                ignore_error_through_attempt=None):
     deadline = time.monotonic() + timeout
     last = {}
     while time.monotonic() < deadline:
@@ -31,7 +32,10 @@ def wait_reload(client, backend, predicate, timeout=180.0):
             # Return the compiler error immediately instead of waiting for the
             # full polling timeout and making an ordinary compile failure look
             # like an MCP/Vulkan deadlock.
-            if last.get("last_error"):
+            error_is_current = (
+                ignore_error_through_attempt is None or
+                int(last.get("attempts", 0)) > ignore_error_through_attempt)
+            if last.get("last_error") and error_is_current:
                 raise RuntimeError(f"shader reload failed: {last}")
         time.sleep(0.05)
     raise RuntimeError(f"shader reload timed out: {last}")
@@ -183,7 +187,8 @@ def main():
                 client, args.backend,
                 lambda s: (int(s.get("attempts", 0)) > watch_attempts and
                            int(s.get("successes", 0)) > watch_successes),
-                timeout=180.0)
+                timeout=180.0,
+                ignore_error_through_attempt=watch_attempts)
             client.call("shader_reload",
                         {"action": "watch", "backend": args.backend,
                          "watch": False})

@@ -24,6 +24,8 @@
 #include <vector>
 
 #include "frame_packet.hh"
+#include "next/stage/change-set.hh"
+#include "tydra/next/render-session.hh"
 
 #include "camera_nav.hh"
 #include "cpu/cpu_raytracer.hh"
@@ -52,7 +54,6 @@
 struct GLFWwindow;
 
 namespace lightusd { namespace next { class Stage; class StageSession; } }
-
 namespace lusdview {
 
 // Encode an RGBA8 (top-down) buffer to an image file; format chosen by extension
@@ -268,6 +269,8 @@ class App
     cameraName_ = n;
     loadOpts_.viewCamera = n;
   }
+  void setStereoRequested(bool on) { stereoRequested_ = on; }
+  void setRasterMotionEnabled(bool on) { rasterMotionEnabled_ = on; }
   void setCameraConform(CameraConform conform) { camera_.setConform(conform); }
   void setViewDirection(float x, float y, float z) {
     viewDir_[0] = x; viewDir_[1] = y; viewDir_[2] = z;
@@ -346,6 +349,8 @@ class App
   nlohmann::json mcpPick(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpListPrims(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpLoadPayloads(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpReloadLayer(const nlohmann::json& a,
+                                std::string& e) override;
   nlohmann::json mcpTimeline(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpSkinning(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpRenderSettings(const nlohmann::json& a,
@@ -403,7 +408,11 @@ class App
   // on-demand load). `addPrimPaths` are deferred-payload prim paths to load on
   // top of those already loaded. No-op if the scene wasn't composed.
   void startRecomposeAsync(const std::set<std::string>& addPrimPaths);
+  void startLayerReloadAsync(const std::string& resolvedLayerId);
   void finishLoadIfReady();
+  bool tryApplyNextSceneUpdate(
+      DrawScene* next, const lightusd::next::StageChangeSet& changes);
+  void prepareNextRenderTransaction(const DrawScene& next);
   void applyLoaded(bool ok, bool progressive,
                    bool alreadyUploaded = false);  // upload + bind on main thread
   void stepProgressiveUpload();  // stream meshes then textures, budgeted per frame
@@ -562,9 +571,16 @@ class App
   // Persistent next document: owns the composed stage, resolver, and PCP cache.
   std::shared_ptr<lightusd::next::StageSession> nextSession_;
   std::shared_ptr<lightusd::next::StageSession> pendingNextSession_;
+  lightusd::next::StageChangeSet pendingNextChanges_;
+  std::shared_ptr<lightusd::tydra::next::RenderSession> nextRenderSession_;
+  std::shared_ptr<lightusd::tydra::next::RenderSession>
+      pendingNextRenderSession_;
+  std::unique_ptr<lightusd::tydra::next::PreparedRenderUpdate>
+      pendingNextRenderUpdate_;
   // Immutable published stage used by the render/UI thread while a shared
   // StageSession recomposes on the loader thread.
   std::shared_ptr<const lightusd::next::Stage> nextStageSnapshot_;
+  uint64_t nextStageRevision_{0};
   bool hasNextMorph_{false};   // any --next draw mesh carries GPU morph channels
   float camDolly_{1.0f};       // --cam-dolly: fitted-distance scale (<1 zooms in)
   OrbitCamera camera_;
@@ -606,6 +622,10 @@ class App
   bool cudaRt_{false};    // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   bool cpuRt_{false};     // --cpu-rt: CPU (lightrt_c) ray tracer
   std::string cameraName_;  // --camera: named USD camera to frame (--next path)
+  bool stereoRequested_{false};  // --stereo: resolve a left/right authored pair
+  bool rasterMotionEnabled_{true};  // native raster shutter accumulation
+  bool stereoLiveComposed_{false};
+  bool stereoCaptureComposed_{false};  // native side-by-side viewport capture
   bool viewDirExplicit_{false};
   float viewDir_[3]{0.0f, 0.0f, -1.0f};  // normalized eye-to-target direction
   std::filesystem::path configPath_;        // where to persist recent scenes
@@ -716,9 +736,13 @@ class App
     uint32_t maxSubsurfaceEvents{0};
     uint32_t maxVolumeEvents{0};
     uint32_t motionSegments{0};
+    double shutterOpen{0.0};
+    double shutterClose{0.0};
     uint32_t seed{0};
     uint64_t kernelGeneration{0};
     uint32_t samples{0};
+    uint64_t shutterSegmentMask{0};
+    uint64_t sceneShutterSegmentMask{0};
     uint64_t generation{0};
     bool valid{false};
     std::vector<uint8_t> lastRgba;
@@ -726,7 +750,19 @@ class App
       samples = 0;
       valid = false;
       lastRgba.clear();
+      shutterSegmentMask = 0;
+      sceneShutterSegmentMask = 0;
       ++generation;
+    }
+    void noteSceneShutterSegment(uint32_t sample, uint32_t segments,
+                                 const RtCameraShutter& shutter) {
+      if (!shutter.enabled() || segments == 0) return;
+      sceneShutterSegmentMask |= uint64_t{1} << ((sample % segments) % 64u);
+    }
+    void noteShutterSegment(uint32_t sample, uint32_t segments,
+                            const RtCameraShutter& shutter) {
+      if (!shutter.enabled() || segments == 0) return;
+      shutterSegmentMask |= uint64_t{1} << ((sample % segments) % 64u);
     }
   };
   struct ExternalTraceResult {
@@ -743,6 +779,51 @@ class App
   };
   ExternalPathAccumulation cudaPathAccum_;
   ExternalPathAccumulation hipPathAccum_;
+  struct RasterMotionAccumulation {
+    std::array<float, 16> baseViewProj{};
+    std::vector<float> linearSum;
+    std::vector<uint8_t> lastRgba;
+    double baseTime{0.0};
+    double shutterOpen{0.0};
+    double shutterClose{0.0};
+    uint64_t sceneGeneration{0};
+    uint32_t segmentCount{0};
+    uint32_t nextSegment{0};
+    uint64_t sampledMask{0};
+    int width{0};
+    int height{0};
+    bool valid{false};
+    void reset() {
+      linearSum.clear();
+      lastRgba.clear();
+      nextSegment = 0;
+      sampledMask = 0;
+      valid = false;
+    }
+  } rasterMotionAccum_;
+  struct VulkanRtMotionAccumulation {
+    std::array<float, 16> baseViewProj{};
+    RtCameraLens baseLens;
+    double baseTime{0.0};
+    double shutterOpen{0.0};
+    double shutterClose{0.0};
+    uint64_t sceneGeneration{0};
+    uint32_t segmentCount{0};
+    uint32_t nextSegment{0};
+    uint64_t sampledMask{0};
+    uint32_t pathMaxDepth{0};
+    uint32_t pathRouletteDepth{0};
+    uint32_t pathSeed{0};
+    int width{0};
+    int height{0};
+    bool pathEnabled{false};
+    bool valid{false};
+    void reset() {
+      nextSegment = 0;
+      sampledMask = 0;
+      valid = false;
+    }
+  } vulkanRtMotionAccum_;
   std::future<ExternalTraceResult> cudaTraceFuture_;
   std::future<ExternalTraceResult> hipTraceFuture_;
   // Lazy, cached CUDA/HIP device-availability probe: init() compiles NVRTC/
@@ -829,6 +910,7 @@ class App
   float lensFStopOverride_{0.0f};
   float lensFocusOverride_{0.0f};
   RtCameraLens cameraLens_;
+  RtCameraShutter cameraShutter_;
   bool vulkanAvailable_{false};
   bool vulkanRtAvailable_{false};
   size_t rtMaxInstances_{16000000};  // --max-instances: CUDA/HIP instance cap (0=off)

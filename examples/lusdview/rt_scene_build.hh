@@ -234,9 +234,15 @@ struct RefitMeshMap {
   size_t triOffset{0};        // this mesh's block in HostScene.tris (tri index)
   std::vector<int> leafOrder; // output slot i holds original triangle leafOrder[i]
 };
+struct RefitInstanceMap {
+  size_t sceneMesh{~size_t(0)};
+  size_t sceneInstance{0};
+  bool instanced{false};
+};
 struct RefitMap {
   bool valid{false};
   std::vector<RefitMeshMap> meshes;
+  std::vector<RefitInstanceMap> instances;
 };
 
 // Build `out` from `scene`. `maxTris` caps unique prototype triangles, `maxInstances`
@@ -258,8 +264,9 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
 // in the recorded leaf order, then refit every BLAS/TLAS node bound over the
 // UNCHANGED tree topology (children are appended after their parent by the
 // builders, so one reverse-index sweep computes children before parents).
-// Instance AABBs are re-derived from each Inst's o2w x its BLAS root bounds --
-// worlds are assumed static (the CUDA/HIP deform path only moves vertices).
+// Instance transforms are refreshed from the current DrawScene before instance
+// AABBs are re-derived, so the same map supports object-transform animation as
+// well as vertex deformation.
 // Returns false (with *err) when the map is invalid or topology changed;
 // the caller should fall back to a full build.
 bool RefitHostScene(const DrawScene& scene, const RefitMap& map, HostScene* hs,

@@ -589,6 +589,9 @@ bool HipRayTracer::refit(const DrawScene& scene, std::string* err) {
                       hs.blas.size() * sizeof(Node)), "hipMemcpyHtoD(blas)");
   CU_OK(hipMemcpyHtoD(reinterpret_cast<void*>(dTlasNodes_), hs.tlas.data(),
                       hs.tlas.size() * sizeof(Node)), "hipMemcpyHtoD(tlas)");
+  CU_OK(hipMemcpyHtoD(reinterpret_cast<void*>(dInstances_), hs.instances.data(),
+                      hs.instances.size() * sizeof(Inst)),
+        "hipMemcpyHtoD(instances)");
   return true;
 }
 

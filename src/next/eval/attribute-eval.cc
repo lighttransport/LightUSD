@@ -53,6 +53,25 @@ EvalResult AttributeEval::EvalInternal(const UsdPrim& prim, const std::string& a
 
   // Check for connection first (if enabled)
   if (opts.follow_connections && depth < opts.max_connection_depth) {
+    // Composed stages store canonical connection targets separately from the
+    // legacy `.connect` value slot.  Prefer that representation so namespace
+    // qualified property names survive the hop unchanged.
+    if (const std::vector<Path>* connections = spec->connection(attr_name)) {
+      if (!connections->empty()) {
+        const Path& target = connections->front();
+        const Path target_prim_path = target.prim_path();
+        const std::string target_property = target.property_name();
+        if (!target_prim_path.str().empty() && !target_property.empty()) {
+          EvalResult connection_result = EvalInternal(
+              stage_->GetPrimAtPath(target_prim_path), target_property, opts,
+              depth + 1);
+          if (connection_result.success) {
+            connection_result.from_connection = true;
+            return connection_result;
+          }
+        }
+      }
+    }
     // Connection attributes typically have "inputs:" prefix and ".connect" suffix
     // Check if there's a connection for this attribute
     std::string conn_attr = attr_name + ".connect";
@@ -101,15 +120,18 @@ EvalResult AttributeEval::EvalInternal(const UsdPrim& prim, const std::string& a
     std::string asset;
     std::string clip_set;
     std::string clip_error;
+    ValueClipResolutionInfo clip_resolution;
     if (ResolveValueClip(prim, attr_name, opts.time.numeric_time(),
                          opts.clip_stage_loader, &clipped, &asset, &clip_error,
-                         &clip_set, opts.clip_stage_cache.get())) {
+                         &clip_set, opts.clip_stage_cache.get(),
+                         &clip_resolution)) {
       result = EvalResult();
       result.value = std::move(clipped);
       result.success = true;
       result.from_time_sample = true;
       result.source_asset = std::move(asset);
       result.source_clip_set = std::move(clip_set);
+      result.clip_resolution = std::move(clip_resolution);
     } else if (opts.strict_aousd_conformance && !clip_error.empty()) {
       result = EvalResult();
       result.error = std::move(clip_error);

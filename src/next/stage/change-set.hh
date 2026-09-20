@@ -68,5 +68,11 @@ struct StageChangeSet {
   }
 };
 
+/// Append a consecutive change record into a revision-range aggregate. Prim
+/// flags are ORed and property names are deduplicated. A revision gap marks the
+/// aggregate as a full resync and returns false.
+bool AppendStageChangeSet(const StageChangeSet& incoming,
+                          StageChangeSet* aggregate);
+
 }  // namespace next
 }  // namespace lightusd

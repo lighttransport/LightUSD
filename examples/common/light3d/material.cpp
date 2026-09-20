@@ -344,6 +344,9 @@ in float vDomWeight;
 in vec2 vUV1;            // 2nd texcoord set (multi-UV AOV)
 in float vMorphInfl;     // blendshape influence (world units)
 
+uniform int uClippingPlaneCount;
+uniform vec4 uClippingPlanes[8];
+
 // Material uniforms (one draw call per submesh)
 uniform vec3 uBaseColor;
 uniform float uMetallic;
@@ -459,6 +462,10 @@ uniform vec4 uLightPositionType[kMaxRasterLights];
 uniform vec4 uLightDirectionAngle[kMaxRasterLights];
 uniform vec4 uLightColorDiffuse[kMaxRasterLights];
 uniform vec4 uLightSpecularShape[kMaxRasterLights];
+uniform vec4 uLightAreaParams[kMaxRasterLights];
+uniform vec4 uLightIesAxisX[kMaxRasterLights];
+uniform vec4 uLightIesAxisY[kMaxRasterLights];
+uniform vec4 uLightIesProfile[kMaxRasterLights * 6];
 
 // DomeLight split-sum IBL (precomputed at load; replaces the constant ambient
 // floor when present).
@@ -961,6 +968,9 @@ float sampleShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
 }
 
 void main() {
+    for (int i = 0; i < uClippingPlaneCount; ++i) {
+        if (dot(vec4(vWorldPos, 1.0), uClippingPlanes[i]) < 0.0) discard;
+    }
     vec3 displayColor = vColor.rgb;
     float displayOpacity = vColor.a;
     vec3 baseColor = uBaseColor * displayColor;  // displayColor defaults to white
@@ -1402,12 +1412,37 @@ void main() {
         vec4 lc = uLightColorDiffuse[li];
         vec4 ss = uLightSpecularShape[li];
         int lightType = int(pt.w + 0.5);
+        int sampleCount = (lightType == 2 || lightType == 3 ||
+                           lightType == 4 || lightType == 7 ||
+                           lightType == 8) ? 8 : 1;
+        for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
+        vec3 samplePos = pt.xyz;
+        int sampleBase = sampleIndex * 3;
+        if (lightType == 7) {
+            samplePos = vec3(
+                uLightIesProfile[li * 6 + sampleBase / 4][sampleBase % 4],
+                uLightIesProfile[li * 6 + (sampleBase + 1) / 4][(sampleBase + 1) % 4],
+                uLightIesProfile[li * 6 + (sampleBase + 2) / 4][(sampleBase + 2) % 4]);
+        } else if (lightType == 3 || lightType == 8) {
+            float sx = (float(sampleIndex % 4) + 0.5) * 0.25 - 0.5;
+            float sy = (float(sampleIndex / 4) + 0.5) * 0.5 - 0.5;
+            samplePos += normalize(uLightIesAxisX[li].xyz) *
+                         (sx * uLightAreaParams[li].y) +
+                         normalize(uLightIesAxisY[li].xyz) *
+                         (sy * uLightAreaParams[li].z);
+        } else if (lightType == 2 || lightType == 4) {
+            float angle = 6.28318530718 * (float(sampleIndex) + 0.5) / 8.0;
+            samplePos += normalize(uLightIesAxisX[li].xyz) *
+                         (cos(angle) * 0.5 * uLightAreaParams[li].x) +
+                         normalize(uLightIesAxisY[li].xyz) *
+                         (sin(angle) * 0.5 * uLightAreaParams[li].x);
+        }
         vec3 L;
         float attenuation = 1.0;
         if (lightType == 5) {
             L = normalize(da.xyz);
         } else {
-            vec3 toLight = pt.xyz - vWorldPos;
+            vec3 toLight = samplePos - vWorldPos;
             float dist2 = max(dot(toLight, toLight), 1e-6);
             L = toLight * inversesqrt(dist2);
             attenuation = 1.0 / dist2;
@@ -1497,7 +1532,8 @@ void main() {
         float visibility = (li == uShadowLightSlot)
                                ? sampleShadow(vWorldPos, Nf, L) : 1.0;
         direct += (baseBrdf * NoL + coatBrdf * coatNoL + transmitted) * lc.rgb *
-                  (attenuation * shape * visibility);
+                  (attenuation * shape * visibility) / float(sampleCount);
+        }
     }
     // Scenes without authored direct lights retain the readable preview key.
     if (uLightCount == 0) {
@@ -1635,6 +1671,8 @@ in vec3 vNormal;
 in vec2 vUV;
 in vec2 vUV1;
 in vec4 vColor;
+uniform int uClippingPlaneCount;
+uniform vec4 uClippingPlanes[8];
 uniform vec3 uCameraPos;
 uniform vec3 uLightDir;
 uniform vec3 uLightColor;
@@ -1735,6 +1773,10 @@ uniform vec4 uLightPositionType[16];
 uniform vec4 uLightDirectionAngle[16];
 uniform vec4 uLightColorDiffuse[16];
 uniform vec4 uLightSpecularShape[16];
+uniform vec4 uLightAreaParams[16];
+uniform vec4 uLightIesAxisX[16];
+uniform vec4 uLightIesAxisY[16];
+uniform vec4 uLightIesProfile[96];
 out vec4 fragColor;
 vec3 linearToSrgb(vec3 c) {
     c = clamp(c, 0.0, 1.0);
@@ -1813,6 +1855,9 @@ float sampleShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
     return visible / 9.0;
 }
 void main() {
+    for (int i = 0; i < uClippingPlaneCount; ++i) {
+        if (dot(vec4(vWorldPos, 1.0), uClippingPlanes[i]) < 0.0) discard;
+    }
     vec3 displayColor = vColor.rgb;
     float displayOpacity = vColor.a;
     vec3 N = normalize(vNormal);
@@ -1893,12 +1938,37 @@ void main() {
         vec4 lc = uLightColorDiffuse[li];
         vec4 ss = uLightSpecularShape[li];
         int lightType = int(pt.w + 0.5);
+        int sampleCount = (lightType == 2 || lightType == 3 ||
+                           lightType == 4 || lightType == 7 ||
+                           lightType == 8) ? 8 : 1;
+        for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
+        vec3 samplePos = pt.xyz;
+        int sampleBase = sampleIndex * 3;
+        if (lightType == 7) {
+            samplePos = vec3(
+                uLightIesProfile[li * 6 + sampleBase / 4][sampleBase % 4],
+                uLightIesProfile[li * 6 + (sampleBase + 1) / 4][(sampleBase + 1) % 4],
+                uLightIesProfile[li * 6 + (sampleBase + 2) / 4][(sampleBase + 2) % 4]);
+        } else if (lightType == 3 || lightType == 8) {
+            float sx = (float(sampleIndex % 4) + 0.5) * 0.25 - 0.5;
+            float sy = (float(sampleIndex / 4) + 0.5) * 0.5 - 0.5;
+            samplePos += normalize(uLightIesAxisX[li].xyz) *
+                         (sx * uLightAreaParams[li].y) +
+                         normalize(uLightIesAxisY[li].xyz) *
+                         (sy * uLightAreaParams[li].z);
+        } else if (lightType == 2 || lightType == 4) {
+            float angle = 6.28318530718 * (float(sampleIndex) + 0.5) / 8.0;
+            samplePos += normalize(uLightIesAxisX[li].xyz) *
+                         (cos(angle) * 0.5 * uLightAreaParams[li].x) +
+                         normalize(uLightIesAxisY[li].xyz) *
+                         (sin(angle) * 0.5 * uLightAreaParams[li].x);
+        }
         vec3 L;
         float attenuation = 1.0;
         if (lightType == 5) {
             L = normalize(da.xyz);
         } else {
-            vec3 toLight = pt.xyz - vWorldPos;
+            vec3 toLight = samplePos - vWorldPos;
             float dist2 = max(dot(toLight, toLight), 1e-6);
             L = toLight * inversesqrt(dist2);
             attenuation = 1.0 / dist2;
@@ -1962,7 +2032,8 @@ void main() {
                                ? sampleShadow(vWorldPos, Nf, L)
                                : 1.0;
         direct += (brdf * nl + transmitted) * lc.rgb *
-                  (attenuation * shape * visibility);
+                  (attenuation * shape * visibility) / float(sampleCount);
+        }
     }
     if (uLightCount == 0) {
         vec3 L = dot(uLightDir, uLightDir) > 1e-8

@@ -47,6 +47,21 @@ struct ValueClipStageCache {
   }
 };
 
+/// Provenance for the clip choice made by one value query. Stage times name
+/// entries in `active`; clip_time is the time-function result sampled inside
+/// the active clip. Missing-value interpolation records both neighboring
+/// assets and their active stage times.
+struct ValueClipResolutionInfo {
+  int active_index = -1;
+  std::string active_asset;
+  double clip_time = 0.0;
+  bool interpolated_missing = false;
+  std::string lower_asset;
+  std::string upper_asset;
+  double lower_stage_time = 0.0;
+  double upper_stage_time = 0.0;
+};
+
 bool ParseValueClipSets(const UsdPrim& prim, std::vector<ValueClipSet>* out,
                         std::string* error = nullptr);
 
@@ -58,7 +73,8 @@ bool ResolveValueClip(const UsdPrim& prim, const std::string& property,
                       Value* out, std::string* source_asset = nullptr,
                       std::string* error = nullptr,
                       std::string* source_clip_set = nullptr,
-                      ValueClipStageCache* stage_cache = nullptr);
+                      ValueClipStageCache* stage_cache = nullptr,
+                      ValueClipResolutionInfo* resolution_info = nullptr);
 
 /// Same resolution over PRE-PARSED clip sets (from ParseValueClipSets):
 /// callers issuing many queries against one prim (e.g. Tydra's animation
@@ -71,7 +87,8 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
                               std::string* source_asset = nullptr,
                               std::string* error = nullptr,
                               std::string* source_clip_set = nullptr,
-                              ValueClipStageCache* stage_cache = nullptr);
+                              ValueClipStageCache* stage_cache = nullptr,
+                              ValueClipResolutionInfo* resolution_info = nullptr);
 
 }  // namespace next
 }  // namespace lightusd

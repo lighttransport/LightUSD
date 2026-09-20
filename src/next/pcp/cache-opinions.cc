@@ -5,6 +5,96 @@ namespace lightusd {
 namespace next {
 namespace pcp {
 
+std::vector<PropertyOpinion> Cache::GetPropertyStack(
+    const Path& path, const std::string& property, size_t limit,
+    bool* truncated, std::string* warn, std::string* err) {
+  NEXT_PCP_WRITE_LOCK(impl_->api_mu_);
+  if (truncated) *truncated = false;
+  std::vector<PropertyOpinion> out;
+  const auto& sources = impl_->SourcesForPath(path, warn, err);
+  auto append = [&](PropertyOpinion opinion) {
+    if (out.size() == limit) { if (truncated) *truncated = true; return; }
+    out.push_back(std::move(opinion));
+  };
+  for (const auto& source : sources) {
+    if (source.variant) {
+      for (const auto& p : source.variant->properties) {
+        if (p.name != property) continue;
+        PropertyOpinion item;
+        // Inline variants keep a pointer to their authored option. Locate its
+        // owning spec instead of attributing a weak-layer option to the root.
+        auto locate = [&](auto&& self, const std::vector<VariantSetData>& sets,
+                          std::string* suffix, size_t depth) -> bool {
+          if (depth > 256) return false;
+          for (const auto& set : sets) for (const auto& variant : set.variants) {
+            const std::string component = "{" + set.name + "=" + variant.name + "}";
+            if (&variant == source.variant) { *suffix = component; return true; }
+            std::string nested;
+            if (self(self, variant.variantSets, &nested, depth + 1)) {
+              *suffix = component + nested; return true;
+            }
+          }
+          return false;
+        };
+        item.prim_path = source.site;
+        for (const auto& spec : impl_->SpecsFor(source)) {
+          std::string suffix;
+          if (locate(locate, spec.spec->meta().variantSets(), &suffix, 0)) {
+            item.layer_identifier = spec.layer_id;
+            item.prim_path += suffix;
+            break;
+          }
+        }
+        item.arc = "variant";
+        item.offset = source.offset.offset;
+        item.scale = source.offset.scale;
+        if (source.expression_variables) {
+          item.expression_variables = *source.expression_variables;
+        }
+        item.has_default = !p.value.is_empty();
+        item.default_value = p.value;
+        append(std::move(item));
+      }
+      continue;
+    }
+    for (const auto& spec : impl_->SpecsFor(source)) {
+      const auto* slot = spec.spec->property(property);
+      if (!slot) continue;
+      PropertyOpinion item;
+      item.layer_identifier = spec.layer_id;
+      item.prim_path = spec.spec->path().str();
+      item.arc = ArcTypeName(source.arc_kind);
+      const LayerOffset time = source.offset.Compose(spec.layer_offset);
+      item.offset = time.offset;
+      item.scale = time.scale;
+      item.suppressed = source.suppress_site_specs;
+      if (source.expression_variables) {
+        item.expression_variables = *source.expression_variables;
+      }
+      if (const auto* value = spec.spec->property_value(slot->name_id)) {
+        item.has_default = !value->is_empty();
+        item.default_value = *value;
+      }
+      if (const auto* samples = spec.spec->time_samples(slot->name_id)) {
+        item.has_samples = !samples->empty();
+        item.sample_times.reserve(samples->size());
+        for (const auto& sample : *samples) {
+          item.sample_times.push_back(time.Apply(sample.first));
+        }
+      }
+      if (const auto* connections = spec.spec->connection(property)) {
+        item.has_connection = !connections->empty();
+        item.connections.reserve(connections->size());
+        for (const Path& connection : *connections) {
+          item.connections.push_back(connection.str());
+        }
+      }
+      append(std::move(item));
+    }
+  }
+  return out;
+}
+
 void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
     // Composed specifier (pxr _GetPrimSpecifierImpl): NOT plain strength
     // order. A defining specifier always beats `over`, and a `class` due to a

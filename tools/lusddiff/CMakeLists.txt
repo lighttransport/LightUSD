@@ -7,6 +7,7 @@ set(LUSDDIFF_TARGET "lusddiff")
 
 add_executable(${LUSDDIFF_TARGET}
     lusddiff.cc
+    collection-diff.cc
     )
 add_sanitizers(${LUSDDIFF_TARGET})
 

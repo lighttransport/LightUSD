@@ -1693,6 +1693,10 @@ void TestSchemaFallbackAndValueClips() {
   EvalResult from_neighbor = m_eval.EvalWith(
       manifest_result.stage.GetPrimAtPath("/Root"), "x", m_opts);
   assert(from_neighbor.success && from_neighbor.source_asset == "clipA.usda");
+  assert(from_neighbor.clip_resolution.active_index == 1);
+  assert(from_neighbor.clip_resolution.active_asset == "clipB.usda");
+  assert(from_neighbor.clip_resolution.interpolated_missing);
+  assert(from_neighbor.clip_resolution.lower_asset == "clipA.usda");
   assert(from_neighbor.value.as_float() &&
          *from_neighbor.value.as_float() == 7.0f);
   // y is not in the manifest: no clip resolution (falls back to no value).
@@ -1750,6 +1754,13 @@ void TestSchemaFallbackAndValueClips() {
   assert(interp.success && interp.value.as_double());
   assert(std::fabs(*interp.value.as_double() - 12.0) < 1e-9 &&
          "missing clip value must interpolate to 12.0, not hold 0.0");
+  assert(interp.clip_resolution.active_index == 1);
+  assert(interp.clip_resolution.active_asset == "b.usda");
+  assert(interp.clip_resolution.interpolated_missing);
+  assert(interp.clip_resolution.lower_asset == "a.usda");
+  assert(interp.clip_resolution.upper_asset == "c.usda");
+  assert(interp.clip_resolution.lower_stage_time == 0.0);
+  assert(interp.clip_resolution.upper_stage_time == 20.0);
 
   // Vectors (and other linear types) must interpolate component-wise, not
   // hold — the common animated float3 case. Same clip layout, float3 p:

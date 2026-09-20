@@ -329,7 +329,7 @@ struct RenderMesh {
     // order (done in the skeleton-resolve pass).
     std::vector<std::string> mesh_joint_order;
   };
-  std::unique_ptr<SkinBinding> skin;
+  std::shared_ptr<SkinBinding> skin;
 
   // Blend shapes
   struct BlendShape {
@@ -761,8 +761,8 @@ struct RenderMaterial {
   std::vector<RetainedMaterialParam> retained_params;
 
   // Shader data (one of these based on shader_type)
-  std::unique_ptr<PreviewSurfaceShader> preview_surface;
-  std::unique_ptr<OpenPBRSurfaceShader> openpbr;
+  std::shared_ptr<PreviewSurfaceShader> preview_surface;
+  std::shared_ptr<OpenPBRSurfaceShader> openpbr;
 
   // Double-sided
   bool double_sided = false;
@@ -1235,11 +1235,13 @@ class RenderScene {
   RenderScene() = default;
   ~RenderScene() = default;
 
-  // Move only
+  // Copies share chunk-backed geometry copy-on-write. Catalog vectors are
+  // copied, while optional skin/shader records remain shared and immutable;
+  // transactional updates replace whole affected resources.
   RenderScene(RenderScene&&) = default;
   RenderScene& operator=(RenderScene&&) = default;
-  RenderScene(const RenderScene&) = delete;
-  RenderScene& operator=(const RenderScene&) = delete;
+  RenderScene(const RenderScene&) = default;
+  RenderScene& operator=(const RenderScene&) = default;
 
   // Scene metadata
   std::string name;

@@ -201,6 +201,7 @@ json App::mcpSceneInfo(const json&, std::string&) {
               {"mesh_count", draw_.meshes.size()},
               {"triangle_count", draw_.triangleCount},
               {"material_count", draw_.materials.size()},
+              {"texture_count", draw_.textures.size()},
               {"upAxis", camera_.upAxis()},
               {"has_bounds", draw_.hasBounds}};
   if (loadActive_) out["loading_path"] = loadingPath_;
@@ -238,6 +239,10 @@ json App::mcpSceneInfo(const json&, std::string&) {
       paths.push_back(json{{"prim", path.str()}, {"arc", "payload"}});
     }
     out["deferred_payloads"] = std::move(paths);
+  }
+  if (nextSession_) {
+    out["stage_revision"] = nextStageRevision_;
+    out["layer_dependencies"] = nextSession_->GetLayerDependencies();
   }
   return out;
 }
@@ -1259,6 +1264,29 @@ json App::mcpLoadPayloads(const json& args, std::string& err) {
   }
   startRecomposeAsync(add);  // async; client polls get_scene_info
   return json{{"started", true}, {"count", add.size()}};
+}
+
+json App::mcpReloadLayer(const json& args, std::string& err) {
+  if (!useNextLoader_ || !nextSession_) {
+    err = "reload_layer: the active scene is not a retained next session";
+    return json::object();
+  }
+  if (loadActive_) {
+    err = "reload_layer: a scene update is already active";
+    return json::object();
+  }
+  std::string layer = args.value("path", loaded_.filepath);
+  const std::vector<std::string> dependencies =
+      nextSession_->GetLayerDependencies();
+  if (layer != loaded_.filepath &&
+      std::find(dependencies.begin(), dependencies.end(), layer) ==
+          dependencies.end()) {
+    err = "reload_layer: path is not a dependency of the active stage";
+    return json{{"dependencies", dependencies}};
+  }
+  startLayerReloadAsync(layer);
+  return json{{"started", true}, {"path", layer},
+              {"base_revision", nextStageRevision_}};
 }
 
 json App::mcpTimeline(const json& args, std::string& err) {

@@ -403,8 +403,79 @@ a deterministic thin-lens model. The aperture radius is derived from USD's
 tenths-of-a-scene-unit focal length, and rays converge on the authored focus
 plane. Vulkan progressively accumulates lens samples while `--rt-samples`
 controls CUDA/HIP sampling. Orthographic cameras and `fStop = 0` retain the
-exact pinhole path. `lusdview-camera-dof-{vulkan,cuda}` compare the two modes
-and capability-skip when their backend is unavailable.
+exact pinhole path. Shaded GL and Vulkan raster use the same lens record in a
+deterministic depth-aware postprocess; AOV and wireframe modes stay unfiltered.
+`lusdview-camera-dof-raster` checks both raster backends, while
+`lusdview-camera-dof-{vulkan,cuda}` cover the ray-traced paths and
+capability-skip when their backend is unavailable.
+
+An authored open shutter (`shutter:close > shutter:open`) drives the headless
+CPU, CUDA, and HIP tracers when the next loader is active. Each tracer evaluates
+animated camera transforms, object transforms, skinning, and blend shapes at
+deterministic midpoint-stratified times; `--pt-motion-segments` selects the
+number of temporal samples (two by default). Each pose gets its own conservative
+acceleration build and the resulting images are averaged in linear light. A
+closed shutter retains the single-pose path. The
+`lusdview-camera-motion-{cpu,cuda,hip}` regressions compare open- and
+closed-shutter captures for both geometry-only and camera-only motion; GPU tests
+capability-skip when their runtime is unavailable. Paused native GL and Vulkan
+raster views also advance one midpoint shutter pose per frame, average the
+captured viewport in linear light, and hold the completed image. The legacy
+loader evaluates animated camera xforms directly from its retained Stage so it
+uses the same schedule without reconverting geometry. The render report records
+`raster_interactive_segments_sampled`. Use `--no-raster-motion` when an
+external tool owns temporal sampling. Vulkan RT keeps one progressive
+accumulation while cycling the same midpoint poses; its report records
+`vulkan_interactive_segments_sampled`.
+
+For raster output, `examples/lusdview/render-motion.py` reads the selected
+camera's authored shutter, evaluates deterministic scene-time snapshots through
+either GL or Vulkan, and averages PPM samples in linear light:
+
+```sh
+python3 examples/lusdview/render-motion.py \
+  --lusdview ./build_ninja/lusdview --next --backend vk --camera Shot \
+  --time 24 --segments 8 --size 1280x720 --output motion.ppm scene.usda
+```
+
+A closed shutter automatically takes the single-render path. The companion
+passes `--no-raster-motion` to each viewer process so its explicit temporal
+samples do not trigger native accumulation a second time. The
+`lusdview-camera-motion-raster-{export,gl}` regressions compare the native and
+companion results and verify closed-shutter behavior; the
+`lusdview-camera-motion-raster-legacy` case checks loader parity, while
+`lusdview-camera-motion-vulkan` checks that Vulkan RT's accumulated sample count
+advances across the cycle.
+
+Windowed CUDA/HIP path tracing cycles animated authored camera poses, optics,
+object transforms, and deformation across the same midpoint-stratified shutter
+segments as accumulation advances. Transform/deformation updates use retained
+RT refit maps, including refreshed instance transforms and BLAS/TLAS bounds.
+Changing the view, frame, shutter interval, segment count, or integrator resets
+the sequence. Render reports expose both camera and scene segment coverage.
+
+`--stereo` resolves authored `stereoRole = "left"` / `"right"` cameras with the
+same rules in both loaders. Selecting either eye with `--camera` prefers the
+opposite role under the same parent; without an explicit camera, the scene must
+contain exactly one unambiguous same-parent pair. Mono selections, missing eyes,
+and ambiguous pairs are reported instead of silently guessing. The render report
+records both resolved paths. A headless raster `--screenshot` renders both eyes
+through GL or Vulkan and writes them side by side. Windowed GL and Vulkan render
+each eye into a half-width target, compose the captures into the live viewport,
+and report `stereo.live_viewport`; the same path is covered for legacy and next
+loaders. `examples/lusdview/render-stereo.py` provides the same side-by-side
+workflow for raster and external CPU/CUDA/HIP tracing modes without third-party
+Python packages:
+
+```sh
+python3 examples/lusdview/render-stereo.py \
+  --lusdview ./build_ninja/lusdview --next --backend vk \
+  --size 960x540 --output stereo.ppm scene.usda
+```
+
+`--size` is the per-eye resolution, so this example writes `1920x540`.
+Use repeated `--viewer-arg` options to select another tracing mode, for example
+`--viewer-arg=--cuda`.
 
 ## HIP/ROCm ray-tracing run test (verified working on AMD)
 

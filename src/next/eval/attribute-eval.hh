@@ -84,6 +84,7 @@ struct EvalResult {
   std::string source_path;          // Path where value was found
   std::string source_asset;         // Value-clip asset, when applicable
   std::string source_clip_set;      // Named clip set, when applicable
+  ValueClipResolutionInfo clip_resolution;
   std::string error;
 };
 

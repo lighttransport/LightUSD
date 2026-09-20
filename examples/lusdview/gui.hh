@@ -140,6 +140,16 @@ class Gui {
       lastDofApertureRadius_ = lens.apertureRadius;
     }
   }
+  void setCameraShutter(const RtCameraShutter& shutter) {
+    cameraShutter_ = shutter;
+  }
+  void setRtTemporalAccumulation(bool active, bool reset) {
+    rtTemporalPose_ = active;
+    rtTemporalReset_ = reset;
+  }
+  void setCameraClippingPlanes(std::vector<float> planes) {
+    cameraClippingPlanes_ = std::move(planes);
+  }
   void setPathTraceSettings(const PathTraceSettings& settings) {
     pathTrace_ = settings;
   }
@@ -222,6 +232,10 @@ class Gui {
     if (w) *w = viewportW_;
     if (h) *h = viewportH_;
   }
+  // Temporarily render an authored stereo eye into a half-width target. The
+  // ImGui viewport remains full width; App composites the two eye captures back
+  // into that display-sized target before the final present.
+  void setStereoEyeViewportWidth(int width) { stereoEyeViewportWidth_ = width; }
   void viewportPixelToScreen(float x, float y, float* sx, float* sy) const {
     if (sx) *sx = x + viewportImageMin_.x;
     if (sy) *sy = y + viewportImageMin_.y;
@@ -480,6 +494,10 @@ class Gui {
   bool focusDofOnSelection(float* focusDistance = nullptr);
   float dofFocusDistance() const { return cameraLens_.focusDistance; }
   const RtCameraLens& cameraLens() const { return cameraLens_; }
+  const RtCameraShutter& cameraShutter() const { return cameraShutter_; }
+  const std::vector<float>& cameraClippingPlanes() const {
+    return cameraClippingPlanes_;
+  }
 
  private:
   void applySelection(const std::string& absPath, int meshIndex, bool recordHistory);
@@ -552,6 +570,10 @@ class Gui {
   Renderer* renderer_{nullptr};
   OrbitCamera* cam_{nullptr};
   RtCameraLens cameraLens_;
+  RtCameraShutter cameraShutter_;
+  bool rtTemporalPose_{false};
+  bool rtTemporalReset_{false};
+  std::vector<float> cameraClippingPlanes_;
   float lastDofApertureRadius_{0.0f};
   PathTraceSettings pathTrace_;
   const LoadedScene* loaded_{nullptr};
@@ -843,6 +865,7 @@ class Gui {
   int navMode_{0};
   int viewportW_{0};
   int viewportH_{0};
+  int stereoEyeViewportWidth_{0};
   ImVec2 viewportImageMin_{0.0f, 0.0f};
   bool regionSelecting_{false};
   bool regionSelectionMoved_{false};

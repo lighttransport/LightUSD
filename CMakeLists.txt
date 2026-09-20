@@ -2078,6 +2078,7 @@ if(LIGHTUSD_BUILD_EXAMPLES)
   endif ()
 
   add_subdirectory(examples/api_tutorial)
+  add_subdirectory(examples/next_workflows)
   add_subdirectory(examples/file_format)
   add_subdirectory(examples/asset_resolution)
   add_subdirectory(examples/progressive_composition)
@@ -2085,9 +2086,7 @@ if(LIGHTUSD_BUILD_EXAMPLES)
   #if (LIGHTUSD_WITH_JSON)
   #  add_subdirectory(examples/usd_to_json)
   #endif()
-  #if (LIGHTUSD_WITH_USD_TO_GLTF)
-  #  add_subdirectory(examples/usd_to_gltf)
-  #endif()
+  add_subdirectory(examples/usd_to_gltf)
   if(LIGHTUSD_WITH_MODULE_USDA_WRITER)
     add_subdirectory(examples/save_usda)
   endif()
@@ -2114,6 +2113,7 @@ if(LIGHTUSD_BUILD_TOOLS)
   add_subdirectory(tools/lusddumpcrate)
   add_subdirectory(tools/lusdzconvert)
   add_subdirectory(tools/lusdchecker)
+  add_subdirectory(tools/lusddeps)
   # lusddiff uses the Tydra diff-and-compare API.
   if(LIGHTUSD_WITH_TYDRA)
     add_subdirectory(tools/lusddiff)
@@ -2677,6 +2677,17 @@ if(LIGHTUSD_BUILD_TESTS)
                          RESOURCE_LOCK lusdview_gl_gpu)
 
     add_test(
+      NAME lusdview-raster-geometry-light
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-raster-geometry-light.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+      )
+    set_tests_properties(lusdview-raster-geometry-light PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 120
+                         LABELS "lusdview;lighting"
+                         RESOURCE_LOCK lusdview_gl_gpu)
+
+    add_test(
       NAME lusdview-rt-light-links
       COMMAND bash
               "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-rt-light-links.sh"
@@ -3175,6 +3186,118 @@ if(LIGHTUSD_BUILD_TESTS)
                                     LABELS "lusdview")
 
     add_test(
+      NAME lusdview-camera-clipping-planes
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-clipping-planes.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-camera-clipping-planes
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
+                                    LABELS "lusdview;raster")
+
+    add_test(
+      NAME lusdview-camera-dof-raster
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-dof-raster.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-camera-dof-raster
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
+                                    LABELS "lusdview;raster")
+
+    add_test(
+      NAME lusdview-camera-shutter-contract
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-shutter-contract.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-camera-shutter-contract
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+                                    LABELS "lusdview;camera")
+
+    add_test(
+      NAME lusdview-camera-motion-cpu
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-cpu.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-camera-motion-cpu
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
+                                    LABELS "lusdview;camera;cpu-rt")
+
+    add_test(
+      NAME lusdview-camera-motion-cuda
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-cuda.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-camera-motion-cuda
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
+                                    LABELS "lusdview;camera;cuda")
+
+    add_test(
+      NAME lusdview-camera-motion-hip
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-hip.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-camera-motion-hip
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
+                                    LABELS "lusdview;camera;hip")
+
+    add_test(
+      NAME lusdview-camera-stereo-contract
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-stereo-contract.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-camera-stereo-contract
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
+                                    LABELS "lusdview;camera;stereo")
+
+    add_test(
+      NAME lusdview-camera-motion-raster-export
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-raster-export.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-camera-motion-raster-export
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 240
+                                    LABELS "lusdview;camera;raster")
+
+    add_test(
+      NAME lusdview-camera-motion-raster-legacy
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-raster-export.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}" vk legacy
+    )
+    set_tests_properties(lusdview-camera-motion-raster-legacy
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 240
+                                    LABELS "lusdview;camera;raster;legacy")
+
+    add_test(
+      NAME lusdview-camera-motion-vulkan
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-vulkan.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-camera-motion-vulkan
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
+                                    LABELS "lusdview;camera;vulkan;rt")
+
+    if(LIGHTUSD_XVFB_RUN)
+      add_test(
+        NAME lusdview-camera-motion-raster-gl
+        COMMAND "${LIGHTUSD_XVFB_RUN}" -a bash
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-raster-export.sh"
+                "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}" gl
+      )
+      set_tests_properties(lusdview-camera-motion-raster-gl
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 240
+                                      LABELS "lusdview;camera;raster;gl")
+    endif()
+
+    add_test(
       NAME lusdview-camera-dof-cuda
       COMMAND bash
               "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-dof-cuda.sh"
@@ -3606,6 +3729,59 @@ if(LIGHTUSD_BUILD_TESTS)
       )
     set_tests_properties(lusdview-usdz-deferred-payload
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
+
+    add_test(
+      NAME lusdview-incremental-topology
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-topology.sh"
+      )
+    set_tests_properties(lusdview-incremental-topology
+                         PROPERTIES LABELS "lusdview" SKIP_RETURN_CODE 77 TIMEOUT 90)
+
+    add_test(
+      NAME lusdview-incremental-layer-reload
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-layer-reload.sh"
+      )
+    set_tests_properties(lusdview-incremental-layer-reload
+                         PROPERTIES LABELS "lusdview" SKIP_RETURN_CODE 77 TIMEOUT 90)
+
+    if(LUSDVIEW_XVFB_RUN)
+      add_test(
+        NAME lusdview-incremental-layer-reload-gl
+        COMMAND "${LUSDVIEW_XVFB_RUN}" -a
+                ${CMAKE_COMMAND} -E env
+                "LUSDVIEW=$<TARGET_FILE:lusdview>"
+                "BACKEND=gl"
+                bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-layer-reload.sh"
+        )
+      set_tests_properties(lusdview-incremental-layer-reload-gl
+                           PROPERTIES LABELS "lusdview" SKIP_RETURN_CODE 77 TIMEOUT 90)
+    endif()
+
+    add_test(
+      NAME lusdview-incremental-texture
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-texture.sh"
+      )
+    set_tests_properties(lusdview-incremental-texture
+                         PROPERTIES LABELS "lusdview" SKIP_RETURN_CODE 77 TIMEOUT 90)
+
+    if(LUSDVIEW_XVFB_RUN)
+      add_test(
+        NAME lusdview-incremental-texture-gl
+        COMMAND "${LUSDVIEW_XVFB_RUN}" -a
+                ${CMAKE_COMMAND} -E env
+                "LUSDVIEW=$<TARGET_FILE:lusdview>"
+                "BACKEND=gl"
+                bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-texture.sh"
+        )
+      set_tests_properties(lusdview-incremental-texture-gl
+                           PROPERTIES LABELS "lusdview" SKIP_RETURN_CODE 77 TIMEOUT 90)
+    endif()
 
     # Deterministic back-to-front alpha blending on both raster backends.
     # Keep this registered separately from scalar opacity/cutout coverage: it
@@ -4448,5 +4624,18 @@ if(WIN32)
     set_target_properties(
       ${LIGHTUSD_TARGET_STATIC} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY
                                            "${CMAKE_CURRENT_SOURCE_DIR}")
+  endif()
+endif()
+
+if(LIGHTUSD_BUILD_TESTS AND TARGET lusddeps AND TARGET next_quickstart AND TARGET lusddiff)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    set(workflow_capture_args)
+    if(TARGET lusdrender)
+      list(APPEND workflow_capture_args --capture-renderer $<TARGET_FILE:lusdrender>)
+    endif()
+    add_test(NAME workflow_tools COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/run-workflow-tools.py --bin-dir ${CMAKE_BINARY_DIR} ${workflow_capture_args})
+    set_tests_properties(workflow_tools PROPERTIES TIMEOUT 120 LABELS "tools;next")
   endif()
 endif()

@@ -32,6 +32,27 @@ namespace lightusd {
 namespace next {
 namespace pcp {
 
+// Owning, opt-in property-stack record. No provenance is retained by normal
+// stage population; callers request this while the composition cache lives.
+struct PropertyOpinion {
+  std::string layer_identifier;
+  std::string prim_path;
+  std::string arc;
+  double offset = 0.0;
+  double scale = 1.0;
+  bool has_default = false;
+  bool has_samples = false;
+  bool has_connection = false;
+  bool suppressed = false;
+  Value default_value;
+  // Expression variables visible at this composition source. Asset-valued
+  // opinions must be evaluated in this context, rather than against the
+  // flattened stage's root-layer dictionary.
+  Value expression_variables;
+  std::vector<double> sample_times;
+  std::vector<std::string> connections;
+};
+
 class Cache {
  public:
   // Called once after namespace discovery, but before the (potentially
@@ -129,6 +150,12 @@ class Cache {
   /// composition, including the root. Sorted and deduplicated so callers can
   /// construct deterministic cache manifests without borrowing Layer objects.
   std::vector<std::string> GetLayerDependencies() const;
+
+  /// Strong-to-weak contributing declarations, including blocked defaults and
+  /// suppressed relocation sites. Bound the result independently of scene size.
+  std::vector<PropertyOpinion> GetPropertyStack(const Path& prim_path,
+      const std::string& property, size_t max_opinions, bool* truncated,
+      std::string* warn, std::string* err);
 
   /// Approximate logical residency owned by the composition cache. Source
   /// layers are counted once even when several layer stacks reference them.

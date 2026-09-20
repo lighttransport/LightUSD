@@ -110,6 +110,11 @@ available on the session after each rebuild. Successful edits atomically publish
 a monotonically revisioned, immutable `StageSnapshot` and a typed
 `StageChangeSet`; retained older snapshots remain coherent. `ReloadLayer()`
 re-reads an edited dependency and publishes the resulting stage transactionally.
+`GetLastChangeSet()` lets retained consumers recover the change record paired
+with the current snapshot after an asynchronous edit completes.
+`AppendStageChangeSet()` combines consecutive edit records into one revision
+range, ORing per-prim flags and deduplicating property names; a revision gap
+forces the aggregate to full-resync.
 Array-backed geometry remains copy-on-write across snapshots.
 Concurrent snapshot reads are supported with one serialized writer. Mutations
 attempted reentrantly from progress, preview, or render-sink callbacks fail with
@@ -119,7 +124,18 @@ after all published snapshots have been released.
 Persistent render consumers can feed those snapshots and change sets to
 `tydra::next::RenderSession`. Its `SceneUpdateSink` transaction reports stable
 resource IDs plus typed removals/upserts, allowing a renderer to retain GPU
-resources across payload, variant, and layer edits.
+resources across payload, variant, and layer edits. Geometry-only topology and
+primvar changes clone the retained catalog with copy-on-write chunk storage and
+reconvert only the named meshes; unchanged mesh allocations remain shared with
+the previous snapshot. `Prepare()`/`PrepareInitialize()` complete conversion and
+allocation without publishing or invoking the destination sink. `Commit()` may
+then run on the render thread; it publishes only after `SceneUpdateSink::EndUpdate`
+succeeds, calls `AbortUpdate` on rejection, and rejects candidates whose base
+revision became stale. A rejected candidate remains retryable, while `Abort()`
+explicitly discards it. The existing `Initialize()` and `Apply()` calls are
+compatibility wrappers around this two-phase protocol.
+older immutable render snapshots. Broader resync, material, hierarchy, light,
+camera, and animation changes currently take the full conversion path.
 
 ## next-io
 

@@ -39,6 +39,10 @@ struct RasterLightSet {
   std::array<RasterLightGPU, kMaxRasterLights> lights{};
   int count{0};
   int truncated{0};
+  // GeometryLight requires triangle sampling. Raster backends omit it until a
+  // mesh-sample payload is available instead of treating its transform origin
+  // as a point emitter.
+  int omittedGeometryLights{0};
   // One 16-bit stage-order direct-light mask per mesh. A set bit means that
   // light's collection includes the mesh. Empty when meshCount == 0.
   std::vector<uint32_t> meshMasks;
@@ -56,12 +60,107 @@ struct RasterLightSet {
   int shadowLightSlot{-1};
 };
 
+inline void PrepareRasterGeometryLightSamples(
+    std::vector<DrawLightCPU>* lights, const std::vector<DrawMeshCPU>& meshes) {
+  if (!lights) return;
+  auto transformPoint = [](const DrawMeshCPU& mesh, const DrawVertex& v,
+                           float out[3]) {
+    if (!mesh.instanceXforms.empty()) {
+      const float* m = mesh.instanceXforms.data();
+      out[0] = m[0] * v.px + m[1] * v.py + m[2] * v.pz + m[3];
+      out[1] = m[4] * v.px + m[5] * v.py + m[6] * v.pz + m[7];
+      out[2] = m[8] * v.px + m[9] * v.py + m[10] * v.pz + m[11];
+    } else {
+      out[0] = mesh.world[0] * v.px + mesh.world[4] * v.py +
+               mesh.world[8] * v.pz + mesh.world[12];
+      out[1] = mesh.world[1] * v.px + mesh.world[5] * v.py +
+               mesh.world[9] * v.pz + mesh.world[13];
+      out[2] = mesh.world[2] * v.px + mesh.world[6] * v.py +
+               mesh.world[10] * v.pz + mesh.world[14];
+    }
+  };
+  auto radicalInverse2 = [](unsigned value) {
+    value = ((value & 0x55555555u) << 1u) |
+            ((value & 0xaaaaaaaau) >> 1u);
+    value = ((value & 0x33333333u) << 2u) |
+            ((value & 0xccccccccu) >> 2u);
+    value = ((value & 0x0f0f0f0fu) << 4u) |
+            ((value & 0xf0f0f0f0u) >> 4u);
+    value = ((value & 0x00ff00ffu) << 8u) |
+            ((value & 0xff00ff00u) >> 8u);
+    value = (value << 16u) | (value >> 16u);
+    return static_cast<float>(value) * 2.3283064365386963e-10f;
+  };
+
+  for (DrawLightCPU& light : *lights) {
+    light.geometryRasterSampleCount = 0;
+    if (light.type != DrawLightCPU::Type::Geometry || light.geometryMesh < 0 ||
+        static_cast<size_t>(light.geometryMesh) >= meshes.size())
+      continue;
+    const DrawMeshCPU& mesh = meshes[static_cast<size_t>(light.geometryMesh)];
+    const size_t triangleCount = mesh.indices.size() / 3;
+    if (triangleCount == 0 || mesh.vertices.empty()) continue;
+
+    std::vector<float> cumulativeArea(triangleCount, 0.0f);
+    float totalArea = 0.0f;
+    for (size_t triangle = 0; triangle < triangleCount; ++triangle) {
+      const uint32_t ia = mesh.indices[triangle * 3 + 0];
+      const uint32_t ib = mesh.indices[triangle * 3 + 1];
+      const uint32_t ic = mesh.indices[triangle * 3 + 2];
+      if (ia >= mesh.vertices.size() || ib >= mesh.vertices.size() ||
+          ic >= mesh.vertices.size()) {
+        cumulativeArea[triangle] = totalArea;
+        continue;
+      }
+      float a[3], b[3], c[3];
+      transformPoint(mesh, mesh.vertices[ia], a);
+      transformPoint(mesh, mesh.vertices[ib], b);
+      transformPoint(mesh, mesh.vertices[ic], c);
+      const float ab[3]{b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+      const float ac[3]{c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+      const float cross[3]{ab[1] * ac[2] - ab[2] * ac[1],
+                           ab[2] * ac[0] - ab[0] * ac[2],
+                           ab[0] * ac[1] - ab[1] * ac[0]};
+      totalArea += 0.5f * std::sqrt(cross[0] * cross[0] +
+                                   cross[1] * cross[1] +
+                                   cross[2] * cross[2]);
+      cumulativeArea[triangle] = totalArea;
+    }
+    if (!(totalArea > 1.0e-12f)) continue;
+
+    for (int sample = 0; sample < 8; ++sample) {
+      const float target = totalArea * (static_cast<float>(sample) + 0.5f) / 8.0f;
+      const auto found = std::lower_bound(cumulativeArea.begin(),
+                                          cumulativeArea.end(), target);
+      const size_t triangle = static_cast<size_t>(
+          found == cumulativeArea.end() ? cumulativeArea.size() - 1
+                                        : found - cumulativeArea.begin());
+      const uint32_t ia = mesh.indices[triangle * 3 + 0];
+      const uint32_t ib = mesh.indices[triangle * 3 + 1];
+      const uint32_t ic = mesh.indices[triangle * 3 + 2];
+      if (ia >= mesh.vertices.size() || ib >= mesh.vertices.size() ||
+          ic >= mesh.vertices.size())
+        continue;
+      float a[3], b[3], c[3];
+      transformPoint(mesh, mesh.vertices[ia], a);
+      transformPoint(mesh, mesh.vertices[ib], b);
+      transformPoint(mesh, mesh.vertices[ic], c);
+      const float root = std::sqrt((static_cast<float>(sample) + 0.5f) / 8.0f);
+      const float r2 = radicalInverse2(static_cast<unsigned>(sample));
+      const float weights[3]{1.0f - root, root * (1.0f - r2), root * r2};
+      for (int axis = 0; axis < 3; ++axis) {
+        light.geometryRasterSamples[sample * 3 + axis] =
+            weights[0] * a[axis] + weights[1] * b[axis] + weights[2] * c[axis];
+      }
+      ++light.geometryRasterSampleCount;
+    }
+  }
+}
+
 inline bool IsRasterDirectLight(const DrawLightCPU& light) {
-  // Raster has no emissive-mesh or environment-importance sampler. Keep
-  // GeometryLight/PortalLight remain in the common light list as bounded
-  // representative-position fallbacks; analytic finite lights use the shared
-  // raster area-sample payload below.
-  return light.type != DrawLightCPU::Type::Dome;
+  return light.type != DrawLightCPU::Type::Dome &&
+         (light.type != DrawLightCPU::Type::Geometry ||
+          light.geometryRasterSampleCount == 8);
 }
 
 inline bool IsRasterFiniteShadowLight(const DrawLightCPU& light) {
@@ -79,6 +178,11 @@ inline RasterLightSet PackRasterLights(const std::vector<DrawLightCPU>& src,
   out.meshMasks.assign(meshCount, 0u);
   out.shadowMeshMasks.assign(meshCount, 0u);
   for (const DrawLightCPU& light : src) {
+    if (light.type == DrawLightCPU::Type::Geometry &&
+        light.geometryRasterSampleCount != 8) {
+      ++out.omittedGeometryLights;
+      continue;
+    }
     if (!IsRasterDirectLight(light)) continue;
     if (out.count >= kMaxRasterLights) {
       ++out.truncated;
@@ -147,6 +251,10 @@ inline RasterLightSet PackRasterLights(const std::vector<DrawLightCPU>& src,
               60.0f * static_cast<float>(x));
         }
       }
+    }
+    if (light.type == DrawLightCPU::Type::Geometry &&
+        light.geometryRasterSampleCount == 8) {
+      std::copy_n(light.geometryRasterSamples, 24, dst.iesProfile);
     }
 
     const uint32_t bit = uint32_t{1} << static_cast<uint32_t>(slot);

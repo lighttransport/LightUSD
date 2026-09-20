@@ -35,6 +35,13 @@ struct LoadDiagnostics {
   int unsupported_lobes = 0;   // material outputs not evaluated in real time
   int skipped = 0;             // draw-side skipped items (UDIM/undecoded/empty)
   int other = 0;               // any other warning line
+  // Authored light inventory and light-specific diagnostics. These remain
+  // separate from `skipped` so reports identify the affected USD feature and
+  // still preserve the legacy aggregate counters used by smoke tests.
+  int geometry_lights = 0;
+  int portal_lights = 0;
+  int ies_profiles = 0;
+  int emissive_mesh_lights = 0;
   std::vector<std::string> examples;  // a few representative lines (capped)
   int total() const {
     return degraded_material + missing_texture + unsupported_mtlx +
@@ -53,6 +60,11 @@ struct LoadDiagnostics {
 // list into a LoadDiagnostics tally by matching the stable tydra message texts.
 LoadDiagnostics CategorizeLoadWarnings(const std::string& warn_blob,
                                        const std::vector<std::string>& skipped);
+
+// Add authored light feature counts to an existing warning classification.
+// Geometry/portal counts describe the scene inventory; IES and emissive-mesh
+// counts describe payloads that reached the backend-neutral light record.
+void AddLightDiagnostics(const DrawScene& draw, LoadDiagnostics* diagnostics);
 
 // Compatibility hook for material diagnostics. OpenPBR surface and homogeneous
 // volume controls are currently packed and consumed by all preview backends,

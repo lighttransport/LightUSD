@@ -1,0 +1,61 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def Scope "Looks"
+    {
+        def Material "ReceiverMaterial"
+        {
+            token outputs:surface.connect = </World/Looks/ReceiverMaterial/P.outputs:surface>
+            def Shader "P"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.5, 0.5, 0.5)
+                float inputs:roughness = 0.8
+                token outputs:surface
+            }
+        }
+    }
+
+    def Mesh "Receiver" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        rel material:binding = </World/Looks/ReceiverMaterial>
+        point3f[] points = [(-2, -2, 0), (2, -2, 0), (2, 2, 0), (-2, 2, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1)] (interpolation = "constant")
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Emitter"
+    {
+        point3f[] points = [(-0.8, -0.5, 2), (0.8, -0.5, 2),
+                            (0.8, 0.5, 2), (-0.8, 0.5, 2)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, -1)] (interpolation = "constant")
+        uniform token subdivisionScheme = "none"
+    }
+
+    def GeometryLight "EmitterLight"
+    {
+        rel geometry = </World/Emitter>
+        color3f inputs:color = (1, 0.25, 0.08)
+        float inputs:intensity = 300
+        float inputs:diffuse = 1
+        float inputs:specular = 0
+    }
+
+    def Camera "Camera"
+    {
+        float focalLength = 50
+        float horizontalAperture = 24
+        float verticalAperture = 24
+        double3 xformOp:translate = (0, 0, 8)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}

@@ -22,11 +22,12 @@ Do not infer the active phase from Ninja's abbreviated progress line. A measured
 three-minute rebuild was GCC optimizing `lightrt_mtlx_bridge.cc`, while the
 actual GNU BFD link took less than a second. The MaterialX graph compiler and
 flat GPU ABI packing now use separate translation units, and the graph compiler
-uses source-local `-O1` in Release/RelWithDebInfo to avoid GCC's pathological
-IPA/PTA cost. On the reference Linux build this reduced a cold graph compile
-from about 148 to 71 seconds; ordinary bridge and packing edits rebuild in about
-8 and 1 seconds respectively. Use `/usr/bin/time -v cmake --build ...` plus
-Ninja's `.ninja_log` when diagnosing a regression.
+uses source-local `-O0` in Release/RelWithDebInfo to avoid GCC's pathological
+IPA/PTA cost. On the reference Linux build this reduced GCC Release lowering
+from 82.4 to 12.7 seconds, while the independently compiled packing phase uses
+the target's normal optimization level and takes 4.7 seconds. Use
+`/usr/bin/time -v cmake --build ...` plus Ninja's `.ninja_log` when diagnosing
+a regression.
 
 Disable the target-local selection when diagnosing a linker/toolchain issue:
 

@@ -1298,6 +1298,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   const bool gathered_directly = indirect && !kDoubleCount;
   if (!tri_hit && !direct_hit.hit) {
     if (primary_hit_t) *primary_hit_t = camera.zfar;
+    if (opt.aov != CaptureAov::Color) return Vec3{0, 0, 0};
     // An escaping BSDF bounce must not bring the ENVIRONMENT back with it: the
     // surface that spawned it already integrated the dome over this very lobe
     // (the split-sum IBL term, or the flat dome term), so returning it here
@@ -1323,6 +1324,12 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     tri_openpbr = hit_openpbr;
   }
   if (primary_hit_t) *primary_hit_t = hit_t;
+  if (opt.aov == CaptureAov::Depth) return Vec3{hit_t, hit_t, hit_t};
+  if (opt.aov == CaptureAov::WorldNormal) return Normalize(tri.n);
+  if (opt.aov == CaptureAov::PrimId) {
+    const float id = float(tri.capture_prim_id);
+    return Vec3{id, id, id};
+  }
   // Occlusion against whichever acceleration structure is active.
   auto occluded = [&](const Vec3 &op, const Vec3 &on, const Vec3 &ol,
                       float omax) -> bool {
@@ -1961,16 +1968,17 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
   img.width = opt.width;
   img.height = height;
   img.channels = 4;
-  img.bpp = 8;
-  img.format = lightusd::Image::PixelFormat::UInt;
-  img.data.resize(size_t(img.width) * size_t(img.height) * 4);
+  const bool data_aov = opt.aov != CaptureAov::Color;
+  img.bpp = data_aov ? 32 : 8;
+  img.format = data_aov ? lightusd::Image::PixelFormat::Float : lightusd::Image::PixelFormat::UInt;
+  img.data.resize(size_t(img.width) * size_t(img.height) * 4 * (data_aov ? 4 : 1));
   float aspect = float(img.width) / float(img.height);
   // Exactly `samples` anti-aliasing samples, distributed by the Halton(2,3)
   // low-discrepancy sequence (PixelJitter). This supersedes the old
   // ceil(sqrt(N))^2 regular grid, which both rounded the sample count up to a
   // square and aliased against regular geometry/texture patterns; Halton spreads
   // the same N samples evenly while staying fully deterministic in `s`.
-  int spp = std::max(1, opt.samples);
+  int spp = data_aov ? 1 : std::max(1, opt.samples);
 
   // Scanlines are independent and write to disjoint pixel ranges, so render
   // them in parallel. Result is deterministic regardless of thread scheduling.
@@ -1999,7 +2007,7 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             org, dir, textures, tri_uvs, tlas, blas, instances,
                             rd, 0, tri_colors, tri_normals, openpbr_mats,
                             false, triangle_chunks, &primary_hit_t);
-          if (backplates) {
+          if (!data_aov && backplates) {
             for (const BackPlateImage &backplate : *backplates) {
               if (!backplate.valid()) continue;
               Vec3 plate_color;
@@ -2018,13 +2026,18 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
               }
             }
           }
-          if (volumes && !volumes->empty()) {
+          if (!data_aov && volumes && !volumes->empty()) {
             surf = CompositeVolumes(*volumes, org, dir, surf);
           }
           color = Add(color, surf);
         }
         color = Mul(color, 1.0f / float(spp));
         size_t ofs = (size_t(y) * size_t(img.width) + size_t(x)) * 4;
+        if (data_aov) {
+          const float values[4] = {color.x, color.y, color.z, 1.f};
+          std::memcpy(img.data.data() + ofs * sizeof(float), values, sizeof(values));
+          continue;
+        }
         img.data[ofs + 0] = ToSRGB8(color.x);
         img.data[ofs + 1] = ToSRGB8(color.y);
         img.data[ofs + 2] = ToSRGB8(color.z);

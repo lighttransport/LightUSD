@@ -141,6 +141,12 @@ json MCPServer::buildToolsList() const {
                   {"items", {{"type", "string"}}},
                   {"description", "Deferred-payload prim paths (omit = all)"}}}}));
   tools.push_back(tool(
+      "reload_layer",
+      "Re-read the root layer or one resolved path from get_scene_info's "
+      "layer_dependencies, recompose the retained next Stage, and apply a "
+      "transactional incremental renderer update. Omit path to reload the root.",
+      {{"path", strProp("resolved dependency-layer path (omit = root layer)")}}));
+  tools.push_back(tool(
       "timeline",
       "Control animation playback. op=play | pause | stop (reset to start) | "
       "seek {time}. Returns the playback state (playing, time, start, end, fps).",
@@ -398,6 +404,8 @@ void MCPServer::drain() {
         payload = host_->mcpListPrims(cmd->args, err);
       } else if (t == "load_payloads") {
         payload = host_->mcpLoadPayloads(cmd->args, err);
+      } else if (t == "reload_layer") {
+        payload = host_->mcpReloadLayer(cmd->args, err);
       } else if (t == "timeline") {
         payload = host_->mcpTimeline(cmd->args, err);
       } else if (t == "skinning") {

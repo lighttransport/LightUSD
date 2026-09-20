@@ -21,7 +21,11 @@
 #include "scene_loader.hh"   // LoadOptions
 #include "skinning.hh"       // RtSkinnedMeshUpload
 
-namespace lightusd { namespace next { class Stage; class StageSession; } }
+namespace lightusd { namespace next {
+class Stage;
+class StageSession;
+struct StageChangeSet;
+} }
 
 namespace lusdview {
 
@@ -36,7 +40,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                     DrawScene* draw, std::string* warn, std::string* err,
                     LoadControl* ctrl = nullptr,
                     std::shared_ptr<lightusd::next::StageSession>* out_session = nullptr,
-                    ProgressiveSceneStream* stream = nullptr);
+                    lightusd::next::StageChangeSet* out_changes = nullptr,
+                    ProgressiveSceneStream* stream = nullptr,
+                    const std::string& reload_layer_id = {});
 
 bool UpdateNextAnimatedMeshWorlds(const lightusd::next::Stage& stage,
                                   DrawScene* draw, double time);
@@ -95,6 +101,14 @@ bool FindNextCamera(const lightusd::next::Stage& stage, const std::string& name,
 // bakes it); `time` is not re-sampled.
 bool FindLegacyCamera(const lightusd::tydra::RenderScene& scene,
                       const std::string& name, NextCameraPose* out);
+
+// Evaluate a legacy-loader camera directly from the retained Stage at `time`.
+// This keeps authored camera motion available to the native temporal raster and
+// Vulkan paths without reconverting the scene's geometry for every shutter
+// midpoint. The RenderScene overload above remains the load-time camera query.
+bool FindLegacyCameraAtTime(const lightusd::Stage& stage,
+                            const std::string& name, double time,
+                            NextCameraPose* out);
 
 // Per-frame GPU-morph coefficients for `--next` instanced prototypes: for each
 // draw mesh that carries morph channels, resolve its blendshape weights from

@@ -1252,6 +1252,11 @@ int main(int argc, char **argv) {
     return RunRTPreviewNext(opt);
   }
 
+  if (opt.aov_explicit || opt.all_render_products) {
+    std::cerr << "Capture AOVs/products require the next CPU path (no GPU, legacy or subdivision override)\n";
+    return EXIT_FAILURE;
+  }
+
   // -frames (per-timecode animation output) is implemented only by the `next`
   // path above. It used to be silently ignored here -- the run produced one
   // image literally named with the `####` token and no animation. Fail loudly

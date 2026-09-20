@@ -26,6 +26,7 @@
 #include "next/reader/usdz-reader.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/validation/usd-validation.hh"
+#include "report.hh"
 
 namespace {
 
@@ -49,6 +50,8 @@ struct Args {
   ValidationOptions groups;
   size_t max_memory_mb = kDefaultMaxMemoryMb;
   bool json = false;
+  bool sarif = false;
+  std::string baseline;
   bool strict = false;
   bool strict_parse = false;
   bool composed = false;
@@ -124,6 +127,8 @@ void PrintUsage(std::ostream& os) {
         "  -d, --dump-rules      Dump the rule registry (id, group, doc)\n"
         "  -v, --verbose         Report per-pass progress on stderr\n"
         "      --json            Emit stable machine-readable JSON\n"
+        "      --sarif           Emit SARIF 2.1.0\n"
+        "      --baseline FILE   Fail only on new findings versus a JSON report\n"
         "  -o, --out FILE        Write report to FILE, stdout, or stderr\n"
         "      --max-memory-mb N Bound input/parser memory (default: 1024)\n"
         "  -h, --help            Show this help\n"
@@ -259,6 +264,11 @@ ParseArgsResult ParseArgs(int argc, char** argv, Args* args,
       return ParseArgsResult::ExitSuccess;
     } else if (arg == "--json") {
       args->json = true;
+    } else if (arg == "--sarif") {
+      args->sarif = true;
+    } else if (arg == "--baseline") {
+      if (!next_value("--baseline", &args->baseline) || args->baseline.empty())
+        return ParseArgsResult::Error;
     } else if (arg == "-t" || arg == "--strict") {
       args->strict = true;
     } else if (arg == "--strict-parse") {
@@ -1434,6 +1444,10 @@ int main(int argc, char** argv) {
     return kExitError;
   }
 
+  if (args.json && args.sarif) {
+    std::cerr << "lusdchecker: --json and --sarif are mutually exclusive\n";
+    return kExitError;
+  }
   if (args.max_memory_mb >
       std::numeric_limits<size_t>::max() / (size_t{1024} * 1024)) {
     std::cerr << "lusdchecker: error: --max-memory-mb is too large\n";
@@ -1657,6 +1671,13 @@ int main(int argc, char** argv) {
   const bool warnings_fail =
       args.strict && (result.warning_count() > 0 || !parser_warnings.empty());
   const bool valid = result.ok() && !warnings_fail;
+  lightusd::minijson::Value report;
+  if (!lightusd::minijson::Parse(JsonReport(args, result, parser_warnings, valid,
+                                          variant_pass_count, variant_limit_hit), &report) ||
+      !lusdchecker::ApplyBaseline(&report, args.baseline, &error)) {
+    std::cerr << "lusdchecker: error: " << error << '\n';
+    return kExitError;
+  }
 
   std::ofstream file_output;
   std::ostream* output = &std::cout;
@@ -1672,9 +1693,8 @@ int main(int argc, char** argv) {
     output = &file_output;
   }
 
-  if (args.json) {
-    *output << JsonReport(args, result, parser_warnings, valid,
-                          variant_pass_count, variant_limit_hit);
+  if (args.json || args.sarif) {
+    *output << (args.sarif ? lusdchecker::ToSarif(report).dump(2) : report.dump()) << '\n';
   } else {
     *output << "Input: " << args.input << '\n';
     if (!parser_warnings.empty()) {
@@ -1685,10 +1705,15 @@ int main(int argc, char** argv) {
     if (warnings_fail && result.ok()) {
       *output << "Strict result: FAILED - warnings are errors\n";
     }
+    if (!args.baseline.empty()) {
+      *output << "Baseline: " << report["existingIssueCount"].get_uint64()
+              << " existing, " << report["newIssueCount"].get_uint64() << " new findings\n"
+              << "Baseline gate: " << (report["gatePassed"].get_bool() ? "PASSED" : "FAILED") << '\n';
+    }
   }
   if (!*output) {
     std::cerr << "lusdchecker: error: failed while writing report\n";
     return kExitError;
   }
-  return valid ? kExitValid : kExitInvalid;
+  return report["gatePassed"].get_bool() ? kExitValid : kExitInvalid;
 }

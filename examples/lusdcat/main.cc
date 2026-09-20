@@ -963,6 +963,7 @@ void print_help() {
   std::cout << "Inspect options (YAML-like tree output):\n";
   std::cout << "  --inspect           Inspect Layer structure (YAML-like output)\n";
   std::cout << "  --inspect-json      Inspect Layer structure (JSON output)\n";
+  std::cout << "  --explain /Prim.attr  Explain property sources (with --json/--time)\n";
   std::cout << "  --mesh-subset-report\n";
   std::cout << "                      Report mesh child GeomSubset/material binding state\n";
   std::cout << "                      to find typeless or incomplete subset children\n";
@@ -1019,7 +1020,10 @@ void print_help() {
 #endif
 #endif
 
+int ExplainProperty(int argc, char** argv);
 int main(int argc, char **argv) {
+  for (int i = 1; i < argc; ++i)
+    if (std::string(argv[i]) == "--explain") return ExplainProperty(argc, argv);
   // Set 32GB virtual memory limit to prevent OOM / memory thrashing
 #if !defined(_WIN32) && !defined(LUSDCAT_NO_AS_LIMIT)
   {

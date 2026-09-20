@@ -55,6 +55,17 @@ class GLRenderer final : public Renderer {
   void updateProxyInstances(const float* xforms, const float* tints,
                             uint32_t count) override;
   void updateMeshWorld(int meshIndex, const float world[16]) override;
+  bool applyMeshSlotUpdatesTransactional(
+      const std::vector<MeshSlotUpdate>& updates, std::string* error) override;
+  bool replaceMeshSlotsTransactional(
+      const std::vector<MeshSlotReplacement>& replacements,
+      std::string* error) override;
+  bool applyMaterialUpdatesTransactional(
+      const std::vector<MaterialSlotUpdate>& updates,
+      std::string* error) override;
+  bool replaceTextureSlotsTransactional(
+      const std::vector<TextureSlotReplacement>& replacements,
+      std::string* error) override;
   int meshCount() const override { return static_cast<int>(meshes_.size()); }
   void resizeViewport(int width, int height) override;
   void newFrame() override;
@@ -207,6 +218,7 @@ class GLRenderer final : public Renderer {
   GLMaterial makeMaterial(const DrawMaterialCPU& material) const;
 
   void destroyScene();
+  void destroyMesh(GLMesh& mesh);
   void buildTessProgram();  // GL>=4.0 tessellation displacement program (best-effort)
   void ensureFbo(int w, int h);
   void drawMeshes(const RenderFrameParams& params, bool wireframe,
@@ -451,7 +463,10 @@ class GLRenderer final : public Renderer {
   std::vector<GLVolume> volumes_;
 
   // Offscreen target
-  GLuint fbo_{0}, colorTex_{0}, depthRbo_{0};
+  GLuint fbo_{0}, colorTex_{0}, depthTex_{0};
+  GLuint dofFbo_{0}, dofTex_{0}, dofProgram_{0}, dofVao_{0};
+  bool dofApplied_{false};
+  void applyRasterDof(const RenderFrameParams& params);
   int vpW_{0}, vpH_{0};
   // Row-flip scratch for uploadViewportImage (CUDA/HIP/CPU RT overlay).
   std::vector<uint8_t> flippedUploadScratch_;

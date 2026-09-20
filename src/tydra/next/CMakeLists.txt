@@ -9,6 +9,7 @@ cmake_minimum_required(VERSION 3.10)
 set(TYDRA_NEXT_SOURCES
     chunk-storage.cc
     render-data.cc
+    gltf-export.cc
     scene-access.cc
     render-extract.cc
     render-converter.cc
@@ -157,4 +158,10 @@ if(LIGHTUSD_NEXT_BUILD_FUZZERS)
     target_link_libraries(fuzz_next_render PRIVATE tydra_next lightusd_next)
     target_compile_options(fuzz_next_render PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
     target_link_options(fuzz_next_render PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
+endif()
+
+if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_NEXT_BUILD_TESTS)
+  add_executable(test_gltf_export ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/tydra/next/test_gltf_export.cc)
+  target_link_libraries(test_gltf_export PRIVATE tydra_next)
+  add_test(NAME next_gltf_export COMMAND test_gltf_export)
 endif()

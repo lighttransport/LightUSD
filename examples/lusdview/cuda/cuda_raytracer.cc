@@ -1221,6 +1221,9 @@ bool CudaRayTracer::refit(const DrawScene& scene, std::string* err) {
   CU_OK(cuMemcpyHtoD(static_cast<CUdeviceptr>(dTlasNodes_), hs.tlas.data(),
                      hs.tlas.size() * sizeof(Node)),
         "cuMemcpyHtoD(refit TLAS)");
+  CU_OK(cuMemcpyHtoD(static_cast<CUdeviceptr>(dInstances_), hs.instances.data(),
+                     hs.instances.size() * sizeof(Inst)),
+        "cuMemcpyHtoD(refit instances)");
 #if defined(LUSDVIEW_HAVE_OPTIX)
   if (optixIasHandle_) {
     bool updated = optixGasUpdateEnabled_ &&

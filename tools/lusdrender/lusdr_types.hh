@@ -543,7 +543,12 @@ struct CameraFrame {
   bool ortho{false};
 };
 
+enum class CaptureAov { Color, Depth, WorldNormal, PrimId };
+
 struct Options {
+  CaptureAov aov{CaptureAov::Color};
+  bool aov_explicit{false};
+  bool all_render_products{false};
   std::string input;
   std::string output;
   std::string camera;

@@ -7,11 +7,14 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <map>
+#include <set>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
+#include "minijson.hh"
 #include "image-loader.hh"
 #include "image-writer.hh"
 #include "next/layer/asset-anchor.hh"   // AssetAnchorPath
@@ -4836,10 +4839,12 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                 job.displacement_tex.id, job.displacement_tex.ch, tex_pool,
                 disp_scale, job.displacement_tex.scale,
                 job.displacement_tex.bias);
+            r.mat.capture_prim_id = CapturePrimId(job.prim.GetPath().str());
             r.has_openpbr = job.has_openpbr;
             r.openpbr = job.openpbr;
             if (job.back_material) {
               r.back_mat = TriMatFromResolved(*job.back_material);
+              r.back_mat.capture_prim_id = r.mat.capture_prim_id;
               r.has_back = true;
               if constexpr (std::is_same<typename TVec::value_type,
                                          FlatTri>::value) {
@@ -6355,6 +6360,15 @@ void AppendCollectionMask(const std::vector<lightusd::next::Path> &includes,
   }
 }
 
+bool CaptureSource(const std::string& source, CaptureAov* aov) {
+  if (source.empty() || source == "Ci" || source == "color") *aov = CaptureAov::Color;
+  else if (source == "depth" || source == "z") *aov = CaptureAov::Depth;
+  else if (source == "worldNormal" || source == "N") *aov = CaptureAov::WorldNormal;
+  else if (source == "primId") *aov = CaptureAov::PrimId;
+  else return false;
+  return true;
+}
+
 bool ApplyUsdRenderOptions(const lightusd::next::Stage &stage,
                            Options *opt) {
   if (!opt) return false;
@@ -6429,10 +6443,14 @@ bool ApplyUsdRenderOptions(const lightusd::next::Stage &stage,
       RenderVarData var;
       const UsdPrim var_prim = stage.GetPrimAtPath(var_path.prim_path());
       if (!GetRenderVarData(stage, var_prim, &var, opt->timecode)) continue;
-      if (!(var.source_name.empty() || var.source_name == "Ci" ||
-            var.source_name == "color")) {
-        std::cerr << "WARN: RenderVar '" << var_path.str() << "' source '"
-                  << var.source_name << "' is preserved but not emitted\n";
+      if (!opt->aov_explicit && product.ordered_vars.size() == 1) {
+        if (var.source_type != "raw" || !CaptureSource(var.source_name, &opt->aov)) {
+          std::cerr << "Unsupported RenderVar source: " << var.source_name << "\n";
+          return false;
+        }
+      } else if (!opt->aov_explicit && !opt->all_render_products && product.ordered_vars.size() > 1) {
+        std::cerr << "Multiple RenderVars require --all-products or --aov\n";
+        return false;
       }
     }
   }
@@ -6551,11 +6569,50 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   return true;
 }
 
+// A prim ID names the source mesh, including a shared prototype. Instance
+// placements deliberately share that source ID. Reject collisions/unsupported
+// hit kinds instead of silently labelling them as background.
+static bool WriteCapturePrimMap(const RenderContext& ctx, const std::string& path) {
+  using Json = lightusd::minijson::Value;
+  std::map<uint32_t, std::string> names;
+  bool valid = true;
+  ctx.stage.Traverse([&](const lightusd::next::UsdPrim& prim) {
+    const auto name = prim.GetPath().str();
+    const uint32_t id = CapturePrimId(name);
+    auto found = names.emplace(id, name);
+    if (!found.second && found.first->second != name) valid = false;
+    return true;
+  });
+  auto check = [&](const TriMat& mat) {
+    if (!mat.capture_prim_id || !names.count(mat.capture_prim_id)) valid = false;
+  };
+  for (const auto& mat : ctx.flat_mats) check(mat);
+  for (const auto& b : ctx.blas) for (const auto& mat : b.mat_table) check(mat);
+  if (ctx.stats.curve_strands || !ctx.volumes.empty()) valid = false;
+  if (!valid) {
+    std::cerr << "primId capture requires named source meshes without ID collisions (curves/volumes are unsupported)\n";
+    return false;
+  }
+  Json entries = Json::array();
+  for (const auto& item : names) entries.push_back(Json{{"id", item.first}, {"primPath", item.second}});
+  Json report{{"schemaVersion", 1}, {"background", 0}, {"semantics", "sourcePrim"}, {"prims", entries}};
+  std::ofstream out(path + ".ids.json"); out << report.dump(2) << '\n'; out.close();
+  return bool(out);
+}
+
 // Render the current camera/parameters of `ctx` and write to `path`.
 // Reuses the persistent BVH (no rebuild). Returns the trace time in seconds
 // (or a negative value on write failure).
 double RenderFrameTo(RenderContext &ctx, const std::string &path) {
   ctx.opt.width = ctx.width;
+  std::string budget_error;
+  const uint64_t image_bytes = uint64_t(std::max(0, ctx.width)) * uint64_t(std::max(0, ctx.height)) * 16;
+  if (ctx.width <= 0 || ctx.width > 32768 || ctx.height <= 0 || ctx.height > 32768 ||
+      image_bytes > std::numeric_limits<size_t>::max() ||
+      MemBudget::Get().WouldExceed(size_t(image_bytes), &budget_error)) {
+    std::cerr << "Capture image dimensions exceed limits: " << budget_error << "\n"; return -1;
+  }
+  if (ctx.opt.aov == CaptureAov::PrimId && !WriteCapturePrimMap(ctx, path)) return -1;
   const auto t0 = std::chrono::steady_clock::now();
   lightusd::Image img = RenderImage(
       ctx.scene, &ctx.direct, ctx.tris, ctx.flat_mats, ctx.lights,
@@ -6572,6 +6629,25 @@ double RenderFrameTo(RenderContext &ctx, const std::string &path) {
       ctx.triangle_chunks.empty() ? nullptr : &ctx.triangle_chunks,
       ctx.backplates.empty() ? nullptr : &ctx.backplates);
   const auto t1 = std::chrono::steady_clock::now();
+  if (ctx.opt.aov != CaptureAov::Color) {
+    if (path.size() < 4 || path.substr(path.size() - 4) != ".pfm") {
+      std::cerr << "Data AOV output must use .pfm (raw float32, no color transform)\n";
+      return -1;
+    }
+    std::ofstream out(path, std::ios::binary);
+    out << "PF\n" << img.width << " " << img.height << "\n-1.0\n";
+    for (int y = img.height - 1; y >= 0; --y) for (int x = 0; x < img.width; ++x) {
+      const size_t offset = (size_t(y) * size_t(img.width) + size_t(x)) * 16;
+      for (unsigned c = 0; c < 3; ++c) {
+        uint32_t bits; std::memcpy(&bits, img.data.data() + offset + c * 4, 4);
+        char bytes[4]; for (unsigned b = 0; b < 4; ++b) bytes[b] = char(bits >> (8 * b));
+        out.write(bytes, 4);
+      }
+    }
+    out.close();
+    if (!out) { std::cerr << "Failed to write PFM\n"; return -1; }
+    return std::chrono::duration<double>(t1 - t0).count();
+  }
   lightusd::image::WriteOption wopt;
   wopt.format = lightusd::image::WriteImageFormat::Autodetect;
   auto ret = lightusd::image::WriteImageToFile(path, img, wopt);
@@ -6809,7 +6885,72 @@ static void PrintLoadSummaryNext(const RenderContext &ctx) {
   }
 }
 
+static std::string CaptureSuffix(const std::string& path) {
+  std::string out;
+  // Encode separators too: /A_B and /A/B must not collide.
+  const char* hex = "0123456789ABCDEF";
+  for (unsigned char c : path) {
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) out += char(c);
+    else { out += '_'; out += hex[c >> 4]; out += hex[c & 15]; }
+  }
+  return out;
+}
+
+static double RenderCaptureProducts(RenderContext& ctx, const Options& original, const std::string& output) {
+  if (!original.all_render_products) return RenderFrameTo(ctx, output);
+  using namespace lightusd::next;
+  std::string settings_path = original.render_settings;
+  if (settings_path.empty() && ctx.stage.GetMeta().renderSettingsPrimPath_set)
+    settings_path = ctx.stage.GetMeta().renderSettingsPrimPath;
+  RenderSettingsData settings;
+  if (!GetRenderSettingsData(ctx.stage, ctx.stage.GetPrimAtPath(settings_path), &settings, ctx.frame_time) || settings.products.empty()) {
+    std::cerr << "--all-products requires RenderSettings with products\n"; return -1;
+  }
+  double total = 0;
+  std::set<std::string> output_paths;
+  const size_t dot = output.find_last_of('.');
+  const size_t slash = output.find_last_of("/\\");
+  const std::string prefix = dot == std::string::npos || (slash != std::string::npos && dot < slash)
+      ? output : output.substr(0, dot);
+  for (const auto& path : settings.products) {
+    RenderProductData product;
+    if (!GetRenderProductData(ctx.stage, ctx.stage.GetPrimAtPath(path), &product, ctx.frame_time)) return -1;
+    if (product.product_type != "raster") { std::cerr << "Only raster products are supported\n"; return -1; }
+    Options options = original;
+    options.render_product = path.str();
+    options.timecode = ctx.frame_time;
+    if (!ApplyUsdRenderOptions(ctx.stage, &options)) return -1;
+    std::vector<Path> vars = product.ordered_vars;
+    if (vars.empty()) vars.emplace_back();
+    for (const auto& var_path : vars) {
+      CaptureAov aov = CaptureAov::Color;
+      if (!var_path.empty()) {
+        RenderVarData var;
+        if (!GetRenderVarData(ctx.stage, ctx.stage.GetPrimAtPath(var_path), &var, ctx.frame_time) ||
+            var.source_type != "raw" || !CaptureSource(var.source_name, &aov)) {
+          std::cerr << "Unsupported RenderVar: " << var_path.str() << "\n"; return -1;
+        }
+      }
+      options.aov = aov;
+      ctx.opt = options; ctx.width = options.width;
+      ResolveCameraNext(ctx); ResolveBackPlateNext(ctx);
+      const std::string file = prefix + "." + CaptureSuffix(path.str()) + "." + CaptureSuffix(var_path.str()) +
+          (aov == CaptureAov::Color ? ".png" : ".pfm");
+      if (!output_paths.insert(file).second) { std::cerr << "Duplicate product output path\n"; return -1; }
+      const double seconds = RenderFrameTo(ctx, file);
+      if (seconds < 0) return -1;
+      total += seconds;
+      std::cerr << "product " << path.str() << " var " << var_path.str() << " -> " << file << "\n";
+    }
+  }
+  return total;
+}
+
 int RunRTPreviewNext(const Options &opt) {
+  if (opt.all_render_products && (!opt.render_product.empty() || opt.aov_explicit || opt.rt_lod || opt.lod_stream)) {
+    std::cerr << "--all-products cannot combine a single product/AOV or view-dependent LOD override\n";
+    return EXIT_FAILURE;
+  }
   RenderContext ctx;
   if (!BuildRenderContext(opt, ctx)) return EXIT_FAILURE;
   PrintLoadSummaryNext(ctx);
@@ -6849,14 +6990,14 @@ int RunRTPreviewNext(const Options &opt) {
       ResolveCameraNext(ctx);
       ResolveBackPlateNext(ctx);
       const std::string out = SubstituteFrame(opt.output, std::lround(t));
-      const double secs = RenderFrameTo(ctx, out);
+      const double secs = RenderCaptureProducts(ctx, opt, out);
       if (secs < 0.0) return EXIT_FAILURE;
       std::cerr << "frame " << t << " -> " << out << "  (" << secs << "s)\n";
     }
     return EXIT_SUCCESS;
   }
 
-  const double secs = RenderFrameTo(ctx, opt.output);
+  const double secs = RenderCaptureProducts(ctx, opt, opt.output);
   if (secs < 0.0) return EXIT_FAILURE;
   if (opt.stats) std::cerr << "render seconds: " << secs << "\n";
   return EXIT_SUCCESS;

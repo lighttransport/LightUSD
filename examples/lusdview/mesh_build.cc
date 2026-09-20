@@ -3431,6 +3431,20 @@ LoadDiagnostics CategorizeLoadWarnings(
   return d;
 }
 
+void AddLightDiagnostics(const DrawScene& draw, LoadDiagnostics* diagnostics) {
+  if (!diagnostics) return;
+  for (const DrawLightCPU& light : draw.lights) {
+    if (light.type == DrawLightCPU::Type::Geometry) {
+      ++diagnostics->geometry_lights;
+      if (light.geometryMesh >= 0) ++diagnostics->emissive_mesh_lights;
+    } else if (light.type == DrawLightCPU::Type::Portal) {
+      ++diagnostics->portal_lights;
+    }
+    if (light.iesValid || !light.shapingIesFile.empty())
+      ++diagnostics->ies_profiles;
+  }
+}
+
 void UpdatePreviewLight(DrawScene* draw) {
   if (!draw) return;
   float fallback[3]{0.5f, 0.8f, 0.6f};

@@ -84,7 +84,15 @@ static constexpr uint32_t kPurposeDefaultMask =
 static constexpr uint32_t kNoOpenPBRMaterial = UINT32_MAX;
 static constexpr uint32_t kNoBackfaceMaterial = UINT32_MAX;
 
+// Exactly representable as float; zero is the capture background.
+inline uint32_t CapturePrimId(const std::string& path) {
+  uint32_t h = 2166136261u;
+  for (unsigned char c : path) { h ^= c; h *= 16777619u; }
+  return (h % 16777215u) + 1u;
+}
+
 struct TriInfo {
+  uint32_t capture_prim_id{0};
   Vec3 p0;
   Vec3 p1;
   Vec3 p2;
@@ -146,6 +154,7 @@ struct TriInfo {
 // triangle. The instanced (TLAS) BLAS arrays store the slim TriStore below + a
 // side table of TriMat, cutting per-triangle memory ~2× on geometry-heavy scenes.
 struct TriMat {
+  uint32_t capture_prim_id{0};
   Vec3 base_color{0.18f, 0.18f, 0.18f};
   Vec3 emission{0.0f, 0.0f, 0.0f};
   float roughness{0.55f};
@@ -272,6 +281,7 @@ inline TriInfo CombineTriMat(const TriMat &m) {
   t.use_specular_workflow = m.use_specular_workflow;
   t.openpbr_id = m.openpbr_id;
   t.area_light = m.area_light;
+  t.capture_prim_id = m.capture_prim_id;
   return t;
 }
 
@@ -281,6 +291,7 @@ inline TriInfo CombineTriMat(const TriMat &m) {
 // synthetic/recomputed). Mirrors the mesh TriStore + TriMat split.
 inline TriMat ExtractTriMat(const TriInfo &t) {
   TriMat m;
+  m.capture_prim_id = t.capture_prim_id;
   m.base_color = t.base_color;
   m.emission = t.emission;
   m.roughness = t.roughness;

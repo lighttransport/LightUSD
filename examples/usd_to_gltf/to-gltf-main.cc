@@ -1,207 +1,74 @@
-// SPDX-License-Identifier: Apache 2.0
-// Copyright 2024-Present Light Transport Entertainment Inc.
-
-//
-// Command-line check tool to convert USD Stage to RenderScene(glTF-like data
-// structure)
-//
-#include <algorithm>
+// SPDX-License-Identifier: Apache-2.0
+#include "next/lightusd-next.hh"
+#include "next/reader/usdz-reader.hh"
+#include "tydra/next/render-converter.hh"
+#include "tydra/next/gltf-export.hh"
+#include "minijson.hh"
+#include <fstream>
+#include <filesystem>
 #include <iostream>
-#include <sstream>
 
-// Use json.hpp located at <lightusd>/src/external
-#define TINYGLTF_NO_INCLUDE_JSON
-#include "external/jsonhpp/nlohmann/json.hpp"
-
-#define TINYGLTF_IMPLEMENTATION
-#define STB_IMAGE_IMPLEMENTATION // this will include <lightusd>/src/external/stb_image.h
-#include "external/tiny_gltf.h"
-
-#include "lightusd.hh"
-#include "io-util.hh"
-#include "tydra/render-data.hh"
-#include "tydra/scene-access.hh"
-#include "tydra/shader-network.hh"
-
-static std::string GetFileExtension(const std::string &filename) {
-  if (filename.find_last_of('.') != std::string::npos)
-    return filename.substr(filename.find_last_of('.') + 1);
-  return "";
-}
-
-static std::string str_tolower(std::string s) {
-  std::transform(s.begin(), s.end(), s.begin(),
-                 [](unsigned char c) { return std::tolower(c); });
-  return s;
-}
-
-// key = Full absolute prim path(e.g. `/bora/dora`)
-using XformMap = std::map<std::string, const lightusd::Xform *>;
-using MeshMap = std::map<std::string, const lightusd::GeomMesh *>;
-using MaterialMap = std::map<std::string, const lightusd::Material *>;
-using PreviewSurfaceMap =
-    std::map<std::string, std::pair<const lightusd::Shader *,
-                                    const lightusd::UsdPreviewSurface *>>;
-using UVTextureMap =
-    std::map<std::string, std::pair<const lightusd::Shader *,
-                                    const lightusd::UsdUVTexture *>>;
-using PrimvarReader_float2Map =
-    std::map<std::string, std::pair<const lightusd::Shader *,
-                                    const lightusd::UsdPrimvarReader_float2 *>>;
-
-tinygltf::Material to_gltf_material(const lightusd::tydra::RenderMaterial &mat) {
-  tinygltf::Material out;
-
-  out.pbrMetallicRoughness.roughnessFactor = mat.surfaceShader.roughness.value;
-
-  return out;
-}
-
-bool to_gltf(const lightusd::tydra::RenderScene &rscene, const std::string &gltf_filename)
-{
-  tinygltf::Model model;
-  tinygltf::Scene scene;
-  std::vector<tinygltf::Mesh> meshes;
-  tinygltf::Primitive primitive;
-
-  tinygltf::Asset asset;
-  asset.version = "2.0";
-  asset.generator = "usd_to_gltf example in LightUSD";
-
-  model.scenes.push_back(scene);
-
-  // model.bufferViews
-  // model.buffers
-  // model.nodes
-  //model.meshes = meshes;
-  model.asset = asset;
-
-  // model.materials
-
-  tinygltf::TinyGLTF ctx;
-  bool ret = ctx.WriteGltfSceneToFile(&model,
-    gltf_filename,
-    true, // embedImages
-  true, // embedBuffers
-  true, // pretty print
-  false); // write binary glTF
-
-  return ret;
-}
-
-int main(int argc, char **argv) {
-  if (argc < 2) {
-    std::cout << "Need USD file.\n"
-              << std::endl;
-    return EXIT_FAILURE;
+int main(int argc, char** argv) {
+  namespace usd = lightusd::next;
+  namespace render = lightusd::tydra::next;
+  bool strict = false;
+  std::string input, output, report;
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg(argv[i]);
+    if (arg == "--strict") strict = true;
+    else if (arg == "--report" && i + 1 < argc) report = argv[++i];
+    else if (!arg.empty() && arg[0] != '-' && input.empty()) input = arg;
+    else if (!arg.empty() && arg[0] != '-' && output.empty()) output = arg;
+    else { std::cerr << "Usage: usd_to_gltf INPUT OUTPUT.glb [--strict] [--report losses.json]\n"; return 2; }
   }
-
-  std::string filepath = argv[1];
-  std::string warn;
-  std::string err;
-
-  std::string ext = str_tolower(GetFileExtension(filepath));
-
-  lightusd::Stage stage;
-
-  if (ext.compare("usdc") == 0) {
-    bool ret = lightusd::LoadUSDCFromFile(filepath, &stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-      // return EXIT_FAILURE;
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USDC file: " << filepath << "\n";
-      return EXIT_FAILURE;
-    }
-  } else if (ext.compare("usda") == 0) {
-    bool ret = lightusd::LoadUSDAFromFile(filepath, &stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-      // return EXIT_FAILURE;
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USDA file: " << filepath << "\n";
-      return EXIT_FAILURE;
-    }
-  } else if (ext.compare("usdz") == 0) {
-    // std::cout << "usdz\n";
-    bool ret = lightusd::LoadUSDZFromFile(filepath, &stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-      // return EXIT_FAILURE;
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USDZ file: " << filepath << "\n";
-      return EXIT_FAILURE;
-    }
-
-  } else {
-    // try to auto detect format.
-    bool ret = lightusd::LoadUSDFromFile(filepath, &stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-      // return EXIT_FAILURE;
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USD file: " << filepath << "\n";
-      return EXIT_FAILURE;
-    }
+  if (input.empty() || output.empty() || output == input || report == input || report == output) {
+    std::cerr << "Supply distinct input, output and optional report paths\n"; return 2;
   }
-
-  std::string s = stage.ExportToString();
-  std::cout << s << "\n";
-  std::cout << "--------------------------------------"
-            << "\n";
-
-  // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
-  lightusd::tydra::RenderScene render_scene;
-  lightusd::tydra::RenderSceneConverter converter;
-  lightusd::tydra::RenderSceneConverterEnv env(stage);
-
-  // Add base directory of .usd file to search path.
-  std::string usd_basedir = lightusd::io::GetBaseDir(filepath);
-  std::cout << "Add seach path: " << usd_basedir << "\n";
-
-  env.set_search_paths({usd_basedir});
-  // TODO: Set user-defined AssetResolutionResolver
-  // AssetResolutionResolver arr;
-  // converter.set_asset_resoluition_resolver(arr);
-
-
-  double timecode = lightusd::value::TimeCode::Default();
-  bool ret = converter.ConvertToRenderScene(env, &render_scene);
-  if (!ret) {
-    std::cerr << "Failed to convert USD Stage to RenderScene: \n" << converter.GetError() << "\n";
-    return EXIT_FAILURE;
+  usd::StageSession session;
+  usd::StageSessionOptions options;
+  options.resolver.enable_suffix_fallback = false;
+  options.load.limits.max_resident_bytes = size_t(1) << 30;
+  const auto opened = session.OpenFile(input, options);
+  if (!opened) { std::cerr << opened.error << '\n'; return 1; }
+  usd::AssetResolver resolver;
+  resolver.SetConfig(options.resolver);
+  render::ConverterConfig config;
+  config.asset_resolver = &resolver;
+  config.asset_base_dir = std::filesystem::path(resolver.Resolve(input).resolved_path).parent_path().string();
+  config.material.load_textures = false;
+  render::RenderSceneConverter converter(config);
+  auto converted = converter.Convert(*session.GetSnapshot());
+  if (!converted.success) { std::cerr << converted.error << '\n'; return 1; }
+  std::string root_anchor = resolver.Resolve(input).resolved_path;
+  if (std::filesystem::path(root_anchor).extension() == ".usdz") {
+    usd::USDZReader package;
+    usd::USDZReadOptions read;
+    read.max_archive_size = options.load.limits.max_resident_bytes;
+    if (package.OpenFile(root_anchor, read) && package.FindRootLayer() >= 0)
+      root_anchor += "[" + package.EntryName(size_t(package.FindRootLayer())) + "]";
   }
-
-  if (converter.GetWarning().size()) {
-    std::cout << "ConvertToRenderScene warn: " << converter.GetWarning() << "\n";
+  for (auto& image : converted.scene.images) {
+    const auto asset = resolver.Resolve(image.resolved_path, root_anchor);
+    if (asset.exists) image.resolved_path = asset.resolved_path;
   }
-
-  std::cout << DumpRenderScene(render_scene) << "\n";
-
-  if (!to_gltf(render_scene, "output.gltf")) {
-    std::cerr << "Failed to save scene as glTF\n";
-    return EXIT_FAILURE;
+  render::GltfExportOptions export_options;
+  export_options.resolver = &resolver;
+  export_options.fail_on_loss = strict;
+  auto result = render::ExportGLB(converted.scene, export_options);
+  for (const auto& warning : converted.warnings) result.losses.push_back(warning);
+  if (strict && !result.losses.empty()) { result.success = false; result.error = "strict export refuses conversion losses"; }
+  for (const auto& loss : result.losses) std::cerr << "loss: " << loss << '\n';
+  if (!report.empty()) {
+    auto losses = lightusd::minijson::Value::array();
+    for (const auto& loss : result.losses) losses.push_back(loss);
+    lightusd::minijson::Value json{{"schemaVersion", 1}, {"success", result.success}, {"error", result.error}, {"losses", losses}};
+    std::ofstream out(report); out << json.dump(2) << '\n'; out.close();
+    if (!out) { std::cerr << "Cannot write loss report\n"; return 1; }
   }
-
-  return EXIT_SUCCESS;
+  if (!result.success) { std::cerr << result.error << '\n'; return 1; }
+  std::ofstream out(output, std::ios::binary);
+  out.write(reinterpret_cast<const char*>(result.glb.data()), std::streamsize(result.glb.size()));
+  out.close();
+  if (!out) { std::cerr << "Cannot write GLB\n"; return 1; }
+  return 0;
 }

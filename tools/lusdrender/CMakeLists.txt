@@ -55,6 +55,7 @@ if(NOT TARGET lightusd_gpu_rt_common)
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/texture_tools.cc
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/lightrt_mtlx_bridge.cc
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/lightrt_mtlx_graph_compile.cc
+    ${LIGHTUSD_GPU_RT_VIEW_DIR}/lightrt_mtlx_graph_phases.cc
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/lightrt_mtlx_pack.cc
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/displacement_bake.cc
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/rt_bvh.cc
@@ -427,5 +428,5 @@ endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   set_source_files_properties(
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/lightrt_mtlx_graph_compile.cc PROPERTIES
-    COMPILE_OPTIONS "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:-O1>")
+    COMPILE_OPTIONS "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:-O0>")
 endif()

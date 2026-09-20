@@ -126,6 +126,12 @@ struct DrawMeshCPU {
   bool proxyFallback{false};
 
   std::vector<DrawVertex> vertices;  // rest pose (GPU morph re-derives from this)
+  // Upload identities survive release of the large CPU arrays. They let a
+  // post-composition transaction prove topology compatibility and avoid
+  // touching renderer slots whose vertex stream is unchanged.
+  uint64_t uploadedVertexFingerprint{0};
+  uint64_t uploadedTopologyFingerprint{0};
+  size_t uploadedVertexCount{0};
   // Optional per-vertex displayColor (rgb, parallel to `vertices`); empty = none.
   // Used by the flat --next preview to tint geometry; the material shader
   // multiplies baseColor by it (default white when absent).
@@ -807,6 +813,10 @@ struct DrawUdimTileCPU {
 
 struct DrawTextureCPU {
   light3d::Image image;  // always normalized to RGBA8 (channels == 4) on the CPU side
+  // Identity of the complete ordinary 2D upload. This survives release of the
+  // pixel/mip payload and lets a later recomposition retain an unchanged GPU
+  // texture slot. Zero means the identity has not been captured yet.
+  uint64_t uploadedFingerprint{0};
   // Linear RGB float source retained for HDR/EXR GPU BC6H processing. The
   // image field is a tonemapped RGBA8 fallback when a backend cannot use it.
   std::vector<float> hdrRGB;
@@ -1018,6 +1028,10 @@ struct DrawLightCPU {
   int geometryTriOffset{-1};
   int geometryTriCount{0};
   int geometryInstance{-1};
+  // Deterministic world-space samples used by bounded raster lighting. RT keeps
+  // using the complete triangle range above. Three floats per sample.
+  int geometryRasterSampleCount{0};
+  float geometryRasterSamples[24]{};
   std::string materialSyncMode;
   bool lightLinksAll{true};
   std::vector<int> lightLinkMeshIndices;

@@ -66,6 +66,9 @@ done
 echo "==> oit_composite.comp -> embedded/oit_composite_comp.spv.h"
 "$GLSLANG" -V --vn oit_composite_comp_spv \
   -o "$OUT/oit_composite_comp.spv.h" "$HERE/oit_composite.comp"
+echo "==> raster_dof.comp -> embedded/raster_dof_comp.spv.h"
+"$GLSLANG" -V --vn raster_dof_comp_spv \
+  -o "$OUT/raster_dof_comp.spv.h" "$HERE/raster_dof.comp"
 
 # --- ray-query compute shader (optional) -----------------------------------
 # Needs a glslang new enough for GL_EXT_ray_query (SPIR-V 1.4 / vulkan1.2).

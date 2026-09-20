@@ -315,6 +315,16 @@ void TestChunkedArrayShareCow() {
   f.share_from(e);
   assert(f.size() == 0 && !f.is_shared());
 
+  // Ordinary copy syntax uses the same COW contract. RenderScene's
+  // transactional catalog clone relies on both construction and assignment.
+  ChunkedArray<uint32_t> copied(c);
+  ChunkedArray<uint32_t> assigned;
+  assigned = c;
+  assert(copied.chunk_data(0) == c.chunk_data(0));
+  assert(assigned.chunk_data(0) == c.chunk_data(0));
+  copied.mutable_at(8) = 54321u;
+  assert(copied[8] == 54321u && c[8] == 8u);
+
   std::cout << "  ChunkedArray copy-on-write sharing passed!\n";
 }
 
@@ -6881,6 +6891,9 @@ class RecordingSceneUpdateSink final : public SceneUpdateSink {
     new_revision = next;
     full_resync = full;
     mesh_upserts = 0;
+    material_upserts = 0;
+    texture_upserts = 0;
+    image_upserts = 0;
     removes = 0;
     mesh_removes = 0;
     if (begin_callback && !inside_callback) {
@@ -6898,7 +6911,19 @@ class RecordingSceneUpdateSink final : public SceneUpdateSink {
   bool UpsertMesh(RenderId id, const RenderMesh& mesh) override {
     ++mesh_upserts;
     mesh_ids[mesh.prim_path] = id;
-    if (!mesh.points.empty()) last_mesh_x = mesh.points[0];
+    if (!mesh.points.empty()) mesh_x[mesh.prim_path] = mesh.points[0];
+    return true;
+  }
+  bool UpsertMaterial(RenderId, const RenderMaterial&) override {
+    ++material_upserts;
+    return true;
+  }
+  bool UpsertTexture(RenderId, const RenderTexture&) override {
+    ++texture_upserts;
+    return true;
+  }
+  bool UpsertImage(RenderId, const TextureImage&) override {
+    ++image_upserts;
     return true;
   }
   bool EndUpdate() override { return !reject_end; }
@@ -6908,10 +6933,13 @@ class RecordingSceneUpdateSink final : public SceneUpdateSink {
   uint64_t new_revision = 0;
   bool full_resync = false;
   size_t mesh_upserts = 0;
+  size_t material_upserts = 0;
+  size_t texture_upserts = 0;
+  size_t image_upserts = 0;
   size_t removes = 0;
   size_t mesh_removes = 0;
-  float last_mesh_x = 0.0f;
   std::map<std::string, RenderId> mesh_ids;
+  std::map<std::string, float> mesh_x;
   std::function<void()> begin_callback;
   bool inside_callback = false;
   bool reject_end = false;
@@ -6922,10 +6950,31 @@ void TestIncrementalRenderSession() {
   std::cout << "Testing incremental RenderSession...\n";
   auto source = [](float x) {
     std::string text = "#usda 1.0\ndef Mesh \"M\" {\n";
+    text += "    rel material:binding = </Mat>\n";
     text += "    int[] faceVertexCounts = [3]\n";
     text += "    int[] faceVertexIndices = [0, 1, 2]\n";
     text += "    point3f[] points = [(" + std::to_string(x);
     text += ", 0, 0), (1, 0, 0), (0, 1, 0)]\n}\n";
+    text += R"(def Mesh "N" {
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    point3f[] points = [(10, 0, 0), (11, 0, 0), (10, 1, 0)]
+}
+def Material "Mat" {
+    token outputs:surface.connect = </Mat/Surface.outputs:surface>
+    def Shader "Surface" {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </Mat/Tex.outputs:rgb>
+        token outputs:surface
+    }
+    def Shader "Tex" {
+        uniform token info:id = "UsdUVTexture"
+        asset inputs:file = @missing-render-session.png@
+        float2 inputs:st = (0, 0)
+        color3f outputs:rgb
+    }
+}
+)";
     return text;
   };
 
@@ -6945,12 +6994,18 @@ void TestIncrementalRenderSession() {
   assert(initial.converted_resource_count > 0);
   assert(initial.converted_scene_bytes > 0);
   assert(sink.full_resync);
-  assert(sink.mesh_upserts == 1);
+  assert(sink.mesh_upserts == 2);
+  // The fixture deliberately includes a stable material and texture catalog so
+  // the geometry-only update below proves they are neither reconverted nor
+  // emitted to the sink.
+  assert(sink.material_upserts == 1);
+  assert(sink.texture_upserts == 1);
+  assert(sink.image_upserts == 1);
   RenderSceneSnapshot retained_render_snapshot = render_session.GetSnapshot();
   assert(retained_render_snapshot.revision == 1);
   assert(retained_render_snapshot.scene);
   const RenderId mesh_id = sink.mesh_ids.at("/M");
-  assert(std::fabs(sink.last_mesh_x) < 1.0e-6f);
+  assert(std::fabs(sink.mesh_x.at("/M")) < 1.0e-6f);
 
   LoadResult second = LoadUSDAFromString(source(2.0f));
   assert(second.success);
@@ -6969,13 +7024,23 @@ void TestIncrementalRenderSession() {
       render_session.Apply(second_snapshot, changes, &sink);
   assert(update);
   assert(!update.full_resync);
-  assert(update.converted_resource_count > 0);
+  assert(update.converted_resource_count == 1);
   assert(!sink.full_resync);
   assert(sink.mesh_upserts == 1);
+  assert(sink.material_upserts == 0);
+  assert(sink.texture_upserts == 0);
+  assert(sink.image_upserts == 0);
+  assert(update.upsert_count == 1);
   assert(sink.mesh_ids.at("/M") == mesh_id);
-  assert(std::fabs(sink.last_mesh_x - 2.0f) < 1.0e-6f);
+  assert(std::fabs(sink.mesh_x.at("/M") - 2.0f) < 1.0e-6f);
   assert(sink.removes == 0);
   assert(render_session.revision() == second_snapshot.revision);
+  const RenderSceneSnapshot patched_snapshot = render_session.GetSnapshot();
+  assert(retained_render_snapshot->meshes.size() == 2);
+  assert(patched_snapshot->meshes.size() == 2);
+  // The unaffected mesh remains the same physical COW geometry allocation.
+  assert(retained_render_snapshot->meshes[1].points.chunk_data(0) ==
+         patched_snapshot->meshes[1].points.chunk_data(0));
 
   LoadResult third = LoadUSDAFromString("#usda 1.0\n");
   assert(third.success);
@@ -6994,7 +7059,7 @@ void TestIncrementalRenderSession() {
   assert(removed);
   assert(!sink.full_resync);
   assert(sink.mesh_upserts == 0);
-  assert(sink.mesh_removes == 1);
+  assert(sink.mesh_removes == 2);
   assert(sink.removes >= 1);
   assert(removed.remove_count == sink.removes);
   assert(render_session.revision() == 3);
@@ -7039,7 +7104,7 @@ void TestIncrementalRenderSession() {
   assert(retry_session.Initialize(first_snapshot, &retry_sink));
   const RenderSceneSnapshot before_reject = retry_session.GetSnapshot();
   std::string expanded = source(3.0f);
-  expanded += R"(def Mesh "N" {
+  expanded += R"(def Mesh "P" {
     int[] faceVertexCounts = [3]
     int[] faceVertexIndices = [0, 1, 2]
     point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
@@ -7058,7 +7123,7 @@ void TestIncrementalRenderSession() {
   RenderUpdateResult rejected =
       retry_session.Apply(expanded_snapshot, expanded_changes, &retry_sink);
   assert(!rejected && rejected.status == OperationStatus::SinkRejected);
-  const RenderId rejected_n_id = retry_sink.mesh_ids.at("/N");
+  const RenderId rejected_n_id = retry_sink.mesh_ids.at("/P");
   const RenderSceneSnapshot after_reject = retry_session.GetSnapshot();
   assert(after_reject.revision == before_reject.revision);
   assert(after_reject.scene == before_reject.scene);
@@ -7066,7 +7131,45 @@ void TestIncrementalRenderSession() {
   RenderUpdateResult retried =
       retry_session.Apply(expanded_snapshot, expanded_changes, &retry_sink);
   assert(retried);
-  assert(retry_sink.mesh_ids.at("/N") == rejected_n_id);
+  assert(retry_sink.mesh_ids.at("/P") == rejected_n_id);
+
+  // Preparation performs conversion without publishing or touching the real
+  // sink. A rejected commit remains retryable, while a competing successful
+  // commit makes an older candidate stale.
+  RenderSession two_phase_session;
+  RecordingSceneUpdateSink two_phase_sink;
+  assert(two_phase_session.Initialize(first_snapshot, &two_phase_sink));
+  const size_t initial_sink_upserts = two_phase_sink.mesh_upserts;
+  PreparedRenderUpdate prepared;
+  RenderUpdateResult prepared_result =
+      two_phase_session.Prepare(second_snapshot, changes, &prepared);
+  assert(prepared_result && prepared);
+  assert(prepared.base_revision() == 1 && prepared.new_revision() == 2);
+  assert(two_phase_session.revision() == 1);
+  assert(two_phase_sink.mesh_upserts == initial_sink_upserts);
+  two_phase_sink.reject_end = true;
+  RenderUpdateResult rejected_commit =
+      two_phase_session.Commit(std::move(prepared), &two_phase_sink);
+  assert(!rejected_commit &&
+         rejected_commit.status == OperationStatus::SinkRejected);
+  assert(prepared);
+  assert(two_phase_session.revision() == 1);
+  two_phase_sink.reject_end = false;
+  assert(two_phase_session.Commit(std::move(prepared), &two_phase_sink));
+  assert(!prepared);
+  assert(two_phase_session.revision() == 2);
+
+  PreparedRenderUpdate candidate_a;
+  PreparedRenderUpdate candidate_b;
+  assert(two_phase_session.Prepare(third_snapshot, removal, &candidate_a));
+  assert(two_phase_session.Prepare(third_snapshot, removal, &candidate_b));
+  assert(two_phase_session.Commit(std::move(candidate_b), &two_phase_sink));
+  const RenderUpdateResult stale =
+      two_phase_session.Commit(std::move(candidate_a), &two_phase_sink);
+  assert(!stale && stale.status == OperationStatus::StaleRevision);
+  assert(candidate_a);
+  two_phase_session.Abort(&candidate_a);
+  assert(!candidate_a);
 
   std::cout << "  incremental RenderSession: PASSED\n";
 }

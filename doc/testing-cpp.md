@@ -344,10 +344,20 @@ The lusdview viewer example registers GPU-dependent tests under the `lusdview` c
 | `lusdview-dome-orientation` | DomeLight IBL orientation | No GPU |
 | `lusdview-light-record-equivalence` | Next/legacy light record parity | `xvfb-run` |
 | `lusdview-camera-record-equivalence` | Next/legacy camera record parity | `xvfb-run` |
+| `lusdview-camera-clipping-planes` | Authored camera clipping on GL/Vulkan raster | `xvfb-run`, Vulkan backend |
+| `lusdview-camera-dof-raster` | Thin-lens response on GL/Vulkan raster | `xvfb-run`, Vulkan backend |
+| `lusdview-camera-motion-raster-export` | Native/companion Vulkan shutter accumulation and closed shutter | Vulkan backend |
+| `lusdview-camera-motion-raster-legacy` | Legacy-loader native/companion camera shutter parity | Vulkan backend |
+| `lusdview-camera-motion-raster-gl` | Native/companion OpenGL shutter accumulation and closed shutter | `xvfb-run` |
+| `lusdview-camera-motion-vulkan` | Vulkan RT temporal poses retain progressive accumulation | Vulkan RT adapter |
 | `lusdview-shadow-alpha-inst` | Alpha-cutout + PointInstancer shadow | No GPU |
 | `lusdview-aousd-conformance` | AOUSD spec render conformance | No Vulkan backend |
 | `lusdview-gl-vk-parity` | GL/VK raster image agreement | No GPU |
 | `lusdview-raster-shadow-map` | Raster shadow map regression | No GPU |
+| `lusdview-raster-multilight` | GL/Vulkan linked finite and directional light parity | `xvfb-run`, Vulkan backend |
+| `lusdview-raster-geometry-light` | GL/Vulkan resolved GeometryLight mesh-sample parity | `xvfb-run`, Vulkan backend |
+| `lusdview-area-light-vulkan` | Vulkan RT finite-light soft-shadow response | Hardware Vulkan RT |
+| `lusdview-area-light-cuda` | CUDA finite-light soft-shadow response | CUDA device |
 
 ```bash
 # Run every test whose name belongs to the lusdview matrix. The name filter
@@ -1056,3 +1066,25 @@ The current infrastructure has a few operational gaps worth keeping in mind:
 - The Python bindings tests (`python/tests/`) are not integrated into `ctest`.
 - Feature fixture directories (`lux/`, `node-mtlx/`, `skinning/`) provide test data but are not exercised by any automated runner.
 - The experimental `next` module (`src/next/`, `tests/next/`) is a standalone CMake project excluded from `build/` `ctest` and the regression gate by design (`LIGHTUSD_NEXT_BUILD_TESTS=OFF`); its `assert()`-based tests are only meaningful in Debug builds. See [Experimental `next` library tests](#experimental-next-library-tests).
+
+## Workflow tools and next examples
+
+`next_workflow_examples` generates small inputs and checks composition, typed
+queries, USDA/USDC reopening, payload/variant edits after snapshot publication,
+cancellation, sampled/spline/skeletal evaluation and portable package relocation.
+It is also registered in standalone next builds with examples enabled.
+
+`workflow_tools` additionally exercises JSON crate limits, bounded dependency
+reports and all-authored variants, variant/property provenance, checker baseline
+and SARIF output, directory/package diffs, textured GLB export and strict losses.
+When `lusdrender` is built, it runs the two-camera synthetic capture and checks
+raw depth, world normals and source IDs numerically. Temporary assets are removed
+after the run. `next_gltf_export` tests API budget failures, invalid attribute
+indices, malformed corner mappings, non-finite values and cyclic node graphs.
+
+```sh
+ctest --test-dir build_ninja -R '^(workflow_tools|next_workflow_examples|next_gltf_export)$' --output-on-failure
+```
+
+These headless checks require no GPU or display. They supplement the native and
+standalone next regression gates; they do not replace viewer GPU tests.

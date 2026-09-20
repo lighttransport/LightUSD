@@ -2642,8 +2642,8 @@ void SplitProtoSubtree(const tnext::UsdPrim& root,
 // recursively, so a TLAS-less GL preview still shows nested instancing -- geometry
 // stays deduped (shared VBO), only the per-instance matrix list grows. Routing the
 // top-level PointInstancer/native passes through this is byte-identical when nothing
-// nests (same mesh order, same per-placement loop). `placementColors`, when set, is
-// 3 floats/placement applied as per-instance color to this level's direct meshes.
+// nests (same mesh order, same per-placement loop). `placementColors` and
+// `placementOpacities`, when set, carry three and one float per placement.
 //
 // SKINNED prototypes stay INSTANCED (an earlier design de-instanced them, one
 // DrawMeshCPU per placement; the comment here outlived it, along with a
@@ -2662,7 +2662,8 @@ void EmitInstancedProto(const tnext::Stage& stage,
                         tydn::RenderSceneConverter& conv,
                         const tnext::UsdPrim& protoRoot,
                         const std::vector<matrix4d>& placements,
-                        const std::vector<float>* placementColors, double time,
+                        const std::vector<float>* placementColors,
+                        const std::vector<float>* placementOpacities, double time,
                         bool gpuSkinning,
                         DrawScene* draw, Bounds* bounds, long long* instTotal,
                         long long* effectiveTris, size_t instBudget,
@@ -2682,6 +2683,8 @@ void EmitInstancedProto(const tnext::Stage& stage,
 
   const bool haveColors =
       placementColors && placementColors->size() == placements.size() * 3;
+  const bool haveOpacities =
+      placementOpacities && placementOpacities->size() == placements.size();
 
   for (const tnext::UsdPrim& mp : directMeshes) {
     if (consumed) consumed->insert(mp.GetPath().str());
@@ -2750,6 +2753,7 @@ void EmitInstancedProto(const tnext::Stage& stage,
     }
     dm.instanceXforms.reserve(placements.size() * 12);
     if (haveColors) dm.instanceColors.reserve(placements.size() * 3);
+    if (haveOpacities) dm.instanceOpacities.reserve(placements.size());
     for (size_t k = 0; k < placements.size(); ++k) {
       if (static_cast<size_t>(*instTotal) + dm.instanceXforms.size() / 12 >=
           instBudget)
@@ -2762,6 +2766,9 @@ void EmitInstancedProto(const tnext::Stage& stage,
         dm.instanceColors.push_back((*placementColors)[k * 3 + 0]);
         dm.instanceColors.push_back((*placementColors)[k * 3 + 1]);
         dm.instanceColors.push_back((*placementColors)[k * 3 + 2]);
+      }
+      if (haveOpacities) {
+        dm.instanceOpacities.push_back((*placementOpacities)[k]);
       }
       // Exact affine AABB transform via center/extents. This is equivalent to
       // transforming all eight corners, but uses one matrix multiply plus the
@@ -2858,7 +2865,7 @@ void EmitInstancedProto(const tnext::Stage& stage,
           }
           if (capped) break;
         }
-        EmitInstancedProto(stage, conv, innerRoot, innerPl, nullptr, time,
+        EmitInstancedProto(stage, conv, innerRoot, innerPl, nullptr, nullptr, time,
                            gpuSkinning, draw, bounds, instTotal, effectiveTris,
                            instBudget, consumed, resolveMat);
       }
@@ -2880,7 +2887,7 @@ void EmitInstancedProto(const tnext::Stage& stage,
       std::vector<matrix4d> innerPl;
       innerPl.reserve(placements.size());
       for (const matrix4d& P : placements) innerPl.push_back(Mul4(m_rel, P));
-      EmitInstancedProto(stage, conv, innerRoot, innerPl, nullptr, time,
+      EmitInstancedProto(stage, conv, innerRoot, innerPl, nullptr, nullptr, time,
                          gpuSkinning, draw, bounds, instTotal, effectiveTris,
                          instBudget, consumed, resolveMat);
     }
@@ -4565,6 +4572,138 @@ bool FindLegacyCamera(const lightusd::tydra::RenderScene& scene,
 // jointIdx indexes them. Shared by the raster bone-texture upload
 // (BuildNextSkinningFrame) and the RT vertex re-pose (BuildNextRtDeformedVertices),
 // which must agree row-for-row or the two backends pose differently.
+namespace {
+
+bool FindLegacyCameraAtTimeRec(const lightusd::tydra::XformNode& node,
+                               const std::string& name, double time,
+                               NextCameraPose* out) {
+  const lightusd::GeomCamera* camera =
+      node.prim ? node.prim->as<lightusd::GeomCamera>() : nullptr;
+  if (camera) {
+    const std::string path = node.absolute_path.full_path_name();
+    const bool match =
+        name.empty() || node.element_name == name || path == name ||
+        (path.size() > name.size() &&
+         path.compare(path.size() - name.size(), name.size(), name) == 0 &&
+         path[path.size() - name.size() - 1] == '/');
+    if (match) {
+      const lightusd::value::matrix4d& matrix = node.get_world_matrix();
+      float up[3] = {float(matrix.m[1][0]), float(matrix.m[1][1]),
+                     float(matrix.m[1][2])};
+      float forward[3] = {-float(matrix.m[2][0]), -float(matrix.m[2][1]),
+                          -float(matrix.m[2][2])};
+      auto normalize = [](float v[3]) {
+        const float length =
+            std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        if (length > 1.0e-12f) {
+          v[0] /= length;
+          v[1] /= length;
+          v[2] /= length;
+        }
+      };
+      normalize(up);
+      normalize(forward);
+      for (int k = 0; k < 3; ++k) {
+        out->eye[k] = float(matrix.m[3][k]);
+        out->up[k] = up[k];
+        out->forward[k] = forward[k];
+      }
+
+      float focalLength = 50.0f;
+      float horizontalAperture = 20.965f;
+      float verticalAperture = 15.2908f;
+      float horizontalApertureOffset = 0.0f;
+      float verticalApertureOffset = 0.0f;
+      float exposure = 0.0f;
+      float focusDistance = 5.0f;
+      float fStop = 0.0f;
+      lightusd::value::float2 clippingRange({0.1f, 1000000.0f});
+      lightusd::GeomCamera::Projection projection =
+          lightusd::GeomCamera::Projection::Perspective;
+      double shutterOpen = 0.0;
+      double shutterClose = 0.0;
+      camera->focalLength.get_value().get(time, &focalLength);
+      camera->horizontalAperture.get_value().get(time, &horizontalAperture);
+      camera->verticalAperture.get_value().get(time, &verticalAperture);
+      camera->horizontalApertureOffset.get_value().get(
+          time, &horizontalApertureOffset);
+      camera->verticalApertureOffset.get_value().get(
+          time, &verticalApertureOffset);
+      camera->exposure.get_value().get(time, &exposure);
+      camera->focusDistance.get_value().get(time, &focusDistance);
+      camera->fStop.get_value().get(time, &fStop);
+      camera->clippingRange.get_value().get(time, &clippingRange);
+      camera->projection.get_value().get(time, &projection);
+      camera->shutterOpen.get_value().get(time, &shutterOpen);
+      camera->shutterClose.get_value().get(time, &shutterClose);
+
+      out->focalLength = focalLength;
+      out->horizontalAperture = horizontalAperture;
+      out->verticalAperture = verticalAperture;
+      out->horizontalApertureOffset = horizontalApertureOffset;
+      out->verticalApertureOffset = verticalApertureOffset;
+      out->exposure = exposure;
+      out->focusDistance = focusDistance;
+      out->fStop = fStop;
+      out->projection =
+          projection == lightusd::GeomCamera::Projection::Orthographic
+              ? CameraProjection::Orthographic
+              : CameraProjection::Perspective;
+      out->zNear = std::max(1.0e-4f, clippingRange[0]);
+      out->zFar = std::max(out->zNear + 1.0e-3f, clippingRange[1]);
+      out->fovYDeg =
+          2.0f * std::atan(0.5f * verticalAperture /
+                           std::max(1.0e-6f, focalLength)) *
+          (180.0f / 3.14159265358979323846f);
+      out->shutterOpen = shutterOpen;
+      out->shutterClose = shutterClose;
+      switch (camera->stereoRole.get_value()) {
+        case lightusd::GeomCamera::StereoRole::Left:
+          out->stereoRole = DrawCameraCPU::StereoRole::Left;
+          break;
+        case lightusd::GeomCamera::StereoRole::Right:
+          out->stereoRole = DrawCameraCPU::StereoRole::Right;
+          break;
+        default:
+          out->stereoRole = DrawCameraCPU::StereoRole::Mono;
+          break;
+      }
+      out->clippingPlanes.clear();
+      std::vector<lightusd::value::float4> clippingPlanes;
+      const auto clippingValue = camera->clippingPlanes.get_value();
+      if (clippingValue && clippingValue->get(time, &clippingPlanes)) {
+        out->clippingPlanes.reserve(clippingPlanes.size() * 4);
+        for (const lightusd::value::float4& plane : clippingPlanes) {
+          for (size_t i = 0; i < 4; ++i) {
+            out->clippingPlanes.push_back(plane[i]);
+          }
+        }
+      }
+      return true;
+    }
+  }
+  for (const lightusd::tydra::XformNode& child : node.children) {
+    if (FindLegacyCameraAtTimeRec(child, name, time, out)) return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+bool FindLegacyCameraAtTime(const lightusd::Stage& stage,
+                            const std::string& name, double time,
+                            NextCameraPose* out) {
+  if (!out) return false;
+  lightusd::tydra::XformNode root;
+  if (!lightusd::tydra::BuildXformNodeFromStage(stage, &root, time)) {
+    return false;
+  }
+  for (const lightusd::tydra::XformNode& child : root.children) {
+    if (FindLegacyCameraAtTimeRec(child, name, time, out)) return true;
+  }
+  return false;
+}
+
 static bool ComputeNextBoneRows(const tnext::Stage& stage, const DrawScene& draw,
                                 double time, std::vector<matrix4d>* out) {
   if (!out || draw.boneMatrixCount <= 0 || draw.nextSkels.empty()) return false;
@@ -5731,7 +5870,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                     DrawScene* draw, std::string* warn, std::string* err,
                     LoadControl* ctrl,
                     std::shared_ptr<tnext::StageSession>* out_session,
-                    ProgressiveSceneStream* stream) {
+                    tnext::StageChangeSet* out_changes,
+                    ProgressiveSceneStream* stream,
+                    const std::string& reload_layer_id) {
   const auto loadBegin = std::chrono::steady_clock::now();
   const bool timing = opts.timing;
   const size_t previewMaxBoxes = opts.previewMaxBoxes != 0
@@ -5743,6 +5884,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                      ? *out_session
                      : std::make_shared<tnext::StageSession>();
   const bool sessionWasOpen = session->IsOpen();
+  tnext::StageChangeSet aggregateChanges;
+  if (sessionWasOpen) {
+    const uint64_t revision = session->GetSnapshot().revision;
+    aggregateChanges.base_revision = revision;
+    aggregateChanges.new_revision = revision;
+  }
   const std::string previewFingerprint = PreviewFingerprint(opts);
   bool previewPublished = false;
   bool earlyPreviewPublished = false;
@@ -5868,8 +6015,16 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   }
   bool opened = session->IsOpen();
   if (opened) {
-    if (session->GetVariantSelections() != opts.variantOverrides) {
-      opened = session->SetVariantSelections(opts.variantOverrides);
+    if (!reload_layer_id.empty()) {
+      const tnext::StageEditResult edit = session->ReloadLayer(reload_layer_id);
+      opened = static_cast<bool>(edit);
+      if (opened) tnext::AppendStageChangeSet(edit.changes, &aggregateChanges);
+    }
+    if (opened && session->GetVariantSelections() != opts.variantOverrides) {
+      const tnext::StageEditResult edit =
+          session->SetVariantSelections(opts.variantOverrides);
+      opened = static_cast<bool>(edit);
+      if (opened) tnext::AppendStageChangeSet(edit.changes, &aggregateChanges);
     }
     if (opened && opts.payloadPolicy == PayloadPolicy::Whitelist) {
       std::vector<tnext::Path> payload_paths;
@@ -5881,18 +6036,23 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         ctrl->payloadsTotal.store(static_cast<long long>(payload_paths.size()));
         ctrl->payloadsDone.store(0);
       }
-      opened = session->LoadPayloads(payload_paths);
+      const tnext::StageEditResult edit = session->LoadPayloads(payload_paths);
+      opened = static_cast<bool>(edit);
+      if (opened) tnext::AppendStageChangeSet(edit.changes, &aggregateChanges);
       if (opened && ctrl)
         ctrl->payloadsDone.store(static_cast<long long>(payload_paths.size()));
     }
   } else {
     opened = session->OpenFile(path, session_options);
+    if (opened) tnext::AppendStageChangeSet(session->GetLastChangeSet(),
+                                            &aggregateChanges);
   }
   if (!opened) {
     if (err) *err = "next: compose failed: " + session->GetError();
     if (stream) stream->pushFailed(err ? *err : "next: compose failed");
     return false;
   }
+  if (out_changes) *out_changes = aggregateChanges;
   const auto composedAt = std::chrono::steady_clock::now();
   const std::vector<std::string> previewDependencies =
       generatedPreview ? session->GetLayerDependencies()
@@ -6379,6 +6539,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       tydn::ValueArrayRead<float> instCol;
       tydn::ReadFloatArray(p, "primvars:displayColor", time, &instCol);
       const bool perInstColor = (instCol.size() == 3 * n && n > 0);
+      tydn::ValueArrayRead<float> instOpacity;
+      tydn::ReadFloatArray(p, "primvars:displayOpacity", time, &instOpacity);
+      const bool perInstOpacity = (instOpacity.size() == n && n > 0);
 
       const std::vector<tnext::Path>* protos = p.GetRelationship("prototypes");
       if (protos) {
@@ -6402,6 +6565,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           std::vector<std::vector<matrix4d>> placementChunks(protos->size());
           std::vector<std::vector<float>> colorChunks;
           if (perInstColor) colorChunks.resize(protos->size());
+          std::vector<std::vector<float>> opacityChunks;
+          if (perInstOpacity) opacityChunks.resize(protos->size());
           for (size_t pi = 0; pi < protos->size(); ++pi) {
             protoRoots[pi] = stage.GetPrimAtPath((*protos)[pi]);
             if (!protoRoots[pi].IsValid()) continue;
@@ -6412,16 +6577,20 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             placementChunks[pi].reserve(progressiveInstanceChunk);
             if (perInstColor)
               colorChunks[pi].reserve(progressiveInstanceChunk * 3u);
+            if (perInstOpacity)
+              opacityChunks[pi].reserve(progressiveInstanceChunk);
           }
           auto flushPlacementChunk = [&](size_t pi) {
             if (placementChunks[pi].empty() || !protoRoots[pi].IsValid()) return;
             EmitInstancedProto(
                 stage, conv, protoRoots[pi], placementChunks[pi],
-                perInstColor ? &colorChunks[pi] : nullptr, time,
+                perInstColor ? &colorChunks[pi] : nullptr,
+                perInstOpacity ? &opacityChunks[pi] : nullptr, time,
                 opts.gpuSkinning, draw, &bounds, &instTotal, &effectiveTris,
                 instBudget, &consumed, &resolveProtoMat);
             placementChunks[pi].clear();
             if (perInstColor) colorChunks[pi].clear();
+            if (perInstOpacity) opacityChunks[pi].clear();
             publishAvailableMeshes();
           };
           size_t pendingInstances = 0;
@@ -6445,6 +6614,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
               colorChunks[pi].push_back(instCol[i * 3 + 1]);
               colorChunks[pi].push_back(instCol[i * 3 + 2]);
             }
+            if (perInstOpacity) opacityChunks[pi].push_back(instOpacity[i]);
             ++pendingInstances;
             if (!previewPublished &&
                 placementChunks[pi].size() >= progressiveInstanceChunk) {
@@ -6467,6 +6637,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         std::vector<std::vector<matrix4d>> placementsByProto(protos->size());
         std::vector<std::vector<float>> colorsByProto;
         if (perInstColor) colorsByProto.resize(protos->size());
+        std::vector<std::vector<float>> opacitiesByProto;
+        if (perInstOpacity) opacitiesByProto.resize(protos->size());
         const size_t remainingInstances =
             static_cast<size_t>(instTotal) < instBudget
                 ? instBudget - static_cast<size_t>(instTotal)
@@ -6483,6 +6655,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         for (size_t pi = 0; pi < protos->size(); ++pi) {
           placementsByProto[pi].reserve(placementCounts[pi]);
           if (perInstColor) colorsByProto[pi].reserve(placementCounts[pi] * 3u);
+          if (perInstOpacity) opacitiesByProto[pi].reserve(placementCounts[pi]);
         }
         size_t bucketedInstances = 0;
         for (size_t i = 0; i < n && bucketedInstances < remainingInstances; ++i) {
@@ -6500,6 +6673,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             colors.push_back(instCol[i * 3 + 0]);
             colors.push_back(instCol[i * 3 + 1]);
             colors.push_back(instCol[i * 3 + 2]);
+          }
+          if (perInstOpacity) {
+            opacitiesByProto[static_cast<size_t>(pi)].push_back(instOpacity[i]);
           }
           ++bucketedInstances;
         }
@@ -6519,7 +6695,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           // instance; EmitInstancedProto bakes mesh_rel*placement and recurses into
           // any nested instancers under the prototype.
           EmitInstancedProto(stage, conv, protoRoot, placementsByProto[pi],
-                             perInstColor ? &colorsByProto[pi] : nullptr, time,
+                             perInstColor ? &colorsByProto[pi] : nullptr,
+                             perInstOpacity ? &opacitiesByProto[pi] : nullptr, time,
                              opts.gpuSkinning, draw, &bounds, &instTotal,
                              &effectiveTris, instBudget, &consumed,
                              &resolveProtoMat);
@@ -7176,7 +7353,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       // GPU-instance the prototype's geometry at each placement; EmitInstancedProto
       // recurses into any nested instancers under the prototype.
       EmitInstancedProto(stage, conv, protoRoot, placements,
-                         /*placementColors=*/nullptr, time, opts.gpuSkinning, draw,
+                         /*placementColors=*/nullptr,
+                         /*placementOpacities=*/nullptr, time, opts.gpuSkinning, draw,
                          &bounds, &instTotal, &effectiveTris, instBudget,
                          /*consumed=*/nullptr, &resolveProtoMat);
       publishAvailableMeshes();

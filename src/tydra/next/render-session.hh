@@ -98,6 +98,28 @@ struct RenderSceneSnapshot {
   const RenderScene& operator*() const { return *scene; }
 };
 
+/// Move-only candidate produced by RenderSession::Prepare(). Conversion and
+/// allocation are complete, but neither the sink nor the published session
+/// revision has been changed. Destroying or aborting a candidate is a no-op.
+class PreparedRenderUpdate {
+ public:
+  PreparedRenderUpdate();
+  ~PreparedRenderUpdate();
+  PreparedRenderUpdate(PreparedRenderUpdate&&) noexcept;
+  PreparedRenderUpdate& operator=(PreparedRenderUpdate&&) noexcept;
+  PreparedRenderUpdate(const PreparedRenderUpdate&) = delete;
+  PreparedRenderUpdate& operator=(const PreparedRenderUpdate&) = delete;
+
+  explicit operator bool() const;
+  uint64_t base_revision() const;
+  uint64_t new_revision() const;
+
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+  friend class RenderSession;
+};
+
 /// Owns stable resource IDs and the last committed retained RenderScene.
 class RenderSession {
  public:
@@ -114,6 +136,22 @@ class RenderSession {
   RenderUpdateResult Apply(const ::lightusd::next::StageSnapshot& snapshot,
                            const ::lightusd::next::StageChangeSet& changes,
                            SceneUpdateSink* sink);
+
+  /// Convert and allocate a candidate without invoking the sink or publishing
+  /// it. Commit may run later on the render thread. A candidate becomes stale
+  /// if another update commits first.
+  RenderUpdateResult Prepare(
+      const ::lightusd::next::StageSnapshot& snapshot,
+      const ::lightusd::next::StageChangeSet& changes,
+      PreparedRenderUpdate* prepared);
+  RenderUpdateResult PrepareInitialize(
+      const ::lightusd::next::StageSnapshot& snapshot,
+      PreparedRenderUpdate* prepared);
+  /// Emit a prepared candidate to the sink and publish it only after EndUpdate
+  /// succeeds. Failure calls AbortUpdate and preserves the old revision/scene.
+  RenderUpdateResult Commit(PreparedRenderUpdate&& prepared,
+                            SceneUpdateSink* sink);
+  void Abort(PreparedRenderUpdate* prepared);
 
   RenderSceneSnapshot GetSnapshot() const;
   uint64_t revision() const;

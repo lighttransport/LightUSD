@@ -15,6 +15,32 @@ struct RtCameraLens {
   }
 };
 
+// Authored UsdGeomCamera shutter offsets in time codes relative to the current
+// frame. A zero-width or reversed interval is the exact no-motion fallback.
+struct RtCameraShutter {
+  double open{0.0};
+  double close{0.0};
+  bool enabled() const {
+    return std::isfinite(open) && std::isfinite(close) && close > open;
+  }
+  double width() const { return enabled() ? close - open : 0.0; }
+};
+
+// Deterministic midpoint stratification used by every backend. Keeping time
+// selection outside renderer-specific kernels makes raster/RT pose sampling
+// comparable and gives motionSegments an observable, shared meaning.
+inline double RtShutterSampleTime(double frameTime,
+                                  const RtCameraShutter& shutter,
+                                  unsigned sampleIndex,
+                                  unsigned sampleCount) {
+  if (!shutter.enabled() || sampleCount == 0) return frameTime;
+  const unsigned index = sampleIndex < sampleCount ? sampleIndex
+                                                   : sampleCount - 1;
+  const double u = (static_cast<double>(index) + 0.5) /
+                   static_cast<double>(sampleCount);
+  return frameTime + shutter.open + u * shutter.width();
+}
+
 // Thin-lens renderers use a focus plane perpendicular to the camera forward
 // vector.  Projecting the picked world-space point onto that vector keeps an
 // off-axis click in focus too (using its radial distance would put the plane

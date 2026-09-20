@@ -12,6 +12,9 @@ include("${CMAKE_CURRENT_LIST_DIR}/pipeline-sources.cmake")
 set(LIGHTUSD_NEXT_SOURCES
     ${LIGHTUSD_NEXT_PIPELINE_SOURCES}
     execution.cc
+    resolver/dependency-report.cc
+    eval/property-trace.cc
+    stage/change-set.cc
     # Shared bounded JSON parser used by the next-generation URDF bridge.
     ../minijson.cc
     ../color-transform.cc
@@ -310,6 +313,7 @@ set(LIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT "" CACHE PATH
     "External AOUSD Core supplemental release checkout")
 
 if(LIGHTUSD_NEXT_BUILD_TESTS)
+    enable_testing() # Needed before child projects register their tests.
     # The next tests validate behavior with assert(); a Release build (-DNDEBUG)
     # would compile those out and make the tests vacuous. Re-enable asserts for
     # everything defined below (directory-scoped; -UNDEBUG is appended after the
@@ -550,6 +554,12 @@ endif()
 
 # ============================================================
 # C API (lightusd_c): FFI layer over lightusd_next + tydra_next.
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  option(LIGHTUSD_NEXT_BUILD_EXAMPLES "Build next workflow examples" ON)
+  if(LIGHTUSD_NEXT_BUILD_EXAMPLES)
+    add_subdirectory(../../examples/next_workflows next_workflow_examples)
+  endif()
+endif()
 # Used by the Python binding and any other language binding.
 # ============================================================
 option(LIGHTUSD_NEXT_BUILD_SHARED_C_API

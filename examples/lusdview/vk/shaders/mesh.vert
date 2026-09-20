@@ -44,6 +44,8 @@ layout(set = 2, binding = 0) uniform Frame {
   mat4 shadowViewProj;
   vec4 pointShadowLight;
   mat4 pointShadowViewProj[6];
+  vec4 clippingPlanes[8];
+  ivec4 clippingInfo;
 } fr;
 struct MaterialTexParam {
   vec4 baseUv0; vec4 baseUv1;

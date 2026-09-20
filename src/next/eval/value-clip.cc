@@ -363,12 +363,13 @@ bool ResolveValueClip(const UsdPrim& prim, const std::string& property,
                       double stage_time, const ValueClipStageLoader& loader,
                       Value* out, std::string* source_asset,
                       std::string* error, std::string* source_clip_set,
-                      ValueClipStageCache* stage_cache) {
+                      ValueClipStageCache* stage_cache,
+                      ValueClipResolutionInfo* resolution_info) {
   std::vector<ValueClipSet> sets;
   if (!ParseValueClipSets(prim, &sets, error)) return false;
   return ResolveValueClipFromSets(sets, prim, property, stage_time, loader,
                                   out, source_asset, error, source_clip_set,
-                                  stage_cache);
+                                  stage_cache, resolution_info);
 }
 
 bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
@@ -377,7 +378,8 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
                               const ValueClipStageLoader& loader, Value* out,
                               std::string* source_asset, std::string* error,
                               std::string* source_clip_set,
-                              ValueClipStageCache* stage_cache) {
+                              ValueClipStageCache* stage_cache,
+                              ValueClipResolutionInfo* resolution_info) {
   if (!out || sets.empty()) return false;
   if (!loader) {
     if (error) *error = "Value clips require a clip_stage_loader";
@@ -416,6 +418,12 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
       continue;
     const std::string clip_path =
         set.prim_path.empty() ? prim.GetPath().str() : set.prim_path;
+    if (resolution_info) {
+      *resolution_info = ValueClipResolutionInfo();
+      resolution_info->active_index = index;
+      resolution_info->active_asset = set.asset_paths[size_t(index)];
+      resolution_info->clip_time = ClipTime(set, stage_time);
+    }
 
     // Manifest gating (pxr semantics): when a manifest is authored and
     // loadable, a property resolves through clips only if it is DECLARED
@@ -468,7 +476,7 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
         std::string nested_asset;
         const bool resolved = ResolveValueClip(
             clip_prim, property, ClipTime(set, at_time), loader, &nested,
-            &nested_asset, error, nullptr, cache);
+            &nested_asset, error, nullptr, cache, nullptr);
         cache->resolution_stack.pop_back();
         if (resolved) {
           if (asset_out)
@@ -531,12 +539,29 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
         // cross-clip type mismatch — exactly pxr's clip-value semantics.
         value = LerpValue(v_lo, v_hi, alpha);
         asset = a_lo;
+        if (resolution_info) {
+          resolution_info->interpolated_missing = true;
+          resolution_info->lower_asset = a_lo;
+          resolution_info->upper_asset = a_hi;
+          resolution_info->lower_stage_time = t_lo;
+          resolution_info->upper_stage_time = t_hi;
+        }
       } else if (!v_lo.is_empty()) {
         value = std::move(v_lo);
         asset = a_lo;
+        if (resolution_info) {
+          resolution_info->interpolated_missing = true;
+          resolution_info->lower_asset = a_lo;
+          resolution_info->lower_stage_time = t_lo;
+        }
       } else if (!v_hi.is_empty()) {
         value = std::move(v_hi);
         asset = a_hi;
+        if (resolution_info) {
+          resolution_info->interpolated_missing = true;
+          resolution_info->upper_asset = a_hi;
+          resolution_info->upper_stage_time = t_hi;
+        }
       }
     }
 

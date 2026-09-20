@@ -104,12 +104,33 @@ bool KindAffected(RenderResourceKind kind,
 
 }  // namespace
 
+struct PreparedRenderUpdate::Impl {
+  std::shared_ptr<const void> owner;
+  uint64_t base_revision = 0;
+  uint64_t new_revision = 0;
+  ::lightusd::next::StageChangeSet changes;
+  std::shared_ptr<RenderScene> scene;
+  std::map<RenderResourceKind, IdMap> ids;
+  RenderId next_id = 1;
+  RenderUpdateResult result;
+};
+
+namespace {
+class AcceptSceneUpdateSink final : public SceneUpdateSink {
+ public:
+  bool BeginUpdate(uint64_t, uint64_t, bool) override { return true; }
+  bool EndUpdate() override { return true; }
+};
+}  // namespace
+
 struct RenderSession::Impl {
-  explicit Impl(const ConverterConfig& config) : converter(config) {}
+  explicit Impl(const ConverterConfig& config)
+      : converter(config), transaction_owner(new int(0)) {}
 
   mutable std::recursive_mutex operation_mu;
   mutable std::mutex publication_mu;
   RenderSceneConverter converter;
+  std::shared_ptr<int> transaction_owner;
   std::shared_ptr<RenderScene> scene;
   uint64_t revision = 0;
   RenderId next_id = 1;
@@ -150,8 +171,49 @@ struct RenderSession::Impl {
     return false;
   }
 
-  RenderUpdateResult ApplyNoOp(const ::lightusd::next::StageSnapshot& snapshot,
-                               SceneUpdateSink* sink) {
+  bool CanPatchMeshes(const ::lightusd::next::StageChangeSet& changes,
+                      std::vector<size_t>* affected) const {
+    using Flag = ::lightusd::next::StageChangeFlag;
+    if (!scene || revision == 0 || changes.full_resync ||
+        changes.stage_metadata_changed || changes.prims.empty() || !affected) {
+      return false;
+    }
+    constexpr uint32_t allowed = static_cast<uint32_t>(Flag::Topology) |
+                                 static_cast<uint32_t>(Flag::Primvar);
+    std::set<size_t> unique;
+    for (const auto& change : changes.prims) {
+      const uint32_t flags = static_cast<uint32_t>(change.flags);
+      if (flags == 0 || (flags & ~allowed) != 0) return false;
+      const std::string path = change.path.str();
+      bool found = false;
+      for (size_t i = 0; i < scene->meshes.size(); ++i) {
+        if (scene->meshes[i].prim_path == path) {
+          // GeomSubset ranges live in topology space and require the full
+          // material-binding finalization pass after a topology edit. Skinned
+          // and morphed meshes likewise require skeleton/channel finalization.
+          if (!scene->meshes[i].material_subsets.empty() ||
+              scene->meshes[i].has_skin() ||
+              scene->meshes[i].has_blend_shapes()) {
+            return false;
+          }
+          unique.insert(i);
+          found = true;
+          break;
+        }
+      }
+      // A topology edit that adds/removes a renderable needs the full catalog
+      // extraction path so hierarchy and resource maps are rebuilt together.
+      if (!found) return false;
+    }
+    affected->assign(unique.begin(), unique.end());
+    return !affected->empty();
+  }
+
+  RenderUpdateResult ApplyNoOp(
+      const ::lightusd::next::StageSnapshot& snapshot, SceneUpdateSink* sink,
+      bool publish, std::shared_ptr<RenderScene>* prepared_scene,
+      std::map<RenderResourceKind, IdMap>* prepared_ids,
+      RenderId* prepared_next_id) {
     RenderUpdateResult out;
     out.revision = revision;
     out.full_resync = false;
@@ -162,10 +224,15 @@ struct RenderSession::Impl {
       sink->AbortUpdate();
       return out;
     }
-    {
+    if (publish) {
       std::lock_guard<std::mutex> lock(publication_mu);
       revision = snapshot.revision;
       out.revision = revision;
+    } else {
+      if (prepared_scene) *prepared_scene = scene;
+      if (prepared_ids) *prepared_ids = ids;
+      if (prepared_next_id) *prepared_next_id = next_id;
+      out.revision = snapshot.revision;
     }
     out.success = true;
     out.status = ::lightusd::next::OperationStatus::Ok;
@@ -218,7 +285,10 @@ struct RenderSession::Impl {
 
   RenderUpdateResult Apply(const ::lightusd::next::StageSnapshot& snapshot,
                            const ::lightusd::next::StageChangeSet& requested,
-                           SceneUpdateSink* sink) {
+                           SceneUpdateSink* sink, bool publish = true,
+                           std::shared_ptr<RenderScene>* prepared_scene = nullptr,
+                           std::map<RenderResourceKind, IdMap>* prepared_ids = nullptr,
+                           RenderId* prepared_next_id = nullptr) {
     RenderUpdateResult out;
     out.revision = revision;
     if (!snapshot || !sink) {
@@ -247,31 +317,62 @@ struct RenderSession::Impl {
     // already-authored value). Preserve the sink's revision protocol without
     // paying for a complete Stage -> RenderScene conversion.
     if (revision != 0 && (changes.empty() || !HasRenderEffect(changes))) {
-      return ApplyNoOp(snapshot, sink);
+      return ApplyNoOp(snapshot, sink, publish, prepared_scene, prepared_ids,
+                       prepared_next_id);
     }
 
-    ConvertResult converted = converter.Convert(*snapshot.stage);
-    out.warnings = converted.warnings;
-    if (!converted.success) {
-      out.error = converted.error;
-      out.status = converted.status;
-      return out;
+    std::vector<size_t> patched_meshes;
+    const bool mesh_patch = CanPatchMeshes(changes, &patched_meshes);
+    std::shared_ptr<RenderScene> committed;
+    if (mesh_patch) {
+      committed.reset(new (std::nothrow) RenderScene(*scene));
+      if (committed) {
+        for (size_t index : patched_meshes) {
+          const std::string path = committed->meshes[index].prim_path;
+          const ::lightusd::next::UsdPrim prim =
+              snapshot.stage->GetPrimAtPath(path);
+          RenderMesh replacement;
+          if (!converter.ConvertRenderableMesh(*snapshot.stage, prim,
+                                               &replacement)) {
+            out.error = converter.GetLastError();
+            out.status = ::lightusd::next::OperationStatus::InvalidData;
+            return out;
+          }
+          // Geometry-only changes retain the already resolved material table.
+          replacement.material_id = committed->meshes[index].material_id;
+          replacement.material_subsets =
+              committed->meshes[index].material_subsets;
+          out.converted_scene_bytes += replacement.memory_usage();
+          committed->meshes[index] = std::move(replacement);
+        }
+        out.converted_resource_count = patched_meshes.size();
+      }
+    } else {
+      ConvertResult converted = converter.Convert(*snapshot.stage);
+      out.warnings = converted.warnings;
+      if (!converted.success) {
+        out.error = converted.error;
+        out.status = converted.status;
+        return out;
+      }
+      committed.reset(
+          new (std::nothrow) RenderScene(std::move(converted.scene)));
     }
-    std::shared_ptr<RenderScene> committed(
-        new (std::nothrow) RenderScene(std::move(converted.scene)));
     if (!committed) {
       out.error = "RenderSession: unable to prepare render scene";
       out.status = ::lightusd::next::OperationStatus::AllocationFailure;
       return out;
     }
     RenderScene& next = *committed;
-    out.converted_resource_count =
-        next.images.size() + next.textures.size() + next.materials.size() +
-        next.meshes.size() + next.points.size() + next.curves.size() +
-        next.point_instancers.size() + next.skeletons.size() +
-        next.animations.size() + next.lights.size() + next.cameras.size() +
-        next.nodes.size();
-    out.converted_scene_bytes = next.memory_usage();
+    if (!mesh_patch) {
+      out.converted_resource_count =
+          next.images.size() + next.textures.size() + next.materials.size() +
+          next.meshes.size() + next.points.size() + next.curves.size() +
+          next.point_instancers.size() + next.skeletons.size() +
+          next.animations.size() + next.lights.size() + next.cameras.size() +
+          next.nodes.size();
+      out.converted_scene_bytes = next.memory_usage();
+    }
     if (!sink->BeginUpdate(revision, snapshot.revision, changes.full_resync) ||
         !sink->UpdateCatalog(next)) {
       out.error = "RenderSession: sink rejected update start/catalog";
@@ -337,19 +438,40 @@ struct RenderSession::Impl {
       return out;
     }
 
-    {
+    if (publish) {
       std::lock_guard<std::mutex> lock(publication_mu);
       scene = std::move(committed);
       ids = std::move(next_ids);
       next_id = candidate_next_id;
       revision = snapshot.revision;
       out.revision = revision;
+    } else {
+      if (prepared_scene) *prepared_scene = std::move(committed);
+      if (prepared_ids) *prepared_ids = std::move(next_ids);
+      if (prepared_next_id) *prepared_next_id = candidate_next_id;
+      out.revision = snapshot.revision;
     }
     out.success = true;
     out.status = ::lightusd::next::OperationStatus::Ok;
     return out;
   }
 };
+
+PreparedRenderUpdate::PreparedRenderUpdate() = default;
+PreparedRenderUpdate::~PreparedRenderUpdate() = default;
+PreparedRenderUpdate::PreparedRenderUpdate(PreparedRenderUpdate&&) noexcept =
+    default;
+PreparedRenderUpdate& PreparedRenderUpdate::operator=(
+    PreparedRenderUpdate&&) noexcept = default;
+PreparedRenderUpdate::operator bool() const {
+  return impl_ && impl_->scene;
+}
+uint64_t PreparedRenderUpdate::base_revision() const {
+  return impl_ ? impl_->base_revision : 0;
+}
+uint64_t PreparedRenderUpdate::new_revision() const {
+  return impl_ ? impl_->new_revision : 0;
+}
 
 RenderSession::RenderSession(const ConverterConfig& config)
     : impl_(new Impl(config)) {}
@@ -359,24 +481,40 @@ RenderSession& RenderSession::operator=(RenderSession&&) noexcept = default;
 
 RenderUpdateResult RenderSession::Initialize(
     const ::lightusd::next::StageSnapshot& snapshot, SceneUpdateSink* sink) {
-  if (RenderOperationActive(impl_.get())) {
-    RenderUpdateResult result;
-    result.status = ::lightusd::next::OperationStatus::Busy;
-    result.error = "render session update is already in progress";
-    result.revision = GetSnapshot().revision;
-    return result;
-  }
-  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
-  RenderOperationScope operation_scope(impl_.get());
-  ::lightusd::next::StageChangeSet full;
-  full.new_revision = snapshot.revision;
-  full.full_resync = true;
-  return impl_->Apply(snapshot, full, sink);
+  PreparedRenderUpdate prepared;
+  RenderUpdateResult result = PrepareInitialize(snapshot, &prepared);
+  return result ? Commit(std::move(prepared), sink) : result;
 }
 
 RenderUpdateResult RenderSession::Apply(
     const ::lightusd::next::StageSnapshot& snapshot,
     const ::lightusd::next::StageChangeSet& changes, SceneUpdateSink* sink) {
+  PreparedRenderUpdate prepared;
+  RenderUpdateResult result = Prepare(snapshot, changes, &prepared);
+  return result ? Commit(std::move(prepared), sink) : result;
+}
+
+RenderUpdateResult RenderSession::PrepareInitialize(
+    const ::lightusd::next::StageSnapshot& snapshot,
+    PreparedRenderUpdate* prepared) {
+  ::lightusd::next::StageChangeSet full;
+  full.new_revision = snapshot.revision;
+  full.full_resync = true;
+  return Prepare(snapshot, full, prepared);
+}
+
+RenderUpdateResult RenderSession::Prepare(
+    const ::lightusd::next::StageSnapshot& snapshot,
+    const ::lightusd::next::StageChangeSet& requested,
+    PreparedRenderUpdate* prepared) {
+  if (!prepared) {
+    RenderUpdateResult result;
+    result.status = ::lightusd::next::OperationStatus::InvalidArgument;
+    result.error = "RenderSession: null prepared-update destination";
+    result.revision = revision();
+    return result;
+  }
+  prepared->impl_.reset();
   if (RenderOperationActive(impl_.get())) {
     RenderUpdateResult result;
     result.status = ::lightusd::next::OperationStatus::Busy;
@@ -386,7 +524,161 @@ RenderUpdateResult RenderSession::Apply(
   }
   std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
   RenderOperationScope operation_scope(impl_.get());
-  return impl_->Apply(snapshot, changes, sink);
+  ::lightusd::next::StageChangeSet changes = requested;
+  if (impl_->revision == 0 || changes.base_revision != impl_->revision ||
+      changes.new_revision != snapshot.revision) {
+    changes.base_revision = impl_->revision;
+    changes.new_revision = snapshot.revision;
+    changes.full_resync = true;
+  }
+  std::unique_ptr<PreparedRenderUpdate::Impl> candidate(
+      new (std::nothrow) PreparedRenderUpdate::Impl());
+  if (!candidate) {
+    RenderUpdateResult result;
+    result.status = ::lightusd::next::OperationStatus::AllocationFailure;
+    result.error = "RenderSession: unable to allocate prepared update";
+    result.revision = impl_->revision;
+    return result;
+  }
+  AcceptSceneUpdateSink accept;
+  RenderUpdateResult result = impl_->Apply(
+      snapshot, changes, &accept, false, &candidate->scene, &candidate->ids,
+      &candidate->next_id);
+  if (!result) return result;
+  candidate->owner = impl_->transaction_owner;
+  candidate->base_revision = changes.base_revision;
+  candidate->new_revision = snapshot.revision;
+  candidate->changes = std::move(changes);
+  candidate->result = result;
+  prepared->impl_ = std::move(candidate);
+  return result;
+}
+
+RenderUpdateResult RenderSession::Commit(PreparedRenderUpdate&& prepared,
+                                         SceneUpdateSink* sink) {
+  RenderUpdateResult invalid;
+  invalid.status = ::lightusd::next::OperationStatus::InvalidArgument;
+  invalid.revision = revision();
+  if (!prepared.impl_ || !sink ||
+      prepared.impl_->owner.get() != impl_->transaction_owner.get()) {
+    invalid.error = !sink ? "RenderSession: null update sink"
+                          : "RenderSession: invalid prepared update";
+    return invalid;
+  }
+  if (RenderOperationActive(impl_.get())) {
+    invalid.status = ::lightusd::next::OperationStatus::Busy;
+    invalid.error = "render session update is already in progress";
+    return invalid;
+  }
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  RenderOperationScope operation_scope(impl_.get());
+  PreparedRenderUpdate::Impl& candidate = *prepared.impl_;
+  RenderUpdateResult out = candidate.result;
+  if (candidate.base_revision != impl_->revision ||
+      candidate.new_revision <= impl_->revision) {
+    out.success = false;
+    out.status = ::lightusd::next::OperationStatus::StaleRevision;
+    out.error = "RenderSession: prepared update base revision is stale";
+    out.revision = impl_->revision;
+    return out;
+  }
+  if (!sink->BeginUpdate(candidate.base_revision, candidate.new_revision,
+                         candidate.changes.full_resync) ||
+      !sink->UpdateCatalog(*candidate.scene)) {
+    out.success = false;
+    out.status = ::lightusd::next::OperationStatus::SinkRejected;
+    out.error = "RenderSession: sink rejected prepared update start/catalog";
+    out.revision = impl_->revision;
+    sink->AbortUpdate();
+    return out;
+  }
+
+  size_t upserts = 0;
+  bool ok = true;
+  auto emit_vector = [&](RenderResourceKind kind, const auto& values,
+                         auto key_fn, auto emit) {
+    std::unordered_map<std::string, size_t> occurrences;
+    const auto ids_it = candidate.ids.find(kind);
+    if (ids_it == candidate.ids.end() && !values.empty()) return false;
+    for (size_t i = 0; i < values.size(); ++i) {
+      std::string key = key_fn(values[i], i);
+      const size_t occurrence = occurrences[key]++;
+      if (occurrence != 0) key += "#" + std::to_string(occurrence);
+      const auto found = ids_it->second.find(key);
+      if (found == ids_it->second.end()) return false;
+      if (impl_->IsAffected(kind, key, candidate.changes)) {
+        if (!emit(found->second, values[i])) return false;
+        ++upserts;
+      }
+    }
+    return true;
+  };
+#define EMIT_PREPARED(KIND, MEMBER, KEY, METHOD)                              \
+  ok = ok && emit_vector(RenderResourceKind::KIND, candidate.scene->MEMBER,   \
+    [](const auto& value, size_t index) {                                     \
+      return KeyOrIndex(value.KEY, index, #KIND ":");                       \
+    },                                                                         \
+    [&](RenderId id, const auto& value) { return sink->METHOD(id, value); })
+  EMIT_PREPARED(Image, images, resolved_path, UpsertImage);
+  EMIT_PREPARED(Texture, textures, prim_path, UpsertTexture);
+  EMIT_PREPARED(Material, materials, prim_path, UpsertMaterial);
+  EMIT_PREPARED(Mesh, meshes, prim_path, UpsertMesh);
+  EMIT_PREPARED(Points, points, prim_path, UpsertPoints);
+  EMIT_PREPARED(Curves, curves, prim_path, UpsertCurves);
+  EMIT_PREPARED(PointInstancer, point_instancers, prim_path,
+                UpsertPointInstancer);
+  EMIT_PREPARED(Skeleton, skeletons, prim_path, UpsertSkeleton);
+  EMIT_PREPARED(Animation, animations, prim_path, UpsertAnimation);
+  EMIT_PREPARED(Light, lights, prim_path, UpsertLight);
+  EMIT_PREPARED(Camera, cameras, prim_path, UpsertCamera);
+  EMIT_PREPARED(Node, nodes, prim_path, UpsertNode);
+#undef EMIT_PREPARED
+
+  size_t removes = 0;
+  if (ok) {
+    for (const auto& kind_map : impl_->ids) {
+      const auto retained_it = candidate.ids.find(kind_map.first);
+      const IdMap empty;
+      const IdMap& retained = retained_it == candidate.ids.end()
+                                  ? empty
+                                  : retained_it->second;
+      for (const auto& old : kind_map.second) {
+        if (retained.count(old.first) != 0) continue;
+        if (!sink->Remove({kind_map.first, old.second, old.first})) {
+          ok = false;
+          break;
+        }
+        ++removes;
+      }
+      if (!ok) break;
+    }
+  }
+  if (!ok || !sink->EndUpdate()) {
+    out.success = false;
+    out.status = ::lightusd::next::OperationStatus::SinkRejected;
+    out.error = "RenderSession: sink rejected prepared resource update";
+    out.revision = impl_->revision;
+    sink->AbortUpdate();
+    return out;
+  }
+  {
+    std::lock_guard<std::mutex> publish_lock(impl_->publication_mu);
+    impl_->scene = std::move(candidate.scene);
+    impl_->ids = std::move(candidate.ids);
+    impl_->next_id = candidate.next_id;
+    impl_->revision = candidate.new_revision;
+  }
+  out.success = true;
+  out.status = ::lightusd::next::OperationStatus::Ok;
+  out.revision = candidate.new_revision;
+  out.upsert_count = upserts;
+  out.remove_count = removes;
+  prepared.impl_.reset();
+  return out;
+}
+
+void RenderSession::Abort(PreparedRenderUpdate* prepared) {
+  if (prepared) prepared->impl_.reset();
 }
 
 RenderSceneSnapshot RenderSession::GetSnapshot() const {

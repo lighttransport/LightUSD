@@ -45,6 +45,8 @@ documents live in [archive/](archive/).
 
 ## Rendering, GPU, and Assets
 
+- [workflow-tools.md](workflow-tools.md) — Dependency reports, property traces, checker baselines/SARIF, recursive diff, static GLB and CPU capture workflows.
+
 - [lusdview.md](lusdview.md) — `lusdview` build & GPU debugging notes.
 - [lusdview-tasks.md](lusdview-tasks.md) — `lusdview`/`lusdrender` open tasks
   and working notes (incl. the external usd-assets run log).

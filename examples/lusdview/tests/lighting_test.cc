@@ -355,6 +355,38 @@ int main() {
     return 1;
   }
 
+  lusdview::DrawMeshCPU geometryMesh;
+  Identity(geometryMesh.world);
+  geometryMesh.vertices = {
+      {-1.0f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+      { 1.0f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f},
+      { 1.0f,  1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f},
+      {-1.0f,  1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f},
+  };
+  geometryMesh.indices = {0, 1, 2, 0, 2, 3};
+  lusdview::DrawLightCPU sampledGeometry = geometry;
+  sampledGeometry.geometryMesh = 0;
+  std::vector<lusdview::DrawLightCPU> sampledGeometryLights{sampledGeometry};
+  lusdview::PrepareRasterGeometryLightSamples(&sampledGeometryLights,
+                                               {geometryMesh});
+  const lusdview::RasterLightSet sampledGeometryRaster =
+      lusdview::PackRasterLights(sampledGeometryLights, 1);
+  if (sampledGeometryLights[0].geometryRasterSampleCount != 8 ||
+      sampledGeometryRaster.count != 1 ||
+      sampledGeometryRaster.omittedGeometryLights != 0) {
+    std::fprintf(stderr, "raster GeometryLight sample preparation mismatch\n");
+    return 1;
+  }
+  for (int i = 0; i < 8; ++i) {
+    const float x = sampledGeometryRaster.lights[0].iesProfile[i * 3 + 0];
+    const float y = sampledGeometryRaster.lights[0].iesProfile[i * 3 + 1];
+    const float z = sampledGeometryRaster.lights[0].iesProfile[i * 3 + 2];
+    if (x < -1.0f || x > 1.0f || y < -1.0f || y > 1.0f || !Near(z, 0.0f)) {
+      std::fprintf(stderr, "raster GeometryLight sample escaped source mesh\n");
+      return 1;
+    }
+  }
+
   // Raster light packing is shared by GL/Vulkan. Dome lights are excluded from
   // direct evaluation, and authored collections become a compact per-mesh mask.
   const lusdview::RasterLightSet raster =
@@ -379,14 +411,14 @@ int main() {
   portalRaster.normalizedColor[2] = 0.6f;
   rasterFallbacks.push_back(geometryRaster);
   rasterFallbacks.push_back(portalRaster);
-  const lusdview::RasterLightSet fallbackLights =
+  const lusdview::RasterLightSet specialLights =
       lusdview::PackRasterLights(rasterFallbacks, 1);
-  if (fallbackLights.count != 3 ||
-      static_cast<int>(fallbackLights.lights[1].positionType[3] + 0.5f) !=
-          static_cast<int>(lusdview::DrawLightCPU::Type::Geometry) ||
-      static_cast<int>(fallbackLights.lights[2].positionType[3] + 0.5f) !=
-          static_cast<int>(lusdview::DrawLightCPU::Type::Portal)) {
-    std::fprintf(stderr, "raster GeometryLight/PortalLight fallback mismatch\n");
+  if (specialLights.count != 2 || specialLights.omittedGeometryLights != 1 ||
+      static_cast<int>(specialLights.lights[1].positionType[3] + 0.5f) !=
+          static_cast<int>(lusdview::DrawLightCPU::Type::Portal) ||
+      !Near(specialLights.lights[1].areaParams[1], portalRaster.width) ||
+      !Near(specialLights.lights[1].areaParams[2], portalRaster.height)) {
+    std::fprintf(stderr, "raster GeometryLight omission/PortalLight packing mismatch\n");
     return 1;
   }
   if (!Near(raster.lights[0].positionType[0], key.position[0]) ||
@@ -873,6 +905,34 @@ int main() {
   if (!foundPointOpacity || !foundCurveOpacity) {
     std::fprintf(stderr,
                  "non-mesh displayOpacity was not retained in RT proxies\n");
+    return 1;
+  }
+
+  // Light-specific diagnostics retain authored feature identity alongside the
+  // generic skipped count, so unresolved GeometryLight/IES paths are
+  // actionable without losing the PortalLight and emissive-mesh inventory.
+  lusdview::DrawScene diagnosticScene;
+  lusdview::DrawLightCPU diagnosticGeometry;
+  diagnosticGeometry.type = lusdview::DrawLightCPU::Type::Geometry;
+  diagnosticGeometry.geometryMesh = 0;
+  diagnosticScene.lights.push_back(diagnosticGeometry);
+  lusdview::DrawLightCPU diagnosticPortal;
+  diagnosticPortal.type = lusdview::DrawLightCPU::Type::Portal;
+  diagnosticScene.lights.push_back(diagnosticPortal);
+  lusdview::DrawLightCPU diagnosticIes;
+  diagnosticIes.shapingIesFile = "fixture.ies";
+  diagnosticIes.iesValid = true;
+  diagnosticScene.lights.push_back(diagnosticIes);
+  lusdview::LoadDiagnostics lightDiagnostics =
+      lusdview::CategorizeLoadWarnings(
+          "", {"GeometryLight '/World/Emitter': emissive-mesh target could "
+               "not be resolved",
+               "Light '/World/Key': IES profile unavailable (missing file)"});
+  lusdview::AddLightDiagnostics(diagnosticScene, &lightDiagnostics);
+  if (lightDiagnostics.skipped != 2 || lightDiagnostics.geometry_lights != 1 ||
+      lightDiagnostics.portal_lights != 1 || lightDiagnostics.ies_profiles != 1 ||
+      lightDiagnostics.emissive_mesh_lights != 1) {
+    std::fprintf(stderr, "light-specific diagnostics were not classified\n");
     return 1;
   }
 

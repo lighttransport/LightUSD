@@ -123,6 +123,17 @@ class VulkanRenderer final : public Renderer {
   void updateProxyInstances(const float* xforms, const float* tints,
                             uint32_t count) override;
   void updateMeshWorld(int meshIndex, const float world[16]) override;
+  bool applyMeshSlotUpdatesTransactional(
+      const std::vector<MeshSlotUpdate>& updates, std::string* error) override;
+  bool replaceMeshSlotsTransactional(
+      const std::vector<MeshSlotReplacement>& replacements,
+      std::string* error) override;
+  bool applyMaterialUpdatesTransactional(
+      const std::vector<MaterialSlotUpdate>& updates,
+      std::string* error) override;
+  bool replaceTextureSlotsTransactional(
+      const std::vector<TextureSlotReplacement>& replacements,
+      std::string* error) override;
   int meshCount() const override { return static_cast<int>(meshes_.size()); }
   void resizeViewport(int width, int height) override;
   void newFrame() override;
@@ -398,6 +409,8 @@ class VulkanRenderer final : public Renderer {
   bool createOffscreenRenderPass(std::string* err);
   bool createOitRenderPass(std::string* err);
   bool createOitCompositePipeline(std::string* err, bool compile = true);
+  bool createRasterDofPipeline(std::string* err);
+  void recordRasterDof(VkCommandBuffer cb);
   bool beginOitPromotion(std::string* err);
   void serviceOitPromotion();
   bool createOverlayLoadPass(std::string* err);  // LOAD pass for overlays over RT
@@ -469,6 +482,9 @@ class VulkanRenderer final : public Renderer {
   bool createDeviceLocalBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                                const void* data, VkBuffer* buf, VkDeviceMemory* mem);
   void destroyBlas(VkMeshGPU& m);
+  void destroyMeshResources(VkMeshGPU& mesh);
+  void finishMeshVertexUpdate(VkMeshGPU& mesh,
+                              const std::vector<DrawVertex>& vertices);
   bool meshHasAlphaMask(const VkMeshGPU& m) const;
   bool meshHasBoundMaterial(const VkMeshGPU& m) const;
   void buildBlas(VkMeshGPU& m);
@@ -676,6 +692,15 @@ class VulkanRenderer final : public Renderer {
   VkDescriptorSet oitCompositeSet_{VK_NULL_HANDLE};
   VkPipelineLayout oitCompositeLayout_{VK_NULL_HANDLE};
   VkPipeline oitCompositePipeline_{VK_NULL_HANDLE};
+  VkDescriptorSetLayout dofSetLayout_{VK_NULL_HANDLE};
+  VkDescriptorPool dofPool_{VK_NULL_HANDLE};
+  VkDescriptorSet dofSet_{VK_NULL_HANDLE};
+  VkPipelineLayout dofLayout_{VK_NULL_HANDLE};
+  VkPipeline dofPipeline_{VK_NULL_HANDLE};
+  VkImage dofImg_{VK_NULL_HANDLE};
+  VkDeviceMemory dofMem_{VK_NULL_HANDLE};
+  VkImageView dofView_{VK_NULL_HANDLE};
+  bool dofImageInitialized_{false};
   VkSampler sampler_{VK_NULL_HANDLE};
   // Material samplers are keyed by DrawTextureCPU wrapS/wrapT (4x4). Scene
   // helpers keep using `sampler_`; material descriptors select from this cache.
@@ -958,6 +983,7 @@ class VulkanRenderer final : public Renderer {
   };
   static_assert(sizeof(int32_t) * 4 + sizeof(uint64_t) * 2 == 32, "DrawMeta 32B");
   void writeDrawMeta(const std::vector<DrawMetaCPU>& meta);
+  void refreshMdiDrawMeta();
 
   // ---- Multi-draw-indirect instanced path (large-scene --next) ----
   // All MDI-eligible (non-morph) instanced prototypes are drawn as a handful of
@@ -989,7 +1015,11 @@ class VulkanRenderer final : public Renderer {
   std::vector<VkBufferCopy> mdiInstPendingXf_, mdiInstPendingCol_;
   // One indirect command per (eligible mesh, submesh); meshIndex ties it back to the
   // prototype for the per-frame instanceCount patch + visibility gate.
-  struct MdiCmd { uint32_t meshIndex; uint32_t reserved; VkDrawIndexedIndirectCommand cmd; };
+  struct MdiCmd {
+    uint32_t meshIndex;
+    bool disabled;
+    VkDrawIndexedIndirectCommand cmd;
+  };
   std::vector<MdiCmd> mdiCmds_;
   // CPU staging accumulated during appendMesh, uploaded + freed by buildInstMdi().
   std::vector<float> mdiInstXfStage_;      // 12 floats / instance (o2w rows)
@@ -1003,6 +1033,9 @@ class VulkanRenderer final : public Renderer {
   uint32_t mdiDrawCount_{0};               // number of indirect commands
   bool mdiBuilt_{false};                   // buffers built for the current scene
   bool mdiActive_{false};                  // any eligible mesh -> use the indirect draw
+  // Runtime mesh replacements must not extend the immutable shared MDI buffers.
+  // Stage them with owned per-mesh buffers and draw them through the fallback loop.
+  bool forceDedicatedInstanceUpload_{false};
   void buildInstMdi();                     // upload staging -> shared buffers (once)
   void patchMdiIndirect();                 // refresh per-frame instanceCount + meta
   void destroyMdiBuffers();                // free shared buffers (reload/shutdown)
@@ -1169,7 +1202,11 @@ class VulkanRenderer final : public Renderer {
   float exposure_{0.0f};
   float materialXTime_{0.0f};
   float materialXFrame_{0.0f};
+  std::array<float, RenderFrameParams::kMaxClippingPlanes * 4>
+      clippingPlanes_{};
+  int clippingPlaneCount_{0};
   RtCameraLens cameraLens_;
+  RtCameraShutter cameraShutter_;
   PathTraceSettings pathTrace_;
   float lightDir_[3]{0.40160966f, 0.64257544f, 0.48193160f};
   float lightColor_[3]{1.0f, 1.0f, 1.0f};
@@ -1346,6 +1383,8 @@ class VulkanRenderer final : public Renderer {
   uint64_t rtAccumGen_{0};          // bumped on geometry / viewport invalidation
   uint64_t lastRtAccumGen_{~0ull};  // generation of the last traced frame
   bool rtAccumEnabled_{true};       // master toggle for progressive accumulation
+  bool rtTemporalPose_{false};      // shutter pose belongs to one base-view sequence
+  bool rtTemporalReset_{false};     // first pose after base sequence changed
   double rtInitMs_{0.0};            // lazy ray-query pipeline creation time
 
   // View-dependent LOD: camera snapshot used by rebuildTlas to classify instances.

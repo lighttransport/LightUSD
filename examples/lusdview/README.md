@@ -5,6 +5,43 @@ An interactive USD viewer example for lightusd, rendering with **OpenGL 3.3** an
 (`.usd/.usda/.usdc/.usdz`), converts it with the Tydra `RenderScene` API and
 displays it with an ImGui docking UI.
 
+Authored stereo pairs can be captured natively side by side from GL or Vulkan:
+
+```sh
+./build_ninja/lusdview --headless --backend vk --frames 1 --stereo \
+  --camera Left --size 640x480 --screenshot stereo.ppm scene.usda
+```
+
+In a window, `--stereo` composes both authored eyes into the live viewport at
+display resolution. The same compositor works with the legacy and next loaders.
+
+The companion tool supplies the same workflow for external tracing modes
+(`--size` is the per-eye resolution):
+
+```sh
+python3 examples/lusdview/render-stereo.py \
+  --lusdview ./build_ninja/lusdview --next --size 640x480 \
+  --output stereo.ppm scene.usda
+```
+
+Authored camera shutters can likewise drive deterministic raster motion exports:
+
+```sh
+./build_ninja/lusdview --next --backend vk --camera Shot --time 24 \
+  --pt-motion-segments 8 scene.usda
+```
+
+When paused, native GL/Vulkan raster evaluates one midpoint shutter pose per
+frame and holds the completed linear-light average. `--no-raster-motion` keeps
+the selected timeline pose unchanged for external sampling or debugging. The
+companion tool performs the same schedule in separate viewer processes:
+
+```sh
+python3 examples/lusdview/render-motion.py \
+  --lusdview ./build_ninja/lusdview --next --backend vk --camera Shot \
+  --time 24 --segments 8 --size 1280x720 --output motion.ppm scene.usda
+```
+
 ## Features
 
 - **USD composition with optional lazy payloads** — `.usd/.usda/.usdc` files are composed
@@ -152,8 +189,9 @@ displays it with an ImGui docking UI.
   deterministic eight-point rectangle/disk/cylinder samples in raster and
   stochastic samples in RT. GeometryLight targets are resolved to emissive
   triangle ranges in the software-BVH path, IES profiles are parsed and packed
-  into the shared light record, and PortalLight uses a rectangular opening
-  sample when dome-guided sampling is unavailable. Vulkan hardware ray-query
+  into the shared light record, and PortalLight uses deterministic rectangular
+  opening samples. Raster GeometryLight uses eight area-stratified samples from
+  its resolved emissive mesh and reports unresolved sources. Vulkan RT
   scenes carrying these extended payloads use the hardware shader when
   available, with compute-BVH as the capability fallback. Native Points/Curves currently receive all packed direct lights
   because their light-link carrier mapping has not landed yet.
@@ -209,6 +247,10 @@ displays it with an ImGui docking UI.
   skips inactive, unlinked, and dome lights instead of spending shadow rays on
   them. USD camera optics and
   `--f-stop`/`--focus-distance` drive deterministic thin-lens depth of field.
+  Shaded GL and Vulkan raster views apply the same lens values as a deterministic
+  screen-space depth-of-field pass; pinhole cameras and diagnostic AOVs bypass it.
+  Named USD cameras also apply up to eight authored `clippingPlanes` equations
+  to ordinary, tessellated, and instanced meshes in both GL and Vulkan raster.
   After picking an object, **Camera ▸ Depth of field ▸ Focus selected** moves
   the focal plane to the clicked surface (or to the bounds center for hierarchy
   and marquee selections). The persistent MCP `viewport` operation exposes the
@@ -288,7 +330,13 @@ displays it with an ImGui docking UI.
     (surfaces show base color until their texture lands). The render loop never
     stalls on one big upload. RT/CUDA/HIP paths retain their scene-owned upload
     paths, and headless `--frames` drains the stream synchronously for
-    deterministic screenshots.
+    deterministic capture. Later payload, variant, and retained-layer edits
+    prepare a `tydra::next::RenderSession` candidate on the loader worker and
+    publish it through the same atomic GL/Vulkan transaction on the render
+    thread. `LUSDVIEW_RENDER_SESSION_MAX_MB` bounds this prepared scene (256 MiB
+    by default; `0` disables it for oversized scenes). PointInstancer transform,
+    displayColor, displayOpacity, and count edits retain stable mesh slots; layout
+    and opacity-class changes replace only the affected slot.
   - With an authored `--camera` (including the Caldera profile default), mesh
     admission inherits model/district extents and ranks conservative in-view
     bounds first. Static material batches are capped at 512K vertices during
@@ -542,12 +590,13 @@ Tools (`tools/list` for schemas):
 | tool | does |
 |---|---|
 | `load_usd {path}` / `load_usd {usda}` | load a USD path or inline USDA text (async; poll `get_scene_info`) |
-| `get_scene_info` / `get_scene_bbox` | loading state/path, scene generation, filepath, mesh/triangle/material counts, up axis, world-space AABB |
+| `get_scene_info` / `get_scene_bbox` | loading state/path, scene generation, filepath, stage revision, retained layer dependencies, mesh/triangle/material/texture counts, up axis, world-space AABB |
 | `get_focused_prim` | selected prim: path, vertex/triangle counts, bbox, world matrix, material (id/name/base color/metal/rough) |
 | `set_focus {path}` | select a prim by absolute path; returns the same info |
 | `viewport {op}` | `orbit`/`pan {dx,dy}`, `dolly`/`forward`/`backward {amount}`, `fit`, `home`, `isometric`, `front`, `back`, `right`, `left`, `top`, `bottom`, `bookmark_save {slot}`, `bookmark_load {slot}`, `set {target,yaw,pitch,distance}`; returns the camera state |
 | `list_prims {max?}` | renderable mesh prim paths |
 | `load_payloads {paths?}` | load deferred USD payloads (and deferred references under `--defer-references`); omit `paths` = all; async, poll `get_scene_info`, which reports `deferred_payloads` (each with an `arc` field) |
+| `reload_layer {path?}` | reload the retained root layer or an exact resolved dependency reported by `get_scene_info`; async and transactionally retains compatible GPU resource slots |
 | `timeline {op, time?}` | animation playback: `op` = `play`/`pause`/`stop`/`seek {time}`; async re-eval, poll `get_scene_info` (reports `has_animation`/`time`/`start_time`/`end_time`/`fps`/`playing`) |
 | `render_settings {mode?, grid?, adaptive_quality?, target_render_fps?}` | change resettable render state between captures without restarting the viewer; `mode:"picking"` displays the depth-tested mesh/curve/points picking-ID buffer |
 | `shader_reload {action, backend?, source?, watch?}` | inspect, explicitly recompile, or watch the active Vulkan GLSL / CUDA NVRTC / HIP hiprtc source while keeping the viewer and GPU scene alive |

@@ -32,8 +32,16 @@ class ChunkedArray {
   ChunkedArray() : storage_(sizeof(T), alignof(T), kElementsPerChunk) {}
   ChunkedArray(ChunkedArray&&) noexcept = default;
   ChunkedArray& operator=(ChunkedArray&&) noexcept = default;
-  ChunkedArray(const ChunkedArray&) = delete;
-  ChunkedArray& operator=(const ChunkedArray&) = delete;
+  // Copies are cheap copy-on-write views. This makes retained RenderScene
+  // catalogs practical to clone for a transactional incremental update while
+  // keeping unchanged geometry chunks physically shared.
+  ChunkedArray(const ChunkedArray& other) : ChunkedArray() {
+    share_from(other);
+  }
+  ChunkedArray& operator=(const ChunkedArray& other) {
+    share_from(other);
+    return *this;
+  }
 
   void share_from(const ChunkedArray& other) {
     if (this == &other) return;

@@ -45,6 +45,17 @@ int main() {
     std::fprintf(stderr, "auto-camera physical aperture scale is incorrect\n");
     return 1;
   }
+  const lusdview::RtCameraShutter shutter{-0.25, 0.5};
+  if (!shutter.enabled() || std::fabs(shutter.width() - 0.75) > 1.0e-12 ||
+      std::fabs(lusdview::RtShutterSampleTime(10.0, shutter, 0, 3) -
+                9.875) > 1.0e-12 ||
+      std::fabs(lusdview::RtShutterSampleTime(10.0, shutter, 2, 3) -
+                10.375) > 1.0e-12 ||
+      lusdview::RtShutterSampleTime(
+          10.0, lusdview::RtCameraShutter{0.0, 0.0}, 0, 8) != 10.0) {
+    std::fprintf(stderr, "camera shutter stratification is incorrect\n");
+    return 1;
+  }
 
   lusdview::OrbitCamera camera;
   const float boundsMin[3] = {-1.0f, -1.0f, -1.0f};

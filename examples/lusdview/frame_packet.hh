@@ -6,6 +6,7 @@
 // this one. See app.cc render thread + gui.cc packet build.
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -24,6 +25,11 @@ struct FramePacket {
   float materialXTime{0.0f};
   float materialXFrame{0.0f};
   RtCameraLens cameraLens;
+  RtCameraShutter cameraShutter;
+  bool rtTemporalPose{false};
+  bool rtTemporalReset{false};
+  float clippingPlanes[RenderFrameParams::kMaxClippingPlanes * 4]{};
+  int clippingPlaneCount{0};
   PathTraceSettings pathTrace;
   RenderMode mode{RenderMode::Shaded};
   float clearColor[4]{0.12f, 0.12f, 0.13f, 1.0f};
@@ -65,6 +71,13 @@ struct FramePacket {
     p.materialXTime = materialXTime;
     p.materialXFrame = materialXFrame;
     p.cameraLens = cameraLens;
+    p.cameraShutter = cameraShutter;
+    p.rtTemporalPose = rtTemporalPose;
+    p.rtTemporalReset = rtTemporalReset;
+    p.clippingPlaneCount = clippingPlaneCount;
+    std::copy(clippingPlanes,
+              clippingPlanes + RenderFrameParams::kMaxClippingPlanes * 4,
+              p.clippingPlanes);
     p.pathTrace = pathTrace;
     p.mode = mode;
     for (int i = 0; i < 4; ++i) p.clearColor[i] = clearColor[i];

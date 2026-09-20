@@ -6296,8 +6296,11 @@ void Gui::drawViewport() {
 void Gui::renderViewportScene(FramePacket* packet) {
   if (!renderer_ || !cam_ || viewportW_ <= 0 || viewportH_ <= 0) return;
 
-  cam_->setAspect(static_cast<float>(viewportW_) / static_cast<float>(viewportH_));
-  const int vpW = viewportW_, vpH = viewportH_;
+  const int vpW = stereoEyeViewportWidth_ > 0
+                      ? std::min(viewportW_, stereoEyeViewportWidth_)
+                      : viewportW_;
+  cam_->setAspect(static_cast<float>(vpW) / static_cast<float>(viewportH_));
+  const int vpH = viewportH_;
   const int renderW = std::max(
       1, static_cast<int>(std::lround(vpW * renderScale_)));
   const int renderH = std::max(
@@ -6320,6 +6323,14 @@ void Gui::renderViewportScene(FramePacket* packet) {
                                            ? timeline_.current / timeline_.fps
                                            : 0.0);
   p.cameraLens = cameraLens_;
+  p.cameraShutter = cameraShutter_;
+  p.rtTemporalPose = rtTemporalPose_;
+  p.rtTemporalReset = rtTemporalReset_;
+  p.clippingPlaneCount = std::min(
+      static_cast<int>(cameraClippingPlanes_.size() / 4),
+      RenderFrameParams::kMaxClippingPlanes);
+  std::copy_n(cameraClippingPlanes_.data(), p.clippingPlaneCount * 4,
+              p.clippingPlanes);
   p.pathTrace = pathTrace_;
   p.mode = mode_;
   const bool pickingAov = mode_ == RenderMode::MeshId;
@@ -6463,6 +6474,13 @@ void Gui::renderViewportScene(FramePacket* packet) {
   packet->materialXTime = p.materialXTime;
   packet->materialXFrame = p.materialXFrame;
   packet->cameraLens = p.cameraLens;
+  packet->cameraShutter = p.cameraShutter;
+  packet->rtTemporalPose = p.rtTemporalPose;
+  packet->rtTemporalReset = p.rtTemporalReset;
+  packet->clippingPlaneCount = p.clippingPlaneCount;
+  std::copy(p.clippingPlanes,
+            p.clippingPlanes + RenderFrameParams::kMaxClippingPlanes * 4,
+            packet->clippingPlanes);
   packet->pathTrace = p.pathTrace;
   packet->mode = p.mode;
   for (int i = 0; i < 4; ++i) packet->clearColor[i] = p.clearColor[i];
