@@ -120,6 +120,124 @@ class HDRImage {
 }
 
 // ============================================================================
+// Environment Importance Sampling
+// ============================================================================
+
+class ImportanceMap {
+  /**
+   * Build a two-level distribution for a lat-long environment map.
+   * Texel weights include sin(theta), so sampling the resulting distribution
+   * is proportional to luminance per unit solid angle.
+   */
+  static build(image) {
+    const { width, height } = image;
+    if (width < 1 || height < 1) {
+      throw new Error('Importance maps require a non-empty image');
+    }
+
+    const rowCdf = new Float64Array(height + 1);
+    const conditionalCdf = new Float64Array(height * (width + 1));
+    const texelWeights = new Float64Array(width * height);
+    const rowWeights = new Float64Array(height);
+    let totalWeight = 0.0;
+
+    for (let y = 0; y < height; y++) {
+      const sinTheta = Math.sin(Math.PI * (y + 0.5) / height);
+      const rowOffset = y * (width + 1);
+      let rowWeight = 0.0;
+      for (let x = 0; x < width; x++) {
+        const pixel = image.getPixel(x, y);
+        const luminance = Math.max(0.0,
+          0.2126 * pixel.r + 0.7152 * pixel.g + 0.0722 * pixel.b);
+        const weight = Number.isFinite(luminance) ? luminance * sinTheta : 0.0;
+        texelWeights[y * width + x] = weight;
+        rowWeight += weight;
+        conditionalCdf[rowOffset + x + 1] = rowWeight;
+      }
+
+      // A black row still needs a valid conditional distribution. It will not
+      // be selected unless the entire image is black.
+      if (rowWeight > 0.0) {
+        for (let x = 1; x <= width; x++) {
+          conditionalCdf[rowOffset + x] /= rowWeight;
+        }
+      } else {
+        for (let x = 1; x <= width; x++) {
+          conditionalCdf[rowOffset + x] = x / width;
+        }
+      }
+      rowWeights[y] = rowWeight;
+      totalWeight += rowWeight;
+      rowCdf[y + 1] = totalWeight;
+    }
+
+    if (totalWeight > 0.0) {
+      for (let y = 1; y <= height; y++) rowCdf[y] /= totalWeight;
+    } else {
+      // Uniform radiance over a black image means uniform solid-angle sampling.
+      totalWeight = 0.0;
+      for (let y = 0; y < height; y++) {
+        rowWeights[y] = Math.sin(Math.PI * (y + 0.5) / height) * width;
+        totalWeight += rowWeights[y];
+        rowCdf[y + 1] = totalWeight;
+      }
+      for (let y = 1; y <= height; y++) rowCdf[y] /= totalWeight;
+      for (let i = 0; i < texelWeights.length; i++) {
+        texelWeights[i] = rowWeights[Math.floor(i / width)] / width;
+      }
+    }
+
+    return { width, height, totalWeight, rowCdf, conditionalCdf,
+             rowWeights, texelWeights };
+  }
+
+  static _findInterval(cdf, offset, count, value) {
+    const u = Math.max(0.0, Math.min(1.0 - Number.EPSILON, value));
+    let low = 0;
+    let high = count;
+    while (low + 1 < high) {
+      const mid = (low + high) >> 1;
+      if (cdf[offset + mid] <= u) low = mid;
+      else high = mid;
+    }
+    return low;
+  }
+
+  /** Sample at the texel center and return a PDF per steradian. */
+  static sample(distribution, rowSample, columnSample) {
+    const { width, height, rowCdf, conditionalCdf, texelWeights, totalWeight } = distribution;
+    const y = ImportanceMap._findInterval(rowCdf, 0, height, rowSample);
+    const x = ImportanceMap._findInterval(
+      conditionalCdf, y * (width + 1), width, columnSample);
+    const u = (x + 0.5) / width;
+    const v = (y + 0.5) / height;
+    const theta = Math.PI * v;
+    const texelSolidAngle = (2.0 * Math.PI / width) *
+      (Math.PI / height) * Math.sin(theta);
+    const probability = texelWeights[y * width + x] / totalWeight;
+    return {
+      x, y, u, v,
+      direction: HDRImage.latLongToDir(u, v),
+      pdf: texelSolidAngle > 0.0 ? probability / texelSolidAngle : 0.0
+    };
+  }
+
+  static writeJSON(distribution, filepath) {
+    const payload = {
+      version: 1,
+      projection: 'latlong',
+      width: distribution.width,
+      height: distribution.height,
+      totalWeight: distribution.totalWeight,
+      rowCdf: Array.from(distribution.rowCdf),
+      conditionalCdf: Array.from(distribution.conditionalCdf)
+    };
+    fs.writeFileSync(filepath, JSON.stringify(payload));
+    console.log(`✓ Wrote importance map: ${filepath}`);
+  }
+}
+
+// ============================================================================
 // Image Transformation Utilities
 // ============================================================================
 
@@ -492,16 +610,79 @@ class HDRWriter {
     console.log(`✓ Wrote HDR file: ${filepath}`);
   }
 
-  /**
-   * Write OpenEXR format (simplified, uncompressed scanline)
-   * For production use, consider using openexr npm package
-   */
+  /** Write an OpenEXR v2 image with uncompressed float scanlines. */
   static writeEXR(image, filepath) {
-    // For now, write as HDR since proper EXR requires external library
-    // In production, use @openexr/node or similar
-    console.warn('EXR writing requires external library, writing as HDR instead');
-    const hdrPath = filepath.replace(/\.exr$/i, '.hdr');
-    HDRWriter.writeRGBE(image, hdrPath);
+    const { width, height, data } = image;
+    if (width < 1 || height < 1) throw new Error('EXR dimensions must be positive');
+
+    const cstring = value => Buffer.from(`${value}\0`, 'ascii');
+    const attribute = (name, type, value) => {
+      const size = Buffer.alloc(4);
+      size.writeUInt32LE(value.length, 0);
+      return Buffer.concat([cstring(name), cstring(type), size, value]);
+    };
+    const float32 = value => {
+      const result = Buffer.alloc(4);
+      result.writeFloatLE(value, 0);
+      return result;
+    };
+    const box2i = Buffer.alloc(16);
+    box2i.writeInt32LE(0, 0);
+    box2i.writeInt32LE(0, 4);
+    box2i.writeInt32LE(width - 1, 8);
+    box2i.writeInt32LE(height - 1, 12);
+
+    const channels = [];
+    for (const name of ['B', 'G', 'R']) {
+      // pixel type (2=float), pLinear/reserved, xSampling, ySampling.
+      const descriptor = Buffer.alloc(16);
+      descriptor.writeInt32LE(2, 0);
+      descriptor.writeUInt8(0, 4);
+      descriptor.writeInt32LE(1, 8);
+      descriptor.writeInt32LE(1, 12);
+      channels.push(cstring(name), descriptor);
+    }
+    channels.push(Buffer.from([0]));
+
+    const header = Buffer.concat([
+      attribute('channels', 'chlist', Buffer.concat(channels)),
+      attribute('compression', 'compression', Buffer.from([0])),
+      attribute('dataWindow', 'box2i', box2i),
+      attribute('displayWindow', 'box2i', box2i),
+      attribute('lineOrder', 'lineOrder', Buffer.from([0])),
+      attribute('pixelAspectRatio', 'float', float32(1.0)),
+      attribute('screenWindowCenter', 'v2f', Buffer.alloc(8)),
+      attribute('screenWindowWidth', 'float', float32(1.0)),
+      Buffer.from([0])
+    ]);
+    const prefix = Buffer.alloc(8);
+    prefix.writeUInt32LE(20000630, 0);
+    prefix.writeUInt32LE(2, 4);
+
+    const bytesPerScanline = width * 3 * 4;
+    const offsetTable = Buffer.alloc(height * 8);
+    let blockOffset = BigInt(prefix.length + header.length + offsetTable.length);
+    const blocks = [];
+    for (let y = 0; y < height; y++) {
+      offsetTable.writeBigUInt64LE(blockOffset, y * 8);
+      const block = Buffer.alloc(8 + bytesPerScanline);
+      block.writeInt32LE(y, 0);
+      block.writeUInt32LE(bytesPerScanline, 4);
+      let dst = 8;
+      // Channel samples are contiguous and follow chlist order.
+      for (const channel of [2, 1, 0]) {
+        for (let x = 0; x < width; x++) {
+          const value = data[(y * width + x) * 3 + channel];
+          block.writeFloatLE(Number.isFinite(value) ? value : 0.0, dst);
+          dst += 4;
+        }
+      }
+      blocks.push(block);
+      blockOffset += BigInt(block.length);
+    }
+
+    fs.writeFileSync(filepath, Buffer.concat([prefix, header, offsetTable, ...blocks]));
+    console.log(`✓ Wrote EXR file: ${filepath}`);
   }
 }
 
@@ -537,6 +718,7 @@ class EnvMapPresets {
       skyIntensity = 0.5,     // Base sky intensity
       horizonColor = new Vec3(0.8, 0.9, 1.0),  // Horizon tint
       zenithColor = new Vec3(0.3, 0.5, 0.9),   // Zenith color
+      sunColor = new Vec3(1.0, 0.95, 0.8),     // Sun disk tint
     } = options;
 
     console.log(`Generating Sun & Sky (${image.width}x${image.height})...`);
@@ -575,7 +757,7 @@ class EnvMapPresets {
         if (angleToSun < sunRadius) {
           // Inside sun disk
           const falloff = 1.0 - (angleToSun / sunRadius);
-          const sunCol = Vec3.mul(new Vec3(1, 0.95, 0.8), sunIntensity);
+          const sunCol = Vec3.mul(sunColor, sunIntensity);
           r += sunCol.x * falloff;
           g += sunCol.y * falloff;
           b += sunCol.z * falloff;
@@ -589,6 +771,42 @@ class EnvMapPresets {
         }
 
         image.setPixel(x, y, r, g, b);
+      }
+    }
+  }
+
+  /**
+   * CIE-style overcast sky. Luminance rises smoothly toward the zenith while
+   * the lower hemisphere receives a dim, neutral ground bounce.
+   */
+  static overcast(image, options = {}) {
+    const {
+      skyIntensity = 1.0,
+      groundIntensity = 0.08,
+      horizonColor = new Vec3(0.72, 0.78, 0.84),
+      zenithColor = new Vec3(0.45, 0.56, 0.68),
+      groundColor = new Vec3(0.35, 0.36, 0.37)
+    } = options;
+
+    console.log(`Generating Overcast Sky (${image.width}x${image.height})...`);
+    for (let y = 0; y < image.height; y++) {
+      for (let x = 0; x < image.width; x++) {
+        const dir = HDRImage.latLongToDir(
+          (x + 0.5) / image.width, (y + 0.5) / image.height);
+        if (dir.y >= 0.0) {
+          const elevationFactor = (1.0 + 2.0 * dir.y) / 3.0;
+          const tint = Vec3.lerp(horizonColor, zenithColor, dir.y);
+          image.setPixel(x, y,
+            tint.x * skyIntensity * elevationFactor,
+            tint.y * skyIntensity * elevationFactor,
+            tint.z * skyIntensity * elevationFactor);
+        } else {
+          const fade = 0.65 + 0.35 * (1.0 + dir.y);
+          image.setPixel(x, y,
+            groundColor.x * groundIntensity * fade,
+            groundColor.y * groundIntensity * fade,
+            groundColor.z * groundIntensity * fade);
+        }
       }
     }
   }
@@ -775,7 +993,8 @@ export class HDRGenerator {
    * Generate environment map with specified preset
    *
    * @param {Object} options - Generation options
-   * @param {string} options.preset - Preset name: 'white-furnace', 'sun-sky', 'studio'
+   * @param {string} options.preset - Preset name: 'white-furnace', 'sun-sky',
+   *   'sunset', 'overcast', or 'studio'
    * @param {number} options.width - Width in pixels (default: 2048 for latlong, 512 for cubemap)
    * @param {number} options.height - Height in pixels (default: 1024 for latlong)
    * @param {string} options.projection - 'latlong' or 'cubemap'
@@ -785,6 +1004,7 @@ export class HDRGenerator {
    * @param {number} options.rotation - Rotation angle in degrees (default: 0)
    * @param {number} options.intensityScale - Intensity multiplier (default: 1.0)
    * @param {Object} options.tonemapOptions - Tone mapping options for LDR output
+   * @param {string} options.importanceMap - Optional JSON importance-map path
    */
   static generate(options) {
     const {
@@ -797,7 +1017,8 @@ export class HDRGenerator {
       presetOptions = {},
       rotation = 0,
       intensityScale = 1.0,
-      tonemapOptions = {}
+      tonemapOptions = {},
+      importanceMap = null
     } = options;
 
     console.log('\n=== HDR Environment Map Generator ===');
@@ -819,6 +1040,21 @@ export class HDRGenerator {
       case 'sun-sky':
         EnvMapPresets.sunSky(latLongImage, presetOptions);
         break;
+      case 'sunset':
+        EnvMapPresets.sunSky(latLongImage, {
+          sunElevation: 5,
+          sunAzimuth: 270,
+          sunIntensity: 150.0,
+          skyIntensity: 0.65,
+          horizonColor: new Vec3(1.0, 0.38, 0.12),
+          zenithColor: new Vec3(0.12, 0.16, 0.38),
+          sunColor: new Vec3(1.0, 0.42, 0.12),
+          ...presetOptions
+        });
+        break;
+      case 'overcast':
+        EnvMapPresets.overcast(latLongImage, presetOptions);
+        break;
       case 'studio':
         EnvMapPresets.studioLighting(latLongImage, presetOptions);
         break;
@@ -835,6 +1071,9 @@ export class HDRGenerator {
       ImageTransform.scaleIntensity(latLongImage, intensityScale);
     }
 
+    const importanceDistribution = importanceMap ? ImportanceMap.build(latLongImage) : null;
+    if (importanceMap) ImportanceMap.writeJSON(importanceDistribution, importanceMap);
+
     // Determine if output is LDR or HDR
     const isLDR = ['png', 'bmp', 'jpg', 'jpeg'].includes(format.toLowerCase());
 
@@ -845,7 +1084,7 @@ export class HDRGenerator {
         const filepath = output.endsWith(`.${format}`) ? output : `${output}.${format}`;
         HDRGenerator._writeImage(latLongImage, format, filepath, isLDR, tonemapOptions);
       }
-      return { latLongImage };
+      return { latLongImage, importanceMap: importanceDistribution };
     } else if (projection === 'cubemap') {
       // Convert to cubemap
       const faceSize = Math.min(width, height); // Use smaller dimension for cube face
@@ -860,7 +1099,7 @@ export class HDRGenerator {
           HDRGenerator._writeImage(face.image, format, facePath, isLDR, tonemapOptions);
         }
       }
-      return { faces };
+      return { faces, importanceMap: importanceDistribution };
     }
   }
 
@@ -908,5 +1147,6 @@ export {
   LDRWriter,
   ToneMapper,
   ImageTransform,
+  ImportanceMap,
   Vec3
 };

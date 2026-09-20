@@ -2241,6 +2241,16 @@ if(LIGHTUSD_BUILD_TESTS)
     find_program(LUSDR_PYTHON NAMES python3 python)
   endif()
 
+  find_program(LIGHTUSD_HDRGEN_NODE_EXECUTABLE NAMES node nodejs)
+  if(LIGHTUSD_HDRGEN_NODE_EXECUTABLE)
+    add_test(
+      NAME tool-hdrgen-test
+      COMMAND ${LIGHTUSD_HDRGEN_NODE_EXECUTABLE}
+              ${PROJECT_SOURCE_DIR}/tools/hdrgen/examples/test-presets.js)
+    set_tests_properties(tool-hdrgen-test PROPERTIES
+                         TIMEOUT 30 LABELS "tools;hdrgen;node;cpu")
+  endif()
+
   if(LIGHTUSD_BUILD_PYTHON_TESTS AND LUSDR_PYTHON)
     execute_process(
       COMMAND ${LUSDR_PYTHON} -c "import pytest, lightusd"

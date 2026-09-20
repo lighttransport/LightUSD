@@ -3,19 +3,15 @@
  * Quick test script for validating all presets
  */
 
-import { HDRGenerator, HDRImage, Vec3 } from '../src/hdrgen.js';
+import { HDRGenerator, HDRImage, ImportanceMap, Vec3 } from '../src/hdrgen.js';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import * as fs from 'fs';
+import * as os from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const outputDir = path.join(__dirname, '../output');
-
-// Ensure output directory exists
-if (!fs.existsSync(outputDir)) {
-  fs.mkdirSync(outputDir, { recursive: true });
-}
+const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lightusd-hdrgen-'));
 
 console.log('Running HDRGen tests...\n');
 
@@ -94,6 +90,32 @@ test('Studio Lighting (256x128)', () => {
   });
 
   if (!result.latLongImage) throw new Error('No image generated');
+});
+
+test('Sunset preset', () => {
+  const result = HDRGenerator.generate({
+    preset: 'sunset', width: 128, height: 64, projection: 'latlong'
+  });
+  const image = result.latLongImage;
+  let maxRed = 0;
+  let maxBlue = 0;
+  for (let i = 0; i < image.data.length; i += 3) {
+    maxRed = Math.max(maxRed, image.data[i]);
+    maxBlue = Math.max(maxBlue, image.data[i + 2]);
+  }
+  if (!(maxRed > maxBlue * 1.5)) throw new Error('Sunset is not warm-dominant');
+});
+
+test('Overcast preset', () => {
+  const result = HDRGenerator.generate({
+    preset: 'overcast', width: 64, height: 32, projection: 'latlong'
+  });
+  const zenith = result.latLongImage.getPixel(16, 0);
+  const horizon = result.latLongImage.getPixel(16, 15);
+  const ground = result.latLongImage.getPixel(16, 24);
+  if (!(zenith.r > horizon.r && horizon.r > ground.r)) {
+    throw new Error('Overcast zenith/horizon/ground ordering is incorrect');
+  }
 });
 
 // Test 4: Cubemap Generation
@@ -179,16 +201,64 @@ test('White Furnace with custom intensity', () => {
   if (Math.abs(pixel.r - 10.0) > 0.01) throw new Error('Wrong intensity');
 });
 
+test('Importance map normalization and sampling', () => {
+  const image = new HDRImage(8, 4);
+  for (let y = 0; y < image.height; y++) {
+    for (let x = 0; x < image.width; x++) image.setPixel(x, y, 1, 1, 1);
+  }
+  const distribution = ImportanceMap.build(image);
+  if (distribution.rowCdf[0] !== 0 || distribution.rowCdf[4] !== 1) {
+    throw new Error('Row CDF is not normalized');
+  }
+  if (!(distribution.rowWeights[1] > distribution.rowWeights[0])) {
+    throw new Error('Solid-angle weighting did not reduce polar rows');
+  }
+  const sample = ImportanceMap.sample(distribution, 0.5, 0.5);
+  const expectedPdf = 1.0 / (4.0 * Math.PI);
+  if (Math.abs(sample.pdf - expectedPdf) > 0.01) {
+    throw new Error(`Uniform-environment PDF is incorrect: ${sample.pdf}`);
+  }
+});
+
+test('Importance map selects a bright texel', () => {
+  const image = new HDRImage(8, 4);
+  image.setPixel(6, 2, 100, 100, 100);
+  const distribution = ImportanceMap.build(image);
+  const sample = ImportanceMap.sample(distribution, 0.5, 0.5);
+  if (sample.x !== 6 || sample.y !== 2) {
+    throw new Error(`Expected bright texel (6,2), got (${sample.x},${sample.y})`);
+  }
+});
+
+test('OpenEXR scanline output', () => {
+  const output = path.join(outputDir, 'test.exr');
+  HDRGenerator.generate({
+    preset: 'white-furnace', width: 7, height: 3,
+    projection: 'latlong', format: 'exr', output,
+    presetOptions: { intensity: 2.0 }
+  });
+  const bytes = fs.readFileSync(output);
+  if (bytes.readUInt32LE(0) !== 20000630 || bytes.readUInt32LE(4) !== 2) {
+    throw new Error('Invalid OpenEXR magic or version');
+  }
+  if (!bytes.includes(Buffer.from('channels\0chlist\0', 'ascii'))) {
+    throw new Error('OpenEXR channel list is missing');
+  }
+  if (fs.existsSync(path.join(outputDir, 'test.hdr'))) {
+    throw new Error('OpenEXR output unexpectedly fell back to HDR');
+  }
+});
+
 // Summary
 console.log('='.repeat(60));
 console.log(`Test Results: ${passed} passed, ${failed} failed`);
 console.log('='.repeat(60));
+fs.rmSync(outputDir, { recursive: true, force: true });
 
 if (failed > 0) {
   console.error('\n✗ Some tests failed');
   process.exit(1);
 } else {
   console.log('\n✓ All tests passed!');
-  console.log(`\nTest outputs in: ${outputDir}/test_*.hdr`);
   process.exit(0);
 }

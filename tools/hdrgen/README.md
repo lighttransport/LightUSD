@@ -5,8 +5,8 @@ A pure Node.js tool for generating synthetic HDR environment maps for testing, d
 ## Features
 
 - **Pure JavaScript/Node.js** - No external dependencies, no native bindings
-- **Multiple Presets** - White furnace, sun & sky, studio lighting
-- **Flexible Output** - HDR (Radiance RGBE) and EXR (OpenEXR) formats
+- **Multiple Presets** - White furnace, sun & sky, sunset, overcast, studio lighting
+- **Flexible Output** - HDR (Radiance RGBE) and EXR (OpenEXR float scanline) formats
 - **Dual Projections** - Equirectangular (lat-long) and cubemap
 - **Physically-Based** - Linear color space, HDR values, proper intensity scaling
 - **Customizable** - Extensive options for each preset
@@ -67,12 +67,25 @@ hdrgen [OPTIONS]
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-h, --help` | Show help message | - |
-| `-p, --preset <name>` | Preset name (white-furnace, sun-sky, studio) | `white-furnace` |
+| `-p, --preset <name>` | Preset name (white-furnace, sun-sky, sunset, overcast, studio) | `white-furnace` |
 | `-w, --width <px>` | Width in pixels | `2048` |
 | `--height <px>` | Height in pixels | `1024` |
 | `--projection <type>` | Projection type (latlong, cubemap) | `latlong` |
 | `-f, --format <fmt>` | Output format (hdr, exr) | `hdr` |
 | `-o, --output <path>` | Output file path | `output/<preset>_<proj>.<fmt>` |
+| `--importance-map <path>` | Write luminance/solid-angle sampling CDFs as JSON | disabled |
+
+The importance-map JSON contains a normalized `rowCdf` with `height + 1`
+entries and row-major `conditionalCdf` data with
+`height * (width + 1)` entries. Weights use Rec. 709 luminance multiplied by
+`sin(theta)` at each texel center, so a renderer can select a row, then a
+column, without over-sampling the poles of a lat-long map. The file also records
+its schema `version`, projection, dimensions, and unnormalized `totalWeight`.
+
+```bash
+hdrgen -p sun-sky -w 1024 --height 512 \
+  -o output/sky.hdr --importance-map output/sky.importance.json
+```
 
 ### White Furnace Options
 
@@ -103,6 +116,19 @@ hdrgen [OPTIONS]
 | `--ambient-intensity <val>` | Ambient light intensity | `0.5` |
 
 **Purpose:** Professional 3-point lighting setup for product visualization and character lighting.
+
+### Sunset and Overcast
+
+`sunset` supplies warm low-sun defaults while accepting the same sun and sky
+options as `sun-sky`. `overcast` implements a smooth CIE-style diffuse sky and
+accepts `--sky-intensity` plus `--ground-intensity` for its lower-hemisphere
+bounce.
+
+```bash
+hdrgen -p sunset --sun-azimuth 240 -o output/sunset.hdr
+hdrgen -p overcast --sky-intensity 1.5 --ground-intensity 0.1 \
+  -o output/overcast.hdr
+```
 
 ## Presets
 
@@ -271,16 +297,14 @@ Standard format for HDR images. Widely supported, compact, 8-bit per channel wit
 
 ### EXR (OpenEXR)
 
-High-precision format from ILM. Better precision, alpha channel support, extensive metadata.
+High-precision format from ILM. HDRGen writes OpenEXR v2 uncompressed scanlines
+with 32-bit floating-point B, G, and R channels.
 
 **Specifications:**
-- Format: Half-float (16-bit) or float (32-bit) per channel
-- Precision: Half = 11-bit mantissa, Float = 24-bit mantissa
-- Dynamic range: Half = 10^-5 to 65504
-- File size: 6 bytes (half) or 12 bytes (float) per pixel
+- Format: Float (32-bit) per channel
+- Precision: 24-bit mantissa
+- File size: 12 bytes per pixel plus scanline/header overhead
 - Extension: `.exr`
-
-**Note:** Current implementation converts to HDR. For production EXR writing, use `@openexr/node` or similar library.
 
 ## API Usage
 
@@ -505,22 +529,19 @@ Check azimuth convention:
 
 Ensure DCC is using OpenGL convention (+Y up). Some DCCs (DirectX convention) may require face reordering.
 
-### EXR files aren't working
-
-Current implementation writes HDR format. For true EXR support, integrate `@openexr/node` or similar library.
-
 ## Limitations
 
-- **EXR Writing:** Currently writes HDR format instead (requires external library for true EXR)
+- **EXR Compression:** Float scanlines are currently uncompressed
 - **Sky Model:** Simplified procedural sky (not full Hosek-Wilkie or Nishita)
 - **Compression:** HDR files are uncompressed (no RLE compression)
 - **Metadata:** Minimal file metadata (no custom tags)
 
 ## Roadmap
 
-- [ ] Proper EXR writing with compression
-- [ ] More presets (indoor, sunset, overcast, etc.)
-- [ ] Importance sampling map generation
+- [x] Proper uncompressed float OpenEXR writing
+- [ ] ZIP/PIZ EXR compression
+- [x] Sunset and overcast presets
+- [x] Importance sampling map generation (`--importance-map` JSON row/column CDFs)
 - [ ] Diffuse/specular pre-filtering
 - [ ] HDRI panorama manipulation (rotate, exposure)
 - [ ] Animation (time-of-day sequence)

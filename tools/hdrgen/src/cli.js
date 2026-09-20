@@ -25,6 +25,7 @@ function parseArgs(argv) {
     projection: 'latlong',
     format: 'hdr',
     output: null,
+    importanceMap: null,
     presetOptions: {},
     rotation: 0,
     intensityScale: 1.0,
@@ -53,6 +54,8 @@ function parseArgs(argv) {
       args.format = argv[++i];
     } else if (arg === '-o' || arg === '--output') {
       args.output = argv[++i];
+    } else if (arg === '--importance-map') {
+      args.importanceMap = argv[++i];
     }
     // Transform options
     else if (arg === '--rotation' || arg === '--rotate') {
@@ -77,6 +80,8 @@ function parseArgs(argv) {
       args.presetOptions.sunIntensity = parseFloat(argv[++i]);
     } else if (arg === '--sky-intensity') {
       args.presetOptions.skyIntensity = parseFloat(argv[++i]);
+    } else if (arg === '--ground-intensity') {
+      args.presetOptions.groundIntensity = parseFloat(argv[++i]);
     }
     // Studio options
     else if (arg === '--key-intensity') {
@@ -106,12 +111,13 @@ USAGE:
 
 OPTIONS:
   -h, --help              Show this help message
-  -p, --preset <name>     Preset name (white-furnace, sun-sky, studio) [default: white-furnace]
+  -p, --preset <name>     Preset: white-furnace, sun-sky, sunset, overcast, studio
   -w, --width <px>        Width in pixels [default: 2048]
   --height <px>           Height in pixels [default: 1024]
   --projection <type>     Projection type (latlong, cubemap) [default: latlong]
   -f, --format <fmt>      Output format (hdr, exr, png, bmp, jpg) [default: hdr]
   -o, --output <path>     Output file path [default: output/<preset>_<proj>.<fmt>]
+  --importance-map <path> Write lat-long luminance/solid-angle CDFs as JSON
 
 TRANSFORM OPTIONS:
   --rotation <deg>        Rotate environment map (degrees, +CCW) [default: 0]
@@ -130,6 +136,7 @@ SUN & SKY OPTIONS:
   --sun-azimuth <deg>     Sun azimuth angle in degrees [default: 135]
   --sun-intensity <val>   Sun disk intensity [default: 100.0]
   --sky-intensity <val>   Base sky intensity [default: 0.5]
+  --ground-intensity <v>  Overcast lower-hemisphere bounce [default: 0.08]
 
 STUDIO LIGHTING OPTIONS:
   --key-intensity <val>   Key light intensity [default: 50.0]
@@ -165,12 +172,14 @@ EXAMPLES:
 PRESETS:
   white-furnace  - Uniform white environment for energy conservation testing
   sun-sky        - Procedural sky with sun disk and atmospheric gradient
+  sunset         - Warm low sun with a dusk sky gradient
+  overcast       - CIE-style diffuse sky with neutral ground bounce
   studio         - 3-point lighting setup (key, fill, rim lights)
 
 FORMATS:
   HDR Formats:
     hdr          - Radiance RGBE format (.hdr)
-    exr          - OpenEXR format (.exr) [requires external library]
+    exr          - OpenEXR v2 uncompressed float scanlines (.exr)
 
   LDR Formats (with automatic tone mapping):
     png          - PNG format (.png) [uncompressed]
@@ -222,6 +231,9 @@ async function main() {
     if (!fs.existsSync(outputDir)) {
       fs.mkdirSync(outputDir, { recursive: true });
     }
+    if (args.importanceMap) {
+      fs.mkdirSync(path.dirname(args.importanceMap), { recursive: true });
+    }
   } catch (err) {
     console.error(`Error creating output directory: ${err.message}`);
     process.exit(1);
@@ -239,7 +251,8 @@ async function main() {
       presetOptions: args.presetOptions,
       rotation: args.rotation,
       intensityScale: args.intensityScale,
-      tonemapOptions: args.tonemapOptions
+      tonemapOptions: args.tonemapOptions,
+      importanceMap: args.importanceMap
     });
 
     console.log('\n✓ Generation complete!');
