@@ -20,6 +20,7 @@ const __dirname = path.dirname(__filename);
 function parseArgs(argv) {
   const args = {
     preset: 'white-furnace',
+    input: null,
     width: 2048,
     height: 1024,
     projection: 'latlong',
@@ -28,6 +29,7 @@ function parseArgs(argv) {
     importanceMap: null,
     exrCompression: 'zips',
     prefilter: null,
+    timeSequence: null,
     presetOptions: {},
     rotation: 0,
     intensityScale: 1.0,
@@ -46,6 +48,8 @@ function parseArgs(argv) {
       args.help = true;
     } else if (arg === '-p' || arg === '--preset') {
       args.preset = argv[++i];
+    } else if (arg === '-i' || arg === '--input') {
+      args.input = argv[++i];
     } else if (arg === '-w' || arg === '--width') {
       args.width = parseInt(argv[++i]);
     } else if (arg === '--height') {
@@ -73,6 +77,9 @@ function parseArgs(argv) {
     } else if (arg === '--prefilter-samples') {
       args.prefilter = args.prefilter || {};
       args.prefilter.samples = parseInt(argv[++i]);
+    } else if (arg === '--time-sequence') {
+      const fields = argv[++i].split(':').map(Number);
+      args.timeSequence = { start: fields[0], end: fields[1], step: fields[2] ?? 1 };
     }
     // Transform options
     else if (arg === '--rotation' || arg === '--rotate') {
@@ -129,6 +136,7 @@ USAGE:
 OPTIONS:
   -h, --help              Show this help message
   -p, --preset <name>     Preset: white-furnace, sun-sky, sunset, overcast, studio
+  -i, --input <path>      Transform an existing lat-long .hdr or .exr panorama
   -w, --width <px>        Width in pixels [default: 2048]
   --height <px>           Height in pixels [default: 1024]
   --projection <type>     Projection type (latlong, cubemap) [default: latlong]
@@ -140,6 +148,7 @@ OPTIONS:
   --prefilter-size <px>    Specular level-0 width [default: 64]
   --prefilter-levels <n>   Number of GGX roughness levels [default: 6]
   --prefilter-samples <n>  Samples per output texel [default: 64]
+  --time-sequence <a:b:s> Generate inclusive solar-hour range start:end:step
 
 TRANSFORM OPTIONS:
   --rotation <deg>        Rotate environment map (degrees, +CCW) [default: 0]
@@ -262,9 +271,9 @@ async function main() {
   }
 
   try {
-    // Generate environment map
-    HDRGenerator.generate({
+    const generationOptions = {
       preset: args.preset,
+      input: args.input,
       width: args.width,
       height: args.height,
       projection: args.projection,
@@ -277,7 +286,15 @@ async function main() {
       importanceMap: args.importanceMap,
       exrCompression: args.exrCompression,
       prefilter: args.prefilter
-    });
+    };
+    if (args.timeSequence) {
+      HDRGenerator.generateTimeSequence({
+        ...generationOptions,
+        ...args.timeSequence
+      });
+    } else {
+      HDRGenerator.generate(generationOptions);
+    }
 
     console.log('\n✓ Generation complete!');
     console.log(`Output: ${args.output}\n`);

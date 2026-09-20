@@ -3,7 +3,7 @@
  * Quick test script for validating all presets
  */
 
-import { EnvironmentPrefilter, HDRGenerator, HDRImage, ImportanceMap, Vec3 } from '../src/hdrgen.js';
+import { EnvironmentPrefilter, HDRGenerator, HDRImage, HDRReader, ImportanceMap, Vec3 } from '../src/hdrgen.js';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import * as fs from 'fs';
@@ -291,6 +291,51 @@ test('Diffuse and GGX environment prefiltering', () => {
       !fs.existsSync(path.join(directory, 'diffuse.exr'))) {
     throw new Error('Prefilter outputs are missing');
   }
+});
+
+test('HDR and compressed EXR panorama input', () => {
+  const exr = path.join(outputDir, 'input.exr');
+  const hdr = path.join(outputDir, 'input.hdr');
+  HDRGenerator.generate({
+    preset: 'white-furnace', width: 12, height: 6,
+    format: 'exr', output: exr, presetOptions: { intensity: 4.0 }
+  });
+  HDRGenerator.generate({
+    preset: 'white-furnace', width: 12, height: 6,
+    format: 'hdr', output: hdr, presetOptions: { intensity: 4.0 }
+  });
+  const exrImage = HDRReader.read(exr);
+  const hdrImage = HDRReader.read(hdr);
+  if (exrImage.width !== 12 || exrImage.height !== 6 ||
+      Math.abs(exrImage.getPixel(3, 2).r - 4.0) > 1e-6) {
+    throw new Error('Compressed EXR panorama read failed');
+  }
+  if (Math.abs(hdrImage.getPixel(3, 2).r - 4.0) > 0.05) {
+    throw new Error('Radiance HDR panorama read failed');
+  }
+  const transformed = HDRGenerator.generate({
+    input: exr, rotation: 90, intensityScale: 0.25
+  }).latLongImage;
+  if (Math.abs(transformed.getPixel(0, 0).r - 1.0) > 1e-6) {
+    throw new Error('Input panorama transform pipeline failed');
+  }
+});
+
+test('Time-of-day sequence generation', () => {
+  const output = path.join(outputDir, 'sequence', 'sky-###.exr');
+  const sequence = HDRGenerator.generateTimeSequence({
+    start: 6, end: 8, step: 1, width: 16, height: 8,
+    format: 'exr', output
+  });
+  if (sequence.frames.length !== 3 ||
+      !sequence.frames[0].file.endsWith('sky-000.exr') ||
+      !sequence.frames[2].file.endsWith('sky-002.exr')) {
+    throw new Error('Time sequence filenames are not stable');
+  }
+  if (!(sequence.frames[1].sunElevation > sequence.frames[0].sunElevation)) {
+    throw new Error('Time sequence solar elevation did not advance');
+  }
+  if (!fs.existsSync(sequence.manifest)) throw new Error('Time sequence manifest is missing');
 });
 
 // Summary

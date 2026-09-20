@@ -714,6 +714,187 @@ class HDRWriter {
 }
 
 // ============================================================================
+// HDR File Format Readers
+// ============================================================================
+
+class HDRReader {
+  static read(filepath) {
+    const extension = path.extname(filepath).toLowerCase();
+    const bytes = fs.readFileSync(filepath);
+    if (extension === '.hdr' || extension === '.rgbe') return HDRReader.readRGBE(bytes);
+    if (extension === '.exr') return HDRReader.readEXR(bytes);
+    throw new Error(`Unsupported panorama input format: ${extension || '(none)'}`);
+  }
+
+  static readRGBE(bytes) {
+    const marker = Buffer.from('\n\n');
+    const headerEnd = bytes.indexOf(marker);
+    if (headerEnd < 0) throw new Error('Invalid Radiance HDR header');
+    const resolutionEnd = bytes.indexOf(0x0a, headerEnd + 2);
+    if (resolutionEnd < 0) throw new Error('Radiance HDR resolution is missing');
+    const resolution = bytes.toString('ascii', headerEnd + 2, resolutionEnd).trim();
+    const match = /^-Y\s+(\d+)\s+\+X\s+(\d+)$/.exec(resolution);
+    if (!match) throw new Error(`Unsupported Radiance HDR orientation: ${resolution}`);
+    const height = Number(match[1]);
+    const width = Number(match[2]);
+    const rgbe = Buffer.alloc(width * height * 4);
+    let source = resolutionEnd + 1;
+
+    for (let y = 0; y < height; y++) {
+      const isRle = width >= 8 && width <= 0x7fff && source + 4 <= bytes.length &&
+        bytes[source] === 2 && bytes[source + 1] === 2 &&
+        (bytes[source + 2] & 0x80) === 0 &&
+        ((bytes[source + 2] << 8) | bytes[source + 3]) === width;
+      if (!isRle) {
+        const count = width * 4;
+        if (source + count > bytes.length) throw new Error('Truncated Radiance HDR pixels');
+        bytes.copy(rgbe, y * width * 4, source, source + count);
+        source += count;
+        continue;
+      }
+      source += 4;
+      const channels = [Buffer.alloc(width), Buffer.alloc(width),
+                        Buffer.alloc(width), Buffer.alloc(width)];
+      for (let channel = 0; channel < 4; channel++) {
+        let x = 0;
+        while (x < width) {
+          if (source >= bytes.length) throw new Error('Truncated Radiance HDR RLE data');
+          const code = bytes[source++];
+          if (code > 128) {
+            const count = code - 128;
+            if (count === 0 || source >= bytes.length || x + count > width) {
+              throw new Error('Invalid Radiance HDR RLE run');
+            }
+            channels[channel].fill(bytes[source++], x, x + count);
+            x += count;
+          } else {
+            if (code === 0 || source + code > bytes.length || x + code > width) {
+              throw new Error('Invalid Radiance HDR RLE literal');
+            }
+            bytes.copy(channels[channel], x, source, source + code);
+            source += code;
+            x += code;
+          }
+        }
+      }
+      for (let x = 0; x < width; x++) {
+        const target = (y * width + x) * 4;
+        for (let channel = 0; channel < 4; channel++) {
+          rgbe[target + channel] = channels[channel][x];
+        }
+      }
+    }
+
+    const image = new HDRImage(width, height);
+    for (let i = 0; i < width * height; i++) {
+      const exponent = rgbe[i * 4 + 3];
+      if (exponent === 0) continue;
+      const scale = Math.pow(2, exponent - 128) / 255.0;
+      image.data[i * 3] = rgbe[i * 4] * scale;
+      image.data[i * 3 + 1] = rgbe[i * 4 + 1] * scale;
+      image.data[i * 3 + 2] = rgbe[i * 4 + 2] * scale;
+    }
+    return image;
+  }
+
+  static _cstring(bytes, state) {
+    const end = bytes.indexOf(0, state.offset);
+    if (end < 0) throw new Error('Unterminated OpenEXR string');
+    const value = bytes.toString('ascii', state.offset, end);
+    state.offset = end + 1;
+    return value;
+  }
+
+  static _unzipEXRBytes(packed, expectedSize) {
+    if (packed.length === expectedSize) return packed;
+    const predicted = zlib.inflateSync(packed);
+    if (predicted.length !== expectedSize) throw new Error('Invalid OpenEXR ZIPS block size');
+    for (let i = 1; i < predicted.length; i++) {
+      predicted[i] = (predicted[i - 1] + predicted[i] - 128) & 0xff;
+    }
+    const raw = Buffer.alloc(expectedSize);
+    const oddStart = Math.floor((expectedSize + 1) / 2);
+    for (let i = 0; i < expectedSize; i += 2) raw[i] = predicted[i / 2];
+    for (let i = 1; i < expectedSize; i += 2) raw[i] = predicted[oddStart + (i >> 1)];
+    return raw;
+  }
+
+  static readEXR(bytes) {
+    if (bytes.length < 9 || bytes.readUInt32LE(0) !== 20000630) {
+      throw new Error('Invalid OpenEXR magic number');
+    }
+    const state = { offset: 8 };
+    const attributes = new Map();
+    while (state.offset < bytes.length) {
+      const name = HDRReader._cstring(bytes, state);
+      if (!name) break;
+      const type = HDRReader._cstring(bytes, state);
+      if (state.offset + 4 > bytes.length) throw new Error('Truncated OpenEXR attribute');
+      const size = bytes.readUInt32LE(state.offset);
+      state.offset += 4;
+      if (state.offset + size > bytes.length) throw new Error('Truncated OpenEXR attribute value');
+      attributes.set(name, { type, value: bytes.subarray(state.offset, state.offset + size) });
+      state.offset += size;
+    }
+    const window = attributes.get('dataWindow')?.value;
+    const channelList = attributes.get('channels')?.value;
+    const compressionValue = attributes.get('compression')?.value?.[0] ?? 0;
+    if (!window || window.length !== 16 || !channelList) {
+      throw new Error('OpenEXR dataWindow or channels are missing');
+    }
+    if (![0, 2].includes(compressionValue)) {
+      throw new Error(`Unsupported OpenEXR compression code: ${compressionValue}`);
+    }
+    const minX = window.readInt32LE(0);
+    const minY = window.readInt32LE(4);
+    const maxX = window.readInt32LE(8);
+    const maxY = window.readInt32LE(12);
+    const width = maxX - minX + 1;
+    const height = maxY - minY + 1;
+    const channels = [];
+    const channelState = { offset: 0 };
+    while (channelState.offset < channelList.length && channelList[channelState.offset] !== 0) {
+      const name = HDRReader._cstring(channelList, channelState);
+      if (channelState.offset + 16 > channelList.length) throw new Error('Truncated OpenEXR channel');
+      const pixelType = channelList.readInt32LE(channelState.offset);
+      const xSampling = channelList.readInt32LE(channelState.offset + 8);
+      const ySampling = channelList.readInt32LE(channelState.offset + 12);
+      channelState.offset += 16;
+      if (pixelType !== 2 || xSampling !== 1 || ySampling !== 1) {
+        throw new Error('Only full-resolution float OpenEXR channels are supported');
+      }
+      channels.push(name);
+    }
+    if (!channels.includes('R') || !channels.includes('G') || !channels.includes('B')) {
+      throw new Error('OpenEXR input requires R, G, and B channels');
+    }
+
+    const image = new HDRImage(width, height);
+    const rowBytes = width * channels.length * 4;
+    const offsetTable = state.offset;
+    for (let row = 0; row < height; row++) {
+      const blockOffset = Number(bytes.readBigUInt64LE(offsetTable + row * 8));
+      if (blockOffset + 8 > bytes.length) throw new Error('Invalid OpenEXR scanline offset');
+      const y = bytes.readInt32LE(blockOffset) - minY;
+      const packedSize = bytes.readUInt32LE(blockOffset + 4);
+      const packed = bytes.subarray(blockOffset + 8, blockOffset + 8 + packedSize);
+      const raw = compressionValue === 2 ? HDRReader._unzipEXRBytes(packed, rowBytes) : packed;
+      if (raw.length !== rowBytes || y < 0 || y >= height) throw new Error('Invalid OpenEXR scanline');
+      for (let channel = 0; channel < channels.length; channel++) {
+        const component = channels[channel] === 'R' ? 0 : channels[channel] === 'G' ? 1 :
+          channels[channel] === 'B' ? 2 : -1;
+        if (component < 0) continue;
+        for (let x = 0; x < width; x++) {
+          image.data[(y * width + x) * 3 + component] =
+            raw.readFloatLE((channel * width + x) * 4);
+        }
+      }
+    }
+    return image;
+  }
+}
+
+// ============================================================================
 // Environment Map Presets
 // ============================================================================
 
@@ -1158,6 +1339,54 @@ class EnvironmentPrefilter {
 // ============================================================================
 
 export class HDRGenerator {
+  static generateTimeSequence(options) {
+    const {
+      start = 6,
+      end = 18,
+      step = 1,
+      output = 'output/sky-####.hdr',
+      presetOptions = {}
+    } = options;
+    if (![start, end, step].every(Number.isFinite) || step === 0 ||
+        (end - start) * step < 0) {
+      throw new Error('Invalid time sequence range');
+    }
+    const frames = [];
+    const forward = step > 0;
+    let frame = 0;
+    for (let hour = start;
+         forward ? hour <= end + 1e-9 : hour >= end - 1e-9;
+         hour += step, frame++) {
+      const daylightPhase = Math.PI * (hour - 6.0) / 12.0;
+      const sunElevation = Math.max(-5.0, 90.0 * Math.sin(daylightPhase));
+      const sunAzimuth = ((hour / 24.0) * 360.0 + 180.0) % 360.0;
+      const match = /(#+)/.exec(output);
+      let filename;
+      if (match) {
+        filename = output.slice(0, match.index) +
+          String(frame).padStart(match[1].length, '0') +
+          output.slice(match.index + match[1].length);
+      } else {
+        const extension = path.extname(output);
+        filename = output.slice(0, output.length - extension.length) +
+          `-${String(frame).padStart(4, '0')}` + extension;
+      }
+      fs.mkdirSync(path.dirname(filename), { recursive: true });
+      HDRGenerator.generate({
+        ...options,
+        preset: 'sun-sky',
+        input: null,
+        output: filename,
+        presetOptions: { sunElevation, sunAzimuth, ...presetOptions },
+        timeSequence: undefined
+      });
+      frames.push({ frame, hour, sunElevation, sunAzimuth, file: filename });
+    }
+    const manifestPath = output.replace(/(#+)/, 'sequence').replace(/\.[^.]+$/, '.json');
+    fs.writeFileSync(manifestPath, JSON.stringify({ version: 1, frames }, null, 2) + '\n');
+    return { frames, manifest: manifestPath };
+  }
+
   /**
    * Generate environment map with specified preset
    *
@@ -1176,6 +1405,7 @@ export class HDRGenerator {
    * @param {string} options.importanceMap - Optional JSON importance-map path
    * @param {string} options.exrCompression - 'zips' or 'none'
    * @param {Object} options.prefilter - Optional IBL prefilter options
+   * @param {string} options.input - Optional existing HDR/EXR panorama
    */
   static generate(options) {
     const {
@@ -1191,22 +1421,24 @@ export class HDRGenerator {
       tonemapOptions = {},
       importanceMap = null,
       exrCompression = 'zips',
-      prefilter = null
+      prefilter = null,
+      input = null
     } = options;
 
     console.log('\n=== HDR Environment Map Generator ===');
-    console.log(`Preset: ${preset}`);
-    console.log(`Resolution: ${width}x${height}`);
+    console.log(input ? `Input: ${input}` : `Preset: ${preset}`);
     console.log(`Projection: ${projection}`);
     console.log(`Format: ${format.toUpperCase()}`);
     if (rotation !== 0) console.log(`Rotation: ${rotation}°`);
     if (intensityScale !== 1.0) console.log(`Intensity Scale: ${intensityScale}x`);
 
-    // Generate lat-long image first
-    let latLongImage = new HDRImage(width, height);
+    let latLongImage = input ? HDRReader.read(input) : new HDRImage(width, height);
+    console.log(`Resolution: ${latLongImage.width}x${latLongImage.height}`);
 
-    // Apply preset
-    switch (preset) {
+    // Apply a preset when no input panorama was supplied.
+    switch (input ? 'input' : preset) {
+      case 'input':
+        break;
       case 'white-furnace':
         EnvMapPresets.whiteFurnace(latLongImage, presetOptions.intensity || 1.0);
         break;
@@ -1264,7 +1496,7 @@ export class HDRGenerator {
       return { latLongImage, importanceMap: importanceDistribution, prefiltered };
     } else if (projection === 'cubemap') {
       // Convert to cubemap
-      const faceSize = Math.min(width, height); // Use smaller dimension for cube face
+      const faceSize = Math.min(latLongImage.width, latLongImage.height);
       const faces = CubemapGenerator.fromLatLong(latLongImage, faceSize);
 
       if (output) {
@@ -1323,6 +1555,7 @@ export {
   HDRImage,
   CubemapGenerator,
   HDRWriter,
+  HDRReader,
   LDRWriter,
   ToneMapper,
   ImageTransform,

@@ -68,6 +68,7 @@ hdrgen [OPTIONS]
 |--------|-------------|---------|
 | `-h, --help` | Show help message | - |
 | `-p, --preset <name>` | Preset name (white-furnace, sun-sky, sunset, overcast, studio) | `white-furnace` |
+| `-i, --input <path>` | Read an existing lat-long HDR or float EXR panorama | disabled |
 | `-w, --width <px>` | Width in pixels | `2048` |
 | `--height <px>` | Height in pixels | `1024` |
 | `--projection <type>` | Projection type (latlong, cubemap) | `latlong` |
@@ -79,6 +80,7 @@ hdrgen [OPTIONS]
 | `--prefilter-size <px>` | Specular level-0 width | `64` |
 | `--prefilter-levels <n>` | GGX roughness mip count | `6` |
 | `--prefilter-samples <n>` | Deterministic samples per output texel | `64` |
+| `--time-sequence <a:b:s>` | Inclusive solar-hour range (`start:end:step`) | disabled |
 
 The importance-map JSON contains a normalized `rowCdf` with `height + 1`
 entries and row-major `conditionalCdf` data with
@@ -90,6 +92,22 @@ its schema `version`, projection, dimensions, and unnormalized `totalWeight`.
 ```bash
 hdrgen -p sun-sky -w 1024 --height 512 \
   -o output/sky.hdr --importance-map output/sky.importance.json
+```
+
+Existing Radiance HDR and full-resolution float OpenEXR panoramas can use the
+same rotation, intensity, importance-map, cubemap, and prefilter pipeline:
+
+```bash
+hdrgen -i input/studio.exr --rotation 90 --intensity-scale 0.5 \
+  -f exr -o output/studio-rotated.exr
+```
+
+Generate a deterministic daylight sequence with numbered frames and a JSON
+manifest. Runs use a simple 06:00 sunrise, 12:00 zenith, 18:00 sunset arc:
+
+```bash
+hdrgen -p sun-sky --time-sequence 6:18:0.5 -w 1024 --height 512 \
+  -f exr -o output/day/sky-####.exr
 ```
 
 IBL prefiltering writes cosine-convolved diffuse irradiance, GGX specular
@@ -559,8 +577,8 @@ Ensure DCC is using OpenGL convention (+Y up). Some DCCs (DirectX convention) ma
 - [x] Sunset and overcast presets
 - [x] Importance sampling map generation (`--importance-map` JSON row/column CDFs)
 - [x] Deterministic diffuse irradiance and GGX specular pre-filtering
-- [ ] HDRI panorama manipulation (rotate, exposure)
-- [ ] Animation (time-of-day sequence)
+- [x] HDR/EXR panorama loading, rotation, and intensity/exposure scaling
+- [x] Deterministic time-of-day sequence with numbered outputs and manifest
 - [ ] Web-based visualizer
 
 ## License
