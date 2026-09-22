@@ -353,6 +353,15 @@ bool CrateReader::ReadIndex(crate::Index *i) {
   return true;
 }
 
+bool CrateReader::CheckArrayRead(uint64_t count, size_t element_size) const {
+  size_t bytes;
+  if (!safe::mul(count, element_size, &bytes) || !sr()->can_read(bytes)) {
+    PushError("Truncated or oversized uncompressed array payload.");
+    return false;
+  }
+  return true;
+}
+
 bool CrateReader::ReadIndices(std::vector<crate::Index> *indices) {
   uint64_t n;
   if (!sr()->read8(&n)) {
@@ -374,7 +383,7 @@ bool CrateReader::ReadIndices(std::vector<crate::Index> *indices) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in ReadIndices: n * sizeof(crate::Index)");
   }
 
-  if (datalen > sr()->size()) {
+  if (!sr()->can_read(datalen)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Indices data exceeds USDC size.");
   }
 
@@ -382,7 +391,7 @@ bool CrateReader::ReadIndices(std::vector<crate::Index> *indices) {
 
   indices->resize(size_t(n));
 
-  if (datalen != sr()->read(datalen, datalen,
+  if (!sr()->read_exact(datalen, datalen,
                           reinterpret_cast<uint8_t *>(indices->data()))) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Indices array.");
   }
@@ -480,9 +489,12 @@ bool CrateReader::ReadDoubleVector(std::vector<double> *d) {
     CHECK_MEMORY_USAGE(byte_count);
   }
 
+  if (!CheckArrayRead(length, sizeof(double))) {
+    return false;
+  }
   d->resize(length);
 
-  if (!sr()->read(sizeof(double) * length, sizeof(double) * length,
+  if (!sr()->read_exact(sizeof(double) * length, sizeof(double) * length,
                  reinterpret_cast<uint8_t *>(d->data()))) {
     _err += "Failed to read double vector data.\n";
     return false;
@@ -512,9 +524,12 @@ bool CrateReader::ReadStringArray(std::vector<std::string> *d) {
       CHECK_MEMORY_USAGE(byte_count);
     }
 
+    if (!CheckArrayRead(n, sizeof(crate::Index))) {
+      return false;
+    }
     std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
-    if (!sr()->read(size_t(n) * sizeof(crate::Index),
+    if (!sr()->read_exact(size_t(n) * sizeof(crate::Index),
                    size_t(n) * sizeof(crate::Index),
                    reinterpret_cast<uint8_t *>(ivalue.data()))) {
       PUSH_ERROR("Failed to read STRING_VECTOR data.");
@@ -641,10 +656,10 @@ bool CrateReader::ReadLayerOffset(LayerOffset *d) {
   static_assert(sizeof(LayerOffset) == 8 * 2, "LayerOffset must be 16bytes");
 
   // double x 2
-  if (!sr()->read(sizeof(double), sizeof(double), reinterpret_cast<uint8_t *>(&(d->_offset)))) {
+  if (!sr()->read_exact(sizeof(double), sizeof(double), reinterpret_cast<uint8_t *>(&(d->_offset)))) {
     return false;
   }
-  if (!sr()->read(sizeof(double), sizeof(double), reinterpret_cast<uint8_t *>(&(d->_scale)))) {
+  if (!sr()->read_exact(sizeof(double), sizeof(double), reinterpret_cast<uint8_t *>(&(d->_scale)))) {
     return false;
   }
 
@@ -676,9 +691,12 @@ bool CrateReader::ReadLayerOffsetArray(std::vector<LayerOffset> *d) {
     CHECK_MEMORY_USAGE(byte_count);
   }
 
+  if (!CheckArrayRead(n, sizeof(LayerOffset))) {
+    return false;
+  }
   d->resize(size_t(n));
 
-  if (!sr()->read(size_t(n) * sizeof(LayerOffset),
+  if (!sr()->read_exact(size_t(n) * sizeof(LayerOffset),
                  size_t(n) * sizeof(LayerOffset),
                  reinterpret_cast<uint8_t *>(d->data()))) {
     PUSH_ERROR("Failed to read LayerOffset[] data.");
@@ -710,9 +728,12 @@ bool CrateReader::ReadPathArray(std::vector<Path> *d) {
       CHECK_MEMORY_USAGE(byte_count);
     }
 
+    if (!CheckArrayRead(n, sizeof(crate::Index))) {
+      return false;
+    }
     std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
-    if (!sr()->read(size_t(n) * sizeof(crate::Index),
+    if (!sr()->read_exact(size_t(n) * sizeof(crate::Index),
                    size_t(n) * sizeof(crate::Index),
                    reinterpret_cast<uint8_t *>(ivalue.data()))) {
       _err += "Failed to read ListOp data.\n";
@@ -777,9 +798,12 @@ bool CrateReader::ReadTokenListOp(ListOp<value::token> *d) {
       CHECK_MEMORY_USAGE(byte_count);
     }
 
+    if (!CheckArrayRead(n, sizeof(crate::Index))) {
+      return false;
+    }
     std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
-    if (!sr()->read(size_t(n) * sizeof(crate::Index),
+    if (!sr()->read_exact(size_t(n) * sizeof(crate::Index),
                    size_t(n) * sizeof(crate::Index),
                    reinterpret_cast<uint8_t *>(ivalue.data()))) {
       _err += "Failed to read ListOp data.\n";
@@ -896,9 +920,12 @@ bool CrateReader::ReadStringListOp(ListOp<std::string> *d) {
       CHECK_MEMORY_USAGE(byte_count);
     }
 
+    if (!CheckArrayRead(n, sizeof(crate::Index))) {
+      return false;
+    }
     std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
-    if (!sr()->read(size_t(n) * sizeof(crate::Index),
+    if (!sr()->read_exact(size_t(n) * sizeof(crate::Index),
                    size_t(n) * sizeof(crate::Index),
                    reinterpret_cast<uint8_t *>(ivalue.data()))) {
       _err += "Failed to read ListOp data.\n";
@@ -1015,9 +1042,12 @@ bool CrateReader::ReadPathListOp(ListOp<Path> *d) {
       CHECK_MEMORY_USAGE(byte_count);
     }
 
+    if (!CheckArrayRead(n, sizeof(crate::Index))) {
+      return false;
+    }
     std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
-    if (!sr()->read(size_t(n) * sizeof(crate::Index),
+    if (!sr()->read_exact(size_t(n) * sizeof(crate::Index),
                    size_t(n) * sizeof(crate::Index),
                    reinterpret_cast<uint8_t *>(ivalue.data()))) {
       PUSH_ERROR("Failed to read ListOp data..");
@@ -1247,9 +1277,12 @@ bool CrateReader::ReadArray(std::vector<T> *d) {
   }
 
   if constexpr (std::is_trivially_copyable<T>::value) {
+    if (!CheckArrayRead(n, sizeof(T))) {
+      return false;
+    }
     d->resize(size_t(n));
     // sr(): per-thread stream state during parallel reconstruction (round 3).
-    if (!sr()->read(sizeof(T) * n, sizeof(T) * size_t(n),
+    if (!sr()->read_exact(sizeof(T) * n, sizeof(T) * size_t(n),
                    reinterpret_cast<uint8_t *>(d->data()))) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read array data");
     }
@@ -1382,8 +1415,7 @@ template bool CrateReader::ReadListOp<Token>(ListOp<Token>*);
 bool CrateReader::ReadSection(crate::Section *s) {
   size_t name_len = crate::kSectionNameMaxLength + 1;
 
-  if (name_len !=
-      sr()->read(name_len, name_len, reinterpret_cast<uint8_t *>(s->name))) {
+  if (!sr()->read_exact(name_len, name_len, reinterpret_cast<uint8_t *>(s->name))) {
     _err += "Failed to read section.name.\n";
     return false;
   }
@@ -1869,8 +1901,7 @@ bool CrateReader::ReadFieldSets() {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "FieldSets compressed data exceeds USDC data.");
   }
 
-  if (fsets_size !=
-      sr()->read(size_t(fsets_size), size_t(fsets_size),
+  if (!sr()->read_exact(size_t(fsets_size), size_t(fsets_size),
                 reinterpret_cast<uint8_t *>(comp_buffer.data()))) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read fieldsets data at `FIELDSETS` section.");
   }
@@ -2339,8 +2370,7 @@ bool CrateReader::ReadSpecs() {
       return false;
     }
 
-    if (path_indexes_size !=
-        sr()->read(size_t(path_indexes_size), size_t(path_indexes_size),
+    if (!sr()->read_exact(size_t(path_indexes_size), size_t(path_indexes_size),
                   reinterpret_cast<uint8_t *>(comp_buffer.data()))) {
       PUSH_ERROR("Failed to read path indexes data at `SPECS` section.");
       return false;
@@ -2372,8 +2402,7 @@ bool CrateReader::ReadSpecs() {
       PUSH_ERROR("fset_indexes_size exceeds comp_buffer size (corrupted USDC).");
       return false;
     }
-    if (fset_indexes_size !=
-        sr()->read(size_t(fset_indexes_size), size_t(fset_indexes_size),
+    if (!sr()->read_exact(size_t(fset_indexes_size), size_t(fset_indexes_size),
                   reinterpret_cast<uint8_t *>(comp_buffer.data()))) {
       PUSH_ERROR("Failed to read fieldset indexes data at `SPECS` section.");
       return false;
@@ -2405,8 +2434,7 @@ bool CrateReader::ReadSpecs() {
       PUSH_ERROR("spectype_size exceeds comp_buffer size (corrupted USDC).");
       return false;
     }
-    if (spectype_size !=
-        sr()->read(size_t(spectype_size), size_t(spectype_size),
+    if (!sr()->read_exact(size_t(spectype_size), size_t(spectype_size),
                   reinterpret_cast<uint8_t *>(comp_buffer.data()))) {
       PUSH_ERROR("Failed to read spectype data at `SPECS` section.");
       return false;
@@ -2523,7 +2551,7 @@ bool CrateReader::ReadBootStrap() {
 
   // parse header.
   uint8_t magic[8];
-  if (8 != sr()->read(/* req */ 8, /* dst len */ 8, magic)) {
+  if (!sr()->read_exact(/* req */ 8, /* dst len */ 8, magic)) {
     PUSH_ERROR("Failed to read magic number.");
     return false;
   }
@@ -2536,7 +2564,7 @@ bool CrateReader::ReadBootStrap() {
 
   // parse version(first 3 bytes from 8 bytes)
   uint8_t version[8];
-  if (8 != sr()->read(8, 8, version)) {
+  if (!sr()->read_exact(8, 8, version)) {
     PUSH_ERROR("Failed to read magic number.");
     return false;
   }

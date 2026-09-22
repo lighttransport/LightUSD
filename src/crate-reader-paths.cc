@@ -526,8 +526,7 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Compressed PathIndexes size.");
     }
 
-    if (compPathIndexesSize !=
-        sr()->read(size_t(compPathIndexesSize), size_t(compPathIndexesSize),
+    if (!sr()->read_exact(size_t(compPathIndexesSize), size_t(compPathIndexesSize),
                   reinterpret_cast<uint8_t *>(compBuffer.data()))) {
       _err += "Failed to read compressed pathIndexes data.\n";
       return false;
@@ -558,8 +557,7 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Compressed elementTokenIndexes size.");
     }
 
-    if (compElementTokenIndexesSize !=
-        sr()->read(size_t(compElementTokenIndexesSize),
+    if (!sr()->read_exact(size_t(compElementTokenIndexesSize),
                   size_t(compElementTokenIndexesSize),
                   reinterpret_cast<uint8_t *>(compBuffer.data()))) {
       PUSH_ERROR("Failed to read elementTokenIndexes data.");
@@ -590,8 +588,7 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Compressed elementTokenIndexes size.");
     }
 
-    if (compJumpsSize !=
-        sr()->read(size_t(compJumpsSize), size_t(compJumpsSize),
+    if (!sr()->read_exact(size_t(compJumpsSize), size_t(compJumpsSize),
                   reinterpret_cast<uint8_t *>(compBuffer.data()))) {
       PUSH_ERROR("Failed to read compressed jumps data.");
       return false;

@@ -274,6 +274,8 @@ const Collection *GetPrimCollection(const value::Value &v) {
     return static_cast<const Collection *>(p); \
   }
 
+  GET_PRIM_COLLECTION(Model)
+  GET_PRIM_COLLECTION(Scope)
   GET_PRIM_COLLECTION(Xform)
   GET_PRIM_COLLECTION(GPrim)
   GET_PRIM_COLLECTION(GeomMesh)
@@ -1301,7 +1303,7 @@ bool CrateWriter::ConvertSinglePrim(
   // This covers ALL prim types and handles properties not extracted by type-specific handlers.
   // Skip properties already extracted by type-specific handlers to avoid duplicates.
   // Re-emit Collection (`collection:<inst>:{includes,excludes,
-  // includeRoot,expansionRule}`) from the typed Collection storage.
+  // includeRoot,expansionRule,membershipExpression}`) from typed storage.
   // The reconstruct path consumed these from the props map and stored
   // them on `Collection::instances()`; without this re-emit, USDC
   // round-trip would drop them.
@@ -1314,6 +1316,26 @@ bool CrateWriter::ConvertSinglePrim(
         continue;
       }
       const std::string prefix = "collection:" + inst_name;
+
+      if (inst.membershipExpression.authored()) {
+        const auto &expr = inst.membershipExpression;
+        Attribute a;
+        a.variability() = Variability::Uniform;
+        a.set_type_name(expr.has_actual_type()
+                            ? expr.get_actual_type_name() : "pathExpression");
+        if (expr.has_value()) {
+          a.set_value(expr.get_value_ref().value());
+        }
+        a.set_blocked(expr.is_blocked());
+        a.metas() = expr.metas();
+        if (expr.has_connections()) {
+          a.set_connections(expr.get_connections());
+        }
+        if (!ConvertAttributeToFields(prefix + ":membershipExpression", a,
+                                      prim_path, /*is_custom=*/false, err)) {
+          return false;
+        }
+      }
 
       if (inst.includes.authored()) {
         std::string ce;

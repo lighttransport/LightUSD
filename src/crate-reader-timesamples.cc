@@ -780,7 +780,7 @@ bool CrateReader::UnpackTimeSampleValue_QUATF(double t,
     // Crate layout, so memcpy reads the bytes directly. (Note: USDA
     // uses the opposite [w, x, y, z] order at the textual layer.)
     value::quatf val;
-    if (!sr()->read(sizeof(val), sizeof(val),
+    if (!sr()->read_exact(sizeof(val), sizeof(val),
                    reinterpret_cast<uint8_t *>(&val))) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read scalar quatf value.");
     }
@@ -933,7 +933,7 @@ bool CrateReader::UnpackTimeSampleValue_STRING(
       // String is stored as StringIndex in the stream
       uint32_t index_data;
       CHECK_MEMORY_USAGE(sizeof(uint32_t));
-      if (!sr()->read(sizeof(uint32_t), sizeof(uint32_t),
+      if (!sr()->read_exact(sizeof(uint32_t), sizeof(uint32_t),
                      reinterpret_cast<uint8_t *>(&index_data))) {
         PUSH_ERROR_AND_RETURN("Failed to read string index");
       }
@@ -1037,7 +1037,7 @@ bool CrateReader::UnpackTimeSampleValue_TOKEN(
       // Token is stored as token index in the stream
       uint32_t index_data;
       CHECK_MEMORY_USAGE(sizeof(uint32_t));
-      if (!sr()->read(sizeof(uint32_t), sizeof(uint32_t),
+      if (!sr()->read_exact(sizeof(uint32_t), sizeof(uint32_t),
                      reinterpret_cast<uint8_t *>(&index_data))) {
         PUSH_ERROR_AND_RETURN("Failed to read token index");
       }
@@ -1295,7 +1295,7 @@ bool CrateReader::UnpackTimeSampleValue_##FUNC_SUFFIX(                         \
           "Failed to seek to scalar " #FUNC_SUFFIX " in TimeSamples.");        \
     }                                                                          \
     CPP_TYPE val;                                                              \
-    if (!sr()->read(sizeof(double) * NDIAG * NDIAG,                             \
+    if (!sr()->read_exact(sizeof(double) * NDIAG * NDIAG,                             \
                    sizeof(double) * NDIAG * NDIAG,                             \
                    reinterpret_cast<uint8_t *>(&val))) {                       \
       PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \

@@ -641,6 +641,9 @@ TEST_LIST = {
   { "usdc_reader_inlined_scalar_test", usdc_reader_inlined_scalar_test },
   { "usdc_reader_multiple_prims_roundtrip_test", usdc_reader_multiple_prims_roundtrip_test },
   { "usdc_reader_truncated_input_test", usdc_reader_truncated_input_test },
+  { "usdc_reader_layer_memory_limit_test", usdc_reader_layer_memory_limit_test },
+  { "usdc_reader_truncated_array_test", usdc_reader_truncated_array_test },
+  { "usdc_reader_collection_binding_roundtrip_test", usdc_reader_collection_binding_roundtrip_test },
   { "usdc_reader_corrupt_header_test", usdc_reader_corrupt_header_test },
   { "usdc_reader_corrupt_body_test", usdc_reader_corrupt_body_test },
   // Phase 0A: ValueView tests
@@ -881,6 +884,8 @@ TEST_LIST = {
   { "security_findfile_segment_traversal_test", security_findfile_segment_traversal_test },
   { "security_findfile_absolute_traversal_test", security_findfile_absolute_traversal_test },
   { "security_usda_load_options_test", security_usda_load_options_test },
+  { "security_stream_exact_read_test", security_stream_exact_read_test },
+  { "security_stream_relative_seek_test", security_stream_relative_seek_test },
   // USDZ writer and validation tests
   { "usdz_writer_basic_roundtrip_test", usdz_writer_basic_roundtrip_test },
   { "usdz_writer_is_usdz_prefix_detection_test", usdz_writer_is_usdz_prefix_detection_test },

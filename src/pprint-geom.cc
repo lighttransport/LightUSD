@@ -242,6 +242,8 @@ std::string to_string(const Model &model, const uint32_t indent,
   ss << pprint::Indent(indent) << "{\n";
 
   std::set<std::string> tokset;
+  ss << print_material_binding(&model, indent + 1);
+  ss << print_collection(&model, indent + 1);
   ss << print_props(model.props, tokset, model.propertyNames(), indent + 1);
 
   if (closing_brace) {
@@ -269,6 +271,8 @@ std::string to_string(const Scope &scope, const uint32_t indent,
   // they are silently dropped on write.
   ss << print_typed_token_attr(scope.purpose, "purpose", indent + 1);
   ss << print_typed_token_attr(scope.visibility, "visibility", indent + 1);
+  ss << print_material_binding(&scope, indent + 1);
+  ss << print_collection(&scope, indent + 1);
 
   std::set<std::string> tokset;
   ss << print_props(scope.props, tokset, scope.propertyNames(), indent + 1);

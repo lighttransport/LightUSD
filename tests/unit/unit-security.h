@@ -28,3 +28,5 @@ void security_is_safe_asset_path_test(void);
 void security_findfile_segment_traversal_test(void);
 void security_findfile_absolute_traversal_test(void);
 void security_usda_load_options_test(void);
+void security_stream_exact_read_test(void);
+void security_stream_relative_seek_test(void);

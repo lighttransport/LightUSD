@@ -90,7 +90,8 @@ bool CrateReader::ReadCompressedInts(Int *out,
     PUSH_ERROR_AND_RETURN_TAG(kTag, "compSize exceeds compBufferSize (corrupted USDC).");
   }
 
-  if (compSize > sr()->size()) {
+  if (!sr()->can_read(compSize)) {
+    PUSH_ERROR("Truncated compressed integer payload.");
     return false;
   }
 
@@ -103,7 +104,7 @@ bool CrateReader::ReadCompressedInts(Int *out,
     return false;
   }
 
-  if (!sr()->read(size_t(compSize), size_t(compSize),
+  if (!sr()->read_exact(size_t(compSize), size_t(compSize),
                 reinterpret_cast<uint8_t *>(decomp_comp_buffer().data()))) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read compressedInts.");
   }
@@ -171,11 +172,16 @@ bool CrateReader::ReadIntArray(bool is_compressed, std::vector<T> *d) {
   }
   CHECK_MEMORY_USAGE(byte_count);
 
+  if ((!is_compressed || length < crate::kMinCompressedArraySize) &&
+      !CheckArrayRead(length, sizeof(T))) {
+    return false;
+  }
+
   d->resize(length);
 
   if (!is_compressed) {
 
-    if (!sr()->read(byte_count, byte_count,
+    if (!sr()->read_exact(byte_count, byte_count,
                    reinterpret_cast<uint8_t *>(d->data()))) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read integer array data.");
     }
@@ -187,7 +193,7 @@ bool CrateReader::ReadIntArray(bool is_compressed, std::vector<T> *d) {
     if (length < crate::kMinCompressedArraySize) {
       size_t sz = sizeof(T) * length;
       // Not stored in compressed for smaller data
-      if (!sr()->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+      if (!sr()->read_exact(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uncompressed integer array data.");
       }
       return true;
@@ -237,12 +243,17 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
   }
   CHECK_MEMORY_USAGE(half_bytes);
 
+  if ((!is_compressed || length < crate::kMinCompressedArraySize) &&
+      !CheckArrayRead(length, sizeof(uint16_t))) {
+    return false;
+  }
+
   d->resize(length);
 
   if (!is_compressed) {
 
 
-    if (!sr()->read(sizeof(uint16_t) * length, sizeof(uint16_t) * length,
+    if (!sr()->read_exact(sizeof(uint16_t) * length, sizeof(uint16_t) * length,
                    reinterpret_cast<uint8_t *>(d->data()))) {
       _err += "Failed to read half array data.\n";
       return false;
@@ -259,7 +270,7 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
       size_t sz = sizeof(uint16_t) * length;
       // Not stored in compressed.
       // reader.ReadContiguous(odata, osize);
-      if (!sr()->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+      if (!sr()->read_exact(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
         _err += "Failed to read uncompressed array data.\n";
         return false;
       }
@@ -307,9 +318,12 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
       size_t idx_bytes = sizeof(uint32_t) * length;
       CHECK_MEMORY_USAGE(lut_bytes + idx_bytes);
 
+      if (!CheckArrayRead(lutSize, sizeof(value::half))) {
+        return false;
+      }
       std::vector<value::half> lut;
       lut.resize(lutSize);
-      if (!sr()->read(sizeof(value::half) * lutSize, sizeof(value::half) * lutSize,
+      if (!sr()->read_exact(sizeof(value::half) * lutSize, sizeof(value::half) * lutSize,
                      reinterpret_cast<uint8_t *>(lut.data()))) {
         REDUCE_MEMORY_USAGE(lut_bytes + idx_bytes);
         _err += "Failed to read lut table in ReadHalfArray.\n";
@@ -385,11 +399,16 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
   }
   CHECK_MEMORY_USAGE(float_bytes);
 
+  if ((!is_compressed || length < crate::kMinCompressedArraySize) &&
+      !CheckArrayRead(length, sizeof(float))) {
+    return false;
+  }
+
   d->resize(length);
 
   if (!is_compressed) {
 
-    if (!sr()->read(sizeof(float) * length, sizeof(float) * length,
+    if (!sr()->read_exact(sizeof(float) * length, sizeof(float) * length,
                    reinterpret_cast<uint8_t *>(d->data()))) {
       _err += "Failed to read float array data.\n";
       return false;
@@ -406,7 +425,7 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
       size_t sz = sizeof(float) * length;
       // Not stored in compressed.
       // reader.ReadContiguous(odata, osize);
-      if (!sr()->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+      if (!sr()->read_exact(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
         _err += "Failed to read uncompressed array data.\n";
         return false;
       }
@@ -456,9 +475,12 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Memory budget exceeded for compressed float lookup table.");
       }
 
+      if (!CheckArrayRead(lutSize, sizeof(float))) {
+        return false;
+      }
       std::vector<float> lut;
       lut.resize(lutSize);
-      if (!sr()->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
+      if (!sr()->read_exact(sizeof(float) * lutSize, sizeof(float) * lutSize,
                      reinterpret_cast<uint8_t *>(lut.data()))) {
         _err += "Failed to read lut table in ReadFloatArray.\n";
         return false;
@@ -535,11 +557,16 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
   }
   CHECK_MEMORY_USAGE(double_bytes);
 
+  if ((!is_compressed || length < crate::kMinCompressedArraySize) &&
+      !CheckArrayRead(length, sizeof(double))) {
+    return false;
+  }
+
   d->resize(length);
 
   if (!is_compressed) {
 
-    if (!sr()->read(sizeof(double) * length, sizeof(double) * length,
+    if (!sr()->read_exact(sizeof(double) * length, sizeof(double) * length,
                    reinterpret_cast<uint8_t *>(d->data()))) {
       _err += "Failed to read double array data.\n";
       return false;
@@ -558,7 +585,7 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
       size_t sz = sizeof(double) * length;
       // Not stored in compressed.
       // reader.ReadContiguous(odata, osize);
-      if (!sr()->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+      if (!sr()->read_exact(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
         _err += "Failed to read uncompressed array data.\n";
         return false;
       }
@@ -606,9 +633,12 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Memory budget exceeded for compressed double lookup table.");
       }
 
+      if (!CheckArrayRead(lutSize, sizeof(double))) {
+        return false;
+      }
       std::vector<double> lut;
       lut.resize(lutSize);
-      if (!sr()->read(sizeof(double) * lutSize, sizeof(double) * lutSize,
+      if (!sr()->read_exact(sizeof(double) * lutSize, sizeof(double) * lutSize,
                      reinterpret_cast<uint8_t *>(lut.data()))) {
         _err += "Failed to read lut table in ReadDoubleArray.\n";
         return false;
@@ -678,10 +708,15 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
   }
   CHECK_MEMORY_USAGE(float_bytes);
 
+  if ((!is_compressed || length < crate::kMinCompressedArraySize) &&
+      !CheckArrayRead(length, sizeof(float))) {
+    return false;
+  }
+
   d->resize(length);
 
   if (!is_compressed) {
-    if (!sr()->read(sizeof(float) * length, sizeof(float) * length,
+    if (!sr()->read_exact(sizeof(float) * length, sizeof(float) * length,
                    reinterpret_cast<uint8_t *>(d->data()))) {
       _err += "Failed to read float array data.\n";
       return false;
@@ -691,7 +726,7 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
     // Handle compressed data
     if (length < crate::kMinCompressedArraySize) {
       size_t sz = sizeof(float) * length;
-      if (!sr()->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+      if (!sr()->read_exact(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
         _err += "Failed to read uncompressed array data.\n";
         return false;
       }
@@ -734,9 +769,12 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
       size_t idx_bytes = sizeof(uint32_t) * length;
       CHECK_MEMORY_USAGE(lut_bytes + idx_bytes);
 
+      if (!CheckArrayRead(lutSize, sizeof(float))) {
+        return false;
+      }
       std::vector<float> lut;
       lut.resize(lutSize);
-      if (!sr()->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
+      if (!sr()->read_exact(sizeof(float) * lutSize, sizeof(float) * lutSize,
                      reinterpret_cast<uint8_t *>(lut.data()))) {
         REDUCE_MEMORY_USAGE(lut_bytes + idx_bytes);
         _err += "Failed to read lut table in ReadFloatArrayTyped.\n";
@@ -805,9 +843,13 @@ bool CrateReader::ReadFloat2ArrayTyped(TypedArray<value::float2> *d) {
 
   CHECK_MEMORY_USAGE(length * sizeof(value::float2));
 
+  if (!CheckArrayRead(length, sizeof(value::float2))) {
+    return false;
+  }
+
   d->resize(length);
 
-  if (!sr()->read(sizeof(value::float2) * length, sizeof(value::float2) * length,
+  if (!sr()->read_exact(sizeof(value::float2) * length, sizeof(value::float2) * length,
                  reinterpret_cast<uint8_t *>(d->data()))) {
     _err += "Failed to read float2 array data.\n";
     return false;
@@ -860,10 +902,15 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
   }
   CHECK_MEMORY_USAGE(double_bytes);
 
+  if ((!is_compressed || length < crate::kMinCompressedArraySize) &&
+      !CheckArrayRead(length, sizeof(double))) {
+    return false;
+  }
+
   d->resize(length);
 
   if (!is_compressed) {
-    if (!sr()->read(sizeof(double) * length, sizeof(double) * length,
+    if (!sr()->read_exact(sizeof(double) * length, sizeof(double) * length,
                    reinterpret_cast<uint8_t *>(d->data()))) {
       _err += "Failed to read double array data.\n";
       return false;
@@ -873,7 +920,7 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
     // Handle compressed data
     if (length < crate::kMinCompressedArraySize) {
       size_t sz = sizeof(double) * length;
-      if (!sr()->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+      if (!sr()->read_exact(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
         _err += "Failed to read uncompressed array data.\n";
         return false;
       }
@@ -915,9 +962,12 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
       size_t idx_bytes = sizeof(uint32_t) * length;
       CHECK_MEMORY_USAGE(lut_bytes + idx_bytes);
 
+      if (!CheckArrayRead(lutSize, sizeof(double))) {
+        return false;
+      }
       std::vector<double> lut;
       lut.resize(lutSize);
-      if (!sr()->read(sizeof(double) * lutSize, sizeof(double) * lutSize,
+      if (!sr()->read_exact(sizeof(double) * lutSize, sizeof(double) * lutSize,
                      reinterpret_cast<uint8_t *>(lut.data()))) {
         REDUCE_MEMORY_USAGE(lut_bytes + idx_bytes);
         _err += "Failed to read lut table in ReadDoubleArrayTyped.\n";
@@ -992,10 +1042,14 @@ bool CrateReader::ReadIntArrayTyped(bool is_compressed, TypedArray<T> *d) {
 
   CHECK_MEMORY_USAGE(length * sizeof(T));
 
+  if (!is_compressed && !CheckArrayRead(length, sizeof(T))) {
+    return false;
+  }
+
   d->resize(length);
 
   if (!is_compressed) {
-    if (!sr()->read(sizeof(T) * length, sizeof(T) * length,
+    if (!sr()->read_exact(sizeof(T) * length, sizeof(T) * length,
                    reinterpret_cast<uint8_t *>(d->data()))) {
       _err += "Failed to read int array data.\n";
       return false;

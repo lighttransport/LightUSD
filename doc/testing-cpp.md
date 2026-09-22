@@ -397,6 +397,35 @@ ctest --output-on-failure -LE benchmark
 
 ## Regression Test Procedure
 
+USDC reader hardening regressions can be run with:
+
+```sh
+./build_ninja/unit-test-lightusd usdc_reader_layer_memory_limit_test \
+  usdc_reader_truncated_array_test security_stream_exact_read_test \
+  security_stream_relative_seek_test
+```
+
+These cover stage/layer decoding-budget parity, rejection of incomplete array
+payloads in default and strict loading (including zero-copy options), and
+overflow-safe relative seeks. Crate payload reads require all requested bytes;
+the stream's separate partial-read API retains its existing behavior. Run the
+stream tests under UBSan as well to catch signed-overflow regressions. The
+fixtures are generated in memory and do not require external scene assets.
+
+Collection and material-binding writer regressions can be run with:
+
+```sh
+./build_ninja/unit-test-lightusd usdc_reader_collection_binding_roundtrip_test
+ctest --test-dir build_ninja -R '^scope-imageable-roundtrip$' --output-on-failure
+node tests/next/test-compare-usda-booleans.cjs
+```
+
+The writer test covers typed bindings and collections on Model, Scope, and
+Xform through USDA and USDC, including membership-expression metadata, blocked
+values, and declarations without values. The comparison test accepts equivalent
+boolean spellings only on matching `bool` declarations, while preserving real
+value differences. It also runs in the standalone `next` CTest suite.
+
 For Vulkan transparency changes, run the persistent-viewer promotion tests as
 well as the fixed-frame transparency matrix:
 

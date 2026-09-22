@@ -19,6 +19,7 @@
 #include "str-util.hh"
 #include "io-util.hh"
 #include "stage.hh"
+#include "stream-reader.hh"
 #include "core/prim.hh"
 #include "composition-graph.hh"
 
@@ -28,6 +29,79 @@
 #include <vector>
 
 using namespace lightusd;
+
+void security_stream_exact_read_test(void) {
+  const uint8_t input[] = {1, 2, 3, 4, 5};
+  uint8_t output[] = {9, 9, 9, 9};
+  StreamReader reader(input, sizeof(input), false);
+  TEST_CHECK(reader.seek_set(2));
+  TEST_CHECK(!reader.read_exact(4, sizeof(output), output));
+  TEST_CHECK(reader.tell() == 2);
+  for (uint8_t byte : output) TEST_CHECK(byte == 9);
+  TEST_CHECK(!reader.read_exact(3, 2, output));
+  TEST_CHECK(reader.tell() == 2);
+  TEST_CHECK(!reader.read_exact(1, 1, nullptr));
+  TEST_CHECK(reader.tell() == 2);
+
+  TEST_CHECK(reader.read_exact(3, sizeof(output), output));
+  TEST_CHECK(output[0] == 3 && output[1] == 4 && output[2] == 5);
+  TEST_CHECK(output[3] == 9);
+  TEST_CHECK(reader.eof());
+  TEST_CHECK(!reader.read_exact(1, sizeof(output), output));
+  TEST_CHECK(reader.read_exact(0, 0, nullptr));
+  TEST_CHECK(reader.tell() == sizeof(input));
+
+  // Existing callers can still deliberately request a partial read.
+  TEST_CHECK(reader.seek_set(2));
+  TEST_CHECK(reader.read((std::numeric_limits<uint64_t>::max)(),
+                         sizeof(output), output) == 3);
+  TEST_CHECK(reader.eof());
+  TEST_CHECK(reader.read(0, 0, nullptr) == 1);
+
+  // A partial scalar must neither consume bytes nor modify the result.
+  TEST_CHECK(reader.seek_set(2));
+  uint32_t value = 123;
+  TEST_CHECK(!reader.read4(&value));
+  TEST_CHECK(value == 123);
+  TEST_CHECK(reader.tell() == 2);
+  StreamReader null_reader(nullptr, 8, false);
+  TEST_CHECK(!null_reader.read_exact(1, sizeof(output), output));
+  TEST_CHECK(!null_reader.read4(&value));
+  TEST_CHECK(null_reader.tell() == 0);
+}
+
+void security_stream_relative_seek_test(void) {
+  const uint8_t input[32] = {};
+  StreamReader reader(input, sizeof(input), false);
+  const int64_t min_offset = (std::numeric_limits<int64_t>::min)();
+  const int64_t max_offset = (std::numeric_limits<int64_t>::max)();
+  TEST_CHECK(reader.seek_set(16));
+  TEST_CHECK(!reader.seek_from_current(max_offset - 8));
+  TEST_CHECK(reader.tell() == 16);
+  TEST_CHECK(!reader.seek_from_current(min_offset));
+  TEST_CHECK(reader.tell() == 16);
+  TEST_CHECK(reader.seek_from_current(-16));
+  TEST_CHECK(reader.tell() == 0);
+  TEST_CHECK(!reader.seek_from_current(-1));
+  TEST_CHECK(reader.tell() == 0);
+  TEST_CHECK(reader.seek_from_current(32));
+  TEST_CHECK(reader.tell() == 32);
+  TEST_CHECK(!reader.seek_from_current(1));
+  TEST_CHECK(reader.tell() == 32);
+  TEST_CHECK(reader.seek_from_current(0));
+
+  // Exercise the full logical offset domain without reading any memory.
+  StreamReader large(nullptr, (std::numeric_limits<uint64_t>::max)(), false);
+  TEST_CHECK(large.seek_set(uint64_t(1) << 63));
+  TEST_CHECK(large.seek_from_current(min_offset));
+  TEST_CHECK(large.tell() == 0);
+  TEST_CHECK(large.seek_from_current(max_offset));
+  TEST_CHECK(large.seek_from_current(max_offset));
+  TEST_CHECK(large.seek_from_current(1));
+  TEST_CHECK(large.tell() == (std::numeric_limits<uint64_t>::max)());
+  TEST_CHECK(!large.seek_from_current(1));
+  TEST_CHECK(large.tell() == (std::numeric_limits<uint64_t>::max)());
+}
 
 namespace {
 

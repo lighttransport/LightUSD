@@ -34,6 +34,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <memory>
 
 namespace lightusd {
@@ -124,15 +125,41 @@ class StreamReader {
   }
 
   bool seek_from_current(const int64_t offset) const {
-    if ((int64_t(idx_) + offset) < 0) {
+    if (offset >= 0) {
+      const uint64_t distance = static_cast<uint64_t>(offset);
+      if (distance > length_ - idx_) {
+        return false;
+      }
+      idx_ += distance;
+    } else {
+      // Avoid negating INT64_MIN in signed arithmetic.
+      const uint64_t distance = static_cast<uint64_t>(-(offset + 1)) + 1;
+      if (distance > idx_) {
+        return false;
+      }
+      idx_ -= distance;
+    }
+    return true;
+  }
+
+  // Check both stream bounds and host addressability without adding offsets.
+  bool can_read(const uint64_t n) const {
+    const uint64_t max_size = (std::numeric_limits<size_t>::max)();
+    return idx_ <= length_ && n <= length_ - idx_ &&
+           idx_ <= max_size && n <= max_size - idx_;
+  }
+
+  // All-or-nothing read: failure leaves the cursor and destination unchanged.
+  bool read_exact(const uint64_t n, const uint64_t dst_len,
+                  uint8_t *dst) const {
+    if (n == 0) {
+      return true;
+    }
+    if (!binary_ || !dst || n > dst_len || !can_read(n)) {
       return false;
     }
-
-    if (uint64_t((int64_t(idx_) + offset)) > length_) {
-      return false;
-    }
-
-    idx_ = uint64_t(int64_t(idx_) + offset);
+    memcpy(dst, binary_ + static_cast<size_t>(idx_), static_cast<size_t>(n));
+    idx_ += n;
     return true;
   }
 
@@ -148,17 +175,17 @@ class StreamReader {
     }
 
     uint64_t len = n;
-    if ((idx_ + len) > length_) {
+    if (len > length_ - idx_) {
       len = length_ - uint64_t(idx_);
     }
 
     if (len > 0) {
-      if (dst_len < len) {
+      if (!binary_ || !dst || dst_len < len || !can_read(len)) {
         // dst does not have enough space. return 0 for a while.
         return 0;
       }
 
-      size_t nbytes = size_t(len); // may shorten size on 32bit platform
+      size_t nbytes = static_cast<size_t>(len);
 
       memcpy(dst, &binary_[idx_], nbytes);
       idx_ += nbytes;
@@ -170,7 +197,7 @@ class StreamReader {
   }
 
   bool read1(uint8_t *ret) const {
-    if ((idx_ + 1) > length_) {
+    if (!binary_ || !ret || !can_read(1)) {
       return false;
     }
 
@@ -183,7 +210,7 @@ class StreamReader {
   }
 
   bool read_bool(bool *ret) const {
-    if ((idx_ + 1) > length_) {
+    if (!binary_ || !ret || !can_read(1)) {
       return false;
     }
 
@@ -196,7 +223,7 @@ class StreamReader {
   }
 
   bool read1(char *ret) const {
-    if ((idx_ + 1) > length_) {
+    if (!binary_ || !ret || !can_read(1)) {
       return false;
     }
 
@@ -209,7 +236,7 @@ class StreamReader {
   }
 
   bool read2(unsigned short *ret) const {
-    if ((idx_ + 2) > length_) {
+    if (!binary_ || !ret || !can_read(2)) {
       return false;
     }
 
@@ -227,7 +254,7 @@ class StreamReader {
   }
 
   bool read4(uint32_t *ret) const {
-    if ((idx_ + 4) > length_) {
+    if (!binary_ || !ret || !can_read(4)) {
       return false;
     }
 
@@ -245,7 +272,7 @@ class StreamReader {
   }
 
   bool read4(int *ret) const {
-    if ((idx_ + 4) > length_) {
+    if (!binary_ || !ret || !can_read(4)) {
       return false;
     }
 
@@ -263,7 +290,7 @@ class StreamReader {
   }
 
   bool read8(uint64_t *ret) const {
-    if ((idx_ + 8) > length_) {
+    if (!binary_ || !ret || !can_read(8)) {
       return false;
     }
 
@@ -281,7 +308,7 @@ class StreamReader {
   }
 
   bool read8(int64_t *ret) const {
-    if ((idx_ + 8) > length_) {
+    if (!binary_ || !ret || !can_read(8)) {
       return false;
     }
 

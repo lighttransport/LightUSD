@@ -831,6 +831,12 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
                     ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test-compare-usda-asset-paths.cjs)
         set_tests_properties(next_compare_usda_asset_paths
             PROPERTIES LABELS "next;pxrdiff")
+        add_test(
+            NAME next_compare_usda_booleans
+            COMMAND ${LIGHTUSD_NEXT_NODE_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test-compare-usda-booleans.cjs)
+        set_tests_properties(next_compare_usda_booleans
+            PROPERTIES LABELS "next;pxrdiff")
     endif()
     # Pinned OpenUSD oracle for the pxr differential gates below. Set
     # LIGHTUSD_PXR_USDCAT to relocate it.

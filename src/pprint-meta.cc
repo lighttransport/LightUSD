@@ -1235,13 +1235,8 @@ std::string print_collection(const Collection *coll, const uint32_t indent) {
 
     }
 
-    if (instance.membershipExpression.authored()) {
-      value::PathExpression expr;
-      if (instance.membershipExpression.get_value(&expr)) {
-        ss << pprint::Indent(indent) << "uniform pathExpression " << prefix
-           << ":membershipExpression = " << expr << "\n";
-      }
-    }
+    ss << print_typed_attr(instance.membershipExpression,
+                           prefix + ":membershipExpression", indent);
   }
 
   return ss.str();

@@ -1782,9 +1782,28 @@ function extractAttributeName(fullKey) {
   return result;
 }
 
-/**
- * Compare attributes between two prims
- */
+// Only bool declarations allow numeric and textual boolean spellings to compare
+// interchangeably. Do not coerce strings, tokens, or arbitrary numeric values.
+function normalizeBooleanValue(value) {
+  if (!value || typeof value !== 'object') return value;
+  if ((value.type === 'token' || value.type === 'keyword') &&
+      /^(true|false)$/i.test(value.value)) {
+    return { type: 'token', value: value.value.toLowerCase() };
+  }
+  if (value.type === 'number' && (Number(value.value) === 0 || Number(value.value) === 1)) {
+    return { type: 'token', value: Number(value.value) === 1 ? 'true' : 'false' };
+  }
+  if (value.type === 'array') {
+    return { ...value, value: value.value.map(normalizeBooleanValue) };
+  }
+  if (value.type === 'timeSamples') {
+    return { ...value, value: Object.fromEntries(Object.entries(value.value)
+      .map(([time, sample]) => [time, normalizeBooleanValue(sample)])) };
+  }
+  return value;
+}
+
+/** Compare attributes between two prims. */
 function compareAttributes(attrs1, attrs2, primPath, options = {}) {
   const differences = [];
 
@@ -1851,6 +1870,13 @@ function compareAttributes(attrs1, attrs2, primPath, options = {}) {
     let actualVal1 = val1 && typeof val1 === 'object' && val1.value !== undefined && val1.line !== undefined ? val1.value : val1;
     let actualVal2 = val2 && typeof val2 === 'object' && val2.value !== undefined && val2.line !== undefined ? val2.value : val2;
 
+    const boolType1 = /^(?:(?:custom|uniform|varying)\s+)*bool(\[\])?\s+/.exec(key1);
+    const boolType2 = /^(?:(?:custom|uniform|varying)\s+)*bool(\[\])?\s+/.exec(key2);
+    if (boolType1 && boolType2 && boolType1[1] === boolType2[1]) {
+      actualVal1 = normalizeBooleanValue(actualVal1);
+      actualVal2 = normalizeBooleanValue(actualVal2);
+    }
+
     // Check if this is a half-precision attribute (using original keys which have type info)
     const isHalfAttr = isHalfPrecisionAttribute(key1 || '') || isHalfPrecisionAttribute(key2 || '');
 
@@ -1866,8 +1892,8 @@ function compareAttributes(attrs1, attrs2, primPath, options = {}) {
       valuesEqual = areValuesEqualAsHalf(actualVal1, actualVal2);
     } else {
       // Normal comparison path
-      const norm1 = normalizeValueForCompare(val1, options, 1);
-      const norm2 = normalizeValueForCompare(val2, options, 2);
+      const norm1 = normalizeValueForCompare(actualVal1, options, 1);
+      const norm2 = normalizeValueForCompare(actualVal2, options, 2);
 
       // Use epsilon comparison for numeric values
       if (isNumericValue(norm1) && isNumericValue(norm2)) {

@@ -402,6 +402,9 @@ class CrateReader {
   /// Report progress during parsing
   bool ReportProgress(float progress);
 
+  /// Validate an uncompressed payload before allocating its destination.
+  bool CheckArrayRead(uint64_t count, size_t element_size) const;
+
 #if defined(LIGHTUSD_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER)
   // To save stack usage
   struct BuildDecompressedPathsArg {
@@ -566,7 +569,7 @@ class CrateReader {
       PushError("[Crate]: Reached maximum memory budget");
       return false;
     }
-    if (!sr()->read(nbytes, nbytes, reinterpret_cast<uint8_t *>(value))) {
+    if (!sr()->read_exact(nbytes, nbytes, reinterpret_cast<uint8_t *>(value))) {
       PushError(std::string(__func__) + "(): " + read_error);
       return false;
     }

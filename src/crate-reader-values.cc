@@ -1230,8 +1230,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
         CHECK_MEMORY_USAGE(uint8_t_size);
 
+        if (!CheckArrayRead(n, sizeof(uint8_t))) {
+          return false;
+        }
         std::vector<uint8_t> data(static_cast<size_t>(n));
-        if (!sr()->read(size_t(n) * sizeof(uint8_t),
+        if (!sr()->read_exact(size_t(n) * sizeof(uint8_t),
                        size_t(n) * sizeof(uint8_t),
                        reinterpret_cast<uint8_t *>(data.data()))) {
           PUSH_ERROR("Failed to read bool array.");
@@ -1292,6 +1295,10 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
         CHECK_MEMORY_USAGE(crate_Index_size);
 
+        if ((!rep.IsCompressed() || n < crate::kMinCompressedArraySize) &&
+            !CheckArrayRead(n, sizeof(crate::Index))) {
+          return false;
+        }
         std::vector<crate::Index> v(static_cast<size_t>(n));
         if (rep.IsCompressed() && n >= crate::kMinCompressedArraySize) {
           if (!ReadCompressedInts(reinterpret_cast<uint32_t *>(v.data()),
@@ -1300,7 +1307,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
             return false;
           }
         } else {
-          if (!sr()->read(size_t(n) * sizeof(crate::Index),
+          if (!sr()->read_exact(size_t(n) * sizeof(crate::Index),
                          size_t(n) * sizeof(crate::Index),
                          reinterpret_cast<uint8_t *>(v.data()))) {
             PUSH_ERROR("Failed to read StringIndex array.");
@@ -1331,7 +1338,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(sizeof(crate::Index));
 
         crate::Index v;
-        if (!sr()->read(sizeof(crate::Index), sizeof(crate::Index),
+        if (!sr()->read_exact(sizeof(crate::Index), sizeof(crate::Index),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read uint64 data.");
           return false;
@@ -1385,7 +1392,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
             rep.IsCompressed() && n >= crate::kMinCompressedArraySize;
         if (!token_array_compressed) {
           const uint64_t remaining =
-              (_sr->size() > _sr->tell()) ? (_sr->size() - _sr->tell()) : 0;
+              (sr()->size() > sr()->tell()) ? (sr()->size() - sr()->tell()) : 0;
           if (crate_Index_size > remaining) {
             PUSH_ERROR_AND_RETURN_TAG(kTag,
                 "Token array element count exceeds remaining file size.");
@@ -1402,7 +1409,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
             return false;
           }
         } else {
-          if (!sr()->read(size_t(n) * sizeof(crate::Index),
+          if (!sr()->read_exact(size_t(n) * sizeof(crate::Index),
                          size_t(n) * sizeof(crate::Index),
                          reinterpret_cast<uint8_t *>(v.data()))) {
             PUSH_ERROR("Failed to read TokenIndex array.");
@@ -1450,6 +1457,10 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
         CHECK_MEMORY_USAGE(crate_Index_size);
 
+        if ((!rep.IsCompressed() || n < crate::kMinCompressedArraySize) &&
+            !CheckArrayRead(n, sizeof(crate::Index))) {
+          return false;
+        }
         std::vector<crate::Index> v(static_cast<size_t>(n));
         if (rep.IsCompressed() && n >= crate::kMinCompressedArraySize) {
           if (!ReadCompressedInts(reinterpret_cast<uint32_t *>(v.data()),
@@ -1458,7 +1469,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
             return false;
           }
         } else {
-          if (!sr()->read(size_t(n) * sizeof(crate::Index),
+          if (!sr()->read_exact(size_t(n) * sizeof(crate::Index),
                          size_t(n) * sizeof(crate::Index),
                          reinterpret_cast<uint8_t *>(v.data()))) {
             PUSH_ERROR("Failed to read TokenIndex array.");
@@ -1491,7 +1502,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(sizeof(crate::Index));
 
         crate::Index v;
-        if (!sr()->read(sizeof(crate::Index), sizeof(crate::Index),
+        if (!sr()->read_exact(sizeof(crate::Index), sizeof(crate::Index),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read StringIndex data.");
           return false;
@@ -1515,7 +1526,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       CHECK_MEMORY_USAGE(sizeof(uint32_t));
 
       uint32_t raw{0};
-      if (!sr()->read(sizeof(uint32_t), sizeof(uint32_t),
+      if (!sr()->read_exact(sizeof(uint32_t), sizeof(uint32_t),
                      reinterpret_cast<uint8_t *>(&raw))) {
         PUSH_ERROR("Failed to read enum value.");
         return false;
@@ -1573,8 +1584,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
         CHECK_MEMORY_USAGE(uint8_t_size);
 
+        if (!CheckArrayRead(n, sizeof(uint8_t))) {
+          return false;
+        }
         v.resize(static_cast<size_t>(n));
-        if (!sr()->read(size_t(n) * sizeof(uint8_t),
+        if (!sr()->read_exact(size_t(n) * sizeof(uint8_t),
                        size_t(n) * sizeof(uint8_t),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read uchar array.");
@@ -1670,7 +1684,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(sizeof(int64_t));
 
         int64_t v;
-        if (!sr()->read(sizeof(int64_t), sizeof(int64_t),
+        if (!sr()->read_exact(sizeof(int64_t), sizeof(int64_t),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read int64 data.");
           return false;
@@ -1710,7 +1724,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(sizeof(uint64_t));
 
         uint64_t v;
-        if (!sr()->read(sizeof(uint64_t), sizeof(uint64_t),
+        if (!sr()->read_exact(sizeof(uint64_t), sizeof(uint64_t),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read uint64 data.");
           return false;
@@ -1905,8 +1919,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(value_matrix2d_size);
 
 
+        if (!CheckArrayRead(n, sizeof(value::matrix2d))) {
+          return false;
+        }
         v.resize(static_cast<size_t>(n));
-        if (!sr()->read(size_t(n) * sizeof(value::matrix2d),
+        if (!sr()->read_exact(size_t(n) * sizeof(value::matrix2d),
                        size_t(n) * sizeof(value::matrix2d),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read Matrix2d array.");
@@ -1921,7 +1938,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(sizeof(value::matrix2d));
 
         value::matrix2d v;
-        if (!sr()->read(sizeof(value::matrix2d), sizeof(value::matrix2d),
+        if (!sr()->read_exact(sizeof(value::matrix2d), sizeof(value::matrix2d),
                        reinterpret_cast<uint8_t *>(v.m))) {
           _err += "Failed to read value of `matrix2d` type\n";
           return false;
@@ -1979,8 +1996,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
         CHECK_MEMORY_USAGE(value_matrix3d_size);
 
+        if (!CheckArrayRead(n, sizeof(value::matrix3d))) {
+          return false;
+        }
         v.resize(static_cast<size_t>(n));
-        if (!sr()->read(size_t(n) * sizeof(value::matrix3d),
+        if (!sr()->read_exact(size_t(n) * sizeof(value::matrix3d),
                        size_t(n) * sizeof(value::matrix3d),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read Matrix3d array.");
@@ -1995,7 +2015,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(sizeof(value::matrix3d));
 
         value::matrix3d v;
-        if (!sr()->read(sizeof(value::matrix3d), sizeof(value::matrix3d),
+        if (!sr()->read_exact(sizeof(value::matrix3d), sizeof(value::matrix3d),
                        reinterpret_cast<uint8_t *>(v.m))) {
           _err += "Failed to read value of `matrix3d` type\n";
           return false;
@@ -2054,8 +2074,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
         CHECK_MEMORY_USAGE(value_matrix4d_size);
 
+        if (!CheckArrayRead(n, sizeof(value::matrix4d))) {
+          return false;
+        }
         v.resize(static_cast<size_t>(n));
-        if (!sr()->read(size_t(n) * sizeof(value::matrix4d),
+        if (!sr()->read_exact(size_t(n) * sizeof(value::matrix4d),
                        size_t(n) * sizeof(value::matrix4d),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read Matrix4d array.");
@@ -2070,7 +2093,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(sizeof(value::matrix4d));
 
         value::matrix4d v;
-        if (!sr()->read(sizeof(value::matrix4d), sizeof(value::matrix4d),
+        if (!sr()->read_exact(sizeof(value::matrix4d), sizeof(value::matrix4d),
                        reinterpret_cast<uint8_t *>(v.m))) {
           _err += "Failed to read value of `matrix4d` type\n";
           return false;
@@ -2125,8 +2148,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
         CHECK_MEMORY_USAGE(value_quatd_size);
 
+        if (!CheckArrayRead(n, sizeof(value::quatd))) {
+          return false;
+        }
         v.resize(static_cast<size_t>(n));
-        if (!sr()->read(size_t(n) * sizeof(value::quatd),
+        if (!sr()->read_exact(size_t(n) * sizeof(value::quatd),
                        size_t(n) * sizeof(value::quatd),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read Quatf array.");
@@ -2148,7 +2174,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         // lightusd's value::quatd struct matches the Crate layout, so
         // memcpy reads the bytes directly.
         value::quatd v;
-        if (!sr()->read(sizeof(v), sizeof(v),
+        if (!sr()->read_exact(sizeof(v), sizeof(v),
                        reinterpret_cast<uint8_t *>(&v))) {
           _err += "Failed to read Quatd value\n";
           return false;
@@ -2202,8 +2228,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
         CHECK_MEMORY_USAGE(value_quatf_size);
 
+        if (!CheckArrayRead(n, sizeof(value::quatf))) {
+          return false;
+        }
         v.resize(static_cast<size_t>(n));
-        if (!sr()->read(size_t(n) * sizeof(value::quatf),
+        if (!sr()->read_exact(size_t(n) * sizeof(value::quatf),
                        size_t(n) * sizeof(value::quatf),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read Quatf array.");
@@ -2222,7 +2251,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         // Crate wire layout is [x, y, z, w] = (imag, real). See
         // QUATD note above and value-types.hh:957.
         value::quatf v;
-        if (!sr()->read(sizeof(v), sizeof(v),
+        if (!sr()->read_exact(sizeof(v), sizeof(v),
                        reinterpret_cast<uint8_t *>(&v))) {
           _err += "Failed to read Quatf value\n";
           return false;
@@ -2277,8 +2306,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
         CHECK_MEMORY_USAGE(value_quath_size);
 
+        if (!CheckArrayRead(n, sizeof(value::quath))) {
+          return false;
+        }
         v.resize(static_cast<size_t>(n));
-        if (!sr()->read(size_t(n) * sizeof(value::quath),
+        if (!sr()->read_exact(size_t(n) * sizeof(value::quath),
                        size_t(n) * sizeof(value::quath),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read Quath array.");
@@ -2298,7 +2330,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         // components stored as raw uint16 bit patterns. See QUATD note
         // above and value-types.hh:957.
         value::quath v;
-        if (!sr()->read(sizeof(v), sizeof(v),
+        if (!sr()->read_exact(sizeof(v), sizeof(v),
                        reinterpret_cast<uint8_t *>(&v))) {
           _err += "Failed to read Quath value\n";
           return false;
@@ -2358,8 +2390,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         std::vector<value::double2> v;
         // Always use std::vector - no mmap view mode
+        if (!CheckArrayRead(n, sizeof(value::double2))) {
+          return false;
+        }
         v.resize(static_cast<size_t>(n));
-        if (!sr()->read(size_t(n) * sizeof(value::double2),
+        if (!sr()->read_exact(size_t(n) * sizeof(value::double2),
                        size_t(n) * sizeof(value::double2),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read double2 array.");
@@ -2373,7 +2408,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::double2));
         value::double2 v;
-        if (!sr()->read(sizeof(value::double2), sizeof(value::double2),
+        if (!sr()->read_exact(sizeof(value::double2), sizeof(value::double2),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read double2 data.");
           return false;
@@ -2434,8 +2469,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         std::vector<value::float2> v;
         // Always use std::vector - no mmap view mode
+        if (!CheckArrayRead(n, sizeof(value::float2))) {
+          return false;
+        }
         v.resize(static_cast<size_t>(n));
-        if (!sr()->read(size_t(n) * sizeof(value::float2),
+        if (!sr()->read_exact(size_t(n) * sizeof(value::float2),
                        size_t(n) * sizeof(value::float2),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read float2 array.");
@@ -2451,7 +2489,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::float2));
         value::float2 v;
-        if (!sr()->read(sizeof(value::float2), sizeof(value::float2),
+        if (!sr()->read_exact(sizeof(value::float2), sizeof(value::float2),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read float2 data.");
           return false;
@@ -2505,8 +2543,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         std::vector<value::half2> v;
         // Always use std::vector - no mmap view mode
+        if (!CheckArrayRead(n, sizeof(value::half2))) {
+          return false;
+        }
         v.resize(static_cast<size_t>(n));
-        if (!sr()->read(size_t(n) * sizeof(value::half2),
+        if (!sr()->read_exact(size_t(n) * sizeof(value::half2),
                        size_t(n) * sizeof(value::half2),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read half2 array.");
@@ -2519,7 +2560,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::half2));
         value::half2 v;
-        if (!sr()->read(sizeof(value::half2), sizeof(value::half2),
+        if (!sr()->read_exact(sizeof(value::half2), sizeof(value::half2),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read half2");
           return false;
@@ -2572,8 +2613,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
         CHECK_MEMORY_USAGE(value_int2_size);
 
+        if (!CheckArrayRead(n, sizeof(value::int2))) {
+          return false;
+        }
         v.resize(static_cast<size_t>(n));
-        if (!sr()->read(size_t(n) * sizeof(value::int2),
+        if (!sr()->read_exact(size_t(n) * sizeof(value::int2),
                        size_t(n) * sizeof(value::int2),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read int2 array.");
@@ -2586,7 +2630,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::int2));
         value::int2 v;
-        if (!sr()->read(sizeof(value::int2), sizeof(value::int2),
+        if (!sr()->read_exact(sizeof(value::int2), sizeof(value::int2),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read int2");
           return false;
@@ -2641,8 +2685,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         std::vector<value::double3> v;
         // Always use std::vector - no mmap view mode
+        if (!CheckArrayRead(n, sizeof(value::double3))) {
+          return false;
+        }
         v.resize(static_cast<size_t>(n));
-        if (!sr()->read(size_t(n) * sizeof(value::double3),
+        if (!sr()->read_exact(size_t(n) * sizeof(value::double3),
                        size_t(n) * sizeof(value::double3),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read double3 array.");
@@ -2655,7 +2702,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::double3));
         value::double3 v;
-        if (!sr()->read(sizeof(value::double3), sizeof(value::double3),
+        if (!sr()->read_exact(sizeof(value::double3), sizeof(value::double3),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read double3");
           return false;
@@ -2711,8 +2758,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         {
           // Regular allocation for compressed data or when mmap is disabled.
           std::vector<value::float3> v;
+          if (!CheckArrayRead(n, sizeof(value::float3))) {
+            return false;
+          }
           v.resize(static_cast<size_t>(n));
-          if (!sr()->read(size_t(n) * sizeof(value::float3),
+          if (!sr()->read_exact(size_t(n) * sizeof(value::float3),
                          size_t(n) * sizeof(value::float3),
                          reinterpret_cast<uint8_t *>(v.data()))) {
             PUSH_ERROR("Failed to read float3 array.");
@@ -2726,7 +2776,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::float3));
         value::float3 v;
-        if (!sr()->read(sizeof(value::float3), sizeof(value::float3),
+        if (!sr()->read_exact(sizeof(value::float3), sizeof(value::float3),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read float3");
           return false;
@@ -2783,8 +2833,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<value::half3> v;
         {
           // Regular allocation for compressed data or when mmap is disabled
+          if (!CheckArrayRead(n, sizeof(value::half3))) {
+            return false;
+          }
           v.resize(static_cast<size_t>(n));
-          if (!sr()->read(size_t(n) * sizeof(value::half3),
+          if (!sr()->read_exact(size_t(n) * sizeof(value::half3),
                          size_t(n) * sizeof(value::half3),
                          reinterpret_cast<uint8_t *>(v.data()))) {
             PUSH_ERROR("Failed to read half3 array.");
@@ -2798,7 +2851,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::half3));
         value::half3 v;
-        if (!sr()->read(sizeof(value::half3), sizeof(value::half3),
+        if (!sr()->read_exact(sizeof(value::half3), sizeof(value::half3),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read half3");
           return false;
@@ -2853,8 +2906,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<value::int3> v;
         {
           // Regular allocation for compressed data or when mmap is disabled
+          if (!CheckArrayRead(n, sizeof(value::int3))) {
+            return false;
+          }
           v.resize(static_cast<size_t>(n));
-          if (!sr()->read(size_t(n) * sizeof(value::int3),
+          if (!sr()->read_exact(size_t(n) * sizeof(value::int3),
                          size_t(n) * sizeof(value::int3),
                          reinterpret_cast<uint8_t *>(v.data()))) {
             PUSH_ERROR("Failed to read int3 array.");
@@ -2868,7 +2924,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::int3));
         value::int3 v;
-        if (!sr()->read(sizeof(value::int3), sizeof(value::int3),
+        if (!sr()->read_exact(sizeof(value::int3), sizeof(value::int3),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read int3");
           return false;
@@ -2924,8 +2980,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<value::double4> v;
         {
           // Regular allocation for compressed data or when mmap is disabled
+          if (!CheckArrayRead(n, sizeof(value::double4))) {
+            return false;
+          }
           v.resize(static_cast<size_t>(n));
-          if (!sr()->read(size_t(n) * sizeof(value::double4),
+          if (!sr()->read_exact(size_t(n) * sizeof(value::double4),
                          size_t(n) * sizeof(value::double4),
                          reinterpret_cast<uint8_t *>(v.data()))) {
             PUSH_ERROR("Failed to read double4 array.");
@@ -2939,7 +2998,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::double4));
         value::double4 v;
-        if (!sr()->read(sizeof(value::double4), sizeof(value::double4),
+        if (!sr()->read_exact(sizeof(value::double4), sizeof(value::double4),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read double4");
           return false;
@@ -2994,8 +3053,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<value::float4> v;
         {
           // Regular allocation for compressed data or when mmap is disabled
+          if (!CheckArrayRead(n, sizeof(value::float4))) {
+            return false;
+          }
           v.resize(static_cast<size_t>(n));
-          if (!sr()->read(size_t(n) * sizeof(value::float4),
+          if (!sr()->read_exact(size_t(n) * sizeof(value::float4),
                          size_t(n) * sizeof(value::float4),
                          reinterpret_cast<uint8_t *>(v.data()))) {
             PUSH_ERROR("Failed to read float4 array.");
@@ -3009,7 +3071,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::float4));
         value::float4 v;
-        if (!sr()->read(sizeof(value::float4), sizeof(value::float4),
+        if (!sr()->read_exact(sizeof(value::float4), sizeof(value::float4),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read float4");
           return false;
@@ -3063,8 +3125,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         std::vector<value::half4> v;
         // Always use std::vector - no mmap view mode
+        if (!CheckArrayRead(n, sizeof(value::half4))) {
+          return false;
+        }
         v.resize(static_cast<size_t>(n));
-        if (!sr()->read(size_t(n) * sizeof(value::half4),
+        if (!sr()->read_exact(size_t(n) * sizeof(value::half4),
                        size_t(n) * sizeof(value::half4),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read half4 array.");
@@ -3077,7 +3142,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::half4));
         value::half4 v;
-        if (!sr()->read(sizeof(value::half4), sizeof(value::half4),
+        if (!sr()->read_exact(sizeof(value::half4), sizeof(value::half4),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read half4");
           return false;
@@ -3129,8 +3194,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
         CHECK_MEMORY_USAGE(value_int4_size);
 
+        if (!CheckArrayRead(n, sizeof(value::int4))) {
+          return false;
+        }
         v.resize(static_cast<size_t>(n));
-        if (!sr()->read(size_t(n) * sizeof(value::int4),
+        if (!sr()->read_exact(size_t(n) * sizeof(value::int4),
                        size_t(n) * sizeof(value::int4),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read int4 array.");
@@ -3143,7 +3211,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::int4));
         value::int4 v;
-        if (!sr()->read(sizeof(value::int4), sizeof(value::int4),
+        if (!sr()->read_exact(sizeof(value::int4), sizeof(value::int4),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read int4");
           return false;
@@ -3247,6 +3315,9 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       }
       CHECK_MEMORY_USAGE(crate_Index_size);
 
+      if (!rep.IsCompressed() && !CheckArrayRead(n, sizeof(crate::Index))) {
+        return false;
+      }
       std::vector<crate::Index> indices(static_cast<size_t>(n));
       if (n > 0) {
         if (rep.IsCompressed()) {
@@ -3256,7 +3327,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
             return false;
           }
         } else {
-          if (!sr()->read(static_cast<size_t>(n) * sizeof(crate::Index),
+          if (!sr()->read_exact(static_cast<size_t>(n) * sizeof(crate::Index),
                          static_cast<size_t>(n) * sizeof(crate::Index),
                          reinterpret_cast<uint8_t *>(indices.data()))) {
             PUSH_ERROR("Failed to read TokenVector value.");
@@ -3630,8 +3701,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
         CHECK_MEMORY_USAGE(crate_Index_size);
 
+        if (!CheckArrayRead(n, sizeof(crate::Index))) {
+          return false;
+        }
         std::vector<crate::Index> v(static_cast<size_t>(n));
-        if (!sr()->read(size_t(n) * sizeof(crate::Index),
+        if (!sr()->read_exact(size_t(n) * sizeof(crate::Index),
                        size_t(n) * sizeof(crate::Index),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read StringIndex array.");
@@ -3659,7 +3733,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(sizeof(crate::Index));
 
         crate::Index v;
-        if (!sr()->read(sizeof(crate::Index), sizeof(crate::Index),
+        if (!sr()->read_exact(sizeof(crate::Index), sizeof(crate::Index),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read StringIndex for PathExpression.");
           return false;
@@ -3746,14 +3820,14 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (!sr()->read8(&blobSize)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read spline blob size.");
       }
-      if (blobSize > sr()->size()) {
+      if (!sr()->can_read(blobSize)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid spline blob size.");
       }
       CHECK_MEMORY_USAGE(blobSize);
 
       std::vector<uint8_t> blob(static_cast<size_t>(blobSize));
       if (blobSize > 0) {
-        if (!sr()->read(static_cast<size_t>(blobSize),
+        if (!sr()->read_exact(static_cast<size_t>(blobSize),
                        static_cast<size_t>(blobSize), blob.data())) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read spline blob.");
         }
