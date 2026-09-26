@@ -21,14 +21,14 @@ from .model import AttributeSpec, Layer, PrimSpec, RelationshipSpec, specs_equal
 from .values import (BLOCK, AssetPath, ListOp, Payload, Reference, Token, TypedValue, UnregisteredValue,
                      infer_type)
 
-from . import geom  # noqa: E402  (convenience builders)
+from . import geom, mtlx, physics, skel  # noqa: E402,F401  (schema helpers)
 
 Stage = Layer
 
 __version__ = "0.1.0"
 __all__ = ["Stage", "Layer", "PrimSpec", "AttributeSpec", "RelationshipSpec", "ListOp",
            "Reference", "Payload", "AssetPath", "Token", "TypedValue", "UnregisteredValue", "BLOCK", "open",
-           "loads", "detect_format", "specs_equal", "infer_type", "geom"]
+           "loads", "detect_format", "specs_equal", "infer_type", "geom", "skel", "mtlx", "physics"]
 
 
 def detect_format(data):

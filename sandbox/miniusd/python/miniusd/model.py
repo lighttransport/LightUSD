@@ -35,7 +35,7 @@ FIELD_TYPES = {
     "displayUnit": "token", "unauthoredValuesIndex": "int", "clipSets": "stringlistop",
     "symmetryArguments": "dictionary", "symmetricPeer": "string", "limits": "dictionary",
     "payloadAssetDependencies": "asset[]", "arraySizeConstraint": "int64",
-    "outputName": "token",
+    "outputName": "token", "weight": "float",
 }
 
 LISTOP_KINDS = ("tokenlistop", "stringlistop", "referencelistop", "payloadlistop", "pathlistop")
@@ -112,6 +112,57 @@ def make_absolute(base, p):
 # Specs
 # ---------------------------------------------------------------------------
 
+def _slerp(a, b, u):
+    import math
+    dot = sum(x * y for x, y in zip(a, b))
+    if dot < 0:
+        b, dot = tuple(-x for x in b), -dot
+    if dot > 0.9995:
+        r = tuple(x + (y - x) * u for x, y in zip(a, b))
+    else:
+        th = math.acos(min(1.0, dot))
+        s0, s1 = math.sin((1 - u) * th) / math.sin(th), math.sin(u * th) / math.sin(th)
+        r = tuple(s0 * x + s1 * y for x, y in zip(a, b))
+    n = math.sqrt(sum(x * x for x in r)) or 1.0
+    return tuple(x / n for x in r)
+
+
+def interpolate_samples(type_name, samples, time, interpolation="linear"):
+    """Value of a {time: value} sample dict at `time` (USD semantics: clamp
+    outside the range, blocks and non-numeric types are held)."""
+    from .values import _is_np, array_from_flat, coerce, flatten
+    times = sorted(samples)
+    lo = times[0]
+    for t in times:
+        if t <= time:
+            lo = t
+    a = samples[lo]
+    idx = times.index(lo)
+    if interpolation == "held" or time <= times[0] or idx + 1 >= len(times) or lo == time:
+        return None if a is BLOCK else a
+    hi = times[idx + 1]
+    b = samples[hi]
+    vt, is_array = split_type(type_name)
+    if a is BLOCK or b is BLOCK or vt is None or vt.kind not in ("num", "vec", "quat", "mat") \
+            or vt.fmt in "?BiIqQ":
+        return None if a is BLOCK else a
+    u = (time - lo) / (hi - lo)
+    fa, fb = flatten(a), flatten(b)
+    if len(fa) != len(fb):
+        return a
+    if vt.kind == "quat":
+        out = []
+        for i in range(0, len(fa), 4):
+            out.extend(_slerp(tuple(fa[i:i + 4]), tuple(fb[i:i + 4]), u))
+    elif _is_np(a) and _is_np(b):
+        return a + (b - a) * u
+    else:
+        out = [x + (y - x) * u for x, y in zip(fa, fb)]
+    if is_array:
+        return array_from_flat(out, vt)
+    return coerce(type_name, out)
+
+
 class AttributeSpec:
     is_attribute = True
 
@@ -140,17 +191,12 @@ class AttributeSpec:
             self.time_samples[float(time)] = coerce(self.type_name, value)
         return self
 
-    def get(self, time=None):
-        """Default value, or the held (step-interpolated) sample at `time`."""
+    def get(self, time=None, interpolation="linear"):
+        """Default value, or the value at `time`: linear interpolation between
+        samples (slerp for quaternions) like USD, or 'held' (step)."""
         if time is None or not self.time_samples:
             return None if self.default is BLOCK else self.default
-        times = sorted(self.time_samples)
-        t = times[0]
-        for tt in times:
-            if tt <= time:
-                t = tt
-        v = self.time_samples[t]
-        return None if v is BLOCK else v
+        return interpolate_samples(self.type_name, self.time_samples, float(time), interpolation)
 
     def connect(self, *targets, op="explicit"):
         """Connect this attribute (e.g. a shader input) to attribute path(s)."""

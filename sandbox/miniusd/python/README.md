@@ -90,6 +90,88 @@ up in `geom.ATTR_TYPES` (points → `point3f[]`, extent → `float3[]`,
 xformOpOrder → `uniform token[]`, ...), then falls back to inferring it from
 the value (floats become `float`).
 
+## Schema helpers: UsdSkel, UsdMtlx, UsdPhysics
+
+`examples/build_features.py` uses all three. It builds a skinned, blend-shaped,
+animated arm with an OpenPBR MaterialX material, plus rigid bodies and a
+driven hinge.
+
+### `miniusd.skel` (skinning, blend shapes, animation)
+
+```python
+from miniusd import skel
+skel.add_skel_root(stage, "/Char")
+sk = skel.add_skeleton(stage, "/Char/Skel", ["Hips", "Hips/Spine"],
+                       bind_transforms=[skel.IDENTITY, skel.translation_matrix((0, 1, 0))])
+anim = skel.add_animation(stage, "/Char/Skel/Anim", ["Hips", "Hips/Spine"],
+                          rotations={1: [q_rest, q_rest], 24: [q_rest, q_bent]},   # (w, x, y, z)
+                          blend_shapes=["Smile"], blend_shape_weights={1: [0], 24: [1]})
+skel.bind_animation(sk, anim)
+skel.bind_skin(mesh, sk, joint_indices, joint_weights, element_size=2)
+skel.add_blendshape(mesh, "Smile", offsets, point_indices)
+pts = skel.evaluate_points(stage, "/Char/Body", time=12)    # CPU blend shapes + LBS
+```
+
+* The authoring follows Blender's layout: `SkelRoot` / `Skeleton` /
+  `SkelAnimation` / `BlendShape` with `SkelBindingAPI`. Rest transforms are
+  derived from bind transforms (or the other way round) when only one is
+  given. `skin_weights_from_nearest()` gives quick automatic weights.
+* `evaluate_points` applies blend shapes, then linear blend skinning with
+  `geomBindTransform` and per-mesh `skel:joints` remapping, and returns points
+  in skeleton space. It matches OpenUSD's `UsdSkelSkinningQuery` to within
+  1e-6 on every skinning/blend-shape model in the repo. Inbetween shapes are
+  authored but not evaluated.
+* `AttributeSpec.get(time)` interpolates time samples the way USD does:
+  linearly, and with slerp for quaternions.
+
+### `miniusd.mtlx` (MaterialX, Blender-compatible)
+
+```python
+from miniusd import mtlx
+mat = mtlx.add_openpbr_material(stage, "/Looks/Skin", base_color=(0.8, 0.5, 0.4), roughness=0.45,
+                                base_color_texture="textures/skin.png", normal_texture="textures/n.png")
+info = mtlx.read_material(stage, mat)                 # surface node, inputs, textures
+xml = mtlx.material_to_mtlx(stage, mat)               # standalone .mtlx document
+mtlx.mtlx_file_to_material(stage, "/Looks", "brass.mtlx")   # .mtlx -> embedded USD network
+```
+
+* Materials carry `MaterialXConfigAPI` / `config:mtlx:version` and
+  `outputs:mtlx:surface` pointing at an `ND_*` shader, with texture nodes in a
+  `NodeGraph`. An optional UsdPreviewSurface fallback goes on
+  `outputs:surface`. This is the layout Blender 4.x exports and OpenUSD's
+  usdMtlx reads.
+* `add_standard_surface_material`, the generic `add_node` / `set_input` /
+  `add_nodegraph_output`, and `reference_mtlx_file` (usdMtlx file format
+  reference) are also provided.
+* Conversion between USD and `.mtlx` handles nodegraph interfaces,
+  `<include>` / `xi:include`, and inferring the `ND_*` name for nodes without
+  an explicit `nodedef`. Every exported document (from the repo's Blender
+  files, the MaterialX example library, and freshly generated materials)
+  passes `MaterialX.Document.validate()` (1.39.5). A `.mtlx` → USD → `.mtlx`
+  round trip keeps every node, value and connection.
+
+### `miniusd.physics` (UsdPhysics)
+
+```python
+from miniusd import physics
+physics.add_scene(stage, "/PhysicsScene", gravity_direction=(0, -1, 0), gravity_magnitude=9.81)
+physics.add_rigid_body(box, mass=2.0, velocity=(0, 0, 1))
+physics.add_collider(mesh, approximation="convexHull")
+physics.set_material(box, static_friction=0.6, dynamic_friction=0.6, restitution=0.2)  # Blender style
+j = physics.add_joint(stage, "/World/Hinge", "revolute", body0=a, body1=b, axis="Z",
+                      lower_limit=-60, upper_limit=60)
+physics.add_drive(j, "angular", "force", stiffness=50, damping=5, target_position=30)
+print(physics.describe(stage))                        # plain-data summary
+```
+
+* Also provided: mass properties, kinematic bodies, physics materials bound
+  with `material:binding:physics`, fixed / revolute / prismatic / spherical /
+  distance joints, `PhysicsLimitAPI`, `PhysicsDriveAPI`, collision groups,
+  filtered pairs and the articulation root.
+* A pxr schema-conformance check confirms that every authored
+  Skel/Physics/Shade/Geom/Lux attribute has its schema's type and
+  variability.
+
 ## CLI
 
 ```
@@ -143,6 +225,16 @@ MINIUSD_NO_NUMPY=1 python -m unittest discover -s tests  # pure stdlib path
 Mini USD's `.usdc`, and for Mini USD's `.usda`. Mini USD must also read
 pxr-written `.usdc` back to the same layer.
 
+`tests/test_schemas.py` can also run optional external oracles when these
+variables are set:
+
+* `MINIUSD_SKEL_ORACLE`: a built `tests/tools/skel_oracle.cpp`, which
+  evaluates UsdSkel with OpenUSD.
+* `MINIUSD_PXR_PYTHON`: a Python with `pxr` importable, for the schema
+  conformance check.
+* `MINIUSD_MTLX_PYTHON`: a Python with the `MaterialX` package, for `.mtlx`
+  validation.
+
 On the whole repo corpus (848 `.usda` and 250 `.usdc`/`.usdz` files under
 `tests/` and `models/`), all but about 5 files that pxr can open round-trip
 identically in every direction. The exceptions are the unsupported types
@@ -164,5 +256,8 @@ miniusd/
   usdz.py          USDZ pack/unpack
   geom.py          builders: xform, mesh, cube/sphere/cylinder, preview material,
                    binding, camera, lights
+  skel.py          UsdSkel authoring + CPU skinning / blend shape evaluation
+  mtlx.py          UsdMtlx (MaterialXConfigAPI) networks, .mtlx XML import/export
+  physics.py       UsdPhysics authoring + describe()
   cli.py           python -m miniusd
 ```
