@@ -1,0 +1,50 @@
+"""USDC (crate) format constants."""
+
+MAGIC = b"PXR-USDC"
+BOOTSTRAP_SIZE = 88
+WRITE_VERSION = (0, 8, 0)
+
+# CrateTypeId
+BOOL, UCHAR, INT, UINT, INT64, UINT64, HALF, FLOAT, DOUBLE = range(1, 10)
+STRING, TOKEN, ASSET_PATH = 10, 11, 12
+DICTIONARY = 31
+TOKEN_LISTOP, STRING_LISTOP, PATH_LISTOP, REFERENCE_LISTOP = 32, 33, 34, 35
+INT_LISTOP, INT64_LISTOP, UINT_LISTOP, UINT64_LISTOP = 36, 37, 38, 39
+PATH_VECTOR, TOKEN_VECTOR = 40, 41
+SPECIFIER, PERMISSION, VARIABILITY = 42, 43, 44
+VARIANT_SELECTION_MAP, TIME_SAMPLES, PAYLOAD = 45, 46, 47
+DOUBLE_VECTOR, LAYER_OFFSET_VECTOR, STRING_VECTOR = 48, 49, 50
+VALUE_BLOCK, VALUE, UNREGISTERED_VALUE, UNREGISTERED_VALUE_LISTOP = 51, 52, 53, 54
+PAYLOAD_LISTOP, TIME_CODE = 55, 56
+
+# SdfSpecType
+SPEC_ATTRIBUTE, SPEC_CONNECTION, SPEC_EXPRESSION, SPEC_MAPPER, SPEC_MAPPER_ARG = 1, 2, 3, 4, 5
+SPEC_PRIM, SPEC_PSEUDOROOT, SPEC_RELATIONSHIP, SPEC_RELATIONSHIP_TARGET = 6, 7, 8, 9
+SPEC_VARIANT, SPEC_VARIANT_SET = 10, 11
+
+SPECIFIERS = ("def", "over", "class")
+PERMISSIONS = ("public", "private")
+
+# ListOp header bits
+LO_IS_EXPLICIT, LO_HAS_EXPLICIT, LO_HAS_ADDED, LO_HAS_DELETED = 1, 2, 4, 8
+LO_HAS_ORDERED, LO_HAS_PREPENDED, LO_HAS_APPENDED = 16, 32, 64
+# (field name, header bit) in on-disk order
+LO_RUNS = (("explicit", LO_HAS_EXPLICIT), ("added", LO_HAS_ADDED),
+           ("prepended", LO_HAS_PREPENDED), ("appended", LO_HAS_APPENDED),
+           ("deleted", LO_HAS_DELETED), ("ordered", LO_HAS_ORDERED))
+
+# ValueRep bits
+REP_ARRAY = 1 << 63
+REP_INLINED = 1 << 62
+REP_COMPRESSED = 1 << 61
+REP_ARRAY_EDIT = 1 << 60
+PAYLOAD_MASK = (1 << 48) - 1
+
+
+def make_rep(type_id, payload=0, array=False, inlined=False, compressed=False):
+    return ((payload & PAYLOAD_MASK) | (type_id << 48) | (REP_ARRAY if array else 0)
+            | (REP_INLINED if inlined else 0) | (REP_COMPRESSED if compressed else 0))
+
+
+def rep_type(rep):
+    return (rep >> 48) & 0xFF
