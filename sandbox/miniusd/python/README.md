@@ -219,8 +219,7 @@ MINIUSD_NO_NUMPY=1 python -m unittest discover -s tests  # pure stdlib path
 ```
 
 `tests/test_pxr_interop.py` runs differential checks against OpenUSD's
-`usdcat` when it can find it (`MINIUSD_USDCAT`, `PATH`, or
-`~/local/USD/dist/bin/usdcat`). For `tests/data/features.usda` and every
+`usdcat` when it can find it (`MINIUSD_USDCAT` or `PATH`). For `tests/data/features.usda` and every
 `models/*.usda` file, pxr must print identical text for the source, for
 Mini USD's `.usdc`, and for Mini USD's `.usda`. Mini USD must also read
 pxr-written `.usdc` back to the same layer.

@@ -438,6 +438,8 @@ CMakeUserPresets.json
 !tests/usda/validation/generated/*.usda
 !tests/feat/large-scene/fixture/**/*.usda
 !models/lusdview-curves-ribbons.usda
+# Mini USD (sandbox/miniusd/python) hand-written feature fixture.
+!sandbox/miniusd/python/tests/data/*.usda
 !models/lusdview-nurbs-patch.usda
 !models/lusdview-transparency.usda
 !models/lusdquicklook-alpha-modes.usda

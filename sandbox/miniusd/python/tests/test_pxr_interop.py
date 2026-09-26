@@ -1,6 +1,7 @@
 """Differential tests against OpenUSD's `usdcat` (skipped when it is not found).
 
-Set MINIUSD_USDCAT=/path/to/usdcat, or put usdcat on PATH.
+Set MINIUSD_USDCAT=/path/to/usdcat, or put usdcat on PATH. Paths are never
+guessed from a developer's home directory.
 """
 
 import glob
@@ -15,8 +16,7 @@ import miniusd
 
 
 def _find_usdcat():
-    cand = [os.environ.get("MINIUSD_USDCAT"), shutil.which("usdcat"),
-            os.path.expanduser("~/local/USD/dist/bin/usdcat")]
+    cand = [os.environ.get("MINIUSD_USDCAT"), shutil.which("usdcat")]
     for c in cand:
         if c and os.path.exists(c):
             return c

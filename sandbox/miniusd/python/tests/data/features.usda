@@ -1,0 +1,158 @@
+#usda 1.0
+(
+    "layer comment"
+    defaultPrim = "World"
+    doc = """multi-line
+documentation"""
+    upAxis = "Z"
+    metersPerUnit = 0.01
+    timeCodesPerSecond = 24
+    startTimeCode = 1
+    endTimeCode = 10
+    customLayerData = {
+        string author = "miniusd"
+        dictionary nested = {
+            int count = 3
+            float3 dir = (0, 0.5, 1)
+            token t = "tok"
+            string[] names = ["a", "b"]
+        }
+    }
+    subLayers = [
+        @./sub_a.usda@ (offset = 10; scale = 2),
+        @./sub_b.usda@
+    ]
+    unknownLayerMeta = 42
+)
+
+reorder rootPrims = ["World", "_class_Base"]
+
+class "_class_Base"
+{
+    custom string note = "base"
+}
+
+def Xform "World" (
+    kind = "assembly"
+    customData = {
+        bool flag = true
+        double scale = 2.5
+        asset tex = @tex.png@
+    }
+    prepend references = [@./asset.usda@</Asset> (offset = 5), </Internal>]
+    append payload = @./payload.usdc@
+    inherits = </_class_Base>
+    delete specializes = </Spec>
+    prepend apiSchemas = ["GeomModelAPI", "CollectionAPI:foo"]
+    variants = {
+        string shading = "red"
+    }
+    prepend variantSets = "shading"
+    instanceable = false
+    active = true
+    hidden = false
+    unknownPrimMeta = (1, 2)
+)
+{
+    reorder nameChildren = ["Mesh", "Mat"]
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:transform"]
+    double3 xformOp:translate = (1, -0, 3.25)
+    quatf xformOp:orient = (1, 0, 0, 0)
+    matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0.5, 0.25, 0.125, 1) )
+    float xformOp:rotateZ.timeSamples = {
+        1: 0,
+        5: None,
+        10: 360,
+    }
+    double3 xformOp:translate:anim = (0, 0, 0)
+    double3 xformOp:translate:anim.timeSamples = {
+        1: (0, 0, 0),
+        10: (1, 2, 3),
+    }
+
+    def Mesh "Mesh" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+        doc = "a mesh"
+    )
+    {
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+            interpolation = "vertex"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "faceVarying"
+        )
+        int[] primvars:st:indices = [0, 1, 2, 3]
+        color3f[] primvars:displayColor = [(0.1, 0.2, 0.3)] (
+            interpolation = "constant"
+            customData = {
+                string role = "debug"
+            }
+        )
+        half[] halves = [0.5, 1.5, -2]
+        half2 h2 = (0.5, 1.5)
+        half3 h3 = (0.25, 0.5, 1)
+        float[] specials = [inf, -inf, 0.1, -0, 1e-7, 3.4028235e38]
+        double d = 0.1
+        int64 big = 9007199254740993
+        uint64 ubig = 18446744073709551615
+        uint u = 4294967295
+        uchar c = 255
+        int i = -2147483648
+        bool[] flags = [1, 0, 1]
+        string s = "quote \" and \\ backslash\nnewline"
+        token[] tokens = ["a", "b:c"]
+        asset[] textures = [@a.png@, @b.png@]
+        asset weird = @@@odd@path@@@
+        matrix2d m2 = ( (1, 2), (3, 4) )
+        matrix3d m3 = ( (1, 0, 0), (0, 1, 0), (0, 0, 1) )
+        quath qh = (1, 0, 0, 0)
+        quatd[] qd = [(1, 0, 0, 0), (0.5, 0.5, 0.5, 0.5)]
+        int2 i2 = (1, 2)
+        int4[] i4 = [(1, 2, 3, 4)]
+        timecode tc = 12.5
+        float blocked = None
+        uniform token subdivisionScheme = "none"
+        custom double userValue = 7 (
+            displayName = "User Value"
+            hidden = true
+        )
+        rel material:binding = </World/Mat>
+        prepend rel proxyPrim = </World/Proxy>
+        custom varying rel legacy
+    }
+
+    def Material "Mat"
+    {
+        token outputs:surface.connect = </World/Mat/Surface.outputs:surface>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.8, 0.1, 0.1)
+            float inputs:roughness.connect = None
+            token outputs:surface
+        }
+    }
+
+    over "Overridden"
+    {
+        float added = 1
+    }
+    variantSet "shading" = {
+        "blue" (
+            kind = "subcomponent"
+        ) {
+            color3f color = (0, 0, 1)
+
+            def Scope "InVariant"
+            {
+            }
+        }
+        "red" {
+            color3f color = (1, 0, 0)
+        }
+    }
+}
