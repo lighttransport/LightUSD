@@ -1017,46 +1017,62 @@ bool CrateReader::Impl::ReadPaths() {
   }
   size_t n = static_cast<size_t>(num_encoded);
 
-  // Read 3 compressed integer arrays (delta+LZ4 format)
-  auto read_comp_array = [&](uint32_t* dst, size_t count, const char* name) -> bool {
+  // Read 3 compressed integer arrays (delta+LZ4 format). The three blobs are
+  // read in file order, then decompressed independently (concurrently for
+  // large tables); errors are reported as the sequential read-then-decompress
+  // of each array in turn would report them (the first failure wins).
+  struct CompArray {
+    const char* name = nullptr;
+    uint32_t* dst = nullptr;
+    std::vector<uint8_t> data;  // u64 compressed_size prefix + payload
+    std::string read_error;
+    std::string decode_error;
+    bool read_ok = false;
+  };
+  auto read_comp_blob = [&](CompArray& a) -> bool {
     uint64_t comp_size;
     if (!reader_->read_u64(comp_size)) {
-      AddError(std::string("Failed to read ") + name + " compressed size");
+      a.read_error = std::string("Failed to read ") + a.name + " compressed size";
       return false;
     }
     // Bound the compressed size against remaining bytes before allocating.
     if (comp_size > reader_->remaining()) {
-      AddError(std::string(name) + " compressed size exceeds remaining data");
+      a.read_error = std::string(a.name) + " compressed size exceeds remaining data";
       return false;
     }
     // Include u64 compressed_size prefix (DecompressCompressedU32 expects it)
-    std::vector<uint8_t> comp_data(8 + static_cast<size_t>(comp_size));
-    std::memcpy(comp_data.data(), &comp_size, 8);
-    if (!reader_->read(comp_data.data() + 8, static_cast<size_t>(comp_size))) {
-      AddError(std::string("Failed to read ") + name + " compressed data");
+    a.data.resize(8 + static_cast<size_t>(comp_size));
+    std::memcpy(a.data.data(), &comp_size, 8);
+    if (!reader_->read(a.data.data() + 8, static_cast<size_t>(comp_size))) {
+      a.read_error = std::string("Failed to read ") + a.name + " compressed data";
       return false;
     }
-    DecompressResult dr = DecompressCompressedU32(comp_data.data(), comp_data.size(),
-                                                   dst, count);
+    a.read_ok = true;
+    return true;
+  };
+  auto decode_comp_blob = [](CompArray& a, size_t count) {
+    const size_t comp_size = a.data.size() - 8;
+    DecompressResult dr =
+        DecompressCompressedU32(a.data.data(), a.data.size(), a.dst, count);
     if (!dr.success) {
       // Fallback: legacy EncodeIntegers (common-prefix, no LZ4)
-      dr = DecompressIntegers(comp_data.data() + 8, static_cast<size_t>(comp_size), count, false);
+      dr = DecompressIntegers(a.data.data() + 8, comp_size, count, false);
       if (!dr.success) {
-        AddError(std::string("Failed to decompress ") + name + ": " + dr.error);
-        return false;
+        a.decode_error = std::string("Failed to decompress ") + a.name + ": " + dr.error;
+        return;
       }
       size_t expected_bytes = 0;
       if (!safe::mul(count, sizeof(uint32_t), &expected_bytes)) {
-        AddError(std::string(name) + " byte size overflow");
-        return false;
+        a.decode_error = std::string(a.name) + " byte size overflow";
+        return;
       }
       if (dr.data.size() < expected_bytes) {
-        AddError(std::string("Decompressed ") + name + " shorter than expected");
-        return false;
+        a.decode_error = std::string("Decompressed ") + a.name + " shorter than expected";
+        return;
       }
-      if (expected_bytes > 0) std::memcpy(dst, dr.data.data(), expected_bytes);
+      if (expected_bytes > 0) std::memcpy(a.dst, dr.data.data(), expected_bytes);
     }
-    return true;
+    std::vector<uint8_t>().swap(a.data);
   };
 
   // `num_encoded` is an independent u64 from the file: it was only checked
@@ -1073,10 +1089,35 @@ bool CrateReader::Impl::ReadPaths() {
   std::vector<uint32_t> element_tokens(n);
   std::vector<uint32_t> jump_raw(n);  // stored as uint32_t, interpreted as int32_t
 
-  if (!read_comp_array(path_indices.data(), n, "path indices") ||
-      !read_comp_array(element_tokens.data(), n, "element tokens") ||
-      !read_comp_array(jump_raw.data(), n, "jump indices")) {
-    return false;
+  CompArray arrays[3];
+  arrays[0].name = "path indices";
+  arrays[0].dst = path_indices.data();
+  arrays[1].name = "element tokens";
+  arrays[1].dst = element_tokens.data();
+  arrays[2].name = "jump indices";
+  arrays[2].dst = jump_raw.data();
+  size_t num_read = 0;
+  while (num_read < 3 && read_comp_blob(arrays[num_read])) ++num_read;
+  bool decoded = false;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  if (num_read > 1 && n >= 65536 && ResolveBuildThreads() > 1) {
+    TaskArena arena(num_read);
+    arena.Run(num_read, [&](size_t k) { decode_comp_blob(arrays[k], n); });
+    decoded = true;
+  }
+#endif
+  if (!decoded) {
+    for (size_t k = 0; k < num_read; ++k) decode_comp_blob(arrays[k], n);
+  }
+  for (size_t k = 0; k < 3; ++k) {
+    if (k < num_read && !arrays[k].decode_error.empty()) {
+      AddError(arrays[k].decode_error);
+      return false;
+    }
+    if (!arrays[k].read_ok) {
+      AddError(arrays[k].read_error);
+      return false;
+    }
   }
 
   timer.lap("decompress");

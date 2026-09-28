@@ -670,11 +670,47 @@ bool CrateReader::Impl::BuildStage() {
   lap("prims");
   // Sort by full path (produces correct depth-first order with parents before
   // children). Done before the property collect so property specs can be
-  // resolved to their owning entry while they are decoded.
-  std::sort(prim_entries.begin(), prim_entries.end(),
-    [](const PrimEntry& a, const PrimEntry& b) {
-      return a.full_path < b.full_path;
-    });
+  // resolved to their owning entry while they are decoded. The order is total
+  // (duplicate paths keep their spec order), so the parallel sort -- sorted
+  // chunks, then pairwise merge rounds -- yields exactly the serial order.
+  {
+    std::vector<uint32_t> perm(prim_entries.size());
+    for (size_t i = 0; i < perm.size(); ++i) perm[i] = static_cast<uint32_t>(i);
+    auto entry_less = [&prim_entries](uint32_t a, uint32_t b) {
+      const int c = prim_entries[a].full_path.compare(prim_entries[b].full_path);
+      return c != 0 ? c < 0 : a < b;
+    };
+    bool sorted = false;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    if (build_threads > 1 && perm.size() >= 65536) {
+      size_t runs = 1;
+      while (runs * 2 <= static_cast<size_t>(build_threads)) runs *= 2;
+      std::vector<size_t> bound(runs + 1);
+      for (size_t r = 0; r <= runs; ++r) bound[r] = perm.size() * r / runs;
+      TaskArena arena(static_cast<size_t>(build_threads));
+      arena.Run(runs, [&](size_t r) {
+        std::sort(perm.begin() + bound[r], perm.begin() + bound[r + 1],
+                  entry_less);
+      });
+      for (size_t width = 1; width < runs; width *= 2) {
+        const size_t merges = runs / (width * 2);
+        arena.Run(merges, [&](size_t m) {
+          const size_t lo = bound[m * width * 2];
+          const size_t mid = bound[m * width * 2 + width];
+          const size_t hi = bound[m * width * 2 + width * 2];
+          std::inplace_merge(perm.begin() + lo, perm.begin() + mid,
+                             perm.begin() + hi, entry_less);
+        });
+      }
+      sorted = true;
+    }
+#endif
+    if (!sorted) std::sort(perm.begin(), perm.end(), entry_less);
+    std::vector<PrimEntry> ordered;
+    ordered.reserve(prim_entries.size());
+    for (uint32_t i : perm) ordered.push_back(std::move(prim_entries[i]));
+    prim_entries.swap(ordered);
+  }
   lap("sort");
 
   // Owning prim path -> entry index (the first entry on a duplicate path).
