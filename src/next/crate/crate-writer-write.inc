@@ -106,9 +106,13 @@
       specs_.reserve(nspec);
       fieldsets_.reserve(nspec);
       fields_.reserve(nspec * 3);
-      value_data_.reserve(nprop + nprim + 16);
-      // Most values inline or dedup; the table grows (amortized) past this.
-      GrowBlockSlots(std::min<size_t>((nprop + nprim + 16) * 2, size_t(1) << 20));
+      if (!(sink && patch && *patch)) {
+        // Staged VALUE blocks (the streaming write keeps none).
+        value_data_.reserve(nprop + nprim + 16);
+        // Most values inline or dedup; the table grows (amortized) past this.
+        GrowBlockSlots(
+            std::min<size_t>((nprop + nprim + 16) * 2, size_t(1) << 20));
+      }
     }
 
     if (sink && patch && *patch) {
