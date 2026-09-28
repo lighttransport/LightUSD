@@ -71,6 +71,106 @@ target_link_libraries(my_application PRIVATE lightusd::c)
 target_link_libraries(my_application PRIVATE lightusd::render_c)
 ```
 
+## Next performance port and runtime controls
+
+The next product now contains the performance work ported from the
+next-refactor line. The port was applied to the current `src/next` tree rather
+than relying on a clean cherry-pick, because the parser, crate, and PCP files
+had diverged. The main pieces are:
+
+- the zmij dtoa fast path, with numeric values formatted directly into writer
+  chunk buffers;
+- batched deferred arrays and parallel USDA parsing by prim subtree, with a
+  serial fallback when the fast path cannot reproduce serial diagnostics;
+- parallel USDC stage construction, pooled PATHS storage, parallel and
+  streaming crate writes, a split `(stem, name)` path table, and deterministic
+  property ordering by name;
+- arc-layer prefetch, parallel prototype warming with work donation, and
+  releasing composition sources as opinions are filled; and
+- forwarding the parser thread hint through PCP into every USDC layer load.
+
+The following measurements used a Release `next_usdcat -f -o /dev/null` build
+on a 32-thread host. They compare the pre-port tip with the current port:
+
+| Scene | Load + compose | USDA write | Total | Peak RSS |
+| --- | ---: | ---: | ---: | ---: |
+| Island | 12.4 s → 4.5 s | 12.6 s → 1.7 s | 25 s → 6.1 s | 7.3 → 6.4 GB |
+| Scene C | 3.0 s → 1.5 s | 5.3 s → 0.9 s | — | — |
+| Scene A | 314 → 240 ms | — | — | — |
+
+Flattened USDA output is byte-identical for the four baseline scenes with
+automatic threading and with serial composition/writing. USDC output now sorts
+properties by name, so its bytes intentionally changed; the result remains
+readable by Pixar `usdcat`. The USDC-source to USDA path remains slower on the
+large Island scene (about 8–9.5 s), and flattening Island to USDC remains about
+13 s; those paths are tracked separately from the USDA writer improvement.
+
+`next_usdcat` exposes independent controls for composition and writing:
+
+```text
+--compose-threads 0     automatic composition (same as -1)
+--compose-threads 1     serial composition
+--compose-threads N     use N composition workers, for N > 1
+--write-threads 0       automatic USDA writer workers
+--write-threads 1       serial USDA writing
+--write-threads N       use N USDA writer workers, for N > 1
+```
+
+Composition defaults to automatic parallel execution. The value `0` is
+accepted for compatibility and means automatic execution; use `1` when a
+serial run is required. Composition and the writer have separate worker
+settings. `--write-threads` applies to USDA serialization and overrides
+`LIGHTUSD_NEXT_NUM_THREADS` for that writer invocation. At every worker count,
+the USDA output is byte-for-byte identical. Builds without
+`LIGHTUSD_NEXT_ENABLE_THREAD` execute these paths serially.
+
+The corresponding library options are `pcp::CompositionOptions::num_threads`,
+`USDAWriteOptions::num_threads`, `CrateReadOptions::num_threads`, and
+`CrateWriteOptions::num_threads`. Direct PCP callers use `-1` for automatic
+composition and `1` for serial; `next_usdcat` maps its CLI value `0` to `-1`.
+The USDA writer uses `1` for serial and a non-positive value for automatic
+worker sizing. Crate reads use `0` for automatic stage-build workers and `1`
+for serial; PCP forwards its parse hint to crate reads. Crate writes use `1`
+for serial and a non-positive value for automatic sizing.
+`LIGHTUSD_NEXT_NUM_THREADS` remains the CLI fallback for parse, writer, and
+crate-write paths where no more specific CLI setting was provided.
+
+### USDC structural limits
+
+`CrateLimits` in `src/next/crate/crate-limits.hh` centralizes bounds for crate
+structural tables. `CrateReadOptions` inherits these fields, so direct USDC
+loads can set them through `USDCLoadOptions::crate_options`:
+
+```cpp
+LoadUSDOptions options;
+options.usdc_options.crate_options.max_tokens = 1u << 20;
+options.usdc_options.crate_options.max_fieldset_indices = 64u << 20;
+Stage stage;
+LoadUSD("scene.usdc", &stage, options, &warn, &err);
+```
+
+The defaults are `max_tokens = 1 Mi`, `max_strings = 1 Mi`, `max_fields = 10
+Mi`, `max_fieldset_indices = 64 Mi`, `max_specs = 10 Mi`, `max_paths = 10 Mi`,
+and `max_path_depth = 256`. `max_fieldset_indices` has its own bound because
+large flattened scenes can contain more FIELDSETS index entries than FIELDS;
+using `max_fields` for both rejected otherwise valid production crates.
+
+Composition carries the same policy through
+`pcp::CompositionOptions::usdc_limits` and
+`pcp::LayerLoadOptions::usdc_limits`. The limits are copied to the root USDC
+layer and to referenced, payload, sublayer, and USDZ crate loads. For example:
+
+```cpp
+pcp::CompositionOptions composition;
+composition.usdc_limits.max_fieldset_indices = 64u << 20;
+LoadUSDComposed("scene.usda", &stage, options, &warn, &err, &composition);
+```
+
+These table-count bounds complement `CrateReadOptions::max_array_elements` and
+the input memory budget; they do not replace either one. The crate-limits
+regression covers direct reads, PCP layer loads, referenced USDC files, and
+root USDC composition.
+
 The native viewer has migrated to the public C boundary, but the product
 migration remains incomplete. Remaining requirements are a complete
 method-level next-only WASM parity inventory, closure or explicit product
