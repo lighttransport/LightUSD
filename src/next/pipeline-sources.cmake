@@ -11,6 +11,7 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     types/spline.cc
     types/interpolation.cc
     writer/dtoa.cc
+    ../external/zmij/zmij.cc  # zmij usdcat fast path (used by writer/dtoa.cc)
     writer/value-printer.cc
     prim/path.cc
     layer/array-edit.cc

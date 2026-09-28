@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <memory>
 
 namespace lightusd {
 namespace next {
@@ -80,71 +81,69 @@ std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
 
 class ChunkedStream {
  public:
-  explicit ChunkedStream(StreamWriter& out) : out_(out) {
-    buf_.reserve(kFlushAt + 256);
-  }
+  explicit ChunkedStream(StreamWriter& out)
+      : out_(out), buf_(new char[kCap]) {}
 
   ~ChunkedStream() { flush(); }
 
-  void append(const char* s) {
-    while (*s) append(*s++);
-  }
+  void append(const char* s) { append(s, std::strlen(s)); }
   void append(const char* s, size_t n) {
-    if (n >= kFlushAt) {
+    if (n >= kFlushAt) {  // bigger than a chunk: flush pending + pass through
       flush();
       out_.write(s, n);
       return;
     }
-    if (buf_.size() + n > kFlushAt) flush();
-    buf_.append(s, n);
+    if (len_ + n > kFlushAt) flush();
+    std::memcpy(buf_.get() + len_, s, n);
+    len_ += n;
   }
   void append(const std::string& s) { append(s.data(), s.size()); }
   void append(char c) {
-    if (buf_.size() == kFlushAt) flush();
-    buf_.push_back(c);
+    if (len_ >= kFlushAt) flush();
+    buf_[len_++] = c;
   }
-  // Number formatters write into a small stack buffer and append it to the chunk
-  // buffer in a single copy -- no intermediate std::string per scalar (this is
-  // the per-element hot path for large numeric arrays). The formatters never emit
-  // more than `sizeof(t)` bytes; clamping the length is a no-op at runtime but
-  // lets the optimizer prove the append cannot take the oversized path (which
-  // would otherwise trip -Warray-bounds on the stack buffer).
+  // Number formatters write DIRECTLY into the chunk buffer tail -- no stack
+  // buffer, no intermediate copy (this is the per-element hot path for large
+  // numeric arrays; the former stack-buffer-then-append was a sizeable share of
+  // the write in memcpy alone). Flush first when a scalar might not fit, so the
+  // format never runs off the end; kCap has headroom past kFlushAt for
+  // dtos_to's SIMD overshoot (see kDtoaBufSize).
   void append_int(int64_t v) {
-    char t[32];
-    size_t n = IntTo(t, v);
-    append(t, n < sizeof(t) ? n : sizeof(t));
+    if (len_ + 32 > kFlushAt) flush();
+    len_ += IntTo(buf_.get() + len_, v);
   }
   void append_uint(uint64_t v) {
-    char t[32];
-    size_t n = UIntTo(t, v);
-    append(t, n < sizeof(t) ? n : sizeof(t));
+    if (len_ + 32 > kFlushAt) flush();
+    len_ += UIntTo(buf_.get() + len_, v);
   }
   void append_float(float v) {
-    char t[32];
-    size_t n = dtos_to(t, v);
-    append(t, n < sizeof(t) ? n : sizeof(t));
+    if (len_ + kDtoaBufSize > kFlushAt) flush();
+    len_ += dtos_to(buf_.get() + len_, v);
   }
   void append_half(uint16_t bits) {
-    char t[48];
-    size_t n = htos_to(t, bits);
-    append(t, n < sizeof(t) ? n : sizeof(t));
+    if (len_ + kDtoaBufSize > kFlushAt) flush();
+    len_ += htos_to(buf_.get() + len_, bits);
   }
   void append_double(double v) {
-    char t[32];
-    size_t n = dtos_to(t, v);
-    append(t, n < sizeof(t) ? n : sizeof(t));
+    if (len_ + kDtoaBufSize > kFlushAt) flush();
+    len_ += dtos_to(buf_.get() + len_, v);
   }
   void flush() {
-    if (!buf_.empty()) {
-      out_.write(buf_.data(), buf_.size());
-      buf_.clear();
+    if (len_) {
+      out_.write(buf_.get(), len_);
+      len_ = 0;
     }
   }
 
  private:
   static constexpr size_t kFlushAt = 64u << 10;
+  // The allocation has headroom past the flush threshold so a scalar formatted
+  // when len_ is just under kFlushAt (plus dtos_to's SIMD overshoot) can never
+  // run off the buffer end.
+  static constexpr size_t kCap = kFlushAt + kDtoaBufSize + 64;
   StreamWriter& out_;
-  std::string buf_;
+  std::unique_ptr<char[]> buf_;
+  size_t len_ = 0;
 };
 
 template <typename T, typename Emit>

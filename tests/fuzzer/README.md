@@ -52,9 +52,12 @@ $ ./fuzz_intcoding_decompress -rss_limit_mb=8192 -jobs 4
 
 ## src/next harnesses
 
-The `next` module has four of its own libFuzzer harnesses -- `next_usdc`
-(crate reader), `next_usda` (ASCII parser), `next_compose` (composition), and
-`next_roundtrip` (USDA/USDC/USDZ writer and reader round trips).
+The `next` module has five of its own libFuzzer harnesses -- `next_usdc`
+(crate reader), `next_usda` (ASCII parser), `next_compose` (composition),
+`next_roundtrip` (USDA/USDC/USDZ writer and reader round trips), and
+`next_dtoa` (USDA float formatter: zmij fast path vs dragonbox reference,
+buffer overshoot, round-trip; the input bytes are the float/double bit
+patterns, so no seed corpus is needed).
 They are built from `src/next`, not from the top-level project, and are off by
 default because they require clang:
 

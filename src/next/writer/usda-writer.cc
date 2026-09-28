@@ -497,8 +497,8 @@ void WriteTimeSamples(StreamWriter& os, const std::string& name, PropNameId name
     const auto& sample = (*samples)[i];
     WriteIndent(os, depth + 1, opts.indent);
     // Format the time into a stack buffer (no per-sample std::string alloc);
-    // 32 bytes covers a double (same bound the dtos_append path uses).
-    char time_buf[32];
+    // kDtoaBufSize is dtos_to's buffer contract (SIMD fast-path overshoot).
+    char time_buf[kDtoaBufSize];
     const size_t tlen = dtos_to(time_buf, sample.first);
     os.write(time_buf, tlen);
     os << ": ";

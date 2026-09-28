@@ -222,8 +222,18 @@ add_library(lightusd_next STATIC
 )
 
 # C++17 (matches the parent project). The USDA writer formats floats via the
-# vendored dragonbox dtoa (writer/dtoa.cc).
+# vendored dragonbox dtoa (writer/dtoa.cc), with a zmij fast path.
 target_compile_features(lightusd_next PUBLIC cxx_std_17)
+
+# Silence warnings from the vendored zmij translation unit (third-party code:
+# __int128 pedantic, sign-compare, unused params -- not ours to fix).
+if(MSVC)
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/../external/zmij/zmij.cc
+        PROPERTIES COMPILE_FLAGS "/w")
+else()
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/../external/zmij/zmij.cc
+        PROPERTIES COMPILE_FLAGS "-w")
+endif()
 
 # Optional threading: enables std::thread parallel paths in next. Keep this OFF
 # for WASM/browser builds so they do not require Emscripten pthreads /
@@ -372,6 +382,11 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_writer.cc
     )
     target_link_libraries(test_writer PRIVATE lightusd_next)
+
+    add_executable(test_dtoa
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_dtoa.cc
+    )
+    target_link_libraries(test_dtoa PRIVATE lightusd_next)
 
     add_executable(test_usdc_writer
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdc_writer.cc
@@ -534,7 +549,7 @@ if(LIGHTUSD_NEXT_BUILD_FUZZERS)
     set(NEXT_FUZZ_LIB_FLAGS -fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all)
     set(NEXT_FUZZ_BIN_FLAGS -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all)
     target_compile_options(lightusd_next PRIVATE ${NEXT_FUZZ_LIB_FLAGS})
-    foreach(fz next_usdc next_usda next_compose next_roundtrip minijson)
+    foreach(fz next_usdc next_usda next_compose next_roundtrip minijson next_dtoa)
         add_executable(fuzz_${fz}
             ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fuzzer/${fz}_fuzzmain.cc
         )
@@ -906,6 +921,18 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_writer COMMAND test_writer
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_dtoa COMMAND test_dtoa
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    # Opt-in: all 2^32 float bit patterns, fast path vs dragonbox reference
+    # (~minutes; multithreaded with LIGHTUSD_NEXT_ENABLE_THREAD).
+    option(LIGHTUSD_NEXT_DTOA_EXHAUSTIVE_TEST
+        "Register the exhaustive all-float dtoa equivalence ctest" OFF)
+    if(LIGHTUSD_NEXT_DTOA_EXHAUSTIVE_TEST)
+        add_test(NAME next_test_dtoa_exhaustive COMMAND test_dtoa exhaustive
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+        set_tests_properties(next_test_dtoa_exhaustive PROPERTIES
+            LABELS "exhaustive" TIMEOUT 3600)
+    endif()
     add_test(NAME next_test_usdc_writer COMMAND test_usdc_writer
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_usdc_reader COMMAND test_usdc_reader
@@ -972,6 +999,7 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         next_test_instance_group
         next_test_array_edit_write
         next_test_writer
+        next_test_dtoa
         next_test_usdc_writer
         next_test_usdc_reader
         next_test_usdc_roundtrip

@@ -191,14 +191,14 @@ void test_hot_array_formatting_parity() {
   // dtos_to / IntTo / UIntTo must be byte-identical to the append variants.
   {
     for (float v : fedge) {
-      char buf[24];
+      char buf[kDtoaBufSize];
       size_t n = dtos_to(buf, v);
       std::string s_append;
       dtos_append(s_append, v);
       assert(std::string(buf, n) == s_append);
     }
     for (double v : dedge) {
-      char buf[32];
+      char buf[kDtoaBufSize];
       size_t n = dtos_to(buf, v);
       std::string s_append;
       dtos_append(s_append, v);
