@@ -53,6 +53,13 @@ int RenderStream::meshField(int mesh_id, uint8_t field) {
     } else {
       output = &analytic_outputs_[static_cast<size_t>(mesh_id) - meshes_.size()];
     }
+    if (field == 11) {
+      if (output) return output->purpose;
+      return source_index >= 0 &&
+                     static_cast<size_t>(source_index) < meshes_.size()
+                 ? purposeCode_(meshes_[static_cast<size_t>(source_index)].GetPrim())
+                 : -1;
+    }
     const tr::RenderMesh* source = nullptr;
     if (source_index >= 0 && render_scene_valid_ &&
         static_cast<size_t>(source_index) < meshes_.size()) {

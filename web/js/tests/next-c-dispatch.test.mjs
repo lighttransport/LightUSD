@@ -1379,6 +1379,48 @@ def Xform "B" {
       `node ${node.primPath} dataId ${node.dataId}`);
   }
   assert.deepEqual(meshNodePaths.sort(), ['/A/C0', '/A/M0', '/B/C1', '/B/M1']);
+  nodeMetadataStream.end();
+  // Computed purpose: the nearest authored opinion on the prim or an
+  // ancestor; guides never merge into renderable groups.
+  const purposeSource = encode(`#usda 1.0
+def Xform "Visual" {
+  def Mesh "V0" { ${tri} }
+  def Mesh "V1" { ${tri} }
+}
+def Xform "Collision" (
+) {
+  uniform token purpose = "guide"
+  def Mesh "G0" { ${tri} }
+  def Mesh "Proxy" {
+    uniform token purpose = "proxy"
+    ${tri}
+  }
+  def Cube "GC" {}
+}
+`);
+  for (const merge of [false, true]) {
+    nodeMetadataStream.setMeshMerge(merge);
+    const purposeLoad = nodeMetadataStream.begin(purposeSource);
+    assert.equal(purposeLoad.success, true, purposeLoad.error || nodeMetadataStream.error());
+    const byPurpose = {};
+    for (let meshId = 0; meshId < nodeMetadataStream.numMeshes(); ++meshId) {
+      const purpose = nodeMetadataStream.meshPurpose(meshId);
+      assert.equal(nodeMetadataStream.getMesh(meshId).purpose, purpose);
+      (byPurpose[purpose] ||= []).push(nodeMetadataStream.getMesh(meshId).primPath);
+    }
+    if (merge) {
+      assert.deepEqual(Object.keys(byPurpose).sort(), ['default', 'guide', 'proxy']);
+      assert.equal(byPurpose.default.length, 1, 'visual meshes merge together');
+    } else {
+      assert.deepEqual(byPurpose, {
+        default: ['/Visual/V0', '/Visual/V1'], guide: ['/Collision/G0', '/Collision/GC'],
+        proxy: ['/Collision/Proxy']});
+    }
+    assert.equal(nodeMetadataStream.meshPurpose(9999), '');
+    assert.throws(() => nodeMetadataStream.meshPurpose(), /one numeric mesh id/);
+    nodeMetadataStream.end();
+  }
+  nodeMetadataStream.setMeshMerge(false);
 } finally { nodeMetadataStream.delete(); }
 const instanceQueryStream = new module.RenderStream();
 try {

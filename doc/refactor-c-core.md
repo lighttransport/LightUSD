@@ -920,10 +920,17 @@ Results:
   vertex buffers), the adapter takes about 60 s, and the first frame needs
   seconds to upload. The sweep therefore polls the canvas until it draws,
   within the per-model timeout, instead of screenshotting 500 ms after load.
-- **Open item — guide geometry:** neither next nor the legacy tree builder
-  hides `purpose = "guide"` prims. MJCF collision copies (for example
-  so_arm100 `Base1`, unbound) therefore draw in default grey over the white
-  visual meshes. Hiding them needs RenderStream to expose computed purpose.
+- **Guide geometry:** RenderStream now reports each output mesh's computed
+  UsdGeomImageable purpose: the nearest authored opinion on the prim or an
+  ancestor (`tydra::next::ComputeInheritedPurpose`). It is exposed as
+  `meshField` 11 and `meshPurpose(id)`, and as `purpose` on `getMesh()`
+  records. Mesh merging keys groups by purpose, so a guide never folds into a
+  renderable group. `buildNextThreeNode` hides guide meshes by default, as
+  usdview does (`showGuides: true` shows them), and leaves them out of the
+  scene bounds. Mesh counts are unchanged. MJCF collision copies (for example
+  so_arm100 `Base1`) no longer draw grey over the visual meshes.
+  next-c-dispatch covers inherited, overridden (proxy), analytic and merged
+  cases; the render-scene contract snapshot gains the `purpose` field.
 
 The resolver/cache boundary remains the first parity track. The next core has
 a thread-safe memory-asset resolver, and the next-only WASM `NextAssetStore`

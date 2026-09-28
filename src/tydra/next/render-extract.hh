@@ -37,6 +37,9 @@ enum class RenderPrimKind {
 bool IsAnalyticGeomTypeName(const std::string& type_name);
 bool IsMeshRenderableTypeName(const std::string& type_name);
 bool IsUnsupportedRenderableTypeName(const std::string& type_name);
+// UsdGeomImageable computed purpose ("default", "render", "proxy" or
+// "guide"): the nearest authored purpose on the prim or an ancestor.
+std::string ComputeInheritedPurpose(const ::lightusd::next::UsdPrim& prim);
 
 struct RenderPrimRecord {
   ::lightusd::next::UsdPrim prim;

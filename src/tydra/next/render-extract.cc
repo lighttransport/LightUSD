@@ -262,6 +262,22 @@ const ::lightusd::next::Value* ValueAtOrDefault(
 
 }  // namespace
 
+std::string ComputeInheritedPurpose(const ::lightusd::next::UsdPrim& prim) {
+  // Walk up to the nearest AUTHORED opinion; the schema fallback "default"
+  // must not stop the walk (see PurposeForPrim).
+  for (::lightusd::next::UsdPrim p = prim; p.IsValid(); p = p.GetParent()) {
+    const ::lightusd::next::PrimSpec* spec = p.GetPrimSpec();
+    const ::lightusd::next::Value* v =
+        spec ? spec->property_value("purpose") : nullptr;
+    const std::string* token = v ? v->as_token() : nullptr;
+    if (token && (*token == "default" || *token == "render" ||
+                  *token == "proxy" || *token == "guide")) {
+      return *token;
+    }
+  }
+  return "default";
+}
+
 bool IsAnalyticGeomTypeName(const std::string& type_name) {
   return type_name == "Cube" || type_name == "Sphere" ||
          type_name == "Cone" || type_name == "Cylinder" ||

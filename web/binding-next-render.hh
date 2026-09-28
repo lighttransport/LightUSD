@@ -323,7 +323,8 @@ class RenderStream {
   // Scalar mesh metadata. field: 0=vertex count, 1=face/triangle count,
   // 2=material id, 3=has normals, 4=has UVs, 5=has tangents,
   // 6=has secondary UVs, 7=has colors, 8=has skin, 9=has bounds,
-  // 10=skeleton id. Returns -1 for invalid ids.
+  // 10=skeleton id, 11=computed purpose (0=default, 1=render, 2=proxy,
+  // 3=guide). Returns -1 for invalid ids.
   int meshField(int mesh_id, uint8_t field);
   int meshPrimvarCount(int mesh_id) const;
   int meshPrimvarField(int mesh_id, int primvar_id, uint8_t field) const;
@@ -584,6 +585,8 @@ class RenderStream {
     bool soup = false;
     int32_t material_id = -1;
     bool double_sided = false;
+    // Computed UsdGeomImageable purpose: 0=default, 1=render, 2=proxy, 3=guide.
+    uint8_t purpose = 0;
     std::array<double, 16> local_matrix;
     std::array<double, 16> world_matrix;
   };
@@ -597,6 +600,7 @@ class RenderStream {
 
   void buildAnalyticOutputs_();
   void remapNodeMeshIds_();
+  static uint8_t purposeCode_(const lightusd::next::UsdPrim &prim);
 
   struct Stats {
     size_t source_mesh_count = 0;

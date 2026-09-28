@@ -16,6 +16,7 @@ void RenderStream::buildAnalyticOutputs_() {
       out.name = source.name;
       out.prim_path = source.prim_path;
       out.double_sided = matBool_(prim, "doubleSided", false);
+      out.purpose = purposeCode_(prim);
       out.local_matrix = localMatrix_(prim);
       out.world_matrix = worldMatrixForPrim_(prim);
 

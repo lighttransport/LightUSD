@@ -236,6 +236,7 @@
   "meshPrimvarIndicesBuffer",
   "meshPrimvarInterpolation",
   "meshPrimvarName",
+  "meshPurpose",
   "meshSecondaryUVBuffer",
   "meshSkeletonId",
   "meshTangentsBuffer",

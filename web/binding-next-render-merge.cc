@@ -166,6 +166,14 @@ bool RenderStream::appendToAccumulator_(const lightusd::next::UsdPrim &prim,
     return true;
   }
 
+uint8_t RenderStream::purposeCode_(const lightusd::next::UsdPrim &prim) {
+    const std::string purpose = tr::ComputeInheritedPurpose(prim);
+    if (purpose == "render") return 1;
+    if (purpose == "proxy") return 2;
+    if (purpose == "guide") return 3;
+    return 0;
+  }
+
 void RenderStream::buildOptimizedOutputs_() {
     outputs_.clear();
     std::unordered_map<std::string, MergeAccumulator> groups;
@@ -211,8 +219,12 @@ void RenderStream::buildOptimizedOutputs_() {
           effectiveDoubleSided_(prim, material_id, s_points_);
       const std::array<double, 16> world = worldMatrixForPrim_(prim);
       std::ostringstream key;
+      // Purpose is part of the key so a guide mesh never merges into a
+      // renderable group that consumers could then not hide.
+      const uint8_t purpose = purposeCode_(prim);
       key << material_id << "|soup=" << soup << "|n=" << has_normals
-          << "|uv=" << has_uv << "|double=" << double_sided;
+          << "|uv=" << has_uv << "|double=" << double_sided
+          << "|purpose=" << static_cast<int>(purpose);
       if (!mesh_merge_bake_transform_) key << "|m=" << matrixKey_(world);
       const auto inserted = groups.try_emplace(key.str());
       if (inserted.second) group_order.push_back(inserted.first->first);
@@ -221,6 +233,7 @@ void RenderStream::buildOptimizedOutputs_() {
           (acc.mesh.soup != soup ||
            acc.mesh.material_id != material_id ||
            acc.mesh.double_sided != double_sided ||
+           acc.mesh.purpose != purpose ||
            (!mesh_merge_bake_transform_ &&
             !sameMatrix_(acc.mesh.world_matrix, world)))) {
         flushAccumulator_(&acc);
@@ -245,6 +258,7 @@ void RenderStream::buildOptimizedOutputs_() {
         outputs_.push_back(out);
         stats_.skipped_merge_count++;
       } else {
+        acc.mesh.purpose = purpose;
         stats_.merge_append_ms += emscripten_get_now() - append_start_ms;
       }
     }

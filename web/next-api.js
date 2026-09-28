@@ -7177,6 +7177,22 @@ def Xform "root"
     ['meshHasColors', 7], ['meshHasSkin', 8], ['meshHasBounds', 9],
     ['meshSkeletonId', 10]
   ];
+  const renderMeshPurposes = ['default', 'render', 'proxy', 'guide'];
+  Object.defineProperty(Module.RenderStream.prototype, 'meshPurpose', {value: function(meshId) {
+    const state = live.get(this);
+    if (!state?.handle || state.kind !== 4) throw new TypeError('Invalid LightUSD receiver');
+    if (arguments.length !== 1 || typeof meshId !== 'number') {
+      throw new TypeError('meshPurpose: expected one numeric mesh id');
+    }
+    ++state.busy;
+    try {
+      // Computed UsdGeomImageable purpose; '' for an invalid mesh id.
+      return renderMeshPurposes[
+        Module['_lightusd_next_render_mesh_field'](state.handle, meshId, 11)] ?? '';
+    } finally {
+      --state.busy;
+    }
+  }});
   for (const [name, field] of renderMeshFields) {
     Object.defineProperty(Module.RenderStream.prototype, name, {value: function(meshId) {
       const state = live.get(this);
@@ -8032,7 +8048,8 @@ def Xform "root"
     if (typeof meshId !== 'number') throw new TypeError('getMesh: expected number');
     const geometry = this.getMeshGeometryView(meshId);
     if (geometry.error) return geometry;
-    const out = {...geometry, material: this.getOutputMaterial(geometry.materialId)};
+    const out = {...geometry, material: this.getOutputMaterial(geometry.materialId),
+      purpose: this.meshPurpose(meshId)};
     const subsets = this.getMeshSubsetOutput(meshId);
     if (subsets) Object.assign(out, subsets);
     const shapes = this.getMeshBlendShapes(meshId);
