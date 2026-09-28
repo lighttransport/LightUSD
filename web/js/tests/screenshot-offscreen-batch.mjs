@@ -132,31 +132,36 @@ function startVite(port) {
   return server;
 }
 
-// Fraction of the viewport that differs from the environment background.
-// The background is a vertical gradient, so each pixel is compared against the
-// same row's right-edge pixel. The element capture also contains the HUD
-// overlays (stats panel, load button, badge, help bar), which are masked out.
-function renderedPixelFraction(image) {
+// Count pixels that differ from the environment background. The background is
+// a vertical gradient, so each pixel is compared against the same row's
+// right-edge pixel. The element capture also contains the HUD overlays (stats
+// panel, load button, badge, help bar), which are masked out.
+//
+// SwiftShader can render a pale model whose RGB contrast against the HDR
+// background is only a few dozen channel levels. A viewport fraction test
+// also rejects small end-effectors even when their geometry is present. Use a
+// small per-pixel contrast threshold and a minimum pixel count instead. The
+// blank worker frame's background variation stays below this threshold.
+function renderedPixelCount(image) {
   const {width, height, data} = image;
   const masked = (x, y) => y < 70 || y > height - 60 || (x < 260 && y < 320);
+  const contrastThreshold = 8;
   let changed = 0;
-  let counted = 0;
   for (let y = 0; y < height; ++y) {
     const ref = (y * width + width - 3) * 4;
     for (let x = 0; x < width; ++x) {
       if (masked(x, y)) continue;
-      ++counted;
       const i = (y * width + x) * 4;
       const diff = Math.abs(data[i] - data[ref]) + Math.abs(data[i + 1] - data[ref + 1]) +
         Math.abs(data[i + 2] - data[ref + 2]);
-      if (diff > 36) changed++;
+      if (diff > contrastThreshold) changed++;
     }
   }
-  return counted ? changed / counted : 0;
+  return changed;
 }
 
 function hasRenderedPixels(buffer) {
-  return renderedPixelFraction(PNG.sync.read(buffer)) > 0.002;
+  return renderedPixelCount(PNG.sync.read(buffer)) >= 8;
 }
 
 async function renderOne(browser, baseUrl, mjcf, opts) {
