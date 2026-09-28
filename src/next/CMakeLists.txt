@@ -316,6 +316,77 @@ if(NOT LIGHTUSD_CXX_EXCEPTIONS)
     endif()
 endif()
 
+# ------------------------------------------------------------------
+# Optional drop-in allocator for the next CLI tools (next_usdcat). The
+# compose + stream path is allocation-heavy (millions of small PrimSpec/Src
+# allocations and cross-thread frees); glibc ptmalloc is a bottleneck there
+# (~20% of compose samples in malloc/free). Measured on Island with 32
+# threads, jemalloc cut the parallel opinion fill ~2x (2.9 -> 1.35 s) and
+# load+compose 14.3 -> 10.2 s; output is byte-identical (an allocator never
+# changes it). Only the tool executables link it -- the library never forces
+# an allocator on applications.
+#
+# Auto-detected SYSTEM library, never required: jemalloc (preferred), then
+# tcmalloc_minimal, then mimalloc. Missing -> plain system malloc with a status
+# message. Opt out with -DLIGHTUSD_NEXT_WITH_ALLOCATOR=OFF. Never used for
+# Emscripten/WASI, Windows/macOS (untested there), or sanitizer/fuzzer builds
+# (the sanitizer runtimes provide their own allocator).
+# Equivalent at runtime to LD_PRELOAD=libjemalloc.so.2.
+#
+# jemalloc runs with its default decay. next-refactor baked a no-purge
+# malloc_conf (dirty/muzzy_decay_ms:-1) into the tool; re-measured here
+# (Island flatten, 3 interleaved runs) it gave the same wall time (~24 s vs
+# glibc ~30 s) at +1.2 GB peak RSS (7.8 vs 6.6 GB), so it is not baked. Try it
+# with MALLOC_CONF=dirty_decay_ms:-1,muzzy_decay_ms:-1.
+# ------------------------------------------------------------------
+option(LIGHTUSD_NEXT_WITH_ALLOCATOR
+    "Link an installed jemalloc/tcmalloc/mimalloc into the next CLI tools when found (optional)" ON)
+set(LIGHTUSD_NEXT_ALLOCATOR_LIB "")
+set(_next_alloc_skip "")
+if(EMSCRIPTEN OR WASI OR CMAKE_SYSTEM_NAME STREQUAL "WASI" OR
+   CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+    set(_next_alloc_skip "WebAssembly target")
+elseif(NOT UNIX OR APPLE)
+    set(_next_alloc_skip "only enabled on Linux/Unix")
+elseif(LIGHTUSD_NEXT_BUILD_FUZZERS OR LIGHTUSD_NEXT_BUILD_TSAN_TESTS OR
+       "${CMAKE_CXX_FLAGS} ${CMAKE_EXE_LINKER_FLAGS}" MATCHES "-fsanitize")
+    set(_next_alloc_skip "sanitizer build")
+endif()
+if(LIGHTUSD_NEXT_WITH_ALLOCATOR AND _next_alloc_skip)
+    message(STATUS "next: drop-in allocator disabled (${_next_alloc_skip}); using system malloc")
+elseif(LIGHTUSD_NEXT_WITH_ALLOCATOR)
+    # Ranking (next-refactor measurements, doc/large-scene.md): jemalloc is
+    # the fastest at the lowest RSS; tcmalloc_minimal is the zero-config
+    # runner-up (often shipped only as the versioned runtime without a -dev
+    # symlink, so also look for that); mimalloc is fast only with
+    # MIMALLOC_PURGE_DELAY=-1 and costs more RSS.
+    find_library(LIGHTUSD_NEXT_ALLOC_JEMALLOC NAMES jemalloc)
+    if(LIGHTUSD_NEXT_ALLOC_JEMALLOC)
+        set(LIGHTUSD_NEXT_ALLOCATOR_LIB "${LIGHTUSD_NEXT_ALLOC_JEMALLOC}")
+    else()
+        find_library(LIGHTUSD_NEXT_ALLOC_TCMALLOC NAMES tcmalloc_minimal tcmalloc)
+        if(NOT LIGHTUSD_NEXT_ALLOC_TCMALLOC)
+            find_file(LIGHTUSD_NEXT_ALLOC_TCMALLOC
+                NAMES libtcmalloc_minimal.so.4 libtcmalloc.so.4
+                PATHS /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu
+                      /lib/x86_64-linux-gnu /usr/lib64 /usr/lib /lib)
+        endif()
+        if(LIGHTUSD_NEXT_ALLOC_TCMALLOC)
+            set(LIGHTUSD_NEXT_ALLOCATOR_LIB "${LIGHTUSD_NEXT_ALLOC_TCMALLOC}")
+        else()
+            find_library(LIGHTUSD_NEXT_ALLOC_MIMALLOC NAMES mimalloc)
+            if(LIGHTUSD_NEXT_ALLOC_MIMALLOC)
+                set(LIGHTUSD_NEXT_ALLOCATOR_LIB "${LIGHTUSD_NEXT_ALLOC_MIMALLOC}")
+            endif()
+        endif()
+    endif()
+    if(LIGHTUSD_NEXT_ALLOCATOR_LIB)
+        message(STATUS "next: linking allocator ${LIGHTUSD_NEXT_ALLOCATOR_LIB} into CLI tools")
+    else()
+        message(STATUS "next: no jemalloc/tcmalloc/mimalloc found (install libjemalloc-dev for faster compose); using system malloc")
+    endif()
+endif()
+
 # Optional: Create test executables.
 #
 # `next` is a stable standalone CMake project. It is not added to the top-level
@@ -521,7 +592,10 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     add_executable(next_usdcat
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/next_usdcat.cc
     )
-    target_link_libraries(next_usdcat PRIVATE lightusd_next)
+    # Allocator (if found, see LIGHTUSD_NEXT_WITH_ALLOCATOR) first, so it wins
+    # symbol resolution.
+    target_link_libraries(next_usdcat PRIVATE
+        ${LIGHTUSD_NEXT_ALLOCATOR_LIB} lightusd_next)
 
     # Replays minimized fuzzer-found crash inputs (run under ASAN/UBSAN).
     add_executable(test_crash_regressions
