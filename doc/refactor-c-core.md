@@ -606,6 +606,49 @@ work separated into these explicit tracks:
 | 4 | Schema/image utilities and MCP | Done: the eight schema/image utilities are paired (two pinned gaps: URDF engine attributes, physics JSON contract); the six MCP calls remain an explicit product decision. | Each method is implemented, explicitly unsupported with a documented reason, or assigned to an adjacent product; all decisions have tests. |
 | 5 | Allocation safety and product selection | Allocation-failure and budget gates, native, Python and wasm32/memory64 gates pass; done: browser sweeps pass, the AOUSD file_formats gaps are closed, and next is the default product. | Allocation-failure tests and a completed feature/API matrix; no default switch while any supported legacy contract lacks a next implementation or an explicit product decision. |
 
+#### MCP server product
+
+The six `mcp*` methods of the combined loader now have a dedicated next
+product. It lives in `src/mcp/` and is a consumer of the public next C API,
+like the native viewer.
+
+**Surfaces:**
+- **Native:** the `lightusd_mcp` library and the `lightusd-mcp` stdio
+  JSON-RPC server, enabled with `-DLIGHTUSD_WITH_MCP_SERVER=ON` in next
+  product builds. Legacy trees keep their own server.
+- **WASM:** `LIGHTUSD_WASM_PRODUCT=mcp` builds `lightusd_mcp(_64).js`
+  (`LightUSDMCPServer` plus legacy-named module functions such as
+  `mcpToolsCall`). It is separate from the lean next-only scene module. The
+  npm package ships it, and `web/mcp-server` prefers it and falls back to the
+  legacy module.
+
+**Tool contract:**
+- Tool definitions are shared with the legacy server through
+  `src/mcp/mcp-tool-schemas.cc`, so tools/list cannot drift.
+- The next product provides 58 of legacy's 62 tools. `run_script` (QuickJS),
+  `texture_resize`/`texture_repack` (image processing) and
+  `load_usd_layer_from_asset` (a legacy stub) are omitted and rejected by
+  name.
+- Several tools that were stubs in legacy now work: `attr_get`, `attr_set`
+  (typed JSON or USDA literals), `attr_block`, `attr_connections`,
+  `variant_define`, and `schema_get_type` (from next's schema registry).
+- `usdz_convert` packages relative asset references as-is and refuses
+  texture-processing options explicitly.
+
+**New next API:**
+- `Layer::rename_prim_at_path` and `lightusd_stage_rename_prim`.
+- Private bridges `SetNativeAttribute` and `MutableNativeRootLayer`.
+
+**Untrusted input:** `lightusd_mcp` always builds with C++ exceptions, so a
+wrong-typed argument becomes a tool error instead of aborting the server.
+Base64 payloads keep legacy's 64 MiB / 48 MiB limits.
+
+**Tests:**
+- `test_mcp_next` (native ctest `next_test_mcp`) drives every tool group
+  and the JSON-RPC transport.
+- `next-mcp-server.test.mjs` checks, on wasm32 and memory64, that the tool
+  list equals legacy's minus the exclusions, plus behavior and hardening.
+
 #### Gap triage before the default switch
 
 Of the 32 pinned behavior gaps, one was a functional gap and is now filled.

@@ -747,6 +747,12 @@ LIGHTUSD_API lightusd_status lightusd_stage_define_prim(lightusd_stage* stage, c
                                             uint8_t specifier,
                                             lightusd_prim* out /* nullable */);
 LIGHTUSD_API lightusd_status lightusd_stage_remove_prim(lightusd_stage* stage, const char* path);
+/* Rename the prim at `path` (last component becomes `new_name`); descendants
+ * move with it and sibling order is kept. Authored paths elsewhere
+ * (relationship targets, connections, arcs) are not retargeted. Fails with
+ * LIGHTUSD_ERR_INVALID_ARG for an invalid name or a sibling collision. */
+LIGHTUSD_API lightusd_status lightusd_stage_rename_prim(lightusd_stage* stage, const char* path,
+                                            const char* new_name);
 
 /* Author a full typed value in ONE call.
  * - POD types: `data` points at `count` elements of `type` (count > 1 or

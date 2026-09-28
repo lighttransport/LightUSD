@@ -18,7 +18,7 @@ option(LIGHTUSD_WITH_XATLAS "Include the vendored xatlas UV atlas generator" ON)
 # transition period.
 set(LIGHTUSD_WASM_PRODUCT "next" CACHE STRING
     "WASM product to build: next, legacy, or combined (combined is compatibility-only)")
-set_property(CACHE LIGHTUSD_WASM_PRODUCT PROPERTY STRINGS next legacy combined)
+set_property(CACHE LIGHTUSD_WASM_PRODUCT PROPERTY STRINGS next legacy combined mcp)
 
 # Keep the historical switches as compatibility aliases for existing build
 # scripts. New callers should select the product explicitly.
@@ -34,12 +34,19 @@ endif()
 
 if (NOT LIGHTUSD_WASM_PRODUCT STREQUAL "legacy" AND
     NOT LIGHTUSD_WASM_PRODUCT STREQUAL "next" AND
-    NOT LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
+    NOT LIGHTUSD_WASM_PRODUCT STREQUAL "combined" AND
+    NOT LIGHTUSD_WASM_PRODUCT STREQUAL "mcp")
   message(FATAL_ERROR
-    "LIGHTUSD_WASM_PRODUCT must be legacy, next, or combined (got '${LIGHTUSD_WASM_PRODUCT}')")
+    "LIGHTUSD_WASM_PRODUCT must be next, legacy, combined, or mcp (got '${LIGHTUSD_WASM_PRODUCT}')")
 endif()
 
-if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "mcp")
+  if (LIGHTUSD_WASM64)
+    set(BUILD_TARGET "lightusd_mcp_64")
+  else()
+    set(BUILD_TARGET "lightusd_mcp")
+  endif()
+elseif (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
   if (LIGHTUSD_WASM64)
     set(BUILD_TARGET "lightusd_next_64")
   else()
@@ -310,6 +317,58 @@ endif()
 # not pull in Emscripten pthreads/SharedArrayBuffer unless a future explicit
 # browser-threading build option opts into it.
 set(LIGHTUSD_ENABLE_THREAD OFF CACHE BOOL "Disable std::thread paths for default WASM builds" FORCE)
+
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "mcp")
+  # The MCP server product: a separate module so the next-only scene module
+  # stays lean. Built on the next C API; no render conversion.
+  message(STATUS "LightUSD WASM: building the MCP server module")
+  set(LIGHTUSD_NEXT_ENABLE_THREAD OFF CACHE BOOL "Disable next std::thread paths for WASM" FORCE)
+  set(LIGHTUSD_NEXT_BUILD_SHARED_C_API OFF CACHE BOOL "Do not build a shared C API in WASM" FORCE)
+  set(LIGHTUSD_WITH_TYDRA OFF CACHE BOOL "The MCP server needs no render conversion" FORCE)
+  set(LIGHTUSD_WITH_MCP_SERVER ON CACHE BOOL "Build the MCP server library" FORCE)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/../src/next lightusd_next_build EXCLUDE_FROM_ALL)
+
+  add_executable(lightusd_mcp_wasm binding-mcp.cc)
+  target_link_libraries(lightusd_mcp_wasm PRIVATE lightusd_mcp)
+  # Untrusted tool arguments: JSON type errors are thrown and reported as
+  # tool errors, so this module keeps C++ exceptions.
+  target_compile_options(lightusd_mcp_wasm PRIVATE -fexceptions)
+  set_property(TARGET lightusd_mcp_wasm APPEND PROPERTY LINK_DEPENDS
+    "${PROJECT_SOURCE_DIR}/mcp-api.js")
+
+  set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/js/src/lightusd/)
+  if(LIGHTUSD_WASM_OUTPUT_DIRECTORY)
+    set(OUTPUT_WASM_DIR "${LIGHTUSD_WASM_OUTPUT_DIRECTORY}")
+  endif()
+  if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(LIGHTUSD_MCP_EMCC_LINK_FLAGS "-g ")
+  elseif (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+    set(LIGHTUSD_MCP_EMCC_LINK_FLAGS "-Oz ")
+  else()
+    set(LIGHTUSD_MCP_EMCC_LINK_FLAGS "")
+  endif()
+  string(APPEND LIGHTUSD_MCP_EMCC_LINK_FLAGS "-fexceptions \
+     -sENVIRONMENT='web,worker,node' \
+     -sALLOW_MEMORY_GROWTH=1 \
+     -sSTACK_SIZE=512000 \
+     -sFILESYSTEM=0 \
+     -sWASM_BIGINT=1 \
+     -sMODULARIZE=1 -sEXPORT_ES6 -sEXPORT_NAME=createLightUSDMCP \
+     -sINVOKE_RUN=0 \
+     -sEXPORTED_FUNCTIONS=['_malloc','_free'] \
+     -sEXPORTED_RUNTIME_METHODS=['UTF8ToString','stringToNewUTF8'] \
+     --post-js \"${PROJECT_SOURCE_DIR}/mcp-api.js\"")
+  if (LIGHTUSD_WASM64)
+    string(APPEND LIGHTUSD_MCP_EMCC_LINK_FLAGS " -sMEMORY64 -sMAXIMUM_MEMORY=16GB")
+  endif()
+  set_target_properties(
+      lightusd_mcp_wasm
+      PROPERTIES OUTPUT_NAME ${BUILD_TARGET}
+                 SUFFIX ".js"
+                 RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR}
+                 LINK_FLAGS "${LIGHTUSD_MCP_EMCC_LINK_FLAGS}")
+  return()
+endif()
 
 if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
   message(STATUS "LightUSD WASM: building next-core + tydra-next only module")

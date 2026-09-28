@@ -44,6 +44,7 @@ const NODE_TESTS = [
   ['next flatten behavior parity', 'tests/next-flatten-behavior-parity.test.mjs'],
   ['next schema/image utility behavior parity', 'tests/next-schema-utilities-behavior-parity.test.mjs'],
   ['next allocation-failure gate', 'tests/next-allocation-failure.test.mjs'],
+  ['next MCP server module', 'tests/next-mcp-server.test.mjs'],
   ['variant selection overloads', 'tests/apply-variant-selection-overload.test.mjs'],
   ['usdcat CLI helpers', 'tests/usdcat-cli.test.mjs'],
   ['URDF/MJCF CLI', 'tests/urdf-to-usd-cli.test.mjs'],

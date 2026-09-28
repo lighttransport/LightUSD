@@ -328,6 +328,41 @@ bool Layer::remove_prim_at_path(const std::string& path) {
   return true;
 }
 
+bool Layer::rename_prim_at_path(const std::string& path,
+                                const std::string& new_name) {
+  if (!IsValidIdentifier(new_name)) return false;
+  if (path_to_index_.empty() && !prims_.empty()) {
+    build_path_index();
+  }
+  auto it = path_to_index_.find(path);
+  if (it == path_to_index_.end()) return false;
+  const uint32_t index = it->second;
+  const size_t slash = path.find_last_of('/');
+  const std::string parent_path = path.substr(0, slash);
+  const std::string new_path =
+      (slash == 0 ? std::string("/") : parent_path + "/") + new_name;
+  if (new_path == path) return true;
+  if (path_to_index_.count(new_path)) return false;  // sibling collision
+
+  // Rewrite the renamed prim and every descendant: their paths all share the
+  // old prefix, which is replaced by the new one.
+  std::vector<uint32_t> stack{index};
+  while (!stack.empty()) {
+    const uint32_t cur = stack.back();
+    stack.pop_back();
+    PrimSpec* p = prim(cur);
+    if (!p) continue;
+    const std::string old_str = p->path().str();
+    const std::string new_str = new_path + old_str.substr(path.size());
+    path_to_index_.erase(old_str);
+    p->set_path(Path(new_str));
+    path_to_index_[new_str] = cur;
+    for (uint32_t child : p->child_indices()) stack.push_back(child);
+  }
+  prim(index)->set_name(new_name);
+  return true;
+}
+
 void Layer::finalize() {
   if (finalized_) return;
 

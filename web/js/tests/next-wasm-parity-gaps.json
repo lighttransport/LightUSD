@@ -1396,42 +1396,48 @@
     "family": "mcp",
     "nextNameMatch": false,
     "parityStatus": "product_decision",
-    "productDecision": "MCP server/context integration remains in the dedicated MCP server product, outside next-only scene-core WASM."
+    "productDecision": "MCP server/context integration is provided by the dedicated MCP server product (lightusd_mcp WASM module and native lightusd-mcp, built on the next C API; same tool contract minus run_script/texture tools), outside next-only scene-core WASM.",
+    "behaviorTest": "next-mcp-server.test.mjs"
   },
   {
     "legacyMethod": "mcpResourcesList",
     "family": "mcp",
     "nextNameMatch": false,
     "parityStatus": "product_decision",
-    "productDecision": "MCP server/context integration remains in the dedicated MCP server product, outside next-only scene-core WASM."
+    "productDecision": "MCP server/context integration is provided by the dedicated MCP server product (lightusd_mcp WASM module and native lightusd-mcp, built on the next C API; same tool contract minus run_script/texture tools), outside next-only scene-core WASM.",
+    "behaviorTest": "next-mcp-server.test.mjs"
   },
   {
     "legacyMethod": "mcpResourcesRead",
     "family": "mcp",
     "nextNameMatch": false,
     "parityStatus": "product_decision",
-    "productDecision": "MCP server/context integration remains in the dedicated MCP server product, outside next-only scene-core WASM."
+    "productDecision": "MCP server/context integration is provided by the dedicated MCP server product (lightusd_mcp WASM module and native lightusd-mcp, built on the next C API; same tool contract minus run_script/texture tools), outside next-only scene-core WASM.",
+    "behaviorTest": "next-mcp-server.test.mjs"
   },
   {
     "legacyMethod": "mcpSelectContext",
     "family": "mcp",
     "nextNameMatch": false,
     "parityStatus": "product_decision",
-    "productDecision": "MCP server/context integration remains in the dedicated MCP server product, outside next-only scene-core WASM."
+    "productDecision": "MCP server/context integration is provided by the dedicated MCP server product (lightusd_mcp WASM module and native lightusd-mcp, built on the next C API; same tool contract minus run_script/texture tools), outside next-only scene-core WASM.",
+    "behaviorTest": "next-mcp-server.test.mjs"
   },
   {
     "legacyMethod": "mcpToolsCall",
     "family": "mcp",
     "nextNameMatch": false,
     "parityStatus": "product_decision",
-    "productDecision": "MCP server/context integration remains in the dedicated MCP server product, outside next-only scene-core WASM."
+    "productDecision": "MCP server/context integration is provided by the dedicated MCP server product (lightusd_mcp WASM module and native lightusd-mcp, built on the next C API; same tool contract minus run_script/texture tools), outside next-only scene-core WASM.",
+    "behaviorTest": "next-mcp-server.test.mjs"
   },
   {
     "legacyMethod": "mcpToolsList",
     "family": "mcp",
     "nextNameMatch": false,
     "parityStatus": "product_decision",
-    "productDecision": "MCP server/context integration remains in the dedicated MCP server product, outside next-only scene-core WASM."
+    "productDecision": "MCP server/context integration is provided by the dedicated MCP server product (lightusd_mcp WASM module and native lightusd-mcp, built on the next C API; same tool contract minus run_script/texture tools), outside next-only scene-core WASM.",
+    "behaviorTest": "next-mcp-server.test.mjs"
   },
   {
     "legacyMethod": "nextFlattenAsyncBegin",

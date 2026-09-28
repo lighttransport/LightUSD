@@ -204,6 +204,7 @@ jobs:
         CXX=clang++ CC=clang cmake -B build_next_product -S . -G Ninja \
           -DCMAKE_BUILD_TYPE=Release \
           -DLIGHTUSD_WITH_TYDRA=On \
+          -DLIGHTUSD_WITH_MCP_SERVER=On \
           -DLIGHTUSD_BUILD_EXAMPLES=On \
           -DLIGHTUSD_BUILD_TESTS=On
     - name: make

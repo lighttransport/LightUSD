@@ -178,6 +178,13 @@ public:
   /// root_indices). Returns false if no prim exists at `path`.
   bool remove_prim_at_path(const std::string& path);
 
+  /// Rename the prim at `path` in place (the last path component becomes
+  /// `new_name`); every descendant path and the path index are rewritten and
+  /// sibling order is kept. Fails for an invalid identifier, a missing prim,
+  /// or a sibling that already uses `new_name`. Paths that other specs author
+  /// (relationship targets, connections, arcs) are not retargeted.
+  bool rename_prim_at_path(const std::string& path, const std::string& new_name);
+
   // ============================================================
   // Access
   // ============================================================

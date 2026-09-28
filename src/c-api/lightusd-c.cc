@@ -2227,6 +2227,27 @@ lightusd_status lightusd_stage_remove_prim(lightusd_stage* stage, const char* pa
   return LIGHTUSD_OK;
 }
 
+lightusd_status lightusd_stage_rename_prim(lightusd_stage* stage, const char* path,
+                                  const char* new_name) {
+  if (!stage || !path || !new_name) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "stage/path/new_name is null");
+  }
+  if (stage->snapshot_stage)
+    return Fail(LIGHTUSD_ERR_UNSUPPORTED, "snapshot stage is read-only");
+  n::Layer* layer = RootLayerOf(stage);
+  if (!layer) return Fail(LIGHTUSD_ERR_INTERNAL, "stage has no root layer");
+  if (!layer->prim_at_path(std::string(path))) {
+    return Fail(LIGHTUSD_ERR_NOT_FOUND, std::string("no prim at path: ") + path);
+  }
+  if (!layer->rename_prim_at_path(path, new_name)) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG,
+                std::string("cannot rename to '") + new_name +
+                    "': invalid identifier or sibling collision");
+  }
+  stage->generation.fetch_add(1, std::memory_order_acq_rel);
+  return LIGHTUSD_OK;
+}
+
 lightusd_status lightusd_attr_set(lightusd_stage* stage, const char* prim_path,
                           const char* name, lightusd_type type, uint8_t is_array,
                           const void* data, size_t count, uint16_t flags) {
@@ -2673,3 +2694,35 @@ lightusd_status lightusd_prim_set_variant_selection(lightusd_stage* stage,
 }
 
 }  // extern "C"
+
+namespace lightusd_internal {
+lightusd::next::Layer* MutableNativeRootLayer(lightusd_stage* stage) {
+  if (!stage || stage->snapshot_stage) return nullptr;
+  n::Layer* layer = RootLayerOf(stage);
+  // The caller may edit structure: invalidate every borrowed handle.
+  if (layer) stage->generation.fetch_add(1, std::memory_order_acq_rel);
+  return layer;
+}
+
+bool SetNativeAttribute(lightusd_stage* stage, const char* prim_path,
+                        const std::string& name, n::Value&& value,
+                        const std::string& type_name, bool uniform,
+                        bool custom, std::string* err) {
+  if (!IsValidAttrName(name.c_str())) {
+    if (err) *err = "attribute name is not a valid identifier: " + name;
+    return false;
+  }
+  lightusd_status st;
+  n::PrimSpec* spec = MutablePrimAt(stage, prim_path, &st);
+  if (!spec) {
+    if (err) *err = lightusd_last_error();
+    return false;
+  }
+  const uint16_t flags =
+      static_cast<uint16_t>((uniform ? LIGHTUSD_PROP_UNIFORM : 0) |
+                            (custom ? LIGHTUSD_PROP_CUSTOM : 0));
+  spec->upsert_property(name, std::move(value), flags);
+  if (!type_name.empty()) spec->set_property_type_name(name, type_name);
+  return true;
+}
+}  // namespace lightusd_internal

@@ -650,6 +650,49 @@ if(LIGHTUSD_WITH_TYDRA)
     endif()
 endif()
 
+# ============================================================
+# MCP server (next product): a public C API consumer that serves the MCP
+# tools/resources surface (tool schemas shared with the legacy server).
+option(LIGHTUSD_WITH_MCP_SERVER "Build the LightUSD MCP server library and stdio executable" OFF)
+# Legacy product trees include src/next for their own tools and keep the
+# legacy MCP server; the next server is built for the next product only.
+if(LIGHTUSD_WITH_MCP_SERVER AND NOT LIGHTUSD_NATIVE_PRODUCT STREQUAL "legacy")
+    add_library(lightusd_mcp STATIC
+        ../mcp/mcp-server.cc
+        ../mcp/mcp-tool-schemas.cc
+        ../mcp/mcp-util.cc
+        ../mcp/mcp-tools-assets.cc
+        ../mcp/mcp-tools-composition.cc
+        ../mcp/mcp-tools-diff.cc
+        ../mcp/mcp-tools-query.cc
+        ../mcp/mcp-tools-stage.cc
+        ../mcp/mcp-tools-usdz.cc)
+    target_include_directories(lightusd_mcp
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../mcp
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../c-api)
+    target_link_libraries(lightusd_mcp PUBLIC lightusd_c)
+    # Tool arguments are untrusted JSON; nlohmann reports type errors by
+    # throwing, and the server converts them into tool errors.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(lightusd_mcp PRIVATE -fexceptions)
+    endif()
+    add_executable(lightusd-mcp ../mcp/lightusd-mcp-main.cc)
+    target_link_libraries(lightusd-mcp PRIVATE lightusd_mcp)
+    set_target_properties(lightusd-mcp PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    if(LIGHTUSD_NEXT_BUILD_TESTS)
+        add_executable(test_mcp_next
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_mcp_next.cc)
+        target_include_directories(test_mcp_next PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/../c-api)
+        target_link_libraries(test_mcp_next PRIVATE lightusd_mcp)
+        add_test(NAME next_test_mcp COMMAND test_mcp_next
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/usda
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+        set_tests_properties(next_test_mcp PROPERTIES LABELS "next;mcp")
+    endif()
+endif()
+
 # One shared FFI module owns all internal registries. Do not statically link
 # separate copies of next into two DLLs: their interned property IDs would
 # refer to different name tables. WITH_TYDRA=OFF produces a core-only DLL.

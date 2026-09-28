@@ -821,6 +821,7 @@ if (LIGHTUSD_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/variant-applier.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools.cc
+        ${PROJECT_SOURCE_DIR}/src/mcp/mcp-tool-schemas.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-scene.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-scene.hh
@@ -1416,6 +1417,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools.cc
+      ${PROJECT_SOURCE_DIR}/src/mcp/mcp-tool-schemas.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-composition.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-query.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-scene.cc

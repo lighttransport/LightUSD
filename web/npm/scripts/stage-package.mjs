@@ -28,7 +28,11 @@ const REQUIRED_SOURCE_FILES = [
   'lightusd_next.js',
   'lightusd_next.wasm',
   'lightusd_next_64.js',
-  'lightusd_next_64.wasm'
+  'lightusd_next_64.wasm',
+  'lightusd_mcp.js',
+  'lightusd_mcp.wasm',
+  'lightusd_mcp_64.js',
+  'lightusd_mcp_64.wasm'
 ];
 
 const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-.]+)?(?:\+[0-9A-Za-z-.]+)?$/;
