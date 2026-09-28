@@ -50,6 +50,43 @@ PropNameId PropNameTable::find_live(std::string_view name) const {
 
 #if defined(LIGHTUSD_ENABLE_THREAD)
 namespace {
+const char* SnapshotNameKey(const void* context, size_t index, size_t* length) {
+  const auto& by_id = *static_cast<const std::vector<const std::string*>*>(context);
+  if (index >= by_id.size()) return nullptr;
+  *length = by_id[index]->size();
+  return by_id[index]->data();
+}
+}  // namespace
+
+PropNameId PropNameTable::SnapshotFind(const GrowthSnapshot& snap,
+                                       std::string_view name) {
+  const size_t id = snap.index.find(name.empty() ? "" : name.data(),
+                                    name.size(), SnapshotNameKey, &snap.by_id);
+  if (id < UINT32_MAX) return PropNameId{static_cast<uint32_t>(id)};
+  return PropNameId{};
+}
+
+void PropNameTable::publish_growth_snapshot_locked() {
+  if (names_.size() == snapshot_count_) return;
+  std::unique_ptr<GrowthSnapshot> snap(new GrowthSnapshot());
+  snap->by_id.reserve(names_.size());
+  for (const std::string& name : names_) snap->by_id.push_back(&name);
+  // An index allocation failure only leaves the snapshot unpublished: the
+  // locked path stays authoritative.
+  if (!snap->index.rebuild(snap->by_id.size(), SnapshotNameKey, &snap->by_id)) {
+    return;
+  }
+  snapshot_count_ = names_.size();
+  snapshot_ptr_.store(snap.get(), std::memory_order_release);
+  snapshots_.push_back(std::move(snap));
+}
+
+void PropNameTable::publish_snapshot() {
+  std::unique_lock<std::shared_mutex> wlk(mu_);
+  publish_growth_snapshot_locked();
+}
+
+namespace {
 // Order the snapshot by the pointed-to name.
 struct FrozenLess {
   bool operator()(const std::pair<const std::string*, uint32_t>& a,
@@ -100,6 +137,7 @@ bool PropNameTable::is_frozen() const {
 void PropNameTable::freeze() {}
 void PropNameTable::unfreeze() {}
 bool PropNameTable::is_frozen() const { return false; }
+void PropNameTable::publish_snapshot() {}
 #endif
 
 PropNameId PropNameTable::intern(const std::string& name) {
@@ -116,6 +154,10 @@ PropNameId PropNameTable::intern(const std::string& name) {
     if (it != idx->by_name.end() && *it->first == view) {
       return PropNameId{it->second};
     }
+  }
+  if (const GrowthSnapshot* snap = snapshot_hit_ptr()) {
+    const PropNameId hit = SnapshotFind(*snap, view);
+    if (hit.is_valid()) return hit;
   }
   {
     std::shared_lock<std::shared_mutex> rlk(mu_);
@@ -134,6 +176,14 @@ PropNameId PropNameTable::intern(const std::string& name) {
     name_to_id_.insert(id, PropertyNameKey, &names_);
   else
     name_to_id_.rebuild(names_.size(), PropertyNameKey, &names_);
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  // Republish the lock-free snapshot once the table has grown by half (at
+  // least 64 names) since the last one: amortized O(1) per insert.
+  if (names_.size() - snapshot_count_ >=
+      std::max<size_t>(64, snapshot_count_ / 2)) {
+    publish_growth_snapshot_locked();
+  }
+#endif
   return PropNameId{id};
 }
 
@@ -149,6 +199,9 @@ std::string_view PropNameTable::get(PropNameId id) const {
   // another thread interns concurrently.
   if (const FrozenIndex* idx = frozen_ptr_.load(std::memory_order_acquire)) {
     if (id.id < idx->by_id.size()) return *idx->by_id[id.id];
+  }
+  if (const GrowthSnapshot* snap = snapshot_hit_ptr()) {
+    if (id.id < snap->by_id.size()) return *snap->by_id[id.id];
   }
   {
     // Shared lock: a concurrent intern() on another thread may push_back names_
@@ -174,6 +227,10 @@ PropNameId PropNameTable::find(std::string_view name) const {
     if (it != idx->by_name.end() && *it->first == name) {
       return PropNameId{it->second};
     }
+  }
+  if (const GrowthSnapshot* snap = snapshot_hit_ptr()) {
+    const PropNameId hit = SnapshotFind(*snap, name);
+    if (hit.is_valid()) return hit;
   }
   std::shared_lock<std::shared_mutex> rlk(mu_);
   return find_live(name);
@@ -384,11 +441,16 @@ void PropIndex::add(PropSlot slot) {
 const PropSlot* PropIndex::find(PropNameId name_id) const {
   if (!name_id.is_valid()) return nullptr;
 
-  if (sorted_) {
-    // Binary search
-    auto it = std::lower_bound(slots_.begin(), slots_.end(), name_id,
-        [](const PropSlot& slot, PropNameId id) {
-          return slot.name_id < id;
+  // Small (or unsorted) indices: a linear id scan beats resolving names.
+  constexpr size_t kLinearScanMax = 8;
+  if (sorted_ && slots_.size() > kLinearScanMax) {
+    // Slots are sorted by NAME (see sort()), not by the raw PropNameId, so
+    // binary-search by the target's name (get() is O(1)).
+    const PropNameTable& table = GetPropNameTable();
+    const std::string_view target = table.get(name_id);
+    auto it = std::lower_bound(slots_.begin(), slots_.end(), target,
+        [&table](const PropSlot& slot, std::string_view name) {
+          return table.get(slot.name_id) < name;
         });
     if (it != slots_.end() && it->name_id == name_id) {
       return &(*it);
@@ -437,10 +499,32 @@ bool PropIndex::remove(PropNameId name_id) {
 }
 
 void PropIndex::sort() {
-  std::sort(slots_.begin(), slots_.end(),
-      [](const PropSlot& a, const PropSlot& b) {
-        return a.name_id < b.name_id;
-      });
+  // add() clears sorted_ and remove() preserves the order, so an index that is
+  // still marked sorted needs no work (loaders pre-sort per prim in parallel
+  // before Layer::finalize() sweeps every prim).
+  if (sorted_) return;
+  // Sort by property NAME, not by PropNameId. The id is a global interning
+  // index whose assignment order is nondeterministic across runs (property
+  // names are interned concurrently while layers load in parallel), so an
+  // id-ordered slot list would make every consumer of slots() order
+  // nondeterministic -- most visibly the USDC writer, whose `properties`
+  // field, spec-emit order and value-block layout all follow this order (the
+  // USDA writer already sorts by name). Name order is canonical and stable.
+  // Names are resolved once per slot, not per comparison.
+  if (slots_.size() > 1) {
+    const PropNameTable& table = GetPropNameTable();
+    std::vector<std::pair<std::string_view, PropSlot>> keyed;
+    keyed.reserve(slots_.size());
+    for (const PropSlot& slot : slots_) {
+      keyed.emplace_back(table.get(slot.name_id), slot);
+    }
+    std::sort(keyed.begin(), keyed.end(),
+              [](const std::pair<std::string_view, PropSlot>& a,
+                 const std::pair<std::string_view, PropSlot>& b) {
+                return a.first < b.first;
+              });
+    for (size_t i = 0; i < keyed.size(); ++i) slots_[i] = keyed[i].second;
+  }
   sorted_ = true;
 }
 

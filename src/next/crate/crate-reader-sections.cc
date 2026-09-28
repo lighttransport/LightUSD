@@ -7,6 +7,7 @@
 #include "lazy-array.hh"
 #include "safe-arithmetic.hh"
 #include "../strfmt.hh"
+#include "../execution.hh"
 
 #include <algorithm>
 #include <cstdint>
@@ -988,7 +989,7 @@ bool CrateReader::Impl::ReadPaths() {
 
   if (num_paths == 0) {
     paths_.resize(1);
-    paths_[0] = "/";
+    paths_.set(0, "/");
     return true;
   }
 
@@ -1011,10 +1012,6 @@ bool CrateReader::Impl::ReadPaths() {
 
   if (!CheckElementAllocation(num_paths, sizeof(std::string), "Path table")) {
     return false;
-  }
-  paths_.resize(static_cast<size_t>(num_paths));
-  if (paths_.size() > 0) {
-    paths_[0] = "/";
   }
   size_t n = static_cast<size_t>(num_encoded);
 
@@ -1121,77 +1118,173 @@ bool CrateReader::Impl::ReadPaths() {
   //   jump == -1: node has a child only (at i+1), no sibling
   //   jump == -2: leaf (no child, no sibling)
   //
-  // The previous decoder kept a flat ancestor stack and popped only ONCE per
-  // leaf, so it could not unwind multiple levels at a subtree boundary — the
-  // stack grew without bound on deep/many-sibling trees, giving O(n^2) memory
-  // (every path got longer) and corrupted/colliding paths. Passing the parent
-  // path down the recursion and following the jump offset to each sibling is
-  // O(num_nodes) and correct.
-  paths_.assign(static_cast<size_t>(num_paths), std::string());
+  // Three passes:
+  //  1. a structural walk (serial) records, per visited node, its parent node
+  //     and visit order -- following the jump offset to each sibling is
+  //     O(num_nodes). It keeps the exact rules of the former recursive
+  //     string-building walk: descend only below max_path_depth, and stop a
+  //     sibling chain at an already-visited node (a malformed jump table can
+  //     make the child pointer (i+1) and a sibling pointer (i+jump) reach the
+  //     same node; `visited` bounds total work to O(n) instead of the
+  //     super-linear re-entry a chain of `jump == 1` nodes would cause);
+  //  2. path lengths in visit order (parent first) and blob offsets;
+  //  3. the fill: each path is written into its own window of one PathPool
+  //     blob -- block-copying the parent's already-written path when it lies
+  //     earlier in the same task, else walking the ancestor chain backward --
+  //     in parallel for large tables. Unvisited nodes keep empty slots.
+  //
+  // A path is "/" for a top-level node whose element is empty or "/", else
+  // "/" + elem under a top-level parent or the root, else parent + "/" + elem;
+  // a property node stores "." + that path (its children, in a malformed
+  // table, still extend the '.'-less form).
+  paths_.resize(static_cast<size_t>(num_paths));  // all slots -> empty path
 
-  auto element_for = [&](size_t i, bool& is_prop) -> std::string {
-    int32_t elem_token = static_cast<int32_t>(element_tokens[i]);
-    is_prop = elem_token < 0;
+  constexpr uint32_t kNoParent = UINT32_MAX;
+  auto element_view = [&](size_t i) -> std::string_view {
+    const int32_t elem_token = static_cast<int32_t>(element_tokens[i]);
     // Promote to int64 before negating (-INT32_MIN is UB).
-    uint32_t token_idx = is_prop
+    const uint32_t token_idx = elem_token < 0
         ? static_cast<uint32_t>(-static_cast<int64_t>(elem_token))
         : static_cast<uint32_t>(elem_token);
-    return tokens_.str(token_idx);
+    return tokens_.view(token_idx);
+  };
+  auto is_prop_node = [&](size_t i) -> bool {
+    return static_cast<int32_t>(element_tokens[i]) < 0;
   };
 
-  // Recurse over a sibling chain that all share `parent` (the parent prim path,
-  // without any property '.' prefix). Depth is bounded by max_path_depth.
-  //
-  // A well-formed pre-order tree visits every encoded node exactly once. A
-  // malformed jump table can make the child pointer (i+1) and a sibling pointer
-  // (i+jump) reference the SAME node from different parents, so a node gets
-  // re-entered — e.g. a chain of `jump == 1` nodes visits node k 2^k times
-  // (super-linear/exponential CPU hang) from a sub-kilobyte input. `visited`
-  // bounds total work to O(n): re-entering an already-emitted node stops that
-  // chain (the input is malformed, but we terminate instead of hanging).
   std::vector<uint8_t> visited(n, uint8_t{0});
-  std::function<void(size_t, const std::string&, size_t)> build =
-      [&](size_t i, const std::string& parent, size_t depth) {
-        while (i < n) {
-          if (visited[i]) return;  // node already emitted: malformed, stop
-          visited[i] = uint8_t{1};
-          bool is_prop = false;
-          std::string elem = element_for(i, is_prop);
-          int32_t jump = static_cast<int32_t>(jump_raw[i]);
-
-          bool is_root = parent.empty() && (elem.empty() || elem == "/");
-          std::string prim_path;  // base path (no '.' prefix) for children
-          if (is_root) {
-            prim_path = "/";
-          } else if (parent.empty() || parent == "/") {
-            prim_path = "/" + elem;
-          } else {
-            prim_path = parent + "/" + elem;
-          }
-
-          uint32_t store_idx = path_indices[i];
-          if (store_idx < num_paths) {
-            paths_[store_idx] = is_prop ? ("." + prim_path) : prim_path;
-          }
-
-          const bool has_child = (jump == -1 || jump > 0);
-          const bool has_sibling = (jump == 0 || jump > 0);
-
-          if (has_child && depth < options_.max_path_depth) {
-            build(i + 1, prim_path, depth + 1);
-          }
-          if (!has_sibling) return;
-          i += (jump > 0) ? static_cast<size_t>(jump) : 1;
+  std::vector<uint32_t> parent_of(n, kNoParent);
+  std::vector<uint32_t> order;  // visited nodes, in visit order
+  order.reserve(n);
+  {
+    struct Frame {
+      size_t i;
+      uint32_t parent;
+      size_t depth;
+    };
+    std::vector<Frame> stack;
+    stack.push_back(Frame{0, kNoParent, 0});
+    while (!stack.empty()) {
+      Frame f = stack.back();
+      stack.pop_back();
+      size_t i = f.i;
+      while (i < n) {
+        if (visited[i]) break;  // node already emitted: malformed, stop
+        visited[i] = uint8_t{1};
+        parent_of[i] = f.parent;
+        order.push_back(static_cast<uint32_t>(i));
+        const int32_t jump = static_cast<int32_t>(jump_raw[i]);
+        const bool has_child = (jump == -1 || jump > 0);
+        const bool has_sibling = (jump == 0 || jump > 0);
+        const size_t next = has_sibling
+            ? i + ((jump > 0) ? static_cast<size_t>(jump) : 1)
+            : n;
+        if (has_child && f.depth < options_.max_path_depth) {
+          // Child subtree first (pre-order), then the rest of this chain.
+          if (has_sibling) stack.push_back(Frame{next, f.parent, f.depth});
+          stack.push_back(
+              Frame{i + 1, static_cast<uint32_t>(i), f.depth + 1});
+          break;
         }
-      };
-  build(0, std::string(), 0);
+        i = next;
+      }
+    }
+  }
+
+  // Prim-path length per node (without a property's '.' prefix) and whether
+  // the node is the root "/".
+  std::vector<uint64_t> plen(n, 0);
+  std::vector<uint8_t> rootish(n, uint8_t{0});
+  std::vector<uint64_t> node_off(n, 0);
+  uint64_t total_bytes = 0;
+  path_parent_.assign(static_cast<size_t>(num_paths), UINT32_MAX);
+  for (const uint32_t i : order) {
+    if (parent_of[i] != kNoParent) {
+      path_parent_[path_indices[i]] = path_indices[parent_of[i]];
+    }
+    const std::string_view elem = element_view(i);
+    const uint32_t par = parent_of[i];
+    if (par == kNoParent) {
+      if (elem.empty() || elem == "/") {
+        rootish[i] = uint8_t{1};
+        plen[i] = 1;
+      } else {
+        plen[i] = 1 + elem.size();
+      }
+    } else if (rootish[par]) {
+      plen[i] = 1 + elem.size();
+    } else {
+      plen[i] = plen[par] + 1 + elem.size();
+    }
+    node_off[i] = total_bytes;
+    total_bytes += plen[i] + (is_prop_node(i) ? 1 : 0);
+  }
+  paths_.resize_blob(static_cast<size_t>(total_bytes));
+
+  // Write node order[k]'s path for k in [begin, end).
+  auto fill_range = [&](size_t begin, size_t end) {
+    for (size_t k = begin; k < end; ++k) {
+      const uint32_t i = order[k];
+      const bool is_prop = is_prop_node(i);
+      char* buf = paths_.blob_at(node_off[i]) + (is_prop ? 1 : 0);
+      if (is_prop) buf[-1] = '.';
+      const uint64_t L = plen[i];
+      if (rootish[i]) {
+        buf[0] = '/';
+      } else {
+        const std::string_view elem = element_view(i);
+        const uint32_t par = parent_of[i];
+        // Parent already written earlier in this range: block-copy it.
+        if (par != kNoParent && !rootish[par] && k > begin &&
+            node_off[par] >= node_off[order[begin]] &&
+            node_off[par] < node_off[i]) {
+          const char* pbuf = paths_.blob_at(node_off[par]) +
+                             (is_prop_node(par) ? 1 : 0);
+          const uint64_t pl = plen[par];
+          std::memcpy(buf, pbuf, static_cast<size_t>(pl));
+          buf[pl] = '/';
+          std::memcpy(buf + pl + 1, elem.data(), elem.size());
+        } else {
+          // Walk the ancestor chain backward.
+          uint64_t pos = L;
+          uint32_t j = i;
+          for (;;) {
+            const std::string_view ej = element_view(j);
+            pos -= ej.size();
+            std::memcpy(buf + pos, ej.data(), ej.size());
+            buf[--pos] = '/';
+            const uint32_t pj = parent_of[j];
+            if (pj == kNoParent || rootish[pj]) break;
+            j = pj;
+          }
+        }
+      }
+      paths_.place(path_indices[i], node_off[i], L + (is_prop ? 1 : 0));
+    }
+  };
+
+  const int nthreads = ResolveBuildThreads();
+  bool filled = false;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  if (nthreads > 1 && order.size() >= 65536) {
+    const size_t task_size = std::max<size_t>(
+        16384, order.size() / (static_cast<size_t>(nthreads) * 4));
+    const size_t ntasks = (order.size() + task_size - 1) / task_size;
+    TaskArena arena(static_cast<size_t>(nthreads));
+    arena.Run(ntasks, [&](size_t t) {
+      fill_range(t * task_size, std::min(order.size(), (t + 1) * task_size));
+    });
+    filled = true;
+  }
+#endif
+  if (!filled) fill_range(0, order.size());
 
   for (const CrateSpec& spec : specs_) {
     if (spec.path_index.value >= paths_.size()) {
       AddError("Spec path index out of range");
       return false;
     }
-    if (paths_[spec.path_index.value].empty()) {
+    if (paths_.empty_at(spec.path_index.value)) {
       AddError("Spec path index references an empty path slot");
       return false;
     }

@@ -89,6 +89,14 @@ public:
   /// (always false) in non-threaded builds, where freeze() is a no-op.
   bool is_frozen() const;
 
+  /// Publish the lock-free read snapshot now if names were interned since the
+  /// last one. The table republishes it on its own as it grows (geometrically,
+  /// so retained snapshots stay O(names)); a bulk loader that is about to hit
+  /// the table from many threads calls this after interning its names up
+  /// front, so every lookup is served without touching the rwlock. No-op
+  /// without LIGHTUSD_ENABLE_THREAD.
+  void publish_snapshot();
+
   // Common property name IDs (pre-registered for O(1) access)
   PropNameId id_points;       // "points"
   PropNameId id_normals;      // "normals"
@@ -134,7 +142,7 @@ private:
   // _Sp_locker, which serializes on one of 16 global mutexes chosen by the
   // ADDRESS of the shared_ptr -- and this table is a singleton, so every thread
   // hashed to the same mutex and every property-name lookup in every worker
-  // serialized on it. On Moana island isCoral that cost ~24% of load
+  // serialized on it. On a large scene that cost ~24% of load
   // (_Sp_locker ctor+dtor inclusive) and showed up as futex traffic.
   //
   // Lifetime: every snapshot ever published is retained in published_ until the
@@ -143,6 +151,30 @@ private:
   // whole codebase, so this retains a couple of MB, not an unbounded set.
   std::atomic<const FrozenIndex*> frozen_ptr_{nullptr};
   std::vector<std::shared_ptr<const FrozenIndex>> published_;  // guarded by mu_
+
+  // Growth snapshot (independent of freeze()): an immutable copy of the id ->
+  // name views plus a hash index over them, published lock-free as a raw
+  // pointer. Read HITS on it never touch mu_ -- parallel USDC stage-build
+  // workers call add_property()/intern()/find() millions of times, and the
+  // shared_lock cache line alone cost ~17% of an Island crate load. It is
+  // republished under the exclusive lock whenever the table has grown by half
+  // since the last one (plus on publish_snapshot()), so a miss is always
+  // recent and falls back to the authoritative locked path, and the retained
+  // snapshots total O(names). Snapshots live until the table dies, so a reader
+  // holding a loaded pointer can never see it freed.
+  struct GrowthSnapshot {
+    std::vector<const std::string*> by_id;
+    detail::StringIndex index;
+  };
+  const GrowthSnapshot* snapshot_hit_ptr() const {
+    return snapshot_ptr_.load(std::memory_order_acquire);
+  }
+  static PropNameId SnapshotFind(const GrowthSnapshot& snap,
+                                 std::string_view name);
+  void publish_growth_snapshot_locked();  // caller holds mu_ exclusively
+  std::atomic<const GrowthSnapshot*> snapshot_ptr_{nullptr};
+  std::vector<std::unique_ptr<const GrowthSnapshot>> snapshots_;  // guarded by mu_
+  size_t snapshot_count_ = 0;  // names covered by the latest; guarded by mu_
 #endif
 };
 
@@ -211,7 +243,8 @@ public:
   /// Get property count
   size_t size() const { return slots_.size(); }
 
-  /// Sort slots by name_id for binary search
+  /// Sort slots by property name (canonical, run-stable order) for binary
+  /// search. No-op while already sorted.
   void sort();
 
   /// Check if sorted

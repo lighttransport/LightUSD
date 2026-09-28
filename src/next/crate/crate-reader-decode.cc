@@ -5,6 +5,7 @@
 
 #include "crate-reader-internal.hh"
 #include "safe-arithmetic.hh"
+#include "../execution.hh"
 
 #include <cmath>
 #include <cstdint>
@@ -12,6 +13,9 @@
 #include <string>
 #include <utility>
 #include <vector>
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include <thread>
+#endif
 
 namespace lightusd {
 namespace next {
@@ -100,41 +104,43 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
     return false;
   }
   if (rep.payload() == 0) return true;  // empty
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
 
   auto read_run = [&]() -> bool {
     uint64_t n = 0;
-    if (!reader_->read_u64(n)) return false;
+    if (!reader()->read_u64(n)) return false;
     if (n > options_.max_array_elements) return false;
     // Each element is 4 input bytes but produces a whole reconstructed path
     // STRING (up to max_path_depth components). Require the file to actually
     // hold the indices, and charge the produced strings against the allocation
     // budget -- otherwise a ~1 MB crate drives `out` into the multi-GB range.
-    if (n > 0 && !reader_->has_elements(static_cast<size_t>(n), 4)) return false;
+    if (n > 0 && !reader()->has_elements(static_cast<size_t>(n), 4)) return false;
     if (!CheckElementAllocation(n, sizeof(std::string), "Path list-op")) {
       return false;
     }
     for (uint64_t i = 0; i < n; ++i) {
       uint32_t idx = 0;
-      if (!reader_->read_u32(idx)) return false;
+      if (!reader()->read_u32(idx)) return false;
       if (idx >= paths_.size()) return false;
-      if (!CheckByteAllocation(paths_[idx].size(), "Path list-op targets")) {
+      if (!CheckByteAllocation(paths_.view(idx).size(), "Path list-op targets")) {
         return false;
       }
       // paths_ renders a property path as ".<primpath>/<prop>"; convert to the
       // canonical USD form "<primpath>.<prop>" so targets re-intern correctly
       // (and survive repeated round-trips). Prim targets pass through as-is.
-      const std::string& p = paths_[idx];
+      const std::string_view p = paths_.view(idx);
       if (!p.empty() && p[0] == '.') {
-        std::string body = p.substr(1);          // "/a/b/prop"
-        size_t slash = body.rfind('/');
-        if (slash != std::string::npos) {
-          out.push_back(body.substr(0, slash) + "." + body.substr(slash + 1));
+        const std::string_view body = p.substr(1);  // "/a/b/prop"
+        const size_t slash = body.rfind('/');
+        if (slash != std::string_view::npos) {
+          std::string target(body);
+          target[slash] = '.';                      // "/a/b.prop"
+          out.push_back(std::move(target));
         } else {
-          out.push_back(body);
+          out.emplace_back(body);
         }
       } else {
-        out.push_back(p);                        // prim path "/a/b"
+        out.emplace_back(p);                        // prim path "/a/b"
       }
     }
     return true;
@@ -152,7 +158,7 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
   // "\x01P"/"\x01A"/"\x01D"/"\x01O" marker entries so the caller can
   // reconstruct the authored list-op edits.
   uint8_t bits = 0;
-  if (!reader_->read_u8(bits)) return false;
+  if (!reader()->read_u8(bits)) return false;
   if ((bits & uint8_t{0x80}) != 0) return false;
   // 0x01 is pxr's SEMANTIC explicit flag (set with no sublist for
   // explicit-empty); 0x02 flags the explicit-items sublist.
@@ -187,7 +193,7 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
     return false;
   }
   if (rep.payload() == 0) return true;  // empty listop
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
 
   // Payload items carry a LayerOffset only from crate 0.8.0 on.
   const bool payload_has_offset =
@@ -196,7 +202,7 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
   // Read one SdfReference/SdfPayload item; when `keep`, append its arc string.
   auto read_item = [&](bool keep) -> bool {
     uint32_t asset_idx = 0, path_idx = 0;
-    if (!reader_->read_u32(asset_idx) || !reader_->read_u32(path_idx)) {
+    if (!reader()->read_u32(asset_idx) || !reader()->read_u32(path_idx)) {
       return false;
     }
     if (asset_idx >= string_indices_.size() || path_idx >= paths_.size()) {
@@ -204,7 +210,7 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
     }
     double offset = 0.0, scale = 1.0;
     if (payload_has_offset) {
-      if (!reader_->read_f64(offset) || !reader_->read_f64(scale)) {
+      if (!reader()->read_f64(offset) || !reader()->read_f64(scale)) {
         return false;
       }
       if (!std::isfinite(offset) || !std::isfinite(scale)) return false;
@@ -216,21 +222,21 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
       // so walk-skip it structurally (dropping the whole ARC because it
       // carries customData loses the reference itself).
       uint64_t dict_count = 0;
-      if (!reader_->read_u64(dict_count)) return false;
+      if (!reader()->read_u64(dict_count)) return false;
       if (dict_count > options_.max_array_elements) return false;
       if (dict_count != 0) {
         AddWarning("Reference customData is ignored");
         for (uint64_t d = 0; d < dict_count; ++d) {
           uint32_t key_idx = 0;
-          if (!reader_->read_u32(key_idx)) return false;
+          if (!reader()->read_u32(key_idx)) return false;
           std::string key;
           if (!GetString(key_idx, key)) return false;
-          const size_t val_start = reader_->position();
+          const size_t val_start = reader()->position();
           uint64_t rec_off_raw = 0;
-          if (!reader_->read_u64(rec_off_raw)) return false;
+          if (!reader()->read_u64(rec_off_raw)) return false;
           const int64_t rec_off = static_cast<int64_t>(rec_off_raw);
           const uint64_t val_start_u64 = static_cast<uint64_t>(val_start);
-          const uint64_t file_size = static_cast<uint64_t>(reader_->size());
+          const uint64_t file_size = static_cast<uint64_t>(reader()->size());
           if (rec_off < 8 || file_size < sizeof(uint64_t) ||
               static_cast<uint64_t>(rec_off) >
                   (std::numeric_limits<uint64_t>::max)() - val_start_u64 ||
@@ -243,7 +249,7 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
               val_start_u64 + static_cast<uint64_t>(rec_off));
           // Skip past this entry's ValueRep; the next entry (or the rest of
           // the reference item) begins right after it.
-          if (!reader_->seek(rep_pos + 8)) return false;
+          if (!reader()->seek(rep_pos + 8)) return false;
         }
       }
     }
@@ -251,7 +257,7 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
 
     std::string asset;
     if (!GetString(asset_idx, asset)) return false;
-    const std::string& prim = paths_[path_idx];
+    const std::string prim = paths_.str(path_idx);
     // Internal arcs (no asset) render as "</Prim>", matching the usda parser.
     std::string arc;
     if (!asset.empty()) arc = "@" + asset + "@";
@@ -266,7 +272,7 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
 
   auto read_run = [&](bool keep) -> bool {
     uint64_t n = 0;
-    if (!reader_->read_u64(n)) return false;
+    if (!reader()->read_u64(n)) return false;
     if (n > options_.max_array_elements) return false;
     // Each item produces a whole arc STRING from a few input bytes; charge the
     // per-item container cost against the allocation budget (read_item itself
@@ -284,7 +290,7 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
   // sublists are marker-delimited ("\x01" "P"/"A"/"D"/"O") so BuildStage can
   // reconstruct the authored list-op edits.
   uint8_t bits = 0;
-  if (!reader_->read_u8(bits)) return false;
+  if (!reader()->read_u8(bits)) return false;
   if ((bits & uint8_t{0x80}) != 0) return false;
   // pxr ListOpHeader: 0x01 is the SEMANTIC explicit flag; 0x02 says an
   // explicit-items sublist is present. Explicit-empty (`references = []` /
@@ -318,13 +324,13 @@ bool CrateReader::Impl::DecodeVariantSelectionMap(
   out.clear();
   if (rep.type_id() != CrateTypeId::VariantSelectionMap) return false;
   if (rep.payload() == 0) return true;  // empty map
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   uint64_t count = 0;
-  if (!reader_->read_u64(count)) return false;
+  if (!reader()->read_u64(count)) return false;
   if (count > options_.max_array_elements) return false;
   for (uint64_t i = 0; i < count; ++i) {
     uint32_t k = 0, v = 0;
-    if (!reader_->read_u32(k) || !reader_->read_u32(v)) return false;
+    if (!reader()->read_u32(k) || !reader()->read_u32(v)) return false;
     std::string key, val;
     if (!GetString(k, key) || !GetString(v, val)) return false;
     out.emplace_back(std::move(key), std::move(val));
@@ -340,24 +346,24 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
     return false;
   }
   if (rep.payload() == 0) return true;  // empty listop
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
 
   const bool is_token = (tid == CrateTypeId::TokenListOp);
   // One [u64 count][u32 idx]* run; collect its tokens when `keep`.
   auto read_run = [&](bool keep) -> bool {
     uint64_t n = 0;
-    if (!reader_->read_u64(n)) return false;
+    if (!reader()->read_u64(n)) return false;
     if (n > options_.max_array_elements) return false;
     // 4 input bytes per element, one whole token/string appended: require the
     // indices to actually be in the file and charge the output.
-    if (n > 0 && !reader_->has_elements(static_cast<size_t>(n), 4)) return false;
+    if (n > 0 && !reader()->has_elements(static_cast<size_t>(n), 4)) return false;
     if (keep && !CheckElementAllocation(n, sizeof(std::string),
                                         "Token list-op")) {
       return false;
     }
     for (uint64_t i = 0; i < n; ++i) {
       uint32_t idx = 0;
-      if (!reader_->read_u32(idx)) return false;
+      if (!reader()->read_u32(idx)) return false;
       std::string s;
       if (is_token) {
         if (idx >= tokens_.size()) return false;
@@ -379,7 +385,7 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
   // recover the authored qualifier (e.g. `prepend apiSchemas` or
   // `delete apiSchemas` — deleted/ordered items used to be dropped).
   uint8_t bits = 0;
-  if (!reader_->read_u8(bits)) return false;
+  if (!reader()->read_u8(bits)) return false;
   if ((bits & uint8_t{0x80}) != 0) return false;
   const uint8_t kIsExplicit = 0x01, kHasExplicit = 0x02, kHasAdded = 0x04,
                 kHasDeleted = 0x08, kHasOrdered = 0x10, kHasPrepended = 0x20,
@@ -408,9 +414,9 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
     out = Value::MakeDictionary();
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   uint64_t count = 0;
-  if (!reader_->read_u64(count)) return false;
+  if (!reader()->read_u64(count)) return false;
   if (count > options_.max_array_elements) return false;
 
   // pxr WriteMap layout: [u64 count] then per entry [u32 keyStringIdx] followed
@@ -423,19 +429,19 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
   Dict* d = dv.as_dictionary();
   for (uint64_t i = 0; i < count; ++i) {
     uint32_t kidx = 0;
-    if (!reader_->read_u32(kidx)) return false;
+    if (!reader()->read_u32(kidx)) return false;
     std::string key;
     if (!GetString(kidx, key)) return false;
 
-    const size_t val_start = reader_->position();
+    const size_t val_start = reader()->position();
     uint64_t rec_off_raw = 0;
-    if (!reader_->read_u64(rec_off_raw)) return false;
+    if (!reader()->read_u64(rec_off_raw)) return false;
     if (rec_off_raw < 8) {
       AddError("Dictionary recursive offset is too small");
       return false;
     }
     const uint64_t val_start_u64 = static_cast<uint64_t>(val_start);
-    const uint64_t file_size = static_cast<uint64_t>(reader_->size());
+    const uint64_t file_size = static_cast<uint64_t>(reader()->size());
     if (file_size < sizeof(uint64_t) ||
         rec_off_raw > (std::numeric_limits<uint64_t>::max)() - val_start_u64 ||
         (val_start_u64 + rec_off_raw) > (file_size - sizeof(uint64_t))) {
@@ -443,10 +449,10 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
       return false;
     }
     const size_t rep_pos = static_cast<size_t>(val_start_u64 + rec_off_raw);
-    if (!reader_->seek(rep_pos)) return false;
+    if (!reader()->seek(rep_pos)) return false;
     uint64_t vrep_raw = 0;
-    if (!reader_->read_u64(vrep_raw)) return false;
-    const size_t next_entry_pos = reader_->position();  // rep_pos + 8
+    if (!reader()->read_u64(vrep_raw)) return false;
+    const size_t next_entry_pos = reader()->position();  // rep_pos + 8
 
     ValueRep vr(vrep_raw);
     Value cv;
@@ -458,7 +464,7 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
     }
     d->set(std::move(key), std::move(cv));
 
-    if (!reader_->seek(next_entry_pos)) return false;  // resume after this value
+    if (!reader()->seek(next_entry_pos)) return false;  // resume after this value
   }
   out = std::move(dv);
   return true;
@@ -498,17 +504,34 @@ bool CrateReader::Impl::CheckByteAllocation(uint64_t bytes, const char* what) {
   // allocations each just under the cap summed without any limit -- a file with
   // many fields could still drive total RSS arbitrarily high. Track the running
   // total against the same bound.
+  const uint64_t budget = AllocationBudget();
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  // Parallel stage-build tasks charge concurrently: reserve with a CAS so the
+  // running total never admits more than the budget.
+  uint64_t cur = alloc_total_.load(std::memory_order_relaxed);
+  for (;;) {
+    if (bytes > kU64MaxBytes - cur || cur + bytes > budget) {
+      AddError(std::string(what) + " exceeds cumulative allocation budget");
+      return false;
+    }
+    if (alloc_total_.compare_exchange_weak(cur, cur + bytes,
+                                           std::memory_order_relaxed)) {
+      return true;
+    }
+  }
+#else
   if (bytes > kU64MaxBytes - alloc_total_) {
     AddError(std::string(what) + " exceeds cumulative allocation budget");
     return false;
   }
   const uint64_t new_total = alloc_total_ + bytes;
-  if (new_total > AllocationBudget()) {
+  if (new_total > budget) {
     AddError(std::string(what) + " exceeds cumulative allocation budget");
     return false;
   }
   alloc_total_ = new_total;
   return true;
+#endif
 }
 
 // Total decoded bytes this reader may accumulate. Deliberately looser than the
@@ -562,9 +585,14 @@ bool CrateReader::Impl::GetString(uint32_t index, std::string& out) {
 
 void CrateReader::Impl::AddError(const std::string& msg) {
   CrateError err;
-  err.offset = reader_ ? reader_->position() : 0;
+  const StreamReader* r = reader();
+  err.offset = r ? r->position() : 0;
   err.message = msg;
-  result_.errors.push_back(err);
+  if (ThreadDecodeCtx* ctx = decode_ctx()) {
+    ctx->errors.push_back(std::move(err));
+    return;
+  }
+  result_.errors.push_back(std::move(err));
 }
 
 bool CrateReader::Impl::ReportProgress(const char* phase, size_t current,
@@ -580,7 +608,31 @@ void CrateReader::Impl::AddWarning(const std::string& msg) {
     AddError("Strict AOUSD mode: " + msg);
     return;
   }
+  if (ThreadDecodeCtx* ctx = decode_ctx()) {
+    ctx->warnings.push_back(msg);
+    return;
+  }
   result_.warnings.push_back(msg);
+}
+
+void CrateReader::Impl::MergeDecodeCtx(ThreadDecodeCtx& ctx) {
+  for (CrateError& e : ctx.errors) result_.errors.push_back(std::move(e));
+  for (std::string& w : ctx.warnings) result_.warnings.push_back(std::move(w));
+  ctx.errors.clear();
+  ctx.warnings.clear();
+}
+
+int CrateReader::Impl::ResolveBuildThreads() const {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  int nt = ClampExecutionThreads(options_.num_threads);
+  if (nt <= 0) {
+    nt = static_cast<int>(std::thread::hardware_concurrency());
+    nt = std::min(nt, 8);
+  }
+  return nt < 1 ? 1 : nt;
+#else
+  return 1;
+#endif
 }
 
 

@@ -60,6 +60,15 @@ struct CrateReadOptions {
   /// Set false to force eager decode (e.g. for A/B memory comparisons).
   bool lazy_arrays = true;
 
+  /// Log per-phase wall times ("[next_crate_read] ...", "[next_crate_stage]
+  /// ...") at INFO through lightusd::logging.
+  bool enable_timing = false;
+
+  /// Worker-thread hint for the parallel stage build (0 = auto min(hw, 8),
+  /// 1 = serial, >1 = fixed, clamped). Output is identical at every count;
+  /// small crates always build serially. Ignored without LIGHTUSD_ENABLE_THREAD.
+  int num_threads = 0;
+
   /// When reading from a file path, memory-map the crate read-only instead of
   /// copying it into an owned heap buffer (Phase 8.3). Falls back to the owned
   /// path automatically when mmap is unavailable (non-posix / WASM) or the
@@ -129,8 +138,8 @@ public:
   // tokens pooled, see TokenPool in the .cc).
   std::vector<std::string> tokens() const;
 
-  /// Get paths table
-  const std::vector<std::string>& paths() const;
+  /// Get paths table (materialized copy; the reader stores paths pooled)
+  std::vector<std::string> paths() const;
 
   /// Get fields table
   const std::vector<CrateField>& fields() const;
