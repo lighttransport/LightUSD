@@ -47,6 +47,7 @@ static void emit_lines(const std::string &msgs, const char *prefix) {
 // destructors and atexit handlers, so it is suitable only after a successful
 // write whose C/C++ streams have been flushed explicitly.
 [[noreturn]] static void ExitAfterSuccessfulWrite() {
+  std::cout.flush();
   std::cerr.flush();
   std::fflush(nullptr);
   std::_Exit(0);
