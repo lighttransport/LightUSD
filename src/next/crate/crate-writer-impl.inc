@@ -195,6 +195,33 @@ private:
     }
   } stream_dedup_;
 
+  // Lazy-array Values are copied while composing instance subtrees, so many
+  // values can refer to the same immutable source byte range.  Once one such
+  // range has been emitted, its output offset is known without hashing the
+  // bytes again.  Different source ranges still use the content-addressed
+  // table below, preserving cross-source deduplication.
+  struct StreamSourceRangeKey {
+    const LazyArraySource* source;
+    uint64_t offset;
+    uint64_t length;
+    bool operator==(const StreamSourceRangeKey& other) const {
+      return source == other.source && offset == other.offset &&
+             length == other.length;
+    }
+  };
+  struct StreamSourceRangeHash {
+    size_t operator()(const StreamSourceRangeKey& key) const {
+      size_t h = std::hash<const void*>{}(key.source);
+      h ^= std::hash<uint64_t>{}(key.offset) +
+           static_cast<size_t>(0x9E3779B97F4A7C15ull) + (h << 6) + (h >> 2);
+      h ^= std::hash<uint64_t>{}(key.length) +
+           static_cast<size_t>(0xC2B2AE3D27D4EB4Full) + (h << 6) + (h >> 2);
+      return h;
+    }
+  };
+  std::unordered_map<StreamSourceRangeKey, uint64_t, StreamSourceRangeHash>
+      stream_source_ranges_;
+
   // Write `n` bytes at the next 8-byte-aligned sink position; returns that
   // absolute offset.
   uint64_t StreamRawBlock(const uint8_t* bytes, size_t n) {
@@ -216,6 +243,18 @@ private:
 
   uint64_t StreamInternBlock(const DataBlock& block) {
     const size_t n = block.size();
+    StreamSourceRangeKey source_key{};
+    bool has_source_key = false;
+    if (block.is_ref()) {
+      source_key = StreamSourceRangeKey{block.src.get(), block.src_offset,
+                                        block.src_len};
+      has_source_key = true;
+      const auto cached = stream_source_ranges_.find(source_key);
+      if (cached != stream_source_ranges_.end()) {
+        ++blocks_deduped_;
+        return cached->second;
+      }
+    }
     const uint8_t* p = block.bytes();
     uint64_t h = 0;
     uint64_t h2 = 0;
@@ -226,12 +265,16 @@ private:
     }
     if (const uint64_t* off = stream_dedup_.find(h, h2, n)) {
       ++blocks_deduped_;
+      if (has_source_key) stream_source_ranges_.emplace(source_key, *off);
       return *off;
     }
     const uint64_t off = StreamRawBlock(p, n);
     if (block.is_ref()) DropStreamedSourceRange(block);
     // Empty blocks are never shared (a staged empty block is never deduped).
-    if (n) stream_dedup_.insert(h, h2, n, off);
+    if (n) {
+      stream_dedup_.insert(h, h2, n, off);
+      if (has_source_key) stream_source_ranges_.emplace(source_key, off);
+    }
     return off;
   }
 

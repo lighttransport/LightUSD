@@ -78,6 +78,7 @@
     block_slots_.clear();
     block_slots_used_ = 0;
     stream_dedup_.clear();
+    stream_source_ranges_.clear();
     stream_values_ = false;
     value_sink_ = nullptr;
     value_stream_error_ = false;

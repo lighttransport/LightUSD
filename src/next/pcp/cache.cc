@@ -386,6 +386,34 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
                            const CompositionOptions &options, std::string *warn,
                            std::string *err, CompositionReport *report) {
   if (!root_layer || !out_stage) return false;
+
+  // A layer without sublayers or composition arcs is already a complete
+  // stage.  Building a Cache/PrimIndex for it would clone every PrimSpec and
+  // copy every lazy Value handle before the caller writes the stage again.
+  // Keep the source layer intact so crate-backed arrays remain eligible for
+  // the writer's byte-range pass-through path.  This is also the behavior of
+  // the public composed loader's no-composition fast path.
+  bool needs_composition = !root_layer->meta().subLayers.empty();
+  if (!needs_composition) {
+    for (const PrimSpec &prim : root_layer->prims()) {
+      // BuildStage also prunes descendants below an authored active=false
+      // prim. Keep that small semantic transform on the composed path rather
+      // than returning the raw layer with its inactive children still present.
+      if (HasCompositionArcs(prim) ||
+          (prim.meta().active_authored && !prim.meta().active)) {
+        needs_composition = true;
+        break;
+      }
+    }
+  }
+  if (!needs_composition) {
+    if (report && !root_identifier.empty()) {
+      report->layer_dependencies.push_back(root_identifier);
+    }
+    out_stage->SetRootLayer(std::move(*root_layer));
+    return true;
+  }
+
   const bool timing = options.enable_timing;
   using Clock = std::chrono::steady_clock;
   auto ms = [](Clock::duration d) {
