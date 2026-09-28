@@ -189,12 +189,42 @@
     // Frozen, those go lock-free. A genuinely new name would unfreeze and fall
     // back to locking.
     GetPropNameTable().freeze();
+    // With release_build_sources, free each slot's composition sources the
+    // moment its opinions are composed, so the transient compose state (~600
+    // MB of Src vectors on Island) drains as the output fills in instead of
+    // coexisting in full with the finished stage. The structure walk is done,
+    // so nothing resolves sources again during the fill, and the caller drops
+    // sources_cache right after it (those emptied entries must never be read
+    // back as "no sources"). A vector shared by several slots (one source path
+    // placed at two output paths) is left for the final drop.
+    const bool release = options.release_build_sources;
+    std::vector<const std::vector<Src> *> shared_srcs;
+    if (release) {
+      std::vector<const std::vector<Src> *> seen;
+      seen.reserve(fill_.size());
+      for (const auto &record : fill_) {
+        if (record.second) seen.push_back(record.second);
+      }
+      std::sort(seen.begin(), seen.end());
+      for (size_t i = 1; i < seen.size(); ++i) {
+        if (seen[i] == seen[i - 1] &&
+            (shared_srcs.empty() || shared_srcs.back() != seen[i])) {
+          shared_srcs.push_back(seen[i]);
+        }
+      }
+    }
     auto do_range = [&](size_t b, size_t e) {
       for (size_t i = b; i < e; ++i) {
         const std::vector<Src> *srcs = fill_[i].second;
         if (!srcs) continue;
         if (PrimSpec *ps = out->prim_mutable(fill_[i].first)) {
           ComposeOpinions(*srcs, ps);
+        }
+        if (release &&
+            !std::binary_search(shared_srcs.begin(), shared_srcs.end(), srcs)) {
+          // sources_cache owns the vector (address-stable deque storage);
+          // fill_ only borrows it read-only for the structure pass.
+          std::vector<Src>().swap(*const_cast<std::vector<Src> *>(srcs));
         }
       }
     };

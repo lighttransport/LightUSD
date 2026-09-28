@@ -27,6 +27,8 @@
 #include <unordered_set>
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 #endif
 

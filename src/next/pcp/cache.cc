@@ -392,8 +392,12 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
     return std::chrono::duration<double, std::milli>(d).count();
   };
   const auto t0 = Clock::now();
+  // The Cache is local to this call and discarded right after BuildStage, so
+  // its cached composition sources can always be freed during the fill.
+  CompositionOptions build_options = options;
+  build_options.release_build_sources = true;
   auto opened = Cache::Open(resolver, std::move(root_layer), root_identifier,
-                            options);
+                            build_options);
   if (!opened) {
     if (err) *err += opened.error() + "\n";
     return false;
