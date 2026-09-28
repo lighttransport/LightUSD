@@ -2504,6 +2504,7 @@ static std::unique_ptr<lightusd::next::Layer> ParseNextLayerBytesOwned(
 
   tn::pcp::LayerLoadOptions lopts;
   lopts.max_memory = read_opts.max_memory;
+  lopts.usdc_limits = read_opts;
   std::string warn;
   std::string parse_err;
   std::shared_ptr<tn::Layer> loaded = tn::pcp::LoadLayerFromMemoryOwned(
@@ -2541,6 +2542,7 @@ static std::unique_ptr<lightusd::next::Layer> ParseNextLayerBytes(
 
   tn::pcp::LayerLoadOptions lopts;
   lopts.max_memory = read_opts.max_memory;
+  lopts.usdc_limits = read_opts;
   std::string warn;
   std::string parse_err;
   std::shared_ptr<tn::Layer> loaded =

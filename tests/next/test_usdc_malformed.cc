@@ -395,6 +395,7 @@ USDCLoadOptions TightOptions() {
   opts.crate_options.max_tokens = 1;
   opts.crate_options.max_strings = 1;
   opts.crate_options.max_fields = 1;
+  opts.crate_options.max_fieldset_indices = 1;
   opts.crate_options.max_specs = 1;
   opts.crate_options.max_paths = 1;
   opts.crate_options.max_array_elements = 16;
@@ -424,6 +425,7 @@ void ExpectWarningAndStrictReject(const char* name,
   USDCLoadOptions opts = TightOptions();
   opts.crate_options.max_tokens = 8;
   opts.crate_options.max_fields = 8;
+  opts.crate_options.max_fieldset_indices = 8;
   opts.crate_options.max_specs = 8;
   opts.crate_options.max_paths = 8;
   USDCLoadResult compatible = LoadUSDCFromMemory(bytes.data(), bytes.size(), opts);

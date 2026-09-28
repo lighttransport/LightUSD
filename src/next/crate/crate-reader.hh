@@ -7,6 +7,7 @@
 #pragma once
 
 #include "crate-format.hh"
+#include "crate-limits.hh"
 #include "../stage/stage.hh"
 #include <functional>
 #include <string>
@@ -18,8 +19,9 @@
 namespace lightusd {
 namespace next {
 
-/// Options for reading crate files
-struct CrateReadOptions {
+/// Options for reading crate files. The structural table-count limits
+/// (max_tokens ... max_path_depth) come from CrateLimits.
+struct CrateReadOptions : CrateLimits {
   /// Fail closed when any field/value must be ignored or approximated. This
   /// turns reader warnings into errors for AOUSD conformance-sensitive loads.
   bool strict_aousd_conformance = false;
@@ -29,28 +31,10 @@ struct CrateReadOptions {
   std::function<bool(const char* phase, size_t current, size_t total)>
       progress_callback;
 
-  /// Maximum number of tokens allowed
-  size_t max_tokens = 1024 * 1024;
-
-  /// Maximum number of strings allowed
-  size_t max_strings = 1024 * 1024;
-
-  /// Maximum number of fields allowed
-  size_t max_fields = 10 * 1024 * 1024;
-
-  /// Maximum number of specs allowed
-  size_t max_specs = 10 * 1024 * 1024;
-
-  /// Maximum number of paths allowed
-  size_t max_paths = 10 * 1024 * 1024;
-
   /// Maximum number of elements in a single value array
   /// (mirrors pxrUSD/legacy core's 1<<30 cap; guards against a malformed
   /// count triggering an enormous allocation).
   size_t max_array_elements = 16 * 1024 * 1024;
-
-  /// Maximum recursion depth for path decoding
-  size_t max_path_depth = 256;
 
   /// Maximum memory budget (bytes, 0 = unlimited)
   size_t max_memory = security_policy::kDefaultInputLimitBytes;

@@ -868,6 +868,8 @@ StageOperationResult StageSession::OpenFile(
   normalized.composition.max_archive_entries = MinNonZero(
       normalized.composition.max_archive_entries,
       normalized.load.limits.max_archive_entries);
+  normalized.composition.usdc_limits =
+      normalized.load.usdc_options.crate_options;
   normalized.composition.max_depth = static_cast<uint32_t>(
       std::min<size_t>(normalized.composition.max_depth,
                        normalized.load.limits.max_composition_depth));
@@ -1523,6 +1525,9 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
       copts.max_array_elements, load_options.limits.max_array_elements);
   copts.max_archive_entries = MinNonZero(
       copts.max_archive_entries, load_options.limits.max_archive_entries);
+  // Crate structural limits come from the caller's USDC reader options, so a
+  // composed load bounds every referenced .usdc exactly like a single-file load.
+  copts.usdc_limits = load_options.usdc_options.crate_options;
   copts.usda_parse_options.max_file_size = MinNonZero(
       copts.usda_parse_options.max_file_size,
       load_options.limits.max_asset_bytes);

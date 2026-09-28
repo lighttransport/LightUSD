@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include "../crate/crate-limits.hh"
 #include "../layer/layer.hh"
 #include "expression-variables.hh"
 #include "../parser/ascii-parser.hh"
@@ -69,6 +70,8 @@ struct CompositionOptions {
   size_t max_layer_memory = 0;
   size_t max_array_elements = size_t(16) * 1024 * 1024;
   size_t max_archive_entries = security_policy::kDefaultArchiveEntryCount;
+  // USDC structural table-count limits for every crate layer loaded.
+  CrateLimits usdc_limits = {};
   ParseOptions usda_parse_options = {};
 
   // Strongest variant selections for flattening. Keys are either a bare

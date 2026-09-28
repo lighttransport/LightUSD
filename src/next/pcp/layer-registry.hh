@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include "../crate/crate-limits.hh"
 #include "../layer/layer.hh"
 #include "../parser/ascii-parser.hh"
 #include "../resolver/asset-resolver.hh"
@@ -39,6 +40,9 @@ struct LayerLoadOptions {
   size_t max_memory = security_policy::kDefaultInputLimitBytes;
   /// Maximum elements in one USDC value array.
   size_t max_array_elements = size_t(16) * 1024 * 1024;
+  /// USDC structural table-count limits (tokens, fields, fieldset indices,
+  /// specs, paths, ...) applied to every crate load.
+  CrateLimits usdc_limits = {};
   /// Maximum number of entries accepted in an external USDZ package.
   size_t max_archive_entries = security_policy::kDefaultArchiveEntryCount;
 

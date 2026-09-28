@@ -118,6 +118,9 @@ bool FlattenLayer(std::unique_ptr<Layer> root_owner, size_t input_bytes,
     AssetResolver& res = opts.resolver ? *opts.resolver : fallback_resolver;
     pcp::CompositionOptions pcp_opts;
     pcp_opts.num_threads = opts.compose_num_threads;
+    pcp_opts.max_array_elements = opts.composition.max_array_elements;
+    pcp_opts.max_archive_entries = opts.composition.max_archive_entries;
+    pcp_opts.usdc_limits = opts.composition.usdc_limits;
     // Self-contained flatten (no residual native-instance prototypes).
     pcp_opts.instance_flatten_mode = pcp::InstanceFlattenMode::Holder;
     Stage stage;
@@ -416,6 +419,7 @@ bool FlattenUSDMemoryImpl(const std::string& key, std::string&& data,
   if (lopts.max_memory == 0) lopts.max_memory = opts.read.max_memory;
   lopts.usda_parse_options = opts.composition.usda_parse_options;
   lopts.max_array_elements = opts.composition.max_array_elements;
+  lopts.usdc_limits = opts.composition.usdc_limits;
   lopts.max_archive_entries = opts.composition.max_archive_entries;
   lopts.parse_num_threads = opts.composition.usda_parse_options.num_threads;
   std::string warn;
@@ -456,6 +460,7 @@ bool FlattenUSDMemoryImplNonOwned(const std::string& key, const uint8_t* data,
   if (lopts.max_memory == 0) lopts.max_memory = opts.read.max_memory;
   lopts.usda_parse_options = opts.composition.usda_parse_options;
   lopts.max_array_elements = opts.composition.max_array_elements;
+  lopts.usdc_limits = opts.composition.usdc_limits;
   lopts.max_archive_entries = opts.composition.max_archive_entries;
   lopts.parse_num_threads = opts.composition.usda_parse_options.num_threads;
   std::string warn;
@@ -523,6 +528,7 @@ bool FlattenUSDFileToUSDC(const std::string& filename, std::vector<uint8_t>& out
     layer_load_opts.max_memory = opts.read.max_memory;
     layer_load_opts.usda_parse_options = opts.composition.usda_parse_options;
     layer_load_opts.max_array_elements = opts.composition.max_array_elements;
+    layer_load_opts.usdc_limits = opts.composition.usdc_limits;
     layer_load_opts.max_archive_entries = opts.composition.max_archive_entries;
     layer_load_opts.parse_num_threads =
         opts.composition.usda_parse_options.num_threads;
@@ -546,6 +552,7 @@ bool FlattenUSDFileToUSDC(const std::string& filename, std::vector<uint8_t>& out
   if (lopts.max_memory == 0) lopts.max_memory = opts.read.max_memory;
   lopts.usda_parse_options = opts.composition.usda_parse_options;
   lopts.max_array_elements = opts.composition.max_array_elements;
+  lopts.usdc_limits = opts.composition.usdc_limits;
   lopts.max_archive_entries = opts.composition.max_archive_entries;
   lopts.parse_num_threads = opts.composition.usda_parse_options.num_threads;
   std::string warn;
@@ -581,6 +588,7 @@ bool FlattenUSDFileToUSDCToSink(const std::string& filename,
     layer_load_opts.max_memory = opts.read.max_memory;
     layer_load_opts.usda_parse_options = opts.composition.usda_parse_options;
     layer_load_opts.max_array_elements = opts.composition.max_array_elements;
+    layer_load_opts.usdc_limits = opts.composition.usdc_limits;
     layer_load_opts.max_archive_entries = opts.composition.max_archive_entries;
     layer_load_opts.parse_num_threads =
         opts.composition.usda_parse_options.num_threads;
@@ -604,6 +612,7 @@ bool FlattenUSDFileToUSDCToSink(const std::string& filename,
   if (lopts.max_memory == 0) lopts.max_memory = opts.read.max_memory;
   lopts.usda_parse_options = opts.composition.usda_parse_options;
   lopts.max_array_elements = opts.composition.max_array_elements;
+  lopts.usdc_limits = opts.composition.usdc_limits;
   lopts.max_archive_entries = opts.composition.max_archive_entries;
   lopts.parse_num_threads = opts.composition.usda_parse_options.num_threads;
   std::string warn;

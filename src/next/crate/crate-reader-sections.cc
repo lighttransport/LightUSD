@@ -744,8 +744,8 @@ bool CrateReader::Impl::ReadFieldsets() {
   }
 
   // fieldset_indices_ entries index into fields_; bound the count to avoid a
-  // huge allocation from a malformed value (no dedicated max, reuse max_fields).
-  if (num_fieldsets > options_.max_fields) {
+  // huge allocation from a malformed value.
+  if (num_fieldsets > options_.max_fieldset_indices) {
     AddError("Too many fieldset indices");
     return false;
   }

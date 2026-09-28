@@ -147,6 +147,7 @@ std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
   if (is_usdc) {
     USDCLoadOptions lopts;
     lopts.crate_options.max_memory = options.max_memory;
+    static_cast<CrateLimits&>(lopts.crate_options) = options.usdc_limits;
     lopts.crate_options.max_array_elements = options.max_array_elements;
     lopts.crate_options.progress_callback = options.progress_callback;
     lopts.crate_options.num_threads = options.parse_num_threads;
@@ -280,6 +281,7 @@ std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
     lopts.crate_options.strict_aousd_conformance =
         options.strict_aousd_conformance;
     lopts.crate_options.max_memory = options.max_memory;
+    static_cast<CrateLimits&>(lopts.crate_options) = options.usdc_limits;
     lopts.crate_options.max_array_elements = options.max_array_elements;
     lopts.crate_options.progress_callback = options.progress_callback;
     lopts.crate_options.num_threads = options.parse_num_threads;
@@ -668,6 +670,7 @@ std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
   if (size >= 8 && std::memcmp(data, "PXR-USDC", 8) == 0) {
     USDCLoadOptions lopts;
     lopts.crate_options.max_memory = options.max_memory;
+    static_cast<CrateLimits&>(lopts.crate_options) = options.usdc_limits;
     lopts.crate_options.max_array_elements = options.max_array_elements;
     lopts.crate_options.progress_callback = options.progress_callback;
     lopts.crate_options.num_threads = options.parse_num_threads;
@@ -731,6 +734,7 @@ std::shared_ptr<Layer> LoadLayerFromMemoryOwned(const std::string &key,
   if (data.size() >= 8 && std::memcmp(data.data(), "PXR-USDC", 8) == 0) {
     USDCLoadOptions lopts;
     lopts.crate_options.max_memory = options.max_memory;
+    static_cast<CrateLimits&>(lopts.crate_options) = options.usdc_limits;
     lopts.crate_options.max_array_elements = options.max_array_elements;
     lopts.crate_options.progress_callback = options.progress_callback;
     lopts.crate_options.num_threads = options.parse_num_threads;

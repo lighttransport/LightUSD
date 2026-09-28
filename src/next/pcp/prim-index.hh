@@ -13,6 +13,7 @@
 
 #pragma once
 
+#include "../crate/crate-limits.hh"
 #include "../parser/ascii-parser.hh"
 #include "arc-types.hh"
 #include "../composition/expression-variables.hh"
@@ -220,6 +221,8 @@ struct CompositionOptions {
   size_t max_layer_memory = 0;
   size_t max_array_elements = size_t(16) * 1024 * 1024;
   size_t max_archive_entries = security_policy::kDefaultArchiveEntryCount;
+  // USDC structural table-count limits forwarded to every crate layer load.
+  CrateLimits usdc_limits = {};
 
   // USDC backing policy for every file-backed layer loaded by PCP. With both
   // enabled, lazy array Values retain shared mmap-backed CrateDataSources as
