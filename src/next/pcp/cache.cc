@@ -407,8 +407,14 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
     }
   }
   if (!needs_composition) {
-    if (report && !root_identifier.empty()) {
-      report->layer_dependencies.push_back(root_identifier);
+    if (report) {
+      // Match the composed path's overwrite semantics when callers reuse a
+      // report object across loads.
+      report->layer_dependencies.clear();
+      report->issues.clear();
+      if (!root_identifier.empty()) {
+        report->layer_dependencies.push_back(root_identifier);
+      }
     }
     out_stage->SetRootLayer(std::move(*root_layer));
     return true;
