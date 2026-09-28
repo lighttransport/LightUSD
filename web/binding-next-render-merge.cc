@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-next-render.hh"
+#include <algorithm>
 #include "tydra/next/render-extract.hh"
 #include "next/schema/geom-xform.hh"
 #include "next/schema/usd-shade.hh"
@@ -57,6 +58,73 @@ void RenderStream::transformNormal_(const std::array<double, 16> &m,
     *z = static_cast<float>(tz);
   }
 
+bool RenderStream::mergePrimvarSignature_(int source_index,
+                                          std::string* signature) const {
+    std::vector<std::string> parts;
+    for (const MeshOnlyPrimvar& pv : *sourcePrimvars_(source_index)) {
+      if (pv.element_size != 1 || !pv.value) return false;
+      if (pv.interpolation != tr::Interpolation::Vertex &&
+          pv.interpolation != tr::Interpolation::Varying &&
+          pv.interpolation != tr::Interpolation::Constant) return false;
+      parts.push_back(pv.name + ":" + std::to_string(static_cast<int>(pv.format)) +
+                      ":" + std::to_string(pv.components));
+    }
+    std::sort(parts.begin(), parts.end());
+    signature->clear();
+    for (const std::string& p : parts) {
+      if (!signature->empty()) *signature += "|";
+      *signature += p;
+    }
+    return true;
+  }
+
+bool RenderStream::expandMergePrimvars_(int source_index,
+                                        std::vector<MergedPrimvar>* out) const {
+    std::vector<const MeshOnlyPrimvar*> sorted;
+    for (const MeshOnlyPrimvar& pv : *sourcePrimvars_(source_index)) sorted.push_back(&pv);
+    std::sort(sorted.begin(), sorted.end(),
+              [](const MeshOnlyPrimvar* a, const MeshOnlyPrimvar* b) {
+                return a->name < b->name;
+              });
+    const size_t vertices = s_point_source_indices_.size();
+    size_t bytes = 0;
+    for (const MeshOnlyPrimvar* pv : sorted) bytes += vertices * pv->components * 4;
+    if (!tr::ProbeAlloc(bytes)) return false;
+    out->clear();
+    out->reserve(sorted.size());
+    for (const MeshOnlyPrimvar* pv : sorted) {
+      MergedPrimvar m;
+      m.name = pv->name;
+      m.format = pv->format;
+      m.components = pv->components;
+      const std::vector<float>* floats = pv->value->as_float_array();
+      const std::vector<double>* doubles = pv->value->as_double_array();
+      const std::vector<int32_t>* ints = pv->value->as_int_array();
+      const size_t elements = pv->scalar_count / pv->components;
+      const std::vector<int32_t>* indices =
+          pv->indices && !pv->indices->empty() ? pv->indices : nullptr;
+      const bool constant = pv->interpolation == tr::Interpolation::Constant;
+      const size_t comps = pv->components;
+      if (ints) m.ints.assign(vertices * comps, 0);
+      else m.floats.assign(vertices * comps, 0.0f);
+      for (size_t v = 0; v < vertices; ++v) {
+        size_t e = constant ? 0 : s_point_source_indices_[v];
+        if (indices) {
+          e = e < indices->size() ? static_cast<size_t>((*indices)[e]) : elements;
+        }
+        if (e >= elements) continue;  // out-of-range stays zero
+        for (size_t c = 0; c < comps; ++c) {
+          const size_t src = e * comps + c;
+          if (ints) m.ints[v * comps + c] = (*ints)[src];
+          else if (floats) m.floats[v * comps + c] = (*floats)[src];
+          else if (doubles) m.floats[v * comps + c] = static_cast<float>((*doubles)[src]);
+        }
+      }
+      out->push_back(std::move(m));
+    }
+    return true;
+  }
+
 void RenderStream::flushAccumulator_(MergeAccumulator *acc) {
     if (!acc || acc->source_count == 0) return;
     if (acc->source_count == 1) {
@@ -69,6 +137,7 @@ void RenderStream::flushAccumulator_(MergeAccumulator *acc) {
       acc->mesh = OutputMesh{};
       acc->source_count = 0;
       acc->first_source_index = -1;
+      acc->primvar_signature.clear();
       return;
     }
     acc->mesh.merged = true;
@@ -81,6 +150,7 @@ void RenderStream::flushAccumulator_(MergeAccumulator *acc) {
     acc->mesh = OutputMesh{};
     acc->source_count = 0;
     acc->first_source_index = -1;
+    acc->primvar_signature.clear();
   }
 
 bool RenderStream::appendToAccumulator_(const lightusd::next::UsdPrim &prim,
@@ -188,10 +258,14 @@ void RenderStream::buildOptimizedOutputs_() {
       const double material_start_ms = emscripten_get_now();
       const int32_t material_id = materialIdForBoundPrim_(prim);
       stats_.material_ms += emscripten_get_now() - material_start_ms;
-      // Output primvars refer to one source vertex/index domain. Keep these
-      // meshes separate until a merged-primvar remap is explicitly supported.
+      // Custom primvars merge when every one expands per output vertex
+      // (vertex/varying/constant); uniform/faceVarying domains and GeomSubset
+      // meshes stay separate.
+      const bool has_custom_primvars = !sourcePrimvars_(static_cast<int>(i))->empty();
+      std::string primvar_signature;
       if (hasGeomSubset_(prim) ||
-          !sourcePrimvars_(static_cast<int>(i))->empty()) {
+          (has_custom_primvars &&
+           !mergePrimvarSignature_(static_cast<int>(i), &primvar_signature))) {
         OutputMesh out;
         out.merged = false;
         out.source_index = static_cast<int>(i);
@@ -224,7 +298,8 @@ void RenderStream::buildOptimizedOutputs_() {
       const uint8_t purpose = purposeCode_(prim);
       key << material_id << "|soup=" << soup << "|n=" << has_normals
           << "|uv=" << has_uv << "|double=" << double_sided
-          << "|purpose=" << static_cast<int>(purpose);
+          << "|purpose=" << static_cast<int>(purpose)
+          << "|primvars=" << primvar_signature;
       if (!mesh_merge_bake_transform_) key << "|m=" << matrixKey_(world);
       const auto inserted = groups.try_emplace(key.str());
       if (inserted.second) group_order.push_back(inserted.first->first);
@@ -234,6 +309,7 @@ void RenderStream::buildOptimizedOutputs_() {
            acc.mesh.material_id != material_id ||
            acc.mesh.double_sided != double_sided ||
            acc.mesh.purpose != purpose ||
+           acc.primvar_signature != primvar_signature ||
            (!mesh_merge_bake_transform_ &&
             !sameMatrix_(acc.mesh.world_matrix, world)))) {
         flushAccumulator_(&acc);
@@ -246,8 +322,13 @@ void RenderStream::buildOptimizedOutputs_() {
           (next_vertices > kMaxGroupVertices || next_indices > kMaxGroupIndices)) {
         flushAccumulator_(&acc);
       }
+      std::vector<MergedPrimvar> merged_primvars;
+      const bool primvars_ok =
+          !has_custom_primvars ||
+          expandMergePrimvars_(static_cast<int>(i), &merged_primvars);
       const double append_start_ms = emscripten_get_now();
-      if (!appendToAccumulator_(prim, static_cast<int>(i), material_id,
+      if (!primvars_ok ||
+          !appendToAccumulator_(prim, static_cast<int>(i), material_id,
                                 double_sided, soup, &acc)) {
         stats_.merge_append_ms += emscripten_get_now() - append_start_ms;
         // Heap too full to merge: flush the group and emit this mesh unmerged.
@@ -259,6 +340,18 @@ void RenderStream::buildOptimizedOutputs_() {
         stats_.skipped_merge_count++;
       } else {
         acc.mesh.purpose = purpose;
+        if (acc.source_count == 1) {
+          acc.mesh.primvars = std::move(merged_primvars);
+          acc.primvar_signature = primvar_signature;
+        } else {
+          for (size_t k = 0; k < merged_primvars.size() &&
+                             k < acc.mesh.primvars.size(); ++k) {
+            MergedPrimvar& dst = acc.mesh.primvars[k];
+            MergedPrimvar& src = merged_primvars[k];
+            dst.floats.insert(dst.floats.end(), src.floats.begin(), src.floats.end());
+            dst.ints.insert(dst.ints.end(), src.ints.begin(), src.ints.end());
+          }
+        }
         stats_.merge_append_ms += emscripten_get_now() - append_start_ms;
       }
     }

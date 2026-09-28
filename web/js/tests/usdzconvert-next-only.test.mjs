@@ -101,7 +101,7 @@ const CUSTOM_PRIMVAR_USDA = SCENE_USDA.replace(
             interpolation = "vertex"
         )
         texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)]`);
-const TWO_MESH_PRIMVAR_USDA = (withPrimvars) => `#usda 1.0
+const TWO_MESH_PRIMVAR_USDA = (withPrimvars, interpolation = '', onlyFirst = false) => `#usda 1.0
 def Xform "World"
 {
     def Mesh "A"
@@ -109,14 +109,14 @@ def Xform "World"
         int[] faceVertexCounts = [3]
         int[] faceVertexIndices = [0, 1, 2]
         point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
-        ${withPrimvars ? 'float[] primvars:heat = [1, 2, 3]' : ''}
+        ${withPrimvars ? `float[] primvars:heat = [1, 2, 3]${interpolation ? ` (interpolation = "${interpolation}")` : ''}` : ''}
     }
     def Mesh "B"
     {
         int[] faceVertexCounts = [3]
         int[] faceVertexIndices = [0, 1, 2]
         point3f[] points = [(2, 0, 0), (3, 0, 0), (2, 1, 0)]
-        ${withPrimvars ? 'float[] primvars:heat = [4, 5, 6]' : ''}
+        ${withPrimvars && !onlyFirst ? `float[] primvars:heat = [4, 5, 6]${interpolation ? ` (interpolation = "${interpolation}")` : ''}` : ''}
     }
 }
 `;
@@ -887,7 +887,7 @@ await testAsync('next low-memory render retains custom primvar buffers', async (
   }
 });
 
-await testAsync('next mesh merge preserves source custom primvars', async () => {
+await testAsync('next mesh merge expands vertex custom primvars', async () => {
   for (const meshOnly of [false, true]) {
     const stream = new native.RenderStream();
     try {
@@ -896,16 +896,29 @@ await testAsync('next mesh merge preserves source custom primvars', async () => 
       const plain = stream.begin(new TextEncoder().encode(TWO_MESH_PRIMVAR_USDA(false)));
       assert.ok(plain?.success, plain?.error || stream.error());
       assert.equal(plain.meshCount, 1, 'plain meshes should still merge');
+      // Vertex primvars share the merged vertex domain: one element per
+      // output vertex, no indices.
       const custom = stream.begin(new TextEncoder().encode(TWO_MESH_PRIMVAR_USDA(true)));
       assert.ok(custom?.success, custom?.error || stream.error());
-      assert.equal(custom.meshCount, 2, 'custom primvar domains must stay separate');
-      assert.ok(stream.getStats().skippedMergeMeshes >= 2);
-      const values = Array.from({length: custom.meshCount}, (_, meshId) => {
-        assert.equal(stream.meshPrimvarCount(meshId), 1);
-        assert.equal(stream.meshPrimvarName(meshId, 0), 'heat');
-        return Array.from(new Float32Array(stream.meshPrimvarBuffer(meshId, 0).buffer));
-      });
-      assert.deepEqual(values, [[1, 2, 3], [4, 5, 6]]);
+      assert.equal(custom.meshCount, 1, 'vertex custom primvars merge');
+      assert.equal(stream.meshPrimvarCount(0), 1);
+      assert.equal(stream.meshPrimvarName(0, 0), 'heat');
+      assert.equal(stream.meshPrimvarInterpolation(0, 0), 2);
+      assert.equal(stream.meshPrimvarHasIndices(0, 0), 0);
+      assert.equal(stream.meshPrimvarElementCount(0, 0), stream.getMesh(0).vertexCount);
+      assert.deepEqual(Array.from(new Float32Array(stream.meshPrimvarBuffer(0, 0).buffer)),
+        [1, 2, 3, 4, 5, 6]);
+      const primvarsJSON = JSON.parse(stream.getMeshPrimvarsJSON(0));
+      assert.equal(primvarsJSON.primvars.heat.interpolation, 'vertex');
+      assert.deepEqual(primvarsJSON.primvars.heat.value.value, [1, 2, 3, 4, 5, 6]);
+      // Face-varying domains and differing primvar sets stay separate.
+      for (const [source, reason] of [
+        [TWO_MESH_PRIMVAR_USDA(true, 'faceVarying'), 'faceVarying primvars stay separate'],
+        [TWO_MESH_PRIMVAR_USDA(true, '', true), 'different primvar sets do not merge']]) {
+        const separate = stream.begin(new TextEncoder().encode(source));
+        assert.ok(separate?.success, separate?.error || stream.error());
+        assert.equal(separate.meshCount, 2, reason);
+      }
     } finally {
       stream.end();
       stream.delete();

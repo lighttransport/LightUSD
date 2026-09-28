@@ -578,10 +578,14 @@ subset, and blend-shape calls. C++ geometry/object assembly and dispatch case
 material-subset, and sparse blend-shape fixtures pass on wasm32 and memory64.
 Render-enabled low-memory conversion now retains custom primvars separately
 from converted geometry. Mesh-only workers use a lazy Stage-backed custom
-primvar catalog and bounded copies. Mesh merge leaves sources with custom
-primvars separate, preserving their indexed value domains; ordinary meshes
-still merge. Combining custom streams into one merged output remains a future
-optimization, not a prerequisite for retaining their data.
+primvar catalog and bounded copies. Mesh merge now also merges sources with custom primvars when every primvar
+is vertex, varying or constant (elementSize 1) and the sources share the same
+primvar set (name, format, components; part of the merge key). Each source's
+values are expanded per output vertex through the render-vertex to
+source-point map, with indices and constants resolved. The merged output
+exposes them as un-indexed vertex primvars in its own vertex domain. Uniform
+and faceVarying primvars (whose values welding could not keep apart),
+elementSize > 1, and GeomSubset meshes stay separate.
 In the same next-only wasm32 build tree, the mesh-output object changed from
 59,618 to 47,530 bytes (20.3% smaller); the linked `.wasm` stayed effectively
 flat at 1,665,684 to 1,665,666 bytes. These are object/file sizes, not a

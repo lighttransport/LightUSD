@@ -161,8 +161,18 @@ RenderStream::sourcePrimvars_(int source_index) const {
   return &catalog;
 }
 
+const RenderStream::OutputMesh* RenderStream::mergedOutput_(int mesh_id) const {
+  if (!mesh_merge_ || mesh_id < 0 ||
+      static_cast<size_t>(mesh_id) >= outputs_.size()) return nullptr;
+  const OutputMesh& output = outputs_[static_cast<size_t>(mesh_id)];
+  return output.merged ? &output : nullptr;
+}
+
 int RenderStream::meshPrimvarCount(int mesh_id) const {
     if (!loaded_ || mesh_id < 0 || mesh_id >= meshCount()) return -1;
+    if (const OutputMesh* merged = mergedOutput_(mesh_id)) {
+      return static_cast<int>(merged->primvars.size());
+    }
     const tr::RenderMesh* mesh = sourceRenderMesh_(mesh_id);
     const size_t count = mesh ? mesh->primvars.size() :
         mesh_only_ ? meshOnlyPrimvars_(mesh_id)->size() : 0;
@@ -174,6 +184,20 @@ int RenderStream::meshPrimvarCount(int mesh_id) const {
 int RenderStream::meshPrimvarField(int mesh_id, int primvar_id, uint8_t field) const {
     const int count = meshPrimvarCount(mesh_id);
     if (count < 0 || primvar_id < 0 || primvar_id >= count || field > 4) return -1;
+    if (const OutputMesh* merged = mergedOutput_(mesh_id)) {
+      const MergedPrimvar& pv = merged->primvars[static_cast<size_t>(primvar_id)];
+      const size_t scalars = pv.format == tr::VertexFormat::Int ? pv.ints.size()
+                                                               : pv.floats.size();
+      switch (field) {
+        case 0: return static_cast<int>(pv.format);
+        case 1: return static_cast<int>(tr::Interpolation::Vertex);
+        case 2: return 0;
+        case 3: return scalars / pv.components >
+                       static_cast<size_t>((std::numeric_limits<int>::max)())
+                   ? -1 : static_cast<int>(scalars / pv.components);
+        default: return 1;
+      }
+    }
     const tr::RenderMesh* mesh = sourceRenderMesh_(mesh_id);
     if (!mesh && mesh_only_) {
       const MeshOnlyPrimvar& pv =
@@ -215,9 +239,12 @@ int RenderStream::meshPrimvarNameCopy(int mesh_id, int primvar_id,
                                       uint8_t* out, uint32_t cap) const {
     const int count = meshPrimvarCount(mesh_id);
     if (count < 0 || primvar_id < 0 || primvar_id >= count) return -1;
-    const tr::RenderMesh* mesh = sourceRenderMesh_(mesh_id);
-    if (!mesh && !mesh_only_) return -1;
-    const std::string& name = mesh
+    const OutputMesh* merged = mergedOutput_(mesh_id);
+    const tr::RenderMesh* mesh = merged ? nullptr : sourceRenderMesh_(mesh_id);
+    if (!merged && !mesh && !mesh_only_) return -1;
+    const std::string& name = merged
+        ? merged->primvars[static_cast<size_t>(primvar_id)].name
+        : mesh
         ? mesh->primvars[static_cast<size_t>(primvar_id)].name
         : (*meshOnlyPrimvars_(mesh_id))[static_cast<size_t>(primvar_id)].name;
     if (name.size() > static_cast<size_t>((std::numeric_limits<int>::max)())) return -1;
@@ -231,6 +258,19 @@ int RenderStream::meshPrimvarBufferCopy(int mesh_id, int primvar_id, uint8_t kin
                                         uint8_t* out, uint32_t cap) const {
     const int count = meshPrimvarCount(mesh_id);
     if (count < 0 || primvar_id < 0 || primvar_id >= count || kind > 1) return -1;
+    if (const OutputMesh* merged = mergedOutput_(mesh_id)) {
+      const MergedPrimvar& pv = merged->primvars[static_cast<size_t>(primvar_id)];
+      if (kind == 1) return 0;  // expanded per vertex: no indices
+      const bool is_int = pv.format == tr::VertexFormat::Int;
+      const size_t scalars = is_int ? pv.ints.size() : pv.floats.size();
+      if (scalars > static_cast<size_t>((std::numeric_limits<int>::max)()) / 4) return -1;
+      const int required = static_cast<int>(scalars * 4);
+      if (!out || cap < static_cast<uint32_t>(required) || !required) return required;
+      std::memcpy(out, is_int ? static_cast<const void*>(pv.ints.data())
+                              : static_cast<const void*>(pv.floats.data()),
+                  static_cast<size_t>(required));
+      return required;
+    }
     const tr::RenderMesh* mesh = sourceRenderMesh_(mesh_id);
     if (!mesh && mesh_only_) {
       const MeshOnlyPrimvar& pv =

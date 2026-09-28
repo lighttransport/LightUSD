@@ -573,6 +573,17 @@ class RenderStream {
     TextureMeta opacity_meta;
   };
 
+  // A custom primvar of a merged output, expanded to one element per output
+  // vertex (the sources' vertex/varying/constant values resolved through
+  // their indices), so it shares the merged geometry's vertex domain.
+  struct MergedPrimvar {
+    std::string name;
+    tr::VertexFormat format = tr::VertexFormat::Float;
+    uint32_t components = 1;
+    std::vector<float> floats;
+    std::vector<int32_t> ints;  // used when format == Int
+  };
+
   struct OutputMesh {
     bool merged = false;
     int source_index = -1;
@@ -589,6 +600,7 @@ class RenderStream {
     uint8_t purpose = 0;
     std::array<double, 16> local_matrix;
     std::array<double, 16> world_matrix;
+    std::vector<MergedPrimvar> primvars;  // merged outputs only
   };
 
   template <typename Chunked>
@@ -750,7 +762,16 @@ class RenderStream {
     OutputMesh mesh;
     size_t source_count = 0;
     int first_source_index = -1;
+    std::string primvar_signature;
   };
+  // Custom primvars that can share a merged vertex domain: every entry is
+  // vertex/varying/constant with elementSize 1. Fills the sorted
+  // name:format:components signature used in the merge key.
+  bool mergePrimvarSignature_(int source_index, std::string* signature) const;
+  // Expand a source's custom primvars per output vertex of the current
+  // scratch mesh (via s_point_source_indices_), sorted by name.
+  bool expandMergePrimvars_(int source_index, std::vector<MergedPrimvar>* out) const;
+  const OutputMesh* mergedOutput_(int mesh_id) const;
 
   static size_t triangleIndexCount_(const std::vector<uint32_t> &indices,
                                     const std::vector<float> &points) {
