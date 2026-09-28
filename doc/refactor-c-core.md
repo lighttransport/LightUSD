@@ -653,6 +653,43 @@ Base64 payloads keep legacy's 64 MiB / 48 MiB limits.
 - `next-mcp-server.test.mjs` checks, on wasm32 and memory64, that the tool
   list equals legacy's minus the exclusions, plus behavior and hardening.
 
+#### MS-Human-700: MJCF→USD size and render cost
+
+MS-Human-700 had 25.9M render vertices in the browser (~980 MB of vertex
+buffers). There were three causes.
+
+**1. Site spheres (95% of the vertices).** 1593 MJCF sites are tiny analytic
+`Sphere` prims. The render stream tessellated each into a level-4 icosphere
+and emitted it as a 15360-corner soup, because the generated normals and
+UVs are per corner.
+- **Fix:** RenderStream now welds analytic-shape corners that agree on
+  (point, normal, uv) into indexed meshes; seams and hard edges stay split.
+- **Result:** sites 24.5M → 4.1M vertices; scene 25.9M → 4.9M.
+
+**2. Bone meshes baked as soups.** The MJCF converter expanded every STL
+corner, and OBJ files lost their own indexing.
+- **Fix:** the native `urdf-to-usd` welds STL positions as MuJoCo does
+  (repeated-vertex removal) and computes MuJoCo-style vertex normals
+  (area-weighted, excluding faces beyond acos(0.8) unless
+  `smoothnormal="true"`). OBJ keeps (v, vt) indexing.
+- **Result:** 1.04M STL corners → 174k vertices; native USDC 16.9 MB →
+  4.0 MB. The native converter now also builds on the next product.
+
+**3. next's URDF/MJCF converter trails legacy on MJCF-only scopes.** A
+payload comparison across Menagerie models found the gaps:
+- sites have no radius, transform, guide purpose or `MjcSiteAPI`, so they
+  become visible 1 m spheres;
+- tendon, actuator and equality relationships are missing;
+- there are no material networks;
+- `mjc:option`/`mjc:compiler` scene settings are missing;
+- fixed-joint frames are missing and joint limits are named differently;
+- lights and cameras have no transforms;
+- keyframes and sensors differ in naming.
+
+The web demo and CLI pin the legacy converter, so this does not affect them
+today. The port to next is in progress; its acceptance check is a zero diff
+against legacy output for every Menagerie payload.
+
 #### Gap triage before the default switch
 
 Of the 32 pinned behavior gaps, one was a functional gap and is now filled.
