@@ -650,6 +650,25 @@ if(LIGHTUSD_WITH_TYDRA)
     endif()
 endif()
 
+# Native MJCF -> USD converter on the next converter and writers (the same
+# source builds against legacy tydra in the legacy product).
+if(LIGHTUSD_NEXT_BUILD_EXAMPLES AND LIGHTUSD_WITH_TYDRA AND
+   NOT LIGHTUSD_NATIVE_PRODUCT STREQUAL "legacy")
+    add_executable(urdf-to-usd
+        ../../examples/urdf-to-usd/main.cc
+        ../external/pugixml.cpp)
+    target_include_directories(urdf-to-usd PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/..
+        ${CMAKE_CURRENT_SOURCE_DIR}/../external)
+    target_compile_definitions(urdf-to-usd PRIVATE LIGHTUSD_URDF_TO_USD_NEXT=1)
+    target_link_libraries(urdf-to-usd PRIVATE tydra_next lightusd_next)
+    set_target_properties(urdf-to-usd PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(urdf-to-usd PRIVATE -fexceptions)
+    endif()
+endif()
+
 # ============================================================
 # MCP server (next product): a public C API consumer that serves the MCP
 # tools/resources surface (tool schemas shared with the legacy server).

@@ -7,18 +7,27 @@
 
 #include "jsonhpp/nlohmann/json.hpp"
 #include "pugixml.hpp"
+// Built for the next product with LIGHTUSD_URDF_TO_USD_NEXT (next converter
+// and writers); otherwise for the legacy product.
+#if defined(LIGHTUSD_URDF_TO_USD_NEXT)
+#include "next/load-usd.hh"
+#include "next/stage/stage.hh"
+#include "next/writer/usdc-writer.hh"
+#include "next/writer/usdz-writer.hh"
+#include "tydra/next/urdf-to-usd.hh"
+#else
 #include "lightusd.hh"
 #include "tydra/urdf-to-usd.hh"
 #include "usda-writer.hh"
 #include "usdc-writer.hh"
-#include "str-util.hh"
-#include "io-util.hh"
+#endif
 
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -84,6 +93,7 @@ struct MeshAsset {
   std::array<double, 4> refquat{{1.0, 0.0, 0.0, 0.0}};  // <mesh refquat="..."> wxyz
   bool has_refpos = false;
   bool has_refquat = false;
+  bool smoothnormal = false;  // <mesh smoothnormal>; MuJoCo default false
 };
 
 struct MeshData {
@@ -239,9 +249,20 @@ bool ParseArgs(int argc, char **argv, Options *opts, std::string *err) {
   return true;
 }
 
+bool ParseInt(const std::string &text, int *out) {
+  if (text.empty()) return false;
+  char *end = nullptr;
+  const long v = std::strtol(text.c_str(), &end, 10);
+  if (!end || *end != '\0' || v < std::numeric_limits<int>::min() ||
+      v > std::numeric_limits<int>::max()) {
+    return false;
+  }
+  *out = static_cast<int>(v);
+  return true;
+}
+
 bool ReadFile(const fs::path &filename, std::string *text, std::string *err) {
-  std::ifstream ifs;
-  lightusd::io::OpenInputFile(&ifs, filename.string(), std::ios::binary);
+  fs::ifstream ifs(filename, std::ios::binary);
   if (!ifs) {
     if (err) *err = "Failed to open: " + filename.string();
     return false;
@@ -254,8 +275,7 @@ bool ReadFile(const fs::path &filename, std::string *text, std::string *err) {
 
 bool WriteFile(const fs::path &filename, const std::vector<uint8_t> &bytes,
                std::string *err) {
-  std::ofstream ofs;
-  lightusd::io::OpenOutputFile(&ofs, filename.string(), std::ios::binary);
+  fs::ofstream ofs(filename, std::ios::binary);
   if (!ofs) {
     if (err) *err = "Failed to open output: " + filename.string();
     return false;
@@ -706,9 +726,60 @@ float ReadFloatLE(const std::vector<uint8_t> &bytes, size_t offset) {
   return v;
 }
 
-bool LoadBinarySTL(const fs::path &filename, MeshData *mesh, std::string *err) {
-  std::ifstream ifs;
-  lightusd::io::OpenInputFile(&ifs, filename.string(), std::ios::binary);
+// MuJoCo removes repeated STL vertices and computes one normal per vertex:
+// face normals weighted by area, and (unless smoothnormal) a face whose normal
+// deviates from the vertex average by more than acos(0.8) is left out so
+// sharp edges stay sharp. Reproduce that so the USD mesh is indexed (an STL
+// is a triangle soup, ~6x the unique positions) and shades like MuJoCo.
+void ComputeMujocoVertexNormals(MeshData *mesh, bool smoothnormal) {
+  const size_t nv = mesh->positions.size() / 3;
+  const size_t nf = mesh->indices.size() / 3;
+  std::vector<double> acc(nv * 3, 0.0), face(nf * 3, 0.0);
+  auto P = [&](int32_t i, int c) { return double(mesh->positions[size_t(i) * 3 + c]); };
+  for (size_t f = 0; f < nf; ++f) {
+    const int32_t a = mesh->indices[f * 3], b = mesh->indices[f * 3 + 1],
+                  c = mesh->indices[f * 3 + 2];
+    const double e1[3] = {P(b, 0) - P(a, 0), P(b, 1) - P(a, 1), P(b, 2) - P(a, 2)};
+    const double e2[3] = {P(c, 0) - P(a, 0), P(c, 1) - P(a, 1), P(c, 2) - P(a, 2)};
+    const double n[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2],
+                         e1[0] * e2[1] - e1[1] * e2[0]};  // length = 2 * area
+    for (int k = 0; k < 3; ++k) face[f * 3 + k] = n[k];
+    for (int32_t v : {a, b, c}) {
+      for (int k = 0; k < 3; ++k) acc[size_t(v) * 3 + k] += n[k];
+    }
+  }
+  auto normalized = [](const double *v, double out[3]) {
+    const double len = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    for (int k = 0; k < 3; ++k) out[k] = len > 0.0 ? v[k] / len : 0.0;
+    return len > 0.0;
+  };
+  std::vector<double> sum = acc;
+  if (!smoothnormal) {
+    for (size_t f = 0; f < nf; ++f) {
+      double uf[3];
+      if (!normalized(&face[f * 3], uf)) continue;
+      for (int j = 0; j < 3; ++j) {
+        const size_t v = size_t(mesh->indices[f * 3 + j]);
+        double avg[3];
+        if (!normalized(&acc[v * 3], avg)) continue;
+        if (avg[0] * uf[0] + avg[1] * uf[1] + avg[2] * uf[2] < 0.8) {
+          for (int k = 0; k < 3; ++k) sum[v * 3 + k] -= face[f * 3 + k];
+        }
+      }
+    }
+  }
+  mesh->normals.assign(nv * 3, 0.0f);
+  for (size_t v = 0; v < nv; ++v) {
+    double n[3];
+    // Every face was excluded (a spike vertex): fall back to the full average.
+    if (!normalized(&sum[v * 3], n)) normalized(&acc[v * 3], n);
+    for (int k = 0; k < 3; ++k) mesh->normals[v * 3 + k] = float(n[k]);
+  }
+}
+
+bool LoadBinarySTL(const fs::path &filename, bool smoothnormal, MeshData *mesh,
+                   std::string *err) {
+  fs::ifstream ifs(filename, std::ios::binary);
   if (!ifs) {
     if (err) *err = "Failed to open STL: " + filename.string();
     return false;
@@ -727,32 +798,42 @@ bool LoadBinarySTL(const fs::path &filename, MeshData *mesh, std::string *err) {
     return false;
   }
 
-  mesh->positions.reserve(size_t(tri_count) * 9);
-  mesh->normals.reserve(size_t(tri_count) * 9);
+  // Weld bit-identical positions (MuJoCo's repeated-vertex removal).
+  struct Key {
+    uint32_t x, y, z;
+    bool operator<(const Key &o) const {
+      return x != o.x ? x < o.x : (y != o.y ? y < o.y : z < o.z);
+    }
+  };
+  std::map<Key, int32_t> welded;
+  mesh->positions.clear();
+  mesh->indices.clear();
   mesh->indices.reserve(size_t(tri_count) * 3);
-
   for (uint32_t i = 0; i < tri_count; i++) {
     const size_t base = 84ull + size_t(i) * 50ull;
-    const std::array<float, 3> n{{ReadFloatLE(bytes, base + 0),
-                                  ReadFloatLE(bytes, base + 4),
-                                  ReadFloatLE(bytes, base + 8)}};
     for (size_t v = 0; v < 3; v++) {
       const size_t vo = base + 12 + v * 12;
-      mesh->positions.push_back(ReadFloatLE(bytes, vo + 0));
-      mesh->positions.push_back(ReadFloatLE(bytes, vo + 4));
-      mesh->positions.push_back(ReadFloatLE(bytes, vo + 8));
-      mesh->normals.push_back(n[0]);
-      mesh->normals.push_back(n[1]);
-      mesh->normals.push_back(n[2]);
-      mesh->indices.push_back(static_cast<int32_t>(i * 3 + v));
+      Key key;
+      std::memcpy(&key.x, bytes.data() + vo + 0, 4);
+      std::memcpy(&key.y, bytes.data() + vo + 4, 4);
+      std::memcpy(&key.z, bytes.data() + vo + 8, 4);
+      auto found = welded.find(key);
+      if (found == welded.end()) {
+        const int32_t index = static_cast<int32_t>(mesh->positions.size() / 3);
+        found = welded.emplace(key, index).first;
+        mesh->positions.push_back(ReadFloatLE(bytes, vo + 0));
+        mesh->positions.push_back(ReadFloatLE(bytes, vo + 4));
+        mesh->positions.push_back(ReadFloatLE(bytes, vo + 8));
+      }
+      mesh->indices.push_back(found->second);
     }
   }
+  ComputeMujocoVertexNormals(mesh, smoothnormal);
   return true;
 }
 
 bool LoadOBJ(const fs::path &filename, MeshData *mesh, std::string *err) {
-  std::ifstream ifs;
-  lightusd::io::OpenInputFile(&ifs, filename.string());
+  fs::ifstream ifs(filename);
   if (!ifs) {
     if (err) *err = "Failed to open OBJ: " + filename.string();
     return false;
@@ -760,6 +841,7 @@ bool LoadOBJ(const fs::path &filename, MeshData *mesh, std::string *err) {
 
   std::vector<std::array<float, 3>> vertices;
   std::vector<std::array<float, 2>> texcoords;  // vt (u,v)
+  std::map<std::pair<int, int>, int32_t> corner_index;  // (v, vt) -> output vertex
   bool all_have_uv = true;  // drop UVs unless every face-vertex has a vt index
   std::string line;
   while (std::getline(ifs, line)) {
@@ -780,12 +862,11 @@ bool LoadOBJ(const fs::path &filename, MeshData *mesh, std::string *err) {
       std::string tok;
       while (ss >> tok) {
         const size_t slash = tok.find('/');
-        nonstd::optional<int> idx_opt = lightusd::atoi(slash == std::string::npos ? tok : tok.substr(0, slash));
-        if (!idx_opt.has_value()) {
+        int idx_val = 0;
+        if (!ParseInt(slash == std::string::npos ? tok : tok.substr(0, slash), &idx_val)) {
           std::cerr << "Invalid face vertex index: " << tok << "\n";
           return false;
         }
-        const int idx_val = idx_opt.value();
         face.push_back(idx_val > 0 ? idx_val - 1 : static_cast<int>(vertices.size()) + idx_val);
         // OBJ face token: v/vt/vn (vt optional). Parse the vt field.
         int vt = -1;
@@ -793,10 +874,9 @@ bool LoadOBJ(const fs::path &filename, MeshData *mesh, std::string *err) {
           const size_t slash2 = tok.find('/', slash + 1);
           const std::string vt_str = tok.substr(
               slash + 1, slash2 == std::string::npos ? std::string::npos : slash2 - slash - 1);
-          nonstd::optional<int> vt_opt = vt_str.empty() ? nonstd::nullopt : lightusd::atoi(vt_str);
-          if (vt_opt.has_value()) {
-            vt = vt_opt.value() > 0 ? vt_opt.value() - 1
-                                    : static_cast<int>(texcoords.size()) + vt_opt.value();
+          int vt_val = 0;
+          if (!vt_str.empty() && ParseInt(vt_str, &vt_val)) {
+            vt = vt_val > 0 ? vt_val - 1 : static_cast<int>(texcoords.size()) + vt_val;
           }
         }
         if (vt < 0) all_have_uv = false;
@@ -805,22 +885,29 @@ bool LoadOBJ(const fs::path &filename, MeshData *mesh, std::string *err) {
       for (size_t i = 1; i + 1 < face.size(); i++) {
         const int tri[3] = {face[0], face[i], face[i + 1]};
         const int triuv[3] = {face_uv[0], face_uv[i], face_uv[i + 1]};
+        bool valid = true;
         for (int k = 0; k < 3; k++) {
-          const int vi = tri[k];
-          if (vi < 0 || size_t(vi) >= vertices.size()) continue;
-          const auto &v = vertices[size_t(vi)];
-          mesh->positions.push_back(v[0]);
-          mesh->positions.push_back(v[1]);
-          mesh->positions.push_back(v[2]);
-          const int ti = triuv[k];
-          if (ti >= 0 && size_t(ti) < texcoords.size()) {
-            mesh->uvs.push_back(texcoords[size_t(ti)][0]);
-            mesh->uvs.push_back(texcoords[size_t(ti)][1]);
-          } else {
-            mesh->uvs.push_back(0.0f);
-            mesh->uvs.push_back(0.0f);
+          valid = valid && tri[k] >= 0 && size_t(tri[k]) < vertices.size();
+        }
+        if (!valid) continue;
+        for (int k = 0; k < 3; k++) {
+          // Keep the OBJ's own indexing: one output vertex per (v, vt) pair.
+          const int ti = (triuv[k] >= 0 && size_t(triuv[k]) < texcoords.size())
+                             ? triuv[k] : -1;
+          const std::pair<int, int> key{tri[k], ti};
+          auto found = corner_index.find(key);
+          if (found == corner_index.end()) {
+            const auto &v = vertices[size_t(tri[k])];
+            found = corner_index
+                        .emplace(key, static_cast<int32_t>(mesh->positions.size() / 3))
+                        .first;
+            mesh->positions.push_back(v[0]);
+            mesh->positions.push_back(v[1]);
+            mesh->positions.push_back(v[2]);
+            mesh->uvs.push_back(ti >= 0 ? texcoords[size_t(ti)][0] : 0.0f);
+            mesh->uvs.push_back(ti >= 0 ? texcoords[size_t(ti)][1] : 0.0f);
           }
-          mesh->indices.push_back(static_cast<int32_t>(mesh->indices.size()));
+          mesh->indices.push_back(found->second);
         }
       }
     }
@@ -829,9 +916,10 @@ bool LoadOBJ(const fs::path &filename, MeshData *mesh, std::string *err) {
   return !mesh->positions.empty();
 }
 
-bool LoadMeshFile(const fs::path &filename, MeshData *mesh, std::string *err) {
+bool LoadMeshFile(const fs::path &filename, bool smoothnormal, MeshData *mesh,
+                  std::string *err) {
   const std::string ext = ToLower(filename.extension().string());
-  if (ext == ".stl") return LoadBinarySTL(filename, mesh, err);
+  if (ext == ".stl") return LoadBinarySTL(filename, smoothnormal, mesh, err);
   if (ext == ".obj") return LoadOBJ(filename, mesh, err);
   if (err) *err = "Unsupported native mesh extension: " + ext;
   return false;
@@ -1024,6 +1112,7 @@ std::map<std::string, MeshAsset> CollectMujocoAssets(
         asset.refpos = ParseDouble3(Attr(mesh_node, "refpos"), {{0, 0, 0}});
         asset.has_refpos = true;
       }
+      asset.smoothnormal = Attr(mesh_node, "smoothnormal") == "true";
       const std::vector<double> rq = ParseDoubles(Attr(mesh_node, "refquat"));
       if (rq.size() >= 4) {
         asset.refquat = {{rq[0], rq[1], rq[2], rq[3]}};
@@ -1219,7 +1308,8 @@ bool BuildGeomPayload(const pugi::xml_node &geom_node, const AttrMap &cls,
       if (err) *err = "Missing MJCF mesh asset: " + mesh_name;
       return false;
     }
-    if (!LoadMeshFile(it->second.path, &payload->mesh, err)) return false;
+    if (!LoadMeshFile(it->second.path, it->second.smoothnormal, &payload->mesh, err))
+      return false;
 
     const std::array<double, 3> scale =
         ParseDouble3(Eff(geom_node, cls, "scale"), it->second.scale);
@@ -2594,7 +2684,44 @@ fs::path OutputPath(const Options &opts, const std::string &format) {
   return out;
 }
 
-bool SaveStage(const lightusd::Stage &stage, const fs::path &filename,
+#if defined(LIGHTUSD_URDF_TO_USD_NEXT)
+using OutputStage = lightusd::next::Stage;
+
+bool SaveStage(const OutputStage &stage, const fs::path &filename,
+               const std::string &format,
+               const std::map<std::string, std::vector<uint8_t>> &assets,
+               std::string *err) {
+  if (format == "usda") return lightusd::next::WriteUSDA(stage, filename.string(), err);
+  if (format == "usdc") return lightusd::next::WriteUSDC(stage, filename.string(), err);
+  // Embed referenced textures so the .usdz is self-contained; the archive
+  // names match the (relative) inputs:file references in the stage.
+  std::vector<uint8_t> usdc;
+  const lightusd::next::USDCWriteResult crate =
+      lightusd::next::WriteUSDCToMemory(usdc, stage);
+  if (!crate.success) {
+    if (err) *err = crate.error;
+    return false;
+  }
+  std::vector<uint8_t> usdz;
+  const lightusd::next::USDZWriteResult zip =
+      lightusd::next::WriteUSDZFromUSDCAndAssetsToMemory(usdz, usdc.data(), usdc.size(),
+                                                         assets);
+  if (!zip.success) {
+    if (err) *err = zip.error;
+    return false;
+  }
+  return WriteFile(filename, usdz, err);
+}
+
+bool ConvertPayload(const nlohmann::json &payload, OutputStage *stage,
+                    std::string *warn, std::string *err) {
+  return lightusd::tydra::next::ConvertURDFJsonToUSDStage(payload.dump(), stage,
+                                                          warn, err);
+}
+#else
+using OutputStage = lightusd::Stage;
+
+bool SaveStage(const OutputStage &stage, const fs::path &filename,
                const std::string &format,
                const std::map<std::string, std::vector<uint8_t>> &assets,
                std::string *err) {
@@ -2612,6 +2739,12 @@ bool SaveStage(const lightusd::Stage &stage, const fs::path &filename,
   if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
   return ok;
 }
+
+bool ConvertPayload(const nlohmann::json &payload, OutputStage *stage,
+                    std::string *warn, std::string *err) {
+  return lightusd::tydra::ConvertURDFJsonToUSDStage(payload.dump(), stage, warn, err);
+}
+#endif
 
 }  // namespace
 
@@ -2648,15 +2781,13 @@ int main(int argc, char **argv) {
   }
 
   if (!opts.dump_json_filename.empty()) {
-    std::ofstream ofs;
-    lightusd::io::OpenOutputFile(&ofs, opts.dump_json_filename);
+    fs::ofstream ofs(fs::path(opts.dump_json_filename));
     ofs << payload.dump(2) << "\n";
   }
 
-  lightusd::Stage stage;
+  OutputStage stage;
   std::string warn;
-  if (!lightusd::tydra::ConvertURDFJsonToUSDStage(payload.dump(), &stage, &warn,
-                                                  &err)) {
+  if (!ConvertPayload(payload, &stage, &warn, &err)) {
     std::cerr << "urdf-to-usd: " << err << "\n";
     return EXIT_FAILURE;
   }
