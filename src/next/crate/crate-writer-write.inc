@@ -12,6 +12,8 @@
   CrateWriteResult Write(const Layer& layer, const CrateWriteSink* sink = nullptr) {
     result_ = CrateWriteResult();
     required_version_minor_ = 0;
+    CratePhaseTimer timer(options_.enable_timing, "next_crate_write");
+    auto lap = [&](const char* phase) { timer.lap(phase); };
 
     const CrateVersion requested_version{options_.version_major,
                                          options_.version_minor,
@@ -98,11 +100,14 @@
       block_dedup_.reserve(nprop + nprim + 16);
     }
 
+    lap("setup");
     // Build tables from layer
     BuildTables(layer);
+    lap("tables");
 
     // Build fields, fieldsets, and specs from layer
     BuildFieldsAndSpecs(layer);
+    lap("fields_specs");
     if (!result_.error.empty()) {
       result_.success = false;
       return result_;
@@ -134,6 +139,7 @@
       }
     }
 
+    lap("path_tokens");
     // Write all sections and record offsets
     std::vector<CrateSection> sections;
 
@@ -147,6 +153,7 @@
 
     // Compute the VALUE section layout and patch field offsets (always needed).
     const uint64_t value_section_size = ComputeValueLayoutAndPatch();
+    lap("value_layout");
     if (value_section_size >
         static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
       result_.error = "Crate output exceeds addressable size";
@@ -192,21 +199,75 @@
       }
       EmitValueBytesToBuffer();
     }
+    lap("value_emit");
 
-    // TOKENS section
+    // Prepare the independent structural payloads (concurrently in a threaded
+    // build when the tables are large), then append every section in crate
+    // order below.
+    std::vector<uint8_t> tokens_payload;
+    std::vector<uint8_t> fields_payload;
+    std::vector<uint8_t> fieldsets_payload;
+    std::vector<uint8_t> specs_payload;
+    std::string fields_error;
+    bool fields_ok = true;
     {
+      auto build_tokens = [&]() { BuildTokensSectionPayload(&tokens_payload); };
+      auto build_fields = [&]() {
+        fields_ok = BuildFieldsSectionPayload(&fields_payload, &fields_error);
+      };
+      auto build_fieldsets = [&]() {
+        BuildFieldsetsSectionPayload(&fieldsets_payload);
+      };
+      auto build_specs = [&]() { BuildSpecsSectionPayload(&specs_payload); };
+      bool prepared = false;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+      if (ResolveThreads() > 1 &&
+          tokens_.size() + fields_.size() + fieldsets_.size() + specs_.size() >=
+              4096) {
+        std::thread th_fields(build_fields);
+        std::thread th_fieldsets(build_fieldsets);
+        std::thread th_specs(build_specs);
+        build_tokens();
+        th_fields.join();
+        th_fieldsets.join();
+        th_specs.join();
+        prepared = true;
+      }
+#endif
+      if (!prepared) {
+        build_tokens();
+        build_fields();
+        build_fieldsets();
+        build_specs();
+      }
+    }
+    if (!fields_ok) {
+      result_.error = fields_error;
+      result_.success = false;
+      return result_;
+    }
+    lap("structural_payloads");
+
+    // Append one prepared section payload and record its TOC entry.
+    auto append_section = [&](const char* name,
+                              const std::vector<uint8_t>& payload) -> bool {
       CrateSection sec;
       std::memset(sec.name, 0, sizeof(sec.name));
-      std::strncpy(sec.name, "TOKENS", sizeof(sec.name) - 1);
+      std::strncpy(sec.name, name, sizeof(sec.name) - 1);
       sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
-      WriteTokensSection();
+      if (!payload.empty()) writer_.write_bytes(payload.data(), payload.size());
       if (writer_.failed()) {
         result_.error = "Crate output exceeds configured file-size limit";
-        return result_;
+        return false;
       }
       sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
       sections.push_back(sec);
-    }
+      return true;
+    };
+
+    // TOKENS section
+    if (!append_section("TOKENS", tokens_payload)) return result_;
+    std::vector<uint8_t>().swap(tokens_payload);
 
     // STRINGS section
     {
@@ -215,6 +276,7 @@
       std::strncpy(sec.name, "STRINGS", sizeof(sec.name) - 1);
       sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
       WriteStringsSection();
+      lap("STRINGS");
       if (writer_.failed()) {
         result_.error = "Crate output exceeds configured file-size limit";
         return result_;
@@ -224,36 +286,15 @@
     }
 
     // FIELDS section (written before VALUE so we know the offsets)
-    {
-      CrateSection sec;
-      std::memset(sec.name, 0, sizeof(sec.name));
-      std::strncpy(sec.name, "FIELDS", sizeof(sec.name) - 1);
-      sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
-      WriteFieldsSection();
-      if (writer_.failed() || !result_.error.empty()) {
-        if (result_.error.empty())
-          result_.error = "Crate output exceeds configured file-size limit";
-        result_.success = false;
-        return result_;
-      }
-      sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
-      sections.push_back(sec);
+    if (!append_section("FIELDS", fields_payload)) {
+      result_.success = false;
+      return result_;
     }
+    std::vector<uint8_t>().swap(fields_payload);
 
     // FIELDSETS section
-    {
-      CrateSection sec;
-      std::memset(sec.name, 0, sizeof(sec.name));
-      std::strncpy(sec.name, "FIELDSETS", sizeof(sec.name) - 1);
-      sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
-      WriteFieldsetsSection();
-      if (writer_.failed()) {
-        result_.error = "Crate output exceeds configured file-size limit";
-        return result_;
-      }
-      sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
-      sections.push_back(sec);
-    }
+    if (!append_section("FIELDSETS", fieldsets_payload)) return result_;
+    std::vector<uint8_t>().swap(fieldsets_payload);
 
     // PATHS section
     {
@@ -262,6 +303,7 @@
       std::strncpy(sec.name, "PATHS", sizeof(sec.name) - 1);
       sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
       WritePathsSection();
+      lap("PATHS");
       if (writer_.failed()) {
         result_.error = "Crate output exceeds configured file-size limit";
         return result_;
@@ -271,19 +313,7 @@
     }
 
     // SPECS section
-    {
-      CrateSection sec;
-      std::memset(sec.name, 0, sizeof(sec.name));
-      std::strncpy(sec.name, "SPECS", sizeof(sec.name) - 1);
-      sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
-      WriteSpecsSection();
-      if (writer_.failed()) {
-        result_.error = "Crate output exceeds configured file-size limit";
-        return result_;
-      }
-      sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
-      sections.push_back(sec);
-    }
+    if (!append_section("SPECS", specs_payload)) return result_;
 
     // Write TOC at the end (VALUE section is NOT included in TOC)
     int64_t toc_offset = static_cast<int64_t>(buffer_.size() + struct_base);
@@ -325,6 +355,7 @@
       }
     }
 
+    lap("toc_stream");
     result_.success = true;
     result_.bytes_written =
         sink ? (64 + value_section_size + (buffer_.size() - 64)) : buffer_.size();

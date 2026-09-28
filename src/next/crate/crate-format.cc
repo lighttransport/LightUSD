@@ -667,6 +667,124 @@ bool ComputeDeltaCodeBytes(size_t count, size_t* out) {
 
 }  // namespace
 
+namespace {
+
+// Most frequent delta, ties broken toward the smallest value -- exactly what a
+// std::map<int32_t, count> scan in ascending key order picks (the former
+// implementation, which cost O(n log k) with a node allocation per distinct
+// delta: ~5 s for the ~30M-entry FIELDSETS table of a large
+// crate). Short inputs sort a copy; long ones tally deltas in
+// [-32768, 32767] (the overwhelmingly common case) in a flat table, scanning
+// only the touched range, and the rest in a hash map.
+class DeltaHistogram {
+ public:
+  explicit DeltaHistogram(size_t expected) : sorted_mode_(expected < 2048) {
+    if (sorted_mode_) {
+      few_.reserve(expected);
+    } else {
+      small_.assign(kSmallSpan, 0);
+    }
+  }
+  void add(int32_t d) {
+    if (sorted_mode_) {
+      few_.push_back(d);
+    } else if (d >= kSmallMin &&
+               d < kSmallMin + static_cast<int32_t>(kSmallSpan)) {
+      const size_t slot = static_cast<size_t>(d - kSmallMin);
+      ++small_[slot];
+      lo_ = std::min(lo_, slot);
+      hi_ = std::max(hi_, slot);
+    } else {
+      add_large(d);
+    }
+  }
+  int32_t most_common() {
+    int32_t best = 0;
+    size_t best_count = 0;
+    bool have = false;
+    auto consider = [&](int32_t d, size_t c) {
+      if (c == 0) return;
+      if (!have || c > best_count || (c == best_count && d < best)) {
+        best = d;
+        best_count = c;
+        have = true;
+      }
+    };
+    if (sorted_mode_) {
+      std::sort(few_.begin(), few_.end());
+      for (size_t i = 0; i < few_.size();) {
+        size_t j = i + 1;
+        while (j < few_.size() && few_[j] == few_[i]) ++j;
+        consider(few_[i], j - i);
+        i = j;
+      }
+      return best;
+    }
+    for (size_t i = lo_; i <= hi_ && i < kSmallSpan; ++i) {
+      consider(static_cast<int32_t>(i) + kSmallMin, small_[i]);
+    }
+    for (const LargeSlot& e : large_) {
+      if (e.key != kEmpty) consider(static_cast<int32_t>(e.key), e.count);
+    }
+    return best;
+  }
+
+ private:
+  static constexpr int32_t kSmallMin = -32768;
+  static constexpr size_t kSmallSpan = 65536;
+  bool sorted_mode_;
+  std::vector<int32_t> few_;
+  std::vector<uint32_t> small_;
+  size_t lo_ = kSmallSpan;
+  size_t hi_ = 0;
+
+  // Open-addressing (linear probe) tally for deltas outside the flat range:
+  // FIELDSETS/PATHS tables have millions of distinct large jumps, where a
+  // node-based map is dominated by allocation.
+  static constexpr int64_t kEmpty = INT64_MIN;
+  struct LargeSlot {
+    int64_t key;
+    size_t count;
+  };
+  std::vector<LargeSlot> large_;
+  size_t large_used_ = 0;
+  static size_t HashDelta(int32_t d) {
+    uint64_t x = static_cast<uint32_t>(d);
+    x *= 0x9E3779B97F4A7C15ull;
+    return static_cast<size_t>(x ^ (x >> 29));
+  }
+  void add_large(int32_t d) {
+    if ((large_used_ + 1) * 2 > large_.size()) {
+      std::vector<LargeSlot> old;
+      old.swap(large_);
+      large_.assign(old.empty() ? 1024 : old.size() * 2, LargeSlot{kEmpty, 0});
+      large_used_ = 0;
+      for (const LargeSlot& e : old) {
+        if (e.key != kEmpty) insert_large(static_cast<int32_t>(e.key), e.count);
+      }
+    }
+    insert_large(d, 1);
+  }
+  void insert_large(int32_t d, size_t n) {
+    const size_t mask = large_.size() - 1;
+    for (size_t i = HashDelta(d) & mask;; i = (i + 1) & mask) {
+      LargeSlot& e = large_[i];
+      if (e.key == d) {
+        e.count += n;
+        return;
+      }
+      if (e.key == kEmpty) {
+        e.key = d;
+        e.count = n;
+        ++large_used_;
+        return;
+      }
+    }
+  }
+};
+
+}  // namespace
+
 std::vector<uint8_t> EncodeDeltaU32(const uint32_t* values, size_t count) {
   std::vector<uint8_t> result;
   if (count == 0) return result;
@@ -682,18 +800,9 @@ std::vector<uint8_t> EncodeDeltaU32(const uint32_t* values, size_t count) {
   }
 
   // Find most common delta
-  std::map<int32_t, size_t> freq;
-  for (size_t i = 0; i < count; i++) {
-    freq[deltas[i]]++;
-  }
-  int32_t common_delta = 0;
-  size_t max_freq = 0;
-  for (const auto& p : freq) {
-    if (p.second > max_freq || (p.second == max_freq && p.first < common_delta)) {
-      common_delta = p.first;
-      max_freq = p.second;
-    }
-  }
+  DeltaHistogram freq(count);
+  for (size_t i = 0; i < count; i++) freq.add(deltas[i]);
+  const int32_t common_delta = freq.most_common();
 
   // Write common delta
   result.resize(sizeof(int32_t));
@@ -817,20 +926,13 @@ std::vector<uint8_t> EncodeDeltaS32(const int32_t* values, size_t count) {
   }
 
   // The shared/common delta header is only int32; wider deltas use code 3.
-  std::map<int32_t, size_t> freq;
+  DeltaHistogram freq(count);
   for (int64_t delta : deltas) {
     if (delta >= INT32_MIN && delta <= INT32_MAX) {
-      freq[static_cast<int32_t>(delta)]++;
+      freq.add(static_cast<int32_t>(delta));
     }
   }
-  int32_t common_delta = 0;
-  size_t max_freq = 0;
-  for (const auto& p : freq) {
-    if (p.second > max_freq || (p.second == max_freq && p.first < common_delta)) {
-      common_delta = p.first;
-      max_freq = p.second;
-    }
-  }
+  const int32_t common_delta = freq.most_common();
 
   // Write common delta
   result.resize(sizeof(int32_t));

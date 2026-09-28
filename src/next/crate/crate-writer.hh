@@ -56,6 +56,10 @@ struct CrateWriteOptions {
   /// counts (the parallel build merges per-prim results in deterministic order).
   int num_threads = 1;
 
+  /// Log per-phase wall times ("[next_crate_write] ...") at INFO through
+  /// lightusd::logging.
+  bool enable_timing = false;
+
   /// Maximum complete crate size in bytes (0 = unlimited). The writer stops
   /// before growing the output buffer beyond this bound.
   uint64_t max_file_size_bytes = 0;

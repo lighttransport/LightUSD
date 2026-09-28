@@ -339,6 +339,7 @@ int main(int argc, char **argv) {
   if (flatten && out_path && IsUSDCPath(out_path)) {
     USDCWriteOptions copts;
     copts.crate_options.num_threads = 0;  // auto; LIGHTUSD_NEXT_NUM_THREADS overrides
+    copts.crate_options.enable_timing = timing;  // [next_crate_write] phases
     if (const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS")) {
       copts.crate_options.num_threads = std::atoi(nt);
     }

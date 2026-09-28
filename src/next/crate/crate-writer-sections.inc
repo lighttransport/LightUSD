@@ -8,6 +8,30 @@
   // Section writing
   // ============================================================
 
+  // Structural section payloads (TOKENS, FIELDS, FIELDSETS, SPECS) are built
+  // into their own buffers -- independently, so the threaded writer prepares
+  // them concurrently -- and appended to the output in fixed crate order, which
+  // keeps TOC offsets and output bytes identical at any thread count.
+  static void WriteCompressedBytes(StreamWriter& out, const uint8_t* data,
+                                   size_t size) {
+    CompressResult cr = CompressCrateBlob(data, size);
+    if (!cr.success) {
+      // Fall back to storing uncompressed.
+      out.write_u64(size);
+      if (size) out.write_bytes(data, size);
+    } else {
+      out.write_u64(cr.data.size());
+      if (!cr.data.empty()) out.write_bytes(cr.data.data(), cr.data.size());
+    }
+  }
+
+  // Usd_IntegerCompression: delta encode + LZ4 (TfFastCompression format).
+  static void WriteCompressedDeltaU32(StreamWriter& out, const uint32_t* vals,
+                                      size_t count) {
+    std::vector<uint8_t> delta = EncodeDeltaU32(vals, count);
+    WriteCompressedBytes(out, delta.data(), delta.size());
+  }
+
   void WriteBootstrap(int64_t toc_offset) {
     // Bootstrap is exactly 64 bytes: [ident(8)][version(8)][tocOffset(8)][reserved(40)]
     size_t pos = 0;
@@ -23,7 +47,8 @@
     while (pos < 64) buffer_[pos++] = 0;
   }
 
-  void WriteTokensSection() {
+  void BuildTokensSectionPayload(std::vector<uint8_t>* payload) {
+    StreamWriter out(*payload);
     // Build uncompressed token data: concatenated null-terminated strings
     std::vector<uint8_t> raw;
     size_t total = 0;
@@ -34,23 +59,14 @@
       raw.push_back(0);  // null terminator
     }
 
-    writer_.write_u64(tokens_.size());
-    writer_.write_u64(raw.size());  // uncompressed_size
+    out.write_u64(tokens_.size());
+    out.write_u64(raw.size());  // uncompressed_size
 
     if (raw.empty()) {
-      writer_.write_u64(0);  // compressed_size = 0
+      out.write_u64(0);  // compressed_size = 0
       return;
     }
-
-    CompressResult cr = CompressCrateBlob(raw.data(), raw.size());
-    if (!cr.success) {
-      // Fall back to storing uncompressed
-      writer_.write_u64(raw.size());
-      writer_.write_bytes(raw.data(), raw.size());
-    } else {
-      writer_.write_u64(cr.data.size());
-      writer_.write_bytes(cr.data.data(), cr.data.size());
-    }
+    WriteCompressedBytes(out, raw.data(), raw.size());
   }
 
   void WriteStringsSection() {
@@ -60,9 +76,12 @@
     }
   }
 
-  void WriteFieldsSection() {
+  // Returns false (with *error set) when the payload cannot be sized.
+  bool BuildFieldsSectionPayload(std::vector<uint8_t>* payload,
+                                 std::string* error) {
+    StreamWriter out(*payload);
     uint64_t num_fields = fields_.size();
-    writer_.write_u64(num_fields);
+    out.write_u64(num_fields);
 
     // Encode token indices using Usd_IntegerCompression (delta + LZ4)
     {
@@ -70,64 +89,41 @@
       for (size_t i = 0; i < num_fields; i++) {
         indices[i] = fields_[i].token_index.value;
       }
-      // Delta-encode
-      std::vector<uint8_t> delta_encoded = EncodeDeltaU32(indices.data(), num_fields);
-      // LZ4-compress (TfFastCompression format)
-      CompressResult cr = CompressCrateBlob(delta_encoded.data(), delta_encoded.size());
-      if (cr.success) {
-        writer_.write_u64(cr.data.size());
-        writer_.write_bytes(cr.data.data(), cr.data.size());
-      } else {
-        // Fallback: store raw delta-encoded data
-        writer_.write_u64(delta_encoded.size());
-        writer_.write_bytes(delta_encoded.data(), delta_encoded.size());
-      }
+      WriteCompressedDeltaU32(out, indices.data(), num_fields);
     }
 
     // Write compressed value reps (TfFastCompression LZ4 format)
     size_t value_rep_bytes = 0;
     if (!safe::mul(static_cast<size_t>(num_fields), size_t(8), &value_rep_bytes)) {
-      result_.error = "Field value-rep byte size overflow";
-      return;
+      *error = "Field value-rep byte size overflow";
+      return false;
     }
     std::vector<uint8_t> raw_reps(value_rep_bytes);
     for (size_t i = 0; i < num_fields; i++) {
       uint64_t v = fields_[i].value_rep.raw();
       std::memcpy(raw_reps.data() + i * 8, &v, 8);
     }
-    CompressResult cr_reps = CompressCrateBlob(raw_reps.data(), raw_reps.size());
-    if (!cr_reps.success) {
-      writer_.write_u64(raw_reps.size());
-      writer_.write_bytes(raw_reps.data(), raw_reps.size());
-    } else {
-      writer_.write_u64(cr_reps.data.size());
-      writer_.write_bytes(cr_reps.data.data(), cr_reps.data.size());
-    }
+    WriteCompressedBytes(out, raw_reps.data(), raw_reps.size());
+    return true;
   }
 
-  void WriteFieldsetsSection() {
+  void BuildFieldsetsSectionPayload(std::vector<uint8_t>* payload) {
+    StreamWriter out(*payload);
     // Build flat array: for each fieldset, write its field indices then a
     // 0xFFFFFFFF sentinel (matching pxrUSD and the old lightusd writer).
+    size_t flat_size = 0;
+    for (const auto& fieldset : fieldsets_) flat_size += fieldset.size() + 1;
     std::vector<uint32_t> flat;
+    flat.reserve(flat_size);
     for (const auto& fieldset : fieldsets_) {
-      for (uint32_t field_idx : fieldset) {
-        flat.push_back(field_idx);
-      }
+      flat.insert(flat.end(), fieldset.begin(), fieldset.end());
       flat.push_back(0xFFFFFFFF);  // sentinel
     }
 
     uint64_t flat_count = flat.size();
-    writer_.write_u64(flat_count);
+    out.write_u64(flat_count);
     // Use Usd_IntegerCompression (delta + LZ4)
-    std::vector<uint8_t> delta_encoded = EncodeDeltaU32(flat.data(), static_cast<size_t>(flat_count));
-    CompressResult cr = CompressCrateBlob(delta_encoded.data(), delta_encoded.size());
-    if (cr.success) {
-      writer_.write_u64(cr.data.size());
-      writer_.write_bytes(cr.data.data(), cr.data.size());
-    } else {
-      writer_.write_u64(delta_encoded.size());
-      writer_.write_bytes(delta_encoded.data(), delta_encoded.size());
-    }
+    WriteCompressedDeltaU32(out, flat.data(), static_cast<size_t>(flat_count));
   }
 
   void WritePathsSection() {
@@ -393,9 +389,10 @@
     write_comp_i32(jump_indices.data(), num_paths);
   }
 
-  void WriteSpecsSection() {
+  void BuildSpecsSectionPayload(std::vector<uint8_t>* payload) {
+    StreamWriter out(*payload);
     uint64_t num_specs = specs_.size();
-    writer_.write_u64(num_specs);
+    out.write_u64(num_specs);
 
     // Convert fieldset numbers to flat array offsets (matching pxrUSD format).
     // Build offset mapping: for each fieldset, its offset in the flat array
@@ -423,21 +420,9 @@
       spec_types[i] = static_cast<uint32_t>(specs_[i].spec_type);
     }
 
-    auto write_comp = [&](const uint32_t* vals, size_t count) {
-      std::vector<uint8_t> delta = EncodeDeltaU32(vals, count);
-      CompressResult cr = CompressCrateBlob(delta.data(), delta.size());
-      if (cr.success) {
-        writer_.write_u64(cr.data.size());
-        writer_.write_bytes(cr.data.data(), cr.data.size());
-      } else {
-        writer_.write_u64(delta.size());
-        writer_.write_bytes(delta.data(), delta.size());
-      }
-    };
-
-    write_comp(path_indices.data(), num_specs);
-    write_comp(fieldset_indices.data(), num_specs);
-    write_comp(spec_types.data(), num_specs);
+    WriteCompressedDeltaU32(out, path_indices.data(), num_specs);
+    WriteCompressedDeltaU32(out, fieldset_indices.data(), num_specs);
+    WriteCompressedDeltaU32(out, spec_types.data(), num_specs);
   }
 
   void _PatchTimeSamplesBlock(uint64_t data_idx) {
@@ -650,14 +635,29 @@
         if (!sink(kZeros, static_cast<size_t>(pad))) return false;
         pos += pad;
       }
-      const size_t sz = value_data_[i].size();
+      const DataBlock& block = value_data_[i];
+      const size_t sz = block.size();
       if (sz) {
-        if (!sink(value_data_[i].bytes(), sz)) return false;
+        if (!sink(block.bytes(), sz)) return false;
         pos += sz;
+        // A pass-through block's source bytes are written exactly once: drop
+        // their resident pages from the (file-mmapped) source so a large
+        // write does not fault the whole input into RSS. Only the page-aligned
+        // interior is dropped (a boundary page may hold a neighbouring block),
+        // and the mapping is read-only, so any later touch just re-faults the
+        // same bytes from the file -- the output cannot change. No-op for
+        // owned (non-mmap) sources.
+        if (block.is_ref() && sz >= kDropResidentMinBytes) {
+          constexpr uint64_t kPage = 4096;
+          const uint64_t begin = (block.src_offset + kPage - 1) & ~(kPage - 1);
+          const uint64_t end = (block.src_offset + block.src_len) & ~(kPage - 1);
+          if (end > begin) block.src->DiscardRange(begin, end - begin);
+        }
       }
     }
     return true;
   }
+  static constexpr size_t kDropResidentMinBytes = size_t(1) << 20;
 
   void WriteTOC(const std::vector<CrateSection>& sections) {
     writer_.write_u64(sections.size());

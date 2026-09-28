@@ -10,6 +10,7 @@
 #include "../parser/lexer.hh"
 #include "../parser/value-parser.hh"
 #include "crate-data-source.hh"
+#include "crate-timing.hh"
 #include "variant-holders.hh"
 #include "crate-writer-types.hh"
 #include "lazy-array.hh"
@@ -28,6 +29,7 @@
 #include <algorithm>
 #include <cstring>
 #include <string_view>
+#include <cstdio>
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include <thread>
 #endif
@@ -71,6 +73,40 @@ bool ValidateStrictCrateFields(const Layer& layer, std::string* error) {
   return true;
 }
 
+// File output for the streaming write: appends go through a fixed staging
+// buffer (large pass-through blocks bypass it), so a file write never holds
+// the whole crate in memory.
+class BufferedFileSink {
+ public:
+  explicit BufferedFileSink(std::ofstream* ofs) : ofs_(ofs) {
+    buf_.reserve(kCapacity);
+  }
+  bool Write(const uint8_t* data, size_t size) {
+    if (size == 0) return true;
+    if (buf_.size() + size > kCapacity && !Flush()) return false;
+    if (size >= kCapacity) {
+      ofs_->write(reinterpret_cast<const char*>(data),
+                  static_cast<std::streamsize>(size));
+      return ofs_->good();
+    }
+    buf_.insert(buf_.end(), data, data + size);
+    return true;
+  }
+  bool Flush() {
+    if (!buf_.empty()) {
+      ofs_->write(reinterpret_cast<const char*>(buf_.data()),
+                  static_cast<std::streamsize>(buf_.size()));
+      buf_.clear();
+    }
+    return ofs_->good();
+  }
+
+ private:
+  static constexpr size_t kCapacity = size_t(4) << 20;
+  std::ofstream* ofs_;
+  std::vector<uint8_t> buf_;
+};
+
 }  // namespace
 
 
@@ -85,14 +121,7 @@ CrateWriteResult CrateWriter::WriteToFile(const char* filename, const Stage& sta
   if (!filename) { CrateWriteResult r; r.error = "Null filename"; return r; }
   const Layer* root_layer = stage.GetRootLayer();
   if (!root_layer) { CrateWriteResult r; r.error = "Stage has no root layer"; return r; }
-  std::vector<uint8_t> buffer;
-  CrateWriteResult result = WriteToMemory(buffer, stage);
-  if (!result.success) return result;
-  std::ofstream ofs(filename, std::ios::out | std::ios::binary);
-  if (!ofs) { result.success = false; result.error = "Failed to open file"; return result; }
-  ofs.write(reinterpret_cast<const char*>(buffer.data()), buffer.size());
-  if (!ofs.good()) { result.success = false; result.error = "Failed to write"; return result; }
-  return result;
+  return WriteLayerToFile(filename, *root_layer);
 }
 
 CrateWriteResult CrateWriter::WriteToFile(const std::string& filename, const Stage& stage) {
@@ -107,13 +136,26 @@ CrateWriteResult CrateWriter::WriteToMemory(std::vector<uint8_t>& buffer, const 
 
 CrateWriteResult CrateWriter::WriteLayerToFile(const char* filename, const Layer& layer) {
   if (!filename) { CrateWriteResult r; r.error = "Null filename"; return r; }
-  std::vector<uint8_t> buffer;
-  CrateWriteResult result = WriteLayerToMemory(buffer, layer);
-  if (!result.success) return result;
-  std::ofstream ofs(filename, std::ios::out | std::ios::binary);
-  if (!ofs) { result.success = false; result.error = "Failed to open file"; return result; }
-  ofs.write(reinterpret_cast<const char*>(buffer.data()), buffer.size());
-  if (!ofs.good()) { result.success = false; result.error = "Failed to write"; return result; }
+  // Stream straight to the file (byte-identical to WriteLayerToMemory): the
+  // VALUE section is copied block by block from its sources instead of first
+  // being staged, with the whole crate, in one output buffer.
+  std::ofstream ofs(filename, std::ios::out | std::ios::binary | std::ios::trunc);
+  if (!ofs) { CrateWriteResult r; r.error = "Failed to open file"; return r; }
+  BufferedFileSink file_sink(&ofs);
+  CrateWriteSink sink = [&file_sink](const uint8_t* data, size_t size) {
+    return file_sink.Write(data, size);
+  };
+  CrateWriteResult result = WriteLayerToSink(sink, layer);
+  const bool flushed = file_sink.Flush();
+  ofs.close();
+  if (result.success && (!flushed || ofs.fail())) {
+    result.success = false;
+    result.error = "Failed to write";
+  }
+  if (!result.success) {
+    // Do not leave a truncated crate behind.
+    std::remove(filename);
+  }
   return result;
 }
 
