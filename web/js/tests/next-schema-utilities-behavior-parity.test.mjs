@@ -104,14 +104,11 @@ function layer(usda) {
     assert.deepEqual([a, b], [{value: true}, {value: true}]);
     const legacyRobot = layer(loader.exportAsUSDA());
     const nextRobot = layer(converter.exportAsUSDA());
-    // Engine-specific solver/contact attributes differ: legacy authors
-    // Newton scene settings and MuJoCo/Newton mesh-collision attributes,
-    // next authors mjc:timestep and mjc:contype/conaffinity.
+    // Next authors every legacy engine attribute (Newton scene settings,
+    // MuJoCo/Newton contact and mesh-collision attributes) with the same
+    // values, plus mjc:timestep and mjc:contype/conaffinity.
     const engineOnly = {
-      legacy: {'/World/PhysicsScene': ['newton:gravityEnabled', 'newton:maxSolverIterations',
-        'newton:timeStepsPerSecond'],
-      '/World/Links/base/collision': ['mjc:condim', 'mjc:inertia', 'mjc:margin', 'mjc:solmix',
-        'newton:contactGap', 'newton:contactMargin', 'newton:maxHullVertices']},
+      legacy: {},
       next: {'/World/PhysicsScene': ['mjc:timestep'],
         '/World/Links/base/collision': ['mjc:conaffinity', 'mjc:contype']}};
     for (const [side, table] of [['legacy', legacyRobot], ['next', nextRobot]]) {

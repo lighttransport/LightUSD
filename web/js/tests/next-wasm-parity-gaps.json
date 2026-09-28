@@ -190,11 +190,11 @@
     "legacyMethod": "createURDFPhysicsScene",
     "family": "schema_and_image_utilities",
     "nextNameMatch": false,
-    "parityStatus": "known_behavior_gap",
+    "parityStatus": "behavior_verified",
     "nextSurface": "NextUSDZConverterNative",
     "nextEquivalent": "createURDFPhysicsScene",
     "behaviorTest": "next-schema-utilities-behavior-parity.test.mjs",
-    "knownDifference": "Both author the same URDF prim hierarchy, meshes, joints and collider purpose=guide; the engine-specific attributes differ: legacy authors Newton scene settings (maxSolverIterations, timeStepsPerSecond, gravityEnabled) and MuJoCo/Newton mesh-collision attributes and APIs, next authors mjc:timestep and mjc:contype/conaffinity."
+    "edgeDifference": "Next authors every legacy attribute with the same values (URDF prim hierarchy, meshes, joints, collider purpose=guide, Newton scene settings and MuJoCo/Newton contact and mesh-collision attributes and APIs) and additionally authors mjc:timestep and mjc:contype/conaffinity."
   },
   {
     "legacyMethod": "debugLogMemory",

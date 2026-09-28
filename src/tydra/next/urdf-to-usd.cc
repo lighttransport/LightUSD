@@ -258,11 +258,15 @@ void AddCollisionData(tn::PrimSpec *prim, const Json &source,
                       bool mesh, bool mjcf_source) {
   AddAPIs(prim, {"PhysicsCollisionAPI", "MjcCollisionAPI",
                  "MjcImageableAPI", "NewtonCollisionAPI"});
-  if (mesh) AddAPI(prim, "PhysicsMeshCollisionAPI");
+  if (mesh) {
+    AddAPIs(prim, {"PhysicsMeshCollisionAPI", "MjcMeshCollisionAPI",
+                   "NewtonMeshCollisionAPI"});
+  }
   Set(prim, "physics:collisionEnabled", tn::Value(true), "bool");
   if (mesh) {
     SetToken(prim, "physics:approximation",
              JsonString(source, "approximation", "convexHull"));
+    SetToken(prim, "mjc:inertia", "legacy", true);
   }
   const Json *mjc = source.contains("mjc") && source.at("mjc").is_object()
                         ? &source.at("mjc")
@@ -281,6 +285,42 @@ void AddCollisionData(tn::PrimSpec *prim, const Json &source,
           mjc ? *mjc : source, "conaffinity",
           JsonNumber(source, "conaffinity", 1)))),
       "int", true);
+  // MuJoCo/Newton contact defaults, as the legacy converter authors them
+  // for URDF colliders (MJCF sources carry their own values through
+  // AuthorExtensions below).
+  const Json &contact = mjc ? *mjc : source;
+  if (!mjcf_source) {
+    Set(prim, "mjc:condim",
+        tn::Value(static_cast<int32_t>(JsonNumber(
+            contact, "condim", JsonNumber(source, "condim", 3)))),
+        "int", true);
+    Set(prim, "mjc:solmix", tn::Value(JsonNumber(contact, "solmix", 1.0)),
+        "double", true);
+    const double margin = JsonNumber(contact, "margin", 0.0);
+    Set(prim, "mjc:margin", tn::Value(margin), "double", true);
+    const Json *newton = source.contains("newton") &&
+                                 source.at("newton").is_object()
+                             ? &source.at("newton")
+                             : nullptr;
+    Set(prim, "newton:contactMargin",
+        tn::Value(static_cast<float>(
+            newton ? JsonNumber(*newton, "contactMargin", margin) : margin)),
+        "float");
+    Set(prim, "newton:contactGap",
+        tn::Value(static_cast<float>(
+            newton ? JsonNumber(*newton, "contactGap", 0.0) : 0.0)),
+        "float");
+  }
+  if (mesh) {
+    const Json *newton = source.contains("newton") &&
+                                 source.at("newton").is_object()
+                             ? &source.at("newton")
+                             : nullptr;
+    Set(prim, "newton:maxHullVertices",
+        tn::Value(static_cast<int32_t>(
+            newton ? JsonNumber(*newton, "maxHullVertices", 64) : 64)),
+        "int", true);
+  }
   // Like the legacy converter (and mujoco-usd-converter), colliders get
   // purpose=guide: hidden from default renders, still visible to
   // schema-aware consumers and purpose toggles.
@@ -504,8 +544,16 @@ bool ConvertURDFJsonToUSDStage(
   if (gravity.size() < 3) gravity = {0.0f, -1.0f, 0.0f};
   SetFloat3(scene, "physics:gravityDirection", gravity, "vector3f");
   Set(scene, "physics:gravityMagnitude", tn::Value(9.80665f), "float");
-  Set(scene, "mjc:timestep", tn::Value(JsonNumber(root, "timestep", 0.002)),
-      "double");
+  const double timestep = JsonNumber(root, "timestep", 0.002);
+  Set(scene, "mjc:timestep", tn::Value(timestep), "double");
+  // Newton scene settings, with the legacy converter's defaults; a payload
+  // "newton" block overrides them through AuthorExtensions below.
+  Set(scene, "newton:timeStepsPerSecond",
+      tn::Value(static_cast<int32_t>(
+          timestep > 0.0 ? std::lround(1.0 / timestep) : 500)),
+      "int");
+  Set(scene, "newton:maxSolverIterations", tn::Value(int32_t{-1}), "int");
+  Set(scene, "newton:gravityEnabled", tn::Value(true), "bool");
   AuthorExtensions(scene, root);
 
   Define(&layer, "/World/Links", "Xform");

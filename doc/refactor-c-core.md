@@ -606,6 +606,35 @@ work separated into these explicit tracks:
 | 4 | Schema/image utilities and MCP | Done: the eight schema/image utilities are paired (two pinned gaps: URDF engine attributes, physics JSON contract); the six MCP calls remain an explicit product decision. | Each method is implemented, explicitly unsupported with a documented reason, or assigned to an adjacent product; all decisions have tests. |
 | 5 | Allocation safety and product selection | Allocation-failure and budget gates, native, Python and wasm32/memory64 gates pass; open: browser sweeps (need the Menagerie dataset), three AOUSD file_formats conformance gaps, and the default-product decision. | Allocation-failure tests and a completed feature/API matrix; no default switch while any supported legacy contract lacks a next implementation or an explicit product decision. |
 
+#### Gap triage before the default switch
+
+Of the 32 pinned behavior gaps, one was a functional gap and is now filled.
+`createURDFPhysicsScene` authors every legacy engine attribute with the same
+values: the Newton scene settings (`timeStepsPerSecond` from the timestep,
+`maxSolverIterations` -1, `gravityEnabled`), plus the MuJoCo/Newton contact
+and mesh-collision attributes and APIs. Next still adds `mjc:timestep` and
+`mjc:contype`/`conaffinity`, so the row is now `behavior_verified` with an
+edge difference.
+
+The remaining 31 are accepted as the next contract:
+- **Record shapes** (nodes, meshes, images, lights, cameras, skeletons,
+  animations, instances): next shape is the product contract, and the field
+  differences are pinned in `next-render-scene-contract.json`.
+- **Safety and product policy:**
+  - the 1 GiB memory default with a 1..8192 MiB range;
+  - sparse UDIM tiles by default;
+  - no mmap in WASM;
+  - setters reject Embind coercions;
+  - `setEnableComposition` composes (legacy ignored it).
+- **Diagnostics and utilities with their own contract:** located parser
+  errors, per-load progress records, crate-structure validation, and the
+  physics JSON.
+
+The non-indexed MS-Human-700 geometry is not a next gap. The converted USD
+authors the meshes as triangle soups (sequential `faceVertexIndices`,
+per-corner flat normals), so both products receive unshared vertices.
+Welding STL-derived meshes belongs in the MJCF→USD converter.
+
 `next-loader-config-behavior-parity.test.mjs` now pairs the combined legacy
 loader with the next-only `RenderStream` (and `NextUSDZConverterNative` for
 USDC export limits) on wasm32 and memory64. It covers all 33
