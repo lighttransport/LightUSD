@@ -101,9 +101,17 @@ on a 32-thread host. They compare the pre-port tip with the current port:
 Flattened USDA output is byte-identical for the four baseline scenes with
 automatic threading and with serial composition/writing. USDC output now sorts
 properties by name, so its bytes intentionally changed; the result remains
-readable by Pixar `usdcat`. The USDC-source to USDA path remains slower on the
-large Island scene (about 8–9.5 s), and flattening Island to USDC remains about
-13 s; those paths are tracked separately from the USDA writer improvement.
+readable by Pixar `usdcat`. Profiling the Island USDC-source path found a
+roughly 1.6–2.0 s USDA write to `/dev/null`; writing the 8 GB USDA result to a
+regular file takes about 9.5 s and is limited by storage throughput. LZ4
+decompression was a negligible share of sampled CPU time.
+
+The crate writer reuses identical lazy source ranges without rehashing their
+bytes. On the same 16-thread Island USDA-to-USDC run, measured writer time
+fell from 12.57 s to 11.13 s, and total time from 17.05 s to 15.35 s. The
+written crate retained the same read-back USDA hash and was read by Pixar
+`usdcat`. A self-contained root layer also bypasses the PCP build walk when
+there are no composition arcs or inactive subtrees.
 
 `next_usdcat` exposes independent controls for composition and writing:
 
@@ -114,6 +122,7 @@ large Island scene (about 8–9.5 s), and flattening Island to USDC remains abou
 --write-threads 0       automatic USDA writer workers
 --write-threads 1       serial USDA writing
 --write-threads N       use N USDA writer workers, for N > 1
+--fast-exit             exit immediately after a successful, flushed write
 ```
 
 Composition defaults to automatic parallel execution. The value `0` is
@@ -134,6 +143,12 @@ for serial; PCP forwards its parse hint to crate reads. Crate writes use `1`
 for serial and a non-positive value for automatic sizing.
 `LIGHTUSD_NEXT_NUM_THREADS` remains the CLI fallback for parse, writer, and
 crate-write paths where no more specific CLI setting was provided.
+
+`--fast-exit` is opt-in for one-shot `next_usdcat` flatten jobs. It skips the
+composed stage's teardown after the output stream has been flushed and closed,
+reducing the observed exit delay from roughly 2–3 s to under 1 s on the Island
+run. It also skips remaining destructors and `atexit` handlers, so callers that
+need normal process cleanup should leave it off.
 
 ### USDC structural limits
 
