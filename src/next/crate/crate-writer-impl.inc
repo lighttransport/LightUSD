@@ -201,17 +201,17 @@ private:
   // bytes again.  Different source ranges still use the content-addressed
   // table below, preserving cross-source deduplication.
   struct StreamSourceRangeKey {
-    const LazyArraySource* source;
+    uint64_t source_id;
     uint64_t offset;
     uint64_t length;
     bool operator==(const StreamSourceRangeKey& other) const {
-      return source == other.source && offset == other.offset &&
+      return source_id == other.source_id && offset == other.offset &&
              length == other.length;
     }
   };
   struct StreamSourceRangeHash {
     size_t operator()(const StreamSourceRangeKey& key) const {
-      size_t h = std::hash<const void*>{}(key.source);
+      size_t h = std::hash<uint64_t>{}(key.source_id);
       h ^= std::hash<uint64_t>{}(key.offset) +
            static_cast<size_t>(0x9E3779B97F4A7C15ull) + (h << 6) + (h >> 2);
       h ^= std::hash<uint64_t>{}(key.length) +
@@ -246,7 +246,7 @@ private:
     StreamSourceRangeKey source_key{};
     bool has_source_key = false;
     if (block.is_ref()) {
-      source_key = StreamSourceRangeKey{block.src.get(), block.src_offset,
+      source_key = StreamSourceRangeKey{block.src->identity(), block.src_offset,
                                         block.src_len};
       has_source_key = true;
       const auto cached = stream_source_ranges_.find(source_key);
