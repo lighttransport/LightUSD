@@ -25,6 +25,7 @@
 #include "next/reader/usda-reader.hh"
 #include "next/writer/usdc-writer.hh"
 #include "next/writer/dtoa.hh"
+#include "next/crate/lazy-array.hh"
 
 using namespace lightusd::next;
 
@@ -700,6 +701,141 @@ void test_parallel_writer_parity() {
   std::cout << "  parallel-writer byte parity passed!\n\n";
 }
 
+// The parallel writer builds the document in independent prim ranges (cut from a
+// skeleton walk) and formats/writes them pipelined. Its output must still be
+// byte-identical to the serial writer for any thread count: multiple roots, deep
+// nesting (ranges start/end mid-hierarchy), inactive prims, and a mix of tiny
+// (inline), medium (offloaded whole) and large (chunked) arrays -- both in-memory
+// and as lazy USDC-backed values (compressed int + half arrays take the
+// decode-once split path).
+void test_parallel_writer_multiroot_parity() {
+  std::cout << "Testing parallel-writer multi-root/deep parity...\n";
+
+  Layer layer;
+  LayerBuilder b(layer);
+  int big = 0;  // large arrays emitted so far (kept few for Debug runtime)
+  for (int r = 0; r < 4; ++r) {
+    b.begin_prim("R" + std::to_string(r), "Xform");
+    constexpr int kDepth = 24;
+    for (int d = 0; d < kDepth; ++d) {
+      // A few leaf siblings at each level, then descend into a chain prim.
+      for (int s = 0; s < 3; ++s) {
+        b.begin_prim("leaf_" + std::to_string(d) + "_" + std::to_string(s),
+                     "Mesh");
+        std::vector<float> tiny = {float(d), float(s) * 0.5f, 1.25f, -3.0f};
+        b.add_property("tiny", Value::MakeFloatArray(std::move(tiny)));
+        std::vector<int32_t> med(300 + size_t(d) * 7);
+        for (size_t i = 0; i < med.size(); ++i) med[i] = int32_t(i * 3) - d;
+        b.add_property("faceVertexCounts", Value::MakeIntArray(std::move(med)));
+        b.add_property("purpose", Value::MakeToken("render"));
+        if (s == 1) {
+          b.add_time_sample("xformOp:translate", 1.0,
+                            Value::MakeFloat3(float(d), 0.0f, 1.0f));
+          b.add_time_sample("xformOp:translate", 2.0,
+                            Value::MakeFloat3(float(d), 1.0f, 1.0f));
+          b.add_relationship("material:binding",
+                             Path("/R" + std::to_string(r)));
+          if (d == 3 || d == 17) {
+            // Default + time-sampled arrays (the sampled/default statements
+            // offload too); one sample large enough to be chunked.
+            auto arr = [](size_t n, float k) {
+              std::vector<float> v(n * 3);
+              for (size_t i = 0; i < v.size(); ++i) v[i] = float(i) * k;
+              return Value::MakeFloat3Array(std::move(v));
+            };
+            b.add_property("anim", arr(300, 0.25f));
+            b.add_time_sample("anim", 1.0, arr(400, 0.5f));
+            b.add_time_sample("anim", 2.0,
+                              arr(d == 3 && r == 0 ? 140000 : 20, 0.75f));
+          }
+        }
+        if (s == 2 && d == 5) b.set_active(false);
+        if (s == 0 && (d % 9) == 4 && big < 6) {
+          ++big;
+          const size_t n = 140000 + size_t(r) * 1000;  // > kSplitMinElems
+          std::vector<float> pts;
+          pts.reserve(n * 3);
+          for (size_t i = 0; i < n * 3; ++i) {
+            pts.push_back(float(i % 9973) * 0.37f - float(r));
+          }
+          b.add_property("points", Value::MakeFloat3Array(std::move(pts)));
+          std::vector<int32_t> idx(n);
+          for (size_t i = 0; i < n; ++i) idx[i] = int32_t((i * 7) % 5003);
+          b.add_property("faceVertexIndices", Value::MakeIntArray(std::move(idx)));
+          std::vector<float> h(n * 3);
+          for (size_t i = 0; i < h.size(); ++i) {
+            h[i] = float(int(i % 2049) - 1024) / 64.0f;  // exact halves
+          }
+          b.add_property("primvars:h",
+                         Value::MakeFloatCompArray(std::move(h), TypeId::Half3, 3));
+        }
+        b.end_prim();
+      }
+      b.begin_prim("chain_" + std::to_string(d), "Xform");
+    }
+    for (int d = 0; d < kDepth; ++d) b.end_prim();
+    b.end_prim();
+  }
+  b.finalize();
+
+  auto check_layer = [](const Layer& l, const char* what) {
+    for (int composed = 0; composed < 2; ++composed) {
+      USDAWriteOptions serial_opts;
+      serial_opts.num_threads = 1;
+      serial_opts.composed_stage_output = composed != 0;
+      const std::string serial = WriteLayerToString(l, serial_opts);
+      assert(serial.size() > 1000000);  // sanity: large arrays were emitted
+      assert(contains(serial, "chain_23"));
+      assert(contains(serial, "anim.timeSamples"));
+      for (int nt : {2, 3, 8, 32}) {
+        USDAWriteOptions par_opts = serial_opts;
+        par_opts.num_threads = nt;
+        const std::string parallel = WriteLayerToString(l, par_opts);
+        if (parallel != serial) {
+          std::cerr << "  parity mismatch (" << what << ", threads=" << nt
+                    << ", composed=" << composed << ")\n";
+        }
+        assert(parallel == serial);
+      }
+    }
+  };
+  check_layer(layer, "in-memory");
+
+  // Same layer through USDC: arrays come back lazy (mmap-style borrowed or
+  // compressed), exercising the borrow-chunk and decode-once split paths.
+  std::vector<uint8_t> usdc;
+  USDCWriteResult wr = WriteLayerToUSDCMemory(usdc, layer);
+  assert(wr.success);
+  USDCLoadResult lr = LoadUSDCFromMemory(usdc.data(), usdc.size());
+  assert(lr.success);
+  const Layer* loaded = lr.stage.GetRootLayer();
+  assert(loaded);
+  {
+    // Sanity: the big arrays really are lazy (compressed ints, half3).
+    const PrimSpec* p = loaded->prim_at_path(
+        "/R0/chain_0/chain_1/chain_2/chain_3/leaf_4_0");
+    assert(p);
+    const Value* fvi = p->property_value("faceVertexIndices");
+    const Value* h = p->property_value("primvars:h");
+    assert(fvi && fvi->is_lazy() && fvi->lazy_ref() &&
+           fvi->lazy_ref()->is_compressed);
+    assert(h && h->is_lazy() && h->type_id() == TypeId::Half3);
+  }
+  check_layer(*loaded, "usdc-lazy");
+
+  // Stage entry point (WriteUSDA(Stage)) shares the same body writer.
+  {
+    USDAWriteOptions serial_opts;
+    serial_opts.num_threads = 1;
+    USDAWriteOptions par_opts;
+    par_opts.num_threads = 8;
+    assert(WriteUSDAToString(lr.stage, serial_opts) ==
+           WriteUSDAToString(lr.stage, par_opts));
+  }
+
+  std::cout << "  parallel-writer multi-root/deep parity passed!\n\n";
+}
+
 void test_roundtrip() {
   std::cout << "Testing USDA roundtrip (write -> manual inspection)...\n";
 
@@ -1295,6 +1431,7 @@ int main() {
     test_time_samples();
     test_roundtrip();
     test_parallel_writer_parity();
+    test_parallel_writer_multiroot_parity();
     test_usda_backend_parity();
     test_usda_layer_backend_parity();
     test_usda_stream_failure();

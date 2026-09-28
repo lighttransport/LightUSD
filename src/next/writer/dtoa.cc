@@ -23,6 +23,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include <mutex>
+#endif
 
 #include "../../external/dragonbox/dragonbox.h"
 #if !defined(LIGHTUSD_NEXT_NO_ZMIJ_DTOA)
@@ -407,7 +410,80 @@ std::string htos(uint16_t bits) {
   return std::string(buffer, htos_to(buffer, bits));
 }
 
+namespace {
+
+size_t HalfToShortestUncached(char* dst, uint16_t bits);
+
+// binary16 has only 65536 values, and the shortest-spelling search below
+// costs up to five dtoa + parse round trips per value, which made half-backed
+// arrays (quath orientations, half3 ...) several times slower to print than
+// floats. Memoize the spelling per value, filled lazily in blocks of 256 so a
+// small write only pays for the blocks it touches.
+struct HalfSpellingCache {
+  static constexpr size_t kBlockBits = 8;
+  static constexpr size_t kBlocks = size_t(1) << (16 - kBlockBits);
+  static constexpr size_t kMaxLen = 15;
+  struct Entry {
+    uint8_t len;  // 0 = not cacheable (spelling longer than kMaxLen)
+    char s[kMaxLen];
+  };
+  struct Block {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    std::once_flag once;
+#else
+    bool filled = false;
+#endif
+    Entry e[size_t(1) << kBlockBits];
+  };
+  Block blocks[kBlocks];
+
+  const Entry& get(uint16_t bits) {
+    Block& b = blocks[bits >> kBlockBits];
+    auto fill = [&]() {
+      const uint16_t base = uint16_t(bits & ~((1u << kBlockBits) - 1u));
+      for (size_t i = 0; i < (size_t(1) << kBlockBits); ++i) {
+        char buf[kDtoaBufSize + 48];
+        const size_t n = HalfToShortestUncached(buf, uint16_t(base + i));
+        Entry& e = b.e[i];
+        if (n <= kMaxLen) {
+          e.len = uint8_t(n);
+          std::memcpy(e.s, buf, n);
+        } else {
+          e.len = 0;
+        }
+      }
+    };
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    std::call_once(b.once, fill);
+#else
+    if (!b.filled) {
+      fill();
+      b.filled = true;
+    }
+#endif
+    return b.e[bits & ((1u << kBlockBits) - 1u)];
+  }
+};
+
+HalfSpellingCache& GetHalfSpellingCache() {
+  static HalfSpellingCache* cache = new HalfSpellingCache();  // ~1 MiB, never freed
+  return *cache;
+}
+
+}  // namespace
+
 size_t htos_to(char* dst, uint16_t bits) {
+  const HalfSpellingCache::Entry& e = GetHalfSpellingCache().get(bits);
+  if (e.len != 0) {
+    std::memcpy(dst, e.s, e.len);
+    return e.len;
+  }
+  return HalfToShortestUncached(dst, bits);
+}
+
+namespace {
+
+size_t HalfToShortestUncached(char* dst, uint16_t bits) {
   const float value = HalfToFloat(bits);
   if (!std::isfinite(value) || value == 0.0f) return dtos_to(dst, value);
 
@@ -430,6 +506,8 @@ size_t htos_to(char* dst, uint16_t bits) {
   }
   return dtos_to(dst, value);
 }
+
+}  // namespace
 
 void htos_append(std::string& out, uint16_t bits) {
   char buffer[48];

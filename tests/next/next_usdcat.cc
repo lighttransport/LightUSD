@@ -67,6 +67,10 @@ int main(int argc, char **argv) {
   // LIGHTUSD_NEXT_NUM_THREADS.) A build without LIGHTUSD_NEXT_ENABLE_THREAD
   // composes serially regardless.
   int compose_threads = -1;
+  // USDA writer threads: 0 = auto (default), 1 = serial, N = fixed. Overrides
+  // LIGHTUSD_NEXT_NUM_THREADS for the writer only (output is byte-identical
+  // for any count). -1 = not given (fall back to the env / auto).
+  int write_threads = -1;
   bool load_payloads = true;
   // Flatten-to-USDC: release composed property values as the writer encodes
   // them (--no-consume-values keeps the composed stage intact).
@@ -133,6 +137,14 @@ int main(int argc, char **argv) {
                      compose_threads);
         return 2;
       }
+    } else if (std::strcmp(argv[i], "--write-threads") == 0 && i + 1 < argc) {
+      write_threads = std::atoi(argv[++i]);  // 0 = auto, 1 = serial
+      if (write_threads < 0) {
+        std::fprintf(stderr,
+                     "Invalid --write-threads value '%d' (must be 0 or >= 1)\n",
+                     write_threads);
+        return 2;
+      }
     } else if (std::strcmp(argv[i], "--compose-threads-auto") == 0) {
       compose_threads = -1;
     } else if (std::strcmp(argv[i], "--no-consume-values") == 0) {
@@ -168,6 +180,7 @@ int main(int argc, char **argv) {
                          "[--instance-mode native|holder|prototypes] "
                          "[--prototype-numbering deterministic|usdcat] "
                          "[--compose-threads N] [--compose-threads-auto] "
+                         "[--write-threads N] "
                          "[--load-payloads|--defer-payloads] "
                          "[--no-consume-values] "
                          "[--aousd-strict] "
@@ -235,6 +248,7 @@ int main(int argc, char **argv) {
     if (const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS")) {
       wopts.num_threads = std::atoi(nt);
     }
+    if (write_threads >= 0) wopts.num_threads = write_threads;
     std::FILE* fp = stdout;
     if (out_path) {
       fp = std::fopen(out_path, "wb");
@@ -396,6 +410,7 @@ int main(int argc, char **argv) {
     if (const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS")) {
       wopts.num_threads = std::atoi(nt);
     }
+    if (write_threads >= 0) wopts.num_threads = write_threads;
     // Write through the next StreamWriter with the native C-stdio backend
     // (buffered + blocked writes). `-o <file>` targets a FILE*; otherwise stdout.
     // This is the default native sink; a WASM/WASI host would supply its own
