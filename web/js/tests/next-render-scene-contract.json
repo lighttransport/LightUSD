@@ -383,7 +383,7 @@
   },
   "primvar-interpolation-001 :: getMeshPrimvarsJSON": {
     "legacy": "{\"primPath\":\"/PrimvarTests/InterpolationMesh\",\"primvars\":{},\"version\":1}",
-    "next": "#2008:24ef9d8"
+    "next": "#2008:9ff3cdc4"
   },
   "lights-full-001 :: numLights": {
     "legacy": 10,
