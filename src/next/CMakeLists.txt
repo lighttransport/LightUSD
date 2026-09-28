@@ -235,6 +235,11 @@ else()
         PROPERTIES COMPILE_FLAGS "-w")
 endif()
 
+# pipeline/flatten.cc is shared with the combined WASM module, which does not
+# link the pcp::Cache engine; only this library enables FlattenOptions::
+# use_pcp_compose.
+target_compile_definitions(lightusd_next PRIVATE LIGHTUSD_NEXT_PIPELINE_PCP_COMPOSE)
+
 # Optional threading: enables std::thread parallel paths in next. Keep this OFF
 # for WASM/browser builds so they do not require Emscripten pthreads /
 # SharedArrayBuffer.

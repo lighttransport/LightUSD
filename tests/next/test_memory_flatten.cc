@@ -273,8 +273,15 @@ static void test_load_layer_from_memory_dispatch() {
 
 // A resolver whose bytes come from an in-memory map (no filesystem), driving
 // a flatten of a USDA root with a USDA dependency — the wasm/HTTP shape.
-static void test_resolver_layer_loader_usda_dep() {
-  std::cout << "[MakeResolverLayerLoader + USDA dependency]\n";
+// With `pcp_threads` > 0 the flatten composes through the pcp::Cache engine
+// (FlattenOptions::use_pcp_compose) with that many workers instead of the
+// serial Compositor; the composed result must be the same.
+static void test_resolver_layer_loader_usda_dep(int pcp_threads = 0) {
+  std::cout << "[MakeResolverLayerLoader + USDA dependency"
+            << (pcp_threads > 0 ? ", pcp compose threads=" +
+                                      std::to_string(pcp_threads)
+                                : std::string())
+            << "]\n";
 
   std::map<std::string, std::string> assets;
   assets["dep.usda"] = kBaseUSDA;
@@ -301,6 +308,10 @@ static void test_resolver_layer_loader_usda_dep() {
   opts.resolver = &resolver;
   opts.layer_loader = pipeline::MakeResolverLayerLoader(&resolver);
   opts.fail_on_composition_error = true;
+  if (pcp_threads > 0) {
+    opts.use_pcp_compose = true;
+    opts.compose_num_threads = pcp_threads;
+  }
 
   std::vector<uint8_t> out;
   pipeline::FlattenStats stats;
@@ -715,6 +726,8 @@ int main() {
   test_scheme_and_anonymous_assets();
   test_mtlx_reference_composition();
   test_resolver_layer_loader_usda_dep();
+  test_resolver_layer_loader_usda_dep(/*pcp_threads=*/1);
+  test_resolver_layer_loader_usda_dep(/*pcp_threads=*/4);
   test_memory_flatten_crate_root();
   test_missing_dep_fails();
 
