@@ -612,6 +612,53 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
 endif()
 
 # ============================================================
+# ThreadSanitizer regression tests (opt-in, default OFF)
+# ============================================================
+# Instruments the whole next build with -fsanitize=thread (every tool and
+# test is a TSan program -- a TSan binary must be built whole) and registers
+# `next_test_tsan_propname`, which hammers the PropNameTable frozen fast path
+# the parallel opinion fill relies on; a
+# detected race aborts nonzero, so ctest FAILS. With it on, every ctest
+# (test_pcp_parallel, next_usdcat flattens, ...) also runs under TSan. Use a
+# dedicated build dir:
+#   cmake -S src/next -B build-tsan -DLIGHTUSD_NEXT_BUILD_TESTS=ON \
+#         -DLIGHTUSD_NEXT_ENABLE_THREAD=ON -DLIGHTUSD_NEXT_BUILD_TSAN_TESTS=ON
+option(LIGHTUSD_NEXT_BUILD_TSAN_TESTS
+    "Instrument next with -fsanitize=thread and register the TSan regression tests" OFF)
+if(LIGHTUSD_NEXT_BUILD_TSAN_TESTS)
+    if(NOT LIGHTUSD_NEXT_ENABLE_THREAD)
+        message(FATAL_ERROR "LIGHTUSD_NEXT_BUILD_TSAN_TESTS requires LIGHTUSD_NEXT_ENABLE_THREAD=ON")
+    endif()
+    if(NOT LIGHTUSD_NEXT_BUILD_TESTS)
+        message(FATAL_ERROR "LIGHTUSD_NEXT_BUILD_TSAN_TESTS requires LIGHTUSD_NEXT_BUILD_TESTS=ON")
+    endif()
+    # Directory-wide flags (CMake uses their final value for every target in
+    # this directory), so C test programs and the shared C API library are
+    # instrumented too -- a thread started from an uninstrumented executable
+    # crashes inside the TSan runtime.
+    set(NEXT_TSAN_FLAGS "-fsanitize=thread -g -fno-omit-frame-pointer")
+    string(APPEND CMAKE_C_FLAGS " ${NEXT_TSAN_FLAGS}")
+    string(APPEND CMAKE_CXX_FLAGS " ${NEXT_TSAN_FLAGS}")
+    string(APPEND CMAKE_EXE_LINKER_FLAGS " -fsanitize=thread")
+    string(APPEND CMAKE_SHARED_LINKER_FLAGS " -fsanitize=thread")
+    add_executable(tsan_propname
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/tsan_propname.cc)
+    target_link_libraries(tsan_propname PRIVATE lightusd_next)
+    # Some kernels make TSan abort at startup with "unexpected memory mapping"
+    # (high-entropy ASLR); run under `setarch -R` when available.
+    find_program(NEXT_SETARCH setarch)
+    if(NEXT_SETARCH)
+        add_test(NAME next_test_tsan_propname
+            COMMAND ${NEXT_SETARCH} -R $<TARGET_FILE:tsan_propname>)
+    else()
+        add_test(NAME next_test_tsan_propname COMMAND tsan_propname)
+    endif()
+    set_tests_properties(next_test_tsan_propname PROPERTIES
+        ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1:exitcode=66"
+        LABELS "next;tsan")
+endif()
+
+# ============================================================
 # libFuzzer harnesses (clang only)
 # ============================================================
 option(LIGHTUSD_NEXT_BUILD_FUZZERS "Build libFuzzer harnesses for LightUSD Next (requires clang)" OFF)
