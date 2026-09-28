@@ -799,6 +799,12 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_tydra_next PRIVATE tydra_next lightusd_next)
 
+    # URDF/MJCF JSON -> USD converter (next port of the legacy builders).
+    add_executable(test_urdf_to_usd_next
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_urdf_to_usd_next.cc
+    )
+    target_link_libraries(test_urdf_to_usd_next PRIVATE tydra_next lightusd_next)
+
     # Render-conversion benchmark (tydra-next pipeline only; this standalone
     # tree cannot build the legacy tydra converter).
     # Report-only: prints timings and a deterministic scene checksum used to
@@ -944,6 +950,8 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     if(LIGHTUSD_WITH_TYDRA)
         add_test(NAME next_test_tydra COMMAND test_tydra_next
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+        add_test(NAME next_test_urdf_to_usd COMMAND test_urdf_to_usd_next
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     endif()
     add_test(NAME next_benchmark COMMAND benchmark_next

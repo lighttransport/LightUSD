@@ -3930,7 +3930,8 @@ def Xform "World"
       "limit": {"lower": -1, "upper": 1},
       "dynamics": {"damping": 0.5, "stiffness": 3, "armature": 0.02}
     }],
-    "tendons": [{"name": "cable", "stiffness": 10}],
+    "tendons": [{"name": "cable", "joints": [{"joint": "hinge"}],
+                 "stiffness": 10}],
     "mjcActuators": [{"name": "motor", "gear": [2]}],
     "keyframes": [{"name": "home", "qpos": [0]}],
     "sensors": [{"name": "position", "type": "jointpos"}]
