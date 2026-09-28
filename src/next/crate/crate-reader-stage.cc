@@ -556,7 +556,9 @@ bool CrateReader::Impl::BuildStage() {
   };
 
   std::vector<PrimEntry> prim_entries;
+#if defined(LIGHTUSD_ENABLE_THREAD)
   const int build_threads = ResolveBuildThreads();
+#endif
   if (!report_stage("stage.prims", 0, specs_.size())) return false;
   {
     std::vector<PrimRecords> prim_records;

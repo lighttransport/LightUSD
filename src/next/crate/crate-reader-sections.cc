@@ -1310,9 +1310,9 @@ bool CrateReader::Impl::ReadPaths() {
     }
   };
 
-  const int nthreads = ResolveBuildThreads();
   bool filled = false;
 #if defined(LIGHTUSD_ENABLE_THREAD)
+  const int nthreads = ResolveBuildThreads();
   if (nthreads > 1 && order.size() >= 65536) {
     const size_t task_size = std::max<size_t>(
         16384, order.size() / (static_cast<size_t>(nthreads) * 4));
