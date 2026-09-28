@@ -11,6 +11,22 @@
 #include "../parser/value-parser.hh"
 #include "crate-data-source.hh"
 #include "crate-timing.hh"
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wall"
+#pragma GCC diagnostic ignored "-Wextra"
+#pragma GCC diagnostic ignored "-Wold-style-cast"
+#endif
+#define XXH_INLINE_ALL
+#include "../../external/xxhash.h"  // XXH3_128bits (streaming-write dedup)
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 #include "variant-holders.hh"
 #include "crate-writer-types.hh"
 #include "lazy-array.hh"
@@ -100,6 +116,16 @@ class BufferedFileSink {
     }
     return ofs_->good();
   }
+  // Overwrite bytes already written at absolute position `pos`, then resume
+  // appending at the end.
+  bool Patch(uint64_t pos, const uint8_t* data, size_t size) {
+    if (!Flush()) return false;
+    ofs_->seekp(static_cast<std::streamoff>(pos), std::ios::beg);
+    ofs_->write(reinterpret_cast<const char*>(data),
+                static_cast<std::streamsize>(size));
+    ofs_->seekp(0, std::ios::end);
+    return ofs_->good();
+  }
 
  private:
   static constexpr size_t kCapacity = size_t(4) << 20;
@@ -145,7 +171,13 @@ CrateWriteResult CrateWriter::WriteLayerToFile(const char* filename, const Layer
   CrateWriteSink sink = [&file_sink](const uint8_t* data, size_t size) {
     return file_sink.Write(data, size);
   };
-  CrateWriteResult result = WriteLayerToSink(sink, layer);
+  // Seekable: VALUE blocks stream to the file as they are built (never all
+  // staged in memory) and the bootstrap is backfilled at the end.
+  CrateWritePatch patch = [&file_sink](uint64_t pos, const uint8_t* data,
+                                       size_t size) {
+    return file_sink.Patch(pos, data, size);
+  };
+  CrateWriteResult result = WriteLayerToSeekableSink(sink, patch, layer);
   const bool flushed = file_sink.Flush();
   ofs.close();
   if (result.success && (!flushed || ofs.fail())) {
@@ -177,6 +209,22 @@ CrateWriteResult CrateWriter::WriteLayerToMemory(std::vector<uint8_t>& buffer, c
   CrateWriteResult result = impl_->Write(layer);
   if (result.success) buffer = impl_->take_buffer();
   return result;
+}
+
+CrateWriteResult CrateWriter::WriteLayerToSeekableSink(
+    const CrateWriteSink& sink, const CrateWritePatch& patch,
+    const Layer& layer) {
+  if (impl_->strict_aousd_conformance()) {
+    CrateWriteResult strict_result;
+    if (!ValidateStrictCrateFields(layer, &strict_result.error)) {
+      return strict_result;
+    }
+  }
+  if (LayerNeedsVariantHolders(layer)) {
+    Layer materialized = MaterializeVariantHolders(layer);
+    return impl_->Write(materialized, &sink, &patch);
+  }
+  return impl_->Write(layer, &sink, &patch);
 }
 
 CrateWriteResult CrateWriter::WriteLayerToSink(const CrateWriteSink& sink, const Layer& layer) {

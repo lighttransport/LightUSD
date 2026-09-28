@@ -483,8 +483,7 @@
       }
     }
     spline_block.data = std::move(raw);
-    const uint64_t data_idx = value_data_.size();
-    value_data_.push_back(std::move(spline_block));
+    const uint64_t data_idx = PushValueBlock(std::move(spline_block));
 
     // A version-2 blob (tangent algorithms) needs crate 0.13.0; version 1
     // needs 0.12.0.
@@ -557,8 +556,10 @@
       uint64_t vr = sample_reps[si].raw();
       std::memcpy(header_data.data() + hp, &vr, 8); hp += 8;
     }
-    uint64_t header_idx = value_data_.size();
-    value_data_.push_back({TypeId::Invalid, std::move(header_data)});
+    // Header embeds the times rep + per-sample reps built above: staged block
+    // indices get relocated by _PatchTimeSamplesBlock; streamed blocks already
+    // carry their absolute offsets.
+    uint64_t header_idx = PushValueBlock({TypeId::Invalid, std::move(header_data)});
 
     CrateField ts_field;
     ts_field.token_index.value = InternToken("timeSamples");

@@ -47,8 +47,9 @@
       put_u64(static_cast<uint64_t>(static_cast<int64_t>(8)));  // recOffset = 8
       put_u64(vr.raw());
     }
-    uint64_t idx = value_data_.size();
-    value_data_.push_back({TypeId::Dictionary, std::move(blk)});
+    // Nested reps above are final offsets when streaming (see PushValueBlock);
+    // staged, they are block indices relocated by _PatchDictBlock.
+    const uint64_t idx = PushValueBlock({TypeId::Dictionary, std::move(blk)});
     return ValueRep::Make(CrateTypeId::Dictionary, idx, false, false);
   }
 
@@ -198,8 +199,7 @@
     block.data[16] = 0;  // isDense: legacy, always false
     block.embedded_value_rep_offsets.push_back(0);
     block.embedded_value_rep_offsets.push_back(8);
-    const uint64_t idx = value_data_.size();
-    value_data_.push_back(std::move(block));
+    const uint64_t idx = PushValueBlock(std::move(block));
     return ValueRep::Make(elem_crate, idx, false, false, false,
                           /*is_array_edit=*/true);
   }

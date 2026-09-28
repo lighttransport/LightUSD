@@ -84,6 +84,7 @@ private:
   // sharing one would apply the index->offset patch twice.
   uint64_t InternBlock(DataBlock&& block) {
     const size_t n = block.size();
+    if (stream_values_) return StreamInternBlock(block);
     if (n == 0) {
       // Never share the empty block: payload 0 is the reserved empty-array
       // marker and a zero-length block at a nonzero offset has no meaning.
@@ -114,6 +115,153 @@ private:
     block_slots_[slot] = BlockSlot{h, idx};
     ++block_slots_used_;
     return idx;
+  }
+
+  // ---- Streaming-value mode ---------------------------------------------
+  //
+  // With a seekable sink (file output), each VALUE block is written straight
+  // to the sink as it is built -- 8-byte aligned, exactly mirroring the
+  // staged layout (ComputeValueLayoutAndPatch + StreamValueBytes) -- and then
+  // dropped, instead of being staged in value_data_ until the end. Every
+  // block-producing call then returns the block's ABSOLUTE file offset rather
+  // than a value_data_ index, so ValueReps (including the ones embedded in
+  // TimeSamples / dictionary / spline / array-edit blocks, which are always
+  // built after the blocks they reference) are final when written and the
+  // relocation passes are skipped. The bootstrap is written as a placeholder
+  // and backfilled at the end. Output bytes are identical to the staged
+  // write.
+  bool stream_values_ = false;
+  const CrateWriteSink* value_sink_ = nullptr;
+  uint64_t value_stream_pos_ = 0;  // absolute sink position of the VALUE tail
+  bool value_stream_error_ = false;
+
+  // Streaming dedup: no block bytes are retained to memcmp against, so blocks
+  // are content-addressed by a FULL-content 128-bit digest plus size (the
+  // staged path's sampled hash would falsely share two large blocks that only
+  // agree on their sampled regions). Entries live in fixed-size segments:
+  // indices stay stable and growth never re-copies the table (animation-heavy
+  // scenes intern millions of tiny blocks).
+  struct StreamDedup {
+    static constexpr uint32_t kInvalid = ~0u;
+    static constexpr size_t kSegmentBits = 16;
+    static constexpr size_t kSegmentSize = size_t(1) << kSegmentBits;
+    struct Entry {
+      uint64_t hash;
+      uint64_t hash2;
+      uint64_t size;
+      uint64_t offset;
+      uint32_t next;
+    };
+    std::vector<uint32_t> buckets;
+    std::vector<std::unique_ptr<Entry[]>> segments;
+    size_t count = 0;
+    Entry& at(uint32_t i) {
+      return segments[i >> kSegmentBits][i & (kSegmentSize - 1)];
+    }
+    void clear() {
+      buckets.clear();
+      segments.clear();
+      count = 0;
+    }
+    const uint64_t* find(uint64_t h, uint64_t h2, uint64_t sz) {
+      if (buckets.empty()) return nullptr;
+      const size_t mask = buckets.size() - 1;
+      for (uint32_t e = buckets[h & mask]; e != kInvalid; e = at(e).next) {
+        const Entry& en = at(e);
+        if (en.hash == h && en.hash2 == h2 && en.size == sz) return &en.offset;
+      }
+      return nullptr;
+    }
+    void insert(uint64_t h, uint64_t h2, uint64_t sz, uint64_t off) {
+      if (buckets.empty() || (count + 1) * 2 >= buckets.size()) {
+        const size_t nb = buckets.empty() ? 1024 : buckets.size() * 2;
+        buckets.assign(nb, kInvalid);
+        const size_t mask = nb - 1;
+        for (uint32_t i = 0; i < count; ++i) {
+          Entry& en = at(i);
+          const size_t b = static_cast<size_t>(en.hash) & mask;
+          en.next = buckets[b];
+          buckets[b] = i;
+        }
+      }
+      if ((count >> kSegmentBits) >= segments.size()) {
+        segments.emplace_back(new Entry[kSegmentSize]);
+      }
+      const size_t mask = buckets.size() - 1;
+      const size_t b = static_cast<size_t>(h) & mask;
+      const uint32_t idx = static_cast<uint32_t>(count++);
+      at(idx) = Entry{h, h2, sz, off, buckets[b]};
+      buckets[b] = idx;
+    }
+  } stream_dedup_;
+
+  // Write `n` bytes at the next 8-byte-aligned sink position; returns that
+  // absolute offset.
+  uint64_t StreamRawBlock(const uint8_t* bytes, size_t n) {
+    static const uint8_t kZeros[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    const uint64_t pad = (8 - (value_stream_pos_ % 8)) % 8;
+    if (pad) {
+      if (!(*value_sink_)(kZeros, static_cast<size_t>(pad))) {
+        value_stream_error_ = true;
+      }
+      value_stream_pos_ += pad;
+    }
+    const uint64_t off = value_stream_pos_;
+    if (n) {
+      if (!(*value_sink_)(bytes, n)) value_stream_error_ = true;
+      value_stream_pos_ += n;
+    }
+    return off;
+  }
+
+  uint64_t StreamInternBlock(const DataBlock& block) {
+    const size_t n = block.size();
+    const uint8_t* p = block.bytes();
+    uint64_t h = 0;
+    uint64_t h2 = 0;
+    if (n) {
+      const XXH128_hash_t digest = XXH3_128bits(p, n);
+      h = digest.low64;
+      h2 = digest.high64;
+    }
+    if (const uint64_t* off = stream_dedup_.find(h, h2, n)) {
+      ++blocks_deduped_;
+      return *off;
+    }
+    const uint64_t off = StreamRawBlock(p, n);
+    if (block.is_ref()) DropStreamedSourceRange(block);
+    // Empty blocks are never shared (a staged empty block is never deduped).
+    if (n) stream_dedup_.insert(h, h2, n, off);
+    return off;
+  }
+
+  // Append a block WITHOUT content dedup (the TimeSamples header, dictionary,
+  // spline and array-edit blocks, which carry embedded ValueReps). Returns its
+  // value_data_ index (staged) or absolute file offset (streaming).
+  uint64_t PushValueBlock(DataBlock&& block) {
+    if (stream_values_) {
+      const uint64_t off = StreamRawBlock(block.bytes(), block.size());
+      if (block.is_ref()) DropStreamedSourceRange(block);
+      return off;
+    }
+    const uint64_t idx = value_data_.size();
+    value_data_.push_back(std::move(block));
+    return idx;
+  }
+
+  // A pass-through block's source bytes are written exactly once: drop their
+  // resident pages from the (file-mmapped) source so a large write does not
+  // fault the whole input into RSS. Only the page-aligned interior is dropped
+  // (a boundary page may hold a neighbouring block), and the mapping is
+  // read-only, so any later touch just re-faults the same bytes from the file
+  // -- the output cannot change. No-op for owned (non-mmap) sources.
+  static constexpr size_t kDropResidentMinBytes = size_t(1) << 20;
+  static void DropStreamedSourceRange(const DataBlock& block) {
+    if (!block.is_ref() || block.src_len < kDropResidentMinBytes) return;
+    constexpr uint64_t kPage = 4096;
+    const uint64_t begin = (block.src_offset + kPage - 1) & ~(kPage - 1);
+    const uint64_t end = (block.src_offset + block.src_len) & ~(kPage - 1);
+    if (end > begin) block.src->DiscardRange(begin, end - begin);
   }
 
   // Lazy-array write accounting.

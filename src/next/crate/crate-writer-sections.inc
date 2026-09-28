@@ -614,24 +614,11 @@
       if (sz) {
         if (!sink(block.bytes(), sz)) return false;
         pos += sz;
-        // A pass-through block's source bytes are written exactly once: drop
-        // their resident pages from the (file-mmapped) source so a large
-        // write does not fault the whole input into RSS. Only the page-aligned
-        // interior is dropped (a boundary page may hold a neighbouring block),
-        // and the mapping is read-only, so any later touch just re-faults the
-        // same bytes from the file -- the output cannot change. No-op for
-        // owned (non-mmap) sources.
-        if (block.is_ref() && sz >= kDropResidentMinBytes) {
-          constexpr uint64_t kPage = 4096;
-          const uint64_t begin = (block.src_offset + kPage - 1) & ~(kPage - 1);
-          const uint64_t end = (block.src_offset + block.src_len) & ~(kPage - 1);
-          if (end > begin) block.src->DiscardRange(begin, end - begin);
-        }
+        DropStreamedSourceRange(block);
       }
     }
     return true;
   }
-  static constexpr size_t kDropResidentMinBytes = size_t(1) << 20;
 
   void WriteTOC(const std::vector<CrateSection>& sections) {
     writer_.write_u64(sections.size());

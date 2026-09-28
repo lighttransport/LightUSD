@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <iterator>
 
 #include "next/stage/stage.hh"
 #include "next/layer/layer.hh"
@@ -2324,6 +2325,68 @@ void test_parallel_stage_build_matches_serial() {
   std::cout << "  parallel stage build matches serial!\n\n";
 }
 
+// File output streams VALUE blocks as they are built (seekable sink, bootstrap
+// backfilled); the bytes must equal the staged in-memory write and the plain
+// append-only sink write.
+void test_streamed_file_write_matches_memory() {
+  std::cout << "Testing streamed USDC file write == in-memory write...\n";
+  Layer layer;
+  LayerBuilder b(layer);
+  for (int i = 0; i < 64; ++i) {
+    b.begin_prim("P" + std::to_string(i), "Mesh");
+    PrimSpec* ps = b.current();
+    std::vector<float> pts(300 + static_cast<size_t>(i));
+    for (size_t k = 0; k < pts.size(); ++k) pts[k] = float(k % 97) * 0.5f;
+    b.add_property("points", Value::MakeFloatCompArray(std::move(pts),
+                                                       TypeId::Point3f, 3));
+    // Shared payload: exercises cross-spec block dedup.
+    b.add_property("faceVertexCounts",
+                   Value::MakeIntArray(std::vector<int32_t>(40, 4)));
+    b.add_property("doubleSided", Value(i % 2 == 0));
+    const PropNameId nid = GetPropNameTable().intern("radius");
+    ps->add_property_slot(nid, TypeId::Double, PropSlot::kFlagTimeSampled);
+    for (int t = 0; t < 4; ++t) {
+      ps->add_time_sample(nid, double(t), Value(double(t % 2) + 0.25));
+    }
+    Dict d;
+    d.set("index", Value(i));
+    d.set("label", Value(std::string("prim ") + std::to_string(i % 3)));
+    ps->meta().customData() = Value::MakeDictionary(std::move(d));
+    ps->meta().setCustomDataAuthored();
+    b.end_prim();
+  }
+  b.finalize();
+
+  CrateWriter writer;
+  std::vector<uint8_t> mem;
+  CrateWriteResult mr = writer.WriteLayerToMemory(mem, layer);
+  assert(mr.success && !mem.empty());
+
+  std::vector<uint8_t> sunk;
+  CrateWriter sink_writer;
+  CrateWriteResult sr = sink_writer.WriteLayerToSink(
+      [&sunk](const uint8_t* data, size_t size) {
+        sunk.insert(sunk.end(), data, data + size);
+        return true;
+      },
+      layer);
+  assert(sr.success);
+  assert(sunk == mem);
+
+  const char* path = "test_usdc_streamed_write.usdc";
+  CrateWriter file_writer;
+  CrateWriteResult fr = file_writer.WriteLayerToFile(path, layer);
+  assert(fr.success);
+  std::ifstream in(path, std::ios::binary);
+  std::vector<uint8_t> file((std::istreambuf_iterator<char>(in)),
+                            std::istreambuf_iterator<char>());
+  in.close();
+  std::remove(path);
+  assert(file == mem);
+  assert(fr.bytes_written == mem.size());
+  std::cout << "  streamed file write matches!\n\n";
+}
+
 // EncodeDeltaU32 picks the most frequent delta (ties -> smallest) as the
 // common delta; the fast histogram must agree with a std::map reference.
 void test_delta_encoding_common_delta() {
@@ -2428,6 +2491,7 @@ int main() {
     test_roundtrip_variants();
     test_parallel_stage_build_matches_serial();
     test_delta_encoding_common_delta();
+    test_streamed_file_write_matches_memory();
     test_property_slots_sorted_by_name();
 
     std::cout << "=== All USDC roundtrip tests passed! ===\n";

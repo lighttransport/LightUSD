@@ -9,7 +9,11 @@
     // Initialize buffer
   }
 
-  CrateWriteResult Write(const Layer& layer, const CrateWriteSink* sink = nullptr) {
+  // `patch` (seek-write at an absolute output position), when given with a
+  // sink, enables the streaming-value write: VALUE blocks go to the sink as
+  // they are built and the bootstrap is backfilled through `patch`.
+  CrateWriteResult Write(const Layer& layer, const CrateWriteSink* sink = nullptr,
+                         const CrateWritePatch* patch = nullptr) {
     result_ = CrateWriteResult();
     required_version_minor_ = 0;
     CratePhaseTimer timer(options_.enable_timing, "next_crate_write");
@@ -73,6 +77,10 @@
     arrays_reencoded_ = 0;
     block_slots_.clear();
     block_slots_used_ = 0;
+    stream_dedup_.clear();
+    stream_values_ = false;
+    value_sink_ = nullptr;
+    value_stream_error_ = false;
     blocks_deduped_ = 0;
     // Reserve block index 0 (empty placeholder). The writer emits empty arrays
     // as a ValueRep with payload==0 / non-inlined (pxrUSD's empty-array marker);
@@ -101,6 +109,20 @@
       value_data_.reserve(nprop + nprim + 16);
       // Most values inline or dedup; the table grows (amortized) past this.
       GrowBlockSlots(std::min<size_t>((nprop + nprim + 16) * 2, size_t(1) << 20));
+    }
+
+    if (sink && patch && *patch) {
+      // Streaming-value write: the VALUE section starts right after a 64-byte
+      // bootstrap placeholder (backfilled below), as in the staged layout.
+      stream_values_ = true;
+      value_sink_ = sink;
+      value_start_offset_ = 64;
+      value_stream_pos_ = 64;
+      static const uint8_t kBootstrapPlaceholder[64] = {0};
+      if (!(*sink)(kBootstrapPlaceholder, 64)) {
+        result_.error = "sink aborted (bootstrap placeholder)";
+        return result_;
+      }
     }
 
     lap("setup");
@@ -134,8 +156,19 @@
     buffer_.resize(64, 0);
     value_start_offset_ = 64;
 
-    // Compute the VALUE section layout and patch field offsets (always needed).
-    const uint64_t value_section_size = ComputeValueLayoutAndPatch();
+    // Compute the VALUE section layout and patch field offsets. Streamed
+    // blocks already sit at their final offsets (baked into every ValueRep),
+    // so the section size is just how many bytes were streamed.
+    uint64_t value_section_size = 0;
+    if (stream_values_) {
+      if (value_stream_error_) {
+        result_.error = "sink aborted (value section)";
+        return result_;
+      }
+      value_section_size = value_stream_pos_ - value_start_offset_;
+    } else {
+      value_section_size = ComputeValueLayoutAndPatch();
+    }
     lap("value_layout");
     if (value_section_size >
         static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
@@ -322,7 +355,20 @@
     // structural sections + TOC (the only part staged in buffer_). buffer_ holds
     // [bootstrap(64)][TOKENS..SPECS][TOC] with the VALUE section logically spliced
     // in after the bootstrap; stream the three parts in file order.
-    if (sink) {
+    if (sink && stream_values_) {
+      // The placeholder bootstrap and the whole VALUE section are already in
+      // the sink: append the structural sections + TOC, then backfill the real
+      // bootstrap at offset 0.
+      if (buffer_.size() > 64 &&
+          !(*sink)(buffer_.data() + 64, buffer_.size() - 64)) {
+        result_.error = "sink aborted (structural sections)";
+        return result_;
+      }
+      if (!(*patch)(0, buffer_.data(), 64)) {
+        result_.error = "sink aborted (bootstrap backfill)";
+        return result_;
+      }
+    } else if (sink) {
       if (!(*sink)(buffer_.data(), 64)) {
         result_.error = "sink aborted (bootstrap)";
         return result_;

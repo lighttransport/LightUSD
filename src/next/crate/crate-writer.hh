@@ -21,6 +21,12 @@ namespace next {
 /// chunks. Returns false to abort the write. See WriteLayerToSink().
 using CrateWriteSink = std::function<bool(const uint8_t* data, size_t size)>;
 
+/// Seek-write for a seekable sink: overwrite `size` bytes at absolute output
+/// position `pos` (bytes already emitted through the sink). Returns false to
+/// abort. Used internally for file output (see WriteLayerToFile).
+using CrateWritePatch =
+    std::function<bool(uint64_t pos, const uint8_t* data, size_t size)>;
+
 /// Options for crate writing
 struct CrateWriteOptions {
   /// Refuse authored fields that cannot be represented in the selected Crate
@@ -131,6 +137,14 @@ public:
   /// straight from their source. `sink` receives ordered byte chunks and
   /// returns false to abort. Output is byte-identical to WriteLayerToMemory.
   CrateWriteResult WriteLayerToSink(const CrateWriteSink& sink, const Layer& layer);
+
+  /// Like WriteLayerToSink, for a sink that can also seek-write (`patch`):
+  /// VALUE blocks are streamed as they are built instead of being staged
+  /// until the end, so the value section is never held in memory. Output is
+  /// byte-identical to WriteLayerToMemory.
+  CrateWriteResult WriteLayerToSeekableSink(const CrateWriteSink& sink,
+                                            const CrateWritePatch& patch,
+                                            const Layer& layer);
 
 private:
   class Impl;
