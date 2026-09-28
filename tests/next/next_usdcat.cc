@@ -57,12 +57,16 @@ int main(int argc, char **argv) {
   // keeps instancing; `prototypes` = usdcat-style /Flattened_Prototype_N.
   pcp::InstanceFlattenMode inst_mode = pcp::InstanceFlattenMode::Holder;
   pcp::PrototypeNumbering proto_num = pcp::PrototypeNumbering::Deterministic;
-  // Parallel composition is OPT-IN via --compose-threads N (default 1 = serial,
-  // no threading). -1 means auto = hardware concurrency.
-  // It is byte-identical to serial; it helps small compose-bound scenes and
-  // currently regresses huge instanced ones, so it stays off by default.
-  // (Independent of the writer's LIGHTUSD_NEXT_NUM_THREADS.)
-  int compose_threads = 1;
+  // Parallel composition: -1 (or 0) = auto (hardware concurrency, clamped to
+  // kMaxExecutionThreads), N = fixed, 1 = serial. Byte-identical to serial.
+  // It prefetches arc layers, pre-warms the sources cache (LIVRPS arc
+  // resolution, instance prototypes included) and fills opinions
+  // concurrently; a net win on every measured scene (Island, Scene A, Scene C,
+  // House), so it defaults ON like parse/write. Force serial with
+  // --compose-threads 1. (Independent of the writer's
+  // LIGHTUSD_NEXT_NUM_THREADS.) A build without LIGHTUSD_NEXT_ENABLE_THREAD
+  // composes serially regardless.
+  int compose_threads = -1;
   bool load_payloads = true;
   // Flatten-to-USDC: release composed property values as the writer encodes
   // them (--no-consume-values keeps the composed stage intact).
@@ -120,12 +124,12 @@ int main(int argc, char **argv) {
         return 2;
       }
     } else if (std::strcmp(argv[i], "--compose-threads") == 0 && i + 1 < argc) {
-      compose_threads = std::atoi(argv[++i]);  // opt-in parallel compose (>1)
+      compose_threads = std::atoi(argv[++i]);  // -1/0 = auto, 1 = serial
       if (compose_threads == 0) {
-        compose_threads = 1;
+        compose_threads = -1;
       } else if (compose_threads < -1) {
         std::fprintf(stderr,
-                     "Invalid --compose-threads value '%d' (must be -1 or >= 1)\n",
+                     "Invalid --compose-threads value '%d' (must be -1, 0 or >= 1)\n",
                      compose_threads);
         return 2;
       }
@@ -307,9 +311,8 @@ int main(int argc, char **argv) {
     }
     opts.instance_flatten_mode = inst_mode;  // default Holder (self-contained)
     opts.prototype_numbering = proto_num;
-    // Parallel compose (pre-warm sources_cache) is OPT-IN via --compose-threads N
-    // and byte-identical to serial. Default 1 = serial (no threading),
-    // -1 = auto hardware concurrency.
+    // Parallel compose is byte-identical to serial. Default -1 = auto
+    // (hardware concurrency); --compose-threads 1 = serial.
     opts.num_threads = compose_threads;
     opts.load_payloads = load_payloads;
     // Forward the CLI timing flag to the library (which no longer reads the env):
