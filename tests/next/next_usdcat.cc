@@ -42,6 +42,16 @@ static void emit_lines(const std::string &msgs, const char *prefix) {
   }
 }
 
+// One-shot flattening can spend seconds destroying the composed Stage after
+// its output is already closed. Keep this opt-in: _Exit skips all remaining
+// destructors and atexit handlers, so it is suitable only after a successful
+// write whose C/C++ streams have been flushed explicitly.
+[[noreturn]] static void ExitAfterSuccessfulWrite() {
+  std::cerr.flush();
+  std::fflush(nullptr);
+  std::_Exit(0);
+}
+
 int main(int argc, char **argv) {
   bool flatten = false;
   // Compose-free parse->write: LoadLayerFromFile (parse only, no composition) ->
@@ -75,6 +85,10 @@ int main(int argc, char **argv) {
   // Flatten-to-USDC: release composed property values as the writer encodes
   // them (--no-consume-values keeps the composed stage intact).
   bool consume_values = true;
+  // One-shot mode: skip the composed Stage teardown after a successful output
+  // write. Disabled by default because it intentionally skips destructors and
+  // atexit handlers; see ExitAfterSuccessfulWrite().
+  bool fast_exit = false;
   // --variant-fallback set=opt1,opt2  (repeatable). Stock pxr registers NO
   // fallbacks; the AOUSD supplemental corpus expectations were generated in
   // an environment with the classic standin->render fallback, so its runner
@@ -149,6 +163,8 @@ int main(int argc, char **argv) {
       compose_threads = -1;
     } else if (std::strcmp(argv[i], "--no-consume-values") == 0) {
       consume_values = false;
+    } else if (std::strcmp(argv[i], "--fast-exit") == 0) {
+      fast_exit = true;
     } else if (std::strcmp(argv[i], "--load-payloads") == 0) {
       load_payloads = true;
     } else if (std::strcmp(argv[i], "--defer-payloads") == 0) {
@@ -183,6 +199,7 @@ int main(int argc, char **argv) {
                          "[--write-threads N] "
                          "[--load-payloads|--defer-payloads] "
                          "[--no-consume-values] "
+                         "[--fast-exit] "
                          "[--aousd-strict] "
                          "[--no-async-arrays] [--no-parallel-prims] "
                          "[--require-prim /Path] "
@@ -391,6 +408,7 @@ int main(int argc, char **argv) {
                      out_path, res.token_count, res.path_count, res.spec_count);
       }
     }
+    if (fast_exit) ExitAfterSuccessfulWrite();
     return 0;
   }
 
@@ -457,5 +475,6 @@ int main(int argc, char **argv) {
       std::fprintf(stderr, "[next_usdcat] load=%.1fms\n", ms(t_loaded - t_start));
     }
   }
+  if (flatten && fast_exit) ExitAfterSuccessfulWrite();
   return 0;
 }
