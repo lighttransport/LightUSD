@@ -686,9 +686,23 @@ payload comparison across Menagerie models found the gaps:
 - lights and cameras have no transforms;
 - keyframes and sensors differ in naming.
 
-The web demo and CLI pin the legacy converter, so this does not affect them
-today. The port to next is in progress; its acceptance check is a zero diff
-against legacy output for every Menagerie payload.
+These are now ported. `src/tydra/next/urdf-to-usd.cc` has dedicated
+builders for every scope (sites, tendons, equalities, MuJoCo and Newton
+actuators, keyframes, sensors, contact pairs, lights, cameras, materials
+with texture networks, MjcCustom/MjcPlugins). It also ports the legacy
+link, joint and scene logic: inertia diagonalization, joint frames and
+limits, `mjc:option`/`mjc:flag`/`mjc:compiler`, and filtered pairs.
+
+Acceptance: `next::Diff` of next against legacy USDA for all 67 Menagerie
+models shows zero unexplained differences, with prim child order also
+checked. The remaining differences are:
+- **Intentional next additions:** `mjc:timestep`, and collider
+  `mjc:contype`/`conaffinity`.
+- **Legacy USDA writer artifacts (not converter differences):**
+  - `to_string(GeomCylinder)` never prints its props map;
+  - typed float attributes print at 6 significant digits.
+
+`next_test_urdf_to_usd` covers every ported scope.
 
 #### Gap triage before the default switch
 
