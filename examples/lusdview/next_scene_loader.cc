@@ -3780,14 +3780,32 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
   // authored string, and for a look layer nested below the root that is relative
   // to THAT layer (`../../texture/foo.png`) -- it does not resolve against the
   // scene file. `resolved_path` has been anchored to the authoring layer by the
-  // converter (see next/layer/asset-anchor.hh). For root-layer and USDZ-internal
-  // assets the two are identical, so this only ever adds the anchor.
+  // converter (see next/layer/asset-anchor.hh). Preserve a raw `<UDIM>` token,
+  // though: the converter resolves the image id to the first tile, and using
+  // that concrete path here silently turns a sparse UDIM texture into a plain
+  // 2D texture. Rebuild the pattern beside the resolved first tile so it keeps
+  // the resolver's layer/archive anchor while retaining the authored basename.
   std::string asset;
+  std::string resolvedImage;
   if (rt.image_id >= 0 &&
       static_cast<size_t>(rt.image_id) < scratch.images.size()) {
-    asset = scratch.images[static_cast<size_t>(rt.image_id)].resolved_path;
+    resolvedImage =
+        scratch.images[static_cast<size_t>(rt.image_id)].resolved_path;
+    asset = resolvedImage;
   }
   if (asset.empty()) asset = rt.asset_path;
+  if (lightusd::io::IsUDIMPath(rt.asset_path)) {
+    if (lightusd::io::IsAbsPath(rt.asset_path)) {
+      asset = rt.asset_path;
+    } else if (!resolvedImage.empty()) {
+      const std::string basename = lightusd::io::GetBaseFilename(rt.asset_path);
+      const std::string baseDir = lightusd::io::GetBaseDir(resolvedImage);
+      asset = baseDir.empty() ? basename
+                              : lightusd::io::JoinPath(baseDir, basename);
+    } else {
+      asset = rt.asset_path;
+    }
+  }
   if (asset.empty()) return -1;
   const std::string key = asset + (srgb ? "|s" : "|l") + "|" +
       std::to_string(static_cast<int>(rt.wrap_s)) + "," +
