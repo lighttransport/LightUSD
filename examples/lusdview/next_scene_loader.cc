@@ -10083,14 +10083,28 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // deliberately carries the whole-scene box), so it has to exist by then.
     const tydn::Float3& lo = m.bbox_min;
     const tydn::Float3& hi = m.bbox_max;
-    for (int corner = 0; corner < 8; ++corner) {
-      float lp[3] = {(corner & 1) ? hi.x : lo.x, (corner & 2) ? hi.y : lo.y,
-                     (corner & 4) ? hi.z : lo.z};
-      float wp[3];
-      for (int c = 0; c < 3; ++c)
-        wp[c] = lp[0] * M[0 * 4 + c] + lp[1] * M[1 * 4 + c] +
-                lp[2] * M[2 * 4 + c] + M[3 * 4 + c];
-      bounds.add(wp);
+    // Some skinned RenderMesh records do not carry a converter bbox. Derive
+    // the provisional box from their rest points so CPU and GPU paths receive
+    // the same framing/culling box before the posed scene box is installed.
+    if (m.has_skin() && !m.has_bbox && m.points.size() >= 3) {
+      for (size_t pi = 0; pi + 2 < m.points.size(); pi += 3) {
+        const float lp[3] = {m.points[pi], m.points[pi + 1], m.points[pi + 2]};
+        float wp[3];
+        for (int c = 0; c < 3; ++c)
+          wp[c] = lp[0] * M[0 * 4 + c] + lp[1] * M[1 * 4 + c] +
+                  lp[2] * M[2 * 4 + c] + M[3 * 4 + c];
+        bounds.add(wp);
+      }
+    } else {
+      for (int corner = 0; corner < 8; ++corner) {
+        float lp[3] = {(corner & 1) ? hi.x : lo.x, (corner & 2) ? hi.y : lo.y,
+                       (corner & 4) ? hi.z : lo.z};
+        float wp[3];
+        for (int c = 0; c < 3; ++c)
+          wp[c] = lp[0] * M[0 * 4 + c] + lp[1] * M[1 * 4 + c] +
+                  lp[2] * M[2 * 4 + c] + M[3 * 4 + c];
+        bounds.add(wp);
+      }
     }
     totalTris += static_cast<long long>(loc.indices.size() / 3);
     if (static_cast<std::size_t>(totalTris) > triCap) {
