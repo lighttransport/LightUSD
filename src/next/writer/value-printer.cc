@@ -507,6 +507,7 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
     }
     case TypeId::Token:
     case TypeId::String:
+    case TypeId::PathExpression:
     case TypeId::AssetPath: {
       Value tmp;
       const Value* src = &value;
@@ -726,6 +727,7 @@ void PrintValueInto(std::string& out, const Value& value,
       }
       case TypeId::Token:
       case TypeId::String:
+      case TypeId::PathExpression:
       case TypeId::AssetPath: {
         if (const auto* a = value.as_token_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();

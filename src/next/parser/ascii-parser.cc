@@ -308,6 +308,17 @@ bool AsciiParser::Impl::ReadArcRef(std::string* out) {
           }
           if (k == "offset") off = v;
           else if (k == "scale") scl = v;
+        } else if ((k == "offset" || k == "scale") &&
+                   Check(TokenType::Identifier)) {
+          // `nan` / `inf` lex as identifiers; keep them as numbers so the
+          // finiteness check below sees them instead of the default.
+          std::string word;
+          lexer_->expect(TokenType::Identifier, word);
+          const double v =
+              word == "inf" ? std::numeric_limits<double>::infinity()
+                            : std::numeric_limits<double>::quiet_NaN();
+          if (k == "offset") off = v;
+          else scl = v;
         } else {
           // Unknown key with a structured value (customData = { ... } may
           // contain nested parens/braces): balanced skip, or the paren scan
@@ -320,10 +331,12 @@ bool AsciiParser::Impl::ReadArcRef(std::string* out) {
       Match(TokenType::Semicolon);
     }
     Match(TokenType::CloseParen);
-    if (!std::isfinite(off) || !std::isfinite(scl) || !(scl > 0.0)) {
+    // The file format preserves any finite offset/scale (the AOUSD
+    // primmetadata.usda baseline keeps `scale = -2.0`); composition maps a
+    // non-positive scale to identity when it applies the arc.
+    if (!std::isfinite(off) || !std::isfinite(scl)) {
       if (options_.strict_aousd_conformance) {
-        AddError("AOUSD composition-arc offset must be finite and scale must "
-                 "be finite and greater than zero");
+        AddError("AOUSD composition-arc layer offset and scale must be finite");
         return false;
       }
       AddWarning("Invalid composition-arc layer offset; using identity mapping");

@@ -86,14 +86,7 @@ def _enumerate_file_formats(limit=CAP):
 # file_formats assets next does not load, with the reason. Each entry must
 # still fail (so a fix is noticed and the entry pruned); every other asset
 # must load.
-KNOWN_FILE_FORMAT_FAILURES = {
-    "text/usda/splines.usda":
-        "OpenUSD 26.05 rejects it too (spline knot parameter syntax)",
-    "text/usda/primmetadata.usda":
-        "next strict mode rejects a negative layer-offset scale that OpenUSD keeps",
-    "binary/gen_pathexpression.usdc":
-        "next strict Crate reader does not support pathExpression[] arrays",
-}
+KNOWN_FILE_FORMAT_FAILURES = {}
 
 
 def test_aousd_file_formats_load():

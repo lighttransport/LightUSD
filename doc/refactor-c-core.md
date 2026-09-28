@@ -604,7 +604,7 @@ work separated into these explicit tracks:
 | 2 | Loader configuration and load diagnostics | Done: all 33 configuration and 21 loading/diagnostics methods are behavior-verified or pinned gaps by paired tests. Converter-level scene-count differences found by the corpus probe belong to the render-scene track. | A setting-by-setting matrix plus behavior tests for supported settings and explicit errors for unsupported settings. |
 | 3 | Composition, flatten, and export | Done: all 16 composition, 17 next-flatten and 15 layer-export methods are behavior-verified by paired tests (edge differences pinned per method). | Per-method input/output/error parity fixtures on wasm32 and memory64; no silent fallback to legacy code. |
 | 4 | Schema/image utilities and MCP | Done: the eight schema/image utilities are paired (two pinned gaps: URDF engine attributes, physics JSON contract); the six MCP calls remain an explicit product decision. | Each method is implemented, explicitly unsupported with a documented reason, or assigned to an adjacent product; all decisions have tests. |
-| 5 | Allocation safety and product selection | Allocation-failure and budget gates, native, Python and wasm32/memory64 gates pass; open: browser sweeps (need the Menagerie dataset), three AOUSD file_formats conformance gaps, and the default-product decision. | Allocation-failure tests and a completed feature/API matrix; no default switch while any supported legacy contract lacks a next implementation or an explicit product decision. |
+| 5 | Allocation safety and product selection | Allocation-failure and budget gates, native, Python and wasm32/memory64 gates pass; done: browser sweeps pass, the AOUSD file_formats gaps are closed, and next is the default product. | Allocation-failure tests and a completed feature/API matrix; no default switch while any supported legacy contract lacks a next implementation or an explicit product decision. |
 
 #### Gap triage before the default switch
 
@@ -878,11 +878,20 @@ bar`). The AOUSD file_formats baseline keeps both, so strict mode now preserves
 unknown stage metadata losslessly, as it already did for prim and property
 metadata. That also lets `aousd-unknown-property-metadata.usda` load under the
 web untrusted policy. The file_formats test now loads its parser-level assets
-uncomposed and records three known failures that must keep failing until fixed:
+uncomposed, and every asset now loads in strict mode (no known failures). The
+AOUSD reference parser's baselines, not OpenUSD's reader, decided each case:
 
-- `splines.usda` — OpenUSD 26.05 rejects it too;
-- a negative layer-offset scale — OpenUSD keeps it, next strict rejects it;
-- `pathExpression[]` Crate arrays — unsupported in next's strict reader.
+- `splines.usda`: block comments inside a spline body count as whitespace
+  (`pre/*...*/(6.4, 6.4)`). Tangents stay `(width, slope)`, as OpenUSD writes
+  them; the AOUSD JSON baseline only names the two numbers the other way.
+- `primmetadata.usda`: the parser preserves any finite arc layer offset,
+  including a negative scale (the baseline keeps `scale = -2.0`).
+  Composition still maps a non-positive scale to identity. Strict mode
+  rejects only non-finite values, and `nan`/`inf` are now read as numbers
+  there instead of being skipped.
+- `gen_pathexpression.usdc`: `pathExpression[]` is read, written to USDA and
+  Crate, and parsed from USDA. OpenUSD reads next's Crate output back as the
+  same array.
 
 **next is now the default product.** Legacy stays available for a transition
 period:

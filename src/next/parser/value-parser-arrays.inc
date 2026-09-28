@@ -1037,7 +1037,9 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
     }
     return ParseResult::Ok(Value::MakeUInt64Array(std::move(values)));
   }
-  if (element_type == TypeId::Token || element_type == TypeId::String) {
+  if (element_type == TypeId::Token || element_type == TypeId::String ||
+      element_type == TypeId::PathExpression) {
+    // pathExpression elements are quoted strings, like string[].
     std::vector<std::string> values;
     auto parse_stringish = [](SliceParser* s, std::string* v) {
       return s->parse_token(v);
@@ -1372,7 +1374,8 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type,
   }
 
   if (element_type == TypeId::Token || element_type == TypeId::String ||
-      element_type == TypeId::AssetPath) {
+      element_type == TypeId::AssetPath ||
+      element_type == TypeId::PathExpression) {
     const char* data = nullptr;
     size_t len = 0;
     bool simple = false;
@@ -1404,7 +1407,8 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type,
       return ParseResult::Ok(
           Value::MakeIntCompArray(std::vector<int32_t>{}, element_type, comps));
     } else if (element_type == TypeId::Token || element_type == TypeId::String ||
-               element_type == TypeId::AssetPath) {
+               element_type == TypeId::AssetPath ||
+               element_type == TypeId::PathExpression) {
       return ParseResult::Ok(
           Value::MakeStringLikeArray(std::vector<std::string>{}, element_type));
     }

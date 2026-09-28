@@ -446,8 +446,10 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
                                     CrateArrayValueType(type_id), comps);
       return true;
     }
-    case CrateTypeId::String: {
-      // uint32 indices into the STRINGS section.
+    case CrateTypeId::String:
+    case CrateTypeId::PathExpression: {
+      // uint32 indices into the STRINGS section. SdfPathExpression arrays
+      // (crate >= 0.10) store each expression's text the same way.
       std::vector<uint32_t> idxs(static_cast<size_t>(count));
       if (compressed) {
         if (!read_compressed_u32(idxs.data())) return false;
@@ -458,7 +460,10 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       for (size_t i = 0; i < count; i++) {
         if (!GetString(idxs[i], data[i])) return false;
       }
-      out = Value::MakeStringLikeArray(std::move(data), TypeId::String);
+      out = Value::MakeStringLikeArray(
+          std::move(data), type_id == CrateTypeId::PathExpression
+                               ? TypeId::PathExpression
+                               : TypeId::String);
       return true;
     }
     case CrateTypeId::AssetPath: {

@@ -619,8 +619,10 @@
           }
           break;
         }
-        case TypeId::String: {
+        case TypeId::String:
+        case TypeId::PathExpression: {
           // String arrays: uint32 indices into the STRINGS section.
+          // SdfPathExpression arrays store each expression text the same way.
           const std::vector<std::string>* arr = val.as_token_array();
           if (arr) {
             count = arr->size();
