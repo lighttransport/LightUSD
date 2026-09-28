@@ -141,6 +141,11 @@ child.on('exit', (code, signal) => {
   if (!initial.loaded || !initial.composed || initial.deferred_payload_count !== 1) {
     throw new Error(`unexpected deferred scene: ${JSON.stringify(initial)}`);
   }
+  if (initial.deferred_payloads.length !== 1 ||
+      initial.deferred_payloads[0].prim !== '/World' ||
+      initial.deferred_payloads[0].arc !== 'payload') {
+    throw new Error(`unexpected deferred paths: ${JSON.stringify(initial.deferred_payloads)}`);
+  }
   if (loader === 'legacy' && initial.triangle_count !== 0) {
     throw new Error(`legacy payload geometry was not deferred: ${JSON.stringify(initial)}`);
   }

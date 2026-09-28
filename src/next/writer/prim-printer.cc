@@ -8,6 +8,7 @@
 // string-backed StreamWriter, so this whole printer is libc-stdio-free.
 
 #include "prim-printer.hh"
+#include "../layer/layer.hh"
 #include "usda-format-utils.hh"
 #include "value-printer.hh"
 #include "stream-writer.hh"

@@ -326,6 +326,18 @@ bool CrateReader::Impl::BuildStage() {
           layer.meta().owner = *s;
           layer.meta().owner_set = true;
         }
+      } else if (field.first == "autoPlay") {
+        if (const bool* value = field.second.as_bool()) {
+          layer.meta().autoPlay = *value;
+          layer.meta().autoPlay_set = true;
+        }
+      } else if (field.first == "playbackMode") {
+        const std::string* value = field.second.as_token();
+        if (!value) value = field.second.as_string();
+        if (value) {
+          layer.meta().playbackMode = *value == "loop" ? "loop" : "none";
+          layer.meta().playbackMode_set = true;
+        }
       } else if (field.first == "__lightusd_unknownMeta") {
         // lightusd-private: length-prefixed (key, raw-value) pairs of unmodeled
         // LAYER metadata the parser preserved (see the writer).
@@ -603,6 +615,7 @@ bool CrateReader::Impl::BuildStage() {
             // target-less relationship with an authored (explicit) edit.
             ri.edits = ArcEdit();
             ri.edits.authored = true;
+            ri.edits.is_value_block = true;
             raw.clear();
           } else if (!raw.empty() && !raw[0].empty() && raw[0][0] == '\x01') {
             // Non-explicit list op: sublists are marker-delimited.

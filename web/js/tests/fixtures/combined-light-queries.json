@@ -1,0 +1,1196 @@
+{
+  "lights-full-001.usda": {
+    "objects": [
+      {
+        "name": "DistantLight",
+        "absPath": "/Lights/DistantLight",
+        "displayName": "",
+        "type": "distant",
+        "color": [
+          1,
+          0.949999988079071,
+          0.8999999761581421
+        ],
+        "intensity": 50000,
+        "exposure": 0,
+        "diffuse": 1,
+        "specular": 1,
+        "normalize": false,
+        "enableColorTemperature": false,
+        "colorTemperature": 6500,
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "direction": [
+          {
+            "$negativeZero": true
+          },
+          {
+            "$negativeZero": true
+          },
+          -1
+        ],
+        "radius": 0.5,
+        "width": 1,
+        "height": 1,
+        "length": 1,
+        "angle": 0.5299999713897705,
+        "textureFile": "",
+        "shapingConeAngle": 90,
+        "shapingConeSoftness": 0,
+        "shapingFocus": 0,
+        "shapingFocusTint": [
+          0,
+          0,
+          0
+        ],
+        "shapingIesFile": "",
+        "shapingIesAngleScale": 0,
+        "shapingIesNormalize": false,
+        "shadowEnable": true,
+        "shadowColor": [
+          0,
+          0,
+          0
+        ],
+        "shadowDistance": -1,
+        "shadowFalloff": -1,
+        "shadowFalloffGamma": 1,
+        "domeTextureFormat": "automatic",
+        "guideRadius": 100000,
+        "envmapTextureId": -1,
+        "geometryMeshId": -1,
+        "materialSyncMode": ""
+      },
+      {
+        "name": "DiskLight",
+        "absPath": "/Lights/DiskLight",
+        "displayName": "",
+        "type": "disk",
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 1000,
+        "exposure": 0,
+        "diffuse": 1,
+        "specular": 1,
+        "normalize": true,
+        "enableColorTemperature": true,
+        "colorTemperature": 5500,
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          -1,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          5,
+          0,
+          1
+        ],
+        "position": [
+          0,
+          5,
+          0
+        ],
+        "direction": [
+          {
+            "$negativeZero": true
+          },
+          -1,
+          {
+            "$negativeZero": true
+          }
+        ],
+        "radius": 0.5,
+        "width": 1,
+        "height": 1,
+        "length": 1,
+        "angle": 0.5299999713897705,
+        "textureFile": "",
+        "shapingConeAngle": 90,
+        "shapingConeSoftness": 0.10000000149011612,
+        "shapingFocus": 0.5,
+        "shapingFocusTint": [
+          1,
+          1,
+          1
+        ],
+        "shapingIesFile": "",
+        "shapingIesAngleScale": 0,
+        "shapingIesNormalize": false,
+        "shadowEnable": true,
+        "shadowColor": [
+          0,
+          0,
+          0
+        ],
+        "shadowDistance": -1,
+        "shadowFalloff": -1,
+        "shadowFalloffGamma": 1,
+        "domeTextureFormat": "automatic",
+        "guideRadius": 100000,
+        "envmapTextureId": -1,
+        "geometryMeshId": -1,
+        "materialSyncMode": ""
+      },
+      {
+        "name": "RectLight",
+        "absPath": "/Lights/RectLight",
+        "displayName": "",
+        "type": "rect",
+        "color": [
+          1,
+          0.9800000190734863,
+          0.949999988079071
+        ],
+        "intensity": 500,
+        "exposure": 1,
+        "diffuse": 1,
+        "specular": 1,
+        "normalize": true,
+        "enableColorTemperature": false,
+        "colorTemperature": 4500,
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          5,
+          3,
+          0,
+          1
+        ],
+        "position": [
+          5,
+          3,
+          0
+        ],
+        "direction": [
+          {
+            "$negativeZero": true
+          },
+          {
+            "$negativeZero": true
+          },
+          -1
+        ],
+        "radius": 0.5,
+        "width": 2,
+        "height": 1,
+        "length": 1,
+        "angle": 0.5299999713897705,
+        "textureFile": "rect_light_texture.png",
+        "shapingConeAngle": 120,
+        "shapingConeSoftness": 0.20000000298023224,
+        "shapingFocus": 0,
+        "shapingFocusTint": [
+          0,
+          0,
+          0
+        ],
+        "shapingIesFile": "",
+        "shapingIesAngleScale": 0,
+        "shapingIesNormalize": false,
+        "shadowEnable": true,
+        "shadowColor": [
+          0.10000000149011612,
+          0.10000000149011612,
+          0.10000000149011612
+        ],
+        "shadowDistance": -1,
+        "shadowFalloff": -1,
+        "shadowFalloffGamma": 1,
+        "domeTextureFormat": "automatic",
+        "guideRadius": 100000,
+        "envmapTextureId": -1,
+        "geometryMeshId": -1,
+        "materialSyncMode": ""
+      },
+      {
+        "name": "SphereLight",
+        "absPath": "/Lights/SphereLight",
+        "displayName": "",
+        "type": "sphere",
+        "color": [
+          1,
+          0.8999999761581421,
+          0.699999988079071
+        ],
+        "intensity": 100,
+        "exposure": 0,
+        "diffuse": 1,
+        "specular": 1,
+        "normalize": false,
+        "enableColorTemperature": true,
+        "colorTemperature": 3200,
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -3,
+          2,
+          2,
+          1
+        ],
+        "position": [
+          -3,
+          2,
+          2
+        ],
+        "direction": [
+          {
+            "$negativeZero": true
+          },
+          {
+            "$negativeZero": true
+          },
+          -1
+        ],
+        "radius": 0.10000000149011612,
+        "width": 1,
+        "height": 1,
+        "length": 1,
+        "angle": 0.5299999713897705,
+        "textureFile": "",
+        "shapingConeAngle": 45,
+        "shapingConeSoftness": 0.25,
+        "shapingFocus": 0.800000011920929,
+        "shapingFocusTint": [
+          1,
+          0.949999988079071,
+          0.8999999761581421
+        ],
+        "shapingIesFile": "",
+        "shapingIesAngleScale": 0,
+        "shapingIesNormalize": false,
+        "shadowEnable": true,
+        "shadowColor": [
+          0,
+          0,
+          0
+        ],
+        "shadowDistance": 100,
+        "shadowFalloff": 50,
+        "shadowFalloffGamma": 2.200000047683716,
+        "domeTextureFormat": "automatic",
+        "guideRadius": 100000,
+        "envmapTextureId": -1,
+        "geometryMeshId": -1,
+        "materialSyncMode": ""
+      },
+      {
+        "name": "CylinderLight",
+        "absPath": "/Lights/CylinderLight",
+        "displayName": "",
+        "type": "cylinder",
+        "color": [
+          0.8999999761581421,
+          0.949999988079071,
+          1
+        ],
+        "intensity": 200,
+        "exposure": 0.5,
+        "diffuse": 1,
+        "specular": 1,
+        "normalize": true,
+        "enableColorTemperature": false,
+        "colorTemperature": 7000,
+        "transform": [
+          0,
+          1,
+          0,
+          0,
+          -1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          3,
+          -2,
+          1
+        ],
+        "position": [
+          0,
+          3,
+          -2
+        ],
+        "direction": [
+          {
+            "$negativeZero": true
+          },
+          {
+            "$negativeZero": true
+          },
+          -1
+        ],
+        "radius": 0.05000000074505806,
+        "width": 1,
+        "height": 1,
+        "length": 2,
+        "angle": 0.5299999713897705,
+        "textureFile": "",
+        "shapingConeAngle": 90,
+        "shapingConeSoftness": 0,
+        "shapingFocus": 0,
+        "shapingFocusTint": [
+          0,
+          0,
+          0
+        ],
+        "shapingIesFile": "",
+        "shapingIesAngleScale": 0,
+        "shapingIesNormalize": false,
+        "shadowEnable": true,
+        "shadowColor": [
+          0,
+          0,
+          0
+        ],
+        "shadowDistance": -1,
+        "shadowFalloff": -1,
+        "shadowFalloffGamma": 1,
+        "domeTextureFormat": "automatic",
+        "guideRadius": 100000,
+        "envmapTextureId": -1,
+        "geometryMeshId": -1,
+        "materialSyncMode": ""
+      },
+      {
+        "name": "DomeLight",
+        "absPath": "/Lights/DomeLight",
+        "displayName": "",
+        "type": "dome",
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 1,
+        "exposure": 0,
+        "diffuse": 1,
+        "specular": 1,
+        "normalize": false,
+        "enableColorTemperature": false,
+        "colorTemperature": 6500,
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "direction": [
+          {
+            "$negativeZero": true
+          },
+          {
+            "$negativeZero": true
+          },
+          -1
+        ],
+        "radius": 0.5,
+        "width": 1,
+        "height": 1,
+        "length": 1,
+        "angle": 0.5299999713897705,
+        "textureFile": "environment.hdr",
+        "shapingConeAngle": 90,
+        "shapingConeSoftness": 0,
+        "shapingFocus": 0,
+        "shapingFocusTint": [
+          0,
+          0,
+          0
+        ],
+        "shapingIesFile": "",
+        "shapingIesAngleScale": 0,
+        "shapingIesNormalize": false,
+        "shadowEnable": true,
+        "shadowColor": [
+          0,
+          0,
+          0
+        ],
+        "shadowDistance": -1,
+        "shadowFalloff": -1,
+        "shadowFalloffGamma": 1,
+        "domeTextureFormat": "latlong",
+        "guideRadius": 1000,
+        "envmapTextureId": -1,
+        "geometryMeshId": -1,
+        "materialSyncMode": ""
+      },
+      {
+        "name": "AnimatedLight",
+        "absPath": "/Lights/AnimatedLight",
+        "displayName": "",
+        "type": "sphere",
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 100,
+        "exposure": 0,
+        "diffuse": 1,
+        "specular": 1,
+        "normalize": false,
+        "enableColorTemperature": false,
+        "colorTemperature": 6500,
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          2,
+          0,
+          1
+        ],
+        "position": [
+          0,
+          2,
+          0
+        ],
+        "direction": [
+          {
+            "$negativeZero": true
+          },
+          {
+            "$negativeZero": true
+          },
+          -1
+        ],
+        "radius": 0.20000000298023224,
+        "width": 1,
+        "height": 1,
+        "length": 1,
+        "angle": 0.5299999713897705,
+        "textureFile": "",
+        "shapingConeAngle": 90,
+        "shapingConeSoftness": 0,
+        "shapingFocus": 0,
+        "shapingFocusTint": [
+          0,
+          0,
+          0
+        ],
+        "shapingIesFile": "",
+        "shapingIesAngleScale": 0,
+        "shapingIesNormalize": false,
+        "shadowEnable": true,
+        "shadowColor": [
+          0,
+          0,
+          0
+        ],
+        "shadowDistance": -1,
+        "shadowFalloff": -1,
+        "shadowFalloffGamma": 1,
+        "domeTextureFormat": "automatic",
+        "guideRadius": 100000,
+        "envmapTextureId": -1,
+        "geometryMeshId": -1,
+        "materialSyncMode": ""
+      },
+      {
+        "name": "RenderOnlyLight",
+        "absPath": "/Lights/RenderOnlyLight",
+        "displayName": "",
+        "type": "sphere",
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 100,
+        "exposure": 0,
+        "diffuse": 1,
+        "specular": 1,
+        "normalize": false,
+        "enableColorTemperature": false,
+        "colorTemperature": 6500,
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "direction": [
+          {
+            "$negativeZero": true
+          },
+          {
+            "$negativeZero": true
+          },
+          -1
+        ],
+        "radius": 0.10000000149011612,
+        "width": 1,
+        "height": 1,
+        "length": 1,
+        "angle": 0.5299999713897705,
+        "textureFile": "",
+        "shapingConeAngle": 90,
+        "shapingConeSoftness": 0,
+        "shapingFocus": 0,
+        "shapingFocusTint": [
+          0,
+          0,
+          0
+        ],
+        "shapingIesFile": "",
+        "shapingIesAngleScale": 0,
+        "shapingIesNormalize": false,
+        "shadowEnable": true,
+        "shadowColor": [
+          0,
+          0,
+          0
+        ],
+        "shadowDistance": -1,
+        "shadowFalloff": -1,
+        "shadowFalloffGamma": 1,
+        "domeTextureFormat": "automatic",
+        "guideRadius": 100000,
+        "envmapTextureId": -1,
+        "geometryMeshId": -1,
+        "materialSyncMode": ""
+      },
+      {
+        "name": "GuideLight",
+        "absPath": "/Lights/GuideLight",
+        "displayName": "",
+        "type": "sphere",
+        "color": [
+          0,
+          1,
+          0
+        ],
+        "intensity": 50,
+        "exposure": 0,
+        "diffuse": 1,
+        "specular": 1,
+        "normalize": false,
+        "enableColorTemperature": false,
+        "colorTemperature": 6500,
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "direction": [
+          {
+            "$negativeZero": true
+          },
+          {
+            "$negativeZero": true
+          },
+          -1
+        ],
+        "radius": 0.20000000298023224,
+        "width": 1,
+        "height": 1,
+        "length": 1,
+        "angle": 0.5299999713897705,
+        "textureFile": "",
+        "shapingConeAngle": 90,
+        "shapingConeSoftness": 0,
+        "shapingFocus": 0,
+        "shapingFocusTint": [
+          0,
+          0,
+          0
+        ],
+        "shapingIesFile": "",
+        "shapingIesAngleScale": 0,
+        "shapingIesNormalize": false,
+        "shadowEnable": true,
+        "shadowColor": [
+          0,
+          0,
+          0
+        ],
+        "shadowDistance": -1,
+        "shadowFalloff": -1,
+        "shadowFalloffGamma": 1,
+        "domeTextureFormat": "automatic",
+        "guideRadius": 100000,
+        "envmapTextureId": -1,
+        "geometryMeshId": -1,
+        "materialSyncMode": ""
+      },
+      {
+        "name": "InvisibleLight",
+        "absPath": "/Lights/InvisibleLight",
+        "displayName": "",
+        "type": "sphere",
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 100,
+        "exposure": 0,
+        "diffuse": 1,
+        "specular": 1,
+        "normalize": false,
+        "enableColorTemperature": false,
+        "colorTemperature": 6500,
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "direction": [
+          {
+            "$negativeZero": true
+          },
+          {
+            "$negativeZero": true
+          },
+          -1
+        ],
+        "radius": 0.10000000149011612,
+        "width": 1,
+        "height": 1,
+        "length": 1,
+        "angle": 0.5299999713897705,
+        "textureFile": "",
+        "shapingConeAngle": 90,
+        "shapingConeSoftness": 0,
+        "shapingFocus": 0,
+        "shapingFocusTint": [
+          0,
+          0,
+          0
+        ],
+        "shapingIesFile": "",
+        "shapingIesAngleScale": 0,
+        "shapingIesNormalize": false,
+        "shadowEnable": true,
+        "shadowColor": [
+          0,
+          0,
+          0
+        ],
+        "shadowDistance": -1,
+        "shadowFalloff": -1,
+        "shadowFalloffGamma": 1,
+        "domeTextureFormat": "automatic",
+        "guideRadius": 100000,
+        "envmapTextureId": -1,
+        "geometryMeshId": -1,
+        "materialSyncMode": ""
+      }
+    ],
+    "formats": [
+      {
+        "json": {
+          "data": "{\"name\": \"DistantLight\",\"abs_path\": \"/Lights/DistantLight\",\"type\": \"Distant\",\"color\": [1, 0.95, 0.9],\"intensity\": 50000,\"exposure\": 0,\"diffuse\": 1,\"specular\": 1,\"normalize\": false,\"enableColorTemperature\": false,\"colorTemperature\": 6500,\"shadow\": {\"enable\": true,\"color\": [0, 0, 0],\"distance\": -1,\"falloff\": -1,\"falloffGamma\": 1},\"shaping\": {\"focus\": 0,\"focusTint\": [0, 0, 0],\"coneAngle\": 90,\"coneSoftness\": 0,\"iesFile\": \"\",\"iesAngleScale\": 0,\"iesNormalize\": false},\"properties\": {\"angle\": 0.53}}",
+          "format": "json"
+        },
+        "xml": {
+          "error": "XML serialization for lights not yet implemented"
+        }
+      },
+      {
+        "json": {
+          "data": "{\"name\": \"DiskLight\",\"abs_path\": \"/Lights/DiskLight\",\"type\": \"Disk\",\"color\": [1, 1, 1],\"intensity\": 1000,\"exposure\": 0,\"diffuse\": 1,\"specular\": 1,\"normalize\": true,\"enableColorTemperature\": true,\"colorTemperature\": 5500,\"shadow\": {\"enable\": true,\"color\": [0, 0, 0],\"distance\": -1,\"falloff\": -1,\"falloffGamma\": 1},\"shaping\": {\"focus\": 0.5,\"focusTint\": [1, 1, 1],\"coneAngle\": 90,\"coneSoftness\": 0.1,\"iesFile\": \"\",\"iesAngleScale\": 0,\"iesNormalize\": false},\"properties\": {\"radius\": 0.5}}",
+          "format": "json"
+        },
+        "xml": {
+          "error": "XML serialization for lights not yet implemented"
+        }
+      },
+      {
+        "json": {
+          "data": "{\"name\": \"RectLight\",\"abs_path\": \"/Lights/RectLight\",\"type\": \"Rect\",\"color\": [1, 0.98, 0.95],\"intensity\": 500,\"exposure\": 1,\"diffuse\": 1,\"specular\": 1,\"normalize\": true,\"enableColorTemperature\": false,\"colorTemperature\": 4500,\"shadow\": {\"enable\": true,\"color\": [0.1, 0.1, 0.1],\"distance\": -1,\"falloff\": -1,\"falloffGamma\": 1},\"shaping\": {\"focus\": 0,\"focusTint\": [0, 0, 0],\"coneAngle\": 120,\"coneSoftness\": 0.2,\"iesFile\": \"\",\"iesAngleScale\": 0,\"iesNormalize\": false},\"properties\": {\"width\": 2,\"height\": 1,\"textureFile\": \"rect_light_texture.png\"}}",
+          "format": "json"
+        },
+        "xml": {
+          "error": "XML serialization for lights not yet implemented"
+        }
+      },
+      {
+        "json": {
+          "data": "{\"name\": \"SphereLight\",\"abs_path\": \"/Lights/SphereLight\",\"type\": \"Sphere\",\"color\": [1, 0.9, 0.7],\"intensity\": 100,\"exposure\": 0,\"diffuse\": 1,\"specular\": 1,\"normalize\": false,\"enableColorTemperature\": true,\"colorTemperature\": 3200,\"shadow\": {\"enable\": true,\"color\": [0, 0, 0],\"distance\": 100,\"falloff\": 50,\"falloffGamma\": 2.2},\"shaping\": {\"focus\": 0.8,\"focusTint\": [1, 0.95, 0.9],\"coneAngle\": 45,\"coneSoftness\": 0.25,\"iesFile\": \"\",\"iesAngleScale\": 0,\"iesNormalize\": false},\"properties\": {\"radius\": 0.1}}",
+          "format": "json"
+        },
+        "xml": {
+          "error": "XML serialization for lights not yet implemented"
+        }
+      },
+      {
+        "json": {
+          "data": "{\"name\": \"CylinderLight\",\"abs_path\": \"/Lights/CylinderLight\",\"type\": \"Cylinder\",\"color\": [0.9, 0.95, 1],\"intensity\": 200,\"exposure\": 0.5,\"diffuse\": 1,\"specular\": 1,\"normalize\": true,\"enableColorTemperature\": false,\"colorTemperature\": 7000,\"shadow\": {\"enable\": true,\"color\": [0, 0, 0],\"distance\": -1,\"falloff\": -1,\"falloffGamma\": 1},\"shaping\": {\"focus\": 0,\"focusTint\": [0, 0, 0],\"coneAngle\": 90,\"coneSoftness\": 0,\"iesFile\": \"\",\"iesAngleScale\": 0,\"iesNormalize\": false},\"properties\": {\"radius\": 0.05,\"length\": 2}}",
+          "format": "json"
+        },
+        "xml": {
+          "error": "XML serialization for lights not yet implemented"
+        }
+      },
+      {
+        "json": {
+          "data": "{\"name\": \"DomeLight\",\"abs_path\": \"/Lights/DomeLight\",\"type\": \"Dome\",\"color\": [1, 1, 1],\"intensity\": 1,\"exposure\": 0,\"diffuse\": 1,\"specular\": 1,\"normalize\": false,\"enableColorTemperature\": false,\"colorTemperature\": 6500,\"shadow\": {\"enable\": true,\"color\": [0, 0, 0],\"distance\": -1,\"falloff\": -1,\"falloffGamma\": 1},\"shaping\": {\"focus\": 0,\"focusTint\": [0, 0, 0],\"coneAngle\": 90,\"coneSoftness\": 0,\"iesFile\": \"\",\"iesAngleScale\": 0,\"iesNormalize\": false},\"properties\": {\"textureFormat\": \"latlong\",\"guideRadius\": 1000,\"textureFile\": \"environment.hdr\"}}",
+          "format": "json"
+        },
+        "xml": {
+          "error": "XML serialization for lights not yet implemented"
+        }
+      },
+      {
+        "json": {
+          "data": "{\"name\": \"AnimatedLight\",\"abs_path\": \"/Lights/AnimatedLight\",\"type\": \"Sphere\",\"color\": [1, 1, 1],\"intensity\": 100,\"exposure\": 0,\"diffuse\": 1,\"specular\": 1,\"normalize\": false,\"enableColorTemperature\": false,\"colorTemperature\": 6500,\"shadow\": {\"enable\": true,\"color\": [0, 0, 0],\"distance\": -1,\"falloff\": -1,\"falloffGamma\": 1},\"shaping\": {\"focus\": 0,\"focusTint\": [0, 0, 0],\"coneAngle\": 90,\"coneSoftness\": 0,\"iesFile\": \"\",\"iesAngleScale\": 0,\"iesNormalize\": false},\"properties\": {\"radius\": 0.2}}",
+          "format": "json"
+        },
+        "xml": {
+          "error": "XML serialization for lights not yet implemented"
+        }
+      },
+      {
+        "json": {
+          "data": "{\"name\": \"RenderOnlyLight\",\"abs_path\": \"/Lights/RenderOnlyLight\",\"type\": \"Sphere\",\"color\": [1, 1, 1],\"intensity\": 100,\"exposure\": 0,\"diffuse\": 1,\"specular\": 1,\"normalize\": false,\"enableColorTemperature\": false,\"colorTemperature\": 6500,\"shadow\": {\"enable\": true,\"color\": [0, 0, 0],\"distance\": -1,\"falloff\": -1,\"falloffGamma\": 1},\"shaping\": {\"focus\": 0,\"focusTint\": [0, 0, 0],\"coneAngle\": 90,\"coneSoftness\": 0,\"iesFile\": \"\",\"iesAngleScale\": 0,\"iesNormalize\": false},\"properties\": {\"radius\": 0.1}}",
+          "format": "json"
+        },
+        "xml": {
+          "error": "XML serialization for lights not yet implemented"
+        }
+      },
+      {
+        "json": {
+          "data": "{\"name\": \"GuideLight\",\"abs_path\": \"/Lights/GuideLight\",\"type\": \"Sphere\",\"color\": [0, 1, 0],\"intensity\": 50,\"exposure\": 0,\"diffuse\": 1,\"specular\": 1,\"normalize\": false,\"enableColorTemperature\": false,\"colorTemperature\": 6500,\"shadow\": {\"enable\": true,\"color\": [0, 0, 0],\"distance\": -1,\"falloff\": -1,\"falloffGamma\": 1},\"shaping\": {\"focus\": 0,\"focusTint\": [0, 0, 0],\"coneAngle\": 90,\"coneSoftness\": 0,\"iesFile\": \"\",\"iesAngleScale\": 0,\"iesNormalize\": false},\"properties\": {\"radius\": 0.2}}",
+          "format": "json"
+        },
+        "xml": {
+          "error": "XML serialization for lights not yet implemented"
+        }
+      },
+      {
+        "json": {
+          "data": "{\"name\": \"InvisibleLight\",\"abs_path\": \"/Lights/InvisibleLight\",\"type\": \"Sphere\",\"color\": [1, 1, 1],\"intensity\": 100,\"exposure\": 0,\"diffuse\": 1,\"specular\": 1,\"normalize\": false,\"enableColorTemperature\": false,\"colorTemperature\": 6500,\"shadow\": {\"enable\": true,\"color\": [0, 0, 0],\"distance\": -1,\"falloff\": -1,\"falloffGamma\": 1},\"shaping\": {\"focus\": 0,\"focusTint\": [0, 0, 0],\"coneAngle\": 90,\"coneSoftness\": 0,\"iesFile\": \"\",\"iesAngleScale\": 0,\"iesNormalize\": false},\"properties\": {\"radius\": 0.1}}",
+          "format": "json"
+        },
+        "xml": {
+          "error": "XML serialization for lights not yet implemented"
+        }
+      }
+    ]
+  },
+  "spectral-emission-001.usda": {
+    "objects": [
+      {
+        "name": "TestLight",
+        "absPath": "/TestLight",
+        "displayName": "",
+        "type": "distant",
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 1,
+        "exposure": 0,
+        "diffuse": 1,
+        "specular": 1,
+        "normalize": false,
+        "enableColorTemperature": false,
+        "colorTemperature": 6500,
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "direction": [
+          {
+            "$negativeZero": true
+          },
+          {
+            "$negativeZero": true
+          },
+          -1
+        ],
+        "radius": 0.5,
+        "width": 1,
+        "height": 1,
+        "length": 1,
+        "angle": 0.5299999713897705,
+        "textureFile": "",
+        "shapingConeAngle": 90,
+        "shapingConeSoftness": 0,
+        "shapingFocus": 0,
+        "shapingFocusTint": [
+          0,
+          0,
+          0
+        ],
+        "shapingIesFile": "",
+        "shapingIesAngleScale": 0,
+        "shapingIesNormalize": false,
+        "shadowEnable": true,
+        "shadowColor": [
+          0,
+          0,
+          0
+        ],
+        "shadowDistance": -1,
+        "shadowFalloff": -1,
+        "shadowFalloffGamma": 1,
+        "domeTextureFormat": "automatic",
+        "guideRadius": 100000,
+        "envmapTextureId": -1,
+        "geometryMeshId": -1,
+        "materialSyncMode": ""
+      }
+    ],
+    "formats": [
+      {
+        "json": {
+          "data": "{\"name\": \"TestLight\",\"abs_path\": \"/TestLight\",\"type\": \"Distant\",\"color\": [1, 1, 1],\"intensity\": 1,\"exposure\": 0,\"diffuse\": 1,\"specular\": 1,\"normalize\": false,\"enableColorTemperature\": false,\"colorTemperature\": 6500,\"shadow\": {\"enable\": true,\"color\": [0, 0, 0],\"distance\": -1,\"falloff\": -1,\"falloffGamma\": 1},\"shaping\": {\"focus\": 0,\"focusTint\": [0, 0, 0],\"coneAngle\": 90,\"coneSoftness\": 0,\"iesFile\": \"\",\"iesAngleScale\": 0,\"iesNormalize\": false},\"properties\": {\"angle\": 0.53}}",
+          "format": "json"
+        },
+        "xml": {
+          "error": "XML serialization for lights not yet implemented"
+        }
+      }
+    ]
+  },
+  "spectral-emission-preset-d50.usda": {
+    "objects": [
+      {
+        "name": "TestLight",
+        "absPath": "/TestLight",
+        "displayName": "",
+        "type": "distant",
+        "color": [
+          1,
+          0.949999988079071,
+          0.8999999761581421
+        ],
+        "intensity": 1,
+        "exposure": 0,
+        "diffuse": 1,
+        "specular": 1,
+        "normalize": false,
+        "enableColorTemperature": false,
+        "colorTemperature": 6500,
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "direction": [
+          {
+            "$negativeZero": true
+          },
+          {
+            "$negativeZero": true
+          },
+          -1
+        ],
+        "radius": 0.5,
+        "width": 1,
+        "height": 1,
+        "length": 1,
+        "angle": 0.5299999713897705,
+        "textureFile": "",
+        "shapingConeAngle": 90,
+        "shapingConeSoftness": 0,
+        "shapingFocus": 0,
+        "shapingFocusTint": [
+          0,
+          0,
+          0
+        ],
+        "shapingIesFile": "",
+        "shapingIesAngleScale": 0,
+        "shapingIesNormalize": false,
+        "shadowEnable": true,
+        "shadowColor": [
+          0,
+          0,
+          0
+        ],
+        "shadowDistance": -1,
+        "shadowFalloff": -1,
+        "shadowFalloffGamma": 1,
+        "domeTextureFormat": "automatic",
+        "guideRadius": 100000,
+        "envmapTextureId": -1,
+        "geometryMeshId": -1,
+        "materialSyncMode": ""
+      }
+    ],
+    "formats": [
+      {
+        "json": {
+          "data": "{\"name\": \"TestLight\",\"abs_path\": \"/TestLight\",\"type\": \"Distant\",\"color\": [1, 0.95, 0.9],\"intensity\": 1,\"exposure\": 0,\"diffuse\": 1,\"specular\": 1,\"normalize\": false,\"enableColorTemperature\": false,\"colorTemperature\": 6500,\"shadow\": {\"enable\": true,\"color\": [0, 0, 0],\"distance\": -1,\"falloff\": -1,\"falloffGamma\": 1},\"shaping\": {\"focus\": 0,\"focusTint\": [0, 0, 0],\"coneAngle\": 90,\"coneSoftness\": 0,\"iesFile\": \"\",\"iesAngleScale\": 0,\"iesNormalize\": false},\"properties\": {\"angle\": 0.53}}",
+          "format": "json"
+        },
+        "xml": {
+          "error": "XML serialization for lights not yet implemented"
+        }
+      }
+    ]
+  },
+  "usdlux_mesh_lights_simple.usda": {
+    "objects": [
+      {
+        "name": "StandardLight",
+        "absPath": "/World/Lights/StandardLight",
+        "displayName": "",
+        "type": "sphere",
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 75,
+        "exposure": 0,
+        "diffuse": 1,
+        "specular": 1,
+        "normalize": false,
+        "enableColorTemperature": false,
+        "colorTemperature": 6500,
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -3,
+          2,
+          2,
+          1
+        ],
+        "position": [
+          -3,
+          2,
+          2
+        ],
+        "direction": [
+          {
+            "$negativeZero": true
+          },
+          {
+            "$negativeZero": true
+          },
+          -1
+        ],
+        "radius": 0.30000001192092896,
+        "width": 1,
+        "height": 1,
+        "length": 1,
+        "angle": 0.5299999713897705,
+        "textureFile": "",
+        "shapingConeAngle": 90,
+        "shapingConeSoftness": 0,
+        "shapingFocus": 0,
+        "shapingFocusTint": [
+          0,
+          0,
+          0
+        ],
+        "shapingIesFile": "",
+        "shapingIesAngleScale": 0,
+        "shapingIesNormalize": false,
+        "shadowEnable": true,
+        "shadowColor": [
+          0,
+          0,
+          0
+        ],
+        "shadowDistance": -1,
+        "shadowFalloff": -1,
+        "shadowFalloffGamma": 1,
+        "domeTextureFormat": "automatic",
+        "guideRadius": 100000,
+        "envmapTextureId": -1,
+        "geometryMeshId": -1,
+        "materialSyncMode": ""
+      }
+    ],
+    "formats": [
+      {
+        "json": {
+          "data": "{\"name\": \"StandardLight\",\"abs_path\": \"/World/Lights/StandardLight\",\"type\": \"Sphere\",\"color\": [1, 1, 1],\"intensity\": 75,\"exposure\": 0,\"diffuse\": 1,\"specular\": 1,\"normalize\": false,\"enableColorTemperature\": false,\"colorTemperature\": 6500,\"shadow\": {\"enable\": true,\"color\": [0, 0, 0],\"distance\": -1,\"falloff\": -1,\"falloffGamma\": 1},\"shaping\": {\"focus\": 0,\"focusTint\": [0, 0, 0],\"coneAngle\": 90,\"coneSoftness\": 0,\"iesFile\": \"\",\"iesAngleScale\": 0,\"iesNormalize\": false},\"properties\": {\"radius\": 0.3}}",
+          "format": "json"
+        },
+        "xml": {
+          "error": "XML serialization for lights not yet implemented"
+        }
+      }
+    ]
+  }
+}

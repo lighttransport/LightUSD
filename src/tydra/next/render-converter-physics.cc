@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
 #include "next/schema/usdPhysics.hh"
 #include <string>
 #include <vector>
@@ -61,7 +61,7 @@ Float4 Float4FromArray(const float v[4]) {
 }
 }  // namespace
 
-void RenderSceneConverter::ExtractPhysicsAnnotations(const Stage& stage,
+void RenderSceneConverter::Impl::ExtractPhysicsAnnotations(const Stage& stage,
                                                      RenderScene* scene) {
   if (!scene) return;
 

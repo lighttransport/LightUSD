@@ -5,7 +5,7 @@ let modulePromise;
 const isIterableBuffer = (value) => value != null && Number.isSafeInteger(value.length) && value.length >= 0 && typeof value[Symbol.iterator] === 'function';
 
 async function getModule() {
-  modulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory());
+  modulePromise ||= import('../../src/lightusd/lightusd_next.js').then(({ default: factory }) => factory());
   return modulePromise;
 }
 
@@ -84,7 +84,7 @@ self.onmessage = async ({ data }) => {
     const suppliedLocks = validateVertexLockMask(data.locks, positions.length / 3) || new Uint8Array();
     const inputGroups = Array.isArray(data.groups) && data.groups.length ? data.groups : [{ start: 0, count: indices.length, materialIndex: 0 }];
     const locks = data.lockBorder === false ? new Uint8Array(positions.length / 3) : deriveBoundaryLocks(indices, inputGroups, positions.length / 3);
-    if (uvs && data.lockUVSeams !== false) { const seamLocks = deriveUVSeamLocks(positions, uvs, positions.length / 3); for (let i = 0; i < locks.length; i++) locks[i] |= seamLocks[i]; }
+    if (source.uvs && data.lockUVSeams !== false) { const seamLocks = deriveUVSeamLocks(positions, source.uvs, positions.length / 3); for (let i = 0; i < locks.length; i++) locks[i] |= seamLocks[i]; }
     if (suppliedLocks.length) for (let i = 0; i < locks.length; i++) locks[i] |= suppliedLocks[i] ? 1 : 0;
     let covered = 0, reducedIndices = [], reducedGroups = [], weightedError = 0;
     for (const group of inputGroups) {

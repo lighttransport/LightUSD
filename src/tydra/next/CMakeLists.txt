@@ -120,26 +120,12 @@ if(NOT LIGHTUSD_CXX_EXCEPTIONS)
     endif()
 endif()
 
-# The lazy Ptex face decoder is part of the top-level lightusd static library
-# when this project is embedded.  Standalone Tydra-next builds need the small
-# reader and bundled deflate implementation locally instead.
-if(TARGET lightusd_static)
-    target_link_libraries(tydra_next PUBLIC lightusd_static)
-else()
-    target_sources(tydra_next PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../ptx-loader.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../external/miniz.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-validate.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-topology.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-bilinear.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-catmark.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-loop.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-fvar.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-refine.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-stream.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-limit.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-lightusd.cc)
-endif()
+# No legacy Stage/schema dependency: both products embed these shared objects.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/lightusd-render-support.cmake")
+lightusd_add_render_support()
+target_sources(tydra_next PRIVATE
+    $<TARGET_OBJECTS:lightusd_ptex_objects>
+    $<TARGET_OBJECTS:lightusd_subdiv_objects>)
 
 # Optional: Build test
 option(TYDRA_NEXT_BUILD_TESTS "Build tests for Tydra Next" OFF)

@@ -5,6 +5,9 @@
 
 #include <algorithm>
 #include <iostream>
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstdio>
 #include <cmath>
@@ -12,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <limits>
 #include <unordered_set>
 #include <atomic>
@@ -611,6 +615,102 @@ void TestRenderScene() {
   std::cout << "  RenderScene: PASSED\n";
 }
 
+void TestRenderMemoryAccounting() {
+  RenderMesh mesh;
+  size_t before = mesh.memory_usage();
+  mesh.subdivision_face_source.reserve(64);
+  assert(mesh.memory_usage() >= before +
+         mesh.subdivision_face_source.capacity() * sizeof(uint32_t));
+  before = mesh.memory_usage();
+  mesh.hole_faces.reserve(32);
+  assert(mesh.memory_usage() >= before +
+         mesh.hole_faces.capacity() * sizeof(uint32_t));
+  before = mesh.memory_usage();
+  mesh.primvars.reserve(3);
+  assert(mesh.memory_usage() >= before +
+         mesh.primvars.capacity() * sizeof(VertexAttribute));
+  mesh.primvars.emplace_back();
+  before = mesh.memory_usage();
+  const size_t old_name_capacity = mesh.primvars[0].name.capacity();
+  mesh.primvars[0].name.assign(128, 'p');
+  assert(mesh.memory_usage() >= before +
+         mesh.primvars[0].name.capacity() - old_name_capacity);
+  before = mesh.memory_usage();
+  mesh.skin = std::make_shared<RenderMesh::SkinBinding>();
+  assert(mesh.memory_usage() >= before + sizeof(RenderMesh::SkinBinding));
+  before = mesh.memory_usage();
+  const size_t old_skeleton_capacity = mesh.skin->skeleton_path.capacity();
+  mesh.skin->skeleton_path.assign(128, 's');
+  assert(mesh.memory_usage() >= before +
+         mesh.skin->skeleton_path.capacity() - old_skeleton_capacity);
+  before = mesh.memory_usage();
+  mesh.skin->mesh_joint_order.reserve(4);
+  assert(mesh.memory_usage() >= before +
+         mesh.skin->mesh_joint_order.capacity() * sizeof(std::string));
+  before = mesh.memory_usage();
+  mesh.blend_shapes.reserve(2);
+  assert(mesh.memory_usage() >= before +
+         mesh.blend_shapes.capacity() * sizeof(RenderMesh::BlendShape));
+  mesh.blend_shapes.emplace_back();
+  before = mesh.memory_usage();
+  mesh.blend_shapes[0].point_indices.reserve(16);
+  assert(mesh.memory_usage() >= before +
+         mesh.blend_shapes[0].point_indices.capacity() * sizeof(uint32_t));
+  before = mesh.memory_usage();
+  mesh.blend_shapes[0].inbetweens.reserve(2);
+  assert(mesh.memory_usage() >= before +
+         mesh.blend_shapes[0].inbetweens.capacity() *
+             sizeof(RenderMesh::BlendShape::Inbetween));
+
+  RenderScene scene;
+  before = scene.memory_usage();
+  scene.meshes.reserve(3);
+  assert(scene.memory_usage() >= before +
+         scene.meshes.capacity() * sizeof(RenderMesh));
+  before = scene.memory_usage();
+  scene.meshes.emplace_back();
+  assert(scene.memory_usage() == before +
+         scene.meshes.back().memory_usage() - sizeof(RenderMesh));
+  before = scene.memory_usage();
+  scene.points.reserve(2);
+  assert(scene.memory_usage() >= before +
+         scene.points.capacity() * sizeof(RenderPoints));
+  before = scene.memory_usage();
+  scene.curves.reserve(2);
+  assert(scene.memory_usage() >= before +
+         scene.curves.capacity() * sizeof(RenderCurves));
+  before = scene.memory_usage();
+  scene.point_instancers.reserve(2);
+  assert(scene.memory_usage() >= before +
+         scene.point_instancers.capacity() * sizeof(RenderPointInstancer));
+  before = scene.memory_usage();
+  scene.images.reserve(2);
+  assert(scene.memory_usage() >= before +
+         scene.images.capacity() * sizeof(TextureImage));
+  scene.materials.emplace_back();
+  RenderMaterial& material = scene.materials.back();
+  before = scene.memory_usage();
+  const size_t old_uri_capacity = material.mtlx_config.source_uri.capacity();
+  material.mtlx_config.source_uri.assign(128, 'u');
+  assert(scene.memory_usage() >= before +
+         material.mtlx_config.source_uri.capacity() - old_uri_capacity);
+  before = scene.memory_usage();
+  material.openpbr = std::make_shared<OpenPBRSurfaceShader>();
+  assert(scene.memory_usage() >= before + sizeof(OpenPBRSurfaceShader));
+  before = scene.memory_usage();
+  const size_t old_graph_capacity = material.openpbr->nodegraph_json.capacity();
+  material.openpbr->nodegraph_json.assign(256, 'g');
+  assert(scene.memory_usage() >= before +
+         material.openpbr->nodegraph_json.capacity() - old_graph_capacity);
+  before = scene.memory_usage();
+  const size_t old_preview_graph_capacity =
+      material.preview_surface_nodegraph_json.capacity();
+  material.preview_surface_nodegraph_json.assign(192, 'p');
+  assert(scene.memory_usage() >= before +
+         material.preview_surface_nodegraph_json.capacity() -
+             old_preview_graph_capacity);
+}
+
 //
 // Scene Access Tests
 //
@@ -714,6 +814,22 @@ void TestDeepSceneAccess() {
 
 void TestRenderExtract() {
   std::cout << "Testing RenderExtract...\n";
+  // Instance proxy expansion can outgrow the authored prim estimate. Every
+  // pointer view must still address its record after storage growth.
+  {
+    RenderExtractResult growing;
+    growing.storage.emplace_back();
+    growing.storage.front().path = "/First";
+    const RenderPrimRecord* first = &growing.storage.front();
+    growing.records.push_back(&growing.storage.front());
+    growing.meshes.push_back(&growing.storage.front());
+    for (size_t i = 0; i < 4096; ++i) growing.storage.emplace_back();
+    assert(&growing.storage.front() == first);
+    assert(growing.records.front().path == "/First");
+    assert(growing.meshes.front().path == "/First");
+    growing.release_storage();
+    assert(growing.storage.empty() && growing.records.empty() && growing.meshes.empty());
+  }
 
   const char* usda = R"(#usda 1.0
 (
@@ -791,6 +907,14 @@ def Xform "World"
   assert(er.curves.size() == 1);
   assert(er.meshes[0].purpose == "render");
   assert(er.meshes[0].path == "/World/MeshA");
+  assert(er.storage.size() == er.records.size());
+  assert(&er.meshes[0] == &er.storage[0]);
+  er.release_records();
+  assert(er.records.empty());
+  assert(er.meshes[0].path == "/World/MeshA");
+  RenderExtractResult::release_list(&er.meshes);
+  assert(er.meshes.empty());
+  assert(er.storage[0].path.empty());
   PointInstancerData pid;
   assert(ReadPointInstancerData(er.point_instancers[0].prim, 0.0, &pid));
   assert(pid.valid);
@@ -822,6 +946,7 @@ def Xform "World"
 class RetainedStreamSink : public SceneSink {
  public:
   bool BeginScene(RenderScene&& catalog) override {
+    began = true;
     scene = std::move(catalog);
     return true;
   }
@@ -842,6 +967,7 @@ class RetainedStreamSink : public SceneSink {
   }
   bool EndScene() override { return true; }
 
+  bool began = false;
   RenderScene scene;
 };
 
@@ -3355,6 +3481,10 @@ def Xform "Root"
   assert(scene.physics.articulation_roots.size() == 1);
   assert(scene.physics.articulation_roots[0] == "/Root/Body");
 
+  RenderScene without_physics = scene;
+  without_physics.physics = PhysicsAnnotations{};
+  assert(scene.memory_usage() > without_physics.memory_usage());
+
   std::cout << "  USD Physics annotations: PASSED\n";
 }
 
@@ -3468,6 +3598,7 @@ void TestConverterMemoryBudget() {
     RenderSceneConverter conv(cfg);
     ConvertResult res = conv.Convert(lr.stage);
     // Graceful: no crash, fewer meshes than authored, and a diagnostic.
+    assert(!res.success && res.status == OperationStatus::ResourceLimit);
     assert(res.scene.meshes.size() < static_cast<size_t>(kMeshes));
     bool warned = false;
     for (const std::string& w : res.warnings) {
@@ -3484,9 +3615,13 @@ void TestConverterMemoryBudget() {
     ConverterConfig cfg = MakeHardenedConverterConfig(1);
     RenderSceneConverter conv(cfg);
     ConvertResult limited = conv.Convert(lr.stage);
+    assert(!limited.success && limited.status == OperationStatus::ResourceLimit);
     assert(limited.scene.meshes.size() < static_cast<size_t>(kMeshes));
     RetainedStreamSink sink;
     StreamConvertResult streamed = conv.ConvertToSink(lr.stage, &sink);
+    assert(!streamed.success &&
+           streamed.status == OperationStatus::ResourceLimit);
+    assert(!sink.began);
     assert(streamed.mesh_count == limited.scene.meshes.size());
   }
 
@@ -3497,6 +3632,9 @@ void TestConverterMemoryBudget() {
     RenderSceneConverter conv(cfg);
     ConvertResult first = conv.Convert(lr.stage);
     ConvertResult second = conv.Convert(lr.stage);
+    assert(!first.success && !second.success &&
+           first.status == OperationStatus::ResourceLimit &&
+           second.status == OperationStatus::ResourceLimit);
     assert(first.scene.meshes.size() < static_cast<size_t>(kMeshes));
     assert(second.scene.meshes.size() == first.scene.meshes.size());
     bool warned = false;
@@ -6946,6 +7084,57 @@ class RecordingSceneUpdateSink final : public SceneUpdateSink {
   size_t aborts = 0;
 };
 
+void TestRenderSessionResidentCap() {
+  auto source = [](size_t count) {
+    std::string text = "#usda 1.0\ndef Mesh \"M\" {\n"
+        "int[] faceVertexCounts = [3]\n"
+        "int[] faceVertexIndices = [0, 1, 2]\n"
+        "point3f[] points = [";
+    for (size_t i = 0; i < count; ++i) {
+      if (i) text += ", ";
+      text += "(" + std::to_string(i) + ", 0, 0)";
+    }
+    return text + "]\n}\n";
+  };
+  LoadResult small = LoadUSDAFromString(source(3));
+  LoadResult large = LoadUSDAFromString(source(1024));
+  assert(small.success && large.success);
+  RenderSceneConverter unrestricted;
+  ConvertResult small_scene = unrestricted.Convert(small.stage);
+  ConvertResult large_scene = unrestricted.Convert(large.stage);
+  assert(small_scene.success && large_scene.success);
+  const size_t small_bytes = small_scene.scene.memory_usage();
+  const size_t large_bytes = large_scene.scene.memory_usage();
+  assert(large_bytes > small_bytes + 4096);
+
+  ConverterConfig config;
+  config.limits.max_resident_bytes =
+      small_bytes + (large_bytes - small_bytes) / 4;
+  RenderSession session(config);
+  RecordingSceneUpdateSink sink;
+  StageSnapshot first;
+  first.revision = 1;
+  first.stage.reset(new Stage(std::move(small.stage)));
+  assert(session.Initialize(first, &sink));
+  assert(session.revision() == 1 && sink.new_revision == 1);
+  StageSnapshot second;
+  second.revision = 2;
+  second.stage.reset(new Stage(std::move(large.stage)));
+  StageChangeSet changes;
+  changes.base_revision = 1;
+  changes.new_revision = 2;
+  PrimChange change;
+  change.path = Path("/M");
+  change.flags = StageChangeFlag::Topology;
+  change.properties.push_back("points");
+  changes.prims.push_back(std::move(change));
+  RenderUpdateResult rejected = session.Apply(second, changes, &sink);
+  assert(!rejected &&
+         rejected.status == OperationStatus::ResourceLimit);
+  assert(session.revision() == 1 && sink.new_revision == 1);
+  assert(session.GetSnapshot().scene->meshes[0].points.size() == 9);
+}
+
 void TestIncrementalRenderSession() {
   std::cout << "Testing incremental RenderSession...\n";
   auto source = [](float x) {
@@ -7319,6 +7508,7 @@ def Xform "World" {
     }
   }
 }
+
 )";
   LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
   assert(loaded.success);
@@ -7382,6 +7572,93 @@ def Xform "World" {
   std::cout << "  parallel material texture remap/callback policy: PASSED\n";
 }
 
+void TestSparseUDIMTextureRetention() {
+  namespace fs = std::filesystem;
+  const fs::path root = fs::temp_directory_path() / "lightusd-next-udim-retain";
+  std::error_code ec;
+  fs::remove_all(root, ec);
+  ec.clear();
+  fs::create_directories(root / "tiles", ec);
+  assert(!ec);
+  for (const char* tile : {"1001", "1011"}) {
+    std::ofstream file(root / "tiles" / (std::string("skin.") + tile + ".png"),
+                       std::ios::binary);
+    assert(file.good());
+  }
+  const std::string usda = R"(#usda 1.0
+def Xform "World" {
+  def Material "Mat" {
+    token outputs:surface.connect = </World/Mat/Surface.outputs:surface>
+    def Shader "Surface" {
+      uniform token info:id = "UsdPreviewSurface"
+      color3f inputs:diffuseColor.connect = </World/Mat/Tex.outputs:rgb>
+      token outputs:surface
+    }
+    def Shader "Tex" {
+      uniform token info:id = "UsdUVTexture"
+      asset inputs:file = @tiles/skin.<UDIM>.png@
+      color3f outputs:rgb
+    }
+  }
+}
+)";
+  LoadResult loaded = LoadUSDAFromString(usda.data(), usda.size());
+  assert(loaded.success);
+  ConverterConfig config;
+  config.material.load_textures = false;
+  config.asset_base_dir = root.string();
+  RenderSceneConverter converter(config);
+  ConvertResult converted = converter.Convert(loaded.stage);
+  assert(converted.success);
+  assert(converted.scene.textures.size() == 1);
+  const RenderTexture& texture = converted.scene.textures[0];
+  assert(texture.is_udim && texture.udim_texture_id == 0);
+  assert(converted.scene.udim_textures.size() == 1);
+  const RenderUDIMTexture& udim = converted.scene.udim_textures[0];
+  assert(udim.asset_identifier == "tiles/skin.<UDIM>.png");
+  assert(udim.tiles.size() == 2);
+  assert(udim.tiles[0].udim == 1001 && udim.tiles[1].udim == 1011);
+  assert(udim.tiles[0].image_id == texture.image_id);
+  assert(udim.tiles[1].image_id >= 0 && udim.tiles[1].image_id != texture.image_id);
+  assert(converted.scene.memory_usage() >= sizeof(RenderUDIMTexture) +
+         udim.asset_identifier.capacity() + udim.tiles.capacity() * sizeof(RenderUDIMTexture::Tile));
+  fs::remove_all(root, ec);
+  std::cout << "  sparse UDIM texture retention: PASSED\n";
+}
+
+void TestLowMemoryCustomPrimvarRetention() {
+  const char* usda = R"(#usda 1.0
+def Mesh "M"
+{
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)]
+    float[] primvars:heat = [0.1, 0.2, 0.3] (
+        interpolation = "vertex"
+    )
+    int[] primvars:heat:indices = [2, 1, 0]
+}
+)";
+  LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(loaded.success);
+  ConverterConfig config;
+  config.mesh.retain_geometry = false;
+  config.mesh.retain_custom_primvars = true;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(loaded.stage);
+  assert(result.success && result.scene.meshes.size() == 1);
+  const RenderMesh& mesh = result.scene.meshes[0];
+  assert(mesh.points.empty() && mesh.face_vertex_indices.empty());
+  assert(mesh.texcoords_0.empty() && mesh.normals.empty());
+  assert(mesh.primvars.size() == 1);
+  const VertexAttribute& heat = mesh.primvars[0];
+  assert(heat.name == "heat");
+  assert(heat.float_data.size() == 3 && heat.indices.size() == 3);
+  assert(std::fabs(heat.float_data[0] - 0.1f) < 1e-6f);
+  assert(heat.indices[0] == 2 && heat.indices[1] == 1 && heat.indices[2] == 0);
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -7411,6 +7688,7 @@ int main() {
   // RenderData tests
   TestRenderMesh();
   TestRenderScene();
+  TestRenderMemoryAccounting();
 
   std::cout << "\n";
 
@@ -7423,6 +7701,7 @@ int main() {
 
   // Converter tests
   TestRenderConverter();
+  TestLowMemoryCustomPrimvarRetention();
   TestRenderConverterHalfGaussian();
   TestRenderConverterMaterials();
   TestRenderConverterNestedMaterialXGraph();
@@ -7464,9 +7743,11 @@ int main() {
   TestLegacyParityExtraction();
   TestRenderColorManagement();
   TestIncrementalRenderSession();
+  TestRenderSessionResidentCap();
   TestPtexMaterialInterfaceAsset();
   TestSurfaceUnlitMaterialXConversion();
   TestParallelMaterialTextureRemapAndCallbackPolicy();
+  TestSparseUDIMTextureRetention();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
   return 0;

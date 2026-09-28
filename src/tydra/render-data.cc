@@ -702,6 +702,11 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
       auto copyright_val = it->second.get_value<std::string>();
       if (copyright_val) {
         render_scene.meta.copyright = copyright_val.value();
+      } else if (auto string_data =
+                     it->second.get_value<value::StringData>()) {
+        // USDA string metadata is retained as StringData (which preserves its
+        // quoting style); expose its payload through the render-scene string.
+        render_scene.meta.copyright = string_data->value;
       }
     }
     stage_meta_ms = ElapsedMs(phase_start);

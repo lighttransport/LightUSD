@@ -1,0 +1,58 @@
+[
+  {
+    "legacyMethod": "loadAsLayerFromBinary",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "load",
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "loadAsLayerFromCachedAsset",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "load",
+    "workflow": [
+      {
+        "surface": "NextAssetStore",
+        "method": "getAsset"
+      },
+      {
+        "surface": "NextLayerDocument",
+        "method": "load"
+      }
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "loadFromBinary",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "begin",
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "loadFromBinaryAsync",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "beginAsync",
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "loadFromBinaryWithProgress",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "begin",
+    "parityStatus": "behavior_verified",
+    "workflow": [
+      {
+        "surface": "RenderStream",
+        "method": "setProgressCallback"
+      },
+      {
+        "surface": "RenderStream",
+        "method": "begin"
+      }
+    ]
+  },
+  {
+    "legacyMethod": "loadFromCachedAsset",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "beginCachedAsset",
+    "parityStatus": "behavior_verified"
+  }
+]

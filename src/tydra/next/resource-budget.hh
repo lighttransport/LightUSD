@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <limits>
 #include <string>
+#include "texture-fit.hh"
 
 namespace lightusd {
 namespace tydra {
@@ -154,20 +155,6 @@ inline TextureBudget DeriveTextureBudget(const ResourceBudget& budget) {
 // The fractions are of total VRAM *capacity*, not currently-free VRAM, so the
 // same scene decides the same way on the same card regardless of what else is
 // running. --vram-budget rehearses a different capacity.
-enum class TextureFitPolicy : uint8_t {
-  Modest,      // leave textures alone only when clearly small (1/3)
-  Default,     // 2/3
-  Aggressive,  // 90%
-  Never,       // never shrink/compress: assume it fits
-  Always,      // always shrink/compress
-  Absolute,    // explicit byte threshold
-};
-
-struct TextureFit {
-  TextureFitPolicy policy = TextureFitPolicy::Default;
-  uint64_t absolute_bytes = 0;  // Absolute only
-};
-
 // "modest"|"default"|"aggressive"|"never"|"always"|"<N>[KMG]".
 // Suffixes match lusdview's ParseByteCount. Returns false on anything else.
 inline bool ParseTextureFit(const std::string& text, TextureFit* out) {

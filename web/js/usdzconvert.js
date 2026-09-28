@@ -72,9 +72,10 @@ container.innerHTML = `
 
       <label>Flatten pipeline</label>
       <select id="pipeline" style="padding:4px;width:160px"
-        title="Legacy is the stable in-memory path. Stream keeps textures lazy. Next is the experimental low-memory root flattener for supported USDC inputs.">
+        title="Legacy is the stable in-memory path. Stream keeps textures lazy. Next is the experimental low-memory flattener. Next-only rewrites one root layer with asset passthrough using the smaller WASM module.">
         <option value="legacy">Legacy</option>
         <option value="next">Next (low memory)</option>
+        <option value="next-only">Next-only (single layer; no flatten)</option>
         <option value="stream">Stream</option>
         <option value="stream-next">Stream + Next</option>
       </select>
@@ -472,6 +473,19 @@ els.btnClear.addEventListener('click', clearFiles);
 els.nameSuffix.addEventListener('input', refreshNamePreview);
 els.nameCustom.addEventListener('input', refreshNamePreview);
 els.rootSelect.addEventListener('change', () => { invalidateResult(); refreshNamePreview(); });
+let flattenBeforeNextOnly = null;
+els.pipeline.addEventListener('change', () => {
+  if (els.pipeline.value === 'next-only') {
+    flattenBeforeNextOnly = els.flatten.checked;
+    els.flatten.checked = false;
+    els.flatten.disabled = true;
+  } else if (flattenBeforeNextOnly !== null) {
+    els.flatten.checked = flattenBeforeNextOnly;
+    els.flatten.disabled = false;
+    flattenBeforeNextOnly = null;
+  }
+  invalidateResult();
+});
 
 // Drag & drop (supports folders via webkitGetAsEntry).
 ['dragenter', 'dragover'].forEach(ev =>
@@ -530,7 +544,8 @@ function uploadedSizeSum(predicate) {
 
 function shouldAutoStreamForWasmCap(opts, rootPath) {
   const cap = Number(opts.wasmHeapLimitBytes || 0);
-  if (!cap || opts.pipeline === 'stream' || opts.pipeline === 'stream-next') return null;
+  if (!cap || opts.pipeline === 'stream' || opts.pipeline === 'stream-next' ||
+      opts.pipeline === 'next-only') return null;
   if (!opts.flatten) return null;
   if (!rootPath || /\.usdz$/i.test(rootPath)) return null;
   if ((opts.targetTextureBytes || 0) > 0) return null;

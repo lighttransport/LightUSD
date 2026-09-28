@@ -1,0 +1,1427 @@
+{
+  "cube-000 :: numMeshes": {
+    "same": true
+  },
+  "cube-000 :: numRootNodes": {
+    "same": true
+  },
+  "cube-000 :: getDefaultRootNodeId": {
+    "same": true
+  },
+  "cube-000 :: getDefaultRootNode": {
+    "legacyOnly": [
+      "instanceId",
+      "prototypeIndex"
+    ],
+    "nextOnly": [
+      "dataId",
+      "name",
+      "parentId",
+      "primPath",
+      "prototypePath",
+      "type",
+      "visible",
+      "worldMatrix"
+    ],
+    "differ": {
+      "displayName": {
+        "legacy": "",
+        "next": "hello"
+      }
+    }
+  },
+  "cube-000 :: getSceneMetadata": {
+    "same": true
+  },
+  "cube-000 :: getUpAxis": {
+    "same": true
+  },
+  "cube-000 :: getURI": {
+    "same": true
+  },
+  "cube-000 :: getMesh": {
+    "legacyOnly": [
+      "absPath",
+      "displayName",
+      "faceVertexCounts",
+      "faceVertexCountsLength",
+      "faceVertexIndices",
+      "faceVertexIndicesLength",
+      "isAreaLight",
+      "normalsFormat",
+      "pointsLength",
+      "texcoords",
+      "uvSets"
+    ],
+    "nextOnly": [
+      "localMatrix",
+      "material",
+      "primPath",
+      "skel_id",
+      "uv0",
+      "vertexCount",
+      "worldMatrix"
+    ],
+    "differ": {
+      "elementSize": {
+        "legacy": 1,
+        "next": 0
+      },
+      "geomBindTransform": {
+        "legacy": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      "materialId": {
+        "legacy": -1,
+        "next": 0
+      },
+      "normals": {
+        "legacy": "#307:ad84442f",
+        "next": {
+          "byteLength": 432,
+          "comps": 3,
+          "dtype": "f32",
+          "length": 108
+        }
+      },
+      "points": {
+        "legacy": "#487:356eaf43",
+        "next": {
+          "byteLength": 432,
+          "comps": 3,
+          "dtype": "f32",
+          "length": 108
+        }
+      },
+      "primName": {
+        "legacy": "",
+        "next": "hello"
+      }
+    }
+  },
+  "cube-000 :: getMeshCopy": {
+    "legacyOnly": [
+      "displayName",
+      "faceVertexCounts",
+      "faceVertexCountsLength",
+      "faceVertexIndicesLength",
+      "isAreaLight",
+      "normalsFormat",
+      "pointsLength",
+      "texcoords",
+      "uvSets"
+    ],
+    "nextOnly": [
+      "localMatrix",
+      "material",
+      "primPath",
+      "skel_id",
+      "uv0",
+      "vertexCount",
+      "worldMatrix"
+    ],
+    "differ": {
+      "elementSize": {
+        "legacy": 1,
+        "next": 0
+      },
+      "faceVertexIndices": {
+        "legacy": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35
+        ]
+      },
+      "geomBindTransform": {
+        "legacy": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      "materialId": {
+        "legacy": -1,
+        "next": 0
+      },
+      "normals": {
+        "legacy": "#307:ad84442f",
+        "next": "#235:c7ea21ed"
+      },
+      "primName": {
+        "legacy": "",
+        "next": "hello"
+      }
+    }
+  },
+  "cube-000 :: getMeshPtr": {
+    "legacyOnly": [
+      "absPath",
+      "displayName",
+      "faceVertexCounts",
+      "hasSubmeshes",
+      "indices",
+      "singleIndexable",
+      "triangulated",
+      "uvSets"
+    ],
+    "nextOnly": [
+      "elementSize",
+      "geomBindTransform",
+      "hasGeomBindTransform",
+      "localMatrix",
+      "primPath",
+      "skel_id",
+      "worldMatrix"
+    ],
+    "differ": {
+      "materialId": {
+        "legacy": -1,
+        "next": 0
+      },
+      "normals": {
+        "legacy": {
+          "byteLength": 108,
+          "comps": 3,
+          "count": 36,
+          "dtype": "snorm8",
+          "length": 108
+        },
+        "next": {
+          "byteLength": 432,
+          "comps": 3,
+          "dtype": "f32",
+          "length": 108
+        }
+      },
+      "points": {
+        "legacy": {
+          "byteLength": 432,
+          "comps": 3,
+          "count": 36,
+          "dtype": "f32",
+          "length": 108
+        },
+        "next": {
+          "byteLength": 432,
+          "comps": 3,
+          "dtype": "f32",
+          "length": 108
+        }
+      },
+      "primName": {
+        "legacy": "",
+        "next": "hello"
+      },
+      "uv0": {
+        "legacy": {
+          "byteLength": 288,
+          "comps": 2,
+          "count": 36,
+          "dtype": "f32",
+          "length": 72
+        },
+        "next": {
+          "byteLength": 288,
+          "comps": 2,
+          "dtype": "f32",
+          "length": 72
+        }
+      }
+    }
+  },
+  "cube-000 :: getMeshPrimvarsJSON": {
+    "legacy": "{\"error\":\"render node is not a GeomMesh\",\"primPath\":\"/hello\",\"primvars\":{},\"version\":1}",
+    "next": "{\"version\":1,\"primvars\":{},\"primPath\":\"/hello\"}"
+  },
+  "cube-000 :: getRootNode": {
+    "legacyOnly": [
+      "instanceId",
+      "prototypeIndex"
+    ],
+    "nextOnly": [
+      "dataId",
+      "name",
+      "parentId",
+      "primPath",
+      "prototypePath",
+      "type",
+      "visible",
+      "worldMatrix"
+    ],
+    "differ": {
+      "displayName": {
+        "legacy": "",
+        "next": "hello"
+      }
+    }
+  },
+  "primvar-interpolation-001 :: getMeshPrimvarsJSON": {
+    "legacy": "{\"primPath\":\"/PrimvarTests/InterpolationMesh\",\"primvars\":{},\"version\":1}",
+    "next": "#2008:24ef9d8"
+  },
+  "lights-full-001 :: numLights": {
+    "legacy": 10,
+    "next": 12
+  },
+  "lights-full-001 /Lights/AnimatedLight :: getLight": {
+    "legacyOnly": [
+      "absPath",
+      "angle",
+      "direction",
+      "displayName",
+      "domeTextureFormat",
+      "envmapTextureId",
+      "geometryMeshId",
+      "guideRadius",
+      "height",
+      "length",
+      "materialSyncMode",
+      "position",
+      "shadowEnable",
+      "shapingConeAngle",
+      "textureFile",
+      "width"
+    ],
+    "nextOnly": [
+      "enableShadow",
+      "filterTargets",
+      "lightLinkMeshIndices",
+      "lightLinkTargets",
+      "lightLinksAll",
+      "primPath",
+      "shadowLinkMeshIndices",
+      "shadowLinkTargets",
+      "shadowLinksAll",
+      "typeCode"
+    ]
+  },
+  "lights-full-001 /Lights/CylinderLight :: getLight": {
+    "legacyOnly": [
+      "absPath",
+      "angle",
+      "direction",
+      "displayName",
+      "domeTextureFormat",
+      "envmapTextureId",
+      "geometryMeshId",
+      "guideRadius",
+      "height",
+      "materialSyncMode",
+      "position",
+      "shadowEnable",
+      "shapingConeAngle",
+      "textureFile",
+      "width"
+    ],
+    "nextOnly": [
+      "enableShadow",
+      "filterTargets",
+      "lightLinkMeshIndices",
+      "lightLinkTargets",
+      "lightLinksAll",
+      "primPath",
+      "shadowLinkMeshIndices",
+      "shadowLinkTargets",
+      "shadowLinksAll",
+      "typeCode"
+    ]
+  },
+  "lights-full-001 /Lights/DiskLight :: getLight": {
+    "legacyOnly": [
+      "absPath",
+      "angle",
+      "direction",
+      "displayName",
+      "domeTextureFormat",
+      "envmapTextureId",
+      "geometryMeshId",
+      "guideRadius",
+      "height",
+      "length",
+      "materialSyncMode",
+      "position",
+      "shadowEnable",
+      "shapingConeAngle",
+      "textureFile",
+      "width"
+    ],
+    "nextOnly": [
+      "enableShadow",
+      "filterTargets",
+      "lightLinkMeshIndices",
+      "lightLinkTargets",
+      "lightLinksAll",
+      "primPath",
+      "shadowLinkMeshIndices",
+      "shadowLinkTargets",
+      "shadowLinksAll",
+      "typeCode"
+    ]
+  },
+  "lights-full-001 /Lights/DistantLight :: getLight": {
+    "legacyOnly": [
+      "absPath",
+      "direction",
+      "displayName",
+      "domeTextureFormat",
+      "envmapTextureId",
+      "geometryMeshId",
+      "guideRadius",
+      "height",
+      "length",
+      "materialSyncMode",
+      "position",
+      "radius",
+      "shadowEnable",
+      "shapingConeAngle",
+      "textureFile",
+      "width"
+    ],
+    "nextOnly": [
+      "enableShadow",
+      "filterTargets",
+      "lightLinkMeshIndices",
+      "lightLinkTargets",
+      "lightLinksAll",
+      "primPath",
+      "shadowLinkMeshIndices",
+      "shadowLinkTargets",
+      "shadowLinksAll",
+      "typeCode"
+    ],
+    "differ": {
+      "type": {
+        "legacy": "distant",
+        "next": "directional"
+      }
+    }
+  },
+  "lights-full-001 /Lights/DomeLight :: getLight": {
+    "legacyOnly": [
+      "absPath",
+      "angle",
+      "direction",
+      "displayName",
+      "geometryMeshId",
+      "guideRadius",
+      "height",
+      "length",
+      "materialSyncMode",
+      "position",
+      "radius",
+      "shadowEnable",
+      "shapingConeAngle",
+      "width"
+    ],
+    "nextOnly": [
+      "enableShadow",
+      "filterTargets",
+      "lightLinkMeshIndices",
+      "lightLinkTargets",
+      "lightLinksAll",
+      "primPath",
+      "shadowLinkMeshIndices",
+      "shadowLinkTargets",
+      "shadowLinksAll",
+      "textureId",
+      "typeCode"
+    ]
+  },
+  "lights-full-001 /Lights/GuideLight :: getLight": {
+    "legacyOnly": [
+      "absPath",
+      "angle",
+      "direction",
+      "displayName",
+      "domeTextureFormat",
+      "envmapTextureId",
+      "geometryMeshId",
+      "guideRadius",
+      "height",
+      "length",
+      "materialSyncMode",
+      "position",
+      "shadowEnable",
+      "shapingConeAngle",
+      "textureFile",
+      "width"
+    ],
+    "nextOnly": [
+      "enableShadow",
+      "filterTargets",
+      "lightLinkMeshIndices",
+      "lightLinkTargets",
+      "lightLinksAll",
+      "primPath",
+      "shadowLinkMeshIndices",
+      "shadowLinkTargets",
+      "shadowLinksAll",
+      "typeCode"
+    ]
+  },
+  "lights-full-001 /Lights/InvisibleLight :: getLight": {
+    "legacyOnly": [
+      "absPath",
+      "angle",
+      "direction",
+      "displayName",
+      "domeTextureFormat",
+      "envmapTextureId",
+      "geometryMeshId",
+      "guideRadius",
+      "height",
+      "length",
+      "materialSyncMode",
+      "position",
+      "shadowEnable",
+      "shapingConeAngle",
+      "textureFile",
+      "width"
+    ],
+    "nextOnly": [
+      "enableShadow",
+      "filterTargets",
+      "lightLinkMeshIndices",
+      "lightLinkTargets",
+      "lightLinksAll",
+      "primPath",
+      "shadowLinkMeshIndices",
+      "shadowLinkTargets",
+      "shadowLinksAll",
+      "typeCode"
+    ]
+  },
+  "lights-full-001 /Lights/PortalLight1 :: getLight": {
+    "legacyOnly": [
+      "missing"
+    ],
+    "nextOnly": [
+      "color",
+      "colorTemperature",
+      "diffuse",
+      "enableColorTemperature",
+      "enableShadow",
+      "exposure",
+      "filterTargets",
+      "height",
+      "intensity",
+      "lightLinkMeshIndices",
+      "lightLinkTargets",
+      "lightLinksAll",
+      "name",
+      "normalize",
+      "primPath",
+      "shadowColor",
+      "shadowDistance",
+      "shadowFalloff",
+      "shadowFalloffGamma",
+      "shadowLinkMeshIndices",
+      "shadowLinkTargets",
+      "shadowLinksAll",
+      "shapingConeSoftness",
+      "shapingFocus",
+      "shapingFocusTint",
+      "shapingIesAngleScale",
+      "shapingIesFile",
+      "shapingIesNormalize",
+      "specular",
+      "transform",
+      "type",
+      "typeCode",
+      "width"
+    ]
+  },
+  "lights-full-001 /Lights/PortalLight2 :: getLight": {
+    "legacyOnly": [
+      "missing"
+    ],
+    "nextOnly": [
+      "color",
+      "colorTemperature",
+      "diffuse",
+      "enableColorTemperature",
+      "enableShadow",
+      "exposure",
+      "filterTargets",
+      "height",
+      "intensity",
+      "lightLinkMeshIndices",
+      "lightLinkTargets",
+      "lightLinksAll",
+      "name",
+      "normalize",
+      "primPath",
+      "shadowColor",
+      "shadowDistance",
+      "shadowFalloff",
+      "shadowFalloffGamma",
+      "shadowLinkMeshIndices",
+      "shadowLinkTargets",
+      "shadowLinksAll",
+      "shapingConeSoftness",
+      "shapingFocus",
+      "shapingFocusTint",
+      "shapingIesAngleScale",
+      "shapingIesFile",
+      "shapingIesNormalize",
+      "specular",
+      "transform",
+      "type",
+      "typeCode",
+      "width"
+    ]
+  },
+  "lights-full-001 /Lights/RectLight :: getLight": {
+    "legacyOnly": [
+      "absPath",
+      "angle",
+      "direction",
+      "displayName",
+      "domeTextureFormat",
+      "envmapTextureId",
+      "geometryMeshId",
+      "guideRadius",
+      "length",
+      "materialSyncMode",
+      "position",
+      "radius",
+      "shadowEnable",
+      "shapingConeAngle",
+      "textureFile"
+    ],
+    "nextOnly": [
+      "enableShadow",
+      "filterTargets",
+      "lightLinkMeshIndices",
+      "lightLinkTargets",
+      "lightLinksAll",
+      "primPath",
+      "shadowLinkMeshIndices",
+      "shadowLinkTargets",
+      "shadowLinksAll",
+      "typeCode"
+    ]
+  },
+  "lights-full-001 /Lights/RenderOnlyLight :: getLight": {
+    "legacyOnly": [
+      "absPath",
+      "angle",
+      "direction",
+      "displayName",
+      "domeTextureFormat",
+      "envmapTextureId",
+      "geometryMeshId",
+      "guideRadius",
+      "height",
+      "length",
+      "materialSyncMode",
+      "position",
+      "shadowEnable",
+      "shapingConeAngle",
+      "textureFile",
+      "width"
+    ],
+    "nextOnly": [
+      "enableShadow",
+      "filterTargets",
+      "lightLinkMeshIndices",
+      "lightLinkTargets",
+      "lightLinksAll",
+      "primPath",
+      "shadowLinkMeshIndices",
+      "shadowLinkTargets",
+      "shadowLinksAll",
+      "typeCode"
+    ]
+  },
+  "lights-full-001 /Lights/SphereLight :: getLight": {
+    "legacyOnly": [
+      "absPath",
+      "direction",
+      "displayName",
+      "domeTextureFormat",
+      "envmapTextureId",
+      "geometryMeshId",
+      "guideRadius",
+      "height",
+      "length",
+      "materialSyncMode",
+      "position",
+      "radius",
+      "shadowEnable",
+      "shapingConeAngle",
+      "textureFile",
+      "width"
+    ],
+    "nextOnly": [
+      "enableShadow",
+      "filterTargets",
+      "lightLinkMeshIndices",
+      "lightLinkTargets",
+      "lightLinksAll",
+      "primPath",
+      "shadowLinkMeshIndices",
+      "shadowLinkTargets",
+      "shadowLinksAll",
+      "typeCode"
+    ],
+    "differ": {
+      "angle": {
+        "legacy": 0.53,
+        "next": 0.7854
+      },
+      "type": {
+        "legacy": "sphere",
+        "next": "spot"
+      }
+    }
+  },
+  "lights-full-001 :: getAllLights": {
+    "legacy": "#226:c9724889",
+    "next": "#272:3b11ad9c"
+  },
+  "camera-full-001 :: numCameras": {
+    "same": true
+  },
+  "camera-full-001 /Cameras/ClippingPlanesCamera :: getCamera": {
+    "legacyOnly": [
+      "absPath",
+      "aspectRatio",
+      "displayName",
+      "projection",
+      "xfov",
+      "yfov",
+      "zfar",
+      "znear"
+    ],
+    "nextOnly": [
+      "aspect",
+      "exposure",
+      "fStop",
+      "farClip",
+      "focusDistance",
+      "fovX",
+      "fovY",
+      "horizontalApertureOffset",
+      "nearClip",
+      "orthoWidth",
+      "primPath",
+      "shutterClose",
+      "shutterOpen",
+      "stereoRole",
+      "transform",
+      "type",
+      "typeCode",
+      "verticalApertureOffset"
+    ]
+  },
+  "camera-full-001 /Cameras/ExtremesCamera :: getCamera": {
+    "legacyOnly": [
+      "absPath",
+      "aspectRatio",
+      "displayName",
+      "projection",
+      "xfov",
+      "yfov",
+      "zfar",
+      "znear"
+    ],
+    "nextOnly": [
+      "aspect",
+      "exposure",
+      "fStop",
+      "farClip",
+      "focusDistance",
+      "fovX",
+      "fovY",
+      "horizontalApertureOffset",
+      "nearClip",
+      "orthoWidth",
+      "primPath",
+      "shutterClose",
+      "shutterOpen",
+      "stereoRole",
+      "transform",
+      "type",
+      "typeCode",
+      "verticalApertureOffset"
+    ]
+  },
+  "camera-full-001 /Cameras/LeftEyeCamera :: getCamera": {
+    "legacyOnly": [
+      "absPath",
+      "aspectRatio",
+      "displayName",
+      "projection",
+      "xfov",
+      "yfov",
+      "zfar",
+      "znear"
+    ],
+    "nextOnly": [
+      "aspect",
+      "exposure",
+      "fStop",
+      "farClip",
+      "focusDistance",
+      "fovX",
+      "fovY",
+      "horizontalApertureOffset",
+      "nearClip",
+      "orthoWidth",
+      "primPath",
+      "shutterClose",
+      "shutterOpen",
+      "stereoRole",
+      "transform",
+      "type",
+      "typeCode",
+      "verticalApertureOffset"
+    ]
+  },
+  "camera-full-001 /Cameras/OrthographicCamera :: getCamera": {
+    "legacyOnly": [
+      "absPath",
+      "aspectRatio",
+      "displayName",
+      "projection",
+      "xfov",
+      "yfov",
+      "zfar",
+      "znear"
+    ],
+    "nextOnly": [
+      "aspect",
+      "exposure",
+      "fStop",
+      "farClip",
+      "focusDistance",
+      "fovX",
+      "fovY",
+      "horizontalApertureOffset",
+      "nearClip",
+      "orthoWidth",
+      "primPath",
+      "shutterClose",
+      "shutterOpen",
+      "stereoRole",
+      "transform",
+      "type",
+      "typeCode",
+      "verticalApertureOffset"
+    ]
+  },
+  "camera-full-001 /Cameras/PerspectiveCamera :: getCamera": {
+    "legacyOnly": [
+      "absPath",
+      "aspectRatio",
+      "displayName",
+      "projection",
+      "xfov",
+      "yfov",
+      "zfar",
+      "znear"
+    ],
+    "nextOnly": [
+      "aspect",
+      "exposure",
+      "fStop",
+      "farClip",
+      "focusDistance",
+      "fovX",
+      "fovY",
+      "horizontalApertureOffset",
+      "nearClip",
+      "orthoWidth",
+      "primPath",
+      "shutterClose",
+      "shutterOpen",
+      "stereoRole",
+      "transform",
+      "type",
+      "typeCode",
+      "verticalApertureOffset"
+    ]
+  },
+  "camera-full-001 /Cameras/RightEyeCamera :: getCamera": {
+    "legacyOnly": [
+      "absPath",
+      "aspectRatio",
+      "displayName",
+      "projection",
+      "xfov",
+      "yfov",
+      "zfar",
+      "znear"
+    ],
+    "nextOnly": [
+      "aspect",
+      "exposure",
+      "fStop",
+      "farClip",
+      "focusDistance",
+      "fovX",
+      "fovY",
+      "horizontalApertureOffset",
+      "nearClip",
+      "orthoWidth",
+      "primPath",
+      "shutterClose",
+      "shutterOpen",
+      "stereoRole",
+      "transform",
+      "type",
+      "typeCode",
+      "verticalApertureOffset"
+    ]
+  },
+  "skelanimation-full-001 :: numSkeletons": {
+    "same": true
+  },
+  "skelanimation-full-001 /AnimationTests/AdditiveBlendShapeRoot/Skeleton :: getSkeleton": {
+    "nextOnly": [
+      "animationId",
+      "animationSourcePath",
+      "jointCount",
+      "joints",
+      "name",
+      "primPath",
+      "rootJoint"
+    ]
+  },
+  "skelanimation-full-001 /AnimationTests/BasicAnimationRoot/Skeleton :: getSkeleton": {
+    "nextOnly": [
+      "animationId",
+      "animationSourcePath",
+      "jointCount",
+      "joints",
+      "name",
+      "primPath",
+      "rootJoint"
+    ],
+    "differ": {
+      "root_node": {
+        "legacy": "#544:32099836",
+        "next": "#528:fea7ffbc"
+      }
+    }
+  },
+  "skelanimation-full-001 /AnimationTests/BlendShapeAnimationRoot/Skeleton :: getSkeleton": {
+    "nextOnly": [
+      "animationId",
+      "animationSourcePath",
+      "jointCount",
+      "joints",
+      "name",
+      "primPath",
+      "rootJoint"
+    ]
+  },
+  "skelanimation-full-001 /AnimationTests/AdditiveBlendShapeRoot/Skeleton :: getSkeletonJointsFlat": {
+    "same": true
+  },
+  "skelanimation-full-001 /AnimationTests/BasicAnimationRoot/Skeleton :: getSkeletonJointsFlat": {
+    "differ": {
+      "joint_names": {
+        "legacy": [
+          "Root",
+          "Root/Spine",
+          "Root/Spine/Head"
+        ],
+        "next": [
+          "Root",
+          "Spine",
+          "Head"
+        ]
+      }
+    }
+  },
+  "skelanimation-full-001 /AnimationTests/BlendShapeAnimationRoot/Skeleton :: getSkeletonJointsFlat": {
+    "same": true
+  },
+  "skelanimation-full-001 :: getAllSkeletons": {
+    "same": true
+  },
+  "skelanimation-full-001 :: numAnimations": {
+    "same": true
+  },
+  "skelanimation-full-001 /AnimationTests/AdditiveBlendShapeRoot/Animation :: getAnimationInfo": {
+    "legacyOnly": [
+      "hasValueClip",
+      "numAnimatedJoints",
+      "numAnimatedNodes",
+      "valueClipEndTime",
+      "valueClipSampleRate",
+      "valueClipStartTime"
+    ],
+    "nextOnly": [
+      "endTime",
+      "has_node_animation",
+      "has_skeletal_animation",
+      "startTime"
+    ],
+    "differ": {
+      "name": {
+        "legacy": "Animation",
+        "next": "Animation_Anim"
+      },
+      "numSamplers": {
+        "legacy": 4,
+        "next": 1
+      },
+      "numTargetNodes": {
+        "legacy": 0,
+        "next": 1
+      },
+      "numTracks": {
+        "legacy": 4,
+        "next": 1
+      }
+    }
+  },
+  "skelanimation-full-001 /AnimationTests/AdditiveBlendShapeRoot/Animation :: getAnimation": {
+    "legacyOnly": [
+      "absPath",
+      "clipAssetPaths",
+      "displayName",
+      "hasValueClip",
+      "numAnimatedJoints",
+      "numAnimatedNodes",
+      "primName",
+      "sourceType",
+      "valueClipBaked",
+      "valueClipEndTime",
+      "valueClipSampleRate",
+      "valueClipStartTime"
+    ],
+    "nextOnly": [
+      "endTime",
+      "has_node_animation",
+      "has_skeletal_animation",
+      "numChannels",
+      "numSamplers",
+      "primPath",
+      "startTime"
+    ],
+    "differ": {
+      "channels": {
+        "legacy": "#397:6910c4e0",
+        "next": "#424:7b661182"
+      },
+      "name": {
+        "legacy": "Animation",
+        "next": "Animation_Anim"
+      },
+      "samplers": {
+        "legacy": "#286:526ac90a",
+        "next": "#192:a685e44a"
+      },
+      "tracks": {
+        "legacy": "#226:b7dda56a",
+        "next": "#403:dc67cd0a"
+      }
+    }
+  },
+  "skelanimation-full-001 /AnimationTests/BasicAnimationRoot/Animation :: getAnimationInfo": {
+    "legacyOnly": [
+      "hasValueClip",
+      "numAnimatedJoints",
+      "numAnimatedNodes",
+      "valueClipEndTime",
+      "valueClipSampleRate",
+      "valueClipStartTime"
+    ],
+    "nextOnly": [
+      "endTime",
+      "has_node_animation",
+      "has_skeletal_animation",
+      "startTime"
+    ],
+    "differ": {
+      "name": {
+        "legacy": "Animation",
+        "next": "Animation_Anim"
+      },
+      "numSamplers": {
+        "legacy": 6,
+        "next": 1
+      },
+      "numTargetNodes": {
+        "legacy": 0,
+        "next": 1
+      },
+      "numTracks": {
+        "legacy": 9,
+        "next": 1
+      }
+    }
+  },
+  "skelanimation-full-001 /AnimationTests/BasicAnimationRoot/Animation :: getAnimation": {
+    "legacyOnly": [
+      "absPath",
+      "clipAssetPaths",
+      "displayName",
+      "hasValueClip",
+      "numAnimatedJoints",
+      "numAnimatedNodes",
+      "primName",
+      "sourceType",
+      "valueClipBaked",
+      "valueClipEndTime",
+      "valueClipSampleRate",
+      "valueClipStartTime"
+    ],
+    "nextOnly": [
+      "endTime",
+      "has_node_animation",
+      "has_skeletal_animation",
+      "numChannels",
+      "numSamplers",
+      "primPath",
+      "startTime"
+    ],
+    "differ": {
+      "channels": {
+        "legacy": "#901:69bdb5e8",
+        "next": "#408:ed1c753b"
+      },
+      "name": {
+        "legacy": "Animation",
+        "next": "Animation_Anim"
+      },
+      "samplers": {
+        "legacy": "#517:48bb3ca1",
+        "next": "#332:4bf29431"
+      },
+      "tracks": {
+        "legacy": "#847:24c13811",
+        "next": "#541:b369a394"
+      }
+    }
+  },
+  "skelanimation-full-001 /AnimationTests/BlendShapeAnimationRoot/Animation :: getAnimationInfo": {
+    "legacyOnly": [
+      "hasValueClip",
+      "numAnimatedJoints",
+      "numAnimatedNodes",
+      "valueClipEndTime",
+      "valueClipSampleRate",
+      "valueClipStartTime"
+    ],
+    "nextOnly": [
+      "endTime",
+      "has_node_animation",
+      "has_skeletal_animation",
+      "startTime"
+    ],
+    "differ": {
+      "name": {
+        "legacy": "Animation",
+        "next": "Animation_Anim"
+      },
+      "numSamplers": {
+        "legacy": 4,
+        "next": 1
+      },
+      "numTargetNodes": {
+        "legacy": 0,
+        "next": 1
+      },
+      "numTracks": {
+        "legacy": 4,
+        "next": 1
+      }
+    }
+  },
+  "skelanimation-full-001 /AnimationTests/BlendShapeAnimationRoot/Animation :: getAnimation": {
+    "legacyOnly": [
+      "absPath",
+      "clipAssetPaths",
+      "displayName",
+      "hasValueClip",
+      "numAnimatedJoints",
+      "numAnimatedNodes",
+      "primName",
+      "sourceType",
+      "valueClipBaked",
+      "valueClipEndTime",
+      "valueClipSampleRate",
+      "valueClipStartTime"
+    ],
+    "nextOnly": [
+      "endTime",
+      "has_node_animation",
+      "has_skeletal_animation",
+      "numChannels",
+      "numSamplers",
+      "primPath",
+      "startTime"
+    ],
+    "differ": {
+      "channels": {
+        "legacy": "#397:6910c4e0",
+        "next": "#413:ca4561fb"
+      },
+      "name": {
+        "legacy": "Animation",
+        "next": "Animation_Anim"
+      },
+      "samplers": {
+        "legacy": "#267:3a4a4082",
+        "next": "#176:41f1e29b"
+      },
+      "tracks": {
+        "legacy": "#225:abe7aa9d",
+        "next": "#388:ae55dca0"
+      }
+    }
+  },
+  "skelanimation-full-001 :: getAllAnimations": {
+    "same": true
+  },
+  "skelanimation-full-001 :: getAllAnimationInfos": {
+    "same": true
+  },
+  "c-core-material-queries :: numTextures": {
+    "same": true
+  },
+  "c-core-material-queries :: numImages": {
+    "same": true
+  },
+  "c-core-material-queries :: extractUnresolvedTexturePaths": {
+    "same": true
+  },
+  "c-core-material-queries :: getTexture": {
+    "same": true
+  },
+  "c-core-material-queries :: getImage": {
+    "legacyOnly": [
+      "bufferId",
+      "colorTransformApplied",
+      "colorTransformBypass",
+      "colorTransformValid",
+      "sourceColorIsData",
+      "sourceColorSpaceName",
+      "sourceGamma",
+      "sourceLinearBias",
+      "sourceToDisplayLinear",
+      "usdColorSpace"
+    ],
+    "nextOnly": [
+      "componentType",
+      "mipLevels",
+      "name"
+    ],
+    "differ": {
+      "channels": {
+        "legacy": -1,
+        "next": 4
+      },
+      "colorSpace": {
+        "legacy": "srgb",
+        "next": 0
+      },
+      "height": {
+        "legacy": -1,
+        "next": 0
+      },
+      "width": {
+        "legacy": -1,
+        "next": 0
+      }
+    }
+  },
+  "c-core-material-queries :: getImageCopy": {
+    "legacyOnly": [
+      "bufferId",
+      "colorTransformApplied",
+      "colorTransformBypass",
+      "colorTransformValid",
+      "sourceColorIsData",
+      "sourceColorSpaceName",
+      "sourceGamma",
+      "sourceLinearBias",
+      "sourceToDisplayLinear",
+      "usdColorSpace"
+    ],
+    "nextOnly": [
+      "componentType",
+      "mipLevels",
+      "name"
+    ],
+    "differ": {
+      "channels": {
+        "legacy": -1,
+        "next": 4
+      },
+      "colorSpace": {
+        "legacy": "srgb",
+        "next": 0
+      },
+      "height": {
+        "legacy": -1,
+        "next": 0
+      },
+      "width": {
+        "legacy": -1,
+        "next": 0
+      }
+    }
+  },
+  "c-core-material-queries :: getImagePtr": {
+    "legacyOnly": [
+      "bufferId",
+      "colorTransformApplied",
+      "colorTransformBypass",
+      "colorTransformValid",
+      "sourceColorIsData",
+      "sourceColorSpaceName",
+      "sourceGamma",
+      "sourceLinearBias",
+      "sourceToDisplayLinear",
+      "usdColorSpace"
+    ],
+    "nextOnly": [
+      "componentType",
+      "mipLevels",
+      "name"
+    ],
+    "differ": {
+      "channels": {
+        "legacy": -1,
+        "next": 4
+      },
+      "colorSpace": {
+        "legacy": "srgb",
+        "next": 0
+      },
+      "height": {
+        "legacy": -1,
+        "next": 0
+      },
+      "width": {
+        "legacy": -1,
+        "next": 0
+      }
+    }
+  },
+  "shader :: extractUnresolvedTexturePaths": {
+    "legacy": [],
+    "next": [
+      "0/teapot_bc.png",
+      "0/teapot_m.png",
+      "0/teapot_r.png",
+      "0/teapot_n.png",
+      "0/teapot_ao.png"
+    ]
+  },
+  "udim-material-bound :: numUDIMTextures": {
+    "same": true
+  },
+  "udim-material-bound :: getUDIMTexture": {
+    "same": true
+  },
+  "instancing-001 :: numInstances": {
+    "legacy": 11,
+    "next": 17
+  },
+  "instancing-001 :: getInstance": {
+    "legacy": "#425:e6083ddd",
+    "next": "#749:98b96da5"
+  },
+  "instancing-001 :: getInstancesForMesh": {
+    "same": true
+  },
+  "flags true :: getNativeMeshMerge": {
+    "same": true
+  },
+  "flags false :: getNativeMeshMerge": {
+    "same": true
+  },
+  "flags true :: getNativeMaterialDedup": {
+    "same": true
+  },
+  "flags false :: getNativeMaterialDedup": {
+    "same": true
+  },
+  "flags true :: getNativeMeshMergeBakeTransform": {
+    "same": true
+  },
+  "flags false :: getNativeMeshMergeBakeTransform": {
+    "same": true
+  },
+  "flags true :: getNativeFlattenRenderTree": {
+    "same": true
+  },
+  "flags false :: getNativeFlattenRenderTree": {
+    "same": true
+  },
+  "c-core-material-queries layer :: getShadingGraphJSON": {
+    "same": true
+  },
+  "c-core-material-queries layer :: getMhProfileJSON": {
+    "same": true
+  }
+}

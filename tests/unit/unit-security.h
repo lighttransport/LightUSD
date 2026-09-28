@@ -15,6 +15,7 @@ void security_resolver_oversized_custom_asset_rejected_test(void);
 void security_resolver_overreported_custom_asset_rejected_test(void);
 void security_nested_zstd_depth_rejected_test(void);
 void security_sha256_overflow_rejected_test(void);
+void security_sha256_digest_test(void);
 void security_stage_move_cache_test(void);
 void security_base122_roundtrip_test(void);
 void security_strutil_unwrap_edge_test(void);

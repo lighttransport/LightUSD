@@ -6,6 +6,7 @@
 #include <emscripten/em_js.h>
 #include <emscripten/fetch.h>
 #include <emscripten/emscripten.h>
+#include <emscripten/heap.h>
 
 #include <string>
 #include <vector>
@@ -15,6 +16,8 @@
 #include <sstream>
 #include <iomanip>
 #include <map>
+#include <memory>
+#include <utility>
 #include <set>
 #include <algorithm>
 #include <cctype>
@@ -28,12 +31,16 @@
 
 //#include "external/fast_float/include/fast_float/bigint.h"
 #include "lightusd.hh"
+#include "tydra/render-data-mesh-internal.hh"
 #include "pprinter.hh"
 #include "tsd/tinysubdiv.hh"
 #include "typed-array-core.hh"
 #include "value-types.hh"
 
 #include "io-util.hh"  // AssetPathSuffixCandidates (UE-export suffix fallback)
+// Declarations only; the legacy product uses its enum constants and never
+// calls the combined-only definitions.
+#include "binding-combined-api.h"
 // next: low-memory lazy-ValueRep flatten pipeline (src/next/). Compiled out
 // in the legacy product (LIGHTUSD_WASM_PRODUCT=legacy).
 #if defined(LIGHTUSD_WASM_WITH_NEXT)
@@ -425,7 +432,8 @@ static inline void FixupZeroTangent(float &tx, float &ty, float &tz,
 // and converts BigInt→Number (64-bit), so it works for both modes.
 EM_JS(void, reportTydraProgress, (int current, int total, const char* stage, const char* meshName, int materialsCurrent, int materialsTotal, const char* materialName, float progress), {
   if (typeof Module.onTydraProgress === 'function') {
-    Module.onTydraProgress({
+    const notify = Module['__lightusdLoadingCallback'] || ((name, event) => Module[name](event));
+    notify('onTydraProgress', {
       meshCurrent: current,
       meshTotal: total,
       stage: UTF8ToString(Number(stage)),
@@ -454,7 +462,8 @@ EM_JS(void, reportLightUSDDebug, (const char* phase, const char* detail, double 
     materialName: UTF8ToString(Number(materialName))
   };
   if (typeof Module.onLightUSDDebug === 'function') {
-    Module.onLightUSDDebug(event);
+    const notify = Module['__lightusdLoadingCallback'] || ((name, event) => Module[name](event));
+    notify('onLightUSDDebug', event);
   }
 });
 
@@ -570,7 +579,8 @@ static inline void ReportLightUSDDebugEvent(
 // Report conversion stage change
 EM_JS(void, reportTydraStage, (const char* stage, const char* message), {
   if (typeof Module.onTydraStage === 'function') {
-    Module.onTydraStage({
+    const notify = Module['__lightusdLoadingCallback'] || ((name, event) => Module[name](event));
+    notify('onTydraStage', {
       stage: UTF8ToString(Number(stage)),
       message: UTF8ToString(Number(message))
     });
@@ -580,7 +590,8 @@ EM_JS(void, reportTydraStage, (const char* stage, const char* message), {
 // Report conversion completion
 EM_JS(void, reportTydraComplete, (int meshCount, int materialCount, int textureCount), {
   if (typeof Module.onTydraComplete === 'function') {
-    Module.onTydraComplete({
+    const notify = Module['__lightusdLoadingCallback'] || ((name, event) => Module[name](event));
+    notify('onTydraComplete', {
       meshCount: meshCount,
       materialCount: materialCount,
       textureCount: textureCount
@@ -597,7 +608,7 @@ EM_JS(void, reportTydraComplete, (int meshCount, int materialCount, int textureC
 // Enable with CMake option: -DLIGHTUSD_WASM_COROUTINE=ON (default)
 // Disable with: -DLIGHTUSD_WASM_COROUTINE=OFF
 
-#if defined(LIGHTUSD_USE_COROUTINE)
+#if defined(LIGHTUSD_USE_COROUTINE) && !defined(LIGHTUSD_WASM_WITH_NEXT)
 
 // NOTE: EM_VAL is a pointer type (struct _EM_VAL*). In MEMORY64 mode,
 // pointers are i64 and must be returned as BigInt from JS→WASM imports.
@@ -648,17 +659,20 @@ inline emscripten::val yieldWithDelay(int delayMs) {
   return emscripten::val::take_ownership(yieldWithDelay_impl(delayMs));
 }
 
+#endif // Legacy coroutine helpers
+
 // Report that async operation is starting (for JS progress UI)
 EM_JS(void, reportAsyncPhaseStart, (const char* phase, float progress), {
   if (typeof Module.onAsyncPhaseStart === 'function') {
-    Module.onAsyncPhaseStart({
+    const notify = Module['__lightusdLoadingCallback'] || ((name, event) => Module[name](event));
+    notify('onAsyncPhaseStart', {
       phase: UTF8ToString(Number(phase)),
       progress: progress
     });
   }
 });
 
-#endif // LIGHTUSD_USE_COROUTINE
+
 
 namespace detail {
 
@@ -941,7 +955,7 @@ struct ZeroCopyStreamingBuffer {
 
   // Mark bytes as written (for progress tracking)
   bool markBytesWritten(size_t count) {
-    if (bytes_written + count > total_size) {
+    if (count > total_size - bytes_written) {
       bytes_written = total_size;
       return false;  // Overflow
     }
@@ -971,6 +985,7 @@ struct ZeroCopyStreamingBuffer {
     return entry;
   }
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val toJS() const {
     emscripten::val result = emscripten::val::object();
     result.set("uuid", uuid);
@@ -983,8 +998,10 @@ struct ZeroCopyStreamingBuffer {
     result.set("bufferPtr", double(getBufferPtr()));
     return result;
   }
+#endif
 };
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
 bool GetUint8ArrayByteLength(const emscripten::val &buffer, size_t *capacity) {
   if (!capacity || buffer.isNull() || buffer.isUndefined()) {
     return false;
@@ -995,30 +1012,15 @@ bool GetUint8ArrayByteLength(const emscripten::val &buffer, size_t *capacity) {
     return false;
   }
   const double n = byte_length.as<double>();
-  if (!std::isfinite(n) || n < 0.0) {
+  if (!std::isfinite(n) || n < 0.0 ||
+      n >= std::ldexp(1.0, int(sizeof(size_t) * 8))) {
     return false;
   }
   *capacity = static_cast<size_t>(n);
   return true;
 }
 
-bool CopyBytesToUint8Array(const std::vector<uint8_t> &bytes,
-                           const emscripten::val &buffer,
-                           size_t capacity,
-                           std::string *err) {
-  if (bytes.size() > capacity) {
-    if (err) {
-      *err = "USDC export output buffer too small.";
-    }
-    return false;
-  }
-  if (!bytes.empty()) {
-    emscripten::val src = emscripten::val(emscripten::typed_memory_view(
-        bytes.size(), bytes.data()));
-    buffer.call<void>("set", src, emscripten::val(0));
-  }
-  return true;
-}
+#endif
 
 struct EMAssetResolutionResolver {
 
@@ -1300,6 +1302,7 @@ struct EMAssetResolutionResolver {
   }
 
   // Get all asset UUIDs
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getAssetUUIDs() const {
     emscripten::val uuids = emscripten::val::object();
     for (const auto &pair : cache) {
@@ -1307,6 +1310,7 @@ struct EMAssetResolutionResolver {
     }
     return uuids;
   }
+#endif
 
   // Find asset by UUID
   std::string findAssetByUUID(const std::string &uuid) const {
@@ -1372,6 +1376,7 @@ struct EMAssetResolutionResolver {
   // owned by this cache and becomes a dangling reference once the asset is
   // evicted or deleted. Callers must consume it before any such mutation.
   // Prefer the copying getAsset()/getAssetByUUID() unless you manage lifetime.
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getCacheDataAsMemoryView(const std::string &asset_name) const {
     if (!cache.count(asset_name)) {
       return emscripten::val::undefined();
@@ -1380,6 +1385,7 @@ struct EMAssetResolutionResolver {
     return emscripten::val(emscripten::typed_memory_view(entry.binary.size(),
                                                          reinterpret_cast<const uint8_t*>(entry.binary.data())));
   }
+#endif
 
   // Zero-copy ingest using a raw WASM-heap pointer from JS.
   // Rejects null pointer and absurd sizes; copies data into our own storage.
@@ -1391,8 +1397,9 @@ struct EMAssetResolutionResolver {
     if (dataPtr == 0) {
       return false;
     }
-    // Overflow guard: reject if pointer + size wraps around.
-    if (dataPtr + size < dataPtr) {
+    // Validate the whole span against the current linear memory before reading.
+    const size_t heap_size = emscripten_get_heap_size();
+    if (dataPtr > heap_size || size > heap_size - dataPtr) {
       return false;
     }
 
@@ -1452,6 +1459,7 @@ struct EMAssetResolutionResolver {
     return streaming_cache.at(asset_name).isComplete();
   }
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getStreamingProgress(const std::string &asset_name) const {
     emscripten::val progress = emscripten::val::object();
 
@@ -1474,6 +1482,7 @@ struct EMAssetResolutionResolver {
 
     return progress;
   }
+#endif
 
   //
   // Zero-copy streaming buffer methods
@@ -1487,45 +1496,48 @@ struct EMAssetResolutionResolver {
   ///        layer exceeds the default stream in instead of falling back to the
   ///        high-memory in-heap path (raise via the CLI --max-mem-mb arg).
   /// Returns buffer info including UUID and pointer for direct memory access
+  bool allocateZeroCopyBufferData(const std::string &asset_name, size_t size,
+                                  size_t max_bytes, std::string *uuid,
+                                  std::string *error) {
+    if (!size) {
+      *error = "Size must be greater than 0";
+      return false;
+    }
+    constexpr size_t kDefaultMaxZeroCopyBufferBytes = size_t(1) << 29;
+    const size_t cap = max_bytes ? max_bytes : kDefaultMaxZeroCopyBufferBytes;
+    if (size > cap) {
+      *error = "Buffer size exceeds " + std::to_string(cap >> 20) + " MiB limit";
+      return false;
+    }
+    ZeroCopyStreamingBuffer buf;
+    if (!buf.allocate(size, asset_name)) {
+      *error = "Failed to allocate buffer";
+      return false;
+    }
+    *uuid = buf.uuid;
+    zerocopy_buffers[*uuid] = std::move(buf);
+    return true;
+  }
+
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val allocateZeroCopyBuffer(const std::string &asset_name, size_t size,
                                          size_t max_bytes) {
     emscripten::val result = emscripten::val::object();
-
-    if (size == 0) {
-      result.set("success", false);
-      result.set("error", "Size must be greater than 0");
+    std::string uuid, error;
+    const bool success = allocateZeroCopyBufferData(asset_name, size, max_bytes,
+                                                    &uuid, &error);
+    result.set("success", success);
+    if (!success) {
+      result.set("error", error);
       return result;
     }
-
-    // Cap single buffer allocation to avoid OOM in WASM's ~2GB linear memory.
-    // Default 512 MiB; the caller may raise it (still bounded by the heap).
-    constexpr size_t kDefaultMaxZeroCopyBufferBytes = size_t(1) << 29;  // 512 MiB
-    const size_t cap = max_bytes ? max_bytes : kDefaultMaxZeroCopyBufferBytes;
-    if (size > cap) {
-      result.set("success", false);
-      result.set("error",
-                 "Buffer size exceeds " + std::to_string(cap >> 20) + " MiB limit");
-      return result;
-    }
-
-    // Create a new buffer with unique UUID
-    ZeroCopyStreamingBuffer buf;
-    if (!buf.allocate(size, asset_name)) {
-      result.set("success", false);
-      result.set("error", "Failed to allocate buffer");
-      return result;
-    }
-
-    std::string uuid = buf.uuid;
-    zerocopy_buffers[uuid] = std::move(buf);
-
-    result.set("success", true);
     result.set("uuid", uuid);
     result.set("assetName", asset_name);
-    result.set("bufferPtr", double(zerocopy_buffers[uuid].getBufferPtr()));
+    result.set("bufferPtr", double(zerocopy_buffers.at(uuid).getBufferPtr()));
     result.set("totalSize", double(size));
     return result;
   }
+#endif
 
   /// Get buffer pointer for direct memory access
   /// @param uuid The buffer UUID returned from allocateZeroCopyBuffer
@@ -1556,6 +1568,7 @@ struct EMAssetResolutionResolver {
 
   /// Get current zero-copy buffer progress
   /// @param uuid The buffer UUID
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getZeroCopyProgress(const std::string &uuid) const {
     if (!zerocopy_buffers.count(uuid)) {
       emscripten::val result = emscripten::val::object();
@@ -1567,6 +1580,7 @@ struct EMAssetResolutionResolver {
     result.set("exists", true);
     return result;
   }
+#endif
 
   /// Finalize zero-copy buffer and move to asset cache
   /// Uses the asset_name stored in the buffer as the cache key
@@ -1610,6 +1624,7 @@ struct EMAssetResolutionResolver {
   }
 
   /// Get all active zero-copy buffers
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getActiveZeroCopyBuffers() const {
     emscripten::val result = emscripten::val::array();
     for (const auto& pair : zerocopy_buffers) {
@@ -1620,6 +1635,7 @@ struct EMAssetResolutionResolver {
     }
     return result;
   }
+#endif
 
   /// Get total cache memory usage in bytes (all caches combined).
   size_t getCacheSizeBytes() const {
@@ -1736,6 +1752,7 @@ struct ParsingProgress {
     return cancel_requested.load();
   }
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val toJS() const {
     emscripten::val result = emscripten::val::object();
     result.set("progress", progress);
@@ -1757,6 +1774,7 @@ struct ParsingProgress {
 
     return result;
   }
+#endif
 };
 
 bool SetupEMAssetResolution(
@@ -3219,7 +3237,7 @@ class LightUSDLoaderNative {
   //
   // Returns a Promise that resolves to a JS object: { success: bool, error?: string }
   //
-#if defined(LIGHTUSD_USE_COROUTINE)
+#if defined(LIGHTUSD_USE_COROUTINE) && !defined(LIGHTUSD_WASM_WITH_NEXT)
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wcoroutine-missing-unhandled-exception"
@@ -3402,47 +3420,28 @@ class LightUSDLoaderNative {
 #endif
 #endif // LIGHTUSD_USE_COROUTINE
 
-  // u8 : Uint8Array object.
-  bool loadTest(const std::string &filename, const emscripten::val &u8) {
-
-    lightusd::TypedArray<uint8_t> binary;
-    detail::uint8arrayToBuffer(u8, binary);
-    std::cout << "binary.size = " << binary.size() << "\n";
-
-    //bool is_usdz = lightusd::IsUSDZ(
-    //    reinterpret_cast<const uint8_t *>(binary.data()), binary.size());
-
+  bool loadTestData(const std::string &filename, const uint8_t *data, size_t size) {
+    if (size > (size_t(1) << 30)) size = 0;
+    std::cout << "binary.size = " << size << "\n";
+    std::cout << "layer\n";
     lightusd::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
-
-#if 0
-    lightusd::Stage stage;
-    loaded_ = lightusd::LoadUSDFromMemory(
-        reinterpret_cast<const uint8_t *>(binary.data()), binary.size(),
-        filename, &stage, &warn_, &error_, options);
-
-    if (!loaded_) {
-      return false;
-    }
-#else
-    std::cout << "layer\n";
     lightusd::Layer layer;
-    loaded_ = lightusd::LoadLayerFromMemory(
-        reinterpret_cast<const uint8_t *>(binary.data()), binary.size(),
-        filename, &layer, &warn_, &error_, options);
-
-    if (!loaded_) {
-      return false;
-    }
-#endif
-
+    loaded_ = lightusd::LoadLayerFromMemory(data, size, filename, &layer,
+                                           &warn_, &error_, options);
+    if (!loaded_) return false;
     loaded_as_layer_ = false;
     filename_ = filename;
-
-    //std::cout << "loaded\n";
-
     return true;
   }
+
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+  bool loadTest(const std::string &filename, const emscripten::val &u8) {
+    lightusd::TypedArray<uint8_t> binary;
+    detail::uint8arrayToBuffer(u8, binary);
+    return loadTestData(filename, binary.data(), binary.size());
+  }
+#endif
 
   /// Load USD from a cached asset (previously streamed via zero-copy transfer)
   /// @param asset_name The name/path used when the asset was cached
@@ -3482,99 +3481,68 @@ class LightUSDLoaderNative {
     return loadAsLayerFromBinary(entry.binary, asset_name);
   }
 
-  // Test function for value::Value memory usage estimation
-  // arrayLength: optional parameter to specify the size of array tests (default: 10000)
-  emscripten::val testValueMemoryUsage(emscripten::val arrayLengthVal) {
-    emscripten::val result = emscripten::val::object();
-    emscripten::val tests = emscripten::val::array();
+  bool memoryProbeLengthValid(int count) const {
+    const uint64_t limit = uint64_t(std::max(1, max_memory_limit_mb_)) * 1024 * 1024;
+    return count >= 0 && uint64_t(count) * 8 <= limit;
+  }
 
-    // Get array length from parameter or use default
-    int arrayLength = 10000;
-    if (!arrayLengthVal.isUndefined() && !arrayLengthVal.isNull()) {
-      arrayLength = arrayLengthVal.as<int>();
-    }
-
+  static std::vector<std::pair<std::string, size_t>> collectValueMemoryUsage(int arrayLength) {
+    std::vector<std::pair<std::string, size_t>> tests;
+    tests.reserve(19);
     // Test 1: Empty value
     {
       lightusd::value::Value v;
       size_t mem = v.estimate_memory_usage();
-      emscripten::val test = emscripten::val::object();
-      test.set("name", "Empty value");
-      test.set("bytes", mem);
-      tests.call<void>("push", test);
+      tests.emplace_back("Empty value", mem);
     }
 
     // Test 2: Simple types
     {
       lightusd::value::Value v1(42);  // int32
-      emscripten::val test = emscripten::val::object();
-      test.set("name", "int32(42)");
-      test.set("bytes", v1.estimate_memory_usage());
-      tests.call<void>("push", test);
+      tests.emplace_back("int32(42)", v1.estimate_memory_usage());
     }
     {
       lightusd::value::Value v2(3.14f);  // float
-      emscripten::val test = emscripten::val::object();
-      test.set("name", "float(3.14)");
-      test.set("bytes", v2.estimate_memory_usage());
-      tests.call<void>("push", test);
+      tests.emplace_back("float(3.14)", v2.estimate_memory_usage());
     }
     {
       lightusd::value::Value v3(2.718);  // double
-      emscripten::val test = emscripten::val::object();
-      test.set("name", "double(2.718)");
-      test.set("bytes", v3.estimate_memory_usage());
-      tests.call<void>("push", test);
+      tests.emplace_back("double(2.718)", v3.estimate_memory_usage());
     }
 
     // Test 3: Vector types
     {
       lightusd::value::float3 f3{1.0f, 2.0f, 3.0f};
       lightusd::value::Value v(f3);
-      emscripten::val test = emscripten::val::object();
-      test.set("name", "float3");
-      test.set("bytes", v.estimate_memory_usage());
-      tests.call<void>("push", test);
+      tests.emplace_back("float3", v.estimate_memory_usage());
     }
 
     // Test 4: Matrix types
     {
       lightusd::value::matrix4d m4d;
       lightusd::value::Value v(m4d);
-      emscripten::val test = emscripten::val::object();
-      test.set("name", "matrix4d");
-      test.set("bytes", v.estimate_memory_usage());
-      tests.call<void>("push", test);
+      tests.emplace_back("matrix4d", v.estimate_memory_usage());
     }
 
     // Test 5: String type
     {
       std::string str = "Hello, World! This is a test string.";
       lightusd::value::Value v(str);
-      emscripten::val test = emscripten::val::object();
-      test.set("name", "string('" + str + "')");
-      test.set("bytes", v.estimate_memory_usage());
-      tests.call<void>("push", test);
+      tests.emplace_back("string('" + str + "')", v.estimate_memory_usage());
     }
 
     // Test 6: Token type
     {
       lightusd::value::token tok("myToken");
       lightusd::value::Value v(tok);
-      emscripten::val test = emscripten::val::object();
-      test.set("name", "token('myToken')");
-      test.set("bytes", v.estimate_memory_usage());
-      tests.call<void>("push", test);
+      tests.emplace_back("token('myToken')", v.estimate_memory_usage());
     }
 
     // Test 7: Array of floats
     {
       std::vector<float> floats = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
       lightusd::value::Value v(floats);
-      emscripten::val test = emscripten::val::object();
-      test.set("name", "float array (5 elements)");
-      test.set("bytes", v.estimate_memory_usage());
-      tests.call<void>("push", test);
+      tests.emplace_back("float array (5 elements)", v.estimate_memory_usage());
     }
 
     // Test 8: Array of float3
@@ -3585,40 +3553,28 @@ class LightUSDLoaderNative {
         {0.0f, 0.0f, 1.0f}
       };
       lightusd::value::Value v(vec3s);
-      emscripten::val test = emscripten::val::object();
-      test.set("name", "float3 array (3 elements)");
-      test.set("bytes", v.estimate_memory_usage());
-      tests.call<void>("push", test);
+      tests.emplace_back("float3 array (3 elements)", v.estimate_memory_usage());
     }
 
     // Test 9: Array of strings
     {
       std::vector<std::string> strings = {"one", "two", "three", "four"};
       lightusd::value::Value v(strings);
-      emscripten::val test = emscripten::val::object();
-      test.set("name", "string array (4 elements)");
-      test.set("bytes", v.estimate_memory_usage());
-      tests.call<void>("push", test);
+      tests.emplace_back("string array (4 elements)", v.estimate_memory_usage());
     }
 
     // Test 10: Color types (role types)
     {
       lightusd::value::color3f c3f{1.0f, 0.5f, 0.0f};
       lightusd::value::Value v(c3f);
-      emscripten::val test = emscripten::val::object();
-      test.set("name", "color3f");
-      test.set("bytes", v.estimate_memory_usage());
-      tests.call<void>("push", test);
+      tests.emplace_back("color3f", v.estimate_memory_usage());
     }
 
     // Test 11: Normal types (role types)
     {
       lightusd::value::normal3f n3f{0.0f, 1.0f, 0.0f};
       lightusd::value::Value v(n3f);
-      emscripten::val test = emscripten::val::object();
-      test.set("name", "normal3f");
-      test.set("bytes", v.estimate_memory_usage());
-      tests.call<void>("push", test);
+      tests.emplace_back("normal3f", v.estimate_memory_usage());
     }
 
     // Test 12: TimeSamples
@@ -3628,20 +3584,14 @@ class LightUSDLoaderNative {
       ts.add_sample(1.0, lightusd::value::Value(2.0f));
       ts.add_sample(2.0, lightusd::value::Value(3.0f));
       size_t mem = ts.estimate_memory_usage();
-      emscripten::val test = emscripten::val::object();
-      test.set("name", "TimeSamples (3 samples)");
-      test.set("bytes", mem);
-      tests.call<void>("push", test);
+      tests.emplace_back("TimeSamples (3 samples)", mem);
     }
 
     // Test 13: Large array test (using specified array length)
     {
       std::vector<float> large_array(arrayLength, 1.0f);
       lightusd::value::Value v(large_array);
-      emscripten::val test = emscripten::val::object();
-      test.set("name", "float array (" + std::to_string(arrayLength) + " elements)");
-      test.set("bytes", v.estimate_memory_usage());
-      tests.call<void>("push", test);
+      tests.emplace_back("float array (" + std::to_string(arrayLength) + " elements)", v.estimate_memory_usage());
     }
 
     // Test 13b: Large float3 array test (using specified array length / 3)
@@ -3653,99 +3603,61 @@ class LightUSDLoaderNative {
         large_vec3_array.push_back({static_cast<float>(i), static_cast<float>(i+1), static_cast<float>(i+2)});
       }
       lightusd::value::Value v(large_vec3_array);
-      emscripten::val test = emscripten::val::object();
-      test.set("name", "float3 array (" + std::to_string(vec3Count) + " elements)");
-      test.set("bytes", v.estimate_memory_usage());
-      tests.call<void>("push", test);
+      tests.emplace_back("float3 array (" + std::to_string(vec3Count) + " elements)", v.estimate_memory_usage());
     }
 
     // Test 13c: Large int array test (using specified array length)
     {
       std::vector<int32_t> large_int_array(arrayLength, 42);
       lightusd::value::Value v(large_int_array);
-      emscripten::val test = emscripten::val::object();
-      test.set("name", "int32 array (" + std::to_string(arrayLength) + " elements)");
-      test.set("bytes", v.estimate_memory_usage());
-      tests.call<void>("push", test);
+      tests.emplace_back("int32 array (" + std::to_string(arrayLength) + " elements)", v.estimate_memory_usage());
     }
 
     // Test 14: Half precision types
     {
       lightusd::value::half h(lightusd::value::float_to_half_full(1.5f));
       lightusd::value::Value v(h);
-      emscripten::val test = emscripten::val::object();
-      test.set("name", "half(1.5)");
-      test.set("bytes", v.estimate_memory_usage());
-      tests.call<void>("push", test);
+      tests.emplace_back("half(1.5)", v.estimate_memory_usage());
     }
 
     // Test 15: Quaternion types
     {
       lightusd::value::quatf q{{0.0f, 0.0f, 0.0f}, 1.0f};
       lightusd::value::Value v(q);
+      tests.emplace_back("quatf", v.estimate_memory_usage());
+    }
+
+    return tests;
+  }
+
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+  emscripten::val testValueMemoryUsage(emscripten::val arrayLengthVal) {
+    const int arrayLength = arrayLengthVal.isUndefined() || arrayLengthVal.isNull()
+                                ? 10000 : arrayLengthVal.as<int>();
+    emscripten::val result = emscripten::val::object();
+    if (!memoryProbeLengthValid(arrayLength)) {
+      result.set("success", false);
+      result.set("error", "Memory probe exceeds configured memory budget");
+      return result;
+    }
+    const auto records = collectValueMemoryUsage(arrayLength);
+    emscripten::val tests = emscripten::val::array();
+    size_t total = 0;
+    for (const auto &record : records) {
       emscripten::val test = emscripten::val::object();
-      test.set("name", "quatf");
-      test.set("bytes", v.estimate_memory_usage());
+      test.set("name", record.first);
+      test.set("bytes", record.second);
       tests.call<void>("push", test);
+      total += record.second;
     }
-
-    // Calculate total memory
-    size_t totalMemory = 0;
-    int numTests = tests["length"].as<int>();
-    for (int i = 0; i < numTests; ++i) {
-      emscripten::val test = tests[i];
-      totalMemory += test["bytes"].as<size_t>();
-    }
-
     result.set("tests", tests);
     result.set("success", true);
-    result.set("totalTests", numTests);
-    result.set("totalMemory", totalMemory);
+    result.set("totalTests", static_cast<int>(records.size()));
+    result.set("totalMemory", total);
     result.set("arrayLength", arrayLength);
-
     return result;
   }
-
-  emscripten::val testLayer(emscripten::val arrayLengthVal) {
-
-    // Get array length from parameter or use default
-    int arrayLength = 10000;
-    if (!arrayLengthVal.isUndefined() && !arrayLengthVal.isNull()) {
-      arrayLength = arrayLengthVal.as<int>();
-    }
-
-    std::cout << "arrayLen " << arrayLength << "\n";
-#if 1
-    // create Attrib
-    std::vector<lightusd::value::point3f> points(arrayLength);
-    lightusd::Attribute attr;
-    attr.set_value(std::move(points));
-
-    std::cout << "Attr.memusage " << attr.estimate_memory_usage() << "\n";
-    size_t totalMemory = 0; //attr.estimate_memory_usage();
-#else
-    lightusd::TypedArray<lightusd::value::point3f> points(arrayLength);
-    lightusd::Attribute attr;
-    //std::cout << "attr.set_value\n";
-    //attr.set_value(std::move(points));
-
-    lightusd::primvar::PrimVar var;
-    std::cout << "pvar";
-    var.set_value(std::move(points));
-
-    //std::vector<lightusd::value::point3f> points(arrayLength);
-    //lightusd::value::Value v(std::move(points));
-    size_t totalMemory = points.size() * sizeof(lightusd::value::point3f);
-    std::cout << "totalMemory " << totalMemory << "\n";
 #endif
-
-
-    emscripten::val result = emscripten::val::object();
-    result.set("totalMemory", totalMemory);
-
-    return result;
-  }
-
 
 #if 0 // TODO: Remove
   //
@@ -3947,6 +3859,69 @@ class LightUSDLoaderNative {
 #endif
 
 
+#if defined(LIGHTUSD_WASM_WITH_NEXT)
+  int32_t cameraInfoC(int32_t id, lightusd_combined_camera_info *out) const {
+    if (!out || out->struct_size < sizeof(*out)) return -1;
+    *out = {}; out->struct_size = sizeof(*out);
+    if (!loaded_ || id < 0 || size_t(id) >= render_scene_.cameras.size()) {
+      lightusd::web::combined::StoreStringTable(
+          {loaded_ ? "Invalid camera ID" : "Scene not loaded"}, {});
+      return 0;
+    }
+    const auto &c = render_scene_.cameras[size_t(id)];
+    out->focal_length = c.focalLength;
+    out->vertical_aperture = c.verticalAperture;
+    out->horizontal_aperture = c.horizontalAperture;
+    out->znear = c.znear; out->zfar = c.zfar;
+    out->yfov = 2.0f * std::atan(0.5f * c.verticalAperture / c.focalLength);
+    out->xfov = 2.0f * std::atan(0.5f * c.horizontalAperture / c.focalLength);
+    out->aspect_ratio = c.horizontalAperture / c.verticalAperture;
+    std::string projection;
+    switch (c.projection) {
+      case lightusd::GeomCamera::Projection::Perspective: projection = "perspective"; break;
+      case lightusd::GeomCamera::Projection::Orthographic: projection = "orthographic"; break;
+    }
+    lightusd::web::combined::StoreStringTable({c.name, c.abs_path, c.display_name, projection}, {});
+    return 1;
+  }
+
+  int32_t sceneMetadataC(lightusd_combined_scene_metadata *out) const {
+    if (!out || out->struct_size < sizeof(*out)) return -1;
+    *out = {}; out->struct_size = sizeof(*out);
+    if (!loaded_) return 0;
+    const auto &m = render_scene_.meta;
+    out->flags = (m.autoPlay ? 1u : 0u) | (m.startTimeCode ? 2u : 0u) | (m.endTimeCode ? 4u : 0u);
+    out->meters_per_unit = m.metersPerUnit;
+    out->kilograms_per_unit = (composited_ ? composed_layer_ : layer_).metas().kilogramsPerUnit.get_value();
+    out->frames_per_second = m.framesPerSecond;
+    out->time_codes_per_second = m.timeCodesPerSecond;
+    if (m.startTimeCode) out->start_time = m.startTimeCode.value();
+    if (m.endTimeCode) out->end_time = m.endTimeCode.value();
+    for (size_t i = 0; i < 9; ++i) out->working_to_display[i] = m.workingToDisplayLinear[i];
+    lightusd::web::combined::StoreStringTable(
+        {m.copyright, m.comment, m.upAxis, m.renderSettingsPrimPath, m.workingColorSpace}, {});
+    return 1;
+  }
+
+  int32_t textureInfoC(int32_t id, lightusd_combined_texture_info *out) const {
+    if (!out || out->struct_size < sizeof(*out)) return -1;
+    *out = {}; out->struct_size = sizeof(*out);
+    if (!loaded_ || id < 0 || size_t(id) >= render_scene_.textures.size()) return 0;
+    const auto &t = render_scene_.textures[size_t(id)];
+    out->flags = (t.has_transform2d ? 1u : 0u) | (t.is_udim ? 2u : 0u);
+    out->image_id = int32_t(t.texture_image_id);
+    out->udim_texture_id = int32_t(t.udim_texture_id);
+    out->rotation = float(t.tx_rotation);
+    out->scale_u = float(t.tx_scale[0]); out->scale_v = float(t.tx_scale[1]);
+    out->translation_u = float(t.tx_translation[0]); out->translation_v = float(t.tx_translation[1]);
+    for (size_t i = 0; i < 4; ++i) { out->bias[i] = float(t.bias[i]); out->scale[i] = float(t.scale[i]); }
+    out->udim_scale_u = float(t.udim_uv_scale[0]); out->udim_scale_v = float(t.udim_uv_scale[1]);
+    out->udim_offset_u = float(t.udim_uv_offset[0]); out->udim_offset_v = float(t.udim_uv_offset[1]);
+    lightusd::web::combined::StoreStringTable({to_string(t.wrapS), to_string(t.wrapT)}, {});
+    return 1;
+  }
+#endif
+
   int numMeshes() const { return render_scene_.meshes.size(); }
 
   // ---- Instance support (AOUSD Spec 11.3.3) ----
@@ -3955,6 +3930,40 @@ class LightUSDLoaderNative {
     return static_cast<int>(render_scene_.instances.size());
   }
 
+#if defined(LIGHTUSD_WASM_WITH_NEXT)
+  int32_t instanceInfoC(int32_t id, lightusd_combined_instance_info *out) const {
+    if (!out || out->struct_size < sizeof(*out)) return -1;
+    *out = {}; out->struct_size = sizeof(*out);
+    if (id < 0 || size_t(id) >= render_scene_.instances.size()) return 0;
+    const auto &inst = render_scene_.instances[size_t(id)];
+    out->visible = inst.visible ? 1u : 0u;
+    out->prototype_index = inst.prototype_index;
+    out->mesh_id = inst.mesh_id;
+    out->material_id = inst.material_id;
+    for (size_t r = 0; r < 4; ++r) {
+      for (size_t c = 0; c < 4; ++c) {
+        out->local_matrix[r * 4 + c] = inst.local_matrix.m[r][c];
+        out->global_matrix[r * 4 + c] = inst.global_matrix.m[r][c];
+      }
+    }
+    lightusd::web::combined::StoreStringTable(
+        {inst.prim_name, inst.abs_path, inst.display_name}, {});
+    return 1;
+  }
+
+  int32_t instancesForMeshC(int32_t mesh_id) const {
+    if (render_scene_.instances.size() > size_t(INT32_MAX)) return -1;
+    std::vector<uint32_t> indices;
+    for (size_t i = 0; i < render_scene_.instances.size(); ++i) {
+      if (render_scene_.instances[i].mesh_id == mesh_id) {
+        indices.push_back(static_cast<uint32_t>(i));
+      }
+    }
+    const int32_t count = static_cast<int32_t>(indices.size());
+    lightusd::web::combined::StoreStringTable({}, std::move(indices));
+    return count;
+  }
+#else
   emscripten::val getInstance(int instance_id) const {
     if (instance_id < 0 ||
         static_cast<size_t>(instance_id) >= render_scene_.instances.size()) {
@@ -3984,6 +3993,8 @@ class LightUSDLoaderNative {
     return arr;
   }
 
+#endif
+
   // ---- End instance support ----
 
   /**
@@ -3997,28 +4008,37 @@ class LightUSDLoaderNative {
    * @param max_influences Maximum influences per vertex (0 = use mesh's elementSize)
    * @return Object with textureData, dimensions, and metadata
    */
-  emscripten::val generateBoneTexture(int mesh_id, int max_influences = 0) const {
-    emscripten::val result = emscripten::val::object();
+  struct BoneTextureData {
+    std::string error;
+    uint32_t width{0}, height{0}, texels_per_vertex{0}, max_influences{0};
+    uint32_t vertex_count{0}, element_size{0};
+    std::vector<float> texture_data, vertex_offsets;
+  };
 
+  bool buildBoneTexture_(int mesh_id, int max_influences, BoneTextureData &result) const {
     if (!loaded_ || mesh_id < 0 || mesh_id >= static_cast<int>(render_scene_.meshes.size())) {
-      result.set("error", "Invalid mesh ID or scene not loaded");
-      return result;
+      result.error = "Invalid mesh ID or scene not loaded";
+      return false;
     }
 
     const auto &rmesh = render_scene_.meshes[size_t(mesh_id)];
     const auto &jw = rmesh.joint_and_weights;
 
     if (jw.jointIndices.empty() || jw.jointWeights.empty()) {
-      result.set("error", "Mesh has no skinning data");
-      return result;
+      result.error = "Mesh has no skinning data";
+      return false;
     }
 
     int elementSize = jw.elementSize;
     if (elementSize <= 0) {
-      result.set("error", "Invalid skinning data (elementSize <= 0)");
-      return result;
+      result.error = "Invalid skinning data (elementSize <= 0)";
+      return false;
     }
-    int vertexCount = static_cast<int>(jw.jointIndices.size()) / elementSize;
+    if (jw.jointWeights.size() < jw.jointIndices.size()) {
+      result.error = "Invalid skinning data (joint weight count mismatch)";
+      return false;
+    }
+    const size_t vertexCount = jw.jointIndices.size() / static_cast<size_t>(elementSize);
 
     // Determine max influences for texture
     int maxInfl = (max_influences > 0) ? max_influences : elementSize;
@@ -4037,7 +4057,13 @@ class LightUSDLoaderNative {
     // Each texel stores 2 influences (boneIdx0, weight0, boneIdx1, weight1)
     int influencesPerTexel = 2;
     int texelsPerVertex = (maxInfl + influencesPerTexel - 1) / influencesPerTexel;
-    size_t totalTexels = static_cast<size_t>(vertexCount) * static_cast<size_t>(texelsPerVertex);
+    // Bound multiplication before computing dimensions, on both pointer widths.
+    constexpr size_t kMaxTextureTexels = size_t(4096) * 4096;
+    if (vertexCount > kMaxTextureTexels / static_cast<size_t>(texelsPerVertex)) {
+      result.error = "Bone texture dimensions too large";
+      return false;
+    }
+    size_t totalTexels = vertexCount * static_cast<size_t>(texelsPerVertex);
 
     // Find optimal texture dimensions (prefer power of 2)
     size_t texWidth = 1;
@@ -4050,22 +4076,23 @@ class LightUSDLoaderNative {
     // Guard against excessive allocation.
     constexpr size_t kMaxTexels = size_t(1) << 30;  // 1 billion texels
     if (totalTexels > kMaxTexels || texWidth > 4096 || texHeight > 4096) {
-      result.set("error", "Bone texture dimensions too large");
-      return result;
+      result.error = "Bone texture dimensions too large";
+      return false;
     }
 
     // Allocate texture data (RGBA float)
-    std::vector<float> textureData(texDataSize, 0.0f);
+    auto &textureData = result.texture_data;
+    textureData.assign(texDataSize, 0.0f);
 
     // Fill texture with bone data
-    for (int v = 0; v < vertexCount; v++) {
-      int texelOffset = v * texelsPerVertex;
+    for (size_t v = 0; v < vertexCount; v++) {
+      size_t texelOffset = v * static_cast<size_t>(texelsPerVertex);
 
       // Collect influences for this vertex, sorted by weight (descending)
       std::vector<std::pair<int, float>> influences;
       for (int j = 0; j < elementSize && j < maxInfl; j++) {
-        int srcIdx = v * elementSize + j;
-        if (srcIdx < static_cast<int>(jw.jointIndices.size())) {
+        size_t srcIdx = v * static_cast<size_t>(elementSize) + static_cast<size_t>(j);
+        if (srcIdx < jw.jointIndices.size()) {
           int boneIdx = jw.jointIndices[srcIdx];
           float weight = jw.jointWeights[srcIdx];
           if (weight > 0.0f) {
@@ -4080,8 +4107,8 @@ class LightUSDLoaderNative {
 
       // Write to texture (2 influences per texel)
       for (int t = 0; t < texelsPerVertex; t++) {
-        int texelIdx = (texelOffset + t) * 4;
-        if (texelIdx + 3 >= static_cast<int>(textureData.size())) break;
+        size_t texelIdx = (texelOffset + static_cast<size_t>(t)) * 4;
+        if (texelIdx + 3 >= textureData.size()) break;
 
         // First influence in texel (RG)
         int infIdx0 = t * 2;
@@ -4106,32 +4133,41 @@ class LightUSDLoaderNative {
     }
 
     // Generate vertex offset array (where each vertex's data starts in texture)
-    std::vector<float> vertexOffsets(vertexCount);
-    for (int v = 0; v < vertexCount; v++) {
+    auto &vertexOffsets = result.vertex_offsets;
+    vertexOffsets.resize(vertexCount);
+    for (size_t v = 0; v < vertexCount; v++) {
       vertexOffsets[v] = static_cast<float>(v * texelsPerVertex);
     }
 
-    // Return result
-    result.set("textureWidth", texWidth);
-    result.set("textureHeight", texHeight);
-    result.set("texelsPerVertex", texelsPerVertex);
-    result.set("maxInfluences", maxInfl);
-    result.set("vertexCount", vertexCount);
-    result.set("originalElementSize", elementSize);
+    result.width = static_cast<uint32_t>(texWidth);
+    result.height = static_cast<uint32_t>(texHeight);
+    result.texels_per_vertex = static_cast<uint32_t>(texelsPerVertex);
+    result.max_influences = static_cast<uint32_t>(maxInfl);
+    result.vertex_count = static_cast<uint32_t>(vertexCount);
+    result.element_size = static_cast<uint32_t>(elementSize);
+    return true;
+  }
 
-    // Store in member first, then create views (avoids dangling pointers).
-    bone_texture_data_ = std::move(textureData);
-    bone_vertex_offsets_ = std::move(vertexOffsets);
-
-    result.set("textureData",
-               typedArray_(bone_texture_data_.size(),
-                           bone_texture_data_.data(), /* copy */ true));
-    result.set("vertexOffsets",
-               typedArray_(bone_vertex_offsets_.size(),
-                           bone_vertex_offsets_.data(), /* copy */ true));
-
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+  emscripten::val generateBoneTexture(int mesh_id, int max_influences = 0) const {
+    BoneTextureData data;
+    emscripten::val result = emscripten::val::object();
+    if (!buildBoneTexture_(mesh_id, max_influences, data)) {
+      result.set("error", data.error);
+      return result;
+    }
+    // Explicit fixed-width integers avoid size_t/BigInt conversion on memory64.
+    result.set("textureWidth", data.width);
+    result.set("textureHeight", data.height);
+    result.set("texelsPerVertex", data.texels_per_vertex);
+    result.set("maxInfluences", data.max_influences);
+    result.set("vertexCount", data.vertex_count);
+    result.set("originalElementSize", data.element_size);
+    result.set("textureData", typedArray_(data.texture_data.size(), data.texture_data.data(), true));
+    result.set("vertexOffsets", typedArray_(data.vertex_offsets.size(), data.vertex_offsets.data(), true));
     return result;
   }
+#endif
 
   int numMaterials() const { return render_scene_.materials.size(); }
 
@@ -4139,148 +4175,194 @@ class LightUSDLoaderNative {
 
   int numImages() const { return render_scene_.images.size(); }
 
-  // Legacy method for backward compatibility
-  emscripten::val getMaterial(int mat_id) const {
-    // Default to JSON format for backward compatibility
-    return getMaterial(mat_id, "json");
+  int32_t materialData_(int id, const std::string &format,
+                        lightusd_combined_material_info &out,
+                        std::vector<std::string> &strings) const {
+    out = {}; out.struct_size = sizeof(out);
+    if (!loaded_) { strings = {"Scene not loaded"}; return 0; }
+    if (id < 0 || size_t(id) >= render_scene_.materials.size()) {
+      strings = {"Invalid material ID"}; return 0;
+    }
+    const auto &material = render_scene_.materials[size_t(id)];
+    if (format == "json" || format == "xml") {
+      const auto serialization = format == "xml" ? lightusd::tydra::SerializationFormat::XML
+                                                   : lightusd::tydra::SerializationFormat::JSON;
+      auto serialized = lightusd::tydra::serializeMaterial(material, serialization, &render_scene_);
+      if (!serialized.has_value()) { strings = {serialized.error()}; return 0; }
+      strings = {serialized.value(), format}; return 1;
+    }
+    if (!format.empty() && format != "legacy") {
+      strings = {"Unsupported format. Use 'json' or 'xml'"}; return 0;
+    }
+    const auto &config = material.materialXConfig;
+    out.flags = config.authored ? 1u : 0u;
+    strings = {"", config.version, config.name_space, config.colorspace, config.source_uri};
+    if (!material.hasUsdPreviewSurface()) {
+      strings[0] = "Material does not have UsdPreviewSurface shader";
+      return 2;
+    }
+    const auto &shader = *material.surfaceShader;
+    out.flags |= 2u | (shader.useSpecularWorkflow ? 4u : 0u);
+    for (size_t i = 0; i < 3; ++i) out.values[0 + i] = shader.diffuseColor.value[i];
+    for (size_t i = 0; i < 3; ++i) out.values[3 + i] = shader.emissiveColor.value[i];
+    for (size_t i = 0; i < 3; ++i) out.values[6 + i] = shader.specularColor.value[i];
+    for (size_t i = 0; i < 3; ++i) out.values[9 + i] = shader.normal.value[i];
+    out.values[12] = shader.metallic.value;
+    out.values[13] = shader.roughness.value;
+    out.values[14] = shader.clearcoat.value;
+    out.values[15] = shader.clearcoatRoughness.value;
+    out.values[16] = shader.opacity.value;
+    out.values[17] = shader.opacityThreshold.value;
+    out.values[18] = shader.ior.value;
+    out.values[19] = shader.displacement.value;
+    out.values[20] = shader.occlusion.value;
+    if (shader.diffuseColor.is_texture()) { out.texture_mask |= (1u << 0); out.texture_ids[0] = shader.diffuseColor.texture_id; }
+    if (shader.emissiveColor.is_texture()) { out.texture_mask |= (1u << 1); out.texture_ids[1] = shader.emissiveColor.texture_id; }
+    if (shader.specularColor.is_texture()) { out.texture_mask |= (1u << 2); out.texture_ids[2] = shader.specularColor.texture_id; }
+    if (shader.metallic.is_texture()) { out.texture_mask |= (1u << 3); out.texture_ids[3] = shader.metallic.texture_id; }
+    if (shader.roughness.is_texture()) { out.texture_mask |= (1u << 4); out.texture_ids[4] = shader.roughness.texture_id; }
+    if (shader.clearcoat.is_texture()) { out.texture_mask |= (1u << 5); out.texture_ids[5] = shader.clearcoat.texture_id; }
+    if (shader.clearcoatRoughness.is_texture()) { out.texture_mask |= (1u << 6); out.texture_ids[6] = shader.clearcoatRoughness.texture_id; }
+    if (shader.opacity.is_texture()) { out.texture_mask |= (1u << 7); out.texture_ids[7] = shader.opacity.texture_id; }
+    if (shader.opacityThreshold.is_texture()) { out.texture_mask |= (1u << 8); out.texture_ids[8] = shader.opacityThreshold.texture_id; }
+    if (shader.ior.is_texture()) { out.texture_mask |= (1u << 9); out.texture_ids[9] = shader.ior.texture_id; }
+    if (shader.normal.is_texture()) { out.texture_mask |= (1u << 10); out.texture_ids[10] = shader.normal.texture_id; }
+    if (shader.displacement.is_texture()) { out.texture_mask |= (1u << 11); out.texture_ids[11] = shader.displacement.texture_id; }
+    if (shader.occlusion.is_texture()) { out.texture_mask |= (1u << 12); out.texture_ids[12] = shader.occlusion.texture_id; }
+    return 2;
   }
 
-  // New method that supports format parameter (json or xml)
-  emscripten::val getMaterial(int mat_id, const std::string& format) const {
-    emscripten::val result = emscripten::val::object();
-
-    if (!loaded_) {
-      result.set("error", "Scene not loaded");
-      return result;
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+  emscripten::val getMaterial(int id) const { return getMaterial(id, "json"); }
+  emscripten::val getMaterial(int id, const std::string &format) const {
+    lightusd_combined_material_info info{};
+    std::vector<std::string> strings;
+    const int32_t status = materialData_(id, format, info, strings);
+    auto material = emscripten::val::object();
+    if (status == 0) { material.set("error", strings[0]); return material; }
+    if (status == 1) {
+      material.set("data", strings[0]); material.set("format", strings[1]); return material;
     }
-
-    if (mat_id < 0 || mat_id >= static_cast<int>(render_scene_.materials.size())) {
-      result.set("error", "Invalid material ID");
-      return result;
+    auto config = emscripten::val::object();
+    config.set("authored", bool(info.flags & 1u)); config.set("version", strings[1]);
+    config.set("namespace", strings[2]); config.set("colorspace", strings[3]); config.set("sourceUri", strings[4]);
+    material.set("materialXConfig", config);
+    if (!(info.flags & 2u)) { material.set("error", strings[0]); return material; }
+    material.set("useSpecularWorkflow", bool(info.flags & 4u));
+    const char *names[] = {"diffuseColor", "emissiveColor", "specularColor", "metallic", "roughness", "clearcoat",
+        "clearcoatRoughness", "opacity", "opacityThreshold", "ior", "normal", "displacement", "occlusion"};
+    const uint32_t offsets[] = {0,3,6,12,13,14,15,16,17,18,9,19,20};
+    for (uint32_t i = 0; i < 13; ++i) {
+      if ((i == 2 && !(info.flags & 4u)) || (i == 3 && (info.flags & 4u))) continue;
+      if (i < 3 || i == 10) {
+        auto vector = emscripten::val::array();
+        for (size_t j = 0; j < 3; ++j) vector.set(j, info.values[offsets[i] + j]);
+        material.set(names[i], vector);
+      } else material.set(names[i], info.values[offsets[i]]);
+      if (info.texture_mask & (1u << i)) material.set(std::string(names[i]) + "TextureId", info.texture_ids[i]);
     }
-
-    const auto &material = render_scene_.materials[mat_id];
-
-    // Determine serialization format
-    lightusd::tydra::SerializationFormat serFormat;
-    if (format == "xml") {
-      serFormat = lightusd::tydra::SerializationFormat::XML;
-    } else if (format == "json") {
-      serFormat = lightusd::tydra::SerializationFormat::JSON;
-    } else {
-      // For backward compatibility, if format is not recognized,
-      // return the old format
-      if (format.empty() || format == "legacy") {
-        // Return legacy format for backward compatibility
-        emscripten::val mat = emscripten::val::object();
-
-        emscripten::val mtlx_config = emscripten::val::object();
-        mtlx_config.set("authored", material.materialXConfig.authored);
-        mtlx_config.set("version", material.materialXConfig.version);
-        mtlx_config.set("namespace", material.materialXConfig.name_space);
-        mtlx_config.set("colorspace", material.materialXConfig.colorspace);
-        mtlx_config.set("sourceUri", material.materialXConfig.source_uri);
-        mat.set("materialXConfig", mtlx_config);
-
-        // Check if material has UsdPreviewSurface
-        if (!material.hasUsdPreviewSurface()) {
-          mat.set("error", "Material does not have UsdPreviewSurface shader");
-          return mat;
-        }
-
-        const auto &m = material;
-        const auto &shader = *m.surfaceShader;
-
-        mat.set("diffuseColor", shader.diffuseColor.value);
-        if (shader.diffuseColor.is_texture()) {
-          mat.set("diffuseColorTextureId", shader.diffuseColor.texture_id);
-        }
-
-        mat.set("emissiveColor", shader.emissiveColor.value);
-        if (shader.emissiveColor.is_texture()) {
-          mat.set("emissiveColorTextureId", shader.emissiveColor.texture_id);
-        }
-
-        mat.set("useSpecularWorkflow", shader.useSpecularWorkflow);
-        if (shader.useSpecularWorkflow) {
-          mat.set("specularColor", shader.specularColor.value);
-          if (shader.specularColor.is_texture()) {
-            mat.set("specularColorTextureId", shader.specularColor.texture_id);
-          }
-        } else {
-          mat.set("metallic", shader.metallic.value);
-          if (shader.metallic.is_texture()) {
-            mat.set("metallicTextureId", shader.metallic.texture_id);
-          }
-        }
-
-        mat.set("roughness", shader.roughness.value);
-        if (shader.roughness.is_texture()) {
-          mat.set("roughnessTextureId", shader.roughness.texture_id);
-        }
-
-        mat.set("clearcoat", shader.clearcoat.value);
-        if (shader.clearcoat.is_texture()) {
-          mat.set("clearcoatTextureId", shader.clearcoat.texture_id);
-        }
-
-        mat.set("clearcoatRoughness", shader.clearcoatRoughness.value);
-        if (shader.clearcoatRoughness.is_texture()) {
-          mat.set("clearcoatRoughnessTextureId", shader.clearcoatRoughness.texture_id);
-        }
-
-        mat.set("opacity", shader.opacity.value);
-        if (shader.opacity.is_texture()) {
-          mat.set("opacityTextureId", shader.opacity.texture_id);
-        }
-
-        mat.set("opacityThreshold", shader.opacityThreshold.value);
-        if (shader.opacityThreshold.is_texture()) {
-          mat.set("opacityThresholdTextureId", shader.opacityThreshold.texture_id);
-        }
-
-        mat.set("ior", shader.ior.value);
-        if (shader.ior.is_texture()) {
-          mat.set("iorTextureId", shader.ior.texture_id);
-        }
-
-        mat.set("normal", shader.normal.value);
-        if (shader.normal.is_texture()) {
-          mat.set("normalTextureId", shader.normal.texture_id);
-        }
-
-        mat.set("displacement", shader.displacement.value);
-        if (shader.displacement.is_texture()) {
-          mat.set("displacementTextureId", shader.displacement.texture_id);
-        }
-
-        mat.set("occlusion", shader.occlusion.value);
-        if (shader.occlusion.is_texture()) {
-          mat.set("occlusionTextureId", shader.occlusion.texture_id);
-        }
-
-        return mat;
-      }
-
-      result.set("error", "Unsupported format. Use 'json' or 'xml'");
-      return result;
-    }
-
-    // Use the new serialization function with RenderScene for texture info
-    auto serialized = lightusd::tydra::serializeMaterial(material, serFormat, &render_scene_);
-
-    if (serialized.has_value()) {
-      result.set("data", serialized.value());
-      result.set("format", format);
-    } else {
-      result.set("error", serialized.error());
-    }
-
-    return result;
+    return material;
   }
+#endif
 
   int numLights() const { return static_cast<int>(render_scene_.lights.size()); }
 
+#if defined(LIGHTUSD_WASM_WITH_NEXT)
+  int32_t lightInfoC(int32_t id, lightusd_combined_light_info *out) const {
+    if (!out || out->struct_size < sizeof(*out)) return -1;
+    *out = {}; out->struct_size = sizeof(*out);
+    if (!loaded_ || id < 0 || size_t(id) >= render_scene_.lights.size()) {
+      lightusd::web::combined::StoreStringTable(
+          {loaded_ ? "Invalid light ID" : "Scene not loaded"}, {});
+      return 0;
+    }
+    const auto &l = render_scene_.lights[size_t(id)];
+    out->flags = (l.normalize ? 1u : 0u) | (l.enableColorTemperature ? 2u : 0u) |
+        (l.shapingIesNormalize ? 4u : 0u) | (l.shadowEnable ? 8u : 0u);
+    out->envmap_texture_id = l.envmap_texture_id;
+    out->geometry_mesh_id = l.geometry_mesh_id;
+    for (size_t c = 0; c < 3; ++c) out->color[c] = l.color[c];
+    out->intensity = l.intensity;
+    out->exposure = l.exposure;
+    out->diffuse = l.diffuse;
+    out->specular = l.specular;
+    out->colorTemperature = l.colorTemperature;
+    for (size_t r = 0; r < 4; ++r) for (size_t c = 0; c < 4; ++c) out->transform[r * 4 + c] = l.transform.m[r][c];
+    for (size_t c = 0; c < 3; ++c) out->position[c] = l.position[c];
+    for (size_t c = 0; c < 3; ++c) out->direction[c] = l.direction[c];
+    out->radius = l.radius;
+    out->width = l.width;
+    out->height = l.height;
+    out->length = l.length;
+    out->angle = l.angle;
+    out->shapingConeAngle = l.shapingConeAngle;
+    out->shapingConeSoftness = l.shapingConeSoftness;
+    out->shapingFocus = l.shapingFocus;
+    for (size_t c = 0; c < 3; ++c) out->shapingFocusTint[c] = l.shapingFocusTint[c];
+    out->shapingIesAngleScale = l.shapingIesAngleScale;
+    for (size_t c = 0; c < 3; ++c) out->shadowColor[c] = l.shadowColor[c];
+    out->shadowDistance = l.shadowDistance;
+    out->shadowFalloff = l.shadowFalloff;
+    out->shadowFalloffGamma = l.shadowFalloffGamma;
+    out->guideRadius = l.guideRadius;
+    std::string typeStr;
+    switch (l.type) {
+      case lightusd::tydra::RenderLight::Type::Point: typeStr = "point"; break;
+      case lightusd::tydra::RenderLight::Type::Sphere: typeStr = "sphere"; break;
+      case lightusd::tydra::RenderLight::Type::Disk: typeStr = "disk"; break;
+      case lightusd::tydra::RenderLight::Type::Rect: typeStr = "rect"; break;
+      case lightusd::tydra::RenderLight::Type::Cylinder: typeStr = "cylinder"; break;
+      case lightusd::tydra::RenderLight::Type::Distant: typeStr = "distant"; break;
+      case lightusd::tydra::RenderLight::Type::Dome: typeStr = "dome"; break;
+      case lightusd::tydra::RenderLight::Type::Geometry: typeStr = "geometry"; break;
+      case lightusd::tydra::RenderLight::Type::Portal: typeStr = "portal"; break;
+    }
+    std::string domeTexFmtStr;
+    switch (l.domeTextureFormat) {
+      case lightusd::tydra::RenderLight::DomeTextureFormat::Automatic: domeTexFmtStr = "automatic"; break;
+      case lightusd::tydra::RenderLight::DomeTextureFormat::Latlong: domeTexFmtStr = "latlong"; break;
+      case lightusd::tydra::RenderLight::DomeTextureFormat::MirroredBall: domeTexFmtStr = "mirroredBall"; break;
+      case lightusd::tydra::RenderLight::DomeTextureFormat::Angular: domeTexFmtStr = "angular"; break;
+    }
+    std::vector<std::string> strings = {l.name, l.abs_path, l.display_name,
+        typeStr, l.textureFile, l.shapingIesFile, domeTexFmtStr, l.material_sync_mode};
+    if (l.hasSpectralEmission()) {
+      const auto &emission = *l.spd_emission;
+      static_assert(sizeof(lightusd::tydra::vec2) == 2 * sizeof(float), "spectral sample layout changed");
+      out->flags |= 16u;
+      out->spectral_samples = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(emission.samples.data()));
+      out->spectral_count = emission.samples.size();
+      std::string interpStr;
+      switch (emission.interpolation) {
+        case lightusd::tydra::SpectralInterpolation::Linear: interpStr = "linear"; break;
+        case lightusd::tydra::SpectralInterpolation::Held: interpStr = "held"; break;
+        case lightusd::tydra::SpectralInterpolation::Cubic: interpStr = "cubic"; break;
+        case lightusd::tydra::SpectralInterpolation::Sellmeier: interpStr = "sellmeier"; break;
+      }
+      std::string unitStr = (emission.unit == lightusd::tydra::WavelengthUnit::Nanometers)
+                            ? "nanometers" : "micrometers";
+      std::string presetStr;
+      switch (emission.preset) {
+        case lightusd::tydra::IlluminantPreset::None: presetStr = "none"; break;
+        case lightusd::tydra::IlluminantPreset::A: presetStr = "a"; break;
+        case lightusd::tydra::IlluminantPreset::D50: presetStr = "d50"; break;
+        case lightusd::tydra::IlluminantPreset::D65: presetStr = "d65"; break;
+        case lightusd::tydra::IlluminantPreset::E: presetStr = "e"; break;
+        case lightusd::tydra::IlluminantPreset::F1: presetStr = "f1"; break;
+        case lightusd::tydra::IlluminantPreset::F2: presetStr = "f2"; break;
+        case lightusd::tydra::IlluminantPreset::F7: presetStr = "f7"; break;
+        case lightusd::tydra::IlluminantPreset::F11: presetStr = "f11"; break;
+      }
+      strings.push_back(std::move(interpStr));
+      strings.push_back(std::move(unitStr));
+      strings.push_back(std::move(presetStr));
+    }
+    lightusd::web::combined::StoreStringTable(std::move(strings), {});
+    return 1;
+  }
+
+  int32_t lightsCountC() const { return loaded_ ? numLights() : 0; }
+#else
   // Get light as direct object with all properties
   emscripten::val getLight(int light_id) const {
     emscripten::val light = emscripten::val::object();
@@ -4453,46 +4535,6 @@ class LightUSDLoaderNative {
     return light;
   }
 
-  // Get light with format parameter (json or xml) - serialized output
-  emscripten::val getLightWithFormat(int light_id, const std::string& format) const {
-    emscripten::val result = emscripten::val::object();
-
-    if (!loaded_) {
-      result.set("error", "Scene not loaded");
-      return result;
-    }
-
-    if (light_id < 0 || light_id >= static_cast<int>(render_scene_.lights.size())) {
-      result.set("error", "Invalid light ID");
-      return result;
-    }
-
-    const auto &light = render_scene_.lights[static_cast<size_t>(light_id)];
-
-    // Determine serialization format
-    lightusd::tydra::SerializationFormat serFormat;
-    if (format == "xml") {
-      serFormat = lightusd::tydra::SerializationFormat::XML;
-    } else if (format == "json") {
-      serFormat = lightusd::tydra::SerializationFormat::JSON;
-    } else {
-      result.set("error", "Unsupported format. Use 'json' or 'xml'");
-      return result;
-    }
-
-    // Use the serialization function with RenderScene for mesh info
-    auto serialized = lightusd::tydra::serializeLight(light, serFormat, &render_scene_);
-
-    if (serialized.has_value()) {
-      result.set("data", serialized.value());
-      result.set("format", format);
-    } else {
-      result.set("error", serialized.error());
-    }
-
-    return result;
-  }
-
   emscripten::val getAllLights() const {
     emscripten::val lights = emscripten::val::array();
 
@@ -4507,8 +4549,37 @@ class LightUSDLoaderNative {
     return lights;
   }
 
+#endif
+
+  bool lightText_(int id, const std::string &format, std::string *text) const {
+    if (!loaded_) { *text = "Scene not loaded"; return false; }
+    if (id < 0 || size_t(id) >= render_scene_.lights.size()) {
+      *text = "Invalid light ID"; return false;
+    }
+    lightusd::tydra::SerializationFormat serialization;
+    if (format == "xml") serialization = lightusd::tydra::SerializationFormat::XML;
+    else if (format == "json") serialization = lightusd::tydra::SerializationFormat::JSON;
+    else { *text = "Unsupported format. Use 'json' or 'xml'"; return false; }
+    auto result = lightusd::tydra::serializeLight(render_scene_.lights[size_t(id)], serialization, &render_scene_);
+    if (!result.has_value()) { *text = result.error(); return false; }
+    *text = std::move(result.value());
+    return true;
+  }
+
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+  emscripten::val getLightWithFormat(int id, const std::string &format) const {
+    auto result = emscripten::val::object();
+    std::string text;
+    if (lightText_(id, format, &text)) {
+      result.set("data", text); result.set("format", format);
+    } else { result.set("error", text); }
+    return result;
+  }
+#endif
+
   int numCameras() const { return static_cast<int>(render_scene_.cameras.size()); }
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getCamera(int camera_id) const {
     emscripten::val cam = emscripten::val::object();
 
@@ -4549,6 +4620,8 @@ class LightUSDLoaderNative {
     return cam;
   }
 
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getTexture(int tex_id) const {
     emscripten::val tex = emscripten::val::object();
 
@@ -4593,11 +4666,33 @@ class LightUSDLoaderNative {
     return tex;
   }
 
+#endif
   int numUDIMTextures() const { return render_scene_.udim_textures.size(); }
 
   // Return a sparse (keep-as-is) UDIM texture: its `<UDIM>` asset identifier
   // and the list of resolved tiles { udim, u, v, imageId }. Each tile image can
   // be fetched with getImage(imageId).
+#if defined(LIGHTUSD_WASM_WITH_NEXT)
+  int32_t udimInfoC(int32_t id, uint32_t *tile_count) const {
+    if (!tile_count) return -1;
+    *tile_count = 0;
+    if (!loaded_ || id < 0 || size_t(id) >= render_scene_.udim_textures.size()) return 0;
+    const auto &u = render_scene_.udim_textures[size_t(id)];
+    if (u.imageTileIds.size() > size_t(UINT32_MAX / 4u)) return -1;
+    std::vector<uint32_t> tiles;
+    tiles.reserve(u.imageTileIds.size() * 4u);
+    for (const auto &kv : u.imageTileIds) {
+      tiles.push_back(kv.first);
+      tiles.push_back((kv.first - 1001u) % 10u);
+      tiles.push_back((kv.first - 1001u) / 10u);
+      tiles.push_back(static_cast<uint32_t>(kv.second));
+    }
+    *tile_count = static_cast<uint32_t>(u.imageTileIds.size());
+    lightusd::web::combined::StoreStringTable(
+        {u.prim_name, u.abs_path, u.display_name, u.asset_identifier}, std::move(tiles));
+    return 1;
+  }
+#else
   emscripten::val getUDIMTexture(int udim_id) const {
     emscripten::val out = emscripten::val::object();
 
@@ -4633,6 +4728,40 @@ class LightUSDLoaderNative {
     return out;
   }
 
+#endif
+
+#if defined(LIGHTUSD_WASM_WITH_NEXT)
+  int32_t imageInfoC(int32_t id, bool load_buffer, lightusd_combined_image_info *out) {
+    if (!out || out->struct_size < sizeof(*out)) return -1;
+    *out = {}; out->struct_size = sizeof(*out);
+    if (!loaded_ || id < 0 || size_t(id) >= render_scene_.images.size()) return 0;
+    if (load_buffer) ensureImageBufferLoaded_(id);
+    const auto &i = render_scene_.images[size_t(id)];
+    out->width = static_cast<int32_t>(i.width);
+    out->height = static_cast<int32_t>(i.height);
+    out->channels = static_cast<int32_t>(i.channels);
+    out->buffer_id = static_cast<int32_t>(i.buffer_id);
+    out->flags = (i.decoded ? 1u : 0u) | (i.colorTransformValid ? 2u : 0u) |
+        (i.colorTransformApplied ? 4u : 0u) | (i.colorTransformBypass ? 8u : 0u) |
+        (i.sourceColorIsData ? 16u : 0u);
+    out->source_gamma = i.sourceGamma;
+    out->source_linear_bias = i.sourceLinearBias;
+    for (size_t c = 0; c < 9; ++c) out->source_to_display[c] = i.sourceToDisplayLinear[c];
+    if (i.buffer_id >= 0 && size_t(i.buffer_id) < render_scene_.buffers.size()) {
+      const auto &b = render_scene_.buffers[size_t(i.buffer_id)];
+      out->flags |= 32u;
+      out->data = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(b.data.data()));
+      out->byte_length = b.data.size();
+    }
+    lightusd::web::combined::StoreStringTable({i.asset_identifier,
+        to_string(i.colorSpace), to_string(i.usdColorSpace), i.sourceColorSpaceName}, {});
+    return 1;
+  }
+
+  int32_t imageWarnC() const {
+    return deprecation_warned_.insert("getImage").second ? 1 : 0;
+  }
+#else
   emscripten::val getImage(int img_id) const {
     warnDeprecated_("getImage", "getImagePtr()/getImageCopy()");
     return buildImageVal_(img_id);
@@ -4683,6 +4812,8 @@ class LightUSDLoaderNative {
     return img;
   }
 
+#endif
+
   // ---------------------------------------------------------------------------
   // Id-based, OpenGL-style heap accessors (zero-copy + explicit copy)
   //
@@ -4704,6 +4835,7 @@ class LightUSDLoaderNative {
   // getMesh()/getImage() remain (deprecated) for backward compatibility.
   // ---------------------------------------------------------------------------
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   static size_t dtypeByteSize_(const char *dtype) {
     std::string d(dtype);
     if (d == "f32" || d == "u32") return 4;
@@ -4724,6 +4856,8 @@ class LightUSDLoaderNative {
     a.set("byteLength", emscripten::val(static_cast<double>(length * dtypeByteSize_(dtype))));
     return a;
   }
+
+#endif
 
   template <typename T>
   static emscripten::val typedArray_(size_t n, const T *ptr, bool copy) {
@@ -4748,52 +4882,246 @@ class LightUSDLoaderNative {
     }
   }
 
+  // Shared native float4 decoder. Call only for a nonempty tangent stream.
+  // The loader owns the returned cache until scene mutation or another query
+  // replaces it; JS copy accessors copy before releasing their loader reference.
+  const std::vector<float> &meshTangents_(
+      int mesh_id, const lightusd::tydra::RenderMesh &rmesh) const {
+      using namespace lightusd::tydra;
+      size_t nv = rmesh.tangents.vertex_count();
+      auto &cache = tangents4_cache_[mesh_id];
+      cache.resize(nv * 4);
+
+      if (rmesh.tangents.format == VertexAttributeFormat::Uint) {
+        // Packed INT_2_10_10_10_REV — unpack to vec4 float
+        const tangent_quantize::PackedTangent1010102 *P =
+            reinterpret_cast<const tangent_quantize::PackedTangent1010102 *>(
+                rmesh.tangents.data.data());
+        for (size_t i = 0; i < nv; i++) {
+          tangent_quantize::unpack_tangent_1010102(
+              P[i], cache[i*4+0], cache[i*4+1], cache[i*4+2], cache[i*4+3]);
+        }
+      } else if (rmesh.tangents.format == VertexAttributeFormat::Char4) {
+        // Packed SNorm8x4 — unpack to vec4 float
+        const tangent_quantize::PackedTangentSNorm8x4 *P =
+            reinterpret_cast<const tangent_quantize::PackedTangentSNorm8x4 *>(
+                rmesh.tangents.data.data());
+        for (size_t i = 0; i < nv; i++) {
+          tangent_quantize::unpack_tangent_snorm8(
+              P[i], cache[i*4+0], cache[i*4+1], cache[i*4+2], cache[i*4+3]);
+        }
+      } else if (rmesh.tangents.format == VertexAttributeFormat::Half4) {
+        // Packed FP16x4 — unpack to vec4 float
+        const tangent_quantize::PackedTangentFp16x4 *P =
+            reinterpret_cast<const tangent_quantize::PackedTangentFp16x4 *>(
+                rmesh.tangents.data.data());
+        for (size_t i = 0; i < nv; i++) {
+          tangent_quantize::unpack_tangent_fp16(
+              P[i], cache[i*4+0], cache[i*4+1], cache[i*4+2], cache[i*4+3]);
+        }
+      } else if (rmesh.tangents.format == VertexAttributeFormat::Vec3) {
+        const float *T = reinterpret_cast<const float *>(rmesh.tangents.data.data());
+        const bool has_binormals = rmesh.binormals.format == VertexAttributeFormat::Vec3 &&
+            rmesh.binormals.vertex_count() >= nv;
+        const float *B = has_binormals
+            ? reinterpret_cast<const float *>(rmesh.binormals.data.data()) : nullptr;
+        for (size_t i = 0; i < nv; ++i) {
+          lightusd::tydra::vec3 normal{0.0f, 0.0f, 1.0f};
+          const bool has_normal = ReadNormalForTangent(rmesh, i, &normal);
+          float tx = T[i*3], ty = T[i*3+1], tz = T[i*3+2];
+          if (has_normal) FixupZeroTangent(tx, ty, tz, normal[0], normal[1], normal[2]);
+          cache[i*4] = tx; cache[i*4+1] = ty; cache[i*4+2] = tz;
+          float sign = 1.0f;
+          if (B && has_normal) {
+            const float cx = normal[1]*tz - normal[2]*ty;
+            const float cy = normal[2]*tx - normal[0]*tz;
+            const float cz = normal[0]*ty - normal[1]*tx;
+            const float d = cx*B[i*3] + cy*B[i*3+1] + cz*B[i*3+2];
+            if (std::isfinite(d) && d < 0.0f) sign = -1.0f;
+          }
+          cache[i*4+3] = sign;
+        }
+      }
+      return cache;
+  }
+
+  struct MeshSubmesh {
+    int32_t start, count, material_id;
+  };
+
+  static void meshMaterialOrder_(const lightusd::tydra::RenderMesh &rmesh,
+                                 std::vector<int> &reorderMap,
+                                 std::vector<MeshSubmesh> &groups) {
+      // Step 1: Group face indices by material
+      std::map<int, std::vector<int>> materialToFaces;
+      size_t totalFaces = 0;
+
+      // Track which faces are covered by GeomSubsets
+      std::unordered_set<int> coveredFaces;
+
+      for (const auto& subset_pair : rmesh.material_subsetMap) {
+        const lightusd::tydra::MaterialSubset& subset = subset_pair.second;
+        const std::vector<int>& faceIndices = subset.indices();
+
+        int matId = subset.material_id;
+        if (materialToFaces.find(matId) == materialToFaces.end()) {
+          materialToFaces[matId] = std::vector<int>();
+        }
+
+        // Collect all face indices for this material
+        materialToFaces[matId].insert(materialToFaces[matId].end(),
+                                      faceIndices.begin(), faceIndices.end());
+        totalFaces += faceIndices.size();
+
+        for (int fi : faceIndices) {
+          coveredFaces.insert(fi);
+        }
+      }
+
+      // Include faces not covered by any GeomSubset — assign mesh-level material_id
+      {
+        size_t numMeshFaces = rmesh.faceVertexCounts().size();
+        std::vector<int> uncoveredFaces;
+        for (size_t i = 0; i < numMeshFaces; i++) {
+          if (coveredFaces.find(static_cast<int>(i)) == coveredFaces.end()) {
+            uncoveredFaces.push_back(static_cast<int>(i));
+          }
+        }
+        if (!uncoveredFaces.empty()) {
+          int fallbackMatId = rmesh.material_id;
+          materialToFaces[fallbackMatId].insert(materialToFaces[fallbackMatId].end(),
+                                                uncoveredFaces.begin(), uncoveredFaces.end());
+          totalFaces += uncoveredFaces.size();
+        }
+      }
+
+      // Step 2: Build reordering map - new triangle index -> old triangle index
+      // Group all triangles by material, creating contiguous ranges
+      reorderMap.reserve(totalFaces);
+
+      int currentStart = 0;
+
+      for (auto& mat_pair : materialToFaces) {
+        int materialId = mat_pair.first;
+        std::vector<int>& faceIndices = mat_pair.second;
+
+        if (faceIndices.empty()) continue;
+
+        // Sort face indices within this material group (optional, helps cache coherence)
+        std::sort(faceIndices.begin(), faceIndices.end());
+
+        // Add all faces for this material to the reorder map
+        for (int faceIdx : faceIndices) {
+          reorderMap.push_back(faceIdx);
+        }
+
+        // Create one submesh group for this material
+        groups.push_back({currentStart * 3,
+                          static_cast<int>(faceIndices.size()) * 3, materialId});
+
+        currentStart += static_cast<int>(faceIndices.size());
+      }
+
+  }
+
+  const std::vector<float> *reorderMeshTangents_(
+      int mesh_id, const lightusd::tydra::RenderMesh &rmesh,
+      const std::vector<int> &reorderMap) const {
+    const size_t numNewTriangles = reorderMap.size();
+    const auto &fvIndices = rmesh.faceVertexIndices();
+    const bool singleIndexable = rmesh.is_single_indexable &&
+        rmesh.tangents.variability != lightusd::tydra::VertexVariability::FaceVarying;
+      if (!rmesh.tangents.empty() && tangents4_cache_.count(mesh_id) &&
+          !tangents4_cache_[mesh_id].empty()) {
+        const float* t4 = tangents4_cache_[mesh_id].data();
+        size_t tangentVertCount = tangents4_cache_[mesh_id].size() / 4;
+        std::vector<float> reorderedTangents(numNewTriangles * 3 * 4);
+        for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
+          int oldTriIdx = reorderMap[newTriIdx];
+          for (int v = 0; v < 3; v++) {
+            size_t oldFV = size_t(oldTriIdx) * 3 + size_t(v);
+            size_t newV = newTriIdx * 3 + size_t(v);
+            uint32_t vi = singleIndexable
+                ? (oldFV < fvIndices.size() ? fvIndices[oldFV] : 0)
+                : uint32_t(oldFV);
+            if (vi < tangentVertCount) {
+              reorderedTangents[newV*4+0] = t4[vi*4+0];
+              reorderedTangents[newV*4+1] = t4[vi*4+1];
+              reorderedTangents[newV*4+2] = t4[vi*4+2];
+              reorderedTangents[newV*4+3] = t4[vi*4+3];
+            } else {
+              reorderedTangents[newV*4+3] = 1.0f;  // default w=1
+            }
+          }
+        }
+        auto& cache = reordered_mesh_cache_[mesh_id];
+        cache.tangents = std::move(reorderedTangents);
+        return &cache.tangents;
+      }
+      return nullptr;
+  }
+
   // Zero-copy mesh descriptor: per-attribute {ptr,length,comps,count,dtype,
   // byteLength}. Subset needed for GPU rendering (points/indices/normals/uv0).
-  emscripten::val getMeshPtr(int mesh_id) const {
-    emscripten::val out = emscripten::val::object();
+  struct MeshPointerData {
+    lightusd_combined_mesh_pointer_info info{};
+    lightusd_combined_mesh_value_info value_info{};
+    std::vector<lightusd_combined_mesh_attribute> attributes;
+    std::vector<lightusd_combined_mesh_submesh> submeshes;
+    std::vector<std::string> strings;
+    void add(uint32_t key, uint32_t slot, uint32_t dtype, const void *data,
+             size_t count, uint32_t components) {
+      attributes.push_back({sizeof(lightusd_combined_mesh_attribute), key, slot,
+          dtype, components, 0, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(data)), count});
+    }
+    void set(uint32_t key, uint32_t slot, uint32_t dtype, const void *data,
+             size_t count, uint32_t components) {
+      for (auto &attribute : attributes) {
+        if (attribute.key == key && attribute.slot == slot) {
+          attribute = {sizeof(lightusd_combined_mesh_attribute), key, slot,
+              dtype, components, 0, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(data)), count};
+          return;
+        }
+      }
+      add(key, slot, dtype, data, count, components);
+    }
+
+  };
+
+  bool meshPointerData_(int mesh_id, MeshPointerData &out) const {
     if (!loaded_ || mesh_id < 0 ||
         static_cast<size_t>(mesh_id) >= render_scene_.meshes.size()) {
-      return out;
+      return false;
     }
     using lightusd::tydra::VertexAttributeFormat;
     const lightusd::tydra::RenderMesh &rmesh =
         render_scene_.meshes[size_t(mesh_id)];
 
     const size_t vtx = rmesh.points.size();
-    out.set("vertexCount", emscripten::val(static_cast<double>(vtx)));
-    out.set("materialId", rmesh.material_id);
-    out.set("doubleSided", rmesh.doubleSided);
-    out.set("primName", rmesh.prim_name);
-    out.set("displayName", rmesh.display_name);
-    out.set("absPath", rmesh.abs_path);
-    if (rmesh.has_authored_displayColor) {
-      emscripten::val display_color = emscripten::val::array();
-      display_color.set(0, rmesh.displayColor[0]);
-      display_color.set(1, rmesh.displayColor[1]);
-      display_color.set(2, rmesh.displayColor[2]);
-      out.set("displayColor", display_color);
-    }
-    out.set("hasSubmeshes", !rmesh.material_subsetMap.empty());
-    out.set("singleIndexable", rmesh.is_single_indexable);
-
-    out.set("points",
-            heapAttr_(reinterpret_cast<const float *>(rmesh.points.data()),
-                      vtx * 3, 3, "f32"));
+    out.info.vertex_count = vtx;
+    out.info.material_id = rmesh.material_id;
+    out.info.flags = (!rmesh.material_subsetMap.empty() ? 1u : 0u) |
+        (rmesh.is_single_indexable ? 2u : 0u) |
+        (rmesh.has_authored_displayColor ? 8u : 0u) |
+        (rmesh.doubleSided ? 16u : 0u);
+    for (size_t i = 0; i < 3; ++i) out.info.display_color[i] = rmesh.displayColor[i];
+    out.strings = {rmesh.prim_name, rmesh.display_name, rmesh.abs_path};
+    out.add(0, 0, 0, reinterpret_cast<const float *>(rmesh.points.data()),
+                      vtx * 3, 3);
 
     const auto &idx = rmesh.faceVertexIndices();
     const auto &cnt = rmesh.faceVertexCounts();
     if (!idx.empty()) {
-      out.set("indices", heapAttr_(idx.data(), idx.size(), 1, "u32"));
+      out.add(1, 0, 1, idx.data(), idx.size(), 1);
     }
     bool triangulated = !cnt.empty();
     for (uint32_t c : cnt) {
       if (c != 3) { triangulated = false; break; }
     }
     if (!cnt.empty()) {
-      out.set("faceVertexCounts", heapAttr_(cnt.data(), cnt.size(), 1, "u32"));
+      out.add(2, 0, 1, cnt.data(), cnt.size(), 1);
     }
-    out.set("triangulated", triangulated);
+    if (triangulated) out.info.flags |= 4u;
 
     if (!rmesh.material_subsetMap.empty() && triangulated &&
         rmesh.is_single_indexable && !cnt.empty()) {
@@ -4809,9 +5137,7 @@ class LightUSDLoaderNative {
         }
       }
 
-      emscripten::val submeshes = emscripten::val::array();
       size_t face_begin = 0;
-      int group_index = 0;
       while (face_begin < face_materials.size()) {
         const int material_id = face_materials[face_begin];
         size_t face_end = face_begin + 1;
@@ -4820,27 +5146,24 @@ class LightUSDLoaderNative {
           face_end++;
         }
 
-        emscripten::val submesh = emscripten::val::object();
-        submesh.set("start", static_cast<int>(face_begin * 3));
-        submesh.set("count", static_cast<int>((face_end - face_begin) * 3));
-        submesh.set("materialId", material_id);
-        submeshes.set(group_index++, submesh);
+        out.submeshes.push_back({sizeof(lightusd_combined_mesh_submesh),
+            static_cast<int32_t>(face_begin * 3),
+            static_cast<int32_t>((face_end - face_begin) * 3), material_id});
 
         face_begin = face_end;
       }
-      out.set("submeshes", submeshes);
     }
 
     // normals (snorm8 / snorm16 / f32; 1010102 unpacked to a stable f32 cache)
     if (!rmesh.normals.empty()) {
       const size_t nv = rmesh.normals.vertex_count();
       if (rmesh.normals.format == VertexAttributeFormat::Char3) {
-        out.set("normals", heapAttr_(rmesh.normals.data.data(), nv * 3, 3, "snorm8"));
+        out.add(3, 0, 2, rmesh.normals.data.data(), nv * 3, 3);
       } else if (rmesh.normals.format == VertexAttributeFormat::Short3) {
-        out.set("normals", heapAttr_(rmesh.normals.data.data(), nv * 3, 3, "snorm16"));
+        out.add(3, 0, 3, rmesh.normals.data.data(), nv * 3, 3);
       } else if (rmesh.normals.format == VertexAttributeFormat::Uint) {
         auto &cache = normals_cache_[mesh_id];
-        if (cache.size() != nv * 3) {
+        {
           cache.resize(nv * 3);
           const uint32_t *P =
               reinterpret_cast<const uint32_t *>(rmesh.normals.data.data());
@@ -4849,45 +5172,32 @@ class LightUSDLoaderNative {
                 P[i], cache[i * 3 + 0], cache[i * 3 + 1], cache[i * 3 + 2]);
           }
         }
-        out.set("normals", heapAttr_(cache.data(), nv * 3, 3, "f32"));
+        out.add(3, 0, 0, cache.data(), nv * 3, 3);
       } else {
-        out.set("normals",
-                heapAttr_(reinterpret_cast<const float *>(rmesh.normals.data.data()),
-                          nv * 3, 3, "f32"));
+        out.add(3, 0, 0, reinterpret_cast<const float *>(rmesh.normals.data.data()),
+                          nv * 3, 3);
       }
     }
 
-    auto uvit = rmesh.texcoords.find(0);
-    if (uvit != rmesh.texcoords.end()) {
-      const size_t uvn = uvit->second.vertex_count();
-      out.set("uv0",
-              heapAttr_(reinterpret_cast<const float *>(uvit->second.data.data()),
-                        uvn * 2, 2, "f32"));
-    }
     if (!rmesh.vertex_colors.empty()) {
       const auto &colors = rmesh.vertex_colors;
       const size_t nv = colors.vertex_count();
       using lightusd::tydra::VertexAttributeFormat;
       if (colors.format == VertexAttributeFormat::Vec3) {
-        out.set("vertexColors", heapAttr_(reinterpret_cast<const float *>(colors.data.data()), nv * 3, 3, "f32"));
+        out.add(5, 0, 0, reinterpret_cast<const float *>(colors.data.data()), nv * 3, 3);
       } else if (colors.format == VertexAttributeFormat::Byte3) {
-        out.set("vertexColors", heapAttr_(colors.data.data(), nv * 3, 3, "u8"));
+        out.add(5, 0, 4, colors.data.data(), nv * 3, 3);
       } else if (colors.format == VertexAttributeFormat::Char3) {
-        out.set("vertexColors", heapAttr_(colors.data.data(), nv * 3, 3, "i8"));
+        out.add(5, 0, 5, colors.data.data(), nv * 3, 3);
       }
     }
     // Preserve authored UV slots for MaterialX texcoord/UsdPrimvarReader
     // routing. Slot 0 remains available as uv0 for compatibility.
     if (!rmesh.texcoords.empty()) {
-      emscripten::val uvSets = emscripten::val::object();
       for (const auto &uv_pair : rmesh.texcoords) {
         const size_t uvn = uv_pair.second.vertex_count();
-        uvSets.set(std::to_string(uv_pair.first),
-                   heapAttr_(reinterpret_cast<const float *>(
-                                 uv_pair.second.data.data()),
-                             uvn * 2, 2, "f32"));
+        out.add(4, uv_pair.first, 0, uv_pair.second.data.data(), uvn * 2, 2);
       }
-      out.set("uvSets", uvSets);
     }
 
     // Authored displayColor/displayOpacity streams. Keep these separate in
@@ -4897,31 +5207,80 @@ class LightUSDLoaderNative {
     if (!rmesh.vertex_colors.empty() &&
         rmesh.vertex_colors.format == VertexAttributeFormat::Vec3) {
       const size_t cv = rmesh.vertex_colors.vertex_count();
-      out.set("colors",
-              heapAttr_(reinterpret_cast<const float *>(
+      out.add(6, 0, 0, reinterpret_cast<const float *>(
                             rmesh.vertex_colors.data.data()),
-                        cv * 3, 3, "f32"));
+                        cv * 3, 3);
     }
     if (!rmesh.vertex_opacities.empty() &&
         rmesh.vertex_opacities.format == VertexAttributeFormat::Float) {
       const size_t ov = rmesh.vertex_opacities.vertex_count();
-      out.set("colorOpacities",
-              heapAttr_(reinterpret_cast<const float *>(
+      out.add(7, 0, 0, reinterpret_cast<const float *>(
                             rmesh.vertex_opacities.data.data()),
-                        ov, 1, "f32"));
+                        ov, 1);
     }
-    // Reuse the retain-safe tangent decoder used by getMeshCopy(). Tangents
-    // are copied here because packed/native formats need a stable float4
-    // representation (xyz direction, w handedness) for WebGPU.
-    {
-      emscripten::val copied = buildMeshVal_(mesh_id, /* copy_arrays */ true);
-      emscripten::val tangent = copied["tangents"];
-      if (!tangent.isUndefined() && !tangent.isNull()) {
-        out.set("tangents", tangent);
+    // Tangents remain owned float4 output, including material-group order.
+    // Preparing them directly avoids copying every other mesh array into JS.
+    const std::vector<float> *tangents = nullptr;
+    if (!rmesh.tangents.empty()) tangents = &meshTangents_(mesh_id, rmesh);
+    if (!rmesh.material_subsetMap.empty()) {
+      std::vector<int> reorderMap;
+      std::vector<MeshSubmesh> groups;
+      meshMaterialOrder_(rmesh, reorderMap, groups);
+      if (const auto *reordered = reorderMeshTangents_(mesh_id, rmesh, reorderMap)) {
+        tangents = reordered;
       }
+    }
+    if (tangents) out.add(8, 0, 0, tangents->data(), tangents->size(), 4);
+    return true;
+  }
+
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+  emscripten::val getMeshPtr(int mesh_id) const {
+    MeshPointerData data;
+    auto out = emscripten::val::object();
+    if (!meshPointerData_(mesh_id, data)) return out;
+    const auto &info = data.info;
+    out.set("vertexCount", static_cast<double>(info.vertex_count));
+    out.set("materialId", info.material_id);
+    out.set("doubleSided", bool(info.flags & 16u));
+    out.set("hasSubmeshes", bool(info.flags & 1u));
+    out.set("singleIndexable", bool(info.flags & 2u));
+    out.set("triangulated", bool(info.flags & 4u));
+    out.set("primName", data.strings[0]); out.set("displayName", data.strings[1]); out.set("absPath", data.strings[2]);
+    if (info.flags & 8u) {
+      auto color = emscripten::val::array();
+      for (size_t i = 0; i < 3; ++i) color.set(i, info.display_color[i]);
+      out.set("displayColor", color);
+    }
+    const char *names[] = {"points", "indices", "faceVertexCounts", "normals", "", "vertexColors", "colors", "colorOpacities"};
+    const char *types[] = {"f32", "u32", "snorm8", "snorm16", "u8", "i8"};
+    auto uvs = emscripten::val::object();
+    bool has_uv = false;
+    for (const auto &attribute : data.attributes) {
+      const void *address = reinterpret_cast<const void *>(static_cast<uintptr_t>(attribute.address));
+      if (attribute.key == 8) {
+        out.set("tangents", typedArray_(size_t(attribute.count), static_cast<const float *>(address), true));
+      } else if (attribute.key == 4) {
+        has_uv = true;
+        uvs.set(std::to_string(attribute.slot), heapAttr_(address, size_t(attribute.count), int(attribute.components), types[attribute.dtype]));
+        if (attribute.slot == 0) out.set("uv0", heapAttr_(address, size_t(attribute.count), int(attribute.components), types[attribute.dtype]));
+      } else {
+        out.set(names[attribute.key], heapAttr_(address, size_t(attribute.count), int(attribute.components), types[attribute.dtype]));
+      }
+    }
+    if (has_uv) out.set("uvSets", uvs);
+    if (!data.submeshes.empty()) {
+      auto groups = emscripten::val::array();
+      for (const auto &group : data.submeshes) {
+        auto item = emscripten::val::object();
+        item.set("start", group.start); item.set("count", group.count); item.set("materialId", group.material_id);
+        groups.call<void>("push", item);
+      }
+      out.set("submeshes", groups);
     }
     return out;
   }
+#endif
 
   // Return the composed authored primvars for one render mesh. Tydra's
   // RenderMesh intentionally keeps only renderer-standard streams; this
@@ -4986,12 +5345,16 @@ class LightUSDLoaderNative {
   }
 
   // Owned, retain-safe drop-in for getMesh(): identical shape, copied arrays.
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getMeshCopy(int mesh_id) const {
     return buildMeshVal_(mesh_id, /* copy_arrays */ true);
   }
 
+#endif
+
   // Zero-copy image descriptor: {width,height,channels,decoded,colorSpace,
   // usdColorSpace,uri,bufferId, ptr,byteLength}.
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getImagePtr(int img_id) const {
     emscripten::val out = imageMeta_(img_id);
     if (out.isUndefined()) return emscripten::val::object();
@@ -5005,6 +5368,8 @@ class LightUSDLoaderNative {
     }
     return out;
   }
+
+#endif
 
   bool ensureImageBufferLoaded_(int img_id) {
     if (!loaded_ || img_id < 0 ||
@@ -5062,6 +5427,7 @@ class LightUSDLoaderNative {
   }
 
   // Owned, retain-safe drop-in for getImage(): identical shape, copied data.
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getImageCopy(int img_id) {
     ensureImageBufferLoaded_(img_id);
     return buildImageVal_(img_id, /* copy_arrays */ true);
@@ -5098,67 +5464,52 @@ class LightUSDLoaderNative {
     return out;
   }
 
+#endif
+
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getMesh(int mesh_id) const {
     warnDeprecated_("getMesh", "getMeshPtr()/getMeshCopy()");
     return buildMeshVal_(mesh_id);
   }
 
-  emscripten::val buildMeshVal_(int mesh_id, bool copy_arrays = false) const {
-    emscripten::val mesh = emscripten::val::object();
+#endif
 
+  int32_t meshWarnC() const {
+    return deprecation_warned_.insert("getMesh").second ? 1 : 0;
+  }
+
+  bool meshValueData_(int mesh_id, MeshPointerData &mesh) const {
     if (!loaded_) {
-      return mesh;
+      return false;
     }
 
     if (mesh_id < 0 || static_cast<size_t>(mesh_id) >= render_scene_.meshes.size()) {
-      return mesh;
+      return false;
     }
 
     const lightusd::tydra::RenderMesh &rmesh =
         render_scene_.meshes[size_t(mesh_id)];
     const size_t point_scalar_count = rmesh.points.size() * 3;
+    mesh.strings = {rmesh.prim_name, rmesh.display_name, rmesh.abs_path, rmesh.light_material_sync_mode};
+    auto &info = mesh.value_info;
+    info.flags = (rmesh.doubleSided ? 1u : 0u) | (rmesh.is_area_light ? 2u : 0u) |
+        (rmesh.light_normalize ? 4u : 0u) | (rmesh.joint_and_weights.hasGeomBindTransform ? 8u : 0u) |
+        (rmesh.has_authored_displayColor ? 16u : 0u) | (!rmesh.material_subsetMap.empty() ? 32u : 0u);
+    info.material_id = rmesh.material_id; info.element_size = rmesh.joint_and_weights.elementSize;
+    info.skeleton_id = rmesh.skel_id;
+    for (size_t i = 0; i < 3; ++i) info.display_color[i] = rmesh.displayColor[i];
+    info.light_intensity = rmesh.light_intensity; info.light_exposure = rmesh.light_exposure;
 
-    //if (rmesh.has_indices()) {
-      const uint32_t *indices_ptr = rmesh.faceVertexIndices().data();
-      mesh.set("faceVertexIndicesLength",
-               static_cast<double>(rmesh.faceVertexIndices().size()));
-      mesh.set("faceVertexIndices",
-               typedArray_(rmesh.faceVertexIndices().size(), indices_ptr,
-                           copy_arrays));
-      const uint32_t *counts_ptr = rmesh.faceVertexCounts().data();
-      mesh.set("faceVertexCountsLength",
-               static_cast<double>(rmesh.faceVertexCounts().size()));
-      mesh.set("faceVertexCounts",
-               typedArray_(rmesh.faceVertexCounts().size(), counts_ptr,
-                           copy_arrays));
-    //} else {
-    //  // Assume all triangles and facevarying attributes.
-    //  if (!rmesh.is_triangulated()) {
-    //    LIGHTUSD_LOG_E("Mesh must be triangulated when the mesh doesn't have indices\n");
-    //    return mesh;
-    //  }
-    //}
-
-    // TODO: Use three.js scene description format?
-    mesh.set("primName", rmesh.prim_name);
-    mesh.set("displayName", rmesh.display_name);
-    mesh.set("absPath", rmesh.abs_path);
-    if (rmesh.has_authored_displayColor) {
-      emscripten::val display_color = emscripten::val::array();
-      display_color.set(0, rmesh.displayColor[0]);
-      display_color.set(1, rmesh.displayColor[1]);
-      display_color.set(2, rmesh.displayColor[2]);
-      mesh.set("displayColor", display_color);
-    }
-    //mesh.set("hasIndices", rmesh.has_indices());
-
+    const auto &indices = rmesh.faceVertexIndices();
+    const auto &counts = rmesh.faceVertexCounts();
+    mesh.set(1, 0, 1, indices.data(), indices.size(), 1);
+    mesh.set(2, 0, 1, counts.data(), counts.size(), 1);
 
     const float *points_ptr =
         reinterpret_cast<const float *>(rmesh.points.data());
     // vec3
-    mesh.set("pointsLength", static_cast<double>(point_scalar_count));
-    mesh.set("points", typedArray_(point_scalar_count, points_ptr,
-                                   copy_arrays));
+
+    mesh.set(0, 0, 0, points_ptr, point_scalar_count, 3);
 
     if (!rmesh.normals.empty()) {
       using lightusd::tydra::VertexAttributeFormat;
@@ -5166,18 +5517,14 @@ class LightUSDLoaderNative {
         // SNorm8x3 — pass as Int8Array; Three.js uses normalized=true
         const int8_t *normals_ptr =
             reinterpret_cast<const int8_t *>(rmesh.normals.data.data());
-        mesh.set("normals",
-                 typedArray_(rmesh.normals.vertex_count() * 3, normals_ptr,
-                             copy_arrays));
-        mesh.set("normalsFormat", std::string("snorm8"));
+        mesh.set(3, 0, 2, normals_ptr, rmesh.normals.vertex_count() * 3, 3);
+
       } else if (rmesh.normals.format == VertexAttributeFormat::Short3) {
         // SNorm16x3 — pass as Int16Array; Three.js uses normalized=true
         const int16_t *normals_ptr =
             reinterpret_cast<const int16_t *>(rmesh.normals.data.data());
-        mesh.set("normals",
-                 typedArray_(rmesh.normals.vertex_count() * 3, normals_ptr,
-                             copy_arrays));
-        mesh.set("normalsFormat", std::string("snorm16"));
+        mesh.set(3, 0, 3, normals_ptr, rmesh.normals.vertex_count() * 3, 3);
+
       } else if (rmesh.normals.format == VertexAttributeFormat::Uint) {
         // Packed 1010102 — Three.js can't use this; unpack to float3 cache
         using namespace lightusd::tydra::tangent_quantize;
@@ -5189,16 +5536,14 @@ class LightUSDLoaderNative {
         for (size_t i = 0; i < nv; i++) {
           unpack_normal_1010102(P[i], cache[i*3+0], cache[i*3+1], cache[i*3+2]);
         }
-        mesh.set("normals", typedArray_(nv * 3, cache.data(), copy_arrays));
-        mesh.set("normalsFormat", std::string("float32"));
+        mesh.set(3, 0, 0, cache.data(), nv * 3, 3);
+
       } else {
         // Float3 (Vec3) — pass as Float32Array
         const float *normals_ptr =
             reinterpret_cast<const float *>(rmesh.normals.data.data());
-        mesh.set("normals",
-                 typedArray_(rmesh.normals.vertex_count() * 3, normals_ptr,
-                             copy_arrays));
-        mesh.set("normalsFormat", std::string("float32"));
+        mesh.set(3, 0, 0, normals_ptr, rmesh.normals.vertex_count() * 3, 3);
+
       }
     }
 
@@ -5222,7 +5567,7 @@ class LightUSDLoaderNative {
       } else {
         cache.clear();
       }
-      if (!cache.empty()) mesh.set("vertexColors", typedArray_(cache.size(), cache.data(), copy_arrays));
+      if (!cache.empty()) mesh.set(5, 0, 0, cache.data(), cache.size(), 3);
     }
     // Keep copied mesh access consistent with getMeshPtr(): RenderMesh stores
     // authored displayColor as float3 and displayOpacity as a float stream.
@@ -5232,54 +5577,28 @@ class LightUSDLoaderNative {
           rmesh.vertex_colors.format == VertexAttributeFormat::Vec3) {
         const float *colors_ptr = reinterpret_cast<const float *>(
             rmesh.vertex_colors.data.data());
-        mesh.set("colors",
-                 typedArray_(rmesh.vertex_colors.vertex_count() * 3,
-                             colors_ptr, copy_arrays));
-        mesh.set("colorsFormat", std::string("float32"));
+        mesh.set(6, 0, 0, colors_ptr, rmesh.vertex_colors.vertex_count() * 3, 3);
+
       }
       if (!rmesh.vertex_opacities.empty() &&
           rmesh.vertex_opacities.format == VertexAttributeFormat::Float) {
         const float *opacities_ptr = reinterpret_cast<const float *>(
             rmesh.vertex_opacities.data.data());
-        mesh.set("colorOpacities",
-                 typedArray_(rmesh.vertex_opacities.vertex_count(),
-                             opacities_ptr, copy_arrays));
-        mesh.set("colorOpacitiesFormat", std::string("float32"));
+        mesh.set(7, 0, 0, opacities_ptr, rmesh.vertex_opacities.vertex_count(), 1);
+
       }
     }
 
     {
-      // Export all UV sets
-      emscripten::val uvSets = emscripten::val::object();
-
-      for (const auto& uv_pair : rmesh.texcoords) {
-        uint32_t uvSlotId = uv_pair.first;
-        const auto& uv_data = uv_pair.second;
-
-        const float *uvs_ptr = reinterpret_cast<const float *>(uv_data.data.data());
-
-        // Create UV set object with metadata
-        emscripten::val uvSet = emscripten::val::object();
-        uvSet.set("data",
-                  typedArray_(uv_data.vertex_count() * 2, uvs_ptr,
-                              copy_arrays));
-        uvSet.set("vertexCount", uv_data.vertex_count());
-        uvSet.set("slotId", int(uvSlotId));
-
-        // Add to UV sets collection
-        std::string slotKey = "uv" + std::to_string(uvSlotId);
-        uvSets.set(slotKey.c_str(), uvSet);
+      for (const auto &uv_pair : rmesh.texcoords) {
+        mesh.set(4, uv_pair.first, 0, uv_pair.second.data.data(), uv_pair.second.vertex_count() * 2, 2);
       }
-
-      mesh.set("uvSets", uvSets);
 
       // Keep backward compatibility - slot 0 as "texcoords"
       if (rmesh.texcoords.count(0)) {
         const float *uvs_ptr = reinterpret_cast<const float *>(
             rmesh.texcoords.at(0).data.data());
-        mesh.set("texcoords",
-                 typedArray_(rmesh.texcoords.at(0).vertex_count() * 2,
-                             uvs_ptr, copy_arrays));
+        mesh.set(9, 0, 0, uvs_ptr, rmesh.texcoords.at(0).vertex_count() * 2, 2);
       }
     }
 
@@ -5288,149 +5607,37 @@ class LightUSDLoaderNative {
     // Supports both packed formats (10_10_10_2, SNorm8, Fp16) and legacy Vec3.
     if (!rmesh.tangents.empty()) {
       using namespace lightusd::tydra;
-      size_t nv = rmesh.tangents.vertex_count();
-      auto &cache = tangents4_cache_[mesh_id];
-      cache.resize(nv * 4);
-
-      if (rmesh.tangents.format == VertexAttributeFormat::Uint) {
-        // Packed INT_2_10_10_10_REV — unpack to vec4 float
-        const tangent_quantize::PackedTangent1010102 *P =
-            reinterpret_cast<const tangent_quantize::PackedTangent1010102 *>(
-                rmesh.tangents.data.data());
-        for (size_t i = 0; i < nv; i++) {
-          tangent_quantize::unpack_tangent_1010102(
-              P[i], cache[i*4+0], cache[i*4+1], cache[i*4+2], cache[i*4+3]);
-        }
-      } else if (rmesh.tangents.format == VertexAttributeFormat::Char4) {
-        // Packed SNorm8x4 — unpack to vec4 float
-        const tangent_quantize::PackedTangentSNorm8x4 *P =
-            reinterpret_cast<const tangent_quantize::PackedTangentSNorm8x4 *>(
-                rmesh.tangents.data.data());
-        for (size_t i = 0; i < nv; i++) {
-          tangent_quantize::unpack_tangent_snorm8(
-              P[i], cache[i*4+0], cache[i*4+1], cache[i*4+2], cache[i*4+3]);
-        }
-      } else if (rmesh.tangents.format == VertexAttributeFormat::Half4) {
-        // Packed FP16x4 — unpack to vec4 float
-        const tangent_quantize::PackedTangentFp16x4 *P =
-            reinterpret_cast<const tangent_quantize::PackedTangentFp16x4 *>(
-                rmesh.tangents.data.data());
-        for (size_t i = 0; i < nv; i++) {
-          tangent_quantize::unpack_tangent_fp16(
-              P[i], cache[i*4+0], cache[i*4+1], cache[i*4+2], cache[i*4+3]);
-        }
-      } else if (rmesh.tangents.format == VertexAttributeFormat::Vec3 &&
-                 !rmesh.normals.empty() && !rmesh.binormals.empty()) {
-        // Legacy Vec3 float tangent + binormal — compute sign from cross product.
-        // Normals may be packed; use unpacked cache if available.
-        const float *T = reinterpret_cast<const float *>(rmesh.tangents.data.data());
-        const float *N = nullptr;
-        if (rmesh.normals.format == VertexAttributeFormat::Uint) {
-          // Packed normals — ensure cache is populated
-          auto &nc = normals3_cache_[mesh_id];
-          if (nc.empty()) {
-            nc.resize(nv * 3);
-            const uint32_t *packed = reinterpret_cast<const uint32_t *>(
-                rmesh.normals.data.data());
-            for (size_t j = 0; j < nv; j++) {
-              tangent_quantize::unpack_normal_1010102(
-                  packed[j], nc[j*3+0], nc[j*3+1], nc[j*3+2]);
-            }
-          }
-          N = nc.data();
-        } else {
-          N = reinterpret_cast<const float *>(rmesh.normals.data.data());
-        }
-        const float *B = reinterpret_cast<const float *>(rmesh.binormals.data.data());
-        for (size_t i = 0; i < nv; i++) {
-          float tx = T[i*3+0], ty = T[i*3+1], tz = T[i*3+2];
-          FixupZeroTangent(tx, ty, tz, N[i*3+0], N[i*3+1], N[i*3+2]);
-          cache[i*4+0] = tx;
-          cache[i*4+1] = ty;
-          cache[i*4+2] = tz;
-          float cx = N[i*3+1]*tz - N[i*3+2]*ty;
-          float cy = N[i*3+2]*tx - N[i*3+0]*tz;
-          float cz = N[i*3+0]*ty - N[i*3+1]*tx;
-          float d = cx*B[i*3+0] + cy*B[i*3+1] + cz*B[i*3+2];
-          cache[i*4+3] = (std::isfinite(d) && d < 0.0f) ? -1.0f : 1.0f;
-        }
-      } else if (rmesh.tangents.format == VertexAttributeFormat::Vec3) {
-        // Vec3 float tangent, no binormals — assume w=1
-        const float *T = reinterpret_cast<const float *>(rmesh.tangents.data.data());
-        const float *N = nullptr;
-        if (!rmesh.normals.empty()) {
-          if (rmesh.normals.format == VertexAttributeFormat::Uint) {
-            auto &nc = normals3_cache_[mesh_id];
-            if (nc.empty()) {
-              nc.resize(nv * 3);
-              const uint32_t *packed = reinterpret_cast<const uint32_t *>(
-                  rmesh.normals.data.data());
-              for (size_t j = 0; j < nv; j++) {
-                tangent_quantize::unpack_normal_1010102(
-                    packed[j], nc[j*3+0], nc[j*3+1], nc[j*3+2]);
-              }
-            }
-            N = nc.data();
-          } else {
-            N = reinterpret_cast<const float *>(rmesh.normals.data.data());
-          }
-        }
-        for (size_t i = 0; i < nv; i++) {
-          float tx = T[i*3+0], ty = T[i*3+1], tz = T[i*3+2];
-          if (N) FixupZeroTangent(tx, ty, tz, N[i*3+0], N[i*3+1], N[i*3+2]);
-          cache[i*4+0] = tx;
-          cache[i*4+1] = ty;
-          cache[i*4+2] = tz;
-          cache[i*4+3] = 1.0f;
-        }
-      }
-      mesh.set("tangents", typedArray_(cache.size(), cache.data(), copy_arrays));
+      const size_t nv = rmesh.tangents.vertex_count();
+      const auto &cache = meshTangents_(mesh_id, rmesh);
+      mesh.set(8, 0, 0, cache.data(), cache.size(), 4);
 
       // Also expose raw packed tangent buffer for direct WebGL2 upload
       if (rmesh.tangents.format == VertexAttributeFormat::Uint) {
         // Uint32Array for GL_INT_2_10_10_10_REV
         const uint32_t *raw = reinterpret_cast<const uint32_t *>(
             rmesh.tangents.data.data());
-        mesh.set("tangentsPacked", typedArray_(nv, raw, copy_arrays));
-        mesh.set("tangentsPackedFormat", emscripten::val("INT_2_10_10_10_REV"));
+        mesh.set(10, 0, 1, raw, nv, 1);
+
       }
     }
 
-    mesh.set("materialId", rmesh.material_id);
-    mesh.set("doubleSided", rmesh.doubleSided);
-
     // Export area light properties (MeshLightAPI)
-    mesh.set("isAreaLight", rmesh.is_area_light);
+
     if (rmesh.is_area_light) {
       const float *light_color_ptr = rmesh.light_color.data();
-      mesh.set("lightColor", typedArray_(3, light_color_ptr, copy_arrays));
-      mesh.set("lightIntensity", rmesh.light_intensity);
-      mesh.set("lightExposure", rmesh.light_exposure);
-      mesh.set("lightNormalize", rmesh.light_normalize);
-      mesh.set("lightMaterialSyncMode", emscripten::val(rmesh.light_material_sync_mode));
+      mesh.set(11, 0, 0, light_color_ptr, 3, 3);
+
     }
 
     // Export skinning data (joint indices, joint weights)
     if (!rmesh.joint_and_weights.jointIndices.empty()) {
       const int *joint_indices_ptr = rmesh.joint_and_weights.jointIndices.data();
-      mesh.set("jointIndices",
-               typedArray_(rmesh.joint_and_weights.jointIndices.size(),
-                           joint_indices_ptr, copy_arrays));
+      mesh.set(12, 0, 6, joint_indices_ptr, rmesh.joint_and_weights.jointIndices.size(), 1);
     }
 
     if (!rmesh.joint_and_weights.jointWeights.empty()) {
       const float *joint_weights_ptr = rmesh.joint_and_weights.jointWeights.data();
-      mesh.set("jointWeights",
-               typedArray_(rmesh.joint_and_weights.jointWeights.size(),
-                           joint_weights_ptr, copy_arrays));
-    }
-
-    // Export element size (influences per vertex)
-    mesh.set("elementSize", rmesh.joint_and_weights.elementSize);
-
-    // Export skeleton ID
-    if (rmesh.skel_id >= 0) {
-      mesh.set("skel_id", rmesh.skel_id);
+      mesh.set(13, 0, 0, joint_weights_ptr, rmesh.joint_and_weights.jointWeights.size(), 1);
     }
 
     // Export geomBindTransform matrix (4x4 matrix as 16 doubles)
@@ -5438,91 +5645,17 @@ class LightUSDLoaderNative {
     const double *geom_bind_ptr =
         reinterpret_cast<const double *>(
             rmesh.joint_and_weights.geomBindTransform.m);
-    mesh.set("geomBindTransform",
-             typedArray_(16, geom_bind_ptr, copy_arrays));
-    // Flag indicating whether geomBindTransform was explicitly authored in USD
-    // If false, the identity matrix is being used as a fallback
-    mesh.set("hasGeomBindTransform", rmesh.joint_and_weights.hasGeomBindTransform);
+    mesh.set(14, 0, 7, geom_bind_ptr, 16, 16);
 
     // Export GeomSubsets (per-face materials) as optimized submeshes
     // Reorder triangles by material so each material has exactly one contiguous group
     if (!rmesh.material_subsetMap.empty()) {
-      // Step 1: Group face indices by material
-      std::map<int, std::vector<int>> materialToFaces;
-      size_t totalFaces = 0;
-
-      // Track which faces are covered by GeomSubsets
-      std::unordered_set<int> coveredFaces;
-
-      for (const auto& subset_pair : rmesh.material_subsetMap) {
-        const lightusd::tydra::MaterialSubset& subset = subset_pair.second;
-        const std::vector<int>& faceIndices = subset.indices();
-
-        int matId = subset.material_id;
-        if (materialToFaces.find(matId) == materialToFaces.end()) {
-          materialToFaces[matId] = std::vector<int>();
-        }
-
-        // Collect all face indices for this material
-        materialToFaces[matId].insert(materialToFaces[matId].end(),
-                                      faceIndices.begin(), faceIndices.end());
-        totalFaces += faceIndices.size();
-
-        for (int fi : faceIndices) {
-          coveredFaces.insert(fi);
-        }
-      }
-
-      // Include faces not covered by any GeomSubset — assign mesh-level material_id
-      {
-        size_t numMeshFaces = rmesh.faceVertexCounts().size();
-        std::vector<int> uncoveredFaces;
-        for (size_t i = 0; i < numMeshFaces; i++) {
-          if (coveredFaces.find(static_cast<int>(i)) == coveredFaces.end()) {
-            uncoveredFaces.push_back(static_cast<int>(i));
-          }
-        }
-        if (!uncoveredFaces.empty()) {
-          int fallbackMatId = rmesh.material_id;
-          materialToFaces[fallbackMatId].insert(materialToFaces[fallbackMatId].end(),
-                                                uncoveredFaces.begin(), uncoveredFaces.end());
-          totalFaces += uncoveredFaces.size();
-        }
-      }
-
-      // Step 2: Build reordering map - new triangle index -> old triangle index
-      // Group all triangles by material, creating contiguous ranges
       std::vector<int> reorderMap;
-      reorderMap.reserve(totalFaces);
-
-      emscripten::val submeshes = emscripten::val::array();
-      int currentStart = 0;
-
-      for (auto& mat_pair : materialToFaces) {
-        int materialId = mat_pair.first;
-        std::vector<int>& faceIndices = mat_pair.second;
-
-        if (faceIndices.empty()) continue;
-
-        // Sort face indices within this material group (optional, helps cache coherence)
-        std::sort(faceIndices.begin(), faceIndices.end());
-
-        // Add all faces for this material to the reorder map
-        for (int faceIdx : faceIndices) {
-          reorderMap.push_back(faceIdx);
-        }
-
-        // Create one submesh group for this material
-        emscripten::val submesh = emscripten::val::object();
-        submesh.set("start", currentStart * 3);  // Convert face index to vertex index
-        submesh.set("count", static_cast<int>(faceIndices.size()) * 3);  // Number of vertices
-        submesh.set("materialId", materialId);
-        submeshes.call<void>("push", submesh);
-
-        currentStart += static_cast<int>(faceIndices.size());
+      std::vector<MeshSubmesh> groups;
+      meshMaterialOrder_(rmesh, reorderMap, groups);
+      for (const auto &group : groups) {
+        mesh.submeshes.push_back({sizeof(lightusd_combined_mesh_submesh), group.start, group.count, group.material_id});
       }
-
-      mesh.set("submeshes", submeshes);
 
       // Step 3: Reorder vertex attributes based on reorderMap
       // Each entry in reorderMap maps a new triangle index to an old triangle index.
@@ -5558,10 +5691,8 @@ class LightUSDLoaderNative {
         // Store in cache and update mesh pointer
         auto& cache = reordered_mesh_cache_[mesh_id];
         cache.points = std::move(reorderedPoints);
-        mesh.set("pointsLength", static_cast<double>(cache.points.size()));
-        mesh.set("points",
-                 typedArray_(cache.points.size(), cache.points.data(),
-                             copy_arrays));
+
+        mesh.set(0, 0, 0, cache.points.data(), cache.points.size(), 3);
       }
 
       // Reorder normals - per-vertex if single_indexable, facevarying otherwise
@@ -5592,10 +5723,8 @@ class LightUSDLoaderNative {
           }
           auto& cache = reordered_mesh_cache_[mesh_id];
           cache.normals_i16 = std::move(reordered);
-          mesh.set("normals",
-                   typedArray_(cache.normals_i16.size(),
-                               cache.normals_i16.data(), copy_arrays));
-          mesh.set("normalsFormat", std::string("snorm16"));
+          mesh.set(3, 0, 3, cache.normals_i16.data(), cache.normals_i16.size(), 3);
+
         } else if (isSnorm8) {
           const int8_t* src = reinterpret_cast<const int8_t*>(rmesh.normals.data.data());
           std::vector<int8_t> reordered(totalVerts * 3, 0);
@@ -5616,10 +5745,8 @@ class LightUSDLoaderNative {
           }
           auto& cache = reordered_mesh_cache_[mesh_id];
           cache.normals_i8 = std::move(reordered);
-          mesh.set("normals",
-                   typedArray_(cache.normals_i8.size(),
-                               cache.normals_i8.data(), copy_arrays));
-          mesh.set("normalsFormat", std::string("snorm8"));
+          mesh.set(3, 0, 2, cache.normals_i8.data(), cache.normals_i8.size(), 3);
+
         } else {
           // Float3 (Vec3) or unpacked from 1010102
           const float* src;
@@ -5651,10 +5778,8 @@ class LightUSDLoaderNative {
           }
           auto& cache = reordered_mesh_cache_[mesh_id];
           cache.normals = std::move(reordered);
-          mesh.set("normals",
-                   typedArray_(cache.normals.size(), cache.normals.data(),
-                               copy_arrays));
-          mesh.set("normalsFormat", std::string("float32"));
+          mesh.set(3, 0, 0, cache.normals.data(), cache.normals.size(), 3);
+
         }
       }
 
@@ -5686,40 +5811,13 @@ class LightUSDLoaderNative {
         }
         auto& cache = reordered_mesh_cache_[mesh_id];
         cache.texcoords = std::move(reorderedTexcoords);
-        mesh.set("texcoords",
-                 typedArray_(cache.texcoords.size(), cache.texcoords.data(),
-                             copy_arrays));
+        mesh.set(9, 0, 0, cache.texcoords.data(), cache.texcoords.size(), 2);
       }
 
       // Reorder tangents as vec4 — use tangents4_cache_ (already unpacked from any
       // packed format by the non-reorder tangent export path above).
-      if (tangents4_cache_.count(mesh_id) && !tangents4_cache_[mesh_id].empty()) {
-        const float* t4 = tangents4_cache_[mesh_id].data();
-        size_t tangentVertCount = tangents4_cache_[mesh_id].size() / 4;
-        std::vector<float> reorderedTangents(numNewTriangles * 3 * 4);
-        for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
-          int oldTriIdx = reorderMap[newTriIdx];
-          for (int v = 0; v < 3; v++) {
-            size_t oldFV = size_t(oldTriIdx) * 3 + size_t(v);
-            size_t newV = newTriIdx * 3 + size_t(v);
-            uint32_t vi = singleIndexable
-                ? (oldFV < fvIndices.size() ? fvIndices[oldFV] : 0)
-                : uint32_t(oldFV);
-            if (vi < tangentVertCount) {
-              reorderedTangents[newV*4+0] = t4[vi*4+0];
-              reorderedTangents[newV*4+1] = t4[vi*4+1];
-              reorderedTangents[newV*4+2] = t4[vi*4+2];
-              reorderedTangents[newV*4+3] = t4[vi*4+3];
-            } else {
-              reorderedTangents[newV*4+3] = 1.0f;  // default w=1
-            }
-          }
-        }
-        auto& cache = reordered_mesh_cache_[mesh_id];
-        cache.tangents = std::move(reorderedTangents);
-        mesh.set("tangents",
-                 typedArray_(cache.tangents.size(), cache.tangents.data(),
-                             copy_arrays));
+      if (const auto *tangents = reorderMeshTangents_(mesh_id, rmesh, reorderMap)) {
+        mesh.set(8, 0, 0, tangents->data(), tangents->size(), 4);
       }
 
       // Reorder vertex skinning data. Joint indices/weights are authored per
@@ -5773,12 +5871,8 @@ class LightUSDLoaderNative {
             }
           }
 
-          mesh.set("jointIndices",
-                   typedArray_(cache.jointIndices.size(),
-                               cache.jointIndices.data(), copy_arrays));
-          mesh.set("jointWeights",
-                   typedArray_(cache.jointWeights.size(),
-                               cache.jointWeights.data(), copy_arrays));
+          mesh.set(12, 0, 6, cache.jointIndices.data(), cache.jointIndices.size(), 1);
+          mesh.set(13, 0, 0, cache.jointWeights.data(), cache.jointWeights.size(), 1);
         }
       }
 
@@ -5790,18 +5884,134 @@ class LightUSDLoaderNative {
       }
       auto& cache = reordered_mesh_cache_[mesh_id];
       cache.faceVertexIndices = std::move(newIndices);
-      mesh.set("faceVertexIndicesLength",
-               static_cast<double>(cache.faceVertexIndices.size()));
-      mesh.set("faceVertexIndices",
-               typedArray_(cache.faceVertexIndices.size(),
-                           cache.faceVertexIndices.data(), copy_arrays));
+
+      mesh.set(1, 0, 1, cache.faceVertexIndices.data(), cache.faceVertexIndices.size(), 1);
     }
 
+    return true;
+  }
+
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+  emscripten::val buildMeshVal_(int mesh_id, bool copy_arrays = false) const {
+    MeshPointerData data;
+    auto mesh = emscripten::val::object();
+    if (!meshValueData_(mesh_id, data)) return mesh;
+    const auto &info = data.value_info;
+    mesh.set("primName", data.strings[0]); mesh.set("displayName", data.strings[1]); mesh.set("absPath", data.strings[2]);
+    mesh.set("materialId", info.material_id); mesh.set("elementSize", info.element_size);
+    mesh.set("doubleSided", bool(info.flags & 1u)); mesh.set("isAreaLight", bool(info.flags & 2u));
+    mesh.set("hasGeomBindTransform", bool(info.flags & 8u));
+    if (info.skeleton_id >= 0) mesh.set("skel_id", info.skeleton_id);
+    if (info.flags & 16u) {
+      auto color = emscripten::val::array();
+      for (size_t i = 0; i < 3; ++i) color.set(i, info.display_color[i]);
+      mesh.set("displayColor", color);
+    }
+    if (info.flags & 2u) {
+      mesh.set("lightIntensity", info.light_intensity); mesh.set("lightExposure", info.light_exposure);
+      mesh.set("lightNormalize", bool(info.flags & 4u)); mesh.set("lightMaterialSyncMode", data.strings[3]);
+    }
+    auto uvs = emscripten::val::object();
+    const char *names[] = {"points", "faceVertexIndices", "faceVertexCounts", "normals", "",
+        "vertexColors", "colors", "colorOpacities", "tangents", "texcoords", "tangentsPacked",
+        "lightColor", "jointIndices", "jointWeights", "geomBindTransform"};
+    for (const auto &attribute : data.attributes) {
+      const void *address = reinterpret_cast<const void *>(static_cast<uintptr_t>(attribute.address));
+      const size_t count = size_t(attribute.count);
+      auto array = emscripten::val::undefined();
+      switch (attribute.dtype) {
+        case 0: array = typedArray_(count, static_cast<const float *>(address), copy_arrays); break;
+        case 1: array = typedArray_(count, static_cast<const uint32_t *>(address), copy_arrays); break;
+        case 2: array = typedArray_(count, static_cast<const int8_t *>(address), copy_arrays); break;
+        case 3: array = typedArray_(count, static_cast<const int16_t *>(address), copy_arrays); break;
+        case 6: array = typedArray_(count, static_cast<const int32_t *>(address), copy_arrays); break;
+        case 7: array = typedArray_(count, static_cast<const double *>(address), copy_arrays); break;
+        default: break;
+      }
+      if (attribute.key == 4) {
+        auto uv = emscripten::val::object();
+        uv.set("data", array); uv.set("vertexCount", static_cast<double>(count / 2));
+        uv.set("slotId", static_cast<int32_t>(attribute.slot));
+        uvs.set("uv" + std::to_string(attribute.slot), uv);
+      } else {
+        mesh.set(names[attribute.key], array);
+      }
+      if (attribute.key <= 2) mesh.set(std::string(names[attribute.key]) + "Length", static_cast<double>(count));
+      if (attribute.key == 3) mesh.set("normalsFormat", std::string(attribute.dtype == 2 ? "snorm8" : attribute.dtype == 3 ? "snorm16" : "float32"));
+      if (attribute.key == 6 || attribute.key == 7) mesh.set(std::string(names[attribute.key]) + "Format", std::string("float32"));
+      if (attribute.key == 10) mesh.set("tangentsPackedFormat", std::string("INT_2_10_10_10_REV"));
+    }
+    mesh.set("uvSets", uvs);
+    if (info.flags & 32u) {
+      auto groups = emscripten::val::array();
+      for (const auto &group : data.submeshes) {
+        auto item = emscripten::val::object();
+        item.set("start", group.start); item.set("count", group.count); item.set("materialId", group.material_id);
+        groups.call<void>("push", item);
+      }
+      mesh.set("submeshes", groups);
+    }
     return mesh;
   }
+#endif
 
   int getDefaultRootNodeId() { return render_scene_.default_root_node; }
 
+#if defined(LIGHTUSD_WASM_WITH_NEXT)
+  struct NodeCursor {
+    struct Frame {
+      const lightusd::tydra::Node *node;
+      size_t next_child{0};
+    };
+    std::vector<Frame> ancestors;
+    bool first{true};
+
+    int32_t next(lightusd_combined_node_info *out) {
+      if (!out || out->struct_size < sizeof(*out)) return -1;
+      *out = {}; out->struct_size = sizeof(*out);
+      if (!first) {
+        while (!ancestors.empty()) {
+          auto &frame = ancestors.back();
+          if (frame.next_child < frame.node->children.size()) {
+            const auto *child = &frame.node->children[frame.next_child++];
+            ancestors.push_back({child, 0});
+            break;
+          }
+          ancestors.pop_back();
+        }
+      }
+      first = false;
+      if (ancestors.empty()) return 0;
+      const auto &node = *ancestors.back().node;
+      out->flags = (node.has_resetXform ? 1u : 0u) | (node.is_instance ? 2u : 0u);
+      out->content_id = node.id;
+      out->prototype_index = node.prototype_index;
+      out->instance_id = node.instance_id;
+      out->child_count = node.children.size();
+      for (size_t r = 0; r < 4; ++r) {
+        for (size_t c = 0; c < 4; ++c) {
+          out->local_matrix[r * 4 + c] = node.local_matrix.m[r][c];
+          out->global_matrix[r * 4 + c] = node.global_matrix.m[r][c];
+        }
+      }
+      lightusd::web::combined::StoreStringTable({node.prim_name,
+          node.display_name, node.abs_path, to_string(node.category),
+          to_string(node.nodeType)}, {});
+      return 1;
+    }
+  };
+
+  int32_t beginNodeCursor(int32_t root_id, bool use_default, void **out) {
+    *out = nullptr;
+    const int32_t id = use_default ? render_scene_.default_root_node : root_id;
+    if (id < 0 || size_t(id) >= render_scene_.nodes.size()) return 0;
+    auto *cursor = new (std::nothrow) NodeCursor();
+    if (!cursor) return -2;
+    cursor->ancestors.push_back({&render_scene_.nodes[size_t(id)], 0});
+    *out = cursor;
+    return 1;
+  }
+#else
   emscripten::val getDefaultRootNode() {
     return getRootNode(getDefaultRootNodeId());
   }
@@ -5817,6 +6027,8 @@ class LightUSDLoaderNative {
     return val;
   }
 
+#endif
+
   int numRootNodes() { return render_scene_.nodes.size(); }
 
   // Get the upAxis from the RenderScene metadata
@@ -5828,6 +6040,7 @@ class LightUSDLoaderNative {
   }
 
   // Get the complete scene metadata as a JavaScript object
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getSceneMetadata() const {
     emscripten::val metadata = emscripten::val::object();
 
@@ -5870,8 +6083,95 @@ class LightUSDLoaderNative {
   }
 
   // Animation data access methods
+#endif
   int numAnimations() const { return render_scene_.animations.size(); }
 
+#if defined(LIGHTUSD_WASM_WITH_NEXT)
+  int32_t animationInfoC(int32_t id, lightusd_combined_animation_info *out) const {
+    if (!out || out->struct_size < sizeof(*out)) return -1;
+    *out = {}; out->struct_size = sizeof(*out);
+    if (!loaded_ || id < 0 || size_t(id) >= render_scene_.animations.size()) return 0;
+    const auto &clip = render_scene_.animations[size_t(id)];
+    if (clip.channels.size() > size_t(INT32_MAX) || clip.samplers.size() > size_t(INT32_MAX) ||
+        clip.clip_asset_paths.size() > size_t(INT32_MAX)) return -1;
+    out->flags = (clip.has_value_clip ? 1u : 0u) | (clip.value_clip_baked ? 2u : 0u);
+    out->channel_count = static_cast<uint32_t>(clip.channels.size());
+    out->sampler_count = static_cast<uint32_t>(clip.samplers.size());
+    std::set<int32_t> targets;
+    for (const auto &channel : clip.channels) if (channel.target_node >= 0) targets.insert(channel.target_node);
+    out->target_node_count = static_cast<uint32_t>(targets.size());
+    out->animated_joints = clip.num_animated_joints;
+    out->animated_nodes = clip.num_animated_nodes;
+    out->asset_count = static_cast<uint32_t>(clip.clip_asset_paths.size());
+    out->duration = clip.duration;
+    out->clip_start = clip.value_clip_start_time;
+    out->clip_end = clip.value_clip_end_time;
+    out->clip_sample_rate = clip.value_clip_sample_rate;
+    std::string source = "Unknown";
+    switch (clip.source_type) {
+      case lightusd::tydra::AnimationSourceType::XformOp: source = "XformOp"; break;
+      case lightusd::tydra::AnimationSourceType::SkelAnimation: source = "SkelAnimation"; break;
+      case lightusd::tydra::AnimationSourceType::BlendShape: source = "BlendShape"; break;
+      default: break;
+    }
+    std::vector<std::string> strings = {clip.name.empty() ? "Animation" + std::to_string(id) : clip.name,
+        clip.prim_name, clip.abs_path, clip.display_name, source};
+    strings.insert(strings.end(), clip.clip_asset_paths.begin(), clip.clip_asset_paths.end());
+    lightusd::web::combined::StoreStringTable(std::move(strings), {});
+    return 1;
+  }
+
+  int32_t animationSamplerC(int32_t id, int32_t index, lightusd_combined_sampler_info *out) const {
+    if (!out || out->struct_size < sizeof(*out)) return -1;
+    *out = {}; out->struct_size = sizeof(*out);
+    if (!loaded_ || id < 0 || size_t(id) >= render_scene_.animations.size() || index < 0) return 0;
+    const auto &clip = render_scene_.animations[size_t(id)];
+    if (size_t(index) >= clip.samplers.size()) return 0;
+    const auto &sampler = clip.samplers[size_t(index)];
+    switch (sampler.interpolation) {
+      case lightusd::tydra::AnimationInterpolation::Step: out->interpolation = 1; break;
+      case lightusd::tydra::AnimationInterpolation::CubicSpline: out->interpolation = 2; break;
+      default: break;
+    }
+    out->times = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(sampler.times.data()));
+    out->time_count = sampler.times.size();
+    out->values = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(sampler.values.data()));
+    out->value_count = sampler.values.size();
+    return 1;
+  }
+
+  int32_t animationChannelC(int32_t id, int32_t index, lightusd_combined_channel_info *out) const {
+    if (!out || out->struct_size < sizeof(*out)) return -1;
+    *out = {}; out->struct_size = sizeof(*out);
+    if (!loaded_ || id < 0 || size_t(id) >= render_scene_.animations.size() || index < 0) return 0;
+    const auto &clip = render_scene_.animations[size_t(id)];
+    if (size_t(index) >= clip.channels.size()) return 0;
+    const auto &ch = clip.channels[size_t(index)];
+    out->flags = (ch.is_valid() ? 1u : 0u) | (ch.is_custom_property ? 4u : 0u) |
+        (ch.target_type == lightusd::tydra::ChannelTargetType::SkeletonJoint ? 8u : 0u);
+    out->sampler = ch.sampler; out->target_node = ch.target_node;
+    out->skeleton_id = ch.skeleton_id; out->joint_id = ch.joint_id;
+    switch (ch.path) {
+      case lightusd::tydra::AnimationPath::Translation: out->path = 0; break;
+      case lightusd::tydra::AnimationPath::Rotation: out->path = 1; break;
+      case lightusd::tydra::AnimationPath::Scale: out->path = 2; break;
+      case lightusd::tydra::AnimationPath::Weights: out->path = 3; break;
+      case lightusd::tydra::AnimationPath::CustomProperty: out->path = 4; break;
+      default: out->path = 5; break;
+    }
+    std::string node_name, track_base;
+    if (ch.target_node >= 0 && size_t(ch.target_node) < render_scene_.nodes.size()) {
+      const auto &node = render_scene_.nodes[size_t(ch.target_node)];
+      out->flags |= 2u;
+      node_name = node.prim_name;
+      track_base = node.abs_path.empty() ? node.prim_name : node.abs_path;
+    }
+    lightusd::web::combined::StoreStringTable({ch.property_name, node_name, track_base}, {});
+    return 1;
+  }
+
+  int32_t animationsCountC() const { return loaded_ ? numAnimations() : 0; }
+#else
   // Get a single animation clip as Three.js friendly JSON
   emscripten::val getAnimation(int anim_id) const {
     emscripten::val anim = emscripten::val::object();
@@ -6136,7 +6436,7 @@ class LightUSDLoaderNative {
   emscripten::val getAnimationInfo(int anim_id) const {
     emscripten::val info = emscripten::val::object();
 
-    if (!loaded_ || anim_id >= static_cast<int>(render_scene_.animations.size())) {
+    if (!loaded_ || anim_id < 0 || anim_id >= static_cast<int>(render_scene_.animations.size())) {
       return info;
     }
 
@@ -6200,6 +6500,8 @@ class LightUSDLoaderNative {
     return infos;
   }
 
+#endif
+
   // ========================================================================
   // Skeleton hierarchy methods
   // ========================================================================
@@ -6209,6 +6511,63 @@ class LightUSDLoaderNative {
     return static_cast<int>(render_scene_.skeletons.size());
   }
 
+#if defined(LIGHTUSD_WASM_WITH_NEXT)
+  struct SkeletonCursor {
+    struct Frame {
+      const lightusd::tydra::SkelNode *node;
+      size_t next_child{0};
+    };
+    std::vector<Frame> ancestors;
+    bool first{true};
+
+    int32_t next(lightusd_combined_joint_info *out) {
+      if (!out || out->struct_size < sizeof(*out)) return -1;
+      *out = {}; out->struct_size = sizeof(*out);
+      if (!first) {
+        while (!ancestors.empty()) {
+          auto &frame = ancestors.back();
+          if (frame.next_child < frame.node->children.size()) {
+            const auto *child = &frame.node->children[frame.next_child++];
+            ancestors.push_back({child, 0});
+            break;
+          }
+          ancestors.pop_back();
+        }
+      }
+      first = false;
+      if (ancestors.empty()) return 0;
+      const auto &node = *ancestors.back().node;
+      out->joint_id = node.joint_id;
+      out->child_count = node.children.size();
+      for (size_t r = 0; r < 4; ++r) {
+        for (size_t c = 0; c < 4; ++c) {
+          out->bind_transform[r * 4 + c] = node.bind_transform.m[r][c];
+          out->rest_transform[r * 4 + c] = node.rest_transform.m[r][c];
+        }
+      }
+      lightusd::web::combined::StoreStringTable({node.joint_path, node.joint_name}, {});
+      return 1;
+    }
+  };
+
+  int32_t beginSkeletonC(int32_t id, lightusd_combined_skeleton_info *out) const {
+    if (!out || out->struct_size < sizeof(*out)) return -1;
+    *out = {}; out->struct_size = sizeof(*out);
+    if (!loaded_ || id < 0 || size_t(id) >= render_scene_.skeletons.size()) {
+      lightusd::web::combined::StoreStringTable(
+          {loaded_ ? "Invalid skeleton ID" : "Scene not loaded"}, {});
+      return 0;
+    }
+    const auto &skel = render_scene_.skeletons[size_t(id)];
+    auto *cursor = new (std::nothrow) SkeletonCursor();
+    if (!cursor) return -2;
+    cursor->ancestors.push_back({&skel.root_node, 0});
+    out->anim_id = skel.anim_id;
+    out->cursor = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(cursor));
+    lightusd::web::combined::StoreStringTable({skel.prim_name, skel.abs_path, skel.display_name}, {});
+    return 1;
+  }
+#else
   // Convert SkelNode to JS object recursively
   emscripten::val skelNodeToJS(const lightusd::tydra::SkelNode& node) const {
     emscripten::val obj = emscripten::val::object();
@@ -6375,6 +6734,8 @@ class LightUSDLoaderNative {
 
     return result;
   }
+
+#endif
 
   void setEnableComposition(bool enabled) { enableComposition_ = enabled; }
   void setLoadTextureInNative(bool onoff) {
@@ -6572,6 +6933,7 @@ class LightUSDLoaderNative {
     return ok;
   }
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getAssetSearchPaths() const {
     emscripten::val arr = emscripten::val::array();
     for (size_t i = 0; i < search_paths_.size(); i++) {
@@ -6579,6 +6941,7 @@ class LightUSDLoaderNative {
     }
     return arr;
   }
+#endif
 
   void setBaseWorkingPath(const std::string &path) {
     base_dir_ = path;
@@ -6601,41 +6964,36 @@ class LightUSDLoaderNative {
     return filename_;
   }
 
-  emscripten::val extractSublayerAssetPaths() {
-    emscripten::val arr = emscripten::val::array();
-
+  std::vector<std::string> layerAssetPaths(uint32_t kind) const {
     const lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
-    std::vector<std::string> paths = lightusd::ExtractSublayerAssetPaths(curr);
-    for (size_t i = 0; i < paths.size(); i++) {
-     arr.call<void>("push", paths[i]);
+    if (kind == LIGHTUSD_COMBINED_SUBLAYER_ASSET_PATHS) {
+      return lightusd::ExtractSublayerAssetPaths(curr);
     }
+    if (kind == LIGHTUSD_COMBINED_REFERENCE_ASSET_PATHS) {
+      return lightusd::ExtractReferencesAssetPaths(curr);
+    }
+    return lightusd::ExtractPayloadAssetPaths(curr);
+  }
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+  static emscripten::val toStringArray(const std::vector<std::string> &items) {
+    emscripten::val arr = emscripten::val::array();
+    for (const auto &item : items) arr.call<void>("push", item);
     return arr;
+  }
+
+  emscripten::val extractSublayerAssetPaths() {
+    return toStringArray(layerAssetPaths(LIGHTUSD_COMBINED_SUBLAYER_ASSET_PATHS));
   }
 
   emscripten::val extractReferencesAssetPaths() {
-    emscripten::val arr = emscripten::val::array();
-
-    const lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
-    std::vector<std::string> paths = lightusd::ExtractReferencesAssetPaths(curr);
-    for (size_t i = 0; i < paths.size(); i++) {
-     arr.call<void>("push", paths[i]);
-    }
-
-    return arr;
+    return toStringArray(layerAssetPaths(LIGHTUSD_COMBINED_REFERENCE_ASSET_PATHS));
   }
 
   emscripten::val extractPayloadAssetPaths() {
-    emscripten::val arr = emscripten::val::array();
-
-    const lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
-    std::vector<std::string> paths = lightusd::ExtractPayloadAssetPaths(curr);
-    for (size_t i = 0; i < paths.size(); i++) {
-     arr.call<void>("push", paths[i]);
-    }
-
-    return arr;
+    return toStringArray(layerAssetPaths(LIGHTUSD_COMBINED_PAYLOAD_ASSET_PATHS));
   }
+#endif
 
   bool hasSublayers() {
     const lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
@@ -6786,14 +7144,95 @@ class LightUSDLoaderNative {
     return lightusd::HasVariants(composited_ ? composed_layer_ : layer_ );
   }
 
-  emscripten::val extractVariants() {
-    emscripten::val arr = emscripten::val::array();
+  struct VariantSetInfo {
+    std::string name;
+    std::string selection;
+    std::vector<std::string> options;
+  };
+  struct VariantPrimInfo {
+    std::string prim_path;
+    std::vector<VariantSetInfo> sets;
+  };
+
+  std::vector<VariantPrimInfo> collectVariantInfo() const {
+    std::vector<VariantPrimInfo> prims;
     const lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
     for (const auto &root : curr.primspecs()) {
-      appendVariantInfoRec(arr, "", root.second);
+      collectVariantInfoRec("", root.second, &prims);
+    }
+    return prims;
+  }
+
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+  emscripten::val extractVariants() {
+    emscripten::val arr = emscripten::val::array();
+    for (const VariantPrimInfo &prim : collectVariantInfo()) {
+      emscripten::val prim_info = emscripten::val::object();
+      emscripten::val sets = emscripten::val::array();
+      prim_info.set("primPath", prim.prim_path);
+      for (const VariantSetInfo &set : prim.sets) {
+        emscripten::val set_info = emscripten::val::object();
+        set_info.set("name", set.name);
+        set_info.set("selection", set.selection);
+        set_info.set("options", toStringArray(set.options));
+        sets.call<void>("push", set_info);
+      }
+      prim_info.set("variantSets", sets);
+      arr.call<void>("push", prim_info);
     }
     return arr;
   }
+#endif
+
+#if defined(LIGHTUSD_WASM_WITH_NEXT)
+  int32_t layerOpC(uint32_t op) {
+    switch (op) {
+      case LIGHTUSD_COMBINED_HAS_SUBLAYERS: return hasSublayers();
+      case LIGHTUSD_COMBINED_HAS_REFERENCES: return hasReferences();
+      case LIGHTUSD_COMBINED_HAS_PAYLOAD: return hasPayload();
+      case LIGHTUSD_COMBINED_HAS_INHERITS: return hasInherits();
+      case LIGHTUSD_COMBINED_HAS_VARIANTS: return hasVariants();
+      case LIGHTUSD_COMBINED_COMPOSE_SUBLAYERS: return composeSublayers();
+      case LIGHTUSD_COMBINED_COMPOSE_REFERENCES: return composeReferences();
+      case LIGHTUSD_COMBINED_COMPOSE_PAYLOAD: return composePayload();
+      case LIGHTUSD_COMBINED_COMPOSE_INHERITS: return composeInherits();
+      case LIGHTUSD_COMBINED_COMPOSE_VARIANTS: return composeVariants();
+      case LIGHTUSD_COMBINED_LOD_VARIANT_COUNT: return lodVariantCount();
+      default: return -1;
+    }
+  }
+
+  int32_t layerStringsC(uint32_t kind, uint32_t *shape_size_out) {
+    if (!shape_size_out || kind > LIGHTUSD_COMBINED_VARIANT_INFO) return -1;
+    std::vector<std::string> strings;
+    std::vector<uint32_t> shape;
+    if (kind == LIGHTUSD_COMBINED_VARIANT_INFO) {
+      for (VariantPrimInfo &prim : collectVariantInfo()) {
+        strings.push_back(std::move(prim.prim_path));
+        shape.push_back(static_cast<uint32_t>(prim.sets.size()));
+        for (VariantSetInfo &set : prim.sets) {
+          strings.push_back(std::move(set.name));
+          strings.push_back(std::move(set.selection));
+          shape.push_back(static_cast<uint32_t>(set.options.size()));
+          for (std::string &option : set.options) {
+            strings.push_back(std::move(option));
+          }
+        }
+      }
+    } else {
+      strings = layerAssetPaths(kind);
+    }
+    if (strings.size() > static_cast<size_t>(INT32_MAX) ||
+        shape.size() > static_cast<size_t>(UINT32_MAX)) {
+      return -1;
+    }
+    const int32_t count = static_cast<int32_t>(strings.size());
+    *shape_size_out = static_cast<uint32_t>(shape.size());
+    lightusd::web::combined::StoreStringTable(std::move(strings),
+                                              std::move(shape));
+    return count;
+  }
+#endif  // LIGHTUSD_WASM_WITH_NEXT
 
   bool applyVariantSelection(const std::string &prim_path,
                              const std::string &variant_set_name,
@@ -7029,6 +7468,7 @@ class LightUSDLoaderNative {
 
     // Clear reordered mesh cache
     reordered_mesh_cache_.clear();
+    tangents4_cache_.clear();
     normals_cache_.clear();
     vertex_colors_cache_.clear();
 
@@ -7045,6 +7485,109 @@ class LightUSDLoaderNative {
     image_export_buf_.clear();
   }
 
+#if defined(LIGHTUSD_WASM_WITH_NEXT)
+  static bool configInt32(double value, int32_t *out) {
+    if (!(value >= -2147483648.0 && value <= 2147483647.0) ||
+        value != std::trunc(value)) {
+      return false;
+    }
+    *out = static_cast<int32_t>(value);
+    return true;
+  }
+
+  int32_t configSetC(uint32_t key, double a, double b) {
+    const bool flag = a != 0.0;
+    int32_t i = 0;
+    switch (key) {
+      case LIGHTUSD_COMBINED_CONFIG_COMBINE_UDIM_TILES: setCombineUDIMTiles(flag); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_DEFER_TANGENT_COMPUTATION: setDeferTangentComputation(flag); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_ENABLE_BONE_REDUCTION: setEnableBoneReduction(flag); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_ENABLE_VALUE_CLIPS: setEnableValueClips(flag); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_ROUND_BONE_COUNT: setRoundBoneCount(flag); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_VALUE_CLIP_USE_TIME_RANGE: setValueClipUseTimeRange(flag); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_ENABLE_COMPOSITION: setEnableComposition(flag); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_LOAD_TEXTURE_IN_NATIVE: setLoadTextureInNative(flag); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_NATIVE_FLATTEN_RENDER_TREE: setNativeFlattenRenderTree(flag); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_NATIVE_MATERIAL_DEDUP: setNativeMaterialDedup(flag); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_NATIVE_MESH_MERGE: setNativeMeshMerge(flag); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_NATIVE_MESH_MERGE_BAKE_TRANSFORM: setNativeMeshMergeBakeTransform(flag); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_MAX_MEMORY_LIMIT_MB:
+        if (!configInt32(a, &i)) return -1;
+        setMaxMemoryLimitMB(i);
+        return 0;
+      case LIGHTUSD_COMBINED_CONFIG_SPHERE_SUBDIVISIONS:
+        if (!configInt32(a, &i)) return -1;
+        setSphereSubdivisions(i);
+        return 0;
+      case LIGHTUSD_COMBINED_CONFIG_TARGET_BONE_COUNT:
+        if (!(a >= 0.0 && a <= 4294967295.0) || a != std::trunc(a)) return -1;
+        setTargetBoneCount(static_cast<uint32_t>(a));
+        return 0;
+      case LIGHTUSD_COMBINED_CONFIG_VALUE_CLIP_SAMPLE_RATE:
+        setValueClipSampleRate(static_cast<float>(a));
+        return 0;
+      case LIGHTUSD_COMBINED_CONFIG_VALUE_CLIP_TIME_RANGE:
+        setValueClipTimeRange(a, b);
+        return 0;
+      case LIGHTUSD_COMBINED_CONFIG_USDC_EXPORT_LIMIT_MB: {
+        int32_t memory_mb = 0;
+        if (!configInt32(a, &i) || !configInt32(b, &memory_mb)) return -1;
+        setUSDCExportLimitMB(i, memory_mb);
+        return 0;
+      }
+      default:
+        return -1;
+    }
+  }
+
+  int32_t configGetC(uint32_t key, double *out) const {
+    if (!out) return -1;
+    switch (key) {
+      case LIGHTUSD_COMBINED_CONFIG_COMBINE_UDIM_TILES: *out = getCombineUDIMTiles(); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_DEFER_TANGENT_COMPUTATION: *out = getDeferTangentComputation(); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_ENABLE_BONE_REDUCTION: *out = getEnableBoneReduction(); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_ENABLE_VALUE_CLIPS: *out = getEnableValueClips(); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_MAX_MEMORY_LIMIT_MB: *out = getMaxMemoryLimitMB(); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_ROUND_BONE_COUNT: *out = getRoundBoneCount(); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_SPHERE_SUBDIVISIONS: *out = getSphereSubdivisions(); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_TARGET_BONE_COUNT: *out = getTargetBoneCount(); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_VALUE_CLIP_SAMPLE_RATE: *out = getValueClipSampleRate(); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_VALUE_CLIP_USE_TIME_RANGE: *out = getValueClipUseTimeRange(); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_VALUE_CLIP_START_TIME: *out = getValueClipStartTime(); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_VALUE_CLIP_END_TIME: *out = getValueClipEndTime(); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_NATIVE_FLATTEN_RENDER_TREE: *out = getNativeFlattenRenderTree(); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_NATIVE_MATERIAL_DEDUP: *out = getNativeMaterialDedup(); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_NATIVE_MESH_MERGE: *out = getNativeMeshMerge(); return 0;
+      case LIGHTUSD_COMBINED_CONFIG_NATIVE_MESH_MERGE_BAKE_TRANSFORM: *out = getNativeMeshMergeBakeTransform(); return 0;
+      default: return -1;
+    }
+  }
+
+  int32_t memoryStatsC(lightusd_combined_memory_stats *out) const {
+    if (!out || out->struct_size < sizeof(*out)) return -1;
+    const uint32_t struct_size = out->struct_size;
+    *out = {};
+    out->struct_size = struct_size;
+    size_t buffer_memory = 0;
+    for (const auto &buf : render_scene_.buffers) buffer_memory += buf.data.size();
+    out->num_meshes = static_cast<double>(render_scene_.meshes.size());
+    out->num_materials = static_cast<double>(render_scene_.materials.size());
+    out->num_textures = static_cast<double>(render_scene_.textures.size());
+    out->num_images = static_cast<double>(render_scene_.images.size());
+    out->num_buffers = static_cast<double>(render_scene_.buffers.size());
+    out->num_nodes = static_cast<double>(render_scene_.nodes.size());
+    out->num_lights = static_cast<double>(render_scene_.lights.size());
+    out->buffer_memory_bytes = static_cast<double>(buffer_memory);
+    out->asset_cache_count = static_cast<double>(em_resolver_.cache.size());
+    out->asset_cache_size_bytes =
+        static_cast<double>(em_resolver_.getCacheSizeBytes());
+    out->asset_cache_max_bytes =
+        static_cast<double>(em_resolver_.getMaxCacheSizeBytes());
+    out->reordered_mesh_cache_count =
+        static_cast<double>(reordered_mesh_cache_.size());
+    return 0;
+  }
+#else
   /// Get memory usage statistics
   emscripten::val getMemoryStats() const {
     emscripten::val stats = emscripten::val::object();
@@ -7076,6 +7619,7 @@ class LightUSDLoaderNative {
 
     return stats;
   }
+#endif  // LIGHTUSD_WASM_WITH_NEXT
 
   void setAsset(const std::string &name, const std::string &binary) {
     em_resolver_.add(name, binary);
@@ -7098,9 +7642,11 @@ class LightUSDLoaderNative {
     return em_resolver_.isStreamingAssetComplete(name);
   }
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getStreamingProgress(const std::string &name) const {
     return em_resolver_.getStreamingProgress(name);
   }
+#endif
 
   //
   // Zero-copy streaming buffer methods for memory-efficient transfer
@@ -7108,10 +7654,12 @@ class LightUSDLoaderNative {
 
   /// Allocate a zero-copy buffer for streaming transfer from JS
   /// Returns object with {success, uuid, bufferPtr, totalSize} or {success: false, error}
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val allocateZeroCopyBuffer(const std::string &name, size_t size,
                                          size_t max_bytes) {
     return em_resolver_.allocateZeroCopyBuffer(name, size, max_bytes);
   }
+#endif
 
   /// Get the buffer pointer for direct memory writes
   double getZeroCopyBufferPtr(const std::string &name) {
@@ -7129,9 +7677,11 @@ class LightUSDLoaderNative {
   }
 
   /// Get zero-copy buffer progress
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getZeroCopyProgress(const std::string &name) const {
     return em_resolver_.getZeroCopyProgress(name);
   }
+#endif
 
   /// Finalize the zero-copy buffer and move to asset cache
   bool finalizeZeroCopyBuffer(const std::string &name) {
@@ -7144,9 +7694,124 @@ class LightUSDLoaderNative {
   }
 
   /// Get all active zero-copy buffers
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getActiveZeroCopyBuffers() const {
     return em_resolver_.getActiveZeroCopyBuffers();
   }
+#endif
+
+#if defined(LIGHTUSD_WASM_WITH_NEXT)
+  static double streamSizeMaxC() {
+    return sizeof(size_t) == 4 ? 4294967295.0 : 9007199254740991.0;
+  }
+
+  static bool validStreamSizeC(double value) {
+    return std::isfinite(value) && value >= 0 && value <= streamSizeMaxC() &&
+           std::floor(value) == value;
+  }
+
+  double streamOpC(uint32_t op, const std::string &key,
+                   const std::string &data, double value) {
+    switch (op) {
+      case LIGHTUSD_COMBINED_STREAM_START:
+        if (!validStreamSizeC(value)) return -1;
+        return startStreamingAsset(key, static_cast<size_t>(value));
+      case LIGHTUSD_COMBINED_STREAM_APPEND: return appendAssetChunk(key, data);
+      case LIGHTUSD_COMBINED_STREAM_FINALIZE: return finalizeStreamingAsset(key);
+      case LIGHTUSD_COMBINED_STREAM_COMPLETE: return isStreamingAssetComplete(key);
+      case LIGHTUSD_COMBINED_ZERO_PTR: return getZeroCopyBufferPtr(key);
+      case LIGHTUSD_COMBINED_ZERO_PTR_OFFSET:
+        if (!validStreamSizeC(value)) return -1;
+        return getZeroCopyBufferPtrAtOffset(key, static_cast<size_t>(value));
+      case LIGHTUSD_COMBINED_ZERO_MARK:
+        if (!validStreamSizeC(value)) return -1;
+        return markZeroCopyBytesWritten(key, static_cast<size_t>(value));
+      case LIGHTUSD_COMBINED_ZERO_FINALIZE: return finalizeZeroCopyBuffer(key);
+      case LIGHTUSD_COMBINED_ZERO_CANCEL: return cancelZeroCopyBuffer(key);
+      case LIGHTUSD_COMBINED_MMAP_SET: setMMapZeroCopy(value != 0); return 0;
+      case LIGHTUSD_COMBINED_MMAP_GET: return getMMapZeroCopy();
+      case LIGHTUSD_COMBINED_ZERO_KEYS: {
+        if (em_resolver_.zerocopy_buffers.size() > size_t(INT32_MAX)) return -1;
+        std::vector<std::string> keys;
+        keys.reserve(em_resolver_.zerocopy_buffers.size());
+        for (const auto &entry : em_resolver_.zerocopy_buffers)
+          keys.push_back(entry.first);
+        const double count = double(keys.size());
+        lightusd::web::combined::StoreStringTable(std::move(keys), {});
+        return count;
+      }
+      case LIGHTUSD_COMBINED_STREAM_SIZE_MAX: return streamSizeMaxC();
+      default: return -1;
+    }
+  }
+
+  double streamSizeOpC(uint32_t op, const std::string &key, uint64_t value) {
+    if (value > uint64_t((std::numeric_limits<size_t>::max)())) return -1;
+    const size_t size = static_cast<size_t>(value);
+    switch (op) {
+      case LIGHTUSD_COMBINED_STREAM_START: return startStreamingAsset(key, size);
+      case LIGHTUSD_COMBINED_ZERO_PTR_OFFSET: return getZeroCopyBufferPtrAtOffset(key, size);
+      case LIGHTUSD_COMBINED_ZERO_MARK: return markZeroCopyBytesWritten(key, size);
+      default: return -1;
+    }
+  }
+
+  int32_t streamAllocateC(const std::string &key, uint64_t size,
+                          uint64_t max_bytes, lightusd_combined_stream_info *out) {
+    if (size > uint64_t((std::numeric_limits<size_t>::max)()) ||
+        max_bytes > uint64_t((std::numeric_limits<size_t>::max)())) return -1;
+    return streamInfoSizedC(2, key, static_cast<size_t>(size),
+                            static_cast<size_t>(max_bytes), out);
+  }
+
+  int32_t streamInfoC(uint32_t kind, const std::string &key, double size,
+                      double max_bytes, lightusd_combined_stream_info *out) {
+    if (kind == 2 && (!validStreamSizeC(size) || !validStreamSizeC(max_bytes)))
+      return -1;
+    return streamInfoSizedC(kind, key, kind == 2 ? static_cast<size_t>(size) : 0,
+                            kind == 2 ? static_cast<size_t>(max_bytes) : 0, out);
+  }
+
+  int32_t streamInfoSizedC(uint32_t kind, const std::string &key, size_t size,
+                           size_t max_bytes, lightusd_combined_stream_info *out) {
+    if (!out || out->struct_size < sizeof(*out) || kind > 2) return -1;
+    *out = {};
+    out->struct_size = sizeof(*out);
+    lightusd::web::combined::StoreStringTable({}, {});
+    if (kind == 0) {
+      auto it = em_resolver_.streaming_cache.find(key);
+      if (it == em_resolver_.streaming_cache.end()) return 0;
+      const StreamingAssetEntry &entry = it->second;
+      out->flags = entry.isComplete() ? 1u : 0u;
+      out->total = double(entry.expected_size);
+      out->current = double(entry.current_size);
+      out->progress = entry.expected_size
+                          ? out->current / out->total * 100.0 : 0.0;
+      lightusd::web::combined::StoreStringTable({entry.uuid, key}, {});
+      return 1;
+    }
+    std::string uuid = key;
+    if (kind == 2) {
+      std::string error;
+      if (!em_resolver_.allocateZeroCopyBufferData(
+              key, static_cast<size_t>(size), static_cast<size_t>(max_bytes),
+              &uuid, &error)) {
+        lightusd::web::combined::StoreStringTable({std::move(error)}, {});
+        return 0;
+      }
+    }
+    auto it = em_resolver_.zerocopy_buffers.find(uuid);
+    if (it == em_resolver_.zerocopy_buffers.end()) return 0;
+    const ZeroCopyStreamingBuffer &entry = it->second;
+    out->flags = (entry.isComplete() ? 1u : 0u) | (entry.finalized ? 2u : 0u);
+    out->total = double(entry.total_size);
+    out->current = double(entry.bytes_written);
+    out->progress = double(entry.getProgress());
+    out->buffer_ptr = double(entry.getBufferPtr());
+    lightusd::web::combined::StoreStringTable({entry.uuid, entry.asset_name}, {});
+    return 1;
+  }
+#endif
 
   bool hasAsset(const std::string &name) const {
     return em_resolver_.has(name);
@@ -7166,6 +7831,7 @@ class LightUSDLoaderNative {
   // (use-after-free in JS) if the asset is later evicted or deleted. Callers
   // that want a zero-copy view and that manage lifetime themselves can use
   // getAssetCacheDataAsMemoryView().
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getAsset(const std::string &name) const {
     emscripten::val val = emscripten::val::object();
     if (em_resolver_.has(name)) {
@@ -7180,6 +7846,7 @@ class LightUSDLoaderNative {
     }
     return val;
   }
+#endif
 
   std::string getAssetUUID(const std::string &name) const {
     return em_resolver_.getUUID(name);
@@ -7189,9 +7856,11 @@ class LightUSDLoaderNative {
     return em_resolver_.getStreamingUUID(name);
   }
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getAllAssetUUIDs() const {
     return em_resolver_.getAssetUUIDs();
   }
+#endif
 
   std::string findAssetByUUID(const std::string &uuid) const {
     return em_resolver_.findAssetByUUID(uuid);
@@ -7199,6 +7868,7 @@ class LightUSDLoaderNative {
 
   // Get asset by UUID instead of name. Like getAsset(), `data` is a JS-owned
   // *copy* to avoid a dangling view after eviction/deletion.
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getAssetByUUID(const std::string &uuid) const {
     emscripten::val val = emscripten::val::object();
 
@@ -7220,6 +7890,7 @@ class LightUSDLoaderNative {
 
     return val;
   }
+#endif
 
   // Delete asset by name or UUID
   bool deleteAsset(const std::string &nameOrUuid) {
@@ -7268,14 +7939,119 @@ class LightUSDLoaderNative {
   // Explicit zero-copy view into the cached bytes. See the warning on
   // EMAssetResolutionResolver::getCacheDataAsMemoryView(): the returned
   // Uint8Array dangles after the asset is evicted/deleted. Prefer getAsset().
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getAssetCacheDataAsMemoryView(const std::string &name) const {
     return em_resolver_.getCacheDataAsMemoryView(name);
   }
+#endif
 
   bool setAssetFromRawPointer(const std::string &name, uintptr_t dataPtr, size_t size) {
     return em_resolver_.addFromRawPointer(name, dataPtr, size);
   }
 
+#if defined(LIGHTUSD_WASM_WITH_NEXT)
+  double assetOpC(uint32_t op, const std::string &key,
+                  const std::string &data, double value) {
+    switch (op) {
+      case LIGHTUSD_COMBINED_ASSET_SET: setAsset(key, data); return 0;
+      case LIGHTUSD_COMBINED_ASSET_HAS: return hasAsset(key);
+      case LIGHTUSD_COMBINED_ASSET_DELETE: return deleteAsset(key);
+      case LIGHTUSD_COMBINED_ASSET_DELETE_UUID: return deleteAssetByUUID(key);
+      case LIGHTUSD_COMBINED_ASSET_DELETE_NAME: return deleteAssetByName(key);
+      case LIGHTUSD_COMBINED_ASSET_EXISTS: return assetExists(key);
+      case LIGHTUSD_COMBINED_ASSET_CLEAR: clearAssets(); return 0;
+      case LIGHTUSD_COMBINED_ASSET_PARENT_PATHS_SET:
+        setAllowParentRelativeAssetPaths(value != 0); return 0;
+      case LIGHTUSD_COMBINED_ASSET_PARENT_PATHS_GET:
+        return getAllowParentRelativeAssetPaths();
+      case LIGHTUSD_COMBINED_ASSET_BASE_PATH_SET: setBaseWorkingPath(key); return 0;
+      case LIGHTUSD_COMBINED_ASSET_SEARCH_PATHS_CLEAR: clearAssetSearchPaths(); return 0;
+      case LIGHTUSD_COMBINED_ASSET_SEARCH_PATH_ADD: addAssetSearchPath(key); return 0;
+      case LIGHTUSD_COMBINED_ASSET_VERIFY_HASH: return verifyAssetHash(key, data);
+      default: return -1;
+    }
+  }
+
+  int32_t assetSizeC(uint32_t op, uint64_t value, uint32_t *out) {
+    if (value > uint64_t((std::numeric_limits<size_t>::max)())) return -1;
+    uint64_t result = 0;
+    switch (op) {
+      case LIGHTUSD_COMBINED_ASSET_COUNT: result = getAssetCount(); break;
+      case LIGHTUSD_COMBINED_ASSET_CACHE_SIZE: result = getAssetCacheSizeBytes(); break;
+      case LIGHTUSD_COMBINED_ASSET_CACHE_LIMIT_GET: result = getAssetCacheMaxSizeBytes(); break;
+      case LIGHTUSD_COMBINED_ASSET_CACHE_LIMIT_SET:
+        setAssetCacheMaxSizeBytes(static_cast<size_t>(value)); return 0;
+      default: return -1;
+    }
+    if (!out) return -1;
+    out[0] = static_cast<uint32_t>(result);
+    out[1] = static_cast<uint32_t>(result >> 32);
+    return 0;
+  }
+
+  int32_t assetInfoC(uint32_t by_uuid, const std::string &key,
+                     lightusd_combined_asset_info *out) const {
+    if (!out || out->struct_size < sizeof(*out) || by_uuid > 1) return -1;
+    *out = {};
+    out->struct_size = sizeof(*out);
+    lightusd::web::combined::StoreStringTable({}, {});
+    if (by_uuid && !em_resolver_.hasByUUID(key)) {
+      lightusd::web::combined::StoreStringTable(
+          {"Asset not found with UUID: " + key}, {});
+      return 0;
+    }
+    const std::string name = by_uuid ? em_resolver_.findAssetByUUID(key) : key;
+    auto it = em_resolver_.cache.find(name);
+    if (it == em_resolver_.cache.end()) return 0;
+    const AssetCacheEntry &entry = it->second;
+    out->size = double(entry.binary.size());
+    out->data_ptr = double(reinterpret_cast<uintptr_t>(entry.binary.data()));
+    lightusd::web::combined::StoreStringTable(
+        {name, entry.sha256_hash, entry.uuid}, {});
+    return 1;
+  }
+
+  int32_t assetStringsC(uint32_t kind, const std::string &key) const {
+    std::vector<std::string> strings;
+    switch (kind) {
+      case LIGHTUSD_COMBINED_ASSET_HASH: strings.push_back(getAssetHash(key)); break;
+      case LIGHTUSD_COMBINED_ASSET_UUID: strings.push_back(getAssetUUID(key)); break;
+      case LIGHTUSD_COMBINED_ASSET_STREAM_UUID:
+        strings.push_back(getStreamingAssetUUID(key)); break;
+      case LIGHTUSD_COMBINED_ASSET_FIND_UUID: strings.push_back(findAssetByUUID(key)); break;
+      case LIGHTUSD_COMBINED_ASSET_BASE_PATH: strings.push_back(getBaseWorkingPath()); break;
+      case LIGHTUSD_COMBINED_ASSET_SEARCH_PATHS: strings = search_paths_; break;
+      case LIGHTUSD_COMBINED_ASSET_UUIDS:
+        if (em_resolver_.cache.size() > size_t(INT32_MAX / 2)) return -1;
+        strings.reserve(em_resolver_.cache.size() * 2);
+        for (const auto &entry : em_resolver_.cache) {
+          strings.push_back(entry.first);
+          strings.push_back(entry.second.uuid);
+        }
+        break;
+      default: return -1;
+    }
+    if (strings.size() > size_t(INT32_MAX)) return -1;
+    const int32_t count = static_cast<int32_t>(strings.size());
+    lightusd::web::combined::StoreStringTable(std::move(strings), {});
+    return count;
+  }
+#endif
+
+#if defined(LIGHTUSD_WASM_WITH_NEXT)
+  int32_t unresolvedTexturesC() const {
+    std::vector<std::string> paths;
+    for (const auto &image : render_scene_.images) {
+      if (image.buffer_id == -1) {
+        if (paths.size() == size_t(INT32_MAX)) return -1;
+        paths.push_back(image.asset_identifier);
+      }
+    }
+    const int32_t count = static_cast<int32_t>(paths.size());
+    lightusd::web::combined::StoreStringTable(std::move(paths), {});
+    return count;
+  }
+#else
   emscripten::val extractUnresolvedTexturePaths() const {
     // Must be an Array: a default-constructed val is `undefined`, on which
     // `.push()` throws. Call this AFTER layerToRenderScene()/loadFromBinary().
@@ -7290,6 +8066,8 @@ class LightUSDLoaderNative {
 
     return val;
   }
+
+#endif
 
   bool mcpCreateContext(const std::string &session_id) {
 
@@ -7518,234 +8296,165 @@ class LightUSDLoaderNative {
     return MakeOwnedHeapTypedArray(bytes.size(), bytes.data());
   }
 
-  static bool copyUint8ArrayToString(const emscripten::val &data,
-                                     std::string *out) {
-    if (!out || data.isNull() || data.isUndefined()) return false;
-    size_t size = data["byteLength"].as<size_t>();
-    constexpr size_t kMaxLayerBytes = size_t(1) << 30;  // 1 GiB
-    if (size == 0 || size > kMaxLayerBytes) return false;
-    out->resize(size);
-    emscripten::val view = emscripten::val::global("Uint8Array").new_(
-        data["buffer"], data["byteOffset"],
-        emscripten::val(static_cast<double>(size)));
-    emscripten::val heapView = emscripten::val(emscripten::typed_memory_view(
-        size, reinterpret_cast<uint8_t *>(&(*out)[0])));
-    heapView.call<void>("set", view);
-    return true;
-  }
-
   // ============================================================
   // next: low-memory lazy-ValueRep flatten pipeline
   // ============================================================
 #if defined(LIGHTUSD_WASM_WITH_NEXT)
 
-  /// Flatten a USDC buffer via the next lazy pipeline: numeric arrays are kept
-  /// as lazy references into a single moved-in source buffer, composed
-  /// structurally (no array copy), and written back by copying unchanged
-  /// compressed blocks verbatim. This avoids the eager path's 5-10x heap
-  /// blow-up. Returns {success, data?:Uint8Array, error?, inputBytes,
-  /// outputBytes, primCount, arraysPassedThrough, arraysReencoded}.
-  // Shared: flatten an owned USDC buffer and build the JS result object.
-  emscripten::val nextFlattenOwned(std::string &&input, bool lazyArrays) {
-    return nextFlattenOwnedRemap(std::move(input), lazyArrays,
-                                 std::map<std::string, std::string>());
-  }
-
-  emscripten::val nextFlattenOwnedRemap(
-      std::string &&input, bool lazyArrays,
-      const std::map<std::string, std::string> &remap) {
-    return nextFlattenOwnedRemapVariants(
-        std::move(input), lazyArrays, remap,
-        std::map<std::string, std::string>());
-  }
-
-  emscripten::val nextFlattenOwnedRemapVariants(
-      std::string &&input, bool lazyArrays,
-      const std::map<std::string, std::string> &remap,
-      const std::map<std::string, std::string> &variants) {
-    emscripten::val result = emscripten::val::object();
-    std::vector<uint8_t> out;
-    lightusd::next::pipeline::FlattenOptions opts;
-    opts.read.lazy_arrays = lazyArrays;  // false => eager decode (A/B baseline)
-    opts.asset_path_remap = remap;
-    opts.composition.variant_overrides = variants;
-    lightusd::next::pipeline::FlattenStats stats;
-    std::string err;
-    bool ok = lightusd::next::pipeline::FlattenUSDCToUSDCOwned(
-        std::move(input), out, opts, &stats, &err);
-
-    result.set("success", ok);
-    if (!ok) {
-      result.set("error", err);
-      return result;
-    }
-    result.set("data", toOwnedUint8Array(out));
-    result.set("inputBytes", static_cast<double>(stats.input_bytes));
-    result.set("outputBytes", static_cast<double>(stats.output_bytes));
-    result.set("primCount", static_cast<double>(stats.prim_count));
-    result.set("arraysPassedThrough",
-               static_cast<double>(stats.arrays_passed_through));
-    result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
-    result.set("assetPathsRemapped",
-               static_cast<double>(stats.asset_paths_remapped));
-    result.set("readMs", stats.read_ms);
-    result.set("composeMs", stats.compose_ms);
-    result.set("writeMs", stats.write_ms);
-    return result;
-  }
-
-  emscripten::val nextFlattenUSDC(emscripten::val data, bool lazyArrays) {
-    // One JS->WASM copy into an owned std::string; the pipeline then MOVES it
-    // into the retained crate buffer (the single in-heap copy of the input).
-    size_t size = data["byteLength"].as<size_t>();
-    constexpr size_t kMaxLayerBytes = size_t(1) << 30;  // 1 GiB
-    if (size > kMaxLayerBytes) {
-      emscripten::val result = emscripten::val::object();
-      result.set("success", false);
-      result.set("error", std::string("Input exceeds 1 GiB limit"));
-      return result;
-    }
-    std::string input;
-    input.resize(size);
-    if (size > 0) {
-      // Pass length as a JS Number (double): under wasm64 size_t marshals to a
-      // BigInt and `new Uint8Array(buffer, byteOffset, bigint)` throws.
-      emscripten::val view = emscripten::val::global("Uint8Array").new_(
-          data["buffer"], data["byteOffset"],
-          emscripten::val(static_cast<double>(size)));
-      emscripten::val heapView = emscripten::val(emscripten::typed_memory_view(
-          size, reinterpret_cast<uint8_t *>(&input[0])));
-      heapView.call<void>("set", view);
-    }
-    return nextFlattenOwned(std::move(input), lazyArrays);
-  }
-
-  /// Streaming-input flatten: the caller first allocates a buffer via
-  /// allocateZeroCopyBuffer(name, size), fills it directly through module.HEAPU8
-  /// (in chunks, re-grabbing HEAPU8 after the alloc), then calls this. The
-  /// buffer's bytes are MOVED straight into the retained crate buffer — no
-  /// embind marshalling and no second copy. The buffer is consumed (erased).
-  emscripten::val nextFlattenBuffer(const std::string &uuid, bool lazyArrays) {
-    std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
+  int32_t nextFlattenBufferC(const uint8_t *uuid, uint32_t uuid_size,
+                             uint8_t lazy_arrays,
+                             lightusd_combined_flatten_info *out) {
+    if (!uuid || !uuid_size || !out) return -1;
+    const std::string key(reinterpret_cast<const char *>(uuid), uuid_size);
+    std::string input = em_resolver_.takeZeroCopyBufferString(key);
     if (input.empty()) {
-      emscripten::val result = emscripten::val::object();
-      result.set("success", false);
-      result.set("error", "Unknown or empty zero-copy buffer: " + uuid);
-      return result;
+      const std::string message = "Unknown or empty zero-copy buffer: " + key;
+      lightusd_combined_set_flatten_error(
+          reinterpret_cast<const uint8_t *>(message.data()),
+          static_cast<uint32_t>(message.size()));
+      return 0;
     }
-    return nextFlattenOwned(std::move(input), lazyArrays);
+    return lightusd::web::combined::NextFlattenOwned(std::move(input),
+                                                      lazy_arrays, out);
   }
 
-  emscripten::val nextFlattenBufferRemap(const std::string &uuid,
-                                         bool lazyArrays,
-                                         emscripten::val remap) {
-    return nextFlattenBufferRemapVariants(
-        uuid, lazyArrays, remap, emscripten::val::undefined());
-  }
-
-  emscripten::val nextFlattenBufferRemapVariants(const std::string &uuid,
-                                                 bool lazyArrays,
-                                                 emscripten::val remap,
-                                                 emscripten::val variants) {
-    emscripten::val result = emscripten::val::object();
-    std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
+  int32_t nextFlattenBufferMapsC(
+      const uint8_t *uuid, uint32_t uuid_size, uint8_t lazy_arrays,
+      const uint8_t *remap_pairs, uint32_t remap_pairs_size,
+      const uint8_t *variant_pairs, uint32_t variant_pairs_size,
+      lightusd_combined_flatten_info *out) {
+    if (!uuid || !uuid_size || !out) return -1;
+    const std::string key(reinterpret_cast<const char *>(uuid), uuid_size);
+    std::string input = em_resolver_.takeZeroCopyBufferString(key);
     if (input.empty()) {
-      result.set("success", false);
-      result.set("error", "Unknown or empty zero-copy buffer: " + uuid);
-      return result;
+      const std::string message = "Unknown or empty zero-copy buffer: " + key;
+      lightusd_combined_set_flatten_error(
+          reinterpret_cast<const uint8_t *>(message.data()),
+          static_cast<uint32_t>(message.size()));
+      return 0;
     }
-    std::map<std::string, std::string> remap_map;
-    if (!parseAssetPathRemap(remap, &remap_map)) {
-      result.set("success", false);
-      result.set("error", "Invalid asset path remap");
-      return result;
+    std::map<std::string, std::string> remap;
+    if (!DecodeFlattenStringMap(remap_pairs, remap_pairs_size, &remap)) {
+      const std::string message = "Invalid asset path remap";
+      lightusd_combined_set_flatten_error(
+          reinterpret_cast<const uint8_t *>(message.data()),
+          static_cast<uint32_t>(message.size()));
+      return 0;
     }
-    std::map<std::string, std::string> variant_map;
-    if (!parseVariantOverrides(variants, &variant_map)) {
-      result.set("success", false);
-      result.set("error", "Invalid variant overrides");
-      return result;
+    std::map<std::string, std::string> variants;
+    if (!DecodeFlattenStringMap(variant_pairs, variant_pairs_size, &variants)) {
+      const std::string message = "Invalid variant overrides";
+      lightusd_combined_set_flatten_error(
+          reinterpret_cast<const uint8_t *>(message.data()),
+          static_cast<uint32_t>(message.size()));
+      return 0;
     }
-    return nextFlattenOwnedRemapVariants(
-        std::move(input), lazyArrays, remap_map, variant_map);
+    return lightusd::web::combined::NextFlattenOwnedWithMaps(
+        std::move(input), lazy_arrays, remap, variants, out);
+  }
+
+  static std::string CountedString(const uint8_t *data, uint32_t size) {
+    return size ? std::string(reinterpret_cast<const char *>(data), size)
+                : std::string();
+  }
+
+  static bool DecodeFlattenMaps(
+      const uint8_t *remap_pairs, uint32_t remap_pairs_size,
+      const uint8_t *variant_pairs, uint32_t variant_pairs_size,
+      lightusd::next::pipeline::FlattenOptions *opts, std::string *error) {
+    if (!DecodeFlattenStringMap(remap_pairs, remap_pairs_size,
+                                &opts->asset_path_remap)) {
+      *error = "Invalid asset path remap";
+      return false;
+    }
+    if (!DecodeFlattenStringMap(variant_pairs, variant_pairs_size,
+                                &opts->composition.variant_overrides)) {
+      *error = "Invalid variant overrides";
+      return false;
+    }
+    return true;
+  }
+
+  // Maps an arc's asset path to a layer key accepted by `has_key`. Keys are
+  // root-relative forward-slash names, so try the anchor-relative join first,
+  // then the raw path, then the UE-export suffix fallback (escaping ../ chains
+  // or absolute drive paths rebased onto the scene root, longest suffix
+  // first). Returns an empty string when no candidate is accepted.
+  template <typename HasKey>
+  static std::string ResolveFlattenLayerKey(const std::string &asset,
+                                            const std::string &anchor,
+                                            const HasKey &has_key) {
+    using lightusd::next::AssetResolver;
+    auto try_key = [&has_key](std::string key) -> std::string {
+      key = AssetResolver::NormalizePath(key);
+      while (key.rfind("./", 0) == 0) key = key.substr(2);
+      return has_key(key) ? key : std::string();
+    };
+    if (!anchor.empty()) {
+      std::string k = try_key(
+          AssetResolver::JoinPath(AssetResolver::GetDirectory(anchor), asset));
+      if (!k.empty()) return k;
+    }
+    std::string k = try_key(asset);
+    if (!k.empty()) return k;
+    for (const auto &cand : lightusd::io::AssetPathSuffixCandidates(asset)) {
+      k = try_key(cand);
+      if (!k.empty()) return k;
+    }
+    return std::string();
   }
 
   /// Streaming-output variant of nextFlattenBuffer: the flattened crate is
-  /// emitted to `chunkCb(view)` in file order, so the full output crate is never
-  /// materialized in the wasm heap (peak stays ~= retained input + small
-  /// structural sections). `chunkCb` receives a Uint8Array VIEW into the wasm
-  /// heap valid ONLY for the duration of the call — JS must copy it out
-  /// synchronously and must not retain it (a later wasm growth can detach it).
-  /// chunkCb may return false to abort. Returns stats only (no `data`).
-  emscripten::val nextFlattenBufferToSink(const std::string &uuid, bool lazyArrays,
-                                          emscripten::val chunkCb) {
-    return nextFlattenBufferToSinkRemap(
-        uuid, lazyArrays, chunkCb, emscripten::val::undefined());
-  }
-
-  emscripten::val nextFlattenBufferToSinkRemap(const std::string &uuid,
-                                               bool lazyArrays,
-                                               emscripten::val chunkCb,
-                                               emscripten::val remap) {
-    return nextFlattenBufferToSinkRemapVariants(
-        uuid, lazyArrays, chunkCb, remap, emscripten::val::undefined());
-  }
-
-  emscripten::val nextFlattenBufferToSinkRemapVariants(
-      const std::string &uuid, bool lazyArrays, emscripten::val chunkCb,
-      emscripten::val remap, emscripten::val variants) {
-    emscripten::val result = emscripten::val::object();
-    std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
+  /// emitted to the JS sink `sink_id` in file order, so the full output crate
+  /// is never materialized in the wasm heap (peak stays ~= retained input +
+  /// small structural sections). The sink receives a heap view valid ONLY for
+  /// the duration of the call; returning strictly false aborts.
+  int32_t nextFlattenToSinkC(const uint8_t *uuid, uint32_t uuid_size,
+                             uint8_t lazy_arrays, uint32_t sink_id,
+                             const uint8_t *remap_pairs,
+                             uint32_t remap_pairs_size,
+                             const uint8_t *variant_pairs,
+                             uint32_t variant_pairs_size,
+                             lightusd_combined_flatten_step_info *out) {
+    if ((!uuid && uuid_size) || !sink_id || !out ||
+        out->struct_size < sizeof(*out)) {
+      return -1;
+    }
+    using lightusd::web::combined::StoreFlattenResult;
+    const std::string key = CountedString(uuid, uuid_size);
+    std::string input = em_resolver_.takeZeroCopyBufferString(key);
     if (input.empty()) {
-      result.set("success", false);
-      result.set("error", "Unknown or empty zero-copy buffer: " + uuid);
-      return result;
+      StoreFlattenResult(-1, "Unknown or empty zero-copy buffer: " + key, {},
+                         nullptr, out);
+      return 0;
     }
     lightusd::next::pipeline::FlattenOptions opts;
-    opts.read.lazy_arrays = lazyArrays;
+    opts.read.lazy_arrays = lazy_arrays != 0;
     opts.write.streaming = true;
-    if (!parseAssetPathRemap(remap, &opts.asset_path_remap)) {
-      result.set("success", false);
-      result.set("error", "Invalid asset path remap");
-      return result;
-    }
-    if (!parseVariantOverrides(variants, &opts.composition.variant_overrides)) {
-      result.set("success", false);
-      result.set("error", "Invalid variant overrides");
-      return result;
+    std::string err;
+    if (!DecodeFlattenMaps(remap_pairs, remap_pairs_size, variant_pairs,
+                           variant_pairs_size, &opts, &err)) {
+      StoreFlattenResult(-1, std::move(err), {}, nullptr, out);
+      return 0;
     }
     lightusd::next::pipeline::FlattenStats stats;
-    std::string err;
     bool aborted = false;
     lightusd::next::CrateWriteSink sink =
         [&](const uint8_t *data, size_t size) -> bool {
-      emscripten::val view(emscripten::typed_memory_view(size, data));
-      emscripten::val r = chunkCb(view);
-      if (r.isFalse()) {  // strictly false aborts; undefined/anything else continues
+      if (!lightusd::web::combined::EmitFlattenChunk(sink_id, data, size)) {
         aborted = true;
         return false;
       }
       return true;
     };
-    bool ok = lightusd::next::pipeline::FlattenUSDCToUSDCOwnedToSink(
-        std::move(input), sink, opts, &stats, &err);
-    result.set("success", ok);
-    if (!ok) {
-      result.set("error", aborted ? "aborted by sink" : err);
-      return result;
+    if (!lightusd::next::pipeline::FlattenUSDCToUSDCOwnedToSink(
+            std::move(input), sink, opts, &stats, &err)) {
+      StoreFlattenResult(0, aborted ? "aborted by sink" : std::move(err), {},
+                         nullptr, out);
+      return 0;
     }
-    result.set("inputBytes", static_cast<double>(stats.input_bytes));
-    result.set("outputBytes", static_cast<double>(stats.output_bytes));
-    result.set("primCount", static_cast<double>(stats.prim_count));
-    result.set("arraysPassedThrough",
-               static_cast<double>(stats.arrays_passed_through));
-    result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
-    result.set("assetPathsRemapped",
-               static_cast<double>(stats.asset_paths_remapped));
-    result.set("readMs", stats.read_ms);
-    result.set("composeMs", stats.compose_ms);
-    result.set("writeMs", stats.write_ms);
-    return result;
+    StoreFlattenResult(3, std::string(), {}, &stats, out);
+    return 0;
   }
 
   /// Multi-asset variant of the next flatten: external reference / payload /
@@ -7753,127 +8462,67 @@ class LightUSDLoaderNative {
   /// The JS side registers each dependency USD layer via setAsset() under its
   /// root-relative name (the same names convertSourceToUSDZStreaming already
   /// feeds), streams the root crate into a zero-copy buffer, and calls this
-  /// with `rootName` = the root layer's root-relative name (the anchor for
+  /// with `root_name` = the root layer's root-relative name (the anchor for
   /// arcs authored in it). Dependency layers are CONSUMED from the cache as
   /// they load (the compositor caches each parsed layer per resolved path), so
-  /// the raw layer bytes never sit in the heap twice. Output streams to
-  /// `chunkCb` exactly like nextFlattenBufferToSink (views are only valid
-  /// during the call); pass a JS null/undefined chunkCb to get a buffered
-  /// `data` result instead.
-  emscripten::val nextFlattenMultiBufferToSink(const std::string &uuid,
-                                               const std::string &rootName,
-                                               bool lazyArrays,
-                                               emscripten::val chunkCb) {
-    return nextFlattenMultiBufferToSinkFetch(
-        uuid, rootName, lazyArrays, chunkCb, emscripten::val::undefined(),
-        emscripten::val::undefined());
-  }
-
-  emscripten::val nextFlattenMultiBufferToSinkFetch(
-      const std::string &uuid, const std::string &rootName, bool lazyArrays,
-      emscripten::val chunkCb, emscripten::val layerExistsCb,
-      emscripten::val layerFetchCb) {
-    return nextFlattenMultiBufferToSinkFetchRemap(
-        uuid, rootName, lazyArrays, chunkCb, layerExistsCb, layerFetchCb,
-        emscripten::val::undefined());
-  }
-
-  emscripten::val nextFlattenMultiBufferToSinkFetchRemap(
-      const std::string &uuid, const std::string &rootName, bool lazyArrays,
-      emscripten::val chunkCb, emscripten::val layerExistsCb,
-      emscripten::val layerFetchCb, emscripten::val remap) {
-    return nextFlattenMultiBufferToSinkFetchRemapVariants(
-        uuid, rootName, lazyArrays, chunkCb, layerExistsCb, layerFetchCb, remap,
-        emscripten::val::undefined());
-  }
-
-  emscripten::val nextFlattenMultiBufferToSinkFetchRemapVariants(
-      const std::string &uuid, const std::string &rootName, bool lazyArrays,
-      emscripten::val chunkCb, emscripten::val layerExistsCb,
-      emscripten::val layerFetchCb, emscripten::val remap,
-      emscripten::val variants) {
-    emscripten::val result = emscripten::val::object();
-    std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
+  /// the raw layer bytes never sit in the heap twice. Layers missing from the
+  /// cache are probed and pulled through the optional JS `exists_id` /
+  /// `fetch_id` callbacks. Output streams to `sink_id` like
+  /// nextFlattenToSinkC; sink_id=0 buffers it instead.
+  int32_t nextFlattenMultiC(const uint8_t *uuid, uint32_t uuid_size,
+                            const uint8_t *root_name, uint32_t root_name_size,
+                            uint8_t lazy_arrays, uint32_t sink_id,
+                            uint32_t exists_id, uint32_t fetch_id,
+                            const uint8_t *remap_pairs,
+                            uint32_t remap_pairs_size,
+                            const uint8_t *variant_pairs,
+                            uint32_t variant_pairs_size,
+                            lightusd_combined_flatten_step_info *out) {
+    if ((!uuid && uuid_size) || (!root_name && root_name_size) || !out ||
+        out->struct_size < sizeof(*out)) {
+      return -1;
+    }
+    using lightusd::web::combined::StoreFlattenResult;
+    const std::string key = CountedString(uuid, uuid_size);
+    const std::string rootName = CountedString(root_name, root_name_size);
+    std::string input = em_resolver_.takeZeroCopyBufferString(key);
     if (input.empty()) {
-      result.set("success", false);
-      result.set("error", "Unknown or empty zero-copy buffer: " + uuid);
-      return result;
+      StoreFlattenResult(-1, "Unknown or empty zero-copy buffer: " + key, {},
+                         nullptr, out);
+      return 0;
     }
 
     lightusd::next::pipeline::FlattenOptions opts;
-    opts.read.lazy_arrays = lazyArrays;
+    opts.read.lazy_arrays = lazy_arrays != 0;
     opts.root_anchor_path = rootName;
-    if (!parseAssetPathRemap(remap, &opts.asset_path_remap)) {
-      result.set("success", false);
-      result.set("error", "Invalid asset path remap");
-      return result;
-    }
-    if (!parseVariantOverrides(variants, &opts.composition.variant_overrides)) {
-      result.set("success", false);
-      result.set("error", "Invalid variant overrides");
-      return result;
+    std::string err;
+    if (!DecodeFlattenMaps(remap_pairs, remap_pairs_size, variant_pairs,
+                           variant_pairs_size, &opts, &err)) {
+      StoreFlattenResult(-1, std::move(err), {}, nullptr, out);
+      return 0;
     }
 
-    // Resolver: map an arc's asset path to a wasm asset-cache KEY. Cache keys
-    // are root-relative forward-slash names, so try the anchor-relative join
-    // first (anchor is itself a cache key or rootName), then the raw path,
-    // then the UE-export suffix fallback (escaping ../ chains or absolute
-    // drive paths rebased onto the scene root, longest suffix first).
-    using lightusd::next::AssetResolver;
-    AssetResolver resolver;
     // Keys the loader has already consumed from the cache: the resolver must
     // keep resolving them (the compositor reloads nothing — it caches each
     // parsed layer per resolved key — but it RESOLVES every arc occurrence).
     auto consumed = std::make_shared<std::unordered_set<std::string>>();
     auto resolved_cache =
         std::make_shared<std::unordered_map<std::string, std::string>>();
-    const bool has_layer_exists =
-        !layerExistsCb.isNull() && !layerExistsCb.isUndefined();
-    const bool has_layer_fetch =
-        !layerFetchCb.isNull() && !layerFetchCb.isUndefined();
+    lightusd::next::AssetResolver resolver;
     resolver.SetCustomResolver(
-        [this, consumed, resolved_cache, layerExistsCb, has_layer_exists](
+        [this, consumed, resolved_cache, exists_id](
             const std::string &asset, const std::string &anchor) -> std::string {
       const std::string cache_key = anchor + "\n" + asset;
       auto hit = resolved_cache->find(cache_key);
-      if (hit != resolved_cache->end()) {
-        return hit->second;
-      }
-      auto try_key = [this, &consumed, &layerExistsCb, has_layer_exists](
-                         std::string key) -> std::string {
-        key = AssetResolver::NormalizePath(key);
-        while (key.rfind("./", 0) == 0) key = key.substr(2);
-        if (em_resolver_.has(key) || consumed->count(key)) return key;
-        if (has_layer_exists) {
-          emscripten::val exists = layerExistsCb(key);
-          if (exists.isTrue()) return key;
-        }
-        return std::string();
-      };
-      if (!anchor.empty()) {
-        std::string k = try_key(AssetResolver::JoinPath(
-            AssetResolver::GetDirectory(anchor), asset));
-        if (!k.empty()) {
-          (*resolved_cache)[cache_key] = k;
-          return k;
-        }
-      }
-      {
-        std::string k = try_key(asset);
-        if (!k.empty()) {
-          (*resolved_cache)[cache_key] = k;
-          return k;
-        }
-      }
-      for (const auto &cand : lightusd::io::AssetPathSuffixCandidates(asset)) {
-        std::string k = try_key(cand);
-        if (!k.empty()) {
-          (*resolved_cache)[cache_key] = k;
-          return k;
-        }
-      }
-      (*resolved_cache)[cache_key] = std::string();
-      return std::string();
+      if (hit != resolved_cache->end()) return hit->second;
+      std::string k = ResolveFlattenLayerKey(
+          asset, anchor, [this, &consumed, exists_id](const std::string &key) {
+            return em_resolver_.has(key) || consumed->count(key) ||
+                   (exists_id &&
+                    lightusd::web::combined::FlattenLayerExists(exists_id, key));
+          });
+      (*resolved_cache)[cache_key] = k;
+      return k;
     });
     opts.resolver = &resolver;
 
@@ -7881,17 +8530,16 @@ class LightUSDLoaderNative {
     // entry — the parsed layer retains its own copy as the lazy-array source)
     // and parse it as a lazy crate, mirroring MakeFileSystemLayerLoader.
     const lightusd::next::CrateReadOptions read_opts = opts.read;
-    opts.layer_loader = [this, read_opts, consumed, layerFetchCb,
-                         has_layer_fetch](const std::string &key,
-                                          std::string *error)
+    opts.layer_loader = [this, read_opts, consumed, fetch_id](
+                            const std::string &key, std::string *error)
         -> std::unique_ptr<lightusd::next::Layer> {
       std::string bytes;
       if (em_resolver_.has(key)) {
         bytes = em_resolver_.takeAssetString(key);
         consumed->insert(key);
-      } else if (has_layer_fetch) {
-        emscripten::val fetched = layerFetchCb(key);
-        if (!copyUint8ArrayToString(fetched, &bytes)) {
+      } else if (fetch_id) {
+        if (!lightusd::web::combined::FetchFlattenLayer(fetch_id, key,
+                                                         &bytes)) {
           if (error) *error = "asset fetch failed: " + key;
           return nullptr;
         }
@@ -7903,22 +8551,18 @@ class LightUSDLoaderNative {
       return ParseNextLayerBytesOwned(std::move(bytes), key, read_opts, error);
     };
 
-    const bool buffered = chunkCb.isNull() || chunkCb.isUndefined();
     lightusd::next::pipeline::FlattenStats stats;
-    std::string err;
+    std::vector<uint8_t> output;
     bool ok = false;
-    std::vector<uint8_t> out;
     bool aborted = false;
-    if (buffered) {
+    if (!sink_id) {
       ok = lightusd::next::pipeline::FlattenUSDMemoryToUSDCOwned(
-          rootName, std::move(input), out, opts, &stats, &err);
+          rootName, std::move(input), output, opts, &stats, &err);
     } else {
       opts.write.streaming = true;
       lightusd::next::CrateWriteSink sink =
           [&](const uint8_t *data, size_t size) -> bool {
-        emscripten::val view(emscripten::typed_memory_view(size, data));
-        emscripten::val r = chunkCb(view);
-        if (r.isFalse()) {
+        if (!lightusd::web::combined::EmitFlattenChunk(sink_id, data, size)) {
           aborted = true;
           return false;
         }
@@ -7927,134 +8571,172 @@ class LightUSDLoaderNative {
       ok = lightusd::next::pipeline::FlattenUSDMemoryToUSDCOwnedToSink(
           rootName, std::move(input), sink, opts, &stats, &err);
     }
-    result.set("success", ok);
     if (!ok) {
-      result.set("error", aborted ? "aborted by sink" : err);
-      return result;
+      StoreFlattenResult(0, aborted ? "aborted by sink" : std::move(err), {},
+                         nullptr, out);
+      return 0;
     }
-    if (buffered) result.set("data", toOwnedUint8Array(out));
-    result.set("inputBytes", static_cast<double>(stats.input_bytes));
-    result.set("outputBytes", static_cast<double>(stats.output_bytes));
-    result.set("primCount", static_cast<double>(stats.prim_count));
-    result.set("arraysPassedThrough",
-               static_cast<double>(stats.arrays_passed_through));
-    result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
-    result.set("assetPathsRemapped",
-               static_cast<double>(stats.asset_paths_remapped));
-    result.set("readMs", stats.read_ms);
-    result.set("composeMs", stats.compose_ms);
-    result.set("writeMs", stats.write_ms);
-    {
-      emscripten::val assets = emscripten::val::array();
-      for (const auto &path : stats.referenced_assets) {
-        assets.call<void>("push", path);
-      }
-      result.set("assetPaths", assets);
-      result.set("assetPathCount",
-                 static_cast<double>(stats.referenced_assets.size()));
-    }
-    // Non-fatal composition errors (unresolved arcs): surface so partial
-    // composition is visible to the JS caller.
-    {
-      emscripten::val errs = emscripten::val::array();
-      const size_t kMaxErrs = 20;
-      for (size_t i = 0; i < stats.composition_errors.size() && i < kMaxErrs; ++i) {
-        errs.call<void>("push", stats.composition_errors[i]);
-      }
-      result.set("compositionErrors", errs);
-      result.set("compositionErrorCount",
-                 static_cast<double>(stats.composition_errors.size()));
-    }
-    return result;
+    StoreFlattenResult(3, std::string(), std::move(output), &stats, out);
+    return 0;
   }
 
-  emscripten::val nextFlattenAsyncBegin(const std::string &uuid,
-                                        const std::string &rootName,
-                                        bool lazyArrays) {
-    return nextFlattenAsyncBeginRemap(
-        uuid, rootName, lazyArrays, emscripten::val::undefined());
-  }
-
-  emscripten::val nextFlattenAsyncBeginRemap(const std::string &uuid,
-                                             const std::string &rootName,
-                                             bool lazyArrays,
-                                             emscripten::val remap) {
-    return nextFlattenAsyncBeginRemapVariants(
-        uuid, rootName, lazyArrays, remap, emscripten::val::undefined());
-  }
-
-  emscripten::val nextFlattenAsyncBeginRemapVariants(
-      const std::string &uuid, const std::string &rootName, bool lazyArrays,
-      emscripten::val remap, emscripten::val variants) {
-    emscripten::val result = emscripten::val::object();
-    std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
-    if (input.empty()) {
-      result.set("success", false);
-      result.set("error", "Unknown or empty zero-copy buffer: " + uuid);
-      return result;
+  int32_t nextFlattenAsyncBeginC(
+      const uint8_t *uuid, uint32_t uuid_size, const uint8_t *root_name,
+      uint32_t root_name_size, uint8_t lazy_arrays, uint8_t *session_out,
+      uint32_t session_cap, uint32_t *session_size_out) {
+    if (!uuid || !uuid_size || (!root_name && root_name_size) ||
+        !session_out || session_cap < 36 || !session_size_out) {
+      return -1;
     }
-
+    const std::string key(reinterpret_cast<const char *>(uuid), uuid_size);
+    std::string input = em_resolver_.takeZeroCopyBufferString(key);
+    if (input.empty()) return 0;
     std::string session_id = generateUUID();
+    if (session_id.size() > session_cap) return -1;
     NextAsyncFlattenSession session;
     session.root = std::move(input);
-    session.root_name = rootName;
-    session.lazy_arrays = lazyArrays;
-    if (!parseAssetPathRemap(remap, &session.asset_path_remap)) {
-      result.set("success", false);
-      result.set("error", "Invalid asset path remap");
-      return result;
+    if (root_name_size) {
+      session.root_name.assign(reinterpret_cast<const char *>(root_name),
+                                root_name_size);
     }
-    if (!parseVariantOverrides(variants, &session.variant_overrides)) {
-      result.set("success", false);
-      result.set("error", "Invalid variant overrides");
-      return result;
-    }
+    session.lazy_arrays = lazy_arrays != 0;
     next_async_flatten_sessions_[session_id] = std::move(session);
-
-    result.set("success", true);
-    result.set("session", session_id);
-    result.set("status", "ready");
-    return result;
+    std::memcpy(session_out, session_id.data(), session_id.size());
+    *session_size_out = static_cast<uint32_t>(session_id.size());
+    return 1;
   }
 
-  emscripten::val nextFlattenAsyncProvideLayer(const std::string &session,
-                                               const std::string &key,
-                                               emscripten::val data) {
-    emscripten::val result = emscripten::val::object();
-    auto it = next_async_flatten_sessions_.find(session);
-    if (it == next_async_flatten_sessions_.end()) {
-      result.set("success", false);
-      result.set("error", "Unknown next flatten session: " + session);
-      return result;
+  int32_t nextFlattenAsyncBeginRemapC(
+      const uint8_t *uuid, uint32_t uuid_size, const uint8_t *root_name,
+      uint32_t root_name_size, uint8_t lazy_arrays,
+      const uint8_t *remap_pairs, uint32_t remap_pairs_size,
+      uint8_t *session_out, uint32_t session_cap,
+      uint32_t *session_size_out) {
+    return nextFlattenAsyncBeginRemapVariantsC(
+        uuid, uuid_size, root_name, root_name_size, lazy_arrays, remap_pairs,
+        remap_pairs_size, nullptr, 0, session_out, session_cap,
+        session_size_out);
+  }
+
+  int32_t nextFlattenAsyncBeginRemapVariantsC(
+      const uint8_t *uuid, uint32_t uuid_size, const uint8_t *root_name,
+      uint32_t root_name_size, uint8_t lazy_arrays,
+      const uint8_t *remap_pairs, uint32_t remap_pairs_size,
+      const uint8_t *variant_pairs, uint32_t variant_pairs_size,
+      uint8_t *session_out, uint32_t session_cap,
+      uint32_t *session_size_out) {
+    std::map<std::string, std::string> remap;
+    std::map<std::string, std::string> variants;
+    if (!DecodeFlattenStringMap(remap_pairs, remap_pairs_size, &remap)) return 2;
+    if (!DecodeFlattenStringMap(variant_pairs, variant_pairs_size, &variants)) return 3;
+    if (!uuid || !uuid_size || (!root_name && root_name_size) ||
+        !session_out || session_cap < 36 || !session_size_out) {
+      return -1;
     }
-    std::string bytes;
-    if (!copyUint8ArrayToString(data, &bytes)) {
-      result.set("success", false);
-      result.set("error", "Invalid or empty layer data for: " + key);
-      return result;
+    const std::string key(reinterpret_cast<const char *>(uuid), uuid_size);
+    std::string input = em_resolver_.takeZeroCopyBufferString(key);
+    if (input.empty()) return 0;
+    std::string session_id = generateUUID();
+    if (session_id.size() > session_cap) return -1;
+    NextAsyncFlattenSession session;
+    session.root = std::move(input);
+    if (root_name_size) {
+      session.root_name.assign(reinterpret_cast<const char *>(root_name),
+                                root_name_size);
     }
-    std::string norm_key = lightusd::next::AssetResolver::NormalizePath(key);
+    session.lazy_arrays = lazy_arrays != 0;
+    session.asset_path_remap = std::move(remap);
+    session.variant_overrides = std::move(variants);
+    next_async_flatten_sessions_[session_id] = std::move(session);
+    std::memcpy(session_out, session_id.data(), session_id.size());
+    *session_size_out = static_cast<uint32_t>(session_id.size());
+    return 1;
+  }
+
+  static bool DecodeFlattenStringMap(
+      const uint8_t *data, uint32_t size,
+      std::map<std::string, std::string> *out) {
+    if (!out) return false;
+    out->clear();
+    if (!size) return data == nullptr;
+    if (!data || size < 4) return false;
+    auto read_u32 = [data](uint32_t offset) {
+      return static_cast<uint32_t>(data[offset]) |
+             (static_cast<uint32_t>(data[offset + 1]) << 8) |
+             (static_cast<uint32_t>(data[offset + 2]) << 16) |
+             (static_cast<uint32_t>(data[offset + 3]) << 24);
+    };
+    const uint32_t count = read_u32(0);
+    uint32_t offset = 4;
+    for (uint32_t i = 0; i < count; ++i) {
+      if (size - offset < 8) return false;
+      const uint32_t key_size = read_u32(offset);
+      const uint32_t value_size = read_u32(offset + 4);
+      offset += 8;
+      if (key_size > size - offset) return false;
+      std::string key(reinterpret_cast<const char *>(data + offset), key_size);
+      offset += key_size;
+      if (value_size > size - offset) return false;
+      std::string value(reinterpret_cast<const char *>(data + offset), value_size);
+      offset += value_size;
+      (*out)[std::move(key)] = std::move(value);
+    }
+    return offset == size;
+  }
+
+  bool nextFlattenAsyncEndC(const uint8_t *session, uint32_t session_size) {
+    if (!session && session_size) return false;
+    std::string key;
+    if (session_size) {
+      key.assign(reinterpret_cast<const char *>(session), session_size);
+    }
+    return next_async_flatten_sessions_.erase(key) != 0;
+  }
+
+  int32_t nextFlattenAsyncProvideLayerC(
+      const uint8_t *session, uint32_t session_size, const uint8_t *key,
+      uint32_t key_size, const uint8_t *data, uint32_t data_size) {
+    if ((!session && session_size) || (!key && key_size)) {
+      return -1;
+    }
+    std::string session_id;
+    if (session_size) {
+      session_id.assign(reinterpret_cast<const char *>(session), session_size);
+    }
+    auto it = next_async_flatten_sessions_.find(session_id);
+    if (it == next_async_flatten_sessions_.end()) return 1;
+    if (!data_size || data_size > (uint32_t(1) << 30)) return 2;
+    if (!data) return -1;
+    std::string layer_key;
+    if (key_size) {
+      layer_key.assign(reinterpret_cast<const char *>(key), key_size);
+    }
+    std::string bytes(reinterpret_cast<const char *>(data), data_size);
+    std::string norm_key = lightusd::next::AssetResolver::NormalizePath(layer_key);
     while (norm_key.rfind("./", 0) == 0) norm_key = norm_key.substr(2);
     it->second.layers[norm_key] = std::move(bytes);
     it->second.parsed_layers.erase(norm_key);
-    result.set("success", true);
-    return result;
+    return 0;
   }
 
-  emscripten::val nextFlattenAsyncEnd(const std::string &session) {
-    emscripten::val result = emscripten::val::object();
-    result.set("success", next_async_flatten_sessions_.erase(session) != 0);
-    return result;
-  }
-
-  emscripten::val nextFlattenAsyncStep(const std::string &session,
-                                       emscripten::val chunkCb) {
-    emscripten::val result = emscripten::val::object();
-    auto sit = next_async_flatten_sessions_.find(session);
+  /// One step of a need-layer flatten session. A layer the session lacks
+  /// ends the step with status 2 and its key; JS provides it and steps again.
+  /// sink_id streams the output like nextFlattenToSinkC (a sink abort leaves
+  /// the session ready, status 1); sink_id=0 buffers it.
+  int32_t nextFlattenAsyncStepC(const uint8_t *session, uint32_t session_size,
+                                uint32_t sink_id,
+                                lightusd_combined_flatten_step_info *out) {
+    if ((!session && session_size) || !out ||
+        out->struct_size < sizeof(*out)) {
+      return -1;
+    }
+    using lightusd::web::combined::StoreFlattenResult;
+    const std::string session_id = CountedString(session, session_size);
+    auto sit = next_async_flatten_sessions_.find(session_id);
     if (sit == next_async_flatten_sessions_.end()) {
-      result.set("success", false);
-      result.set("error", "Unknown next flatten session: " + session);
-      return result;
+      StoreFlattenResult(-1, "Unknown next flatten session: " + session_id, {},
+                         nullptr, out);
+      return 0;
     }
     NextAsyncFlattenSession &state = sit->second;
 
@@ -8077,45 +8759,23 @@ class LightUSDLoaderNative {
       const std::string cache_key = anchor + "\n" + asset;
       auto hit = resolved_cache->find(cache_key);
       if (hit != resolved_cache->end()) return hit->second;
-      auto try_key = [&state, &consumed](std::string key) -> std::string {
-        key = AssetResolver::NormalizePath(key);
-        while (key.rfind("./", 0) == 0) key = key.substr(2);
-        return (state.layers.count(key) || consumed->count(key)) ? key
-                                                                 : std::string();
-      };
-      if (!anchor.empty()) {
-        std::string k = try_key(AssetResolver::JoinPath(
-            AssetResolver::GetDirectory(anchor), asset));
-        if (!k.empty()) {
-          (*resolved_cache)[cache_key] = k;
-          return k;
+      std::string k = ResolveFlattenLayerKey(
+          asset, anchor, [&state, &consumed](const std::string &key) {
+            return state.layers.count(key) || consumed->count(key);
+          });
+      if (k.empty()) {
+        // Return the best normalized candidate so the loader can surface
+        // exactly which layer JS should fetch.
+        k = asset;
+        if (!anchor.empty()) {
+          k = AssetResolver::JoinPath(AssetResolver::GetDirectory(anchor),
+                                      asset);
         }
+        k = AssetResolver::NormalizePath(k);
+        while (k.rfind("./", 0) == 0) k = k.substr(2);
       }
-      {
-        std::string k = try_key(asset);
-        if (!k.empty()) {
-          (*resolved_cache)[cache_key] = k;
-          return k;
-        }
-      }
-      for (const auto &cand : lightusd::io::AssetPathSuffixCandidates(asset)) {
-        std::string k = try_key(cand);
-        if (!k.empty()) {
-          (*resolved_cache)[cache_key] = k;
-          return k;
-        }
-      }
-      // Return the best normalized candidate so the loader can surface exactly
-      // which layer JS should fetch.
-      std::string request = asset;
-      if (!anchor.empty()) {
-        request = AssetResolver::JoinPath(AssetResolver::GetDirectory(anchor),
-                                          asset);
-      }
-      request = AssetResolver::NormalizePath(request);
-      while (request.rfind("./", 0) == 0) request = request.substr(2);
-      (*resolved_cache)[cache_key] = request;
-      return request;
+      (*resolved_cache)[cache_key] = k;
+      return k;
     });
     opts.resolver = &resolver;
 
@@ -8150,25 +8810,22 @@ class LightUSDLoaderNative {
       return layer;
     };
 
-    const bool buffered = chunkCb.isNull() || chunkCb.isUndefined();
     lightusd::next::pipeline::FlattenStats stats;
     std::string err;
     bool ok = false;
-    std::vector<uint8_t> out;
+    std::vector<uint8_t> output;
     bool aborted = false;
     const uint8_t *root_data =
         reinterpret_cast<const uint8_t *>(state.root.data());
     const size_t root_size = state.root.size();
-    if (buffered) {
+    if (!sink_id) {
       ok = lightusd::next::pipeline::FlattenUSDMemoryToUSDC(
-          state.root_name, root_data, root_size, out, opts, &stats, &err);
+          state.root_name, root_data, root_size, output, opts, &stats, &err);
     } else {
       opts.write.streaming = true;
       lightusd::next::CrateWriteSink sink =
           [&](const uint8_t *data, size_t size) -> bool {
-        emscripten::val view(emscripten::typed_memory_view(size, data));
-        emscripten::val r = chunkCb(view);
-        if (r.isFalse()) {
+        if (!lightusd::web::combined::EmitFlattenChunk(sink_id, data, size)) {
           aborted = true;
           return false;
         }
@@ -8179,46 +8836,13 @@ class LightUSDLoaderNative {
     }
 
     if (!missing_key.empty()) {
-      result.set("success", true);
-      result.set("status", "need-layer");
-      result.set("key", missing_key);
-      return result;
+      StoreFlattenResult(2, std::move(missing_key), {}, nullptr, out);
+    } else if (!ok) {
+      StoreFlattenResult(aborted ? 1 : 0, std::move(err), {}, nullptr, out);
+    } else {
+      StoreFlattenResult(3, std::string(), std::move(output), &stats, out);
     }
-    result.set("success", ok);
-    if (!ok) {
-      if (aborted) {
-        result.set("success", true);
-        result.set("status", "ready");
-        return result;
-      }
-      result.set("status", "error");
-      result.set("error", err);
-      return result;
-    }
-
-    result.set("status", "done");
-    if (buffered) result.set("data", toOwnedUint8Array(out));
-    result.set("inputBytes", static_cast<double>(stats.input_bytes));
-    result.set("outputBytes", static_cast<double>(stats.output_bytes));
-    result.set("primCount", static_cast<double>(stats.prim_count));
-    result.set("arraysPassedThrough",
-               static_cast<double>(stats.arrays_passed_through));
-    result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
-    result.set("assetPathsRemapped",
-               static_cast<double>(stats.asset_paths_remapped));
-    result.set("readMs", stats.read_ms);
-    result.set("composeMs", stats.compose_ms);
-    result.set("writeMs", stats.write_ms);
-    {
-      emscripten::val assets = emscripten::val::array();
-      for (const auto &path : stats.referenced_assets) {
-        assets.call<void>("push", path);
-      }
-      result.set("assetPaths", assets);
-      result.set("assetPathCount",
-                 static_cast<double>(stats.referenced_assets.size()));
-    }
-    return result;
+    return 0;
   }
 
 #endif  // LIGHTUSD_WASM_WITH_NEXT
@@ -8469,6 +9093,7 @@ class LightUSDLoaderNative {
         memory_mb > 0 ? static_cast<int64_t>(memory_mb) * 1024 * 1024 : 0;
   }
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val debugLogMemory(const std::string &label) {
     ReportLightUSDDebugEvent("manual", label);
     emscripten::val result = emscripten::val::object();
@@ -8476,180 +9101,126 @@ class LightUSDLoaderNative {
     result.set("heapBytes", GetWasmHeapByteLengthForDebug());
     return result;
   }
+#endif
 
-  emscripten::val exportAsUSDC() {
-    lightusd::Stage stage;
-    if (!getStageFromLayer(stage)) {
-      return emscripten::val::null();
-    }
-
-    std::vector<uint8_t> output;
+  bool exportUSDCData(bool as_layer, std::vector<uint8_t> *output,
+                      std::string *pending_warning = nullptr) {
     std::string warn, err;
-    if (!lightusd::usdc::SaveAsUSDCToMemory(stage, &output, &warn, &err,
-                                            usdc_max_file_size_bytes_,
-                                            usdc_max_memory_bytes_)) {
-      error_ = "USDC export failed: " + err;
-      warn_ = warn;
-      return emscripten::val::null();
+    bool saved = false;
+    if (as_layer) {
+      if (!loaded_ || !loaded_as_layer_) {
+        error_ = "No layer loaded";
+        return false;
+      }
+      const lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
+      saved = lightusd::usdc::SaveAsUSDCToMemory(curr, output, &warn, &err,
+          usdc_max_file_size_bytes_, usdc_max_memory_bytes_);
+    } else {
+      lightusd::Stage stage;
+      if (!getStageFromLayer(stage)) return false;
+      saved = lightusd::usdc::SaveAsUSDCToMemory(stage, output, &warn, &err,
+          usdc_max_file_size_bytes_, usdc_max_memory_bytes_);
     }
+    if (saved && pending_warning) *pending_warning = warn;
+    else warn_ = warn;
+    if (!saved) error_ = "USDC export failed: " + err;
+    return saved;
+  }
 
-    warn_ = warn;
-
-    // Return a JS-owned COPY, not a heap view: callers commonly hold the result
-    // across delete()/new-loader calls that grow the WASM heap and would detach
-    // a typed_memory_view (yielding a garbage buffer). Copy straight from the
-    // local `output` so the USDC bytes are freed wasm-side on return rather than
-    // retained in a member. See toOwnedUint8Array().
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+  emscripten::val exportAsUSDC() {
+    std::vector<uint8_t> output;
+    if (!exportUSDCData(false, &output)) return emscripten::val::null();
     return toOwnedUint8Array(output);
   }
 
-  /// Export the current layer as USDC (binary Crate) - returns Uint8Array.
-  /// This avoids Stage reconstruction and USDZ packaging, and is used by the
-  /// JS low-heap USDZ repacker to rewrite only the archive root layer.
   emscripten::val exportLayerAsUSDCWithOptions(emscripten::val options) {
     (void)options;
-    if (!loaded_ || !loaded_as_layer_) {
-      error_ = "No layer loaded";
-      return emscripten::val::null();
-    }
-
-    const lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
     std::vector<uint8_t> output;
-    std::string warn, err;
-    if (!lightusd::usdc::SaveAsUSDCToMemory(curr, &output, &warn, &err,
-                                            usdc_max_file_size_bytes_,
-                                            usdc_max_memory_bytes_)) {
-      error_ = "USDC export failed: " + err;
-      warn_ = warn;
-      return emscripten::val::null();
-    }
-
-    warn_ = warn;
-    // JS-owned copy (not a heap view) — detach-safe if the caller retains it
-    // across heap-growing WASM calls; copied from the local so nothing is
-    // retained wasm-side after return. See toOwnedUint8Array().
+    if (!exportUSDCData(true, &output)) return emscripten::val::null();
     return toOwnedUint8Array(output);
   }
+#endif
 
-  /// Export the current layer as USDC directly into a JS Uint8Array.
-  /// This avoids retaining the whole written crate in a WASM-side vector.
+  bool exportLayerReady() {
+    if (!loaded_ || !loaded_as_layer_) {
+      error_ = "No layer loaded";
+      return false;
+    }
+    return true;
+  }
+
+  bool exportUSDCBufferData(bool as_layer, uint32_t buffer_kind, double capacity,
+                            std::vector<uint8_t> *output, std::string *pending_warn) {
+    if (as_layer && !exportLayerReady()) return false;
+    if (buffer_kind == 1) {
+      error_ = "USDC export output buffer is null.";
+      return false;
+    }
+    if (buffer_kind == 2 || !std::isfinite(capacity) || capacity < 0 ||
+        capacity >= std::ldexp(1.0, int(sizeof(size_t) * 8))) {
+      error_ = "USDC export output must be a Uint8Array.";
+      return false;
+    }
+    const size_t size = static_cast<size_t>(capacity);
+    if (!size) {
+      error_ = "USDC export output buffer is empty.";
+      return false;
+    }
+    if (!exportUSDCData(as_layer, output, pending_warn)) return false;
+    if (output->size() > size) {
+      error_ = "USDC export output buffer too small.";
+      warn_ = *pending_warn;
+      return false;
+    }
+    return true;
+  }
+
+  void finishUSDCBufferCopy(const std::string &warning) { warn_ = warning; }
+
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+  emscripten::val exportUSDCToBuffer(bool as_layer, emscripten::val buffer) {
+    emscripten::val result = emscripten::val::object();
+    result.set("success", false);
+    result.set("size", 0.0);
+    // Preserve validation order before accessing a potentially user-defined getter.
+    if (as_layer && !exportLayerReady()) {
+      result.set("error", error_);
+      return result;
+    }
+    uint32_t kind = 0;
+    size_t capacity = 0;
+    if (buffer.isNull() || buffer.isUndefined()) kind = 1;
+    else if (!GetUint8ArrayByteLength(buffer, &capacity)) kind = 2;
+    std::vector<uint8_t> output;
+    std::string warning;
+    if (!exportUSDCBufferData(as_layer, kind, double(capacity), &output, &warning)) {
+      result.set("error", error_);
+      return result;
+    }
+    if (!output.empty()) {
+      buffer.call<void>("set", emscripten::val(emscripten::typed_memory_view(
+          output.size(), output.data())), emscripten::val(0));
+    }
+    finishUSDCBufferCopy(warning);
+    result.set("success", true);
+    result.set("size", static_cast<double>(output.size()));
+    result.set("warn", warning);
+    return result;
+  }
+
   emscripten::val exportLayerAsUSDCToBufferWithOptions(
       emscripten::val buffer, emscripten::val options) {
     (void)options;
-    emscripten::val result = emscripten::val::object();
-    result.set("success", false);
-    result.set("size", 0.0);
-
-    if (!loaded_ || !loaded_as_layer_) {
-      error_ = "No layer loaded";
-      result.set("error", error_);
-      return result;
-    }
-    if (buffer.isNull() || buffer.isUndefined()) {
-      error_ = "USDC export output buffer is null.";
-      result.set("error", error_);
-      return result;
-    }
-
-    size_t capacity = 0;
-    if (!GetUint8ArrayByteLength(buffer, &capacity)) {
-      error_ = "USDC export output must be a Uint8Array.";
-      result.set("error", error_);
-      return result;
-    }
-    if (capacity == 0) {
-      error_ = "USDC export output buffer is empty.";
-      result.set("error", error_);
-      return result;
-    }
-
-    const lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
-
-    std::vector<uint8_t> output;
-    std::string warn, err;
-    if (!lightusd::usdc::SaveAsUSDCToMemory(curr, &output, &warn, &err,
-                                            usdc_max_file_size_bytes_,
-                                            usdc_max_memory_bytes_)) {
-      error_ = "USDC export failed: " + err;
-      warn_ = warn;
-      result.set("error", error_);
-      return result;
-    }
-
-    if (!CopyBytesToUint8Array(output, buffer, capacity, &err)) {
-      error_ = err;
-      warn_ = warn;
-      result.set("error", error_);
-      return result;
-    }
-
-    warn_ = warn;
-    result.set("success", true);
-    result.set("size", static_cast<double>(output.size()));
-    result.set("warn", warn_);
-    return result;
+    return exportUSDCToBuffer(true, buffer);
   }
 
-  /// Export the current layer's COMPOSED STAGE (typed-Prim reconstruction, the
-  /// same path as exportAsUSDC()/exportAsUSDZWithOptions()) as USDC directly
-  /// into a JS Uint8Array. Low-heap counterpart of the in-heap stage export:
-  /// the finalized crate streams into `buffer` instead of a WASM-side vector,
-  /// so large scenes that overflow the 2 GB wasm32 heap when the whole USDZ is
-  /// built in-heap can be repacked from JS (keep textures + JS-side zip).
   emscripten::val exportStageAsUSDCToBufferWithOptions(
       emscripten::val buffer, emscripten::val options) {
     (void)options;
-    emscripten::val result = emscripten::val::object();
-    result.set("success", false);
-    result.set("size", 0.0);
-
-    if (buffer.isNull() || buffer.isUndefined()) {
-      error_ = "USDC export output buffer is null.";
-      result.set("error", error_);
-      return result;
-    }
-    size_t capacity = 0;
-    if (!GetUint8ArrayByteLength(buffer, &capacity)) {
-      error_ = "USDC export output must be a Uint8Array.";
-      result.set("error", error_);
-      return result;
-    }
-    if (capacity == 0) {
-      error_ = "USDC export output buffer is empty.";
-      result.set("error", error_);
-      return result;
-    }
-
-    lightusd::Stage stage;
-    if (!getStageFromLayer(stage)) {
-      result.set("error", error_);
-      return result;
-    }
-
-    std::vector<uint8_t> output;
-    std::string warn, err;
-    if (!lightusd::usdc::SaveAsUSDCToMemory(stage, &output, &warn, &err,
-                                            usdc_max_file_size_bytes_,
-                                            usdc_max_memory_bytes_)) {
-      error_ = "USDC export failed: " + err;
-      warn_ = warn;
-      result.set("error", error_);
-      return result;
-    }
-
-    if (!CopyBytesToUint8Array(output, buffer, capacity, &err)) {
-      error_ = err;
-      warn_ = warn;
-      result.set("error", error_);
-      return result;
-    }
-
-    warn_ = warn;
-    result.set("success", true);
-    result.set("size", static_cast<double>(output.size()));
-    result.set("warn", warn_);
-    return result;
+    return exportUSDCToBuffer(false, buffer);
   }
+#endif
 
   /// Flatten the loaded layer at the LAYER level: compose
   /// sublayers/references/payload/inherits/variants into a single Layer and
@@ -8753,6 +9324,7 @@ class LightUSDLoaderNative {
     return true;
   }
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   /// Export loaded scene as USDZ (ZIP package with packed assets) — returns Uint8Array
   /// Assets are collected from the em_resolver_ cache.
   ///
@@ -9203,6 +9775,196 @@ class LightUSDLoaderNative {
         usdz_export_buf_.size(), usdz_export_buf_.data()));
   }
 
+#else
+  bool applyMaterialOptimizationC(const std::string &mode,
+      const lightusd_combined_export_optimization &options) {
+    lightusd::usdz::UsdzConvertOptions opt;
+    auto parse_mode = [&](const std::string &mode) {
+      std::string m = mode;
+      for (auto &c : m) c = static_cast<char>(std::tolower(c));
+      if (m == "off" || m == "none" || m.empty()) {
+        opt.material_optimization =
+            lightusd::usdz::MaterialOptimizationMode::Off;
+      } else if (m == "dedupe" || m == "dedup") {
+        opt.material_optimization =
+            lightusd::usdz::MaterialOptimizationMode::Dedupe;
+      } else if (m == "preview" || m == "previewsurface" ||
+                 m == "usdpreviewsurface") {
+        opt.material_optimization =
+            lightusd::usdz::MaterialOptimizationMode::Preview;
+      } else if (m == "atlas") {
+        opt.material_optimization =
+            lightusd::usdz::MaterialOptimizationMode::Atlas;
+      } else {
+        error_ = "Invalid material optimization mode: " + mode;
+        return false;
+      }
+      return true;
+    };
+
+    if (!parse_mode(mode)) return false;
+    if (opt.material_optimization ==
+        lightusd::usdz::MaterialOptimizationMode::Off) {
+      return true;
+    }
+
+    if (options.present & 1u) opt.material_atlas_size = options.values[0];
+    if (options.present & 2u) opt.material_atlas_tile_size = options.values[1];
+    if (options.present & 4u) opt.material_atlas_padding = options.values[2];
+    if (options.present & 8u) opt.material_atlas_min_group_size = options.values[3];
+
+    if (!loaded_ || !loaded_as_layer_) {
+      error_ = "Material optimization requires a loaded Layer.";
+      return false;
+    }
+
+    lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
+    lightusd::usdz::MaterialOptimizationStats opt_stats;
+    std::string owarn, oerr;
+    if (!lightusd::usdz::OptimizeMaterialsInLayer(opt, &curr, &opt_stats,
+                                                  &owarn, &oerr)) {
+      error_ = "Material optimization failed: " + oerr;
+      warn_ += owarn;
+      return false;
+    }
+    warn_ += owarn;
+    warn_ += "Material optimization: " +
+             std::to_string(opt_stats.num_materials_before) + " -> " +
+             std::to_string(opt_stats.num_materials_after) + ", deduped " +
+             std::to_string(opt_stats.num_materials_deduped) + ".\n";
+    return true;
+  }
+  bool applyGeometryOptimizationC(const std::string &mode,
+      const lightusd_combined_export_optimization &options) {
+    lightusd::usdz::UsdzConvertOptions opt;
+    auto parse_mode = [&](const std::string &mode) {
+      std::string m = mode;
+      for (auto &c : m) c = static_cast<char>(std::tolower(c));
+      if (m == "off" || m == "none" || m.empty()) {
+        opt.geometry_optimization =
+            lightusd::usdz::GeometryOptimizationMode::Off;
+      } else if (m == "mergemeshes" || m == "merge" ||
+                 m == "meshmerge") {
+        opt.geometry_optimization =
+            lightusd::usdz::GeometryOptimizationMode::MergeMeshes;
+      } else {
+        error_ = "Invalid geometry optimization mode: " + mode;
+        return false;
+      }
+      return true;
+    };
+
+    if (!parse_mode(mode)) return false;
+    if (opt.geometry_optimization ==
+        lightusd::usdz::GeometryOptimizationMode::Off) {
+      return true;
+    }
+
+    if (options.present & 1u) opt.mesh_merge_max_input_faces = options.values[0];
+    if (options.present & 2u) opt.mesh_merge_max_input_points = options.values[1];
+    if (options.present & 4u) opt.mesh_merge_max_aggregate_faces = options.values[2];
+    if (options.present & 8u) opt.mesh_merge_min_group_size = options.values[3];
+
+    if (!loaded_ || !loaded_as_layer_) {
+      error_ = "Geometry optimization requires a loaded Layer.";
+      return false;
+    }
+
+    lightusd::Layer &curr = composited_ ? composed_layer_ : layer_;
+    lightusd::usdz::GeometryOptimizationStats opt_stats;
+    std::string owarn, oerr;
+    if (!lightusd::usdz::OptimizeGeometryInLayer(opt, &curr, &opt_stats,
+                                                 &owarn, &oerr)) {
+      error_ = "Geometry optimization failed: " + oerr;
+      warn_ += owarn;
+      return false;
+    }
+    warn_ += owarn;
+    warn_ += "Geometry optimization: " +
+             std::to_string(opt_stats.num_meshes_before) + " -> " +
+             std::to_string(opt_stats.num_meshes_after) + ", merged " +
+             std::to_string(opt_stats.num_meshes_merged) + " into " +
+             std::to_string(opt_stats.num_mesh_aggregates) +
+             " aggregate(s).\n";
+    return true;
+  }
+  struct PackageExportState {
+    LightUSDLoaderNative *owner{nullptr};
+    bool as_layer{false};
+    lightusd::Stage stage;
+  };
+
+  PackageExportState *beginPackageExport(bool as_layer) {
+    if (as_layer && !exportLayerReady()) return nullptr;
+    auto state = std::make_unique<PackageExportState>();
+    state->owner = this;
+    state->as_layer = as_layer;
+    if (!as_layer && !getStageFromLayer(state->stage)) return nullptr;
+    return state.release();
+  }
+
+  bool writePackageExport(PackageExportState &state,
+      const std::map<std::string, std::string> &remap, std::string root_format,
+      bool arkit, lightusd_combined_export_info *out) {
+    if (!state.as_layer && !remap.empty())
+      lightusd::usdz::RemapTextureAssetPaths(state.stage, remap);
+    for (auto &c : root_format) c = static_cast<char>(std::tolower(c));
+    lightusd::USDZWriteOptions options;
+    options.max_file_size_bytes = usdc_max_file_size_bytes_;
+    options.max_memory_bytes = usdc_max_memory_bytes_;
+    if (state.as_layer) {
+      options.root_layer_format = root_format == "usdc"
+          ? lightusd::USDZRootLayerFormat::USDC : lightusd::USDZRootLayerFormat::USDA;
+    } else {
+      if (root_format == "usda") options.root_layer_format = lightusd::USDZRootLayerFormat::USDA;
+      if (arkit) {
+        state.stage.metas().upAxis.set_value(lightusd::Axis::Y);
+        options.root_layer_format = lightusd::USDZRootLayerFormat::USDC;
+      }
+    }
+    std::map<std::string, std::vector<uint8_t>> assets;
+    for (const auto &kv : em_resolver_.cache) {
+      const auto &name = kv.first;
+      std::string ext;
+      auto dot = name.rfind('.');
+      if (dot != std::string::npos) {
+        ext = name.substr(dot);
+        for (auto &c : ext) c = static_cast<char>(std::tolower(c));
+      }
+      const bool layer = ext == ".usd" || ext == ".usda" || ext == ".usdc";
+      const bool media = ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+          ext == ".exr" || ext == ".avif" || ext == ".m4a" || ext == ".mp3" || ext == ".wav";
+      if (media || (state.as_layer && !composited_ && layer))
+        assets[name] = std::vector<uint8_t>(kv.second.binary.begin(), kv.second.binary.end());
+    }
+    std::vector<uint8_t> output;
+    std::string warn, err;
+    const bool success = state.as_layer
+        ? lightusd::SaveAsUSDZToMemory(composited_ ? composed_layer_ : layer_, assets,
+                                      &output, options, &warn, &err)
+        : lightusd::SaveAsUSDZToMemory(state.stage, assets, &output, options, &warn, &err);
+    warn_ = warn;
+    if (!success) {
+      error_ = "USDZ export failed: " + err;
+      return false;
+    }
+    usdz_export_buf_ = std::move(output);
+    out->size = static_cast<double>(usdz_export_buf_.size());
+    out->data_ptr = static_cast<double>(reinterpret_cast<uintptr_t>(usdz_export_buf_.data()));
+    return true;
+  }
+
+  int32_t remapLayerAssetPathsC(const std::map<std::string, std::string> &remap) {
+    if (!loaded_) {
+      error_ = "No layer loaded";
+      return -1;
+    }
+    return int32_t(lightusd::usdz::RemapLayerTextureAssetPaths(
+        composited_ ? composed_layer_ : layer_, remap));
+  }
+
+#endif
+
   /// Create a sample scene with a textured quad (checkerboard).
   /// The texture PNG must be set from JS via setAsset("textures/checkerboard.png", pngBytes)
   /// BEFORE calling exportAsUSDZ.
@@ -9345,6 +10107,7 @@ class LightUSDLoaderNative {
     urdf_mesh_buffers_.clear();
   }
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   bool setVisualMesh(const std::string &name, const emscripten::val &positions,
                      const emscripten::val &normals,
                      const emscripten::val &uvs,
@@ -9358,6 +10121,8 @@ class LightUSDLoaderNative {
                         const emscripten::val &indices) {
     return setURDFMeshBuffer(name, positions, normals, uvs, indices);
   }
+
+#endif
 
   /// Build an exportable USD Physics + MuJoCo stage from a compact JSON
   /// description generated by web/js/urdf.js. Geometry is expected to be
@@ -9382,6 +10147,7 @@ class LightUSDLoaderNative {
     return true;
   }
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   bool setURDFMeshBuffer(const std::string &name,
                          const emscripten::val &positions,
                          const emscripten::val &normals,
@@ -9398,6 +10164,15 @@ class LightUSDLoaderNative {
     detail::copyTypedArray<float>(uvs, buffer.uvs, "Float32Array");
     detail::copyTypedArray<int32_t>(indices, buffer.indices, "Int32Array");
 
+    return storeURDFMeshBuffer_(name, std::move(buffer));
+  }
+#endif
+
+  bool storeURDFMeshBuffer_(const std::string &name, lightusd::tydra::URDFMeshBuffer buffer) {
+    if (name.empty()) {
+      error_ = "setVisualMesh/setCollisionMesh requires a non-empty mesh name";
+      return false;
+    }
     if (buffer.positions.size() < 9 || (buffer.positions.size() % 3) != 0) {
       error_ = "setVisualMesh/setCollisionMesh `" + name +
                "` requires positions as Float32Array triples";
@@ -9427,15 +10202,14 @@ class LightUSDLoaderNative {
   /// Encode raw pixel data to image format using native writer (for EXR/TIFF/DNG only).
   /// For PNG/JPEG, use browser Canvas API instead.
   /// format: "exr", "tiff", "dng", "bmp", "png" (fallback)
-  emscripten::val encodeImageNative(const std::string &pixelData, int width, int height, int channels, const std::string &format) {
+  int32_t encodeImageData_(const uint8_t *pixels, size_t pixel_size, int width, int height,
+                           int channels, const std::string &format, lightusd_combined_export_info &out) {
+    out = {}; out.struct_size = sizeof(out);
     // Validate dimensions at WASM boundary.
     constexpr int kMaxDimension = 65536;
     if (width <= 0 || height <= 0 || channels < 1 || channels > 4 ||
         width > kMaxDimension || height > kMaxDimension) {
-      emscripten::val err = emscripten::val::object();
-      err.set("success", false);
-      err.set("error", "Invalid image dimensions.");
-      return err;
+      return 2;
     }
     lightusd::Image img;
     img.width = width;
@@ -9443,8 +10217,7 @@ class LightUSDLoaderNative {
     img.channels = channels;
     img.bpp = 8;
     img.format = lightusd::Image::PixelFormat::UInt;
-    img.data.assign(reinterpret_cast<const uint8_t*>(pixelData.data()),
-                    reinterpret_cast<const uint8_t*>(pixelData.data()) + pixelData.size());
+    if (pixel_size) img.data.assign(pixels, pixels + pixel_size);
 
     lightusd::image::WriteOption opt;
     if (format == "exr") {
@@ -9459,28 +10232,46 @@ class LightUSDLoaderNative {
       opt.format = lightusd::image::WriteImageFormat::PNG;
     } else {
       error_ = "Unsupported image format: " + format;
-      return emscripten::val::null();
+      return 0;
     }
 
     auto result = lightusd::image::WriteImageToMemory(img, opt);
     if (!result) {
       error_ = "Image encoding failed: " + result.error();
-      return emscripten::val::null();
+      return 0;
     }
 
     image_export_buf_ = std::move(result.value());
-    return emscripten::val(emscripten::typed_memory_view(
-        image_export_buf_.size(), image_export_buf_.data()));
+    out.size = static_cast<double>(image_export_buf_.size());
+    out.data_ptr = static_cast<double>(reinterpret_cast<uintptr_t>(image_export_buf_.data()));
+    return 1;
   }
+
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+  emscripten::val encodeImageNative(const std::string &pixelData, int width, int height, int channels, const std::string &format) {
+    lightusd_combined_export_info info{};
+    const int32_t status = encodeImageData_(reinterpret_cast<const uint8_t *>(pixelData.data()),
+        pixelData.size(), width, height, channels, format, info);
+    if (status == 2) {
+      auto error = emscripten::val::object();
+      error.set("success", false); error.set("error", "Invalid image dimensions.");
+      return error;
+    }
+    if (!status) return emscripten::val::null();
+    return emscripten::val(emscripten::typed_memory_view(image_export_buf_.size(), image_export_buf_.data()));
+  }
+#endif
 
   //
   // Progress reporting methods for polling-based async progress
   //
 
   /// Get current parsing progress as a JS object
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val getProgress() const {
     return parsing_progress_.toJS();
   }
+#endif
 
   /// Request cancellation of current parsing operation
   void cancelParsing() {
@@ -9618,6 +10409,228 @@ class LightUSDLoaderNative {
     return true;
   }
 
+#if defined(LIGHTUSD_WASM_WITH_NEXT)
+  int32_t loadingOpC(uint32_t op, const std::string &a,
+                     const std::string &b, const std::string &c) {
+    switch (op) {
+      case LIGHTUSD_COMBINED_LOAD_BINARY: return loadFromBinary(a, b);
+      case LIGHTUSD_COMBINED_LOAD_LAYER: return loadAsLayerFromBinary(a, b);
+      case LIGHTUSD_COMBINED_LOAD_PROGRESS: return loadFromBinaryWithProgress(a, b);
+      case LIGHTUSD_COMBINED_LOAD_LAYER_PROGRESS: return loadAsLayerFromBinaryWithProgress(a, b);
+      case LIGHTUSD_COMBINED_LOAD_CACHED: return loadFromCachedAsset(a);
+      case LIGHTUSD_COMBINED_LOAD_LAYER_CACHED: return loadAsLayerFromCachedAsset(a);
+      case LIGHTUSD_COMBINED_LOAD_JSON: return loadLayerFromJSON(a);
+      case LIGHTUSD_COMBINED_LOAD_TEST:
+        return loadTestData(a, reinterpret_cast<const uint8_t *>(b.data()), b.size());
+      case LIGHTUSD_COMBINED_LOAD_CANCEL: cancelParsing(); return 0;
+      case LIGHTUSD_COMBINED_LOAD_WAS_CANCELLED: return wasCancelled();
+      case LIGHTUSD_COMBINED_LOAD_IN_PROGRESS: return isParsingInProgress();
+      case LIGHTUSD_COMBINED_LOAD_RESET_PROGRESS: resetProgress(); return 0;
+      case LIGHTUSD_COMBINED_LOAD_RELEASE_SOURCE: releaseSourceLayer(); return 0;
+      case LIGHTUSD_COMBINED_LOAD_RESET: reset(); return 0;
+      case LIGHTUSD_COMBINED_LOAD_OK: return ok();
+      case LIGHTUSD_COMBINED_LOAD_ERROR:
+        lightusd::web::combined::StoreStringTable({error()}, {}); return 0;
+      case LIGHTUSD_COMBINED_LOAD_WARNING:
+        lightusd::web::combined::StoreStringTable({warn()}, {}); return 0;
+      case LIGHTUSD_COMBINED_LOAD_VALIDATE_BINARY:
+        lightusd::web::combined::StoreStringTable({validateFromBinary(a, b, c)}, {}); return 0;
+      case LIGHTUSD_COMBINED_LOAD_VALIDATE_LAYER:
+        lightusd::web::combined::StoreStringTable({validateLoadedLayer(a)}, {}); return 0;
+      default: return -1;
+    }
+  }
+
+  int32_t loadingProgressC(lightusd_combined_loading_progress *out) const {
+    if (!out || out->struct_size < sizeof(*out)) return -1;
+    *out = {};
+    out->struct_size = sizeof(*out);
+    const ParsingProgress &p = parsing_progress_;
+    out->flags = p.cancel_requested.load() ? 1u : 0u;
+    out->progress = p.progress;
+    out->percentage = p.progress * 100.0f;
+    out->bytes_processed = double(p.bytes_processed);
+    out->total_bytes = double(p.total_bytes);
+    out->meshes_processed = double(p.meshes_processed);
+    out->meshes_total = double(p.meshes_total);
+    out->materials_processed = double(p.materials_processed);
+    out->materials_total = double(p.materials_total);
+    lightusd::web::combined::StoreStringTable(
+        {p.stage_name, p.current_operation, p.error_message,
+         p.current_mesh_name, p.tydra_stage}, {});
+    return 0;
+  }
+
+  int32_t loadingMemoryProbeC(int32_t array_length) const {
+    if (!memoryProbeLengthValid(array_length)) return -1;
+    auto records = collectValueMemoryUsage(array_length);
+    std::vector<std::string> names;
+    std::vector<uint32_t> sizes;
+    names.reserve(records.size());
+    sizes.reserve(records.size() * 2);
+    for (auto &record : records) {
+      names.push_back(std::move(record.first));
+      const uint64_t size = record.second;
+      sizes.push_back(static_cast<uint32_t>(size));
+      sizes.push_back(static_cast<uint32_t>(size >> 32));
+    }
+    const int32_t count = static_cast<int32_t>(records.size());
+    lightusd::web::combined::StoreStringTable(std::move(names), std::move(sizes));
+    return count;
+  }
+#endif
+
+#if defined(LIGHTUSD_WASM_WITH_NEXT)
+  struct AsyncLoadState {
+    std::string binary;
+    std::string filename;
+    std::string error;
+    lightusd::Stage stage;
+    std::unique_ptr<lightusd::tydra::RenderSceneConverterEnv> env;
+    std::unique_ptr<lightusd::tydra::RenderSceneConverter> converter;
+    lightusd_combined_async_load_info result{};
+    uint32_t phase{0};
+    bool is_usdz{false};
+  };
+
+  uint32_t loadingAsyncBeginC(std::string binary, std::string filename) {
+    if (!next_async_load_id_) return 0;
+    const uint32_t id = next_async_load_id_++;
+    auto state = std::make_unique<AsyncLoadState>();
+    state->binary = std::move(binary);
+    state->filename = std::move(filename);
+    async_loads_.emplace(id, std::move(state));
+    return id;
+  }
+
+  int32_t loadingAsyncStepC(uint32_t task, lightusd_combined_async_load_info *out) {
+    if (!out || out->struct_size < sizeof(*out)) return -1;
+    auto found = async_loads_.find(task);
+    if (found == async_loads_.end()) return -1;
+    AsyncLoadState &s = *found->second;
+    *out = {};
+    out->struct_size = sizeof(*out);
+    auto fail = [&](std::string error) {
+      s.error = std::move(error);
+      s.phase = 9;
+      lightusd::web::combined::StoreStringTable({s.error}, {});
+      return 0;
+    };
+    switch (s.phase) {
+      case 0:
+        reportAsyncPhaseStart("detecting", 0.0f);
+        s.is_usdz = lightusd::IsUSDZ(
+            reinterpret_cast<const uint8_t *>(s.binary.data()), s.binary.size());
+        break;
+      case 1: {
+        reportAsyncPhaseStart("parsing", 0.1f);
+        lightusd::USDLoadOptions options;
+        options.max_memory_limit_in_mb = max_memory_limit_mb_;
+        options.mmap_zero_copy = mmap_zero_copy_;
+        loaded_ = lightusd::LoadUSDFromMemory(
+            reinterpret_cast<const uint8_t *>(s.binary.data()), s.binary.size(),
+            s.filename, &s.stage, &warn_, &error_, options);
+        if (!loaded_) return fail(error_);
+        loaded_as_layer_ = false;
+        filename_ = s.filename;
+        export_stage_ = s.stage;
+        has_stage_ = true;
+        physics_scene_json_cache_ = BuildPhysicsSceneJSON(s.stage);
+        break;
+      }
+      case 2: {
+        reportAsyncPhaseStart("setup", 0.3f);
+        s.env = std::make_unique<lightusd::tydra::RenderSceneConverterEnv>(s.stage);
+        auto &env = *s.env;
+        env.scene_config.load_texture_assets = loadTextureInNative_;
+        env.material_config.preserve_texel_bitdepth = true;
+        env.material_config.combine_udim_tiles = combineUDIMTiles_;
+        env.mesh_config.lowmem = true;
+        env.mesh_config.defer_tangent_computation = defer_tangent_computation_;
+        env.mesh_config.compute_tangents_only_with_normal_map = true;
+        env.mesh_config.sphere_subdivisions = sphere_subdivisions_;
+        env.mesh_config.enable_bone_reduction = enable_bone_reduction_;
+        env.mesh_config.target_bone_count = target_bone_count_;
+        env.mesh_config.round_bone_count = round_bone_count_;
+        break;
+      }
+      case 3: {
+        reportAsyncPhaseStart("assets", 0.4f);
+        lightusd::AssetResolutionResolver resolver;
+        if (s.is_usdz) {
+          bool asset_on_memory = false;
+          if (!lightusd::ReadUSDZAssetInfoFromMemory(
+                  reinterpret_cast<const uint8_t *>(s.binary.data()), s.binary.size(),
+                  asset_on_memory, &usdz_asset_, &warn_, &error_))
+            return fail("Failed to read USDZ assetInfo");
+          if (!lightusd::SetupUSDZAssetResolution(resolver, &usdz_asset_))
+            return fail("Failed to setup AssetResolution for USDZ");
+        } else if (!SetupEMAssetResolution(resolver, &em_resolver_)) {
+          return fail("Failed to setup asset resolution");
+        }
+        s.env->asset_resolver = resolver;
+        break;
+      }
+      case 4: {
+        reportAsyncPhaseStart("meshes", 0.5f);
+        s.converter = std::make_unique<lightusd::tydra::RenderSceneConverter>();
+        s.converter->SetDetailedProgressCallback(
+            [](const lightusd::tydra::DetailedProgressInfo &info, void *) -> bool {
+              reportTydraProgress(
+                  static_cast<int>(info.meshes_processed), static_cast<int>(info.meshes_total),
+                  info.GetStageName(), info.current_mesh_name.c_str(),
+                  static_cast<int>(info.materials_processed), static_cast<int>(info.materials_total),
+                  info.current_material_name.c_str(), info.progress);
+              return true;
+            }, nullptr);
+        auto &env = *s.env;
+        if (s.stage.metas().startTimeCode.authored())
+          env.timecode = s.stage.metas().startTimeCode.get_value();
+        env.scene_config.enable_value_clips = enable_value_clips_;
+        env.scene_config.value_clip_sample_rate = value_clip_sample_rate_;
+        env.scene_config.value_clip_use_time_range = value_clip_use_time_range_;
+        env.scene_config.value_clip_start_time = value_clip_start_time_;
+        env.scene_config.value_clip_end_time = value_clip_end_time_;
+        env.scene_config.dedup_materials_by_texture_identity = native_material_dedup_;
+        env.scene_config.merge_meshes = native_mesh_merge_;
+        env.scene_config.merge_meshes_bake_transform = native_mesh_merge_bake_transform_;
+        env.scene_config.flatten_optimized_render_tree = native_flatten_render_tree_;
+        break;
+      }
+      case 5:
+        loaded_ = s.converter->ConvertToRenderScene(*s.env, &render_scene_);
+        break;
+      case 6:
+        if (!s.converter->GetWarning().empty()) {
+          if (!warn_.empty()) warn_ += "\n";
+          warn_ += s.converter->GetWarning();
+        }
+        if (!loaded_) return fail(s.converter->GetError());
+        reportAsyncPhaseStart("complete", 1.0f);
+        break;
+      case 7:
+        s.result.struct_size = sizeof(s.result);
+        s.result.mesh_count = static_cast<uint32_t>(render_scene_.meshes.size());
+        s.result.material_count = static_cast<uint32_t>(render_scene_.materials.size());
+        s.result.texture_count = static_cast<uint32_t>(render_scene_.textures.size());
+        s.phase = 8;
+        [[fallthrough]];
+      case 8:
+        *out = s.result;
+        return 2;
+      case 9:
+        return fail(s.error);
+      default: return -1;
+    }
+    ++s.phase;
+    return 1;
+  }
+
+  int32_t loadingAsyncEndC(uint32_t task) {
+    return async_loads_.erase(task) ? 0 : -1;
+  }
+#endif
+
   // TODO: Deprecate
   bool ok() const { return loaded_; }
 
@@ -9625,9 +10638,15 @@ class LightUSDLoaderNative {
   const std::string &warn() const { return warn_; }
 
  private:
+#if defined(LIGHTUSD_WASM_WITH_NEXT)
+  std::map<uint32_t, std::unique_ptr<AsyncLoadState>> async_loads_;
+  uint32_t next_async_load_id_{1};
+#endif
 
-  void appendVariantInfoRec(emscripten::val &arr, const std::string &root_path,
-                            const lightusd::PrimSpec &ps) const {
+
+  void collectVariantInfoRec(const std::string &root_path,
+                             const lightusd::PrimSpec &ps,
+                             std::vector<VariantPrimInfo> *out) const {
     const std::string prim_path = root_path + "/" + ps.name();
     std::vector<std::string> set_names;
 
@@ -9650,46 +10669,37 @@ class LightUSDLoaderNative {
     }
 
     if (!set_names.empty()) {
-      emscripten::val prim_info = emscripten::val::object();
-      emscripten::val sets = emscripten::val::array();
-      prim_info.set("primPath", prim_path);
-
+      VariantPrimInfo prim_info;
+      prim_info.prim_path = prim_path;
       for (const std::string &set_name : set_names) {
-        emscripten::val set_info = emscripten::val::object();
-        emscripten::val options = emscripten::val::array();
-        set_info.set("name", set_name);
-
-        std::string selection;
+        VariantSetInfo set_info;
+        set_info.name = set_name;
         if (ps.metas().variants) {
           const auto &variants = ps.metas().variants.value();
           auto it = variants.find(set_name);
           if (it != variants.end()) {
-            selection = it->second;
+            set_info.selection = it->second;
           }
         }
-        set_info.set("selection", selection);
-
         auto vs_it = ps.variantSets().find(set_name);
         if (vs_it != ps.variantSets().end()) {
           for (const auto &variant : vs_it->second.variantSet) {
-            options.call<void>("push", variant.first);
+            set_info.options.push_back(variant.first);
           }
         }
-        set_info.set("options", options);
-        sets.call<void>("push", set_info);
+        prim_info.sets.push_back(std::move(set_info));
       }
-
-      prim_info.set("variantSets", sets);
-      arr.call<void>("push", prim_info);
+      out->push_back(std::move(prim_info));
     }
 
     for (const auto &child : ps.children()) {
-      appendVariantInfoRec(arr, prim_path, child);
+      collectVariantInfoRec(prim_path, child, out);
     }
   }
 
 
   // Simple glTF-like Node
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
   emscripten::val buildNodeRec(const lightusd::tydra::Node &rnode) {
     emscripten::val node = emscripten::val::object();
 
@@ -9732,6 +10742,8 @@ class LightUSDLoaderNative {
   }
 
 
+#endif
+
   bool loaded_{false};
   bool loaded_as_layer_{false};
   bool loaded_layer_is_usdz_{false};
@@ -9758,40 +10770,6 @@ class LightUSDLoaderNative {
   };
   std::map<std::string, NextAsyncFlattenSession> next_async_flatten_sessions_;
 #endif  // LIGHTUSD_WASM_WITH_NEXT
-
-  bool parseAssetPathRemap(emscripten::val remap,
-                           std::map<std::string, std::string> *out) {
-    if (!out) return false;
-    out->clear();
-    if (remap.isUndefined() || remap.isNull()) return true;
-    emscripten::val keys =
-        emscripten::val::global("Object").call<emscripten::val>("keys", remap);
-    const size_t nkeys = keys["length"].as<size_t>();
-    for (size_t i = 0; i < nkeys; i++) {
-      std::string k = keys[i].as<std::string>();
-      (*out)[k] = remap[k].as<std::string>();
-    }
-    return true;
-  }
-
-  bool parseVariantOverrides(emscripten::val variants,
-                             std::map<std::string, std::string> *out) {
-    if (!out) return false;
-    out->clear();
-    if (variants.isUndefined() || variants.isNull()) return true;
-    emscripten::val keys =
-        emscripten::val::global("Object").call<emscripten::val>("keys", variants);
-    const size_t nkeys = keys["length"].as<size_t>();
-    for (size_t i = 0; i < nkeys; i++) {
-      std::string k = keys[i].as<std::string>();
-      if (k.empty()) continue;
-      emscripten::val v = variants[k];
-      if (v.isUndefined() || v.isNull()) continue;
-      std::string value = v.as<std::string>();
-      if (!value.empty()) (*out)[k] = value;
-    }
-    return true;
-  }
 
   // UDIM: when false, keep UDIM tiles separate (sparse tydra::UDIMTexture)
   // for editing tiles in the web RenderScene. When true (default), combine
@@ -9833,10 +10811,6 @@ class LightUSDLoaderNative {
   bool value_clip_use_time_range_{false};
   double value_clip_start_time_{0.0};
   double value_clip_end_time_{0.0};
-
-  // Bone texture data cache (mutable for const member function)
-  mutable std::vector<float> bone_texture_data_;
-  mutable std::vector<float> bone_vertex_offsets_;
 
   std::string filename_;
   std::string warn_;
@@ -9888,7 +10862,6 @@ class LightUSDLoaderNative {
 
   // Cache for vec4 tangents (xyz=tangent, w=handedness) in the non-reordered path
   mutable std::unordered_map<int, std::vector<float>> tangents4_cache_;
-  mutable std::unordered_map<int, std::vector<float>> normals3_cache_;
 
   // Deprecated-method names already warned about (warn once per name).
   mutable std::set<std::string> deprecation_warned_;
@@ -9901,6 +10874,796 @@ class LightUSDLoaderNative {
   // Progress tracking for polling-based progress reporting
   ParsingProgress parsing_progress_;
 };
+
+#if defined(LIGHTUSD_WASM_WITH_NEXT)
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t
+lightusd_combined_next_flatten_buffer(
+    void *loader, const uint8_t *uuid, uint32_t uuid_size,
+    uint8_t lazy_arrays, lightusd_combined_flatten_info *out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->nextFlattenBufferC(
+      uuid, uuid_size, lazy_arrays, out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t
+lightusd_combined_next_flatten_buffer_maps(
+    void *loader, const uint8_t *uuid, uint32_t uuid_size,
+    uint8_t lazy_arrays, const uint8_t *remap_pairs,
+    uint32_t remap_pairs_size, const uint8_t *variant_pairs,
+    uint32_t variant_pairs_size, lightusd_combined_flatten_info *out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->nextFlattenBufferMapsC(
+      uuid, uuid_size, lazy_arrays, remap_pairs, remap_pairs_size,
+      variant_pairs, variant_pairs_size, out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t
+lightusd_combined_next_flatten_async_end(void *loader,
+                                         const uint8_t *session,
+                                         uint32_t session_size) {
+  if (!loader || (!session && session_size)) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->nextFlattenAsyncEndC(
+             session, session_size)
+             ? 1
+             : 0;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t
+lightusd_combined_next_flatten_async_provide_layer(
+    void *loader, const uint8_t *session, uint32_t session_size,
+    const uint8_t *key, uint32_t key_size, const uint8_t *data,
+    uint32_t data_size) {
+  if (!loader || (!session && session_size) || (!key && key_size) ||
+      (!data && data_size && data_size <= (uint32_t(1) << 30))) {
+    return -1;
+  }
+  return static_cast<LightUSDLoaderNative *>(loader)
+      ->nextFlattenAsyncProvideLayerC(session, session_size, key, key_size,
+                                      data, data_size);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t
+lightusd_combined_next_flatten_async_begin(
+    void *loader, const uint8_t *uuid, uint32_t uuid_size,
+    const uint8_t *root_name, uint32_t root_name_size, uint8_t lazy_arrays,
+    uint8_t *session_out, uint32_t session_cap, uint32_t *session_size_out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->nextFlattenAsyncBeginC(
+      uuid, uuid_size, root_name, root_name_size, lazy_arrays, session_out,
+      session_cap, session_size_out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t
+lightusd_combined_next_flatten_async_begin_remap(
+    void *loader, const uint8_t *uuid, uint32_t uuid_size,
+    const uint8_t *root_name, uint32_t root_name_size, uint8_t lazy_arrays,
+    const uint8_t *remap_pairs, uint32_t remap_pairs_size,
+    uint8_t *session_out, uint32_t session_cap, uint32_t *session_size_out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)
+      ->nextFlattenAsyncBeginRemapC(
+          uuid, uuid_size, root_name, root_name_size, lazy_arrays, remap_pairs,
+      remap_pairs_size, session_out, session_cap, session_size_out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t
+lightusd_combined_next_flatten_async_begin_remap_variants(
+    void *loader, const uint8_t *uuid, uint32_t uuid_size,
+    const uint8_t *root_name, uint32_t root_name_size, uint8_t lazy_arrays,
+    const uint8_t *remap_pairs, uint32_t remap_pairs_size,
+    const uint8_t *variant_pairs, uint32_t variant_pairs_size,
+    uint8_t *session_out, uint32_t session_cap, uint32_t *session_size_out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)
+      ->nextFlattenAsyncBeginRemapVariantsC(
+          uuid, uuid_size, root_name, root_name_size, lazy_arrays, remap_pairs,
+          remap_pairs_size, variant_pairs, variant_pairs_size, session_out,
+          session_cap, session_size_out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t
+lightusd_combined_next_flatten_to_sink(
+    void *loader, const uint8_t *uuid, uint32_t uuid_size,
+    uint8_t lazy_arrays, uint32_t sink_id, const uint8_t *remap_pairs,
+    uint32_t remap_pairs_size, const uint8_t *variant_pairs,
+    uint32_t variant_pairs_size, lightusd_combined_flatten_step_info *out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->nextFlattenToSinkC(
+      uuid, uuid_size, lazy_arrays, sink_id, remap_pairs, remap_pairs_size,
+      variant_pairs, variant_pairs_size, out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t
+lightusd_combined_next_flatten_multi(
+    void *loader, const uint8_t *uuid, uint32_t uuid_size,
+    const uint8_t *root_name, uint32_t root_name_size, uint8_t lazy_arrays,
+    uint32_t sink_id, uint32_t exists_id, uint32_t fetch_id,
+    const uint8_t *remap_pairs, uint32_t remap_pairs_size,
+    const uint8_t *variant_pairs, uint32_t variant_pairs_size,
+    lightusd_combined_flatten_step_info *out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->nextFlattenMultiC(
+      uuid, uuid_size, root_name, root_name_size, lazy_arrays, sink_id,
+      exists_id, fetch_id, remap_pairs, remap_pairs_size, variant_pairs,
+      variant_pairs_size, out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t
+lightusd_combined_next_flatten_async_step(
+    void *loader, const uint8_t *session, uint32_t session_size,
+    uint32_t sink_id, lightusd_combined_flatten_step_info *out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->nextFlattenAsyncStepC(
+      session, session_size, sink_id, out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t
+lightusd_combined_layer_op(void *loader, uint32_t op) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->layerOpC(op);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t
+lightusd_combined_apply_variant_selection(
+    void *loader, const uint8_t *prim_path, uint32_t prim_path_size,
+    const uint8_t *variant_set, uint32_t variant_set_size,
+    const uint8_t *variant, uint32_t variant_size) {
+  if (!loader || (!prim_path && prim_path_size) ||
+      (!variant_set && variant_set_size) || (!variant && variant_size)) {
+    return -1;
+  }
+  auto counted = [](const uint8_t *data, uint32_t size) {
+    return size ? std::string(reinterpret_cast<const char *>(data), size)
+                : std::string();
+  };
+  return static_cast<LightUSDLoaderNative *>(loader)->applyVariantSelection(
+             counted(prim_path, prim_path_size),
+             counted(variant_set, variant_set_size),
+             counted(variant, variant_size))
+             ? 1
+             : 0;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t
+lightusd_combined_apply_global_variant_selection(void *loader,
+                                                 const uint8_t *variant,
+                                                 uint32_t variant_size) {
+  if (!loader || (!variant && variant_size)) return -1;
+  const std::string name =
+      variant_size ? std::string(reinterpret_cast<const char *>(variant),
+                                 variant_size)
+                   : std::string();
+  return static_cast<LightUSDLoaderNative *>(loader)->applyVariantSelection(name)
+             ? 1
+             : 0;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t
+lightusd_combined_layer_strings(void *loader, uint32_t kind,
+                                uint32_t *shape_size_out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->layerStringsC(
+      kind, shape_size_out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE double lightusd_combined_stream_op(
+    void *loader, uint32_t op, const uint8_t *key, uint32_t key_size,
+    const uint8_t *data, uint32_t data_size, double value) {
+  if (!loader || (!key && key_size) || (!data && data_size)) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->streamOpC(
+      op, key_size ? std::string(reinterpret_cast<const char *>(key), key_size)
+                   : std::string(),
+      data_size ? std::string(reinterpret_cast<const char *>(data), data_size)
+                : std::string(), value);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_stream_info_get(
+    void *loader, uint32_t kind, const uint8_t *key, uint32_t key_size,
+    double size, double max_bytes, lightusd_combined_stream_info *out) {
+  if (!loader || (!key && key_size)) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->streamInfoC(
+      kind, key_size ? std::string(reinterpret_cast<const char *>(key), key_size)
+                     : std::string(), size, max_bytes, out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE double lightusd_combined_stream_size_op(
+    void *loader, uint32_t op, const uint8_t *key, uint32_t key_size,
+    uint32_t low, uint32_t high) {
+  if (!loader || (!key && key_size)) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->streamSizeOpC(
+      op, key_size ? std::string(reinterpret_cast<const char *>(key), key_size)
+                   : std::string(), uint64_t(low) | (uint64_t(high) << 32));
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_stream_allocate(
+    void *loader, const uint8_t *key, uint32_t key_size,
+    uint32_t size_low, uint32_t size_high, uint32_t max_low, uint32_t max_high,
+    lightusd_combined_stream_info *out) {
+  if (!loader || (!key && key_size)) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->streamAllocateC(
+      key_size ? std::string(reinterpret_cast<const char *>(key), key_size)
+               : std::string(),
+      uint64_t(size_low) | (uint64_t(size_high) << 32),
+      uint64_t(max_low) | (uint64_t(max_high) << 32), out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE double lightusd_combined_asset_op(
+    void *loader, uint32_t op, const uint8_t *key, uint32_t key_size,
+    const uint8_t *data, uint32_t data_size, double value) {
+  if (!loader || (!key && key_size) || (!data && data_size)) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->assetOpC(
+      op, key_size ? std::string(reinterpret_cast<const char *>(key), key_size)
+                   : std::string(),
+      data_size ? std::string(reinterpret_cast<const char *>(data), data_size)
+                : std::string(), value);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_asset_size_op(
+    void *loader, uint32_t op, uint32_t low, uint32_t high, uint32_t *out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->assetSizeC(
+      op, uint64_t(low) | (uint64_t(high) << 32), out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_asset_set_raw(
+    void *loader, const uint8_t *key, uint32_t key_size, const uint8_t *data,
+    uint32_t size_low, uint32_t size_high) {
+  const uint64_t size = uint64_t(size_low) | (uint64_t(size_high) << 32);
+  if (!loader || (!key && key_size) ||
+      size > uint64_t((std::numeric_limits<size_t>::max)())) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->setAssetFromRawPointer(
+      key_size ? std::string(reinterpret_cast<const char *>(key), key_size)
+               : std::string(), reinterpret_cast<uintptr_t>(data),
+      static_cast<size_t>(size));
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_asset_info_get(
+    void *loader, uint32_t by_uuid, const uint8_t *key, uint32_t key_size,
+    lightusd_combined_asset_info *out) {
+  if (!loader || (!key && key_size)) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->assetInfoC(
+      by_uuid, key_size ? std::string(reinterpret_cast<const char *>(key), key_size)
+                        : std::string(), out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_asset_strings(
+    void *loader, uint32_t kind, const uint8_t *key, uint32_t key_size) {
+  if (!loader || (!key && key_size)) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->assetStringsC(
+      kind, key_size ? std::string(reinterpret_cast<const char *>(key), key_size)
+                     : std::string());
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_export_op(
+    void *loader, uint32_t op, uint32_t embed_buffers,
+    const uint8_t *array_mode, uint32_t array_mode_size) {
+  if (!loader || (!array_mode && array_mode_size) || op > 5 || embed_buffers > 1)
+    return -1;
+  auto &native = *static_cast<LightUSDLoaderNative *>(loader);
+  std::string result;
+  switch (op) {
+    case 0: result = native.layerToString(); break;
+    case 1: result = native.layerToJSON(); break;
+    case 2:
+      result = native.layerToJSONWithOptions(embed_buffers != 0,
+          array_mode_size ? std::string(reinterpret_cast<const char *>(array_mode),
+                                        array_mode_size) : std::string());
+      break;
+    case 3: result = native.exportAsUSDA(); break;
+    case 4: return native.flattenLayer();
+    case 5: return native.layerToRenderScene();
+    default: return -1;
+  }
+  lightusd::web::combined::StoreStringTable({std::move(result)}, {});
+  return 0;
+}
+
+struct CombinedExportBytes {
+  std::vector<uint8_t> bytes;
+  std::string warning;
+};
+
+extern "C" EMSCRIPTEN_KEEPALIVE void *lightusd_combined_export_usdc(
+    void *loader, uint32_t as_layer, lightusd_combined_export_info *out) {
+  if (!loader || as_layer > 1 || !out || out->struct_size < sizeof(*out))
+    return nullptr;
+  *out = {};
+  out->struct_size = sizeof(*out);
+  auto result = std::make_unique<CombinedExportBytes>();
+  if (!static_cast<LightUSDLoaderNative *>(loader)->exportUSDCData(as_layer != 0, &result->bytes))
+    return nullptr;
+  out->size = static_cast<double>(result->bytes.size());
+  out->data_ptr = static_cast<double>(reinterpret_cast<uintptr_t>(result->bytes.data()));
+  return result.release();
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE void lightusd_combined_export_release(void *result) {
+  delete static_cast<CombinedExportBytes *>(result);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_export_layer_ready(void *loader) {
+  return loader ? static_cast<LightUSDLoaderNative *>(loader)->exportLayerReady() : -1;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE void *lightusd_combined_export_usdc_buffer(
+    void *loader, uint32_t as_layer, uint32_t buffer_kind, double capacity,
+    lightusd_combined_export_info *out) {
+  if (!loader || as_layer > 1 || buffer_kind > 2 || !out || out->struct_size < sizeof(*out))
+    return nullptr;
+  *out = {};
+  out->struct_size = sizeof(*out);
+  auto result = std::make_unique<CombinedExportBytes>();
+  if (!static_cast<LightUSDLoaderNative *>(loader)->exportUSDCBufferData(
+          as_layer != 0, buffer_kind, capacity, &result->bytes, &result->warning))
+    return nullptr;
+  out->size = static_cast<double>(result->bytes.size());
+  out->data_ptr = static_cast<double>(reinterpret_cast<uintptr_t>(result->bytes.data()));
+  return result.release();
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_export_buffer_finish(
+    void *loader, void *result) {
+  if (!loader || !result) return -1;
+  const auto &warning = static_cast<CombinedExportBytes *>(result)->warning;
+  static_cast<LightUSDLoaderNative *>(loader)->finishUSDCBufferCopy(warning);
+  lightusd::web::combined::StoreStringTable({warning}, {});
+  return 0;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_export_optimize(
+    void *loader, uint32_t kind, const uint8_t *mode, uint32_t mode_size,
+    const lightusd_combined_export_optimization *options) {
+  if (!loader || kind > 1 || (!mode && mode_size) || !options ||
+      options->struct_size < sizeof(*options) || (options->present & ~15u)) return -1;
+  auto &native = *static_cast<LightUSDLoaderNative *>(loader);
+  const std::string name = mode_size
+      ? std::string(reinterpret_cast<const char *>(mode), mode_size) : std::string();
+  return kind == 0 ? native.applyMaterialOptimizationC(name, *options)
+                   : native.applyGeometryOptimizationC(name, *options);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE void *lightusd_combined_package_begin(void *loader, uint32_t as_layer) {
+  if (!loader || as_layer > 1) return nullptr;
+  return static_cast<LightUSDLoaderNative *>(loader)->beginPackageExport(as_layer != 0);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_package_write(
+    void *loader, void *package, const uint8_t *remap, uint32_t remap_size,
+    const uint8_t *root_format, uint32_t root_format_size, uint32_t arkit,
+    lightusd_combined_export_info *out) {
+  if (!loader || !package || (!remap && remap_size) || (!root_format && root_format_size) ||
+      arkit > 1 || !out || out->struct_size < sizeof(*out)) return -1;
+  auto &state = *static_cast<LightUSDLoaderNative::PackageExportState *>(package);
+  if (state.owner != loader) return -1;
+  std::map<std::string, std::string> paths;
+  if (!LightUSDLoaderNative::DecodeFlattenStringMap(remap, remap_size, &paths)) return -1;
+  *out = {};
+  out->struct_size = sizeof(*out);
+  return static_cast<LightUSDLoaderNative *>(loader)->writePackageExport(state, paths,
+      root_format_size ? std::string(reinterpret_cast<const char *>(root_format), root_format_size)
+                       : std::string(), arkit != 0, out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE void lightusd_combined_package_end(void *package) {
+  delete static_cast<LightUSDLoaderNative::PackageExportState *>(package);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_export_remap(
+    void *loader, const uint8_t *remap, uint32_t size) {
+  if (!loader || (!remap && size)) return -2;
+  std::map<std::string, std::string> paths;
+  if (!LightUSDLoaderNative::DecodeFlattenStringMap(remap, size, &paths)) return -2;
+  return static_cast<LightUSDLoaderNative *>(loader)->remapLayerAssetPathsC(paths);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_render_scalar(void *loader, uint32_t key, double *out) {
+  if (!loader || !out) return -1;
+  auto &native = *static_cast<LightUSDLoaderNative *>(loader);
+  *out = 0;
+  switch (key) {
+    case 0: *out = native.numMeshes(); return 0;
+    case 1: *out = native.numInstances(); return 0;
+    case 2: *out = native.numMaterials(); return 0;
+    case 3: *out = native.numTextures(); return 0;
+    case 4: *out = native.numImages(); return 0;
+    case 5: *out = native.numLights(); return 0;
+    case 6: *out = native.numCameras(); return 0;
+    case 7: *out = native.numUDIMTextures(); return 0;
+    case 8: *out = native.numRootNodes(); return 0;
+    case 9: *out = native.numAnimations(); return 0;
+    case 10: *out = native.numSkeletons(); return 0;
+    case 11: *out = native.getDefaultRootNodeId(); return 0;
+    case 12: lightusd::web::combined::StoreStringTable({native.getURI()}, {}); return 0;
+    case 13: lightusd::web::combined::StoreStringTable({native.getUpAxis()}, {}); return 0;
+    default: return -1;
+  }
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_render_json(void *loader, uint32_t query) {
+  if (!loader || query > 1) return -1;
+  auto &native = *static_cast<LightUSDLoaderNative *>(loader);
+  lightusd::web::combined::StoreStringTable(
+      {query == 0 ? native.getMhProfileJSON() : native.getShadingGraphJSON()}, {});
+  return 0;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_bone_texture_begin(
+    void *loader, int32_t mesh_id, int32_t max_influences, lightusd_combined_bone_texture_info *out) {
+  if (!loader || !out || out->struct_size < sizeof(*out)) return -1;
+  *out = {}; out->struct_size = sizeof(*out);
+  std::unique_ptr<LightUSDLoaderNative::BoneTextureData> result(
+      new (std::nothrow) LightUSDLoaderNative::BoneTextureData());
+  if (!result) return -1;
+  if (!static_cast<LightUSDLoaderNative *>(loader)->buildBoneTexture_(mesh_id, max_influences, *result)) {
+    lightusd::web::combined::StoreStringTable({result->error}, {});
+    return 0;
+  }
+  out->width = result->width; out->height = result->height;
+  out->texels_per_vertex = result->texels_per_vertex;
+  out->max_influences = result->max_influences;
+  out->vertex_count = result->vertex_count; out->element_size = result->element_size;
+  out->texture_data = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(result->texture_data.data()));
+  out->texture_count = result->texture_data.size();
+  out->vertex_offsets = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(result->vertex_offsets.data()));
+  out->offset_count = result->vertex_offsets.size();
+  out->result = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(result.release()));
+  return 1;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE void lightusd_combined_bone_texture_end(void *result) {
+  delete static_cast<LightUSDLoaderNative::BoneTextureData *>(result);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_mesh_value_begin(
+    void *loader, int32_t mesh_id, lightusd_combined_mesh_value_info *out) {
+  if (!loader || !out || out->struct_size < sizeof(*out)) return -1;
+  *out = {}; out->struct_size = sizeof(*out);
+  std::unique_ptr<LightUSDLoaderNative::MeshPointerData> result(
+      new (std::nothrow) LightUSDLoaderNative::MeshPointerData());
+  if (!result) return -1;
+  if (!static_cast<LightUSDLoaderNative *>(loader)->meshValueData_(mesh_id, *result)) return 0;
+  if (result->attributes.size() > size_t(INT32_MAX) || result->submeshes.size() > size_t(INT32_MAX)) return -1;
+  *out = result->value_info; out->struct_size = sizeof(*out);
+  out->attribute_count = static_cast<uint32_t>(result->attributes.size());
+  out->submesh_count = static_cast<uint32_t>(result->submeshes.size());
+  lightusd::web::combined::StoreStringTable(std::move(result->strings), {});
+  out->result = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(result.release()));
+  return 1;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_mesh_warn(void *loader) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->meshWarnC();
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_mesh_pointer_begin(
+    void *loader, int32_t mesh_id, lightusd_combined_mesh_pointer_info *out) {
+  if (!loader || !out || out->struct_size < sizeof(*out)) return -1;
+  *out = {}; out->struct_size = sizeof(*out);
+  std::unique_ptr<LightUSDLoaderNative::MeshPointerData> result(
+      new (std::nothrow) LightUSDLoaderNative::MeshPointerData());
+  if (!result) return -1;
+  if (!static_cast<LightUSDLoaderNative *>(loader)->meshPointerData_(mesh_id, *result)) return 0;
+  if (result->attributes.size() > size_t(INT32_MAX) || result->submeshes.size() > size_t(INT32_MAX)) return -1;
+  *out = result->info; out->struct_size = sizeof(*out);
+  out->attribute_count = static_cast<uint32_t>(result->attributes.size());
+  out->submesh_count = static_cast<uint32_t>(result->submeshes.size());
+  lightusd::web::combined::StoreStringTable(std::move(result->strings), {});
+  out->result = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(result.release()));
+  return 1;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_mesh_pointer_attribute(
+    void *result, int32_t index, lightusd_combined_mesh_attribute *out) {
+  if (!result || !out || out->struct_size < sizeof(*out) || index < 0) return -1;
+  const auto &attributes = static_cast<LightUSDLoaderNative::MeshPointerData *>(result)->attributes;
+  if (size_t(index) >= attributes.size()) return 0;
+  *out = attributes[size_t(index)]; return 1;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_mesh_pointer_submesh(
+    void *result, int32_t index, lightusd_combined_mesh_submesh *out) {
+  if (!result || !out || out->struct_size < sizeof(*out) || index < 0) return -1;
+  const auto &groups = static_cast<LightUSDLoaderNative::MeshPointerData *>(result)->submeshes;
+  if (size_t(index) >= groups.size()) return 0;
+  *out = groups[size_t(index)]; return 1;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE void lightusd_combined_mesh_pointer_end(void *result) {
+  delete static_cast<LightUSDLoaderNative::MeshPointerData *>(result);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_encode_image(
+    void *loader, const uint8_t *pixels, uint32_t pixel_size, int32_t width, int32_t height,
+    int32_t channels, const uint8_t *format, uint32_t format_size, lightusd_combined_export_info *out) {
+  if (!loader || !out || out->struct_size < sizeof(*out) || (!pixels && pixel_size) ||
+      (!format && format_size)) return -1;
+  const std::string fmt = format_size
+      ? std::string(reinterpret_cast<const char *>(format), format_size) : std::string();
+  return static_cast<LightUSDLoaderNative *>(loader)->encodeImageData_(
+      pixels, pixel_size, width, height, channels, fmt, *out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_schema_operation(
+    void *loader, uint32_t operation, const uint8_t *data, uint32_t size) {
+  if (!loader || (!data && size) || operation > 3) return -1;
+  if (operation != 3 && size) return -1;
+  auto &native = *static_cast<LightUSDLoaderNative *>(loader);
+  switch (operation) {
+    case 0:
+      lightusd::web::combined::StoreStringTable({native.extractPhysicsSceneJSON()}, {});
+      return 1;
+    case 1: return native.createSampleScene() ? 1 : 0;
+    case 2: native.clearURDFMeshBuffers(); return 1;
+    case 3: return native.createURDFPhysicsScene(size
+        ? std::string(reinterpret_cast<const char *>(data), size) : std::string()) ? 1 : 0;
+    default: return -1;
+  }
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_schema_mesh(
+    void *loader, const uint8_t *name, uint32_t name_size,
+    const float *positions, uint32_t position_count, const float *normals, uint32_t normal_count,
+    const float *uvs, uint32_t uv_count, const int32_t *indices, uint32_t index_count) {
+  constexpr uint32_t kMaxElements = 1u << 28;
+  if (!loader || (!name && name_size) || (!positions && position_count) ||
+      (!normals && normal_count) || (!uvs && uv_count) || (!indices && index_count) ||
+      position_count > kMaxElements || normal_count > kMaxElements ||
+      uv_count > kMaxElements || index_count > kMaxElements) return -1;
+  if ((position_count && reinterpret_cast<uintptr_t>(positions) % alignof(float)) ||
+      (normal_count && reinterpret_cast<uintptr_t>(normals) % alignof(float)) ||
+      (uv_count && reinterpret_cast<uintptr_t>(uvs) % alignof(float)) ||
+      (index_count && reinterpret_cast<uintptr_t>(indices) % alignof(int32_t))) return -1;
+  const std::string key = name_size
+      ? std::string(reinterpret_cast<const char *>(name), name_size) : std::string();
+  lightusd::tydra::URDFMeshBuffer buffer;
+  if (!key.empty()) {
+    if (position_count) buffer.positions.assign(positions, positions + position_count);
+    if (normal_count) buffer.normals.assign(normals, normals + normal_count);
+    if (uv_count) buffer.uvs.assign(uvs, uvs + uv_count);
+    if (index_count) buffer.indices.assign(indices, indices + index_count);
+  }
+  return static_cast<LightUSDLoaderNative *>(loader)->storeURDFMeshBuffer_(key, std::move(buffer)) ? 1 : 0;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_mesh_operation(
+    void *loader, uint32_t operation, int32_t mesh_id) {
+  if (!loader) return -1;
+  auto &native = *static_cast<LightUSDLoaderNative *>(loader);
+  switch (operation) {
+    case 0:
+      lightusd::web::combined::StoreStringTable({native.getMeshPrimvarsJSON(mesh_id)}, {});
+      return 0;
+    case 1: return native.computeMeshTangents(mesh_id) ? 1 : 0;
+    default: return -1;
+  }
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_nodes_begin(
+    void *loader, int32_t root_id, uint32_t use_default, void **cursor) {
+  if (!loader || !cursor || use_default > 1) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->beginNodeCursor(root_id, use_default != 0, cursor);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_nodes_next(
+    void *cursor, lightusd_combined_node_info *out) {
+  if (!cursor) return -1;
+  return static_cast<LightUSDLoaderNative::NodeCursor *>(cursor)->next(out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE void lightusd_combined_nodes_end(void *cursor) {
+  delete static_cast<LightUSDLoaderNative::NodeCursor *>(cursor);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_udim_get(
+    void *loader, int32_t id, uint32_t *tile_count) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->udimInfoC(id, tile_count);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_unresolved_textures(void *loader) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->unresolvedTexturesC();
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_image_get(
+    void *loader, int32_t id, uint32_t load_buffer, lightusd_combined_image_info *out) {
+  if (!loader || load_buffer > 1) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->imageInfoC(id, load_buffer != 0, out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_image_warn(void *loader) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->imageWarnC();
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_light_get(
+    void *loader, int32_t id, lightusd_combined_light_info *out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->lightInfoC(id, out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_lights_count(void *loader) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->lightsCountC();
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_material_get(
+    void *loader, int32_t id, const uint8_t *format, uint32_t size, lightusd_combined_material_info *out) {
+  if (!loader || !out || out->struct_size < sizeof(*out) || (!format && size)) return -1;
+  const std::string fmt = size ? std::string(reinterpret_cast<const char *>(format), size) : std::string();
+  std::vector<std::string> strings;
+  const int32_t status = static_cast<LightUSDLoaderNative *>(loader)->materialData_(id, fmt, *out, strings);
+  lightusd::web::combined::StoreStringTable(std::move(strings), {});
+  return status;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_light_format(
+    void *loader, int32_t id, const uint8_t *format, uint32_t size) {
+  if (!loader || (!format && size)) return -1;
+  const std::string fmt = size ? std::string(reinterpret_cast<const char *>(format), size) : std::string();
+  std::string text;
+  const bool ok = static_cast<LightUSDLoaderNative *>(loader)->lightText_(id, fmt, &text);
+  lightusd::web::combined::StoreStringTable({std::move(text), fmt}, {});
+  return ok ? 1 : 0;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_skeleton_begin(
+    void *loader, int32_t id, lightusd_combined_skeleton_info *out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->beginSkeletonC(id, out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_skeleton_next(
+    void *cursor, lightusd_combined_joint_info *out) {
+  if (!cursor) return -1;
+  return static_cast<LightUSDLoaderNative::SkeletonCursor *>(cursor)->next(out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE void lightusd_combined_skeleton_end(void *cursor) {
+  delete static_cast<LightUSDLoaderNative::SkeletonCursor *>(cursor);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_animation_get(
+    void *loader, int32_t id, lightusd_combined_animation_info *out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->animationInfoC(id, out);
+}
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_animation_sampler(
+    void *loader, int32_t id, int32_t index, lightusd_combined_sampler_info *out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->animationSamplerC(id, index, out);
+}
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_animation_channel(
+    void *loader, int32_t id, int32_t index, lightusd_combined_channel_info *out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->animationChannelC(id, index, out);
+}
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_animations_count(void *loader) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->animationsCountC();
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_instance_get(
+    void *loader, int32_t id, lightusd_combined_instance_info *out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->instanceInfoC(id, out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_instances_for_mesh(
+    void *loader, int32_t mesh_id) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->instancesForMeshC(mesh_id);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_camera_get(void *loader, int32_t id, lightusd_combined_camera_info *out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->cameraInfoC(id, out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_metadata_get(void *loader, lightusd_combined_scene_metadata *out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->sceneMetadataC(out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_texture_get(void *loader, int32_t id, lightusd_combined_texture_info *out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->textureInfoC(id, out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_mcp_op(
+    void *loader, uint32_t op, const uint8_t *a, uint32_t a_size,
+    const uint8_t *b, uint32_t b_size) {
+  if (!loader || (!a && a_size) || (!b && b_size) ||
+      op > LIGHTUSD_COMBINED_MCP_RESOURCES_READ) return -1;
+  const std::string first = a_size
+      ? std::string(reinterpret_cast<const char *>(a), a_size) : std::string();
+  const std::string second = b_size
+      ? std::string(reinterpret_cast<const char *>(b), b_size) : std::string();
+  auto &native = *static_cast<LightUSDLoaderNative *>(loader);
+  std::string result;
+  switch (op) {
+    case LIGHTUSD_COMBINED_MCP_CREATE_CONTEXT: return native.mcpCreateContext(first);
+    case LIGHTUSD_COMBINED_MCP_SELECT_CONTEXT: return native.mcpSelectContext(first);
+    case LIGHTUSD_COMBINED_MCP_TOOLS_LIST: result = native.mcpToolsList(); break;
+    case LIGHTUSD_COMBINED_MCP_TOOLS_CALL: result = native.mcpToolsCall(first, second); break;
+    case LIGHTUSD_COMBINED_MCP_RESOURCES_LIST: result = native.mcpResourcesList(); break;
+    case LIGHTUSD_COMBINED_MCP_RESOURCES_READ: result = native.mcpResourcesRead(first); break;
+    default: return -1;
+  }
+  lightusd::web::combined::StoreStringTable({std::move(result)}, {});
+  return 0;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_loading_op(
+    void *loader, uint32_t op, const uint8_t *a, uint32_t a_size,
+    const uint8_t *b, uint32_t b_size, const uint8_t *c, uint32_t c_size) {
+  if (!loader || (!a && a_size) || (!b && b_size) || (!c && c_size)) return -1;
+  auto text = [](const uint8_t *data, uint32_t size) {
+    return size ? std::string(reinterpret_cast<const char *>(data), size) : std::string();
+  };
+  return static_cast<LightUSDLoaderNative *>(loader)->loadingOpC(
+      op, text(a, a_size), text(b, b_size), text(c, c_size));
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_loading_progress_get(
+    void *loader, lightusd_combined_loading_progress *out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->loadingProgressC(out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_loading_memory_probe(
+    void *loader, int32_t array_length) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->loadingMemoryProbeC(array_length);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE uint32_t lightusd_combined_loading_async_begin(
+    void *loader, const uint8_t *data, uint32_t size,
+    const uint8_t *filename, uint32_t filename_size) {
+  if (!loader || (!data && size) || (!filename && filename_size)) return 0;
+  return static_cast<LightUSDLoaderNative *>(loader)->loadingAsyncBeginC(
+      size ? std::string(reinterpret_cast<const char *>(data), size) : std::string(),
+      filename_size ? std::string(reinterpret_cast<const char *>(filename), filename_size)
+                    : std::string());
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_loading_async_step(
+    void *loader, uint32_t task, lightusd_combined_async_load_info *out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->loadingAsyncStepC(task, out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_loading_async_end(
+    void *loader, uint32_t task) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->loadingAsyncEndC(task);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t
+lightusd_combined_config_set(void *loader, uint32_t key, double a, double b) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->configSetC(key, a, b);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t
+lightusd_combined_config_get(void *loader, uint32_t key, double *out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->configGetC(key, out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_memory_stats_get(
+    void *loader, lightusd_combined_memory_stats *out) {
+  if (!loader) return -1;
+  return static_cast<LightUSDLoaderNative *>(loader)->memoryStatsC(out);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE double lightusd_combined_debug_log_memory(
+    void *loader, const uint8_t *label, uint32_t label_size) {
+  if (!loader || (!label && label_size)) return -1.0;
+  ReportLightUSDDebugEvent(
+      "manual", label_size ? std::string(reinterpret_cast<const char *>(label),
+                                         label_size)
+                           : std::string());
+  return GetWasmHeapByteLengthForDebug();
+}
+#endif
 
 ///
 /// USD composition
@@ -11927,191 +13690,205 @@ EMSCRIPTEN_BINDINGS(lightusd_module) {
 #if defined(LIGHTUSD_WASM_ASYNCIFY)
       .function("loadAsync", &LightUSDLoaderNative::loadAsync)
 #endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("loadAsLayerFromBinary", &LightUSDLoaderNative::loadAsLayerFromBinary)
       .function("loadFromBinary", &LightUSDLoaderNative::loadFromBinary)
-#if defined(LIGHTUSD_WASM_WITH_NEXT)
-      .function("nextFlattenUSDC", &LightUSDLoaderNative::nextFlattenUSDC)
-      .function("nextFlattenBuffer", &LightUSDLoaderNative::nextFlattenBuffer)
-      .function("nextFlattenBufferRemap",
-                &LightUSDLoaderNative::nextFlattenBufferRemap)
-      .function("nextFlattenBufferRemapVariants",
-                &LightUSDLoaderNative::nextFlattenBufferRemapVariants)
-      .function("nextFlattenBufferToSink",
-                &LightUSDLoaderNative::nextFlattenBufferToSink)
-      .function("nextFlattenBufferToSinkRemap",
-                &LightUSDLoaderNative::nextFlattenBufferToSinkRemap)
-      .function("nextFlattenBufferToSinkRemapVariants",
-                &LightUSDLoaderNative::nextFlattenBufferToSinkRemapVariants)
-      .function("nextFlattenMultiBufferToSink",
-                &LightUSDLoaderNative::nextFlattenMultiBufferToSink)
-      .function("nextFlattenMultiBufferToSinkFetch",
-                &LightUSDLoaderNative::nextFlattenMultiBufferToSinkFetch)
-      .function("nextFlattenMultiBufferToSinkFetchRemap",
-                &LightUSDLoaderNative::nextFlattenMultiBufferToSinkFetchRemap)
-      .function("nextFlattenMultiBufferToSinkFetchRemapVariants",
-                &LightUSDLoaderNative::nextFlattenMultiBufferToSinkFetchRemapVariants)
-      .function("nextFlattenAsyncBegin",
-                &LightUSDLoaderNative::nextFlattenAsyncBegin)
-      .function("nextFlattenAsyncBeginRemap",
-                &LightUSDLoaderNative::nextFlattenAsyncBeginRemap)
-      .function("nextFlattenAsyncBeginRemapVariants",
-                &LightUSDLoaderNative::nextFlattenAsyncBeginRemapVariants)
-      .function("nextFlattenAsyncProvideLayer",
-                &LightUSDLoaderNative::nextFlattenAsyncProvideLayer)
-      .function("nextFlattenAsyncStep",
-                &LightUSDLoaderNative::nextFlattenAsyncStep)
-      .function("nextFlattenAsyncEnd",
-                &LightUSDLoaderNative::nextFlattenAsyncEnd)
-#endif  // LIGHTUSD_WASM_WITH_NEXT
-#if defined(LIGHTUSD_USE_COROUTINE)
-      .function("loadFromBinaryAsync", &LightUSDLoaderNative::loadFromBinaryAsync)  // C++20 coroutine async version
 #endif
+#if defined(LIGHTUSD_USE_COROUTINE) && !defined(LIGHTUSD_WASM_WITH_NEXT)
+      .function("loadFromBinaryAsync", &LightUSDLoaderNative::loadFromBinaryAsync)
+#endif  // Legacy C++20 coroutine async version
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("loadTest", &LightUSDLoaderNative::loadTest)
       .function("loadFromCachedAsset", &LightUSDLoaderNative::loadFromCachedAsset)
       .function("loadAsLayerFromCachedAsset", &LightUSDLoaderNative::loadAsLayerFromCachedAsset)
       .function("testValueMemoryUsage", &LightUSDLoaderNative::testValueMemoryUsage)
-      .function("testLayer", &LightUSDLoaderNative::testLayer)
+#endif
       //.function("loadAndCompositeFromBinary", &LightUSDLoaderNative::loadFromBinary)
 
       // For Stage
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("extractUnresolvedTexturePaths", &LightUSDLoaderNative::extractUnresolvedTexturePaths)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getURI", &LightUSDLoaderNative::getURI)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getMesh", &LightUSDLoaderNative::getMesh)  // deprecated: use getMeshPtr/getMeshCopy
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getMeshPtr", &LightUSDLoaderNative::getMeshPtr)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getMeshPrimvarsJSON",
                 &LightUSDLoaderNative::getMeshPrimvarsJSON)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getMeshCopy", &LightUSDLoaderNative::getMeshCopy)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("numMeshes", &LightUSDLoaderNative::numMeshes)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("numInstances", &LightUSDLoaderNative::numInstances)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getInstance", &LightUSDLoaderNative::getInstance)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getInstancesForMesh", &LightUSDLoaderNative::getInstancesForMesh)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("generateBoneTexture", &LightUSDLoaderNative::generateBoneTexture)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getMaterial", select_overload<emscripten::val(int) const>(&LightUSDLoaderNative::getMaterial))
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getMaterialWithFormat", select_overload<emscripten::val(int, const std::string&) const>(&LightUSDLoaderNative::getMaterial))
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("numMaterials", &LightUSDLoaderNative::numMaterials)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getLight", &LightUSDLoaderNative::getLight)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getLightWithFormat", &LightUSDLoaderNative::getLightWithFormat)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getAllLights", &LightUSDLoaderNative::getAllLights)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("numLights", &LightUSDLoaderNative::numLights)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getCamera", &LightUSDLoaderNative::getCamera)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("numCameras", &LightUSDLoaderNative::numCameras)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getTexture", &LightUSDLoaderNative::getTexture)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("numTextures", &LightUSDLoaderNative::numTextures)
-      .function("getImage", &LightUSDLoaderNative::getImage)  // deprecated: use getImagePtr/getImageCopy
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+      .function("getImage", &LightUSDLoaderNative::getImage)
+#endif  // deprecated: use getImagePtr/getImageCopy
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getImagePtr", &LightUSDLoaderNative::getImagePtr)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getImageCopy", &LightUSDLoaderNative::getImageCopy)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("numImages", &LightUSDLoaderNative::numImages)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("numUDIMTextures", &LightUSDLoaderNative::numUDIMTextures)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getUDIMTexture", &LightUSDLoaderNative::getUDIMTexture)
-      .function("setCombineUDIMTiles",
-                &LightUSDLoaderNative::setCombineUDIMTiles)
-      .function("getCombineUDIMTiles",
-                &LightUSDLoaderNative::getCombineUDIMTiles)
-      .function("setNativeMaterialDedup",
-                &LightUSDLoaderNative::setNativeMaterialDedup)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getNativeMaterialDedup",
                 &LightUSDLoaderNative::getNativeMaterialDedup)
-      .function("setNativeMeshMerge",
-                &LightUSDLoaderNative::setNativeMeshMerge)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getNativeMeshMerge",
                 &LightUSDLoaderNative::getNativeMeshMerge)
-      .function("setNativeMeshMergeBakeTransform",
-                &LightUSDLoaderNative::setNativeMeshMergeBakeTransform)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getNativeMeshMergeBakeTransform",
                 &LightUSDLoaderNative::getNativeMeshMergeBakeTransform)
-      .function("setNativeFlattenRenderTree",
-                &LightUSDLoaderNative::setNativeFlattenRenderTree)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getNativeFlattenRenderTree",
                 &LightUSDLoaderNative::getNativeFlattenRenderTree)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("setAllowParentRelativeAssetPaths",
                 &LightUSDLoaderNative::setAllowParentRelativeAssetPaths)
       .function("getAllowParentRelativeAssetPaths",
                 &LightUSDLoaderNative::getAllowParentRelativeAssetPaths)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getDefaultRootNodeId",
                 &LightUSDLoaderNative::getDefaultRootNodeId)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getRootNode", &LightUSDLoaderNative::getRootNode)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getDefaultRootNode", &LightUSDLoaderNative::getDefaultRootNode)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("numRootNodes", &LightUSDLoaderNative::numRootNodes)
+#endif
 
       // Metadata access
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getUpAxis", &LightUSDLoaderNative::getUpAxis)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getSceneMetadata", &LightUSDLoaderNative::getSceneMetadata)
+#endif
 
       // Animation methods
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("numAnimations", &LightUSDLoaderNative::numAnimations)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getAnimation", &LightUSDLoaderNative::getAnimation)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getAllAnimations", &LightUSDLoaderNative::getAllAnimations)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getAnimationInfo", &LightUSDLoaderNative::getAnimationInfo)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getAllAnimationInfos", &LightUSDLoaderNative::getAllAnimationInfos)
+#endif
 
       // Skeleton hierarchy methods
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("numSkeletons", &LightUSDLoaderNative::numSkeletons)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getSkeleton", &LightUSDLoaderNative::getSkeleton)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getAllSkeletons", &LightUSDLoaderNative::getAllSkeletons)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getSkeletonJointsFlat", &LightUSDLoaderNative::getSkeletonJointsFlat)
+#endif
 
-      .function("setLoadTextureInNative",
-                &LightUSDLoaderNative::setLoadTextureInNative)
 
-      .function("setMaxMemoryLimitMB",
-                &LightUSDLoaderNative::setMaxMemoryLimitMB)
-      .function("getMaxMemoryLimitMB",
-                &LightUSDLoaderNative::getMaxMemoryLimitMB)
 
       // Bone reduction configuration
       // Sphere tessellation
-      .function("setSphereSubdivisions",
-                &LightUSDLoaderNative::setSphereSubdivisions)
-      .function("getSphereSubdivisions",
-                &LightUSDLoaderNative::getSphereSubdivisions)
 
-      .function("setEnableBoneReduction",
-                &LightUSDLoaderNative::setEnableBoneReduction)
-      .function("getEnableBoneReduction",
-                &LightUSDLoaderNative::getEnableBoneReduction)
-      .function("setEnableValueClips",
-                &LightUSDLoaderNative::setEnableValueClips)
-      .function("getEnableValueClips",
-                &LightUSDLoaderNative::getEnableValueClips)
-      .function("setValueClipSampleRate",
-                &LightUSDLoaderNative::setValueClipSampleRate)
-      .function("getValueClipSampleRate",
-                &LightUSDLoaderNative::getValueClipSampleRate)
-      .function("setValueClipUseTimeRange",
-                &LightUSDLoaderNative::setValueClipUseTimeRange)
-      .function("getValueClipUseTimeRange",
-                &LightUSDLoaderNative::getValueClipUseTimeRange)
-      .function("setValueClipTimeRange",
-                &LightUSDLoaderNative::setValueClipTimeRange)
-      .function("getValueClipStartTime",
-                &LightUSDLoaderNative::getValueClipStartTime)
-      .function("getValueClipEndTime",
-                &LightUSDLoaderNative::getValueClipEndTime)
-      .function("setTargetBoneCount",
-                &LightUSDLoaderNative::setTargetBoneCount)
-      .function("getTargetBoneCount",
-                &LightUSDLoaderNative::getTargetBoneCount)
-      .function("setRoundBoneCount",
-                &LightUSDLoaderNative::setRoundBoneCount)
-      .function("getRoundBoneCount",
-                &LightUSDLoaderNative::getRoundBoneCount)
 
       // Deferred tangent computation
-      .function("setDeferTangentComputation",
-                &LightUSDLoaderNative::setDeferTangentComputation)
-      .function("getDeferTangentComputation",
-                &LightUSDLoaderNative::getDeferTangentComputation)
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("computeMeshTangents",
                 &LightUSDLoaderNative::computeMeshTangents)
+#endif
 
       // MMap zero-copy (experimental, default off)
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("setMMapZeroCopy",
                 &LightUSDLoaderNative::setMMapZeroCopy)
       .function("getMMapZeroCopy",
                 &LightUSDLoaderNative::getMMapZeroCopy)
+#endif
 
-      .function("setEnableComposition",
-                &LightUSDLoaderNative::setEnableComposition)
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+  // The combined product installs typed-C adapters for these from
+  // combined-api.js.
       .function("extractSublayerAssetPaths",
                 &LightUSDLoaderNative::extractSublayerAssetPaths)
       .function("extractReferencesAssetPaths",
@@ -12164,11 +13941,50 @@ EMSCRIPTEN_BINDINGS(lightusd_module) {
 
       .function("lodVariantCount",
                 &LightUSDLoaderNative::lodVariantCount)
+#endif  // !LIGHTUSD_WASM_WITH_NEXT
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+  // Loader configuration; combined-api.js installs typed-C adapters instead.
+      .function("debugLogMemory", &LightUSDLoaderNative::debugLogMemory)
+      .function("getCombineUDIMTiles", &LightUSDLoaderNative::getCombineUDIMTiles)
+      .function("getDeferTangentComputation", &LightUSDLoaderNative::getDeferTangentComputation)
+      .function("getEnableBoneReduction", &LightUSDLoaderNative::getEnableBoneReduction)
+      .function("getEnableValueClips", &LightUSDLoaderNative::getEnableValueClips)
+      .function("getMaxMemoryLimitMB", &LightUSDLoaderNative::getMaxMemoryLimitMB)
+      .function("getMemoryStats", &LightUSDLoaderNative::getMemoryStats)
+      .function("getRoundBoneCount", &LightUSDLoaderNative::getRoundBoneCount)
+      .function("getSphereSubdivisions", &LightUSDLoaderNative::getSphereSubdivisions)
+      .function("getTargetBoneCount", &LightUSDLoaderNative::getTargetBoneCount)
+      .function("getValueClipEndTime", &LightUSDLoaderNative::getValueClipEndTime)
+      .function("getValueClipSampleRate", &LightUSDLoaderNative::getValueClipSampleRate)
+      .function("getValueClipStartTime", &LightUSDLoaderNative::getValueClipStartTime)
+      .function("getValueClipUseTimeRange", &LightUSDLoaderNative::getValueClipUseTimeRange)
+      .function("setCombineUDIMTiles", &LightUSDLoaderNative::setCombineUDIMTiles)
+      .function("setDeferTangentComputation", &LightUSDLoaderNative::setDeferTangentComputation)
+      .function("setEnableBoneReduction", &LightUSDLoaderNative::setEnableBoneReduction)
+      .function("setEnableComposition", &LightUSDLoaderNative::setEnableComposition)
+      .function("setEnableValueClips", &LightUSDLoaderNative::setEnableValueClips)
+      .function("setLoadTextureInNative", &LightUSDLoaderNative::setLoadTextureInNative)
+      .function("setMaxMemoryLimitMB", &LightUSDLoaderNative::setMaxMemoryLimitMB)
+      .function("setNativeFlattenRenderTree", &LightUSDLoaderNative::setNativeFlattenRenderTree)
+      .function("setNativeMaterialDedup", &LightUSDLoaderNative::setNativeMaterialDedup)
+      .function("setNativeMeshMerge", &LightUSDLoaderNative::setNativeMeshMerge)
+      .function("setNativeMeshMergeBakeTransform", &LightUSDLoaderNative::setNativeMeshMergeBakeTransform)
+      .function("setRoundBoneCount", &LightUSDLoaderNative::setRoundBoneCount)
+      .function("setSphereSubdivisions", &LightUSDLoaderNative::setSphereSubdivisions)
+      .function("setTargetBoneCount", &LightUSDLoaderNative::setTargetBoneCount)
+      .function("setUSDCExportLimitMB", &LightUSDLoaderNative::setUSDCExportLimitMB)
+      .function("setValueClipSampleRate", &LightUSDLoaderNative::setValueClipSampleRate)
+      .function("setValueClipTimeRange", &LightUSDLoaderNative::setValueClipTimeRange)
+      .function("setValueClipUseTimeRange", &LightUSDLoaderNative::setValueClipUseTimeRange)
+#endif  // !LIGHTUSD_WASM_WITH_NEXT
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("layerToRenderScene",
                 &LightUSDLoaderNative::layerToRenderScene)
+#endif
 
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("setAsset",
                 &LightUSDLoaderNative::setAsset)
       .function("startStreamingAsset",
@@ -12199,7 +14015,9 @@ EMSCRIPTEN_BINDINGS(lightusd_module) {
                 &LightUSDLoaderNative::cancelZeroCopyBuffer)
       .function("getActiveZeroCopyBuffers",
                 &LightUSDLoaderNative::getActiveZeroCopyBuffers)
+#endif
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("hasAsset",
                 &LightUSDLoaderNative::hasAsset)
       .function("getAsset",
@@ -12244,40 +14062,54 @@ EMSCRIPTEN_BINDINGS(lightusd_module) {
                 &LightUSDLoaderNative::releaseSourceLayer)
       .function("reset",
                 &LightUSDLoaderNative::reset)
-      .function("getMemoryStats",
-                &LightUSDLoaderNative::getMemoryStats)
+#endif
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("layerToString",
                 &LightUSDLoaderNative::layerToString)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("validateFromBinary",
                 &LightUSDLoaderNative::validateFromBinary)
       .function("validateLoadedLayer",
                 &LightUSDLoaderNative::validateLoadedLayer)
+#endif
 
       // JSON conversion methods
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("layerToJSON",
                 &LightUSDLoaderNative::layerToJSON)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("layerToJSONWithOptions",
                 &LightUSDLoaderNative::layerToJSONWithOptions)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("loadLayerFromJSON",
                 &LightUSDLoaderNative::loadLayerFromJSON)
+#endif
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("setBaseWorkingPath", &LightUSDLoaderNative::setBaseWorkingPath)
       .function("getBaseWorkingPath", &LightUSDLoaderNative::getBaseWorkingPath)
       .function("clearAssetSearchPaths", &LightUSDLoaderNative::clearAssetSearchPaths)
       .function("addAssetSearchPath", &LightUSDLoaderNative::addAssetSearchPath)
       .function("getAssetSearchPaths", &LightUSDLoaderNative::getAssetSearchPaths)
+#endif
 
 
       // MCP
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("mcpCreateContext", &LightUSDLoaderNative::mcpCreateContext)
       .function("mcpSelectContext", &LightUSDLoaderNative::mcpSelectContext)
       .function("mcpResourcesList", &LightUSDLoaderNative::mcpResourcesList)
       .function("mcpResourcesRead", &LightUSDLoaderNative::mcpResourcesRead)
       .function("mcpToolsList", &LightUSDLoaderNative::mcpToolsList)
       .function("mcpToolsCall", &LightUSDLoaderNative::mcpToolsCall)
+#endif
 
       // Progress reporting for async parsing
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getProgress", &LightUSDLoaderNative::getProgress)
       .function("cancelParsing", &LightUSDLoaderNative::cancelParsing)
       .function("wasCancelled", &LightUSDLoaderNative::wasCancelled)
@@ -12285,34 +14117,76 @@ EMSCRIPTEN_BINDINGS(lightusd_module) {
       .function("resetProgress", &LightUSDLoaderNative::resetProgress)
       .function("loadFromBinaryWithProgress", &LightUSDLoaderNative::loadFromBinaryWithProgress)
       .function("loadAsLayerFromBinaryWithProgress", &LightUSDLoaderNative::loadAsLayerFromBinaryWithProgress)
+#endif
 
       // USD Export
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("exportAsUSDA", &LightUSDLoaderNative::exportAsUSDA)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getShadingGraphJSON", &LightUSDLoaderNative::getShadingGraphJSON)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("exportAsUSDC", &LightUSDLoaderNative::exportAsUSDC)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("exportLayerAsUSDCWithOptions", &LightUSDLoaderNative::exportLayerAsUSDCWithOptions)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("exportLayerAsUSDCToBufferWithOptions", &LightUSDLoaderNative::exportLayerAsUSDCToBufferWithOptions)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("exportStageAsUSDCToBufferWithOptions", &LightUSDLoaderNative::exportStageAsUSDCToBufferWithOptions)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("flattenLayer", &LightUSDLoaderNative::flattenLayer)
-      .function("setUSDCExportLimitMB", &LightUSDLoaderNative::setUSDCExportLimitMB)
-      .function("debugLogMemory", &LightUSDLoaderNative::debugLogMemory)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("exportAsUSDZ", &LightUSDLoaderNative::exportAsUSDZ)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("exportAsUSDZWithRemap", &LightUSDLoaderNative::exportAsUSDZWithRemap)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("remapLayerAssetPaths", &LightUSDLoaderNative::remapLayerAssetPaths)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("exportAsUSDZWithOptions", &LightUSDLoaderNative::exportAsUSDZWithOptions)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("exportLayerAsUSDZWithOptions", &LightUSDLoaderNative::exportLayerAsUSDZWithOptions)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("extractPhysicsSceneJSON", &LightUSDLoaderNative::extractPhysicsSceneJSON)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("getMhProfileJSON", &LightUSDLoaderNative::getMhProfileJSON)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("createSampleScene", &LightUSDLoaderNative::createSampleScene)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("clearURDFMeshBuffers", &LightUSDLoaderNative::clearURDFMeshBuffers)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("setVisualMesh", &LightUSDLoaderNative::setVisualMesh)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("setCollisionMesh", &LightUSDLoaderNative::setCollisionMesh)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("createURDFPhysicsScene", &LightUSDLoaderNative::createURDFPhysicsScene)
+#endif
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("encodeImageNative", &LightUSDLoaderNative::encodeImageNative)
+#endif
 
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("ok", &LightUSDLoaderNative::ok)
       .function("error", &LightUSDLoaderNative::error)
-      .function("warn", &LightUSDLoaderNative::warn);
+      .function("warn", &LightUSDLoaderNative::warn)
+#endif
+      ;
 
   // USD container format detection (magic-number based, extension-independent).
   // detectUSDFormat(data) -> "usda" | "usdc" | "usdz" | "" (not USD)

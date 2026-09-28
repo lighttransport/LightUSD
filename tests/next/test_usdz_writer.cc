@@ -2,10 +2,10 @@
 /// Writes a Stage to USDZ, reads it back with the USDZ reader,
 /// then reads the embedded USDC with the USDC reader.
 
-#include "next/lightusd-next.hh"
 #include "next/writer/usdz-writer.hh"
 #include "next/writer/usdc-writer.hh"
 #include "next/reader/usdz-reader.hh"
+#include "next/load-usd.hh"
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -347,6 +347,72 @@ void test_write_from_usdc() {
   PASS();
 }
 
+void test_usdz_stream_sink() {
+  TEST("Stream USDZ archive to sink");
+  const std::string root = "root-usdc-payload";
+  std::map<std::string, std::vector<uint8_t>> assets;
+  assets["textures/albedo.bin"] = {1, 2, 3, 4};
+  std::vector<uint8_t> expected;
+  const auto memory = WriteUSDZFromUSDCAndAssetsToMemory(
+      expected, reinterpret_cast<const uint8_t*>(root.data()), root.size(), assets);
+  if (!memory.success) { FAIL(memory.error.c_str()); return; }
+
+  std::vector<uint8_t> streamed;
+  const auto result = WriteUSDZFromUSDCAndAssetsToSink(
+      reinterpret_cast<const uint8_t*>(root.data()), root.size(), assets,
+      [&streamed](const uint8_t* data, size_t size) {
+        streamed.insert(streamed.end(), data, data + size);
+        return true;
+      });
+  if (!result.success || result.bytes_written != streamed.size() ||
+      streamed != expected) {
+    FAIL(result.error.empty() ? "sink bytes differ from memory writer" : result.error.c_str());
+    return;
+  }
+  bool rejected = false;
+  const auto failed = WriteUSDZFromUSDCAndAssetsToSink(
+      reinterpret_cast<const uint8_t*>(root.data()), root.size(), assets,
+      [&rejected](const uint8_t*, size_t) { rejected = true; return false; });
+  if (failed.success || !rejected || failed.error.empty()) {
+    FAIL("sink rejection was not propagated"); return;
+  }
+  PASS();
+}
+
+void test_write_from_usda_with_assets() {
+  TEST("Write USDA root with packaged assets");
+  const std::string usda = "#usda 1.0\n\ndef Xform \"World\" {}\n";
+  std::map<std::string, std::vector<uint8_t>> assets;
+  assets["textures/albedo.bin"] = {1, 2, 3};
+  std::vector<uint8_t> bytes;
+  const auto result = WriteUSDZFromUSDAAndAssetsToMemory(
+      bytes, reinterpret_cast<const uint8_t*>(usda.data()), usda.size(), assets);
+  if (!result.success) { FAIL(result.error.c_str()); return; }
+
+  USDZReader reader;
+  if (!reader.Open(bytes.data(), bytes.size())) {
+    FAIL("failed to open USDA-root USDZ"); return;
+  }
+  const int root = reader.FindRootLayer();
+  if (root < 0 || reader.EntryName(root) != "root.usda" ||
+      reader.EntrySize(root) != usda.size() ||
+      std::memcmp(reader.EntryData(root), usda.data(), usda.size()) != 0) {
+    FAIL("USDA root layer was not written faithfully"); return;
+  }
+  int asset = -1;
+  for (size_t i = 0; i < reader.NumEntries(); ++i) {
+    if (reader.EntryName(i) == "textures/albedo.bin") {
+      asset = static_cast<int>(i);
+      break;
+    }
+  }
+  if (asset < 0 || reader.EntrySize(asset) != 3 ||
+      reader.EntryData(asset)[2] != 3) {
+    FAIL("packaged asset was not retained"); return;
+  }
+  PASS();
+}
+
 void test_write_failure() {
   TEST("Report file write failure");
 #if defined(__linux__)
@@ -372,6 +438,8 @@ int main() {
   test_usdz_memory_caps();
   test_usdc_from_usdz();
   test_write_from_usdc();
+  test_usdz_stream_sink();
+  test_write_from_usda_with_assets();
   test_write_failure();
 
   printf("\n%d/%d tests passed\n", pass_count, test_count);

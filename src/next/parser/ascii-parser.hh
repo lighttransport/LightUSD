@@ -7,12 +7,23 @@
 #pragma once
 
 #include "../stage/stage.hh"
+#include <functional>
 #include <string>
 #include <vector>
 #include <memory>
 
 namespace lightusd {
 namespace next {
+
+class Lexer;
+struct ArrayEditData;
+
+/// Parse a VtArrayEdit value `edit [ <op>; ... ]` from `lexer` (positioned at
+/// the `edit` keyword). Literals are validated against `elem_type`; returns
+/// the canonical one-line spelling and, when `out_edit` is non-null, the
+/// structured op list.
+bool ParseArrayEditText(Lexer& lexer, TypeId elem_type, std::string* canonical,
+                        ArrayEditData* out_edit, std::string* err);
 
 /// Options for parsing USDA files
 struct ParseOptions {
@@ -46,6 +57,12 @@ struct ParseOptions {
   /// serial; >1 = that many workers. Replaces the former LIGHTUSD_NEXT_NUM_THREADS
   /// env read so the library takes no implicit process-environment input.
   int num_threads = 0;
+
+  /// Optional coarse parse progress callback. Reports bootstrap, after each
+  /// completed prim (including nested prims), and completion. Returning false
+  /// cancels before the parsed Stage is published.
+  std::function<bool(const char* phase, size_t current, size_t total)>
+      progress_callback;
 };
 
 /// Error information from parsing

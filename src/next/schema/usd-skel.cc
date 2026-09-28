@@ -4,6 +4,7 @@
 // LightUSD Next - UsdSkel Schema Implementation
 
 #include "usd-skel.hh"
+#include "../layer/prim-spec.hh"
 #include "../strfmt.hh"
 #include <cstring>
 #include <algorithm>

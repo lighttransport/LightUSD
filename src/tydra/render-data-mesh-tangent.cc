@@ -727,6 +727,86 @@ bool ComputeNormals(const std::vector<vec3> &vertices,
   return true;
 }
 
+// Read a normal without assuming its alignment or storage width.
+bool ReadNormalAttribute(const VertexAttribute &attribute, size_t index, vec3 *out) {
+  if (!out || attribute.elementSize != 1) return false;
+  size_t width = 0;
+  switch (attribute.format) {
+    case VertexAttributeFormat::Vec3: width = sizeof(vec3); break;
+    case VertexAttributeFormat::Char3: width = 3; break;
+    case VertexAttributeFormat::Short3: width = 6; break;
+    case VertexAttributeFormat::Uint: width = 4; break;
+    default: return false;
+  }
+  const size_t stride = attribute.stride ? attribute.stride : width;
+  if (stride < width || attribute.data.size() < width ||
+      index > (attribute.data.size() - width) / stride) return false;
+  const uint8_t *src = attribute.data.data() + index * stride;
+  using namespace tangent_quantize;
+  switch (attribute.format) {
+    case VertexAttributeFormat::Vec3: memcpy(out, src, sizeof(vec3)); break;
+    case VertexAttributeFormat::Char3: {
+      PackedNormalSNorm8x3 packed;
+      memcpy(&packed, src, sizeof(packed));
+      unpack_normal_snorm8(packed, (*out)[0], (*out)[1], (*out)[2]);
+      break;
+    }
+    case VertexAttributeFormat::Short3: {
+      PackedNormalSNorm16x3 packed;
+      memcpy(&packed, src, sizeof(packed));
+      unpack_normal_snorm16(packed, (*out)[0], (*out)[1], (*out)[2]);
+      break;
+    }
+    case VertexAttributeFormat::Uint: {
+      uint32_t packed;
+      memcpy(&packed, src, sizeof(packed));
+      unpack_normal_1010102(packed, (*out)[0], (*out)[1], (*out)[2]);
+      break;
+    }
+    default: return false;
+  }
+  return true;
+}
+
+bool MeshAttributeCornerIndex(const RenderMesh &mesh, const VertexAttribute &attribute,
+                              size_t corner, size_t face, size_t *out) {
+  if (!out) return false;
+  if (attribute.variability == VertexVariability::Constant) { *out = 0; return true; }
+  if (attribute.variability == VertexVariability::Uniform) { *out = face; return true; }
+  if (!attribute.indices.empty()) {
+    if (corner >= attribute.indices.size()) return false;
+    *out = attribute.indices[corner];
+    return true;
+  }
+  if (mesh.is_single_indexable || attribute.is_vertex()) {
+    const auto &indices = mesh.faceVertexIndices();
+    if (corner >= indices.size()) return false;
+    *out = indices[corner];
+  } else {
+    *out = corner;
+  }
+  return true;
+}
+
+bool ReadNormalForTangent(const RenderMesh &mesh, size_t index, vec3 *out) {
+  size_t normal_index = index;
+  if (mesh.tangents.variability == VertexVariability::FaceVarying) {
+    size_t face = 0;
+    if (mesh.normals.variability == VertexVariability::Uniform) {
+      size_t first = 0;
+      const auto &counts = mesh.faceVertexCounts();
+      while (face < counts.size() && index - first >= counts[face]) {
+        first += counts[face++];
+      }
+      if (face == counts.size()) return false;
+    }
+    if (!MeshAttributeCornerIndex(mesh, mesh.normals, index, face, &normal_index)) return false;
+  } else if (mesh.normals.variability == VertexVariability::Constant) {
+    normal_index = 0;
+  }
+  return ReadNormalAttribute(mesh.normals, normal_index, out);
+}
+
 bool QuantizeMeshTangents(
     RenderMesh &mesh,
     MeshConverterConfig::TangentStorageFormat format) {
@@ -738,14 +818,12 @@ bool QuantizeMeshTangents(
 
   // Only quantize from Vec3 float format
   if (mesh.tangents.format != VertexAttributeFormat::Vec3 ||
-      mesh.binormals.format != VertexAttributeFormat::Vec3 ||
-      mesh.normals.format != VertexAttributeFormat::Vec3) {
+      mesh.binormals.format != VertexAttributeFormat::Vec3) {
     return true;
   }
 
   size_t nT = mesh.tangents.vertex_count();
   size_t nB = mesh.binormals.vertex_count();
-  size_t nN = mesh.normals.vertex_count();
 
   if (nT == 0 || nT != nB) return true;
 
@@ -753,32 +831,11 @@ bool QuantizeMeshTangents(
       reinterpret_cast<const value::float3 *>(mesh.tangents.data.data());
   const value::float3 *B =
       reinterpret_cast<const value::float3 *>(mesh.binormals.data.data());
-  const value::float3 *N =
-      reinterpret_cast<const value::float3 *>(mesh.normals.data.data());
-
   std::vector<value::float3> tangents_v(T, T + nT);
   std::vector<value::float3> binormals_v(B, B + nT);
-  std::vector<value::float3> normals_v;
-
-  if (nN == nT) {
-    normals_v.assign(N, N + nT);
-  } else if (nN > 0 &&
-             mesh.tangents.variability == VertexVariability::FaceVarying &&
-             mesh.normals.variability == VertexVariability::Vertex) {
-    // Expand vertex normals to facevarying
-    const auto &fvi = mesh.triangulatedFaceVertexIndices.size()
-                          ? mesh.triangulatedFaceVertexIndices
-                          : mesh.usdFaceVertexIndices;
-    if (fvi.size() == nT) {
-      normals_v.resize(nT);
-      for (size_t i = 0; i < nT; i++) {
-        normals_v[i] = (fvi[i] < nN) ? N[fvi[i]] : value::float3{0, 1, 0};
-      }
-    } else {
-      return true;  // cannot match, skip
-    }
-  } else {
-    return true;  // mismatched counts, skip
+  std::vector<value::float3> normals_v(nT);
+  for (size_t i = 0; i < nT; ++i) {
+    if (!ReadNormalForTangent(mesh, i, &normals_v[i])) return false;
   }
 
   VertexVariability var = mesh.tangents.variability;

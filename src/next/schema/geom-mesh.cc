@@ -4,6 +4,7 @@
 // LightUSD Next - UsdGeomMesh Schema Implementation
 
 #include "geom-mesh.hh"
+#include "../layer/property-index.hh"
 
 #include <cmath>
 

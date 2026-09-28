@@ -4,6 +4,7 @@
 // LightUSD Next - USDA Writer Implementation
 
 #include "usda-writer.hh"
+#include "../layer/layer.hh"
 #include "value-printer.hh"
 #include "stream-writer.hh"
 #include "dtoa.hh"
@@ -243,6 +244,14 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
   }
   if (meta.owner_set || !meta.owner.empty()) {
     lines.push_back(opts.indent + "owner = " + EscapeString(meta.owner));
+  }
+  if (meta.autoPlay_set) {
+    lines.push_back(opts.indent + std::string("autoPlay = ") +
+                    (meta.autoPlay ? "true" : "false"));
+  }
+  if (meta.playbackMode_set) {
+    lines.push_back(opts.indent + "playbackMode = " +
+                    EscapeString(meta.playbackMode));
   }
 
   if (meta.metersPerUnit_set || meta.metersPerUnit != 0.01) {
@@ -759,12 +768,16 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
   // changes composition semantics for delete/prepend against weaker layers).
   const ArcEdit* re = nullptr;
   bool explicit_empty = false;
+  bool value_block = false;
   {
     const auto& edits = spec.relationship_edits();
     const auto it = edits.find(name);
     if (it != edits.end() && it->second.authored) {
       if (!it->second.is_explicit) re = &it->second;
-      else if (targets.empty()) explicit_empty = true;
+      else if (targets.empty()) {
+        explicit_empty = true;
+        value_block = it->second.is_value_block;
+      }
     }
   }
   if (re) {
@@ -797,7 +810,8 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
   if (targets.empty()) {
     // Composed-stage output: an explicit-None (block) relationship resolved
     // to "no targets"; pxr flatten writes the bare declaration.
-    if (explicit_empty && !opts.composed_stage_output) os << " = None";
+    if (explicit_empty && !opts.composed_stage_output)
+      os << (value_block ? " = None" : " = []");
     // Otherwise this is a declared-only relationship: bare `rel name` (pxr
     // re-parses it without an authored targetPaths opinion).
   } else {
@@ -1900,6 +1914,10 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.doc = stage_meta.doc;
   meta.comment = stage_meta.comment;
   meta.owner = stage_meta.owner;
+  meta.autoPlay = stage_meta.autoPlay;
+  meta.autoPlay_set = stage_meta.autoPlay_set;
+  meta.playbackMode = stage_meta.playbackMode;
+  meta.playbackMode_set = stage_meta.playbackMode_set;
   meta.doc_set = stage_meta.doc_set;
   meta.comment_set = stage_meta.comment_set;
   meta.owner_set = stage_meta.owner_set;

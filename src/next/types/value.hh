@@ -221,6 +221,10 @@ public:
   /// True if this is an array whose payload has not been decoded yet.
   bool is_lazy() const { return is_lazy_; }
 
+  /// Estimated dynamic bytes owned by scalar strings, string arrays, and
+  /// recursive dictionaries. Numeric array payloads are accounted separately.
+  size_t dynamic_string_memory_usage() const;
+
   /// True if the value was materialized AND potentially mutated (so write-time
   /// byte pass-through is no longer safe).
   bool is_dirty() const { return dirty_; }
@@ -392,9 +396,15 @@ struct Dict {
   void set(std::string key, Value v);
   size_t size() const { return entries_.size(); }
   bool empty() const { return entries_.empty(); }
+  // Preserve an explicitly typed dictionary wrapper in Layer JSON. This is a
+  // serialization hint; USDA/USDC dictionary semantics remain unchanged.
+  bool typed_json_wrapper() const { return typed_json_wrapper_; }
+  void set_typed_json_wrapper(bool value) { typed_json_wrapper_ = value; }
+  size_t dynamic_string_memory_usage() const;
  private:
   friend class Value;  // Iterative destruction moves out nested Values.
   std::vector<std::pair<std::string, Value>> entries_;
+  bool typed_json_wrapper_ = false;
   // Keys live only in entries_. Index allocation failure uses a correct linear
   // fallback; it cannot discard an authored value. Keys change only via set().
   detail::StringIndex index_;

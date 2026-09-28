@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
 #include "next/schema/geom-point-instancer.hh"
 #include "tydra/tangent-quantize.hh"
 #include <algorithm>
@@ -97,7 +97,7 @@ void BuildCompactInstances(
 }
 }  // namespace
 
-bool RenderSceneConverter::ConvertPointInstancer(const UsdPrim& prim,
+bool RenderSceneConverter::Impl::ConvertPointInstancer(const UsdPrim& prim,
                                                  RenderPointInstancer* out) {
   if (!out || !::lightusd::next::IsPointInstancer(prim)) {
     SetLastError("Invalid PointInstancer prim");

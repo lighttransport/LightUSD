@@ -132,18 +132,31 @@ function startVite(port) {
   return server;
 }
 
-function hasRenderedPixels(buffer) {
-  const image = PNG.sync.read(buffer);
+// Fraction of the viewport that differs from the environment background.
+// The background is a vertical gradient, so each pixel is compared against the
+// same row's right-edge pixel. The element capture also contains the HUD
+// overlays (stats panel, load button, badge, help bar), which are masked out.
+function renderedPixelFraction(image) {
+  const {width, height, data} = image;
+  const masked = (x, y) => y < 70 || y > height - 60 || (x < 260 && y < 320);
   let changed = 0;
-  for (let i = 0; i < image.data.length; i += 4) {
-    const r = image.data[i];
-    const g = image.data[i + 1];
-    const b = image.data[i + 2];
-    // The canvas background is dark blue-gray. Count only clearly rendered
-    // pixels, avoiding the surrounding page UI entirely via element capture.
-    if (Math.max(r, g, b) - Math.min(r, g, b) > 10 || r + g + b > 100) changed++;
+  let counted = 0;
+  for (let y = 0; y < height; ++y) {
+    const ref = (y * width + width - 3) * 4;
+    for (let x = 0; x < width; ++x) {
+      if (masked(x, y)) continue;
+      ++counted;
+      const i = (y * width + x) * 4;
+      const diff = Math.abs(data[i] - data[ref]) + Math.abs(data[i + 1] - data[ref + 1]) +
+        Math.abs(data[i + 2] - data[ref + 2]);
+      if (diff > 36) changed++;
+    }
   }
-  return changed > image.width * image.height * 0.01;
+  return counted ? changed / counted : 0;
+}
+
+function hasRenderedPixels(buffer) {
+  return renderedPixelFraction(PNG.sync.read(buffer)) > 0.002;
 }
 
 async function renderOne(browser, baseUrl, mjcf, opts) {
@@ -193,8 +206,15 @@ async function renderOne(browser, baseUrl, mjcf, opts) {
       throw new Error(`worker reported no renderable meshes (${state.status})`);
     }
 
+    // The first frame uploads every vertex buffer, which takes seconds on
+    // large scenes (ms_human_700 carries ~1 GB), so poll until it lands.
     const canvas = await page.$('#gl');
-    const image = await canvas.screenshot({ encoding: 'binary' });
+    const renderDeadline = Date.now() + opts.timeout;
+    let image = await canvas.screenshot({ encoding: 'binary' });
+    while (!hasRenderedPixels(image) && Date.now() < renderDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      image = await canvas.screenshot({ encoding: 'binary' });
+    }
     if (!hasRenderedPixels(image)) throw new Error('OffscreenCanvas render is blank');
     fs.writeFileSync(output, image);
     return { ok: true, label, output, meshes: state.meshes };
@@ -222,7 +242,10 @@ async function main() {
   let browser;
   const results = [];
   try {
-    await waitForServer(`${baseUrl}/offscreengl.html`, 30000);
+    const requestedViteTimeoutMs = Number(process.env.LIGHTUSD_VITE_TIMEOUT_MS);
+    const viteTimeoutMs = Number.isFinite(requestedViteTimeoutMs) && requestedViteTimeoutMs > 0
+      ? requestedViteTimeoutMs : 120000;
+    await waitForServer(`${baseUrl}/offscreengl.html`, viteTimeoutMs);
     const commonArgs = [
       '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
       '--ignore-gpu-blocklist', '--disable-gpu-blocklist',

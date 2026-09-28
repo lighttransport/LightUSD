@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "../viewer_document.hh"
+#include "../public_stage_queries.hh"
 // App's McpHost implementation: the tool handlers. All run on the main thread
 // (the MCP server marshals tool calls into the render loop), so they freely read
 // the loaded scene / DrawScene and drive the camera and selection.
@@ -14,7 +16,6 @@
 
 #include "app.hh"
 #include "light3d/math.h"
-#include "next/lightusd-next.hh"
 #include "skinning.hh"
 #include "tydra/scene-access.hh"
 #include "tydra/mcp-tools.hh"  // lightusd::tydra::mcp::CallTool
@@ -82,20 +83,21 @@ json openPbrMaterialJson(int id, const DrawMaterialCPU& mat) {
           {"values", openPbrValues(mat.lightRtOpenPBR)}};
 }
 
-json nextValueJson(const lightusd::next::Value& value) {
-  if (value.is_array()) {
-    return json{{"type", lightusd::next::GetTypeName(value.type_id())},
-                {"count", value.array_size()}};
+json publicDefaultJson(const lightusd_value_view& value, lightusd_sv text) {
+  if (value.is_array) return json{{"type", lightusd_type_name(value.type)}, {"count", value.count}};
+  if (value.data) {
+    switch (value.type) {
+      case LIGHTUSD_TYPE_BOOL: return *static_cast<const bool*>(value.data);
+      case LIGHTUSD_TYPE_INT: return *static_cast<const int32_t*>(value.data);
+      case LIGHTUSD_TYPE_INT64: return *static_cast<const int64_t*>(value.data);
+      case LIGHTUSD_TYPE_FLOAT: return *static_cast<const float*>(value.data);
+      case LIGHTUSD_TYPE_DOUBLE: return *static_cast<const double*>(value.data);
+      default: break;
+    }
   }
-  if (const bool* v = value.as_bool()) return *v;
-  if (const int32_t* v = value.as_int()) return *v;
-  if (const int64_t* v = value.as_int64()) return *v;
-  if (const float* v = value.as_float()) return *v;
-  if (const double* v = value.as_double()) return *v;
-  if (const std::string* v = value.as_string()) return *v;
-  if (const std::string* v = value.as_token()) return *v;
-  if (const std::string* v = value.as_asset_path()) return *v;
-  return json{{"type", lightusd::next::GetTypeName(value.type_id())}};
+  if (value.type == LIGHTUSD_TYPE_STRING || value.type == LIGHTUSD_TYPE_TOKEN ||
+      value.type == LIGHTUSD_TYPE_ASSET_PATH) return PublicString(text);
+  return json{{"type", lightusd_type_name(value.type)}};
 }
 
 // Build the focused-prim payload from the current selection + DrawScene.
@@ -231,12 +233,12 @@ json App::mcpSceneInfo(const json&, std::string&) {
     out["deferred_payloads"] = deferred;
   } else if (nextSession_) {
     out["composed"] = nextSession_->IsComposed();
-    const std::vector<lightusd::next::Path> deferred =
+    const std::vector<std::string> deferred =
         nextSession_->GetDeferredPayloadPaths();
     out["deferred_payload_count"] = deferred.size();
     json paths = json::array();
-    for (const lightusd::next::Path& path : deferred) {
-      paths.push_back(json{{"prim", path.str()}, {"arc", "payload"}});
+    for (const std::string& path : deferred) {
+      paths.push_back(json{{"prim", path}, {"arc", "payload"}});
     }
     out["deferred_payloads"] = std::move(paths);
   }
@@ -592,8 +594,10 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
 
   std::vector<VcharControl> authoredControls;
   if (nextSession_) {
-    const lightusd::next::StageSnapshot snapshot = nextSession_->GetSnapshot();
-    if (snapshot) authoredControls = ReadVcharControls(*snapshot);
+    auto snapshot = nextSession_->PublicSnapshot();
+    lightusd::api::Stage view;
+    if (lightusd::api::DocumentSnapshotStage(snapshot, &view) == LIGHTUSD_OK)
+      authoredControls = ReadVcharControls(view.get());
   } else if (loaded_.ok) {
     authoredControls = ReadVcharControls(loaded_.stage);
   }
@@ -1251,9 +1255,9 @@ json App::mcpLoadPayloads(const json& args, std::string& err) {
     }
   } else {
     if (nextSession_) {
-      for (const lightusd::next::Path& path :
+      for (const std::string& path :
            nextSession_->GetDeferredPayloadPaths()) {
-        add.insert(path.str());
+        add.insert(path);
       }
     } else {
       for (const auto& d : loaded_.comp.deferred) add.insert(d.primPath);
@@ -1608,11 +1612,12 @@ json App::mcpListPrims(const json& args, std::string&) {
   }
   json paths = json::array();
   if (nextSession_) {
-    const lightusd::next::StageSnapshot snapshot = nextSession_->GetSnapshot();
-    if (snapshot) {
-      snapshot->Traverse([&](const lightusd::next::UsdPrim& prim) {
+    auto snapshot = nextSession_->PublicSnapshot();
+    lightusd::api::Stage stage;
+    if (lightusd::api::DocumentSnapshotStage(snapshot, &stage) == LIGHTUSD_OK) {
+      VisitPublicPrims(stage.get(), [&](lightusd_prim prim) {
         if (paths.size() >= cap) return false;
-        paths.push_back(prim.GetPath().str());
+        paths.push_back(PublicString(lightusd_prim_path(prim)));
         return true;
       });
     }
@@ -1628,14 +1633,15 @@ json App::mcpListPrims(const json& args, std::string&) {
 json App::mcpCallLibraryTool(const std::string& name, const json& args,
                              std::string& err) {
   if (nextSession_) {
-    const lightusd::next::StageSnapshot snapshot = nextSession_->GetSnapshot();
-    if (!snapshot) {
+    auto document = nextSession_->PublicSnapshot();
+    lightusd::api::Stage view;
+    if (lightusd::api::DocumentSnapshotStage(document, &view) != LIGHTUSD_OK) {
       err = "next session has no published stage";
       return json();
     }
-    const lightusd::next::Stage& stage = *snapshot;
     if (name == "stage_info") {
-      const lightusd::next::StageMeta& meta = stage.GetMeta();
+      PublicStageInfo meta;
+      if (!ReadPublicStageInfo(view.get(), &meta)) { err = lightusd::api::LastError(); return json(); }
       return json{{"loaded", true},
                   {"defaultPrim", meta.defaultPrim},
                   {"upAxis", meta.upAxis},
@@ -1643,7 +1649,7 @@ json App::mcpCallLibraryTool(const std::string& name, const json& args,
                   {"startTimeCode", meta.startTimeCode},
                   {"endTimeCode", meta.endTimeCode},
                   {"timeCodesPerSecond", meta.timeCodesPerSecond},
-                  {"primCount", stage.GetPrimCount()}};
+                  {"primCount", meta.primCount}};
     }
 
     if (name == "prim_list" || name == "query_prims_by_type" ||
@@ -1652,21 +1658,21 @@ json App::mcpCallLibraryTool(const std::string& name, const json& args,
       const std::string type = args.value("type", std::string());
       const std::string query = args.value("query", std::string());
       json prims = json::array();
-      stage.Traverse([&](const lightusd::next::UsdPrim& prim) {
-        const std::string path = prim.GetPath().str();
+      VisitPublicPrims(view.get(), [&](lightusd_prim prim) {
+        const std::string path = PublicString(lightusd_prim_path(prim));
         if (root != "/" && path != root &&
             path.compare(0, root.size() + 1, root + "/") != 0) {
           return true;
         }
-        if (!type.empty() && prim.GetTypeName() != type) return true;
+        if (!type.empty() && PublicString(lightusd_prim_type_name(prim)) != type) return true;
         if (!query.empty() && path.find(query) == std::string::npos &&
-            prim.GetName().find(query) == std::string::npos) {
+            PublicString(lightusd_prim_name(prim)).find(query) == std::string::npos) {
           return true;
         }
         prims.push_back(json{{"path", path},
-                             {"name", prim.GetName()},
-                             {"type", prim.GetTypeName()},
-                             {"active", prim.IsActive()}});
+                             {"name", PublicString(lightusd_prim_name(prim))},
+                             {"type", PublicString(lightusd_prim_type_name(prim))},
+                             {"active", bool(lightusd_prim_is_active(prim))}});
         return true;
       });
       return json{{"path", root}, {"prims", prims}, {"count", prims.size()}};
@@ -1677,59 +1683,35 @@ json App::mcpCallLibraryTool(const std::string& name, const json& args,
       return json::object();
     }
     const std::string path = args["path"].get<std::string>();
-    const lightusd::next::UsdPrim prim = stage.GetPrimAtPath(path);
-    if (!prim.IsValid()) {
+    const lightusd_prim prim = lightusd_stage_prim_at_path(view.get(), path.c_str());
+    if (!lightusd_prim_is_valid(prim)) {
       err = "Prim not found: " + path;
       return json::object();
     }
 
     if (name == "prim_get") {
-      return json{{"path", path},
-                  {"name", prim.GetName()},
-                  {"type", prim.GetTypeName()},
-                  {"active", prim.IsActive()},
-                  {"propertyCount", prim.GetPropertyNames().size()},
-                  {"childCount", prim.GetChildCount()}};
-    }
-    if (name == "attr_list") {
-      json attributes = json::array();
-      for (const std::string& attr : prim.GetPropertyNames()) {
-        const lightusd::next::Value* value = prim.GetPropertyValue(attr);
-        attributes.push_back(
-            json{{"name", attr},
-                 {"type", value ? lightusd::next::GetTypeName(value->type_id())
-                                : "unknown"},
-                 {"hasValue", value != nullptr}});
+      lightusd::api::StringList names;
+      if (lightusd_prim_property_names(prim, names.put()) != LIGHTUSD_OK) {
+        err = lightusd::api::LastError(); return json::object();
       }
       return json{{"path", path},
-                  {"attributes", attributes},
-                  {"count", attributes.size()}};
-    }
-    if (name == "attr_get") {
-      const std::string attr = args.value("attr_name", std::string());
-      if (attr.empty()) {
-        err = "Missing 'attr_name' argument";
-        return json::object();
-      }
-      const lightusd::next::Value* value = prim.GetPropertyValue(attr);
-      if (!value) {
-        err = "Attribute not found: " + attr;
-        return json::object();
-      }
-      return json{{"path", path},
-                  {"attr_name", attr},
-                  {"value", nextValueJson(*value)}};
+                  {"name", PublicString(lightusd_prim_name(prim))},
+                  {"type", PublicString(lightusd_prim_type_name(prim))},
+                  {"active", bool(lightusd_prim_is_active(prim))},
+                  {"propertyCount", lightusd::api::StringListSize(names)},
+                  {"childCount", lightusd_prim_child_count(prim)}};
     }
     if (name == "variant_list_sets" || name == "variant_get_selection") {
       json sets = json::object();
-      for (const lightusd::next::VariantSetData& set :
-           prim.GetMeta().variantSets()) {
+      const size_t count = lightusd_prim_variant_set_count(prim);
+      for (size_t i = 0; i < count; ++i) {
+        const std::string set = PublicString(lightusd_prim_variant_set_name(prim, i));
         json variants = json::array();
-        for (const lightusd::next::VariantData& variant : set.variants) {
-          variants.push_back(variant.name);
-        }
-        sets[set.name] = json{{"selection", set.selected},
-                              {"variants", variants}};
+        const size_t variantCount = lightusd_variant_count(prim, set.c_str());
+        for (size_t j = 0; j < variantCount; ++j)
+          variants.push_back(PublicString(lightusd_variant_name(prim, set.c_str(), j)));
+        sets[set] = json{{"selection", PublicString(lightusd_variant_selection(prim, set.c_str()))},
+                         {"variants", variants}};
       }
       if (name == "variant_get_selection") {
         const std::string set = args.value("variant_set", std::string());
@@ -1753,6 +1735,33 @@ json App::mcpCallLibraryTool(const std::string& name, const json& args,
       loadOpts_.variantOverrides[path][set] = variant;
       startRecomposeAsync(std::set<std::string>());
       return json{{"success", true}, {"started", true}, {"path", path}};
+    }
+
+    if (name == "attr_list") {
+      lightusd::api::StringList names;
+      if (lightusd_prim_property_names(prim, names.put()) != LIGHTUSD_OK) {
+        err = lightusd::api::LastError(); return json::object();
+      }
+      json attributes = json::array();
+      for (size_t i = 0; i < lightusd::api::StringListSize(names); ++i) {
+        const auto attr = PublicString(lightusd::api::StringListGet(names, i));
+        lightusd_value_view value{};
+        const bool present = lightusd_attr_inspect_default(prim, attr.c_str(), &value, nullptr) == LIGHTUSD_OK;
+        attributes.push_back(json{{"name", attr},
+            {"type", present ? lightusd_type_name(value.type) : "unknown"}, {"hasValue", present}});
+      }
+      return json{{"path", path}, {"attributes", attributes}, {"count", attributes.size()}};
+    }
+    if (name == "attr_get") {
+      const std::string attr = args.value("attr_name", std::string());
+      if (attr.empty()) { err = "Missing 'attr_name' argument"; return json::object(); }
+      lightusd_value_view value{};
+      lightusd_sv text{};
+      if (lightusd_attr_inspect_default(prim, attr.c_str(), &value, &text) != LIGHTUSD_OK) {
+        err = "Attribute not found: " + attr;
+        return json::object();
+      }
+      return json{{"path", path}, {"attr_name", attr}, {"value", publicDefaultJson(value, text)}};
     }
 
     err = "Tool is not available on the read-only next document: " + name;

@@ -1,0 +1,2122 @@
+[
+  {
+    "legacyMethod": "addAssetSearchPath",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "addAssetSearchPath",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "allocateZeroCopyBuffer",
+    "family": "streaming_buffers",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "allocateZeroCopyBuffer"
+  },
+  {
+    "legacyMethod": "appendAssetChunk",
+    "family": "streaming_buffers",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "appendAssetChunk"
+  },
+  {
+    "legacyMethod": "applyVariantSelection",
+    "family": "composition_and_variants",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-composition-behavior-parity.test.mjs",
+    "edgeDifference": "Legacy selects in place on its loaded layer; next applies NextFlattenSession.setVariantOverride before begin(). The three-argument form maps to a prim-scoped key (\"<prim>{<set>}\"); the one-argument form, which legacy forces on every variant set, maps to one set-name override per set.",
+    "workflow": [
+      "setVariantOverride",
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ]
+  },
+  {
+    "legacyMethod": "assetExists",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "assetExists",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "cancelParsing",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-load-diagnostics-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "cancelParsing",
+    "edgeDifference": "An idle call cancels nothing on either product; legacy records it as cancelRequested in its progress record, next does not. Next additionally reports and controls a running parse from the RenderStream progress callback; legacy loads synchronously without a JS callback and has no equivalent. Called from the callback it cancels the load (stage \"cancelled\")."
+  },
+  {
+    "legacyMethod": "cancelZeroCopyBuffer",
+    "family": "streaming_buffers",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "cancelZeroCopyBuffer"
+  },
+  {
+    "legacyMethod": "clearAssetSearchPaths",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "clearAssetSearchPaths",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "clearAssets",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "clearAssets"
+  },
+  {
+    "legacyMethod": "clearURDFMeshBuffers",
+    "family": "schema_and_image_utilities",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextUSDZConverterNative",
+    "nextEquivalent": "clearURDFMeshBuffers",
+    "behaviorTest": "next-schema-utilities-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "composeInherits",
+    "family": "composition_and_variants",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-composition-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ]
+  },
+  {
+    "legacyMethod": "composePayload",
+    "family": "composition_and_variants",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-composition-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ]
+  },
+  {
+    "legacyMethod": "composeReferences",
+    "family": "composition_and_variants",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-composition-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ]
+  },
+  {
+    "legacyMethod": "composeSublayers",
+    "family": "composition_and_variants",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-composition-behavior-parity.test.mjs",
+    "workflow": [
+      "addSublayer",
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ]
+  },
+  {
+    "legacyMethod": "composeVariants",
+    "family": "composition_and_variants",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-composition-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ]
+  },
+  {
+    "legacyMethod": "computeMeshTangents",
+    "family": "schema_and_image_utilities",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "computeMeshTangents"
+  },
+  {
+    "legacyMethod": "createSampleScene",
+    "family": "schema_and_image_utilities",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextUSDZConverterNative",
+    "nextEquivalent": "createSampleScene",
+    "behaviorTest": "next-schema-utilities-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "createURDFPhysicsScene",
+    "family": "schema_and_image_utilities",
+    "nextNameMatch": false,
+    "parityStatus": "known_behavior_gap",
+    "nextSurface": "NextUSDZConverterNative",
+    "nextEquivalent": "createURDFPhysicsScene",
+    "behaviorTest": "next-schema-utilities-behavior-parity.test.mjs",
+    "knownDifference": "Both author the same URDF prim hierarchy, meshes, joints and collider purpose=guide; the engine-specific attributes differ: legacy authors Newton scene settings (maxSolverIterations, timeStepsPerSecond, gravityEnabled) and MuJoCo/Newton mesh-collision attributes and APIs, next authors mjc:timestep and mjc:contype/conaffinity."
+  },
+  {
+    "legacyMethod": "debugLogMemory",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "debugLogMemory"
+  },
+  {
+    "legacyMethod": "deleteAsset",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "deleteAsset",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "deleteAssetByName",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "deleteAssetByName",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "deleteAssetByUUID",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "deleteAssetByUUID",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "encodeImageNative",
+    "family": "schema_and_image_utilities",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-schema-utilities-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "encodeImageNative"
+  },
+  {
+    "legacyMethod": "error",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-load-diagnostics-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "error",
+    "knownDifference": "Next product contract: failures report the next parser's located message (\"Line N, column M: ...\"); legacy reports its own parser error stack. Empty-string results for idle and successful loads match."
+  },
+  {
+    "legacyMethod": "exportAsUSDA",
+    "family": "layer_export_and_validation",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "exportUSDA",
+    "workflow": [
+      "load",
+      "exportUSDA"
+    ],
+    "behaviorTest": "next-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "exportAsUSDC",
+    "family": "layer_export_and_validation",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "exportUSDC",
+    "workflow": [
+      "load",
+      "exportUSDC"
+    ],
+    "behaviorTest": "next-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "exportAsUSDZ",
+    "family": "layer_export_and_validation",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextUSDZConverterNative",
+    "nextEquivalent": "exportAsUSDZ",
+    "behaviorTest": "next-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "exportAsUSDZWithOptions",
+    "family": "layer_export_and_validation",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextUSDZConverterNative",
+    "nextEquivalent": "exportAsUSDZWithOptions",
+    "behaviorTest": "next-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "exportAsUSDZWithRemap",
+    "family": "layer_export_and_validation",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextUSDZConverterNative",
+    "nextEquivalent": "exportAsUSDZWithRemap",
+    "behaviorTest": "next-layer-export-behavior-parity.test.mjs",
+    "edgeDifference": "Both rewrite the root layer's asset path; next packages the asset under the remapped name, while legacy keeps the original entry name and leaves the remapped reference dangling."
+  },
+  {
+    "legacyMethod": "exportLayerAsUSDCToBufferWithOptions",
+    "family": "layer_export_and_validation",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "exportUSDCToBuffer",
+    "workflow": [
+      "load",
+      "exportUSDCToBuffer"
+    ],
+    "behaviorTest": "next-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "exportLayerAsUSDCWithOptions",
+    "family": "layer_export_and_validation",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "exportUSDC",
+    "workflow": [
+      "load",
+      "exportUSDC"
+    ],
+    "behaviorTest": "next-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "exportLayerAsUSDZWithOptions",
+    "family": "layer_export_and_validation",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "exportUSDZ",
+    "workflow": [
+      {
+        "surface": "NextLayerDocument",
+        "method": "load"
+      },
+      {
+        "surface": "NextAssetStore",
+        "method": "setAsset"
+      },
+      {
+        "surface": "NextLayerDocument",
+        "method": "exportUSDZ"
+      }
+    ],
+    "behaviorTest": "next-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "exportStageAsUSDCToBufferWithOptions",
+    "family": "layer_export_and_validation",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "exportUSDCToBuffer",
+    "workflow": [
+      "begin",
+      "exportUSDCToBuffer"
+    ],
+    "behaviorTest": "next-layer-export-behavior-parity.test.mjs",
+    "edgeDifference": "Next keeps mesh geometry arrays (points, faceVertexCounts, faceVertexIndices) in the stage export; legacy loses those the converter consumed. All other content matches."
+  },
+  {
+    "legacyMethod": "extractPayloadAssetPaths",
+    "family": "composition_and_variants",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "extractPayloadAssetPaths",
+    "behaviorTest": "next-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "extractPhysicsSceneJSON",
+    "family": "schema_and_image_utilities",
+    "nextNameMatch": false,
+    "parityStatus": "known_behavior_gap",
+    "nextSurface": "NextUSDZConverterNative",
+    "nextEquivalent": "extractPhysicsSceneJSON",
+    "behaviorTest": "next-schema-utilities-behavior-parity.test.mjs",
+    "knownDifference": "Both describe the same prims in the same order, but next's physics JSON is its own contract: schema fallback properties and geometry arrays instead of legacy's specifier/flag/matrix fields and point/face counts."
+  },
+  {
+    "legacyMethod": "extractReferencesAssetPaths",
+    "family": "composition_and_variants",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "extractReferencesAssetPaths",
+    "behaviorTest": "next-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "extractSublayerAssetPaths",
+    "family": "composition_and_variants",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "extractSublayerAssetPaths",
+    "behaviorTest": "next-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "extractUnresolvedTexturePaths",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "extractUnresolvedTexturePaths",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "knownDifference": "Next lists authored texture asset paths that did not resolve (for example shader.usda's 0/teapot_*.png); legacy returns an empty list for those. Resolved textures agree. Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "extractVariants",
+    "family": "composition_and_variants",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "extractVariants",
+    "behaviorTest": "next-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "finalizeStreamingAsset",
+    "family": "streaming_buffers",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "finalizeStreamingAsset",
+    "edgeDifference": "A zero-length stream cannot be finalized in legacy; next finalizes it as an empty asset."
+  },
+  {
+    "legacyMethod": "finalizeZeroCopyBuffer",
+    "family": "streaming_buffers",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "finalizeZeroCopyBuffer"
+  },
+  {
+    "legacyMethod": "findAssetByUUID",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "findAssetByUUID",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "flattenLayer",
+    "family": "layer_export_and_validation",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "nextEquivalent": "step",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ],
+    "behaviorTest": "next-layer-export-behavior-parity.test.mjs",
+    "edgeDifference": "Next keeps a referenced layer's relative asset path as authored (@old.png@) where legacy re-anchors it (@./old.png@), per next's relative-asset-path policy."
+  },
+  {
+    "legacyMethod": "generateBoneTexture",
+    "family": "schema_and_image_utilities",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-schema-utilities-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "generateBoneTexture",
+    "edgeDifference": "Bone textures are identical for bound meshes; next also skins a mesh that binds a skeleton without applying SkelBindingAPI, which legacy leaves unskinned."
+  },
+  {
+    "legacyMethod": "getActiveZeroCopyBuffers",
+    "family": "streaming_buffers",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getActiveZeroCopyBuffers"
+  },
+  {
+    "legacyMethod": "getAllAnimationInfos",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getAllAnimationInfos"
+  },
+  {
+    "legacyMethod": "getAllAnimations",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getAllAnimations"
+  },
+  {
+    "legacyMethod": "getAllAssetUUIDs",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "getAllAssetUUIDs",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAllLights",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getAllLights",
+    "knownDifference": "Includes next's additional PortalLight/filter records (see numLights). Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getAllSkeletons",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getAllSkeletons"
+  },
+  {
+    "legacyMethod": "getAllowParentRelativeAssetPaths",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "getAllowParentRelativeAssetPaths",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAnimation",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getAnimation",
+    "knownDifference": "Next skeletal animations are array channels (valueStride/elementCount/jointRemap) rather than legacy per-joint tracks; clips are named \"<name>_Anim\" and carry primPath/startTime/endTime instead of legacy value-clip metadata. Custom-property values match legacy. Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getAnimationInfo",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getAnimationInfo",
+    "knownDifference": "Next reports one channel per skeletal animation (legacy one track per joint TRS), names clips after the source prim (\"<name>_Anim\"), counts the skeleton node as a target, and exposes startTime/endTime instead of legacy value-clip fields. duration matches (last key time). Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getAsset",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "getAsset",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAssetByUUID",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "getAssetByUUID",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAssetCacheDataAsMemoryView",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "getAssetCacheDataAsMemoryView",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAssetCacheMaxSizeBytes",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "getAssetCacheMaxSizeBytes",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAssetCacheSizeBytes",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "getAssetCacheSizeBytes",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAssetCount",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "getAssetCount",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAssetHash",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "getAssetHash",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAssetSearchPaths",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "getAssetSearchPaths",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAssetUUID",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "getAssetUUID",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getBaseWorkingPath",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "getBaseWorkingPath",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs",
+    "edgeDifference": "Default spelling differs: legacy reports \"./\", next reports the resolver working directory \".\"; set/get round-trips match."
+  },
+  {
+    "legacyMethod": "getCamera",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getCamera",
+    "knownDifference": "Next camera records use primPath, type/typeCode, fovX/fovY, nearClip/farClip, aperture offsets, exposure, focus, fStop, shutter and stereo fields plus the transform; legacy uses absPath/displayName/projection/xfov/yfov/znear/zfar/aspectRatio. Shared values match. Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getCombineUDIMTiles",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getCombineUDIMTiles",
+    "knownDifference": "Legacy defaults to combining UDIM tiles; next intentionally defaults to sparse tiles (false) for editor workflows. Setter/getter behavior is covered, but the product default differs.",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getDefaultRootNode",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getDefaultRootNode",
+    "knownDifference": "Next node records add primPath/type/visible/worldMatrix/prototypePath fields and omit legacy prototypeIndex/instanceId; displayName falls back to the prim name. Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getDefaultRootNodeId",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getDefaultRootNodeId"
+  },
+  {
+    "legacyMethod": "getDeferTangentComputation",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getDeferTangentComputation",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getEnableBoneReduction",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getEnableBoneReduction",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getEnableValueClips",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getEnableValueClips",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getImage",
+    "family": "render_scene_queries",
+    "nextNameMatch": false,
+    "parityStatus": "known_behavior_gap",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getImageCopy",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "knownDifference": "Maps to getImageCopy: next reports componentType/mipLevels/name and a numeric colorSpace; an undecoded image reports 0 width/height and 4 channels (legacy -1 and string colorSpace plus color-transform fields). Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getImageCopy",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getImageCopy",
+    "knownDifference": "Next reports componentType/mipLevels/name and a numeric colorSpace; an undecoded image reports 0 width/height and 4 channels (legacy -1, string colorSpace and color-transform fields). Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getImagePtr",
+    "family": "render_scene_queries",
+    "nextNameMatch": false,
+    "parityStatus": "known_behavior_gap",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getImageView",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "knownDifference": "Maps to getImageView: same image record contract as getImageCopy (componentType/mipLevels/name, numeric colorSpace; an undecoded image reports 0 width/height and 4 channels) with a borrowed pixel view only for decoded images. Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getInstance",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getInstance",
+    "knownDifference": "Instance ids follow next's native-instance enumeration: records are the instancing prims with their world matrices and resolved prototype mesh ids. Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getInstancesForMesh",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getInstancesForMesh"
+  },
+  {
+    "legacyMethod": "getLight",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getLight",
+    "knownDifference": "Next records use primPath, enableShadow, typeCode, light-link/filter targets and type-specific shape fields; legacy adds absPath/displayName/position/direction, all shape fields with defaults, shapingConeAngle (degrees), guideRadius and texture/geometry links. Next names distant lights \"directional\", reports shaped sphere lights as \"spot\" with a radian cone angle, and includes PortalLights. Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getLightWithFormat",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "material-format-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getLightWithFormat"
+  },
+  {
+    "legacyMethod": "getMMapZeroCopy",
+    "family": "streaming_buffers",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getMMapZeroCopy",
+    "knownDifference": "Legacy reports its mmap flag (false by default); next throws because next-only WASM assets are never mmap-backed (explicit product decision)."
+  },
+  {
+    "legacyMethod": "getMaterial",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "material-format-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getMaterial"
+  },
+  {
+    "legacyMethod": "getMaterialWithFormat",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "material-format-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getMaterialWithFormat"
+  },
+  {
+    "legacyMethod": "getMaxMemoryLimitMB",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getMaxMemoryLimitMB",
+    "knownDifference": "The next product uses an architecture-independent 1 GiB default; legacy defaults to 2 GiB on wasm32 and 8 GiB on memory64. Next also rejects limits outside 1..8192 MiB, while legacy preserves signed integer values. This is an intentional untrusted-input safety policy difference.",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getMemoryStats",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getMemoryStats",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Mesh, material, texture, image, light and asset counts match; node, buffer and cache-byte fields report each product's own accounting."
+  },
+  {
+    "legacyMethod": "getMesh",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getMesh",
+    "knownDifference": "Next returns borrowed heap descriptors ({ptr,length,comps,dtype}) for geometry, a non-indexed triangle soup, primPath/localMatrix/worldMatrix/material, and an unbound mesh uses the fallback material id; legacy returns indexed typed arrays with face counts/uvSets/normalsFormat. Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getMeshCopy",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getMeshCopy",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "knownDifference": "Owned copies of next's non-indexed geometry (uv0, vertexCount, local/world matrices, material); legacy returns indexed arrays with face counts, uvSets and packed normals. An unbound mesh uses the fallback material id. Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getMeshPrimvarsJSON",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getMeshPrimvarsJSON",
+    "knownDifference": "Next reports every primvar of the retained mesh (legacy returned an empty set for the interpolation fixture) and omits legacy's \"render node is not a GeomMesh\" error for plain meshes. Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getMeshPtr",
+    "family": "render_scene_queries",
+    "nextNameMatch": false,
+    "parityStatus": "known_behavior_gap",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getMeshGeometryView",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "knownDifference": "Maps to getMeshGeometryView: f32 geometry views plus skin/bind-transform and matrix fields; legacy returns indexed descriptors (snorm8 normals, faceVertexCounts, submesh flags). Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getMhProfileJSON",
+    "family": "render_scene_queries",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "getMhProfileJSON",
+    "workflow": [
+      "load",
+      "getMhProfileJSON"
+    ],
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getNativeFlattenRenderTree",
+    "family": "render_scene_queries",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getFlattenRenderTree",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getNativeMaterialDedup",
+    "family": "render_scene_queries",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getMaterialDedup",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getNativeMeshMerge",
+    "family": "render_scene_queries",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getMeshMerge",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getNativeMeshMergeBakeTransform",
+    "family": "render_scene_queries",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getMeshMergeBakeTransform",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getProgress",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-load-diagnostics-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getProgress",
+    "knownDifference": "Next product contract: the record tracks each load (stage \"complete\"/\"error\"/\"cancelled\", byte counts, errorMessage equal to error()). Legacy reports stage \"idle\" with \"Conversion complete\" after loading, keeps that record after a failed parse, and keeps cancelRequested set after an idle cancelParsing(). Idle records match."
+  },
+  {
+    "legacyMethod": "getRootNode",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getRootNode",
+    "knownDifference": "Same node record contract as getDefaultRootNode: next adds primPath/type/visible/worldMatrix/prototypePath, omits prototypeIndex/instanceId, and falls back to the prim name for displayName. Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getRoundBoneCount",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getRoundBoneCount",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getSceneMetadata",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getSceneMetadata",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getShadingGraphJSON",
+    "family": "render_scene_queries",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "getShadingGraphJSON",
+    "workflow": [
+      "load",
+      "getShadingGraphJSON"
+    ],
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getSkeleton",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getSkeleton",
+    "knownDifference": "Next adds primPath/joints/rootJoint/jointCount/animationSourcePath; skeleton ids follow next's traversal order (legacy orders them differently) and joint names are leaf names instead of full joint paths. Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getSkeletonJointsFlat",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getSkeletonJointsFlat",
+    "knownDifference": "joint_names are leaf joint names in next and full joint paths in legacy; other arrays match. Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getSphereSubdivisions",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getSphereSubdivisions",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getStreamingAssetUUID",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getStreamingAssetUUID"
+  },
+  {
+    "legacyMethod": "getStreamingProgress",
+    "family": "streaming_buffers",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getStreamingProgress",
+    "edgeDifference": "An overflowing chunk is rejected by both, but legacy still appends it (current > total, percentage > 100); next leaves the transfer at its expected size."
+  },
+  {
+    "legacyMethod": "getTargetBoneCount",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getTargetBoneCount",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getTexture",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getTexture"
+  },
+  {
+    "legacyMethod": "getUDIMTexture",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getUDIMTexture"
+  },
+  {
+    "legacyMethod": "getURI",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getURI",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getUpAxis",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getUpAxis",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getValueClipEndTime",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getValueClipEndTime",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getValueClipSampleRate",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getValueClipSampleRate",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getValueClipStartTime",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getValueClipStartTime",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getValueClipUseTimeRange",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getValueClipUseTimeRange",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getZeroCopyBufferPtr",
+    "family": "streaming_buffers",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getZeroCopyBufferPtr"
+  },
+  {
+    "legacyMethod": "getZeroCopyBufferPtrAtOffset",
+    "family": "streaming_buffers",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getZeroCopyBufferPtrAtOffset"
+  },
+  {
+    "legacyMethod": "getZeroCopyProgress",
+    "family": "streaming_buffers",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getZeroCopyProgress"
+  },
+  {
+    "legacyMethod": "hasAsset",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "hasAsset",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "hasInherits",
+    "family": "composition_and_variants",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "hasInherits",
+    "behaviorTest": "next-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "hasPayload",
+    "family": "composition_and_variants",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "hasPayload",
+    "behaviorTest": "next-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "hasReferences",
+    "family": "composition_and_variants",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "hasReferences",
+    "behaviorTest": "next-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "hasSublayers",
+    "family": "composition_and_variants",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "hasSublayers",
+    "behaviorTest": "next-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "hasVariants",
+    "family": "composition_and_variants",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "hasVariants",
+    "behaviorTest": "next-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "isParsingInProgress",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-load-diagnostics-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "isParsingInProgress",
+    "edgeDifference": "Idle and post-load results match. Next additionally reports and controls a running parse from the RenderStream progress callback; legacy loads synchronously without a JS callback and has no equivalent. It is true inside the callback."
+  },
+  {
+    "legacyMethod": "isStreamingAssetComplete",
+    "family": "streaming_buffers",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "isStreamingAssetComplete",
+    "edgeDifference": "A zero-length stream is never complete in legacy; next treats it as complete."
+  },
+  {
+    "legacyMethod": "layerToJSON",
+    "family": "layer_export_and_validation",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "exportJSON",
+    "workflow": [
+      "load",
+      "exportJSON"
+    ],
+    "behaviorTest": "next-layer-export-behavior-parity.test.mjs",
+    "edgeDifference": "An attribute authoring both a default and `.connect` keeps its connection in next Layer JSON; legacy drops it. All other Layer JSON content matches."
+  },
+  {
+    "legacyMethod": "layerToJSONWithOptions",
+    "family": "layer_export_and_validation",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "exportJSONWithOptions",
+    "workflow": [
+      "load",
+      "exportJSONWithOptions"
+    ],
+    "behaviorTest": "next-layer-export-behavior-parity.test.mjs",
+    "edgeDifference": "An attribute authoring both a default and `.connect` keeps its connection in next Layer JSON; legacy drops it. All other Layer JSON content matches. Both products emit the same document for every embed/array mode."
+  },
+  {
+    "legacyMethod": "layerToRenderScene",
+    "family": "layer_export_and_validation",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "beginFromLayerDocument",
+    "behaviorTest": "next-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "layerToString",
+    "family": "layer_export_and_validation",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "exportUSDA",
+    "workflow": [
+      "load",
+      "exportUSDA"
+    ],
+    "behaviorTest": "next-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "loadAsLayerFromBinary",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "load",
+    "behaviorTest": "next-loading-behavior-parity.test.mjs",
+    "edgeDifference": "Returns {success, primCount} instead of a boolean. Next applies its untrusted input policy: strict AOUSD parsing rejects ignored reference customData that legacy accepts."
+  },
+  {
+    "legacyMethod": "loadAsLayerFromBinaryWithProgress",
+    "family": "loading_and_diagnostics",
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "loadWithProgress",
+    "workflow": [
+      "loadWithProgress"
+    ],
+    "nextNameMatch": false,
+    "behaviorTest": "next-loading-behavior-parity.test.mjs",
+    "edgeDifference": "Returns {success, primCount} and reports progress to the loadWithProgress callback. Next applies its untrusted input policy: strict AOUSD parsing rejects ignored reference customData that legacy accepts."
+  },
+  {
+    "legacyMethod": "loadAsLayerFromCachedAsset",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "load",
+    "workflow": [
+      {
+        "surface": "NextAssetStore",
+        "method": "getAsset"
+      },
+      {
+        "surface": "NextLayerDocument",
+        "method": "load"
+      }
+    ],
+    "behaviorTest": "next-loading-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "loadFromBinary",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "begin",
+    "behaviorTest": "next-loading-behavior-parity.test.mjs",
+    "edgeDifference": "Success agrees on the shared corpus; next returns the begin() record (success, counts, error) instead of a boolean. Next applies its untrusted input policy: strict AOUSD parsing rejects ignored reference customData that legacy accepts. A missing sublayer or reference asset also fails next composition, while legacy never composes on load. Next loads some meshes that legacy's converter rejects."
+  },
+  {
+    "legacyMethod": "loadFromBinaryAsync",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "beginAsync",
+    "behaviorTest": "next-loading-behavior-parity.test.mjs",
+    "edgeDifference": "Both resolve after the call returns; legacy resolves {success, meshCount, materialCount, textureCount}, next the full begin() record."
+  },
+  {
+    "legacyMethod": "loadFromBinaryWithProgress",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "begin",
+    "behaviorTest": "next-loading-behavior-parity.test.mjs",
+    "edgeDifference": "Legacy updates its polled progress record synchronously; next reports phases to RenderStream.setProgressCallback during begin().",
+    "workflow": [
+      {
+        "surface": "RenderStream",
+        "method": "setProgressCallback"
+      },
+      {
+        "surface": "RenderStream",
+        "method": "begin"
+      }
+    ]
+  },
+  {
+    "legacyMethod": "loadFromCachedAsset",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "beginCachedAsset",
+    "behaviorTest": "next-loading-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "loadLayerFromJSON",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "loadJSON",
+    "workflow": [
+      "loadJSON"
+    ],
+    "behaviorTest": "next-loading-behavior-parity.test.mjs",
+    "edgeDifference": "Legacy-exported JSON imports on both; next requires the root typeName to be \"Layer\", which legacy does not check."
+  },
+  {
+    "legacyMethod": "loadTest",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "load",
+    "workflow": [
+      "load"
+    ],
+    "behaviorTest": "next-loading-behavior-parity.test.mjs",
+    "edgeDifference": "Maps to NextLayerDocument.load(bytes), returning {success, primCount} instead of a boolean. Next applies its untrusted input policy: strict AOUSD parsing rejects ignored reference customData that legacy accepts."
+  },
+  {
+    "legacyMethod": "lodVariantCount",
+    "family": "composition_and_variants",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "lodVariantCount",
+    "behaviorTest": "next-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "markZeroCopyBytesWritten",
+    "family": "streaming_buffers",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "markZeroCopyBytesWritten",
+    "edgeDifference": "An over-count mark fails on both, but legacy clamps its written count to the buffer size; next leaves the count unchanged."
+  },
+  {
+    "legacyMethod": "mcpCreateContext",
+    "family": "mcp",
+    "nextNameMatch": false,
+    "parityStatus": "product_decision",
+    "productDecision": "MCP server/context integration remains in the dedicated MCP server product, outside next-only scene-core WASM."
+  },
+  {
+    "legacyMethod": "mcpResourcesList",
+    "family": "mcp",
+    "nextNameMatch": false,
+    "parityStatus": "product_decision",
+    "productDecision": "MCP server/context integration remains in the dedicated MCP server product, outside next-only scene-core WASM."
+  },
+  {
+    "legacyMethod": "mcpResourcesRead",
+    "family": "mcp",
+    "nextNameMatch": false,
+    "parityStatus": "product_decision",
+    "productDecision": "MCP server/context integration remains in the dedicated MCP server product, outside next-only scene-core WASM."
+  },
+  {
+    "legacyMethod": "mcpSelectContext",
+    "family": "mcp",
+    "nextNameMatch": false,
+    "parityStatus": "product_decision",
+    "productDecision": "MCP server/context integration remains in the dedicated MCP server product, outside next-only scene-core WASM."
+  },
+  {
+    "legacyMethod": "mcpToolsCall",
+    "family": "mcp",
+    "nextNameMatch": false,
+    "parityStatus": "product_decision",
+    "productDecision": "MCP server/context integration remains in the dedicated MCP server product, outside next-only scene-core WASM."
+  },
+  {
+    "legacyMethod": "mcpToolsList",
+    "family": "mcp",
+    "nextNameMatch": false,
+    "parityStatus": "product_decision",
+    "productDecision": "MCP server/context integration remains in the dedicated MCP server product, outside next-only scene-core WASM."
+  },
+  {
+    "legacyMethod": "nextFlattenAsyncBegin",
+    "family": "next_flatten",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin"
+    ]
+  },
+  {
+    "legacyMethod": "nextFlattenAsyncBeginRemap",
+    "family": "next_flatten",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "setAssetPathRemap"
+    ]
+  },
+  {
+    "legacyMethod": "nextFlattenAsyncBeginRemapVariants",
+    "family": "next_flatten",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "setAssetPathRemap",
+      "setVariantOverride"
+    ]
+  },
+  {
+    "legacyMethod": "nextFlattenAsyncEnd",
+    "family": "next_flatten",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "end"
+    ]
+  },
+  {
+    "legacyMethod": "nextFlattenAsyncProvideLayer",
+    "family": "next_flatten",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "provideLayer"
+    ]
+  },
+  {
+    "legacyMethod": "nextFlattenAsyncStep",
+    "family": "next_flatten",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "nextFlattenBuffer",
+    "family": "next_flatten",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "step"
+    ],
+    "edgeDifference": "Output is byte-identical to NextFlattenSession for Crate roots; the legacy entry point rejects a USDA root (\"Invalid USDC magic bytes\"), which a NextFlattenSession accepts."
+  },
+  {
+    "legacyMethod": "nextFlattenBufferRemap",
+    "family": "next_flatten",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "setAssetPathRemap",
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "nextFlattenBufferRemapVariants",
+    "family": "next_flatten",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "setAssetPathRemap",
+      "setVariantOverride",
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "nextFlattenBufferToSink",
+    "family": "next_flatten",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "nextFlattenBufferToSinkRemap",
+    "family": "next_flatten",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "setAssetPathRemap",
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "nextFlattenBufferToSinkRemapVariants",
+    "family": "next_flatten",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "setAssetPathRemap",
+      "setVariantOverride",
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "nextFlattenMultiBufferToSink",
+    "family": "next_flatten",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "nextFlattenMultiBufferToSinkFetch",
+    "family": "next_flatten",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "nextFlattenMultiBufferToSinkFetchRemap",
+    "family": "next_flatten",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "setAssetPathRemap",
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "nextFlattenMultiBufferToSinkFetchRemapVariants",
+    "family": "next_flatten",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "setAssetPathRemap",
+      "setVariantOverride",
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "nextFlattenUSDC",
+    "family": "next_flatten",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "behaviorTest": "next-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "step"
+    ],
+    "edgeDifference": "Output is byte-identical to NextFlattenSession for Crate roots; the legacy entry point rejects a USDA root (\"Invalid USDC magic bytes\"), which a NextFlattenSession accepts."
+  },
+  {
+    "legacyMethod": "numAnimations",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "numAnimations"
+  },
+  {
+    "legacyMethod": "numCameras",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "numCameras"
+  },
+  {
+    "legacyMethod": "numImages",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "numImages"
+  },
+  {
+    "legacyMethod": "numInstances",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "numInstances",
+    "knownDifference": "Next enumerates one instance per native-instance prim (17 in instancing-001); legacy enumerates its prototype-expanded instance records (11). Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "numLights",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "numLights",
+    "knownDifference": "Next exports PortalLight prims as rect lights (and light filters as inert point lights with a warning); legacy omits them. Next RenderStream record shape is the product contract; the exact field differences are pinned in next-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "numMaterials",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "numMaterials",
+    "edgeDifference": "Counts and ids match (bound materials in mesh order, deduplicated when enabled); an unbound mesh uses a trailing fallback record id equal to numMaterials where legacy reports -1."
+  },
+  {
+    "legacyMethod": "numMeshes",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "numMeshes"
+  },
+  {
+    "legacyMethod": "numRootNodes",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "numRootNodes"
+  },
+  {
+    "legacyMethod": "numSkeletons",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "numSkeletons"
+  },
+  {
+    "legacyMethod": "numTextures",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "numTextures"
+  },
+  {
+    "legacyMethod": "numUDIMTextures",
+    "family": "render_scene_queries",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-render-scene-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "numUDIMTextures"
+  },
+  {
+    "legacyMethod": "ok",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-load-diagnostics-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "ok"
+  },
+  {
+    "legacyMethod": "releaseSourceLayer",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-load-diagnostics-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "releaseSourceLayer"
+  },
+  {
+    "legacyMethod": "remapLayerAssetPaths",
+    "family": "layer_export_and_validation",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextFlattenSession",
+    "nextEquivalent": "remapLayerAssetPaths",
+    "workflow": [
+      "begin",
+      "remapLayerAssetPaths"
+    ],
+    "behaviorTest": "next-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "reset",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-load-diagnostics-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "reset"
+  },
+  {
+    "legacyMethod": "resetProgress",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-load-diagnostics-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "resetProgress",
+    "edgeDifference": "Both reset to the same idle record. Next additionally reports and controls a running parse from the RenderStream progress callback; legacy loads synchronously without a JS callback and has no equivalent. Next rejects resetProgress with TypeError while a parse is running."
+  },
+  {
+    "legacyMethod": "setAllowParentRelativeAssetPaths",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "setAllowParentRelativeAssetPaths",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "setAsset",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "setAsset",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs",
+    "edgeDifference": "Next returns whether an existing entry was replaced (legacy returns undefined) and rejects an empty identifier, which legacy stores."
+  },
+  {
+    "legacyMethod": "setAssetCacheMaxSizeBytes",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "setAssetCacheMaxSizeBytes",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "setAssetFromRawPointer",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "setAssetFromRawPointer",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "setBaseWorkingPath",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "setBaseWorkingPath",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "setCollisionMesh",
+    "family": "schema_and_image_utilities",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextUSDZConverterNative",
+    "nextEquivalent": "setCollisionMesh",
+    "behaviorTest": "next-schema-utilities-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "setCombineUDIMTiles",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "setCombineUDIMTiles",
+    "knownDifference": "The setter accepts canonical booleans on both products, but next rejects legacy Embind coercions such as numeric/string inputs. Its default is also false (sparse tiles), while legacy defaults to true (combined atlas).",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "setDeferTangentComputation",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "setDeferTangentComputation",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while next throws TypeError/RangeError and keeps the previous value. Tangent values match; legacy re-indexes a mesh when computing deferred tangents, so its stream length can differ."
+  },
+  {
+    "legacyMethod": "setEnableBoneReduction",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "setEnableBoneReduction",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while next throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setEnableComposition",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "setEnableComposition",
+    "knownDifference": "Legacy stores the flag but never composes on load (its use is commented out); next composes arcs when enabled. Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while next throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setEnableValueClips",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "setEnableValueClips",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while next throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setLoadTextureInNative",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "setLoadTextureInNative",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while next throws TypeError/RangeError and keeps the previous value. Next decodes textures from an attached NextAssetStore (legacy: setAsset), expands RGB to RGBA, and reports unknown image sizes as 0 instead of -1."
+  },
+  {
+    "legacyMethod": "setMMapZeroCopy",
+    "family": "streaming_buffers",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "setMMapZeroCopy",
+    "knownDifference": "Legacy stores the mmap flag; next validates and throws because next-only WASM assets are never mmap-backed (explicit product decision)."
+  },
+  {
+    "legacyMethod": "setMaxMemoryLimitMB",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "setMaxMemoryLimitMB",
+    "knownDifference": "The next product uses an architecture-independent 1 GiB default; legacy defaults to 2 GiB on wasm32 and 8 GiB on memory64. Next also rejects limits outside 1..8192 MiB, while legacy preserves signed integer values. This is an intentional untrusted-input safety policy difference.",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "setNativeFlattenRenderTree",
+    "family": "loader_configuration",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "setFlattenRenderTree",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while next throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setNativeMaterialDedup",
+    "family": "loader_configuration",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "setMaterialDedup",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while next throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setNativeMeshMerge",
+    "family": "loader_configuration",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "setMeshMerge",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while next throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setNativeMeshMergeBakeTransform",
+    "family": "loader_configuration",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "setMeshMergeBakeTransform",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while next throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setRoundBoneCount",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "setRoundBoneCount",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while next throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setSphereSubdivisions",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "setSphereSubdivisions",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while next throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setTargetBoneCount",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "setTargetBoneCount",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while next throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setUSDCExportLimitMB",
+    "family": "loader_configuration",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextUSDZConverterNative",
+    "nextEquivalent": "setUSDCExportLimitMB",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "The file-size cap matches legacy exportAsUSDC on NextUSDZConverterNative.exportAsUSDC; next also rejects when an up-front working-set estimate exceeds the memory cap, which legacy does not enforce."
+  },
+  {
+    "legacyMethod": "setValueClipSampleRate",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "setValueClipSampleRate",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while next throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setValueClipTimeRange",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "setValueClipTimeRange",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while next throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setValueClipUseTimeRange",
+    "family": "loader_configuration",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "setValueClipUseTimeRange",
+    "behaviorTest": "next-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while next throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setVisualMesh",
+    "family": "schema_and_image_utilities",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextUSDZConverterNative",
+    "nextEquivalent": "setVisualMesh",
+    "behaviorTest": "next-schema-utilities-behavior-parity.test.mjs",
+    "edgeDifference": "Invalid uploads fail on both; a null positions array returns false in legacy and throws TypeError in next."
+  },
+  {
+    "legacyMethod": "startStreamingAsset",
+    "family": "streaming_buffers",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "startStreamingAsset"
+  },
+  {
+    "legacyMethod": "testValueMemoryUsage",
+    "family": "test_only",
+    "nextNameMatch": false,
+    "parityStatus": "test_only_excluded",
+    "knownDifference": "This debug memory-probe helper constructs synthetic values for the legacy memory-usage CLI and tests; it is not a product loading/diagnostics API."
+  },
+  {
+    "legacyMethod": "validateFromBinary",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": false,
+    "parityStatus": "known_behavior_gap",
+    "nextSurface": "NextModule",
+    "nextEquivalent": "validateFromBinary",
+    "knownDifference": "For USDC, next now validates the decoded crate structure and reports the crate checked-group. The compatibility adapter preserves the CrateReader threading warning text without legacy's source-location prefix. Parse-failure wording differs.",
+    "behaviorTest": "next-validation-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "validateLoadedLayer",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextLayerDocument",
+    "nextEquivalent": "validateLoadedLayer",
+    "behaviorTest": "next-validation-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "verifyAssetHash",
+    "family": "asset_resolution_and_cache",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextAssetStore",
+    "nextEquivalent": "verifyAssetHash",
+    "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "warn",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-load-diagnostics-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "warn"
+  },
+  {
+    "legacyMethod": "wasCancelled",
+    "family": "loading_and_diagnostics",
+    "nextNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "next-load-diagnostics-behavior-parity.test.mjs",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "wasCancelled",
+    "edgeDifference": "Idle and post-load results match. Next additionally reports and controls a running parse from the RenderStream progress callback; legacy loads synchronously without a JS callback and has no equivalent. It is true after a callback-driven cancellation and cleared by the next begin()."
+  }
+]

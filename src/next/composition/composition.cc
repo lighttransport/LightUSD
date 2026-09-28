@@ -347,6 +347,29 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
     // (already-removed nested paths simply miss). The specs stay allocated
     // but unreachable — writers/consumers traverse from the roots.
     for (const std::string& cp : prune) result->remove_prim_at_path(cp);
+
+    // Variant holders authored in the ROOT layer itself (Crate encodes variant
+    // content as "<prim>{set=option}" specs) were copied into the result and
+    // their selected content already grafted; drop them like grafted holders
+    // so the flattened layer carries no variant structure (matching pxr and
+    // the PCP flatten). Selections are consumed too: an empty `variants = {}`
+    // left behind by the selections-authored flag is not part of the output.
+    std::vector<std::string> holders;
+    for (size_t i = 0; i < result->prim_count(); ++i) {
+      PrimSpec* p = result->prim_mutable(static_cast<uint32_t>(i));
+      if (!p) continue;
+      const std::string path = p->path().str();
+      if (path.find('{') != std::string::npos) {
+        holders.push_back(path);
+        continue;
+      }
+      if (p->meta().has_ext() && p->meta().variantSelectionsAuthored() &&
+          p->meta().variantSelections().empty() &&
+          p->meta().variantSelection.empty()) {
+        p->meta().setVariantSelectionsAuthored(false);
+      }
+    }
+    for (const std::string& hp : holders) result->remove_prim_at_path(hp);
   }
 
   return result;

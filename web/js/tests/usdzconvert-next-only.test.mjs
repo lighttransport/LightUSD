@@ -24,6 +24,53 @@ import {
 
 const COMPOUND_ROTATION_DECAL_BYTES = new Uint8Array(fs.readFileSync(
   new URL('../../../tests/usda/xform-rotatexyz-decal-001.usda', import.meta.url)));
+const BLEND_SHAPE_USDA = fs.readFileSync(
+  new URL('../../../tests/usda/blendshape-full-001.usda', import.meta.url), 'utf8');
+const BLEND_SHAPE_BYTES = new TextEncoder().encode(BLEND_SHAPE_USDA.replace(
+  'uniform int[] pointIndices = [0, 1, 2, 3]',
+  `uniform vector3f[] inbetweens:half = [
+                (0.1, 0.15, 0.05), (-0.1, 0.15, 0.05), (0, 0, 0), (0, 0, 0)
+            ] ( weight = 0.5 )
+            uniform int[] pointIndices = [0, 1, 2, 3]`));
+const SUBSET_MATERIAL_USDA = `#usda 1.0
+def Xform "Root"
+{
+    def Mesh "Quad"
+    {
+        rel material:binding = </Root/MatB>
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        def GeomSubset "FirstFace"
+        {
+            uniform token familyName = "materialBind"
+            uniform token elementType = "face"
+            int[] indices = [0]
+            rel material:binding = </Root/MatA>
+        }
+    }
+    def Material "MatA"
+    {
+        token outputs:surface.connect = </Root/MatA/Shader.outputs:surface>
+        def Shader "Shader"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (1, 0, 0)
+            token outputs:surface
+        }
+    }
+    def Material "MatB"
+    {
+        token outputs:surface.connect = </Root/MatB/Shader.outputs:surface>
+        def Shader "Shader"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 0, 1)
+            token outputs:surface
+        }
+    }
+}
+`;
 
 const SCENE_USDA = `#usda 1.0
 (
@@ -37,6 +84,39 @@ def Xform "World"
         int[] faceVertexCounts = [3]
         int[] faceVertexIndices = [0, 1, 2]
         point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    }
+}
+`;
+const CUSTOM_PRIMVAR_USDA = SCENE_USDA.replace(
+  'point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]',
+  `point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        float[] primvars:heat = [0.1, 0.2, 0.3] (
+            interpolation = "vertex"
+        )
+        int[] primvars:heat:indices = [2, 1, 0]
+        int[] primvars:tag = [5, 6, 7] (
+            interpolation = "vertex"
+        )
+        double[] primvars:weight = [0.5, 0.25, 0.75] (
+            interpolation = "vertex"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)]`);
+const TWO_MESH_PRIMVAR_USDA = (withPrimvars) => `#usda 1.0
+def Xform "World"
+{
+    def Mesh "A"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        ${withPrimvars ? 'float[] primvars:heat = [1, 2, 3]' : ''}
+    }
+    def Mesh "B"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(2, 0, 0), (3, 0, 0), (2, 1, 0)]
+        ${withPrimvars ? 'float[] primvars:heat = [4, 5, 6]' : ''}
     }
 }
 `;
@@ -82,6 +162,38 @@ def Xform "World"
                 uniform token info:id = "ND_subtract_color3"
                 color3f inputs:in1 = (1, 1, 1)
                 color3f inputs:in2.connect = </World/Mat/Graph/color.outputs:out>
+                color3f outputs:out
+            }
+        }
+    }
+}
+`;
+const PREVIEW_SURFACE_NODEGRAPH_SPHERE_USDA = `#usda 1.0
+(
+    defaultPrim = "World"
+)
+def Xform "World"
+{
+    def Sphere "Ball"
+    {
+        rel material:binding = </World/Mat>
+    }
+    def Material "Mat"
+    {
+        token outputs:surface.connect = </World/Mat/Surface.outputs:surface>
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </World/Mat/Graph.outputs:result>
+            token outputs:surface
+        }
+        def NodeGraph "Graph"
+        {
+            color3f outputs:result.connect = </World/Mat/Color.outputs:out>
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_constant_color3"
+                color3f inputs:value = (0.2, 0.4, 0.8)
                 color3f outputs:out
             }
         }
@@ -161,6 +273,13 @@ def Xform "World"
     def Camera "MainCamera"
     {
         float focalLength = 35
+        float focusDistance = 12
+        float fStop = 2.5
+        float horizontalApertureOffset = 1.5
+        float exposure = 0.75
+        token stereoRole = "left"
+        double shutter:open = -0.25
+        double shutter:close = 0.5
     }
 
     def SphereLight "KeyLight"
@@ -182,6 +301,9 @@ def Xform "World"
     {
         int[] curveVertexCounts = [2]
         point3f[] points = [(0, 0, 0), (0, 1, 0)]
+        float[] widths = [0.1, 0.2]
+        color3f[] primvars:displayColor = [(1, 0, 0), (0, 0, 1)]
+        float[] primvars:displayOpacity = [0.25, 0.75]
     }
 
     def HermiteCurves "Hermite"
@@ -306,6 +428,39 @@ const glueUrl = new URL(glue, import.meta.url).href;
 const wasmDir = new URL('../src/lightusd/', import.meta.url);
 const native = await loadWasm(() => import(glueUrl), {
   locateFile: (file) => new URL(file, wasmDir).href,
+});
+
+await testAsync('next RenderStream runtime methods match the checked API inventory', async () => {
+  const expected = JSON.parse(fs.readFileSync(
+    new URL('./renderstream-api-inventory.json', import.meta.url), 'utf8'));
+  const actual = Object.getOwnPropertyNames(native.RenderStream.prototype)
+    .filter((name) => name !== 'constructor').sort();
+  assert.deepEqual(actual, expected,
+    'intentional RenderStream API changes must update the checked inventory');
+});
+
+await testAsync('next USDZ converter runtime methods match the checked API inventory', async () => {
+  const expected = JSON.parse(fs.readFileSync(
+    new URL('./next-usdz-converter-api-inventory.json', import.meta.url), 'utf8'));
+  const actual = Object.getOwnPropertyNames(native.NextUSDZConverterNative.prototype)
+    .filter((name) => name !== 'constructor').sort();
+  assert.deepEqual(actual, expected,
+    'intentional next USDZ converter API changes must update the checked inventory');
+});
+
+await testAsync('schema and image utility methods map to the next-only surfaces', async () => {
+  const inventory = JSON.parse(fs.readFileSync(
+    new URL('./schema-image-next-api-inventory.json', import.meta.url), 'utf8'));
+  const prototypes = {
+    RenderStream: native.RenderStream.prototype,
+    NextUSDZConverterNative: native.NextUSDZConverterNative.prototype
+  };
+  assert.equal(inventory.length, 9);
+  for (const entry of inventory) {
+    const [owner, method] = entry.next.split('.');
+    assert.equal(typeof prototypes[owner]?.[method], 'function',
+      `${entry.legacy} must map to ${entry.next}`);
+  }
 });
 
 await testAsync('next texture roles preserve linear wide-gamut inputs', async () => {
@@ -563,9 +718,19 @@ await testAsync('next RenderStream exposes analytic geometry and MaterialX node 
       'analytic Sphere should be exposed as a render mesh');
     const mesh = stream.getMesh(0);
     assert.equal(mesh.primPath, '/World/Ball');
+    const sphereView = stream.getMeshGeometryView(0);
+    assert.equal(sphereView.primPath, mesh.primPath);
+    assert.equal(sphereView.primName, mesh.primName);
+    assert.equal(sphereView.materialId, mesh.materialId);
+    assert.deepEqual(sphereView.localMatrix, mesh.localMatrix);
+    assert.deepEqual(sphereView.worldMatrix, mesh.worldMatrix);
+    assert.equal(sphereView.points.length, mesh.points.length);
+    assert.equal(sphereView.normals.length, mesh.normals.length);
     assert.ok(mesh.points?.length > 0, 'generated sphere should expose positions');
     assert.ok(mesh.normals?.length > 0, 'generated sphere should expose normals');
     assert.equal(mesh.material?.shaderType, 'OpenPBR');
+    assert.deepEqual(stream.getOutputMaterial(mesh.materialId), mesh.material,
+      'typed output material should match the OpenPBR object');
     assert.ok(mesh.material?.baseColor?.every((value, index) =>
       Math.abs(value - [0, 0.5, 0.9][index]) < 1e-6),
     'constant MaterialX subtract network should drive the fallback color');
@@ -579,6 +744,203 @@ await testAsync('next RenderStream exposes analytic geometry and MaterialX node 
     assert.deepEqual(graph.connections, [{
       input: 'base_color', nodegraph: 'Graph', output: 'result'
     }]);
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await testAsync('next RenderStream retains PreviewSurface utility node graphs', async () => {
+  const stream = new native.RenderStream();
+  try {
+    const result = stream.begin(new TextEncoder().encode(PREVIEW_SURFACE_NODEGRAPH_SPHERE_USDA));
+    assert.ok(result?.success, result?.error || stream.error());
+    const mesh = stream.getMesh(0);
+    const material = stream.getOutputMaterial(mesh.materialId);
+    const graphJson = stream.outputMaterialString(mesh.materialId, 5);
+    assert.ok(graphJson, 'typed output should copy the retained PreviewSurface graph');
+    assert.equal(material.openPBRNodeGraphJson, graphJson,
+      'compatibility material object should use the same typed graph copy');
+    const previewSurfaceGraphJson = stream.outputMaterialString(mesh.materialId, 11);
+    assert.equal(material.previewSurfaceNodeGraphJson, previewSurfaceGraphJson,
+      'material output should preserve its dedicated PreviewSurface graph');
+    const graph = JSON.parse(graphJson);
+    assert.equal(graph.nodegraph.name, 'Graph');
+    assert.deepEqual(graph.nodegraph.nodes.map((node) => node.name), ['Color']);
+    assert.deepEqual(graph.connections, [{
+      input: 'diffuseColor', nodegraph: 'Graph', output: 'result'
+    }]);
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await testAsync('next RenderStream exposes authored MaterialX volume graphs', async () => {
+  const volumeUsd = `#usda 1.0
+(
+    defaultPrim = "World"
+)
+def Xform "World" {
+    def Mesh "M" {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        rel material:binding = </World/Mat>
+    }
+    def Material "Mat" {
+        token outputs:surface.connect = </World/Mat/PS.outputs:surface>
+        token outputs:volume.connect = </World/Mat/Vol.outputs:volume>
+        def Shader "PS" {
+            uniform token info:id = "UsdPreviewSurface"
+            token outputs:surface
+        }
+        def Shader "Vol" {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:density.connect = </World/Mat/Density.outputs:out>
+            float inputs:emission = 2.0
+            token outputs:volume
+        }
+        def Shader "Density" {
+            uniform token info:id = "ND_constant_float"
+            float inputs:value = 0.75
+            float outputs:out
+        }
+    }
+}
+`;
+  const stream = new native.RenderStream();
+  try {
+    const result = stream.begin(new TextEncoder().encode(volumeUsd));
+    assert.ok(result?.success, result?.error || stream.error());
+    const mesh = stream.getMesh(0);
+    const material = stream.getOutputMaterial(mesh.materialId);
+    const graphJson = stream.outputMaterialString(mesh.materialId, 10);
+    assert.ok(graphJson, 'typed output should copy the retained volume graph');
+    assert.equal(material.volumeNodeGraphJson, graphJson,
+      'compatibility material object should include the same volume graph');
+    const graph = JSON.parse(graphJson);
+    assert.ok(graphJson.includes('volume_density'));
+    assert.ok(graph.nodegraph || graph.connections,
+      'volume graph copy should retain nodegraph content');
+    assert.throws(() => stream.outputMaterialString(mesh.materialId, 12),
+      /invalid material or string kind/);
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await testAsync('next mesh subset materials retain their public objects', async () => {
+  const stream = new native.RenderStream();
+  try {
+    const result = stream.begin(new TextEncoder().encode(SUBSET_MATERIAL_USDA));
+    assert.ok(result?.success, result?.error || stream.error());
+    const meshes = Array.from({length: result.meshCount}, (_, id) => stream.getMesh(id));
+    const subsetMesh = meshes.find(mesh => mesh.submeshes?.length);
+    assert.ok(subsetMesh, 'fixture should expose a material subset');
+    assert.equal(subsetMesh.materials.length, 1);
+    assert.equal(subsetMesh.materials[0].primPath, '/Root/MatA');
+    assert.deepEqual(subsetMesh.materials[0],
+      stream.getOutputMaterial(subsetMesh.materials[0].id));
+    assert.ok(subsetMesh.submeshes.every(group => group.materialIndex === 0));
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await testAsync('next low-memory render retains custom primvar buffers', async () => {
+  for (const meshOnly of [false, true]) {
+    const stream = new native.RenderStream();
+    try {
+      stream.setMeshOnly(meshOnly);
+      const result = stream.begin(new TextEncoder().encode(CUSTOM_PRIMVAR_USDA));
+      assert.ok(result?.success, result?.error || stream.error());
+      assert.equal(result.meshCount, 1);
+      assert.equal(stream.meshPrimvarCount(0), 3);
+      const names = Array.from({length: 3}, (_, id) => stream.meshPrimvarName(0, id));
+      const heat = names.indexOf('heat');
+      const tag = names.indexOf('tag');
+      const weight = names.indexOf('weight');
+      assert.ok(heat >= 0 && tag >= 0 && weight >= 0,
+        'builtin st must not enter the custom catalog');
+      assert.equal(stream.meshPrimvarFormat(0, heat), 0);
+      assert.equal(stream.meshPrimvarFormat(0, tag), 4);
+      assert.equal(stream.meshPrimvarInterpolation(0, heat), 2);
+      assert.equal(stream.meshPrimvarElementCount(0, heat), 3);
+      assert.deepEqual(Array.from(new Float32Array(stream.meshPrimvarBuffer(0, heat).buffer))
+        .map(value => Math.round(value * 10)), [1, 2, 3]);
+      assert.equal(stream.meshPrimvarHasIndices(0, heat), 1);
+      assert.deepEqual(Array.from(new Uint32Array(
+        stream.meshPrimvarIndicesBuffer(0, heat).buffer)), [2, 1, 0]);
+      assert.deepEqual(Array.from(new Int32Array(
+        stream.meshPrimvarBuffer(0, tag).buffer)), [5, 6, 7]);
+      assert.deepEqual(Array.from(new Float32Array(
+        stream.meshPrimvarBuffer(0, weight).buffer)), [0.5, 0.25, 0.75]);
+      assert.equal(stream.getMesh(0).points.length, 9);
+      assert.equal(stream.meshPrimvarName(0, heat), 'heat');
+    } finally {
+      stream.end();
+      stream.delete();
+    }
+  }
+});
+
+await testAsync('next mesh merge preserves source custom primvars', async () => {
+  for (const meshOnly of [false, true]) {
+    const stream = new native.RenderStream();
+    try {
+      stream.setMeshOnly(meshOnly);
+      stream.setMeshMerge(true);
+      const plain = stream.begin(new TextEncoder().encode(TWO_MESH_PRIMVAR_USDA(false)));
+      assert.ok(plain?.success, plain?.error || stream.error());
+      assert.equal(plain.meshCount, 1, 'plain meshes should still merge');
+      const custom = stream.begin(new TextEncoder().encode(TWO_MESH_PRIMVAR_USDA(true)));
+      assert.ok(custom?.success, custom?.error || stream.error());
+      assert.equal(custom.meshCount, 2, 'custom primvar domains must stay separate');
+      assert.ok(stream.getStats().skippedMergeMeshes >= 2);
+      const values = Array.from({length: custom.meshCount}, (_, meshId) => {
+        assert.equal(stream.meshPrimvarCount(meshId), 1);
+        assert.equal(stream.meshPrimvarName(meshId, 0), 'heat');
+        return Array.from(new Float32Array(stream.meshPrimvarBuffer(meshId, 0).buffer));
+      });
+      assert.deepEqual(values, [[1, 2, 3], [4, 5, 6]]);
+    } finally {
+      stream.end();
+      stream.delete();
+    }
+  }
+});
+
+await testAsync('next mesh blend shapes match typed offset copies', async () => {
+  const stream = new native.RenderStream();
+  try {
+    const result = stream.begin(BLEND_SHAPE_BYTES);
+    assert.ok(result?.success, result?.error || stream.error());
+    let compared = 0;
+    let inbetweenCount = 0;
+    for (let meshId = 0; meshId < result.meshCount; ++meshId) {
+      const typedShapes = stream.getMeshBlendShapes(meshId);
+      const mesh = stream.getMesh(meshId);
+      if (!mesh.blendShapes?.length) continue;
+      assert.deepEqual(mesh.blendShapes, typedShapes);
+      stream.meshPointsBuffer(meshId);
+      assert.deepEqual(stream.getMeshBlendShapes(meshId), typedShapes,
+        'another scratch mesh build must invalidate the offset remap cache');
+      assert.ok(typedShapes.every(shape =>
+        shape.pointOffsets.length === mesh.points.length));
+      const half = typedShapes.flatMap(shape => shape.inbetweens)
+        .find(inbetween => inbetween.name === 'half');
+      if (half) {
+        assert.ok(Math.abs(half.weight - 0.5) < 1e-6);
+        assert.ok(half.pointOffsets.some(value => Math.abs(value - 0.15) < 1e-6));
+      }
+      inbetweenCount += typedShapes.reduce((sum, shape) => sum + shape.inbetweens.length, 0);
+      ++compared;
+    }
+    assert.ok(compared > 0, 'fixture should expose a mesh blend shape');
+    assert.ok(inbetweenCount > 0, 'fixture should expose an inbetween shape');
   } finally {
     stream.end();
     stream.delete();
@@ -949,8 +1311,16 @@ await testAsync('next merge-bake keeps compound-rotated decal vertices coplanar'
       'anonymous wall and decal meshes should merge into one baked mesh');
 
     const merged = stream.getMesh(0);
+    const aggregatePoints = new Float32Array(native.HEAPU8.buffer,
+      Number(merged.points.ptr), Number(merged.points.length)).slice();
+    const mergedView = stream.getMeshGeometryView(0);
+    assert.equal(mergedView.primPath, merged.primPath);
+    assert.equal(mergedView.materialId, merged.materialId);
+    assert.deepEqual(mergedView.localMatrix, merged.localMatrix);
+    assert.deepEqual(mergedView.worldMatrix, merged.worldMatrix);
     const points = new Float32Array(native.HEAPU8.buffer,
-      Number(merged.points.ptr), Number(merged.points.length));
+      Number(mergedView.points.ptr), Number(mergedView.points.length));
+    assert.deepEqual(points, aggregatePoints);
     assert.ok(points.length >= 24, 'merged wall and decal should retain both quads');
     let minX = Infinity;
     let maxX = -Infinity;
@@ -1195,7 +1565,17 @@ function assertEntityAccessorsWithRenderStream(usdz, label) {
 
     const camera = stream.getCamera(0);
     assert.equal(camera.type, 'perspective', `${label}: camera should expose type`);
-    assert.equal(typeof camera.focalLength, 'number', `${label}: camera should expose focal length`);
+    assert.equal(camera.focalLength, 35, `${label}: camera should expose focal length`);
+    assert.equal(camera.focusDistance, 12, `${label}: camera should expose focus distance`);
+    assert.equal(camera.fStop, 2.5, `${label}: camera should expose f-stop`);
+    assert.equal(camera.horizontalApertureOffset, 1.5,
+      `${label}: camera should expose aperture offset`);
+    assert.equal(camera.exposure, 0.75, `${label}: camera should expose exposure`);
+    assert.equal(camera.stereoRole, 1, `${label}: camera should expose stereo role`);
+    assert.equal(camera.shutterOpen, -0.25, `${label}: camera should expose shutter open`);
+    assert.equal(camera.shutterClose, 0.5, `${label}: camera should expose shutter close`);
+    assert.equal(camera.transform.length, 16,
+      `${label}: camera should expose the bounded transform`);
 
     const skeleton = stream.getSkeleton(0);
     assert.equal(skeleton.animationSourcePath, '/World/SkelAnim',
@@ -1203,8 +1583,10 @@ function assertEntityAccessorsWithRenderStream(usdz, label) {
 
     const points = stream.getPoints(0);
     assert.equal(points.pointCount, 2, `${label}: point cloud should expose point count`);
-    assert.ok(points.points && points.points.length === 6,
-      `${label}: point cloud should expose xyz buffer descriptor`);
+    assert.ok(points.points instanceof Float32Array && points.points.length === 6,
+      `${label}: point cloud should expose owned xyz values`);
+    assert.equal(points.primPath, '/World/Dust',
+      `${label}: point cloud path should survive the typed boundary`);
 
     const mesh = stream.getMesh(0);
     const baseMeta = mesh?.material?.textureMetadata?.baseColor;
@@ -1216,6 +1598,8 @@ function assertEntityAccessorsWithRenderStream(usdz, label) {
     assert.ok(materialJson.previewSurface,
       `${label}: material JSON should include shader parameter export`);
     assert.ok(baseMeta, `${label}: material should expose baseColor texture metadata`);
+    assert.deepEqual(stream.getOutputMaterial(mesh.materialId), mesh.material,
+      `${label}: typed material should preserve PreviewSurface texture metadata`);
     assert.equal(baseMeta.path, 'textures/diffuse.<UDIM>.png',
       `${label}: material metadata should preserve texture asset path`);
     assert.equal(baseMeta.sourceColorSpace, 'raw',
@@ -1238,6 +1622,33 @@ function assertEntityAccessorsWithRenderStream(usdz, label) {
         `${label}: BasisCurves should be present in converted curves`);
       assert.ok(curves.some((item) => item?.primPath === '/World/Hermite'),
         `${label}: HermiteCurves should be present in converted curves`);
+      const basisCurves = curves.find((item) => item?.primPath === '/World/Curve');
+      const hermiteCurves = curves.find((item) => item?.primPath === '/World/Hermite');
+      assert.ok(basisCurves.points instanceof Float32Array &&
+        basisCurves.tessellatedPoints instanceof Float32Array,
+        `${label}: curve geometry should be owned typed arrays`);
+      assert.deepEqual(basisCurves.curveVertexCounts, [2],
+        `${label}: authored curve topology should survive the typed boundary`);
+      assert.equal(basisCurves.widthsInterpolation, 'vertex',
+        `${label}: curve width interpolation should remain queryable`);
+      assert.equal(basisCurves.colorsInterpolation, 'vertex',
+        `${label}: curve color interpolation should remain queryable`);
+      assert.equal(basisCurves.opacitiesInterpolation, 'vertex',
+        `${label}: curve opacity interpolation should remain queryable`);
+      assert.equal(basisCurves.widths.length, 2,
+        `${label}: authored curve widths should survive the typed boundary`);
+      assert.equal(basisCurves.tessellatedWidths.length, basisCurves.tessellatedPointCount,
+        `${label}: tessellated curve widths should survive the typed boundary`);
+      assert.equal(basisCurves.colors.length, 6,
+        `${label}: authored curve colors should survive the typed boundary`);
+      assert.equal(basisCurves.tessellatedColors.length, basisCurves.tessellatedPointCount * 3,
+        `${label}: tessellated curve colors should survive the typed boundary`);
+      assert.deepEqual(Array.from(basisCurves.opacities), [0.25, 0.75],
+        `${label}: authored curve opacities should survive the typed boundary`);
+      assert.equal(basisCurves.tessellatedOpacities.length, basisCurves.tessellatedPointCount,
+        `${label}: tessellated curve opacities should survive the typed boundary`);
+      assert.equal(hermiteCurves.isHermite, true,
+        `${label}: Hermite curve type should survive the typed boundary`);
     }
 
     const animationCount = stream.numAnimations();
@@ -1248,6 +1659,20 @@ function assertEntityAccessorsWithRenderStream(usdz, label) {
       const animationView = stream.getAnimationView(0);
       assert.ok(Array.isArray(animationView.channels),
         `${label}: fast animation should expose channels`);
+      assert.deepEqual(animationView.channels, animation.channels,
+        `${label}: copied and borrowed animation channels should agree`);
+      animation.samplers.forEach((sampler, channelId) => {
+        const path = animation.channels[channelId].path;
+        const components = path === 'Weights' ? 1 :
+          path === 'Translation' || path === 'Scale' ? 3 : 4;
+        assert.equal(sampler.values.length, sampler.times.length * components,
+          `${label}: keyframe values should use the path's component width`);
+        assert.deepEqual(animationView.samplers[channelId].values, sampler.values,
+          `${label}: copied and borrowed samplers should have the same keyframes`);
+        assert.deepEqual(animation.channels[channelId].jointRemap,
+          Array.from(stream.animationJointRemapBuffer(0, channelId)),
+          `${label}: typed joint remap should match the aggregate`);
+      });
       const viewArraySampler = animationView.samplers.find((sampler) => sampler?.arrayValues);
       if (viewArraySampler) {
         assert.equal(viewArraySampler.arrayValues.dtype, 'f32',
@@ -1285,12 +1710,38 @@ function assertEntityAccessorsWithRenderStream(usdz, label) {
 async function assertEntityAccessorsWithAdapter(usdz, label) {
   const loader = new LightUSDLoader({ suppressNativeInfoLogs: true });
   await loader.init({ useMemory64: wasm64, useNextOnlyWasm: true });
-  const adapter = await new Promise((resolve, reject) => {
-    loader.parse(usdz, `${label}.usdz`, resolve, reject, { backend: 'next' });
-  });
+  const native = loader.native_;
+  const dispatch = native._lightusd_next_call;
+  native._lightusd_next_call = (...args) => {
+    if (args[1] === 56) throw new Error('node used aggregate emval dispatch');
+    return dispatch(...args);
+  };
+  let adapter;
+  try {
+    adapter = await new Promise((resolve, reject) => {
+      loader.parse(usdz, `${label}.usdz`, resolve, reject, { backend: 'next' });
+    });
+  } finally {
+    native._lightusd_next_call = dispatch;
+  }
   try {
     assert.equal(adapter.__backend, 'next', `${label}: expected next adapter`);
     assert.ok(adapter.numNodes() >= 4, `${label}: adapter should expose node count`);
+    const typedNode = adapter.getNode(0);
+    assert.equal(typedNode.primPath, '/World',
+      `${label}: typed node path should identify the root`);
+    assert.equal(typedNode.name, 'World',
+      `${label}: typed node name should be preserved`);
+    assert.equal(typedNode.type, 'xform',
+      `${label}: typed node enum should preserve the public type`);
+    assert.equal(typedNode.visible, true,
+      `${label}: typed node visibility should be preserved`);
+    assert.equal(typedNode.localMatrix.length, 16,
+      `${label}: typed node local transform should contain 16 values`);
+    assert.equal(typedNode.worldMatrix.length, 16,
+      `${label}: typed node world transform should contain 16 values`);
+    assert.ok(typedNode.children.length > 0,
+      `${label}: typed node should retain child IDs`);
     assert.ok(adapter.numPoints() >= 1, `${label}: adapter should expose point cloud count`);
     assert.ok(adapter.numRootNodes() >= 1, `${label}: adapter should expose root node count`);
     const root = adapter.getDefaultRootNode();
@@ -1538,6 +1989,55 @@ await testAsync('next-only WASM usdzconvert writes USDC root USDZ', async () => 
   assert.equal(order[0], 'root.usdc');
   assert.equal(new TextDecoder().decode(entries.get('root.usdc').slice(0, 8)), 'PXR-USDC');
   assertReloadsWithRenderStream(usdz, 'USDC-root USDZ');
+});
+
+await testAsync('browser usdzconvert worker selects next-only WASM', async () => {
+  const previousSelf = globalThis.self;
+  const messages = [];
+  globalThis.self = {
+    postMessage(message) { messages.push(message); },
+    close() {},
+    onmessage: null,
+  };
+  try {
+    await import(new URL('../usdzconvert.worker.js?next-only-smoke', import.meta.url).href);
+    const rootBytes = new TextEncoder().encode(SCENE_USDA);
+    self.onmessage({ data: {
+      type: 'convert',
+      files: [{ path: 'scene.usda', file: { arrayBuffer: async () => rootBytes.buffer } }],
+      opts: { pipeline: 'next-only', rootPath: 'scene.usda', rootLayerFormat: 'usdc' },
+      needsTextureWork: false,
+      colorspaceAware: false,
+    } });
+    await new Promise((resolve, reject) => {
+      const deadline = setTimeout(() => reject(new Error('worker conversion timed out')), 30000);
+      const poll = () => {
+        const terminal = messages.find((message) =>
+          message.type === 'complete' || message.type === 'error');
+        if (!terminal) { setTimeout(poll, 10); return; }
+        clearTimeout(deadline);
+        if (terminal.type === 'error') reject(new Error(terminal.message));
+        else resolve();
+      };
+      poll();
+    });
+    const result = messages.find((message) => message.type === 'complete');
+    assert.equal(result.stats.pipeline, 'next-only');
+    assert.ok(unpackUSDZ(result.usdz).entries.has('root.usdc'));
+  } finally {
+    if (previousSelf === undefined) delete globalThis.self;
+    else globalThis.self = previousSelf;
+  }
+});
+
+await testAsync('next-only converter rejects flattening and variant overrides', async () => {
+  const map = new Map([['scene.usda', new TextEncoder().encode(SCENE_USDA)]]);
+  await assert.rejects(convertFolderToUSDZ(native, map, {
+    rootPath: 'scene.usda', flatten: true,
+  }), /flattening and variant overrides/);
+  await assert.rejects(convertFolderToUSDZ(native, map, {
+    rootPath: 'scene.usda', variantSelections: { lod: 'high' },
+  }), /flattening and variant overrides/);
 });
 
 await testAsync('next-only WASM exposes next scene entities to web adapters', async () => {

@@ -96,6 +96,22 @@ function stop() { if (child.exitCode === null) child.kill('SIGTERM'); }
   const initial = await call('get_scene_info');
   if (!initial.loaded || initial.mesh_count !== 2 || initial.stage_revision < 1)
     throw new Error(`unexpected initial scene: ${JSON.stringify(initial)}\n${stderr}`);
+  const stageInfo = await call('stage_info');
+  if (!stageInfo.loaded || stageInfo.primCount !== 4 || stageInfo.upAxis !== 'Y')
+    throw new Error(`public stage metadata mismatch: ${JSON.stringify(stageInfo)}`);
+  const limited = await call('list_prims', {max: 1});
+  if (limited.count !== 1 || limited.paths[0] !== '/World')
+    throw new Error(`public prim-list limit/order mismatch: ${JSON.stringify(limited)}`);
+  const subtree = await call('prim_list', {path: '/World/Instances'});
+  if (subtree.count !== 2 || subtree.prims[0].path !== '/World/Instances' ||
+      subtree.prims[1].path !== '/World/Instances/Prototype')
+    throw new Error(`public subtree query mismatch: ${JSON.stringify(subtree)}`);
+  const meshes = await call('query_prims_by_type', {type: 'Mesh'});
+  if (meshes.count !== 2 || meshes.prims.some(p => p.type !== 'Mesh' || !p.active))
+    throw new Error(`public type query mismatch: ${JSON.stringify(meshes)}`);
+  const search = await call('search', {query: 'Prototype'});
+  if (search.count !== 1 || search.prims[0].name !== 'Prototype')
+    throw new Error(`public search mismatch: ${JSON.stringify(search)}`);
   const dependency = initial.layer_dependencies.find(
     path => path.endsWith('/geometry.usda') || path.endsWith('\\geometry.usda'));
   if (!dependency)

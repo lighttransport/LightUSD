@@ -93,6 +93,7 @@ std::shared_ptr<Layer> ConvertLoadedUSDC(USDCLoadResult &&r,
 
 ParseOptions MakeUSDAParseOptions(const LayerLoadOptions &options) {
   ParseOptions popts = options.usda_parse_options;
+  if (options.progress_callback) popts.progress_callback = options.progress_callback;
   if (options.strict_aousd_conformance) {
     popts.strict_aousd_conformance = true;
   }
@@ -147,6 +148,7 @@ std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
     USDCLoadOptions lopts;
     lopts.crate_options.max_memory = options.max_memory;
     lopts.crate_options.max_array_elements = options.max_array_elements;
+    lopts.crate_options.progress_callback = options.progress_callback;
     lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
     lopts.crate_options.use_mmap = options.usdc_use_mmap;
     lopts.crate_options.strict_aousd_conformance =
@@ -278,6 +280,7 @@ std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
         options.strict_aousd_conformance;
     lopts.crate_options.max_memory = options.max_memory;
     lopts.crate_options.max_array_elements = options.max_array_elements;
+    lopts.crate_options.progress_callback = options.progress_callback;
     lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
     lopts.crate_options.use_mmap = options.usdc_use_mmap;
     return ConvertLoadedUSDC(LoadUSDCFromFile(resolved_path, lopts),
@@ -664,6 +667,7 @@ std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
     USDCLoadOptions lopts;
     lopts.crate_options.max_memory = options.max_memory;
     lopts.crate_options.max_array_elements = options.max_array_elements;
+    lopts.crate_options.progress_callback = options.progress_callback;
     lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
     lopts.crate_options.strict_aousd_conformance =
         options.strict_aousd_conformance;
@@ -725,6 +729,7 @@ std::shared_ptr<Layer> LoadLayerFromMemoryOwned(const std::string &key,
     USDCLoadOptions lopts;
     lopts.crate_options.max_memory = options.max_memory;
     lopts.crate_options.max_array_elements = options.max_array_elements;
+    lopts.crate_options.progress_callback = options.progress_callback;
     lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
     lopts.crate_options.strict_aousd_conformance =
         options.strict_aousd_conformance;

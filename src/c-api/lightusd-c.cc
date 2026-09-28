@@ -6,28 +6,86 @@
 #include "c-internal.hh"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <limits>
 #include <map>
 
 #include "next/prim/identifier.hh"
-#include "next/lightusd-next.hh"
+#include "next/schema/usd-geom-camera.hh"
+#include "next/schema/usd-shade.hh"
+#include "next/layer/layer.hh"
+#include "next/layer/prim-spec.hh"
+#include "next/load-usd.hh"
+#include "next/types/type-info.hh"
+#include "next/types/value-view.hh"
 #include "next/pipeline/flatten.hh"
 #include "next/writer/usda-writer.hh"
 #include "next/writer/usdc-writer.hh"
 #include "next/writer/usdz-writer.hh"
-#include "tydra/next/scene-access.hh"
+#include "next/eval/xform-eval.hh"
+#include "next/eval/property-trace.hh"
+#include "next/pcp/cache.hh"
+#include "next/resolver/asset-resolver.hh"
 
 namespace n = lightusd::next;
 using lightusd_internal::Fail;
 using lightusd_internal::FromC;
+using lightusd_internal::SpecFromC;
 using lightusd_internal::MakeView;
 using lightusd_internal::SetError;
 using lightusd_internal::SV;
 using lightusd_internal::EmptySV;
 using lightusd_internal::ToC;
 using lightusd_internal::ValueFromRaw;
+
+struct lightusd_backplate {
+  n::BackPlateData data;
+};
+
+lightusd_status lightusd_backplate_eval(
+    const lightusd_stage* stage, lightusd_prim prim, const char* instance_name,
+    double time, lightusd_backplate** out) {
+  if (out) *out = nullptr;
+  if (!stage || !out || !instance_name || prim._owner != stage ||
+      !SpecFromC(prim) || !std::isfinite(time) ||
+      !n::IsValidNamespacedIdentifier(instance_name))
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid backplate evaluation arguments");
+  auto* plate = new (std::nothrow) lightusd_backplate;
+  if (!plate) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "backplate allocation failed");
+  if (!n::GetBackPlateData(stage->ReadStage(), FromC(prim), instance_name,
+                           &plate->data, time)) {
+    delete plate;
+    return Fail(LIGHTUSD_ERR_NOT_FOUND, "BackPlateAPI instance not applied");
+  }
+  *out = plate;
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_backplate_get_info(
+    const lightusd_backplate* plate, lightusd_backplate_info* out) {
+  if (out) *out = {};
+  if (!plate || !out)
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "backplate/out is null");
+  const auto& data = plate->data;
+  out->image = SV(data.image);
+  out->alpha_image = SV(data.alpha_image);
+  out->depth_image = SV(data.depth_image);
+  out->plate_visibility = SV(data.plate_visibility);
+  out->depth_min_offset = data.depth_min_offset;
+  out->depth_normalizing_factor = data.depth_normalizing_factor;
+  out->depth_camera_space_offset = data.depth_camera_space_offset;
+  std::copy_n(data.scale_tweak, 2, out->scale_tweak);
+  std::copy_n(data.rotate_xyz_tweak, 3, out->rotate_xyz_tweak);
+  std::copy_n(data.translate_tweak, 3, out->translate_tweak);
+  std::copy_n(data.luma_gain, 3, out->luma_gain);
+  std::copy_n(data.luma_lift, 3, out->luma_lift);
+  std::copy_n(data.luma_gamma, 3, out->luma_gamma);
+  return LIGHTUSD_OK;
+}
+
+void lightusd_backplate_destroy(lightusd_backplate* plate) { delete plate; }
 
 // ============================================================
 // Error handling / library info
@@ -41,6 +99,30 @@ thread_local std::string t_last_error;
 // mutation shared across threads reading one stage).
 std::mutex g_materialize_mu;
 }  // namespace
+
+const n::PrimSpec* SpecFromC(lightusd_prim p) {
+  if (!p._owner || !p._layer ||
+      p._generation != p._owner->generation.load(std::memory_order_acquire))
+    return nullptr;
+  return static_cast<const n::Layer*>(p._layer)->prim(p._index);
+}
+
+n::UsdPrim FromC(lightusd_prim p) {
+  const n::PrimSpec* spec = SpecFromC(p);
+  return spec ? n::UsdPrim(spec, static_cast<const n::Layer*>(p._layer), p._index)
+              : n::UsdPrim();
+}
+
+lightusd_prim ToC(const lightusd_stage* owner, const n::UsdPrim& prim) {
+  lightusd_prim result{};
+  if (owner && prim.IsValid()) {
+    result._owner = owner;
+    result._layer = prim.GetLayer();
+    result._index = prim.GetIndex();
+    result._generation = owner->generation.load(std::memory_order_acquire);
+  }
+  return result;
+}
 
 void SetError(const std::string& msg) { t_last_error = msg; }
 void SetError(const char* msg) { t_last_error = msg ? msg : ""; }
@@ -64,6 +146,19 @@ const char* lightusd_last_error(void) {
 // ============================================================
 // Strings
 // ============================================================
+
+lightusd_status lightusd_sv_copy(lightusd_sv view, char* out, size_t cap,
+                                 size_t* required) {
+  if (!required) return LIGHTUSD_ERR_INVALID_ARG;
+  *required = view.len;
+  if (view.len == 0) return LIGHTUSD_OK;
+  if (!view.data) return LIGHTUSD_ERR_INVALID_ARG;
+  /* A size query is intentionally successful so bindings can allocate once. */
+  if (!out && cap == 0) return LIGHTUSD_OK;
+  if (!out || cap < view.len) return LIGHTUSD_ERR_INVALID_ARG;
+  std::memmove(out, view.data, view.len);
+  return LIGHTUSD_OK;
+}
 
 lightusd_sv lightusd_string_view(const lightusd_string* s) {
   if (!s) return EmptySV();
@@ -394,7 +489,7 @@ bool ValueFromRaw(lightusd_type type, uint8_t is_array, const void* data,
 namespace {
 
 n::Layer* RootLayerOf(lightusd_stage* stage) {
-  return stage ? stage->stage.GetRootLayer() : nullptr;
+  return stage && !stage->snapshot_stage ? stage->stage.GetRootLayer() : nullptr;
 }
 
 // Attribute/relationship names must be valid (possibly namespaced) identifiers
@@ -409,6 +504,10 @@ n::PrimSpec* MutablePrimAt(lightusd_stage* stage, const char* prim_path,
   *st = LIGHTUSD_OK;
   if (!stage || !prim_path) {
     *st = Fail(LIGHTUSD_ERR_INVALID_ARG, "stage/path is null");
+    return nullptr;
+  }
+  if (stage->snapshot_stage) {
+    *st = Fail(LIGHTUSD_ERR_UNSUPPORTED, "snapshot stage is read-only");
     return nullptr;
   }
   n::Layer* layer = RootLayerOf(stage);
@@ -444,7 +543,7 @@ lightusd_value* NewValue(n::Value&& v) {
 const n::Value* FindDefaultValue(lightusd_prim p, const char* name,
                                  lightusd_status* st) {
   *st = LIGHTUSD_OK;
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   if (!spec || !name) {
     *st = Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim/name");
     return nullptr;
@@ -518,9 +617,12 @@ lightusd_status LoadFailureStatus(const std::string& error,
 bool ApplyLoadOptions(const lightusd_load_options* opts, n::LoadUSDOptions* lo,
                       lightusd::next::pcp::CompositionOptions* co) {
   if (!opts) return true;
-  if (!lo || opts->struct_size < sizeof(lightusd_load_options) ||
+  constexpr uint32_t kPriorLoadOptionsSize =
+      static_cast<uint32_t>(offsetof(lightusd_load_options, progress_callback));
+  if (!lo || opts->struct_size < kPriorLoadOptionsSize ||
       opts->format > LIGHTUSD_FORMAT_USDZ ||
       opts->input_policy > LIGHTUSD_INPUT_TRUSTED ||
+      opts->preserve_native_instances > 1 ||
       opts->max_threads < 0 ||
       !ToSizeLimit(opts->max_input_bytes, &lo->limits.max_input_bytes) ||
       !ToSizeLimit(opts->max_asset_bytes, &lo->limits.max_asset_bytes) ||
@@ -547,6 +649,19 @@ bool ApplyLoadOptions(const lightusd_load_options* opts, n::LoadUSDOptions* lo,
       lo->limits.max_array_elements;
   lo->usda_options.parse_options.max_depth = lo->limits.max_parse_depth;
   lo->usda_options.parse_options.num_threads = opts->max_threads;
+  constexpr uint32_t kProgressOptionsSize = static_cast<uint32_t>(
+      offsetof(lightusd_load_options, progress_userdata) +
+      sizeof(void*));
+  if (opts->struct_size >= kProgressOptionsSize && opts->progress_callback) {
+    const auto callback = opts->progress_callback;
+    void* const userdata = opts->progress_userdata;
+    auto progress = [callback, userdata](const char* phase, size_t current,
+                                         size_t total) {
+      return callback(userdata, phase, current, total) != 0;
+    };
+    lo->usda_options.parse_options.progress_callback = progress;
+    lo->usdc_options.crate_options.progress_callback = progress;
+  }
   lo->usda_options.parse_options.strict_aousd_conformance = untrusted;
   lo->usdc_options.crate_options.max_memory = lo->limits.max_input_bytes;
   lo->usdc_options.crate_options.max_array_elements =
@@ -557,6 +672,11 @@ bool ApplyLoadOptions(const lightusd_load_options* opts, n::LoadUSDOptions* lo,
   lo->usdz_options.max_entry_size = lo->limits.max_asset_bytes;
   lo->usdz_options.max_entries = lo->limits.max_archive_entries;
   if (co) {
+    if (opts->preserve_native_instances) {
+      co->flatten_instances = false;
+      co->instance_flatten_mode =
+          lightusd::next::pcp::InstanceFlattenMode::Native;
+    }
     co->load_payloads = opts->load_payloads != 0;
     co->max_depth = opts->max_composition_depth;
     co->max_namespace_depth = opts->max_namespace_depth;
@@ -674,6 +794,22 @@ lightusd_status lightusd_dict_find(lightusd_dict_ref d, const char* key,
   return DictOut(nullptr, v, nullptr, val, sval, subdict);
 }
 
+lightusd_status lightusd_dict_get_token_array(
+    lightusd_dict_ref d, const char* key, lightusd_strlist** out) {
+  if (out) *out = nullptr;
+  const auto* dict = static_cast<const n::Dict*>(d._dict);
+  if (!dict || !key || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid dict/key/out");
+  const auto* value = dict->find(key);
+  if (!value) return Fail(LIGHTUSD_ERR_NOT_FOUND, "dictionary key not found");
+  const auto* strings = value->as_token_array();
+  if (!strings) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "dictionary entry is not a string-family array");
+  auto* result = new (std::nothrow) lightusd_strlist();
+  if (!result) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "string list alloc failed");
+  result->items = *strings;
+  *out = result;
+  return LIGHTUSD_OK;
+}
+
 // ------------------------------------------------------------
 // Stage: load / create / save
 // ------------------------------------------------------------
@@ -745,6 +881,7 @@ lightusd_status lightusd_stage_load(const char* filename,
   }
   if (ok) {
     const std::string fn(filename ? filename : "");
+    stage->source_filename = fn;
     const size_t slash = fn.find_last_of("/\\");
     stage->source_dir = (slash == std::string::npos) ? "" : fn.substr(0, slash);
   }
@@ -798,7 +935,18 @@ lightusd_status lightusd_stage_create(lightusd_stage** out) {
   return LIGHTUSD_OK;
 }
 
-void lightusd_stage_destroy(lightusd_stage* stage) { delete stage; }
+void lightusd_stage_retain(lightusd_stage* stage) {
+  if (stage) stage->references.fetch_add(1, std::memory_order_relaxed);
+}
+
+void lightusd_stage_destroy(lightusd_stage* stage) {
+  if (stage && stage->references.fetch_sub(1, std::memory_order_acq_rel) == 1)
+    delete stage;
+}
+
+int lightusd_stage_is_read_only(const lightusd_stage* stage) {
+  return stage && bool(stage->snapshot_stage);
+}
 
 lightusd_status lightusd_stage_take_warnings(lightusd_stage* stage, lightusd_string** out) {
   if (!stage || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "stage/out is null");
@@ -834,11 +982,11 @@ lightusd_status lightusd_stage_save(const lightusd_stage* stage, const char* fil
   std::string err;
   bool ok = false;
   if (format == LIGHTUSD_FORMAT_USDA) {
-    ok = n::WriteUSDA(stage->stage, filename, &err);
+    ok = n::WriteUSDA(stage->ReadStage(), filename, &err);
   } else if (format == LIGHTUSD_FORMAT_USDC) {
-    ok = n::WriteUSDC(stage->stage, filename, &err);
+    ok = n::WriteUSDC(stage->ReadStage(), filename, &err);
   } else if (format == LIGHTUSD_FORMAT_USDZ) {
-    n::USDZWriteResult r = n::WriteUSDZToFile(filename, stage->stage);
+    n::USDZWriteResult r = n::WriteUSDZToFile(filename, stage->ReadStage());
     ok = r.success;
     err = r.error;
   } else {
@@ -856,7 +1004,7 @@ lightusd_status lightusd_stage_save_usdz_with_assets(
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid USDZ asset arguments");
   }
   std::vector<uint8_t> usdc;
-  n::USDCWriteResult usdc_result = n::WriteUSDCToMemory(usdc, stage->stage);
+  n::USDCWriteResult usdc_result = n::WriteUSDCToMemory(usdc, stage->ReadStage());
   if (!usdc_result.success) return Fail(LIGHTUSD_ERR_IO, usdc_result.error);
   std::map<std::string, std::vector<uint8_t>> assets;
   for (size_t i = 0; i < asset_count; ++i) {
@@ -886,7 +1034,7 @@ lightusd_status lightusd_stage_export_usda(const lightusd_stage* stage,
   if (!stage || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "stage/out is null");
   lightusd_string* s = new (std::nothrow) lightusd_string();
   if (!s) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "alloc failed");
-  s->s = n::WriteUSDAToString(stage->stage);
+  s->s = n::WriteUSDAToString(stage->ReadStage());
   *out = s;
   return LIGHTUSD_OK;
 }
@@ -895,7 +1043,7 @@ lightusd_status lightusd_stage_export_usdc(const lightusd_stage* stage,
                                    lightusd_string** out) {
   if (!stage || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "stage/out is null");
   std::vector<uint8_t> buf;
-  n::USDCWriteResult r = n::WriteUSDCToMemory(buf, stage->stage);
+  n::USDCWriteResult r = n::WriteUSDCToMemory(buf, stage->ReadStage());
   if (!r.success) return Fail(LIGHTUSD_ERR_INTERNAL, r.error);
   lightusd_string* s = new (std::nothrow) lightusd_string();
   if (!s) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "alloc failed");
@@ -904,13 +1052,57 @@ lightusd_status lightusd_stage_export_usdc(const lightusd_stage* stage,
   return LIGHTUSD_OK;
 }
 
+lightusd_status lightusd_stage_explain_property(
+    const lightusd_stage* stage, const char* prim_path, const char* property,
+    double time, lightusd_string** out) {
+  if (!stage || !prim_path || !property || !out) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "stage/path/property/out is null");
+  }
+  *out = nullptr;
+  const n::Layer* root = stage->ReadStage().GetRootLayer();
+  if (!root) return Fail(LIGHTUSD_ERR_NOT_FOUND, "stage has no root layer");
+
+  // A composed stage intentionally contains flattened specs. Reload the
+  // original file-backed layer for provenance-sensitive explanations; this
+  // preserves variant/arc source paths while the PCP cache still resolves the
+  // same composition. In-memory stages retain the existing root layer.
+  n::Stage source_stage;
+  std::string source_warn, source_err;
+  if (!stage->source_filename.empty() &&
+      n::LoadUSD(stage->source_filename, &source_stage, &source_warn,
+                 &source_err)) {
+    root = source_stage.GetRootLayer();
+  }
+
+  n::ResolverConfig resolver_config;
+  resolver_config.working_directory = stage->source_dir;
+  resolver_config.enable_suffix_fallback = false;
+  n::AssetResolver resolver(resolver_config);
+  std::shared_ptr<n::Layer> root_copy =
+      std::make_shared<n::Layer>(root->Clone());
+  auto cache = n::pcp::Cache::Open(
+      resolver, std::move(root_copy), stage->source_filename);
+  if (!cache) return Fail(LIGHTUSD_ERR_COMPOSITION, cache.error());
+
+  n::EvalOptions options;
+  options.time = std::isnan(time) ? n::TimeQuery::Default()
+                                  : n::TimeQuery::Numeric(time);
+  n::PropertyResolutionTrace trace = n::TraceProperty(
+      *cache, n::Path(prim_path), property, options);
+  lightusd_string* result = new (std::nothrow) lightusd_string();
+  if (!result) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "alloc failed");
+  result->s = n::PropertyResolutionTraceToJSON(trace);
+  *out = result;
+  return LIGHTUSD_OK;
+}
+
 lightusd_status lightusd_stage_flatten(const lightusd_stage* stage, lightusd_stage** out) {
   if (!stage || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "stage/out is null");
   lightusd_stage* flat = new (std::nothrow) lightusd_stage();
   if (!flat) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "alloc failed");
-  n::Layer layer = stage->stage.Flatten();
+  n::Layer layer = stage->ReadStage().Flatten();
   flat->stage.SetRootLayer(std::move(layer));
-  flat->stage.GetMeta() = stage->stage.GetMeta();
+  flat->stage.GetMeta() = stage->ReadStage().GetMeta();
   *out = flat;
   return LIGHTUSD_OK;
 }
@@ -984,12 +1176,30 @@ lightusd_status lightusd_flatten_file_to_usdc(const char* in_filename,
 // Stage metadata & stats
 // ------------------------------------------------------------
 
+int lightusd_stage_metadata_is_authored(const lightusd_stage* stage, const char* key) {
+  if (!stage || !key) return 0;
+  const auto& meta = stage->ReadStage().GetMeta();
+  if (std::strcmp(key, "defaultPrim") == 0) return meta.defaultPrim_set;
+  if (std::strcmp(key, "upAxis") == 0) return meta.upAxis_set;
+  if (std::strcmp(key, "metersPerUnit") == 0) return meta.metersPerUnit_set;
+  if (std::strcmp(key, "timeCodesPerSecond") == 0) return meta.timeCodesPerSecond_set;
+  if (std::strcmp(key, "startTimeCode") == 0) return meta.startTimeCode_set;
+  if (std::strcmp(key, "endTimeCode") == 0) return meta.endTimeCode_set;
+  if (std::strcmp(key, "framesPerSecond") == 0) return meta.framesPerSecond_set;
+  if (std::strcmp(key, "kilogramsPerUnit") == 0) return meta.kilogramsPerUnit_set;
+  if (std::strcmp(key, "colorConfiguration") == 0) return meta.colorConfiguration_set;
+  if (std::strcmp(key, "colorManagementSystem") == 0) return meta.colorManagementSystem_set;
+  if (std::strcmp(key, "doc") == 0) return meta.doc_set;
+  if (std::strcmp(key, "comment") == 0) return meta.comment_set;
+  return 0;
+}
+
 lightusd_status lightusd_stage_get_metadata(const lightusd_stage* stage, const char* key,
                                     lightusd_value** out) {
   if (!stage || !key || !out) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "stage/key/out is null");
   }
-  const n::StageMeta& m = stage->stage.GetMeta();
+  const n::StageMeta& m = stage->ReadStage().GetMeta();
   const std::string k(key);
   n::Value v;
   if (k == "defaultPrim") {
@@ -1029,6 +1239,8 @@ lightusd_status lightusd_stage_set_metadata(lightusd_stage* stage, const char* k
                                     lightusd_type type, const void* data,
                                     size_t count) {
   if (!stage || !key) return Fail(LIGHTUSD_ERR_INVALID_ARG, "stage/key is null");
+  if (stage && stage->snapshot_stage)
+    return Fail(LIGHTUSD_ERR_UNSUPPORTED, "snapshot stage is read-only");
   n::Layer* layer = RootLayerOf(stage);
   if (!layer) return Fail(LIGHTUSD_ERR_INTERNAL, "stage has no root layer");
 
@@ -1063,6 +1275,7 @@ lightusd_status lightusd_stage_set_metadata(lightusd_stage* stage, const char* k
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "defaultPrim expects a token");
     sm.defaultPrim = *s;
     lm.defaultPrim = *s;
+    sm.defaultPrim_set = lm.defaultPrim_set = true;
   } else if (k == "upAxis") {
     const std::string* s = as_str();
     if (!s || (*s != "X" && *s != "Y" && *s != "Z")) {
@@ -1108,21 +1321,25 @@ lightusd_status lightusd_stage_set_metadata(lightusd_stage* stage, const char* k
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "doc expects a string");
     sm.doc = *s;
     lm.doc = *s;
+    sm.doc_set = lm.doc_set = true;
   } else if (k == "comment") {
     const std::string* s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "comment expects a string");
     sm.comment = *s;
     lm.comment = *s;
+    sm.comment_set = lm.comment_set = true;
   } else if (k == "colorConfiguration") {
     const std::string* s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects an asset path");
     sm.colorConfiguration = *s;
     lm.colorConfiguration = *s;
+    sm.colorConfiguration_set = lm.colorConfiguration_set = true;
   } else if (k == "colorManagementSystem") {
     const std::string* s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects a token");
     sm.colorManagementSystem = *s;
     lm.colorManagementSystem = *s;
+    sm.colorManagementSystem_set = lm.colorManagementSystem_set = true;
   } else {
     return Fail(LIGHTUSD_ERR_NOT_FOUND, "unknown stage metadata key: " + k);
   }
@@ -1131,7 +1348,7 @@ lightusd_status lightusd_stage_set_metadata(lightusd_stage* stage, const char* k
 
 lightusd_sv lightusd_stage_default_prim_path(const lightusd_stage* stage) {
   if (!stage) return EmptySV();
-  return SV(stage->stage.GetMeta().defaultPrim);
+  return SV(stage->ReadStage().GetMeta().defaultPrim);
 }
 
 lightusd_status lightusd_stage_set_default_prim(lightusd_stage* stage,
@@ -1147,7 +1364,7 @@ lightusd_status lightusd_stage_sublayers(const lightusd_stage* stage, lightusd_s
   if (!stage || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "stage/out is null");
   lightusd_strlist* l = new (std::nothrow) lightusd_strlist();
   if (!l) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "alloc failed");
-  if (const n::Layer* layer = stage->stage.GetRootLayer()) {
+  if (const n::Layer* layer = stage->ReadStage().GetRootLayer()) {
     l->items = layer->meta().subLayers;
   }
   *out = l;
@@ -1159,6 +1376,8 @@ lightusd_status lightusd_stage_add_sublayer_path(lightusd_stage* stage,
   if (!stage || !asset_path) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "stage/path is null");
   }
+  if (stage && stage->snapshot_stage)
+    return Fail(LIGHTUSD_ERR_UNSUPPORTED, "snapshot stage is read-only");
   n::Layer* layer = RootLayerOf(stage);
   if (!layer) return Fail(LIGHTUSD_ERR_INTERNAL, "stage has no root layer");
   layer->meta().subLayers.push_back(asset_path);
@@ -1169,7 +1388,7 @@ lightusd_status lightusd_stage_custom_layer_data(const lightusd_stage* stage,
                                          lightusd_dict_ref* out) {
   if (!stage || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "stage/out is null");
   out->_dict = nullptr;
-  const n::Layer* layer = stage->stage.GetRootLayer();
+  const n::Layer* layer = stage->ReadStage().GetRootLayer();
   if (!layer) return LIGHTUSD_OK;
   const n::Value& cld = layer->meta().customLayerData;
   if (cld.is_dictionary()) out->_dict = cld.as_dictionary();
@@ -1179,7 +1398,7 @@ lightusd_status lightusd_stage_custom_layer_data(const lightusd_stage* stage,
 lightusd_status lightusd_stage_get_stats(const lightusd_stage* stage,
                                  lightusd_stage_stats* out) {
   if (!stage || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "stage/out is null");
-  n::Stage::Stats s = stage->stage.GetStats();
+  n::Stage::Stats s = stage->ReadStage().GetStats();
   out->prim_count = s.prim_count;
   out->layer_count = s.layer_count;
   out->total_properties = s.total_properties;
@@ -1188,18 +1407,18 @@ lightusd_status lightusd_stage_get_stats(const lightusd_stage* stage,
 }
 
 double lightusd_stage_start_timecode(const lightusd_stage* stage) {
-  return stage ? stage->stage.GetStartTimeCode() : 0.0;
+  return stage ? stage->ReadStage().GetStartTimeCode() : 0.0;
 }
 
 double lightusd_stage_end_timecode(const lightusd_stage* stage) {
-  return stage ? stage->stage.GetEndTimeCode() : 0.0;
+  return stage ? stage->ReadStage().GetEndTimeCode() : 0.0;
 }
 
 // ------------------------------------------------------------
 // Prim access & traversal
 // ------------------------------------------------------------
 
-int lightusd_prim_is_valid(lightusd_prim p) { return p._spec != nullptr; }
+int lightusd_prim_is_valid(lightusd_prim p) { return SpecFromC(p) != nullptr; }
 
 lightusd_prim lightusd_stage_pseudo_root(const lightusd_stage* stage) {
   if (!stage) {
@@ -1207,26 +1426,26 @@ lightusd_prim lightusd_stage_pseudo_root(const lightusd_stage* stage) {
     std::memset(&p, 0, sizeof(p));
     return p;
   }
-  return ToC(stage->stage.GetPseudoRoot());
+  return ToC(stage, stage->ReadStage().GetPseudoRoot());
 }
 
 lightusd_prim lightusd_stage_prim_at_path(const lightusd_stage* stage, const char* path) {
   lightusd_prim invalid;
   std::memset(&invalid, 0, sizeof(invalid));
   if (!stage || !path) return invalid;
-  return ToC(stage->stage.GetPrimAtPath(std::string(path)));
+  return ToC(stage, stage->ReadStage().GetPrimAtPath(std::string(path)));
 }
 
 lightusd_prim lightusd_stage_default_prim(const lightusd_stage* stage) {
   lightusd_prim invalid;
   std::memset(&invalid, 0, sizeof(invalid));
   if (!stage) return invalid;
-  return ToC(stage->stage.GetDefaultPrim());
+  return ToC(stage, stage->ReadStage().GetDefaultPrim());
 }
 
 size_t lightusd_stage_root_prim_count(const lightusd_stage* stage) {
   if (!stage) return 0;
-  const n::Layer* layer = stage->stage.GetRootLayer();
+  const n::Layer* layer = stage->ReadStage().GetRootLayer();
   return layer ? layer->root_indices().size() : 0;
 }
 
@@ -1234,58 +1453,75 @@ lightusd_prim lightusd_stage_root_prim(const lightusd_stage* stage, size_t index
   lightusd_prim invalid;
   std::memset(&invalid, 0, sizeof(invalid));
   if (!stage) return invalid;
-  const n::Layer* layer = stage->stage.GetRootLayer();
+  const n::Layer* layer = stage->ReadStage().GetRootLayer();
   if (!layer || index >= layer->root_indices().size()) return invalid;
   uint32_t idx = layer->root_indices()[index];
   const n::PrimSpec* spec = layer->prim(idx);
   if (!spec) return invalid;
-  return ToC(n::UsdPrim(spec, layer, idx));
+  return ToC(stage, n::UsdPrim(spec, layer, idx));
 }
 
 size_t lightusd_stage_prim_count(const lightusd_stage* stage) {
-  return stage ? stage->stage.GetPrimCount() : 0;
+  return stage ? stage->ReadStage().GetPrimCount() : 0;
 }
 
 lightusd_sv lightusd_prim_name(lightusd_prim p) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   return spec ? SV(spec->name()) : EmptySV();
 }
 
 lightusd_sv lightusd_prim_type_name(lightusd_prim p) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   return spec ? SV(spec->type_name()) : EmptySV();
 }
 
 lightusd_sv lightusd_prim_path(lightusd_prim p) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   return spec ? SV(spec->path().str()) : EmptySV();
 }
 
+uint64_t lightusd_prim_root_layer_resource_id(lightusd_prim p) {
+  const n::PrimSpec* spec = SpecFromC(p);
+  if (!spec) return 0;
+  const n::Stage& stage = p._owner->ReadStage();
+  const n::Layer* root = stage.GetRootLayer();
+  const auto* layer = static_cast<const n::Layer*>(p._layer);
+  if (!root || layer != root || layer->prim(p._index) != spec) return 0;
+  // Prim indices are stable for the lifetime of this stage generation. Offset
+  // by one so zero remains the invalid/non-root sentinel.
+  return static_cast<uint64_t>(p._index) + 1u;
+}
+
 uint8_t lightusd_prim_specifier(lightusd_prim p) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   return spec ? static_cast<uint8_t>(spec->specifier()) : 0;
 }
 
+int lightusd_prim_has_payload(lightusd_prim p) {
+  const n::PrimSpec* spec = SpecFromC(p);
+  return spec && !spec->meta().payloads.empty();
+}
+
 int lightusd_prim_is_active(lightusd_prim p) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   return (spec && spec->meta().active) ? 1 : 0;
 }
 
-lightusd_prim lightusd_prim_parent(lightusd_prim p) { return ToC(FromC(p).GetParent()); }
+lightusd_prim lightusd_prim_parent(lightusd_prim p) { return ToC(p._owner, FromC(p).GetParent()); }
 
 size_t lightusd_prim_child_count(lightusd_prim p) {
   return FromC(p).GetChildCount();
 }
 
 lightusd_prim lightusd_prim_child(lightusd_prim p, size_t index) {
-  return ToC(FromC(p).GetChildAt(index));
+  return ToC(p._owner, FromC(p).GetChildAt(index));
 }
 
 lightusd_prim lightusd_prim_child_by_name(lightusd_prim p, const char* name) {
   lightusd_prim invalid;
   std::memset(&invalid, 0, sizeof(invalid));
   if (!name) return invalid;
-  return ToC(FromC(p).GetChild(std::string(name)));
+  return ToC(p._owner, FromC(p).GetChild(std::string(name)));
 }
 
 // ------------------------------------------------------------
@@ -1293,38 +1529,106 @@ lightusd_prim lightusd_prim_child_by_name(lightusd_prim p, const char* name) {
 // ------------------------------------------------------------
 
 size_t lightusd_prim_property_count(lightusd_prim p) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   return spec ? spec->properties().size() : 0;
 }
 
+lightusd_status lightusd_prim_property_names(lightusd_prim p, lightusd_strlist** out) {
+  if (out) *out = nullptr;
+  const auto prim = FromC(p);
+  if (!prim.IsValid() || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim/out");
+  auto* names = new (std::nothrow) lightusd_strlist();
+  if (!names) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "property names alloc failed");
+  names->items = prim.GetPropertyNames();
+  *out = names;
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_attr_copy_default(lightusd_prim p, const char* name,
+                                           lightusd_value** out) {
+  if (out) *out = nullptr;
+  const auto prim = FromC(p);
+  if (!prim.IsValid() || !name || !out)
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim/name/out");
+  const auto* value = prim.GetPropertyValue(name);
+  if (!value) return Fail(LIGHTUSD_ERR_NOT_FOUND, "default value not found");
+  auto* result = new (std::nothrow) lightusd_value;
+  if (!result) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "default allocation failed");
+  result->v = value->materialized_copy();
+  if (result->v.is_empty()) {
+    delete result;
+    return Fail(LIGHTUSD_ERR_INTERNAL, "default materialization failed");
+  }
+  *out = result;
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_attr_inspect_default(lightusd_prim p, const char* name,
+    lightusd_value_view* out, lightusd_sv* text) {
+  if (out) *out = {};
+  if (text) *text = EmptySV();
+  const auto prim = FromC(p);
+  if (!prim.IsValid() || !name || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim/name/out");
+  const auto* value = prim.GetPropertyValue(name);
+  if (!value) return Fail(LIGHTUSD_ERR_NOT_FOUND, "default value not found");
+  if (value->is_array()) {
+    out->type = static_cast<lightusd_type>(value->type_id());
+    out->is_array = 1;
+    out->count = value->array_size();
+    return LIGHTUSD_OK;
+  }
+  const auto status = MakeView(*value, out);
+  if (status != LIGHTUSD_OK) return status;
+  if (text) {
+    if (const auto* string = value->as_string()) *text = SV(*string);
+    else if (const auto* token = value->as_token()) *text = SV(*token);
+    else if (const auto* asset = value->as_asset_path()) *text = SV(*asset);
+  }
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_attr_would_materialize_array(
+    lightusd_prim p, const char* name, int* out) {
+  if (out) *out = 0;
+  if (!name || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "name/out is null");
+  const auto prim = FromC(p);
+  if (!prim.IsValid()) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim");
+  const n::Value* value = prim.GetPropertyValue(name);
+  if (!value) return Fail(LIGHTUSD_ERR_NOT_FOUND, "default value not found");
+  if (!value->is_array())
+    return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "property is not an array");
+  *out = value->is_lazy() && !lightusd::next::CanBorrowLazyFlat(*value);
+  return LIGHTUSD_OK;
+}
+
 lightusd_sv lightusd_prim_property_name(lightusd_prim p, size_t index) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   if (!spec || index >= spec->properties().size()) return EmptySV();
   const n::PropSlot& slot = spec->properties().slots()[index];
   return SV(n::GetPropNameTable().get(slot.name_id));
 }
 
 uint16_t lightusd_prim_property_flags_at(lightusd_prim p, size_t index) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   if (!spec || index >= spec->properties().size()) return 0;
   return spec->properties().slots()[index].flags;
 }
 
 int lightusd_prim_has_property(lightusd_prim p, const char* name) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   if (!spec || !name) return 0;
   return spec->property(std::string(name)) != nullptr ? 1 : 0;
 }
 
 uint16_t lightusd_prim_property_flags(lightusd_prim p, const char* name) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   if (!spec || !name) return 0;
   const n::PropSlot* slot = spec->property(std::string(name));
   return slot ? slot->flags : 0;
 }
 
 lightusd_sv lightusd_prim_property_type_name(lightusd_prim p, const char* name) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   if (!spec || !name) return EmptySV();
   const std::string* tn = spec->property_type_name(std::string(name));
   return tn ? SV(*tn) : EmptySV();
@@ -1373,7 +1677,7 @@ lightusd_status lightusd_attr_metadata(lightusd_prim p, const char* name, const 
   if (!name || !key || !out) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "name/key/out is null");
   }
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   if (!spec) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim");
   const n::PropMeta* meta = spec->property_meta(std::string(name));
   if (!meta) {
@@ -1422,7 +1726,7 @@ lightusd_status lightusd_attr_custom_data(lightusd_prim p, const char* name,
                                   lightusd_dict_ref* out) {
   if (!name || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "name/out is null");
   out->_dict = nullptr;
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   if (!spec) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim");
   const n::PropMeta* meta = spec->property_meta(std::string(name));
   if (meta && meta->customData.is_dictionary()) {
@@ -1432,14 +1736,14 @@ lightusd_status lightusd_attr_custom_data(lightusd_prim p, const char* name,
 }
 
 size_t lightusd_attr_connection_count(lightusd_prim p, const char* name) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   if (!spec || !name) return 0;
   const std::vector<n::Path>* targets = spec->connection(std::string(name));
   return targets ? targets->size() : 0;
 }
 
 lightusd_sv lightusd_attr_connection(lightusd_prim p, const char* name, size_t index) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   if (!spec || !name) return EmptySV();
   const std::vector<n::Path>* targets = spec->connection(std::string(name));
   if (!targets || index >= targets->size()) return EmptySV();
@@ -1448,12 +1752,42 @@ lightusd_sv lightusd_attr_connection(lightusd_prim p, const char* name, size_t i
 
 lightusd_status lightusd_attr_eval(const lightusd_stage* stage, lightusd_prim p,
                            const char* name, double time, lightusd_value** out) {
+  return lightusd_attr_eval_ex(stage, p, name, time, 1, 1, out);
+}
+
+lightusd_status lightusd_attr_eval_ex(const lightusd_stage* stage, lightusd_prim p,
+                                      const char* name, double time,
+                                      uint8_t interp_mode,
+                                      uint8_t follow_connections,
+                                      lightusd_value** out) {
   if (!stage || !name || !out) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "stage/name/out is null");
   }
-  n::AttributeEval eval(&stage->stage);
-  eval.SetTime(time);
-  n::EvalResult r = eval.Eval(FromC(p), std::string(name));
+  if (p._owner != stage || !SpecFromC(p))
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim or different owner");
+  n::EvalOptions options;
+  options.time = std::isnan(time) ? n::TimeQuery::Default()
+                                  : n::TimeQuery::Numeric(time);
+  if (interp_mode > 1) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "unknown interpolation mode");
+  }
+  options.interp = interp_mode == 0 ? n::TimeInterpolation::Held
+                                    : n::TimeInterpolation::Linear;
+  options.follow_connections = follow_connections != 0;
+  if (!stage->source_dir.empty()) {
+    auto resolver = std::make_shared<n::AssetResolver>();
+    resolver->SetWorkingDirectory(stage->source_dir);
+    options.clip_stage_cache = std::make_shared<n::ValueClipStageCache>();
+    options.clip_stage_loader = [resolver](const std::string& asset,
+                                           n::Stage* clip, std::string* warning,
+                                           std::string* error) {
+      const n::ResolvedAsset resolved = resolver->Resolve(asset);
+      return resolved.exists &&
+             n::LoadUSDComposed(resolved.resolved_path, clip, warning, error);
+    };
+  }
+  n::EvalResult r = n::AttributeEval(&stage->ReadStage()).EvalWith(
+      FromC(p), std::string(name), options);
   if (!r.success) {
     return Fail(LIGHTUSD_ERR_NOT_FOUND,
                 std::string("attribute evaluation failed for: ") + name);
@@ -1469,7 +1803,7 @@ lightusd_status lightusd_prim_local_transform(lightusd_prim p, double time,
   if (!out16) return Fail(LIGHTUSD_ERR_INVALID_ARG, "out is null");
   n::UsdPrim prim = FromC(p);
   if (!prim.IsValid()) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim");
-  if (!lightusd::tydra::next::ComputeLocalTransform(prim, out16, time)) {
+  if (!n::ComputeLocalTransform(prim, out16, time)) {
     return Fail(LIGHTUSD_ERR_INTERNAL, "failed to compute local transform");
   }
   return LIGHTUSD_OK;
@@ -1480,9 +1814,11 @@ lightusd_status lightusd_prim_world_transform(const lightusd_stage* stage, light
   if (!stage || !out16) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "stage/out is null");
   }
+  if (p._owner != stage)
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "prim belongs to another stage");
   n::UsdPrim prim = FromC(p);
   if (!prim.IsValid()) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim");
-  if (!lightusd::tydra::next::ComputeWorldTransform(stage->stage, prim, out16,
+  if (!n::ComputeWorldTransform(stage->ReadStage(), prim, out16,
                                                     time)) {
     return Fail(LIGHTUSD_ERR_INTERNAL, "failed to compute world transform");
   }
@@ -1495,7 +1831,7 @@ lightusd_status lightusd_prim_world_transform(const lightusd_stage* stage, light
 
 static const std::vector<std::pair<double, uint32_t>>* SamplesOf(
     lightusd_prim p, const char* name) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   if (!spec || !name) return nullptr;
   n::PropNameId id = n::GetPropNameTable().find(name);
   if (!id.is_valid()) return nullptr;
@@ -1534,7 +1870,7 @@ lightusd_status lightusd_attr_timesample_at(lightusd_prim p, const char* name,
   if (index >= samples->size()) {
     return Fail(LIGHTUSD_ERR_NOT_FOUND, "time sample index out of range");
   }
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   const n::Value* v = spec->time_sample_value((*samples)[index].second);
   if (!v) return Fail(LIGHTUSD_ERR_INTERNAL, "sample value missing");
   if (time) *time = (*samples)[index].first;
@@ -1544,7 +1880,7 @@ lightusd_status lightusd_attr_timesample_at(lightusd_prim p, const char* name,
 lightusd_status lightusd_attr_interpolate(lightusd_prim p, const char* name, double time,
                                   uint8_t interp_mode, lightusd_value** out) {
   if (!name || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "name/out is null");
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   if (!spec) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim");
   n::SampleResult r = spec->interpolate_time_sample(
       std::string(name), time,
@@ -1565,38 +1901,96 @@ lightusd_status lightusd_attr_interpolate(lightusd_prim p, const char* name, dou
 // ------------------------------------------------------------
 
 size_t lightusd_prim_relationship_count(lightusd_prim p) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
-  return spec ? spec->relationship_names().size() : 0;
+  return FromC(p).GetRelationshipNames().size();
 }
 
 lightusd_status lightusd_prim_relationship_names(lightusd_prim p, lightusd_strlist** out) {
-  if (!out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "out is null");
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
-  if (!spec) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim");
-  lightusd_strlist* l = new (std::nothrow) lightusd_strlist();
-  if (!l) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "alloc failed");
-  l->items = spec->relationship_names();
-  *out = l;
+  if (out) *out = nullptr;
+  const auto prim = FromC(p);
+  if (!prim.IsValid() || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim/out");
+  auto* names = new (std::nothrow) lightusd_strlist();
+  if (!names) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "alloc failed");
+  names->items = prim.GetRelationshipNames();
+  *out = names;
   return LIGHTUSD_OK;
 }
 
 int lightusd_prim_has_relationship(lightusd_prim p, const char* name) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
-  if (!spec || !name) return 0;
-  return spec->relationship(std::string(name)) != nullptr ? 1 : 0;
+  return name && FromC(p).GetRelationship(name) != nullptr;
 }
 
 size_t lightusd_rel_target_count(lightusd_prim p, const char* name) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
-  if (!spec || !name) return 0;
-  const std::vector<n::Path>* targets = spec->relationship(std::string(name));
+  const auto* targets = name ? FromC(p).GetRelationship(name) : nullptr;
   return targets ? targets->size() : 0;
 }
 
+lightusd_status lightusd_prim_bound_material_path(
+    const lightusd_stage* stage, lightusd_prim prim, const char* purpose,
+    lightusd_string** out) {
+  if (out) *out = nullptr;
+  if (!stage || !out || prim._owner != stage || !SpecFromC(prim))
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid material binding query");
+  const auto native = FromC(prim);
+  const std::string path = !purpose || !*purpose
+      ? n::GetInheritedBoundMaterialPath(stage->ReadStage(),
+                                          native.GetPath().str())
+      : n::GetInheritedBoundMaterialPathForPurpose(stage->ReadStage(),
+                                                    native.GetPath().str(),
+                                                    purpose);
+  auto* result = new (std::nothrow) lightusd_string();
+  if (!result) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "string allocation failed");
+  result->s = path;
+  *out = result;
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_material_shader_path(
+    const lightusd_stage* stage, lightusd_prim material, uint8_t kind,
+    lightusd_string** out) {
+  if (out) *out = nullptr;
+  if (!stage || !out || material._owner != stage || !SpecFromC(material))
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid material shader query");
+  if (kind > LIGHTUSD_MATERIAL_SHADER_VOLUME)
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid material shader kind");
+  const auto prim = FromC(material);
+  if (!n::IsMaterial(prim))
+    return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "prim is not Material");
+  std::string path;
+  switch (kind) {
+    case LIGHTUSD_MATERIAL_SHADER_SURFACE:
+      path = n::GetSurfaceShader(stage->ReadStage(), prim); break;
+    case LIGHTUSD_MATERIAL_SHADER_DISPLACEMENT:
+      path = n::GetDisplacementShader(stage->ReadStage(), prim); break;
+    case LIGHTUSD_MATERIAL_SHADER_VOLUME:
+      path = n::GetVolumeShader(stage->ReadStage(), prim); break;
+    default: break;
+  }
+  auto* result = new (std::nothrow) lightusd_string();
+  if (!result) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "string allocation failed");
+  result->s = std::move(path);
+  *out = result;
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_shader_port_value(
+    const lightusd_stage* stage, lightusd_prim shader, const char* input,
+    double time, lightusd_value** out) {
+  if (out) *out = nullptr;
+  if (!stage || !input || !*input || !out || shader._owner != stage ||
+      !SpecFromC(shader) || !std::isfinite(time))
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid shader port query");
+  n::Value value;
+  if (!n::ResolveShaderPortValue(stage->ReadStage(), FromC(shader), input,
+                                 &value, time))
+    return Fail(LIGHTUSD_ERR_NOT_FOUND, "shader port value unavailable");
+  lightusd_value* result = NewValue(std::move(value));
+  if (!result) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "value allocation failed");
+  *out = result;
+  return LIGHTUSD_OK;
+}
+
 lightusd_sv lightusd_rel_target(lightusd_prim p, const char* name, size_t index) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
-  if (!spec || !name) return EmptySV();
-  const std::vector<n::Path>* targets = spec->relationship(std::string(name));
+  const auto* targets = name ? FromC(p).GetRelationship(name) : nullptr;
   if (!targets || index >= targets->size()) return EmptySV();
   return SV((*targets)[index].str());
 }
@@ -1605,9 +1999,41 @@ lightusd_sv lightusd_rel_target(lightusd_prim p, const char* name, size_t index)
 // Variants (read)
 // ------------------------------------------------------------
 
+static const std::vector<std::string>* ArcPaths(lightusd_prim p, uint8_t arc_type) {
+  const auto* spec = SpecFromC(p);
+  if (!spec) return nullptr;
+  const auto& meta = spec->meta();
+  switch (arc_type) {
+    case LIGHTUSD_ARC_REFERENCE: return &meta.references;
+    case LIGHTUSD_ARC_PAYLOAD: return &meta.payloads;
+    case LIGHTUSD_ARC_INHERIT: return &meta.inherits;
+    case LIGHTUSD_ARC_SPECIALIZE: return &meta.specializes;
+    default: return nullptr;
+  }
+}
+size_t lightusd_prim_arc_count(lightusd_prim p, uint8_t arc_type) {
+  const auto* arcs = ArcPaths(p, arc_type);
+  return arcs ? arcs->size() : 0;
+}
+lightusd_sv lightusd_prim_arc_text(lightusd_prim p, uint8_t arc_type, size_t index) {
+  const auto* arcs = ArcPaths(p, arc_type);
+  return arcs && index < arcs->size() ? SV((*arcs)[index]) : EmptySV();
+}
+lightusd_status lightusd_prim_variant_selection_names(lightusd_prim p, lightusd_strlist** out) {
+  if (out) *out = nullptr;
+  const auto* spec = SpecFromC(p);
+  if (!spec || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim/out");
+  auto* names = new (std::nothrow) lightusd_strlist();
+  if (!names) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "alloc failed");
+  for (const auto& selection : spec->meta().variantSelections())
+    names->items.push_back(selection.first);
+  *out = names;
+  return LIGHTUSD_OK;
+}
+
 static const n::VariantSetData* FindVariantSet(lightusd_prim p,
                                                const char* set_name) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   if (!spec || !set_name) return nullptr;
   for (const n::VariantSetData& vs : spec->meta().variantSets()) {
     if (vs.name == set_name) return &vs;
@@ -1616,12 +2042,12 @@ static const n::VariantSetData* FindVariantSet(lightusd_prim p,
 }
 
 size_t lightusd_prim_variant_set_count(lightusd_prim p) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   return spec ? spec->meta().variantSets().size() : 0;
 }
 
 lightusd_sv lightusd_prim_variant_set_name(lightusd_prim p, size_t set_index) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   if (!spec || set_index >= spec->meta().variantSets().size()) {
     return EmptySV();
   }
@@ -1640,7 +2066,7 @@ lightusd_sv lightusd_variant_name(lightusd_prim p, const char* set_name, size_t 
 }
 
 lightusd_sv lightusd_variant_selection(lightusd_prim p, const char* set_name) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   if (!spec || !set_name) return EmptySV();
   // Explicit selections list wins over the set's own `selected`.
   for (const auto& sel : spec->meta().variantSelections()) {
@@ -1658,35 +2084,39 @@ lightusd_sv lightusd_variant_selection(lightusd_prim p, const char* set_name) {
 lightusd_status lightusd_prim_get_metadata(lightusd_prim p, const char* key,
                                    lightusd_value** out) {
   if (!key || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "key/out is null");
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   if (!spec) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim");
   const n::PrimSpecMeta& m = spec->meta();
   const std::string k(key);
   n::Value v;
   if (k == "active") {
+    if (!m.active_authored) return Fail(LIGHTUSD_ERR_NOT_FOUND, "active unauthored");
     v = n::Value(m.active);
   } else if (k == "hidden") {
+    if (!m.hidden_authored) return Fail(LIGHTUSD_ERR_NOT_FOUND, "hidden unauthored");
     v = n::Value(m.hidden);
   } else if (k == "instanceable") {
+    if (!m.instanceable_authored && !m.instanceable)
+      return Fail(LIGHTUSD_ERR_NOT_FOUND, "instanceable unauthored");
     v = n::Value(m.instanceable);
   } else if (k == "kind") {
-    if (m.kind().empty()) return Fail(LIGHTUSD_ERR_NOT_FOUND, "kind unauthored");
+    if (!m.kindAuthored()) return Fail(LIGHTUSD_ERR_NOT_FOUND, "kind unauthored");
     v = n::Value::MakeToken(m.kind());
   } else if (k == "doc") {
-    if (m.doc().empty()) return Fail(LIGHTUSD_ERR_NOT_FOUND, "doc unauthored");
+    if (!m.doc_authored()) return Fail(LIGHTUSD_ERR_NOT_FOUND, "doc unauthored");
     v = n::Value(m.doc());
   } else if (k == "comment") {
-    if (m.comment().empty()) {
+    if (!m.comment_authored()) {
       return Fail(LIGHTUSD_ERR_NOT_FOUND, "comment unauthored");
     }
     v = n::Value(m.comment());
   } else if (k == "displayName") {
-    if (m.displayName().empty()) {
+    if (!m.displayNameAuthored()) {
       return Fail(LIGHTUSD_ERR_NOT_FOUND, "displayName unauthored");
     }
     v = n::Value(m.displayName());
   } else if (k == "apiSchemas") {
-    if (m.apiSchemas().empty()) {
+    if (!m.apiSchemasAuthored()) {
       return Fail(LIGHTUSD_ERR_NOT_FOUND, "apiSchemas unauthored");
     }
     v = n::Value::MakeTokenArray(m.apiSchemas());
@@ -1699,10 +2129,30 @@ lightusd_status lightusd_prim_get_metadata(lightusd_prim p, const char* key,
   return LIGHTUSD_OK;
 }
 
+lightusd_status lightusd_prim_metadata_is_authored(
+    lightusd_prim p, const char* key, int* out_authored) {
+  if (!key || !out_authored)
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "key/out_authored is null");
+  const n::PrimSpec* spec = SpecFromC(p);
+  if (!spec) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim");
+  const n::PrimSpecMeta& m = spec->meta();
+  const std::string k(key);
+  if (k == "active") *out_authored = m.active_authored;
+  else if (k == "hidden") *out_authored = m.hidden_authored;
+  else if (k == "instanceable") *out_authored = m.instanceable_authored || m.instanceable;
+  else if (k == "kind") *out_authored = m.kindAuthored();
+  else if (k == "doc") *out_authored = m.doc_authored();
+  else if (k == "comment") *out_authored = m.comment_authored();
+  else if (k == "displayName") *out_authored = m.displayNameAuthored();
+  else if (k == "apiSchemas") *out_authored = m.apiSchemasAuthored();
+  else return Fail(LIGHTUSD_ERR_NOT_FOUND, "unknown prim metadata key: " + k);
+  return LIGHTUSD_OK;
+}
+
 lightusd_status lightusd_prim_custom_data(lightusd_prim p, lightusd_dict_ref* out) {
   if (!out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "out is null");
   out->_dict = nullptr;
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   if (!spec) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim");
   const n::Value& cd = spec->meta().customData();
   if (cd.is_dictionary()) out->_dict = cd.as_dictionary();
@@ -1712,7 +2162,7 @@ lightusd_status lightusd_prim_custom_data(lightusd_prim p, lightusd_dict_ref* ou
 lightusd_status lightusd_prim_asset_info(lightusd_prim p, lightusd_dict_ref* out) {
   if (!out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "out is null");
   out->_dict = nullptr;
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   if (!spec) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim");
   const n::Value& ai = spec->meta().assetInfo();
   if (ai.is_dictionary()) out->_dict = ai.as_dictionary();
@@ -1720,9 +2170,20 @@ lightusd_status lightusd_prim_asset_info(lightusd_prim p, lightusd_dict_ref* out
 }
 
 lightusd_sv lightusd_prim_kind(lightusd_prim p) {
-  const n::PrimSpec* spec = static_cast<const n::PrimSpec*>(p._spec);
+  const n::PrimSpec* spec = SpecFromC(p);
   return spec ? SV(spec->meta().kind()) : EmptySV();
 }
+
+lightusd_sv lightusd_prim_instance_prototype_path(lightusd_prim p) {
+  const n::PrimSpec* spec = SpecFromC(p);
+  return spec ? SV(spec->meta().instance_prototype()) : EmptySV();
+}
+
+int lightusd_prim_has_value_clips(lightusd_prim p) {
+  const n::PrimSpec* spec = SpecFromC(p);
+  return spec && spec->meta().clips().is_dictionary();
+}
+
 
 // ------------------------------------------------------------
 // Authoring
@@ -1734,6 +2195,8 @@ lightusd_status lightusd_stage_define_prim(lightusd_stage* stage, const char* pa
   if (out) std::memset(out, 0, sizeof(*out));
   if (!stage || !path) return Fail(LIGHTUSD_ERR_INVALID_ARG, "stage/path is null");
   if (specifier > 2) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid specifier");
+  if (stage && stage->snapshot_stage)
+    return Fail(LIGHTUSD_ERR_UNSUPPORTED, "snapshot stage is read-only");
   n::Layer* layer = RootLayerOf(stage);
   if (!layer) return Fail(LIGHTUSD_ERR_INTERNAL, "stage has no root layer");
 
@@ -1746,13 +2209,15 @@ lightusd_status lightusd_stage_define_prim(lightusd_stage* stage, const char* pa
   }
   stage->generation.fetch_add(1, std::memory_order_acq_rel);
   if (out) {
-    *out = ToC(n::UsdPrim(layer->prim(idx), layer, idx));
+    *out = ToC(stage, n::UsdPrim(layer->prim(idx), layer, idx));
   }
   return LIGHTUSD_OK;
 }
 
 lightusd_status lightusd_stage_remove_prim(lightusd_stage* stage, const char* path) {
   if (!stage || !path) return Fail(LIGHTUSD_ERR_INVALID_ARG, "stage/path is null");
+  if (stage && stage->snapshot_stage)
+    return Fail(LIGHTUSD_ERR_UNSUPPORTED, "snapshot stage is read-only");
   n::Layer* layer = RootLayerOf(stage);
   if (!layer) return Fail(LIGHTUSD_ERR_INTERNAL, "stage has no root layer");
   if (!layer->remove_prim_at_path(path)) {
@@ -1794,8 +2259,9 @@ lightusd_status lightusd_attr_set_token_array(lightusd_stage* stage, const char*
   if (!IsValidAttrName(name)) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "name is not a valid identifier");
   }
-  if (type != LIGHTUSD_TYPE_TOKEN && type != LIGHTUSD_TYPE_STRING) {
-    return Fail(LIGHTUSD_ERR_INVALID_ARG, "type must be token or string");
+  if (type != LIGHTUSD_TYPE_TOKEN && type != LIGHTUSD_TYPE_STRING &&
+      type != LIGHTUSD_TYPE_ASSET_PATH) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "type must be token, string, or asset path");
   }
   lightusd_status st;
   n::PrimSpec* spec = MutablePrimAt(stage, prim_path, &st);
@@ -1806,9 +2272,11 @@ lightusd_status lightusd_attr_set_token_array(lightusd_stage* stage, const char*
   for (size_t i = 0; i < count; ++i) {
     tokens.emplace_back(items[i] ? items[i] : "");
   }
-  spec->upsert_property(std::string(name),
-                        n::Value::MakeTokenArray(std::move(tokens)),
-                        flags & (LIGHTUSD_PROP_CUSTOM | LIGHTUSD_PROP_UNIFORM));
+  spec->upsert_property(
+      std::string(name),
+      n::Value::MakeStringLikeArray(std::move(tokens),
+                                    static_cast<n::TypeId>(type)),
+      flags & (LIGHTUSD_PROP_CUSTOM | LIGHTUSD_PROP_UNIFORM));
   RecordTypeName(spec, name, type, true);
   return LIGHTUSD_OK;
 }
@@ -2082,22 +2550,27 @@ lightusd_status lightusd_prim_set_metadata(lightusd_stage* stage, const char* pr
     const bool* b = v.as_bool();
     if (!b) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects a bool");
     m.instanceable = *b;
+    m.instanceable_authored = true;
   } else if (k == "kind") {
     const std::string* s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects a token");
     m.kind() = *s;
+    m.setKindAuthored();
   } else if (k == "doc") {
     const std::string* s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects a string");
     m.doc() = *s;
+    m.set_doc_authored();
   } else if (k == "comment") {
     const std::string* s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects a string");
     m.comment() = *s;
+    m.set_comment_authored();
   } else if (k == "displayName") {
     const std::string* s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects a string");
     m.displayName() = *s;
+    m.setDisplayNameAuthored();
   } else if (k == "apiSchemas") {
     const std::vector<std::string>* arr = v.as_token_array();
     if (!arr) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects a token array");

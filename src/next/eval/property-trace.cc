@@ -11,6 +11,13 @@ PropertyResolutionTrace TraceProperty(pcp::Cache& cache, const Path& path,
   PropertyResolutionTrace trace;
   trace.prim_path = path; trace.property = property; trace.time = options.time;
   if (!max_opinions) { trace.complete = false; trace.error = "max_opinions must be positive"; return trace; }
+  // Capture provenance before materializing the composed Stage. BuildStage may
+  // cache a flattened spec view, which intentionally omits variant-source
+  // identity needed by property explanations.
+  bool truncated = false;
+  trace.opinions = cache.GetPropertyStack(path, property, max_opinions,
+                                           &truncated, &trace.warning,
+                                           &trace.error);
   // Use the authoritative stage evaluator (including clips, fallbacks and
   // instance proxies), rather than guessing values by matching source text.
   Stage stage;
@@ -62,9 +69,6 @@ PropertyResolutionTrace TraceProperty(pcp::Cache& cache, const Path& path,
       }
     }
   }
-  bool truncated = false;
-  trace.opinions = cache.GetPropertyStack(path, property, max_opinions, &truncated,
-                                         &trace.warning, &trace.error);
   trace.complete = !truncated && trace.error.empty();
   if (truncated) trace.error += "property opinion limit reached";
   if (!trace.resolved.success && trace.resolved.error.empty())

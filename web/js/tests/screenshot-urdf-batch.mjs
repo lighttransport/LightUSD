@@ -294,7 +294,10 @@ async function main() {
   const failures = [];
 
   try {
-    await waitForServer(`${baseUrl}/urdf.html`, 30000);
+    const requestedViteTimeoutMs = Number(process.env.LIGHTUSD_VITE_TIMEOUT_MS);
+    const viteTimeoutMs = Number.isFinite(requestedViteTimeoutMs) && requestedViteTimeoutMs > 0
+      ? requestedViteTimeoutMs : 120000;
+    await waitForServer(`${baseUrl}/urdf.html`, viteTimeoutMs);
     // Two render paths:
     //  * --hw: real GPU (NVIDIA) WebGL. Chrome's true headless (--headless=new)
     //    can't do hardware WebGL on Linux (it falls back to SwiftShader), so run

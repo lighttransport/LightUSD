@@ -1,0 +1,1042 @@
+[
+  {
+    "name": "addAssetSearchPath",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "allocateZeroCopyBuffer",
+    "family": "streaming_buffers",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "appendAssetChunk",
+    "family": "streaming_buffers",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "applyVariantSelection",
+    "family": "composition_and_variants",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "assetExists",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "cancelParsing",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "cancelZeroCopyBuffer",
+    "family": "streaming_buffers",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "clearAssetSearchPaths",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "clearAssets",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "clearURDFMeshBuffers",
+    "family": "schema_and_image_utilities",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "composeInherits",
+    "family": "composition_and_variants",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "composePayload",
+    "family": "composition_and_variants",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "composeReferences",
+    "family": "composition_and_variants",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "composeSublayers",
+    "family": "composition_and_variants",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "composeVariants",
+    "family": "composition_and_variants",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "computeMeshTangents",
+    "family": "schema_and_image_utilities",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "createSampleScene",
+    "family": "schema_and_image_utilities",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "createURDFPhysicsScene",
+    "family": "schema_and_image_utilities",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "debugLogMemory",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "deleteAsset",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "deleteAssetByName",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "deleteAssetByUUID",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "encodeImageNative",
+    "family": "schema_and_image_utilities",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "error",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "exportAsUSDA",
+    "family": "layer_export_and_validation",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "exportAsUSDC",
+    "family": "layer_export_and_validation",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "exportAsUSDZ",
+    "family": "layer_export_and_validation",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "exportAsUSDZWithOptions",
+    "family": "layer_export_and_validation",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "exportAsUSDZWithRemap",
+    "family": "layer_export_and_validation",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "exportLayerAsUSDCToBufferWithOptions",
+    "family": "layer_export_and_validation",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "exportLayerAsUSDCWithOptions",
+    "family": "layer_export_and_validation",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "exportLayerAsUSDZWithOptions",
+    "family": "layer_export_and_validation",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "exportStageAsUSDCToBufferWithOptions",
+    "family": "layer_export_and_validation",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "extractPayloadAssetPaths",
+    "family": "composition_and_variants",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "extractPhysicsSceneJSON",
+    "family": "schema_and_image_utilities",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "extractReferencesAssetPaths",
+    "family": "composition_and_variants",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "extractSublayerAssetPaths",
+    "family": "composition_and_variants",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "extractUnresolvedTexturePaths",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "extractVariants",
+    "family": "composition_and_variants",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "finalizeStreamingAsset",
+    "family": "streaming_buffers",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "finalizeZeroCopyBuffer",
+    "family": "streaming_buffers",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "findAssetByUUID",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "flattenLayer",
+    "family": "layer_export_and_validation",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "generateBoneTexture",
+    "family": "schema_and_image_utilities",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getActiveZeroCopyBuffers",
+    "family": "streaming_buffers",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getAllAnimationInfos",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getAllAnimations",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getAllAssetUUIDs",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getAllLights",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getAllSkeletons",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getAllowParentRelativeAssetPaths",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getAnimation",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getAnimationInfo",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getAsset",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getAssetByUUID",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getAssetCacheDataAsMemoryView",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getAssetCacheMaxSizeBytes",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getAssetCacheSizeBytes",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getAssetCount",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getAssetHash",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getAssetSearchPaths",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getAssetUUID",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getBaseWorkingPath",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getCamera",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getCombineUDIMTiles",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getDefaultRootNode",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getDefaultRootNodeId",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getDeferTangentComputation",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getEnableBoneReduction",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getEnableValueClips",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getImage",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getImageCopy",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getImagePtr",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getInstance",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getInstancesForMesh",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getLight",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getLightWithFormat",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getMMapZeroCopy",
+    "family": "streaming_buffers",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getMaterial",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getMaterialWithFormat",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getMaxMemoryLimitMB",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getMemoryStats",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getMesh",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getMeshCopy",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getMeshPrimvarsJSON",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getMeshPtr",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getMhProfileJSON",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getNativeFlattenRenderTree",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getNativeMaterialDedup",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getNativeMeshMerge",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getNativeMeshMergeBakeTransform",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getProgress",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getRootNode",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getRoundBoneCount",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getSceneMetadata",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getShadingGraphJSON",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getSkeleton",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getSkeletonJointsFlat",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getSphereSubdivisions",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getStreamingAssetUUID",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getStreamingProgress",
+    "family": "streaming_buffers",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getTargetBoneCount",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getTexture",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getUDIMTexture",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getURI",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getUpAxis",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getValueClipEndTime",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getValueClipSampleRate",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getValueClipStartTime",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getValueClipUseTimeRange",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getZeroCopyBufferPtr",
+    "family": "streaming_buffers",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getZeroCopyBufferPtrAtOffset",
+    "family": "streaming_buffers",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "getZeroCopyProgress",
+    "family": "streaming_buffers",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "hasAsset",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "hasInherits",
+    "family": "composition_and_variants",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "hasPayload",
+    "family": "composition_and_variants",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "hasReferences",
+    "family": "composition_and_variants",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "hasSublayers",
+    "family": "composition_and_variants",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "hasVariants",
+    "family": "composition_and_variants",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "isParsingInProgress",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "isStreamingAssetComplete",
+    "family": "streaming_buffers",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "layerToJSON",
+    "family": "layer_export_and_validation",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "layerToJSONWithOptions",
+    "family": "layer_export_and_validation",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "layerToRenderScene",
+    "family": "layer_export_and_validation",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "layerToString",
+    "family": "layer_export_and_validation",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "loadAsLayerFromBinary",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "loadAsLayerFromBinaryWithProgress",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "loadAsLayerFromCachedAsset",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "loadFromBinary",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "loadFromBinaryAsync",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "loadFromBinaryWithProgress",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "loadFromCachedAsset",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "loadLayerFromJSON",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "loadTest",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "lodVariantCount",
+    "family": "composition_and_variants",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "markZeroCopyBytesWritten",
+    "family": "streaming_buffers",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "mcpCreateContext",
+    "family": "mcp",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "mcpResourcesList",
+    "family": "mcp",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "mcpResourcesRead",
+    "family": "mcp",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "mcpSelectContext",
+    "family": "mcp",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "mcpToolsCall",
+    "family": "mcp",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "mcpToolsList",
+    "family": "mcp",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "nextFlattenAsyncBegin",
+    "family": "next_flatten",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "nextFlattenAsyncBeginRemap",
+    "family": "next_flatten",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "nextFlattenAsyncBeginRemapVariants",
+    "family": "next_flatten",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "nextFlattenAsyncEnd",
+    "family": "next_flatten",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "nextFlattenAsyncProvideLayer",
+    "family": "next_flatten",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "nextFlattenAsyncStep",
+    "family": "next_flatten",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "nextFlattenBuffer",
+    "family": "next_flatten",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "nextFlattenBufferRemap",
+    "family": "next_flatten",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "nextFlattenBufferRemapVariants",
+    "family": "next_flatten",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "nextFlattenBufferToSink",
+    "family": "next_flatten",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "nextFlattenBufferToSinkRemap",
+    "family": "next_flatten",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "nextFlattenBufferToSinkRemapVariants",
+    "family": "next_flatten",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "nextFlattenMultiBufferToSink",
+    "family": "next_flatten",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "nextFlattenMultiBufferToSinkFetch",
+    "family": "next_flatten",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "nextFlattenMultiBufferToSinkFetchRemap",
+    "family": "next_flatten",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "nextFlattenMultiBufferToSinkFetchRemapVariants",
+    "family": "next_flatten",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "nextFlattenUSDC",
+    "family": "next_flatten",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "numAnimations",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "numCameras",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "numImages",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "numInstances",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "numLights",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "numMaterials",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "numMeshes",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "numRootNodes",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "numSkeletons",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "numTextures",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "numUDIMTextures",
+    "family": "render_scene_queries",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "ok",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "releaseSourceLayer",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "remapLayerAssetPaths",
+    "family": "layer_export_and_validation",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "reset",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "resetProgress",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setAllowParentRelativeAssetPaths",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setAsset",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setAssetCacheMaxSizeBytes",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setAssetFromRawPointer",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setBaseWorkingPath",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setCollisionMesh",
+    "family": "schema_and_image_utilities",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setCombineUDIMTiles",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setDeferTangentComputation",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setEnableBoneReduction",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setEnableComposition",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setEnableValueClips",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setLoadTextureInNative",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setMMapZeroCopy",
+    "family": "streaming_buffers",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setMaxMemoryLimitMB",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setNativeFlattenRenderTree",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setNativeMaterialDedup",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setNativeMeshMerge",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setNativeMeshMergeBakeTransform",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setRoundBoneCount",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setSphereSubdivisions",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setTargetBoneCount",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setUSDCExportLimitMB",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setValueClipSampleRate",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setValueClipTimeRange",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setValueClipUseTimeRange",
+    "family": "loader_configuration",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "setVisualMesh",
+    "family": "schema_and_image_utilities",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "startStreamingAsset",
+    "family": "streaming_buffers",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "testValueMemoryUsage",
+    "family": "test_only",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "validateFromBinary",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "validateLoadedLayer",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "verifyAssetHash",
+    "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "warn",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "wasCancelled",
+    "family": "loading_and_diagnostics",
+    "boundary": "typed-c"
+  }
+]

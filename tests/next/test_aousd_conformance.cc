@@ -559,6 +559,21 @@ void TestDefaultPrimReferenceEncoding() {
          "omitted reference path must compose the target defaultPrim");
 }
 
+void TestEmptyPathReference() {
+  // AOUSD's own corpus authors `<>` (RelocateToNone, BasicReference_session);
+  // strict parsing must accept the empty path while still rejecting invalid
+  // non-empty path text.
+  LoadOptions strict;
+  strict.parse_options.strict_aousd_conformance = true;
+  assert(LoadUSDAFromFile(UsdaFixturePath("relocates_basic.usda"), strict).success);
+  assert(LoadUSDAFromString(
+      "#usda 1.0\n(\n relocates = {\n  </A/Gone>: <>\n }\n)\n"
+      "def \"A\" (\n references = <>\n) {\n}\n", strict).success);
+  assert(!LoadUSDAFromString(
+      "#usda 1.0\n(\n relocates = {\n  </A/Gone>: </Root//Bad>\n }\n)\n",
+      strict).success);
+}
+
 void TestRelationshipForwarding() {
   LoadOptions strict;
   strict.parse_options.strict_aousd_conformance = true;
@@ -2270,6 +2285,20 @@ void TestRemainingElectiveFieldCoverage() {
   // Comment round-trips as a BARE empty string literal (pxr spelling).
   assert(text.find("\"\"") != std::string::npos);
 
+  // Strict parsing keeps elective and unregistered layer metadata, as the
+  // AOUSD file_formats corpus does (empty.usda: framePrecision;
+  // layermetadata.usda: `foo = bar`, `baz = None`).
+  LoadOptions strict;
+  strict.parse_options.strict_aousd_conformance = true;
+  LoadResult opaque = LoadUSDAFromString(
+      "#usda 1.0\n(\n    framesPerSecond = 24\n    framePrecision = 3\n    foo = bar\n"
+      "    baz = None\n)\n", strict);
+  assert(opaque.success);
+  const std::string opaque_text = WriteUSDAToString(opaque.stage);
+  assert(opaque_text.find("framePrecision = 3") != std::string::npos);
+  assert(opaque_text.find("foo = bar") != std::string::npos);
+  assert(opaque_text.find("baz = None") != std::string::npos);
+
   std::vector<uint8_t> crate;
   assert(WriteUSDCToMemory(crate, parsed.stage, USDCWriteOptions{}).success);
   USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
@@ -3160,6 +3189,7 @@ int main() {
   TestDictionaryAndRelationshipComposition();
   TestNamespaceOrdering();
   TestDefaultPrimReferenceEncoding();
+  TestEmptyPathReference();
   TestRelationshipForwarding();
   TestAuthoredEmptyMetadata();
   TestVariantSetListOpFidelity();

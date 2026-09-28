@@ -1,0 +1,7084 @@
+{
+  "wasm32": {
+    "textured": [
+      {
+        "before": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Prim_A",
+            "displayName": "",
+            "absPath": "/World/Prim_A",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {
+              "uv0": {
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                },
+                "vertexCount": 3,
+                "slotId": 0
+              }
+            },
+            "texcoords": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                1,
+                0,
+                0,
+                1
+              ]
+            },
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Prim_A",
+            "displayName": "",
+            "absPath": "/World/Prim_A",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            },
+            "uv0": {
+              "length": 6,
+              "comps": 2,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 24,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "uvSets": {
+              "0": {
+                "length": 6,
+                "comps": 2,
+                "dtype": "f32",
+                "count": 3,
+                "byteLength": 24,
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "computed": true,
+        "after": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Prim_A",
+            "displayName": "",
+            "absPath": "/World/Prim_A",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {
+              "uv0": {
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                },
+                "vertexCount": 3,
+                "slotId": 0
+              }
+            },
+            "texcoords": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                1,
+                0,
+                0,
+                1
+              ]
+            },
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Prim_A",
+            "displayName": "",
+            "absPath": "/World/Prim_A",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            },
+            "uv0": {
+              "length": 6,
+              "comps": 2,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 24,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "uvSets": {
+              "0": {
+                "length": 6,
+                "comps": 2,
+                "dtype": "f32",
+                "count": 3,
+                "byteLength": 24,
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "before": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Prim_B",
+            "displayName": "",
+            "absPath": "/World/Prim_B",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                2,
+                0,
+                0,
+                1,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {
+              "uv0": {
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                },
+                "vertexCount": 3,
+                "slotId": 0
+              }
+            },
+            "texcoords": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                1,
+                0,
+                0,
+                1
+              ]
+            },
+            "materialId": 1,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 1,
+            "doubleSided": false,
+            "primName": "Prim_B",
+            "displayName": "",
+            "absPath": "/World/Prim_B",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  1,
+                  0,
+                  0,
+                  2,
+                  0,
+                  0,
+                  1,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            },
+            "uv0": {
+              "length": 6,
+              "comps": 2,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 24,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "uvSets": {
+              "0": {
+                "length": 6,
+                "comps": 2,
+                "dtype": "f32",
+                "count": 3,
+                "byteLength": 24,
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "computed": true,
+        "after": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Prim_B",
+            "displayName": "",
+            "absPath": "/World/Prim_B",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                2,
+                0,
+                0,
+                1,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {
+              "uv0": {
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                },
+                "vertexCount": 3,
+                "slotId": 0
+              }
+            },
+            "texcoords": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                1,
+                0,
+                0,
+                1
+              ]
+            },
+            "materialId": 1,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 1,
+            "doubleSided": false,
+            "primName": "Prim_B",
+            "displayName": "",
+            "absPath": "/World/Prim_B",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  1,
+                  0,
+                  0,
+                  2,
+                  0,
+                  0,
+                  1,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            },
+            "uv0": {
+              "length": 6,
+              "comps": 2,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 24,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "uvSets": {
+              "0": {
+                "length": 6,
+                "comps": 2,
+                "dtype": "f32",
+                "count": 3,
+                "byteLength": 24,
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    ],
+    "skin": [
+      {
+        "before": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Skin",
+            "displayName": "",
+            "absPath": "/World/Skin",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": -1,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "jointIndices": {
+              "$type": "Int32Array",
+              "data": [
+                0,
+                2,
+                3
+              ]
+            },
+            "jointWeights": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                1,
+                1
+              ]
+            },
+            "elementSize": 1,
+            "skel_id": 0,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": -1,
+            "doubleSided": false,
+            "primName": "Skin",
+            "displayName": "",
+            "absPath": "/World/Skin",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        },
+        "computed": true,
+        "after": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Skin",
+            "displayName": "",
+            "absPath": "/World/Skin",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": -1,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "jointIndices": {
+              "$type": "Int32Array",
+              "data": [
+                0,
+                2,
+                3
+              ]
+            },
+            "jointWeights": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                1,
+                1
+              ]
+            },
+            "elementSize": 1,
+            "skel_id": 0,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": -1,
+            "doubleSided": false,
+            "primName": "Skin",
+            "displayName": "",
+            "absPath": "/World/Skin",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        }
+      }
+    ],
+    "c-core-mesh-queries.usda": [
+      {
+        "before": {
+          "copy": {
+            "faceVertexIndicesLength": 6,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5
+              ]
+            },
+            "faceVertexCountsLength": 2,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3,
+                3
+              ]
+            },
+            "primName": "Triangle",
+            "displayName": "",
+            "absPath": "/Triangle",
+            "pointsLength": 18,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                1,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "vertexColors": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colors": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colorsFormat": "float32",
+            "colorOpacities": {
+              "$type": "Float32Array",
+              "data": [
+                0.25,
+                0.5,
+                1
+              ]
+            },
+            "colorOpacitiesFormat": "float32",
+            "uvSets": {
+              "uv0": {
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                },
+                "vertexCount": 3,
+                "slotId": 0
+              }
+            },
+            "texcoords": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                1
+              ]
+            },
+            "tangents": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1
+              ]
+            },
+            "materialId": 1,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false,
+            "submeshes": [
+              {
+                "start": 0,
+                "count": 3,
+                "materialId": 0
+              },
+              {
+                "start": 3,
+                "count": 3,
+                "materialId": 1
+              }
+            ]
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 1,
+            "doubleSided": false,
+            "primName": "Triangle",
+            "displayName": "",
+            "absPath": "/Triangle",
+            "hasSubmeshes": true,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 6,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 6,
+              "byteLength": 24,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2,
+                  2,
+                  1,
+                  0
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 2,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 2,
+              "byteLength": 8,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3,
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "submeshes": [
+              {
+                "start": 0,
+                "count": 3,
+                "materialId": 1
+              },
+              {
+                "start": 3,
+                "count": 3,
+                "materialId": 0
+              }
+            ],
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            },
+            "uv0": {
+              "length": 6,
+              "comps": 2,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 24,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "vertexColors": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "uvSets": {
+              "0": {
+                "length": 6,
+                "comps": 2,
+                "dtype": "f32",
+                "count": 3,
+                "byteLength": 24,
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                }
+              }
+            },
+            "colors": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "colorOpacities": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0.25,
+                  0.5,
+                  1
+                ]
+              }
+            },
+            "tangents": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        },
+        "computed": true,
+        "after": {
+          "copy": {
+            "faceVertexIndicesLength": 6,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5
+              ]
+            },
+            "faceVertexCountsLength": 2,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3,
+                3
+              ]
+            },
+            "primName": "Triangle",
+            "displayName": "",
+            "absPath": "/Triangle",
+            "pointsLength": 18,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                1,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "vertexColors": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colors": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colorsFormat": "float32",
+            "colorOpacities": {
+              "$type": "Float32Array",
+              "data": [
+                0.25,
+                0.5,
+                1
+              ]
+            },
+            "colorOpacitiesFormat": "float32",
+            "uvSets": {
+              "uv0": {
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                },
+                "vertexCount": 3,
+                "slotId": 0
+              }
+            },
+            "texcoords": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                1
+              ]
+            },
+            "tangents": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1
+              ]
+            },
+            "materialId": 1,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false,
+            "submeshes": [
+              {
+                "start": 0,
+                "count": 3,
+                "materialId": 0
+              },
+              {
+                "start": 3,
+                "count": 3,
+                "materialId": 1
+              }
+            ]
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 1,
+            "doubleSided": false,
+            "primName": "Triangle",
+            "displayName": "",
+            "absPath": "/Triangle",
+            "hasSubmeshes": true,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 6,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 6,
+              "byteLength": 24,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2,
+                  2,
+                  1,
+                  0
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 2,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 2,
+              "byteLength": 8,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3,
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "submeshes": [
+              {
+                "start": 0,
+                "count": 3,
+                "materialId": 1
+              },
+              {
+                "start": 3,
+                "count": 3,
+                "materialId": 0
+              }
+            ],
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            },
+            "uv0": {
+              "length": 6,
+              "comps": 2,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 24,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "vertexColors": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "uvSets": {
+              "0": {
+                "length": 6,
+                "comps": 2,
+                "dtype": "f32",
+                "count": 3,
+                "byteLength": 24,
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                }
+              }
+            },
+            "colors": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "colorOpacities": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0.25,
+                  0.5,
+                  1
+                ]
+              }
+            },
+            "tangents": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "geomsubset-001.usda": [],
+    "geometry-optimize-subset-partial-001.usda": [
+      {
+        "before": {
+          "copy": {
+            "faceVertexIndicesLength": 6,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2,
+                0,
+                2,
+                3
+              ]
+            },
+            "faceVertexCountsLength": 2,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3,
+                3
+              ]
+            },
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/A/Mesh",
+            "pointsLength": 12,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 4,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/A/Mesh",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 12,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 4,
+              "byteLength": 48,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1,
+                  1,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 6,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 6,
+              "byteLength": 24,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2,
+                  0,
+                  2,
+                  3
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 2,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 2,
+              "byteLength": 8,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3,
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 12,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 4,
+              "byteLength": 12,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        },
+        "computed": true,
+        "after": {
+          "copy": {
+            "faceVertexIndicesLength": 6,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2,
+                0,
+                2,
+                3
+              ]
+            },
+            "faceVertexCountsLength": 2,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3,
+                3
+              ]
+            },
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/A/Mesh",
+            "pointsLength": 12,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 4,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/A/Mesh",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 12,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 4,
+              "byteLength": 48,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1,
+                  1,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 6,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 6,
+              "byteLength": 24,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2,
+                  0,
+                  2,
+                  3
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 2,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 2,
+              "byteLength": 8,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3,
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 12,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 4,
+              "byteLength": 12,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        "before": {
+          "copy": {
+            "faceVertexIndicesLength": 6,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2,
+                0,
+                2,
+                3
+              ]
+            },
+            "faceVertexCountsLength": 2,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3,
+                3
+              ]
+            },
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/B/Mesh",
+            "pointsLength": 12,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 4,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/B/Mesh",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 12,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 4,
+              "byteLength": 48,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1,
+                  1,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 6,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 6,
+              "byteLength": 24,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2,
+                  0,
+                  2,
+                  3
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 2,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 2,
+              "byteLength": 8,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3,
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 12,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 4,
+              "byteLength": 12,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        },
+        "computed": true,
+        "after": {
+          "copy": {
+            "faceVertexIndicesLength": 6,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2,
+                0,
+                2,
+                3
+              ]
+            },
+            "faceVertexCountsLength": 2,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3,
+                3
+              ]
+            },
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/B/Mesh",
+            "pointsLength": 12,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 4,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/B/Mesh",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 12,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 4,
+              "byteLength": 48,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1,
+                  1,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 6,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 6,
+              "byteLength": 24,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2,
+                  0,
+                  2,
+                  3
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 2,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 2,
+              "byteLength": 8,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3,
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 12,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 4,
+              "byteLength": 12,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        }
+      }
+    ],
+    "geometry-optimize-subset-overlap-001.usda": [
+      {
+        "before": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/A/Mesh",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/A/Mesh",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        },
+        "computed": true,
+        "after": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/A/Mesh",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/A/Mesh",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        "before": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/B/Mesh",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                2,
+                0,
+                0,
+                3,
+                0,
+                0,
+                2,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/B/Mesh",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  2,
+                  0,
+                  0,
+                  3,
+                  0,
+                  0,
+                  2,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        },
+        "computed": true,
+        "after": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/B/Mesh",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                2,
+                0,
+                0,
+                3,
+                0,
+                0,
+                2,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/B/Mesh",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  2,
+                  0,
+                  0,
+                  3,
+                  0,
+                  0,
+                  2,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        }
+      }
+    ]
+  },
+  "wasm64": {
+    "textured": [
+      {
+        "before": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Prim_A",
+            "displayName": "",
+            "absPath": "/World/Prim_A",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {
+              "uv0": {
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                },
+                "vertexCount": {
+                  "$bigint": "3"
+                },
+                "slotId": 0
+              }
+            },
+            "texcoords": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                1,
+                0,
+                0,
+                1
+              ]
+            },
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Prim_A",
+            "displayName": "",
+            "absPath": "/World/Prim_A",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            },
+            "uv0": {
+              "length": 6,
+              "comps": 2,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 24,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "uvSets": {
+              "0": {
+                "length": 6,
+                "comps": 2,
+                "dtype": "f32",
+                "count": 3,
+                "byteLength": 24,
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "computed": true,
+        "after": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Prim_A",
+            "displayName": "",
+            "absPath": "/World/Prim_A",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {
+              "uv0": {
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                },
+                "vertexCount": {
+                  "$bigint": "3"
+                },
+                "slotId": 0
+              }
+            },
+            "texcoords": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                1,
+                0,
+                0,
+                1
+              ]
+            },
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Prim_A",
+            "displayName": "",
+            "absPath": "/World/Prim_A",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            },
+            "uv0": {
+              "length": 6,
+              "comps": 2,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 24,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "uvSets": {
+              "0": {
+                "length": 6,
+                "comps": 2,
+                "dtype": "f32",
+                "count": 3,
+                "byteLength": 24,
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "before": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Prim_B",
+            "displayName": "",
+            "absPath": "/World/Prim_B",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                2,
+                0,
+                0,
+                1,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {
+              "uv0": {
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                },
+                "vertexCount": {
+                  "$bigint": "3"
+                },
+                "slotId": 0
+              }
+            },
+            "texcoords": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                1,
+                0,
+                0,
+                1
+              ]
+            },
+            "materialId": 1,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 1,
+            "doubleSided": false,
+            "primName": "Prim_B",
+            "displayName": "",
+            "absPath": "/World/Prim_B",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  1,
+                  0,
+                  0,
+                  2,
+                  0,
+                  0,
+                  1,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            },
+            "uv0": {
+              "length": 6,
+              "comps": 2,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 24,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "uvSets": {
+              "0": {
+                "length": 6,
+                "comps": 2,
+                "dtype": "f32",
+                "count": 3,
+                "byteLength": 24,
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "computed": true,
+        "after": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Prim_B",
+            "displayName": "",
+            "absPath": "/World/Prim_B",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                2,
+                0,
+                0,
+                1,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {
+              "uv0": {
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                },
+                "vertexCount": {
+                  "$bigint": "3"
+                },
+                "slotId": 0
+              }
+            },
+            "texcoords": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                1,
+                0,
+                0,
+                1
+              ]
+            },
+            "materialId": 1,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 1,
+            "doubleSided": false,
+            "primName": "Prim_B",
+            "displayName": "",
+            "absPath": "/World/Prim_B",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  1,
+                  0,
+                  0,
+                  2,
+                  0,
+                  0,
+                  1,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            },
+            "uv0": {
+              "length": 6,
+              "comps": 2,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 24,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "uvSets": {
+              "0": {
+                "length": 6,
+                "comps": 2,
+                "dtype": "f32",
+                "count": 3,
+                "byteLength": 24,
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    ],
+    "skin": [
+      {
+        "before": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Skin",
+            "displayName": "",
+            "absPath": "/World/Skin",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": -1,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "jointIndices": {
+              "$type": "Int32Array",
+              "data": [
+                0,
+                2,
+                3
+              ]
+            },
+            "jointWeights": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                1,
+                1
+              ]
+            },
+            "elementSize": 1,
+            "skel_id": 0,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": -1,
+            "doubleSided": false,
+            "primName": "Skin",
+            "displayName": "",
+            "absPath": "/World/Skin",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        },
+        "computed": true,
+        "after": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Skin",
+            "displayName": "",
+            "absPath": "/World/Skin",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": -1,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "jointIndices": {
+              "$type": "Int32Array",
+              "data": [
+                0,
+                2,
+                3
+              ]
+            },
+            "jointWeights": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                1,
+                1
+              ]
+            },
+            "elementSize": 1,
+            "skel_id": 0,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": -1,
+            "doubleSided": false,
+            "primName": "Skin",
+            "displayName": "",
+            "absPath": "/World/Skin",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        }
+      }
+    ],
+    "c-core-mesh-queries.usda": [
+      {
+        "before": {
+          "copy": {
+            "faceVertexIndicesLength": 6,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5
+              ]
+            },
+            "faceVertexCountsLength": 2,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3,
+                3
+              ]
+            },
+            "primName": "Triangle",
+            "displayName": "",
+            "absPath": "/Triangle",
+            "pointsLength": 18,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                1,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "vertexColors": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colors": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colorsFormat": "float32",
+            "colorOpacities": {
+              "$type": "Float32Array",
+              "data": [
+                0.25,
+                0.5,
+                1
+              ]
+            },
+            "colorOpacitiesFormat": "float32",
+            "uvSets": {
+              "uv0": {
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                },
+                "vertexCount": {
+                  "$bigint": "3"
+                },
+                "slotId": 0
+              }
+            },
+            "texcoords": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                1
+              ]
+            },
+            "tangents": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1
+              ]
+            },
+            "materialId": 1,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false,
+            "submeshes": [
+              {
+                "start": 0,
+                "count": 3,
+                "materialId": 0
+              },
+              {
+                "start": 3,
+                "count": 3,
+                "materialId": 1
+              }
+            ]
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 1,
+            "doubleSided": false,
+            "primName": "Triangle",
+            "displayName": "",
+            "absPath": "/Triangle",
+            "hasSubmeshes": true,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 6,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 6,
+              "byteLength": 24,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2,
+                  2,
+                  1,
+                  0
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 2,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 2,
+              "byteLength": 8,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3,
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "submeshes": [
+              {
+                "start": 0,
+                "count": 3,
+                "materialId": 1
+              },
+              {
+                "start": 3,
+                "count": 3,
+                "materialId": 0
+              }
+            ],
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            },
+            "uv0": {
+              "length": 6,
+              "comps": 2,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 24,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "vertexColors": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "uvSets": {
+              "0": {
+                "length": 6,
+                "comps": 2,
+                "dtype": "f32",
+                "count": 3,
+                "byteLength": 24,
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                }
+              }
+            },
+            "colors": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "colorOpacities": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0.25,
+                  0.5,
+                  1
+                ]
+              }
+            },
+            "tangents": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        },
+        "computed": true,
+        "after": {
+          "copy": {
+            "faceVertexIndicesLength": 6,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5
+              ]
+            },
+            "faceVertexCountsLength": 2,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3,
+                3
+              ]
+            },
+            "primName": "Triangle",
+            "displayName": "",
+            "absPath": "/Triangle",
+            "pointsLength": 18,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                1,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "vertexColors": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colors": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colorsFormat": "float32",
+            "colorOpacities": {
+              "$type": "Float32Array",
+              "data": [
+                0.25,
+                0.5,
+                1
+              ]
+            },
+            "colorOpacitiesFormat": "float32",
+            "uvSets": {
+              "uv0": {
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                },
+                "vertexCount": {
+                  "$bigint": "3"
+                },
+                "slotId": 0
+              }
+            },
+            "texcoords": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                1
+              ]
+            },
+            "tangents": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1
+              ]
+            },
+            "materialId": 1,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false,
+            "submeshes": [
+              {
+                "start": 0,
+                "count": 3,
+                "materialId": 0
+              },
+              {
+                "start": 3,
+                "count": 3,
+                "materialId": 1
+              }
+            ]
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 1,
+            "doubleSided": false,
+            "primName": "Triangle",
+            "displayName": "",
+            "absPath": "/Triangle",
+            "hasSubmeshes": true,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 6,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 6,
+              "byteLength": 24,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2,
+                  2,
+                  1,
+                  0
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 2,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 2,
+              "byteLength": 8,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3,
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "submeshes": [
+              {
+                "start": 0,
+                "count": 3,
+                "materialId": 1
+              },
+              {
+                "start": 3,
+                "count": 3,
+                "materialId": 0
+              }
+            ],
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            },
+            "uv0": {
+              "length": 6,
+              "comps": 2,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 24,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "vertexColors": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "uvSets": {
+              "0": {
+                "length": 6,
+                "comps": 2,
+                "dtype": "f32",
+                "count": 3,
+                "byteLength": 24,
+                "data": {
+                  "$type": "Float32Array",
+                  "data": [
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1
+                  ]
+                }
+              }
+            },
+            "colors": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            },
+            "colorOpacities": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0.25,
+                  0.5,
+                  1
+                ]
+              }
+            },
+            "tangents": {
+              "$type": "Float32Array",
+              "data": [
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "geomsubset-001.usda": [],
+    "geometry-optimize-subset-partial-001.usda": [
+      {
+        "before": {
+          "copy": {
+            "faceVertexIndicesLength": 6,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2,
+                0,
+                2,
+                3
+              ]
+            },
+            "faceVertexCountsLength": 2,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3,
+                3
+              ]
+            },
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/A/Mesh",
+            "pointsLength": 12,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 4,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/A/Mesh",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 12,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 4,
+              "byteLength": 48,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1,
+                  1,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 6,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 6,
+              "byteLength": 24,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2,
+                  0,
+                  2,
+                  3
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 2,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 2,
+              "byteLength": 8,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3,
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 12,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 4,
+              "byteLength": 12,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        },
+        "computed": true,
+        "after": {
+          "copy": {
+            "faceVertexIndicesLength": 6,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2,
+                0,
+                2,
+                3
+              ]
+            },
+            "faceVertexCountsLength": 2,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3,
+                3
+              ]
+            },
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/A/Mesh",
+            "pointsLength": 12,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 4,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/A/Mesh",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 12,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 4,
+              "byteLength": 48,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1,
+                  1,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 6,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 6,
+              "byteLength": 24,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2,
+                  0,
+                  2,
+                  3
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 2,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 2,
+              "byteLength": 8,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3,
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 12,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 4,
+              "byteLength": 12,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        "before": {
+          "copy": {
+            "faceVertexIndicesLength": 6,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2,
+                0,
+                2,
+                3
+              ]
+            },
+            "faceVertexCountsLength": 2,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3,
+                3
+              ]
+            },
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/B/Mesh",
+            "pointsLength": 12,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 4,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/B/Mesh",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 12,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 4,
+              "byteLength": 48,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1,
+                  1,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 6,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 6,
+              "byteLength": 24,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2,
+                  0,
+                  2,
+                  3
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 2,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 2,
+              "byteLength": 8,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3,
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 12,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 4,
+              "byteLength": 12,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        },
+        "computed": true,
+        "after": {
+          "copy": {
+            "faceVertexIndicesLength": 6,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2,
+                0,
+                2,
+                3
+              ]
+            },
+            "faceVertexCountsLength": 2,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3,
+                3
+              ]
+            },
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/B/Mesh",
+            "pointsLength": 12,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 4,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/B/Mesh",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 12,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 4,
+              "byteLength": 48,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  1,
+                  1,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 6,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 6,
+              "byteLength": 24,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2,
+                  0,
+                  2,
+                  3
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 2,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 2,
+              "byteLength": 8,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3,
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 12,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 4,
+              "byteLength": 12,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        }
+      }
+    ],
+    "geometry-optimize-subset-overlap-001.usda": [
+      {
+        "before": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/A/Mesh",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/A/Mesh",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        },
+        "computed": true,
+        "after": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/A/Mesh",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/A/Mesh",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        "before": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/B/Mesh",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                2,
+                0,
+                0,
+                3,
+                0,
+                0,
+                2,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/B/Mesh",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  2,
+                  0,
+                  0,
+                  3,
+                  0,
+                  0,
+                  2,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        },
+        "computed": true,
+        "after": {
+          "copy": {
+            "faceVertexIndicesLength": 3,
+            "faceVertexIndices": {
+              "$type": "Uint32Array",
+              "data": [
+                0,
+                1,
+                2
+              ]
+            },
+            "faceVertexCountsLength": 1,
+            "faceVertexCounts": {
+              "$type": "Uint32Array",
+              "data": [
+                3
+              ]
+            },
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/B/Mesh",
+            "pointsLength": 9,
+            "points": {
+              "$type": "Float32Array",
+              "data": [
+                2,
+                0,
+                0,
+                3,
+                0,
+                0,
+                2,
+                1,
+                0
+              ]
+            },
+            "normals": {
+              "$type": "Int8Array",
+              "data": [
+                0,
+                0,
+                127,
+                0,
+                0,
+                127,
+                0,
+                0,
+                127
+              ]
+            },
+            "normalsFormat": "snorm8",
+            "uvSets": {},
+            "materialId": 0,
+            "doubleSided": false,
+            "isAreaLight": false,
+            "elementSize": 1,
+            "geomBindTransform": {
+              "$type": "Float64Array",
+              "data": [
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "hasGeomBindTransform": false
+          },
+          "descriptor": {
+            "vertexCount": 3,
+            "materialId": 0,
+            "doubleSided": false,
+            "primName": "Mesh",
+            "displayName": "",
+            "absPath": "/Root/B/Mesh",
+            "hasSubmeshes": false,
+            "singleIndexable": true,
+            "points": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "f32",
+              "count": 3,
+              "byteLength": 36,
+              "data": {
+                "$type": "Float32Array",
+                "data": [
+                  2,
+                  0,
+                  0,
+                  3,
+                  0,
+                  0,
+                  2,
+                  1,
+                  0
+                ]
+              }
+            },
+            "indices": {
+              "length": 3,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 3,
+              "byteLength": 12,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            },
+            "faceVertexCounts": {
+              "length": 1,
+              "comps": 1,
+              "dtype": "u32",
+              "count": 1,
+              "byteLength": 4,
+              "data": {
+                "$type": "Uint32Array",
+                "data": [
+                  3
+                ]
+              }
+            },
+            "triangulated": true,
+            "normals": {
+              "length": 9,
+              "comps": 3,
+              "dtype": "snorm8",
+              "count": 3,
+              "byteLength": 9,
+              "data": {
+                "$type": "Int8Array",
+                "data": [
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127,
+                  0,
+                  0,
+                  127
+                ]
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

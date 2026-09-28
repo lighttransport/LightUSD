@@ -7,7 +7,8 @@
 #include <vector>
 
 #include "gpu_scene.hh"
-#include "next/stage/change-set.hh"
+
+#include "c-api/lightusd-render-c.h"
 
 namespace lusdview {
 
@@ -29,10 +30,11 @@ void CaptureTextureUploadIdentity(DrawTextureCPU* texture);
 
 // Validate a replacement DrawScene without touching the renderer. A compatible
 // plan can be committed atomically because every operation targets an existing
-// mesh slot; rejection leaves the caller free to perform a full upload.
+// mesh slot. Change-record paths/properties are borrowed for this call only;
+// rejection leaves the caller free to perform a full upload.
 IncrementalSceneUpdatePlan PlanIncrementalSceneUpdate(
     const DrawScene& current, DrawScene* next,
-    const lightusd::next::StageChangeSet& changes,
+    const lightusd_render_change_set& changes, uint64_t newRevision,
     uint64_t displayedRevision, int rendererMeshCount);
 
 }  // namespace lusdview

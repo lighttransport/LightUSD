@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "viewer_document.hh"
+#include "public_stage_queries.hh"
 #include "app.hh"
 
 #include <glad/glad.h>
@@ -48,8 +50,6 @@
 #include "lightrt_mtlx_bridge.hh"
 #include "mesh_build.hh"
 #include "next_scene_loader.hh"
-#include "next/lightusd-next.hh"  // tnext::Stage (per-frame --next morph weights)
-#include "tydra/next/render-session.hh"
 #include "scene_validation.hh"
 #include "skinning.hh"
 #include "texture_residency_policy.hh"
@@ -65,30 +65,77 @@
 namespace lusdview {
 
 namespace {
-class AcceptPreparedSceneSink final
-    : public lightusd::tydra::next::SceneUpdateSink {
- public:
-  bool BeginUpdate(uint64_t, uint64_t, bool) override { return true; }
-  bool EndUpdate() override { return true; }
+bool ReadDocumentInfo(const ViewerDocument& document, PublicStageInfo* info) {
+  auto snapshot = document.PublicSnapshot();
+  lightusd::api::Stage stage;
+  return lightusd::api::DocumentSnapshotStage(snapshot, &stage) == LIGHTUSD_OK &&
+         ReadPublicStageInfo(stage.get(), info);
+}
+
+// Borrowed C record view over viewer-owned change strings.
+struct PublicChangesView {
+  std::vector<std::vector<lightusd_sv>> properties;
+  std::vector<lightusd_prim_change> prims;
+  lightusd_render_change_set view{};
+  explicit PublicChangesView(const ViewerChanges& changes) {
+    properties.resize(changes.prims.size());
+    prims.reserve(changes.prims.size());
+    for (size_t i = 0; i < changes.prims.size(); ++i) {
+      const auto& change = changes.prims[i];
+      properties[i].reserve(change.properties.size());
+      for (const auto& property : change.properties)
+        properties[i].push_back({property.data(), property.size()});
+      prims.push_back({change.path.c_str(), change.flags,
+                       properties[i].data(), properties[i].size()});
+    }
+    view.struct_size = sizeof(view);
+    view.base_revision = changes.base_revision;
+    view.full_resync = changes.full_resync;
+    view.stage_metadata_changed = changes.stage_metadata_changed;
+    view.prims = prims.data();
+    view.prim_count = prims.size();
+  }
+  PublicChangesView(const PublicChangesView&) = delete;
+  PublicChangesView& operator=(const PublicChangesView&) = delete;
 };
 
-class DrawSceneCommitSink final
-    : public lightusd::tydra::next::SceneUpdateSink {
+// The public event sink runs the GPU transaction at End, before publication.
+class DrawSceneCommitSink {
  public:
   explicit DrawSceneCommitSink(std::function<bool()> commit)
       : commit_(std::move(commit)) {}
-  bool BeginUpdate(uint64_t, uint64_t, bool) override { return true; }
-  bool EndUpdate() override {
-    committed_ = commit_ && commit_();
-    return committed_;
+  static int Event(void* userdata, const lightusd_render_event* event) {
+    auto* self = static_cast<DrawSceneCommitSink*>(userdata);
+    if (event->type == LIGHTUSD_RENDER_EVENT_END) {
+      self->committed_ = self->commit_ && self->commit_();
+      return self->committed_;
+    }
+    if (event->type == LIGHTUSD_RENDER_EVENT_ABORT) self->committed_ = false;
+    return 1;
   }
-  void AbortUpdate() override { committed_ = false; }
   bool committed() const { return committed_; }
-
  private:
   std::function<bool()> commit_;
   bool committed_{false};
 };
+
+lightusd_status CommitPreparedScene(lightusd::api::RenderSession& session,
+    lightusd::api::PreparedRenderUpdate* prepared,
+    DrawSceneCommitSink* callback = nullptr) {
+  lightusd_render_event_sink sink;
+  lightusd_render_event_sink_init(&sink);
+  if (callback) {
+    sink.callback = DrawSceneCommitSink::Event;
+    sink.userdata = callback;
+  }
+  auto status = session.set_event_sink(callback ? &sink : nullptr);
+  if (status != LIGHTUSD_OK) return status;
+  lightusd::api::RenderScene scene;
+  status = session.commit(prepared, &scene);
+  // The callback borrows stack data only for the synchronous commit.
+  session.set_event_sink(nullptr);
+  return status;
+}
 
 bool AppendPtexFaceTableUpdates(
     const DrawTextureCPU& texture, uint32_t face,
@@ -230,12 +277,12 @@ bool CameraPoseDiffers(const NextCameraPose& a, const NextCameraPose& b) {
          a.projection != b.projection;
 }
 
-bool FindCameraPoseAtTime(const lightusd::next::Stage* stage,
+bool FindCameraPoseAtTime(const lightusd_stage* stage,
                           const lightusd::Stage* legacyStage,
                           const std::string& cameraName, double time,
                           NextCameraPose* out) {
   if (!out || cameraName.empty()) return false;
-  if (stage) return FindNextCamera(*stage, cameraName, time, out);
+  if (stage) return FindNextCamera(stage, cameraName, time, out);
   return legacyStage &&
          FindLegacyCameraAtTime(*legacyStage, cameraName, time, out);
 }
@@ -255,7 +302,7 @@ struct ShutterMotionPlan {
 };
 
 ShutterMotionPlan MakeShutterMotionPlan(
-    const DrawScene& draw, const lightusd::next::Stage* stage,
+    const DrawScene& draw, const lightusd_stage* stage,
     const std::string& cameraName, double frameTime,
     const RtCameraShutter& shutter, uint32_t requestedSamples,
     const lightusd::Stage* legacyStage = nullptr) {
@@ -275,12 +322,12 @@ ShutterMotionPlan MakeShutterMotionPlan(
   if (!cameraName.empty()) {
     NextCameraPose openPose, closePose;
     const bool haveOpen =
-        stage ? FindNextCamera(*stage, cameraName, frameTime + shutter.open,
+        stage ? FindNextCamera(stage, cameraName, frameTime + shutter.open,
                                &openPose)
               : FindLegacyCameraAtTime(*legacyStage, cameraName,
                                        frameTime + shutter.open, &openPose);
     const bool haveClose =
-        stage ? FindNextCamera(*stage, cameraName, frameTime + shutter.close,
+        stage ? FindNextCamera(stage, cameraName, frameTime + shutter.close,
                                &closePose)
               : FindLegacyCameraAtTime(*legacyStage, cameraName,
                                        frameTime + shutter.close, &closePose);
@@ -301,7 +348,7 @@ struct InteractiveCameraSample {
 
 InteractiveCameraSample MakeInteractiveCameraSample(
     const OrbitCamera& baseCamera, const RtCameraLens& baseLens,
-    const DrawScene& draw, const lightusd::next::Stage* stage,
+    const DrawScene& draw, const lightusd_stage* stage,
     const std::string& cameraName, double frameTime,
     const RtCameraShutter& shutter, uint32_t motionSegments,
     uint32_t accumulatedSamples) {
@@ -312,7 +359,7 @@ InteractiveCameraSample MakeInteractiveCameraSample(
                                     accumulatedSamples % segmentCount,
                                     segmentCount);
   NextCameraPose pose;
-  if (!FindNextCamera(*stage, cameraName, sample.time, &pose)) {
+  if (!FindNextCamera(stage, cameraName, sample.time, &pose)) {
     sample.time = frameTime;
     return sample;
   }
@@ -1805,6 +1852,8 @@ void App::getRequestedWindowSize(int* width, int* height) const {
   *height = static_cast<int>(static_cast<float>(kBaseWindowHeight) * windowScale_);
 }
 
+App::App(Backend backend) : backend_(backend) {}
+
 App::~App() {
 #if defined(LUSDVIEW_HAVE_MCP)
   // Stop the MCP transports first so no worker thread calls back into App while
@@ -2780,7 +2829,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
       }
     }
     // GPU-budget LOD: bound the full-mesh draw count / VRAM for huge assembled
-    // scenes (e.g. Moana island ~84k meshes) by merging the long tail of small
+    // scenes (e.g. Island ~84k meshes) by merging the long tail of small
     // meshes into one instanced bbox-proxy soup, so the per-mesh-buffer raster
     // upload doesn't create tens of thousands of buffers and stall for minutes.
     if (!alreadyUploaded && useNextLoader_ &&
@@ -3050,7 +3099,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     const bool haveCamera =
         !cameraName_.empty() &&
         (useNextLoader_ && nextStageSnapshot_
-             ? FindNextCamera(*nextStageSnapshot_, cameraName_, animTime_,
+             ? FindNextCamera(nextStageSnapshot_.get(), cameraName_, animTime_,
                               &campose)
              : (loaded_.ok &&
                 FindLegacyCameraAtTime(loaded_.stage, cameraName_, animTime_,
@@ -3059,7 +3108,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     if (haveCamera) framedFocalLength = campose.focalLength;
     if (framedAuthoredCamera) {
       // Drive the orbit rig from a scene camera. The auto-fit framing is useless
-      // on vast scenes (Caldera's 8 km map frames to a sub-pixel speck); a named
+      // on vast scenes (Scene C's 8 km map frames to a sub-pixel speck); a named
       // USD camera gives a meaningful district view across raster / --rt / --cuda.
       ApplyAuthoredCameraPose(campose, draw_, &camera_);
       // USD camera optics are authored in tenths of a scene unit. The physical
@@ -3195,13 +3244,13 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
   }
   gui_.setCameraLens(cameraLens_);
   gui_.setCameraShutter(cameraShutter_);
-  gui_.setNextStage(nextStageSnapshot_.get());
+  gui_.setNextStage(nextStageSnapshot_);
   {
     std::vector<std::string> deferred;
     if (nextSession_) {
-      for (const lightusd::next::Path& path :
+      for (const std::string& path :
            nextSession_->GetDeferredPayloadPaths()) {
-        deferred.push_back(path.str());
+        deferred.push_back(path);
       }
     }
     gui_.setDeferredPayloadPaths(std::move(deferred));
@@ -4039,7 +4088,7 @@ void App::loadFileBlocking(const std::string& path) {
   // View-dependent district LOD (--lod-stream): a proxy pre-pass promotes the
   // camera-nearest districts to full and writes a wrapper layer we load instead.
   // Only meaningful on the --next path (the only one that composes huge scenes
-  // like Caldera). The original `path` stays as the displayed filename.
+  // like Scene C). The original `path` stays as the displayed filename.
   std::string effPath = path;
   if (lodStream_ && useNextLoader_) {
     LodStreamOptions lo;
@@ -4051,17 +4100,17 @@ void App::loadFileBlocking(const std::string& path) {
     if (!wrapper.empty()) effPath = wrapper;
   }
   if (useNextLoader_) {
-    std::shared_ptr<lightusd::next::StageSession> session;
+    std::shared_ptr<ViewerDocument> session;
     const bool ok = LoadUSDViaNext(effPath, opts, &drawTmp, &tmp.warn, &tmp.err,
                                    &loadCtrl_, &session);
     tmp.ok = ok;
     tmp.filepath = path;
     tmp.render.meta.upAxis = drawTmp.upAxis;  // drive camera/grid up-axis
-    if (session) {
-      const lightusd::next::Stage& stage = *session->GetSnapshot().stage;
-      const double s = stage.GetStartTimeCode();
-      const double e = stage.GetEndTimeCode();
-      const double fps = stage.GetTimeCodesPerSecond();
+    PublicStageInfo info;
+    if (session && ReadDocumentInfo(*session, &info)) {
+      const double s = info.startTimeCode;
+      const double e = info.endTimeCode;
+      const double fps = info.timeCodesPerSecond;
       if (fps > 0.0) tmp.render.meta.timeCodesPerSecond = fps;
       if (e > s) {
         tmp.render.meta.startTimeCode = s;
@@ -4078,24 +4127,25 @@ void App::loadFileBlocking(const std::string& path) {
       pendingNextChanges_ = {};
       prepareNextRenderTransaction(draw_);
       if (pendingNextRenderSession_ && pendingNextRenderUpdate_) {
-        AcceptPreparedSceneSink sink;
-        const auto committed = pendingNextRenderSession_->Commit(
-            std::move(*pendingNextRenderUpdate_), &sink);
-        if (committed) {
+        const auto committed = CommitPreparedScene(*pendingNextRenderSession_,
+            pendingNextRenderUpdate_.get());
+        if (committed == LIGHTUSD_OK) {
           nextRenderSession_ = std::move(pendingNextRenderSession_);
         } else {
           LOGI("RenderSession synchronous bootstrap rejected: %s",
-               committed.error.c_str());
+               lightusd::api::LastError());
         }
       }
       pendingNextSession_.reset();
       pendingNextRenderSession_.reset();
       pendingNextRenderUpdate_.reset();
     }
-    const auto snapshot = nextSession_ ? nextSession_->GetSnapshot()
-                                       : lightusd::next::StageSnapshot{};
-    nextStageSnapshot_ = snapshot.stage;
-    nextStageRevision_ = snapshot.revision;
+    auto snapshot = nextSession_ ? nextSession_->PublicSnapshot()
+                               : lightusd::api::DocumentSnapshot{};
+    nextStageSnapshot_ = lightusd::api::Stage{};
+    if (snapshot) lightusd::api::DocumentSnapshotStage(snapshot, &nextStageSnapshot_);
+    nextStageRevision_ = nextStageSnapshot_
+        ? lightusd::api::DocumentSnapshotRevision(snapshot) : 0;
     applyLoaded(ok, /*progressive=*/false);
     return;
   }
@@ -4287,13 +4337,12 @@ void App::startLoadAsync(const std::string& path) {
       // Surface the stage's animation range so --next gets a timeline (the Tydra
       // RenderScene meta is otherwise empty here). readAnimationRange reads these.
       if (pendingNextSession_) {
-        const lightusd::next::StageSnapshot snapshot =
-            pendingNextSession_->GetSnapshot();
-        if (snapshot) {
-          lp->render.meta.upAxis = snapshot->GetUpAxis();
-          const double s = snapshot->GetStartTimeCode();
-          const double e = snapshot->GetEndTimeCode();
-          const double fps = snapshot->GetTimeCodesPerSecond();
+        PublicStageInfo info;
+        if (ReadDocumentInfo(*pendingNextSession_, &info)) {
+          lp->render.meta.upAxis = info.upAxis;
+          const double s = info.startTimeCode;
+          const double e = info.endTimeCode;
+          const double fps = info.timeCodesPerSecond;
           if (fps > 0.0) lp->render.meta.timeCodesPerSecond = fps;
           if (e > s) {
             lp->render.meta.startTimeCode = s;
@@ -4401,9 +4450,8 @@ void App::startRecomposeAsync(const std::set<std::string>& addPrimPaths) {
                 path.compare(0, root.size(), root) == 0 &&
                 path[root.size()] == '/');
       };
-      for (const lightusd::next::Path& deferred :
+      for (const std::string& path :
            nextSession_->GetDeferredPayloadPaths()) {
-        const std::string path = deferred.str();
         for (const std::string& requested : addPrimPaths) {
           if (atOrBelow(path, requested) || atOrBelow(requested, path)) {
             recursive.insert(path);
@@ -4491,42 +4539,39 @@ void App::prepareNextRenderTransaction(const DrawScene& next) {
     return;
   }
 
+  auto document = pendingNextSession_->PublicSnapshot();
+  if (!document) return;
+  PublicChangesView changes(pendingNextChanges_);
   if (!pendingNextRenderSession_) {
-    pendingNextRenderSession_ =
-        std::make_shared<lightusd::tydra::next::RenderSession>();
+    lightusd::api::Stage stage;
+    if (lightusd::api::DocumentSnapshotStage(document, &stage) != LIGHTUSD_OK) return;
+    auto session = std::make_shared<lightusd::api::RenderSession>();
+    if (session->create(stage) != LIGHTUSD_OK) return;
+    pendingNextRenderSession_ = std::move(session);
   }
-  const lightusd::next::StageSnapshot snapshot =
-      pendingNextSession_->GetSnapshot();
-  if (!snapshot) return;
-  std::unique_ptr<lightusd::tydra::next::PreparedRenderUpdate> prepared(
-      new (std::nothrow) lightusd::tydra::next::PreparedRenderUpdate());
-  if (!prepared) return;
-  lightusd::tydra::next::RenderUpdateResult result;
-  if (pendingNextRenderSession_->revision() == 0) {
-    result = pendingNextRenderSession_->PrepareInitialize(snapshot,
-                                                          prepared.get());
-  } else {
-    result = pendingNextRenderSession_->Prepare(snapshot, pendingNextChanges_,
-                                                prepared.get());
-  }
-  if (!result) {
-    LOGI("RenderSession preparation rejected: %s", result.error.c_str());
+  auto prepared = std::make_unique<lightusd::api::PreparedRenderUpdate>();
+  lightusd_render_update_info result;
+  lightusd_render_update_info_init(&result);
+  pendingNextRenderBootstrap_ = pendingNextRenderSession_->revision() == 0;
+  const auto status = pendingNextRenderSession_->prepare(document, changes.view, prepared.get(), &result);
+  if (status != LIGHTUSD_OK) {
+    LOGI("RenderSession preparation rejected: %s", lightusd::api::LastError());
     return;
   }
   LOGI("RenderSession prepared revision %llu off-thread: %zu resources, "
        "%.2f MiB converted",
        static_cast<unsigned long long>(result.revision),
-       result.converted_resource_count,
-       static_cast<double>(result.converted_scene_bytes) /
-           (1024.0 * 1024.0));
+       static_cast<size_t>(result.converted_resource_count),
+       static_cast<double>(result.converted_scene_bytes) / (1024.0 * 1024.0));
   pendingNextRenderUpdate_ = std::move(prepared);
 }
 
 bool App::tryApplyNextSceneUpdate(
-    DrawScene* next, const lightusd::next::StageChangeSet& changes) {
+    DrawScene* next, const ViewerChanges& changes) {
   if (!next || !renderer_ || renderThreadActive_) return false;
+  PublicChangesView changesView(changes);
   IncrementalSceneUpdatePlan plan = PlanIncrementalSceneUpdate(
-      draw_, next, changes, nextStageRevision_, renderer_->meshCount());
+      draw_, next, changesView.view, changes.new_revision, nextStageRevision_, renderer_->meshCount());
   if (!plan.compatible) {
     LOGI("incremental scene update rejected: %s", plan.reason.c_str());
     return false;
@@ -4636,21 +4681,20 @@ void App::finishLoadIfReady() {
   bool renderSessionCommitted = false;
   const bool render_session_bootstrap =
       pendingNextRenderUpdate_ &&
-      pendingNextRenderUpdate_->base_revision() == 0;
+      pendingNextRenderBootstrap_;
   if (!streamLoadActive_ && ok && nextSession_ && pendingDraw_ &&
       pendingNextRenderSession_ && pendingNextRenderUpdate_ &&
       !render_session_bootstrap) {
     DrawSceneCommitSink sink([&]() {
       return tryApplyNextSceneUpdate(pendingDraw_.get(), pendingNextChanges_);
     });
-    const lightusd::tydra::next::RenderUpdateResult committed =
-        pendingNextRenderSession_->Commit(std::move(*pendingNextRenderUpdate_),
-                                          &sink);
-    incrementalUploaded = committed && sink.committed();
-    renderSessionCommitted = static_cast<bool>(committed);
-    if (!committed) {
+    const auto committed = CommitPreparedScene(*pendingNextRenderSession_,
+                                               pendingNextRenderUpdate_.get(), &sink);
+    incrementalUploaded = committed == LIGHTUSD_OK && sink.committed();
+    renderSessionCommitted = committed == LIGHTUSD_OK;
+    if (committed != LIGHTUSD_OK) {
       LOGI("RenderSession commit rejected; using full-scene fallback: %s",
-           committed.error.c_str());
+           lightusd::api::LastError());
     }
   } else if (!streamLoadActive_ && ok && nextSession_ && pendingDraw_ &&
              !render_session_bootstrap) {
@@ -4662,14 +4706,12 @@ void App::finishLoadIfReady() {
   // the stable-ID catalog prepared by the worker.
   if (ok && render_session_bootstrap && pendingNextRenderSession_ &&
       pendingNextRenderUpdate_) {
-    AcceptPreparedSceneSink sink;
-    const lightusd::tydra::next::RenderUpdateResult committed =
-        pendingNextRenderSession_->Commit(std::move(*pendingNextRenderUpdate_),
-                                          &sink);
-    renderSessionCommitted = static_cast<bool>(committed);
-    if (!committed) {
+    const auto committed = CommitPreparedScene(*pendingNextRenderSession_,
+                                               pendingNextRenderUpdate_.get());
+    renderSessionCommitted = committed == LIGHTUSD_OK;
+    if (committed != LIGHTUSD_OK) {
       LOGI("RenderSession bootstrap commit rejected: %s",
-           committed.error.c_str());
+           lightusd::api::LastError());
     }
   }
   const bool alreadyUploaded = (streamLoadActive_ || incrementalUploaded) && ok;
@@ -4692,10 +4734,12 @@ void App::finishLoadIfReady() {
   } else if (renderSessionCommitted) {
     nextRenderSession_ = std::move(pendingNextRenderSession_);
   }
-  const auto snapshot = nextSession_ ? nextSession_->GetSnapshot()
-                                     : lightusd::next::StageSnapshot{};
-  nextStageSnapshot_ = snapshot.stage;
-  nextStageRevision_ = snapshot.revision;
+  auto snapshot = nextSession_ ? nextSession_->PublicSnapshot()
+                             : lightusd::api::DocumentSnapshot{};
+  nextStageSnapshot_ = lightusd::api::Stage{};
+  if (snapshot) lightusd::api::DocumentSnapshotStage(snapshot, &nextStageSnapshot_);
+  nextStageRevision_ = nextStageSnapshot_
+        ? lightusd::api::DocumentSnapshotRevision(snapshot) : 0;
   pendingNextSession_.reset();
   pendingNextRenderSession_.reset();
   pendingNextRenderUpdate_.reset();
@@ -4879,7 +4923,7 @@ void App::updateGpuSkinningFrameIfNeeded() {
   if (useNextLoader_) {
     if (nextStageSnapshot_ && loaded_.ok && !progressiveActive_ &&
         renderer_->meshCount() == static_cast<int>(draw_.meshes.size())) {
-      if (UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_, animTime_)) {
+      if (UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_, animTime_)) {
         std::vector<std::pair<int, std::array<float, 16>>> worldUploads;
         for (size_t i = 0; i < draw_.meshes.size(); ++i) {
           if (!draw_.meshes[i].animatedWorld) continue;
@@ -5063,7 +5107,7 @@ void App::updateNextDeformFrameIfNeeded() {
   // moving rig cannot cull or LOD itself out of the frame.
   {
     float bmin[3], bmax[3];
-    if (BuildNextPosedSceneBounds(*nextStageSnapshot_, &draw_, animTime_,
+    if (BuildNextPosedSceneBounds(nextStageSnapshot_.get(), &draw_, animTime_,
                                   gui_.blendOverrides(), bmin, bmax)) {
       for (int k = 0; k < 3; ++k) {
         draw_.aabbMin[k] = bmin[k];
@@ -5082,7 +5126,7 @@ void App::updateNextDeformFrameIfNeeded() {
     static const bool kRtTiming = std::getenv("LUSDVIEW_RT_TIMING") != nullptr;
     const auto skinT0 = std::chrono::steady_clock::now();
     std::vector<RtSkinnedMeshUpload> uploads;
-    if (BuildNextRtDeformedVertices(*nextStageSnapshot_, draw_, animTime_,
+    if (BuildNextRtDeformedVertices(nextStageSnapshot_.get(), draw_, animTime_,
                                     gui_.blendOverrides(), &uploads)) {
       if (kRtTiming) {
         size_t verts = 0;
@@ -5109,13 +5153,13 @@ void App::updateNextDeformFrameIfNeeded() {
   // Renderer uploads go through postGpu() so they run on the render thread when
   // it owns the context (threaded path); inline otherwise. See the note in
   // updateGpuSkinningFrameIfNeeded.
-  if (hasSkin && BuildNextSkinningFrame(*nextStageSnapshot_, &draw_,
+  if (hasSkin && BuildNextSkinningFrame(nextStageSnapshot_.get(), &draw_,
                                         animTime_, &skinFrame_)) {
     postGpu([this, sf = skinFrame_]() { renderer_->uploadSkinningFrame(sf); });
   }
   if (hasNextMorph_) {
     std::vector<std::pair<int, std::vector<float>>> coeffs;
-    BuildNextMorphWeights(*nextStageSnapshot_, draw_, animTime_,
+    BuildNextMorphWeights(nextStageSnapshot_.get(), draw_, animTime_,
                           gui_.blendOverrides(), &coeffs);
     postGpu([this, mc = std::move(coeffs)]() {
       for (const auto& c : mc) renderer_->updateMorphWeights(c.first, c.second);
@@ -5234,7 +5278,7 @@ bool App::poseNextDrawForTracer(double time) {
     if (i < draw_.meshes.size()) draw_.meshes[i].vertices = kv.second;
   }
   std::vector<RtSkinnedMeshUpload> uploads;
-  if (!BuildNextRtDeformedVertices(*nextStageSnapshot_, draw_, time,
+  if (!BuildNextRtDeformedVertices(nextStageSnapshot_.get(), draw_, time,
                                    gui_.blendOverrides(), &uploads)) {
     return false;
   }
@@ -6051,7 +6095,7 @@ bool App::renderHipViewport() {
       animTime_ != nextTracerPosedTime_) {
     if (nextStageSnapshot_) {
       if (sceneIsNextDeformable()) restoreNextDrawRestPose();
-      UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_, animTime_);
+      UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_, animTime_);
       if (sceneIsNextDeformable()) poseNextDrawForTracer(animTime_);
       std::string e;
       const float dispScale = gui_.displacementScale();
@@ -6162,7 +6206,7 @@ bool App::renderHipViewport() {
   if (pathTrace_.enabled && cameraShutter_.enabled() && hipSceneDynamic &&
       hipCameraSample.time != nextTracerPosedTime_ && nextStageSnapshot_) {
     if (sceneIsNextDeformable()) restoreNextDrawRestPose();
-    UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_,
+    UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_,
                                  hipCameraSample.time);
     if (sceneIsNextDeformable()) poseNextDrawForTracer(hipCameraSample.time);
     std::string refitError;
@@ -6374,7 +6418,7 @@ bool App::renderCudaViewport() {
       animTime_ != nextTracerPosedTime_) {
     if (nextStageSnapshot_) {
       if (sceneIsNextDeformable()) restoreNextDrawRestPose();
-      UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_, animTime_);
+      UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_, animTime_);
       if (sceneIsNextDeformable()) poseNextDrawForTracer(animTime_);
       std::string e;
       const float dispScale = gui_.displacementScale();
@@ -6475,7 +6519,7 @@ bool App::renderCudaViewport() {
   if (pathTrace_.enabled && cameraShutter_.enabled() && cudaSceneDynamic &&
       cudaCameraSample.time != nextTracerPosedTime_ && nextStageSnapshot_) {
     if (sceneIsNextDeformable()) restoreNextDrawRestPose();
-    UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_,
+    UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_,
                                  cudaCameraSample.time);
     if (sceneIsNextDeformable()) poseNextDrawForTracer(cudaCameraSample.time);
     std::string refitError;
@@ -7243,7 +7287,7 @@ int App::run(const std::string& initialFile, int maxFrames,
                       !screenshot.empty();
   // Windowed --hip: the HIP tracer drives the viewport per frame (build once,
   // retrace on the orbit camera). Skip the raster scene upload (which would stall
-  // on huge instanced scenes like Moana Island) and render single-threaded so the
+  // on huge instanced scenes like Island) and render single-threaded so the
   // HIP launch + the colorImg_ upload happen on one thread.
   hipInteractive_ = hipRt_ && !headless_;
   // Windowed --cuda: same shape as --hip above, driven by CudaRayTracer.
@@ -7487,9 +7531,12 @@ int App::run(const std::string& initialFile, int maxFrames,
     applyDomeLightRequest(request);
     gui_.setDomeRequestState(request);
   }
-  gui_.setNextStage(nextStageSnapshot_.get());
-  gui_.setFacialControls(nextStageSnapshot_ ? ReadVcharControls(*nextStageSnapshot_)
-                                             : ReadVcharControls(loaded_.stage));
+  gui_.setNextStage(nextStageSnapshot_);
+  if (nextStageSnapshot_) {
+    gui_.setFacialControls(ReadVcharControls(nextStageSnapshot_.get()));
+  } else {
+    gui_.setFacialControls(ReadVcharControls(loaded_.stage));
+  }
   gui_.setDeferredPayloadPaths({});
   gui_.setBudget(&loadCtrl_);
   gui_.setLoadOptions(&loadOpts_);
@@ -8374,7 +8421,7 @@ int App::run(const std::string& initialFile, int maxFrames,
             NextCameraPose eyePose;
             const bool havePose =
                 useNextLoader_ && nextStageSnapshot_
-                    ? FindNextCamera(*nextStageSnapshot_, eyeName, animTime_,
+                    ? FindNextCamera(nextStageSnapshot_.get(), eyeName, animTime_,
                                      &eyePose)
                     : (loaded_.ok &&
                        FindLegacyCameraAtTime(loaded_.stage, eyeName, animTime_,
@@ -8666,9 +8713,9 @@ int App::run(const std::string& initialFile, int maxFrames,
       std::set<std::string> add(payloadReqs.begin(), payloadReqs.end());
       if (loadAllPayloads) {
         if (useNextLoader_ && nextSession_) {
-          for (const lightusd::next::Path& path :
+          for (const std::string& path :
                nextSession_->GetDeferredPayloadPaths()) {
-            add.insert(path.str());
+            add.insert(path);
           }
         } else {
           for (const auto& d : loaded_.comp.deferred) add.insert(d.primPath);
@@ -8871,7 +8918,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     const double cudaFirstTime = cudaMotion.sampleTime(0);
     if (nextStageSnapshot_) {
       restoreNextDrawRestPose();
-      UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_, cudaFirstTime);
+      UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_, cudaFirstTime);
       poseNextDrawForTracer(cudaFirstTime);
     }
     ensureRtTexturePayloads();  // raster frames may have released them
@@ -8947,7 +8994,7 @@ int App::run(const std::string& initialFile, int maxFrames,
         const double sampleTime = cudaMotion.sampleTime(sampleIndex);
         if (sampleIndex > 0) {
           restoreNextDrawRestPose();
-          UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_, sampleTime);
+          UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_, sampleTime);
           poseNextDrawForTracer(sampleTime);
           if (!buildCudaScene()) {
             LOGW("CUDA ray tracing build failed at shutter time %.6f: %s",
@@ -9090,7 +9137,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     const double hipFirstTime = hipMotion.sampleTime(0);
     if (nextStageSnapshot_) {
       restoreNextDrawRestPose();
-      UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_, hipFirstTime);
+      UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_, hipFirstTime);
       poseNextDrawForTracer(hipFirstTime);
     }
     ensureRtTexturePayloads();         // as CUDA above
@@ -9154,7 +9201,7 @@ int App::run(const std::string& initialFile, int maxFrames,
         const double sampleTime = hipMotion.sampleTime(sampleIndex);
         if (sampleIndex > 0) {
           restoreNextDrawRestPose();
-          UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_, sampleTime);
+          UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_, sampleTime);
           poseNextDrawForTracer(sampleTime);
           if (!hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
                                 gui_.displacementScale(), nullptr, false,
@@ -9332,7 +9379,7 @@ int App::run(const std::string& initialFile, int maxFrames,
         const double sampleTime = cpuMotion.sampleTime(sampleIndex);
         if (nextStageSnapshot_) {
           restoreNextDrawRestPose();
-          UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_, sampleTime);
+          UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_, sampleTime);
           poseNextDrawForTracer(sampleTime);
         }
         OrbitCamera sampleCamera = camera_;
@@ -9490,7 +9537,7 @@ int App::run(const std::string& initialFile, int maxFrames,
         NextCameraPose eyePose;
         const bool havePose =
             useNextLoader_ && nextStageSnapshot_
-                ? FindNextCamera(*nextStageSnapshot_, eyeName, animTime_,
+                ? FindNextCamera(nextStageSnapshot_.get(), eyeName, animTime_,
                                  &eyePose)
                 : (loaded_.ok &&
                    FindLegacyCameraAtTime(loaded_.stage, eyeName, animTime_,

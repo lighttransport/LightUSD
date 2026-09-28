@@ -123,6 +123,8 @@ class Cache {
   /// borrowed reference could dangle if a concurrent compose appended to the
   /// log under LIGHTUSD_NEXT_FINE_LOCKS.
   std::vector<CompositionIssue> GetCompositionIssues() const;
+  size_t GetCompositionIssueCount() const;
+  bool GetCompositionIssue(size_t index, CompositionIssue* out) const;
 
   /// Drop all accumulated composition issues.
   void ClearCompositionIssues();
@@ -291,6 +293,11 @@ class Cache {
   std::unique_ptr<Impl> impl_;
 };
 
+struct CompositionReport {
+  std::vector<std::string> layer_dependencies;
+  std::vector<Cache::CompositionIssue> issues;
+};
+
 // --- one-call composition helpers ------------------------------------------
 
 /// Load a root layer from `filename`, compose it (sublayers + references +
@@ -308,7 +315,8 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
                            const std::string &root_identifier = "",
                            const CompositionOptions &options = {},
                            std::string *warn = nullptr,
-                           std::string *err = nullptr);
+                           std::string *err = nullptr,
+                           CompositionReport *report = nullptr);
 
 }  // namespace pcp
 }  // namespace next

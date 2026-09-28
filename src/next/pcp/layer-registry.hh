@@ -45,6 +45,9 @@ struct LayerLoadOptions {
   /// USDA parser options applied to each external USDA layer.
   ParseOptions usda_parse_options = {};
 
+  /// Optional parser progress callback, also forwarded to crate loads.
+  std::function<bool(const char*, size_t, size_t)> progress_callback;
+
   /// USDA parser worker-thread hint (0 = auto/default, 1 = serial, >1 = fixed).
   int parse_num_threads = 0;
 };

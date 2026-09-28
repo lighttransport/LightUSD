@@ -4,6 +4,7 @@
 // LightUSD Next - UsdPhysics Applied API Schema Implementation
 
 #include "physics-api.hh"
+#include "../layer/prim-spec.hh"
 #include <cstring>
 
 namespace lightusd {

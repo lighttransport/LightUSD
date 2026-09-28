@@ -38,6 +38,7 @@ private:
   std::vector<ParseError> errors_;
   std::vector<std::string> warnings_;
   std::shared_ptr<LazyArraySource> source_;
+  size_t parse_length_ = 0;
 
   // Parsing state
   std::unique_ptr<Lexer> lexer_;
@@ -77,6 +78,7 @@ private:
 
   void AddError(const std::string& message);
   void AddWarning(const std::string& message);
+  bool ReportProgress(const char* phase, size_t current, size_t total);
 
   // Token helpers
   bool Match(TokenType type);

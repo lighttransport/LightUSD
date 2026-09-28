@@ -5,7 +5,7 @@
 // from the catalog/orchestration TU: streaming callers use these without
 // compiling material, hierarchy, or full scene conversion machinery.
 
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
 #include "render-extract.hh"
 #include "value-types.hh"
 
@@ -127,7 +127,7 @@ bool FillExtentProxyMesh(const UsdPrim& prim, double time, RenderMesh* out) {
 
 }  // namespace
 
-bool RenderSceneConverter::ConvertExtentProxy(const UsdPrim& prim,
+bool RenderSceneConverter::Impl::ConvertExtentProxy(const UsdPrim& prim,
                                               RenderMesh* out) {
   if (!FillExtentProxyMesh(prim, config_.time_code, out)) return false;
   if (config_.mesh.triangulate && !TriangulateMesh(out)) return false;
@@ -137,7 +137,7 @@ bool RenderSceneConverter::ConvertExtentProxy(const UsdPrim& prim,
   return !out->has_alloc_failure();
 }
 
-bool RenderSceneConverter::ConvertBoundsProxy(const UsdPrim& prim,
+bool RenderSceneConverter::Impl::ConvertBoundsProxy(const UsdPrim& prim,
                                               const Float3& minimum,
                                               const Float3& maximum,
                                               RenderMesh* out) {

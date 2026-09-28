@@ -1,15 +1,15 @@
 # USD to GLB
 
-This maintained example converts a composed next Stage through Tydra-next into
-a self-contained glTF 2.0 binary:
+This maintained example loads and converts USD through the public C++17 facade
+over LightUSD's C/POD API, then writes a self-contained glTF 2.0 binary:
 
 ```sh
 ./build_ninja/usd_to_gltf input.usdz output.glb --report losses.json
 ./build_ninja/usd_to_gltf input.usda output.glb --strict
 ```
 
-Built with `LIGHTUSD_BUILD_EXAMPLES=ON`. The library entry is
-`tydra/next/gltf-export.hh`: `ExportGLB(RenderScene, GltfExportOptions)`.
+Built with `LIGHTUSD_BUILD_EXAMPLES=ON`. The public library entry is
+`lightusd_render_export_glb` (or `lightusd::api::ExportGLB`).
 The command writes GLB only. `--strict` refuses output if conversion reports a
 loss; otherwise losses appear on stderr, in the optional JSON report, and in
 `extras.lightusdConversionLosses` (exporter losses) inside the GLB.

@@ -13,6 +13,9 @@
 #include <string>
 #include <utility>
 #include <vector>
+#if defined(__unix__) || defined(__APPLE__) || defined(__linux__)
+#include <unistd.h>
+#endif
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include <atomic>
 #include <thread>
@@ -25,20 +28,37 @@
 #include "next/crate/crate-format.hh"
 #include "next/crate/lazy-array.hh"
 #include "next/prim/path.hh"
-#include "next/prim/attribute.hh"
-#include "next/prim/prim.hh"
 #include "next/parser/lexer.hh"
 #include "next/parser/value-parser.hh"
 #include "next/parser/ascii-parser.hh"
+#include "next/load-usd.hh"
 #include "next/stage/stage.hh"
 #include "next/reader/usda-reader.hh"
 #include "next/schema/physics-api.hh"
 #include "next/schema/physics-joint.hh"
-#include "next/lightusd-next.hh"
+#include "next/schema/physics-scene.hh"
+#include "next/writer/usdc-writer.hh"
 
 using namespace lightusd::next;
 
 namespace {
+
+static const std::string& NextTestScratchDirectory() {
+  static const std::string directory = [] {
+#if defined(__unix__) || defined(__APPLE__) || defined(__linux__)
+    char pattern[] = "/tmp/lightusd-next-unit-XXXXXX";
+    char* created = ::mkdtemp(pattern);
+    return created ? std::string(created) : std::string("/tmp");
+#else
+    return std::string("/tmp");
+#endif
+  }();
+  return directory;
+}
+
+static std::string NextTestScratchPath(const char* name) {
+  return NextTestScratchDirectory() + "/" + name;
+}
 
 #if !defined(LIGHTUSD_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
     !defined(__wasi__) &&                                             \
@@ -501,34 +521,25 @@ void test_path() {
 }
 
 void test_prim() {
-  std::cout << "Testing Prim..." << std::endl;
-
-  Prim prim("Cube", "Mesh");
-  assert(prim.name() == "Cube");
-  assert(prim.type_name() == "Mesh");
-  assert(prim.specifier() == Specifier::Def);
-
-  // Test attributes
-  Attribute attr("points", TypeId::Float3);
-  attr.set_default(Value::MakeFloat3(0, 0, 0));
-  prim.set_attribute(std::move(attr));
-
-  assert(prim.has_attribute("points"));
-  const Attribute* a = prim.get_attribute("points");
-  assert(a != nullptr);
-  assert(a->type_id() == TypeId::Float3);
-
-  // Test children
-  Prim child("SubMesh", "Mesh");
-  prim.add_child(std::move(child));
-  assert(prim.child_count() == 1);
-  assert(prim.find_child("SubMesh") != nullptr);
-
-  // Test metadata
-  prim.set_metadata("purpose", Value::MakeToken("render"));
-  assert(prim.has_metadata("purpose"));
-
-  std::cout << "  Prim tests passed!" << std::endl;
+  std::cout << "Testing canonical PrimSpec authoring..." << std::endl;
+  Layer layer;
+  const uint32_t cube = layer.define_prim_at_path("/Cube", "Mesh", PrimSpecifier::Def);
+  assert(cube != UINT32_MAX);
+  PrimSpec* prim = layer.prim(cube);
+  assert(prim->name() == "Cube");
+  assert(prim->type_name() == "Mesh");
+  assert(prim->specifier() == PrimSpecifier::Def);
+  prim->upsert_property("points", Value::MakeFloat3(0, 0, 0));
+  const Value* points = prim->property_value("points");
+  assert(points && points->type_id() == TypeId::Float3);
+  prim->meta().customData() = Value::MakeDictionary();
+  prim->meta().customData().as_dictionary()->set("purpose", Value::MakeToken("render"));
+  assert(prim->meta().customData().as_dictionary()->find("purpose"));
+  const uint32_t child = layer.define_prim_at_path("/Cube/SubMesh", "Mesh", PrimSpecifier::Def);
+  assert(child != UINT32_MAX);
+  assert(layer.prim(cube)->child_indices().size() == 1);
+  assert(layer.prim(cube)->child_indices()[0] == child);
+  std::cout << "  PrimSpec tests passed!" << std::endl;
 }
 
 // ============================================================
@@ -1276,6 +1287,18 @@ def Mesh "M" {
 )";
   }
 
+  {
+    StageSession per_prim;
+    assert(per_prim.OpenFile(path));
+    StageSnapshot retained = per_prim.GetSnapshot();
+    const UsdPrim mesh = retained->GetPrimAtPath("/M");
+    const auto released = per_prim.ReleaseStaticGeometryArraysForPrim(mesh, 1);
+    assert(released.property_count == 3);
+    assert(retained->GetPrimAtPath("/M").GetPropertyValue("points") != nullptr);
+    assert(per_prim.GetSnapshot()->GetPrimAtPath("/M").GetPropertyValue("points") == nullptr);
+    assert(per_prim.ReleaseStaticGeometryArraysForPrim(mesh, 1).property_count == 0);
+  }
+
   StageSession session;
   assert(session.OpenFile(path));
   assert(session.IsComposed());
@@ -1517,8 +1540,8 @@ void test_stage_session_payloads_and_cancel() {
 void test_stage_session_preview_and_dependencies() {
   std::cout << "Testing StageSession preview checkpoint/dependencies..."
             << std::endl;
-  const char* root_path = "/tmp/lightusd_next_preview_root.usda";
-  const char* sub_path = "/tmp/lightusd_next_preview_sub.usda";
+  const std::string root_path = NextTestScratchPath("preview_root.usda");
+  const std::string sub_path = NextTestScratchPath("preview_sub.usda");
   {
     std::ofstream ofs(sub_path);
     ofs << R"(#usda 1.0
@@ -1532,7 +1555,7 @@ def Mesh "FromSub" {
   }
   {
     std::ofstream ofs(root_path);
-    ofs << "#usda 1.0\n( subLayers = [@lightusd_next_preview_sub.usda@] )\n"
+    ofs << "#usda 1.0\n( subLayers = [@./preview_sub.usda@] )\n"
            "def Xform \"Root\" { def Scope \"Child\" {} }\n";
   }
 
@@ -1596,8 +1619,8 @@ def Mesh "FromSub" {
   session.ReleaseCompositionCache();
   assert(session.GetLayerDependencies() == dependencies);
 
-  std::remove(root_path);
-  std::remove(sub_path);
+  std::remove(root_path.c_str());
+  std::remove(sub_path.c_str());
   std::cout << "  StageSession preview/dependency tests passed!" << std::endl;
 }
 

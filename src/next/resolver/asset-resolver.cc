@@ -27,6 +27,42 @@
 namespace lightusd {
 namespace next {
 
+bool AssetPayloadBudget::SetLimit(uint64_t limit_bytes) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (limit_bytes < used_bytes_) return false;
+  limit_bytes_ = limit_bytes;
+  return true;
+}
+
+std::shared_ptr<void> AssetPayloadBudget::Reserve(uint64_t bytes) {
+  if (bytes == 0) return {};
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (bytes > limit_bytes_ - std::min(used_bytes_, limit_bytes_)) return {};
+    used_bytes_ += bytes;
+  }
+  const auto owner = shared_from_this();
+  return std::shared_ptr<void>(new uint8_t{0}, [owner, bytes](void* token) {
+    delete static_cast<uint8_t*>(token);
+    owner->Release(bytes);
+  });
+}
+
+uint64_t AssetPayloadBudget::UsedBytes() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return used_bytes_;
+}
+
+uint64_t AssetPayloadBudget::LimitBytes() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return limit_bytes_;
+}
+
+void AssetPayloadBudget::Release(uint64_t bytes) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  used_bytes_ = bytes > used_bytes_ ? 0 : used_bytes_ - bytes;
+}
+
 namespace {
 
 // Global default resolver
@@ -286,19 +322,38 @@ bool AssetResolver::HasScheme(const std::string& scheme) const {
 
 std::string AssetResolver::RegisterMemoryAsset(const std::string& identifier,
                                                std::vector<uint8_t> bytes) {
+  return RegisterMemoryAssetView(identifier,
+      std::make_shared<const std::vector<uint8_t>>(std::move(bytes)));
+}
+
+std::string AssetResolver::RegisterMemoryAssetView(
+    const std::string& identifier,
+    std::shared_ptr<const std::vector<uint8_t>> bytes) {
+  if (!bytes) return {};
   std::lock_guard<std::mutex> lock(registry_mutex_);
   std::string key = identifier;
   if (key.empty()) {
     key = "usd-anon:" + std::to_string(next_anonymous_id_++);
   }
-  memory_assets_[key] =
-      std::make_shared<const std::vector<uint8_t>>(std::move(bytes));
+  memory_assets_[key] = std::move(bytes);
   return key;
 }
 
 bool AssetResolver::UnregisterMemoryAsset(const std::string& identifier) {
   std::lock_guard<std::mutex> lock(registry_mutex_);
   return memory_assets_.erase(identifier) != 0;
+}
+
+void AssetResolver::ClearMemoryAssets() {
+  std::lock_guard<std::mutex> lock(registry_mutex_);
+  memory_assets_.clear();
+}
+
+std::shared_ptr<const std::vector<uint8_t>> AssetResolver::GetMemoryAssetView(
+    const std::string& identifier) const {
+  std::lock_guard<std::mutex> lock(registry_mutex_);
+  const auto it = memory_assets_.find(identifier);
+  return it == memory_assets_.end() ? nullptr : it->second;
 }
 
 bool AssetResolver::ReadAsset(const std::string& resolved_path,

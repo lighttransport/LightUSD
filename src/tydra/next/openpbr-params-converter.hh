@@ -77,9 +77,13 @@ inline bool BuildRealtimePbrMaterial(
     CopyShaderParam3ToOpenPBR(s.coat_color, p.coatColor);
     p.coatRoughness = s.coat_roughness.value.x;
     p.coatIor = s.coat_ior.value.x > 0.0f ? s.coat_ior.value.x : 1.5f;
-    p.sheenWeight = s.sheen_weight.value.x;
-    CopyShaderParam3ToOpenPBR(s.sheen_color, p.sheenColor);
-    p.sheenRoughness = s.sheen_roughness.value.x;
+    const ShaderParam& sheen_weight = s.fuzz_authored ? s.fuzz_weight : s.sheen_weight;
+    const ShaderParam& sheen_color = s.fuzz_authored ? s.fuzz_color : s.sheen_color;
+    const ShaderParam& sheen_roughness =
+        s.fuzz_authored ? s.fuzz_roughness : s.sheen_roughness;
+    p.sheenWeight = sheen_weight.value.x;
+    CopyShaderParam3ToOpenPBR(sheen_color, p.sheenColor);
+    p.sheenRoughness = sheen_roughness.value.x;
     p.thinFilmWeight = s.thin_film_weight.value.x;
     p.thinFilmThicknessNm = s.thin_film_thickness.value.x;
     p.thinFilmIor = s.thin_film_ior.value.x;
@@ -95,8 +99,8 @@ inline bool BuildRealtimePbrMaterial(
         &s.transmission_depth, &s.subsurface_weight, &s.subsurface_color,
         &s.subsurface_radius, &s.subsurface_scale, &s.coat_weight,
         &s.coat_color, &s.coat_roughness, &s.coat_ior, &s.sheen_weight,
-        &s.sheen_color,
-        &s.sheen_roughness, &s.thin_film_weight, &s.thin_film_thickness,
+        &s.sheen_color, &s.sheen_roughness, &s.fuzz_weight, &s.fuzz_color,
+        &s.fuzz_roughness, &s.thin_film_weight, &s.thin_film_thickness,
         &s.thin_film_ior, &s.emission_luminance, &s.emission_color,
         &s.opacity, &s.thin_walled, &s.normal, &s.coat_normal,
         &s.displacement});

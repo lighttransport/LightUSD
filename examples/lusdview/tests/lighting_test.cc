@@ -76,14 +76,21 @@ int main() {
     }
     std::string presetError;
     lusdview::DrawLightCPU furnace;
-    if (!lusdview::BuildWhiteFurnaceDome(false, &furnace, &presetError) ||
-        !furnace.ibl.valid || furnace.ibl.envCube.empty() ||
-        furnace.ibl.envLatlongWidth != 32 ||
-        furnace.ibl.envLatlongHeight != 16 ||
-        furnace.ibl.envLatlongRgbe.size() != 32u * 16u * 4u ||
-        furnace.ibl.envLatlongRgbe[0] < 127u ||
-        furnace.ibl.envLatlongRgbe[3] != 129u) {
-      std::fprintf(stderr, "white-furnace preset failed: %s\n",
+    if (lusdview::TexToolsAvailable()) {
+      if (!lusdview::BuildWhiteFurnaceDome(false, &furnace, &presetError) ||
+          !furnace.ibl.valid || furnace.ibl.envCube.empty() ||
+          furnace.ibl.envLatlongWidth != 32 ||
+          furnace.ibl.envLatlongHeight != 16 ||
+          furnace.ibl.envLatlongRgbe.size() != 32u * 16u * 4u ||
+          furnace.ibl.envLatlongRgbe[0] < 127u ||
+          furnace.ibl.envLatlongRgbe[3] != 129u) {
+        std::fprintf(stderr, "white-furnace preset failed: %s\n",
+                     presetError.c_str());
+        return 1;
+      }
+    } else if (lusdview::BuildWhiteFurnaceDome(false, &furnace, &presetError) ||
+               presetError != "environment-map tools are unavailable in this build") {
+      std::fprintf(stderr, "white-furnace optional-tool fallback failed: %s\n",
                    presetError.c_str());
       return 1;
     }

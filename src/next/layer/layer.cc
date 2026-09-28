@@ -12,6 +12,77 @@
 namespace lightusd {
 namespace next {
 
+void LayerMeta::FillAbsentStageMetaFrom(const LayerMeta& weaker) {
+    if (!rootPrimOrder_set &&
+        (weaker.rootPrimOrder_set || !weaker.rootPrimOrder.empty())) {
+      rootPrimOrder = weaker.rootPrimOrder;
+      rootPrimOrder_set = true;
+    }
+    if (!defaultPrim_set &&
+        (weaker.defaultPrim_set || !weaker.defaultPrim.empty())) {
+      defaultPrim = weaker.defaultPrim;
+      defaultPrim_set = true;
+    }
+    if (!doc_set && weaker.doc_set) {
+      doc = weaker.doc;
+      doc_set = true;
+    }
+    if (!owner_set && weaker.owner_set) {
+      owner = weaker.owner;
+      owner_set = true;
+    }
+    if (!comment_set && weaker.comment_set) {
+      comment = weaker.comment;
+      comment_set = true;
+    }
+    if (!playbackMode_set && weaker.playbackMode_set) {
+      playbackMode = weaker.playbackMode;
+      playbackMode_set = true;
+    }
+    if (!colorConfiguration_set && weaker.colorConfiguration_set) {
+      colorConfiguration = weaker.colorConfiguration;
+      colorConfiguration_set = true;
+    }
+    if (!colorManagementSystem_set && weaker.colorManagementSystem_set) {
+      colorManagementSystem = weaker.colorManagementSystem;
+      colorManagementSystem_set = true;
+    }
+    if (!renderSettingsPrimPath_set && weaker.renderSettingsPrimPath_set) {
+      renderSettingsPrimPath = weaker.renderSettingsPrimPath;
+      renderSettingsPrimPath_set = true;
+    }
+    if (!upAxis_set && weaker.upAxis_set) {
+      upAxis = weaker.upAxis;
+      upAxis_set = true;
+    }
+    if (!metersPerUnit_set && weaker.metersPerUnit_set) {
+      metersPerUnit = weaker.metersPerUnit;
+      metersPerUnit_set = true;
+    }
+    if (!timeCodesPerSecond_set && weaker.timeCodesPerSecond_set) {
+      timeCodesPerSecond = weaker.timeCodesPerSecond;
+      timeCodesPerSecond_set = true;
+    }
+    if (!framesPerSecond_set && weaker.framesPerSecond_set) {
+      framesPerSecond = weaker.framesPerSecond;
+      framesPerSecond_set = true;
+    }
+    if (!kilogramsPerUnit_set && weaker.kilogramsPerUnit_set) {
+      kilogramsPerUnit = weaker.kilogramsPerUnit;
+      kilogramsPerUnit_set = true;
+    }
+    if (!startTimeCode_set && weaker.startTimeCode_set) {
+      startTimeCode = weaker.startTimeCode;
+      startTimeCode_set = true;
+    }
+    if (!endTimeCode_set && weaker.endTimeCode_set) {
+      endTimeCode = weaker.endTimeCode;
+      endTimeCode_set = true;
+    }
+    MergeWeakerRawFields(&unknownMeta, weaker.unknownMeta);
+    MergeWeakerExtensionFields(&unknownFields, weaker.unknownFields);
+  }
+
 // ============================================================
 // Layer
 // ============================================================
@@ -325,34 +396,100 @@ std::vector<const PrimSpec*> Layer::children(uint32_t prim_index) const {
 }
 
 size_t Layer::memory_usage() const {
-  size_t size = sizeof(Layer);
+  size_t size = 0;
   auto add = [&size](size_t bytes) {
     size = safe::saturating_add(size, bytes);
   };
+  const auto add_strings = [&add](const std::vector<std::string>& strings) {
+    add(safe::saturating_mul(strings.capacity(), sizeof(std::string)));
+    for (const std::string& text : strings) add(text.capacity());
+  };
+  const auto add_value = [&add](const Value& value) {
+    add(value.dynamic_string_memory_usage());
+    if (value.is_array() && !value.is_lazy()) {
+      add(safe::saturating_mul(value.array_size(),
+                               GetTypeSize(value.type_id())));
+    }
+    if (!value.as_dictionary()) return;
+    std::vector<const Value*> pending{&value};
+    while (!pending.empty()) {
+      const Value* current = pending.back();
+      pending.pop_back();
+      if (current != &value && current->is_array() && !current->is_lazy()) {
+        add(safe::saturating_mul(current->array_size(),
+                                 GetTypeSize(current->type_id())));
+      }
+      if (const Dict* dict = current->as_dictionary()) {
+        for (const auto& entry : dict->entries()) pending.push_back(&entry.second);
+      }
+    }
+  };
+  std::vector<const Layer*> pending_layers{this};
+  std::unordered_set<const Layer*> visited_layers;
+  while (!pending_layers.empty()) {
+    const Layer* layer = pending_layers.back();
+    pending_layers.pop_back();
+    if (!layer || !visited_layers.insert(layer).second) continue;
+    add(sizeof(Layer));
 
-  // Prims vector
-  add(safe::saturating_mul(prims_.capacity(), sizeof(PrimSpec)));
-  for (const auto& prim : prims_) {
-    const size_t prim_bytes = prim.memory_usage();
-    add(prim_bytes >= sizeof(PrimSpec) ? prim_bytes - sizeof(PrimSpec) : 0);
-  }
+    // Each shared variant content Layer is charged once, even if multiple
+    // options reference it or an authored graph points back to an ancestor.
+    add(safe::saturating_mul(layer->prims_.capacity(), sizeof(PrimSpec)));
+    for (const PrimSpec& prim : layer->prims_) {
+      const size_t prim_bytes = prim.memory_usage();
+      add(prim_bytes >= sizeof(PrimSpec) ? prim_bytes - sizeof(PrimSpec) : 0);
+      std::vector<const VariantSetData*> pending_sets;
+      for (const VariantSetData& set : prim.meta().variantSets())
+        pending_sets.push_back(&set);
+      while (!pending_sets.empty()) {
+        const VariantSetData* set = pending_sets.back();
+        pending_sets.pop_back();
+        for (const VariantData& option : set->variants) {
+          if (option.content) pending_layers.push_back(option.content.get());
+          for (const VariantSetData& nested : option.variantSets)
+            pending_sets.push_back(&nested);
+        }
+      }
+    }
 
-  // Root indices
-  add(safe::saturating_mul(root_indices_.capacity(), sizeof(uint32_t)));
+    add(safe::saturating_mul(layer->root_indices_.capacity(), sizeof(uint32_t)));
+    for (const auto& kv : layer->path_to_index_) {
+      add(kv.first.capacity());
+      add(sizeof(uint32_t) + sizeof(void*) * 2);  // Rough hash map overhead
+    }
 
-  // Path index map (estimate)
-  for (const auto& kv : path_to_index_) {
-    add(kv.first.capacity());
-    add(sizeof(uint32_t) + sizeof(void*) * 2);  // Rough hash map overhead
-  }
-
-  // Metadata
-  add(meta_.defaultPrim.capacity());
-  add(meta_.upAxis.capacity());
-  add(meta_.doc.capacity());
-  add(meta_.comment.capacity());
-  for (const auto& s : meta_.subLayers) {
-    add(s.capacity());
+    // Metadata. JSON import/export budgets must include retained dictionaries,
+    // numeric arrays, ordering, and decodable extension payloads.
+    const LayerMeta& meta = layer->meta_;
+    for (const std::string* text : {&meta.defaultPrim, &meta.upAxis,
+         &meta.doc, &meta.comment, &meta.owner, &meta.playbackMode,
+         &meta.colorConfiguration, &meta.colorManagementSystem,
+         &meta.renderSettingsPrimPath}) add(text->capacity());
+    add_strings(meta.rootPrimOrder);
+    add_strings(meta.subLayers);
+    add(safe::saturating_mul(meta.subLayerOffsets.capacity(),
+                             sizeof(std::pair<double, double>)));
+    add(safe::saturating_mul(meta.relocates.capacity(),
+                             sizeof(std::pair<std::string, std::string>)));
+    for (const auto& relocate : meta.relocates) {
+      add(relocate.first.capacity());
+      add(relocate.second.capacity());
+    }
+    add_value(meta.customLayerData);
+    add_value(meta.expressionVariables);
+    add(safe::saturating_mul(meta.unknownMeta.capacity(),
+                             sizeof(std::pair<std::string, std::string>)));
+    for (const auto& entry : meta.unknownMeta) {
+      add(entry.first.capacity());
+      add(entry.second.capacity());
+    }
+    add(safe::saturating_mul(meta.unknownFields.capacity(),
+                             sizeof(TypedExtensionField)));
+    for (const TypedExtensionField& field : meta.unknownFields) {
+      add(field.name.capacity());
+      add(field.unregistered_source.capacity());
+      add_value(field.value);
+    }
   }
 
   return size;

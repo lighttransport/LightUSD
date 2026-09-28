@@ -3,7 +3,7 @@
 //
 // Tydra Next - Mesh triangulation and normals
 
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
 #include "safe-arithmetic.hh"
 #include <cstring>
 #include "external/mapbox/earcut/earcut.hpp"
@@ -30,7 +30,7 @@ size_t SaturatingMul(size_t a, size_t b) {
 }
 }  // namespace
 
-bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
+bool RenderSceneConverter::Impl::TriangulateMesh(RenderMesh* mesh) {
   if (mesh->face_vertex_counts.empty()) return false;
 
   // Triangulation roughly doubles the index storage (triangulated_indices +
@@ -337,7 +337,7 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   return true;
 }
 
-bool RenderSceneConverter::TriangulateFan(
+bool RenderSceneConverter::Impl::TriangulateFan(
     const uint32_t* face_vertex_counts, size_t face_count,
     const uint32_t* indices, size_t index_count,
     UInt32Chunked* out_indices) {
@@ -398,7 +398,7 @@ bool RenderSceneConverter::TriangulateFan(
 // Normal computation
 //
 
-bool RenderSceneConverter::ComputeVertexNormals(RenderMesh* mesh) {
+bool RenderSceneConverter::Impl::ComputeVertexNormals(RenderMesh* mesh) {
   if (mesh->points.empty() || !mesh->is_triangulated) {
     // Need triangulated mesh for normal computation
     if (!mesh->is_triangulated) {

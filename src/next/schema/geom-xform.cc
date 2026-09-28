@@ -4,6 +4,7 @@
 // LightUSD Next - UsdGeomXform Schema Implementation
 
 #include "geom-xform.hh"
+#include "../layer/property-index.hh"
 
 #include <algorithm>
 #include <cstring>

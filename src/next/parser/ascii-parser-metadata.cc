@@ -4,6 +4,8 @@
 // LightUSD Next - USDA ASCII parser stage metadata.
 
 #include "ascii-parser-internal.hh"
+
+#include <algorithm>
 #include "value-parser.hh"
 
 namespace lightusd {
@@ -153,6 +155,18 @@ bool AsciiParser::Impl::ParseStageMetadata() {
           layer_->meta().owner = value;
           layer_->meta().owner_set = true;
         }
+      } else if (key == "autoPlay") {
+        ParseResult r = ParseValue(*lexer_, TypeId::Bool);
+        if (r.success && r.value.as_bool()) {
+          layer_->meta().autoPlay = *r.value.as_bool();
+          layer_->meta().autoPlay_set = true;
+        }
+      } else if (key == "playbackMode") {
+        std::string value;
+        if (lexer_->expect(TokenType::String, value)) {
+          layer_->meta().playbackMode = value == "loop" ? "loop" : "none";
+          layer_->meta().playbackMode_set = true;
+        }
       } else if (key == "customLayerData") {
         ParseResult r = ParseDict(*lexer_);
         if (r.success) {
@@ -223,10 +237,10 @@ bool AsciiParser::Impl::ParseStageMetadata() {
           Match(TokenType::CloseBracket);
         }
       } else {
-        if (options_.strict_aousd_conformance) {
-          AddError("Unsupported stage metadata in strict AOUSD mode: " + key);
-          return false;
-        }
+        // AOUSD Core's layer grammar accepts any metadata key (the spec's own
+        // file_formats baseline keeps `foo = bar` / `baz = None`, and elective
+        // fields such as framePrecision). Strict mode therefore preserves
+        // unknown stage metadata losslessly, like prim/property metadata.
         // Generic metadata may be a dictionary/list: consume it structurally
         // but PRESERVE the raw source text so the writer re-emits it verbatim
         // (uniform losslessness with prim/property metadata).

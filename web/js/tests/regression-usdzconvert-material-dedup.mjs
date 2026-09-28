@@ -56,7 +56,9 @@ async function test(name, fn) {
 }
 
 const wasm64 = process.env.LIGHTUSD_WASM64 === '1';
-const glue = wasm64 ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js';
+// Combined product: legacy LightUSDLoaderNative plus the next core.
+const glue = wasm64 ? '../src/lightusd/lightusd_combined_64.js'
+                    : '../src/lightusd/lightusd_combined.js';
 const native = await loadWasm(() => import(new URL(glue, import.meta.url).href));
 const nextGlue = wasm64 ? '../src/lightusd/lightusd_next_64.js' : '../src/lightusd/lightusd_next.js';
 const nextNative = await loadWasm(

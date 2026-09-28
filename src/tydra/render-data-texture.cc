@@ -225,6 +225,8 @@ namespace {
 bool UDIMDecodeImageAsset(const std::string &assetPath,
                           const AssetResolutionResolver &assetResolver,
                           Image *out, std::string *warn, std::string *err) {
+#if !defined(__EMSCRIPTEN__)
+  // WASM assets belong to the configured resolver (the web product has no FS).
   std::vector<uint8_t> direct_data;
   if (io::FileExists(assetPath)) {
     const size_t max_bytes = security_policy::GetMaxAssetReadBytes();
@@ -242,6 +244,8 @@ bool UDIMDecodeImageAsset(const std::string &assetPath,
     (*out) = result.value().image;
     return true;
   }
+
+#endif
 
   std::string sanitized = utils::SanitizeAssetPath(
       assetPath, assetResolver.get_allow_parent_relative_paths());
@@ -378,7 +382,10 @@ bool ExpandUDIMTiles(const std::string &udimAssetPath,
   tilesOut->clear();
   for (uint32_t id = kUDIMStart; id <= kUDIMEnd; id++) {
     const std::string tilePath = prefix + std::to_string(id) + suffix;
-    bool found = io::FileExists(tilePath);
+    bool found = false;
+#if !defined(__EMSCRIPTEN__)
+    found = io::FileExists(tilePath);
+#endif
     if (!found) {
       const std::string sanitized = utils::SanitizeAssetPath(
           tilePath, assetResolver.get_allow_parent_relative_paths());

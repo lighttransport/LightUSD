@@ -55,6 +55,15 @@ struct CrateWriteOptions {
   /// round-trippable crate at any thread count and is byte-identical across thread
   /// counts (the parallel build merges per-prim results in deterministic order).
   int num_threads = 1;
+
+  /// Maximum complete crate size in bytes (0 = unlimited). The writer stops
+  /// before growing the output buffer beyond this bound.
+  uint64_t max_file_size_bytes = 0;
+
+  /// Maximum estimated writer working set in bytes (0 = unlimited). This is
+  /// based on retained Layer data plus Crate table/index overhead; it is a
+  /// policy estimate, not an operating-system RSS limit.
+  uint64_t max_memory_bytes = 0;
 };
 
 /// Result of crate write operation

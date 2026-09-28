@@ -85,7 +85,10 @@ class Exporter {
     std::vector<uint8_t> data;
     std::string error;
     if (opt.resolver) {
-      if (!opt.resolver->ReadAsset(image.resolved_path, &data, &error)) { Loss(path, "unreadable texture: " + image.resolved_path); return -1; }
+      const std::string resolved = opt.asset_anchor.empty()
+          ? image.resolved_path
+          : opt.resolver->Resolve(image.resolved_path, opt.asset_anchor).resolved_path;
+      if (!opt.resolver->ReadAsset(resolved, &data, &error)) { Loss(path, "unreadable texture: " + image.resolved_path); return -1; }
     } else {
       std::ifstream in(image.resolved_path, std::ios::binary | std::ios::ate);
       const auto size = in.tellg();

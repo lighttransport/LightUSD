@@ -958,7 +958,9 @@ export class NextRenderSceneAdapter {
     }
 
     static _copyPoints(native, points, index) {
-        const copy = (desc, Type) => copyWasmArray(native, desc, Type);
+        const copy = (desc, Type) => desc instanceof Type
+            ? (desc.length ? markOwnedFloat32Array(new Float32Array(desc)) : null)
+            : copyWasmArray(native, desc, Type);
         return {
             index,
             name: points.name || `points_${index}`,
@@ -975,7 +977,9 @@ export class NextRenderSceneAdapter {
     }
 
     static _copyCurves(native, curves, index) {
-        const copy = (desc, Type) => copyWasmArray(native, desc, Type);
+        const copy = (desc, Type) => desc instanceof Type
+            ? (desc.length ? markOwnedFloat32Array(new Float32Array(desc)) : null)
+            : copyWasmArray(native, desc, Type);
         return {
             index,
             name: curves.name || `curves_${index}`,
@@ -988,9 +992,11 @@ export class NextRenderSceneAdapter {
             basis: curves.basis || 'bezier',
             wrap: curves.wrap || 'nonperiodic',
             isNurbs: !!curves.isNurbs,
+            isHermite: !!curves.isHermite,
             materialId: Number.isFinite(curves.materialId) ? curves.materialId : -1,
             widthsInterpolation: curves.widthsInterpolation || 'constant',
             colorsInterpolation: curves.colorsInterpolation || 'constant',
+            opacitiesInterpolation: curves.opacitiesInterpolation || 'constant',
             curveVertexCounts: Array.from(curves.curveVertexCounts || []),
             tessellatedVertexCounts: Array.from(curves.tessellatedVertexCounts || []),
             points: copy(curves.points, Float32Array),
@@ -999,6 +1005,8 @@ export class NextRenderSceneAdapter {
             tessellatedPoints: copy(curves.tessellatedPoints, Float32Array),
             tessellatedWidths: copy(curves.tessellatedWidths, Float32Array),
             tessellatedColors: copy(curves.tessellatedColors, Float32Array),
+            opacities: copy(curves.opacities, Float32Array),
+            tessellatedOpacities: copy(curves.tessellatedOpacities, Float32Array),
             hasBounds: !!curves.hasBounds,
             bboxMin: Array.isArray(curves.bboxMin) ? curves.bboxMin.slice(0, 3) : null,
             bboxMax: Array.isArray(curves.bboxMax) ? curves.bboxMax.slice(0, 3) : null

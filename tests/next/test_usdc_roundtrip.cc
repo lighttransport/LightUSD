@@ -5,6 +5,7 @@
 // Creates a stage with multiple schema types, writes to USDC,
 // and verifies the binary output by parsing TOC/sections.
 
+#include <algorithm>
 #include <iostream>
 #include <fstream>
 #include <cassert>
@@ -23,7 +24,9 @@
 #include "next/crate/crate-format.hh"
 #include "next/crate/crate-reader.hh"
 #include "next/crate/lazy-array.hh"
-#include "next/lightusd-next.hh"
+#include "next/load-usd.hh"
+#include "next/reader/usda-reader.hh"
+#include "next/reader/usdc-reader.hh"
 #include "next/writer/usdc-writer.hh"
 #include "next/writer/dtoa.hh"
 #include "next/parser/ascii-parser.hh"
@@ -480,6 +483,8 @@ void test_roundtrip_layer_metadata() {
   layer.meta().startTimeCode = 1.0;
   layer.meta().endTimeCode = 48.0;
   layer.meta().doc = "Test layer";
+  layer.meta().playbackMode = "loop";
+  layer.meta().playbackMode_set = true;
 
   LayerBuilder builder(layer);
   builder.begin_prim("Root", "Xform");
@@ -515,6 +520,13 @@ void test_roundtrip_layer_metadata() {
             << "  Paths: " << result.path_count
             << "  Specs: " << result.spec_count
             << "  Fields: " << result.field_count << "\n";
+
+  CrateReader reader;
+  CrateReadResult reloaded = reader.Read(buffer.data(), buffer.size());
+  assert(reloaded.success);
+  const Layer* reloaded_layer = reloaded.stage.GetRootLayer();
+  assert(reloaded_layer && reloaded_layer->meta().playbackMode_set &&
+         reloaded_layer->meta().playbackMode == "loop");
 
   std::cout << "  roundtrip layer metadata test passed!\n\n";
 }
@@ -1655,6 +1667,15 @@ def Scope "T" (
   const PrimSpec* sp = MustPrim(src, "/T");
   const PrimSpec* dp = MustPrim(dst, "/T");
 
+  // String-family arrays must be decoded by the crate reader, so the Layer
+  // JSON retained-memory estimate includes their expanded strings. A lazy
+  // string array could multiply a small index block into many large copies
+  // only after the export budget had already been checked.
+  for (const char* name : {"sa", "ta", "aa"}) {
+    const Value* value = dp->property_value(name);
+    assert(value && value->is_array() && !value->is_lazy());
+  }
+
   // Every authored default value round-trips exactly (Value equality
   // materializes lazy arrays, so this also exercises lazy decode).
   PropNameTable& names = GetPropNameTable();
@@ -1779,6 +1800,7 @@ def Xform "Zeta" (
     custom rel material:binding
     prepend rel plist = </Zeta/M2>
     delete rel plist = </Zeta/M1>
+    delete rel deleteOnly = </Zeta/M1>
     float a = 1
     float b.connect = None
     widget w = 5
@@ -1825,6 +1847,14 @@ def Xform "Alpha"
          dst->meta().subLayerOffsets[0].second == 2.0);
 
   const PrimSpec* z = MustPrim(dst, "/Zeta");
+  // A delete-only authored relationship remains enumerable even when it has
+  // no effective local targets.
+  {
+    const auto names = z->relationship_names();
+    assert(std::find(names.begin(), names.end(), "deleteOnly") != names.end());
+    const auto* delete_targets = z->relationship("deleteOnly");
+    assert(!delete_targets || delete_targets->empty());
+  }
   // Authored active=true / hidden=false round-trip via the authored flags.
   assert(z->meta().active && z->meta().active_authored);
   assert(!z->meta().hidden && z->meta().hidden_authored);

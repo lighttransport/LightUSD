@@ -13,6 +13,7 @@
 
 #include "next/stage/stage.hh"
 #include "next/types/value.hh"
+#include "next/eval/xform-eval.hh"
 
 namespace lightusd {
 namespace tydra {
@@ -129,16 +130,9 @@ std::string GetBoundSkeleton(const UsdPrim& prim);
 // Transform operations
 //
 
-// Compute local transform matrix from xformOps
-bool ComputeLocalTransform(const UsdPrim& prim, float* matrix16, double time = 0.0);
-bool ComputeLocalTransform(const UsdPrim& prim, double* matrix16, double time = 0.0);
-
-// Compute world transform (including all parent transforms)
-bool ComputeWorldTransform(const Stage& stage, const UsdPrim& prim, float* matrix16, double time = 0.0);
-bool ComputeWorldTransform(const Stage& stage, const UsdPrim& prim, double* matrix16, double time = 0.0);
-
-// Check if prim has resetXformStack
-bool HasResetXformStack(const UsdPrim& prim);
+using ::lightusd::next::ComputeLocalTransform;
+using ::lightusd::next::ComputeWorldTransform;
+using ::lightusd::next::HasResetXformStack;
 
 //
 // Hierarchy access

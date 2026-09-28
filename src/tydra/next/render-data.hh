@@ -180,6 +180,15 @@ struct alignas(64) Matrix4 {
   float operator()(int row, int col) const { return m[row * 4 + col]; }
 };
 
+// UsdSkel's bind/rest transforms are matrix4d authored data. Retain these as
+// doubles in RenderSkeleton so the public skeleton query does not silently
+// round them through the renderer's float-precision transform type.
+struct Matrix4d {
+  double m[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+
+  static Matrix4d Identity() { return Matrix4d(); }
+};
+
 //
 // Vertex Attribute
 //
@@ -244,6 +253,13 @@ struct VertexAttribute {
 // RenderMesh - GPU-ready mesh data
 //
 struct RenderMesh {
+  RenderMesh();
+  ~RenderMesh();
+  RenderMesh(const RenderMesh&);
+  RenderMesh& operator=(const RenderMesh&);
+  RenderMesh(RenderMesh&&) noexcept;
+  RenderMesh& operator=(RenderMesh&&) noexcept;
+
   std::string name;
   std::string prim_path;
   // True for an extent-derived low-cost stand-in emitted by a streaming sink
@@ -636,6 +652,7 @@ struct OpenPBRSurfaceShader {
   ShaderParam base_weight = {-1, {1, 0, 0, 0}};
   ShaderParam base_color = {-1, {0.8f, 0.8f, 0.8f, 1}};
   ShaderParam base_roughness = {-1, {0, 0, 0, 0}};
+  ShaderParam base_diffuse_roughness = {-1, {0, 0, 0, 0}};
   ShaderParam base_metalness = {-1, {0, 0, 0, 0}};
 
   // Specular
@@ -651,6 +668,8 @@ struct OpenPBRSurfaceShader {
   ShaderParam transmission_weight = {-1, {0, 0, 0, 0}};
   ShaderParam transmission_color = {-1, {1, 1, 1, 1}};
   ShaderParam transmission_depth = {-1, {0, 0, 0, 0}};
+  ShaderParam transmission_scatter = {-1, {0, 0, 0, 1}};
+  ShaderParam transmission_scatter_anisotropy = {-1, {0, 0, 0, 0}};
   ShaderParam transmission_dispersion = {-1, {0, 0, 0, 0}};
   ShaderParam transmission_dispersion_scale = {-1, {0, 0, 0, 0}};
 
@@ -659,12 +678,16 @@ struct OpenPBRSurfaceShader {
   ShaderParam subsurface_color = {-1, {0.8f, 0.8f, 0.8f, 1}};
   ShaderParam subsurface_radius = {-1, {1, 1, 1, 0}};
   ShaderParam subsurface_scale = {-1, {1, 0, 0, 0}};
+  ShaderParam subsurface_anisotropy = {-1, {0, 0, 0, 0}};
 
   // Coat
   ShaderParam coat_weight = {-1, {0, 0, 0, 0}};
   ShaderParam coat_color = {-1, {1, 1, 1, 1}};
   ShaderParam coat_roughness = {-1, {0, 0, 0, 0}};
+  ShaderParam coat_rotation = {-1, {0, 0, 0, 0}};
   ShaderParam coat_ior = {-1, {1.5f, 0, 0, 0}};
+  ShaderParam coat_affect_color = {-1, {0, 0, 0, 0}};
+  ShaderParam coat_affect_roughness = {-1, {0, 0, 0, 0}};
   ShaderParam coat_anisotropy = {-1, {0, 0, 0, 0}};
   ShaderParam coat_roughness_anisotropy = {-1, {0, 0, 0, 0}};
   // OpenPBR's independently authored coat-layer normal. Keep this separate
@@ -676,6 +699,10 @@ struct OpenPBRSurfaceShader {
   ShaderParam sheen_weight = {-1, {0, 0, 0, 0}};
   ShaderParam sheen_color = {-1, {1, 1, 1, 1}};
   ShaderParam sheen_roughness = {-1, {0.3f, 0, 0, 0}};
+  ShaderParam fuzz_weight = {-1, {0, 0, 0, 0}};
+  ShaderParam fuzz_color = {-1, {1, 1, 1, 1}};
+  ShaderParam fuzz_roughness = {-1, {0.5f, 0, 0, 0}};
+  bool fuzz_authored = false;
 
   // Thin-film / iridescence.
   ShaderParam thin_film_weight = {-1, {0, 0, 0, 0}};
@@ -691,11 +718,14 @@ struct OpenPBRSurfaceShader {
   ShaderParam thin_walled = {-1, {0, 0, 0, 0}};
   ShaderParam normal = {-1, {0, 0, 1, 0}};
   ShaderParam tangent = {-1, {1, 0, 0, 0}};
+  ShaderParam coat_tangent = {-1, {1, 0, 0, 0}};
   // Scalar metadata carried by common MaterialX utility nodes feeding the
   // geometry inputs. Renderers without a programmable MaterialX path can
   // still reproduce normal-map strength and retain tangent-frame intent.
   float normal_map_scale = 1.0f;
+  float coat_normal_map_scale = 1.0f;
   float tangent_rotation = 0.0f;
+  float coat_tangent_rotation = 0.0f;
   // Height/displacement output carried by MaterialX standard_surface graphs.
   // OpenPBR itself does not define surface displacement, but retaining it here
   // lets render consumers use the same geometry path as UsdPreviewSurface.
@@ -732,6 +762,13 @@ struct RetainedMaterialParam {
 };
 
 struct RenderMaterial {
+  RenderMaterial();
+  ~RenderMaterial();
+  RenderMaterial(const RenderMaterial&);
+  RenderMaterial& operator=(const RenderMaterial&);
+  RenderMaterial(RenderMaterial&&) noexcept;
+  RenderMaterial& operator=(RenderMaterial&&) noexcept;
+
   std::string name;
   std::string prim_path;
 
@@ -763,6 +800,10 @@ struct RenderMaterial {
   // Shader data (one of these based on shader_type)
   std::shared_ptr<PreviewSurfaceShader> preview_surface;
   std::shared_ptr<OpenPBRSurfaceShader> openpbr;
+  // Authored utility graph feeding a PreviewSurface terminal. Kept as a
+  // separate compatibility payload because the GPU-facing parameters above
+  // intentionally contain only the resolved shader values.
+  std::string preview_surface_nodegraph_json;
 
   // Double-sided
   bool double_sided = false;
@@ -810,6 +851,22 @@ struct RenderTexture {
   Float2 scale = {1, 1};
   float rotation = 0.0f;  // Radians
 
+  // Legacy UVTexture record fields. Preserve whether a UsdTransform2d node was
+  // authored separately from the effective identity transform, and retain
+  // its legacy-facing degree/scale/translation components for C adapters.
+  bool has_transform2d = false;
+  float tx_rotation = 0.0f;  // Degrees, as authored by UsdTransform2d
+  Float2 tx_scale = {1, 1};
+  Float2 tx_translation = {0, 0};
+
+  // Sparse UDIM identity. Tile IDs are 1001..1100 and index `udim_textures`;
+  // image_id remains the lowest available tile for simple renderers.
+  bool is_udim = false;
+  int32_t udim_texture_id = -1;
+  // UV remap for a combined UDIM atlas. Sparse textures retain identity.
+  Float2 udim_uv_scale = {1, 1};
+  Float2 udim_uv_offset = {0, 0};
+
   // UV set sampled by this texture (UsdPrimvarReader varname on the st
   // chain); empty = the default uv primvar ("st").
   std::string uv_primvar;
@@ -855,12 +912,25 @@ struct RenderTexture {
   Channel output_channel = Channel::RGBA;
 };
 
+struct RenderUDIMTexture {
+  struct Tile {
+    uint32_t udim = 1001;
+    int32_t image_id = -1;
+  };
+  std::string prim_name;
+  std::string abs_path;
+  std::string display_name;
+  std::string asset_identifier;
+  std::vector<Tile> tiles;
+};
+
 //
 // TextureImage - actual image data
 //
 struct TextureImage {
   std::string name;
   std::string resolved_path;  // Filesystem path
+  std::string asset_identifier;  // Authored asset path, when available
 
   uint32_t width = 0;
   uint32_t height = 0;
@@ -899,6 +969,9 @@ struct RenderLight {
   Float3 shaping_focus_tint = {0, 0, 0};  // color3f per UsdLux ShapingAPI
   float shaping_cone_softness = 0.0f;
   std::string shaping_ies_file;
+  // Authored texture asset on RectLight. Dome textures use the resolved image
+  // table and params.dome.texture_id instead.
+  std::string texture_file;
   float shaping_ies_angle_scale = 0.0f;
   bool shaping_ies_normalize = false;
   std::vector<std::string> light_link_targets;
@@ -925,6 +998,10 @@ struct RenderLight {
 
   // Transform
   Matrix4 transform;
+
+  // Preserve the SphereLight radius when shaping makes its render type Spot.
+  float spot_source_radius = 0.5f;
+  float guide_radius = 1.0e5f;
 
   // Type-specific properties
   union {
@@ -1014,7 +1091,10 @@ struct RenderCamera {
 struct SceneNode {
   std::string name;
   std::string prim_path;
+  std::string prototype_path;
   NodeType type = NodeType::Xform;
+  bool has_reset_xform = false;
+  bool is_instance = false;
 
   // Transform
   Matrix4 local_transform;
@@ -1111,8 +1191,8 @@ struct SkeletonJoint {
   std::string path;
   int32_t parent_id = -1;
 
-  Matrix4 bind_transform;
-  Matrix4 rest_transform;
+  Matrix4d bind_transform;
+  Matrix4d rest_transform;
 
   std::vector<int32_t> children;
 };
@@ -1122,6 +1202,7 @@ struct SkeletonJoint {
 //
 struct Skeleton {
   std::string name;
+  std::string display_name;
   std::string prim_path;
 
   std::vector<SkeletonJoint> joints;
@@ -1232,16 +1313,16 @@ struct UnsupportedRenderable {
 //
 class RenderScene {
  public:
-  RenderScene() = default;
-  ~RenderScene() = default;
+  RenderScene();
+  ~RenderScene();
 
   // Copies share chunk-backed geometry copy-on-write. Catalog vectors are
   // copied, while optional skin/shader records remain shared and immutable;
   // transactional updates replace whole affected resources.
-  RenderScene(RenderScene&&) = default;
-  RenderScene& operator=(RenderScene&&) = default;
-  RenderScene(const RenderScene&) = default;
-  RenderScene& operator=(const RenderScene&) = default;
+  RenderScene(RenderScene&&) noexcept;
+  RenderScene& operator=(RenderScene&&) noexcept;
+  RenderScene(const RenderScene&);
+  RenderScene& operator=(const RenderScene&);
 
   // Scene metadata
   std::string name;
@@ -1273,6 +1354,7 @@ class RenderScene {
   std::vector<RenderPointInstanceDraw> point_instance_draws;
   std::vector<RenderMaterial> materials;
   std::vector<RenderTexture> textures;
+  std::vector<RenderUDIMTexture> udim_textures;
   std::vector<TextureImage> images;
   std::vector<RenderLight> lights;
   std::vector<RenderCamera> cameras;

@@ -95,8 +95,6 @@ set(LIGHTUSD_NEXT_HEADERS
     # Prim types
     prim/path.hh
     prim/identifier.hh
-    prim/attribute.hh
-    prim/prim.hh
 
     # Composition policy
     composition/expression-variables.hh
@@ -109,6 +107,7 @@ set(LIGHTUSD_NEXT_HEADERS
     # Stage (composed scene)
     stage/stage.hh
     stage/change-set.hh
+    stage/stage-session.hh
 
     # Color management shared with render consumers
     ../color-transform.hh
@@ -201,9 +200,9 @@ set(LIGHTUSD_NEXT_HEADERS
     pcp/cache-utils.hh
 
     # High-level API
+    load-usd.hh
     lightusd-next.hh
     operation-status.hh
-    compat.hh
 )
 
 # LZ4 source (from existing LightUSD)
@@ -547,7 +546,8 @@ endif()
 
 # Tydra Next (render data conversion). Keep its target definition in its own
 # directory so standalone next-core and top-level consumers cannot drift.
-if(NOT TARGET tydra_next)
+option(LIGHTUSD_WITH_TYDRA "Build render conversion and its C API" ON)
+if(LIGHTUSD_WITH_TYDRA AND NOT TARGET tydra_next)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next
                      ${CMAKE_CURRENT_BINARY_DIR}/tydra_next_build)
 endif()
@@ -556,91 +556,186 @@ endif()
 # C API (lightusd_c): FFI layer over lightusd_next + tydra_next.
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   option(LIGHTUSD_NEXT_BUILD_EXAMPLES "Build next workflow examples" ON)
-  if(LIGHTUSD_NEXT_BUILD_EXAMPLES)
+  if(LIGHTUSD_NEXT_BUILD_EXAMPLES AND LIGHTUSD_WITH_TYDRA)
     add_subdirectory(../../examples/next_workflows next_workflow_examples)
+  endif()
+endif()
+
+if(LIGHTUSD_NEXT_BUILD_EXAMPLES)
+  add_executable(asset_resolution_example
+      ../../examples/asset_resolution/asset-resolution-next.cc)
+  target_link_libraries(asset_resolution_example PRIVATE lightusd_next)
+  set_target_properties(asset_resolution_example PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+  if(LIGHTUSD_NEXT_BUILD_TESTS)
+    add_test(NAME next_asset_resolution_example COMMAND asset_resolution_example
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(next_asset_resolution_example PROPERTIES
+        LABELS "next;examples")
   endif()
 endif()
 # Used by the Python binding and any other language binding.
 # ============================================================
 option(LIGHTUSD_NEXT_BUILD_SHARED_C_API
-       "Build lightusd_c as a Windows/FFI shared library in addition to the static target"
+       "Build the portable shared C ABI in addition to static libraries"
+       ON)
+option(LIGHTUSD_NEXT_BUILD_C_API_EXAMPLE
+       "Build the public C API consumer example"
        OFF)
 
+# Keep core C consumers independent of render headers and libraries.
 set(LIGHTUSD_C_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/lightusd-c.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/lightusd-render-c.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/lightusd-c.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/lightusd-render-c.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/c-internal.hh)
-
-add_library(lightusd_c STATIC
-    ${LIGHTUSD_C_SOURCES}
-)
-target_link_libraries(lightusd_c PUBLIC lightusd_next tydra_next)
-target_compile_features(lightusd_c PUBLIC cxx_std_17)
-target_include_directories(lightusd_c PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../c-api>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
-    $<INSTALL_INTERFACE:include>
-)
-if(MSVC)
-    target_compile_options(lightusd_c PRIVATE /W4)
-else()
-    target_compile_options(lightusd_c PRIVATE -Wall -Wextra -Wpedantic)
+    ../c-api/lightusd-c.cc
+    ../c-api/lightusd-c-format.cc
+    ../c-api/lightusd-c-dependencies.cc
+    ../c-api/lightusd-session-c.cc)
+add_library(lightusd_c STATIC ${LIGHTUSD_C_SOURCES})
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+   CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    # Static consumers can discard unused C entry points even while the
+    # implementation is being split into smaller source files.
+    target_compile_options(lightusd_c PRIVATE
+        -ffunction-sections -fdata-sections)
 endif()
-if(NOT LIGHTUSD_CXX_RTTI)
-    if(MSVC)
-        target_compile_options(lightusd_c PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
-    else()
-        target_compile_options(lightusd_c PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+# This target is installed for external C consumers. Propagate the static
+# core dependency through the exported target so a find_package consumer gets
+# a complete link interface instead of an unresolved lightusd_next archive.
+target_link_libraries(lightusd_c PUBLIC lightusd_next)
+set(LIGHTUSD_C_TARGETS lightusd_c)
+if(LIGHTUSD_NEXT_BUILD_EXAMPLES)
+    add_executable(variant-lister
+        ../../examples/variant-lister/variant-lister-next.cc)
+    target_include_directories(variant-lister PRIVATE ../c-api)
+    target_link_libraries(variant-lister PRIVATE lightusd_c)
+    set_target_properties(variant-lister PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    if(LIGHTUSD_NEXT_BUILD_TESTS)
+        add_test(NAME next_variant_lister_smoke COMMAND variant-lister --summary
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/usda/variantSet-002.usda)
+        set_tests_properties(next_variant_lister_smoke PROPERTIES
+            LABELS "next;examples"
+            PASS_REGULAR_EXPRESSION "Total variant options: 5")
     endif()
 endif()
-if(NOT LIGHTUSD_CXX_EXCEPTIONS)
-    if(MSVC)
-        target_compile_options(lightusd_c PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
-    else()
-        target_compile_options(lightusd_c PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+if(LIGHTUSD_NEXT_BUILD_C_API_EXAMPLE)
+    add_executable(next_c_api_example
+                   ../../examples/c_api_example/next-c-api-example.c)
+    target_include_directories(next_c_api_example PRIVATE ../c-api)
+    target_link_libraries(next_c_api_example PRIVATE lightusd_c)
+    if(LIGHTUSD_NEXT_BUILD_TESTS)
+        add_test(NAME next_c_api_example_smoke
+                 COMMAND next_c_api_example
+                         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/usda/anytype-001.usda)
+        set_tests_properties(next_c_api_example_smoke PROPERTIES LABELS "next;c-api")
+    endif()
+endif()
+if(LIGHTUSD_WITH_TYDRA)
+    add_library(lightusd_render_c STATIC
+        ../c-api/lightusd-render-c.cc
+        ../c-api/lightusd-render-glb-c.cc)
+    target_link_libraries(lightusd_render_c PUBLIC lightusd_c tydra_next)
+    list(APPEND LIGHTUSD_C_TARGETS lightusd_render_c)
+    if(LIGHTUSD_NEXT_BUILD_C_API_EXAMPLE)
+        add_executable(next_render_session_example
+                       ../../examples/c_api_example/next-render-session-example.c)
+        target_include_directories(next_render_session_example PRIVATE ../c-api)
+        target_link_libraries(next_render_session_example PRIVATE lightusd_render_c lightusd_c)
+        if(LIGHTUSD_NEXT_BUILD_TESTS)
+            add_test(NAME next_render_session_example_smoke
+                     COMMAND next_render_session_example
+                             ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/usda/anytype-001.usda)
+            set_tests_properties(next_render_session_example_smoke
+                                 PROPERTIES LABELS "next;c-api;render")
+        endif()
     endif()
 endif()
 
+# One shared FFI module owns all internal registries. Do not statically link
+# separate copies of next into two DLLs: their interned property IDs would
+# refer to different name tables. WITH_TYDRA=OFF produces a core-only DLL.
 if(LIGHTUSD_NEXT_BUILD_SHARED_C_API)
+    set_target_properties(lightusd_next PROPERTIES POSITION_INDEPENDENT_CODE ON)
     add_library(lightusd_c_shared SHARED ${LIGHTUSD_C_SOURCES})
-    target_link_libraries(lightusd_c_shared PRIVATE lightusd_next tydra_next)
-    target_compile_features(lightusd_c_shared PRIVATE cxx_std_17)
-    target_include_directories(lightusd_c_shared PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../c-api>
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
-    target_compile_definitions(lightusd_c_shared PRIVATE
-        LIGHTUSD_C_BUILD_SHARED=1)
-    if(NOT LIGHTUSD_CXX_RTTI)
-        if(MSVC)
-            target_compile_options(lightusd_c_shared PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
-        else()
-            target_compile_options(lightusd_c_shared PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
-        endif()
+    target_link_libraries(lightusd_c_shared PRIVATE lightusd_next)
+    if(LIGHTUSD_WITH_TYDRA)
+        set_target_properties(tydra_next PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        target_sources(lightusd_c_shared PRIVATE
+            ../c-api/lightusd-render-c.cc
+            ../c-api/lightusd-render-glb-c.cc)
+        target_link_libraries(lightusd_c_shared PRIVATE tydra_next)
     endif()
-    if(NOT LIGHTUSD_CXX_EXCEPTIONS)
-        if(MSVC)
-            target_compile_options(lightusd_c_shared PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
-        else()
-            target_compile_options(lightusd_c_shared PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
-        endif()
-    endif()
+    target_compile_definitions(lightusd_c_shared
+        PRIVATE LIGHTUSD_C_BUILD_SHARED=1
+        INTERFACE LIGHTUSD_C_USE_SHARED=1)
     set_target_properties(lightusd_c_shared PROPERTIES OUTPUT_NAME lightusd_c)
+    list(APPEND LIGHTUSD_C_TARGETS lightusd_c_shared)
 endif()
+
+# Only the C boundary and thin ownership facades are installed for consumers.
+include(GNUInstallDirs)
+set_target_properties(lightusd_c PROPERTIES EXPORT_NAME c)
+install(TARGETS lightusd_next lightusd_c EXPORT LightUSDTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(FILES ../c-api/lightusd-c.h ../c-api/lightusd-cpp.hh
+              ../c-api/lightusd-session-c.h ../c-api/lightusd-session-cpp.hh
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+if(LIGHTUSD_WITH_TYDRA)
+    set_target_properties(lightusd_render_c PROPERTIES EXPORT_NAME render_c)
+    install(TARGETS tydra_next lightusd_render_c EXPORT LightUSDTargets
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    install(FILES ../c-api/lightusd-render-c.h ../c-api/lightusd-render-cpp.hh
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+endif()
+if(LIGHTUSD_NEXT_BUILD_SHARED_C_API)
+    set_target_properties(lightusd_c_shared PROPERTIES EXPORT_NAME c_shared)
+    install(TARGETS lightusd_c_shared EXPORT LightUSDTargets
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+endif()
+
+include(CMakePackageConfigHelpers)
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/LightUSDConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/LightUSDConfig.cmake"
+    INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/LightUSD")
+install(EXPORT LightUSDTargets NAMESPACE lightusd::
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/LightUSD")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/LightUSDConfig.cmake"
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/LightUSD")
+
+foreach(c_target IN LISTS LIGHTUSD_C_TARGETS)
+    target_compile_features(${c_target} PRIVATE cxx_std_17)
+    target_include_directories(${c_target}
+        PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../c-api>
+               $<INSTALL_INTERFACE:include>
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    if(MSVC)
+        target_compile_options(${c_target} PRIVATE /W4)
+        if(NOT LIGHTUSD_CXX_RTTI)
+            target_compile_options(${c_target} PRIVATE /GR-)
+        endif()
+        if(NOT LIGHTUSD_CXX_EXCEPTIONS)
+            target_compile_options(${c_target} PRIVATE /EHs-c-)
+        endif()
+    else()
+        target_compile_options(${c_target} PRIVATE -Wall -Wextra -Wpedantic)
+        if(NOT LIGHTUSD_CXX_RTTI)
+            target_compile_options(${c_target} PRIVATE -fno-rtti)
+        endif()
+        if(NOT LIGHTUSD_CXX_EXCEPTIONS)
+            target_compile_options(${c_target} PRIVATE -fno-exceptions)
+        endif()
+    endif()
+endforeach()
 
 # Tydra Next test
 if(LIGHTUSD_NEXT_BUILD_TESTS)
+  if(LIGHTUSD_WITH_TYDRA)
     add_executable(test_tydra_next
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/next/test_tydra_next.cc
     )
     target_link_libraries(test_tydra_next PRIVATE tydra_next lightusd_next)
-
-    # Performance benchmark
-    add_executable(benchmark_next
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/benchmark_next.cc
-    )
-    target_link_libraries(benchmark_next PRIVATE lightusd_next)
 
     # Render-conversion benchmark (tydra-next pipeline only; this standalone
     # tree cannot build the legacy tydra converter).
@@ -655,8 +750,54 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     target_compile_definitions(bench_tydra_render PRIVATE
         PERFRC_ENABLE_NEXT=1 PERFRC_ENABLE_LEGACY=0)
 
+  endif()
+
+    # Performance benchmark
+    add_executable(benchmark_next
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/benchmark_next.cc
+    )
+    target_link_libraries(benchmark_next PRIVATE lightusd_next)
+
     # Register tests with ctest
     enable_testing()
+
+    add_executable(test_lightusd_cpp ../../tests/c-api/test_lightusd_cpp.cc)
+    target_link_libraries(test_lightusd_cpp PRIVATE lightusd_c)
+    target_compile_features(test_lightusd_cpp PRIVATE cxx_std_17)
+    if(LIGHTUSD_WITH_TYDRA)
+        target_link_libraries(test_lightusd_cpp PRIVATE lightusd_render_c)
+        target_compile_definitions(test_lightusd_cpp PRIVATE LIGHTUSD_TEST_RENDER_API=1)
+    endif()
+    add_test(NAME next_test_cpp_facade COMMAND test_lightusd_cpp)
+    if(LIGHTUSD_WITH_TYDRA)
+        add_executable(test_lightusd_document_session
+            ../../tests/c-api/test_lightusd_document_session.c)
+        target_link_libraries(test_lightusd_document_session PRIVATE
+            lightusd_render_c)
+        set_target_properties(test_lightusd_document_session PROPERTIES
+            C_STANDARD 11 C_STANDARD_REQUIRED ON)
+        if(NOT MSVC)
+            target_compile_options(test_lightusd_document_session PRIVATE
+                -Wall -Wextra -Werror -pedantic)
+        endif()
+        add_test(NAME next_test_document_session_c
+            COMMAND test_lightusd_document_session
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/usda/cube.usda
+                    ${CMAKE_CURRENT_BINARY_DIR}/document-change-records.usda)
+        set_tests_properties(next_test_document_session_c PROPERTIES LABELS "next;c-api;render")
+        add_executable(test_lightusd_render_session
+            ../../tests/c-api/test_lightusd_render_session.c)
+        target_link_libraries(test_lightusd_render_session PRIVATE
+            lightusd_render_c)
+        set_target_properties(test_lightusd_render_session PROPERTIES
+            C_STANDARD 11 C_STANDARD_REQUIRED ON)
+        if(NOT MSVC)
+            target_compile_options(test_lightusd_render_session PRIVATE
+                -Wall -Wextra -Werror -pedantic)
+        endif()
+        add_test(NAME next_test_render_session_c
+            COMMAND test_lightusd_render_session)
+    endif()
 
     # C API smoke test (pure C11 translation unit)
     add_executable(test_lightusd_c
@@ -669,8 +810,16 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         target_link_libraries(test_lightusd_c PRIVATE lightusd_c)
     endif()
     set_target_properties(test_lightusd_c PROPERTIES C_STANDARD 11)
+    if(NOT MSVC)
+        target_compile_options(test_lightusd_c PRIVATE
+            -Wall -Wextra -Werror -pedantic)
+    endif()
     add_test(NAME next_test_c_api COMMAND test_lightusd_c
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/usda/cube.usda
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/usda/instancing-001.usda
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/usda/c-core-relationships.usda
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/usda/clips-primmeta-001.usda
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/usdc/schema-blendshape-001.usdc
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
     add_test(NAME next_test_lightusd COMMAND test_lightusd_next
@@ -731,14 +880,18 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_aousd_conformance COMMAND test_aousd_conformance
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-    add_test(NAME next_test_tydra COMMAND test_tydra_next
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    if(LIGHTUSD_WITH_TYDRA)
+        add_test(NAME next_test_tydra COMMAND test_tydra_next
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    endif()
     add_test(NAME next_benchmark COMMAND benchmark_next
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    if(LIGHTUSD_WITH_TYDRA)
     add_test(NAME next_bench_tydra_render COMMAND bench_tydra_render
         --iters 1 --prims 64
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(next_bench_tydra_render PROPERTIES LABELS "benchmark")
+    endif()
 
     set(LIGHTUSD_NEXT_SMOKE_TESTS
         next_test_lightusd
@@ -769,8 +922,10 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         next_test_layer_diff
         next_test_memory_flatten
         next_test_validation
-        next_test_aousd_conformance
-        next_test_tydra)
+        next_test_aousd_conformance)
+    if(LIGHTUSD_WITH_TYDRA)
+        list(APPEND LIGHTUSD_NEXT_SMOKE_TESTS next_test_tydra)
+    endif()
     set_tests_properties(${LIGHTUSD_NEXT_SMOKE_TESTS}
         PROPERTIES LABELS "next")
     set_tests_properties(next_benchmark

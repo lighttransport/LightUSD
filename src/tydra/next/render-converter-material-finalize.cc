@@ -32,20 +32,24 @@ void ForEachMaterialShaderParam(RenderMaterial* mat, Fn&& fn) {
     OpenPBRSurfaceShader& o = *mat->openpbr;
     for (ShaderParam* p :
          {&o.base_weight, &o.base_color, &o.base_roughness,
+          &o.base_diffuse_roughness,
           &o.base_metalness, &o.specular_weight, &o.specular_color,
           &o.specular_roughness, &o.specular_ior, &o.specular_anisotropy,
           &o.specular_roughness_anisotropy, &o.specular_rotation,
           &o.transmission_weight, &o.transmission_color,
-          &o.transmission_depth,
+          &o.transmission_depth, &o.transmission_scatter,
+          &o.transmission_scatter_anisotropy,
           &o.transmission_dispersion, &o.transmission_dispersion_scale,
           &o.subsurface_weight, &o.subsurface_color, &o.subsurface_radius,
-          &o.subsurface_scale, &o.coat_weight, &o.coat_color, &o.coat_roughness,
+          &o.subsurface_scale, &o.subsurface_anisotropy,
+          &o.coat_weight, &o.coat_color, &o.coat_roughness, &o.coat_rotation,
           &o.coat_ior, &o.coat_anisotropy, &o.coat_roughness_anisotropy,
-          &o.coat_normal, &o.sheen_weight, &o.sheen_color,
-          &o.sheen_roughness,
+          &o.coat_affect_color, &o.coat_affect_roughness,
+          &o.coat_normal, &o.sheen_weight, &o.sheen_color, &o.sheen_roughness,
+          &o.fuzz_weight, &o.fuzz_color, &o.fuzz_roughness,
           &o.thin_film_weight, &o.thin_film_thickness, &o.thin_film_ior,
           &o.emission_luminance, &o.emission_color, &o.normal, &o.opacity,
-          &o.tangent, &o.displacement}) {
+          &o.tangent, &o.coat_tangent, &o.displacement}) {
       fn(*p);
     }
   }

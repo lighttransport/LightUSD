@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <sstream>
+#include <vector>
 
 #include "lightusd.hh"
 #include "layer.hh"
@@ -11,8 +12,7 @@
 #include "pprinter.hh"
 #include "str-util.hh"
 #include "io-util.hh"
-
-#include "tydra/scene-access.hh"
+#include "usdGeom.hh"
 
 struct CompositionFeatures {
   bool subLayers{true};
@@ -22,6 +22,37 @@ struct CompositionFeatures {
   bool payload{true}; // Not 'payloads'
   bool specializes{true};
 };
+
+static void CollectMeshPaths(const lightusd::Prim& root,
+                             std::vector<std::string>* paths) {
+  struct Frame {
+    const lightusd::Prim* prim;
+    size_t child_index;
+    size_t parent_path_length;
+  };
+  std::vector<Frame> stack;
+  std::string path = "/" + root.local_path().full_path_name();
+  if (root.is<lightusd::GeomMesh>()) paths->push_back(path);
+  if (!root.children().empty()) stack.push_back({&root, 0, 0});
+  while (!stack.empty()) {
+    Frame& frame = stack.back();
+    if (frame.child_index >= frame.prim->children().size()) {
+      path.resize(frame.parent_path_length);
+      stack.pop_back();
+      continue;
+    }
+    const lightusd::Prim& child = frame.prim->children()[frame.child_index++];
+    const size_t current_path_length = path.size();
+    path += "/";
+    path += child.local_path().full_path_name();
+    if (child.is<lightusd::GeomMesh>()) paths->push_back(path);
+    if (!child.children().empty()) {
+      stack.push_back({&child, 0, current_path_length});
+    } else {
+      path.resize(current_path_length);
+    }
+  }
+}
 
 static std::string GetFileExtension(const std::string &filename) {
   if (filename.find_last_of('.') != std::string::npos)
@@ -368,15 +399,12 @@ int main(int argc, char **argv) {
 
     std::cout << comp_stage.ExportToString() << "\n";
 
-    using MeshMap = lightusd::tydra::PathPrimMap<lightusd::GeomMesh>;
-    MeshMap meshmap;
-
-    lightusd::tydra::ListPrims(comp_stage, meshmap);
-
-    for (const auto &item : meshmap) {
-
-      std::cout << "Prim : " << item.first << "\n";
+    std::vector<std::string> mesh_paths;
+    for (const lightusd::Prim& root : comp_stage.root_prims()) {
+      CollectMeshPaths(root, &mesh_paths);
     }
+    std::sort(mesh_paths.begin(), mesh_paths.end());
+    for (const std::string& path : mesh_paths) std::cout << "Prim : " << path << "\n";
 
   } else {
 

@@ -15,11 +15,12 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <unistd.h>
 
 #include "next/eval/attribute-eval.hh"
 #include "next/layer/asset-anchor.hh"
 #include "next/layer/layer.hh"
-#include "next/lightusd-next.hh"
+#include "next/load-usd.hh"
 #include "next/writer/usda-writer.hh"
 #include "next/writer/usdz-writer.hh"
 #include "next/pcp/cache.hh"
@@ -40,6 +41,19 @@ static int g_pcp_check_failures = 0;
       ++g_pcp_check_failures;                                             \
     }                                                                     \
   } while (0)
+
+static const std::string& PcpScratchDirectory() {
+  static const std::string directory = [] {
+    char pattern[] = "/tmp/lightusd-next-pcp-suite-XXXXXX";
+    char* created = ::mkdtemp(pattern);
+    return created ? std::string(created) : std::string("/tmp");
+  }();
+  return directory;
+}
+
+static std::string PcpScratchPath(const char* name) {
+  return PcpScratchDirectory() + "/" + name;
+}
 
 // Build an in-memory root layer:
 //   /World (Xform)
@@ -424,7 +438,7 @@ static void test_usda_connection_and_custom_rel() {
 // block must be followed -- XGen-style assets author the geometry-defining
 // `def Mesh` in a payload on the variant, not in the variant body. Before the
 // fix the parser dropped variant-option arcs, so the prim stayed empty (the
-// 13411-specifier Moana Island residual). Relative `@./geo@` must anchor to the
+// 13411-specifier Island residual). Relative `@./geo@` must anchor to the
 // file that authored the variant.
 static void test_variant_option_payload_arc() {
   std::cout << "test_variant_option_payload_arc..." << std::endl;
@@ -567,7 +581,7 @@ static void test_parallel_compose_byte_identical() {
 
 // An authored value block (`= None`) is a real opinion that blocks weaker values
 // and must round-trip as `= None`, NOT collapse to a declared-only attribute
-// (the 13.5k-line Moana Island residual: indexed-primvar `:indices = None`).
+// (the 13.5k-line Island residual: indexed-primvar `:indices = None`).
 static void test_value_block_roundtrip() {
   std::cout << "test_value_block_roundtrip..." << std::endl;
   const std::string base = "/tmp/next_block_base.usda";
@@ -602,7 +616,7 @@ static void test_value_block_roundtrip() {
 // contains an instance references another /Flattened_Prototype_M).
 static void test_extracted_prototypes() {
   std::cout << "test_extracted_prototypes..." << std::endl;
-  const std::string f = "/tmp/next_extract.usda";
+  const std::string f = PcpScratchPath("next_extract.usda");
   {
     std::ofstream o(f);
     o << "#usda 1.0\n"
@@ -658,7 +672,7 @@ static void test_extracted_prototypes() {
 
 static void test_extracted_prototypes_collision_and_remap() {
   std::cout << "test_extracted_prototypes_collision_and_remap..." << std::endl;
-  const std::string f = "/tmp/next_extract_collision.usda";
+  const std::string f = PcpScratchPath("next_extract_collision.usda");
   {
     std::ofstream o(f);
     o << "#usda 1.0\n"
@@ -2391,6 +2405,14 @@ static void test_authored_arc_fidelity_fixture() {
                 edits->payloads.deleted.size() == 1 &&
                 edits->payloads.ordered.size() == 2,
             "all authored payload list-op sublists must survive parsing");
+  PCP_CHECK(prim->meta().references.size() == 2 &&
+                prim->meta().references[0].find("</InternalA>") == 0 &&
+                prim->meta().references[1].find("@asset-a.usda@") == 0,
+            "reorder references must reorder existing inline arcs without adding duplicates");
+  PCP_CHECK(prim->meta().payloads.size() == 2 &&
+                prim->meta().payloads[0].find("</InternalPayload>") == 0 &&
+                prim->meta().payloads[1].find("@payload-a.usda@") == 0,
+            "reorder payloads must reorder existing inline arcs without adding duplicates");
   PCP_CHECK(edits->references.prepended[0].find("?layerOffset=2.000000:0.500000") !=
                 std::string::npos,
             "reference layer offset must survive authored parsing");
@@ -2557,7 +2579,7 @@ static void test_nested_relative_reference() {
 
 // A reference/payload authored in a SUBLAYER (or inside a variant) must anchor
 // its relative asset path to the LAYER that authored it, not the layer-stack
-// root. Regression for the ALab failure: entry.usda sublayers
+// root. Regression for the Scene A failure: entry.usda sublayers
 // deep/dir/mid.usda, which references `../../target/asset.usda` relative to its
 // OWN dir; anchoring to the root made `../../` resolve too high and fail.
 static void test_sublayer_authored_reference_anchor() {
@@ -3795,8 +3817,13 @@ static void test_out_of_scope_targets_dropped() {
 // deferral marker set by an earlier deferred one.
 static void test_deferred_payload_marker_order() {
   std::cout << "test_deferred_payload_marker_order..." << std::endl;
-  const std::string pay1 = "/tmp/next_def_p1.usda";
-  const std::string pay2 = "/tmp/next_def_p2.usda";
+  char directory_template[] = "/tmp/lightusd-next-pcp-XXXXXX";
+  char* directory = ::mkdtemp(directory_template);
+  PCP_CHECK(directory != nullptr, "create isolated PCP temporary directory");
+  if (!directory) return;
+  const std::string temp_dir(directory);
+  const std::string pay1 = temp_dir + "/next_def_p1.usda";
+  const std::string pay2 = temp_dir + "/next_def_p2.usda";
   {
     std::ofstream o(pay1);
     o << "#usda 1.0\ndef Xform \"P1\" { float a = 1 }\n";
@@ -3806,20 +3833,20 @@ static void test_deferred_payload_marker_order() {
     o << "#usda 1.0\ndef Xform \"P2\" { float b = 2 }\n";
   }
   for (int order = 0; order < 2; ++order) {
-    const std::string root = "/tmp/next_def_root.usda";
+    const std::string root = temp_dir + "/next_def_root.usda";
     {
       std::ofstream o(root);
       o << "#usda 1.0\n"
            "def Xform \"A\" (prepend payload = [";
       if (order == 0) {
-        o << "@./next_def_p2.usda@</P2>, @./next_def_p1.usda@</P1>";
+      o << "@./next_def_p2.usda@</P2>, @./next_def_p1.usda@</P1>";
       } else {
         o << "@./next_def_p1.usda@</P1>, @./next_def_p2.usda@</P2>";
       }
       o << "])\n{\n}\n";
     }
     AssetResolver resolver;
-    resolver.SetWorkingDirectory("/tmp");
+    resolver.SetWorkingDirectory(temp_dir);
     pcp::CompositionOptions opts;
     // Load only p1; p2 stays deferred — regardless of arc order.
     opts.payload_policy = [](const Path&, const std::string& asset) {
@@ -3843,10 +3870,11 @@ static void test_deferred_payload_marker_order() {
     assert(a.GetPropertyValue("b") == nullptr && "deferred payload leaked");
     assert(cache.HasDeferredPayload(Path("/A")) &&
            "deferral marker lost (payload order dependence)");
-    std::remove(root.c_str());
+  std::remove(root.c_str());
   }
   std::remove(pay1.c_str());
   std::remove(pay2.c_str());
+  ::rmdir(temp_dir.c_str());
   std::cout << "  OK" << std::endl;
 }
 

@@ -2,6 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 
 #include "value-clip.hh"
+#include "../layer/prim-spec.hh"
 
 #include <algorithm>
 #include <cmath>

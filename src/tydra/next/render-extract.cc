@@ -4,6 +4,7 @@
 // Shared render-oriented extraction helpers for next::Stage.
 
 #include "render-extract.hh"
+#include "../../next/layer/prim-spec.hh"
 
 #include <algorithm>
 #include <cmath>
@@ -87,33 +88,39 @@ std::string PurposeForPrim(const ::lightusd::next::UsdPrim& prim,
   return inherited.empty() ? std::string("default") : inherited;
 }
 
-void PushRecord(RenderPrimRecord&& rec, bool collect_records,
+void PushRecord(RenderPrimRecord&& rec, const RenderExtractOptions& options,
                 RenderExtractResult* out) {
-  if (collect_records) out->records.push_back(rec);
-  if (rec.type_name == "Points" ||
-      rec.type_name == "ParticleField3DGaussianSplat") {
-    out->points.push_back(std::move(rec));
+  if (rec.kind == RenderPrimKind::NativeInstance &&
+      !rec.native_prototype.empty()) {
+    out->native_prototype_holders.insert(rec.native_prototype);
+  }
+  if (!options.collect_records && !options.collect_categories) return;
+  out->storage.push_back(std::move(rec));
+  RenderPrimRecord* stored = &out->storage.back();
+  if (options.collect_records) out->records.push_back(stored);
+  if (!options.collect_categories) return;
+  if (stored->type_name == "Points" ||
+      stored->type_name == "ParticleField3DGaussianSplat") {
+    out->points.push_back(stored);
     return;
   }
-  switch (rec.kind) {
-    case RenderPrimKind::Mesh: out->meshes.push_back(std::move(rec)); break;
+  switch (stored->kind) {
+    case RenderPrimKind::Mesh: out->meshes.push_back(stored); break;
     case RenderPrimKind::PointInstancer:
-      out->point_instancers.push_back(std::move(rec));
+      out->point_instancers.push_back(stored);
       break;
     case RenderPrimKind::NativeInstance:
-      if (!rec.native_prototype.empty())
-        out->native_prototype_holders.insert(rec.native_prototype);
-      out->native_instances.push_back(std::move(rec));
+      out->native_instances.push_back(stored);
       break;
-    case RenderPrimKind::Light: out->lights.push_back(std::move(rec)); break;
-    case RenderPrimKind::Camera: out->cameras.push_back(std::move(rec)); break;
+    case RenderPrimKind::Light: out->lights.push_back(stored); break;
+    case RenderPrimKind::Camera: out->cameras.push_back(stored); break;
     case RenderPrimKind::Material:
-      out->materials.push_back(std::move(rec));
+      out->materials.push_back(stored);
       break;
-    case RenderPrimKind::Volume: out->volumes.push_back(std::move(rec)); break;
-    case RenderPrimKind::Curve: out->curves.push_back(std::move(rec)); break;
+    case RenderPrimKind::Volume: out->volumes.push_back(stored); break;
+    case RenderPrimKind::Curve: out->curves.push_back(stored); break;
     case RenderPrimKind::Skeleton:
-      out->skeletons.push_back(std::move(rec));
+      out->skeletons.push_back(stored);
       break;
     default: break;
   }
@@ -180,7 +187,8 @@ void CollectRec(const ::lightusd::next::UsdPrim& root,
     rec.material_path = strong_material.empty() ? nearest_material
                                                  : strong_material;
     ComputeLocalTransform(prim, rec.local, options.time_code);
-    if (HasResetXformStack(prim)) {
+    rec.has_reset_xform = HasResetXformStack(prim);
+    if (rec.has_reset_xform) {
       std::memcpy(rec.world, rec.local, sizeof(rec.world));
     } else {
       MulRowMajor(rec.local, frame.parent_world, rec.world);
@@ -224,7 +232,7 @@ void CollectRec(const ::lightusd::next::UsdPrim& root,
         stack.push_back(std::move(child_frame));
       }
     }
-    if (collect_this_record) PushRecord(std::move(rec), options.collect_records, out);
+    if (collect_this_record) PushRecord(std::move(rec), options, out);
   }
 }
 
@@ -278,7 +286,7 @@ bool CollectRenderPrims(const ::lightusd::next::Stage& stage,
                         RenderExtractResult* out) {
   if (!out) return false;
   *out = RenderExtractResult();
-  if (options.collect_records) {
+  if (options.collect_records || options.collect_categories) {
     const size_t estimated_records = stage.GetPrimCount();
     if (estimated_records > 0) {
       out->records.reserve(estimated_records);
@@ -368,6 +376,7 @@ void CollectPrototypePaths(const ::lightusd::next::Stage& stage,
   options.stop_at_point_instancers = true;
   options.stop_at_native_instances = true;
   options.collect_records = false;
+  options.collect_categories = false;
   RenderExtractResult result;
   if (!CollectRenderPrims(stage, options, &result)) return;
   out->insert(result.native_prototype_holders.begin(),

@@ -5,8 +5,11 @@ import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 
 export async function resolve(specifier, context, nextResolve) {
-  const override = process.env.LIGHTUSD_NEXT_MODULE;
-  if (override && /(?:^|\/)lightusd_next(?:_64)?\.js$/.test(specifier)) {
+  const override = /(?:^|\/)lightusd_next(?:_64)?\.js$/.test(specifier)
+    ? process.env.LIGHTUSD_NEXT_MODULE
+    : /(?:^|\/)lightusd_combined(?:_64)?\.js$/.test(specifier)
+      ? process.env.LIGHTUSD_COMBINED_MODULE : undefined;
+  if (override) {
     return {url: 'lightusd-next-override:' + encodeURIComponent(
       pathToFileURL(path.resolve(override)).href), shortCircuit: true};
   }

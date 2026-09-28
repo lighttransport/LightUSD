@@ -3,7 +3,8 @@
 //
 // Tydra Next - Curves and instancers conversion
 
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
+#include "../../next/layer/layer.hh"
 #include "next/eval/value-clip.hh"
 
 #include <algorithm>
@@ -199,7 +200,7 @@ struct CurveTessPlan {
 
 }  // namespace
 
-bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
+bool RenderSceneConverter::Impl::ConvertCurves(const UsdPrim& prim,
                                          RenderCurves* out) {
   const std::string type_name =
       prim.IsValid() ? prim.GetTypeName() : std::string();

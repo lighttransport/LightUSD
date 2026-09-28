@@ -69,7 +69,16 @@ def Xform "World" (variants = { string display = "low" } prepend variantSets = "
         assert "linear 0.500000 = 1" in spline
         run("next_quickstart", scene, work / "roundtrip.usda")
         assert (work / "roundtrip.usda").read_text().startswith("#usda")
-        run("interactive_session", scene)
+        interactive = run("interactive_session", scene)
+        assert "changes 0 -> 1 prims=1 properties=0" in interactive, interactive
+        assert "property /World.level" in interactive
+        assert "transferred stage without cloning" in interactive
+        assert "released composition cache; retained snapshot remains readable" in interactive
+        assert "dependency " in interactive
+        assert "read-only snapshot stage queried without cloning" in interactive
+        assert "provisional preview phase=0" in interactive
+        assert "provisional preview phase=1" in interactive
+        assert "released static geometry properties=" in interactive
         run("portable_asset_package", work / "package")
         if (binaries / "usd_to_gltf").exists():
             glb = work / "scene.glb"

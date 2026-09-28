@@ -34,6 +34,18 @@ static int g_fail = 0;
     else { std::cout << "  ok: " << msg << "\n"; }                          \
   } while (0)
 
+static void test_shared_asset_payload_budget() {
+  auto budget = std::make_shared<AssetPayloadBudget>(5);
+  auto lease = budget->Reserve(3);
+  CHECK(lease && budget->UsedBytes() == 3,
+        "shared payload budget tracks retained bytes");
+  CHECK(!budget->Reserve(3), "shared payload budget rejects over-cap reserve");
+  CHECK(!budget->SetLimit(2), "shared payload cap cannot shrink below use");
+  lease.reset();
+  CHECK(budget->UsedBytes() == 0 && budget->SetLimit(2),
+        "shared payload lease releases bytes for a smaller cap");
+}
+
 static const char* kBaseUSDA = R"(#usda 1.0
 
 def Xform "Base"
@@ -46,6 +58,131 @@ def Xform "Base"
     }
 }
 )";
+
+static void test_usda_progress_and_cancellation() {
+  LoadOptions options;
+  std::vector<std::string> phases;
+  options.parse_options.progress_callback =
+      [&phases](const char* phase, size_t current, size_t total) {
+        phases.emplace_back(phase);
+        return current <= total;
+      };
+  const LoadResult loaded = LoadUSDAFromString(kBaseUSDA, options);
+  CHECK(loaded.success, "USDA parse with progress callback succeeds");
+  CHECK(phases.size() >= 4 && phases.front() == "bootstrap" &&
+            phases.back() == "complete",
+        "USDA progress reports bootstrap, completed prims, and completion");
+
+  options.parse_options.progress_callback =
+      [](const char* phase, size_t, size_t) {
+        return std::string(phase) != "prims";
+      };
+  const LoadResult cancelled = LoadUSDAFromString(kBaseUSDA, options);
+  CHECK(!cancelled.success &&
+            cancelled.error_summary.find("USDA parse cancelled during prims") !=
+                std::string::npos,
+        "USDA progress callback can cancel before publishing the Stage");
+}
+
+static void test_crate_and_usdz_file_size_limits() {
+  LoadResult parsed = LoadUSDAFromString(kBaseUSDA);
+  CHECK(parsed.success, "file-limit fixture stage parses");
+  if (!parsed.success) return;
+
+  USDCWriteOptions crate_options;
+  crate_options.crate_options.max_file_size_bytes = 128;
+  std::vector<uint8_t> crate;
+  const USDCWriteResult rejected =
+      WriteUSDCToMemory(crate, parsed.stage, crate_options);
+  CHECK(!rejected.success &&
+            rejected.error.find("configured file-size limit") != std::string::npos,
+        "Crate writer rejects output beyond the configured byte cap");
+  CHECK(crate.empty(), "rejected Crate output is not published");
+
+  crate_options.crate_options.max_file_size_bytes = 0;
+  crate_options.crate_options.max_memory_bytes = 1;
+  const USDCWriteResult memory_rejected =
+      WriteUSDCToMemory(crate, parsed.stage, crate_options);
+  CHECK(!memory_rejected.success &&
+            memory_rejected.error.find("estimated working set") != std::string::npos,
+        "Crate writer rejects an estimated working set above its memory policy");
+  CHECK(crate.empty(), "memory-rejected Crate output is not published");
+  crate_options.crate_options.max_memory_bytes = 1u << 20;
+
+  crate_options.crate_options.max_file_size_bytes = 1u << 20;
+  const USDCWriteResult written =
+      WriteUSDCToMemory(crate, parsed.stage, crate_options);
+  CHECK(written.success && crate.size() <= (1u << 20),
+        "Crate writer accepts output within the configured byte cap");
+  if (!written.success) return;
+
+  USDZWriteOptions usdz_options;
+  usdz_options.max_file_size_bytes = crate.size() + 70;
+  std::vector<uint8_t> package;
+  const USDZWriteResult package_rejected = WriteUSDZFromUSDCToMemory(
+      package, crate.data(), crate.size(), usdz_options);
+  CHECK(!package_rejected.success && package.empty(),
+        "USDZ writer applies the file cap to local entries and central directory");
+
+  usdz_options.max_file_size_bytes = 0;
+  usdz_options.max_memory_bytes = 1;
+  const USDZWriteResult usdz_memory_rejected = WriteUSDZFromUSDCToMemory(
+      package, crate.data(), crate.size(), usdz_options);
+  CHECK(!usdz_memory_rejected.success &&
+            usdz_memory_rejected.error.find("estimated working set") != std::string::npos &&
+            package.empty(),
+        "USDZ writer rejects a working set above its memory policy");
+
+  std::map<std::string, std::vector<uint8_t>> assets;
+  assets["payload.bin"].resize(2u << 20, 0x5a);
+  usdz_options.max_memory_bytes = 3u << 20;
+  const USDZWriteResult asset_memory_rejected =
+      WriteUSDZFromUSDCAndAssetsToMemory(package, crate.data(), crate.size(),
+                                          assets, usdz_options);
+  CHECK(!asset_memory_rejected.success && package.empty(),
+        "USDZ memory policy includes retained archive assets and output storage");
+  usdz_options.max_memory_bytes = 8u << 20;
+  const USDZWriteResult asset_memory_accepted =
+      WriteUSDZFromUSDCAndAssetsToMemory(package, crate.data(), crate.size(),
+                                          assets, usdz_options);
+  CHECK(asset_memory_accepted.success && !package.empty(),
+        "USDZ accepts archive payloads within a sufficient memory estimate");
+}
+
+static void test_writer_memory_estimate_counts_string_payloads() {
+  std::vector<std::string> string_items;
+  string_items.emplace_back(400u * 1024u, 's');
+  const Value string_array = Value::MakeStringLikeArray(
+      std::move(string_items), TypeId::String);
+  CHECK(string_array.dynamic_string_memory_usage() >= 400u * 1024u,
+        "dynamic value estimate includes string-array storage");
+  Dict nested;
+  nested.set("payload", Value(std::string(400u * 1024u, 'd')));
+  const Value dictionary = Value::MakeDictionary(std::move(nested));
+  CHECK(dictionary.dynamic_string_memory_usage() >= 400u * 1024u,
+        "dynamic value estimate includes recursive dictionary strings");
+
+  const std::string payload(1100u * 1024u, 'x');
+  const std::string source = "#usda 1.0\ndef Xform \"Root\" { custom string payload = \"" +
+      payload + "\" }\n";
+  LoadResult parsed = LoadUSDAFromString(source);
+  CHECK(parsed.success, "large string memory-estimate fixture parses");
+  if (!parsed.success) return;
+
+  USDCWriteOptions options;
+  options.crate_options.max_memory_bytes = 1u << 20;
+  std::vector<uint8_t> crate;
+  const USDCWriteResult rejected = WriteUSDCToMemory(crate, parsed.stage, options);
+  CHECK(!rejected.success &&
+            rejected.error.find("estimated working set") != std::string::npos,
+        "writer memory estimate includes retained scalar string capacity");
+  CHECK(crate.empty(), "string-heavy memory-rejected output is not published");
+
+  options.crate_options.max_memory_bytes = 4u << 20;
+  const USDCWriteResult accepted = WriteUSDCToMemory(crate, parsed.stage, options);
+  CHECK(accepted.success && !crate.empty(),
+        "writer accepts string payload under a sufficient estimate budget");
+}
 
 static const char* kRootUSDA = R"(#usda 1.0
 (
@@ -378,6 +515,27 @@ static void test_scheme_and_anonymous_assets() {
             moved_resolver.HasScheme("studio"),
         "resolver copy/move preserves registered schemes and memory assets");
 
+  const std::string owned_view_id = resolver.RegisterMemoryAsset(
+      "studio:owned-view", std::vector<uint8_t>{4, 5, 6});
+  const auto owned_view = resolver.GetMemoryAssetView(owned_view_id);
+  CHECK(owned_view && *owned_view == std::vector<uint8_t>({4, 5, 6}),
+        "memory asset views share the registered payload without copying");
+  CHECK(resolver.UnregisterMemoryAsset(owned_view_id) && owned_view &&
+            *owned_view == std::vector<uint8_t>({4, 5, 6}),
+        "owning resolver views remain valid after unregister");
+  const auto shared_payload = std::make_shared<const std::vector<uint8_t>>(
+      std::vector<uint8_t>{7, 8, 9});
+  AssetResolver imported_resolver;
+  const std::string imported_id = imported_resolver.RegisterMemoryAssetView(
+      "studio:shared-view", shared_payload);
+  CHECK(imported_id == "studio:shared-view" &&
+            imported_resolver.GetMemoryAssetView(imported_id) == shared_payload,
+        "resolver imports an immutable payload view without copying");
+  imported_resolver.ClearMemoryAssets();
+  CHECK(!imported_resolver.Resolve(imported_id).exists &&
+            *shared_payload == std::vector<uint8_t>({7, 8, 9}),
+        "clearing imported resolver keys preserves the external owner");
+
   std::string root =
       "#usda 1.0\ndef Xform \"Root\" (references = @" + anonymous +
       "@</Base>) {}\n";
@@ -547,6 +705,10 @@ def Xform "Scene"
 }
 
 int main() {
+  test_shared_asset_payload_budget();
+  test_usda_progress_and_cancellation();
+  test_crate_and_usdz_file_size_limits();
+  test_writer_memory_estimate_counts_string_payloads();
   test_load_layer_from_memory_dispatch();
   test_suffix_fallback_resolution();
   test_recursive_resolution_and_identifiers();

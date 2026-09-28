@@ -438,7 +438,11 @@
         }
         // variantSetChildren: sets that have CONTENT (holder prims present in
         // the layer) — pxr enumerates the child specs from it.
-        auto oit = variant_names.find(prim.path().str());
+        // Same gate as the holder specs above: after flattening, the
+        // compositor clears the owner's variant sets and its leftover holder
+        // specs are not emitted, so neither are their set/child lists.
+        auto oit = prim.meta().variantSets().empty() ? variant_names.end()
+                                                     : variant_names.find(prim.path().str());
         std::vector<std::string> content_sets;
         if (oit != variant_names.end()) {
           content_sets.reserve(oit->second.size());
@@ -667,7 +671,7 @@
         CrateField f;
         f.token_index.value = InternToken("documentation");
         uint32_t str_idx = InternString(layer.meta().doc);
-        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
+        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
@@ -677,7 +681,7 @@
         CrateField f;
         f.token_index.value = InternToken("comment");
         uint32_t str_idx = InternString(layer.meta().comment);
-        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
+        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
@@ -687,7 +691,25 @@
         f.token_index.value = InternToken("owner");
         uint32_t str_idx = InternString(layer.meta().owner);
         f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false,
-                                     false);
+                                     true);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // USDZ playback metadata is a typed boolean field on the pseudo-root.
+      if (layer.meta().autoPlay_set) {
+        CrateField f;
+        f.token_index.value = InternToken("autoPlay");
+        f.value_rep = EncodeValue(Value(layer.meta().autoPlay));
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+      if (layer.meta().playbackMode_set) {
+        CrateField f;
+        f.token_index.value = InternToken("playbackMode");
+        f.value_rep = ValueRep::Make(
+            CrateTypeId::Token, InternToken(layer.meta().playbackMode), false,
+            true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
@@ -704,7 +726,7 @@
         CrateField f;
         f.token_index.value = InternToken("__lightusd_unknownMeta");
         uint32_t str_idx = InternString(blob);
-        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
+        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
@@ -782,7 +804,7 @@
         f.token_index.value = InternToken("renderSettingsPrimPath");
         f.value_rep = ValueRep::Make(
             CrateTypeId::String,
-            InternString(layer.meta().renderSettingsPrimPath), false, false);
+            InternString(layer.meta().renderSettingsPrimPath), false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }

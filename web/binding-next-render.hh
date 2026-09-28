@@ -1,9 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #pragma once
+#include <array>
+#include <cstdint>
+#include <iomanip>
+#include <limits>
+#include <map>
+#include <set>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <vector>
+#include "asset-uuid.hh"
 #include "binding-next-common.hh"
+#include "security-policy.hh"
+#include "next/resolver/asset-resolver.hh"
+#include "next/pcp/cache.hh"
+#include "next/schema/geom-mesh.hh"
+#include "next/stage/stage.hh"
+#include "tydra/next/render-converter.hh"
 namespace lightusd {
+namespace tydra { namespace next { template <typename T> struct ValueArrayRead; } }
 namespace web_next {
+class NextAssetStore;
+class NextLayerDocument;
 class RenderStream {
  public:
   RenderStream();
@@ -24,9 +44,96 @@ class RenderStream {
     build_vertex_indices_ = enabled;
     build_vertex_indices_set_ = true;
   }
+  void setEnableComposition(bool enabled) { enable_composition_ = enabled; }
+  void setEnableValueClips(bool enabled) { enable_value_clips_ = enabled; }
+  void setLoadTextureInNative(bool enabled) { load_texture_in_native_ = enabled; }
+  void setCombineUDIMTiles(bool enabled) { combine_udim_tiles_ = enabled; }
+  int renderFlag(uint8_t kind) const {
+    switch (kind) {
+      case 0: return material_dedup_ ? 1 : 0;
+      case 1: return mesh_merge_ ? 1 : 0;
+      case 2: return mesh_merge_bake_transform_ ? 1 : 0;
+      case 3: return flatten_render_tree_ ? 1 : 0;
+      case 4: return mesh_only_ ? 1 : 0;
+      case 5: return compute_tangents_ ? 1 : 0;
+      case 6: return build_vertex_indices_ ? 1 : 0;
+      case 7: return enable_composition_ ? 1 : 0;
+      case 8: return enable_value_clips_ ? 1 : 0;
+      case 9: return load_texture_in_native_ ? 1 : 0;
+      case 10: return combine_udim_tiles_ ? 1 : 0;
+      default: return -1;
+    }
+  }
+  bool enableValueClips() const { return enable_value_clips_; }
+  int sphereSubdivisions() const { return sphere_subdivisions_; }
+  int setSphereSubdivisions(int value);
+  bool enableBoneReduction() const { return enable_bone_reduction_; }
+  int setEnableBoneReduction(bool enabled) {
+    enable_bone_reduction_ = enabled;
+    return 0;
+  }
+  uint32_t targetBoneCount() const { return target_bone_count_; }
+  int setTargetBoneCount(uint32_t value);
+  bool roundBoneCount() const { return round_bone_count_; }
+  int setRoundBoneCount(bool enabled) {
+    round_bone_count_ = enabled;
+    return 0;
+  }
+  int setValueClipSetting(uint8_t field, double value);
+  double valueClipSetting(uint8_t field) const;
 
-  void provideAsset(const std::string& name, const emscripten::val& bytes);
-  void clearAssets() { clip_assets_.clear(); }
+  int provideAssetBytes(const uint8_t* name, uint32_t name_size,
+                        const uint8_t* bytes, uint32_t byte_size);
+  int importAssetStore(const NextAssetStore& store);
+  int beginCachedAsset(NextAssetStore& store, const uint8_t* identifier,
+                      uint32_t identifier_size);
+  int clearImportedAssetStore();
+  void reset();
+  int startStreamingAsset(const uint8_t* name, uint32_t name_size,
+                          uint32_t expected_size);
+  int appendStreamingAsset(const uint8_t* name, uint32_t name_size,
+                           const uint8_t* bytes, uint32_t byte_size);
+  int streamingAssetBytesWritten(const uint8_t* name, uint32_t name_size) const;
+  int streamingAssetExpectedBytes(const uint8_t* name, uint32_t name_size) const;
+  int streamingAssetUuidCopy(const uint8_t* name, uint32_t name_size,
+                             uint8_t* out, uint32_t cap) const;
+  uintptr_t streamingAssetViewPtr(const uint8_t* name, uint32_t name_size,
+                                  uint32_t byte_size) const;
+  uintptr_t streamingAssetViewPtrAt(const uint8_t* name, uint32_t name_size,
+                                    uint32_t offset, uint32_t byte_size) const;
+  int markStreamingAssetBytesWritten(const uint8_t* name, uint32_t name_size,
+                                     uint32_t byte_size);
+  int markStreamingAssetRangeWritten(const uint8_t* name, uint32_t name_size,
+                                     uint32_t offset, uint32_t byte_size);
+  int finalizeStreamingAsset(const uint8_t* name, uint32_t name_size);
+  int finalizeStreamingAssetToStore(const uint8_t* name, uint32_t name_size,
+                                   NextAssetStore& store);
+  int cancelStreamingAsset(const uint8_t* name, uint32_t name_size);
+  int beginStreamingAssetAsRoot(const uint8_t* name, uint32_t name_size);
+  int removeAssetBytes(const uint8_t* name, uint32_t name_size);
+  int providedAssetCount() const;
+  int providedAssetNameCopy(int asset_id, uint8_t* out, uint32_t cap) const;
+  int providedAssetBytesCopy(const uint8_t* name, uint32_t name_size,
+                             uint8_t* out, uint32_t cap) const;
+  int setProvidedAssetByteLimit(uint32_t limit);
+  uint32_t providedAssetByteLimit() const { return provided_asset_byte_limit_; }
+  int setMaxInputBytes(uint32_t limit);
+  uint32_t maxInputBytes() const { return max_input_bytes_; }
+  int setMaxMemoryLimitMB(int32_t limit_mb);
+  int32_t maxMemoryLimitMB() const { return max_memory_limit_mb_; }
+  size_t maxMemoryLimitBytes() const {
+    return static_cast<size_t>(max_memory_limit_mb_) * (size_t{1} << 20);
+  }
+  size_t remainingMemoryLimitBytes() const;
+  size_t providedAssetMemoryBytes() const;
+  void clearAssets() {
+    clip_assets_.clear();
+    clip_asset_budget_reservations_.clear();
+    streaming_assets_.clear();
+    asset_resolver_.ClearMemoryAssets();
+    imported_asset_bytes_ = 0;
+    payload_budget_.reset();
+  }
 
   // Strongest variant selection. `key` is a variant-set name (applies to
   // every prim carrying that set) or the prim-scoped form
@@ -39,17 +146,29 @@ class RenderStream {
   void clearVariantOverrides() { variant_overrides_.clear(); }
 
   // Authored variant sets of the most recently loaded root layer (recorded
-  // before composition consumes them): [{primPath, setName, selected,
-  // variants: [names...]}].
-  emscripten::val listVariants() const;
+  // before composition consumes them). String kind: 0=prim path, 1=set name,
+  // 2=selection, 3=variant name at variant_id.
+  int variantSetCount() const;
+  int variantNameCount(int set_id) const;
+  int variantStringCopy(int set_id, int variant_id, uint8_t kind,
+                        uint8_t* out, uint32_t cap) const;
+  int layerAssetPathCount(uint8_t kind) const;
+  int layerAssetPathCopy(uint8_t kind, int path_id, uint8_t* out,
+                         uint32_t cap) const;
+  int layerArcPresent(uint8_t kind) const;
   void setTangentMethod(const std::string &method);
 
   // Adopt the root bytes by move. USDC lazy arrays and USDA lazy slices retain
   // this buffer directly instead of copying it again inside the loader.
-  emscripten::val beginOwned(std::string &&crate);
+  bool beginOwned(std::string &&crate);
 
   // Begin from a JS Uint8Array (one copy into the WASM heap, then adopted).
-  emscripten::val begin(emscripten::val bytes);
+  int preflightBeginInput(uint32_t size);
+  int beginBytes(const uint8_t* bytes, uint32_t size);
+  int beginFromLayerDocument(NextLayerDocument& document);
+  int exportStageUSDC();
+  int stageUSDCSize() const;
+  uintptr_t stageUSDCData() const;
 
   int meshCount() const {
     if (!loaded_ && outputs_.empty()) return 0;
@@ -60,6 +179,249 @@ class RenderStream {
   int nodeCount() const {
     return render_scene_valid_ ? static_cast<int>(render_scene_.nodes.size()) : 0;
   }
+  int nativeInstanceNodeIdsCopy(uint8_t* out, uint32_t cap) const;
+
+  // Scalar node metadata: 0=type, 1=parent id, 2=data id, 3=visible,
+  // 4=reset-xform-stack, 5=native instance.
+  int nodeField(int node_id, uint8_t field) const {
+    if (!render_scene_valid_ || node_id < 0 ||
+        static_cast<size_t>(node_id) >= render_scene_.nodes.size()) return -1;
+    const auto& node = render_scene_.nodes[static_cast<size_t>(node_id)];
+    switch (field) {
+      case 0: return static_cast<int>(node.type);
+      case 1: return node.parent_id;
+      case 2: return node.data_id;
+      case 3: return node.visible ? 1 : 0;
+      case 4: return node.has_reset_xform ? 1 : 0;
+      case 5: return node.is_instance ? 1 : 0;
+      default: return -1;
+    }
+  }
+
+  int nodeChildId(int node_id, int child_index) const {
+    if (!render_scene_valid_ || node_id < 0 || child_index < 0 ||
+        static_cast<size_t>(node_id) >= render_scene_.nodes.size()) return -1;
+    const auto& children =
+        render_scene_.nodes[static_cast<size_t>(node_id)].children;
+    return static_cast<size_t>(child_index) < children.size()
+               ? children[static_cast<size_t>(child_index)]
+               : -1;
+  }
+
+  int nodeChildCount(int node_id) const {
+    if (!render_scene_valid_ || node_id < 0 ||
+        static_cast<size_t>(node_id) >= render_scene_.nodes.size()) return -1;
+    const size_t count =
+        render_scene_.nodes[static_cast<size_t>(node_id)].children.size();
+    return count <= static_cast<size_t>((std::numeric_limits<int>::max)())
+               ? static_cast<int>(count)
+               : -1;
+  }
+
+  int rootNodeId(int root_index) const {
+    if (!render_scene_valid_ || root_index < 0 ||
+        static_cast<size_t>(root_index) >= render_scene_.root_nodes.size())
+      return -1;
+    return render_scene_.root_nodes[static_cast<size_t>(root_index)];
+  }
+
+  // Copy the stable prim-path key for a node into caller-owned WASM memory.
+  // Returns the UTF-8 byte count; a short or null buffer only queries size.
+  int nodePathCopy(int node_id, uint8_t* out, uint32_t cap) const;
+  int nodePrototypePathCopy(int node_id, uint8_t* out, uint32_t cap) const;
+
+  // Copy a node's local (kind 0) or world (kind 1) 4x4 float matrix.
+  // Returns 64 bytes; a short or null buffer only queries size.
+  int nodeTransformCopy(int node_id, uint8_t kind, uint8_t* out,
+                        uint32_t cap) const;
+
+  // Copy a path-bearing resource key. kind: 0=node, 1=mesh, 2=material,
+  // 3=texture, 4=image, 5=light, 6=camera, 7=skeleton, 8=animation,
+  // 9=unsupported, 10=instancer, 11=root node, 12=points, 13=curves,
+  // 14=instance draw. Root-node IDs address the root list.
+  int resourcePathCopy(uint8_t kind, int resource_id, uint8_t* out,
+                       uint32_t cap) const;
+  int resourceNameCopy(uint8_t kind, int resource_id, uint8_t* out,
+                       uint32_t cap) const;
+  // Copy the stable key for a scene record. Kinds match lightusd_render_kind;
+  // root-node record indices refer to the root list, not the node array.
+  int recordPathCopy(uint8_t kind, int record_id, uint8_t* out,
+                     uint32_t cap) const;
+  // Point-cloud payloads: kind 0=positions, 1=widths, 2=colors (float data).
+  int pointsBufferCopy(int points_id, uint8_t kind, uint8_t* out,
+                       uint32_t cap) const;
+  int pointsInfo(int points_id, lightusd_next_points_info* out) const;
+  // Curve payloads: kind 0=control points, 1=tessellated points,
+  // 2=widths, 3=colors (float data), 4=authored vertex counts,
+  // 5=tessellated vertex counts (uint32 data).
+  int curvesBufferCopy(int curves_id, uint8_t kind, uint8_t* out,
+                       uint32_t cap) const;
+  int curvesInfo(int curves_id, lightusd_next_curves_info* out) const;
+  // Curve fields: 0=type, 1=basis, 2=wrap, 3=is NURBS, 4=is Hermite.
+  int curvesField(int curves_id, uint8_t field) const;
+  // Point-instancer payloads: kind 0=compact records, 1=positions,
+  // 2=orientations, 3=scales, 4=prototype indices, 5=visibility,
+  // 6=prototype node ids, 7=prototype mesh offsets, 8=prototype mesh ids,
+  // 9=prototype transforms.
+  int instancerBufferCopy(int instancer_id, uint8_t kind, uint8_t* out,
+                          uint32_t cap) const;
+  int instancerInfo(int instancer_id, lightusd_next_instancer_info* out) const;
+  int instancerStringCopy(int instancer_id, int prototype_id, uint8_t kind,
+                          uint8_t* out, uint32_t cap) const;
+  // Point-instance draw fields: 0=instancer id, 1=instance index,
+  // 2=prototype index, 3=mesh id, 4=material id, 5=expanded mesh id.
+  int pointInstanceDrawField(int draw_id, uint8_t field) const;
+  // Copy one point-instance draw transform as 16 float values (64 bytes).
+  int pointInstanceDrawTransformCopy(int draw_id, uint8_t* out,
+                                     uint32_t cap) const;
+  // Light fields: 0=type, 1=intensity*1e3, 2=exposure*1e3,
+  // 3=normalize, 4=shadow enabled. Camera fields: 0=type,
+  // 1=focal length*1e3, 2=ortho width*1e3, 3=near clip*1e3,
+  // 4=far clip*1e3, 5=fov x*1e3, 6=fov y*1e3.
+  int lightField(int light_id, uint8_t field) const;
+  int lightTransformCopy(int light_id, uint8_t* out, uint32_t cap) const;
+  int lightColorCopy(int light_id, uint8_t* out, uint32_t cap) const;
+  int lightInfo(int light_id, lightusd_next_light_info* out) const;
+  int lightStringCopy(int light_id, uint8_t kind, int item_id, uint8_t* out,
+                      uint32_t cap) const;
+  int lightMeshIdsCopy(int light_id, uint8_t kind, uint8_t* out,
+                       uint32_t cap) const;
+  int cameraField(int camera_id, uint8_t field) const;
+  int cameraInfo(int camera_id, lightusd_next_camera_info* out) const;
+  int cameraTransformCopy(int camera_id, uint8_t* out, uint32_t cap) const;
+  int cameraOpticsCopy(int camera_id, uint8_t* out, uint32_t cap) const;
+  // Skeleton fields: 0=joint count, 1=root joint, 2=animation id.
+  int skeletonField(int skeleton_id, uint8_t field) const;
+  // Skeleton joint payloads: kind 0=bind matrices, 1=rest matrices,
+  // 2=parent indices.
+  int skeletonJointBufferCopy(int skeleton_id, uint8_t kind, uint8_t* out,
+                              uint32_t cap) const;
+  int skeletonJointChildrenCopy(int skeleton_id, int joint_id, uint8_t* out,
+                                uint32_t cap) const;
+  int skeletonJointStringCopy(int skeleton_id, int joint_id, uint8_t kind,
+                              uint8_t* out, uint32_t cap) const;
+  int animationChannelCount(int animation_id) const;
+  // Fields: 0=target node, 1=target skeleton, 2=keyframe count,
+  // 3=element count, 4=value stride, 5=interpolation, 6=skeletal,
+  // 7=target path, 8=joint-order count, 9=blend-shape-order count,
+  // 10=joint-remap count.
+  int animationChannelField(int animation_id, int channel_id,
+                            uint8_t field) const;
+  // Payload kinds: 0=keyframe times f64, 1=keyframe values f32
+  // (path-dependent width), 2=full array values f32, 3=joint remap i32.
+  int animationChannelBufferCopy(int animation_id, int channel_id,
+                                 uint8_t kind, uint8_t* out,
+                                 uint32_t cap) const;
+  int animationArrayView(int animation_id, int channel_id,
+                         lightusd_next_animation_array_view* out) const;
+  int animationChannelStringCopy(int animation_id, int channel_id, uint8_t kind,
+                                 uint8_t* out, uint32_t cap) const;
+  int animationChannelOrderStringCopy(int animation_id, int channel_id,
+                                      uint8_t kind, int order_id, uint8_t* out,
+                                      uint32_t cap) const;
+
+  // Scalar mesh metadata. field: 0=vertex count, 1=face/triangle count,
+  // 2=material id, 3=has normals, 4=has UVs, 5=has tangents,
+  // 6=has secondary UVs, 7=has colors, 8=has skin, 9=has bounds,
+  // 10=skeleton id. Returns -1 for invalid ids.
+  int meshField(int mesh_id, uint8_t field);
+  int meshPrimvarCount(int mesh_id) const;
+  int meshPrimvarField(int mesh_id, int primvar_id, uint8_t field) const;
+  int meshPrimvarNameCopy(int mesh_id, int primvar_id, uint8_t* out,
+                          uint32_t cap) const;
+  int meshPrimvarBufferCopy(int mesh_id, int primvar_id, uint8_t kind,
+                            uint8_t* out, uint32_t cap) const;
+
+  // Copy one GPU payload into caller-owned WASM memory. kind: 0=points f32x3,
+  // 1=indices u32, 2=normals f32x3, 3=primary UV f32x2, 4=tangents f32x4,
+  // 5=colors f32, 6=opacities f32, 7=skin joint indices u16,
+  // 8=skin joint weights f32, 9=secondary UV f32x2. Returns the required
+  // byte count; a short or null buffer only queries the size. Returns -1 for
+  // an invalid mesh/kind. This keeps payload transfer out of emval.
+  /// Legacy computeMeshTangents: request tangents for one output mesh.
+  /// Returns 1 for a valid mesh id and 0 otherwise.
+  int requestMeshTangents(int mesh_id);
+  int meshBufferCopy(int mesh_id, uint8_t kind, uint8_t* out,
+                     uint32_t cap);
+  int meshView(int mesh_id, lightusd_next_mesh_view* out);
+  int meshViewStringCopy(int mesh_id, uint8_t kind, uint8_t* out,
+                         uint32_t cap) const;
+  int meshSubsetOutputCopy(int mesh_id, uint8_t* out, uint32_t cap);
+  int meshBlendShapeCount(int mesh_id) const;
+  int meshBlendShapeInfo(int mesh_id, int shape_id, int inbetween_id,
+                         lightusd_next_blend_shape_info* out) const;
+  int meshBlendShapeNameCopy(int mesh_id, int shape_id, int inbetween_id,
+                             uint8_t* out, uint32_t cap) const;
+  int meshBlendShapeOffsetsCopy(int mesh_id, int shape_id, int inbetween_id,
+                                uint8_t kind, uint8_t* out, uint32_t cap);
+  int outputMaterialInfo(int material_id,
+                         lightusd_next_output_material_info* out) const;
+  int outputMaterialStringCopy(int material_id, uint8_t kind, uint8_t* out,
+                               uint32_t cap) const;
+  int materialFormatStatus(int material_id, uint8_t format) const;
+  int materialFormatStringCopy(int material_id, uint8_t format, uint8_t* out,
+                               uint32_t cap) const;
+  int lightFormatStatus(int light_id, uint8_t format) const;
+  int lightFormatStringCopy(int light_id, uint8_t format, uint8_t* out,
+                            uint32_t cap) const;
+  int outputTextureMeta(int material_id, uint8_t slot,
+                        lightusd_next_output_texture_meta* out) const;
+  int outputTextureStringCopy(int material_id, uint8_t slot, uint8_t kind,
+                              uint8_t* out, uint32_t cap) const;
+
+  // Scalar material metadata. field: 0=shader type, 1=alpha mode,
+  // 2=double-sided, 3=opacity*1000000, 4=roughness*1000000,
+  // 5=clearcoat*1000000, 6=clearcoat roughness*1000000, 7=fallback.
+  int materialField(int material_id, uint8_t field) const;
+  int materialDiagnosticCount(int material_id) const;
+  int materialDiagnosticKind(int material_id, int diagnostic_id) const;
+  int materialDiagnosticStringCopy(int material_id, int diagnostic_id,
+                                   uint8_t kind, uint8_t* out,
+                                   uint32_t cap) const;
+  // Common shader parameter slots: 0=base/diffuse color, 1=emissive,
+  // 2=metallic, 3=roughness, 4=opacity. Returns four f32 values.
+  int materialParamBufferCopy(int material_id, uint8_t param, uint8_t* out,
+                              uint32_t cap) const;
+  int materialParamTextureId(int material_id, uint8_t param) const;
+
+  // Scalar texture metadata. field: 0=image id, 1=width, 2=height,
+  // 3=channels, 4=mip levels, 5=loaded.
+  int textureField(int texture_id, uint8_t field) const;
+  int textureStringCopy(int texture_id, uint8_t kind, uint8_t* out,
+                        uint32_t cap) const;
+
+  // Copy decoded image bytes for a texture into caller-owned WASM memory.
+  // Returns required bytes; a short or null buffer only queries the size.
+  int textureImageBufferCopy(int texture_id, uint8_t* out, uint32_t cap) const;
+  int textureSamplingBufferCopy(int texture_id, uint8_t* out,
+                                uint32_t cap) const;
+  int textureTransformBufferCopy(int texture_id, uint8_t* out,
+                                 uint32_t cap) const;
+  int textureUDIMRemapBufferCopy(int texture_id, uint8_t* out,
+                                 uint32_t cap) const;
+  int udimTileCount(int udim_id) const;
+  int udimTextureCount() const;
+  int udimTileBufferCopy(int udim_id, uint8_t* out, uint32_t cap) const;
+  int udimStringCopy(int udim_id, uint8_t kind, uint8_t* out,
+                     uint32_t cap) const;
+  int textureColorTransformBufferCopy(int texture_id, uint8_t* out,
+                                      uint32_t cap) const;
+
+  // Scalar scene metadata. field: 0=meters/unit * 1e6, 1=up axis,
+  // 2=start time * 1e3, 3=end time * 1e3, 4=fps * 1e3.
+  int sceneField(uint8_t field) const;
+  // Scene strings: 0=name, 1=default prim, 2=render-settings path,
+  // 3=working color space. Returns required UTF-8 bytes excluding NUL.
+  int sceneStringCopy(uint8_t kind, uint8_t* out, uint32_t cap) const;
+  int sceneMetadata(lightusd_next_scene_metadata* out) const;
+  // Unsupported renderable strings: 0=prim path, 1=type name, 2=reason.
+  int unsupportedStringCopy(int unsupported_id, uint8_t kind, uint8_t* out,
+                            uint32_t cap) const;
+  int renderStats(lightusd_next_render_stats* out) const;
+  int renderStatsDetail(lightusd_next_render_stats_detail* out) const;
+  int animationInfo(int animation_id, lightusd_next_animation_info* out) const;
+  int animationClipAssetCopy(int animation_id, int asset_id, uint8_t* out,
+                             uint32_t cap) const;
 
   int lightCount() const {
     return render_scene_valid_ ? static_cast<int>(render_scene_.lights.size()) : 0;
@@ -76,6 +438,30 @@ class RenderStream {
   int cameraCount() const {
     return render_scene_valid_ ? static_cast<int>(render_scene_.cameras.size()) : 0;
   }
+  int imageField(int image_id, uint8_t field) const;
+  int imageAssetIdentifierCopy(int image_id, uint8_t* out,
+                               uint32_t cap) const;
+  int imageBufferCopy(int image_id, uint8_t* out, uint32_t cap) const;
+  uintptr_t imageBufferData(int image_id) const;
+  int imageCount() const {
+    return render_scene_valid_ ? static_cast<int>(render_scene_.images.size()) : 0;
+  }
+  // Public material ids index the (optionally deduplicated) bound-material
+  // table, registered in mesh order at load. Like legacy, the count excludes
+  // the trailing fallback record used by unbound meshes.
+  int materialCount() const {
+    if (!render_scene_valid_) return 0;
+    size_t count = materials_.size();
+    if (count && materials_.back().prim_path == "__default") --count;
+    return static_cast<int>(count);
+  }
+  int textureCount() const {
+    return render_scene_valid_ ? static_cast<int>(render_scene_.textures.size()) : 0;
+  }
+  bool loaded() const { return loaded_; }
+  int rootNodeCount() const {
+    return render_scene_valid_ ? static_cast<int>(render_scene_.root_nodes.size()) : 0;
+  }
 
   int pointInstancerCount() const {
     return render_scene_valid_ ? static_cast<int>(render_scene_.point_instancers.size())
@@ -87,6 +473,7 @@ class RenderStream {
                ? static_cast<int>(render_scene_.point_instance_draws.size())
                : 0;
   }
+
 
   int skeletonCount() const {
     return render_scene_valid_ ? static_cast<int>(render_scene_.skeletons.size()) : 0;
@@ -102,55 +489,33 @@ class RenderStream {
                : 0;
   }
 
-  std::string error() const { return error_; }
+  const std::string& error() const { return error_; }
+  const std::string& warning() const { return warning_; }
+  const lightusd::next::pcp::CompositionReport& compositionReport() const {
+    return composition_report_;
+  }
 
-  emscripten::val getNode(int32_t node_id) const;
 
-  emscripten::val getLight(int32_t light_id) const;
 
-  emscripten::val getPoints(int32_t points_id);
 
-  emscripten::val getCurves(int32_t curves_id);
 
-  emscripten::val getCamera(int32_t camera_id) const;
 
-  emscripten::val getPointInstancer(int32_t instancer_id) const;
 
-  emscripten::val getPointInstanceDraw(int32_t draw_id) const;
 
-  emscripten::val getSkeleton(int32_t skeleton_id) const;
 
-  emscripten::val getAnimation(int32_t anim_id) const;
 
-  // Adapter-oriented animation getter. Large aggregate skeletal arrays are
-  // exposed as transient WASM heap descriptors instead of being pushed into
-  // JavaScript arrays (and duplicated in both samplers and tracks). Consumers
-  // must copy descriptor-backed data before the next heap-growing native call
-  // or end(). getAnimation() remains the compatibility getter for direct API
-  // users.
-  emscripten::val getAnimationView(int32_t anim_id) const;
 
-  emscripten::val getAllAnimations() const;
 
-  emscripten::val getAnimationInfo(int32_t anim_id) const;
 
-  emscripten::val getAllAnimationInfos() const;
-
-  emscripten::val getUnsupportedRenderables() const;
-
-  emscripten::val getStats() const;
-
-  emscripten::val getSceneMetadata() const;
-
-  // Materialize mesh i's geometry into the scratch and return zero-copy
-  // descriptors {points,indices,normals,uv0} + resolved material. Valid until the
-  // next getMesh()/end(); the JS caller must upload before calling getMesh again.
-  emscripten::val getMesh(int i);
 
   // Free the stage, mesh list and scratch (returns the heap to the allocator).
   void end();
+  // Composition replaces the source root in Stage in place, so there is no
+  // additional source-layer copy to release. Keep the legacy lifecycle hook.
+  void releaseSourceLayer() {}
 
   void buildRenderScene_();
+  int prepareMaterialFormat_(int material_id, uint8_t format) const;
 
  private:
   struct TextureMeta {
@@ -231,6 +596,7 @@ class RenderStream {
   }
 
   void buildAnalyticOutputs_();
+  void remapNodeMeshIds_();
 
   struct Stats {
     size_t source_mesh_count = 0;
@@ -258,9 +624,25 @@ class RenderStream {
     size_t geometry_materialized_bytes = 0;
   };
 
-  emscripten::val outputSourceMesh_(int i);
+  const tr::RenderMesh* sourceRenderMesh_(int mesh_id) const;
+  const tr::RenderMesh::BlendShape* outputBlendShape_(
+      int mesh_id, int shape_id) const;
 
-  emscripten::val outputMergedMesh_(const OutputMesh &record) const;
+  struct MeshOnlyPrimvar {
+    std::string name;
+    const lightusd::next::Value* value = nullptr;
+    const std::vector<int32_t>* indices = nullptr;
+    tr::VertexFormat format = tr::VertexFormat::Float;
+    tr::Interpolation interpolation = tr::Interpolation::Vertex;
+    uint32_t components = 1;
+    size_t scalar_count = 0;
+    int32_t element_size = 1;
+  };
+  const std::vector<MeshOnlyPrimvar>* meshOnlyPrimvars_(int mesh_id) const;
+  const std::vector<MeshOnlyPrimvar>* sourcePrimvars_(int source_index) const;
+
+  const tr::RenderMaterial* outputRenderMaterial_(int material_id) const;
+  const TextureMeta* outputTextureMeta_(int material_id, uint8_t slot) const;
 
   template <typename T>
   static void freeVec_(std::vector<T> &v) { std::vector<T>().swap(v); }
@@ -268,6 +650,13 @@ class RenderStream {
   tr::MeshConfig::TangentComputationMethod tangentMethod_() const;
 
   bool computeScratchTangents_();
+  void flattenRenderTree_();
+  // Legacy parity: tangents exist only for meshes whose bound material (or a
+  // GeomSubset material) has a normal-map texture, either eagerly when
+  // deferral is off or after an explicit computeMeshTangents request.
+  bool wantsTangents_(int source_index) const;
+  bool hasNormalMap_(const lightusd::next::UsdPrim &prim) const;
+  void prepareScratchSkin_(const tr::RenderMesh* mesh);
 
   bool readFloatArray_(const lightusd::next::UsdPrim &prim, const char *name,
                        tr::ValueArrayRead<float> *out);
@@ -338,10 +727,7 @@ class RenderStream {
 
   int32_t registerMaterial_(const lightusd::next::UsdPrim &mat);
 
-  int32_t materialIdForBoundPrim_(const lightusd::next::UsdPrim &prim) {
-    lightusd::next::UsdPrim mat = lightusd::next::GetBoundMaterial(stage_, prim);
-    return registerMaterial_(mat);
-  }
+  int32_t materialIdForBoundPrim_(const lightusd::next::UsdPrim &prim);
 
   static bool hasGeomSubset_(const lightusd::next::UsdPrim &prim);
 
@@ -466,15 +852,6 @@ class RenderStream {
                               const std::vector<uint32_t> &idx,
                               std::vector<float> &out);
 
-  emscripten::val heapF_(const std::vector<float> &v, int comps) const;
-  emscripten::val heapU32_(const std::vector<uint32_t> &v) const;
-  emscripten::val heapU16_(const std::vector<uint16_t> &v) const;
-  static emscripten::val arr3_(const float *c);
-  static emscripten::val matArray_(const std::array<double, 16> &m) {
-    emscripten::val a = emscripten::val::array();
-    for (double v : m) a.call<void>("push", v);
-    return a;
-  }
   static std::array<double, 16> identityMatrix_();
   static std::array<double, 16> multiplyMatrix_(
       const std::array<double, 16> &a, const std::array<double, 16> &b);
@@ -491,21 +868,6 @@ class RenderStream {
   std::array<double, 16> worldMatrixForPrim_(
       const lightusd::next::UsdPrim &prim) const;
 
-  emscripten::val materialObjectForPrim_(
-      const lightusd::next::UsdPrim &mat);
-
-  emscripten::val materialObject_(int32_t material_id) const;
-
-  // Resolve the prim's bound material to UsdPreviewSurface values + texture
-  // asset paths (resolved to GPU textures by the JS caller from the archive).
-  emscripten::val resolveMaterial_(const lightusd::next::UsdPrim &prim) {
-    lightusd::next::UsdPrim mat = lightusd::next::GetBoundMaterial(stage_, prim);
-    return materialObjectForPrim_(mat);
-  }
-
-  void addGeomSubsetMaterials_(const lightusd::next::UsdPrim &prim,
-                               emscripten::val &out);
-
   lightusd::next::Stage stage_;
   tr::RenderScene render_scene_;
   bool render_scene_valid_ = false;
@@ -514,6 +876,15 @@ class RenderStream {
   std::vector<OutputMesh> outputs_;
   std::vector<OutputMesh> analytic_outputs_;
   std::vector<MaterialRecord> materials_;
+  mutable int32_t formatted_material_id_ = -1;
+  mutable uint8_t formatted_material_format_ = 0xff;
+  mutable int32_t formatted_material_status_ = 0;
+  mutable std::string formatted_material_text_;
+  mutable int32_t formatted_light_id_ = -1;
+  mutable uint8_t formatted_light_format_ = 0xff;
+  mutable int32_t formatted_light_status_ = 0;
+  mutable bool formatted_light_cached_ = false;
+  mutable std::string formatted_light_text_;
   std::unordered_map<std::string, int32_t> material_key_to_id_;
   std::unordered_map<std::string, int32_t> material_path_to_id_;
   std::unordered_map<std::string, int32_t> material_identity_to_id_;
@@ -525,6 +896,31 @@ class RenderStream {
   std::set<std::string> source_texture_keys_;
   std::set<std::string> texture_keys_;
   std::map<std::string, std::string> clip_assets_;
+  std::map<std::string, std::shared_ptr<void>> clip_asset_budget_reservations_;
+  lightusd::next::AssetResolver asset_resolver_;
+  std::shared_ptr<lightusd::next::AssetPayloadBudget> payload_budget_;
+  size_t imported_asset_bytes_{0};
+  struct StreamingAsset {
+    std::string bytes;
+    std::string uuid;
+    std::shared_ptr<void> budget_reservation;
+    uint32_t expected_size{0};
+    uint32_t cursor{0};
+    uint32_t written_size{0};
+    static constexpr size_t kMaxWrittenRanges = 128;
+    std::array<std::pair<uint32_t, uint32_t>, kMaxWrittenRanges> written_ranges{};
+    size_t written_range_count{0};
+  };
+  size_t streamingRangeBookkeepingBytes_() const;
+  int markStreamingRange_(StreamingAsset& stream, uint32_t offset,
+                          uint32_t byte_size);
+  std::map<std::string, StreamingAsset> streaming_assets_;
+  uint32_t provided_asset_byte_limit_{0};  // 0 = unlimited
+  uint32_t max_input_bytes_{static_cast<uint32_t>(
+      security_policy::kDefaultInputLimitBytes)};
+  // Next-only untrusted-load policy: keep one architecture-independent 1 GiB
+  // resident default, independent of legacy WASM's 2/8 GiB render defaults.
+  int32_t max_memory_limit_mb_{1024};
   struct VariantSetInfo {
     std::string prim_path;
     std::string set_name;
@@ -541,24 +937,44 @@ class RenderStream {
   double pending_input_copy_ms_ = 0.0;
   size_t pending_input_bytes_ = 0;
   bool loaded_ = false;
+  bool authored_has_inherits_ = false;
+  bool authored_has_specializes_ = false;
+  // Root-layer sublayer/reference/payload asset paths and arc presence as
+  // authored, captured before in-place composition consumes the arcs.
+  std::vector<std::string> authored_arc_paths_[3];
+  bool authored_arc_present_[3] = {false, false, false};
   bool material_dedup_ = false;
   bool mesh_merge_ = false;
-  bool mesh_merge_bake_transform_ = false;
+  bool mesh_merge_bake_transform_ = true;  // legacy default: bake merged meshes
   bool flatten_render_tree_ = false;
   bool mesh_only_ = false;
   bool compute_tangents_ = false;
+  std::vector<uint8_t> tangent_requests_;  // per source mesh index
   bool build_vertex_indices_ = true;
   bool build_vertex_indices_set_ = false;
+  bool enable_composition_ = true;
+  bool enable_value_clips_ = true;
+  bool load_texture_in_native_ = false;
+  bool combine_udim_tiles_ = false;
+  bool enable_bone_reduction_ = false;
+  uint32_t target_bone_count_ = 4;
+  bool round_bone_count_ = false;
+  int sphere_subdivisions_ = 4;
+  float value_clip_sample_rate_ = 0.0f;
+  bool value_clip_use_time_range_ = false;
+  double value_clip_start_time_ = 0.0;
+  double value_clip_end_time_ = 0.0;
   std::string tangent_method_ = "hybrid";
   std::string render_settings_path_;
   std::string error_;
+  std::string warning_;
+  lightusd::next::pcp::CompositionReport composition_report_;
+  std::string mesh_view_error_;
+  int mesh_view_source_id_ = -1;
   std::vector<float> s_points_, s_normals_, s_uv_, s_tangents_;
-  std::vector<float> s_points_cloud_points_, s_points_cloud_widths_;
-  std::vector<float> s_points_cloud_colors_;
-  std::vector<float> s_curve_points_, s_curve_widths_, s_curve_colors_;
-  std::vector<float> s_curve_tessellated_points_;
-  std::vector<float> s_curve_tessellated_widths_;
-  std::vector<float> s_curve_tessellated_colors_;
+  std::vector<uint8_t> stage_usdc_export_;
+  mutable std::unordered_map<int, std::vector<MeshOnlyPrimvar>>
+      source_primvars_;
   std::vector<uint32_t> s_indices_;
   std::vector<uint32_t> s_point_source_indices_;
   std::vector<uint16_t> s_joint_indices_;

@@ -1,8 +1,48 @@
 import assert from 'node:assert/strict';
-import createLightUSD from '../src/lightusd/lightusd_next.js';
+const {default: createLightUSD} = await import(process.env.LIGHTUSD_WASM64 === '1'
+  ? '../src/lightusd/lightusd_next_64.js'
+  : '../src/lightusd/lightusd_next.js');
 import { raycastTriangles } from '../lucia-code/src/projection-bake.js';
 
 const module = await createLightUSD();
+const simplifier = new module.MeshoptSimplifier();
+const simplifyPositions = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]);
+const simplifyIndices = new Uint32Array([0, 1, 2, 0, 2, 3]);
+const simplified = simplifier.simplify(simplifyPositions, simplifyIndices,
+  new Float32Array(12), new Float32Array(8), new Uint8Array(4), 3, 1, 0);
+assert.ok(simplified.indices instanceof Uint32Array);
+assert.ok(simplified.indices.length >= 3 && simplified.indices.length <= 6);
+assert.equal(simplified.sourceVertexCount, 4);
+assert.equal(simplified.vertexCacheOptimized, true);
+assert.equal(simplifier.simplify(simplifyPositions, simplifyIndices,
+  null, null, null, 2, 1, 0), undefined);
+simplifier.delete();
+assert.throws(() => simplifier.simplify(simplifyPositions, simplifyIndices,
+  null, null, null, 3, 1, 0), /already deleted/);
+const previousRetopoSelf = globalThis.self;
+let retopoMessage = null;
+globalThis.self = {postMessage(message) { retopoMessage = message; }};
+try {
+  await import(`../lucia-code/src/retopo-worker.js?regression=${Date.now()}`);
+  await globalThis.self.onmessage({data: {
+    type: 'retopo', positions: simplifyPositions, indices: simplifyIndices,
+    targetRatio: .5, targetError: 1, lockBorder: false, lockUVSeams: false
+  }});
+  assert.equal(retopoMessage?.type, 'result', retopoMessage?.message);
+  assert.ok(retopoMessage.indices instanceof Uint32Array);
+  assert.ok(retopoMessage.indices.length >= 3);
+  retopoMessage = null;
+  await globalThis.self.onmessage({data: {
+    type: 'retopo', positions: simplifyPositions, indices: simplifyIndices,
+    uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+    targetRatio: .5, targetError: 1, lockBorder: false, lockUVSeams: true
+  }});
+  assert.equal(retopoMessage?.type, 'result', retopoMessage?.message);
+  assert.ok(retopoMessage.uvs instanceof Float32Array);
+} finally {
+  if (previousRetopoSelf === undefined) delete globalThis.self;
+  else globalThis.self = previousRetopoSelf;
+}
 assert.equal(typeof module.LightRTPathTracer, 'function');
 const tracer = new module.LightRTPathTracer();
 const positions = new Float32Array([-1, -1, 0, 1, -1, 0, 0, 1, 0]);
@@ -15,6 +55,10 @@ assert.equal(tracer.triangleCount(), 1);
 const gpu = tracer.webGPUScene();
 assert.equal(gpu.width, 4);
 assert.ok(gpu.blocks.length > 0);
+assert.deepEqual([...gpu.normals], [...normals]);
+assert.deepEqual([...gpu.colors], [...colors]);
+assert.deepEqual([...gpu.materialIds], [0]);
+assert.deepEqual([...gpu.materials], [...materials]);
 const pixels = tracer.trace(new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
   new Float32Array([0, 0, 2]), 16, 16, 0, 1, 2, 1);
 assert.equal(pixels.length, 16 * 16 * 4);
@@ -34,7 +78,23 @@ const reference = raycastTriangles({ origins: new Float32Array([0, 0, 1, 2, 0, 1
 assert.deepEqual([...hits.triangle], [...reference.triangle]);
 assert.ok(Math.abs(hits.distance[0] - reference.distance[0]) < 1e-5);
 for (let i = 0; i < hits.barycentrics.length; i++) assert.ok(Math.abs(hits.barycentrics[i] - reference.barycentrics[i]) < 1e-5);
+assert.equal(tracer.build(positions, normals, colors, new Float32Array(11),
+  new Int32Array([0]), materials), false);
+assert.match(tracer.error(), /attribute array size mismatch/);
+assert.equal(tracer.triangleCount(), 0);
+assert.equal(tracer.build(new Float32Array(8), new Float32Array(8),
+  new Float32Array(8), params, new Int32Array([0]), materials), false);
+assert.match(tracer.error(), /positions must contain triangle soup/);
+const staleHandle = module._lightusd_lrt_create();
+assert.ok(staleHandle);
+module._lightusd_lrt_destroy(staleHandle);
+assert.equal(module._lightusd_lrt_triangle_count(staleHandle), -1);
+tracer.clear();
+assert.equal(tracer.triangleCount(), 0);
+assert.equal(tracer.webGPUScene(), undefined);
 tracer.delete();
+assert.equal(tracer.isDeleted(), true);
+assert.throws(() => tracer.error(), /already deleted/);
 
 const previousSelf = globalThis.self;
 let workerMessage = null;

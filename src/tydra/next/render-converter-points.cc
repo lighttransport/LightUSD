@@ -3,7 +3,8 @@
 //
 // Tydra Next - Points conversion
 
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
+#include "../../next/layer/prim-spec.hh"
 
 #include "next/schema/usd-vol.hh"
 
@@ -49,7 +50,7 @@ Interpolation ParsePrimvarInterp(const std::string& s) {
 
 }  // namespace
 
-bool RenderSceneConverter::ConvertPoints(const Stage& stage,
+bool RenderSceneConverter::Impl::ConvertPoints(const Stage& stage,
                                          const UsdPrim& prim,
                                          RenderPoints* out) {
   const bool gaussian = prim.GetTypeName() == "ParticleField3DGaussianSplat";

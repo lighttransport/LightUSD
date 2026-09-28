@@ -41,7 +41,23 @@ if(NOT LIGHTUSD_NATIVE_PRODUCT STREQUAL "legacy" AND
   message(FATAL_ERROR "LIGHTUSD_NATIVE_PRODUCT must be legacy or next")
 endif()
 if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
+  # The next product returns before the legacy dependency/configuration block
+  # below. Load sanitizer support here as well so SANITIZE_ADDRESS and
+  # SANITIZE_UNDEFINED are honored by next-only targets.
+  list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/sanitizers)
+  find_package(Sanitizers)
+  if(SANITIZE_ADDRESS)
+    set(CMAKE_EXE_LINKER_FLAGS
+        "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+  endif()
+  if(SANITIZE_UNDEFINED)
+    set(CMAKE_EXE_LINKER_FLAGS
+        "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=undefined")
+  endif()
   option(LIGHTUSD_BUILD_TESTS "Build tests" OFF)
+  option(LIGHTUSD_BUILD_EXAMPLES "Build public next consumer examples" OFF)
+  option(LIGHTUSD_NEXT_BUILD_EXAMPLES "Build next-native consumer examples"
+         ${LIGHTUSD_BUILD_EXAMPLES})
   option(LIGHTUSD_ENABLE_THREAD "Enable optional parallel paths" OFF)
   if(NOT DEFINED LIGHTUSD_NEXT_BUILD_TESTS)
     set(LIGHTUSD_NEXT_BUILD_TESTS ${LIGHTUSD_BUILD_TESTS} CACHE BOOL "Build next tests")
@@ -49,10 +65,17 @@ if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
   if(NOT DEFINED LIGHTUSD_NEXT_ENABLE_THREAD)
     set(LIGHTUSD_NEXT_ENABLE_THREAD ${LIGHTUSD_ENABLE_THREAD} CACHE BOOL "Enable next parallel paths")
   endif()
+  if(LIGHTUSD_BUILD_EXAMPLES AND NOT DEFINED LIGHTUSD_NEXT_BUILD_C_API_EXAMPLE)
+    set(LIGHTUSD_NEXT_BUILD_C_API_EXAMPLE ON CACHE BOOL
+        "Build the public next C API consumer example")
+  endif()
   if(LIGHTUSD_NEXT_BUILD_TESTS)
     enable_testing()
   endif()
   add_subdirectory(src/next)
+  if(COMMAND add_sanitizers)
+    add_sanitizers(lightusd_next)
+  endif()
   # Explicit next names prevent consumers from silently binding legacy APIs.
   add_library(lightusd::next ALIAS lightusd_next)
   return()
@@ -624,7 +647,6 @@ set(LIGHTUSD_SOURCES
     ${PROJECT_SOURCE_DIR}/src/tiny-string.cc
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
-    ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
     ${PROJECT_SOURCE_DIR}/src/image-writer.cc
     ${PROJECT_SOURCE_DIR}/src/image-util.cc
     ${PROJECT_SOURCE_DIR}/src/imageio/png-stream.cc
@@ -1051,7 +1073,6 @@ endif(LIGHTUSD_WITH_EXR)
 
 # LightUSD's PTEX reader and nanoimage backend use miniz directly. Keep this
 # bundled dependency even when TinyDNG itself is configured to use system zlib.
-list(APPEND LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/miniz.c)
 set_source_files_properties(
   ${PROJECT_SOURCE_DIR}/src/external/miniz.c
   PROPERTIES COMPILE_DEFINITIONS "_LARGEFILE64_SOURCE=1")
@@ -1165,19 +1186,13 @@ if(LIGHTUSD_WITH_QJS)
   )
 endif(LIGHTUSD_WITH_QJS)
 
-# tinysubdiv (tsd): dependency-free subdivision surface library, always built.
+# Share stage-neutral Ptex/subdivision objects with next and render consumers.
+include("${PROJECT_SOURCE_DIR}/cmake/lightusd-render-support.cmake")
+lightusd_add_render_support()
 list(APPEND LIGHTUSD_SOURCES
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-validate.cc
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-topology.cc
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-bilinear.cc
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-catmark.cc
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-loop.cc
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-fvar.cc
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-refine.cc
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-stream.cc
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-limit.cc
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-lightusd.cc
-)
+  $<TARGET_OBJECTS:lightusd_ptex_objects>
+  $<TARGET_OBJECTS:lightusd_subdiv_objects>
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-lightusd.cc)
 
 if(LIGHTUSD_WITH_GEOGRAM)
   # Geogram basic core files (header-only minimal set)
@@ -3132,7 +3147,7 @@ if(LIGHTUSD_BUILD_TESTS)
 
   #
   # UsdShade material-binding resolution: purpose-scoped (material:binding:preview
-  # / :full) bindings authored on an ANCESTOR, as production scenes (ALab) bind.
+  # / :full) bindings authored on an ANCESTOR, as production scenes (Scene A) bind.
   # Reading only the Mesh's own `material:binding` drops the material and every
   # texture with it. Renders headless (Vulkan offscreen); SKIPs without a GPU.
   #
@@ -3204,6 +3219,16 @@ if(LIGHTUSD_BUILD_TESTS)
     set_tests_properties(lusdview-camera-clipping-planes
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
                                     LABELS "lusdview;raster")
+
+    add_test(
+      NAME lusdview-value-clip-carrier
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-value-clip-carrier.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-value-clip-carrier
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+                                    LABELS "lusdview;animation")
 
     add_test(
       NAME lusdview-camera-dof-raster

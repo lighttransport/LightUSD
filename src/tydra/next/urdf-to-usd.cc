@@ -281,6 +281,10 @@ void AddCollisionData(tn::PrimSpec *prim, const Json &source,
           mjc ? *mjc : source, "conaffinity",
           JsonNumber(source, "conaffinity", 1)))),
       "int", true);
+  // Like the legacy converter (and mujoco-usd-converter), colliders get
+  // purpose=guide: hidden from default renders, still visible to
+  // schema-aware consumers and purpose toggles.
+  SetToken(prim, "purpose", "guide", true);
   AuthorExtensions(prim, source);
 }
 

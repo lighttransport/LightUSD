@@ -6,8 +6,7 @@
 
 #pragma once
 
-#include <ostream>  // operator<<(std::ostream&, const Path&) below; MSVC's
-                    // <string> does not complete std::basic_ostream
+#include <iosfwd>
 #include <string>
 #include <vector>
 
@@ -118,9 +117,7 @@ private:
 };
 
 /// Stream output for debugging
-inline std::ostream& operator<<(std::ostream& os, const Path& path) {
-  return os << path.str();
-}
+std::ostream& operator<<(std::ostream& os, const Path& path);
 
 }  // namespace next
 }  // namespace lightusd

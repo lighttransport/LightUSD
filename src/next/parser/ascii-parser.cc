@@ -60,11 +60,20 @@ bool IsNameToken(const Token& tok) {
   }
 }
 
+bool AsciiParser::Impl::ReportProgress(const char* phase, size_t current,
+                                       size_t total) {
+  if (!options_.progress_callback ||
+      options_.progress_callback(phase, current, total)) return true;
+  AddError(std::string("USDA parse cancelled during ") + phase);
+  return false;
+}
+
 bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
                                        std::shared_ptr<LazyArraySource> source) {
   errors_.clear();
   warnings_.clear();
   depth_ = 0;
+  parse_length_ = length;
   source_ = std::move(source);
 
   if (!source_ && length != 0 && !data) {
@@ -91,6 +100,8 @@ bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
   }
   lexer_->num_threads = options_.num_threads;
   lexer_->strict_aousd_conformance = options_.strict_aousd_conformance;
+
+  if (!ReportProgress("bootstrap", 0, length)) return false;
 
   // Enforce the `#usda 1.0` magic on the raw bytes BEFORE lexing: the lexer
   // treats '#' as a comment, so a token-level check is dead code and any
@@ -160,6 +171,8 @@ bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
 
   // Finalize the layer
   builder_->finalize();
+
+  if (!ReportProgress("complete", length, length)) return false;
 
   // Create stage from layer
   stage_ = Stage();
@@ -437,8 +450,10 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         break;
       case ArcQual::Append:
       case ArcQual::Add:
-      case ArcQual::Reorder:
         target->insert(target->end(), items.begin(), items.end());
+        break;
+      case ArcQual::Reorder:
+        ApplyStringListOrder(items, target);
         break;
       case ArcQual::Delete: {
         // Single O(N+M) pass via a hash set of the deleted entries. A per-entry

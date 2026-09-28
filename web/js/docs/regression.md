@@ -209,6 +209,16 @@ test supplies `locateFile` for the application's normal artifacts. This is a
 Node-only testing helper, not a production loader or a substitute for the
 browser/physics gates below.
 
+For a combined-module binding change, set `LIGHTUSD_COMBINED_MODULE` to the
+isolated `lightusd_combined.js` (or `lightusd_combined_64.js`). The same override
+loader redirects combined imports and keeps their WASM paired with the glue.
+`apply-variant-selection-overload.test.mjs` checks the complete loader method
+inventory, typed streaming-buffer and asset-cache ownership/progress/error
+contracts, binary chunk copies, exact memory64 size_t/BigInt values, wasm32
+progress overflow, and standard SHA-256 digests across padding boundaries,
+alongside composition and flatten coverage. Set `LUSDCAT_PATH` to the native `build_ninja/lusdcat` executable to
+include validation parity rather than skipping it.
+
 ## Complete gate
 
 All web/WASM regression procedures live under `web/js`. The canonical gate is
@@ -305,7 +315,9 @@ advertised URL and reports child-process startup diagnostics on failure.
 The regular browser check loads each MJCF into `urdf.html`, converts it to USD,
 and verifies both visible views. The OffscreenCanvas check uploads the converted
 USD to `offscreengl.html`, verifies the Worker message protocol and mesh count,
-captures the canvas itself, and rejects blank renders and page errors.
+captures the canvas itself, and rejects blank renders and page errors. Both
+browser runners accept `LIGHTUSD_VITE_TIMEOUT_MS` to override the cold Vite
+startup budget; the default is 120 seconds for clean CI workspaces.
 
 ## Pass criteria
 

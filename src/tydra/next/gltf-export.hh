@@ -9,6 +9,7 @@ namespace lightusd { namespace tydra { namespace next {
 struct GltfExportOptions {
   size_t max_output_bytes = size_t(1) << 30;
   const ::lightusd::next::AssetResolver* resolver = nullptr;
+  std::string asset_anchor;
   bool fail_on_loss = false;
 };
 struct GltfExportResult {

@@ -7,7 +7,7 @@ let createLightUSD;
 self.onmessage = async ({ data }) => {
   if (data?.type !== 'bake-occlusion') return;
   try {
-    createLightUSD ||= (await import('../../src/lightusd/lightusd.js')).default;
+    createLightUSD ||= (await import('../../src/lightusd/lightusd_next.js')).default;
     const module = await createLightUSD(), tracer = new module.LightRTPathTracer();
     try {
       const resolution = Math.max(64, Math.min(2048, data.resolution | 0)), samples = Math.max(1, Math.min(16, data.samples | 0));

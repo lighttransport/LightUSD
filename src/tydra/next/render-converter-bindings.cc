@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
 #include "next/schema/usd-shade.hh"
 #include <algorithm>
 #include <memory>
@@ -43,7 +43,7 @@ std::string FindInheritedMaterialBinding(const Stage& stage,
       stage, prim_path, purpose.empty() ? "preview" : purpose);
 }
 }  // namespace
-void RenderSceneConverter::AssignMaterialBindings(const Stage& stage,
+void RenderSceneConverter::Impl::AssignMaterialBindings(const Stage& stage,
                                                   RenderScene* scene) {
   if (!scene) return;
   for (RenderCurves& curves : scene->curves) {
@@ -75,7 +75,7 @@ void RenderSceneConverter::AssignMaterialBindings(const Stage& stage,
   }
 }
 
-void RenderSceneConverter::AssignMeshMaterialBinding(const Stage& stage,
+void RenderSceneConverter::Impl::AssignMeshMaterialBinding(const Stage& stage,
                                                      const RenderScene& scene,
                                                      RenderMesh* mesh) {
   if (!mesh) return;
@@ -166,7 +166,7 @@ void RenderSceneConverter::AssignMeshMaterialBinding(const Stage& stage,
   }
 }
 
-int32_t RenderSceneConverter::GetOrCreateDefaultMaterial(RenderScene* scene) {
+int32_t RenderSceneConverter::Impl::GetOrCreateDefaultMaterial(RenderScene* scene) {
   // Same sentinel path as the legacy converter.
   constexpr const char* kDefaultMaterialPath = "/__lightusd_default_material__";
   const auto it = scene->material_by_path.find(kDefaultMaterialPath);
@@ -186,7 +186,7 @@ int32_t RenderSceneConverter::GetOrCreateDefaultMaterial(RenderScene* scene) {
   return id;
 }
 
-void RenderSceneConverter::AssignPointInstanceDrawMaterials(RenderScene* scene) {
+void RenderSceneConverter::Impl::AssignPointInstanceDrawMaterials(RenderScene* scene) {
   if (!scene) return;
   for (RenderPointInstanceDraw& draw : scene->point_instance_draws) {
     if (draw.mesh_id < 0 ||

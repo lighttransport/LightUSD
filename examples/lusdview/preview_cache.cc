@@ -9,9 +9,9 @@
 #include <iomanip>
 #include <sstream>
 #include <system_error>
+#include <utility>
 
 #include "external/jsonhpp/nlohmann/json.hpp"
-#include "next/lightusd-next.hh"
 
 namespace lusdview {
 namespace {
@@ -190,9 +190,11 @@ PreviewCacheLookup LoadPreviewCache(const PreviewCacheOptions& options,
       result.reason = "dependency changed: " + id; return result;
     }
   }
-  std::string warn, err;
-  if (!lightusd::next::LoadUSDC(stage_path.string(), &result.stage, &warn, &err)) {
-    result.reason = "preview USDC invalid: " + err; return result;
+  lightusd_load_options load_options;
+  lightusd_load_options_init(&load_options);
+  load_options.format = LIGHTUSD_FORMAT_USDC;
+  if (result.stage.load(stage_path.string().c_str(), &load_options) != LIGHTUSD_OK) {
+    result.reason = std::string("preview USDC invalid: ") + lightusd::api::LastError(); return result;
   }
   result.hit = true;
   result.reason = "hit";
@@ -204,7 +206,7 @@ PreviewCacheLookup LoadPreviewCache(const PreviewCacheOptions& options,
 bool StorePreviewCache(const PreviewCacheOptions& options,
                        const std::string& root,
                        const std::string& fingerprint,
-                       const lightusd::next::Stage& preview,
+                       const lightusd::api::Stage& preview,
                        const std::vector<std::string>& dependencies,
                        std::string* reason) {
   if (options.mode == PreviewCacheMode::Off) return false;
@@ -236,9 +238,11 @@ bool StorePreviewCache(const PreviewCacheOptions& options,
     }
     manifest["dependencies"].push_back({{"id", id}, {"size", size}, {"mtime", mtime}});
   }
-  std::string write_error;
-  if (!lightusd::next::WriteUSDC(preview, stage_tmp.string(), &write_error)) {
-    if (reason) *reason = "preview write failed: " + write_error;
+  lightusd_save_options save_options;
+  lightusd_save_options_init(&save_options);
+  save_options.format = LIGHTUSD_FORMAT_USDC;
+  if (preview.save(stage_tmp.string().c_str(), &save_options) != LIGHTUSD_OK) {
+    if (reason) *reason = std::string("preview write failed: ") + lightusd::api::LastError();
     return false;
   }
   {

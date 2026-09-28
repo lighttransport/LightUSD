@@ -5,7 +5,7 @@
 // Included inside CrateWriter::Impl public section.
 
   explicit Impl(const CrateWriteOptions& options)
-      : options_(options), writer_(buffer_) {
+      : options_(options), writer_(buffer_, options.max_file_size_bytes) {
     // Initialize buffer
   }
 
@@ -21,7 +21,37 @@
                       requested_version.to_string();
       return result_;
     }
+    if (options_.max_file_size_bytes &&
+        options_.max_file_size_bytes < kCrateBootstrapSize) {
+      result_.error = "Crate output exceeds configured file-size limit";
+      return result_;
+    }
+    if (options_.max_memory_bytes) {
+      // Layer::memory_usage includes retained values and source buffers. Add a
+      // conservative per-spec allowance for the writer's table, hash-map, and
+      // relocation entries before reserving or constructing those structures.
+      size_t spec_count = 0;
+      for (const auto& prim : layer.prims()) {
+        const size_t properties = prim.properties().slots().size();
+        if (spec_count == (std::numeric_limits<size_t>::max)() ||
+            properties > (std::numeric_limits<size_t>::max)() - spec_count - 1) {
+          result_.error = "Crate estimated working set exceeds configured memory limit";
+          return result_;
+        }
+        spec_count += 1 + properties;
+      }
+      constexpr size_t kEstimatedBytesPerSpec = 512;
+      const size_t layer_bytes = layer.memory_usage();
+      if (spec_count > ((std::numeric_limits<size_t>::max)() - layer_bytes) /
+                           kEstimatedBytesPerSpec ||
+          layer_bytes + spec_count * kEstimatedBytesPerSpec >
+              options_.max_memory_bytes) {
+        result_.error = "Crate estimated working set exceeds configured memory limit";
+        return result_;
+      }
+    }
     buffer_.clear();
+    writer_.clearFailure();
 
     // Clear all accumulated table state from previous writes
     tokens_.clear();
@@ -117,6 +147,23 @@
 
     // Compute the VALUE section layout and patch field offsets (always needed).
     const uint64_t value_section_size = ComputeValueLayoutAndPatch();
+    if (value_section_size >
+        static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
+      result_.error = "Crate output exceeds addressable size";
+      return result_;
+    }
+    if (options_.max_file_size_bytes &&
+        (value_section_size > options_.max_file_size_bytes ||
+         kCrateBootstrapSize > options_.max_file_size_bytes -
+                                   value_section_size)) {
+      result_.error = "Crate output exceeds configured file-size limit";
+      return result_;
+    }
+    if (options_.max_file_size_bytes) {
+      writer_.setMaxSize(sink
+          ? options_.max_file_size_bytes - value_section_size
+          : options_.max_file_size_bytes);
+    }
 
     // Streaming mode keeps the VALUE bytes OUT of buffer_ (they are streamed
     // straight from their source at the end), so the structural sections sit at
@@ -135,6 +182,12 @@
         size_t est = 64;
         for (const auto& b : value_data_) est += b.size() + 8;  // +8 align slack
         est += est / 8 + (size_t(1) << 20);  // ~12% for structural sections + 1MB
+        if (options_.max_file_size_bytes &&
+            est > options_.max_file_size_bytes) {
+          est = static_cast<size_t>(std::min<uint64_t>(
+              options_.max_file_size_bytes,
+              static_cast<uint64_t>((std::numeric_limits<size_t>::max)())));
+        }
         if (est > buffer_.capacity()) buffer_.reserve(est);
       }
       EmitValueBytesToBuffer();
@@ -147,6 +200,10 @@
       std::strncpy(sec.name, "TOKENS", sizeof(sec.name) - 1);
       sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
       WriteTokensSection();
+      if (writer_.failed()) {
+        result_.error = "Crate output exceeds configured file-size limit";
+        return result_;
+      }
       sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
       sections.push_back(sec);
     }
@@ -158,6 +215,10 @@
       std::strncpy(sec.name, "STRINGS", sizeof(sec.name) - 1);
       sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
       WriteStringsSection();
+      if (writer_.failed()) {
+        result_.error = "Crate output exceeds configured file-size limit";
+        return result_;
+      }
       sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
       sections.push_back(sec);
     }
@@ -169,7 +230,9 @@
       std::strncpy(sec.name, "FIELDS", sizeof(sec.name) - 1);
       sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
       WriteFieldsSection();
-      if (!result_.error.empty()) {
+      if (writer_.failed() || !result_.error.empty()) {
+        if (result_.error.empty())
+          result_.error = "Crate output exceeds configured file-size limit";
         result_.success = false;
         return result_;
       }
@@ -184,6 +247,10 @@
       std::strncpy(sec.name, "FIELDSETS", sizeof(sec.name) - 1);
       sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
       WriteFieldsetsSection();
+      if (writer_.failed()) {
+        result_.error = "Crate output exceeds configured file-size limit";
+        return result_;
+      }
       sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
       sections.push_back(sec);
     }
@@ -195,6 +262,10 @@
       std::strncpy(sec.name, "PATHS", sizeof(sec.name) - 1);
       sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
       WritePathsSection();
+      if (writer_.failed()) {
+        result_.error = "Crate output exceeds configured file-size limit";
+        return result_;
+      }
       sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
       sections.push_back(sec);
     }
@@ -206,6 +277,10 @@
       std::strncpy(sec.name, "SPECS", sizeof(sec.name) - 1);
       sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
       WriteSpecsSection();
+      if (writer_.failed()) {
+        result_.error = "Crate output exceeds configured file-size limit";
+        return result_;
+      }
       sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
       sections.push_back(sec);
     }
@@ -213,8 +288,21 @@
     // Write TOC at the end (VALUE section is NOT included in TOC)
     int64_t toc_offset = static_cast<int64_t>(buffer_.size() + struct_base);
     WriteTOC(sections);
+    if (writer_.failed()) {
+      result_.error = "Crate output exceeds configured file-size limit";
+      return result_;
+    }
 
     // Write bootstrap header at the beginning
+    const uint64_t complete_size = sink
+        ? static_cast<uint64_t>(64) + value_section_size +
+              static_cast<uint64_t>(buffer_.size() - 64)
+        : static_cast<uint64_t>(buffer_.size());
+    if (options_.max_file_size_bytes &&
+        complete_size > options_.max_file_size_bytes) {
+      result_.error = "Crate output exceeds configured file-size limit";
+      return result_;
+    }
     WriteBootstrap(toc_offset);
 
     // Streaming emit: bootstrap (64 B) -> VALUE bytes (streamed from source) ->

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "incremental_scene_update.hh"
 
+
 #include <cstring>
+#include <string_view>
 #include <unordered_map>
 
 namespace lusdview {
@@ -22,7 +24,7 @@ IncrementalSceneUpdatePlan Reject(const char* reason) {
   return plan;
 }
 
-bool AtOrBelow(const std::string& path, const std::string& root) {
+bool AtOrBelow(std::string_view path, std::string_view root) {
   return path == root ||
          (path.size() > root.size() &&
           path.compare(0, root.size(), root) == 0 &&
@@ -205,16 +207,28 @@ void CaptureTextureUploadIdentity(DrawTextureCPU* texture) {
 
 IncrementalSceneUpdatePlan PlanIncrementalSceneUpdate(
     const DrawScene& current, DrawScene* next,
-    const lightusd::next::StageChangeSet& changes,
+    const lightusd_render_change_set& changes, uint64_t newRevision,
     uint64_t displayedRevision, int rendererMeshCount) {
-  using Flag = lightusd::next::StageChangeFlag;
   if (!next) return Reject("missing replacement scene");
+  if (changes.struct_size < sizeof(changes) ||
+      (changes.prim_count && !changes.prims)) {
+    return Reject("invalid change records");
+  }
+  for (size_t i = 0; i < changes.prim_count; ++i) {
+    const auto& change = changes.prims[i];
+    if (!change.prim_path || (change.property_count && !change.properties))
+      return Reject("invalid change records");
+    for (size_t p = 0; p < change.property_count; ++p) {
+      if (change.properties[p].len && !change.properties[p].data)
+        return Reject("invalid change records");
+    }
+  }
   if (changes.base_revision != displayedRevision ||
-      changes.new_revision <= changes.base_revision) {
+      newRevision <= changes.base_revision) {
     return Reject("change set does not follow the displayed revision");
   }
   if (changes.full_resync || changes.stage_metadata_changed ||
-      changes.prims.empty()) {
+      changes.prim_count == 0) {
     return Reject("change set requires full scene processing");
   }
   if (rendererMeshCount != static_cast<int>(current.meshes.size())) {
@@ -230,43 +244,48 @@ IncrementalSceneUpdatePlan PlanIncrementalSceneUpdate(
     return Reject("non-mesh draw data requires full scene processing");
   }
 
-  const uint32_t allowed = static_cast<uint32_t>(Flag::Transform) |
-                           static_cast<uint32_t>(Flag::Topology) |
-                           static_cast<uint32_t>(Flag::Primvar) |
-                           static_cast<uint32_t>(Flag::Resync) |
-                           static_cast<uint32_t>(Flag::Material) |
-                           static_cast<uint32_t>(Flag::Texture);
+  const uint32_t allowed = LIGHTUSD_CHANGE_TRANSFORM |
+                           LIGHTUSD_CHANGE_TOPOLOGY |
+                           LIGHTUSD_CHANGE_PRIMVAR |
+                           LIGHTUSD_CHANGE_RESYNC |
+                           LIGHTUSD_CHANGE_MATERIAL |
+                           LIGHTUSD_CHANGE_TEXTURE;
   bool topology_change = false;
   bool structural_change = false;
   bool material_change = false;
   bool texture_change = false;
-  for (const auto& change : changes.prims) {
+  for (size_t change_index = 0; change_index < changes.prim_count; ++change_index) {
+    const auto& change = changes.prims[change_index];
     const uint32_t flags = static_cast<uint32_t>(change.flags);
     if (flags == 0 || (flags & ~allowed) != 0) {
       return Reject("change set contains an unsupported structural edit");
     }
     topology_change = topology_change ||
-        lightusd::next::HasStageChange(change.flags, Flag::Topology);
+        (change.flags & LIGHTUSD_CHANGE_TOPOLOGY);
     structural_change = structural_change ||
-        lightusd::next::HasStageChange(change.flags, Flag::Resync);
+        (change.flags & LIGHTUSD_CHANGE_RESYNC);
     const bool changes_texture =
-        lightusd::next::HasStageChange(change.flags, Flag::Texture);
+        (change.flags & LIGHTUSD_CHANGE_TEXTURE);
     texture_change = texture_change || changes_texture;
     bool changes_material_constants =
-        lightusd::next::HasStageChange(change.flags, Flag::Material);
+        (change.flags & LIGHTUSD_CHANGE_MATERIAL);
     // Shader inputs:file is classified as both Material and Texture because it
     // lives on a Shader prim. If every reported property is texture-specific,
     // the material binding/constant record is unchanged and only its texture
     // slot needs replacement.
     if (changes_material_constants && changes_texture &&
-        !change.properties.empty()) {
-      changes_material_constants = std::any_of(
-          change.properties.begin(), change.properties.end(),
-          [](const std::string& property) {
-            return property.find("file") == std::string::npos &&
-                   property.find("texture") == std::string::npos &&
-                   property.find("sourceColorSpace") == std::string::npos;
-          });
+        change.property_count != 0) {
+      changes_material_constants = false;
+      for (size_t p = 0; p < change.property_count; ++p) {
+        const auto& name = change.properties[p];
+        const std::string_view property(name.data ? name.data : "", name.len);
+        if (property.find("file") == std::string_view::npos &&
+            property.find("texture") == std::string_view::npos &&
+            property.find("sourceColorSpace") == std::string_view::npos) {
+          changes_material_constants = true;
+          break;
+        }
+      }
     }
     material_change = material_change || changes_material_constants;
   }
@@ -304,11 +323,12 @@ IncrementalSceneUpdatePlan PlanIncrementalSceneUpdate(
       }
       const std::string& material_path = next->materials[i].absPath;
       if (material_path.empty()) continue;
-      for (const auto& change : changes.prims) {
-        if (!lightusd::next::HasStageChange(change.flags, Flag::Material)) {
+      for (size_t change_index = 0; change_index < changes.prim_count; ++change_index) {
+        const auto& change = changes.prims[change_index];
+        if (!(change.flags & LIGHTUSD_CHANGE_MATERIAL)) {
           continue;
         }
-        const std::string path = change.path.str();
+        const std::string_view path(change.prim_path);
         if (AtOrBelow(path, material_path) ||
             AtOrBelow(material_path, path)) {
           plan.materialUpdates.push_back(i);

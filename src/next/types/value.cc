@@ -1187,6 +1187,31 @@ const Dict* Value::as_dictionary() const {
   return DictSlot(storage_)->get();
 }
 
+size_t Value::dynamic_string_memory_usage() const {
+  size_t bytes = 0;
+  const auto add = [&bytes](size_t n) {
+    bytes = n > (std::numeric_limits<size_t>::max)() - bytes
+        ? (std::numeric_limits<size_t>::max)() : bytes + n;
+  };
+  const auto multiply = [](size_t a, size_t b) {
+    return a && b > (std::numeric_limits<size_t>::max)() / a
+        ? (std::numeric_limits<size_t>::max)() : a * b;
+  };
+  if (const std::string* value = as_string()) add(value->capacity());
+  else if (const std::string* value = as_token()) add(value->capacity());
+  else if (const std::string* value = as_asset_path()) add(value->capacity());
+
+  // Estimating a retained lazy array must not materialize it as a side effect.
+  if (is_array_ && !is_lazy_) {
+    if (const auto* values = as_token_array()) {
+      add(multiply(values->capacity(), sizeof(std::string)));
+      for (const std::string& value : *values) add(value.capacity());
+    }
+  }
+  if (const Dict* dict = as_dictionary()) add(dict->dynamic_string_memory_usage());
+  return bytes;
+}
+
 Dict* Value::as_dictionary() {
   if (type_id_ != TypeId::Dictionary) return nullptr;
   DetachDict(storage_);

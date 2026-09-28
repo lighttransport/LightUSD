@@ -2,10 +2,11 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 // Tydra Next - Preview-surface material extraction
 #include "safe-arithmetic.hh"
+#include "../../next/layer/prim-spec.hh"
 #include "core/path-expression-eval.hh"
 #include "next/schema/usd-vol.hh"
 #include "next/schema/usd-geom-camera.hh"
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
 #include "mem-budget.hh"
 #include "next/schema/color-space.hh"
 #include "next/eval/value-clip.hh"
@@ -87,6 +88,113 @@ bool IsTextureEndpoint(const Stage& stage, const UsdPrim& prim,
          eval.EvalString(prim, "inputs:file").has_value() ||
          eval.EvalAssetPath(prim, "inputs:filename").has_value() ||
          eval.EvalString(prim, "inputs:filename").has_value();
+}
+
+bool CombineUDIMTileImages(RenderScene* scene,
+                           const std::vector<RenderUDIMTexture::Tile>& tiles,
+                           const std::string& identifier,
+                           size_t resident_limit, int32_t* image_id,
+                           Float2* uv_scale, Float2* uv_offset,
+                           std::string* error) {
+  if (!scene || !image_id || !uv_scale || !uv_offset || tiles.empty()) return false;
+  uint32_t min_u = 9, max_u = 0, min_v = 9, max_v = 0;
+  const TextureImage* first = nullptr;
+  for (const auto& tile : tiles) {
+    if (tile.udim < 1001 || tile.udim > 1100 || tile.image_id < 0 ||
+        static_cast<size_t>(tile.image_id) >= scene->images.size()) return false;
+    const uint32_t u = (tile.udim - 1001) % 10;
+    const uint32_t v = (tile.udim - 1001) / 10;
+    min_u = std::min(min_u, u); max_u = std::max(max_u, u);
+    min_v = std::min(min_v, v); max_v = std::max(max_v, v);
+    const TextureImage& image = scene->images[static_cast<size_t>(tile.image_id)];
+    if (!image.is_loaded() || image.component_type != ComponentType::UInt8 ||
+        (image.channels != 1 && image.channels != 3 && image.channels != 4)) {
+      if (error) *error = "UDIM atlas requires decoded 8-bit tiles";
+      return false;
+    }
+    size_t source_pixels = 0, source_bytes = 0;
+    if (!safe::mul(static_cast<size_t>(image.width),
+                   static_cast<size_t>(image.height), &source_pixels) ||
+        !safe::mul(source_pixels, static_cast<size_t>(image.channels),
+                   &source_bytes) || image.data.size() != source_bytes) {
+      if (error) *error = "UDIM tile payload has an invalid size";
+      return false;
+    }
+    if (!first) first = &image;
+    else if (image.width != first->width || image.height != first->height ||
+             image.channels != first->channels) {
+      if (error) *error = "UDIM atlas tiles must have matching dimensions and channels";
+      return false;
+    }
+  }
+  if (!first || first->width == 0 || first->height == 0) return false;
+  const uint32_t cols = max_u - min_u + 1;
+  const uint32_t rows = max_v - min_v + 1;
+  size_t wide_width = 0, wide_height = 0;
+  size_t pixels = 0, bytes = 0;
+  if (!safe::mul(static_cast<size_t>(first->width), static_cast<size_t>(cols),
+                 &wide_width) ||
+      !safe::mul(static_cast<size_t>(first->height), static_cast<size_t>(rows),
+                 &wide_height) ||
+      wide_width > 4096 || wide_height > 4096 ||
+      wide_width > (std::numeric_limits<uint32_t>::max)() ||
+      wide_height > (std::numeric_limits<uint32_t>::max)() ||
+      !safe::mul(wide_width, wide_height, &pixels) ||
+      !safe::mul(pixels, size_t{4}, &bytes)) {
+    if (error) *error = "UDIM atlas exceeds the 4096-pixel edge limit";
+    return false;
+  }
+  const uint32_t width = static_cast<uint32_t>(wide_width);
+  const uint32_t height = static_cast<uint32_t>(wide_height);
+  if (width == 0 || height == 0 ||
+      bytes == 0) return false;
+  const size_t resident = scene->memory_usage();
+  if (resident > resident_limit || bytes > resident_limit - resident) {
+    if (error) *error = "UDIM atlas exceeds the remaining scene memory budget";
+    return false;
+  }
+  std::vector<uint8_t> atlas(bytes, 0);
+  for (const auto& tile : tiles) {
+    const TextureImage& image = scene->images[static_cast<size_t>(tile.image_id)];
+    const uint32_t u = (tile.udim - 1001) % 10;
+    const uint32_t v = (tile.udim - 1001) / 10;
+    const uint32_t dst_x = (u - min_u) * first->width;
+    const uint32_t dst_y = (rows - 1 - (v - min_v)) * first->height;
+    for (uint32_t y = 0; y < first->height; ++y) {
+      for (uint32_t x = 0; x < first->width; ++x) {
+        const size_t src = (static_cast<size_t>(y) * first->width + x) * image.channels;
+        const size_t dst = (static_cast<size_t>(dst_y + y) * width + dst_x + x) * 4;
+        if (image.channels == 1) {
+          atlas[dst] = atlas[dst + 1] = atlas[dst + 2] = image.data[src];
+          atlas[dst + 3] = 255;
+        } else {
+          atlas[dst] = image.data[src]; atlas[dst + 1] = image.data[src + 1];
+          atlas[dst + 2] = image.data[src + 2];
+          atlas[dst + 3] = image.channels == 4 ? image.data[src + 3] : 255;
+        }
+      }
+    }
+  }
+  if (scene->images.size() >= static_cast<size_t>((std::numeric_limits<int32_t>::max)()))
+    return false;
+  TextureImage combined;
+  combined.name = first->name;
+  combined.asset_identifier = identifier;
+  combined.width = width;
+  combined.height = height;
+  combined.channels = 4;
+  combined.component_type = ComponentType::UInt8;
+  combined.color_space = first->color_space;
+  if (!combined.data.append(atlas.data(), atlas.size())) return false;
+  *image_id = static_cast<int32_t>(scene->images.size());
+  scene->images.push_back(std::move(combined));
+  *uv_scale = Float2(1.0f / static_cast<float>(cols),
+                     1.0f / static_cast<float>(rows));
+  *uv_offset = Float2(min_u == 0 ? 0.0f :
+                          -static_cast<float>(min_u) / static_cast<float>(cols),
+                      min_v == 0 ? 0.0f :
+                          -static_cast<float>(min_v) / static_cast<float>(rows));
+  return true;
 }
 
 const std::vector<::lightusd::next::Path>* PrimaryDataInputConnection(
@@ -915,7 +1023,7 @@ bool EvalMtlxConstantConnection(const Stage& stage,
 // property name. Returns false for single-axis rotateX/Y/Z and non-rotate ops.
 }  // namespace
 
-bool RenderSceneConverter::ExtractPreviewSurface(const Stage& stage,
+bool RenderSceneConverter::Impl::ExtractPreviewSurface(const Stage& stage,
                                                  const UsdPrim& shader_prim,
                                                  PreviewSurfaceShader* out,
                                                  RenderScene* scene) {
@@ -984,6 +1092,7 @@ struct TextureNodeData {
   float uv_translation[2] = {0.0f, 0.0f};
   float uv_rotation = 0.0f;             // degrees (UsdTransform2d convention)
   float uv_scale[2] = {1.0f, 1.0f};
+  bool has_transform2d = false;
 };
 
 // Trace a UsdUVTexture's inputs:st connection chain: UsdTransform2d nodes
@@ -1027,6 +1136,7 @@ void TraceTextureStChain(const Stage& stage, const UsdPrim& texture_prim,
     std::string id;
     GetToken(np, "info:id", &id);
     if (id == "UsdTransform2d") {
+      out->has_transform2d = true;
       float tr[2] = {0.0f, 0.0f};
       GetFloat2Local(np, "inputs:translation", tr);
       float rot = 0.0f;
@@ -1239,7 +1349,7 @@ bool ExtractTextureNodeData(const Stage& stage,
 // MaterialX Autodesk standard_surface (usdMtlx flatten pattern).
 }  // namespace
 
-bool RenderSceneConverter::ExtractStandardSurfaceAsOpenPBR(
+bool RenderSceneConverter::Impl::ExtractStandardSurfaceAsOpenPBR(
     const Stage& stage, const UsdPrim& shader_prim, OpenPBRSurfaceShader* out,
     RenderScene* scene) {
   if (!out || !::lightusd::next::IsShader(shader_prim)) return false;
@@ -1332,7 +1442,7 @@ bool RenderSceneConverter::ExtractStandardSurfaceAsOpenPBR(
   return true;
 }
 
-bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
+bool RenderSceneConverter::Impl::ExtractOpenPBRSurface(const Stage& stage,
                                                  const UsdPrim& shader_prim,
                                                  OpenPBRSurfaceShader* out,
                                                  RenderScene* scene) {
@@ -1343,7 +1453,7 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
   ExtractShaderParam(stage, shader_prim, "baseColor", &out->base_color, scene);
   ExtractShaderParam(stage, shader_prim, "base_roughness", &out->base_roughness, scene);
   ExtractShaderParam(stage, shader_prim, "base_diffuse_roughness",
-                     &out->base_roughness, scene);
+                     &out->base_diffuse_roughness, scene);
   ExtractShaderParam(stage, shader_prim, "roughness", &out->base_roughness, scene);
   ExtractShaderParam(stage, shader_prim, "base_metalness", &out->base_metalness, scene);
   ExtractShaderParam(stage, shader_prim, "metalness", &out->base_metalness, scene);
@@ -1366,6 +1476,10 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
                      &out->transmission_color, scene);
   ExtractShaderParam(stage, shader_prim, "transmission_depth",
                      &out->transmission_depth, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_scatter",
+                     &out->transmission_scatter, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_scatter_anisotropy",
+                     &out->transmission_scatter_anisotropy, scene);
   ExtractShaderParam(stage, shader_prim, "transmission_dispersion",
                      &out->transmission_dispersion, scene);
   ExtractShaderParam(stage, shader_prim, "transmission_dispersion_scale",
@@ -1392,11 +1506,18 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
     out->subsurface_radius = subsurfaceRadiusScale;
     out->subsurface_scale = subsurfaceRadius;
   }
+  ExtractShaderParam(stage, shader_prim, "subsurface_anisotropy",
+                     &out->subsurface_anisotropy, scene);
 
   ExtractShaderParam(stage, shader_prim, "coat_weight", &out->coat_weight, scene);
   ExtractShaderParam(stage, shader_prim, "coat_color", &out->coat_color, scene);
   ExtractShaderParam(stage, shader_prim, "coat_roughness", &out->coat_roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "coat_rotation", &out->coat_rotation, scene);
   ExtractShaderParam(stage, shader_prim, "coat_ior", &out->coat_ior, scene);
+  ExtractShaderParam(stage, shader_prim, "coat_affect_color",
+                     &out->coat_affect_color, scene);
+  ExtractShaderParam(stage, shader_prim, "coat_affect_roughness",
+                     &out->coat_affect_roughness, scene);
   ExtractShaderParam(stage, shader_prim, "coat_anisotropy",
                      &out->coat_anisotropy, scene);
   ExtractShaderParam(stage, shader_prim, "coat_roughness_anisotropy",
@@ -1406,25 +1527,40 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
     ExtractShaderParam(stage, shader_prim, "coat_normal", &out->coat_normal,
                        scene);
   }
+  if (!ExtractShaderParam(stage, shader_prim, "geometry_coat_tangent",
+                          &out->coat_tangent, scene)) {
+    ExtractShaderParam(stage, shader_prim, "coat_tangent", &out->coat_tangent,
+                       scene);
+  }
+  (void)FindConnectedUtilityScalar(
+      stage, shader_prim, "geometry_coat_normal", "ND_normalmap_", "scale",
+      config_.time_code, &out->coat_normal_map_scale);
+  (void)FindConnectedUtilityScalar(
+      stage, shader_prim, "geometry_coat_tangent", "ND_rotate3d_", "amount",
+      config_.time_code, &out->coat_tangent_rotation);
 
   // OpenPBR renamed the grazing cloth lobe to fuzz. Retain the older sheen
   // spellings for Standard Surface and early OpenPBR files, but prefer the
   // current names when both are authored.
-  if (!ExtractShaderParam(stage, shader_prim, "fuzz_weight",
-                          &out->sheen_weight, scene)) {
-    ExtractShaderParam(stage, shader_prim, "sheen_weight",
-                       &out->sheen_weight, scene);
-  }
-  if (!ExtractShaderParam(stage, shader_prim, "fuzz_color",
-                          &out->sheen_color, scene)) {
-    ExtractShaderParam(stage, shader_prim, "sheen_color",
-                       &out->sheen_color, scene);
-  }
-  if (!ExtractShaderParam(stage, shader_prim, "fuzz_roughness",
-                          &out->sheen_roughness, scene)) {
-    ExtractShaderParam(stage, shader_prim, "sheen_roughness",
-                       &out->sheen_roughness, scene);
-  }
+  const bool hasFuzzWeight = ExtractShaderParam(
+      stage, shader_prim, "fuzz_weight", &out->fuzz_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "sheen_weight",
+                     &out->sheen_weight, scene);
+  const bool hasFuzzColor = ExtractShaderParam(
+      stage, shader_prim, "fuzz_color", &out->fuzz_color, scene);
+  ExtractShaderParam(stage, shader_prim, "sheen_color",
+                     &out->sheen_color, scene);
+  const bool hasFuzzRoughness = ExtractShaderParam(
+      stage, shader_prim, "fuzz_roughness", &out->fuzz_roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "sheen_roughness",
+                     &out->sheen_roughness, scene);
+  out->fuzz_authored = hasFuzzWeight || hasFuzzColor || hasFuzzRoughness;
+  // The render payload's sheen slots are the effective grazing-lobe values
+  // consumed by existing renderers. Keep fuzz separately for lossless C and
+  // serializer queries while preserving the established renderer behavior.
+  if (hasFuzzWeight) out->sheen_weight = out->fuzz_weight;
+  if (hasFuzzColor) out->sheen_color = out->fuzz_color;
+  if (hasFuzzRoughness) out->sheen_roughness = out->fuzz_roughness;
   ExtractShaderParam(stage, shader_prim, "thin_film_weight",
                      &out->thin_film_weight, scene);
   ExtractShaderParam(stage, shader_prim, "thin_film_thickness",
@@ -1465,7 +1601,7 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
   return true;
 }
 
-bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
+bool RenderSceneConverter::Impl::ExtractShaderParam(const Stage& stage,
                                               const UsdPrim& shader_prim,
                                               const std::string& param_name,
                                               ShaderParam* out,
@@ -1558,14 +1694,134 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
       const ColorSpace cs = ParseColorSpace(tex_data.source_color_space);
       const ColorSpace image_color_space =
           cs == ColorSpace::Unknown ? ColorSpace::sRGB : cs;
-      const std::string resolved =
-          ResolveAssetPath(tex_data.file, AssetAnchorOf(texture_prim));
-      int32_t image_id =
-          FindCachedImageId(scene, resolved, image_color_space);
+      const uint32_t asset_anchor = AssetAnchorOf(texture_prim);
+      const std::string authored_anchor =
+          ::lightusd::next::AssetAnchorPath(asset_anchor);
+      std::vector<RenderUDIMTexture::Tile> udim_tiles;
+      int32_t udim_texture_id = -1;
+      const bool udim_path = tex_data.file.find("<UDIM>") != std::string::npos;
+      if (udim_path) {
+        udim_tiles.reserve(8);
+        for (uint32_t udim_id = 1001; udim_id <= 1100; ++udim_id) {
+          std::string tile_asset = tex_data.file;
+          const size_t udim_token = tile_asset.find("<UDIM>");
+          if (udim_token == std::string::npos) break;
+          tile_asset.replace(udim_token, 6, std::to_string(udim_id));
+          ::lightusd::next::ResolvedAsset resolved_tile;
+          if (config_.asset_resolver) {
+            resolved_tile = config_.asset_resolver->Resolve(
+                tile_asset, authored_anchor.empty() ? std::string()
+                                                    : authored_anchor + "/");
+          } else if (!config_.asset_base_dir.empty()) {
+            ::lightusd::next::AssetResolver local_resolver;
+            local_resolver.SetWorkingDirectory(config_.asset_base_dir);
+            if (!authored_anchor.empty()) {
+              resolved_tile = local_resolver.Resolve(tile_asset,
+                                                     authored_anchor + "/");
+            }
+            if (!resolved_tile.exists) {
+              resolved_tile = local_resolver.Resolve(tile_asset);
+            }
+          }
+          if (!resolved_tile.exists || resolved_tile.resolved_path.empty()) continue;
+          const std::string& tile_path = resolved_tile.resolved_path;
+          int32_t tile_image_id =
+              FindCachedImageId(scene, tile_path, image_color_space);
+          if (tile_image_id < 0) {
+            TextureImage tile_image;
+            tile_image.name = texture_prim.IsValid()
+                                  ? texture_prim.GetName() + "." +
+                                        std::to_string(udim_id)
+                                  : tile_asset;
+            tile_image.resolved_path = tile_path;
+            tile_image.asset_identifier = tile_path;
+            tile_image.color_space = image_color_space;
+            if (config_.material.load_textures) {
+              TextureImage loaded;
+              if (LoadTexture(tile_path, &loaded)) {
+                if (loaded.name.empty()) loaded.name = tile_image.name;
+                if (loaded.resolved_path.empty()) loaded.resolved_path = tile_path;
+                if (!config_.material.custom_texture_loader ||
+                    loaded.color_space == ColorSpace::Unknown) {
+                  loaded.color_space = image_color_space;
+                }
+                tile_image = std::move(loaded);
+                tile_image.asset_identifier = tile_path;
+              } else if (!config_.material.allow_missing_textures) {
+                AddWarning("Failed to load UDIM tile: " + tile_asset);
+                return false;
+              }
+            }
+            tile_image_id = static_cast<int32_t>(scene->images.size());
+            scene->images.push_back(std::move(tile_image));
+            RememberImageId(scene, tile_path, image_color_space, tile_image_id);
+          }
+          udim_tiles.push_back({udim_id, tile_image_id});
+        }
+      }
+
+      int32_t image_id = -1;
+      std::string resolved;
+      bool combined_udim = false;
+      Float2 udim_uv_scale(1.0f, 1.0f);
+      Float2 udim_uv_offset(0.0f, 0.0f);
+      if (!udim_tiles.empty()) {
+        std::string atlas_error;
+        if (config_.material.combine_udim_tiles &&
+            CombineUDIMTileImages(scene, udim_tiles, tex_data.file,
+                                  config_.limits.max_resident_bytes, &image_id,
+                                  &udim_uv_scale, &udim_uv_offset,
+                                  &atlas_error)) {
+          combined_udim = true;
+          resolved = tex_data.file;
+        } else {
+          if (!atlas_error.empty()) {
+            AddWarning("Unable to combine UDIM tiles for " + tex_data.file +
+                       ": " + atlas_error + "; retaining sparse tiles");
+          }
+          RenderUDIMTexture udim;
+          udim.prim_name = texture_prim.IsValid() ? texture_prim.GetName() : param_name;
+          udim.abs_path = texture_prim_path;
+          udim.display_name = udim.prim_name;
+          if (texture_prim.IsValid()) {
+            const auto* spec = texture_prim.GetPrimSpec();
+            if (spec && !spec->meta().displayName().empty()) {
+              udim.display_name = spec->meta().displayName();
+            }
+          }
+          udim.asset_identifier = tex_data.file;
+          udim.tiles = std::move(udim_tiles);
+          image_id = udim.tiles.front().image_id;
+          resolved = scene->images[static_cast<size_t>(image_id)].resolved_path;
+          // Stable index, shared by textures which resolve the same UDIM asset.
+          auto existing = std::find_if(
+              scene->udim_textures.begin(), scene->udim_textures.end(),
+              [&udim](const RenderUDIMTexture& candidate) {
+                if (candidate.asset_identifier != udim.asset_identifier ||
+                    candidate.tiles.size() != udim.tiles.size()) return false;
+                for (size_t i = 0; i < candidate.tiles.size(); ++i) {
+                  if (candidate.tiles[i].udim != udim.tiles[i].udim ||
+                      candidate.tiles[i].image_id != udim.tiles[i].image_id) return false;
+                }
+                return true;
+              });
+          if (existing == scene->udim_textures.end()) {
+            udim_texture_id = static_cast<int32_t>(scene->udim_textures.size());
+            scene->udim_textures.push_back(std::move(udim));
+          } else {
+            udim_texture_id = static_cast<int32_t>(
+                std::distance(scene->udim_textures.begin(), existing));
+          }
+        }
+      } else {
+        resolved = ResolveAssetPath(tex_data.file, asset_anchor);
+        image_id = FindCachedImageId(scene, resolved, image_color_space);
+      }
       if (image_id < 0) {
         TextureImage image;
         image.name = texture_prim.IsValid() ? texture_prim.GetName() : tex_data.file;
         image.resolved_path = resolved;
+        image.asset_identifier = tex_data.file;
         image.color_space = image_color_space;
         if (config_.material.load_textures) {
           TextureImage loaded;
@@ -1577,6 +1833,7 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
               loaded.color_space = image.color_space;
             }
             image = std::move(loaded);
+            image.asset_identifier = tex_data.file;
           } else if (!config_.material.allow_missing_textures) {
             AddWarning("Failed to load texture: " + tex_data.file);
             return false;
@@ -1601,6 +1858,10 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
       texture.bias = Float4(tex_data.bias[0], tex_data.bias[1],
                             tex_data.bias[2], tex_data.bias[3]);
       texture.image_id = image_id;
+      texture.is_udim = udim_texture_id >= 0 || combined_udim;
+      texture.udim_texture_id = texture.is_udim ? udim_texture_id : -1;
+      texture.udim_uv_scale = udim_uv_scale;
+      texture.udim_uv_offset = udim_uv_offset;
       texture.source_color_space = tex_data.source_color_space;
       texture.target_color_space = scene->working_color_space;
       {
@@ -1631,6 +1892,11 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
                               tex_data.uv_translation[1]);
       texture.scale = Float2(tex_data.uv_scale[0], tex_data.uv_scale[1]);
       texture.rotation = tex_data.uv_rotation * 3.14159265358979323846f / 180.0f;
+      texture.has_transform2d = tex_data.has_transform2d;
+      texture.tx_rotation = tex_data.uv_rotation;
+      texture.tx_scale = Float2(tex_data.uv_scale[0], tex_data.uv_scale[1]);
+      texture.tx_translation = Float2(tex_data.uv_translation[0],
+                                      tex_data.uv_translation[1]);
       texture.uv_primvar = tex_data.uv_primvar;
 
       out->texture_id = static_cast<int32_t>(scene->textures.size());

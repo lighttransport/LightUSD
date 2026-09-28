@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "gui.hh"
-#include "next/lightusd-next.hh"
-#include "tydra/next/scene-access.hh"
+#include "public_stage_queries.hh"
 
 #include <algorithm>
 #include <chrono>
@@ -1515,7 +1514,7 @@ void Gui::rebuildSubsetHighlight() {
     // Stage instead, the same mechanism the CUDA/HIP/CPU RT tracers already
     // use (BuildNextRtDeformedVertices, next_scene_loader.hh).
     std::vector<RtSkinnedMeshUpload> posed;
-    if (BuildNextRtDeformedVertices(*nextStage_, *draw_, timeline_.applied,
+    if (BuildNextRtDeformedVertices(nextStage_.get(), *draw_, timeline_.applied,
                                     nullptr, &posed)) {
       for (const RtSkinnedMeshUpload& u : posed) {
         if (u.meshIndex == mi) {
@@ -2049,25 +2048,25 @@ void Gui::rebuildInspectorCache() {
   }
 }
 
-bool Gui::drawNextPrimTree(const lightusd::next::UsdPrim& prim) {
-  if (!prim.IsValid()) return false;
-  const std::string path = prim.GetPath().str();
-  const std::string label = prim.GetName() + "  " + prim.GetTypeName();
+bool Gui::drawNextPrimTree(lightusd_prim prim) {
+  if (!lightusd_prim_is_valid(prim)) return false;
+  const std::string path = PublicString(lightusd_prim_path(prim));
+  const std::string label = PublicString(lightusd_prim_name(prim)) + "  " + PublicString(lightusd_prim_type_name(prim));
   const bool matches = hierFilter_.PassFilter(label.c_str()) ||
                        hierFilter_.PassFilter(path.c_str());
   bool descendant_matches = false;
-  for (size_t i = 0; i < prim.GetChildCount() && !descendant_matches; ++i) {
-    const lightusd::next::UsdPrim child = prim.GetChildAt(i);
+  for (size_t i = 0; i < lightusd_prim_child_count(prim) && !descendant_matches; ++i) {
+    const lightusd_prim child = lightusd_prim_child(prim, i);
     const std::string child_label =
-        child.GetName() + "  " + child.GetTypeName() + "  " +
-        child.GetPath().str();
+        PublicString(lightusd_prim_name(child)) + "  " + PublicString(lightusd_prim_type_name(child)) + "  " +
+        PublicString(lightusd_prim_path(child));
     descendant_matches = hierFilter_.PassFilter(child_label.c_str());
   }
   if (!matches && !descendant_matches && hierFilter_.IsActive()) return false;
 
   ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth |
                              ImGuiTreeNodeFlags_OpenOnArrow;
-  if (prim.GetChildCount() == 0) flags |= ImGuiTreeNodeFlags_Leaf;
+  if (lightusd_prim_child_count(prim) == 0) flags |= ImGuiTreeNodeFlags_Leaf;
   if (path == selPath_) flags |= ImGuiTreeNodeFlags_Selected;
   if (revealSelectionInHierarchy_ && !selPath_.empty() &&
       selPath_.compare(0, path.size(), path) == 0) {
@@ -2078,23 +2077,23 @@ bool Gui::drawNextPrimTree(const lightusd::next::UsdPrim& prim) {
   if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
     selectByPath(path, -1);
   }
-  if (!prim.IsActive()) {
+  if (!lightusd_prim_is_active(prim)) {
     ImGui::SameLine();
     ImGui::TextDisabled("inactive");
-  } else if (!prim.GetMeta().payloads.empty()) {
+  } else if (lightusd_prim_has_payload(prim)) {
     ImGui::SameLine();
     ImGui::TextDisabled("payload");
   }
   if (ImGui::BeginPopupContextItem("next_prim_context")) {
-    if (!prim.GetMeta().payloads.empty() && ImGui::MenuItem("Load payload")) {
+    if (lightusd_prim_has_payload(prim) && ImGui::MenuItem("Load payload")) {
       payloadLoadRequests_.push_back(path);
     }
     if (ImGui::MenuItem("Copy path")) ImGui::SetClipboardText(path.c_str());
     ImGui::EndPopup();
   }
   if (open) {
-    for (size_t i = 0; i < prim.GetChildCount(); ++i) {
-      drawNextPrimTree(prim.GetChildAt(i));
+    for (size_t i = 0; i < lightusd_prim_child_count(prim); ++i) {
+      drawNextPrimTree(lightusd_prim_child(prim, i));
     }
     ImGui::TreePop();
   }
@@ -2102,35 +2101,13 @@ bool Gui::drawNextPrimTree(const lightusd::next::UsdPrim& prim) {
   return matches || descendant_matches;
 }
 
-namespace {
-
-std::string NextValueSummary(const lightusd::next::Value& value) {
-  if (value.is_array()) {
-    const char* type = lightusd::next::GetTypeName(value.type_id());
-    return std::string(type ? type : "value") + "[" +
-           std::to_string(value.array_size()) + "]";
-  }
-  if (const bool* v = value.as_bool()) return *v ? "true" : "false";
-  if (const int32_t* v = value.as_int()) return std::to_string(*v);
-  if (const int64_t* v = value.as_int64()) return std::to_string(*v);
-  if (const float* v = value.as_float()) return std::to_string(*v);
-  if (const double* v = value.as_double()) return std::to_string(*v);
-  if (const std::string* v = value.as_string()) return *v;
-  if (const std::string* v = value.as_token()) return *v;
-  if (const std::string* v = value.as_asset_path()) return "@" + *v + "@";
-  const char* type = lightusd::next::GetTypeName(value.type_id());
-  return type ? type : "value";
-}
-
-}  // namespace
-
 void Gui::drawNextInspector() {
   if (!nextStage_ || selPath_.empty()) {
     HintWrapped("Select a prim to inspect it.");
     return;
   }
-  const lightusd::next::UsdPrim prim = nextStage_->GetPrimAtPath(selPath_);
-  if (!prim.IsValid()) {
+  const lightusd_prim publicPrim = lightusd_stage_prim_at_path(nextStage_.get(), selPath_.c_str());
+  if (!lightusd_prim_is_valid(publicPrim)) {
     HintWrapped("The selected prim is not present in the composed stage.");
     return;
   }
@@ -2138,14 +2115,13 @@ void Gui::drawNextInspector() {
   drawSelectionBreadcrumbs("##next-inspector-breadcrumbs");
   ImGui::TextWrapped("%s", selPath_.c_str());
   if (ImGui::SmallButton("Copy path")) ImGui::SetClipboardText(selPath_.c_str());
-  ImGui::TextDisabled("Type: %s", prim.GetTypeName().c_str());
-  ImGui::Text("Specifier: %s", prim.GetSpecifier() == lightusd::next::PrimSpecifier::Def
+  ImGui::TextDisabled("Type: %s", PublicString(lightusd_prim_type_name(publicPrim)).c_str());
+  ImGui::Text("Specifier: %s", lightusd_prim_specifier(publicPrim) == 0
                                    ? "def"
-                                   : prim.GetSpecifier() ==
-                                             lightusd::next::PrimSpecifier::Over
+                                   : lightusd_prim_specifier(publicPrim) == 1
                                          ? "over"
                                          : "class");
-  ImGui::Text("Active: %s", prim.IsActive() ? "true" : "false");
+  ImGui::Text("Active: %s", lightusd_prim_is_active(publicPrim) ? "true" : "false");
 
   // StandardShaderBall authors its example-material choice on the scene root,
   // while the selected material_surface inherits that binding through the
@@ -2158,12 +2134,14 @@ void Gui::drawNextInspector() {
   if (shaderBallPos != std::string::npos &&
       shaderBallPos + shaderBallSuffix.size() == selPath_.size()) {
     const std::string sceneRoot = selPath_.substr(0, shaderBallPos);
-    const lightusd::next::UsdPrim materialScope = nextStage_->GetPrimAtPath(
-        sceneRoot + "/materials/examples/mtlx");
+    const lightusd_prim materialScope = lightusd_stage_prim_at_path(nextStage_.get(),
+        (sceneRoot + "/materials/examples/mtlx").c_str());
     std::vector<std::string> choices;
-    if (materialScope.IsValid()) {
-      for (const lightusd::next::UsdPrim& child : materialScope.GetChildren()) {
-        if (child.GetTypeName() == "Material") choices.push_back(child.GetName());
+    if (lightusd_prim_is_valid(materialScope)) {
+      for (size_t i = 0; i < lightusd_prim_child_count(materialScope); ++i) {
+        const lightusd_prim child = lightusd_prim_child(materialScope, i);
+        if (PublicString(lightusd_prim_type_name(child)) == "Material")
+          choices.push_back(PublicString(lightusd_prim_name(child)));
       }
       std::sort(choices.begin(), choices.end());
     }
@@ -2206,26 +2184,28 @@ void Gui::drawNextInspector() {
     }
   }
 
-  const lightusd::next::PrimSpecMeta& meta = prim.GetMeta();
-  if (!meta.variantSets().empty() &&
-      ImGui::CollapsingHeader("Variant sets", ImGuiTreeNodeFlags_DefaultOpen)) {
-    for (const lightusd::next::VariantSetData& set : meta.variantSets()) {
-      std::string selected = set.selected;
-      for (const auto& authored : meta.variantSelections()) {
-        if (authored.first == set.name) selected = authored.second;
-      }
+  const size_t setCount = lightusd_prim_variant_set_count(publicPrim);
+  if (setCount && ImGui::CollapsingHeader("Variant sets", ImGuiTreeNodeFlags_DefaultOpen)) {
+    for (size_t i = 0; i < setCount; ++i) {
+      const std::string set = PublicString(lightusd_prim_variant_set_name(publicPrim, i));
+      std::string selected = PublicString(lightusd_variant_selection(publicPrim, set.c_str()));
       if (selected.empty()) selected = "(default)";
-      const std::string id = set.name + "##next_variant";
+      const std::string id = set + "##next_variant";
       if (ImGui::BeginCombo(id.c_str(), selected.c_str())) {
-        for (const lightusd::next::VariantData& variant : set.variants) {
-          const bool current = variant.name == selected;
-          if (ImGui::Selectable(variant.name.c_str(), current) && !current) {
-            std::map<std::string, std::string> selections;
-            for (const auto& authored : meta.variantSelections()) {
-              selections[authored.first] = authored.second;
+        for (size_t j = 0; j < lightusd_variant_count(publicPrim, set.c_str()); ++j) {
+          const std::string variant = PublicString(lightusd_variant_name(publicPrim, set.c_str(), j));
+          const bool current = variant == selected;
+          if (ImGui::Selectable(variant.c_str(), current) && !current) {
+            lightusd::api::StringList authored;
+            if (lightusd_prim_variant_selection_names(publicPrim, authored.put()) == LIGHTUSD_OK) {
+              std::map<std::string, std::string> selections;
+              for (size_t k = 0; k < lightusd::api::StringListSize(authored); ++k) {
+                const std::string key = PublicString(lightusd::api::StringListGet(authored, k));
+                selections[key] = PublicString(lightusd_variant_selection(publicPrim, key.c_str()));
+              }
+              selections[set] = variant;
+              requestVariantSwitch(selPath_, selections);
             }
-            selections[set.name] = variant.name;
-            requestVariantSwitch(selPath_, selections);
           }
           if (current) ImGui::SetItemDefaultFocus();
         }
@@ -2234,20 +2214,20 @@ void Gui::drawNextInspector() {
     }
   }
 
-  if ((!meta.references.empty() || !meta.payloads.empty() ||
-       !meta.inherits.empty() || !meta.specializes.empty()) &&
-      ImGui::CollapsingHeader("Composition arcs",
-                              ImGuiTreeNodeFlags_DefaultOpen)) {
-    ImGui::Text("References: %zu", meta.references.size());
-    ImGui::Text("Payloads: %zu", meta.payloads.size());
-    ImGui::Text("Inherits: %zu", meta.inherits.size());
-    ImGui::Text("Specializes: %zu", meta.specializes.size());
-    if (!meta.payloads.empty() && ImGui::SmallButton("Load payload")) {
-      payloadLoadRequests_.push_back(selPath_);
-    }
+  const size_t references = lightusd_prim_arc_count(publicPrim, LIGHTUSD_ARC_REFERENCE);
+  const size_t payloads = lightusd_prim_arc_count(publicPrim, LIGHTUSD_ARC_PAYLOAD);
+  const size_t inherits = lightusd_prim_arc_count(publicPrim, LIGHTUSD_ARC_INHERIT);
+  const size_t specializes = lightusd_prim_arc_count(publicPrim, LIGHTUSD_ARC_SPECIALIZE);
+  if ((references || payloads || inherits || specializes) &&
+      ImGui::CollapsingHeader("Composition arcs", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::Text("References: %zu", references);
+    ImGui::Text("Payloads: %zu", payloads);
+    ImGui::Text("Inherits: %zu", inherits);
+    ImGui::Text("Specializes: %zu", specializes);
+    if (payloads && ImGui::SmallButton("Load payload")) payloadLoadRequests_.push_back(selPath_);
   }
 
-  const std::string material = lightusd::tydra::next::GetBoundMaterial(prim);
+  const std::string material = PublicString(lightusd_rel_target(publicPrim, "material:binding", 0));
   if (!material.empty() &&
       ImGui::CollapsingHeader("Material binding",
                               ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -2263,29 +2243,36 @@ void Gui::drawNextInspector() {
       ImGui::TableSetupColumn("Type");
       ImGui::TableSetupColumn("Value");
       ImGui::TableHeadersRow();
-      for (const std::string& name : prim.GetPropertyNames()) {
-        const lightusd::next::Value* value = prim.GetPropertyValue(name);
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn();
-        ImGui::TextUnformatted(name.c_str());
-        ImGui::TableNextColumn();
-        const char* type = value ? lightusd::next::GetTypeName(value->type_id())
-                                 : "relationship";
-        ImGui::TextUnformatted(type ? type : "value");
-        ImGui::TableNextColumn();
-        const std::string summary = value ? NextValueSummary(*value) : "";
-        ImGui::TextUnformatted(summary.c_str());
+      lightusd::api::StringList names;
+      if (lightusd_prim_property_names(publicPrim, names.put()) == LIGHTUSD_OK) {
+        for (size_t i = 0; i < lightusd::api::StringListSize(names); ++i) {
+          const std::string name = PublicString(lightusd::api::StringListGet(names, i));
+          lightusd_value_view value{};
+          lightusd_sv text{};
+          const bool present = lightusd_attr_inspect_default(publicPrim, name.c_str(), &value, &text) == LIGHTUSD_OK;
+          ImGui::TableNextRow();
+          ImGui::TableNextColumn();
+          ImGui::TextUnformatted(name.c_str());
+          ImGui::TableNextColumn();
+          const char* type = present ? lightusd_type_name(value.type) : "relationship";
+          ImGui::TextUnformatted(type ? type : "value");
+          ImGui::TableNextColumn();
+          const std::string summary = present ? PublicDefaultSummary(value, text) : "";
+          ImGui::TextUnformatted(summary.c_str());
+        }
       }
-      for (const std::string& name : prim.GetRelationshipNames()) {
-        const std::vector<lightusd::next::Path>* targets =
-            prim.GetRelationship(name);
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn();
-        ImGui::TextUnformatted(name.c_str());
-        ImGui::TableNextColumn();
-        ImGui::TextUnformatted("relationship");
-        ImGui::TableNextColumn();
-        ImGui::Text("%zu target(s)", targets ? targets->size() : 0);
+      lightusd::api::StringList relationships;
+      if (lightusd_prim_relationship_names(publicPrim, relationships.put()) == LIGHTUSD_OK) {
+        for (size_t i = 0; i < lightusd::api::StringListSize(relationships); ++i) {
+          const std::string name = PublicString(lightusd::api::StringListGet(relationships, i));
+          ImGui::TableNextRow();
+          ImGui::TableNextColumn();
+          ImGui::TextUnformatted(name.c_str());
+          ImGui::TableNextColumn();
+          ImGui::TextUnformatted("relationship");
+          ImGui::TableNextColumn();
+          ImGui::Text("%zu target(s)", lightusd_rel_target_count(publicPrim, name.c_str()));
+        }
       }
       ImGui::EndTable();
     }
@@ -2339,8 +2326,8 @@ void Gui::drawHierarchy() {
     if (showRenderNodes_) {
       for (const auto& n : loaded_->render.nodes) drawNodeTree(n);
     } else if (nextStage_) {
-      for (const lightusd::next::UsdPrim& root : nextStage_->GetRootPrims()) {
-        drawNextPrimTree(root);
+      for (size_t i = 0; i < lightusd_stage_root_prim_count(nextStage_.get()); ++i) {
+        drawNextPrimTree(lightusd_stage_root_prim(nextStage_.get(), i));
       }
     } else {
       for (const auto& root : loaded_->stage.root_prims()) drawPrimTree(root);
@@ -3235,13 +3222,6 @@ void Gui::drawPayloads() {
       ImGui::End();
       return;
     }
-    std::unordered_map<std::string, std::string> authoredAssets;
-    nextStage_->Traverse([&](const lightusd::next::UsdPrim& prim) {
-      for (const std::string& payload : prim.GetMeta().payloads) {
-        authoredAssets.emplace(prim.GetPath().str(), payload);
-      }
-      return true;
-    });
     ImGui::Text("Deferred payloads: %zu", deferredPayloadPaths_.size());
     if (ImGui::Button("Load All") && !loadStatus_.active) {
       wantLoadAllPayloads_ = true;
@@ -3267,10 +3247,11 @@ void Gui::drawPayloads() {
         ImGui::TableNextColumn();
         ImGui::TextUnformatted(primPath.c_str());
         ImGui::TableNextColumn();
-        const auto asset = authoredAssets.find(primPath);
-        ImGui::TextUnformatted(asset == authoredAssets.end()
-                                   ? "(deferred)"
-                                   : asset->second.c_str());
+        const lightusd_prim prim = lightusd_stage_prim_at_path(nextStage_.get(), primPath.c_str());
+        const std::string asset = lightusd_prim_has_payload(prim)
+            ? PublicString(lightusd_prim_arc_text(prim, LIGHTUSD_ARC_PAYLOAD, 0))
+            : "(deferred)";
+        ImGui::TextUnformatted(asset.c_str());
       }
       ImGui::EndTable();
     }
@@ -6819,25 +6800,25 @@ void Gui::drawStageMeta() {
         ImGui::TextWrapped("%s", v.c_str());
       };
       if (nextStage_) {
-        const lightusd::next::StageMeta& next_meta = nextStage_->GetMeta();
-        row("upAxis", next_meta.upAxis);
-        row("metersPerUnit", std::to_string(next_meta.metersPerUnit));
-        row("framesPerSecond", std::to_string(next_meta.framesPerSecond));
-        row("timeCodesPerSecond",
-            std::to_string(next_meta.timeCodesPerSecond));
-        if (next_meta.startTimeCode_set)
-          row("startTimeCode", std::to_string(next_meta.startTimeCode));
-        if (next_meta.endTimeCode_set)
-          row("endTimeCode", std::to_string(next_meta.endTimeCode));
-        if (!next_meta.defaultPrim.empty()) row("defaultPrim", next_meta.defaultPrim);
-        if (!next_meta.comment.empty()) row("comment", next_meta.comment);
-        if (!next_meta.doc.empty()) row("documentation", next_meta.doc);
-        const lightusd::next::Layer* layer = nextStage_->GetRootLayer();
-        if (layer && !layer->meta().subLayers.empty()) {
+        PublicStageInfo info;
+        if (ReadPublicStageInfo(nextStage_.get(), &info)) {
+          row("upAxis", info.upAxis);
+          row("metersPerUnit", std::to_string(info.metersPerUnit));
+          row("framesPerSecond", std::to_string(info.framesPerSecond));
+          row("timeCodesPerSecond", std::to_string(info.timeCodesPerSecond));
+          if (info.startTimeCodeAuthored) row("startTimeCode", std::to_string(info.startTimeCode));
+          if (info.endTimeCodeAuthored) row("endTimeCode", std::to_string(info.endTimeCode));
+          if (!info.defaultPrim.empty()) row("defaultPrim", info.defaultPrim);
+          if (!info.comment.empty()) row("comment", info.comment);
+          if (!info.documentation.empty()) row("documentation", info.documentation);
+        }
+        lightusd::api::StringList layers;
+        if (lightusd_stage_sublayers(nextStage_.get(), layers.put()) == LIGHTUSD_OK &&
+            lightusd::api::StringListSize(layers)) {
           std::string sublayers;
-          for (const std::string& sublayer : layer->meta().subLayers) {
+          for (size_t i = 0; i < lightusd::api::StringListSize(layers); ++i) {
             if (!sublayers.empty()) sublayers += "\n";
-            sublayers += sublayer;
+            sublayers += PublicString(lightusd::api::StringListGet(layers, i));
           }
           row("subLayers", sublayers);
         }

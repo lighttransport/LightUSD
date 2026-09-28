@@ -4,19 +4,33 @@
 // Persistent, revisioned next::Stage -> Tydra render update conversion.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
-#include "render-converter.hh"
 #include "next/operation-status.hh"
 #include "next/stage/change-set.hh"
 
 namespace lightusd {
 namespace tydra {
 namespace next {
+
+struct ConverterConfig;
+class RenderScene;
+struct SceneNode;
+struct RenderMesh;
+struct RenderPoints;
+struct RenderCurves;
+struct RenderPointInstancer;
+struct RenderMaterial;
+struct RenderTexture;
+struct TextureImage;
+struct RenderLight;
+struct RenderCamera;
+struct AnimationClip;
+struct Skeleton;
 
 using RenderId = uint64_t;
 constexpr RenderId kInvalidRenderId = 0;
@@ -113,6 +127,10 @@ class PreparedRenderUpdate {
   explicit operator bool() const;
   uint64_t base_revision() const;
   uint64_t new_revision() const;
+  // Borrowed candidate data; valid until this update is committed or aborted.
+  const RenderScene* scene() const;
+  std::shared_ptr<const RenderScene> scene_owner() const;
+  const std::vector<std::string>* warnings() const;
 
  private:
   struct Impl;
@@ -123,7 +141,8 @@ class PreparedRenderUpdate {
 /// Owns stable resource IDs and the last committed retained RenderScene.
 class RenderSession {
  public:
-  explicit RenderSession(const ConverterConfig& config = {});
+  RenderSession();
+  explicit RenderSession(const ConverterConfig& config);
   ~RenderSession();
   RenderSession(RenderSession&&) noexcept;
   RenderSession& operator=(RenderSession&&) noexcept;
@@ -155,6 +174,8 @@ class RenderSession {
 
   RenderSceneSnapshot GetSnapshot() const;
   uint64_t revision() const;
+  /// Return the stable ID for a committed resource key, or kInvalidRenderId.
+  RenderId ResourceId(RenderResourceKind kind, const std::string& key) const;
   void Reset();
 
  private:

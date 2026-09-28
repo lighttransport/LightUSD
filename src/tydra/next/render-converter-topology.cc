@@ -3,7 +3,7 @@
 //
 // Tydra Next - Mesh topology sanitization
 
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
 
 #include <algorithm>
 #include <cstdint>
@@ -12,7 +12,7 @@
 
 namespace lightusd { namespace tydra { namespace next {
 
-void RenderSceneConverter::SanitizeMeshTopology(RenderMesh* mesh) {
+void RenderSceneConverter::Impl::SanitizeMeshTopology(RenderMesh* mesh) {
   const uint32_t point_count = static_cast<uint32_t>(mesh->point_count());
   const size_t index_count = mesh->face_vertex_indices.size();
 

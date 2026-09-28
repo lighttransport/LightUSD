@@ -1,0 +1,100 @@
+{
+  "wasm32": {
+    "unloaded": "",
+    "sample": true,
+    "sampleScene": {
+      "usda": "573037759b797b1783027cf8782fff2ad02b9dd76676c052bf3cf8461583f979",
+      "physics": "0b7a2768129731b6b3666167c2d866677a5f4e6dc6abff4152f7b6cd1b1df723",
+      "error": "No scene loaded",
+      "warn": ""
+    },
+    "badRobot": false,
+    "badRobotError": "URDF export JSON parse failed: unterminated string",
+    "invalid": [
+      [
+        false,
+        "setVisualMesh/setCollisionMesh requires a non-empty mesh name"
+      ],
+      [
+        false,
+        "setVisualMesh/setCollisionMesh `bad` requires positions as Float32Array triples"
+      ],
+      [
+        false,
+        "setVisualMesh/setCollisionMesh `bad` normals length must match positions length"
+      ],
+      [
+        false,
+        "setVisualMesh/setCollisionMesh `bad` uvs length must be vertex count * 2"
+      ],
+      [
+        false,
+        "setVisualMesh/setCollisionMesh `bad` indices must be triangle indices"
+      ]
+    ],
+    "robot": true,
+    "robotScene": {
+      "usda": "8815bd0123a9a97dd75d3cde859cb9c6d0035183540daf96006a3b54fcb24477",
+      "physics": "980d6cf0cb4904f28e8e02548717320cd1ffb72d5bcc0fe2d05166926f77cfcc",
+      "error": "",
+      "warn": ""
+    },
+    "clear": true,
+    "withoutMeshes": true,
+    "withoutMeshesScene": {
+      "usda": "253bf5c3cc4e324006b8fa8f324f7405f77316f5d51d53819356f43452892abc",
+      "physics": "3cb04f6719ce2744353492dc84c032ed417226c31aace807f7d8267a4048af7f",
+      "error": "",
+      "warn": ""
+    }
+  },
+  "wasm64": {
+    "unloaded": "",
+    "sample": true,
+    "sampleScene": {
+      "usda": "573037759b797b1783027cf8782fff2ad02b9dd76676c052bf3cf8461583f979",
+      "physics": "0b7a2768129731b6b3666167c2d866677a5f4e6dc6abff4152f7b6cd1b1df723",
+      "error": "No scene loaded",
+      "warn": ""
+    },
+    "badRobot": false,
+    "badRobotError": "URDF export JSON parse failed: unterminated string",
+    "invalid": [
+      [
+        false,
+        "setVisualMesh/setCollisionMesh requires a non-empty mesh name"
+      ],
+      [
+        false,
+        "setVisualMesh/setCollisionMesh `bad` requires positions as Float32Array triples"
+      ],
+      [
+        false,
+        "setVisualMesh/setCollisionMesh `bad` normals length must match positions length"
+      ],
+      [
+        false,
+        "setVisualMesh/setCollisionMesh `bad` uvs length must be vertex count * 2"
+      ],
+      [
+        false,
+        "setVisualMesh/setCollisionMesh `bad` indices must be triangle indices"
+      ]
+    ],
+    "robot": true,
+    "robotScene": {
+      "usda": "8815bd0123a9a97dd75d3cde859cb9c6d0035183540daf96006a3b54fcb24477",
+      "physics": "980d6cf0cb4904f28e8e02548717320cd1ffb72d5bcc0fe2d05166926f77cfcc",
+      "error": "",
+      "warn": ""
+    },
+    "clear": true,
+    "withoutMeshes": true,
+    "withoutMeshesScene": {
+      "usda": "253bf5c3cc4e324006b8fa8f324f7405f77316f5d51d53819356f43452892abc",
+      "physics": "3cb04f6719ce2744353492dc84c032ed417226c31aace807f7d8267a4048af7f",
+      "error": "",
+      "warn": ""
+    }
+  }
+}

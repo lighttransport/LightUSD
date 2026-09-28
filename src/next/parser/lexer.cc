@@ -672,7 +672,9 @@ Token Lexer::scan_path_ref() {
     return make_token(TokenType::Invalid, start_line, start_col);
   }
 
-  if (strict_aousd_conformance && !IsValidPathString(value)) {
+  // `<>` is the empty path, which AOUSD authors for relocate-to-none and to
+  // clear reference/payload targets; only non-empty text must be a path.
+  if (strict_aousd_conformance && !value.empty() && !IsValidPathString(value)) {
     set_fatal_error("Invalid AOUSD path reference: <" + value + ">");
     return make_token(TokenType::Invalid, start_line, start_col);
   }

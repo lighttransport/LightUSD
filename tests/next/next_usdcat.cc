@@ -24,7 +24,7 @@
 #include "next/pcp/layer-registry.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
-#include "next/lightusd-next.hh"
+#include "next/load-usd.hh"
 #include "next/writer/usda-writer.hh"
 #include "next/writer/usdc-writer.hh"
 

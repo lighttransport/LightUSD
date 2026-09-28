@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-next-render.hh"
+#include "tydra/next/render-extract.hh"
+#include "next/schema/geom-xform.hh"
+#include "next/schema/usd-shade.hh"
 namespace lightusd {
 namespace web_next {
 bool RenderStream::hasGeomSubset_(const lightusd::next::UsdPrim &prim) {
@@ -166,6 +169,9 @@ bool RenderStream::appendToAccumulator_(const lightusd::next::UsdPrim &prim,
 void RenderStream::buildOptimizedOutputs_() {
     outputs_.clear();
     std::unordered_map<std::string, MergeAccumulator> groups;
+    // Flush pending groups in first-source order so output ids follow the
+    // authored mesh order (as legacy does) instead of hash-map order.
+    std::vector<std::string> group_order;
     constexpr size_t kMaxGroupVertices = size_t(1) << 20;
     constexpr size_t kMaxGroupIndices = size_t(3) << 20;
 
@@ -174,7 +180,10 @@ void RenderStream::buildOptimizedOutputs_() {
       const double material_start_ms = emscripten_get_now();
       const int32_t material_id = materialIdForBoundPrim_(prim);
       stats_.material_ms += emscripten_get_now() - material_start_ms;
-      if (hasGeomSubset_(prim)) {
+      // Output primvars refer to one source vertex/index domain. Keep these
+      // meshes separate until a merged-primvar remap is explicitly supported.
+      if (hasGeomSubset_(prim) ||
+          !sourcePrimvars_(static_cast<int>(i))->empty()) {
         OutputMesh out;
         out.merged = false;
         out.source_index = static_cast<int>(i);
@@ -205,7 +214,9 @@ void RenderStream::buildOptimizedOutputs_() {
       key << material_id << "|soup=" << soup << "|n=" << has_normals
           << "|uv=" << has_uv << "|double=" << double_sided;
       if (!mesh_merge_bake_transform_) key << "|m=" << matrixKey_(world);
-      MergeAccumulator &acc = groups[key.str()];
+      const auto inserted = groups.try_emplace(key.str());
+      if (inserted.second) group_order.push_back(inserted.first->first);
+      MergeAccumulator &acc = inserted.first->second;
       if (acc.source_count > 0 &&
           (acc.mesh.soup != soup ||
            acc.mesh.material_id != material_id ||
@@ -237,7 +248,7 @@ void RenderStream::buildOptimizedOutputs_() {
         stats_.merge_append_ms += emscripten_get_now() - append_start_ms;
       }
     }
-    for (auto &kv : groups) flushAccumulator_(&kv.second);
+    for (const std::string &group_key : group_order) flushAccumulator_(&groups[group_key]);
     stats_.source_material_count = source_material_keys_.size();
     stats_.source_texture_count = source_texture_keys_.size();
   }

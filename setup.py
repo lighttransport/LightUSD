@@ -3,7 +3,7 @@ Build driver for the lightusd PyPI wheel.
 
 Flow:
   1. Invoke CMake on the standalone `src/next` project (next-core), building
-     the `lightusd_next`, `tydra_next` and `lightusd_c` static libraries.
+     the `lightusd_next`, `tydra_next`, `lightusd_c` and `lightusd_render_c` libraries.
      The legacy lightusd core is NOT built or linked into the Python wheel
      (v1.0.0 next + tydra-next only, npm preview tag). Native
      (`cmake -S .`) and WASM (`web/CMakeLists.txt` / `web/binding.cc` with
@@ -78,6 +78,7 @@ def _cmake_configure_and_build() -> None:
         ("-DLIGHTUSD_NEXT_ENABLE_THREAD=" +
          ("ON" if PY_ENABLE_THREAD else "OFF")),
         "-DLIGHTUSD_NEXT_BUILD_TESTS=OFF",
+        "-DLIGHTUSD_WITH_TYDRA=ON",
     ]
     is_windows = platform.system() == "Windows"
 
@@ -102,7 +103,7 @@ def _cmake_configure_and_build() -> None:
         "--config", "MinSizeRel",
         "--target", "lightusd_next",
         "--target", "tydra_next",
-        "--target", "lightusd_c",
+        "--target", "lightusd_render_c",
         "--parallel", str(os.cpu_count() or 2),
     ]
     subprocess.check_call(build_args, env=env)
@@ -133,12 +134,13 @@ class CMakeBuildExt(build_ext):
         _cmake_configure_and_build()
 
         # Link order matters for static archives on POSIX: dependents first.
+        render_api = _find_static_lib("lightusd_render_c")
         c_api = _find_static_lib("lightusd_c")
         tydra = _find_static_lib("tydra_next")
         core = _find_static_lib("lightusd_next")
 
         for ext in self.extensions:
-            ext.extra_objects = [str(c_api), str(tydra), str(core)] + list(
+            ext.extra_objects = [str(render_api), str(c_api), str(tydra), str(core)] + list(
                 ext.extra_objects)
         # setuptools does not reliably treat a changed static-archive path or
         # CMake build flavor as an extension dependency. Always relink the tiny

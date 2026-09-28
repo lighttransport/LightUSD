@@ -6,9 +6,12 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
+#include <iterator>
 #include <string>
 #include <unordered_set>
 #include <vector>
+#include <deque>
 
 #include "next/schema/geom-point-instancer.hh"
 #include "next/stage/stage.hh"
@@ -43,12 +46,66 @@ struct RenderPrimRecord {
   std::string purpose = "default";
   std::string material_path;
   std::string native_prototype;
+  bool has_reset_xform = false;
   // True when this prim or any transform ancestor has time-varying xform
   // opinions. The extractor carries this down its traversal so consumers do
   // not repeatedly walk the same ancestry for every mesh.
   bool animated_world = false;
   double local[16];
   double world[16];
+};
+
+// Non-owning category index into RenderExtractResult::storage. Records are
+// stored once at stable addresses in traversal order; category views no longer copy every string,
+// prim handle, and pair of transforms.
+class RenderRecordRefs {
+ public:
+  class iterator {
+   public:
+    using iterator_category = std::forward_iterator_tag;
+    using value_type = RenderPrimRecord;
+    using difference_type = std::ptrdiff_t;
+    using pointer = RenderPrimRecord*;
+    using reference = RenderPrimRecord&;
+    explicit iterator(std::vector<RenderPrimRecord*>::iterator i) : i_(i) {}
+    reference operator*() const { return **i_; }
+    pointer operator->() const { return *i_; }
+    iterator& operator++() { ++i_; return *this; }
+    bool operator==(const iterator& other) const { return i_ == other.i_; }
+    bool operator!=(const iterator& other) const { return !(*this == other); }
+   private:
+    std::vector<RenderPrimRecord*>::iterator i_;
+  };
+  class const_iterator {
+   public:
+    using iterator_category = std::forward_iterator_tag;
+    using value_type = RenderPrimRecord;
+    using difference_type = std::ptrdiff_t;
+    using pointer = const RenderPrimRecord*;
+    using reference = const RenderPrimRecord&;
+    explicit const_iterator(std::vector<RenderPrimRecord*>::const_iterator i)
+        : i_(i) {}
+    reference operator*() const { return **i_; }
+    pointer operator->() const { return *i_; }
+    const_iterator& operator++() { ++i_; return *this; }
+    bool operator==(const const_iterator& other) const { return i_ == other.i_; }
+    bool operator!=(const const_iterator& other) const { return !(*this == other); }
+   private:
+    std::vector<RenderPrimRecord*>::const_iterator i_;
+  };
+  void push_back(RenderPrimRecord* record) { refs_.push_back(record); }
+  const RenderPrimRecord& operator[](size_t i) const { return *refs_[i]; }
+  const RenderPrimRecord& front() const { return *refs_.front(); }
+  size_t size() const { return refs_.size(); }
+  bool empty() const { return refs_.empty(); }
+  void reserve(size_t n) { refs_.reserve(n); }
+  iterator begin() { return iterator(refs_.begin()); }
+  iterator end() { return iterator(refs_.end()); }
+  const_iterator begin() const { return const_iterator(refs_.begin()); }
+  const_iterator end() const { return const_iterator(refs_.end()); }
+  void clear() { std::vector<RenderPrimRecord*>().swap(refs_); }
+ private:
+  std::vector<RenderPrimRecord*> refs_;
 };
 
 struct RenderExtractOptions {
@@ -61,29 +118,56 @@ struct RenderExtractOptions {
   bool stop_at_point_instancers = false;
   bool stop_at_native_instances = false;
   bool collect_other = false;
-  // Keep the combined traversal-order list in addition to the kind-specific
-  // lists. Consumers that only use meshes/native_instances can disable this to
-  // avoid retaining a second full RenderPrimRecord for every renderable prim.
+  // Keep a combined traversal-order reference list in addition to kind lists.
+  // Category membership and traversal order reference shared storage.
   bool collect_records = true;
+  bool collect_categories = true;
 };
 
 struct RenderExtractResult {
-  std::vector<RenderPrimRecord> records;
-  std::vector<RenderPrimRecord> meshes;
+  // Composed instance proxies can exceed Stage::GetPrimCount. Category views
+  // retain pointers while extraction grows, so storage must not relocate.
+  std::deque<RenderPrimRecord> storage;
+  RenderRecordRefs records;
+  RenderRecordRefs meshes;
   // Points have mesh-like topology but a separate converter/data container.
-  // Keeping this list lets streaming conversion release `records` before
-  // decoding large point payloads.
-  std::vector<RenderPrimRecord> points;
-  std::vector<RenderPrimRecord> point_instancers;
-  std::vector<RenderPrimRecord> native_instances;
-  std::vector<RenderPrimRecord> lights;
-  std::vector<RenderPrimRecord> cameras;
-  std::vector<RenderPrimRecord> materials;
-  std::vector<RenderPrimRecord> volumes;
-  std::vector<RenderPrimRecord> curves;
-  std::vector<RenderPrimRecord> skeletons;
+  // Keeping this category reference list lets streaming conversion release
+  // traversal-order references before decoding large point payloads.
+  RenderRecordRefs points;
+  RenderRecordRefs point_instancers;
+  RenderRecordRefs native_instances;
+  RenderRecordRefs lights;
+  RenderRecordRefs cameras;
+  RenderRecordRefs materials;
+  RenderRecordRefs volumes;
+  RenderRecordRefs curves;
+  RenderRecordRefs skeletons;
   std::unordered_set<std::string> native_prototype_holders;
   bool limit_exceeded = false;
+
+  // Drop traversal-order references after hierarchy/animation processing;
+  // category lists keep the shared records alive through conversion.
+  void release_records() { records.clear(); }
+  void release_storage() {
+    records.clear();
+    meshes.clear(); points.clear(); point_instancers.clear();
+    native_instances.clear(); lights.clear(); cameras.clear();
+    materials.clear(); volumes.clear(); curves.clear(); skeletons.clear();
+    std::deque<RenderPrimRecord>().swap(storage);
+  }
+
+  // Category lists are also temporary after their conversion phase. Keeping
+  // explicit release points lets streaming callers return record storage to
+  // the allocator before the next large payload is decoded.
+  static void release_list(RenderRecordRefs* list) {
+    if (!list) return;
+    for (RenderPrimRecord& rec : *list) {
+      // Category membership is disjoint, so releasing a phase also frees its
+      // large path/material strings before the next payload is decoded.
+      rec = RenderPrimRecord();
+    }
+    list->clear();
+  }
 };
 
 struct PointInstancerData {

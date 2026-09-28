@@ -4,6 +4,7 @@
 #include <array>
 #include <cstring>
 #include <fstream>
+#include <limits>
 
 namespace lightusd {
 namespace next {
@@ -70,12 +71,28 @@ static bool WriteLocalFileHeader(std::vector<uint8_t>& buf,
                                   const std::string& name,
                                   const uint8_t* data, size_t data_size,
                                   CentralDirEntry* out_entry,
-                                  std::string* err) {
+                                  std::string* err,
+                                  uint64_t max_file_size_bytes) {
   size_t header_size = kZipLocalHeaderSize + name.size();
   size_t padding = 0;
   size_t remainder = (buf.size() + header_size) % kUSDZAlignment;
   if (remainder != 0) {
     padding = kUSDZAlignment - remainder;
+  }
+
+  if (header_size > (std::numeric_limits<size_t>::max)() - padding ||
+      header_size + padding >
+          (std::numeric_limits<size_t>::max)() - data_size) {
+    if (err) *err = "USDZ output size overflow";
+    return false;
+  }
+  const size_t append_size = header_size + padding + data_size;
+  if (max_file_size_bytes &&
+      (static_cast<uint64_t>(buf.size()) > max_file_size_bytes ||
+       static_cast<uint64_t>(append_size) >
+           max_file_size_bytes - static_cast<uint64_t>(buf.size()))) {
+    if (err) *err = "USDZ output exceeds configured file-size limit";
+    return false;
   }
 
   size_t local_header_offset = buf.size();
@@ -202,77 +219,325 @@ static void WriteCentralDirectory(
   buf.insert(buf.end(), eocd, eocd + 22);
 }
 
+static void Store16(uint8_t* out, uint16_t value) {
+  out[0] = static_cast<uint8_t>(value);
+  out[1] = static_cast<uint8_t>(value >> 8);
+}
+
+static void Store32(uint8_t* out, uint32_t value) {
+  Store16(out, static_cast<uint16_t>(value));
+  Store16(out + 2, static_cast<uint16_t>(value >> 16));
+}
+
+static bool WriteSinkSpan(const USDZWriteSink& sink, const uint8_t* data,
+                          size_t size, uint64_t max_size, size_t* position,
+                          std::string* error) {
+  if (size > (std::numeric_limits<size_t>::max)() - *position ||
+      (max_size && (static_cast<uint64_t>(*position) > max_size ||
+                    static_cast<uint64_t>(size) > max_size - *position))) {
+    *error = "USDZ output exceeds configured file-size limit";
+    return false;
+  }
+  if (size && !sink(data, size)) {
+    *error = "USDZ output sink rejected data";
+    return false;
+  }
+  *position += size;
+  return true;
+}
+
+static bool WriteSinkEntry(const USDZWriteSink& sink, const std::string& name,
+                          const uint8_t* data, size_t size,
+                          uint64_t max_size, size_t* position,
+                          CentralDirEntry* entry, std::string* error) {
+  if (name.size() > UINT16_MAX || size > UINT32_MAX ||
+      *position > UINT32_MAX) {
+    *error = "USDZ entry exceeds ZIP32 limits";
+    return false;
+  }
+  const size_t offset = *position;
+  const size_t base = kZipLocalHeaderSize + name.size();
+  const size_t padding = (kUSDZAlignment - ((base + offset) % kUSDZAlignment)) % kUSDZAlignment;
+  if (padding > UINT16_MAX) {
+    *error = "USDZ alignment field exceeds ZIP32 limit";
+    return false;
+  }
+  const uint32_t crc = data && size ? ComputeCRC32(data, size) : 0;
+  uint8_t header[kZipLocalHeaderSize]{};
+  Store32(header, 0x04034b50u);
+  Store16(header + 4, 20);
+  Store32(header + 14, crc);
+  Store32(header + 18, static_cast<uint32_t>(size));
+  Store32(header + 22, static_cast<uint32_t>(size));
+  Store16(header + 26, static_cast<uint16_t>(name.size()));
+  Store16(header + 28, static_cast<uint16_t>(padding));
+  if (!WriteSinkSpan(sink, header, sizeof(header), max_size, position, error) ||
+      !WriteSinkSpan(sink, reinterpret_cast<const uint8_t*>(name.data()), name.size(), max_size, position, error)) return false;
+  uint8_t zeros[kUSDZAlignment]{};
+  if (!WriteSinkSpan(sink, zeros, padding, max_size, position, error) ||
+      !WriteSinkSpan(sink, data, size, max_size, position, error)) return false;
+  entry->name = name;
+  entry->crc = crc;
+  entry->size = static_cast<uint32_t>(size);
+  entry->local_header_offset = offset;
+  return true;
+}
+
+static bool WriteSinkDirectory(const USDZWriteSink& sink,
+                               const std::vector<CentralDirEntry>& entries,
+                               uint64_t max_size, size_t* position,
+                               std::string* error) {
+  const size_t cd_offset = *position;
+  if (entries.size() > UINT16_MAX || cd_offset > UINT32_MAX) {
+    *error = "USDZ archive exceeds ZIP32 limits (ZIP64 not supported)";
+    return false;
+  }
+  for (const auto& e : entries) {
+    uint8_t record[46]{};
+    Store32(record, 0x02014b50u);
+    Store16(record + 4, 20); Store16(record + 6, 20);
+    Store32(record + 16, e.crc); Store32(record + 20, e.size);
+    Store32(record + 24, e.size);
+    Store16(record + 28, static_cast<uint16_t>(e.name.size()));
+    Store32(record + 42, static_cast<uint32_t>(e.local_header_offset));
+    if (!WriteSinkSpan(sink, record, sizeof(record), max_size, position, error) ||
+        !WriteSinkSpan(sink, reinterpret_cast<const uint8_t*>(e.name.data()), e.name.size(), max_size, position, error)) return false;
+  }
+  const size_t cd_size = *position - cd_offset;
+  if (cd_size > UINT32_MAX) {
+    *error = "USDZ central directory exceeds ZIP32 limit";
+    return false;
+  }
+  uint8_t end[22]{};
+  Store32(end, 0x06054b50u);
+  Store16(end + 8, static_cast<uint16_t>(entries.size()));
+  Store16(end + 10, static_cast<uint16_t>(entries.size()));
+  Store32(end + 12, static_cast<uint32_t>(cd_size));
+  Store32(end + 16, static_cast<uint32_t>(cd_offset));
+  return WriteSinkSpan(sink, end, sizeof(end), max_size, position, error);
+}
+
 } // namespace
 
 // ============================================================
 // Public API
 // ============================================================
 
-USDZWriteResult WriteUSDZToMemory(std::vector<uint8_t>& buffer, const Stage& stage) {
+static USDZWriteResult WriteUSDZFromRootAndAssetsToMemory(
+    std::vector<uint8_t>& buffer, const uint8_t* root_data, size_t root_size,
+    const std::map<std::string, std::vector<uint8_t>>& assets,
+    const std::string& root_name, const USDZWriteOptions& options);
+
+USDZWriteResult WriteUSDZToMemory(std::vector<uint8_t>& buffer, const Stage& stage,
+                                  const USDZWriteOptions& options) {
   USDZWriteResult result;
 
   // First serialize stage to USDC
   std::vector<uint8_t> usdc_buffer;
-  auto usdc_result = WriteUSDCToMemory(usdc_buffer, stage);
+  USDCWriteOptions write_options;
+  write_options.crate_options.max_file_size_bytes = options.max_file_size_bytes;
+  write_options.crate_options.max_memory_bytes = options.max_memory_bytes;
+  auto usdc_result = WriteUSDCToMemory(usdc_buffer, stage, write_options);
   if (!usdc_result.success) {
     result.error = usdc_result.error;
     return result;
   }
 
   // Then wrap in ZIP
-  return WriteUSDZFromUSDCToMemory(buffer, usdc_buffer.data(), usdc_buffer.size());
+  return WriteUSDZFromUSDCToMemory(buffer, usdc_buffer.data(),
+                                   usdc_buffer.size(), options);
 }
 
-USDZWriteResult WriteUSDZToFile(const std::string& filename, const Stage& stage) {
-  std::vector<uint8_t> buf;
-  auto result = WriteUSDZToMemory(buf, stage);
-  if (!result.success) return result;
-
+USDZWriteResult WriteUSDZToFile(const std::string& filename, const Stage& stage,
+                                const USDZWriteOptions& options) {
+  USDZWriteResult result;
+  std::vector<uint8_t> usdc;
+  USDCWriteOptions write_options;
+  write_options.crate_options.max_file_size_bytes = options.max_file_size_bytes;
+  write_options.crate_options.max_memory_bytes = options.max_memory_bytes;
+  auto usdc_result = WriteUSDCToMemory(usdc, stage, write_options);
+  if (!usdc_result.success) { result.error = usdc_result.error; return result; }
   std::ofstream ofs(filename, std::ios::binary);
   if (!ofs) {
     result.success = false;
     result.error = "Failed to open file for writing: " + filename;
     return result;
   }
-  ofs.write(reinterpret_cast<const char*>(buf.data()), buf.size());
+  result = WriteUSDZFromUSDCAndAssetsToSink(
+      usdc.data(), usdc.size(), {},
+      [&ofs](const uint8_t* bytes, size_t count) {
+        ofs.write(reinterpret_cast<const char*>(bytes), static_cast<std::streamsize>(count));
+        return ofs.good();
+      }, options);
   ofs.flush();
-  if (!ofs.good()) {
+  if (!ofs.good() && result.success) {
     result.success = false;
     result.error = "Write failed (disk full?) for file: " + filename;
-    result.bytes_written = FilePositionOrZero(ofs);
-    return result;
   }
-  result.bytes_written = buf.size();
-  result.success = true;
+  result.bytes_written = FilePositionOrZero(ofs);
   return result;
 }
 
 
 USDZWriteResult WriteUSDZFromUSDCToMemory(std::vector<uint8_t>& buffer,
                                            const uint8_t* usdc_data,
-                                           size_t usdc_size) {
+                                           size_t usdc_size,
+                                           const USDZWriteOptions& options) {
   const std::map<std::string, std::vector<uint8_t>> no_assets;
   return WriteUSDZFromUSDCAndAssetsToMemory(buffer, usdc_data, usdc_size,
-                                            no_assets);
+                                            no_assets, options);
 }
 
 USDZWriteResult WriteUSDZFromUSDCAndAssetsToMemory(
     std::vector<uint8_t>& buffer, const uint8_t* usdc_data, size_t usdc_size,
-    const std::map<std::string, std::vector<uint8_t>>& assets) {
+    const std::map<std::string, std::vector<uint8_t>>& assets,
+    const USDZWriteOptions& options) {
+  return WriteUSDZFromRootAndAssetsToMemory(
+      buffer, usdc_data, usdc_size, assets, "root.usdc", options);
+}
+
+USDZWriteResult WriteUSDZFromUSDCAndAssetsToSink(
+    const uint8_t* usdc_data, size_t usdc_size,
+    const std::map<std::string, std::vector<uint8_t>>& assets,
+    const USDZWriteSink& sink, const USDZWriteOptions& options) {
+  USDZWriteResult result;
+  if (!sink || !usdc_data || usdc_size == 0) {
+    result.error = "USDZ output requires a sink and non-empty root layer";
+    return result;
+  }
+  if (options.max_memory_bytes) {
+    size_t retained = usdc_size;
+    size_t metadata_estimate = 0;
+    const auto add = [](size_t* total, size_t amount) {
+      if (amount > (std::numeric_limits<size_t>::max)() - *total) return false;
+      *total += amount;
+      return true;
+    };
+    bool ok = add(&metadata_estimate, 9);
+    for (const auto& asset : assets) {
+      ok = ok && add(&retained, asset.second.size()) &&
+           add(&retained, asset.first.capacity()) &&
+           add(&metadata_estimate, asset.first.capacity());
+    }
+    size_t working = retained;
+    ok = ok && add(&working, metadata_estimate) &&
+         assets.size() < (std::numeric_limits<size_t>::max)() &&
+         assets.size() + 1 <= (std::numeric_limits<size_t>::max)() /
+                                  sizeof(CentralDirEntry) &&
+         add(&working, (assets.size() + 1) * sizeof(CentralDirEntry));
+    if (!ok || working > options.max_memory_bytes) {
+      result.error = "USDZ estimated working set exceeds configured memory limit";
+      return result;
+    }
+  }
+  size_t position = 0;
+  std::vector<CentralDirEntry> entries;
+  entries.reserve(assets.size() + 1);
+  std::string error;
+  CentralDirEntry root;
+  if (!WriteSinkEntry(sink, "root.usdc", usdc_data, usdc_size,
+                      options.max_file_size_bytes, &position, &root, &error)) {
+    result.error = error;
+    result.bytes_written = position;
+    return result;
+  }
+  entries.push_back(std::move(root));
+  for (const auto& asset : assets) {
+    const std::string& name = asset.first;
+    if (name.empty() || name == "root.usdc" || name == "root.usda" ||
+        name[0] == '/' || name.find("..") != std::string::npos ||
+        name.find('\\') != std::string::npos) {
+      result.error = "Invalid USDZ asset path: " + name;
+      result.bytes_written = position;
+      return result;
+    }
+    CentralDirEntry entry;
+    const uint8_t* data = asset.second.empty() ? nullptr : asset.second.data();
+    if (!WriteSinkEntry(sink, name, data, asset.second.size(),
+                        options.max_file_size_bytes, &position, &entry, &error)) {
+      result.error = error;
+      result.bytes_written = position;
+      return result;
+    }
+    entries.push_back(std::move(entry));
+  }
+  if (!WriteSinkDirectory(sink, entries, options.max_file_size_bytes,
+                          &position, &error)) {
+    result.error = error;
+    result.bytes_written = position;
+    return result;
+  }
+  result.success = true;
+  result.bytes_written = position;
+  return result;
+}
+
+USDZWriteResult WriteUSDZFromUSDAAndAssetsToMemory(
+    std::vector<uint8_t>& buffer, const uint8_t* usda_data, size_t usda_size,
+    const std::map<std::string, std::vector<uint8_t>>& assets,
+    const USDZWriteOptions& options) {
+  return WriteUSDZFromRootAndAssetsToMemory(
+      buffer, usda_data, usda_size, assets, "root.usda", options);
+}
+
+static USDZWriteResult WriteUSDZFromRootAndAssetsToMemory(
+    std::vector<uint8_t>& buffer, const uint8_t* usdc_data, size_t usdc_size,
+    const std::map<std::string, std::vector<uint8_t>>& assets,
+    const std::string& root_name, const USDZWriteOptions& options) {
   USDZWriteResult result;
 
   if (!usdc_data || usdc_size == 0) {
-    result.error = "Empty USDC data";
+    result.error = "Empty USD root-layer data";
     return result;
+  }
+
+  if (options.max_memory_bytes) {
+    size_t retained_bytes = usdc_size;
+    size_t archive_bytes = 0;
+    size_t directory_bytes = 22;
+    size_t entry_count = 1;
+    const auto add_checked = [](size_t* total, size_t amount) {
+      if (amount > (std::numeric_limits<size_t>::max)() - *total) return false;
+      *total += amount;
+      return true;
+    };
+    const auto estimate_entry = [&](size_t name_size, size_t payload_size) {
+      // ZIP local header, path, worst-case USDZ alignment padding, payload;
+      // central-directory header and path are charged separately.
+      return add_checked(&archive_bytes, kZipLocalHeaderSize) &&
+             add_checked(&archive_bytes, name_size) &&
+             add_checked(&archive_bytes, kUSDZAlignment - 1) &&
+             add_checked(&archive_bytes, payload_size) &&
+             add_checked(&directory_bytes, 46) &&
+             add_checked(&directory_bytes, name_size);
+    };
+    bool estimate_ok = estimate_entry(root_name.size(), usdc_size);
+    for (const auto& asset : assets) {
+      ++entry_count;
+      estimate_ok = estimate_ok &&
+          add_checked(&retained_bytes, asset.second.size()) &&
+          add_checked(&retained_bytes, asset.first.capacity()) &&
+          estimate_entry(asset.first.size(), asset.second.size());
+    }
+    size_t working_bytes = retained_bytes;
+    estimate_ok = estimate_ok && add_checked(&working_bytes, archive_bytes) &&
+        add_checked(&working_bytes, directory_bytes) &&
+        entry_count <= (std::numeric_limits<size_t>::max)() /
+                           sizeof(CentralDirEntry) &&
+        add_checked(&working_bytes, entry_count * sizeof(CentralDirEntry));
+    if (!estimate_ok || working_bytes > options.max_memory_bytes) {
+      result.error = "USDZ estimated working set exceeds configured memory limit";
+      return result;
+    }
   }
 
   buffer.clear();
 
   // Write root layer
-  std::string root_name = "root.usdc";
   CentralDirEntry entry;
   std::string err;
-  if (!WriteLocalFileHeader(buffer, root_name, usdc_data, usdc_size, &entry, &err)) {
+  if (!WriteLocalFileHeader(buffer, root_name, usdc_data, usdc_size, &entry,
+                            &err, options.max_file_size_bytes)) {
     result.error = err.empty() ? "Failed to write ZIP entry" : err;
     return result;
   }
@@ -294,7 +559,8 @@ USDZWriteResult WriteUSDZFromUSDCAndAssetsToMemory(
     CentralDirEntry asset_entry;
     const uint8_t* data = asset.second.empty() ? nullptr : asset.second.data();
     if (!WriteLocalFileHeader(buffer, name, data, asset.second.size(),
-                              &asset_entry, &err)) {
+                              &asset_entry, &err,
+                              options.max_file_size_bytes)) {
       result.error = err.empty() ? "Failed to write USDZ asset" : err;
       buffer.clear();
       return result;
@@ -310,6 +576,24 @@ USDZWriteResult WriteUSDZFromUSDCAndAssetsToMemory(
   }
 
   // Write central directory
+  size_t central_size = 22;
+  for (const auto& central_entry : entries) {
+    const size_t entry_size = 46 + central_entry.name.size();
+    if (entry_size > (std::numeric_limits<size_t>::max)() - central_size) {
+      result.error = "USDZ central directory size overflow";
+      buffer.clear();
+      return result;
+    }
+    central_size += entry_size;
+  }
+  if (options.max_file_size_bytes &&
+      (static_cast<uint64_t>(buffer.size()) > options.max_file_size_bytes ||
+       static_cast<uint64_t>(central_size) >
+           options.max_file_size_bytes - static_cast<uint64_t>(buffer.size()))) {
+    result.error = "USDZ output exceeds configured file-size limit";
+    buffer.clear();
+    return result;
+  }
   WriteCentralDirectory(buffer, entries);
 
   result.bytes_written = buffer.size();
@@ -319,27 +603,27 @@ USDZWriteResult WriteUSDZFromUSDCAndAssetsToMemory(
 
 USDZWriteResult WriteUSDZFromUSDCToFile(const std::string& filename,
                                          const uint8_t* usdc_data,
-                                         size_t usdc_size) {
-  std::vector<uint8_t> buf;
-  auto result = WriteUSDZFromUSDCToMemory(buf, usdc_data, usdc_size);
-  if (!result.success) return result;
-
+                                         size_t usdc_size,
+                                         const USDZWriteOptions& options) {
+  USDZWriteResult result;
   std::ofstream ofs(filename, std::ios::binary);
   if (!ofs) {
     result.success = false;
     result.error = "Failed to open file for writing: " + filename;
     return result;
   }
-  ofs.write(reinterpret_cast<const char*>(buf.data()), buf.size());
+  result = WriteUSDZFromUSDCAndAssetsToSink(
+      usdc_data, usdc_size, {},
+      [&ofs](const uint8_t* bytes, size_t count) {
+        ofs.write(reinterpret_cast<const char*>(bytes), static_cast<std::streamsize>(count));
+        return ofs.good();
+      }, options);
   ofs.flush();
-  if (!ofs.good()) {
+  if (!ofs.good() && result.success) {
     result.success = false;
     result.error = "Write failed (disk full?) for file: " + filename;
-    result.bytes_written = FilePositionOrZero(ofs);
-    return result;
   }
-  result.bytes_written = buf.size();
-  result.success = true;
+  result.bytes_written = FilePositionOrZero(ofs);
   return result;
 }
 

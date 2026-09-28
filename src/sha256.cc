@@ -1,9 +1,6 @@
 #include <cstdint>
 #include <cstring>
-#include <iomanip>
 #include <limits>
-#include <sstream>
-#include <cstdint>
 
 #include "sha256.hh"
 
@@ -113,45 +110,43 @@ std::string sha256(const char *binary, size_t size) {
         0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
     };
 
-    // Guard against overflow in allocation: new_len can be up to size + 64,
-    // and we need new_len + 8 bytes. SIZE_MAX is a realistic limit on 32-bit.
-    if (size > (std::numeric_limits<size_t>::max)() - 72) {
+    // Keep rejecting unrepresentable input sizes, including the historical
+    // SIZE_MAX padding-overflow range. SHA-256 encodes a 64-bit bit count.
+    if ((!binary && size) ||
+        size > (std::numeric_limits<size_t>::max)() - 72) {
         return "";
     }
 
+    const uint64_t bit_len = static_cast<uint64_t>(size) * 8;
+    if (bit_len / 8 != size) return "";
     const uint8_t *data = reinterpret_cast<const uint8_t *>(binary);
-    size_t bit_len = size * 8;
-    size_t new_len = size;
-
-    new_len += 1;
-    while (new_len % 64 != 56) {
-        new_len++;
+    size_t remaining = size;
+    while (remaining >= 64) {
+        sha256_transform(state, data);
+        data += 64;
+        remaining -= 64;
     }
 
-    uint8_t *msg = new uint8_t[new_len + 8];
-    memcpy(msg, data, size);
-    msg[size] = 0x80;
-
-    for (size_t i = size + 1; i < new_len; i++) {
-        msg[i] = 0;
+    // Only the final one or two blocks require padding. Hash full input
+    // blocks directly instead of allocating a second copy of the asset.
+    uint8_t tail[128] = {};
+    if (remaining) std::memcpy(tail, data, remaining);
+    tail[remaining] = 0x80;
+    const size_t padded_size = remaining < 56 ? 64 : 128;
+    for (unsigned i = 0; i < 8; ++i) {
+        tail[padded_size - 8 + i] =
+            static_cast<uint8_t>((bit_len >> (56 - i * 8)) & 0xff);
     }
+    sha256_transform(state, tail);
+    if (padded_size == 128) sha256_transform(state, tail + 64);
 
-    for (int i = 0; i < 8; i++) {
-        msg[new_len + size_t(i)] = static_cast<uint8_t>((bit_len >> (56 - i * 8)) & 0xff);
+    constexpr char hex[] = "0123456789abcdef";
+    std::string result(64, '0');
+    for (size_t i = 0; i < result.size(); ++i) {
+        const unsigned shift = 28u - static_cast<unsigned>(i % 8) * 4u;
+        result[i] = hex[(state[i / 8] >> shift) & 0xfu];
     }
-
-    for (size_t i = 0; i < new_len + 8; i += 64) {
-        sha256_transform(state, &msg[i]);
-    }
-
-    delete[] msg;
-
-    std::stringstream ss;
-    for (int i = 0; i < 8; i++) {
-        ss << std::hex << std::setfill('0') << std::setw(8) << state[i];
-    }
-
-    return ss.str();
+    return result;
 }
 
 }  // namespace lightusd

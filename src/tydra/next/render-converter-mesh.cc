@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 // Tydra Next - Mesh conversion orchestration
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
 #include "safe-arithmetic.hh"
 #include <cstring>
 #include "next/schema/usd-skel.hh"
@@ -18,7 +18,7 @@ bool GetToken(const UsdPrim& prim, const char* name, std::string* out) { const V
 void ComputePointBounds(const FloatChunked& p, Float3* lo, Float3* hi, bool* has) { if (!lo || !hi || !has || p.size()<3) return; *lo=Float3(1e30f,1e30f,1e30f); *hi=Float3(-1e30f,-1e30f,-1e30f); for(size_t i=0;i<p.size()/3;++i){ const float x=p[i*3],y=p[i*3+1],z=p[i*3+2]; lo->x=std::min(lo->x,x);lo->y=std::min(lo->y,y);lo->z=std::min(lo->z,z);hi->x=std::max(hi->x,x);hi->y=std::max(hi->y,y);hi->z=std::max(hi->z,z);} *has=true; }
 }  // namespace
 
-bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, RenderMesh* out) {
+bool RenderSceneConverter::Impl::ConvertMesh(const Stage& stage, const UsdPrim& prim, RenderMesh* out) {
   if (!out || !IsMesh(prim)) {
     SetLastError("Invalid mesh prim");
     return false;
@@ -47,8 +47,8 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
   // Extract render vertex attributes only when the caller retains geometry.
   // Metadata-only consumers source these arrays elsewhere; decoding/copying
   // large face-varying normals and UVs here would be pure transient overhead.
-  if (config_.mesh.retain_geometry) {
-    ExtractMeshPrimvars(prim, out);
+  if (config_.mesh.retain_geometry || config_.mesh.retain_custom_primvars) {
+    ExtractMeshPrimvars(prim, out, !config_.mesh.retain_geometry);
   }
 
   // Uniformly pre-tessellate authored subdivision surfaces before building
@@ -350,6 +350,45 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
           }
           sb.joint_indices = std::move(reduced_indices);
           sb.joint_weights = std::move(reduced_weights);
+        } else if (config_.mesh.round_bone_count &&
+                   !config_.mesh.enable_bone_reduction) {
+          static constexpr uint32_t kStandardInfluenceCounts[] = {
+              4, 8, 16, 32, 48, 64, 80, 96, 128};
+          uint32_t rounded_influences = 128;
+          for (uint32_t standard : kStandardInfluenceCounts) {
+            if (influences <= standard) {
+              rounded_influences = standard;
+              break;
+            }
+          }
+          if (rounded_influences > influences) {
+            size_t padded_count = 0;
+            size_t padded_bytes = 0;
+            const bool padded_size_valid =
+                safe::mul(point_count,
+                          static_cast<size_t>(rounded_influences),
+                          &padded_count) &&
+                safe::mul(padded_count,
+                          sizeof(int32_t) + sizeof(float), &padded_bytes);
+            if (padded_size_valid && ProbeAlloc(padded_bytes)) {
+              std::vector<int32_t> padded_indices(padded_count, 0);
+              std::vector<float> padded_weights(padded_count, 0.0f);
+              for (size_t point = 0; point < point_count; ++point) {
+                const size_t source = point * influences;
+                const size_t destination = point * rounded_influences;
+                std::copy_n(sb.joint_indices.begin() + source, influences,
+                            padded_indices.begin() + destination);
+                std::copy_n(sb.joint_weights.begin() + source, influences,
+                            padded_weights.begin() + destination);
+              }
+              sb.joint_indices = std::move(padded_indices);
+              sb.joint_weights = std::move(padded_weights);
+              output_influences = rounded_influences;
+            } else {
+              AddWarning("Memory budget reached; leaving bone influence width unchanged on " +
+                         prim.GetPath().str());
+            }
+          }
         }
 
       // Cumulative budget guard: ProbeAlloc above only bounds the transient

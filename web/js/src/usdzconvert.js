@@ -785,6 +785,10 @@ function hasNextOnlyConverter(native) {
 }
 
 function assertNextOnlyUSDZConvertOptions(assetMap, rootPath, opts, textureFormat) {
+  if (opts.flatten === true ||
+      (opts.variantSelections && Object.keys(opts.variantSelections).length > 0)) {
+    throw new Error('next-only WASM usdzconvert rewrites one root USD layer; flattening and variant overrides require the legacy module.');
+  }
   if ((opts.maxTextureSize || 0) > 0 || opts.reencode === true ||
       (opts.targetTextureBytes || 0) > 0 || textureFormat !== 'keep' ||
       typeof opts.textureProcessor === 'function' ||

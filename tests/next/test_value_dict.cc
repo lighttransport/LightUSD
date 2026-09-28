@@ -59,16 +59,19 @@ static void TestValueCowIndex() {
   Value v = Value::MakeDictionary();
   {
     Dict* d = v.as_dictionary();
+    d->set_typed_json_wrapper(true);
     d->set("a", Value(1));
     d->set("b", Value(2));
     d->set("c", Value(3));
   }
   Value shared = v;  // refcount++ on the same Dict (no deep copy)
+  assert(shared.as_dictionary()->typed_json_wrapper());
   assert(shared.as_dictionary()->find("b") &&
          *shared.as_dictionary()->find("b")->as_int() == 2);
 
   // Mutable access detaches (copies the Dict, rebuilding its index).
   Dict* det = v.as_dictionary();
+  assert(det->typed_json_wrapper());
   det->set("d", Value(4));
   assert(det->find("d") && *det->find("d")->as_int() == 4);
   // The detached copy still sees its pre-detach keys.

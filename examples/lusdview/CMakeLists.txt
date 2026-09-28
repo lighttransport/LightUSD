@@ -99,6 +99,8 @@ set(LUSDVIEW_SOURCES
     scene_optimize.cc
     incremental_scene_update.cc
     next_scene_loader.cc
+    viewer_document.cc
+    public_stage_queries.cc
     preview_cache.cc
     texture_residency_policy.cc
     dome_light.cc
@@ -224,10 +226,6 @@ set(LIGHTUSD_GPU_RT_COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
     ptex_atlas.cc
     texture_tools.cc
-    lightrt_mtlx_bridge.cc
-    lightrt_mtlx_graph_compile.cc
-    lightrt_mtlx_graph_phases.cc
-    lightrt_mtlx_pack.cc
     displacement_bake.cc
     rt_bvh.cc
     rt_scene_build.cc
@@ -269,6 +267,23 @@ if(MSVC)
   list(APPEND LIGHTUSD_GPU_RT_COMMON_SOURCES
        kernel_resource.cc raytracer_kernel_resource.rc)
 endif()
+
+# Material compilation is backend-independent. Reuse its objects in the
+# renderer and the six headless tests instead of optimizing it seven times.
+add_library(lusdview_material_objects OBJECT
+    lightrt_mtlx_bridge.cc
+    lightrt_mtlx_graph_compile.cc
+    lightrt_mtlx_graph_phases.cc
+    lightrt_mtlx_pack.cc)
+target_compile_features(lusdview_material_objects PRIVATE cxx_std_17)
+target_include_directories(lusdview_material_objects PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}/src/external ${COMMON_DIR})
+if(COMMAND add_sanitizers)
+  add_sanitizers(lusdview_material_objects)
+endif()
+list(APPEND LIGHTUSD_GPU_RT_COMMON_SOURCES
+    $<TARGET_OBJECTS:lusdview_material_objects>)
 
 add_library(lightusd_gpu_rt_common STATIC
     ${LIGHTUSD_GPU_RT_COMMON_SOURCES}
@@ -361,6 +376,7 @@ function(lusdview_set_warning_flags target)
   target_compile_options(${target} PRIVATE
       $<$<COMPILE_LANGUAGE:CXX>:${_flags_list}>)
 endfunction()
+lusdview_set_warning_flags(lusdview_material_objects)
 
 if(LIGHTUSD_BUILD_TESTS)
   if(LUSDVIEW_HAVE_OPTIX)
@@ -406,10 +422,6 @@ if(LIGHTUSD_BUILD_TESTS)
 
   add_executable(lusdview_lightrt_bridge_test
       tests/lightrt_bridge_test.cc
-      lightrt_mtlx_bridge.cc
-      lightrt_mtlx_graph_compile.cc
-      lightrt_mtlx_graph_phases.cc
-      lightrt_mtlx_pack.cc
       lighting_ies.cc
       rt_scene_build.cc
       rt_bvh.cc
@@ -437,10 +449,6 @@ if(LIGHTUSD_BUILD_TESTS)
       tests/openpbr_material_test.cc
       mesh_build.cc
       texture_tools.cc
-      lightrt_mtlx_bridge.cc
-      lightrt_mtlx_graph_compile.cc
-      lightrt_mtlx_graph_phases.cc
-      lightrt_mtlx_pack.cc
       lighting_ies.cc
       displacement_bake.cc
       skinning.cc
@@ -466,10 +474,6 @@ if(LIGHTUSD_BUILD_TESTS)
       lighting_ies.cc
       mesh_build.cc
       texture_tools.cc
-      lightrt_mtlx_bridge.cc
-      lightrt_mtlx_graph_compile.cc
-      lightrt_mtlx_graph_phases.cc
-      lightrt_mtlx_pack.cc
       rt_scene_build.cc
       rt_bvh.cc
       ptex_atlas.cc
@@ -494,10 +498,6 @@ if(LIGHTUSD_BUILD_TESTS)
       tests/geometry_primvar_test.cc
       mesh_build.cc
       texture_tools.cc
-      lightrt_mtlx_bridge.cc
-      lightrt_mtlx_graph_compile.cc
-      lightrt_mtlx_graph_phases.cc
-      lightrt_mtlx_pack.cc
       lighting_ies.cc
       displacement_bake.cc
       skinning.cc
@@ -520,10 +520,6 @@ if(LIGHTUSD_BUILD_TESTS)
       tests/texture_pipeline_test.cc
       mesh_build.cc
       texture_tools.cc
-      lightrt_mtlx_bridge.cc
-      lightrt_mtlx_graph_compile.cc
-      lightrt_mtlx_graph_phases.cc
-      lightrt_mtlx_pack.cc
       lighting_ies.cc
       displacement_bake.cc
       skinning.cc
@@ -606,7 +602,30 @@ if(LIGHTUSD_BUILD_TESTS)
       ${CMAKE_CURRENT_SOURCE_DIR}
       ${PROJECT_SOURCE_DIR}/src
       ${PROJECT_SOURCE_DIR}/src/external)
-  target_link_libraries(lusdview_preview_cache_test PRIVATE lightusd_next)
+  target_link_libraries(lusdview_preview_cache_test PRIVATE lightusd_c)
+
+  add_executable(lusdview_vchar_control_map_test
+      tests/vchar_control_map_test.cc vchar_control_map.cc)
+  target_compile_features(lusdview_vchar_control_map_test PRIVATE cxx_std_17)
+  lusdview_set_warning_flags(lusdview_vchar_control_map_test)
+  target_include_directories(lusdview_vchar_control_map_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src)
+  target_link_libraries(lusdview_vchar_control_map_test PRIVATE lightusd_c ${LIGHTUSD_TARGET_STATIC})
+
+  add_executable(lusdview_public_stage_queries_test
+      tests/public_stage_queries_test.cc public_stage_queries.cc)
+  target_compile_features(lusdview_public_stage_queries_test PRIVATE cxx_std_17)
+  lusdview_set_warning_flags(lusdview_public_stage_queries_test)
+  target_include_directories(lusdview_public_stage_queries_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(lusdview_public_stage_queries_test PRIVATE lightusd_c)
+
+  add_executable(lusdview_document_test tests/viewer_document_test.cc viewer_document.cc)
+  target_compile_features(lusdview_document_test PRIVATE cxx_std_17)
+  lusdview_set_warning_flags(lusdview_document_test)
+  target_include_directories(lusdview_document_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src)
+  target_link_libraries(lusdview_document_test PRIVATE lightusd_c)
 
   add_executable(lusdview_texture_residency_policy_test
       tests/texture_residency_policy_test.cc
@@ -626,8 +645,19 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
-  target_link_libraries(lusdview_incremental_scene_update_test PRIVATE
-      lightusd_next)
+
+  add_executable(lusdview_lod_stream_test
+      tests/lod_stream_test.cc
+      lod_stream.cc
+      ${PROJECT_SOURCE_DIR}/src/external/hipew/hipew.c)
+  target_compile_features(lusdview_lod_stream_test PRIVATE cxx_std_17)
+  lusdview_set_warning_flags(lusdview_lod_stream_test)
+  target_include_directories(lusdview_lod_stream_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external/hipew)
+  target_link_libraries(lusdview_lod_stream_test PRIVATE
+      lightusd_c ${CMAKE_DL_LIBS})
 
   add_executable(lusdview_rt_lod_test
       tests/rt_lod_test.cc
@@ -643,10 +673,6 @@ if(LIGHTUSD_BUILD_TESTS)
   add_executable(lusdview_scene_safety_test
       tests/scene_safety_test.cc
       scene_optimize.cc
-      lightrt_mtlx_bridge.cc
-      lightrt_mtlx_graph_compile.cc
-      lightrt_mtlx_graph_phases.cc
-      lightrt_mtlx_pack.cc
       ${LUSDVIEW_LIGHTRT_MTLX_DIR}/bsdf.c
       $<TARGET_OBJECTS:lusdview_lightrt_mtlx_const>)
   target_compile_features(lusdview_scene_safety_test PRIVATE cxx_std_17)
@@ -661,6 +687,13 @@ if(LIGHTUSD_BUILD_TESTS)
   if(UNIX AND NOT APPLE)
     target_link_libraries(lusdview_scene_safety_test PRIVATE Threads::Threads)
   endif()
+
+  foreach(material_test
+      lusdview_lightrt_bridge_test lusdview_openpbr_material_test
+      lusdview_lighting_test lusdview_geometry_primvar_test
+      lusdview_texture_pipeline_test lusdview_scene_safety_test)
+    target_sources(${material_test} PRIVATE $<TARGET_OBJECTS:lusdview_material_objects>)
+  endforeach()
 
   # Register the lusdview unit tests with ctest. They were built here but never
   # registered (this file had no add_test at all), so a regression in any of
@@ -680,8 +713,12 @@ if(LIGHTUSD_BUILD_TESTS)
       lusdview_camera_nav_test
       lusdview_camera_stereo_test
       lusdview_preview_cache_test
+      lusdview_vchar_control_map_test
+      lusdview_document_test
+      lusdview_public_stage_queries_test
       lusdview_texture_residency_policy_test
       lusdview_incremental_scene_update_test
+      lusdview_lod_stream_test
       lusdview_rt_lod_test
       lusdview_scene_safety_test)
     add_test(NAME ${tv_test} COMMAND ${tv_test})
@@ -796,7 +833,11 @@ if(NOT TARGET tydra_next)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/tydra/next
                    ${CMAKE_BINARY_DIR}/lusdview_tydra_next_build)
 endif()
-target_link_libraries(${EXAMPLE_TARGET} PRIVATE lightusd_next tydra_next)
+target_link_libraries(${EXAMPLE_TARGET} PRIVATE lightusd_render_c lightusd_next tydra_next)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+   CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_link_options(${EXAMPLE_TARGET} PRIVATE "LINKER:--gc-sections")
+endif()
 
 # CPU RT (cpu/cpu_raytracer.cc): reuse the vendored lightrt_c BVH library
 # (src/external/lightrt/lightrt_c_tri.*) via the same CMake target

@@ -13,6 +13,9 @@
 #include <fstream>
 #include <iostream>
 #include <vector>
+#if defined(__unix__) || defined(__APPLE__) || defined(__linux__)
+#include <unistd.h>
+#endif
 
 #include "next/composition/composition.hh"
 #include "next/crate/crate-data-source.hh"
@@ -32,6 +35,18 @@
 #include "next/writer/usdc-writer.hh"
 
 using namespace lightusd::next;
+
+namespace {
+std::string LazyArrayScratchDirectory() {
+#if defined(__unix__) || defined(__APPLE__) || defined(__linux__)
+  char pattern[] = "/tmp/lightusd-next-lazy-XXXXXX";
+  char* created = ::mkdtemp(pattern);
+  return created ? std::string(created) : std::string("/tmp");
+#else
+  return "/tmp";
+#endif
+}
+}  // namespace
 
 int main() {
   std::cout << "=== LightUSD Next Lazy Array Tests ===" << std::endl;
@@ -333,19 +348,20 @@ int main() {
     // File-backed USDC arrays must remain mmap-backed after crossing an
     // external reference and PCP Stage reconstruction. The same composition
     // with mmap disabled stays lazy but retains an owned byte source instead.
-    const std::string asset_path = "/tmp/next_pcp_mmap_asset.usdc";
-    const std::string root_path = "/tmp/next_pcp_mmap_root.usda";
+    const std::string scratch = LazyArrayScratchDirectory();
+    const std::string asset_path = scratch + "/asset.usdc";
+    const std::string root_path = scratch + "/root.usda";
     USDCWriteResult file_wr = WriteUSDCToFile(asset_path, big_stage);
     assert(file_wr.success);
     {
       std::ofstream root(root_path);
       root << "#usda 1.0\n"
               "def Xform \"Composed\" (prepend references = "
-              "@./next_pcp_mmap_asset.usdc@</BigMesh>)\n{\n}\n";
+              "@./asset.usdc@</BigMesh>)\n{\n}\n";
     }
 
     AssetResolver resolver;
-    resolver.SetWorkingDirectory("/tmp");
+    resolver.SetWorkingDirectory(scratch);
     pcp::CompositionOptions compose_options;
     Stage composed;
     std::string compose_warn, compose_err;

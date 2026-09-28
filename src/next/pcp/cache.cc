@@ -341,6 +341,17 @@ std::vector<Cache::CompositionIssue> Cache::GetCompositionIssues() const {
   NEXT_PCP_READ_LOCK(impl_->api_mu_);
   return impl_->issues_;  // copy out under the lock (see header)
 }
+size_t Cache::GetCompositionIssueCount() const {
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  return impl_->issues_.size();
+}
+bool Cache::GetCompositionIssue(size_t index, CompositionIssue* out) const {
+  if (!out) return false;
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  if (index >= impl_->issues_.size()) return false;
+  *out = impl_->issues_[index];
+  return true;
+}
 void Cache::ClearCompositionIssues() {
   NEXT_PCP_WRITE_LOCK(impl_->api_mu_);
   impl_->issues_.clear();
@@ -373,7 +384,7 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
                            AssetResolver &resolver, Stage *out_stage,
                            const std::string &root_identifier,
                            const CompositionOptions &options, std::string *warn,
-                           std::string *err) {
+                           std::string *err, CompositionReport *report) {
   if (!root_layer || !out_stage) return false;
   const bool timing = options.enable_timing;
   using Clock = std::chrono::steady_clock;
@@ -390,6 +401,10 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
   Cache cache = std::move(*opened);
   const auto t1 = Clock::now();
   bool ok = cache.BuildStage(out_stage, warn, err);
+  if (report) {
+    report->layer_dependencies = cache.GetLayerDependencies();
+    report->issues = cache.GetCompositionIssues();
+  }
   const auto t2 = Clock::now();
   if (timing) {
     LIGHTUSD_LOG_I("[next_compose] open=" + FormatMilliseconds(ms(t1 - t0)) +

@@ -4,11 +4,16 @@
 // LightUSD Next - Path implementation
 
 #include "path.hh"
+#include <ostream>
 
 #include "identifier.hh"
 
 namespace lightusd {
 namespace next {
+
+std::ostream& operator<<(std::ostream& os, const Path& path) {
+  return os << path.str();
+}
 
 bool Path::is_valid() const {
   return !path_.empty() && IsValidPathString(path_);

@@ -3,7 +3,8 @@
 //
 // Tydra Next - Mesh primvar extraction
 
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
+#include "../../next/layer/prim-spec.hh"
 
 #include <algorithm>
 #include <cstdint>
@@ -52,7 +53,9 @@ uint32_t PrimvarToFloats(const Value& v, std::vector<float>* scratch,
 
 }  // namespace
 
-bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* mesh) {
+bool RenderSceneConverter::Impl::ExtractMeshPrimvars(const UsdPrim& prim,
+                                                     RenderMesh* mesh,
+                                                     bool custom_only) {
   std::vector<Primvar> primvars = GetPrimvars(prim);
 
   // The primary UV set is the first configured name this mesh actually authors.
@@ -149,7 +152,7 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
 
   // Authored `normals` attribute (primvars:normals, handled in the loop
   // below, takes precedence per USD).
-  {
+  if (!custom_only) {
     ValueArrayRead<float> normals;
     if (ReadFloatArray(prim, "normals", config_.time_code, &normals) &&
         !normals.empty()) {
@@ -183,9 +186,6 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
     // check used to sit below, after a full copy of the array had been made.
     if (pv.name.rfind("skel:", 0) == 0) continue;
 
-    std::vector<float> data;
-    const std::vector<float>* fdata = nullptr;
-    const uint32_t comps = PrimvarToFloats(*pv.value, &data, &fdata);
     const bool is_uv0 = (pv.name == uv_base);
     const bool is_uv1 = (!uv_second.empty() && pv.name == uv_second);
     const bool is_color = (pv.name == "displayColor");
@@ -193,6 +193,11 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
     const bool is_normals = (pv.name == "normals");
     const bool builtin =
         is_uv0 || is_uv1 || is_color || is_opacity || is_normals;
+    if (custom_only && builtin) continue;
+
+    std::vector<float> data;
+    const std::vector<float>* fdata = nullptr;
+    const uint32_t comps = PrimvarToFloats(*pv.value, &data, &fdata);
 
     // Unauthored interpolation defaults to `constant` per the USD spec
     // (pxr UsdGeomPrimvar / legacy GeomPrimvar parity). Unauthored arrays

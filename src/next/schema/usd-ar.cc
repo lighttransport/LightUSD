@@ -4,6 +4,7 @@
 // LightUSD Next - UsdAR Schema Implementation
 
 #include "usd-ar.hh"
+#include "../layer/prim-spec.hh"
 
 namespace lightusd {
 namespace next {

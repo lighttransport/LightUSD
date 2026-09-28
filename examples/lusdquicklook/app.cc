@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "app.hh"
+#include "byte-budget.hh"
 
 #include <algorithm>
 #include <chrono>
@@ -1815,12 +1816,20 @@ bool App::SaveThumbnailToCache(const std::string& cache_path,
                               const DecodedImage& image) const {
   if (cache_path.empty()) return false;
   if (image.width <= 0 || image.height <= 0 || image.rgba.empty()) return false;
-  const size_t needed = size_t(image.width) * size_t(image.height) * 4;
+  size_t texels = 0;
+  size_t needed = 0;
+  if (!budget_detail::CheckedMulSize(static_cast<size_t>(image.width),
+                                     static_cast<size_t>(image.height),
+                                     &texels) ||
+      !budget_detail::CheckedMulSize(texels, 4, &needed) ||
+      image.rgba.size() < needed) {
+    return false;
+  }
   if (!SpaceAvailableForCache(needed)) {
     return false;
   }
 
-  std::vector<uint32_t> argb(size_t(image.width) * size_t(image.height));
+  std::vector<uint32_t> argb(texels);
   for (size_t i = 0; i < argb.size(); i++) {
     const size_t s = i * 4;
     const uint8_t r = image.rgba[s];
@@ -1855,7 +1864,7 @@ void App::EnforceImageCacheLimit() const {
         static_cast<uint64_t>(fs::last_write_time(p, ec).time_since_epoch().count());
     if (ec) continue;
     files.push_back({p, mtime});
-    total += sz;
+    total = budget_detail::SaturatingAdd(total, sz);
   }
   if (total <= kImageCacheMaxBytes) return;
 
@@ -2029,8 +2038,12 @@ bool App::CreateRenderer(BackendChoice backend, const lvg_rect_t& viewport,
 
   if (backend == BackendChoice::Gl) {
     // Rough VRAM need: geometry + textures, plus the framebuffers.
+    const uint64_t pixels = budget_detail::SaturatingMul(
+        static_cast<uint64_t>(std::max(0, viewport.width)),
+        static_cast<uint64_t>(std::max(0, viewport.height)));
+    const uint64_t frame_bytes = budget_detail::SaturatingMul(pixels, 8);
     const uint64_t needed =
-        scene_.ByteSize() + uint64_t(viewport.width) * viewport.height * 8;
+        budget_detail::SaturatingAdd(scene_.ByteSize(), frame_bytes);
     next = CreateGlRenderer(viewport.width, viewport.height, rs, needed,
                             opts_.max_gpu_mem_bytes, &gl_probe_, err);
     if (!next) return false;
