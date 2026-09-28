@@ -8,6 +8,7 @@
 #include "safe-arithmetic.hh"
 #include "../strfmt.hh"
 #include "../execution.hh"
+#include "crate-timing.hh"
 
 #include <algorithm>
 #include <cstdint>
@@ -970,6 +971,7 @@ bool CrateReader::Impl::ReadSpecs() {
 }
 
 bool CrateReader::Impl::ReadPaths() {
+  CratePhaseTimer timer(options_.enable_timing, "next_crate_paths");
   const CrateSection* section = toc_.find("PATHS");
   if (!section) {
     AddError("Missing PATHS section");
@@ -1077,6 +1079,7 @@ bool CrateReader::Impl::ReadPaths() {
     return false;
   }
 
+  timer.lap("decompress");
   std::vector<uint8_t> seen_path_slot(static_cast<size_t>(num_paths), uint8_t{0});
   for (size_t i = 0; i < n; ++i) {
     if (path_indices[i] >= num_paths) {
@@ -1110,6 +1113,7 @@ bool CrateReader::Impl::ReadPaths() {
     }
   }
 
+  timer.lap("validate");
   // Reconstruct paths from the compressed tree by navigating jump offsets.
   //
   // Nodes are emitted in pre-order. jump semantics (matching the writer):
@@ -1191,6 +1195,7 @@ bool CrateReader::Impl::ReadPaths() {
     }
   }
 
+  timer.lap("walk");
   // Prim-path length per node (without a property's '.' prefix) and whether
   // the node is the root "/".
   std::vector<uint64_t> plen(n, 0);
@@ -1221,6 +1226,7 @@ bool CrateReader::Impl::ReadPaths() {
   }
   paths_.resize_blob(static_cast<size_t>(total_bytes));
 
+  timer.lap("lengths");
   // Write node order[k]'s path for k in [begin, end).
   auto fill_range = [&](size_t begin, size_t end) {
     for (size_t k = begin; k < end; ++k) {
@@ -1278,6 +1284,7 @@ bool CrateReader::Impl::ReadPaths() {
   }
 #endif
   if (!filled) fill_range(0, order.size());
+  timer.lap("fill");
 
   for (const CrateSpec& spec : specs_) {
     if (spec.path_index.value >= paths_.size()) {
