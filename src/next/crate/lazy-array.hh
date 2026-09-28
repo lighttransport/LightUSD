@@ -26,6 +26,10 @@ class LazyArraySource {
 public:
   LazyArraySource() noexcept : identity_(NextIdentity()) {}
   virtual ~LazyArraySource() = default;
+  LazyArraySource(const LazyArraySource&) = delete;
+  LazyArraySource& operator=(const LazyArraySource&) = delete;
+  LazyArraySource(LazyArraySource&&) = delete;
+  LazyArraySource& operator=(LazyArraySource&&) = delete;
 
   // A source identity remains unique after the source is destroyed. Writers
   // use it for non-owning caches whose entries must not keep a multi-GB crate
