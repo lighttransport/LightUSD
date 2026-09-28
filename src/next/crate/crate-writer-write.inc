@@ -61,7 +61,9 @@
     string_indices_.clear();
     string_to_index_.clear();
     paths_.clear();
-    path_to_index_.clear();
+    path_hashes_.clear();
+    path_slots_.clear();
+    path_owned_.clear();
     fields_.clear();
     fieldsets_.clear();
     specs_.clear();
@@ -69,7 +71,8 @@
     value_offsets_.clear();
     arrays_passed_through_ = 0;
     arrays_reencoded_ = 0;
-    block_dedup_.clear();
+    block_slots_.clear();
+    block_slots_used_ = 0;
     blocks_deduped_ = 0;
     // Reserve block index 0 (empty placeholder). The writer emits empty arrays
     // as a ValueRep with payload==0 / non-inlined (pxrUSD's empty-array marker);
@@ -91,13 +94,13 @@
       size_t nprop = 0;
       for (const auto& p : layer.prims()) nprop += p.properties().slots().size();
       const size_t nspec = nprim + nprop + 16;
-      paths_.reserve(nspec);
-      path_to_index_.reserve(nspec * 2);
+      ReservePaths(nspec);
       specs_.reserve(nspec);
       fieldsets_.reserve(nspec);
       fields_.reserve(nspec * 3);
       value_data_.reserve(nprop + nprim + 16);
-      block_dedup_.reserve(nprop + nprim + 16);
+      // Most values inline or dedup; the table grows (amortized) past this.
+      GrowBlockSlots(std::min<size_t>((nprop + nprim + 16) * 2, size_t(1) << 20));
     }
 
     lap("setup");
@@ -113,31 +116,11 @@
       return result_;
     }
 
-    // Pre-register path element tokens so they're included in TOKENS section.
-    // WritePathsSection calls InternToken() for path elements, but that happens
-    // AFTER WriteTokensSection. Pre-registering ensures they're in the output.
-    for (const auto& path : paths_) {
-      if (path.empty() || path == "/") {
-        InternToken("");  // Token 0 = empty string for root path marker
-      } else {
-        // Split into path-element tokens and register each. Property paths use
-        // a '.' separator between the prim path and the property name
-        // ("/a/b.prop"), so split on BOTH '/' and '.' — otherwise the trailing
-        // "b.prop" would be interned as one bogus token (and "prop" would be
-        // missing, only to be re-added later, after the TOKENS section).
-        size_t start = 1;
-        while (start < path.size()) {
-          size_t end = path.size();
-          size_t slash = path.find('/', start);
-          size_t dot = path.find('.', start);
-          if (slash != std::string::npos) end = std::min(end, slash);
-          if (dot != std::string::npos) end = std::min(end, dot);
-          std::string comp = path.substr(start, end - start);
-          if (!comp.empty()) InternToken(comp);
-          start = end + 1;
-        }
-      }
-    }
+    // Complete the path tree (synthesized ancestors) and pre-register every
+    // path element token so they're included in the TOKENS section:
+    // WritePathsSection runs AFTER the TOKENS section is built.
+    SynthesizeAncestorPaths();
+    RegisterPathElementTokens();
 
     lap("path_tokens");
     // Write all sections and record offsets

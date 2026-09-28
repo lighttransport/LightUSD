@@ -219,19 +219,21 @@
       // Properties, relationships, connections and time samples are emitted as
       // separate pxrUSD-style Attribute/Relationship specs (below). Collect the
       // child property names here for the prim's "properties" field.
-      std::vector<std::string> prop_names = EmitPrimProperties(prim);
+      std::vector<std::string_view> prop_names = EmitPrimProperties(prim);
       if (!prim.meta().propertyOrder().empty()) {
-        std::vector<std::string> ordered;
+        // Views of the emitted names (not of propertyOrder) keep the list
+        // pointing at PropNameTable storage.
+        std::vector<std::string_view> ordered;
         ordered.reserve(prop_names.size());
         for (const std::string& wanted : prim.meta().propertyOrder()) {
-          if (std::find(prop_names.begin(), prop_names.end(), wanted) !=
-                  prop_names.end() &&
-              std::find(ordered.begin(), ordered.end(), wanted) ==
-                  ordered.end()) {
-            ordered.push_back(wanted);
+          auto it = std::find(prop_names.begin(), prop_names.end(),
+                              std::string_view(wanted));
+          if (it != prop_names.end() &&
+              std::find(ordered.begin(), ordered.end(), *it) == ordered.end()) {
+            ordered.push_back(*it);
           }
         }
-        for (const std::string& name : prop_names) {
+        for (const std::string_view name : prop_names) {
           if (std::find(ordered.begin(), ordered.end(), name) == ordered.end())
             ordered.push_back(name);
         }
@@ -526,13 +528,22 @@
       fieldsets_.push_back(std::move(fieldset));
       path_to_fs_idx[prim.path().str()] = fs_idx;
 
+      // consume_values: every field referencing this prim's values is now
+      // built (their blocks interned), and no later writer pass reads property
+      // values -- release them so the layer shrinks as value blocks accumulate
+      // instead of coexisting in full. Cross-prim reads (variant-owner check,
+      // child lists) touch meta and names only.
+      if (options_.consume_values) {
+        const_cast<PrimSpec&>(prim).release_value_payloads();
+      }
+
       // Create spec. A prim whose LAST path element is a variant selector
       // ("{vset=sel}") is a Variant spec; "{vset=}" is the VariantSet
       // declaration. (Variant CHILD prims like "/Prim/{vset=sel}/Geo" keep a
       // normal name -> Prim.) Using the right spec type keeps the unflattened
       // output readable by pxrUSD (which rejects a Prim named "{...}").
       CrateSpec spec;
-      spec.path_index.value = InternPath(prim.path().str());
+      spec.path_index.value = InternPathStable(prim.path().str());
       spec.fieldset_index.value = fs_idx;
       spec.spec_type = SpecType::Prim;
       {

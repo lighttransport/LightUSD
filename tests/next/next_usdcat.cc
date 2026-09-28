@@ -64,6 +64,9 @@ int main(int argc, char **argv) {
   // (Independent of the writer's LIGHTUSD_NEXT_NUM_THREADS.)
   int compose_threads = 1;
   bool load_payloads = true;
+  // Flatten-to-USDC: release composed property values as the writer encodes
+  // them (--no-consume-values keeps the composed stage intact).
+  bool consume_values = true;
   // --variant-fallback set=opt1,opt2  (repeatable). Stock pxr registers NO
   // fallbacks; the AOUSD supplemental corpus expectations were generated in
   // an environment with the classic standin->render fallback, so its runner
@@ -128,6 +131,8 @@ int main(int argc, char **argv) {
       }
     } else if (std::strcmp(argv[i], "--compose-threads-auto") == 0) {
       compose_threads = -1;
+    } else if (std::strcmp(argv[i], "--no-consume-values") == 0) {
+      consume_values = false;
     } else if (std::strcmp(argv[i], "--load-payloads") == 0) {
       load_payloads = true;
     } else if (std::strcmp(argv[i], "--defer-payloads") == 0) {
@@ -160,6 +165,7 @@ int main(int argc, char **argv) {
                          "[--prototype-numbering deterministic|usdcat] "
                          "[--compose-threads N] [--compose-threads-auto] "
                          "[--load-payloads|--defer-payloads] "
+                         "[--no-consume-values] "
                          "[--aousd-strict] "
                          "[--no-async-arrays] [--no-parallel-prims] "
                          "[--require-prim /Path] "
@@ -340,6 +346,9 @@ int main(int argc, char **argv) {
     USDCWriteOptions copts;
     copts.crate_options.num_threads = 0;  // auto; LIGHTUSD_NEXT_NUM_THREADS overrides
     copts.crate_options.enable_timing = timing;  // [next_crate_write] phases
+    // The composed stage is discarded right after this write: let the writer
+    // release each prim's values once they are encoded (byte-identical).
+    copts.crate_options.consume_values = consume_values;
     if (const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS")) {
       copts.crate_options.num_threads = std::atoi(nt);
     }

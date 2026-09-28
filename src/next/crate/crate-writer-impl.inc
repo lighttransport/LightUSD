@@ -23,16 +23,26 @@ private:
   StreamWriter writer_;
 
   // Table storage
-  std::vector<std::string> tokens_;
-  std::unordered_map<std::string, uint32_t> token_to_index_;
+  // deque: token strings keep their address, so the lookup maps can key on
+  // views of them (no std::string construction per lookup).
+  std::deque<std::string> tokens_;
+  std::unordered_map<std::string_view, uint32_t> token_to_index_;
 
   // STRINGS: each entry is a token index
   std::vector<uint32_t> string_indices_;
-  std::unordered_map<std::string, uint32_t> string_to_index_;
+  std::unordered_map<std::string_view, uint32_t> string_to_index_;  // views of tokens_
 
-  // Paths
-  std::vector<std::string> paths_;
-  std::unordered_map<std::string, uint32_t> path_to_index_;
+  // Paths. Each path is a canonical (stem, name) VIEW pair (see PathRec in
+  // crate-writer-tables.inc); the views point at storage that outlives the
+  // write: the input Layer's prim paths, the PropNameTable, or path_owned_.
+  struct PathRec {
+    std::string_view stem;  // prim part (the whole path for a prim path)
+    std::string_view name;  // property name ("" for a prim path)
+  };
+  std::vector<PathRec> paths_;
+  std::vector<uint64_t> path_hashes_;   // per record, for rehash
+  std::vector<uint32_t> path_slots_;    // open-addressed index + 1 (0 = empty)
+  std::deque<std::string> path_owned_;  // copies of transient path strings
 
   // Fields and fieldsets
   std::vector<CrateField> fields_;
@@ -83,17 +93,26 @@ private:
     }
     const uint8_t* p = block.bytes();
     const uint64_t h = HashBlockBytes(p, n);
-    auto range = block_dedup_.equal_range(h);
-    for (auto it = range.first; it != range.second; ++it) {
-      const DataBlock& ex = value_data_[it->second];
+    if (block_slots_.empty() || (block_slots_used_ + 1) * 2 > block_slots_.size()) {
+      GrowBlockSlots(block_slots_.empty() ? 1024 : block_slots_.size() * 2);
+    }
+    // At most one indexed block can hold these exact bytes (identical blocks
+    // are never indexed twice), so the first full match is THE match.
+    const size_t mask = block_slots_.size() - 1;
+    size_t slot = static_cast<size_t>(h) & mask;
+    for (; block_slots_[slot].idx != 0; slot = (slot + 1) & mask) {
+      const BlockSlot& bs = block_slots_[slot];
+      if (bs.hash != h) continue;
+      const DataBlock& ex = value_data_[bs.idx];
       if (ex.size() == n && std::memcmp(ex.bytes(), p, n) == 0) {
         ++blocks_deduped_;
-        return it->second;
+        return bs.idx;
       }
     }
     uint64_t idx = value_data_.size();
     value_data_.push_back(std::move(block));
-    block_dedup_.emplace(h, idx);
+    block_slots_[slot] = BlockSlot{h, idx};
+    ++block_slots_used_;
     return idx;
   }
 
@@ -110,24 +129,58 @@ private:
   // the shared tables, so blocks/fields they emit already carry GLOBAL indices).
   // A miss means the serial pre-pass was incomplete; the worker sets `frozen_miss_`
   // and the driver discards the parallel result and writes serially (safe).
-  const std::unordered_map<std::string, uint32_t>* frozen_tok_ = nullptr;
-  const std::unordered_map<std::string, uint32_t>* frozen_str_ = nullptr;
+  const std::unordered_map<std::string_view, uint32_t>* frozen_tok_ = nullptr;
+  const std::unordered_map<std::string_view, uint32_t>* frozen_str_ = nullptr;
   bool frozen_miss_ = false;
 
-  // Cross-spec block dedup: content hash -> block indices with that hash.
+  // Cross-spec block dedup: open-addressed (content hash, block index) table.
   // Flattened composition duplicates referenced array payloads per instance;
   // content-addressing the VALUE blocks writes each distinct payload once.
-  std::unordered_multimap<uint64_t, uint64_t> block_dedup_;
+  // Block index 0 (the reserved empty block) is never indexed, so idx 0 marks
+  // an empty slot.
+  struct BlockSlot {
+    uint64_t hash;
+    uint64_t idx;
+  };
+  std::vector<BlockSlot> block_slots_;
+  size_t block_slots_used_ = 0;
   size_t blocks_deduped_ = 0;
 
+  void GrowBlockSlots(size_t capacity) {
+    size_t cap = 16;
+    while (cap < capacity) cap *= 2;
+    if (cap <= block_slots_.size()) return;
+    std::vector<BlockSlot> old;
+    old.swap(block_slots_);
+    block_slots_.assign(cap, BlockSlot{0, 0});
+    const size_t mask = cap - 1;
+    for (const BlockSlot& bs : old) {
+      if (bs.idx == 0) continue;
+      size_t slot = static_cast<size_t>(bs.hash) & mask;
+      while (block_slots_[slot].idx != 0) slot = (slot + 1) & mask;
+      block_slots_[slot] = bs;
+    }
+  }
+
   static uint64_t HashBlockBytes(const uint8_t* p, size_t n) {
-    // FNV-1a over (length, head, tail) — cheap on multi-MB blocks; candidates
-    // are confirmed with a full memcmp, so collisions only cost compares.
-    uint64_t h = 1469598103934665603ull;
+    // Word-at-a-time multiply/xor-shift over (length, head, middle, tail) --
+    // cheap on multi-MB blocks; candidates are confirmed with a full memcmp,
+    // so collisions only cost compares.
+    uint64_t h = 0x9E3779B97F4A7C15ull ^ (static_cast<uint64_t>(n) *
+                                          0xC2B2AE3D27D4EB4Full);
     auto mix = [&h](const uint8_t* q, size_t m) {
-      for (size_t i = 0; i < m; ++i) { h ^= q[i]; h *= 1099511628211ull; }
+      size_t i = 0;
+      for (; i + 8 <= m; i += 8) {
+        uint64_t w;
+        std::memcpy(&w, q + i, 8);
+        h = (h ^ w) * 0xFF51AFD7ED558CCDull;
+        h ^= h >> 32;
+      }
+      uint64_t tail = 0;
+      if (i < m) std::memcpy(&tail, q + i, m - i);
+      h = (h ^ tail ^ static_cast<uint64_t>(m - i)) * 0xC4CEB9FE1A85EC53ull;
+      h ^= h >> 29;
     };
-    mix(reinterpret_cast<const uint8_t*>(&n), sizeof(n));
     if (n <= 512) {
       mix(p, n);
     } else {

@@ -376,9 +376,9 @@
     return f;
   }
 
-  std::string AttrTypeName(const PrimSpec& prim, const std::string& prop_name,
+  std::string AttrTypeName(const PrimSpec& prim, PropNameId prop_id,
                            const Value* val, uint16_t slot_flags) {
-    if (const std::string* tn = prim.property_type_name(prop_name)) {
+    if (const std::string* tn = prim.property_type_name(prop_id)) {
       if (!tn->empty()) return *tn;
     }
     TypeId tid = val ? val->type_id() : static_cast<TypeId>(TypeId::Invalid);
@@ -567,7 +567,7 @@
     return ts_field;
   }
 
-  void EmitPropertySpec(const std::string& prop_path, SpecType st,
+  void EmitPropertySpec(uint32_t path_index, SpecType st,
                         const std::vector<CrateField>& field_list) {
     std::vector<uint32_t> fs;
     fs.reserve(field_list.size());
@@ -578,7 +578,7 @@
     uint32_t fs_idx = static_cast<uint32_t>(fieldsets_.size());
     fieldsets_.push_back(std::move(fs));
     CrateSpec spec;
-    spec.path_index.value = InternPath(prop_path);
+    spec.path_index.value = path_index;
     spec.fieldset_index.value = fs_idx;
     spec.spec_type = st;
     specs_.push_back(spec);
@@ -685,25 +685,39 @@
     }
   }
 
-  std::vector<std::string> EmitPrimProperties(const PrimSpec& prim) {
-    std::vector<std::string> prop_names;
+  // Returns the emitted property names (views into the PropNameTable, which
+  // outlives the write), in spec order.
+  std::vector<std::string_view> EmitPrimProperties(const PrimSpec& prim) {
+    std::vector<std::string_view> prop_names;
     PropNameTable& name_table = GetPropNameTable();
-    const std::string base = prim.path().str();
-    std::unordered_set<std::string> emitted;
+    const std::string& base = prim.path().str();
+    // Emitted attribute names, by interned id (one id per name).
+    std::unordered_set<uint32_t> emitted;
+    // Property spec paths: (prim path, property name) views interned
+    // directly; the concatenated text is only built for irregular prim paths.
+    const bool clean_prop_paths = PropPathSplitsCleanly(base);
+    const uint64_t base_hash = clean_prop_paths ? HashStem(base) : 0;
+    auto prop_path_index = [&](std::string_view stable_name) -> uint32_t {
+      if (clean_prop_paths && !stable_name.empty() &&
+          stable_name.find('/') == std::string_view::npos) {
+        return InternPropPath(base, base_hash, stable_name);
+      }
+      return InternPath(base + "." + std::string(stable_name));
+    };
 
     for (const auto& slot : prim.properties().slots()) {
-      const std::string prop_name(name_table.get(slot.name_id));
+      const std::string_view prop_name = name_table.get(slot.name_id);
       // Defense against duplicate slots for one property (the parser now
       // upserts, but crate-read or API-built layers could still carry them):
       // two Attribute specs with the same path make pxr reject the layer.
-      if (emitted.count(prop_name)) continue;
+      if (emitted.count(slot.name_id.id)) continue;
       const Value* val = prim.property_value(slot.name_id);
       const bool has_ts = prim.has_time_samples(slot.name_id);
       std::vector<CrateField> flds;
 
       CrateField tf;
       tf.token_index.value = InternToken("typeName");
-      std::string tn = AttrTypeName(prim, prop_name, val, slot.flags);
+      std::string tn = AttrTypeName(prim, slot.name_id, val, slot.flags);
       tf.value_rep =
           ValueRep::Make(CrateTypeId::Token, InternToken(tn), false, true);
       flds.push_back(tf);
@@ -744,14 +758,15 @@
       }
 
       if (slot.flags & PropSlot::kFlagConnection) {
-        if (const std::vector<Path>* conns = prim.connection(prop_name)) {
+        const std::string conn_name(prop_name);
+        if (const std::vector<Path>* conns = prim.connection(conn_name)) {
           std::vector<std::string> targets;
           targets.reserve(conns->size());
           for (const auto& p : *conns)
             if (!p.str().empty()) targets.push_back(p.str());
           // An authored-empty list is a connection BLOCK (`.connect = None`):
           // emit an explicit-empty PathListOp so it round-trips.
-          const ArcEdit* edit = prim.connection_edit(prop_name);
+          const ArcEdit* edit = prim.connection_edit(conn_name);
           uint64_t blk = (edit && edit->authored)
                              ? StorePathArcListOp(targets, edit)
                              : StorePathListOp(targets);
@@ -767,7 +782,8 @@
 
       if (const std::string* spline_text = prim.spline_source(slot.name_id)) {
         CrateField sf;
-        if (BuildSplineField(base + "." + prop_name, tn, *spline_text, &sf)) {
+        if (BuildSplineField(base + "." + std::string(prop_name), tn,
+                             *spline_text, &sf)) {
           flds.push_back(sf);
         } else if (!result_.error.empty()) {
           return prop_names;  // strict mode: abort on unencodable spline
@@ -778,21 +794,21 @@
         EmitPropMetaFields(*pm, flds);
       }
 
-      EmitPropertySpec(base + "." + prop_name, SpecType::Attribute, flds);
+      EmitPropertySpec(prop_path_index(prop_name), SpecType::Attribute, flds);
       prop_names.push_back(prop_name);
-      emitted.insert(prop_name);
+      emitted.insert(slot.name_id.id);
     }
 
     for (auto prop_id : prim.time_sampled_properties()) {
-      const std::string prop_name(name_table.get(prop_id));
-      if (emitted.count(prop_name)) continue;
+      const std::string_view prop_name = name_table.get(prop_id);
+      if (emitted.count(prop_id.id)) continue;
       std::vector<CrateField> flds;
       const Value* sv = nullptr;
       if (auto* s = prim.time_samples(prop_id))
         if (!s->empty()) sv = prim.time_sample_value((*s)[0].second);
       CrateField tf;
       tf.token_index.value = InternToken("typeName");
-      std::string tn = AttrTypeName(prim, prop_name, sv, 0);
+      std::string tn = AttrTypeName(prim, prop_id, sv, 0);
       tf.value_rep =
           ValueRep::Make(CrateTypeId::Token, InternToken(tn), false, true);
       flds.push_back(tf);
@@ -800,9 +816,9 @@
       if (const PropMeta* pm = prim.property_meta(prop_id)) {
         EmitPropMetaFields(*pm, flds);
       }
-      EmitPropertySpec(base + "." + prop_name, SpecType::Attribute, flds);
+      EmitPropertySpec(prop_path_index(prop_name), SpecType::Attribute, flds);
       prop_names.push_back(prop_name);
-      emitted.insert(prop_name);
+      emitted.insert(prop_id.id);
     }
 
     for (const auto& rel_name : prim.relationship_names()) {
@@ -858,8 +874,11 @@
               prim.property_meta(GetPropNameTable().intern(rel_name))) {
         EmitPropMetaFields(*pm, flds);
       }
-      EmitPropertySpec(base + "." + rel_name, SpecType::Relationship, flds);
-      prop_names.push_back(rel_name);
+      const std::string_view stable_rel_name =
+          name_table.get(name_table.intern(rel_name));
+      EmitPropertySpec(prop_path_index(stable_rel_name),
+                       SpecType::Relationship, flds);
+      prop_names.push_back(stable_rel_name);
     }
 
     return prop_names;
