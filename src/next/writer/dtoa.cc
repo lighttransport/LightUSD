@@ -331,6 +331,22 @@ char* dtoa_ref_impl(const float f, char* buf) {
 // nullptr for special / subnormal / scientific / out-of-window values, which go
 // to the dragonbox renderer. REQUIRES buf capacity >= kDtoaBufSize.
 char* dtoa_impl(const double f, char* buf) {
+  uint64_t bits;
+  std::memcpy(&bits, &f, sizeof(bits));
+  if ((bits & 0x7FFFFFFFFFFFFFFFULL) == 0) {
+    if (bits >> 63) *buf++ = '-';
+    *buf++ = '0';
+    return buf;
+  }
+  if (bits == 0x3FF0000000000000ULL) {
+    *buf++ = '1';
+    return buf;
+  }
+  if (bits == 0xBFF0000000000000ULL) {
+    *buf++ = '-';
+    *buf++ = '1';
+    return buf;
+  }
 #if !defined(LIGHTUSD_NEXT_NO_ZMIJ_DTOA)
   if (char* e = zmij::write_usd_fast(buf, f)) return e;
 #endif
@@ -338,6 +354,22 @@ char* dtoa_impl(const double f, char* buf) {
 }
 
 char* dtoa_impl(const float f, char* buf) {
+  uint32_t bits;
+  std::memcpy(&bits, &f, sizeof(bits));
+  if ((bits & 0x7FFFFFFFU) == 0) {
+    if (bits >> 31) *buf++ = '-';
+    *buf++ = '0';
+    return buf;
+  }
+  if (bits == 0x3F800000U) {
+    *buf++ = '1';
+    return buf;
+  }
+  if (bits == 0xBF800000U) {
+    *buf++ = '-';
+    *buf++ = '1';
+    return buf;
+  }
 #if !defined(LIGHTUSD_NEXT_NO_ZMIJ_DTOA)
   if (char* e = zmij::write_usd_fast(buf, f)) return e;
 #endif
