@@ -14,9 +14,11 @@ option(LIGHTUSD_WASM_RELAXED_SIMD "Enable WebAssembly Relaxed SIMD (requires rec
 option(LIGHTUSD_WASM_WITH_EXR "Include bounded EXR encoding in next-only WASM" ON)
 option(LIGHTUSD_WASM_COROUTINE "Enable legacy C++20 coroutine async loading (combined uses typed C tasks)" ON)
 option(LIGHTUSD_WITH_XATLAS "Include the vendored xatlas UV atlas generator" ON)
-set(LIGHTUSD_WASM_PRODUCT "legacy" CACHE STRING
-    "WASM product to build: legacy, next, or combined (combined is compatibility-only)")
-set_property(CACHE LIGHTUSD_WASM_PRODUCT PROPERTY STRINGS legacy next combined)
+# next is the default product; legacy and combined remain available for a
+# transition period.
+set(LIGHTUSD_WASM_PRODUCT "next" CACHE STRING
+    "WASM product to build: next, legacy, or combined (combined is compatibility-only)")
+set_property(CACHE LIGHTUSD_WASM_PRODUCT PROPERTY STRINGS next legacy combined)
 
 # Keep the historical switches as compatibility aliases for existing build
 # scripts. New callers should select the product explicitly.

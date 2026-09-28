@@ -884,8 +884,32 @@ uncomposed and records three known failures that must keep failing until fixed:
 - a negative layer-offset scale — OpenUSD keeps it, next strict rejects it;
 - `pathExpression[]` Crate arrays — unsupported in next's strict reader.
 
-The native CMake product, the WASM product and the JS loader all still default
-to legacy; switching them is a product decision, not a gate result.
+**next is now the default product.** Legacy stays available for a transition
+period:
+
+| Surface | Default | Legacy selection |
+|---|---|---|
+| Root CMake | `LIGHTUSD_NATIVE_PRODUCT=next` | `-DLIGHTUSD_NATIVE_PRODUCT=legacy` |
+| `web/` CMake | `LIGHTUSD_WASM_PRODUCT=next` (`lightusd_next(_64).js`) | `-DLIGHTUSD_WASM_PRODUCT=legacy` or `combined` |
+| `LightUSDLoader` | `backend: 'next'`, next-only module | `backend: 'legacy'` |
+| `LoaderConfigUtils` helpers, `LightUSDWorker` | next | `backend: 'legacy'` |
+
+Existing CI jobs and bootstrap scripts pin
+`-DLIGHTUSD_NATIVE_PRODUCT=legacy` / `-DLIGHTUSD_WASM_PRODUCT=legacy`, so
+legacy coverage is unchanged; `npm/build-wasm.sh` already selected every
+product explicitly. The new `build-next-product` Linux job builds and tests
+the default root configure. A fresh default configure builds the next
+product and passes all 47 tests.
+
+Demo status:
+- Viewers with a next scene builder (`buildNextThreeNode`) run on next.
+  `main.js` gained that branch; `offscreengl.worker.js` moved earlier.
+- `LightUSDWorker` imports the legacy module only on the legacy path, so
+  next-only deployments load it.
+- Two demos remain pinned to `backend: 'legacy'` until they are ported:
+  - `phys-sim.js` consumes legacy's physics JSON through
+    `LightUSDLoaderNative`;
+  - `materialx-webgpu.js` converts legacy material JSON for WebGPU.
 
 With the pinned MuJoCo Menagerie checkout
 (`71f066ad0be9cd271f7ed58c030243ef157af9f4`) the full web regression now runs

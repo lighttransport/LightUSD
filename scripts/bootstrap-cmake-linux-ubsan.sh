@@ -8,5 +8,6 @@ mkdir ${builddir}
 cd ${builddir} && CXX=clang++ CC=clang cmake \
   -DSANITIZE_UNDEFINED=1 \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
+  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   ..
 

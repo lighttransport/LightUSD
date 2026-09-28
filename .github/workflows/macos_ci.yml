@@ -27,6 +27,7 @@ jobs:
       - name: CmakeAndBuild
         run: |
             cmake -B build_next -S . \
+              -DLIGHTUSD_NATIVE_PRODUCT=legacy \
               -DCMAKE_BUILD_TYPE=Release \
               -DLIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=On \
               -DLIGHTUSD_WITH_TYDRA=On \

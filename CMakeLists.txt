@@ -32,10 +32,11 @@ if (PROJECT_IS_TOP_LEVEL AND NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TY
 endif ()
 
 
-# Keep the compatibility default until the next product passes the full parity
-# gate. Select before configuring legacy dependencies or global compiler flags.
-set(LIGHTUSD_NATIVE_PRODUCT "legacy" CACHE STRING "Native implementation: legacy or next")
-set_property(CACHE LIGHTUSD_NATIVE_PRODUCT PROPERTY STRINGS legacy next)
+# next is the default product. The legacy implementation stays available for
+# a transition period with -DLIGHTUSD_NATIVE_PRODUCT=legacy. Select before
+# configuring legacy dependencies or global compiler flags.
+set(LIGHTUSD_NATIVE_PRODUCT "next" CACHE STRING "Native implementation: next or legacy")
+set_property(CACHE LIGHTUSD_NATIVE_PRODUCT PROPERTY STRINGS next legacy)
 if(NOT LIGHTUSD_NATIVE_PRODUCT STREQUAL "legacy" AND
    NOT LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
   message(FATAL_ERROR "LIGHTUSD_NATIVE_PRODUCT must be legacy or next")

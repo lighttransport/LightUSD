@@ -9,5 +9,6 @@ mkdir ${builddir}
 cd ${builddir} && cmake \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
+  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   ..
 

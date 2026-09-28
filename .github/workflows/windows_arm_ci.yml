@@ -27,7 +27,7 @@ jobs:
       - name: Configure
         run: |
           mkdir build_arm64
-          cmake -G "Visual Studio 18 2026" -A ARM64 -Bbuild_arm64 -DLIGHTUSD_WITH_EXR=1 -DLIGHTUSD_WITH_TIFF=1 -S.
+          cmake -G "Visual Studio 18 2026" -A ARM64 -Bbuild_arm64 -DLIGHTUSD_NATIVE_PRODUCT=legacy -DLIGHTUSD_WITH_EXR=1 -DLIGHTUSD_WITH_TIFF=1 -S.
       - name: Build
         run: cmake --build build_arm64 --config Release
 

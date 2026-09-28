@@ -13,4 +13,5 @@ cd ${builddir} && CXX=clang++ CC=clang cmake \
   -DLIGHTUSD_BUILD_BENCHMARKS=1 \
   -DSANITIZE_ADDRESS=0 \
   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   ..

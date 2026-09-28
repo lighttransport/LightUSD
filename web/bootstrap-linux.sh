@@ -11,4 +11,4 @@
 rm -rf build
 mkdir build
 
-emcmake cmake -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_VERBOSE_MAKEFILE=1 -Bbuild
+emcmake cmake -DLIGHTUSD_WASM_PRODUCT=legacy -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_VERBOSE_MAKEFILE=1 -Bbuild
