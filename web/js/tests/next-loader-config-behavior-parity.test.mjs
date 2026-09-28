@@ -156,7 +156,7 @@ const set = (target, legacy, method, value) =>
   target[legacy ? method : nextName.get(method)](value);
 const triangles = (target, legacy, id) => legacy
   ? target.getMesh(id).faceVertexIndices.length / 3
-  : target.getMeshCopy(id).points.length / 9;
+  : (target.getMeshCopy(id).indices?.length ?? target.getMeshCopy(id).points.length / 3) / 3;
 
 // Sphere tessellation.
 for (const level of [1, 3]) {

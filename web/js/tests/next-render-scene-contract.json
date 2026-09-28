@@ -54,6 +54,7 @@
       "uvSets"
     ],
     "nextOnly": [
+      "indices",
       "localMatrix",
       "material",
       "primPath",
@@ -95,19 +96,19 @@
       "normals": {
         "legacy": "#307:ad84442f",
         "next": {
-          "byteLength": 432,
+          "byteLength": 288,
           "comps": 3,
           "dtype": "f32",
-          "length": 108
+          "length": 72
         }
       },
       "points": {
         "legacy": "#487:356eaf43",
         "next": {
-          "byteLength": 432,
+          "byteLength": 288,
           "comps": 3,
           "dtype": "f32",
-          "length": 108
+          "length": 72
         }
       },
       "primName": {
@@ -129,6 +130,7 @@
       "uvSets"
     ],
     "nextOnly": [
+      "indices",
       "localMatrix",
       "material",
       "primPath",
@@ -181,6 +183,44 @@
           33,
           34,
           35
+        ],
+        "next": [
+          0,
+          1,
+          2,
+          0,
+          2,
+          3,
+          4,
+          5,
+          6,
+          4,
+          6,
+          7,
+          8,
+          9,
+          10,
+          8,
+          10,
+          11,
+          12,
+          13,
+          14,
+          12,
+          14,
+          15,
+          16,
+          17,
+          18,
+          16,
+          18,
+          19,
+          20,
+          21,
+          22,
+          20,
+          22,
+          23
         ]
       },
       "geomBindTransform": {
@@ -209,7 +249,11 @@
       },
       "normals": {
         "legacy": "#307:ad84442f",
-        "next": "#235:c7ea21ed"
+        "next": "#157:fe9f11dd"
+      },
+      "points": {
+        "legacy": "#487:356eaf43",
+        "next": "#325:88a6a1f9"
       },
       "primName": {
         "legacy": "",
@@ -223,7 +267,6 @@
       "displayName",
       "faceVertexCounts",
       "hasSubmeshes",
-      "indices",
       "singleIndexable",
       "triangulated",
       "uvSets"
@@ -238,6 +281,21 @@
       "worldMatrix"
     ],
     "differ": {
+      "indices": {
+        "legacy": {
+          "byteLength": 144,
+          "comps": 1,
+          "count": 36,
+          "dtype": "u32",
+          "length": 36
+        },
+        "next": {
+          "byteLength": 144,
+          "comps": 1,
+          "dtype": "u32",
+          "length": 36
+        }
+      },
       "materialId": {
         "legacy": -1,
         "next": 0
@@ -251,10 +309,10 @@
           "length": 108
         },
         "next": {
-          "byteLength": 432,
+          "byteLength": 288,
           "comps": 3,
           "dtype": "f32",
-          "length": 108
+          "length": 72
         }
       },
       "points": {
@@ -266,10 +324,10 @@
           "length": 108
         },
         "next": {
-          "byteLength": 432,
+          "byteLength": 288,
           "comps": 3,
           "dtype": "f32",
-          "length": 108
+          "length": 72
         }
       },
       "primName": {
@@ -285,11 +343,15 @@
           "length": 72
         },
         "next": {
-          "byteLength": 288,
+          "byteLength": 192,
           "comps": 2,
           "dtype": "f32",
-          "length": 72
+          "length": 48
         }
+      },
+      "vertexCount": {
+        "legacy": 36,
+        "next": 24
       }
     }
   },

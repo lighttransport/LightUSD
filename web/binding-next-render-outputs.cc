@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-next-render.hh"
+#include <map>
+#include <cstring>
+#include <array>
 #include "next/schema/usd-shade.hh"
 namespace lightusd {
 namespace web_next {
@@ -52,45 +55,65 @@ void RenderStream::buildAnalyticOutputs_() {
           out.indices[i] = source.triangulated_indices[i];
         }
       } else {
-        // Face-varying analytic attributes need one vertex per triangulated
-        // corner. Preserve the converter's authored-corner remap so generated
-        // sphere/cone UV seams and normals stay aligned.
-        out.soup = true;
+        // Face-varying analytic attributes (generated per-corner normals and
+        // spherical UVs): weld corners that agree on (point, normal, uv) into
+        // an indexed mesh. Seams and hard edges keep split vertices because
+        // their values differ; a level-4 icosphere drops from 15360 soup
+        // corners to ~2.6k vertices. The converter's authored-corner remap
+        // keeps generated UV seams and normals aligned.
         const size_t corners = source.triangulated_indices.size();
-        out.points.reserve(corners * 3);
-        if (!source.normals.empty()) out.normals.reserve(corners * 3);
-        if (!source.texcoords_0.empty()) out.uv.reserve(corners * 2);
+        std::map<std::array<uint32_t, 6>, uint32_t> welded;
+        out.indices.reserve(corners);
+        auto bits = [](float f) {
+          uint32_t u;
+          std::memcpy(&u, &f, sizeof(u));
+          return u;
+        };
         for (size_t corner = 0; corner < corners; ++corner) {
           const uint32_t vertex = source.triangulated_indices[corner];
           if (vertex >= point_count) continue;
-          for (size_t c = 0; c < 3; ++c) {
-            out.points.push_back(source.points[static_cast<size_t>(vertex) * 3 + c]);
-          }
           const size_t authored_corner =
               corner < source.triangulated_face_vertex_indices.size()
                   ? source.triangulated_face_vertex_indices[corner]
                   : corner;
+          float n[3] = {0.0f, 0.0f, 0.0f};
+          bool has_n = false;
           if (!source.normals.empty()) {
             const size_t normal_element =
                 source.normals_interp == tr::Interpolation::FaceVarying
                     ? authored_corner
                     : static_cast<size_t>(vertex);
             if (normal_element * 3 + 2 < source.normals.size()) {
-              for (size_t c = 0; c < 3; ++c) {
-                out.normals.push_back(source.normals[normal_element * 3 + c]);
-              }
+              for (size_t c = 0; c < 3; ++c) n[c] = source.normals[normal_element * 3 + c];
+              has_n = true;
             }
           }
+          float uv[2] = {0.0f, 0.0f};
+          bool has_uv = false;
           if (!source.texcoords_0.empty()) {
             const size_t uv_element =
                 source.texcoords_0_interp == tr::Interpolation::FaceVarying
                     ? authored_corner
                     : static_cast<size_t>(vertex);
             if (uv_element * 2 + 1 < source.texcoords_0.size()) {
-              out.uv.push_back(source.texcoords_0[uv_element * 2]);
-              out.uv.push_back(source.texcoords_0[uv_element * 2 + 1]);
+              uv[0] = source.texcoords_0[uv_element * 2];
+              uv[1] = source.texcoords_0[uv_element * 2 + 1];
+              has_uv = true;
             }
           }
+          const std::array<uint32_t, 6> key{vertex, bits(n[0]), bits(n[1]),
+                                            bits(n[2]), bits(uv[0]), bits(uv[1])};
+          auto found = welded.find(key);
+          if (found == welded.end()) {
+            const uint32_t index = static_cast<uint32_t>(out.points.size() / 3);
+            found = welded.emplace(key, index).first;
+            for (size_t c = 0; c < 3; ++c) {
+              out.points.push_back(source.points[static_cast<size_t>(vertex) * 3 + c]);
+            }
+            if (has_n) out.normals.insert(out.normals.end(), n, n + 3);
+            if (has_uv) out.uv.insert(out.uv.end(), uv, uv + 2);
+          }
+          out.indices.push_back(found->second);
         }
         if (out.normals.size() != out.points.size()) out.normals.clear();
         if (out.uv.size() * 3 != out.points.size() * 2) out.uv.clear();
