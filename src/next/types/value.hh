@@ -7,6 +7,7 @@
 #pragma once
 
 #include "type-id.hh"
+#include "array-storage.hh"
 #include <cstddef>
 #include <string>
 #include "../core/string-index.hh"
@@ -172,6 +173,53 @@ public:
   /// Scalar string-family value with an explicit type (Token / String /
   /// AssetPath / PathExpression).
   static Value MakeStringLike(const std::string& s, TypeId type);
+
+  /// Storage scalar kind of a numeric array payload (the flat vector's element
+  /// type; half/float vector types are all Float-backed, uchar is UInt32).
+  enum class ArrayScalarKind : uint8_t {
+    Float, Double, Int32, UInt32, Int64, UInt64, Bool
+  };
+
+  /// Handle to the payload of an array created by MakeDeferredArray. Holds its
+  /// own reference to the (empty) payload storage, so the storage outlives an
+  /// early-destroyed committed Value (error paths).
+  class DeferredArrayFill {
+   public:
+    DeferredArrayFill() = default;
+    DeferredArrayFill(DeferredArrayFill&&) noexcept = default;
+    DeferredArrayFill& operator=(DeferredArrayFill&&) noexcept = default;
+    DeferredArrayFill(const DeferredArrayFill&) = delete;
+    DeferredArrayFill& operator=(const DeferredArrayFill&) = delete;
+
+    /// Move the payload of `parsed` (a regular, eagerly parsed array Value)
+    /// into the deferred storage, making every committed copy observe it.
+    /// Fails — storage left untouched — unless `parsed` is a plain
+    /// materialized array with exactly the committed element type, element
+    /// count and storage kind.
+    bool Complete(Value&& parsed);
+
+    /// Drop this handle's reference (the committed Value keeps its own).
+    void Release() { handle_ = detail::ArrayHandle(); }
+
+   private:
+    friend class Value;
+    detail::ArrayHandle handle_;
+    TypeId type_id_ = TypeId::Invalid;
+    uint32_t elem_count_ = 0;
+  };
+
+  /// Deferred-fill array factory for the batched USDA array parser: returns a
+  /// fully-typed array Value (type_id / is_array / array size final at
+  /// creation) whose payload vector is still EMPTY. The caller commits the
+  /// Value into the layer immediately and a parser worker later fills the
+  /// payload in place through *out_fill (DeferredArrayFill::Complete). The
+  /// payload storage is shared by every copy of the Value, but the value must
+  /// not be hashed, compared, printed, payload-accessed, sized through the
+  /// payload, or COW-detached until the fill completes (the parse's drain
+  /// barrier).
+  static Value MakeDeferredArray(TypeId elem_type, ArrayScalarKind kind,
+                                 uint32_t elem_count,
+                                 DeferredArrayFill* out_fill);
 
   // ============================================================
   // Type queries

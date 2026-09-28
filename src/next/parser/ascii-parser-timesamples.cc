@@ -39,14 +39,9 @@ bool AsciiParser::Impl::ParseTimeSamples(const std::string& prop_name,
     }
 
     ParseResult value_result;
+    bool deferred = false;
     if (is_array) {
-      ParseArrayContext array_ctx;
-      array_ctx.source = source_;
-      array_ctx.enable_usda_lazy_arrays = options_.enable_usda_lazy_arrays;
-      array_ctx.max_usda_lazy_array_elements =
-          options_.max_usda_lazy_array_elements;
-      array_ctx.num_threads = options_.num_threads;
-      value_result = ParseArrayValue(*lexer_, type_id, array_ctx);
+      value_result = ParseArrayAttributeValue(type_id, &deferred);
     } else if (Check(TokenType::Number) && !IsScalarType(type_id)) {
       // AOUSD permits format implementations to retain a default/time sample
       // whose stored value disagrees with the declared type. Parse the scalar
@@ -61,7 +56,10 @@ bool AsciiParser::Impl::ParseTimeSamples(const std::string& prop_name,
       return false;
     }
 
-    builder_->add_time_sample(prop_name, time, std::move(value_result.value));
+    // Deferred-fill values skip content-hash dedup: their payload is not
+    // parsed yet (see PrimSpec::add_time_sample).
+    builder_->add_time_sample(prop_name, time, std::move(value_result.value),
+                              /*dedup=*/!deferred);
 
     Match(TokenType::Comma);
   }

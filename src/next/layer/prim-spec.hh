@@ -1016,8 +1016,12 @@ public:
   // TimeSamples (stored separately for efficiency)
   // ============================================================
 
-  /// Add a time sample for a property
-  void add_time_sample(PropNameId name_id, double time, Value value);
+  /// Add a time sample for a property. `dedup=false` skips content-hash
+  /// deduplication — required for deferred-fill values whose payload arrives
+  /// later (batched USDA array parse): hashing them would read the payload
+  /// while a parser worker is still writing it.
+  void add_time_sample(PropNameId name_id, double time, Value value,
+                       bool dedup = true);
 
   /// Get time samples for a property (returns vector of (time, value_offset))
   const std::vector<std::pair<double, uint32_t>>* time_samples(PropNameId name_id) const;
@@ -1209,6 +1213,10 @@ public:
 
   /// Get child indices
   const std::vector<uint32_t>& child_indices() const { return child_indices_; }
+
+  /// Mutable child-index storage — used by Layer stitching (the parallel USDA
+  /// subtree parse rebases/resolves placeholder indices in one pass).
+  std::vector<uint32_t>& mutable_child_indices() { return child_indices_; }
 
   /// Add child index
   void add_child_index(uint32_t index);

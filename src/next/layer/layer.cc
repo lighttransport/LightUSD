@@ -116,6 +116,111 @@ void Layer::add_root(uint32_t index) {
   }
 }
 
+void Layer::add_root_pending(uint32_t fragment_id) {
+  root_indices_.push_back(kPendingIndexBit | fragment_id);
+}
+
+bool Layer::splice_fragments(const std::vector<Layer*>& fragments,
+                             const std::vector<size_t>& insert_before) {
+  const size_t nf = fragments.size();
+  if (insert_before.size() != nf) return false;
+  const size_t nmain = prims_.size();
+  size_t total = nmain;
+  for (size_t f = 0; f < nf; ++f) {
+    const Layer* frag = fragments[f];
+    if (!frag || frag->prims_.empty() || frag->root_indices_.empty() ||
+        insert_before[f] > nmain ||
+        (f > 0 && insert_before[f] < insert_before[f - 1])) {
+      return false;
+    }
+    for (uint32_t r : frag->root_indices_) {
+      if (r >= frag->prims_.size()) return false;
+    }
+    total += frag->prims_.size();
+  }
+  if (total >= kPendingIndexBit) return false;
+
+  // Final positions: fragment f occupies [frag_off[f], +size) right before
+  // main prim insert_before[f]; the main prims keep their relative order.
+  std::vector<uint32_t> main_map(nmain);
+  std::vector<uint32_t> frag_off(nf);
+  {
+    size_t next = 0;
+    size_t f = 0;
+    for (size_t i = 0; i <= nmain; ++i) {
+      while (f < nf && insert_before[f] == i) {
+        frag_off[f] = static_cast<uint32_t>(next);
+        next += fragments[f]->prims_.size();
+        ++f;
+      }
+      if (i < nmain) main_map[i] = static_cast<uint32_t>(next++);
+    }
+  }
+  // Remap one index list: main indices through main_map, each placeholder
+  // expanded to its fragment's (rebased) roots.
+  auto remap_list = [&](std::vector<uint32_t>* list) -> bool {
+    bool has_pending = false;
+    for (uint32_t& v : *list) {
+      if (v & kPendingIndexBit) {
+        has_pending = true;
+        continue;
+      }
+      if (v >= nmain) return false;
+      v = main_map[v];
+    }
+    if (!has_pending) return true;
+    std::vector<uint32_t> out;
+    out.reserve(list->size() + 4);
+    for (uint32_t v : *list) {
+      if (!(v & kPendingIndexBit)) {
+        out.push_back(v);
+        continue;
+      }
+      const uint32_t id = v & ~kPendingIndexBit;
+      if (id >= nf) return false;
+      for (uint32_t r : fragments[id]->root_indices_) {
+        out.push_back(frag_off[id] + r);
+      }
+    }
+    *list = std::move(out);
+    return true;
+  };
+
+  // Validate/remap every index before moving anything.
+  if (!remap_list(&root_indices_)) return false;
+  for (PrimSpec& p : prims_) {
+    if (!remap_list(&p.mutable_child_indices())) return false;
+  }
+  for (size_t f = 0; f < nf; ++f) {
+    const size_t fsize = fragments[f]->prims_.size();
+    for (PrimSpec& p : fragments[f]->prims_) {
+      for (uint32_t& ci : p.mutable_child_indices()) {
+        if (ci >= fsize) return false;  // (also rejects nested placeholders)
+        ci += frag_off[f];
+      }
+    }
+  }
+
+  // One exact-size allocation, every PrimSpec moved once (a per-fragment
+  // append with exact reserves reallocates the whole vector per fragment:
+  // quadratic).
+  std::vector<PrimSpec> out;
+  out.reserve(total);
+  size_t f = 0;
+  for (size_t i = 0; i <= nmain; ++i) {
+    while (f < nf && insert_before[f] == i) {
+      for (PrimSpec& p : fragments[f]->prims_) out.push_back(std::move(p));
+      fragments[f]->prims_.clear();
+      fragments[f]->root_indices_.clear();
+      ++f;
+    }
+    if (i < nmain) out.push_back(std::move(prims_[i]));
+  }
+  prims_ = std::move(out);
+  path_to_index_.clear();
+  return true;
+}
+
 void Layer::build_path_index() {
   path_to_index_.clear();
   path_to_index_.reserve(prims_.size());
@@ -579,7 +684,7 @@ uint32_t LayerBuilder::begin_prim(const std::string& name, const std::string& ty
   // Build path based on parent stack
   std::string path_str;
   if (prim_stack_.empty()) {
-    path_str = "/" + name;
+    path_str = path_prefix_ + "/" + name;  // prefix empty for a real root
   } else {
     // Get parent path
     const PrimSpec* parent = layer_.prim(prim_stack_.back());
@@ -653,7 +758,8 @@ void LayerBuilder::add_property(const std::string& name, Value value, uint16_t f
   }
 }
 
-void LayerBuilder::add_time_sample(const std::string& prop_name, double time, Value value) {
+void LayerBuilder::add_time_sample(const std::string& prop_name, double time,
+                                   Value value, bool dedup) {
   // Authoring boundary (see PrimSpec::add_property): keep the name a valid
   // (possibly namespaced) identifier so API scenes stay round-trippable.
   if (!IsValidNamespacedIdentifier(prop_name)) return;
@@ -663,7 +769,7 @@ void LayerBuilder::add_time_sample(const std::string& prop_name, double time, Va
     // First, add the time sample (stores the value and records time)
     TypeId type_id = value.type_id();
     bool is_array = value.is_array();
-    p->add_time_sample(name_id, time, std::move(value));
+    p->add_time_sample(name_id, time, std::move(value), dedup);
 
     // Ensure property slot exists with the time-sampled flag set.
     const PropSlot* existing = p->property(name_id);

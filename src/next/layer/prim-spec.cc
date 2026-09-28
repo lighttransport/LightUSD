@@ -1046,10 +1046,17 @@ void PrimSpec::mark_property_time_sampled(PropNameId name_id) {
   }
 }
 
-void PrimSpec::add_time_sample(PropNameId name_id, double time, Value value) {
-  // Use deduplicated storage for array values (common case for animation)
+void PrimSpec::add_time_sample(PropNameId name_id, double time, Value value,
+                               bool dedup) {
+  // Use deduplicated storage for array values (common case for animation).
+  // `dedup=false`: deferred-fill value (see header), stored as-is like the
+  // is_lazy() bypass in add_dedup.
   if (!time_samples_) time_samples_ = std::make_unique<TimeSampleStorage>();
-  time_samples_->add_dedup(name_id, time, std::move(value));
+  if (dedup) {
+    time_samples_->add_dedup(name_id, time, std::move(value));
+  } else {
+    time_samples_->add(name_id, time, std::move(value));
+  }
 }
 
 const std::vector<std::pair<double, uint32_t>>* PrimSpec::time_samples(PropNameId name_id) const {

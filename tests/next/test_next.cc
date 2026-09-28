@@ -38,6 +38,7 @@
 #include "next/schema/physics-joint.hh"
 #include "next/schema/physics-scene.hh"
 #include "next/writer/usdc-writer.hh"
+#include "next/writer/usda-writer.hh"
 
 using namespace lightusd::next;
 
@@ -2173,6 +2174,204 @@ void test_hardened_session_profile() {
   for (uint8_t visited : visits) assert(visited == 1);
 }
 
+// The batched deferred-array parse and the parallel prim-subtree parse must be
+// indistinguishable from the serial parser: same layer (written text), same
+// warnings (text AND order), and on failure the same errors (the fast attempt
+// falls back to a serial re-parse).
+namespace {
+
+std::string MakeFastParseTestDoc(int nchildren, const std::string& inject_at_7,
+                                 bool dup_sibling, bool block_comment) {
+  auto num_list = [](int n, int base, bool tuple3, bool trailing) {
+    std::string s = "[";
+    for (int i = 0; i < n; i++) {
+      if (i) s += ", ";
+      if (tuple3) {
+        s += "(" + std::to_string(base + i) + ".5, " +
+             std::to_string(i % 7) + ", -" + std::to_string(i) + "e-2)";
+      } else {
+        s += std::to_string(base + i);
+      }
+    }
+    if (trailing) s += ",";
+    s += "]";
+    return s;
+  };
+  std::string doc =
+      "#usda 1.0\n"
+      "(\n"
+      "    defaultPrim = \"World\"\n"
+      "    upAxis = \"Z\"\n"
+      ")\n\n"
+      "def Xform \"World\" (\n"
+      "    kind = \"assembly\"\n"
+      "    customData = { dictionary d = { int x = 1 } }\n"
+      ")\n{\n";
+  for (int c = 0; c < nchildren; c++) {
+    const std::string name = "m" + std::to_string(c);
+    // Small leading siblings (batched into runs) and mid-size meshes.
+    doc += "    def Scope \"s" + std::to_string(c) + "\" { int k = " +
+           std::to_string(c) + " }\n";
+    doc += "    def Mesh \"" + name + "\" (\n"
+           "        kind = \"component\"\n"
+           "        weirdMeta" + std::to_string(c % 3) + " = 1\n"
+           "    )\n    {\n";
+    const int n = 200 + 37 * (c % 5);
+    doc += "        point3f[] points = " + num_list(n, c, true, c % 4 == 1) +
+           "\n";
+    doc += "        int[] faceVertexIndices = " +
+           num_list(n, c, false, c % 3 == 2) + "\n";
+    // float -> int coercion stays on the synchronous (fallback) semantics.
+    doc += "        int[] coerced = [1.5, -2.25, " + num_list(90, 3, false, false)
+               .substr(1) + "\n";
+    doc += "        half[] halves = " + num_list(120, c, false, false) + "\n";
+    doc += "        uchar[] bytes = [1, 2, 3, 250, 7, 9, 11, 13, 17, 19, 23, 29, "
+           "31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101]\n";
+    doc += "        matrix4d[] xf = [( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), "
+           "(" + std::to_string(c) + ", 2, 3, 1) ), ( (1, 0, 0, 0), (0, 1, 0, "
+           "0), (0, 0, 1, 0), (0, 0, 0, 1) ), ( (2, 0, 0, 0), (0, 2, 0, 0), (0, "
+           "0, 2, 0), (0, 0, 0, 1) ), ( (3, 0, 0, 0), (0, 3, 0, 0), (0, 0, 3, "
+           "0), (0, 0, 0, 1) )]\n";
+    doc += "        normal3f[] normals.timeSamples = {\n";
+    for (int t = 0; t < 3; t++) {
+      doc += "            " + std::to_string(t) + ": " +
+             num_list(n / 2, t, true, t == 1) + ",\n";
+    }
+    doc += "        }\n";
+    doc += "        custom string note = \"a { b } ( c ) [ d ] # e @ f\"\n";
+    doc += "        asset tex = @@@dir/a@b.png@@@\n";
+    doc += "        asset tex2 = @./t{x}.png@\n";
+    doc += "        rel material:binding = </World/m0/Mat>\n";
+    doc += "        rel sib = <../s" + std::to_string(c) + ">\n";
+    doc += "        uniform token purpose = \"render\" (\n"
+           "            customData = { string c = \"}\" }\n"
+           "        )\n";
+    doc += "        # comment with } and ) and [ inside\n";
+    if (c == 7 && !inject_at_7.empty()) doc += inject_at_7;
+    if (block_comment && c == 5) doc += "        /* { block } */ int bc = 1\n";
+    doc += "        def Material \"Mat\" {\n"
+           "            token outputs:surface.connect = <Shader.outputs:out>\n"
+           "            def Shader \"Shader\" {\n"
+           "                uniform token info:id = \"UsdPreviewSurface\"\n"
+           "                color3f inputs:diffuseColor = (0.1, 0.2, 0.3)\n"
+           "            }\n"
+           "        }\n";
+    doc += "        variantSet \"lod\" = {\n"
+           "            \"hi\" { def Scope \"Hi\" { float f = 1 } }\n"
+           "            \"lo\" { def Scope \"Lo\" { float f = 2 } }\n"
+           "        }\n";
+    doc += "    }\n";
+  }
+  if (dup_sibling) {
+    doc += "    over \"m3\" { float extra = 1 }\n";
+  }
+  doc += "    float worldAttr = 3\n";
+  doc += "}\n\n";
+  doc += "def \"Tail\" { double[] d = " + std::string("[") ;
+  for (int i = 0; i < 300; i++) doc += (i ? ", " : "") + std::to_string(i) + ".25";
+  doc += "] }\n";
+  return doc;
+}
+
+struct ParseOutcome {
+  bool ok = false;
+  bool fast = false;
+  std::string text;
+  std::vector<std::string> warnings;
+  std::vector<std::string> errors;
+};
+
+ParseOutcome ParseForEquivalence(const std::string& doc, bool fast,
+                                 bool strict) {
+  ParseOptions opts;
+  opts.strict_aousd_conformance = strict;
+  if (fast) {
+    opts.num_threads = 4;
+  } else {
+    opts.async_arrays = false;
+    opts.parallel_prims = false;
+  }
+  AsciiParser parser(opts);
+  ParseOutcome out;
+  out.ok = parser.Parse(doc.data(), doc.size());
+  out.fast = parser.UsedFastPath();
+  out.warnings = parser.GetWarnings();
+  for (const ParseError& e : parser.GetErrors()) {
+    out.errors.push_back(std::to_string(e.line) + ":" +
+                         std::to_string(e.column) + ":" + e.message);
+  }
+  if (out.ok) {
+    Stage stage = parser.TakeStage();
+    assert(stage.GetRootLayer());
+    out.text = WriteLayerToString(*stage.GetRootLayer());
+  }
+  return out;
+}
+
+void ExpectSameOutcome(const std::string& doc, bool strict,
+                       bool expect_fast) {
+  const ParseOutcome serial = ParseForEquivalence(doc, false, strict);
+  const ParseOutcome fast = ParseForEquivalence(doc, true, strict);
+  assert(!serial.fast);
+  assert(serial.ok == fast.ok);
+  assert(serial.text == fast.text);
+  assert(serial.warnings == fast.warnings);
+  assert(serial.errors == fast.errors);
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  if (expect_fast && std::thread::hardware_concurrency() > 1) {
+    assert(fast.fast);
+  }
+#else
+  (void)expect_fast;
+#endif
+}
+
+}  // namespace
+
+void test_usda_fast_parse_equivalence() {
+  std::cout << "Testing USDA fast-parse (deferred arrays / parallel prims) "
+               "equivalence..." << std::endl;
+  // Clean document: must take the fast path and match the serial parse.
+  const std::string clean = MakeFastParseTestDoc(40, "", false, false);
+  assert(clean.size() > (size_t(256) << 10));
+  ExpectSameOutcome(clean, false, /*expect_fast=*/true);
+  ExpectSameOutcome(clean, true, /*expect_fast=*/false);  // strict: any
+
+  // Duplicate sibling spanning a dispatched fragment and the main parser
+  // (serial MERGES it): must fall back and still match.
+  ExpectSameOutcome(MakeFastParseTestDoc(40, "", true, false), false, false);
+
+  // Block comment inside a prim body (capture leaves it inline).
+  ExpectSameOutcome(MakeFastParseTestDoc(40, "", false, true), false, false);
+
+  // Errors inside a dispatched block / deferred array: identical errors and
+  // warnings (serial re-parse), for both modes.
+  const char* bad_bodies[] = {
+      "        float[] bad = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, "
+      "15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, "
+      "32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, "
+      "49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, "
+      "66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, x]\n",
+      "        int[] big = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, "
+      "16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, "
+      "33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, "
+      "50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 99999999999]\n",
+      "        float3[] odd = [(1, 2, 3), (4, 5), (6, 7, 8), (1, 2, 3), (1, 2, "
+      "3), (1, 2, 3), (1, 2, 3), (1, 2, 3), (1, 2, 3), (1, 2, 3), (1, 2, 3), "
+      "(1, 2, 3), (1, 2, 3), (1, 2, 3), (1, 2, 3), (1, 2, 3), (1, 2, 3), (1, "
+      "2, 3), (1, 2, 3), (1, 2, 3), (1, 2, 3), (1, 2, 3), (1, 2, 3)]\n",
+      "        float x = \n",
+      "        def \"bad name\" {}\n",
+      "        string unterminated = \"abc\n",
+  };
+  for (const char* body : bad_bodies) {
+    const std::string doc = MakeFastParseTestDoc(40, body, false, false);
+    ExpectSameOutcome(doc, false, false);
+    ExpectSameOutcome(doc, true, false);
+  }
+  std::cout << "  USDA fast-parse equivalence tests passed!" << std::endl;
+}
+
 int main() {
   std::cout << "=== LightUSD Next Unit Tests ===" << std::endl;
   std::cout << std::endl;
@@ -2195,6 +2394,7 @@ int main() {
     test_ascii_parser();
     test_usda_reader();
     test_usda_reorder_after_child_prim();
+    test_usda_fast_parse_equivalence();
     test_hardened_session_profile();
     test_usda_lazy_parse_policies();
     test_arc_listops();

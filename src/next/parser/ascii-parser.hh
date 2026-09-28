@@ -58,6 +58,22 @@ struct ParseOptions {
   /// env read so the library takes no implicit process-environment input.
   int num_threads = 0;
 
+  /// Parse captured simple numeric arrays (attribute defaults AND timeSample
+  /// values) on the parser worker pool, batched, while the main thread keeps
+  /// lexing; payloads are filled in place and joined before finalize.
+  /// Requires LIGHTUSD_ENABLE_THREAD and more than one parse thread; inactive
+  /// with enable_usda_lazy_arrays or a progress_callback. The result is
+  /// identical to the synchronous parse: any failure re-runs the parse
+  /// serially, so errors and warnings are always the serial parser's.
+  bool async_arrays = true;
+
+  /// Parse mid-size prim subtrees on the parser worker pool: the main thread
+  /// captures each prim block (SIMD brace matching) and workers parse blocks
+  /// into layer fragments that are spliced back (authored order and serial
+  /// prim order preserved) before finalize. Same conditions and the same
+  /// serial-fallback guarantee as async_arrays.
+  bool parallel_prims = true;
+
   /// Optional coarse parse progress callback. Reports bootstrap, after each
   /// completed prim (including nested prims), and completion. Returning false
   /// cancels before the parsed Stage is published.
@@ -120,6 +136,11 @@ public:
 
   /// Get warning messages
   const std::vector<std::string>& GetWarnings() const;
+
+  /// True when the last parse completed on the batched/parallel fast path
+  /// (ParseOptions::async_arrays / parallel_prims) rather than the serial
+  /// parser. Diagnostics/testing only: results are identical either way.
+  bool UsedFastPath() const;
 
 private:
   class Impl;

@@ -327,7 +327,7 @@ bool AsciiParser::Impl::ParsePrimContents() {
 
     if (tok.type == TokenType::Def || tok.type == TokenType::Over ||
         tok.type == TokenType::Class) {
-      if (!ParsePrim()) {
+      if (!ParsePrimMaybeParallel()) {
         return false;
       }
       continue;
@@ -573,12 +573,6 @@ bool AsciiParser::Impl::ParseAttribute(
                  type_name);
     } else {
       ParseResult result;
-      ParseArrayContext array_ctx;
-      array_ctx.source = source_;
-      array_ctx.enable_usda_lazy_arrays = options_.enable_usda_lazy_arrays;
-      array_ctx.max_usda_lazy_array_elements =
-          options_.max_usda_lazy_array_elements;
-      array_ctx.num_threads = options_.num_threads;
       const Token& vtok = lexer_->peek();
       if (is_array && vtok.type == TokenType::Identifier &&
           vtok.value == "edit") {
@@ -607,7 +601,7 @@ bool AsciiParser::Impl::ParseAttribute(
         return true;
       }
       if (is_array) {
-        result = ParseArrayValue(*lexer_, type_id, array_ctx);
+        result = ParseArrayAttributeValue(type_id, nullptr);
       } else {
         result = ParseValue(*lexer_, type_id);
       }

@@ -11,6 +11,7 @@
 #include <cctype>
 #include <cstring>
 #include <limits>
+#include <utility>
 
 namespace lightusd {
 namespace next {
@@ -88,13 +89,33 @@ const Keyword kKeywords[] = {
   {"rel", TokenType::Rel},
 };
 
-TokenType LookupKeyword(const std::string& name) {
+// Keyword lookup over the raw identifier bytes: a length + first-byte gate in
+// front of the memcmp (comparing a std::string against each `const char*`
+// keyword cost a strlen per keyword per identifier on the hot path).
+TokenType LookupKeyword(const char* p, size_t n) {
+  if (n < 3 || n > 11) return TokenType::Identifier;
   for (const auto& kw : kKeywords) {
-    if (name == kw.name) {
+    if (kw.name[0] == p[0] && std::strlen(kw.name) == n &&
+        std::memcmp(kw.name, p, n) == 0) {
       return kw.type;
     }
   }
   return TokenType::Identifier;
+}
+
+// ASCII bytes that continue an identifier, derived once from the same XID
+// tables the general path uses (so the fast path cannot disagree with it).
+struct AsciiIdentTable {
+  bool cont[128];
+  AsciiIdentTable() {
+    for (uint32_t c = 0; c < 128; ++c) {
+      cont[c] = identifier_detail::IsContinue(c);
+    }
+  }
+};
+const AsciiIdentTable& GetAsciiIdentTable() {
+  static const AsciiIdentTable table;
+  return table;
 }
 
 }  // anonymous namespace
@@ -102,27 +123,8 @@ TokenType LookupKeyword(const std::string& name) {
 Lexer::Lexer(const char* data, size_t length)
     : data_(data), length_(length) {}
 
-void Lexer::advance() {
-  if (pos_ < length_) {
-    if (data_[pos_] == '\n') {
-      line_++;
-      column_ = 1;
-    } else {
-      column_++;
-    }
-    pos_++;
-  }
-}
-
-char Lexer::current_char() const {
-  return (pos_ < length_) ? data_[pos_] : '\0';
-}
-
-char Lexer::peek_char(size_t offset) const {
-  if (offset > (std::numeric_limits<size_t>::max)() - pos_) return '\0';
-  size_t idx = pos_ + offset;
-  return (idx < length_) ? data_[idx] : '\0';
-}
+// advance()/current_char()/peek_char() are defined inline in lexer.hh (they
+// sit in every per-byte scanning loop).
 
 void Lexer::skip_whitespace() {
   while (pos_ < length_) {
@@ -171,7 +173,7 @@ void Lexer::skip_line() {
 }
 
 bool Lexer::capture_bracketed_literal(const char** out_data, size_t* out_len,
-                                      bool* out_simple) {
+                                      bool* out_simple, size_t* out_commas) {
   if (!out_data || !out_len) return false;
   const Token& tok = peek();
   if (tok.type != TokenType::OpenBracket) {
@@ -186,6 +188,7 @@ bool Lexer::capture_bracketed_literal(const char** out_data, size_t* out_len,
   // "Simple" = no comment/string/asset/nested-bracket bytes inside, so every
   // comma/paren is a pure separator (safe to split for parallel numeric parse).
   bool simple = true;
+  size_t commas = 0;
   int depth = 1;
   while (pos_ < length_ && depth > 0) {
     // SIMD-skip the "boring" array bytes (digits/commas/whitespace) straight to
@@ -196,7 +199,7 @@ bool Lexer::capture_bracketed_literal(const char** out_data, size_t* out_len,
       const char* base = data_ + pos_;
       size_t nl = 0;
       const char* hit =
-          simdscan::ScanArrayStructural(base, data_ + length_, &nl);
+          simdscan::ScanArrayStructural(base, data_ + length_, &nl, &commas);
       pos_ += static_cast<size_t>(hit - base);
       line_ += nl;  // column_ left approximate inside arrays (error cosmetics)
       if (pos_ >= length_ || depth <= 0) break;
@@ -300,6 +303,233 @@ bool Lexer::capture_bracketed_literal(const char** out_data, size_t* out_len,
   *out_data = data_ + start;
   *out_len = pos_ - start;
   if (out_simple) *out_simple = simple;
+  if (out_commas) *out_commas = commas;
+  has_current_ = false;
+  return true;
+}
+
+void Lexer::skip_quoted_raw() {
+  const char quote = current_char();
+  advance();
+  bool triple = false;
+  if (current_char() == quote && peek_char() == quote) {
+    triple = true;
+    advance();
+    advance();
+  }
+  while (pos_ < length_) {
+    if (current_char() == '\\') {
+      advance();
+      if (pos_ < length_) advance();
+      continue;
+    }
+    if (triple) {
+      if (current_char() == quote && peek_char() == quote &&
+          peek_char(2) == quote) {
+        advance();
+        advance();
+        advance();
+        return;
+      }
+    } else if (current_char() == quote) {
+      advance();
+      return;
+    }
+    advance();
+  }
+}
+
+void Lexer::skip_asset_raw() {
+  // Triple-@ form (@@@path@@@, used when the path itself contains '@'):
+  // terminated only by an unescaped @@@ run.
+  const bool triple = (pos_ + 2 < length_ && data_[pos_ + 1] == '@' &&
+                       data_[pos_ + 2] == '@');
+  advance();
+  if (triple) {
+    advance();
+    advance();
+  }
+  while (pos_ < length_) {
+    if (current_char() == '\\') {
+      advance();
+      if (pos_ < length_) advance();
+      continue;
+    }
+    if (triple) {
+      if (current_char() == '@' && pos_ + 2 < length_ &&
+          data_[pos_ + 1] == '@' && data_[pos_ + 2] == '@') {
+        advance();
+        advance();
+        advance();
+        return;
+      }
+    } else if (current_char() == '@') {
+      advance();
+      return;
+    }
+    advance();
+  }
+}
+
+bool Lexer::capture_prim_block(size_t min_bytes, size_t max_bytes,
+                               const char** out_block, size_t* out_len,
+                               size_t* out_line, size_t* out_column,
+                               bool* out_too_big) {
+  if (out_too_big) *out_too_big = false;
+  if (!out_block || !out_len) return false;
+
+  const Token& tok = peek();
+  if (tok.type != TokenType::Def && tok.type != TokenType::Over &&
+      tok.type != TokenType::Class) {
+    return false;
+  }
+  // peek() recorded where the specifier token starts (after whitespace and
+  // comments): that is the block start.
+  const size_t block_start = token_start_;
+  const size_t start_line = tok.line;
+  const size_t start_column = tok.column;
+
+  // Full state snapshot for restore on too-big/too-small/malformed.
+  const size_t saved_pos = pos_;
+  const size_t saved_line = line_;
+  const size_t saved_column = column_;
+  const Token saved_current = current_;
+  const bool saved_has_current = has_current_;
+
+  has_current_ = false;
+
+  // Scan for the body '{' (first open brace at paren depth 0 — metadata dicts
+  // live inside the '(...)' block so their braces are at paren depth >= 1),
+  // then match braces to the block end. Strings / asset refs / comments are
+  // skipped so separator bytes inside them are inert; the SIMD scan jumps over
+  // everything else.
+  int paren_depth = 0;
+  int brace_depth = 0;
+  bool body_seen = false;
+  bool ok = false;
+  bool bail = false;
+  const size_t scan_limit =
+      (max_bytes > 0 && max_bytes < length_ - block_start)
+          ? (block_start + max_bytes)
+          : length_;
+
+  while (pos_ < length_) {
+    {
+      const char* base = data_ + pos_;
+      size_t nl = 0;
+      const char* hit =
+          simdscan::ScanPrimStructural(base, data_ + length_, &nl);
+      pos_ += static_cast<size_t>(hit - base);
+      line_ += nl;  // column_ approximate inside the block (restored/unused)
+      if (pos_ >= length_) break;
+    }
+    if (pos_ > scan_limit) break;
+    const char c = current_char();
+
+    if (c == '#') {
+      skip_comment();
+      continue;
+    }
+    if (c == '"' || c == '\'') {
+      skip_quoted_raw();
+      continue;
+    }
+    if (c == '@') {
+      skip_asset_raw();
+      continue;
+    }
+    if (c == '/') {
+      if (peek_char() == '*') {
+        // C-style block comment: rare; leave the whole prim to the inline
+        // parser rather than teaching every raw scanner about it.
+        bail = true;
+        break;
+      }
+      advance();
+      continue;
+    }
+
+    if (c == '[') {
+      // Skip the whole bracketed literal with the ARRAY scanner: numeric
+      // tuple arrays are full of parens, and stopping at each one here made
+      // the prim scan far slower than the inline parse it replaces.
+      advance();  // '['
+      int bracket_depth = 1;
+      while (pos_ < length_ && bracket_depth > 0) {
+        {
+          const char* base = data_ + pos_;
+          size_t nl = 0;
+          size_t commas_unused = 0;
+          const char* hit = simdscan::ScanArrayStructural(
+              base, data_ + length_, &nl, &commas_unused);
+          pos_ += static_cast<size_t>(hit - base);
+          line_ += nl;
+          if (pos_ >= length_) break;
+        }
+        if (pos_ > scan_limit) break;
+        const char ac = current_char();
+        if (ac == '#') {
+          skip_comment();
+          continue;
+        }
+        if (ac == '"' || ac == '\'') {
+          skip_quoted_raw();
+          continue;
+        }
+        if (ac == '@') {
+          skip_asset_raw();
+          continue;
+        }
+        if (ac == '[') {
+          bracket_depth++;
+        } else if (ac == ']') {
+          bracket_depth--;
+        }
+        advance();
+      }
+      if (pos_ > scan_limit) break;
+      continue;
+    }
+
+    if (c == '(') {
+      paren_depth++;
+    } else if (c == ')') {
+      if (paren_depth > 0) paren_depth--;
+    } else if (c == '{') {
+      if (paren_depth == 0) {
+        body_seen = true;
+        brace_depth++;
+      }
+      // braces inside metadata parens (dict values) are balanced within the
+      // parens: they cannot open the prim body.
+    } else if (c == '}') {
+      if (paren_depth == 0 && body_seen) {
+        brace_depth--;
+        if (brace_depth == 0) {
+          advance();  // consume the closing '}'
+          ok = true;
+          break;
+        }
+      }
+    }
+    advance();  // stray ']' (malformed) is skipped like any other byte
+  }
+
+  const size_t block_len = ok ? (pos_ - block_start) : 0;
+  if (!ok || bail || block_len < min_bytes || pos_ > scan_limit) {
+    if (out_too_big && !ok && !bail && pos_ > scan_limit) *out_too_big = true;
+    pos_ = saved_pos;
+    line_ = saved_line;
+    column_ = saved_column;
+    current_ = saved_current;
+    has_current_ = saved_has_current;
+    return false;
+  }
+
+  *out_block = data_ + block_start;
+  *out_len = block_len;
+  if (out_line) *out_line = start_line;
+  if (out_column) *out_column = start_column;
   has_current_ = false;
   return true;
 }
@@ -318,6 +548,14 @@ Token Lexer::next() {
     return current_;
   }
   return scan_token();
+}
+
+void Lexer::consume() {
+  if (has_current_) {
+    has_current_ = false;
+    return;
+  }
+  (void)scan_token();
 }
 
 bool Lexer::expect(TokenType type) {
@@ -362,10 +600,10 @@ Token Lexer::make_token(TokenType type, size_t start_line, size_t start_col) {
   return tok;
 }
 
-Token Lexer::make_token(TokenType type, const std::string& value, size_t start_line, size_t start_col) {
+Token Lexer::make_token(TokenType type, std::string value, size_t start_line, size_t start_col) {
   Token tok;
   tok.type = type;
-  tok.value = value;
+  tok.value = std::move(value);
   tok.line = start_line;
   tok.column = start_col;
   return tok;
@@ -442,8 +680,25 @@ Token Lexer::scan_identifier() {
   size_t start_line = line_;
   size_t start_col = column_;
   size_t start = pos_;
+  const AsciiIdentTable& ascii = GetAsciiIdentTable();
 
   while (pos_ < length_) {
+    // ASCII fast path: identifier bytes never include '\n', so the location
+    // update is a plain column bump (same result as advance() per byte).
+    {
+      size_t p = pos_;
+      while (p < length_) {
+        const unsigned char c = static_cast<unsigned char>(data_[p]);
+        if (c >= 0x80 || !ascii.cont[c]) break;
+        ++p;
+      }
+      column_ += p - pos_;
+      pos_ = p;
+      if (pos_ >= length_ ||
+          static_cast<unsigned char>(data_[pos_]) < 0x80) {
+        break;  // end of input or a non-identifier ASCII byte
+      }
+    }
     uint32_t cp = 0;
     size_t width = 0;
     if (!identifier_detail::DecodeUtf8(data_, length_, pos_, &cp, &width)) {
@@ -462,10 +717,9 @@ Token Lexer::scan_identifier() {
     return make_token(TokenType::Invalid, start_line, start_col);
   }
 
-  std::string value(data_ + start, pos_ - start);
-  TokenType type = LookupKeyword(value);
-
-  return make_token(type, value, start_line, start_col);
+  const TokenType type = LookupKeyword(data_ + start, pos_ - start);
+  return make_token(type, std::string(data_ + start, pos_ - start), start_line,
+                    start_col);
 }
 
 Token Lexer::scan_number() {
@@ -483,7 +737,7 @@ Token Lexer::scan_number() {
   if (size_t special = MatchFloatSpecial(data_ + pos_, data_ + length_)) {
     for (size_t i = 0; i < special; i++) advance();
     std::string value(data_ + start, pos_ - start);
-    return make_token(TokenType::Number, value, start_line, start_col);
+    return make_token(TokenType::Number, std::move(value), start_line, start_col);
   }
 
   // Check for hex
@@ -534,7 +788,7 @@ Token Lexer::scan_number() {
   }
 
   std::string value(data_ + start, pos_ - start);
-  return make_token(TokenType::Number, value, start_line, start_col);
+  return make_token(TokenType::Number, std::move(value), start_line, start_col);
 }
 
 Token Lexer::scan_string() {
@@ -646,7 +900,7 @@ Token Lexer::scan_string() {
     return make_token(TokenType::Invalid, start_line, start_col);
   }
 
-  return make_token(TokenType::String, value, start_line, start_col);
+  return make_token(TokenType::String, std::move(value), start_line, start_col);
 }
 
 Token Lexer::scan_path_ref() {
@@ -678,7 +932,7 @@ Token Lexer::scan_path_ref() {
     set_fatal_error("Invalid AOUSD path reference: <" + value + ">");
     return make_token(TokenType::Invalid, start_line, start_col);
   }
-  return make_token(TokenType::PathRef, value, start_line, start_col);
+  return make_token(TokenType::PathRef, std::move(value), start_line, start_col);
 }
 
 Token Lexer::scan_asset_ref() {
@@ -743,7 +997,7 @@ Token Lexer::scan_asset_ref() {
   }
 
   // Return as a string token (asset references are essentially strings)
-  return make_token(TokenType::String, value, start_line, start_col);
+  return make_token(TokenType::String, std::move(value), start_line, start_col);
 }
 
 const char* TokenTypeName(TokenType type) {

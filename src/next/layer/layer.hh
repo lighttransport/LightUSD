@@ -158,6 +158,28 @@ public:
   Layer Clone() const;
 
   // ============================================================
+  // Parallel-subtree stitch support (USDA parallel prim parse)
+  // ============================================================
+
+  /// Placeholder marker bit: root/child index entries carrying this bit refer
+  /// to a not-yet-stitched worker fragment (low 31 bits = fragment id). Every
+  /// placeholder is resolved by splice_fragments() before finalize.
+  static constexpr uint32_t kPendingIndexBit = 0x80000000u;
+
+  /// Append a pending root marker (fragment id), preserving authored order.
+  void add_root_pending(uint32_t fragment_id);
+
+  /// Move the prims of every fragment into this layer, reproducing the exact
+  /// prim order a serial build would have produced: fragment f's prims are
+  /// placed right before this layer's prim number insert_before[f] (= how many
+  /// prims this layer held when f was dispatched; non-decreasing in f).
+  /// A placeholder expands to ALL of its fragment's roots, in order. All
+  /// indices are rebased and placeholders resolved. Returns false (layer
+  /// contents unspecified — callers discard it) on any inconsistency.
+  bool splice_fragments(const std::vector<Layer*>& fragments,
+                        const std::vector<size_t>& insert_before);
+
+  // ============================================================
   // Path-addressed authoring (post-load editing)
   // ============================================================
 
@@ -296,8 +318,10 @@ public:
   /// Add property to current prim
   void add_property(const std::string& name, Value value, uint16_t flags = 0);
 
-  /// Add time sample to current prim
-  void add_time_sample(const std::string& prop_name, double time, Value value);
+  /// Add time sample to current prim. `dedup=false` skips content-hash dedup
+  /// (deferred-fill values from the batched USDA array parse; see PrimSpec).
+  void add_time_sample(const std::string& prop_name, double time, Value value,
+                       bool dedup = true);
 
   /// Add relationship to current prim
   void add_relationship(const std::string& name, const Path& target);
@@ -311,6 +335,18 @@ public:
 
   /// Finalize the layer
   void finalize();
+
+  /// True if the layer already holds a prim at `path_str` (same lookup
+  /// begin_prim() uses to re-open duplicate siblings).
+  bool contains_path(const std::string& path_str) {
+    return FindExistingPrim(path_str) != UINT32_MAX;
+  }
+
+  /// Absolute-path prefix applied to prims begun with an EMPTY parent stack
+  /// (path = prefix + "/" + name). Used by parallel subtree sub-parsers whose
+  /// fragment root is not a real layer root. Empty (default) keeps the normal
+  /// root behavior.
+  void set_path_prefix(std::string prefix) { path_prefix_ = std::move(prefix); }
 
 private:
   /// Index of the prim already at `path_str`, or UINT32_MAX.
@@ -334,6 +370,7 @@ private:
   std::unordered_map<std::string, uint32_t> path_index_;
   size_t indexed_prim_count_ = 0;
   bool path_index_built_ = false;
+  std::string path_prefix_;
 };
 
 }  // namespace next

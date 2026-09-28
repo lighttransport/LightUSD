@@ -48,6 +48,9 @@ int main(int argc, char **argv) {
   // WriteLayer. Measures RAW parse and RAW write throughput in isolation, and is
   // an idempotent parse-fidelity oracle (rewriting its own output is byte-identical).
   bool rewrite_layer = false;
+  // USDA parse fast paths (default on; byte-identical, serial fallback).
+  bool async_arrays = true;
+  bool parallel_prims = true;
   bool openusd_compat = false;
   bool aousd_strict = false;
   // Default instance flatten = holder (the historical -f behavior). `native`
@@ -74,6 +77,10 @@ int main(int argc, char **argv) {
       flatten = true;
     } else if (std::strcmp(argv[i], "--rewrite-layer") == 0) {
       rewrite_layer = true;
+    } else if (std::strcmp(argv[i], "--no-async-arrays") == 0) {
+      async_arrays = false;
+    } else if (std::strcmp(argv[i], "--no-parallel-prims") == 0) {
+      parallel_prims = false;
     } else if (std::strcmp(argv[i], "-l") == 0) {
       flatten = false;
     } else if ((std::strcmp(argv[i], "-o") == 0 ||
@@ -154,6 +161,7 @@ int main(int argc, char **argv) {
                          "[--compose-threads N] [--compose-threads-auto] "
                          "[--load-payloads|--defer-payloads] "
                          "[--aousd-strict] "
+                         "[--no-async-arrays] [--no-parallel-prims] "
                          "[--require-prim /Path] "
                          "file.usd[acz]\n");
     return 2;
@@ -195,7 +203,12 @@ int main(int argc, char **argv) {
     pcp::LayerLoadOptions load_opts;
     load_opts.parse_num_threads = parse_threads;
     load_opts.usda_parse_options.strict_aousd_conformance = aousd_strict;
+    load_opts.usda_parse_options.async_arrays = async_arrays;
+    load_opts.usda_parse_options.parallel_prims = parallel_prims;
     load_opts.strict_aousd_conformance = aousd_strict;
+    // Benchmark path: flattened scenes exceed the default input cap. 0 keeps
+    // only the unconditional 16 GiB readable-file ceiling.
+    load_opts.max_memory = 0;
     auto layer = pcp::LoadLayerFromFile(filename, &warn, &err,
                                         load_opts);  // PARSE only
     const auto t_parsed = Clock::now();
@@ -279,6 +292,13 @@ int main(int argc, char **argv) {
     opts.strict_aousd_conformance = aousd_strict;
     if (!variant_fallbacks.empty()) opts.variant_fallbacks = variant_fallbacks;
     opts.usda_parse_options.strict_aousd_conformance = aousd_strict;
+    opts.usda_parse_options.async_arrays = async_arrays;
+    opts.usda_parse_options.parallel_prims = parallel_prims;
+    // USDA parse-thread hint for every layer composition loads (0 = auto,
+    // 1 = serial parse); same env knob as the --rewrite-layer path.
+    if (const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS")) {
+      opts.usda_parse_options.num_threads = std::atoi(nt);
+    }
     opts.instance_flatten_mode = inst_mode;  // default Holder (self-contained)
     opts.prototype_numbering = proto_num;
     // Parallel compose (pre-warm sources_cache) is OPT-IN via --compose-threads N

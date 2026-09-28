@@ -878,11 +878,21 @@ bool ParseNumericArrayParallel(const char* data, size_t len, int nt_hint,
 // Serial parse of a whole simple array span ([ .. ]) through the tight
 // ParseChunkFlat inner loop — the same low-per-element-overhead path the parallel
 // workers use, so sub-threshold (and threads-off) arrays get the same speedup.
+//
+// `expected_scalars` (0 = unknown) is the capture-time scalar prediction for a
+// simple array (see Lexer::capture_bracketed_literal): an exact-capacity
+// reserve removes all growth reallocation/copying. Reserve + push_back,
+// deliberately NOT a pointer-fill loop: extra instantiations of the chunk
+// parser blow the inline budget and un-inline fast_float.
 template <class T, uint32_t N, class ParseOne>
-bool ParseSimpleArraySerial(const char* data, size_t len, std::vector<T>* out,
+bool ParseSimpleArraySerial(const char* data, size_t len,
+                            size_t expected_scalars, std::vector<T>* out,
                             ParseOne parse_one) {
   if (len < 2 || data[0] != '[' || data[len - 1] != ']') return false;
   out->clear();
+  if (expected_scalars > 0 && expected_scalars <= kMaxArrayScalars) {
+    out->reserve(expected_scalars);
+  }
   return ParseChunkFlat<T, N>(data + 1, data + len - 1, /*is_last=*/true, out,
                               parse_one);
 }
@@ -890,7 +900,8 @@ bool ParseSimpleArraySerial(const char* data, size_t len, std::vector<T>* out,
 template <class T, class ParseOne>
 bool ParseScalarArrayMaybeParallel(const char* data, size_t len, bool simple,
                                    int nt_hint, std::vector<T>* out,
-                                   ParseOne parse_one) {
+                                   ParseOne parse_one,
+                                   size_t expected_scalars = 0) {
 #if defined(LIGHTUSD_ENABLE_THREAD)
   if (simple &&
       ParseNumericArrayParallel<T, 1>(data, len, nt_hint, out, parse_one)) {
@@ -899,7 +910,8 @@ bool ParseScalarArrayMaybeParallel(const char* data, size_t len, bool simple,
 #else
   (void)nt_hint;
 #endif
-  if (simple && ParseSimpleArraySerial<T, 1>(data, len, out, parse_one)) {
+  if (simple && ParseSimpleArraySerial<T, 1>(data, len, expected_scalars, out,
+                                             parse_one)) {
     return true;
   }
   SliceParser sp{data, data + len};
@@ -910,7 +922,8 @@ bool ParseScalarArrayMaybeParallel(const char* data, size_t len, bool simple,
 template <class T, uint32_t N, class ParseOne>
 bool ParseTupleArrayMaybeParallel(const char* data, size_t len, bool simple,
                                   int nt_hint, std::vector<T>* out,
-                                  ParseOne parse_one) {
+                                  ParseOne parse_one,
+                                  size_t expected_scalars = 0) {
 #if defined(LIGHTUSD_ENABLE_THREAD)
   if (simple &&
       ParseNumericArrayParallel<T, N>(data, len, nt_hint, out, parse_one)) {
@@ -919,16 +932,33 @@ bool ParseTupleArrayMaybeParallel(const char* data, size_t len, bool simple,
 #else
   (void)nt_hint;
 #endif
-  if (simple && ParseSimpleArraySerial<T, N>(data, len, out, parse_one)) {
+  if (simple && ParseSimpleArraySerial<T, N>(data, len, expected_scalars, out,
+                                             parse_one)) {
     return true;
   }
   SliceParser sp{data, data + len};
   return ParseTupleArray<T, N>(&sp, out, parse_one);
 }
 
+ParseResult ParseArrayValueFromSliceSized(const char* data, size_t len,
+                                         bool simple, int nt_hint,
+                                         TypeId element_type,
+                                         size_t expected_scalars);
+
 ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
                                     int nt_hint, TypeId element_type) {
+  return ParseArrayValueFromSliceSized(data, len, simple, nt_hint,
+                                       element_type, /*expected_scalars=*/0);
+}
+
+// `expected_scalars` (0 = unknown) only pre-sizes the output vectors of the
+// simple-array fast paths; it never changes what is parsed.
+ParseResult ParseArrayValueFromSliceSized(const char* data, size_t len,
+                                         bool simple, int nt_hint,
+                                         TypeId element_type,
+                                         size_t expected_scalars) {
   SliceParser sp{data, data + len};
+  const size_t xs = simple ? expected_scalars : 0;
 
   auto parse_float = [](SliceParser* s, float* v) { return s->parse_float(v); };
   auto parse_double = [](SliceParser* s, double* v) { return s->parse_double(v); };
@@ -936,7 +966,7 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
   if (element_type == TypeId::Float) {
     std::vector<float> values;
     if (!ParseScalarArrayMaybeParallel<float>(data, len, simple, nt_hint,
-                                             &values, parse_float)) {
+                                             &values, parse_float, xs)) {
       return ParseResult::Error("Failed to parse float array");
     }
     return ParseResult::Ok(Value::MakeFloatArray(std::move(values)));
@@ -944,7 +974,7 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
   if (element_type == TypeId::Double) {
     std::vector<double> values;
     if (!ParseScalarArrayMaybeParallel<double>(data, len, simple, nt_hint,
-                                              &values, parse_double)) {
+                                              &values, parse_double, xs)) {
       return ParseResult::Error("Failed to parse double array");
     }
     return ParseResult::Ok(Value::MakeDoubleArray(std::move(values)));
@@ -952,7 +982,7 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
   if (element_type == TypeId::Half) {
     std::vector<float> values;
     if (!ParseScalarArrayMaybeParallel<float>(data, len, simple, nt_hint,
-                                             &values, parse_float)) {
+                                             &values, parse_float, xs)) {
       return ParseResult::Error("Failed to parse half array");
     }
     QuantizeHalfValues(&values);
@@ -961,7 +991,7 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
   if (element_type == TypeId::TimeCode) {
     std::vector<double> values;
     if (!ParseScalarArrayMaybeParallel<double>(data, len, simple, nt_hint,
-                                              &values, parse_double)) {
+                                              &values, parse_double, xs)) {
       return ParseResult::Error("Failed to parse timecode array");
     }
     return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 1));
@@ -984,7 +1014,7 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
       return true;
     };
     if (!ParseScalarArrayMaybeParallel<int32_t>(data, len, simple, nt_hint,
-                                               &values, parse_i32)) {
+                                               &values, parse_i32, xs)) {
       return ParseResult::Error("Failed to parse int array");
     }
     return ParseResult::Ok(Value::MakeIntArray(std::move(values)));
@@ -998,7 +1028,7 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
       return true;
     };
     if (!ParseScalarArrayMaybeParallel<uint32_t>(data, len, simple, nt_hint,
-                                                &values, parse_u32)) {
+                                                &values, parse_u32, xs)) {
       return ParseResult::Error("Failed to parse uint array");
     }
     return ParseResult::Ok(Value::MakeUIntArray(std::move(values)));
@@ -1013,7 +1043,7 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
       return true;
     };
     if (!ParseScalarArrayMaybeParallel<uint32_t>(data, len, simple, nt_hint,
-                                                &values, parse_u8)) {
+                                                &values, parse_u8, xs)) {
       return ParseResult::Error("Failed to parse uchar array");
     }
     return ParseResult::Ok(
@@ -1023,7 +1053,7 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
     std::vector<int64_t> values;
     auto parse_i64 = [](SliceParser* s, int64_t* v) { return s->parse_i64(v); };
     if (!ParseScalarArrayMaybeParallel<int64_t>(data, len, simple, nt_hint,
-                                               &values, parse_i64)) {
+                                               &values, parse_i64, xs)) {
       return ParseResult::Error("Failed to parse int64 array");
     }
     return ParseResult::Ok(Value::MakeInt64Array(std::move(values)));
@@ -1032,7 +1062,7 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
     std::vector<uint64_t> values;
     auto parse_u64 = [](SliceParser* s, uint64_t* v) { return s->parse_u64(v); };
     if (!ParseScalarArrayMaybeParallel<uint64_t>(data, len, simple, nt_hint,
-                                               &values, parse_u64)) {
+                                               &values, parse_u64, xs)) {
       return ParseResult::Error("Failed to parse uint64 array");
     }
     return ParseResult::Ok(Value::MakeUInt64Array(std::move(values)));
@@ -1118,13 +1148,13 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
     bool ok = false;
     if (element_type == TypeId::Int2) {
       ok = ParseTupleArrayMaybeParallel<int32_t, 2>(
-          data, len, simple, nt_hint, &values, parse_i32);
+          data, len, simple, nt_hint, &values, parse_i32, xs);
     } else if (element_type == TypeId::Int3) {
       ok = ParseTupleArrayMaybeParallel<int32_t, 3>(
-          data, len, simple, nt_hint, &values, parse_i32);
+          data, len, simple, nt_hint, &values, parse_i32, xs);
     } else {
       ok = ParseTupleArrayMaybeParallel<int32_t, 4>(
-          data, len, simple, nt_hint, &values, parse_i32);
+          data, len, simple, nt_hint, &values, parse_i32, xs);
     }
     if (!ok) return ParseResult::Error("Failed to parse int-vector array");
     const uint32_t comps = (element_type == TypeId::Int2)   ? 2u
@@ -1146,13 +1176,13 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
     bool ok = false;
     if (element_type == TypeId::UInt2) {
       ok = ParseTupleArrayMaybeParallel<uint32_t, 2>(
-          data, len, simple, nt_hint, &values, parse_u32);
+          data, len, simple, nt_hint, &values, parse_u32, xs);
     } else if (element_type == TypeId::UInt3) {
       ok = ParseTupleArrayMaybeParallel<uint32_t, 3>(
-          data, len, simple, nt_hint, &values, parse_u32);
+          data, len, simple, nt_hint, &values, parse_u32, xs);
     } else {
       ok = ParseTupleArrayMaybeParallel<uint32_t, 4>(
-          data, len, simple, nt_hint, &values, parse_u32);
+          data, len, simple, nt_hint, &values, parse_u32, xs);
     }
     if (!ok) return ParseResult::Error("Failed to parse uint-vector array");
     const uint32_t comps = (element_type == TypeId::UInt2)   ? 2u
@@ -1164,7 +1194,7 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
   if (IsFloat2Like(element_type)) {
     std::vector<float> values;
     if (!ParseTupleArrayMaybeParallel<float, 2>(data, len, simple, nt_hint,
-                                               &values, parse_float)) {
+                                               &values, parse_float, xs)) {
       return ParseResult::Error("Failed to parse float2 array");
     }
     if (IsHalfLike(element_type)) QuantizeHalfValues(&values);
@@ -1173,7 +1203,7 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
   if (IsFloat3Like(element_type)) {
     std::vector<float> values;
     if (!ParseTupleArrayMaybeParallel<float, 3>(data, len, simple, nt_hint,
-                                               &values, parse_float)) {
+                                               &values, parse_float, xs)) {
       return ParseResult::Error("Failed to parse float3 array");
     }
     if (IsHalfLike(element_type)) QuantizeHalfValues(&values);
@@ -1182,7 +1212,7 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
   if (IsFloat4Like(element_type)) {
     std::vector<float> values;
     if (!ParseTupleArrayMaybeParallel<float, 4>(data, len, simple, nt_hint,
-                                               &values, parse_float)) {
+                                               &values, parse_float, xs)) {
       return ParseResult::Error("Failed to parse float4 array");
     }
     if (IsHalfLike(element_type)) QuantizeHalfValues(&values);
@@ -1191,7 +1221,7 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
   if (IsDouble2Like(element_type)) {
     std::vector<double> values;
     if (!ParseTupleArrayMaybeParallel<double, 2>(data, len, simple, nt_hint,
-                                                &values, parse_double)) {
+                                                &values, parse_double, xs)) {
       return ParseResult::Error("Failed to parse double2 array");
     }
     return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 2));
@@ -1199,7 +1229,7 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
   if (IsDouble3Like(element_type)) {
     std::vector<double> values;
     if (!ParseTupleArrayMaybeParallel<double, 3>(data, len, simple, nt_hint,
-                                                &values, parse_double)) {
+                                                &values, parse_double, xs)) {
       return ParseResult::Error("Failed to parse double3 array");
     }
     return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 3));
@@ -1207,7 +1237,7 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
   if (IsDouble4Like(element_type)) {
     std::vector<double> values;
     if (!ParseTupleArrayMaybeParallel<double, 4>(data, len, simple, nt_hint,
-                                                &values, parse_double)) {
+                                                &values, parse_double, xs)) {
       return ParseResult::Error("Failed to parse double4 array");
     }
     return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 4));
@@ -1321,6 +1351,143 @@ bool IsUsdaArrayLazyCandidate(TypeId element_type) {
   }
 }
 
+// Scalar-count prediction for a captured simple array from the capture's comma
+// tally: in a well-formed simple array (bare scalars, paren tuples, or matrix
+// rows) every adjacent scalar pair is separated by exactly one comma, so
+// scalars = commas + 1, or = commas with a trailing comma before ']'. 0 =
+// unknown (not simple, or no commas: empty / single-element arrays cannot be
+// told apart from the tally alone). Only ever used as a reserve hint or as a
+// shape the deferred parse VERIFIES against the real parse.
+size_t PredictSimpleArrayScalars(const char* data, size_t len, bool simple,
+                                 size_t commas) {
+  if (!simple || commas == 0 || len < 2) return 0;
+  size_t i = len - 1;  // the closing ']'
+  while (i > 0) {
+    const char c = data[i - 1];
+    if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+      --i;
+      continue;
+    }
+    break;
+  }
+  const bool trailing_comma = (i > 0 && data[i - 1] == ',');
+  return trailing_comma ? commas : commas + 1;
+}
+
+// Storage mapping of a deferrable array element type, mirroring EXACTLY what
+// ParseArrayValueFromSliceSized builds for it (payload scalar kind + scalars
+// per element). String-family arrays stay synchronous.
+bool GetDeferredArrayInfo(TypeId t, Value::ArrayScalarKind* kind,
+                          uint32_t* comps) {
+  using K = Value::ArrayScalarKind;
+  switch (t) {
+    case TypeId::Float:
+    case TypeId::Half: *kind = K::Float; *comps = 1; return true;
+    case TypeId::Double:
+    case TypeId::TimeCode: *kind = K::Double; *comps = 1; return true;
+    case TypeId::Bool: *kind = K::Bool; *comps = 1; return true;
+    case TypeId::Int: *kind = K::Int32; *comps = 1; return true;
+    case TypeId::UInt:
+    case TypeId::UChar: *kind = K::UInt32; *comps = 1; return true;
+    case TypeId::Int64: *kind = K::Int64; *comps = 1; return true;
+    case TypeId::UInt64: *kind = K::UInt64; *comps = 1; return true;
+    case TypeId::Int2: *kind = K::Int32; *comps = 2; return true;
+    case TypeId::Int3: *kind = K::Int32; *comps = 3; return true;
+    case TypeId::Int4: *kind = K::Int32; *comps = 4; return true;
+    case TypeId::UInt2: *kind = K::UInt32; *comps = 2; return true;
+    case TypeId::UInt3: *kind = K::UInt32; *comps = 3; return true;
+    case TypeId::UInt4: *kind = K::UInt32; *comps = 4; return true;
+    case TypeId::Matrix2f: *kind = K::Float; *comps = 4; return true;
+    case TypeId::Matrix3f: *kind = K::Float; *comps = 9; return true;
+    case TypeId::Matrix4f: *kind = K::Float; *comps = 16; return true;
+    case TypeId::Matrix2d: *kind = K::Double; *comps = 4; return true;
+    case TypeId::Matrix3d: *kind = K::Double; *comps = 9; return true;
+    case TypeId::Matrix4d: *kind = K::Double; *comps = 16; return true;
+    default: break;
+  }
+  if (IsFloat2Like(t)) { *kind = K::Float; *comps = 2; return true; }
+  if (IsFloat3Like(t)) { *kind = K::Float; *comps = 3; return true; }
+  if (IsFloat4Like(t)) { *kind = K::Float; *comps = 4; return true; }
+  if (IsDouble2Like(t)) { *kind = K::Double; *comps = 2; return true; }
+  if (IsDouble3Like(t)) { *kind = K::Double; *comps = 3; return true; }
+  if (IsDouble4Like(t)) { *kind = K::Double; *comps = 4; return true; }
+  return false;
+}
+
+#if defined(LIGHTUSD_ENABLE_THREAD)
+// Deferral window. Below the floor the per-item bookkeeping outweighs the
+// parse. Huge arrays are deferred too: one worker parses the whole array into
+// its exactly-reserved vector while the main thread streams ahead, which beats
+// the synchronous intra-array split (per-array join blocking the main thread
+// plus a full concatenate copy).
+constexpr size_t kDeferredArrayMinBytes = 256;
+constexpr size_t kDeferredArrayMaxBytes = size_t(2) << 30;  // 2 GiB
+
+// Worker-side deferred parse: the SAME slice parser the synchronous path uses
+// (bit-identical values, identical accept/reject), then the payload is moved
+// into the committed placeholder. Returns false on a parse failure or a shape
+// that differs from the prediction; the parser then re-parses serially.
+bool CompleteDeferredArrayItem(DeferredArrayItem& item) {
+  ParseResult r = ParseArrayValueFromSliceSized(
+      item.data, item.len, /*simple=*/true, /*nt_hint=*/1, item.type_id,
+      item.expected_scalars);
+  const bool ok = r.success && item.fill.Complete(std::move(r.value));
+  item.fill.Release();
+  return ok;
+}
+#endif  // LIGHTUSD_ENABLE_THREAD
+
+ParseResult ParseArrayValueMaybeDeferred(Lexer& lexer, TypeId element_type,
+                                         const ParseArrayContext& context,
+                                         DeferredArrayScheduler* scheduler,
+                                         bool* out_deferred) {
+  if (out_deferred) *out_deferred = false;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  Value::ArrayScalarKind kind{};
+  uint32_t comps = 0;
+  if (scheduler && !scheduler->failed() && !context.enable_usda_lazy_arrays &&
+      IsUsdaArrayLazyCandidate(element_type) &&
+      GetDeferredArrayInfo(element_type, &kind, &comps) &&
+      lexer.peek().type == TokenType::OpenBracket) {
+    // Same capture ParseArrayValue performs for these element types.
+    const char* data = nullptr;
+    size_t len = 0;
+    bool simple = false;
+    size_t commas = 0;
+    if (!lexer.capture_bracketed_literal(&data, &len, &simple, &commas)) {
+      return ParseResult::Error(lexer.error());
+    }
+    const size_t scalars = PredictSimpleArrayScalars(data, len, simple, commas);
+    if (scalars > 0 && len >= kDeferredArrayMinBytes &&
+        len < kDeferredArrayMaxBytes && (scalars % comps) == 0 &&
+        scalars <= kMaxArrayScalars) {
+      Value::DeferredArrayFill fill;
+      Value v = Value::MakeDeferredArray(
+          element_type, kind, static_cast<uint32_t>(scalars / comps), &fill);
+      if (!v.is_empty()) {
+        DeferredArrayItem item;
+        item.data = data;
+        item.len = len;
+        item.expected_scalars = scalars;
+        item.type_id = element_type;
+        item.fill = std::move(fill);
+        scheduler->Enqueue(std::move(item));
+        if (out_deferred) *out_deferred = true;
+        return ParseResult::Ok(std::move(v));
+      }
+    }
+    // Captured but not deferrable: finish synchronously, exactly as
+    // ParseArrayValue would after its own capture.
+    return ParseArrayValueFromSliceSized(data, len, simple,
+                                         context.num_threads, element_type,
+                                         scalars);
+  }
+#else
+  (void)scheduler;
+#endif
+  return ParseArrayValue(lexer, element_type, context);
+}
+
 ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type,
                            const ParseArrayContext& context) {
   // USD allows array-valued attributes to author `None` as a blocked value.
@@ -1339,7 +1506,8 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type,
     const char* data = nullptr;
     size_t len = 0;
     bool simple = false;
-    if (!lexer.capture_bracketed_literal(&data, &len, &simple)) {
+    size_t commas = 0;
+    if (!lexer.capture_bracketed_literal(&data, &len, &simple, &commas)) {
       return ParseResult::Error(lexer.error());
     }
 
@@ -1369,8 +1537,9 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type,
       }
     }
 
-    return ParseArrayValueFromSlice(data, len, simple, context.num_threads,
-                                   element_type);
+    return ParseArrayValueFromSliceSized(
+        data, len, simple, context.num_threads, element_type,
+        PredictSimpleArrayScalars(data, len, simple, commas));
   }
 
   if (element_type == TypeId::Token || element_type == TypeId::String ||

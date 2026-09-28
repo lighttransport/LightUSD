@@ -290,7 +290,7 @@ void AsciiParser::Impl::AddWarning(const std::string& message) {
 
 bool AsciiParser::Impl::Match(TokenType type) {
   if (Check(type)) {
-    lexer_->next();
+    lexer_->consume();
     return true;
   }
   return false;
