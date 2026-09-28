@@ -4470,7 +4470,9 @@ if(LIGHTUSD_BUILD_TESTS)
     target_link_libraries(bench-render-convert PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(bench-render-convert PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME bench-render-convert COMMAND bench-render-convert --iters 1 --prims 64)
-    set_tests_properties(bench-render-convert PROPERTIES LABELS "benchmark")
+    # Both binaries create/remove the same /tmp/perfrc_scene_64.usda fixture.
+    set_tests_properties(bench-render-convert PROPERTIES LABELS "benchmark"
+                         RESOURCE_LOCK render_convert_fixture)
 
     if(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE AND TARGET lightusd_next AND TARGET tydra_next)
       add_executable(bench-render-convert-next tests/feat/render-convert/perf-render-convert.cc)
@@ -4481,7 +4483,8 @@ if(LIGHTUSD_BUILD_TESTS)
         ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/src/next)
       target_compile_definitions(bench-render-convert-next PRIVATE PERFRC_ENABLE_NEXT=1)
       add_test(NAME bench-render-convert-next COMMAND bench-render-convert-next --iters 1 --prims 64)
-      set_tests_properties(bench-render-convert-next PROPERTIES LABELS "benchmark")
+      set_tests_properties(bench-render-convert-next PROPERTIES LABELS "benchmark"
+                           RESOURCE_LOCK render_convert_fixture)
     endif()
   endif()
 
