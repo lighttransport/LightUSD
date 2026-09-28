@@ -8,6 +8,11 @@
 #include "../../safe-arithmetic.hh"
 #include <algorithm>
 #include <unordered_set>
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include <thread>
+#include <vector>
+#include "../execution.hh"
+#endif
 
 namespace lightusd {
 namespace next {
@@ -474,9 +479,33 @@ void Layer::finalize() {
   // Build path-to-index map
   build_path_index();
 
-  // Finalize each prim's properties (sort for binary search)
-  for (auto& prim : prims_) {
-    prim.finalize_properties();
+  // Finalize each prim's properties (sort for binary search). Each prim's
+  // sort orders only its own slots, so large layers (a composed stage) sort in
+  // parallel with identical results. The 64k-prim threshold keeps ordinary
+  // layers -- including per-worker layers finalized during a parallel scene
+  // load -- on the serial path, avoiding nested thread fan-out.
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  const unsigned hw = std::thread::hardware_concurrency();
+  const size_t workers =
+      std::min<size_t>(hw ? hw : 1, static_cast<size_t>(kMaxExecutionThreads));
+  if (prims_.size() >= 65536 && workers > 1) {
+    std::vector<std::thread> pool;
+    pool.reserve(workers);
+    const size_t n = prims_.size();
+    for (size_t t = 0; t < workers; ++t) {
+      const size_t lo = n * t / workers;
+      const size_t hi = n * (t + 1) / workers;
+      pool.emplace_back([this, lo, hi]() {
+        for (size_t i = lo; i < hi; ++i) prims_[i].finalize_properties();
+      });
+    }
+    for (std::thread& th : pool) th.join();
+  } else
+#endif
+  {
+    for (auto& prim : prims_) {
+      prim.finalize_properties();
+    }
   }
 
   apply_namespace_ordering();
