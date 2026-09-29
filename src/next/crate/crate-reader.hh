@@ -7,6 +7,7 @@
 #pragma once
 
 #include "crate-format.hh"
+#include "crate-limits.hh"
 #include "../stage/stage.hh"
 #include <functional>
 #include <string>
@@ -18,8 +19,9 @@
 namespace lightusd {
 namespace next {
 
-/// Options for reading crate files
-struct CrateReadOptions {
+/// Options for reading crate files. The structural table-count limits
+/// (max_tokens ... max_path_depth) come from CrateLimits.
+struct CrateReadOptions : CrateLimits {
   /// Fail closed when any field/value must be ignored or approximated. This
   /// turns reader warnings into errors for AOUSD conformance-sensitive loads.
   bool strict_aousd_conformance = false;
@@ -29,28 +31,10 @@ struct CrateReadOptions {
   std::function<bool(const char* phase, size_t current, size_t total)>
       progress_callback;
 
-  /// Maximum number of tokens allowed
-  size_t max_tokens = 1024 * 1024;
-
-  /// Maximum number of strings allowed
-  size_t max_strings = 1024 * 1024;
-
-  /// Maximum number of fields allowed
-  size_t max_fields = 10 * 1024 * 1024;
-
-  /// Maximum number of specs allowed
-  size_t max_specs = 10 * 1024 * 1024;
-
-  /// Maximum number of paths allowed
-  size_t max_paths = 10 * 1024 * 1024;
-
   /// Maximum number of elements in a single value array
   /// (mirrors pxrUSD/legacy core's 1<<30 cap; guards against a malformed
   /// count triggering an enormous allocation).
   size_t max_array_elements = 16 * 1024 * 1024;
-
-  /// Maximum recursion depth for path decoding
-  size_t max_path_depth = 256;
 
   /// Maximum memory budget (bytes, 0 = unlimited)
   size_t max_memory = security_policy::kDefaultInputLimitBytes;
@@ -59,6 +43,15 @@ struct CrateReadOptions {
   /// instead of eagerly decoding them (low-memory load/compose/write path).
   /// Set false to force eager decode (e.g. for A/B memory comparisons).
   bool lazy_arrays = true;
+
+  /// Log per-phase wall times ("[next_crate_read] ...", "[next_crate_stage]
+  /// ...") at INFO through lightusd::logging.
+  bool enable_timing = false;
+
+  /// Worker-thread hint for the parallel stage build (0 = auto min(hw, 8),
+  /// 1 = serial, >1 = fixed, clamped). Output is identical at every count;
+  /// small crates always build serially. Ignored without LIGHTUSD_ENABLE_THREAD.
+  int num_threads = 0;
 
   /// When reading from a file path, memory-map the crate read-only instead of
   /// copying it into an owned heap buffer (Phase 8.3). Falls back to the owned
@@ -129,8 +122,8 @@ public:
   // tokens pooled, see TokenPool in the .cc).
   std::vector<std::string> tokens() const;
 
-  /// Get paths table
-  const std::vector<std::string>& paths() const;
+  /// Get paths table (materialized copy; the reader stores paths pooled)
+  std::vector<std::string> paths() const;
 
   /// Get fields table
   const std::vector<CrateField>& fields() const;

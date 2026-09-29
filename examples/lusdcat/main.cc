@@ -28,7 +28,6 @@
 #include "usda-writer.hh"
 #include "usd-validation.hh"
 
-#include "tydra/scene-access.hh"
 #include "variant-format.hh"
 #include "comp-graph-dump.hh"
 
@@ -142,6 +141,28 @@ static bool ContainsAny(const std::string &s,
     }
   }
   return false;
+}
+
+static void PrintMeshPrims(const lightusd::Stage &stage) {
+  std::vector<std::pair<const lightusd::Prim *, std::string>> pending;
+  for (auto it = stage.root_prims().rbegin();
+       it != stage.root_prims().rend(); ++it) {
+    pending.emplace_back(&*it, "");
+  }
+  while (!pending.empty()) {
+    auto current = std::move(pending.back());
+    pending.pop_back();
+    const auto name = current.first->element_name();
+    const std::string path = current.second + "/" +
+                             std::string(name.data(), name.size());
+    if (current.first->type_name() == "Mesh") {
+      std::cout << "Prim : " << path << "\n";
+    }
+    const auto &children = current.first->children();
+    for (auto it = children.rbegin(); it != children.rend(); ++it) {
+      pending.emplace_back(&*it, path);
+    }
+  }
 }
 
 template <typename T>
@@ -2164,15 +2185,7 @@ int main(int argc, char **argv) {
     }
     phase_mark("write-output");
 
-    using MeshMap = lightusd::tydra::PathPrimMap<lightusd::GeomMesh>;
-    MeshMap meshmap;
-
-    lightusd::tydra::ListPrims(comp_stage, meshmap);
-
-    for (const auto &item : meshmap) {
-
-      std::cout << "Prim : " << item.first << "\n";
-    }
+    PrintMeshPrims(comp_stage);
     phase_mark("list-prims(tail)");
 
   } else {

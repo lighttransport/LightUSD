@@ -4,6 +4,7 @@
 // LightUSD Next - Stage Implementation
 
 #include "stage.hh"
+#include "../layer/layer.hh"
 #include "../composition/composition.hh"
 #include "../schema/schema-registry.hh"
 #include "../../safe-arithmetic.hh"
@@ -785,6 +786,21 @@ const PrimSpecMeta& UsdPrim::GetMeta() const {
 // Stage
 // ============================================================
 
+const PropMeta* UsdPrim::GetPropertyMeta(const std::string& name) const {
+  return spec_ ? spec_->property_meta(name) : nullptr;
+}
+
+std::unique_ptr<Layer> Stage::ReleaseRootLayer() {
+  return std::move(root_layer_);
+}
+
+void Stage::Traverse(void* context, VisitFn callback) const {
+  if (!root_layer_ || !callback) return;
+  for (uint32_t idx : root_layer_->root_indices()) {
+    if (!TraverseImpl(idx, root_layer_.get(), context, callback)) break;
+  }
+}
+
 Stage::Stage() = default;
 Stage::~Stage() = default;
 
@@ -850,6 +866,16 @@ void Stage::UpdateMetaFromRootLayer() {
   meta_.doc = lm.doc;
   meta_.comment = lm.comment;
   meta_.owner = lm.owner;
+  meta_.autoPlay = lm.autoPlay;
+  meta_.autoPlay_set = lm.autoPlay_set;
+  meta_.playbackMode = lm.playbackMode;
+  meta_.playbackMode_set = lm.playbackMode_set;
+  meta_.copyright.clear();
+  if (const Dict* custom = lm.customLayerData.as_dictionary()) {
+    if (const Value* value = custom->find("copyright")) {
+      if (const std::string* text = value->as_string()) meta_.copyright = *text;
+    }
+  }
   meta_.doc_set = lm.doc_set;
   meta_.comment_set = lm.comment_set;
   meta_.owner_set = lm.owner_set;
@@ -870,7 +896,7 @@ UsdPrim Stage::GetPrimAtPath(const std::string& path) const {
 
   // The path index already maps path -> index; use it directly. (Previously this
   // re-derived the index with a linear scan over every prim -- O(N) per call,
-  // O(meshes*prims) over a render, ~8% of an isCoral render in per-mesh
+  // O(meshes*prims) over a render, ~8% of a large-scene render in per-mesh
   // material/texture/prototype lookups.)
   const uint32_t idx = root_layer_->index_at_path(path);
   if (idx != UINT32_MAX) {
@@ -937,7 +963,7 @@ bool Stage::HasPrimAtPath(const std::string& path) const {
 }
 
 bool Stage::TraverseImpl(uint32_t prim_index, const Layer* layer,
-                          const std::function<bool(const UsdPrim&)>& callback) const {
+                          void* context, VisitFn callback) const {
   // Iterative DFS with explicit stack to avoid stack overflow on deep scenes.
   struct Frame {
     uint32_t idx;
@@ -949,7 +975,7 @@ bool Stage::TraverseImpl(uint32_t prim_index, const Layer* layer,
   if (!spec) return true;
 
   UsdPrim prim(spec, layer, prim_index);
-  if (!callback(prim)) return false;
+  if (!callback(context, prim)) return false;
 
   stack.push_back({prim_index, 0});
 
@@ -969,7 +995,7 @@ bool Stage::TraverseImpl(uint32_t prim_index, const Layer* layer,
     if (!child_spec) continue;
 
     UsdPrim child_prim(child_spec, layer, child_idx);
-    if (!callback(child_prim)) return false;
+    if (!callback(context, child_prim)) return false;
 
     stack.push_back({child_idx, 0});
   }

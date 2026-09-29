@@ -7,6 +7,7 @@
 #include "../safe-file-size.hh"
 
 #include "crate-data-source.hh"
+#include "crate-timing.hh"
 
 #include <cstring>
 #include <fstream>
@@ -35,6 +36,7 @@ CrateReadResult CrateReader::Impl::ParseFromSource() {
   fieldset_indices_.clear();
   specs_.clear();
   paths_.clear();
+  path_parent_.clear();
 
   if (!source_ || source_->size() < kCrateBootstrapSize) {
     AddError("Invalid input data");
@@ -45,24 +47,34 @@ CrateReadResult CrateReader::Impl::ParseFromSource() {
 
   constexpr size_t kPhaseTotal = 10;
   if (!ReportProgress("bootstrap", 0, kPhaseTotal)) return std::move(result_);
+  CratePhaseTimer timer(options_.enable_timing, "next_crate_read");
+  auto lap = [&](const char* phase) { timer.lap(phase); };
   if (!ReadBootstrap()) return std::move(result_);
   source_->set_version(version_);
   if (!ReportProgress("toc", 1, kPhaseTotal)) return std::move(result_);
   if (!ReadTOC()) return std::move(result_);
+  lap("ReadTOC");
   if (!ReportProgress("tokens", 2, kPhaseTotal)) return std::move(result_);
   if (!ReadTokens()) return std::move(result_);
+  lap("ReadTokens");
   if (!ReportProgress("strings", 3, kPhaseTotal)) return std::move(result_);
   if (!ReadStrings()) return std::move(result_);
+  lap("ReadStrings");
   if (!ReportProgress("fields", 4, kPhaseTotal)) return std::move(result_);
   if (!ReadFields()) return std::move(result_);
+  lap("ReadFields");
   if (!ReportProgress("fieldsets", 5, kPhaseTotal)) return std::move(result_);
   if (!ReadFieldsets()) return std::move(result_);
+  lap("ReadFieldsets");
   if (!ReportProgress("specs", 6, kPhaseTotal)) return std::move(result_);
   if (!ReadSpecs()) return std::move(result_);
+  lap("ReadSpecs");
   if (!ReportProgress("paths", 7, kPhaseTotal)) return std::move(result_);
   if (!ReadPaths()) return std::move(result_);
+  lap("ReadPaths");
   if (!ReportProgress("stage", 8, kPhaseTotal)) return std::move(result_);
   if (!BuildStage()) return std::move(result_);
+  lap("BuildStage");
   if (!ReportProgress("complete", kPhaseTotal, kPhaseTotal)) {
     return std::move(result_);
   }
@@ -195,7 +207,7 @@ std::vector<std::string> CrateReader::tokens() const {
   return impl_->tokens();
 }
 
-const std::vector<std::string>& CrateReader::paths() const {
+std::vector<std::string> CrateReader::paths() const {
   return impl_->paths();
 }
 

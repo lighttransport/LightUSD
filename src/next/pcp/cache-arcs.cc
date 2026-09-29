@@ -483,6 +483,7 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
         LayerLoadOptions load_opts;
         load_opts.max_memory = options.max_layer_memory;
         load_opts.max_array_elements = options.max_array_elements;
+        load_opts.usdc_limits = options.usdc_limits;
         load_opts.max_archive_entries = options.max_archive_entries;
         load_opts.usdc_lazy_arrays = options.usdc_lazy_arrays;
         load_opts.usdc_use_mmap = options.usdc_use_mmap;

@@ -3,7 +3,7 @@
 //
 // Tydra Next - Mesh tangent conversion
 
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
 #include "safe-arithmetic.hh"
 #include <cstring>
 #include "mem-budget.hh"
@@ -19,7 +19,7 @@
 
 namespace lightusd { namespace tydra { namespace next {
 
-bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
+bool RenderSceneConverter::Impl::ComputeVertexTangents(RenderMesh* mesh) {
   if (!mesh->is_triangulated) {
     if (!TriangulateMesh(mesh)) return false;
   }

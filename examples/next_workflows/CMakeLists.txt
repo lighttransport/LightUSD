@@ -4,7 +4,11 @@ foreach(pair "next_quickstart|quickstart.cc" "interactive_session|interactive-se
   list(GET parts 0 target)
   list(GET parts 1 source)
   add_executable(${target} ${source})
-  target_link_libraries(${target} PRIVATE tydra_next lightusd_next)
+  target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/src/c-api)
+  target_link_libraries(${target} PRIVATE lightusd_c)
+  if(target STREQUAL "interactive_session")
+    target_link_libraries(${target} PRIVATE lightusd_render_c)
+  endif()
   set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 endforeach()
 

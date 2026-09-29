@@ -7,6 +7,8 @@
 #include "lazy-array.hh"
 #include "safe-arithmetic.hh"
 #include "../strfmt.hh"
+#include "../execution.hh"
+#include "crate-timing.hh"
 
 #include <algorithm>
 #include <cstdint>
@@ -742,8 +744,8 @@ bool CrateReader::Impl::ReadFieldsets() {
   }
 
   // fieldset_indices_ entries index into fields_; bound the count to avoid a
-  // huge allocation from a malformed value (no dedicated max, reuse max_fields).
-  if (num_fieldsets > options_.max_fields) {
+  // huge allocation from a malformed value.
+  if (num_fieldsets > options_.max_fieldset_indices) {
     AddError("Too many fieldset indices");
     return false;
   }
@@ -969,6 +971,7 @@ bool CrateReader::Impl::ReadSpecs() {
 }
 
 bool CrateReader::Impl::ReadPaths() {
+  CratePhaseTimer timer(options_.enable_timing, "next_crate_paths");
   const CrateSection* section = toc_.find("PATHS");
   if (!section) {
     AddError("Missing PATHS section");
@@ -988,7 +991,7 @@ bool CrateReader::Impl::ReadPaths() {
 
   if (num_paths == 0) {
     paths_.resize(1);
-    paths_[0] = "/";
+    paths_.set(0, "/");
     return true;
   }
 
@@ -1012,52 +1015,64 @@ bool CrateReader::Impl::ReadPaths() {
   if (!CheckElementAllocation(num_paths, sizeof(std::string), "Path table")) {
     return false;
   }
-  paths_.resize(static_cast<size_t>(num_paths));
-  if (paths_.size() > 0) {
-    paths_[0] = "/";
-  }
   size_t n = static_cast<size_t>(num_encoded);
 
-  // Read 3 compressed integer arrays (delta+LZ4 format)
-  auto read_comp_array = [&](uint32_t* dst, size_t count, const char* name) -> bool {
+  // Read 3 compressed integer arrays (delta+LZ4 format). The three blobs are
+  // read in file order, then decompressed independently (concurrently for
+  // large tables); errors are reported as the sequential read-then-decompress
+  // of each array in turn would report them (the first failure wins).
+  struct CompArray {
+    const char* name = nullptr;
+    uint32_t* dst = nullptr;
+    std::vector<uint8_t> data;  // u64 compressed_size prefix + payload
+    std::string read_error;
+    std::string decode_error;
+    bool read_ok = false;
+  };
+  auto read_comp_blob = [&](CompArray& a) -> bool {
     uint64_t comp_size;
     if (!reader_->read_u64(comp_size)) {
-      AddError(std::string("Failed to read ") + name + " compressed size");
+      a.read_error = std::string("Failed to read ") + a.name + " compressed size";
       return false;
     }
     // Bound the compressed size against remaining bytes before allocating.
     if (comp_size > reader_->remaining()) {
-      AddError(std::string(name) + " compressed size exceeds remaining data");
+      a.read_error = std::string(a.name) + " compressed size exceeds remaining data";
       return false;
     }
     // Include u64 compressed_size prefix (DecompressCompressedU32 expects it)
-    std::vector<uint8_t> comp_data(8 + static_cast<size_t>(comp_size));
-    std::memcpy(comp_data.data(), &comp_size, 8);
-    if (!reader_->read(comp_data.data() + 8, static_cast<size_t>(comp_size))) {
-      AddError(std::string("Failed to read ") + name + " compressed data");
+    a.data.resize(8 + static_cast<size_t>(comp_size));
+    std::memcpy(a.data.data(), &comp_size, 8);
+    if (!reader_->read(a.data.data() + 8, static_cast<size_t>(comp_size))) {
+      a.read_error = std::string("Failed to read ") + a.name + " compressed data";
       return false;
     }
-    DecompressResult dr = DecompressCompressedU32(comp_data.data(), comp_data.size(),
-                                                   dst, count);
+    a.read_ok = true;
+    return true;
+  };
+  auto decode_comp_blob = [](CompArray& a, size_t count) {
+    const size_t comp_size = a.data.size() - 8;
+    DecompressResult dr =
+        DecompressCompressedU32(a.data.data(), a.data.size(), a.dst, count);
     if (!dr.success) {
       // Fallback: legacy EncodeIntegers (common-prefix, no LZ4)
-      dr = DecompressIntegers(comp_data.data() + 8, static_cast<size_t>(comp_size), count, false);
+      dr = DecompressIntegers(a.data.data() + 8, comp_size, count, false);
       if (!dr.success) {
-        AddError(std::string("Failed to decompress ") + name + ": " + dr.error);
-        return false;
+        a.decode_error = std::string("Failed to decompress ") + a.name + ": " + dr.error;
+        return;
       }
       size_t expected_bytes = 0;
       if (!safe::mul(count, sizeof(uint32_t), &expected_bytes)) {
-        AddError(std::string(name) + " byte size overflow");
-        return false;
+        a.decode_error = std::string(a.name) + " byte size overflow";
+        return;
       }
       if (dr.data.size() < expected_bytes) {
-        AddError(std::string("Decompressed ") + name + " shorter than expected");
-        return false;
+        a.decode_error = std::string("Decompressed ") + a.name + " shorter than expected";
+        return;
       }
-      if (expected_bytes > 0) std::memcpy(dst, dr.data.data(), expected_bytes);
+      if (expected_bytes > 0) std::memcpy(a.dst, dr.data.data(), expected_bytes);
     }
-    return true;
+    std::vector<uint8_t>().swap(a.data);
   };
 
   // `num_encoded` is an independent u64 from the file: it was only checked
@@ -1074,12 +1089,38 @@ bool CrateReader::Impl::ReadPaths() {
   std::vector<uint32_t> element_tokens(n);
   std::vector<uint32_t> jump_raw(n);  // stored as uint32_t, interpreted as int32_t
 
-  if (!read_comp_array(path_indices.data(), n, "path indices") ||
-      !read_comp_array(element_tokens.data(), n, "element tokens") ||
-      !read_comp_array(jump_raw.data(), n, "jump indices")) {
-    return false;
+  CompArray arrays[3];
+  arrays[0].name = "path indices";
+  arrays[0].dst = path_indices.data();
+  arrays[1].name = "element tokens";
+  arrays[1].dst = element_tokens.data();
+  arrays[2].name = "jump indices";
+  arrays[2].dst = jump_raw.data();
+  size_t num_read = 0;
+  while (num_read < 3 && read_comp_blob(arrays[num_read])) ++num_read;
+  bool decoded = false;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  if (num_read > 1 && n >= 65536 && ResolveBuildThreads() > 1) {
+    TaskArena arena(num_read);
+    arena.Run(num_read, [&](size_t k) { decode_comp_blob(arrays[k], n); });
+    decoded = true;
+  }
+#endif
+  if (!decoded) {
+    for (size_t k = 0; k < num_read; ++k) decode_comp_blob(arrays[k], n);
+  }
+  for (size_t k = 0; k < 3; ++k) {
+    if (k < num_read && !arrays[k].decode_error.empty()) {
+      AddError(arrays[k].decode_error);
+      return false;
+    }
+    if (!arrays[k].read_ok) {
+      AddError(arrays[k].read_error);
+      return false;
+    }
   }
 
+  timer.lap("decompress");
   std::vector<uint8_t> seen_path_slot(static_cast<size_t>(num_paths), uint8_t{0});
   for (size_t i = 0; i < n; ++i) {
     if (path_indices[i] >= num_paths) {
@@ -1113,6 +1154,7 @@ bool CrateReader::Impl::ReadPaths() {
     }
   }
 
+  timer.lap("validate");
   // Reconstruct paths from the compressed tree by navigating jump offsets.
   //
   // Nodes are emitted in pre-order. jump semantics (matching the writer):
@@ -1121,77 +1163,176 @@ bool CrateReader::Impl::ReadPaths() {
   //   jump == -1: node has a child only (at i+1), no sibling
   //   jump == -2: leaf (no child, no sibling)
   //
-  // The previous decoder kept a flat ancestor stack and popped only ONCE per
-  // leaf, so it could not unwind multiple levels at a subtree boundary — the
-  // stack grew without bound on deep/many-sibling trees, giving O(n^2) memory
-  // (every path got longer) and corrupted/colliding paths. Passing the parent
-  // path down the recursion and following the jump offset to each sibling is
-  // O(num_nodes) and correct.
-  paths_.assign(static_cast<size_t>(num_paths), std::string());
+  // Three passes:
+  //  1. a structural walk (serial) records, per visited node, its parent node
+  //     and visit order -- following the jump offset to each sibling is
+  //     O(num_nodes). It keeps the exact rules of the former recursive
+  //     string-building walk: descend only below max_path_depth, and stop a
+  //     sibling chain at an already-visited node (a malformed jump table can
+  //     make the child pointer (i+1) and a sibling pointer (i+jump) reach the
+  //     same node; `visited` bounds total work to O(n) instead of the
+  //     super-linear re-entry a chain of `jump == 1` nodes would cause);
+  //  2. path lengths in visit order (parent first) and blob offsets;
+  //  3. the fill: each path is written into its own window of one PathPool
+  //     blob -- block-copying the parent's already-written path when it lies
+  //     earlier in the same task, else walking the ancestor chain backward --
+  //     in parallel for large tables. Unvisited nodes keep empty slots.
+  //
+  // A path is "/" for a top-level node whose element is empty or "/", else
+  // "/" + elem under a top-level parent or the root, else parent + "/" + elem;
+  // a property node stores "." + that path (its children, in a malformed
+  // table, still extend the '.'-less form).
+  paths_.resize(static_cast<size_t>(num_paths));  // all slots -> empty path
 
-  auto element_for = [&](size_t i, bool& is_prop) -> std::string {
-    int32_t elem_token = static_cast<int32_t>(element_tokens[i]);
-    is_prop = elem_token < 0;
+  constexpr uint32_t kNoParent = UINT32_MAX;
+  auto element_view = [&](size_t i) -> std::string_view {
+    const int32_t elem_token = static_cast<int32_t>(element_tokens[i]);
     // Promote to int64 before negating (-INT32_MIN is UB).
-    uint32_t token_idx = is_prop
+    const uint32_t token_idx = elem_token < 0
         ? static_cast<uint32_t>(-static_cast<int64_t>(elem_token))
         : static_cast<uint32_t>(elem_token);
-    return tokens_.str(token_idx);
+    return tokens_.view(token_idx);
+  };
+  auto is_prop_node = [&](size_t i) -> bool {
+    return static_cast<int32_t>(element_tokens[i]) < 0;
   };
 
-  // Recurse over a sibling chain that all share `parent` (the parent prim path,
-  // without any property '.' prefix). Depth is bounded by max_path_depth.
-  //
-  // A well-formed pre-order tree visits every encoded node exactly once. A
-  // malformed jump table can make the child pointer (i+1) and a sibling pointer
-  // (i+jump) reference the SAME node from different parents, so a node gets
-  // re-entered — e.g. a chain of `jump == 1` nodes visits node k 2^k times
-  // (super-linear/exponential CPU hang) from a sub-kilobyte input. `visited`
-  // bounds total work to O(n): re-entering an already-emitted node stops that
-  // chain (the input is malformed, but we terminate instead of hanging).
   std::vector<uint8_t> visited(n, uint8_t{0});
-  std::function<void(size_t, const std::string&, size_t)> build =
-      [&](size_t i, const std::string& parent, size_t depth) {
-        while (i < n) {
-          if (visited[i]) return;  // node already emitted: malformed, stop
-          visited[i] = uint8_t{1};
-          bool is_prop = false;
-          std::string elem = element_for(i, is_prop);
-          int32_t jump = static_cast<int32_t>(jump_raw[i]);
-
-          bool is_root = parent.empty() && (elem.empty() || elem == "/");
-          std::string prim_path;  // base path (no '.' prefix) for children
-          if (is_root) {
-            prim_path = "/";
-          } else if (parent.empty() || parent == "/") {
-            prim_path = "/" + elem;
-          } else {
-            prim_path = parent + "/" + elem;
-          }
-
-          uint32_t store_idx = path_indices[i];
-          if (store_idx < num_paths) {
-            paths_[store_idx] = is_prop ? ("." + prim_path) : prim_path;
-          }
-
-          const bool has_child = (jump == -1 || jump > 0);
-          const bool has_sibling = (jump == 0 || jump > 0);
-
-          if (has_child && depth < options_.max_path_depth) {
-            build(i + 1, prim_path, depth + 1);
-          }
-          if (!has_sibling) return;
-          i += (jump > 0) ? static_cast<size_t>(jump) : 1;
+  std::vector<uint32_t> parent_of(n, kNoParent);
+  std::vector<uint32_t> order;  // visited nodes, in visit order
+  order.reserve(n);
+  {
+    struct Frame {
+      size_t i;
+      uint32_t parent;
+      size_t depth;
+    };
+    std::vector<Frame> stack;
+    stack.push_back(Frame{0, kNoParent, 0});
+    while (!stack.empty()) {
+      Frame f = stack.back();
+      stack.pop_back();
+      size_t i = f.i;
+      while (i < n) {
+        if (visited[i]) break;  // node already emitted: malformed, stop
+        visited[i] = uint8_t{1};
+        parent_of[i] = f.parent;
+        order.push_back(static_cast<uint32_t>(i));
+        const int32_t jump = static_cast<int32_t>(jump_raw[i]);
+        const bool has_child = (jump == -1 || jump > 0);
+        const bool has_sibling = (jump == 0 || jump > 0);
+        const size_t next = has_sibling
+            ? i + ((jump > 0) ? static_cast<size_t>(jump) : 1)
+            : n;
+        if (has_child && f.depth < options_.max_path_depth) {
+          // Child subtree first (pre-order), then the rest of this chain.
+          if (has_sibling) stack.push_back(Frame{next, f.parent, f.depth});
+          stack.push_back(
+              Frame{i + 1, static_cast<uint32_t>(i), f.depth + 1});
+          break;
         }
-      };
-  build(0, std::string(), 0);
+        i = next;
+      }
+    }
+  }
+
+  timer.lap("walk");
+  // Prim-path length per node (without a property's '.' prefix) and whether
+  // the node is the root "/".
+  std::vector<uint64_t> plen(n, 0);
+  std::vector<uint8_t> rootish(n, uint8_t{0});
+  std::vector<uint64_t> node_off(n, 0);
+  uint64_t total_bytes = 0;
+  path_parent_.assign(static_cast<size_t>(num_paths), UINT32_MAX);
+  for (const uint32_t i : order) {
+    if (parent_of[i] != kNoParent) {
+      path_parent_[path_indices[i]] = path_indices[parent_of[i]];
+    }
+    const std::string_view elem = element_view(i);
+    const uint32_t par = parent_of[i];
+    if (par == kNoParent) {
+      if (elem.empty() || elem == "/") {
+        rootish[i] = uint8_t{1};
+        plen[i] = 1;
+      } else {
+        plen[i] = 1 + elem.size();
+      }
+    } else if (rootish[par]) {
+      plen[i] = 1 + elem.size();
+    } else {
+      plen[i] = plen[par] + 1 + elem.size();
+    }
+    node_off[i] = total_bytes;
+    total_bytes += plen[i] + (is_prop_node(i) ? 1 : 0);
+  }
+  paths_.resize_blob(static_cast<size_t>(total_bytes));
+
+  timer.lap("lengths");
+  // Write node order[k]'s path for k in [begin, end).
+  auto fill_range = [&](size_t begin, size_t end) {
+    for (size_t k = begin; k < end; ++k) {
+      const uint32_t i = order[k];
+      const bool is_prop = is_prop_node(i);
+      char* buf = paths_.blob_at(node_off[i]) + (is_prop ? 1 : 0);
+      if (is_prop) buf[-1] = '.';
+      const uint64_t L = plen[i];
+      if (rootish[i]) {
+        buf[0] = '/';
+      } else {
+        const std::string_view elem = element_view(i);
+        const uint32_t par = parent_of[i];
+        // Parent already written earlier in this range: block-copy it.
+        if (par != kNoParent && !rootish[par] && k > begin &&
+            node_off[par] >= node_off[order[begin]] &&
+            node_off[par] < node_off[i]) {
+          const char* pbuf = paths_.blob_at(node_off[par]) +
+                             (is_prop_node(par) ? 1 : 0);
+          const uint64_t pl = plen[par];
+          std::memcpy(buf, pbuf, static_cast<size_t>(pl));
+          buf[pl] = '/';
+          std::memcpy(buf + pl + 1, elem.data(), elem.size());
+        } else {
+          // Walk the ancestor chain backward.
+          uint64_t pos = L;
+          uint32_t j = i;
+          for (;;) {
+            const std::string_view ej = element_view(j);
+            pos -= ej.size();
+            std::memcpy(buf + pos, ej.data(), ej.size());
+            buf[--pos] = '/';
+            const uint32_t pj = parent_of[j];
+            if (pj == kNoParent || rootish[pj]) break;
+            j = pj;
+          }
+        }
+      }
+      paths_.place(path_indices[i], node_off[i], L + (is_prop ? 1 : 0));
+    }
+  };
+
+  bool filled = false;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  const int nthreads = ResolveBuildThreads();
+  if (nthreads > 1 && order.size() >= 65536) {
+    const size_t task_size = std::max<size_t>(
+        16384, order.size() / (static_cast<size_t>(nthreads) * 4));
+    const size_t ntasks = (order.size() + task_size - 1) / task_size;
+    TaskArena arena(static_cast<size_t>(nthreads));
+    arena.Run(ntasks, [&](size_t t) {
+      fill_range(t * task_size, std::min(order.size(), (t + 1) * task_size));
+    });
+    filled = true;
+  }
+#endif
+  if (!filled) fill_range(0, order.size());
+  timer.lap("fill");
 
   for (const CrateSpec& spec : specs_) {
     if (spec.path_index.value >= paths_.size()) {
       AddError("Spec path index out of range");
       return false;
     }
-    if (paths_[spec.path_index.value].empty()) {
+    if (paths_.empty_at(spec.path_index.value)) {
       AddError("Spec path index references an empty path slot");
       return false;
     }

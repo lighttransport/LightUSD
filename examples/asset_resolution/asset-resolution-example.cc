@@ -10,11 +10,6 @@
 #include "prim-pprint.hh"
 #include "value-pprint.hh"
 
-// Tydra is a collection of APIs to access/convert USD Prim data
-// (e.g. Can get Attribute by name)
-// See <lightusd>/examples/tydra_api for more Tydra API examples.
-#include "tydra/scene-access.hh"
-
 std::map<std::string, std::string> g_map;
 
 //

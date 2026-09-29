@@ -1,11 +1,14 @@
 /// Extended schema tests for the next library.
 /// Tests all 11 committed schema modules: Skel, AR, Mtlx, Media, Physics.
 
-#include "next/lightusd-next.hh"
 #include "next/schema/usd-skel.hh"
 #include "next/schema/usd-ar.hh"
 #include "next/schema/usd-mtlx.hh"
 #include "next/schema/usd-media.hh"
+#include "next/schema/usd-vol.hh"
+#include "next/schema/usd-geom-camera.hh"
+#include "next/schema/usd-semantics.hh"
+#include "next/schema/usd-render.hh"
 #include "next/schema/physics-scene.hh"
 #include "next/schema/physics-api.hh"
 #include "next/schema/physics-joint.hh"
@@ -15,6 +18,14 @@
 #include "next/schema/usd-geom-model.hh"
 #include "next/prim/path.hh"
 #include "next/types/value-view.hh"
+#include "next/types/value.hh"
+#include "next/types/type-id.hh"
+#include "next/layer/layer.hh"
+#include "next/stage/stage.hh"
+#include "next/reader/usda-reader.hh"
+#include "next/reader/usdc-reader.hh"
+#include "next/load-usd.hh"
+#include "next/writer/usdc-writer.hh"
 #include <cstdio>
 #include <cstring>
 #include <cassert>

@@ -206,6 +206,7 @@ def main():
     except Exception as exc:
         log = client.stderr_text()
         unavailable_tokens = ("unavailable", "no cuda", "no hip", "no vulkan",
+                              "no rocm-capable device",
                               "ray query unsupported", "failed to initialize",
                               "pipeline cache is cold",
                               "rt=software")

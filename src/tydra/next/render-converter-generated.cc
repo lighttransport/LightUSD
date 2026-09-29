@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
 #include "render-extract.hh"
 #include "safe-arithmetic.hh"
 #include "tydra/shape-to-mesh.hh"
@@ -114,7 +114,7 @@ void FillGeneratedMesh(const UsdPrim& prim,
 }
 }  // namespace
 
-bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
+bool RenderSceneConverter::Impl::ConvertGeomPrimitive(const UsdPrim& prim,
                                                 RenderMesh* out) {
   if (!out || !prim.IsValid() ||
       (!IsAnalyticGeomTypeName(prim.GetTypeName()) &&

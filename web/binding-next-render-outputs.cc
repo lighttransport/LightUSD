@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-next-render.hh"
+#include <map>
+#include <cstring>
+#include <array>
+#include "next/schema/usd-shade.hh"
 namespace lightusd {
 namespace web_next {
 void RenderStream::buildAnalyticOutputs_() {
@@ -15,6 +19,7 @@ void RenderStream::buildAnalyticOutputs_() {
       out.name = source.name;
       out.prim_path = source.prim_path;
       out.double_sided = matBool_(prim, "doubleSided", false);
+      out.purpose = purposeCode_(prim);
       out.local_matrix = localMatrix_(prim);
       out.world_matrix = worldMatrixForPrim_(prim);
 
@@ -50,45 +55,65 @@ void RenderStream::buildAnalyticOutputs_() {
           out.indices[i] = source.triangulated_indices[i];
         }
       } else {
-        // Face-varying analytic attributes need one vertex per triangulated
-        // corner. Preserve the converter's authored-corner remap so generated
-        // sphere/cone UV seams and normals stay aligned.
-        out.soup = true;
+        // Face-varying analytic attributes (generated per-corner normals and
+        // spherical UVs): weld corners that agree on (point, normal, uv) into
+        // an indexed mesh. Seams and hard edges keep split vertices because
+        // their values differ; a level-4 icosphere drops from 15360 soup
+        // corners to ~2.6k vertices. The converter's authored-corner remap
+        // keeps generated UV seams and normals aligned.
         const size_t corners = source.triangulated_indices.size();
-        out.points.reserve(corners * 3);
-        if (!source.normals.empty()) out.normals.reserve(corners * 3);
-        if (!source.texcoords_0.empty()) out.uv.reserve(corners * 2);
+        std::map<std::array<uint32_t, 6>, uint32_t> welded;
+        out.indices.reserve(corners);
+        auto bits = [](float f) {
+          uint32_t u;
+          std::memcpy(&u, &f, sizeof(u));
+          return u;
+        };
         for (size_t corner = 0; corner < corners; ++corner) {
           const uint32_t vertex = source.triangulated_indices[corner];
           if (vertex >= point_count) continue;
-          for (size_t c = 0; c < 3; ++c) {
-            out.points.push_back(source.points[static_cast<size_t>(vertex) * 3 + c]);
-          }
           const size_t authored_corner =
               corner < source.triangulated_face_vertex_indices.size()
                   ? source.triangulated_face_vertex_indices[corner]
                   : corner;
+          float n[3] = {0.0f, 0.0f, 0.0f};
+          bool has_n = false;
           if (!source.normals.empty()) {
             const size_t normal_element =
                 source.normals_interp == tr::Interpolation::FaceVarying
                     ? authored_corner
                     : static_cast<size_t>(vertex);
             if (normal_element * 3 + 2 < source.normals.size()) {
-              for (size_t c = 0; c < 3; ++c) {
-                out.normals.push_back(source.normals[normal_element * 3 + c]);
-              }
+              for (size_t c = 0; c < 3; ++c) n[c] = source.normals[normal_element * 3 + c];
+              has_n = true;
             }
           }
+          float uv[2] = {0.0f, 0.0f};
+          bool has_uv = false;
           if (!source.texcoords_0.empty()) {
             const size_t uv_element =
                 source.texcoords_0_interp == tr::Interpolation::FaceVarying
                     ? authored_corner
                     : static_cast<size_t>(vertex);
             if (uv_element * 2 + 1 < source.texcoords_0.size()) {
-              out.uv.push_back(source.texcoords_0[uv_element * 2]);
-              out.uv.push_back(source.texcoords_0[uv_element * 2 + 1]);
+              uv[0] = source.texcoords_0[uv_element * 2];
+              uv[1] = source.texcoords_0[uv_element * 2 + 1];
+              has_uv = true;
             }
           }
+          const std::array<uint32_t, 6> key{vertex, bits(n[0]), bits(n[1]),
+                                            bits(n[2]), bits(uv[0]), bits(uv[1])};
+          auto found = welded.find(key);
+          if (found == welded.end()) {
+            const uint32_t index = static_cast<uint32_t>(out.points.size() / 3);
+            found = welded.emplace(key, index).first;
+            for (size_t c = 0; c < 3; ++c) {
+              out.points.push_back(source.points[static_cast<size_t>(vertex) * 3 + c]);
+            }
+            if (has_n) out.normals.insert(out.normals.end(), n, n + 3);
+            if (has_uv) out.uv.insert(out.uv.end(), uv, uv + 2);
+          }
+          out.indices.push_back(found->second);
         }
         if (out.normals.size() != out.points.size()) out.normals.clear();
         if (out.uv.size() * 3 != out.points.size() * 2) out.uv.clear();
@@ -97,176 +122,274 @@ void RenderStream::buildAnalyticOutputs_() {
     }
   }
 
-emscripten::val RenderStream::outputSourceMesh_(int i) {
-    emscripten::val out = emscripten::val::object();
-    if (i < 0 || i >= static_cast<int>(meshes_.size())) {
-      out.set("error", std::string("invalid source mesh index"));
-      return out;
-    }
-    const lightusd::next::UsdPrim &prim = meshes_[static_cast<size_t>(i)].GetPrim();
-
-    bool soup = false;  // indexed, or non-indexed soup
-    std::string mesh_err;
-    if (!buildRenderMesh_(prim, &soup, &mesh_err)) {
-      out.set("error", mesh_err.empty() ? std::string("mesh build failed")
-                                        : mesh_err);
-      return out;
-    }
-
-    const int32_t material_id = materialIdForBoundPrim_(prim);
-    out.set("vertexCount", static_cast<double>(s_points_.size() / 3));
-    out.set("primName", prim.GetName());
-    out.set("primPath", prim.GetPath().str());
-    out.set("doubleSided",
-            effectiveDoubleSided_(prim, material_id, s_points_));
-    out.set("points", heapF_(s_points_, 3));
-    if (!soup && !s_indices_.empty()) out.set("indices", heapU32_(s_indices_));
-    if (!s_normals_.empty()) out.set("normals", heapF_(s_normals_, 3));
-    if (!s_uv_.empty()) out.set("uv0", heapF_(s_uv_, 2));
-    if (compute_tangents_ && computeScratchTangents_()) {
-      out.set("tangents", heapF_(s_tangents_, 4));
-      out.set("tangentMethod", tangent_method_);
-    }
-    s_joint_indices_.clear();
-    s_joint_weights_.clear();
-    if (render_scene_valid_) {
-      auto it = render_scene_.mesh_by_path.find(prim.GetPath().str());
-      if (it != render_scene_.mesh_by_path.end() && it->second >= 0 &&
-          static_cast<size_t>(it->second) < render_scene_.meshes.size()) {
-        const tr::RenderMesh& rmesh =
-            render_scene_.meshes[static_cast<size_t>(it->second)];
-        if (rmesh.skin) {
-          const int element_size =
-              static_cast<int>(rmesh.skin->influences_per_vertex);
-          if (element_size > 0 &&
-              s_point_source_indices_.size() == s_points_.size() / 3) {
-            const size_t influences = static_cast<size_t>(element_size);
-            s_joint_indices_.reserve(s_point_source_indices_.size() * influences);
-            s_joint_weights_.reserve(s_point_source_indices_.size() * influences);
-            for (uint32_t source_point : s_point_source_indices_) {
-              const size_t source = static_cast<size_t>(source_point) * influences;
-              if (source + influences > rmesh.skin->joint_indices.size() ||
-                  source + influences > rmesh.skin->joint_weights.size()) {
-                continue;
-              }
-              for (size_t influence = 0; influence < influences; ++influence) {
-                s_joint_indices_.push_back(
-                    rmesh.skin->joint_indices[source + influence]);
-                s_joint_weights_.push_back(
-                    rmesh.skin->joint_weights[source + influence]);
-              }
-            }
-          }
-          if (!s_joint_indices_.empty()) {
-            out.set("jointIndices", heapU16_(s_joint_indices_));
-          }
-          if (!s_joint_weights_.empty()) {
-            out.set("jointWeights", heapF_(s_joint_weights_, 1));
-          }
-          out.set("skel_id", rmesh.skin->skeleton_id);
-          out.set("skeletonPath", rmesh.skin->skeleton_path);
-          out.set("elementSize", element_size);
-          out.set("hasGeomBindTransform", true);
-          out.set("geomBindTransform",
-                  MatrixValue(MatrixToArray(rmesh.skin->geom_bind_transform)));
-        }
-        if (!rmesh.blend_shapes.empty()) {
-          auto float_array = [](const tr::FloatChunked& values) {
-            emscripten::val array = emscripten::val::array();
-            for (size_t index = 0; index < values.size(); ++index) {
-              array.set(static_cast<unsigned>(index), values[index]);
-            }
-            return array;
-          };
-          auto remapped_offsets = [this](
-              const tr::FloatChunked& values,
-              const std::vector<uint32_t>& sparse_points) {
-            emscripten::val array = emscripten::val::array();
-            std::unordered_map<uint32_t, size_t> sparse_index;
-            for (size_t i = 0; i < sparse_points.size(); ++i) {
-              sparse_index.emplace(sparse_points[i], i);
-            }
-            size_t output = 0;
-            for (uint32_t source_point : s_point_source_indices_) {
-              size_t source_offset = static_cast<size_t>(source_point) * 3;
-              if (!sparse_points.empty()) {
-                const auto it = sparse_index.find(source_point);
-                source_offset = it == sparse_index.end()
-                                    ? (std::numeric_limits<size_t>::max)()
-                                    : it->second * 3;
-              }
-              for (size_t component = 0; component < 3; ++component) {
-                const float value =
-                    source_offset != (std::numeric_limits<size_t>::max)() &&
-                            source_offset + component < values.size()
-                        ? values[source_offset + component]
-                        : 0.0f;
-                array.set(static_cast<unsigned>(output++), value);
-              }
-            }
-            return array;
-          };
-          emscripten::val shapes = emscripten::val::array();
-          for (size_t shape_index = 0;
-               shape_index < rmesh.blend_shapes.size(); ++shape_index) {
-            const tr::RenderMesh::BlendShape& shape =
-                rmesh.blend_shapes[shape_index];
-            emscripten::val value = emscripten::val::object();
-            value.set("name", shape.name);
-            value.set("weight", shape.weight);
-            value.set("pointOffsets",
-                      remapped_offsets(shape.point_offsets,
-                                       shape.point_indices));
-            value.set("normalOffsets",
-                      shape.normal_offsets.empty()
-                          ? float_array(shape.normal_offsets)
-                          : remapped_offsets(shape.normal_offsets,
-                                             shape.point_indices));
-            value.set("pointIndices", emscripten::val::array());
-            emscripten::val inbetweens = emscripten::val::array();
-            for (size_t i = 0; i < shape.inbetweens.size(); ++i) {
-              const tr::RenderMesh::BlendShape::Inbetween& source =
-                  shape.inbetweens[i];
-              emscripten::val inbetween = emscripten::val::object();
-              inbetween.set("name", source.name);
-              inbetween.set("weight", source.weight);
-              inbetween.set("pointOffsets",
-                            remapped_offsets(source.point_offsets,
-                                             shape.point_indices));
-              inbetweens.set(static_cast<unsigned>(i), inbetween);
-            }
-            value.set("inbetweens", inbetweens);
-            shapes.set(static_cast<unsigned>(shape_index), value);
-          }
-          out.set("blendShapes", shapes);
-        }
+// Tydra node data ids index render_scene_.meshes (traversal order), but the
+// stream publishes authored Mesh outputs first and analytic gprims after
+// them. Rewrite mesh node ids into that output index space so getNode()
+// dataId addresses getMesh(). Sources folded into a merged output have no
+// output of their own and become -1.
+void RenderStream::remapNodeMeshIds_() {
+    if (!render_scene_valid_) return;
+    std::map<std::string, int32_t> output_by_path;
+    const size_t authored = mesh_merge_ ? outputs_.size() : meshes_.size();
+    for (size_t i = 0; i < authored; ++i) {
+      int source_index = static_cast<int>(i);
+      if (mesh_merge_) {
+        if (outputs_[i].merged) continue;
+        source_index = outputs_[i].source_index;
       }
+      if (source_index < 0 ||
+          static_cast<size_t>(source_index) >= meshes_.size()) continue;
+      output_by_path.emplace(
+          meshes_[static_cast<size_t>(source_index)].GetPrim().GetPath().str(),
+          static_cast<int32_t>(i));
     }
-    out.set("localMatrix", matArray_(localMatrix_(prim)));
-    out.set("worldMatrix", matArray_(worldMatrixForPrim_(prim)));
-    out.set("materialId", material_id);
-    out.set("material", materialObject_(material_id));
-    addGeomSubsetMaterials_(prim, out);
-    return out;
+    for (size_t i = 0; i < analytic_outputs_.size(); ++i) {
+      output_by_path.emplace(analytic_outputs_[i].prim_path,
+                             static_cast<int32_t>(authored + i));
+    }
+    for (tr::SceneNode& node : render_scene_.nodes) {
+      if (node.type != tr::NodeType::Mesh || node.data_id < 0) continue;
+      const size_t id = static_cast<size_t>(node.data_id);
+      const auto it = id < render_scene_.meshes.size()
+          ? output_by_path.find(render_scene_.meshes[id].prim_path)
+          : output_by_path.end();
+      node.data_id = it == output_by_path.end() ? -1 : it->second;
+    }
   }
 
-emscripten::val RenderStream::outputMergedMesh_(const OutputMesh &record) const {
-    emscripten::val out = emscripten::val::object();
-    out.set("vertexCount", static_cast<double>(record.points.size() / 3));
-    out.set("primName", record.name);
-    out.set("primPath", record.prim_path);
-    out.set("doubleSided", record.double_sided);
-    out.set("points", heapF_(record.points, 3));
-    if (!record.soup && !record.indices.empty()) {
-      out.set("indices", heapU32_(record.indices));
+int RenderStream::meshView(int mesh_id, lightusd_next_mesh_view* out) {
+    mesh_view_error_.clear();
+    mesh_view_source_id_ = -1;
+    if (!out || out->struct_size < sizeof(*out) || !loaded_ ||
+        mesh_id < 0 || mesh_id >= meshCount()) return -1;
+    const OutputMesh* output = nullptr;
+    int source_index = -1;
+    if (mesh_merge_) {
+      if (static_cast<size_t>(mesh_id) < outputs_.size()) {
+        const OutputMesh& record = outputs_[static_cast<size_t>(mesh_id)];
+        if (record.merged) output = &record;
+        else source_index = record.source_index;
+      } else {
+        output = &analytic_outputs_[static_cast<size_t>(mesh_id) - outputs_.size()];
+      }
+    } else if (static_cast<size_t>(mesh_id) < meshes_.size()) {
+      source_index = mesh_id;
+    } else {
+      output = &analytic_outputs_[static_cast<size_t>(mesh_id) - meshes_.size()];
     }
-    if (!record.normals.empty()) out.set("normals", heapF_(record.normals, 3));
-    if (!record.uv.empty()) out.set("uv0", heapF_(record.uv, 2));
-    out.set("localMatrix", matArray_(record.local_matrix));
-    out.set("worldMatrix", matArray_(record.world_matrix));
-    out.set("materialId", record.material_id);
-    out.set("material", materialObject_(record.material_id));
-    return out;
+
+    const uint32_t requested_size = out->struct_size;
+    std::memset(out, 0, sizeof(*out));
+    out->struct_size = requested_size;
+    out->material_id = -1;
+    out->skeleton_id = -1;
+    auto set_buffer = [out](size_t slot, const void* data, size_t count) -> bool {
+      if (count > (std::numeric_limits<uint32_t>::max)()) return false;
+      out->ptr[slot] = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(data));
+      out->length[slot] = static_cast<uint32_t>(count);
+      return true;
+    };
+
+    if (output) {
+      out->material_id = output->material_id;
+      if (output->double_sided) out->flags |= 1u;
+      std::memcpy(out->local_matrix, output->local_matrix.data(),
+                  sizeof(out->local_matrix));
+      std::memcpy(out->world_matrix, output->world_matrix.data(),
+                  sizeof(out->world_matrix));
+      if (!set_buffer(0, output->points.data(), output->points.size()) ||
+          !set_buffer(1, output->soup ? nullptr : output->indices.data(),
+                      output->soup ? 0 : output->indices.size()) ||
+          !set_buffer(2, output->normals.data(), output->normals.size()) ||
+          !set_buffer(3, output->uv.data(), output->uv.size())) return -1;
+      return 0;
+    }
+
+    if (source_index < 0 || static_cast<size_t>(source_index) >= meshes_.size()) return -1;
+    const lightusd::next::UsdPrim& prim = meshes_[static_cast<size_t>(source_index)].GetPrim();
+    bool soup = false;
+    std::string mesh_error;
+    s_tangents_.clear();
+    if (!buildRenderMesh_(prim, &soup, &mesh_error)) {
+      mesh_view_error_ = mesh_error.empty() ? "mesh build failed" : mesh_error;
+      return -2;
+    }
+    out->material_id = materialIdForBoundPrim_(prim);
+    if (effectiveDoubleSided_(prim, out->material_id, s_points_)) out->flags |= 1u;
+    const std::array<double, 16> local = localMatrix_(prim);
+    const std::array<double, 16> world = worldMatrixForPrim_(prim);
+    std::memcpy(out->local_matrix, local.data(), sizeof(out->local_matrix));
+    std::memcpy(out->world_matrix, world.data(), sizeof(out->world_matrix));
+    if (wantsTangents_(source_index)) computeScratchTangents_();
+    const tr::RenderMesh* source = sourceRenderMesh_(mesh_id);
+    prepareScratchSkin_(source);
+    if (source && source->skin) {
+      out->flags |= 2u;
+      out->skeleton_id = source->skin->skeleton_id;
+      out->element_size = static_cast<int32_t>(source->skin->influences_per_vertex);
+      const std::array<double, 16> bind =
+          MatrixToArray(source->skin->geom_bind_transform);
+      std::memcpy(out->geom_bind_matrix, bind.data(), sizeof(out->geom_bind_matrix));
+    }
+    if (!set_buffer(0, s_points_.data(), s_points_.size()) ||
+        !set_buffer(1, soup ? nullptr : s_indices_.data(),
+                    soup ? 0 : s_indices_.size()) ||
+        !set_buffer(2, s_normals_.data(), s_normals_.size()) ||
+        !set_buffer(3, s_uv_.data(), s_uv_.size()) ||
+        !set_buffer(4, s_tangents_.data(), s_tangents_.size()) ||
+        !set_buffer(5, s_joint_indices_.data(), s_joint_indices_.size()) ||
+        !set_buffer(6, s_joint_weights_.data(), s_joint_weights_.size())) return -1;
+    mesh_view_source_id_ = mesh_id;
+    return 0;
+}
+
+int RenderStream::meshViewStringCopy(int mesh_id, uint8_t kind, uint8_t* out,
+                                     uint32_t cap) const {
+    if (!loaded_ || mesh_id < 0 || mesh_id >= meshCount() || kind > 4) return -1;
+    const OutputMesh* output = nullptr;
+    int source_index = -1;
+    if (mesh_merge_) {
+      if (static_cast<size_t>(mesh_id) < outputs_.size()) {
+        const OutputMesh& record = outputs_[static_cast<size_t>(mesh_id)];
+        if (record.merged) output = &record;
+        else source_index = record.source_index;
+      } else {
+        output = &analytic_outputs_[static_cast<size_t>(mesh_id) - outputs_.size()];
+      }
+    } else if (static_cast<size_t>(mesh_id) < meshes_.size()) {
+      source_index = mesh_id;
+    } else {
+      output = &analytic_outputs_[static_cast<size_t>(mesh_id) - meshes_.size()];
+    }
+    std::string value;
+    if (kind == 4) {
+      value = mesh_view_error_;
+    } else if (output) {
+      if (kind == 0) value = output->name;
+      if (kind == 1) value = output->prim_path;
+    } else if (source_index >= 0 &&
+               static_cast<size_t>(source_index) < meshes_.size()) {
+      const lightusd::next::UsdPrim& prim =
+          meshes_[static_cast<size_t>(source_index)].GetPrim();
+      if (kind == 0) value = prim.GetName();
+      if (kind == 1) value = prim.GetPath().str();
+      if (kind == 2) {
+        const tr::RenderMesh* mesh = sourceRenderMesh_(mesh_id);
+        if (mesh && mesh->skin) value = mesh->skin->skeleton_path;
+      }
+      if (kind == 3 && wantsTangents_(source_index)) value = tangent_method_;
+    } else {
+      return -1;
+    }
+    if (value.size() > static_cast<size_t>((std::numeric_limits<int>::max)())) return -1;
+    const int required = static_cast<int>(value.size());
+    if (out && cap >= value.size() && !value.empty())
+      std::memcpy(out, value.data(), value.size());
+    return required;
+}
+
+const tr::RenderMesh::BlendShape* RenderStream::outputBlendShape_(
+    int mesh_id, int shape_id) const {
+  const tr::RenderMesh* mesh = sourceRenderMesh_(mesh_id);
+  if (!mesh || shape_id < 0 ||
+      static_cast<size_t>(shape_id) >= mesh->blend_shapes.size()) return nullptr;
+  return &mesh->blend_shapes[static_cast<size_t>(shape_id)];
+}
+
+int RenderStream::meshBlendShapeCount(int mesh_id) const {
+  if (!loaded_ || mesh_id < 0 || mesh_id >= meshCount()) return -1;
+  const tr::RenderMesh* mesh = sourceRenderMesh_(mesh_id);
+  if (!mesh) return 0;
+  if (mesh->blend_shapes.size() >
+      static_cast<size_t>((std::numeric_limits<int>::max)())) return -1;
+  return static_cast<int>(mesh->blend_shapes.size());
+}
+
+int RenderStream::meshBlendShapeInfo(
+    int mesh_id, int shape_id, int inbetween_id,
+    lightusd_next_blend_shape_info* out) const {
+  if (!out || out->struct_size < sizeof(*out)) return -1;
+  const tr::RenderMesh::BlendShape* shape = outputBlendShape_(mesh_id, shape_id);
+  if (!shape || inbetween_id < -1 ||
+      (inbetween_id >= 0 &&
+       static_cast<size_t>(inbetween_id) >= shape->inbetweens.size())) return -1;
+  const uint32_t requested_size = out->struct_size;
+  std::memset(out, 0, sizeof(*out));
+  out->struct_size = requested_size;
+  if (inbetween_id < 0) {
+    if (shape->inbetweens.size() >
+        static_cast<size_t>((std::numeric_limits<uint32_t>::max)())) return -1;
+    out->weight = shape->weight;
+    out->inbetween_count = static_cast<uint32_t>(shape->inbetweens.size());
+    if (!shape->normal_offsets.empty()) out->flags |= 1u;
+  } else {
+    out->weight = shape->inbetweens[static_cast<size_t>(inbetween_id)].weight;
   }
+  return 0;
+}
+
+int RenderStream::meshBlendShapeNameCopy(
+    int mesh_id, int shape_id, int inbetween_id,
+    uint8_t* out, uint32_t cap) const {
+  const tr::RenderMesh::BlendShape* shape = outputBlendShape_(mesh_id, shape_id);
+  if (!shape || inbetween_id < -1 ||
+      (inbetween_id >= 0 &&
+       static_cast<size_t>(inbetween_id) >= shape->inbetweens.size())) return -1;
+  const std::string& name = inbetween_id < 0
+      ? shape->name : shape->inbetweens[static_cast<size_t>(inbetween_id)].name;
+  if (name.size() > static_cast<size_t>((std::numeric_limits<int>::max)()))
+    return -1;
+  if (out && cap >= name.size() && !name.empty())
+    std::memcpy(out, name.data(), name.size());
+  return static_cast<int>(name.size());
+}
+
+int RenderStream::meshBlendShapeOffsetsCopy(
+    int mesh_id, int shape_id, int inbetween_id, uint8_t kind,
+    uint8_t* out, uint32_t cap) {
+  const tr::RenderMesh::BlendShape* shape = outputBlendShape_(mesh_id, shape_id);
+  if (!shape || inbetween_id < -1 || kind > 1 ||
+      (inbetween_id >= 0 && (kind != 0 ||
+       static_cast<size_t>(inbetween_id) >= shape->inbetweens.size()))) return -1;
+  const tr::FloatChunked& values = inbetween_id >= 0
+      ? shape->inbetweens[static_cast<size_t>(inbetween_id)].point_offsets
+      : kind == 0 ? shape->point_offsets : shape->normal_offsets;
+  if (kind == 1 && values.empty()) return 0;
+  if (mesh_view_source_id_ != mesh_id) {
+    lightusd_next_mesh_view view{};
+    view.struct_size = sizeof(view);
+    if (meshView(mesh_id, &view) != 0 || mesh_view_source_id_ != mesh_id)
+      return -1;
+  }
+  if (s_point_source_indices_.size() >
+      static_cast<size_t>((std::numeric_limits<int>::max)()) /
+          (3 * sizeof(float))) return -1;
+  const int required = static_cast<int>(s_point_source_indices_.size() *
+                                        3 * sizeof(float));
+  if (!out || cap < static_cast<uint32_t>(required)) return required;
+  std::unordered_map<uint32_t, size_t> sparse_index;
+  for (size_t i = 0; i < shape->point_indices.size(); ++i)
+    sparse_index.emplace(shape->point_indices[i], i);
+  size_t output = 0;
+  for (uint32_t source_point : s_point_source_indices_) {
+    size_t source_offset = static_cast<size_t>(source_point) * 3;
+    if (!shape->point_indices.empty()) {
+      const auto it = sparse_index.find(source_point);
+      source_offset = it == sparse_index.end()
+                          ? (std::numeric_limits<size_t>::max)()
+                          : it->second * 3;
+    }
+    for (size_t component = 0; component < 3; ++component) {
+      const float value =
+          source_offset != (std::numeric_limits<size_t>::max)() &&
+                  source_offset + component < values.size()
+              ? values[source_offset + component] : 0.0f;
+      std::memcpy(out + output, &value, sizeof(value));
+      output += sizeof(value);
+    }
+  }
+  return required;
+}
+
 }  // namespace web_next
 }  // namespace lightusd

@@ -4,6 +4,7 @@
 // LightUSD Next - UsdGeomCamera Schema Implementation
 
 #include "usd-geom-camera.hh"
+#include "../layer/prim-spec.hh"
 #include "../prim/identifier.hh"
 #include <cmath>
 

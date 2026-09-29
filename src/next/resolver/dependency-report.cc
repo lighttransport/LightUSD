@@ -330,6 +330,7 @@ class Collector {
         opt.max_depth, std::numeric_limits<uint32_t>::max()));
     composition.strict_aousd_conformance = opt.load.strict_aousd_conformance;
     composition.usda_parse_options = opt.load.usda_parse_options;
+    composition.usdc_limits = opt.load.usdc_limits;
     auto opened = pcp::Cache::Open(resolver, root, composition_id, composition);
     if (!opened) { Issue(opened.error()); return; }
     pcp::Cache cache = std::move(opened.value());

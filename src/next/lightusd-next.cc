@@ -868,6 +868,8 @@ StageOperationResult StageSession::OpenFile(
   normalized.composition.max_archive_entries = MinNonZero(
       normalized.composition.max_archive_entries,
       normalized.load.limits.max_archive_entries);
+  normalized.composition.usdc_limits =
+      normalized.load.usdc_options.crate_options;
   normalized.composition.max_depth = static_cast<uint32_t>(
       std::min<size_t>(normalized.composition.max_depth,
                        normalized.load.limits.max_composition_depth));
@@ -1276,6 +1278,23 @@ StageSession::GetCompositionIssues() const {
                       : std::vector<pcp::Cache::CompositionIssue>());
 }
 
+size_t StageSession::GetCompositionIssueCount() const {
+  if (!impl_) return 0;
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  return impl_->cache ? impl_->cache->GetCompositionIssueCount()
+                      : impl_->released_composition_issues.size();
+}
+
+bool StageSession::GetCompositionIssue(
+    size_t index, pcp::Cache::CompositionIssue* out) const {
+  if (!impl_ || !out) return false;
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  if (impl_->cache) return impl_->cache->GetCompositionIssue(index, out);
+  if (index >= impl_->released_composition_issues.size()) return false;
+  *out = impl_->released_composition_issues[index];
+  return true;
+}
+
 std::vector<std::string> StageSession::GetLayerDependencies() const {
   if (!impl_) return {};
   std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
@@ -1294,21 +1313,22 @@ StageSessionMemoryStats StageSession::GetMemoryStats() const {
   impl_->UpdateMemoryStats();
   return impl_->memory_stats;
 }
-void StageSession::TrimCaches() {
-  if (!impl_) return;
-  if (StageOperationActive(impl_.get())) return;
+OperationStatus StageSession::TrimCaches() {
+  if (!impl_) return OperationStatus::InvalidArgument;
+  if (StageOperationActive(impl_.get())) return OperationStatus::Busy;
   std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
   StageOperationScope operation_scope(impl_.get());
-  if (!impl_ || !impl_->cache) return;
+  if (!impl_->cache) return OperationStatus::Ok;
   impl_->cache->TrimTransientCaches();
   impl_->UpdateMemoryStats();
+  return OperationStatus::Ok;
 }
-void StageSession::ReleaseCompositionCache() {
-  if (!impl_) return;
-  if (StageOperationActive(impl_.get())) return;
+OperationStatus StageSession::ReleaseCompositionCache() {
+  if (!impl_) return OperationStatus::InvalidArgument;
+  if (StageOperationActive(impl_.get())) return OperationStatus::Busy;
   std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
   StageOperationScope operation_scope(impl_.get());
-  if (!impl_ || !impl_->cache) return;
+  if (!impl_->cache) return OperationStatus::Ok;
   impl_->WaitForRetiringCache();
   impl_->released_load_rules = impl_->cache->GetLoadRules();
   impl_->released_variant_selections = impl_->cache->GetVariantSelections();
@@ -1324,38 +1344,49 @@ void StageSession::ReleaseCompositionCache() {
 #else
   retiring.reset();
 #endif
+  return OperationStatus::Ok;
 }
+OperationStatus StageSession::ReleaseStaticGeometryArraysByPath(
+    const Path* prim_path, size_t min_array_elements,
+    Stage::StaticGeometryReleaseStats* out) {
+  if (!impl_ || !out) return OperationStatus::InvalidArgument;
+  if (StageOperationActive(impl_.get())) return OperationStatus::Busy;
+  std::lock_guard<std::recursive_mutex> operation_lock(impl_->operation_mu);
+  StageOperationScope operation_scope(impl_.get());
+  if (!impl_->open) return OperationStatus::InvalidData;
+  if (!impl_->cache && !impl_->composition_cache_released)
+    return OperationStatus::Unsupported;
+  std::lock_guard<std::mutex> publish_lock(impl_->publication_mu);
+  if (prim_path && (!prim_path->is_absolute() || prim_path->is_root() ||
+                    prim_path->has_property() ||
+                    !impl_->stage->GetPrimAtPath(*prim_path).IsValid()))
+    return OperationStatus::InvalidArgument;
+  impl_->EnsureUniqueStage();
+  if (prim_path) {
+    // Resolve against the current backing layer AFTER copy-on-write. A prim
+    // borrowed from a retained snapshot belongs to the old layer after cloning.
+    *out = impl_->stage->ReleaseStaticGeometryArraysForPrim(
+        impl_->stage->GetPrimAtPath(*prim_path), min_array_elements);
+  } else {
+    *out = impl_->stage->ReleaseStaticGeometryArrays(min_array_elements);
+    impl_->UpdateMemoryStats();
+  }
+  return OperationStatus::Ok;
+}
+
 Stage::StaticGeometryReleaseStats StageSession::ReleaseStaticGeometryArrays(
     size_t min_array_elements) {
-  if (!impl_) return {};
-  if (StageOperationActive(impl_.get())) return {};
-  std::lock_guard<std::recursive_mutex> operation_lock(impl_->operation_mu);
-  StageOperationScope operation_scope(impl_.get());
-  if (!impl_->open ||
-      (!impl_->cache && !impl_->composition_cache_released)) return {};
-  std::lock_guard<std::mutex> publish_lock(impl_->publication_mu);
-  impl_->EnsureUniqueStage();
-  Stage::StaticGeometryReleaseStats stats =
-      impl_->stage->ReleaseStaticGeometryArrays(min_array_elements);
-  impl_->UpdateMemoryStats();
+  Stage::StaticGeometryReleaseStats stats;
+  ReleaseStaticGeometryArraysByPath(nullptr, min_array_elements, &stats);
   return stats;
 }
-Stage::StaticGeometryReleaseStats
-StageSession::ReleaseStaticGeometryArraysForPrim(
+Stage::StaticGeometryReleaseStats StageSession::ReleaseStaticGeometryArraysForPrim(
     const UsdPrim& prim, size_t min_array_elements) {
-  if (!impl_) return {};
-  if (StageOperationActive(impl_.get())) return {};
-  std::lock_guard<std::recursive_mutex> operation_lock(impl_->operation_mu);
-  StageOperationScope operation_scope(impl_.get());
-  if (!impl_->open ||
-      (!impl_->cache && !impl_->composition_cache_released)) return {};
-  std::lock_guard<std::mutex> publish_lock(impl_->publication_mu);
-  impl_->EnsureUniqueStage();
-  // Do not rescan stage memory here: the streaming converter calls this for
-  // every last-use prim while worker threads are active. A final bulk release
-  // refreshes aggregate memory stats after the workers join.
-  return impl_->stage->ReleaseStaticGeometryArraysForPrim(
-      prim, min_array_elements);
+  Stage::StaticGeometryReleaseStats stats;
+  if (!prim.IsValid()) return stats;
+  const Path path = prim.GetPath();
+  ReleaseStaticGeometryArraysByPath(&path, min_array_elements, &stats);
+  return stats;
 }
 std::string StageSession::GetWarning() const {
   if (!impl_) return {};
@@ -1384,7 +1415,8 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
                         const std::string& anchor_label,
                         const LoadUSDOptions& load_options,
                         std::string* warn, std::string* err,
-                        const pcp::CompositionOptions* comp_opts) {
+                        const pcp::CompositionOptions* comp_opts,
+                        pcp::CompositionReport* report) {
   if (!stage) {
     if (err) *err = "composition failed: null stage";
     return false;
@@ -1414,7 +1446,7 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
   // instance into the flat triangle/BVH stream at its own world transform while
   // the composed STAGE keeps just one copy per prototype. (Inline expansion via
   // detect_instances=false instead duplicates every instance's geometry into the
-  // stage and OOMs on large scenes like Caldera beachhead/capital.)
+  // stage and OOMs on large composed scenes.)
   pcp::CompositionOptions copts;
   copts.load_payloads = true;
   // Diagnostics and worker counts are explicit CompositionOptions. Keeping
@@ -1493,6 +1525,9 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
       copts.max_array_elements, load_options.limits.max_array_elements);
   copts.max_archive_entries = MinNonZero(
       copts.max_archive_entries, load_options.limits.max_archive_entries);
+  // Crate structural limits come from the caller's USDC reader options, so a
+  // composed load bounds every referenced .usdc exactly like a single-file load.
+  copts.usdc_limits = load_options.usdc_options.crate_options;
   copts.usda_parse_options.max_file_size = MinNonZero(
       copts.usda_parse_options.max_file_size,
       load_options.limits.max_asset_bytes);
@@ -1517,7 +1552,7 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
     return false;
   }
   if (!pcp::ComposeStageFromLayer(std::move(root_layer), resolver, &composed,
-                                  filename, copts, &cwarn, &cerr)) {
+                                  filename, copts, &cwarn, &cerr, report)) {
     if (err) {
       *err = "composition failed for " + filename +
              (cerr.empty() ? "" : ": " + cerr);

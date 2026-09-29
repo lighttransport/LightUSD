@@ -9,6 +9,7 @@
 // nested stage customLayerData dict, prim customData/assetInfo (incl. token[]),
 // and a property-level customData dict.
 
+#include "next/layer/layer.hh"
 #include <cassert>
 #include <iostream>
 

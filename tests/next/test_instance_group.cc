@@ -22,7 +22,7 @@
 #include "next/pcp/cache.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
-#include "next/lightusd-next.hh"
+#include "next/types/value.hh"
 
 using namespace lightusd::next;
 

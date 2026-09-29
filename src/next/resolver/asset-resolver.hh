@@ -18,6 +18,23 @@
 namespace lightusd {
 namespace next {
 
+/// Thread-safe retained-payload budget shared by asset stores and consumers.
+/// Reservations live as long as the last owner of the corresponding bytes.
+class AssetPayloadBudget : public std::enable_shared_from_this<AssetPayloadBudget> {
+ public:
+  explicit AssetPayloadBudget(uint64_t limit_bytes) : limit_bytes_(limit_bytes) {}
+  bool SetLimit(uint64_t limit_bytes);
+  std::shared_ptr<void> Reserve(uint64_t bytes);
+  uint64_t UsedBytes() const;
+  uint64_t LimitBytes() const;
+
+ private:
+  void Release(uint64_t bytes);
+  mutable std::mutex mutex_;
+  uint64_t limit_bytes_{0};
+  uint64_t used_bytes_{0};
+};
+
 /// Resolved asset information
 struct ResolvedAsset {
   std::string resolved_path;    // Full resolved path
@@ -85,6 +102,8 @@ public:
   /// Set all search paths
   void SetSearchPaths(const std::vector<std::string>& paths);
   const std::vector<std::string>& GetSearchPaths() const { return config_.search_paths; }
+  void SetAllowParentPaths(bool allow) { config_.allow_parent_paths = allow; }
+  bool GetAllowParentPaths() const { return config_.allow_parent_paths; }
 
   /// Clear all search paths
   void ClearSearchPaths();
@@ -114,7 +133,16 @@ public:
   /// the filesystem and are safe for concurrent reads.
   std::string RegisterMemoryAsset(const std::string& identifier,
                                   std::vector<uint8_t> bytes);
+  /// Register an immutable shared payload without copying its bytes.
+  std::string RegisterMemoryAssetView(
+      const std::string& identifier,
+      std::shared_ptr<const std::vector<uint8_t>> bytes);
   bool UnregisterMemoryAsset(const std::string& identifier);
+  void ClearMemoryAssets();
+  /// Return an owning read view for registered memory assets without copying.
+  /// The shared view remains valid after replacement or unregister.
+  std::shared_ptr<const std::vector<uint8_t>> GetMemoryAssetView(
+      const std::string& identifier) const;
 
   /// Get configuration
   const ResolverConfig& GetConfig() const { return config_; }

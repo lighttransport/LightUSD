@@ -11,5 +11,6 @@ mkdir ${builddir}
 cd ${builddir} && CXX=clang++-21 CC=clang-21 cmake \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
+  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   ..
 

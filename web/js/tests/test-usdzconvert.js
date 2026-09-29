@@ -318,11 +318,13 @@ await testAsync('node texture processor caps concurrency to its memory budget', 
 // ============================================================
 console.log('Integration: loadWasm + convertFolderToUSDZ');
 // ============================================================
-const wasmJs = path.resolve(__dirname, '../src/lightusd/lightusd.js');
+// The next-backed conversion paths need the combined product; the legacy
+// lightusd.js excludes the next core.
+const wasmJs = path.resolve(__dirname, '../src/lightusd/lightusd_combined.js');
 const hasWasm = fs.existsSync(wasmJs);
 
 if (hasWasm) {
-  const wasmGlue = new URL('../src/lightusd/lightusd.js', import.meta.url).href;
+  const wasmGlue = new URL('../src/lightusd/lightusd_combined.js', import.meta.url).href;
 
   await testAsync('loadWasm succeeds', async () => {
     const native = await loadWasm(() => import(wasmGlue));

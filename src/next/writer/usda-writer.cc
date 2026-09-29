@@ -4,6 +4,7 @@
 // LightUSD Next - USDA Writer Implementation
 
 #include "usda-writer.hh"
+#include "../layer/layer.hh"
 #include "value-printer.hh"
 #include "stream-writer.hh"
 #include "dtoa.hh"
@@ -18,7 +19,8 @@
 #include <unordered_set>
 #include <vector>
 #if defined(LIGHTUSD_ENABLE_THREAD)
-#include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 #endif
 
@@ -27,33 +29,64 @@ namespace next {
 
 namespace {
 
-// One unit of parallel write work, emitted in document order by a single serial
-// build pass. The main thread produces cheap structural glue as Text; every array
-// value worth offloading becomes a WholeValue task (formatted by one worker) or,
-// for a large chunkable array, a run of Chunk tasks (formatted by many workers).
+// A non-borrowable (compressed / component-reordered lazy) array that is still
+// worth splitting across workers. It is decoded ONCE, on first use, by whichever
+// worker reaches one of its chunks first (the others wait on the once-flag), and
+// released after its last chunk has been written -- so a decoded buffer only
+// lives while its chunks are inside the formatting window, never for the whole
+// write.
+struct DecodeSlot {
+  const Value* src = nullptr;
+  Value decoded;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  std::once_flag once;
+#else
+  bool done = false;
+#endif
+
+  const Value& get() {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    std::call_once(once, [this]() { decoded = src->materialized_copy(); });
+#else
+    if (!done) {
+      decoded = src->materialized_copy();
+      done = true;
+    }
+#endif
+    return decoded;
+  }
+};
+
+// One unit of parallel write work, emitted in document order by the build pass.
+// The build produces structural glue as Text; every array value worth
+// offloading becomes a WholeValue task (formatted by one worker) or, for a large
+// chunkable array, a run of Chunk tasks (formatted by many workers).
 struct WriteTask {
   enum class Kind : uint8_t { Text, WholeValue, Chunk } kind;
   std::string text;             // Text: literal bytes, produced during the walk
-  const Value* value = nullptr; // WholeValue/Chunk: borrowed (Layer or holder)
+  const Value* value = nullptr; // WholeValue/Chunk: borrowed from the Layer
+  DecodeSlot* slot = nullptr;   // Chunk: decode-on-first-use source (or null)
   size_t lo = 0;                // Chunk: USD element range [lo, hi)
   size_t hi = 0;
   bool open = false;            // Chunk: emit leading '['
   bool close = false;           // Chunk: emit trailing ']'
-  int free_idx = -1;            // after consuming, free holder[free_idx] (or -1)
 };
 
 // Offload tuning. An array property with >= kOffloadMinElems USD elements is
 // formatted by a worker rather than inline on the build thread (tiny arrays stay
-// inline to avoid task spam). A directly chunkable array with >= kSplitMinElems
-// elements is split into kChunkElems-sized pieces so one giant array spreads
-// across workers; kChunkElems also bounds each worker buffer (~3 MB for float3 at
-// 64Ki). A giant chunkable-TYPE array that is not borrowable (compressed/lazy) is
-// decoded once into an owned buffer and then chunked, but only past the larger
-// kMaterializeChunkMin so the one-off decode pays off versus a single WholeValue.
+// inline to avoid task spam). A chunkable array with >= kSplitMinElems elements
+// is split into kChunkElems-sized pieces so one giant array spreads across
+// workers (a single unsplit array holds up the in-order writer for its whole
+// formatting time); kChunkElems also bounds each worker buffer (~3 MB for float3
+// at 64Ki). A chunkable-TYPE array that is not borrowable (compressed, or lazy
+// with reordered components such as quath) is decoded once into a DecodeSlot
+// and then chunked (compressed int arrays only up to kMaxDecodeSplitElems).
 constexpr size_t kChunkElems = 64u * 1024u;
 constexpr size_t kSplitMinElems = 2u * kChunkElems;
 constexpr size_t kOffloadMinElems = 256u;
-constexpr size_t kMaterializeChunkMin = 1u << 20;  // 1Mi elements
+// Compressed int arrays up to this size are decoded once (<= 64 MiB) and split
+// like any other array; beyond it they keep the streaming no-decode path.
+constexpr size_t kMaxDecodeSplitElems = 16u * 1024u * 1024u;
 
 bool IsCompressedLazyIntArray(const Value& value) {
   if (!value.is_lazy() || value.type_id() != TypeId::Int) return false;
@@ -61,38 +94,40 @@ bool IsCompressedLazyIntArray(const Value& value) {
   return ref && ref->is_compressed && ref->crate_type == CrateTypeId::Int;
 }
 
-// Collects ordered tasks during the serial build walk. Structural bytes accrue in
-// `cur` (the StreamWriter target); each offloaded array flushes `cur` as a Text
-// task and appends WholeValue/Chunk task(s). The worker emits the array's full
-// `[...]`, so the build path writes nothing for the value itself. Giant
-// non-borrowable arrays are materialized into `holder` (stable addresses) so their
-// chunks can alias one decoded buffer; the buffer is freed once consumed.
+// Collects ordered tasks during a build walk. Structural bytes accrue in `cur`
+// (the StreamWriter target); each offloaded array flushes `cur` as a Text task
+// and appends WholeValue/Chunk task(s). The worker emits the array's full
+// `[...]`, so the build path writes nothing for the value itself. Split
+// non-borrowable arrays get a DecodeSlot in `holder` (stable addresses) that
+// their chunks share; the decode is freed once consumed.
 struct SegmentSink {
   std::vector<WriteTask>* tasks = nullptr;
   std::string* cur = nullptr;
   const PrintOptions* po = nullptr;
-  std::deque<Value>* holder = nullptr;
+  std::deque<DecodeSlot>* holder = nullptr;
 
   void flush_text() {
     if (cur && !cur->empty()) {
       WriteTask t;
       t.kind = WriteTask::Kind::Text;
-      t.text = std::move(*cur);
+      // Copy out an exact-size string and keep `cur`'s capacity for the next
+      // run (moving it out would regrow a fresh buffer by doubling each time).
+      t.text.assign(cur->data(), cur->size());
       cur->clear();
       tasks->push_back(std::move(t));
     }
   }
 
-  void push_chunks(const Value* src, size_t n, int free_idx) {
+  void push_chunks(const Value* src, DecodeSlot* slot, size_t n) {
     for (size_t lo = 0; lo < n; lo += kChunkElems) {
       WriteTask t;
       t.kind = WriteTask::Kind::Chunk;
       t.value = src;
+      t.slot = slot;
       t.lo = lo;
       t.hi = (lo + kChunkElems < n) ? (lo + kChunkElems) : n;
       t.open = (lo == 0);
       t.close = (t.hi == n);
-      if (t.close) t.free_idx = free_idx;  // free the decoded buffer last
       tasks->push_back(std::move(t));
     }
   }
@@ -101,16 +136,19 @@ struct SegmentSink {
     flush_text();
     const size_t n = ArrayElementCount(*v);
     if (n >= kSplitMinElems && IsChunkableArray(*v, *po)) {
-      push_chunks(v, n, /*free_idx=*/-1);  // borrowable: chunk in place
-    } else if (IsCompressedLazyIntArray(*v)) {
+      push_chunks(v, nullptr, n);  // borrowable: chunk in place
+    } else if (IsCompressedLazyIntArray(*v) &&
+               (n < kSplitMinElems || n > kMaxDecodeSplitElems)) {
+      // Streamed by the printer's own block decoder (a giant one directly into
+      // the output by the writer thread) -- no whole-array decode buffer.
       WriteTask t;
       t.kind = WriteTask::Kind::WholeValue;
       t.value = v;
       tasks->push_back(std::move(t));
-    } else if (n >= kMaterializeChunkMin && holder && IsChunkableType(*v, *po)) {
-      holder->push_back(v->materialized_copy());  // decode once, then chunk
-      push_chunks(&holder->back(), n,
-                  static_cast<int>(holder->size() - 1));
+    } else if (n >= kSplitMinElems && holder && IsChunkableType(*v, *po)) {
+      holder->emplace_back();  // decoded on first use, then chunked
+      holder->back().src = v;
+      push_chunks(v, &holder->back(), n);
     } else {
       WriteTask t;
       t.kind = WriteTask::Kind::WholeValue;
@@ -243,6 +281,14 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
   }
   if (meta.owner_set || !meta.owner.empty()) {
     lines.push_back(opts.indent + "owner = " + EscapeString(meta.owner));
+  }
+  if (meta.autoPlay_set) {
+    lines.push_back(opts.indent + std::string("autoPlay = ") +
+                    (meta.autoPlay ? "true" : "false"));
+  }
+  if (meta.playbackMode_set) {
+    lines.push_back(opts.indent + "playbackMode = " +
+                    EscapeString(meta.playbackMode));
   }
 
   if (meta.metersPerUnit_set || meta.metersPerUnit != 0.01) {
@@ -458,7 +504,8 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
 
 // Write time samples for a property
 void WriteTimeSamples(StreamWriter& os, const std::string& name, PropNameId name_id,
-                      const PrimSpec& spec, int depth, const USDAWriteOptions& opts) {
+                      const PrimSpec& spec, int depth, const USDAWriteOptions& opts,
+                      SegmentSink* segsink) {
   const auto* samples = spec.time_samples(name_id);
   if (!samples || samples->empty()) return;
 
@@ -488,8 +535,8 @@ void WriteTimeSamples(StreamWriter& os, const std::string& name, PropNameId name
     const auto& sample = (*samples)[i];
     WriteIndent(os, depth + 1, opts.indent);
     // Format the time into a stack buffer (no per-sample std::string alloc);
-    // 32 bytes covers a double (same bound the dtos_append path uses).
-    char time_buf[32];
+    // kDtoaBufSize is dtos_to's buffer contract (SIMD fast-path overshoot).
+    char time_buf[kDtoaBufSize];
     const size_t tlen = dtos_to(time_buf, sample.first);
     os.write(time_buf, tlen);
     os << ": ";
@@ -500,8 +547,15 @@ void WriteTimeSamples(StreamWriter& os, const std::string& name, PropNameId name
     } else if (val) {
       // Stream large arrays directly; lazy crate-backed POD arrays can be
       // borrowed without decoding, while unsupported encodings fall back to a
-      // transient materialized value inside the value printer.
-      PrintValue(os, *val, print_opts);
+      // transient materialized value inside the value printer. In a parallel
+      // build a non-trivial sampled array is offloaded like a default value
+      // (animated points would otherwise be formatted by the one build worker).
+      if (segsink && val->is_array() &&
+          ArrayElementCount(*val) >= kOffloadMinElems) {
+        segsink->offload_array(val);
+      } else {
+        PrintValue(os, *val, print_opts);
+      }
     } else {
       os << "None";
     }
@@ -653,7 +707,17 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
         po.float_precision = opts.float_precision;
         po.double_precision = opts.double_precision;
         po.indent = opts.indent;
-        PrintValue(os, *def_val, po);
+        // Offload only when this statement's print options match the array
+        // options the offload workers use (they differ in the element
+        // limit/compact fields, which this statement leaves at defaults).
+        if (segsink && def_val->is_array() &&
+            ArrayElementCount(*def_val) >= kOffloadMinElems &&
+            po.max_array_elements == opts.max_elements_per_line &&
+            po.compact == opts.compact) {
+          segsink->offload_array(def_val);
+        } else {
+          PrintValue(os, *def_val, po);
+        }
       }
       WritePropMeta(os, spec, slot.name_id, depth, opts);
       os << "\n";
@@ -664,7 +728,7 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
       WritePropMeta(os, spec, slot.name_id, depth, opts);
       os << "\n";
     }
-    WriteTimeSamples(os, name, slot.name_id, spec, depth, opts);
+    WriteTimeSamples(os, name, slot.name_id, spec, depth, opts, segsink);
     os << "\n";
     // A connection coexists with time samples (pxr emits it as a third
     // statement after the `.timeSamples` block); dropping it here silently
@@ -759,12 +823,16 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
   // changes composition semantics for delete/prepend against weaker layers).
   const ArcEdit* re = nullptr;
   bool explicit_empty = false;
+  bool value_block = false;
   {
     const auto& edits = spec.relationship_edits();
     const auto it = edits.find(name);
     if (it != edits.end() && it->second.authored) {
       if (!it->second.is_explicit) re = &it->second;
-      else if (targets.empty()) explicit_empty = true;
+      else if (targets.empty()) {
+        explicit_empty = true;
+        value_block = it->second.is_value_block;
+      }
     }
   }
   if (re) {
@@ -797,7 +865,8 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
   if (targets.empty()) {
     // Composed-stage output: an explicit-None (block) relationship resolved
     // to "no targets"; pxr flatten writes the bare declaration.
-    if (explicit_empty && !opts.composed_stage_output) os << " = None";
+    if (explicit_empty && !opts.composed_stage_output)
+      os << (value_block ? " = None" : " = []");
     // Otherwise this is a declared-only relationship: bare `rel name` (pxr
     // re-parses it without an authored targetPaths opinion).
   } else {
@@ -1535,9 +1604,15 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
 
 }
 
-void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
-                   int depth, const USDAWriteOptions& opts,
-                   SegmentSink* segsink) {
+// Pre-order hierarchy walk shared by the streaming writer and the parallel
+// writer's skeleton pass, so both visit exactly the same prims in the same
+// order (including the cycle/depth guards). `open(prim, depth, is_child)` fires
+// when a prim is entered (`is_child` = entered from its parent, which the
+// writer separates with a blank line); `close(prim, depth)` when it is left.
+template <typename OpenFn, typename CloseFn>
+void WalkPrimSubtree(const PrimSpec& spec, const Layer& layer, int depth,
+                     const USDAWriteOptions& opts, OpenFn&& open,
+                     CloseFn&& close) {
   // Composed-stage output: pxr usdcat --flatten DROPS deactivated prims
   // (and their subtrees) from the flattened layer entirely. The in-memory
   // stage keeps them (IsActive stays queryable); only the flatten output
@@ -1569,7 +1644,7 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
   while (!stack.empty()) {
     Frame& frame = stack.back();
     if (!frame.opened) {
-      WritePrimSpecOpen(os, *frame.prim, layer, frame.depth, opts, segsink);
+      open(*frame.prim, frame.depth, /*is_child=*/stack.size() > 1);
       frame.opened = true;
     }
 
@@ -1594,18 +1669,31 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
       if (child_depth >= kMaxWriteDepth || !on_stack.insert(child).second) {
         continue;
       }
-      os << "\n";
       stack.push_back(Frame{child, child_depth, 0, false});
       descended = true;
       break;
     }
     if (descended) continue;
 
-    WriteIndent(os, frame.depth, opts.indent);
-    os << "}\n";
+    close(*frame.prim, frame.depth);
     on_stack.erase(frame.prim);
     stack.pop_back();
   }
+}
+
+void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
+                   int depth, const USDAWriteOptions& opts,
+                   SegmentSink* segsink) {
+  WalkPrimSubtree(
+      spec, layer, depth, opts,
+      [&](const PrimSpec& prim, int d, bool is_child) {
+        if (is_child) os << "\n";
+        WritePrimSpecOpen(os, prim, layer, d, opts, segsink);
+      },
+      [&](const PrimSpec&, int d) {
+        WriteIndent(os, d, opts.indent);
+        os << "}\n";
+      });
 }
 
 void WriteRootPrimOrder(StreamWriter& os, const LayerMeta& meta) {
@@ -1640,11 +1728,14 @@ void WriteStageBodySerial(StreamWriter& os, const Layer& layer,
 // giant array no longer pins a single worker), so throughput scales with cores;
 // the auto default is capped at kAutoCap to stay reasonable on shared machines
 // while still feeding many cores. An explicit request is honored as-is so callers
-// can override on unusual hardware.
+// can override on unusual hardware. Measured on a 16-core/32-thread box (Island
+// flatten, 7.5 GB): 16 -> 32 workers cut the write ~12% (1.87 -> 1.65 s) for
+// ~+300 MB of in-flight buffers; formatting is float-to-text bound, so SMT
+// siblings add less than real cores.
 int ResolveWriteThreads(int requested) {
   if (requested == 1) return 1;
   if (requested > 1) return requested;
-  constexpr int kAutoCap = 16;
+  constexpr int kAutoCap = 32;
   int hw = static_cast<int>(std::thread::hardware_concurrency());
   if (hw < 1) hw = 1;
   return std::min(hw, kAutoCap);
@@ -1662,14 +1753,29 @@ PrintOptions MakeArrayPrintOpts(const USDAWriteOptions& opts) {
   return p;
 }
 
-// Parallel stage body. A single serial pre-order walk builds the document-ordered
-// task list: cheap structural bytes accrue inline as Text, while every array value
-// worth offloading (>= kOffloadMinElems elements) becomes WholeValue/Chunk task(s)
-// referencing the borrowed array. A worker pool then formats the offloaded arrays
-// concurrently -- this is where nearly all of a geometry-heavy stage's write time
-// goes -- while the main thread writes the task results strictly in order. A
-// bounded look-ahead window keeps in-flight result buffers (hence peak memory)
-// small. Output is byte-identical to the serial writer regardless of thread count.
+// Parallel stage body, byte-identical to the serial writer for any thread count.
+//
+//  1. Skeleton (serial, cheap): one pre-order walk records every prim's
+//     open/close event -- the same WalkPrimSubtree the streaming writer uses,
+//     so visit order and cycle/depth guards are identical. The event list is
+//     cut into contiguous, cost-balanced RANGES.
+//  2. Build (parallel): a worker replays one range into its own document-ordered
+//     task list: prim headers, property lines and small arrays become Text,
+//     larger arrays are offloaded as WholeValue/Chunk tasks (see SegmentSink).
+//     A prim's text depends only on the prim and its depth, so the ranges'
+//     outputs concatenate to exactly the serial document. The built task list
+//     is cut into byte-balanced SEGMENTS.
+//  3. Format (parallel): a worker formats one whole segment (its Text plus the
+//     arrays it references) into a pooled buffer.
+//  4. Write (main thread): segment buffers are written strictly in document
+//     order.
+// Building and formatting are pipelined over one worker pool: a worker formats
+// the oldest published segment when the in-order window has room, otherwise it
+// builds the next range. Ranges are published (their segments appended to the
+// global order) strictly in range order. Two bounds keep memory flat: at most
+// W segments are in flight past the writer, and ranges are built at most
+// kBuildAhead ranges past the one being written, so neither the structure text
+// nor decoded array buffers ever accumulate for the whole document.
 void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
                             const LayerMeta& meta, const USDAWriteOptions& opts,
                             int nthreads) {
@@ -1679,122 +1785,171 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
   // only non-reentrant spot on the write path; reads are thread-safe after).
   (void)GetPropNameTable();
 
-  // Phase 1 (serial, cheap): walk the whole stage, emitting structure as Text and
-  // offloading array values. No giant array is formatted here, so this is fast.
-  std::vector<WriteTask> tasks;
-  std::deque<Value> holder;  // decoded buffers for materialized giant arrays
-  {
-    std::string cur;
-    StreamWriter sw(&cur);
-    SegmentSink sink;
-    sink.tasks = &tasks;
-    sink.cur = &cur;
-    sink.po = &po;
-    sink.holder = &holder;
-    WriteLayerMeta(sw, meta, opts);
-    WriteRootPrimOrder(sw, meta);
-    for (uint32_t root_idx : layer.root_indices()) {
-      const PrimSpec* root = layer.prim(root_idx);
-      if (!root) continue;
-      WritePrimSpec(sw, *root, layer, 0, opts, &sink);
-      sw << "\n";
-    }
-    sink.flush_text();
+  // The layer header is tiny: write it straight through.
+  WriteLayerMeta(os, meta, opts);
+  WriteRootPrimOrder(os, meta);
+
+  // ---- 1. Skeleton walk + range cut ----
+  enum : uint8_t { kEvOpenRoot, kEvOpenChild, kEvClose, kEvRootEnd };
+  struct WalkEvent {
+    const PrimSpec* prim;
+    int32_t depth;
+    uint8_t kind;
+  };
+  std::vector<WalkEvent> events;
+  std::vector<uint32_t> ev_cost;  // per event: relative build cost estimate
+  for (uint32_t root_idx : layer.root_indices()) {
+    const PrimSpec* root = layer.prim(root_idx);
+    if (!root) continue;
+    WalkPrimSubtree(
+        *root, layer, 0, opts,
+        [&](const PrimSpec& prim, int d, bool is_child) {
+          events.push_back(WalkEvent{&prim, d,
+                                     is_child ? uint8_t(kEvOpenChild)
+                                              : uint8_t(kEvOpenRoot)});
+          // ~one unit per property line plus the header.
+          ev_cost.push_back(
+              4u + static_cast<uint32_t>(prim.properties().slots().size()));
+        },
+        [&](const PrimSpec& prim, int d) {
+          events.push_back(WalkEvent{&prim, d, uint8_t(kEvClose)});
+          ev_cost.push_back(0);
+        });
+    events.push_back(WalkEvent{root, 0, uint8_t(kEvRootEnd)});
+    ev_cost.push_back(0);
   }
+  if (events.empty()) return;
 
-  const size_t m = tasks.size();
-  if (m == 0) return;
+  // Many more ranges than workers, so dynamic claiming balances uneven prims
+  // and the first range (which gates all formatting) is quick to build.
+  std::vector<size_t> range_begin;  // event index where each range starts; +[n]
+  {
+    uint64_t total_cost = 0;
+    for (uint32_t c : ev_cost) total_cost += c;
+    const uint64_t r_target = static_cast<uint64_t>(nthreads) * 16u;
+    const uint64_t per_range = std::max<uint64_t>(1, total_cost / r_target);
+    range_begin.push_back(0);
+    uint64_t acc = 0;
+    for (size_t i = 0; i < events.size(); ++i) {
+      acc += ev_cost[i];
+      if (acc >= per_range && i + 1 < events.size()) {
+        range_begin.push_back(i + 1);
+        acc = 0;
+      }
+    }
+    range_begin.push_back(events.size());
+  }
+  std::vector<uint32_t>().swap(ev_cost);
+  const size_t R = range_begin.size() - 1;
 
-  // Group the document-ordered tasks into ~K byte-balanced segments, each a
-  // contiguous task run. A worker formats an entire segment (its structure +
-  // arrays) into one buffer, so writing is just K large in-order copies -- cheap
-  // synchronization (K is small) with balanced formatting (segments are equal
-  // estimated bytes, so no worker gets stuck on one giant array's neighbourhood).
-  auto scalar_bytes = [](const Value& v, uint64_t elems) -> uint64_t {
-    // ~8 output chars per scalar component (digits + ", "); scale by components.
-    size_t comps = GetComponentCount(v.type_id());
+  // ---- Segment sizing ----
+  // Estimated output bytes of a task (~8 chars per scalar component).
+  auto task_bytes = [](const WriteTask& t) -> uint64_t {
+    if (t.kind == WriteTask::Kind::Text) return t.text.size();
+    size_t comps = GetComponentCount(t.value->type_id());
     if (comps < 1) comps = 1;
+    const uint64_t elems = (t.kind == WriteTask::Kind::Chunk)
+                               ? uint64_t(t.hi - t.lo)
+                               : uint64_t(ArrayElementCount(*t.value));
     return elems * uint64_t(comps) * 8u + 2u;
   };
-  auto task_bytes = [&](const WriteTask& t) -> uint64_t {
-    if (t.kind == WriteTask::Kind::Text) return t.text.size();
-    if (t.kind == WriteTask::Kind::Chunk) return scalar_bytes(*t.value, t.hi - t.lo);
-    return scalar_bytes(*t.value, ArrayElementCount(*t.value));  // WholeValue
-  };
+  // Very large compressed int arrays are formatted by the writer thread
+  // straight into the output so they never need a full text buffer.
   auto direct_stream_task = [&](const WriteTask& t) -> bool {
     constexpr uint64_t kDirectStreamBytes = 64ull << 20;
     return t.kind == WriteTask::Kind::WholeValue && t.value &&
            IsCompressedLazyIntArray(*t.value) &&
            task_bytes(t) >= kDirectStreamBytes;
   };
-  uint64_t total_bytes = 0;
-  for (const auto& t : tasks) total_bytes += task_bytes(t);
-  const size_t k_target = std::max<size_t>(1, static_cast<size_t>(nthreads) * 64);
-  const uint64_t seg_target = std::max<uint64_t>(1, total_bytes / k_target);
-  std::vector<size_t> seg_begin;  // task index where each segment starts; +[m]
-  seg_begin.push_back(0);
-  uint64_t acc = 0;
-  for (size_t i = 0; i < m; ++i) {
-    if (direct_stream_task(tasks[i])) {
-      if (seg_begin.back() != i) seg_begin.push_back(i);
-      seg_begin.push_back(i + 1);
-      acc = 0;
-      continue;
-    }
-    acc += task_bytes(tasks[i]);
-    if (acc >= seg_target && seg_begin.back() != i + 1) {
-      seg_begin.push_back(i + 1);
-      acc = 0;
-    }
-  }
-  if (seg_begin.back() != m) seg_begin.push_back(m);
-  const size_t K = seg_begin.size() - 1;
-  std::vector<uint8_t> direct_segment(K, 0);
-  for (size_t k = 0; k < K; ++k) {
-    direct_segment[k] =
-        (seg_begin[k + 1] == seg_begin[k] + 1 &&
-         direct_stream_task(tasks[seg_begin[k]]))
-            ? 1
-            : 0;
-  }
+  // ~Chunk-sized segments: large enough that per-segment overhead vanishes,
+  // small enough to balance and to keep the in-flight window's buffers small.
+  constexpr uint64_t kSegTargetBytes = 4ull << 20;
 
-  // Per-segment list of decoded-buffer holder indices to free once that segment is
-  // written. A buffer's freeing flag sits on its last chunk; by the time that
-  // segment is consumed, all of the buffer's chunks (here and in earlier segments)
-  // have been formatted, so the decode can be released -- bounding peak memory.
-  std::vector<std::vector<int>> seg_free(K);
-  {
-    size_t seg = 0;
+  struct Segment {
+    size_t lo = 0, hi = 0;             // task range within its build range
+    bool direct = false;
+    std::vector<DecodeSlot*> frees;    // decodes to release once written
+  };
+  struct RangeOut {
+    std::vector<WriteTask> tasks;
+    std::deque<DecodeSlot> holder;     // decode slots of split arrays
+    std::vector<Segment> segs;
+  };
+  std::vector<RangeOut> range_out(R);
+
+  auto build_range = [&](size_t r) {
+    RangeOut& out = range_out[r];
+    {
+      std::string cur;
+      StreamWriter sw(&cur);
+      SegmentSink sink;
+      sink.tasks = &out.tasks;
+      sink.cur = &cur;
+      sink.po = &po;
+      sink.holder = &out.holder;
+      for (size_t i = range_begin[r]; i < range_begin[r + 1]; ++i) {
+        const WalkEvent& ev = events[i];
+        switch (ev.kind) {
+          case kEvOpenChild:
+            sw << "\n";
+            WritePrimSpecOpen(sw, *ev.prim, layer, ev.depth, opts, &sink);
+            break;
+          case kEvOpenRoot:
+            WritePrimSpecOpen(sw, *ev.prim, layer, ev.depth, opts, &sink);
+            break;
+          case kEvClose:
+            WriteIndent(sw, ev.depth, opts.indent);
+            sw << "}\n";
+            break;
+          case kEvRootEnd:
+            sw << "\n";
+            break;
+        }
+      }
+      sink.flush_text();
+    }
+    // Cut into segments. A decode slot is released with the segment holding
+    // its closing chunk: every earlier chunk sits in an earlier (or the same)
+    // segment, so all of them have been formatted by then.
+    const std::vector<WriteTask>& tasks = out.tasks;
+    const size_t m = tasks.size();
+    size_t start = 0;
+    uint64_t acc = 0;
     for (size_t i = 0; i < m; ++i) {
-      while (seg + 1 < K && i >= seg_begin[seg + 1]) ++seg;
-      if (tasks[i].free_idx >= 0) seg_free[seg].push_back(tasks[i].free_idx);
+      if (direct_stream_task(tasks[i])) {
+        if (start != i) out.segs.push_back(Segment{start, i, false, {}});
+        out.segs.push_back(Segment{i, i + 1, true, {}});
+        start = i + 1;
+        acc = 0;
+        continue;
+      }
+      acc += task_bytes(tasks[i]);
+      if (acc >= kSegTargetBytes) {
+        out.segs.push_back(Segment{start, i + 1, false, {}});
+        start = i + 1;
+        acc = 0;
+      }
     }
-  }
+    if (start != m) out.segs.push_back(Segment{start, m, false, {}});
+    for (Segment& sg : out.segs) {
+      for (size_t i = sg.lo; i < sg.hi; ++i) {
+        if (tasks[i].slot && tasks[i].close) sg.frees.push_back(tasks[i].slot);
+      }
+    }
+  };
 
-  // Phase 2: workers format whole segments; the main thread writes segment buffers
-  // in order. Very large compressed int arrays are marked direct and formatted by
-  // the consumer into the final stream so they do not allocate a full text buffer.
-  // Lock-free: each segment is claimed once via `next`, produced into results[k]
-  // (or marked direct), published via ready[k]; the consumer spins (yielding) on
-  // ready[s] and advances `consumed`, back-pressuring workers past W segments
-  // ahead.
-  std::vector<std::string> results(K);
-  std::vector<std::atomic<uint8_t>> ready(K);
-  for (size_t i = 0; i < K; ++i) ready[i].store(0, std::memory_order_relaxed);
-  std::atomic<size_t> next{0};
-  std::atomic<size_t> consumed{0};
-  const size_t W = static_cast<size_t>(nthreads) * 2 + 2;
-
-  auto format_segment_to = [&](size_t k, StreamWriter& sw) {
-    for (size_t i = seg_begin[k]; i < seg_begin[k + 1]; ++i) {
-      WriteTask& t = tasks[i];
+  auto format_segment_to = [&](RangeOut& ro, const Segment& sg,
+                               StreamWriter& sw) {
+    for (size_t i = sg.lo; i < sg.hi; ++i) {
+      WriteTask& t = ro.tasks[i];
       switch (t.kind) {
         case WriteTask::Kind::Text:
           sw.write(t.text.data(), t.text.size());
           std::string().swap(t.text);  // free structure bytes once copied
           break;
         case WriteTask::Kind::Chunk:
-          PrintArrayRangeToStream(sw, *t.value, po, t.lo, t.hi, t.open, t.close);
+          PrintArrayRangeToStream(sw, t.slot ? t.slot->get() : *t.value, po,
+                                  t.lo, t.hi, t.open, t.close);
           break;
         case WriteTask::Kind::WholeValue:
           PrintValue(sw, *t.value, po);  // worker emits the full `[ ... ]`
@@ -1802,48 +1957,145 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
       }
     }
   };
-  auto format_segment = [&](size_t k, std::string& buf) {
-    buf.clear();
-    StreamWriter sw(&buf);
-    format_segment_to(k, sw);
+
+  // ---- 2-4. Pipelined build / format / in-order write ----
+  // Scheduler state, all guarded by `mu`. `order` lists published segments in
+  // document order; a std::deque so appends never move existing slots.
+  struct SegSlot {
+    size_t range;
+    size_t index;       // into range_out[range].segs
+    uint8_t state = 0;  // 0 pending, 1 buffer ready, 2 direct (writer formats)
+    std::string buf;
   };
+  std::mutex mu;
+  std::condition_variable cv_work;    // workers: new segment / window / range
+  std::condition_variable cv_writer;  // writer: segment ready / range published
+  std::deque<SegSlot> order;
+  std::vector<uint8_t> built(R, 0);
+  size_t next_build = 0;      // next range to claim for building
+  size_t next_pub = 0;        // ranges [0, next_pub) are published into `order`
+  size_t next_fmt = 0;        // next `order` index to claim for formatting
+  size_t consumed = 0;        // `order` entries already written
+  size_t writing_range = 0;   // range the writer is currently in
+  const size_t W = static_cast<size_t>(nthreads) * 2 + 2;
+  const size_t kBuildAhead = static_cast<size_t>(nthreads) * 2 + 2;
+
+  // Segment buffers are recycled through a small pool (guarded by `mu`): the
+  // writer hands a written buffer back (capacity kept) instead of freeing it,
+  // so workers reuse already-faulted pages rather than growing a fresh
+  // multi-MB string by doubling for every segment (that realloc/page-fault
+  // churn was most of the writer's kernel time). An outlier-sized buffer (a
+  // giant unsplittable value) is released instead of pooled.
+  std::vector<std::string> buf_pool;
+  constexpr size_t kMaxPooledCapacity = 4u * (4u << 20);
 
   auto worker = [&]() {
-    std::string buf;
+    std::unique_lock<std::mutex> lk(mu);
     for (;;) {
-      size_t k = next.fetch_add(1, std::memory_order_relaxed);
-      if (k >= K) break;
-      while (k >= consumed.load(std::memory_order_acquire) + W) {
-        std::this_thread::yield();
-      }
-      if (direct_segment[k]) {
-        ready[k].store(2, std::memory_order_release);
+      if (next_fmt < order.size() && next_fmt < consumed + W) {
+        SegSlot& slot = order[next_fmt++];
+        RangeOut& ro = range_out[slot.range];
+        const Segment& sg = ro.segs[slot.index];
+        if (sg.direct) {
+          slot.state = 2;
+          cv_writer.notify_one();
+          continue;
+        }
+        std::string buf;
+        if (!buf_pool.empty()) {
+          buf = std::move(buf_pool.back());
+          buf_pool.pop_back();
+        }
+        lk.unlock();
+        buf.clear();
+        {
+          StreamWriter sw(&buf);
+          format_segment_to(ro, sg, sw);
+        }
+        lk.lock();
+        slot.buf = std::move(buf);
+        slot.state = 1;
+        cv_writer.notify_one();
         continue;
       }
-      format_segment(k, buf);
-      results[k] = std::move(buf);
-      ready[k].store(1, std::memory_order_release);
+      if (next_build < R && next_build < writing_range + kBuildAhead) {
+        const size_t r = next_build++;
+        lk.unlock();
+        build_range(r);
+        lk.lock();
+        built[r] = 1;
+        bool published = false;
+        while (next_pub < R && built[next_pub]) {
+          const size_t nseg = range_out[next_pub].segs.size();
+          for (size_t j = 0; j < nseg; ++j) {
+            SegSlot s;
+            s.range = next_pub;
+            s.index = j;
+            order.push_back(std::move(s));
+          }
+          ++next_pub;
+          published = true;
+        }
+        if (published) {
+          cv_work.notify_all();
+          cv_writer.notify_one();
+        }
+        continue;
+      }
+      if (next_build >= R && next_pub >= R && next_fmt >= order.size()) break;
+      cv_work.wait(lk);
     }
   };
 
-  const int nw = std::min<int>(nthreads, static_cast<int>(K));
+  const int nw = std::max(1, nthreads);
   std::vector<std::thread> pool;
-  pool.reserve(nw);
+  pool.reserve(static_cast<size_t>(nw));
   for (int t = 0; t < nw; ++t) pool.emplace_back(worker);
 
-  for (size_t s = 0; s < K; ++s) {
-    uint8_t state = 0;
-    while ((state = ready[s].load(std::memory_order_acquire)) == 0) {
-      std::this_thread::yield();
+  size_t g = 0;  // global `order` index being written
+  for (size_t r = 0; r < R; ++r) {
+    RangeOut& ro = range_out[r];
+    {
+      std::unique_lock<std::mutex> lk(mu);
+      cv_writer.wait(lk, [&]() { return next_pub > r; });
     }
-    if (state == 2) {
-      format_segment_to(s, os);
-    } else {
-      os.write(results[s].data(), results[s].size());
-      std::string().swap(results[s]);  // free as we go
+    const size_t nseg = ro.segs.size();
+    for (size_t j = 0; j < nseg; ++j, ++g) {
+      uint8_t state = 0;
+      std::string buf;
+      {
+        std::unique_lock<std::mutex> lk(mu);
+        cv_writer.wait(lk, [&]() { return order[g].state != 0; });
+        state = order[g].state;
+        if (state == 1) buf = std::move(order[g].buf);
+      }
+      const Segment& sg = ro.segs[j];
+      if (state == 2) {
+        format_segment_to(ro, sg, os);
+      } else {
+        os.write(buf.data(), buf.size());
+      }
+      for (DecodeSlot* ds : sg.frees) ds->decoded = Value{};  // release decodes
+      {
+        std::lock_guard<std::mutex> lk(mu);
+        if (state == 1 && buf.capacity() <= kMaxPooledCapacity) {
+          buf.clear();
+          buf_pool.push_back(std::move(buf));  // recycle (capacity kept)
+        }
+        consumed = g + 1;
+      }
+      cv_work.notify_all();
     }
-    for (int idx : seg_free[s]) holder[idx] = Value{};  // release decoded buffers
-    consumed.store(s + 1, std::memory_order_release);
+    // Every segment of range r is written, so no worker references it any
+    // more: release its tasks and decode slots, and let building advance.
+    std::vector<WriteTask>().swap(ro.tasks);
+    std::deque<DecodeSlot>().swap(ro.holder);
+    std::vector<Segment>().swap(ro.segs);
+    {
+      std::lock_guard<std::mutex> lk(mu);
+      writing_range = r + 1;
+    }
+    cv_work.notify_all();
   }
 
   for (auto& th : pool) th.join();
@@ -1900,6 +2152,10 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.doc = stage_meta.doc;
   meta.comment = stage_meta.comment;
   meta.owner = stage_meta.owner;
+  meta.autoPlay = stage_meta.autoPlay;
+  meta.autoPlay_set = stage_meta.autoPlay_set;
+  meta.playbackMode = stage_meta.playbackMode;
+  meta.playbackMode_set = stage_meta.playbackMode_set;
   meta.doc_set = stage_meta.doc_set;
   meta.comment_set = stage_meta.comment_set;
   meta.owner_set = stage_meta.owner_set;

@@ -788,6 +788,56 @@ Value Value::MakeIntCompArray(std::vector<int32_t>&& data, TypeId elem_type,
   return v;
 }
 
+Value Value::MakeDeferredArray(TypeId elem_type, ArrayScalarKind kind,
+                               uint32_t elem_count,
+                               DeferredArrayFill* out_fill) {
+  if (!out_fill) return Value();
+  Value v;
+  v.type_id_ = elem_type;
+  v.is_array_ = true;
+  // Final size now; the payload arrives through *out_fill before anything may
+  // read it (see the header contract).
+  v.array_size_ = elem_count;
+  ArrayHandle* h = nullptr;
+  switch (kind) {
+    case ArrayScalarKind::Float:
+      h = new (v.storage_) ArrayHandle(std::vector<float>());
+      break;
+    case ArrayScalarKind::Double:
+      h = new (v.storage_) ArrayHandle(std::vector<double>());
+      break;
+    case ArrayScalarKind::Int32:
+      h = new (v.storage_) ArrayHandle(std::vector<int32_t>());
+      break;
+    case ArrayScalarKind::UInt32:
+      h = new (v.storage_) ArrayHandle(std::vector<uint32_t>());
+      break;
+    case ArrayScalarKind::Int64:
+      h = new (v.storage_) ArrayHandle(std::vector<int64_t>());
+      break;
+    case ArrayScalarKind::UInt64:
+      h = new (v.storage_) ArrayHandle(std::vector<uint64_t>());
+      break;
+    case ArrayScalarKind::Bool:
+      h = new (v.storage_) ArrayHandle(std::vector<uint8_t>());
+      break;
+  }
+  if (!h) return Value();
+  out_fill->handle_ = *h;  // second reference: the fill side
+  out_fill->type_id_ = elem_type;
+  out_fill->elem_count_ = elem_count;
+  return v;
+}
+
+bool Value::DeferredArrayFill::Complete(Value&& parsed) {
+  if (!parsed.is_array_ || parsed.is_lazy_ || parsed.is_block_ ||
+      parsed.dirty_ || parsed.type_id_ != type_id_ ||
+      parsed.array_size_ != elem_count_) {
+    return false;
+  }
+  return ArraySlot(parsed.storage_)->swap_payload(handle_);
+}
+
 // ============================================================
 // Queries and accessors
 // ============================================================
@@ -1185,6 +1235,31 @@ const std::string* Value::as_asset_path() const {
 const Dict* Value::as_dictionary() const {
   if (type_id_ != TypeId::Dictionary) return nullptr;
   return DictSlot(storage_)->get();
+}
+
+size_t Value::dynamic_string_memory_usage() const {
+  size_t bytes = 0;
+  const auto add = [&bytes](size_t n) {
+    bytes = n > (std::numeric_limits<size_t>::max)() - bytes
+        ? (std::numeric_limits<size_t>::max)() : bytes + n;
+  };
+  const auto multiply = [](size_t a, size_t b) {
+    return a && b > (std::numeric_limits<size_t>::max)() / a
+        ? (std::numeric_limits<size_t>::max)() : a * b;
+  };
+  if (const std::string* value = as_string()) add(value->capacity());
+  else if (const std::string* value = as_token()) add(value->capacity());
+  else if (const std::string* value = as_asset_path()) add(value->capacity());
+
+  // Estimating a retained lazy array must not materialize it as a side effect.
+  if (is_array_ && !is_lazy_) {
+    if (const auto* values = as_token_array()) {
+      add(multiply(values->capacity(), sizeof(std::string)));
+      for (const std::string& value : *values) add(value.capacity());
+    }
+  }
+  if (const Dict* dict = as_dictionary()) add(dict->dynamic_string_memory_usage());
+  return bytes;
 }
 
 Dict* Value::as_dictionary() {

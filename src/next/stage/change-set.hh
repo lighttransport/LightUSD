@@ -9,10 +9,12 @@
 #include <string>
 #include <vector>
 
-#include "stage.hh"
+#include "next/prim/path.hh"
 
 namespace lightusd {
 namespace next {
+
+class Stage;
 
 struct StageSnapshot {
   uint64_t revision = 0;

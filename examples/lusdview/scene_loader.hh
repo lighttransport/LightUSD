@@ -15,7 +15,7 @@
 #include <vector>
 
 #include "gpu_scene.hh"
-#include "tydra/next/resource-budget.hh"  // TextureFit
+#include "lightusd-render-c.h"
 #include "preview_cache.hh"
 #include "io-util.hh"  // lightusd::io::MMapFileHandle
 #include "layer.hh"
@@ -95,7 +95,7 @@ struct LoadOptions {
   // --texture-fit: resident-byte threshold (geometry + decoded textures) under
   // which textures are left unshrunk and uncompressed. 0 == "always process"
   // (the pre-policy behaviour); UINT64 max == "never process".
-  lightusd::tydra::next::TextureFit textureFit{};
+  lightusd_texture_fit textureFit{0, LIGHTUSD_TEXTURE_FIT_DEFAULT, 0};
   size_t textureFitThresholdBytes{0};
   // 25% of resident VRAM, INDEPENDENT of --texture-fit. Gates mip generation
   // only; see the comment where it is consumed in next_scene_loader.cc.
@@ -150,8 +150,8 @@ struct LoadOptions {
   std::map<std::string, std::map<std::string, std::string>> variantOverrides;
   // Allow parent-directory ('..') segments in composition asset paths
   // (--allow-parent-paths). Off by default (lightusd rejects '..' traversal as
-  // unsafe). Some production scenes (e.g. Animal Logic ALab's lighting overrides
-  // referenced as `../lightingrenderovers/...`) need it; resolution of the
+  // unsafe). Some production scenes have lighting overrides
+  // referenced through parent-directory paths and need it; resolution of the
   // surviving '..' is delegated to the asset resolver, anchored at searchPaths.
   bool allowParentRelativePaths{false};
   // Emit per-vertex GPU skinning attributes (joint indices/weights + a bone

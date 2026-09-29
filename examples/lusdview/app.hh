@@ -24,8 +24,8 @@
 #include <vector>
 
 #include "frame_packet.hh"
-#include "next/stage/change-set.hh"
-#include "tydra/next/render-session.hh"
+#include "viewer_document.hh"
+#include "lightusd-render-cpp.hh"
 
 #include "camera_nav.hh"
 #include "cpu/cpu_raytracer.hh"
@@ -53,8 +53,9 @@
 
 struct GLFWwindow;
 
-namespace lightusd { namespace next { class Stage; class StageSession; } }
+namespace lightusd { namespace next { class Stage; } }
 namespace lusdview {
+class ViewerDocument;
 
 // Encode an RGBA8 (top-down) buffer to an image file; format chosen by extension
 // (.png/.ppm). Defined in app.cc. Declared here so the MCP screenshot tool can
@@ -68,7 +69,7 @@ class App
 #endif
 {
  public:
-  explicit App(Backend backend) : backend_(backend) {}
+  explicit App(Backend backend);
   ~App() override;
 
   // Optional render budget (for scripting/testing). maxTris==0 keeps the default.
@@ -264,7 +265,7 @@ class App
   void setLodMaxMemGiB(double g) { lodMaxMemGiB_ = g; }
   void setLodMaxVramGiB(double g) { lodMaxVramGiB_ = g; }
   // --camera <name>: frame the viewer on a named USD Camera (either loader) instead
-  // of auto-fitting the whole scene. Essential for vast scenes (e.g. Caldera).
+  // of auto-fitting the whole scene. Essential for vast scenes (e.g. Scene C).
   void setCameraName(const std::string& n) {
     cameraName_ = n;
     loadOpts_.viewCamera = n;
@@ -411,7 +412,7 @@ class App
   void startLayerReloadAsync(const std::string& resolvedLayerId);
   void finishLoadIfReady();
   bool tryApplyNextSceneUpdate(
-      DrawScene* next, const lightusd::next::StageChangeSet& changes);
+      DrawScene* next, const ViewerChanges& changes);
   void prepareNextRenderTransaction(const DrawScene& next);
   void applyLoaded(bool ok, bool progressive,
                    bool alreadyUploaded = false);  // upload + bind on main thread
@@ -568,18 +569,19 @@ class App
   LoadOptions loadOpts_;
   double uploadBudgetMs_{8.0};
   bool useNextLoader_{false};  // --next: next loader + tydra-next flat preview
-  // Persistent next document: owns the composed stage, resolver, and PCP cache.
-  std::shared_ptr<lightusd::next::StageSession> nextSession_;
-  std::shared_ptr<lightusd::next::StageSession> pendingNextSession_;
-  lightusd::next::StageChangeSet pendingNextChanges_;
-  std::shared_ptr<lightusd::tydra::next::RenderSession> nextRenderSession_;
-  std::shared_ptr<lightusd::tydra::next::RenderSession>
+  // Persistent public-C document owner, with temporary native query views.
+  std::shared_ptr<ViewerDocument> nextSession_;
+  std::shared_ptr<ViewerDocument> pendingNextSession_;
+  ViewerChanges pendingNextChanges_;
+  std::shared_ptr<lightusd::api::RenderSession> nextRenderSession_;
+  std::shared_ptr<lightusd::api::RenderSession>
       pendingNextRenderSession_;
-  std::unique_ptr<lightusd::tydra::next::PreparedRenderUpdate>
+  std::unique_ptr<lightusd::api::PreparedRenderUpdate>
       pendingNextRenderUpdate_;
+  bool pendingNextRenderBootstrap_{false};
   // Immutable published stage used by the render/UI thread while a shared
-  // StageSession recomposes on the loader thread.
-  std::shared_ptr<const lightusd::next::Stage> nextStageSnapshot_;
+  // document recomposes on the loader thread.
+  lightusd::api::Stage nextStageSnapshot_;
   uint64_t nextStageRevision_{0};
   bool hasNextMorph_{false};   // any --next draw mesh carries GPU morph channels
   float camDolly_{1.0f};       // --cam-dolly: fitted-distance scale (<1 zooms in)
@@ -657,11 +659,11 @@ class App
   bool rasterLodEnabled_{false};       // --raster-lod (optimization B)
   // Screen size at/above which an instance keeps its real geometry; below it (down
   // to rasterLodCullPx_) it is drawn as a box proxy. This was 48px, which proxied
-  // clearly-visible geometry: on Moana island isDunesB the vegetation turned into
+  // clearly-visible geometry: on a large scene subtree the vegetation turned into
   // white boxes. The quality cliff sits between 16 and 48 -- 4, 8 and 16 all render
   // that scene identically (21445786 tris, 6.4ms vs 1154ms unculled) while 48 drops
   // to 5655 proxies and visible blocks. 8 keeps a wide margin below the cliff; use
-  // --raster-lod-full-px 4 for quality-critical work (isCoral is baseline-identical
+  // --raster-lod-full-px 4 for quality-critical work (prototype subtree is baseline-identical
   // at 4, marginally blockier at 8).
   float rasterLodFullPx_{8.0f};
   float rasterLodCullPx_{1.5f};
@@ -684,7 +686,7 @@ class App
   bool hipRt_{false};     // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   // True when a headless --cuda/--hip run owns the screenshot: the rasterized
   // upload + per-frame draw are then skipped (the RT path writes the image, the
-  // raster capture is never used) -- a big win on huge scenes (Moana Island).
+  // raster capture is never used) -- a big win on huge scenes (Island).
   bool rtOwnsScreenshot_{false};
   // True for a windowed --hip run: the HIP tracer drives the viewport per frame
   // (build once, retrace on the orbit camera, upload into the offscreen color via

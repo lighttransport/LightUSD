@@ -368,7 +368,7 @@ async function loadSample(index) {
       filename,
       baseUrl,
       label: sample.label,
-      backend: 'legacy',
+      backend: 'next',
       onStatus: (msg) => { status.textContent = msg; },
     });
     const elapsed = performance.now() - t0;

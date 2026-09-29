@@ -3,7 +3,8 @@ import { Timer } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
-import { LightUSDLoaderUtils, TextureLoadingManager } from 'lightusd/LightUSDLoaderUtils.js';
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
+import { buildNextDemoScene } from '../next-scene.js';
 import { setLightUSD as setMaterialXLightUSD } from 'lightusd/LightUSDMaterialX.js';
 import { extractSkinnedMeshData } from 'lightusd/USDSceneSkinningData.js';
 import { buildSkeletonDataFromUSD } from 'lightusd/USDSkeletonData.js';
@@ -53,14 +54,13 @@ const root = document.getElementById('demo-root');
 root.innerHTML = `
 <div class="demo-shell">
   <header class="demo-toolbar"><div><a class="demo-back" href="./">Demos</a><h1>Online USD Viewer</h1>
-    <p>Drop a USD file or folder. References load first; payloads stay deferred until requested.</p></div>
+    <p>Drop a USD file or folder. References and payloads load together.</p></div>
     <div class="demo-actions"><button id="open-btn">Open USD</button><button id="folder-btn">Open Folder</button><button id="clear-btn">Clear</button><button id="fit-btn">Fit</button></div>
   </header>
   <main class="demo-main"><section class="viewport-wrap"><div id="viewport" class="viewport"></div><div id="drop-zone" class="drop-hint">Drop USD, USDZ, or a folder here</div><div id="status" class="status">Choose a USD file, folder, or URL below.</div><div id="fetch-progress" style="display:none;position:absolute;left:18px;right:18px;bottom:18px;padding:8px 10px;background:rgba(10,12,18,.86);border:1px solid rgba(148,163,184,.25);border-radius:6px"><div id="fetch-progress-label" style="font-size:.76rem;color:#cbd5e1;margin-bottom:5px">Fetching asset…</div><div style="height:5px;background:#263244;border-radius:4px;overflow:hidden"><div id="fetch-progress-fill" style="height:100%;width:0;background:#38bdf8;transition:width .12s ease"></div></div></div>
     <div id="timeline" class="timeline-bar" hidden><button id="play-btn">Play</button><label>Clip <select id="clip-select"></select></label><label>Speed <select id="speed-select"><option>0.25</option><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select>×</label><input id="scrub" type="range" min="0" max="1" step="0.001" value="0"><span class="muted">F current · A all</span></div>
   </section><aside class="info-panel" style="overflow:auto"><h2>Source</h2><select id="sample-select" style="width:100%">${REMOTE_SAMPLES.map(([label, url]) => `<option value="${url}">${label}</option>`).join('')}</select><input id="url-input" placeholder="https://…/scene.usd" style="width:100%;box-sizing:border-box;margin-top:8px"><button id="url-btn" style="margin-top:8px">Load URL</button><p id="source-note" class="muted">GitHub-hosted assets use the GitHub Contents API. Other hosts still need CORS; 403/429 responses are shown here.</p>
-    <h2>Shading</h2><select id="material-select" style="width:100%"><option value="auto">Auto</option><option value="usdpreviewsurface">UsdPreviewSurface</option><option value="openpbr">MaterialX / OpenPBR</option></select><label style="display:block;margin-top:8px;font-size:.8rem;color:#cbd5e1">Environment<select id="environment-select" style="width:100%;margin-top:4px"><option value="goegap">Goegap HDRI (default)</option><option value="sunsky">Synthetic Sun / Sky</option><option value="furnace">White Furnace</option></select></label><label style="display:block;margin-top:8px;font-size:.8rem;color:#cbd5e1">Rotation <span id="environment-rotation-value">0°</span><input id="environment-rotation" type="range" min="-180" max="180" step="1" value="0" style="width:100%"></label><label style="display:block;margin-top:8px;font-size:.8rem;color:#cbd5e1">Lighting intensity <span id="environment-intensity-value">1.00</span><input id="environment-intensity" type="range" min="0" max="4" step="0.05" value="1" style="width:100%"></label><label style="display:block;margin-top:8px;font-size:.8rem;color:#cbd5e1">Background intensity <span id="background-intensity-value">1.00</span><input id="background-intensity" type="range" min="0" max="2" step="0.05" value="1" style="width:100%"></label><label style="display:block;margin-top:8px;font-size:.8rem;color:#cbd5e1">Background blur <span id="background-blur-value">0.00</span><input id="background-blur" type="range" min="0" max="1" step="0.01" value="0" style="width:100%"></label><label style="display:flex;align-items:center;gap:7px;margin-top:8px;font-size:.8rem;color:#cbd5e1"><input id="background-visible" type="checkbox" checked> Show background</label><label style="display:flex;align-items:center;gap:7px;margin-top:6px;font-size:.8rem;color:#cbd5e1"><input id="ground-visible" type="checkbox"> Show ground plane</label><label style="display:flex;align-items:center;gap:7px;margin-top:6px;font-size:.8rem;color:#cbd5e1"><input id="environment-shadow" type="checkbox" checked> Soft contact shadow</label><label style="display:block;margin-top:8px;font-size:.8rem;color:#cbd5e1">AOV<select id="aov-select" style="width:100%;margin-top:4px"><option value="beauty">Beauty</option><option value="baseColor">Base Color</option><option value="normal">Normal</option><option value="roughness">Roughness</option><option value="metalness">Metalness</option><option value="occlusion">Ambient Occlusion</option><option value="emission">Emission</option><option value="opacity">Opacity</option></select></label><label style="display:block;margin-top:8px;font-size:.8rem;color:#cbd5e1">Display transform<select id="tone-map-select" style="width:100%;margin-top:4px"><option value="aces2">ACES 2.0 (approx)</option><option value="aces1">ACES 1.x Filmic</option><option value="srgb">sRGB</option><option value="raw">RAW (linear)</option></select></label><label style="display:block;margin-top:8px;font-size:.8rem;color:#cbd5e1">Exposure <span id="exposure-value">0.0 EV</span><input id="exposure" type="range" min="-4" max="4" step="0.1" value="0" style="width:100%"></label>
-    <button id="payload-btn" hidden style="width:100%;margin-top:10px">Load deferred payload</button>
+    <h2>Shading</h2><p class="muted">Authored material networks are selected automatically.</p><label style="display:block;margin-top:8px;font-size:.8rem;color:#cbd5e1">Environment<select id="environment-select" style="width:100%;margin-top:4px"><option value="goegap">Goegap HDRI (default)</option><option value="sunsky">Synthetic Sun / Sky</option><option value="furnace">White Furnace</option></select></label><label style="display:block;margin-top:8px;font-size:.8rem;color:#cbd5e1">Rotation <span id="environment-rotation-value">0°</span><input id="environment-rotation" type="range" min="-180" max="180" step="1" value="0" style="width:100%"></label><label style="display:block;margin-top:8px;font-size:.8rem;color:#cbd5e1">Lighting intensity <span id="environment-intensity-value">1.00</span><input id="environment-intensity" type="range" min="0" max="4" step="0.05" value="1" style="width:100%"></label><label style="display:block;margin-top:8px;font-size:.8rem;color:#cbd5e1">Background intensity <span id="background-intensity-value">1.00</span><input id="background-intensity" type="range" min="0" max="2" step="0.05" value="1" style="width:100%"></label><label style="display:block;margin-top:8px;font-size:.8rem;color:#cbd5e1">Background blur <span id="background-blur-value">0.00</span><input id="background-blur" type="range" min="0" max="1" step="0.01" value="0" style="width:100%"></label><label style="display:flex;align-items:center;gap:7px;margin-top:8px;font-size:.8rem;color:#cbd5e1"><input id="background-visible" type="checkbox" checked> Show background</label><label style="display:flex;align-items:center;gap:7px;margin-top:6px;font-size:.8rem;color:#cbd5e1"><input id="ground-visible" type="checkbox"> Show ground plane</label><label style="display:flex;align-items:center;gap:7px;margin-top:6px;font-size:.8rem;color:#cbd5e1"><input id="environment-shadow" type="checkbox" checked> Soft contact shadow</label><label style="display:block;margin-top:8px;font-size:.8rem;color:#cbd5e1">AOV<select id="aov-select" style="width:100%;margin-top:4px"><option value="beauty">Beauty</option><option value="baseColor">Base Color</option><option value="normal">Normal</option><option value="roughness">Roughness</option><option value="metalness">Metalness</option><option value="occlusion">Ambient Occlusion</option><option value="emission">Emission</option><option value="opacity">Opacity</option></select></label><label style="display:block;margin-top:8px;font-size:.8rem;color:#cbd5e1">Display transform<select id="tone-map-select" style="width:100%;margin-top:4px"><option value="aces2">ACES 2.0 (approx)</option><option value="aces1">ACES 1.x Filmic</option><option value="srgb">sRGB</option><option value="raw">RAW (linear)</option></select></label><label style="display:block;margin-top:8px;font-size:.8rem;color:#cbd5e1">Exposure <span id="exposure-value">0.0 EV</span><input id="exposure" type="range" min="-4" max="4" step="0.1" value="0" style="width:100%"></label>
     <h2>Scene</h2><dl><dt>Source</dt><dd id="stat-source">—</dd><dt>Budget</dt><dd id="stat-budget">—</dd><dt>Meshes</dt><dd id="stat-meshes">—</dd><dt>Materials</dt><dd id="stat-materials">—</dd><dt>Textures</dt><dd id="stat-textures">—</dd><dt>Animations</dt><dd id="stat-anims">—</dd><dt>Playback FPS</dt><dd id="stat-fps">—</dd><dt>Composition</dt><dd id="stat-compose">—</dd></dl>
   </aside></main><input id="file-input" type="file" accept=".usd,.usda,.usdc,.usdz" hidden><input id="folder-input" type="file" webkitdirectory directory multiple hidden>
 </div>`;
@@ -82,7 +82,7 @@ const grid = new THREE.GridHelper(10, 20, 0x44444a, 0x26262b); grid.visible = fa
 const groundPlane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshStandardMaterial({ color: 0x30343b, metalness: 0, roughness: 0.92 })); groundPlane.name = 'ViewerGroundPlane'; groundPlane.rotation.x = -Math.PI / 2; groundPlane.receiveShadow = true; groundPlane.visible = false; groundPlane.renderOrder = -1; scene.add(groundPlane);
 const world = new THREE.Group(); scene.add(world);
 
-const state = { loader: null, record: null, resolver: null, budget: null, sourceName: '', material: 'auto', environmentPreset: 'goegap', environmentRotation: 0, environmentIntensity: 1, backgroundIntensity: 1, backgroundBlur: 0, backgroundVisible: true, groundVisible: false, environmentShadow: true, aov: 'beauty', toneMap: 'aces2', exposureEV: 0, generation: 0, mixer: null, actions: [], clips: [], playing: false, duration: 0, animationFPS: 24, playbackSpeed: 1, textureManager: null, domeEnvironment: null, activeEnvironment: null, animationBounds: null, framingBounds: null, loadProgressTimer: 0, loadProgressInterval: 0 };
+const state = { loader: null, record: null, resolver: null, budget: null, sourceName: '', environmentPreset: 'goegap', environmentRotation: 0, environmentIntensity: 1, backgroundIntensity: 1, backgroundBlur: 0, backgroundVisible: true, groundVisible: false, environmentShadow: true, aov: 'beauty', toneMap: 'aces2', exposureEV: 0, generation: 0, mixer: null, actions: [], clips: [], playing: false, duration: 0, animationFPS: 24, playbackSpeed: 1, textureManager: null, domeEnvironment: null, activeEnvironment: null, animationBounds: null, framingBounds: null, loadProgressTimer: 0, loadProgressInterval: 0 };
 function status(message) { $('status').textContent = message; }
 function beginDelayedLoadProgress(label) {
   endDelayedLoadProgress(false);
@@ -113,13 +113,12 @@ function fetchProgress(info) {
 function stat(id, value) { $(id).textContent = value; }
 function updateStats(layer, composition = 'references') {
   stat('stat-source', state.sourceName || '—'); stat('stat-budget', state.budget?.label() || '—'); stat('stat-compose', composition);
-  stat('stat-meshes', layer?.numMeshes?.() ?? '—'); stat('stat-materials', layer?.numMaterials?.() ?? '—'); stat('stat-textures', layer?.numImages?.() ?? '—'); stat('stat-anims', state.clips.length || 0);
-  $('payload-btn').hidden = !state.record?.hasPayload || composition === 'payload';
+  stat('stat-meshes', layer?.numMeshes?.() ?? '—'); stat('stat-materials', layer?.numMaterials?.() ?? '—'); stat('stat-textures', layer?.numTextures?.() ?? '—'); stat('stat-anims', state.clips.length || 0);
 }
 async function ensureLoader() {
   if (state.loader) return state.loader;
   status('Initializing LightUSD…'); state.loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
-  await state.loader.init({ backend: 'legacy', useZstdCompressedWasm: false, useMemory64: false });
+  await state.loader.init({ backend: 'next', useZstdCompressedWasm: false, useMemory64: false });
   LightUSDLoaderUtils.setLightUSD(state.loader.native_); setMaterialXLightUSD(state.loader.native_); state.loader.setMaxMemoryLimitMB?.(512); return state.loader;
 }
 function clearWorld() {
@@ -130,7 +129,6 @@ function clearWorld() {
 }
 function disposeRecord(record) {
   record?.layer?.delete?.();
-  record?.composer?.setLayer?.(null);
 }
 function resetViewer() {
   state.generation++;
@@ -141,7 +139,6 @@ function resetViewer() {
   state.animationFPS = 24; state.playbackSpeed = 1;
   $('speed-select').value = '1'; $('sample-select').value = ''; $('url-input').value = '';
   for (const id of ['stat-source', 'stat-budget', 'stat-meshes', 'stat-materials', 'stat-textures', 'stat-anims', 'stat-fps', 'stat-compose']) stat(id, '—');
-  $('payload-btn').hidden = true;
   fetchProgress(null);
   status('Scene cleared. Choose a USD file, folder, or URL.');
 }
@@ -333,36 +330,6 @@ async function applyDomeEnvironment(layer) {
     await selectEnvironment(state.environmentPreset);
   }
 }
-function textureMimeType(uri, bytes) {
-  const ext = String(uri || '').split(/[?#]/)[0].toLowerCase().split('.').pop();
-  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
-  if (ext === 'png') return 'image/png';
-  if (ext === 'webp') return 'image/webp';
-  if (bytes?.[0] === 0xff && bytes?.[1] === 0xd8) return 'image/jpeg';
-  if (bytes?.[0] === 0x89 && bytes?.[1] === 0x50) return 'image/png';
-  if (bytes?.[0] === 0x52 && bytes?.[1] === 0x49 && bytes?.[2] === 0x46 && bytes?.[3] === 0x46) return 'image/webp';
-  return '';
-}
-async function decodeBrowserTexture(textureId, layer, mapProperty) {
-  const texture = layer.getTexture(textureId); const imageId = texture.textureImageId;
-  const image = layer.getImageCopy(imageId); const uri = image.uri || '';
-  const encoded = state.resolver?.getAsset(uri);
-  const bytes = encoded ? new Uint8Array(encoded) : (!image.decoded && image.data ? new Uint8Array(image.data) : null);
-  const mime = textureMimeType(uri, bytes);
-  if (!bytes || !mime) return LightUSDLoaderUtils.getTextureFromUSD(layer, textureId, mapProperty);
-  // Match the working web/js lazy path: let Three.js own image decoding and
-  // upload through TextureLoader rather than uploading ImageBitmap directly.
-  const blobUrl = URL.createObjectURL(new Blob([bytes.slice()], { type: mime }));
-  try {
-    const result = await new THREE.TextureLoader().loadAsync(blobUrl);
-    // Keep the browser-decoded texture.  The optional RGBA readback/compression
-    // path is useful for offline pipelines, but doing a canvas readback here
-    // blocks the main thread for every large map and defeats lazy loading.
-    return LightUSDLoaderUtils.applyTextureSampler(result, texture);
-  } finally {
-    URL.revokeObjectURL(blobUrl);
-  }
-}
 function aovFragment(mode) {
   if (mode === 'baseColor') return 'vec4 lightusdAov = vec4( diffuseColor.rgb, 1.0 );';
   if (mode === 'normal') return 'vec4 lightusdAov = vec4( normalize( normal ) * 0.5 + 0.5, 1.0 );';
@@ -429,38 +396,30 @@ async function buildScene(layer) {
   state.animationFPS = metadata.framesPerSecond;
   stat('stat-fps', `${state.animationFPS} fps`);
   await applyDomeEnvironment(layer);
-  const material = LightUSDLoaderUtils.createDefaultMaterial();
-  const textureLoadingManager = new TextureLoadingManager();
-  state.textureManager = textureLoadingManager;
-  const rootNode = await LightUSDLoaderUtils.buildThreeNode(layer.getDefaultRootNode(), material, layer, { preferredMaterialType: state.material, envMap: scene.environment, computeMissingTangents: true, textureCache: new Map(), textureLoadingManager, onProgress: (info) => status(info.message || 'Building scene…') });
+  const built = await buildNextDemoScene(layer, {
+    envMap: scene.environment,
+    awaitTextures: false,
+    onProgress: (info) => status(info.message || 'Building scene…'),
+  });
+  state.textureManager = built.textureManager;
+  const rootNode = built.node;
   world.add(rootNode);
   rootNode.traverse((object) => {
     const materials = Array.isArray(object.material) ? object.material : [object.material];
     materials.forEach((item) => applyMaterialFeatures(item));
   });
-  textureLoadingManager.startLoading({
-    concurrency: 4,
-    yieldInterval: 16,
-    onProgress: (info) => status(info.total ? `Decoding textures ${info.loaded + info.failed}/${info.total}…` : 'Building scene…'),
-    loadTexture: (textureId, usdScene, mapProperty) => decodeBrowserTexture(textureId, usdScene, mapProperty),
-    onTextureLoaded: (material, mapProperty) => applyMaterialFeatures(material, mapProperty)
-  }).then((textureStatus) => {
-    if (state.textureManager !== textureLoadingManager) return;
-    if (textureStatus.failed) console.warn(`Skipped ${textureStatus.failed} texture(s).`);
-    state.textureManager = null;
-    fetchProgress(null);
-  });
+  fetchProgress(null);
   try {
     const skin = extractSkinnedMeshData(layer, { logger: console, verbose: false }); const skel = buildSkeletonDataFromUSD(layer, { logger: console, hasSkinnedMeshData: skin.hasSkinnedMeshData });
-    const nodeIndexMap = buildNodeIndexMap(rootNode);
-    applyUSDSceneSkinningPipeline({ threeNode: rootNode, characterGroup: world, helperScene: scene, skeletonDataArray: skel.skeletonDataArray, allSkinnedMeshUSDData: skin.allSkinnedMeshUSDData, skinnedMeshDataByName: skin.skinnedMeshDataByName, usdScene: layer, showMesh: true, textureLoadingManager, logger: console });
+    const nodeIndexMap = built.nodeIndexMap || buildNodeIndexMap(rootNode);
+    applyUSDSceneSkinningPipeline({ threeNode: rootNode, characterGroup: world, helperScene: scene, skeletonDataArray: skel.skeletonDataArray, allSkinnedMeshUSDData: skin.allSkinnedMeshUSDData, skinnedMeshDataByName: skin.skinnedMeshDataByName, usdScene: layer, showMesh: true, logger: console });
     const anim = extractUSDSceneAnimations(layer, { boneMaps: skel.boneMaps, nodeIndexMap, timeCodesPerSecond: metadata.timeCodesPerSecond, logger: console }); state.clips = [...anim.usdAnimations, ...anim.usdNodeAnimations];
   } catch (error) { console.warn('Animation extraction skipped:', error); }
   if (state.clips.length) {
     state.mixer = new THREE.AnimationMixer(world); state.mixer.timeScale = state.animationFPS * state.playbackSpeed; state.actions = state.clips.map((clip) => state.mixer.clipAction(clip)); state.duration = Math.max(...state.clips.map((clip) => clip.duration), 0); $('clip-select').innerHTML = state.clips.map((clip, i) => `<option value="${i}">${clip.name || `Clip ${i}`}</option>`).join(''); $('timeline').hidden = false; state.actions[0]?.play(); state.playing = true; $('play-btn').textContent = 'Pause';
   }
   if (state.actions.length) animatedSceneBounds();
-  fitScene('current'); updateStats(layer, state.record?.hasPayload ? 'references (payload deferred)' : 'references');
+  fitScene('current'); updateStats(layer, 'references and payloads');
 }
 async function loadBytes(bytes, filename, resolver, budget, label) {
   const token = ++state.generation; state.budget = budget; state.resolver = resolver; state.sourceName = label || filename;
@@ -470,11 +429,11 @@ async function loadBytes(bytes, filename, resolver, budget, label) {
     // parse so long files never look like a frozen page.
     await new Promise((resolve) => requestAnimationFrame(() => resolve()));
     status(`Parsing ${filename}…`); await ensureLoader();
-    const record = await composeLayer({ loader: state.loader, bytes, filename, resolver, composePayload: false, onStatus: status });
+    const record = await composeLayer({ loader: state.loader, bytes, filename, resolver, onStatus: status });
     if (token !== state.generation) { disposeRecord(record); resolver.clearCache?.(); return; }
     disposeRecord(state.record); state.record = record; status(`Building ${filename}…`); await buildScene(record.layer);
     if (token !== state.generation) return;
-    status(`Loaded ${filename} — references ready.`);
+    status(`Loaded ${filename} — references and payloads ready.`);
   } finally {
     endDelayedLoadProgress();
   }
@@ -487,12 +446,8 @@ async function loadURL(url) {
   try { const budget = new AssetBudget(MAX_ASSET_BYTES); const clean = new URL(url, document.baseURI); const resolver = new HttpAssetResolver(new URL('.', clean).href, budget, status, fetchProgress); const [, bytes] = await resolver.resolveAsync(clean.href); await loadBytes(bytes, clean.pathname.split('/').pop() || 'scene.usd', resolver, budget, clean.href); }
   catch (error) { console.error(error); status(`Failed: ${error.message}`); }
 }
-async function loadPayload() {
-  if (!state.record?.hasPayload) return; try { status('Loading deferred payload…'); await state.record.composer.progressiveComposition({ composePayload: true }); await buildScene(state.record.layer); status('Loaded references and payload.'); } catch (error) { status(`Payload failed: ${error.message}`); }
-}
-
-$('open-btn').onclick = () => $('file-input').click(); $('folder-btn').onclick = () => $('folder-input').click(); $('clear-btn').onclick = resetViewer; $('fit-btn').onclick = () => fitScene('current'); $('payload-btn').onclick = loadPayload;
-$('sample-select').onchange = (event) => { $('url-input').value = event.target.value; }; $('url-btn').onclick = () => { if ($('url-input').value.trim()) loadURL($('url-input').value.trim()); }; $('material-select').onchange = async (event) => { state.material = event.target.value; if (state.record) await buildScene(state.record.layer); }; $('environment-select').onchange = (event) => selectEnvironment(event.target.value);
+$('open-btn').onclick = () => $('file-input').click(); $('folder-btn').onclick = () => $('folder-input').click(); $('clear-btn').onclick = resetViewer; $('fit-btn').onclick = () => fitScene('current');
+$('sample-select').onchange = (event) => { $('url-input').value = event.target.value; }; $('url-btn').onclick = () => { if ($('url-input').value.trim()) loadURL($('url-input').value.trim()); }; $('environment-select').onchange = (event) => selectEnvironment(event.target.value);
 $('environment-rotation').oninput = (event) => { state.environmentRotation = Number(event.target.value); $('environment-rotation-value').textContent = `${state.environmentRotation.toFixed(0)}°`; updateEnvironmentDisplay(); };
 $('environment-intensity').oninput = (event) => { state.environmentIntensity = Number(event.target.value); $('environment-intensity-value').textContent = state.environmentIntensity.toFixed(2); updateEnvironmentDisplay(); };
 $('background-intensity').oninput = (event) => { state.backgroundIntensity = Number(event.target.value); $('background-intensity-value').textContent = state.backgroundIntensity.toFixed(2); updateEnvironmentDisplay(); };

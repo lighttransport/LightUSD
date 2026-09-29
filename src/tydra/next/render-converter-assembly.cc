@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
 #include "render-converter-assembly.hh"
 #include <limits>
 namespace lightusd { namespace tydra { namespace next {

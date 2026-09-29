@@ -51,23 +51,82 @@
   }
 
   void MergeSources(Impl &w, size_t seed_stack_count, size_t seed_pool_count) {
-    std::unordered_map<uint32_t, uint32_t> stack_remap;
+    // Worker-local stack / mapping indices past the seed snapshot are adopted
+    // lazily (only those a merged entry references), memoized in flat tables.
+    std::vector<uint32_t> stack_remap(
+        w.layer_stacks.size() > seed_stack_count
+            ? w.layer_stacks.size() - seed_stack_count
+            : 0,
+        UINT32_MAX);
     auto remap = [&](uint32_t ws) -> uint32_t {
       if (ws < seed_stack_count) return ws;
-      auto it = stack_remap.find(ws);
-      if (it != stack_remap.end()) return it->second;
-      uint32_t m = AdoptStack(w.layer_stacks[ws]);
-      stack_remap.emplace(ws, m);
+      uint32_t &m = stack_remap[ws - seed_stack_count];
+      if (m == UINT32_MAX) m = AdoptStack(w.layer_stacks[ws]);
       return m;
     };
-    std::unordered_map<uint32_t, uint32_t> map_remap;
+    std::vector<uint32_t> map_remap(
+        w.nm_pool_.size() > seed_pool_count ? w.nm_pool_.size() - seed_pool_count
+                                            : 0,
+        UINT32_MAX);
     auto remap_map = [&](uint32_t wm) -> uint32_t {
       if (wm < seed_pool_count) return wm;
-      auto it = map_remap.find(wm);
-      if (it != map_remap.end()) return it->second;
-      uint32_t m = InternMapping(w.nm_pool_[wm]);
-      map_remap.emplace(wm, m);
+      uint32_t &m = map_remap[wm - seed_pool_count];
+      if (m == UINT32_MAX) m = InternMapping(w.nm_pool_[wm]);
       return m;
+    };
+    // arc_chain / arc_sites are shared by whole subtrees, so remap each
+    // distinct one once; a chain entirely inside the seed snapshot is already
+    // valid in the main tables and is kept as is.
+    std::unordered_map<const ArcChain *, std::shared_ptr<const ArcChain>>
+        chain_memo;
+    using ArcSites = std::vector<std::pair<uint32_t, std::string>>;
+    std::unordered_map<const ArcSites *, std::shared_ptr<const ArcSites>>
+        sites_memo;
+    auto remap_chain = [&](std::shared_ptr<const ArcChain> *chain) {
+      auto it = chain_memo.find(chain->get());
+      if (it == chain_memo.end()) {
+        std::shared_ptr<const ArcChain> out = *chain;
+        bool local = false;
+        for (const auto &node : **chain) {
+          if (node.first >= seed_stack_count || node.second >= seed_pool_count) {
+            local = true;
+            break;
+          }
+        }
+        if (local) {
+          ArcChain remapped;
+          remapped.reserve((*chain)->size());
+          for (const auto &node : **chain) {
+            remapped.emplace_back(remap(node.first), remap_map(node.second));
+          }
+          out = std::make_shared<const ArcChain>(std::move(remapped));
+        }
+        it = chain_memo.emplace(chain->get(), std::move(out)).first;
+      }
+      *chain = it->second;
+    };
+    auto remap_sites = [&](std::shared_ptr<const ArcSites> *sites) {
+      auto it = sites_memo.find(sites->get());
+      if (it == sites_memo.end()) {
+        std::shared_ptr<const ArcSites> out = *sites;
+        bool local = false;
+        for (const auto &hop : **sites) {
+          if (hop.first >= seed_stack_count) {
+            local = true;
+            break;
+          }
+        }
+        if (local) {
+          auto remapped = std::make_shared<ArcSites>();
+          remapped->reserve((*sites)->size());
+          for (const auto &hop : **sites) {
+            remapped->emplace_back(remap(hop.first), hop.second);
+          }
+          out = std::move(remapped);
+        }
+        it = sites_memo.emplace(sites->get(), std::move(out)).first;
+      }
+      *sites = it->second;
     };
     w.sources_cache.for_each([&](const std::string &key,
                                  std::vector<Src> &val) {
@@ -81,15 +140,17 @@
         return;
       }
       // The worker cache is a local delta over the shared immutable seed, so
-      // entries already present in the main cache are not copied back.
+      // entries already present in the main cache (the seed, or the same
+      // ancestor re-derived by another worker that took a donated subtree --
+      // identical sources) are not copied back.
       if (sources_cache.contains(key)) return;
-      // The worker Impl is discarded right after this merge and warms subtrees
-      // disjoint from the other workers (shared seeded keys are skipped above),
-      // so steal its Src vector instead of copying it. NOTE: a vector move is a
-      // buffer steal — the elements' SpecsMemo self-reset never runs — so any
-      // worker-set specs_ (pointing into the discarded worker's spec cache)
-      // must be dropped explicitly below.
-      std::vector<Src> srcs = std::move(val);
+      // The worker Impl is discarded right after this merge, so steal its Src
+      // vector instead of copying it. NOTE: a vector move is a buffer steal —
+      // the elements' SpecsMemo self-reset never runs — so any worker-set
+      // specs_ (pointing into the discarded worker's spec cache) must be
+      // dropped explicitly below.
+      std::vector<Src> &srcs = sources_cache.get_or_create(key);
+      srcs = std::move(val);
       for (Src &s : srcs) {
         s.stack_idx = remap(s.stack_idx);
         s.map_idx = remap_map(s.map_idx);
@@ -98,15 +159,11 @@
           s.implied_anchor = remap(s.implied_anchor);
         }
         // The implied-class arc chain also indexes the worker's tables.
-        if (s.arc_chain && !s.arc_chain->empty()) {
-          ArcChain remapped;
-          remapped.reserve(s.arc_chain->size());
-          for (const auto &node : *s.arc_chain) {
-            remapped.emplace_back(remap(node.first), remap_map(node.second));
-          }
-          s.arc_chain = std::make_shared<const ArcChain>(std::move(remapped));
-        }
+        if (s.arc_chain && !s.arc_chain->empty()) remap_chain(&s.arc_chain);
+        // So does the ancestral arc-target trail (stack, site) used to re-seed
+        // cycle detection; a worker stack index is meaningless (or out of
+        // range) in the main table.
+        if (s.arc_sites && !s.arc_sites->empty()) remap_sites(&s.arc_sites);
       }
-      sources_cache.emplace_if_absent(key, std::move(srcs));
     });
   }

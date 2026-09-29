@@ -14,7 +14,6 @@
 #include <algorithm>
 #include <climits>
 #include <cstdint>
-#include <list>
 #include <string>
 #include <vector>
 #include <deque>
@@ -214,6 +213,7 @@ struct VariantSetData {
 struct ArcEdit {
   bool authored = false;     // true when this arc field authored list-op edits.
   bool is_explicit = true;  // bare list (the common case)
+  bool is_value_block = false;  // relationship `= None`, distinct from `= []`
   std::vector<std::string> added;
   std::vector<std::string> prepended;
   std::vector<std::string> appended;
@@ -264,81 +264,18 @@ struct StringListOpEdits {
 /// weaker subtree is silently shadowed — when `conflicts` is provided, the
 /// dotted key path of each such collision is recorded so callers can surface
 /// a diagnostic.
-inline void MergeWeakerDictionaryValue(
+void MergeWeakerDictionaryValue(
     Value* stronger, const Value& weaker,
     std::vector<std::string>* conflicts = nullptr,
-    const std::string& key_prefix = std::string()) {
-  if (!stronger || !weaker.is_dictionary()) return;
-  if (!stronger->is_dictionary()) {
-    *stronger = weaker;
-    return;
-  }
-  // Explicit DFS avoids exhausting the C++ stack for deeply nested
-  // dictionaries created through the API. A frame processes one dictionary at
-  // a time; descending immediately also keeps Value pointers stable while a
-  // parent Dict's entry vector may grow.
-  struct Frame {
-    Value* destination_value;
-    const Value* source_value;
-    size_t next_entry;
-    std::string prefix;
-  };
-  std::vector<Frame> stack;
-  stack.push_back(Frame{stronger, &weaker, 0, key_prefix});
-  while (!stack.empty()) {
-    Frame& frame = stack.back();
-    Dict* destination = frame.destination_value->as_dictionary();
-    const Dict* source = frame.source_value->as_dictionary();
-    if (!destination || !source || frame.next_entry >= source->entries().size()) {
-      stack.pop_back();
-      continue;
-    }
+    const std::string& key_prefix = std::string());
 
-    const auto& entry = source->entries()[frame.next_entry++];
-    Value* existing = destination->find(entry.first);
-    if (!existing) {
-      destination->set(entry.first, entry.second);
-    } else if (existing->is_dictionary() && entry.second.is_dictionary()) {
-      stack.push_back(
-          Frame{existing, &entry.second, 0, frame.prefix + entry.first + "."});
-    } else if (conflicts &&
-               existing->is_dictionary() != entry.second.is_dictionary()) {
-      conflicts->push_back(frame.prefix + entry.first);
-    }
-  }
-}
-
-inline void MergeWeakerExtensionFields(
+void MergeWeakerExtensionFields(
     std::vector<TypedExtensionField>* stronger,
-    const std::vector<TypedExtensionField>& weaker) {
-  if (!stronger) return;
-  for (const TypedExtensionField& field : weaker) {
-    auto existing = std::find_if(
-        stronger->begin(), stronger->end(),
-        [&](const TypedExtensionField& own) { return own.name == field.name; });
-    if (existing == stronger->end()) {
-      stronger->push_back(field);
-    } else if (existing->value.is_dictionary() && field.value.is_dictionary()) {
-      MergeWeakerDictionaryValue(&existing->value, field.value);
-      // The authored source represented only the stronger dictionary. Force
-      // writers to regenerate the merged UnregisteredValue source.
-      if (existing->unregistered) existing->unregistered_source.clear();
-    }
-  }
-}
+    const std::vector<TypedExtensionField>& weaker);
 
-inline void MergeWeakerRawFields(
+void MergeWeakerRawFields(
     std::vector<std::pair<std::string, std::string>>* stronger,
-    const std::vector<std::pair<std::string, std::string>>& weaker) {
-  if (!stronger) return;
-  for (const auto& field : weaker) {
-    const bool present = std::find_if(
-        stronger->begin(), stronger->end(),
-        [&](const auto& own) { return own.first == field.first; }) !=
-        stronger->end();
-    if (!present) stronger->push_back(field);
-  }
-}
+    const std::vector<std::pair<std::string, std::string>>& weaker);
 
 /// Apply an authored string list-op to a weaker effective list. This preserves
 /// the authored sublists above while providing one shared effective-order rule
@@ -348,66 +285,12 @@ inline void MergeWeakerRawFields(
 /// contiguous run of non-ordered items that follow it, sequences are emitted
 /// in the authored ordered order, and items before any ordered item stay at
 /// the front.
-inline void ApplyStringListOrder(const std::vector<std::string> &order,
-                                 std::vector<std::string> *list) {
-  if (!list || list->empty() || order.empty()) return;
-  std::vector<std::string> unique_order;
-  for (const std::string &o : order) {
-    if (std::find(unique_order.begin(), unique_order.end(), o) ==
-        unique_order.end()) {
-      unique_order.push_back(o);
-    }
-  }
-  auto in_set = [&](const std::string &s) {
-    return std::find(unique_order.begin(), unique_order.end(), s) !=
-           unique_order.end();
-  };
-  std::list<std::string> scratch(list->begin(), list->end());
-  std::list<std::string> result;
-  for (const std::string &o : unique_order) {
-    auto j = std::find(scratch.begin(), scratch.end(), o);
-    if (j == scratch.end()) continue;
-    auto e = std::next(j);
-    while (e != scratch.end() && !in_set(*e)) ++e;
-    result.splice(result.end(), scratch, j, e);
-  }
-  result.splice(result.begin(), scratch);
-  list->assign(result.begin(), result.end());
-}
+void ApplyStringListOrder(const std::vector<std::string> &order,
+                                 std::vector<std::string> *list);
 
-inline std::vector<std::string> ApplyStringListOp(
+std::vector<std::string> ApplyStringListOp(
     const StringListOpEdits &edits,
-    const std::vector<std::string> &weaker) {
-  std::vector<std::string> result;
-  auto append_unique = [&](const std::string &item) {
-    if (std::find(result.begin(), result.end(), item) == result.end()) {
-      result.push_back(item);
-    }
-  };
-  if (!edits.authored) {
-    for (const std::string &item : weaker) append_unique(item);
-    return result;
-  }
-  if (edits.is_explicit) {
-    for (const std::string &item : edits.explicit_items) append_unique(item);
-    return result;
-  }
-
-  for (const std::string &item : edits.prepended) append_unique(item);
-  for (const std::string &item : weaker) {
-    if (std::find(edits.deleted.begin(), edits.deleted.end(), item) ==
-        edits.deleted.end()) {
-      append_unique(item);
-    }
-  }
-  for (const std::string &item : edits.added) append_unique(item);
-  for (const std::string &item : edits.appended) {
-    result.erase(std::remove(result.begin(), result.end(), item), result.end());
-    result.push_back(item);
-  }
-  ApplyStringListOrder(edits.ordered, &result);
-  return result;
-}
+    const std::vector<std::string> &weaker);
 
 /// Cold PrimSpec metadata: fields that are empty on the vast majority of prims
 /// (no docs / variants / relocates / apiSchemas / instancing / list-op edits).
@@ -474,47 +357,9 @@ struct PrimSpecMetaExt {
   // Arc list-op qualifiers (Phase 7 S5); null unless authored.
   std::unique_ptr<ArcListOpEdits> arc_edits;
 
-  PrimSpecMetaExt() = default;
-  PrimSpecMetaExt(const PrimSpecMetaExt &o)
-      : doc(o.doc),
-        comment(o.comment),
-        doc_authored(o.doc_authored),
-        comment_authored(o.comment_authored),
-        kind(o.kind),
-        kind_authored(o.kind_authored),
-        displayName(o.displayName),
-        display_name_authored(o.display_name_authored),
-        permission(o.permission),
-        displayGroupOrder(o.displayGroupOrder),
-        displayGroupOrderAuthored(o.displayGroupOrderAuthored),
-        instance_prototype(o.instance_prototype),
-        apiSchemas(o.apiSchemas),
-        apiSchemasAuthored(o.apiSchemasAuthored),
-        apiSchemaEdits(o.apiSchemaEdits),
-        apiSchemasQualifier(o.apiSchemasQualifier),
-        variantSets(o.variantSets),
-        variantSetNameEdits(o.variantSetNameEdits),
-        variantSelections(o.variantSelections),
-        variantSelectionsAuthored(o.variantSelectionsAuthored),
-        relocates(o.relocates),
-        relocatesAuthored(o.relocatesAuthored),
-        customData(o.customData),
-        assetInfo(o.assetInfo),
-        sdrMetadata(o.sdrMetadata),
-        clips(o.clips),
-        clipSetEdits(o.clipSetEdits),
-        clipShadowedProps(o.clipShadowedProps),
-        customDataAuthored(o.customDataAuthored),
-        assetInfoAuthored(o.assetInfoAuthored),
-        sdrMetadataAuthored(o.sdrMetadataAuthored),
-        clipsAuthored(o.clipsAuthored),
-        primOrder(o.primOrder),
-        propertyOrder(o.propertyOrder),
-        primOrderAuthored(o.primOrderAuthored),
-        propertyOrderAuthored(o.propertyOrderAuthored),
-        unknownMeta(o.unknownMeta),
-        unknownFields(o.unknownFields),
-        arc_edits(o.arc_edits ? new ArcListOpEdits(*o.arc_edits) : nullptr) {}
+  PrimSpecMetaExt();
+  ~PrimSpecMetaExt();
+  PrimSpecMetaExt(const PrimSpecMetaExt &o);
   PrimSpecMetaExt &operator=(const PrimSpecMetaExt &) = delete;
 };
 
@@ -550,29 +395,12 @@ struct PrimSpecMeta {
   // Layer offset (applied at evaluation time). First = offset, second = scale.
   std::pair<double, double> layer_offset = {0.0, 1.0};
 
-  PrimSpecMeta() = default;
-  PrimSpecMeta(PrimSpecMeta &&) = default;
-  PrimSpecMeta &operator=(PrimSpecMeta &&) = default;
-  PrimSpecMeta(const PrimSpecMeta &o) { *this = o; }
-  PrimSpecMeta &operator=(const PrimSpecMeta &o) {
-    active = o.active;
-    hidden = o.hidden;
-    active_authored = o.active_authored;
-    hidden_authored = o.hidden_authored;
-    loaded = o.loaded;
-    instanceable_authored = o.instanceable_authored;
-    instanceable = o.instanceable;
-    references = o.references;
-    payloads = o.payloads;
-    inherits = o.inherits;
-    specializes = o.specializes;
-    variantSelection = o.variantSelection;
-    layer_offset = o.layer_offset;
-    ext_ = o.ext_ ? std::unique_ptr<PrimSpecMetaExt>(
-                        new PrimSpecMetaExt(*o.ext_))
-                  : nullptr;
-    return *this;
-  }
+  PrimSpecMeta();
+  ~PrimSpecMeta();
+  PrimSpecMeta(PrimSpecMeta&&) noexcept;
+  PrimSpecMeta& operator=(PrimSpecMeta&&) noexcept;
+  PrimSpecMeta(const PrimSpecMeta& other);
+  PrimSpecMeta& operator=(const PrimSpecMeta& other);
 
   bool has_ext() const { return ext_ != nullptr; }
   void ensure_ext() {
@@ -954,6 +782,12 @@ public:
   /// Clear all storage
   void clear();
 
+  /// Free every stored value's heap payload (each element becomes an empty
+  /// Value) while keeping offsets valid, so slots still resolve. AssetPath
+  /// values are kept intact: post-write asset collection reads them after the
+  /// crate bytes are emitted. Used by the crate writer's consume_values mode.
+  void release_payloads();
+
 private:
   std::vector<Value> values_;
 };
@@ -1023,6 +857,11 @@ public:
 
   /// Clear all storage
   void clear();
+
+  /// Free every sample value's heap payload (each becomes an empty Value)
+  /// while keeping the (time, offset) tables valid; also drops the dedup
+  /// index. Used by the crate writer's consume_values mode.
+  void release_payloads();
 
   /// Statistics
   struct Stats {
@@ -1184,12 +1023,24 @@ public:
   /// Finalize properties (sort for binary search)
   void finalize_properties();
 
+  /// Free the heap payloads of every property default value and time sample
+  /// (AssetPath defaults are kept -- see ValueStorage::release_payloads). Slot
+  /// tables, names, types, meta, relationships and connections stay valid, so
+  /// the PrimSpec remains structurally usable but value-stripped. Used by the
+  /// crate writer's consume_values mode to cut peak RSS on write-and-discard
+  /// flows.
+  void release_value_payloads();
+
   // ============================================================
   // TimeSamples (stored separately for efficiency)
   // ============================================================
 
-  /// Add a time sample for a property
-  void add_time_sample(PropNameId name_id, double time, Value value);
+  /// Add a time sample for a property. `dedup=false` skips content-hash
+  /// deduplication — required for deferred-fill values whose payload arrives
+  /// later (batched USDA array parse): hashing them would read the payload
+  /// while a parser worker is still writing it.
+  void add_time_sample(PropNameId name_id, double time, Value value,
+                       bool dedup = true);
 
   /// Get time samples for a property (returns vector of (time, value_offset))
   const std::vector<std::pair<double, uint32_t>>* time_samples(PropNameId name_id) const;
@@ -1274,7 +1125,8 @@ public:
   void add_relationship(const std::string& name, const Path& target);
 
   /// Replace a relationship's targets wholesale (creates it if absent).
-  /// An empty target list authors an explicit empty relationship.
+  /// An empty list registers the relationship; author an ArcEdit as well to
+  /// distinguish `= []` or `= None` from a bare declaration.
   void set_relationship_targets(const std::string& name,
                                 std::vector<Path> targets);
 
@@ -1380,6 +1232,10 @@ public:
 
   /// Get child indices
   const std::vector<uint32_t>& child_indices() const { return child_indices_; }
+
+  /// Mutable child-index storage — used by Layer stitching (the parallel USDA
+  /// subtree parse rebases/resolves placeholder indices in one pass).
+  std::vector<uint32_t>& mutable_child_indices() { return child_indices_; }
 
   /// Add child index
   void add_child_index(uint32_t index);

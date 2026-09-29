@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
-import { isNextScene, buildNextThreeNode, nextCountsFromScene } from 'lightusd-next-demo-utils';
+import { isNextScene, nextCountsFromScene } from 'lightusd-next-demo-utils';
+import { buildNextDemoScene } from '../next-scene.js';
 import { showLoader, hideLoader } from '../lightusd-loader.js';
 
 function escapeHTML(v) { return String(v).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
@@ -15,7 +16,7 @@ document.getElementById('demo-root').innerHTML = `
     <div>
       <a class="demo-back" href="./">Demos</a>
       <h1>Backend Comparison</h1>
-      <p>Compare legacy and next rendering backends side by side with synchronized cameras.</p>
+      <p>Compare deprecated legacy and next rendering backends side by side with synchronized cameras.</p>
     </div>
     <div class="demo-actions">
       <select id="sample-select"></select>
@@ -27,7 +28,7 @@ document.getElementById('demo-root').innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1px 1fr;min-height:0;overflow:hidden">
       <div id="legacy-wrap" style="display:flex;flex-direction:column;min-width:0;overflow:hidden">
         <div style="flex:0 0 auto;padding:6px 10px;background:rgba(56,189,248,.08);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:6px;font-size:.82rem;font-weight:600;color:#38bdf8">
-          Legacy Backend<div id="legacy-loading" class="loading-dot" style="width:6px;height:6px;border-radius:50%;background:var(--ok);display:inline-block;margin-left:auto"></div>
+          Legacy Backend (deprecated)<div id="legacy-loading" class="loading-dot" style="width:6px;height:6px;border-radius:50%;background:var(--ok);display:inline-block;margin-left:auto"></div>
         </div>
         <div id="legacy-vp" style="flex:1;min-height:0;position:relative;background:#080809"></div>
         <div style="flex:0 0 auto;padding:5px 10px;border-top:1px solid var(--line);font-size:.74rem;color:var(--dim);background:var(--panel);display:flex;gap:12px;flex-wrap:wrap">
@@ -108,13 +109,7 @@ vNext.controls.addEventListener('change', () => syncCameras(vNext, vLegacy));
 let loader = null;
 
 async function loadScene(url, label) {
-  showLoader('Loading WASM + USD...', $id('legacy-wrap'));
-  loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
-  try {
-    await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'legacy' });
-  } finally { hideLoader(); }
-
-  LightUSDLoaderUtils.setLightUSD(loader.native_);
+  await ensureLoader();
 
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -156,10 +151,12 @@ async function loadScene(url, label) {
     return;
   }
   if (isNextScene(nextScene)) {
-    const built = buildNextThreeNode(nextScene, { skipTextures: false, lazyTextures: true, releaseBuildData: false });
+    const built = await buildNextDemoScene(nextScene, { sourceUrl: url });
     vNext.world.clear();
     vNext.world.add(built.node);
+    vNext.data = nextScene;
     const nc = nextCountsFromScene(nextScene);
+    vNext.counts = nc;
     $id('next-stats').textContent = `${nc.meshes} meshes, ${nc.materials} mats, ${nc.textures} tex`;
   } else {
     $id('next-stats').textContent = 'Next backend returned non-next scene';
@@ -174,9 +171,9 @@ async function loadScene(url, label) {
   html += '<table style="width:100%;border-collapse:collapse;font-size:.76rem">';
   html += '<tr style="color:var(--dim);border-bottom:1px solid var(--line)"><td style="padding:4px 6px">Metric</td><td style="padding:4px 6px;text-align:center;color:#38bdf8;font-weight:600">Legacy</td><td style="padding:4px 6px;text-align:center;color:#a78bfa;font-weight:600">Next</td></tr>';
   const rows = [
-    ['Meshes', lm, vNext.data?.stats?.meshes ?? '—'],
-    ['Materials', lma, vNext.data?.stats?.materials ?? '—'],
-    ['Textures', lt, vNext.data?.stats?.textures ?? '—'],
+    ['Meshes', lm, vNext.counts?.meshes ?? '—'],
+    ['Materials', lma, vNext.counts?.materials ?? '—'],
+    ['Textures', lt, vNext.counts?.textures ?? '—'],
     ['Up Axis', legacyScene.getUpAxis?.() || 'Y', 'Y'],
   ];
   for (const [label, a, b] of rows) {
@@ -250,10 +247,12 @@ ensureLoader().then(() => loadScene(SAMPLES[0].url, SAMPLES[0].label)).catch(con
 requestAnimationFrame(anim);
 
 async function ensureLoader() {
+  if (loader) return loader;
   loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
   showLoader('Loading LightUSD WASM...', $id('legacy-wrap'));
   try {
     await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'legacy' });
   } finally { hideLoader(); }
   LightUSDLoaderUtils.setLightUSD(loader.native_);
+  return loader;
 }

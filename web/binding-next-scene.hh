@@ -4,9 +4,8 @@
 #include <string>
 #include <vector>
 #include "minijson.hh"
-#include "next/prim/path.hh"
 namespace lightusd {
-namespace next { class Value; class UsdPrim; class Stage; }
+namespace next { class Path; class Value; class UsdPrim; class Stage; }
 namespace web_next {
 minijson::Value NextValueJSON(const next::Value& value);
 const std::vector<next::Path>* NextPropertyConnections(

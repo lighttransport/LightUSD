@@ -1763,16 +1763,21 @@ class LightUSDLoaderUtils extends LoaderUtils {
             return null;
         }
 
+        // Build views from HEAPU8's buffer: every module exports HEAPU8, while
+        // the next-only module does not export the other typed heaps (and
+        // touching an unexported runtime symbol aborts). Copies own their
+        // data, so a later heap growth cannot invalidate them.
+        const buffer = lightusd.HEAPU8.buffer;
         switch (desc.dtype) {
             case 'f32':
-                return new Float32Array(lightusd.HEAPF32.subarray(ptr >> 2, (ptr >> 2) + length));
+                return new Float32Array(buffer, ptr, length).slice();
             case 'u32':
-                return new Uint32Array(lightusd.HEAPU32.subarray(ptr >> 2, (ptr >> 2) + length));
+                return new Uint32Array(buffer, ptr, length).slice();
             case 'snorm16':
-                return new Int16Array(lightusd.HEAP16.subarray(ptr >> 1, (ptr >> 1) + length));
+                return new Int16Array(buffer, ptr, length).slice();
             case 'snorm8':
             case 'u8':
-                return new Int8Array(lightusd.HEAP8.subarray(ptr, ptr + length));
+                return new Int8Array(buffer, ptr, length).slice();
             default:
                 return null;
         }
@@ -1780,11 +1785,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
 
     static _canUseMeshPtr() {
         const lightusd = LightUSDLoaderUtils._lightusd;
-        return !!(lightusd &&
-            lightusd.HEAPF32 &&
-            lightusd.HEAPU32 &&
-            lightusd.HEAP16 &&
-            lightusd.HEAP8);
+        return !!(lightusd && lightusd.HEAPU8 && lightusd.HEAPU8.buffer);
     }
 
     static convertUsdMeshPtrToThreeMesh(mesh, options = {}) {
@@ -1875,8 +1876,10 @@ class LightUSDLoaderUtils extends LoaderUtils {
 
         geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(mesh.points), 3));
 
+        // Next-backend meshes can be non-indexed triangle soups, which carry
+        // `faceVertexIndices: null`.
         if (Object.prototype.hasOwnProperty.call(mesh, 'faceVertexIndices')) {
-          if (mesh.faceVertexIndices.length >0 ) {
+          if (mesh.faceVertexIndices && mesh.faceVertexIndices.length > 0) {
             const indices = new Uint32Array(mesh.faceVertexIndices);
             // Validate: check for out-of-range indices (common corruption indicator)
             const numVertices = mesh.points.length / 3;
@@ -2762,7 +2765,12 @@ class LightUSDLoaderUtils extends LoaderUtils {
             // Yield to browser before heavy mesh setup
             await this.maybeYieldToUI(options._progressState, options);
 
-            const threeMesh = await this.setupMesh(mesh, defaultMtl, usdScene, options);
+            // A mesh prim the converter produced no render mesh for
+            // (contentId -1, e.g. no drawable geometry) stays an empty group
+            // so its transform and children are kept.
+            const threeMesh = mesh && !mesh.error
+                ? await this.setupMesh(mesh, defaultMtl, usdScene, options)
+                : new THREE.Group();
             node = threeMesh;
 
             // Increment mesh counter after building

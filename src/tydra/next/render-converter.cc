@@ -4,10 +4,11 @@
 // Tydra Next - Render Scene Converter Implementation
 
 #include "safe-arithmetic.hh"
+#include "../../next/layer/prim-spec.hh"
 #include "core/path-expression-eval.hh"
 #include "next/schema/usd-vol.hh"
 #include "next/schema/usd-geom-camera.hh"
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
 #include "render-converter-assembly.hh"
 #include "render-converter-material-finalize.hh"
 #include "render-converter-light-linking.hh"
@@ -964,11 +965,101 @@ ConverterConfig MakeHardenedConverterConfig(size_t max_memory) {
 }
 
 RenderSceneConverter::RenderSceneConverter(const ConverterConfig& config)
-    : config_(config) {}
-
+    : impl_(new Impl(config)) {}
 RenderSceneConverter::~RenderSceneConverter() = default;
 
-GeometryInfo RenderSceneConverter::GetGeometryInfo(const UsdPrim& prim,
+ConvertResult RenderSceneConverter::Convert(const ::lightusd::next::Stage& stage) {
+  return impl_->Convert(stage);
+}
+
+StreamConvertResult RenderSceneConverter::ConvertToSink(::lightusd::next::Stage& stage,
+                                    SceneSink* sink) {
+  return impl_->ConvertToSink(stage, sink);
+}
+
+GeometryInfo RenderSceneConverter::GetGeometryInfo(const UsdPrim& prim, GeometryKind kind,
+                               int32_t id) const {
+  return impl_->GetGeometryInfo(prim, kind, id);
+}
+
+bool RenderSceneConverter::ConvertExtentProxy(const UsdPrim& prim, RenderMesh* out) {
+  return impl_->ConvertExtentProxy(prim, out);
+}
+
+bool RenderSceneConverter::ConvertBoundsProxy(const UsdPrim& prim, const Float3& minimum,
+                          const Float3& maximum, RenderMesh* out) {
+  return impl_->ConvertBoundsProxy(prim, minimum, maximum, out);
+}
+
+bool RenderSceneConverter::ConvertRenderableMesh(const Stage& stage, const UsdPrim& prim,
+                             RenderMesh* out) {
+  return impl_->ConvertRenderableMesh(stage, prim, out);
+}
+
+bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, RenderMesh* out) {
+  return impl_->ConvertMesh(stage, prim, out);
+}
+
+bool RenderSceneConverter::ConvertPoints(const Stage& stage, const UsdPrim& prim,
+                     RenderPoints* out) {
+  return impl_->ConvertPoints(stage, prim, out);
+}
+
+bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim, RenderCurves* out) {
+  return impl_->ConvertCurves(prim, out);
+}
+
+bool RenderSceneConverter::ConvertPointInstancer(const UsdPrim& prim, RenderPointInstancer* out) {
+  return impl_->ConvertPointInstancer(prim, out);
+}
+
+bool RenderSceneConverter::ConvertMaterial(const ::lightusd::next::Stage& stage, const UsdPrim& prim, RenderMaterial* out) {
+  return impl_->ConvertMaterial(stage, prim, out);
+}
+
+bool RenderSceneConverter::ConvertMaterial(const ::lightusd::next::Stage& stage,
+                       const UsdPrim& prim, RenderMaterial* out,
+                       RenderScene* scene) {
+  return impl_->ConvertMaterial(stage, prim, out, scene);
+}
+
+bool RenderSceneConverter::ConvertLight(const ::lightusd::next::Stage& stage,
+                                       const UsdPrim& prim, RenderLight* out) {
+  return impl_->ConvertLight(stage, prim, out);
+}
+
+bool RenderSceneConverter::ConvertCamera(const ::lightusd::next::Stage& stage,
+                     const UsdPrim& prim, RenderCamera* out) {
+  return impl_->ConvertCamera(stage, prim, out);
+}
+
+bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
+  return impl_->ConvertSkeleton(prim, out);
+}
+
+bool RenderSceneConverter::ConvertAnimation(const ::lightusd::next::Stage& stage,
+                        const UsdPrim& prim, AnimationClip* out) {
+  return impl_->ConvertAnimation(stage, prim, out);
+}
+
+bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
+  return impl_->TriangulateMesh(mesh);
+}
+
+bool RenderSceneConverter::LoadTexture(const std::string& asset_path, TextureImage* out) {
+  return impl_->LoadTexture(asset_path, out);
+}
+
+std::string RenderSceneConverter::GetLastError() const {
+  return impl_->GetLastError();
+}
+
+RenderSceneConverter::Impl::Impl(const ConverterConfig& config)
+    : config_(config) {}
+
+RenderSceneConverter::Impl::~Impl() = default;
+
+GeometryInfo RenderSceneConverter::Impl::GetGeometryInfo(const UsdPrim& prim,
                                                     GeometryKind kind,
                                                     int32_t id) const {
   return BuildGeometryInfo(prim, kind, id);
@@ -984,7 +1075,8 @@ namespace {
 // phases. Assignment from an empty ChunkedArray releases chunks immediately;
 // ChunkedArray::clear() intentionally retains them for reuse.
 void ReleaseMeshGeometry(RenderMesh* mesh, bool keep_binding_inputs,
-                         bool keep_triangulation = false) {
+                         bool keep_triangulation = false,
+                         bool keep_custom_primvars = false) {
   if (!mesh) return;
 
   mesh->face_vertex_indices = UInt32Chunked();
@@ -1003,7 +1095,7 @@ void ReleaseMeshGeometry(RenderMesh* mesh, bool keep_binding_inputs,
   mesh->face_vertex_counts = UInt32Chunked();
   mesh->texcoords_0 = FloatChunked();
   mesh->texcoords_1 = FloatChunked();
-  std::vector<VertexAttribute>().swap(mesh->primvars);
+  if (!keep_custom_primvars) std::vector<VertexAttribute>().swap(mesh->primvars);
   std::vector<uint32_t>().swap(mesh->face_triangle_offsets);
   std::vector<int32_t>().swap(mesh->sanitize_face_remap);
   std::vector<uint32_t>().swap(mesh->hole_faces);
@@ -1025,7 +1117,7 @@ void ReleaseSourceMeshStaticArrays(Stage& stage, const UsdPrim& mesh_prim) {
 
 
 
-StreamConvertResult RenderSceneConverter::ConvertToSink(Stage& stage,
+StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
                                                         SceneSink* sink) {
   StreamConvertResult result;
   ResetOperationState();
@@ -1061,7 +1153,10 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(Stage& stage,
   const auto meta = stage.GetMeta();
   catalog.name = meta.defaultPrim;
   catalog.default_prim = meta.defaultPrim;
-  catalog.meters_per_unit = static_cast<float>(meta.metersPerUnit);
+  // The render product retains its 1-meter fallback for unauthored layers;
+  // the next Stage keeps its independent 0.01 USD metadata fallback.
+  catalog.meters_per_unit = static_cast<float>(
+      meta.metersPerUnit_set ? meta.metersPerUnit : 1.0);
   catalog.up_axis = meta.upAxis == "Z" ? RenderScene::UpAxis::Z
                                         : RenderScene::UpAxis::Y;
   catalog.start_time = meta.startTimeCode;
@@ -1186,7 +1281,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(Stage& stage,
 
   for (const RenderPrimRecord& rec : extracted.lights) {
     RenderLight light;
-    if (!ConvertLight(rec.prim, &light)) continue;
+    if (!ConvertLight(stage, rec.prim, &light)) continue;
     for (int i = 0; i < 16; ++i) light.transform.m[i] = float(rec.world[i]);
     if (light.type == LightType::Dome) {
       std::string texture;
@@ -1276,16 +1371,21 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(Stage& stage,
     skeleton_by_path[catalog.skeletons[i].prim_path] = static_cast<int32_t>(i);
   }
 
+  if (catalog.memory_usage() > config_.limits.max_resident_bytes) {
+    result.status = ::lightusd::next::OperationStatus::ResourceLimit;
+    result.error = "stream render catalog exceeds resident memory limit";
+    result.warnings = std::move(warnings_);
+    return result;
+  }
   if (!sink->BeginScene(std::move(catalog))) {
     result.status = ::lightusd::next::OperationStatus::SinkRejected;
     result.error = "scene sink rejected catalog";
     return result;
   }
   // The catalog and all non-geometry metadata are now owned by the sink.
-  // Release the traversal-order duplicate before the first large geometry
-  // payload is decoded; kind-specific lists still provide the conversion
-  // order below.
-  std::vector<RenderPrimRecord>().swap(extracted.records);
+  // Drop the traversal-order pointer index before the first large geometry
+  // payload is decoded; category lists reference the single owned records.
+  extracted.release_records();
 
   const auto abort = [&](const std::string& error, bool cancelled) {
     sink->AbortScene();
@@ -1346,6 +1446,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(Stage& stage,
     }
     ++result.mesh_count;
   }
+  RenderExtractResult::release_list(&extracted.meshes);
 
   int32_t points_id = 0;
   for (const RenderPrimRecord& rec : extracted.points) {
@@ -1388,6 +1489,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(Stage& stage,
     }
     ++points_id;
   }
+  RenderExtractResult::release_list(&extracted.points);
   for (size_t i = 0; i < extracted.curves.size(); ++i) {
     if (cancellation_requested()) {
       abort("conversion cancelled", true);
@@ -1432,6 +1534,13 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(Stage& stage,
     }
     ++result.curve_count;
   }
+  RenderExtractResult::release_list(&extracted.curves);
+  RenderExtractResult::release_list(&extracted.point_instancers);
+  RenderExtractResult::release_list(&extracted.materials);
+  RenderExtractResult::release_list(&extracted.skeletons);
+  RenderExtractResult::release_list(&extracted.lights);
+  RenderExtractResult::release_list(&extracted.cameras);
+  extracted.release_storage();
 
   if (!sink->EndScene()) {
     abort("scene sink failed to finalize", false);
@@ -1449,7 +1558,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(Stage& stage,
 // Mesh conversion
 //
 
-bool RenderSceneConverter::ConvertRenderableMesh(const Stage& stage,
+bool RenderSceneConverter::Impl::ConvertRenderableMesh(const Stage& stage,
                                                  const UsdPrim& prim,
                                                  RenderMesh* out) {
   if (!prim.IsValid() || !IsMeshRenderableTypeName(prim.GetTypeName())) {
@@ -1465,7 +1574,7 @@ bool RenderSceneConverter::ConvertRenderableMesh(const Stage& stage,
 // Cumulative memory guard for expensive conversion phases. This is an
 // estimate-based early gate; ChunkAllocationBudget enforces actual retained
 // chunk bytes independently for every concurrent conversion.
-bool RenderSceneConverter::BudgetWouldExceed(size_t estimate,
+bool RenderSceneConverter::Impl::BudgetWouldExceed(size_t estimate,
                                              const char* phase) {
   // Callable from the parallel per-record conversion phases (e.g. mesh
   // conversion, see ConvertMeshesParallel), so budget_*_ bookkeeping and the
@@ -1492,18 +1601,18 @@ bool RenderSceneConverter::BudgetWouldExceed(size_t estimate,
   return false;
 }
 
-void RenderSceneConverter::ResetOperationState() {
+void RenderSceneConverter::Impl::ResetOperationState() {
   warnings_.clear();
   budget_accounted_bytes_ = 0;
   budget_exceeded_ = false;
 }
 
-void RenderSceneConverter::AddWarning(std::string msg) {
+void RenderSceneConverter::Impl::AddWarning(std::string msg) {
   ConverterStateLock lk(state_mu_);
   warnings_.push_back(std::move(msg));
 }
 
-void RenderSceneConverter::SetLastError(std::string msg) {
+void RenderSceneConverter::Impl::SetLastError(std::string msg) {
   ConverterStateLock lk(state_mu_);
   last_error_ = std::move(msg);
 }
@@ -1525,7 +1634,7 @@ void RenderSceneConverter::SetLastError(std::string msg) {
 // Skeleton conversion
 //
 
-bool RenderSceneConverter::LoadTexture(const std::string& asset_path, TextureImage* out) {
+bool RenderSceneConverter::Impl::LoadTexture(const std::string& asset_path, TextureImage* out) {
   if (!out) return false;
 
   // Use custom loader if provided
@@ -1561,7 +1670,7 @@ void ComputeTriangleNormal(const float* p0, const float* p1, const float* p2, fl
 }
 
 
-ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
+ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
   ConvertResult result;
   ResetOperationState();
   ResetImageIdCache();
@@ -1590,7 +1699,8 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     auto meta = stage.GetMeta();
     result.scene.name = meta.defaultPrim;
     result.scene.default_prim = meta.defaultPrim;
-    result.scene.meters_per_unit = static_cast<float>(meta.metersPerUnit);
+    result.scene.meters_per_unit = static_cast<float>(
+        meta.metersPerUnit_set ? meta.metersPerUnit : 1.0);
     result.scene.up_axis = (meta.upAxis == "Z") ?
                            RenderScene::UpAxis::Z : RenderScene::UpAxis::Y;
     result.scene.start_time = meta.startTimeCode;
@@ -1691,6 +1801,10 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
         result.scene.animations.push_back(std::move(clip));
       }
     }
+
+    // Category lists retain the records needed by conversion workers. Drop
+    // the traversal-order pointer index before materializing geometry.
+    extracted.release_records();
 
     // Convert meshes
     //
@@ -2027,6 +2141,18 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
           }
           image_remap[ii] = id;
         }
+        std::vector<int32_t> udim_remap(local.udim_textures.size(), -1);
+        for (size_t ui = 0; ui < local.udim_textures.size(); ++ui) {
+          RenderUDIMTexture& udim = local.udim_textures[ui];
+          for (RenderUDIMTexture::Tile& tile : udim.tiles) {
+            if (tile.image_id >= 0 &&
+                static_cast<size_t>(tile.image_id) < image_remap.size()) {
+              tile.image_id = image_remap[static_cast<size_t>(tile.image_id)];
+            }
+          }
+          udim_remap[ui] = static_cast<int32_t>(result.scene.udim_textures.size());
+          result.scene.udim_textures.push_back(std::move(udim));
+        }
         // Textures are never deduped against each other (matches the
         // original: every ExtractShaderParam call appends a fresh
         // RenderTexture), just index-remapped and appended.
@@ -2036,6 +2162,11 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
           if (tex.image_id >= 0 &&
               static_cast<size_t>(tex.image_id) < image_remap.size()) {
             tex.image_id = image_remap[static_cast<size_t>(tex.image_id)];
+          }
+          if (tex.udim_texture_id >= 0 &&
+              static_cast<size_t>(tex.udim_texture_id) < udim_remap.size()) {
+            tex.udim_texture_id =
+                udim_remap[static_cast<size_t>(tex.udim_texture_id)];
           }
           texture_remap[ti] = static_cast<int32_t>(result.scene.textures.size());
           result.scene.textures.push_back(std::move(tex));
@@ -2063,7 +2194,8 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
         const bool analytic = source.IsValid() && source.GetTypeName() != "Mesh";
         if (analytic && config_.mesh.retain_analytic_geometry) continue;
         ReleaseMeshGeometry(&mesh, false,
-                            config_.mesh.retain_triangulation);
+                            config_.mesh.retain_triangulation,
+                            config_.mesh.retain_custom_primvars);
       }
     }
     AssignPointInstanceDrawMaterials(&result.scene);
@@ -2086,7 +2218,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       std::vector<uint8_t> batch_ok(n, 0);
       task_arena.Run(n, [&](size_t bi) {
         ScopedChunkAllocationBudget worker_budget_scope(chunk_budget);
-        batch_ok[bi] = ConvertLight(
+        batch_ok[bi] = ConvertLight(stage,
                            extracted.lights[batch_start + bi].prim,
                            &batch_light[bi]) ? 1 : 0;
       });
@@ -2276,6 +2408,14 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     ResolveSkeletalAnimationTargets(&result.scene);
 
     ResolveLightLinking(stage, &result.scene);
+    extracted.release_storage();
+
+    if (result.scene.memory_usage() > config_.limits.max_resident_bytes) {
+      result.status = ::lightusd::next::OperationStatus::ResourceLimit;
+      result.error = "converted render scene exceeds resident memory limit";
+      result.warnings = std::move(warnings_);
+      return result;
+    }
 
     if (config_.progress_callback) {
       config_.progress_callback(1.0f, "Conversion complete");

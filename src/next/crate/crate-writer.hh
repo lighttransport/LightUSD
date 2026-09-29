@@ -21,6 +21,12 @@ namespace next {
 /// chunks. Returns false to abort the write. See WriteLayerToSink().
 using CrateWriteSink = std::function<bool(const uint8_t* data, size_t size)>;
 
+/// Seek-write for a seekable sink: overwrite `size` bytes at absolute output
+/// position `pos` (bytes already emitted through the sink). Returns false to
+/// abort. Used internally for file output (see WriteLayerToFile).
+using CrateWritePatch =
+    std::function<bool(uint64_t pos, const uint8_t* data, size_t size)>;
+
 /// Options for crate writing
 struct CrateWriteOptions {
   /// Refuse authored fields that cannot be represented in the selected Crate
@@ -55,6 +61,30 @@ struct CrateWriteOptions {
   /// round-trippable crate at any thread count and is byte-identical across thread
   /// counts (the parallel build merges per-prim results in deterministic order).
   int num_threads = 1;
+
+  /// Log per-phase wall times ("[next_crate_write] ...") at INFO through
+  /// lightusd::logging.
+  bool enable_timing = false;
+
+  /// Consume the input layer's property values while writing: after a prim's
+  /// fields are built (its values encoded into the crate's value blocks), the
+  /// prim's default values and time samples are released
+  /// (PrimSpec::release_value_payloads), so the layer's materialized values
+  /// and the staged value blocks never coexist in full -- a peak-RSS cut on
+  /// write-and-discard flows (flatten-to-file). The layer stays structurally
+  /// valid but value-stripped (AssetPath defaults are kept for post-write
+  /// asset collection). Requires the caller's layer to be genuinely mutable;
+  /// output bytes are identical to a non-consuming write. Default off.
+  bool consume_values = false;
+
+  /// Maximum complete crate size in bytes (0 = unlimited). The writer stops
+  /// before growing the output buffer beyond this bound.
+  uint64_t max_file_size_bytes = 0;
+
+  /// Maximum estimated writer working set in bytes (0 = unlimited). This is
+  /// based on retained Layer data plus Crate table/index overhead; it is a
+  /// policy estimate, not an operating-system RSS limit.
+  uint64_t max_memory_bytes = 0;
 };
 
 /// Result of crate write operation
@@ -107,6 +137,14 @@ public:
   /// straight from their source. `sink` receives ordered byte chunks and
   /// returns false to abort. Output is byte-identical to WriteLayerToMemory.
   CrateWriteResult WriteLayerToSink(const CrateWriteSink& sink, const Layer& layer);
+
+  /// Like WriteLayerToSink, for a sink that can also seek-write (`patch`):
+  /// VALUE blocks are streamed as they are built instead of being staged
+  /// until the end, so the value section is never held in memory. Output is
+  /// byte-identical to WriteLayerToMemory.
+  CrateWriteResult WriteLayerToSeekableSink(const CrateWriteSink& sink,
+                                            const CrateWritePatch& patch,
+                                            const Layer& layer);
 
 private:
   class Impl;

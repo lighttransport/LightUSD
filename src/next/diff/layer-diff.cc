@@ -478,6 +478,7 @@ std::string ArcEditToStr(const ArcEdit &e) {
   if (!e.authored) return "<none>";
   std::stringstream ss;
   ss << (e.is_explicit ? "explicit" : "listop");
+  if (e.is_value_block) ss << " valueBlock";
   ss << " add" << StrListToStr(e.added);
   ss << " prepend" << StrListToStr(e.prepended);
   ss << " append" << StrListToStr(e.appended);

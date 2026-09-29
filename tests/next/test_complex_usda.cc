@@ -3,6 +3,7 @@
 //
 // LightUSD Next - Complex USDA parsing test
 
+#include "next/layer/layer.hh"
 #include <iostream>
 #include <cassert>
 #include <cmath>
@@ -137,6 +138,7 @@ def Xform "Cube" {
     }
     uniform token[] xformOpOrder = ["xformOp:translate"]
 }
+
 )";
 
   LoadResult result = LoadUSDAFromString(input);
@@ -160,6 +162,28 @@ def Xform "Cube" {
   assert(times[4] == 96);
 
   std::cout << "  Animation test passed!" << std::endl;
+}
+
+void test_timesample_declaration_flags() {
+  const char* input = R"(#usda 1.0
+def Xform "Root" {
+    custom float gain.timeSamples = { 0: 0.25, 1: 0.75 }
+    uniform float weight.timeSamples = { 0: 1, 1: 2 }
+    varying float[] values.timeSamples = { 0: [1, 2] }
+}
+)";
+  LoadResult result = LoadUSDAFromString(input);
+  assert(result.success);
+  const PrimSpec* prim = result.stage.GetRootPrims().front().GetPrimSpec();
+  assert(prim);
+  const PropSlot* gain = prim->property("gain");
+  const PropSlot* weight = prim->property("weight");
+  const PropSlot* values = prim->property("values");
+  assert(gain && gain->is_custom() && gain->is_time_sampled());
+  assert(weight && weight->is_uniform() && weight->variability_authored() &&
+         weight->is_time_sampled());
+  assert(values && values->is_array() && values->is_varying() &&
+         values->variability_authored() && values->is_time_sampled());
 }
 
 void test_large_scene_ascii_grammar_regressions() {
@@ -992,6 +1016,7 @@ int main() {
   try {
     test_cube_with_material();
     test_animation();
+    test_timesample_declaration_flags();
     test_large_scene_ascii_grammar_regressions();
     test_metadata_dict_propmeta_roundtrip();
     test_relationship_body_listops();

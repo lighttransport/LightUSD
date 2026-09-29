@@ -13,6 +13,7 @@
 
 #pragma once
 
+#include "../crate/crate-limits.hh"
 #include "../parser/ascii-parser.hh"
 #include "arc-types.hh"
 #include "../composition/expression-variables.hh"
@@ -205,12 +206,23 @@ struct CompositionOptions {
   // Zero selects the library default. Smaller values improve load balance;
   // larger values reduce scheduler/atomic overhead.
   size_t opinion_batch_size = 0;
+  // When true, BuildStage frees each prim's cached composition sources as
+  // soon as its opinions are filled and drops the sources cache afterwards,
+  // so the transient compose state does not coexist in full with the finished
+  // stage (Island: ~400 MB lower peak RSS). Composed output is unaffected; a
+  // later per-prim query (GetPropertyStack, ComputePrimIndex, ...) re-resolves
+  // the sources it needs instead of hitting the cache. Off by default so a
+  // long-lived Cache (e.g. a StageSession with full cache retention) stays
+  // warm; the one-shot ComposeStageFromLayer/File always enable it.
+  bool release_build_sources = false;
 
   // Per-layer file/input memory cap for layers loaded by the compositor
   // (sublayers, references, payloads). 0 = no limit.
   size_t max_layer_memory = 0;
   size_t max_array_elements = size_t(16) * 1024 * 1024;
   size_t max_archive_entries = security_policy::kDefaultArchiveEntryCount;
+  // USDC structural table-count limits forwarded to every crate layer load.
+  CrateLimits usdc_limits = {};
 
   // USDC backing policy for every file-backed layer loaded by PCP. With both
   // enabled, lazy array Values retain shared mmap-backed CrateDataSources as

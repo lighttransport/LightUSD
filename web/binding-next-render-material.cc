@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-next-render.hh"
+#include "next/schema/usd-shade.hh"
 namespace lightusd {
 namespace web_next {
+int32_t RenderStream::materialIdForBoundPrim_(
+    const lightusd::next::UsdPrim& prim) {
+  return registerMaterial_(lightusd::next::GetBoundMaterial(stage_, prim));
+}
+
 RenderStream::MaterialRecord RenderStream::materialRecordForPrim_(
       const lightusd::next::UsdPrim &mat) {
     MaterialRecord rec;

@@ -4,6 +4,7 @@
 // Collection API and path-expression based light-link resolution.
 
 #include "render-converter-light-linking.hh"
+#include "../../next/layer/prim-spec.hh"
 #include "render-data.hh"
 #include "core/path-expression-eval.hh"
 #include "next/stage/stage.hh"

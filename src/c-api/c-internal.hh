@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstring>
 #include <mutex>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -33,11 +34,22 @@ struct lightusd_value {
 };
 
 struct lightusd_stage {
+  std::atomic<size_t> references{1};
   lightusd::next::Stage stage;
+  // Non-null only for immutable handles retained from document snapshots.
+  std::shared_ptr<const lightusd::next::Stage> snapshot_stage;
+  const lightusd::next::Stage& ReadStage() const {
+    return snapshot_stage ? *snapshot_stage : stage;
+  }
+
   std::string warnings;
   // Directory of the file this stage was loaded from (empty for in-memory /
   // created stages); used to resolve relative texture asset paths.
   std::string source_dir;
+  // Original filename, when file-backed. Property explanations reload this
+  // uncomposed layer so variant and arc provenance is not lost in a flattened
+  // stage snapshot.
+  std::string source_filename;
   // Bumped by structural mutations (define/remove prim) so bindings can
   // detect stale lightusd_prim handles.
   std::atomic<uint64_t> generation{0};
@@ -55,21 +67,11 @@ inline lightusd_status Fail(lightusd_status st, const std::string& msg) {
   return st;
 }
 
-// lightusd_prim <-> next::UsdPrim (both are {spec, layer, index} triples).
-inline lightusd::next::UsdPrim FromC(lightusd_prim p) {
-  return lightusd::next::UsdPrim(
-      static_cast<const lightusd::next::PrimSpec*>(p._spec),
-      static_cast<const lightusd::next::Layer*>(p._layer), p._index);
-}
-
-inline lightusd_prim ToC(const lightusd::next::UsdPrim& up) {
-  lightusd_prim p;
-  p._spec = up.GetPrimSpec();
-  p._layer = up.GetLayer();
-  p._index = up.GetIndex();
-  p._pad = 0;
-  return p;
-}
+// Compiled handle validation keeps storage details out of binding headers.
+const lightusd::next::PrimSpec* SpecFromC(lightusd_prim p);
+lightusd::next::UsdPrim FromC(lightusd_prim p);
+lightusd_prim ToC(const lightusd_stage* owner,
+                 const lightusd::next::UsdPrim& prim);
 
 inline lightusd_sv SV(const std::string& s) {
   lightusd_sv v;

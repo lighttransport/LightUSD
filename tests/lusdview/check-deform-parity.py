@@ -76,8 +76,16 @@ def render(binary, scene, out, time, camera, extra=(), env=None, backend=(),
             partial = partial.decode(errors="replace")
         return False, (f"render timed out after {timeout:g}s\n{partial}")
     log = r.stdout.decode(errors="replace")
+    if r.returncode < 0:
+        log += f"\nrender terminated by signal {-r.returncode}"
     return (r.returncode == 0 and os.path.exists(out) and
             os.path.getsize(out) > 0), log
+
+
+def fatal_render_error(log):
+    return any(marker in log for marker in (
+        "terminate called after throwing", "std::bad_alloc", "Segmentation fault",
+        "AddressSanitizer", "render terminated by signal"))
 
 
 def read_luma(path):
@@ -179,6 +187,9 @@ def main():
 
     rest_ok, rest_log = render(binary, scene, rest, rest_t, camera,
                                backend=backend)
+    if not rest_ok and fatal_render_error(rest_log):
+        print("FAIL: rest render aborted\n" + rest_log)
+        return 1
     if not rest_ok or not backend_available(rest_log):
         print(f"SKIP: the {which} backend produced no image (unavailable here?)")
         if rest_log:
@@ -186,6 +197,9 @@ def main():
         return SKIP
     gpu_ok, gpu_log = render(binary, scene, gpu, pose_t, camera,
                              backend=backend)
+    if not gpu_ok and fatal_render_error(gpu_log):
+        print("FAIL: animated render aborted\n" + gpu_log)
+        return 1
     if not gpu_ok or not backend_available(gpu_log):
         print(f"SKIP: the {which} backend produced no image (unavailable here?)")
         return SKIP
@@ -195,6 +209,9 @@ def main():
                              backend=backend,
                              extra=["--skinning", "cpu"],
                              env={"LUSDVIEW_NEXT_MORPH_BAKE": "1"})
+    if not cpu_ok and fatal_render_error(cpu_log):
+        print("FAIL: baked render aborted\n" + cpu_log)
+        return 1
     if not cpu_ok or not backend_available(cpu_log):
         print("SKIP: the CPU-bake reference did not render")
         return SKIP

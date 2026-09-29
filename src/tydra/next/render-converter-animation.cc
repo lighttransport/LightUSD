@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 // Tydra Next - Skeleton and animation conversion
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
+#include "../../next/layer/prim-spec.hh"
 #include "next/schema/usd-skel.hh"
 #include "next/eval/value-clip.hh"
+#include "next/types/type-info.hh"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -59,6 +61,68 @@ bool ValueToFloat4(const Value& value, Float4* out) {
     return true;
   }
   return false;
+}
+
+// Flattens a custom-property sample to its compact float components, as the
+// legacy converter does: one lane per scalar component (bool/int/uint/int64/
+// uint64/half/float/double), vectors and matrices row-major, and arrays as
+// element_count consecutive elements. Half arrays are not animated.
+bool FlattenCustomAnimationValue(const Value& value, std::vector<float>* out,
+                                 uint32_t* stride, uint32_t* count) {
+  using ::lightusd::next::TypeId;
+  if (!out || !stride || !count || value.is_empty() || value.is_block())
+    return false;
+  const ::lightusd::next::TypeInfo* info =
+      ::lightusd::next::GetTypeInfo(value.type_id());
+  if (!info || info->size == 0 || info->component_count == 0) return false;
+  const TypeId lane = info->component_type == TypeId::Invalid
+                          ? info->id : info->component_type;
+  const uint32_t comps = info->component_count;
+  if (!value.is_array() && comps <= 4 && lane != TypeId::Bool &&
+      lane != TypeId::Int && lane != TypeId::UInt && lane != TypeId::Int64 &&
+      lane != TypeId::UInt64) {
+    float lanes[4] = {0, 0, 0, 0};
+    const bool ok = comps == 1 ? value.to_float(lanes)
+        : comps == 2 ? value.to_float2(lanes)
+        : comps == 3 ? value.to_float3(lanes) : value.to_float4(lanes);
+    if (!ok) return false;
+    out->insert(out->end(), lanes, lanes + comps);
+    *stride = comps;
+    *count = 1;
+    return true;
+  }
+  size_t lane_size = 0;
+  switch (lane) {
+    case TypeId::Bool: lane_size = sizeof(bool); break;
+    case TypeId::Int: case TypeId::UInt: case TypeId::Float: lane_size = 4; break;
+    case TypeId::Int64: case TypeId::UInt64: case TypeId::Double: lane_size = 8; break;
+    default: return false;
+  }
+  if (lane_size * comps != info->size) return false;
+  const size_t elements = value.is_array() ? value.array_size() : 1;
+  if (elements == 0 || elements > (size_t(1) << 24) / comps) return false;
+  const auto* data = static_cast<const uint8_t*>(value.raw_data());
+  if (!data) return false;
+  const size_t lanes = elements * comps;
+  out->reserve(out->size() + lanes);
+  for (size_t i = 0; i < lanes; ++i) {
+    const uint8_t* p = data + i * lane_size;
+    float f = 0.0f;
+    switch (lane) {
+      case TypeId::Bool: { bool v; std::memcpy(&v, p, sizeof v); f = v ? 1.0f : 0.0f; break; }
+      case TypeId::Int: { int32_t v; std::memcpy(&v, p, 4); f = static_cast<float>(v); break; }
+      case TypeId::UInt: { uint32_t v; std::memcpy(&v, p, 4); f = static_cast<float>(v); break; }
+      case TypeId::Float: std::memcpy(&f, p, 4); break;
+      case TypeId::Int64: { int64_t v; std::memcpy(&v, p, 8); f = static_cast<float>(v); break; }
+      case TypeId::UInt64: { uint64_t v; std::memcpy(&v, p, 8); f = static_cast<float>(v); break; }
+      case TypeId::Double: { double v; std::memcpy(&v, p, 8); f = static_cast<float>(v); break; }
+      default: return false;
+    }
+    out->push_back(f);
+  }
+  *stride = comps;
+  *count = static_cast<uint32_t>(elements);
+  return true;
 }
 
 // Closed-form Euler-degrees -> quaternion (xyzw) for all six USD rotation
@@ -168,21 +232,19 @@ bool ValueToAnimationFloat4(const std::string& prop_name,
 }
 
 
-void SetIdentity(Matrix4* m) {
+void SetIdentity(Matrix4d* m) {
   if (!m) return;
-  *m = Matrix4::Identity();
+  *m = Matrix4d::Identity();
 }
 
 void CopyMatrixFromDoubles(const std::vector<double>& values,
                            size_t matrix_index,
-                           Matrix4* out) {
+                           Matrix4d* out) {
   if (!out) return;
   SetIdentity(out);
   const size_t offset = matrix_index * 16;
   if (offset + 16 > values.size()) return;
-  for (size_t i = 0; i < 16; ++i) {
-    out->m[i] = static_cast<float>(values[offset + i]);
-  }
+  std::copy_n(values.data() + offset, 16, out->m);
 }
 
 
@@ -244,7 +306,8 @@ bool IsXformAnimationProperty(const std::string& prop_name) {
 
 std::vector<double> ValueClipSampleTimes(
     const Stage& stage, const ::lightusd::next::ValueClipSet& meta,
-    uint32_t max_samples) {
+    uint32_t max_samples, float sample_rate, bool use_time_range,
+    double range_start, double range_end) {
   std::set<double> exact;
   for (const auto& value : meta.times) exact.insert(value.first);
   for (const auto& value : meta.active) exact.insert(value.first);
@@ -253,7 +316,25 @@ std::vector<double> ValueClipSampleTimes(
   double end = exact.empty() ? start : *exact.rbegin();
   if (stage_meta.startTimeCode_set) start = stage_meta.startTimeCode;
   if (stage_meta.endTimeCode_set) end = stage_meta.endTimeCode;
+  if (use_time_range) {
+    start = range_start;
+    end = range_end;
+  }
   if (end < start) std::swap(start, end);
+  if (sample_rate > 0.0f && std::isfinite(sample_rate)) {
+    const uint32_t limit = std::max<uint32_t>(2, max_samples);
+    const double span = end - start;
+    if (span == 0.0) return {start};
+    const double requested = std::ceil(span * static_cast<double>(sample_rate));
+    const uint32_t segments = static_cast<uint32_t>(std::max(
+        1.0, std::min(requested, static_cast<double>(limit - 1))));
+    std::vector<double> sampled;
+    sampled.reserve(static_cast<size_t>(segments) + 1);
+    for (uint32_t i = 0; i <= segments; ++i) {
+      sampled.push_back(start + span * static_cast<double>(i) / segments);
+    }
+    return sampled;
+  }
   exact.insert(start);
   exact.insert(end);
 
@@ -313,7 +394,7 @@ size_t SaturatingMul(size_t a, size_t b) {
 
 }  // namespace
 
-bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
+bool RenderSceneConverter::Impl::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
   if (!out || !::lightusd::next::IsSkeleton(prim)) {
     SetLastError("Invalid skeleton prim");
     return false;
@@ -321,6 +402,9 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
 
   out->name = prim.GetName();
   out->prim_path = prim.GetPath().str();
+  if (const auto* spec = prim.GetPrimSpec()) {
+    out->display_name = spec->meta().displayName();
+  }
   out->root_joint = -1;
 
   Stage stage;
@@ -403,7 +487,7 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
       double parent_inv[16];
       for (int e = 0; e < 16; ++e) {
         parent_bind[e] =
-            double(out->joints[static_cast<size_t>(parent)].bind_transform.m[e]);
+            out->joints[static_cast<size_t>(parent)].bind_transform.m[e];
       }
       if (!InvertMatrix4x4D(parent_bind, parent_inv)) {
         joint.rest_transform = joint.bind_transform;
@@ -411,7 +495,7 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
       }
       // rest = bind * parent_inv (row-vector: local * parent = world)
       double bind[16];
-      for (int e = 0; e < 16; ++e) bind[e] = double(joint.bind_transform.m[e]);
+      for (int e = 0; e < 16; ++e) bind[e] = joint.bind_transform.m[e];
       double rest[16];
       for (int r = 0; r < 4; ++r) {
         for (int c = 0; c < 4; ++c) {
@@ -423,7 +507,7 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
         }
       }
       for (int e = 0; e < 16; ++e) {
-        joint.rest_transform.m[e] = static_cast<float>(rest[e]);
+        joint.rest_transform.m[e] = rest[e];
       }
     }
   }
@@ -446,7 +530,7 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
 // Animation conversion
 //
 
-bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
+bool RenderSceneConverter::Impl::ConvertAnimation(const Stage& stage,
                                             const UsdPrim& prim,
                                             AnimationClip* out) {
   if (!out || !prim.IsValid()) return false;
@@ -521,7 +605,11 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
         }
 
         const std::vector<double> sample_times = ValueClipSampleTimes(
-            stage, clip_set, config_.limits.max_value_clip_samples);
+            stage, clip_set, config_.limits.max_value_clip_samples,
+            config_.animation.value_clip_sample_rate,
+            config_.animation.value_clip_use_time_range,
+            config_.animation.value_clip_start_time,
+            config_.animation.value_clip_end_time);
         for (const std::string& property : properties) {
           if (!baked_properties.insert(property).second) continue;
           const auto prop_id =
@@ -716,8 +804,20 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
     return true;
   }
 
-  const std::vector<::lightusd::next::PropNameId> sampled_props =
-      prim_spec->time_sampled_properties();
+  // Visit sampled properties in authored order (the time-sample store's own
+  // order is not stable), then any sampled property without a slot.
+  std::vector<::lightusd::next::PropNameId> sampled_props;
+  {
+    const std::vector<::lightusd::next::PropNameId> stored =
+        prim_spec->time_sampled_properties();
+    std::set<::lightusd::next::PropNameId> pending(stored.begin(), stored.end());
+    for (const auto& slot : prim_spec->properties().slots()) {
+      if (pending.erase(slot.name_id)) sampled_props.push_back(slot.name_id);
+    }
+    for (const auto& prop_id : stored) {
+      if (pending.count(prop_id)) sampled_props.push_back(prop_id);
+    }
+  }
   for (const auto& prop_id : sampled_props) {
     const std::string prop_name(
         ::lightusd::next::GetPropNameTable().get(prop_id));
@@ -731,16 +831,42 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
     channel.target_prim_path = prim_path;
     channel.property_name = prop_name;
     channel.keyframes.reserve(samples->size());
+    uint32_t custom_stride = 0;
+    uint32_t custom_count = 0;
 
     for (const auto& sample : *samples) {
       const double t = sample.first;
       Float4 v;
       const Value* value = prim_spec->time_sample_value(sample.second);
       if (!value) continue;
-      if (!ValueToAnimationFloat4(prop_name, *value, &v)) continue;
+      if (is_xform) {
+        if (!ValueToAnimationFloat4(prop_name, *value, &v)) continue;
+      } else {
+        // Custom properties carry every component compactly in array_values
+        // (value_stride lanes x element_count per key); keyframes keep a
+        // first-element preview. Keys whose shape changes are skipped.
+        std::vector<float> lanes;
+        uint32_t stride = 0;
+        uint32_t count = 0;
+        if (!FlattenCustomAnimationValue(*value, &lanes, &stride, &count)) continue;
+        if (custom_stride == 0) {
+          custom_stride = stride;
+          custom_count = count;
+        } else if (stride != custom_stride || count != custom_count) {
+          continue;
+        }
+        v = Float4(lanes[0], stride > 1 ? lanes[1] : 0.0f,
+                   stride > 2 ? lanes[2] : 0.0f, stride > 3 ? lanes[3] : 0.0f);
+        channel.array_values.insert(channel.array_values.end(), lanes.begin(),
+                                    lanes.end());
+      }
       channel.keyframes.push_back(Keyframe{t, v});
       out->start_time = std::min(out->start_time, t);
       out->end_time = std::max(out->end_time, t);
+    }
+    if (!is_xform) {
+      channel.value_stride = custom_stride;
+      channel.element_count = custom_count;
     }
 
     if (!channel.keyframes.empty()) {

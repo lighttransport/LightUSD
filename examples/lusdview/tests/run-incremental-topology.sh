@@ -131,6 +131,28 @@ function stop() { if (child.exitCode === null) child.kill('SIGTERM'); }
   const initial = await call('get_scene_info');
   if (!initial.loaded || initial.mesh_count !== 2 || initial.triangle_count <= 0)
     throw new Error(`unexpected initial scene: ${JSON.stringify(initial)}`);
+  const prim = await call('prim_get', {path:'/Model/Keep'});
+  if (prim.name !== 'Keep' || prim.type !== 'Mesh' || !prim.active ||
+      prim.propertyCount <= 6 || prim.childCount !== 0)
+    throw new Error(`public prim summary mismatch: ${JSON.stringify(prim)}`);
+  const attributes = await call('attr_list', {path:'/Model/Keep'});
+  if (attributes.count !== prim.propertyCount ||
+      !attributes.attributes.some(a => a.name === 'visibility' && a.hasValue))
+    throw new Error(`resolved attribute list mismatch: ${JSON.stringify(attributes)}`);
+  const fallback = await call('attr_get', {path:'/Model/Keep', attr_name:'visibility'});
+  if (fallback.value !== 'inherited') throw new Error(`schema fallback mismatch: ${JSON.stringify(fallback)}`);
+  const points = await call('attr_get', {path:'/Model/Keep', attr_name:'points'});
+  if (points.value.count !== 3 || typeof points.value.type !== 'string')
+    throw new Error(`array summary mismatch: ${JSON.stringify(points)}`);
+  const sets = await call('variant_list_sets', {path:'/Model'});
+  // Composition strips variant definitions from the flattened snapshot.
+  if (sets.count !== 0 || Object.keys(sets.variantSets).length !== 0)
+    throw new Error(`public variant enumeration mismatch: ${JSON.stringify(sets)}`);
+  const selected = await call('variant_get_selection', {path:'/Model', variant_set:'shape'});
+  if (selected.selection !== '')
+    throw new Error(`public variant selection mismatch: ${JSON.stringify(selected)}`);
+  const absent = await call('variant_get_selection', {path:'/Model', variant_set:'absent'});
+  if (absent.selection !== '') throw new Error('missing variant set must report an empty selection');
   const edit = await call('variant_set_selection', {
     path:'/Model', variant_set:'shape', variant:'Quad'
   });
@@ -144,6 +166,9 @@ function stop() { if (child.exitCode === null) child.kill('SIGTERM'); }
   }
   if (info.triangle_count === initial.triangle_count)
     throw new Error(`variant topology did not publish: ${JSON.stringify(info)}\n${stderr}`);
+  const changedSelection = await call('variant_get_selection', {path:'/Model', variant_set:'shape'});
+  if (changedSelection.selection !== '')
+    throw new Error(`edited public variant selection mismatch: ${JSON.stringify(changedSelection)}`);
   if (!stderr.includes('incremental scene update: retained 1/3 mesh GPU slots; replaced 2 meshes'))
     throw new Error(`incremental topology transaction was not used\n${stderr}`);
   if (!stderr.includes('RenderSession prepared revision 2 off-thread') ||

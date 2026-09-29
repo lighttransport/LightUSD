@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import { weldMeshGeometry } from './src/mjcf-mesh-weld.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import URDFLoader from 'urdf-loader';
@@ -702,8 +703,10 @@ async function loadOBJMeshFromFile(file) {
 }
 
 async function loadSTLMeshFromFile(file) {
-  const geometry = new STLLoader().parse(await file.arrayBuffer());
-  geometry.computeVertexNormals();
+  // Weld the STL soup and shade it like MuJoCo (per-vertex normals with
+  // sharp edges kept); matches the native and CLI converters.
+  const geometry = weldMeshGeometry(new STLLoader().parse(await file.arrayBuffer()),
+    { mode: 'stl' });
   const mesh = new THREE.Mesh(
     geometry,
     new THREE.MeshStandardMaterial({ color: 0xb8c0c8, roughness: 0.62, metalness: 0.05 })

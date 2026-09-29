@@ -11,10 +11,9 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     types/spline.cc
     types/interpolation.cc
     writer/dtoa.cc
+    ../external/zmij/zmij.cc  # zmij usdcat fast path (used by writer/dtoa.cc)
     writer/value-printer.cc
     prim/path.cc
-    prim/attribute.cc
-    prim/prim.cc
     layer/array-edit.cc
     layer/property-index.cc
     layer/prim-spec.cc
@@ -53,6 +52,7 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     schema/geom-mesh.cc
     schema/geom-xform.cc
     schema/usd-shade.cc
+    eval/xform-eval.cc
     eval/attribute-eval.cc
     eval/value-clip.cc
     schema/schema-registry.cc

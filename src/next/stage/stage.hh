@@ -6,14 +6,24 @@
 
 #pragma once
 
-#include "../layer/layer.hh"
+#include "../prim/path.hh"
+#include "../types/value.hh"
 #include <string>
 #include <vector>
 #include <memory>
-#include <functional>
+#include <type_traits>
+#include <utility>
 
 namespace lightusd {
 namespace next {
+
+class Layer;
+class LayerBuilder;
+class PrimSpec;
+struct PrimSpecMeta;
+struct PropMeta;
+struct PropNameId;
+enum class PrimSpecifier : uint8_t;
 
 /// Stage metadata (derived from root layer)
 struct StageMeta {
@@ -45,6 +55,11 @@ struct StageMeta {
   bool doc_set = false;
   bool comment_set = false;
   bool owner_set = false;
+  bool autoPlay = true;
+  bool autoPlay_set = false;
+  std::string playbackMode;
+  bool playbackMode_set = false;
+  std::string copyright;
 };
 
 /// Prim handle for stage traversal
@@ -202,9 +217,7 @@ public:
 
   /// Get a property's metadata block (interpolation / customData / ...),
   /// or nullptr when none authored. Never allocates.
-  const PropMeta* GetPropertyMeta(const std::string& name) const {
-    return spec_ ? spec_->property_meta(name) : nullptr;
-  }
+  const PropMeta* GetPropertyMeta(const std::string& name) const;
 
   /// Get underlying PrimSpec (for advanced use)
   const PrimSpec* GetPrimSpec() const { return spec_; }
@@ -262,7 +275,7 @@ public:
   /// Move the root layer out of the stage (transfers ownership). Used by the
   /// pcp LayerRegistry to obtain a shareable Layer from a freshly-loaded Stage.
   /// After this the stage has no root layer.
-  std::unique_ptr<Layer> ReleaseRootLayer() { return std::move(root_layer_); }
+  std::unique_ptr<Layer> ReleaseRootLayer();
 
   /// Add a sublayer (for composition)
   void AddSubLayer(Layer&& layer);
@@ -301,6 +314,9 @@ public:
   /// Traverse all prims in depth-first order
   /// Callback signature: bool(const UsdPrim& prim)
   /// Return false from callback to stop traversal
+  using VisitFn = bool (*)(void* context, const UsdPrim& prim);
+  // Synchronous: context is borrowed for this call only.
+  void Traverse(void* context, VisitFn callback) const;
   template<typename Fn>
   void Traverse(Fn&& callback) const;
 
@@ -394,7 +410,7 @@ private:
   // Internal helpers
   void UpdateMetaFromRootLayer();
   bool TraverseImpl(uint32_t prim_index, const Layer* layer,
-                    const std::function<bool(const UsdPrim&)>& callback) const;
+                    void* context, VisitFn callback) const;
 };
 
 // ============================================================
@@ -403,12 +419,11 @@ private:
 
 template<typename Fn>
 void Stage::Traverse(Fn&& callback) const {
-  if (!root_layer_) return;
-
-  std::function<bool(const UsdPrim&)> fn = std::forward<Fn>(callback);
-  for (uint32_t idx : root_layer_->root_indices()) {
-    if (!TraverseImpl(idx, root_layer_.get(), fn)) break;
-  }
+  using Callback = typename std::decay<Fn>::type;
+  Callback local(std::forward<Fn>(callback));
+  Traverse(&local, [](void* context, const UsdPrim& prim) {
+    return (*static_cast<Callback*>(context))(prim);
+  });
 }
 
 template<typename Fn, typename Pred>

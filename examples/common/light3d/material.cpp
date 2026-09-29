@@ -1722,6 +1722,12 @@ uniform sampler2D uRoughnessTex;
 uniform sampler2D uNormalTex;
 uniform sampler2D uEmissiveTex;
 uniform sampler2D uOpacityTex;
+uniform sampler2D uOcclusionTex;
+uniform sampler2D uSpecularColorTex;
+uniform sampler2D uCoatWeightTex;
+uniform sampler2D uCoatColorTex;
+uniform sampler2D uCoatRoughnessTex;
+uniform sampler2D uCoatNormalTex;
 uniform int uRenderMode;
 uniform int uMatId;
 uniform sampler2D uBaseColorTex;
@@ -1731,6 +1737,12 @@ uniform bool uHasRoughnessTex;
 uniform bool uHasNormalTex;
 uniform bool uHasEmissiveTex;
 uniform bool uHasOpacityTex;
+uniform bool uHasOcclusionTex;
+uniform bool uHasSpecularColorTex;
+uniform bool uHasCoatWeightTex;
+uniform bool uHasCoatColorTex;
+uniform bool uHasCoatRoughnessTex;
+uniform bool uHasCoatNormalTex;
 uniform vec3 uBaseColorUv0;
 uniform vec3 uBaseColorUv1;
 uniform vec3 uMetallicUv0;
@@ -1744,13 +1756,48 @@ uniform vec3 uEmissiveUv0;
 uniform vec3 uEmissiveUv1;
 uniform vec3 uOpacityUv0;
 uniform vec3 uOpacityUv1;
+uniform vec3 uOcclusionUv0;
+uniform vec3 uOcclusionUv1;
+uniform vec3 uSpecularColorUv0;
+uniform vec3 uSpecularColorUv1;
+uniform vec3 uCoatWeightUv0;
+uniform vec3 uCoatWeightUv1;
+uniform vec3 uCoatColorUv0;
+uniform vec3 uCoatColorUv1;
+uniform vec3 uCoatRoughnessUv0;
+uniform vec3 uCoatRoughnessUv1;
+uniform vec3 uCoatNormalUv0;
+uniform vec3 uCoatNormalUv1;
 uniform ivec4 uUvSet;
 uniform int uOpacityUvSet;
+uniform int uOcclusionUvSet;
+uniform int uSpecularColorUvSet;
+uniform int uCoatWeightUvSet;
+uniform int uCoatColorUvSet;
+uniform int uCoatRoughnessUvSet;
+uniform int uCoatNormalUvSet;
 uniform int uOpacityChannel;
 uniform float uOpacityTexScale;
 uniform float uOpacityTexBias;
 uniform int uMetallicChannel;
 uniform int uRoughnessChannel;
+uniform int uOcclusionChannel;
+uniform int uCoatWeightChannel;
+uniform int uCoatRoughnessChannel;
+uniform float uOcclusionTexScale;
+uniform float uOcclusionTexBias;
+uniform vec4 uSpecularColorScale;
+uniform vec4 uSpecularColorBias;
+uniform vec4 uCoatWeightScale;
+uniform vec4 uCoatWeightBias;
+uniform vec4 uCoatColorScale;
+uniform vec4 uCoatColorBias;
+uniform vec4 uCoatRoughnessScale;
+uniform vec4 uCoatRoughnessBias;
+uniform vec4 uCoatNormalScale;
+uniform vec4 uCoatNormalBias;
+uniform float uOcclusion;
+uniform float uCoatAffectRoughness;
 uniform float uMetallicTexScale;
 uniform float uMetallicTexBias;
 uniform float uRoughnessTexScale;
@@ -1861,7 +1908,6 @@ void main() {
     vec3 displayColor = vColor.rgb;
     float displayOpacity = vColor.a;
     vec3 N = normalize(vNormal);
-    if (uRenderMode == 2) { fragColor = vec4(N * 0.5 + 0.5, 1.0); return; }
     if (uRenderMode == 3) { fragColor = vec4(idColor(uMatId), 1.0); return; }
     vec3 base = uBaseColor * displayColor;
     vec3 emissive = uEmissive;
@@ -1878,7 +1924,17 @@ void main() {
                           uNormalUv0, uNormalUv1);
         vec3 mapped = texture(uNormalTex, uv).rgb * uNormalTexScale.xyz +
                       uNormalTexBias.xyz;
-        N = normalize(mapped);
+        vec3 dp1 = dFdx(vWorldPos), dp2 = dFdy(vWorldPos);
+        vec2 du1 = dFdx(uv), du2 = dFdy(uv);
+        float determinant = du1.x * du2.y - du2.x * du1.y;
+        vec3 tangent = dp1 * du2.y - dp2 * du1.y;
+        if (abs(determinant) > 1e-8) tangent /= determinant;
+        else tangent = cross(abs(N.z) < 0.9 ? vec3(0.0, 0.0, 1.0)
+                                            : vec3(0.0, 1.0, 0.0), N);
+        tangent = normalize(tangent - N * dot(N, tangent));
+        vec3 bitangent = normalize(cross(N, tangent)) *
+                         (determinant < 0.0 ? -1.0 : 1.0);
+        N = normalize(mat3(tangent, bitangent, N) * normalize(mapped));
     }
     if (uHasMetallicTex) {
         vec2 uv = applyUv(uUvSet.y == 1 ? vUV1 : vUV,
@@ -1904,6 +1960,78 @@ void main() {
         opacity *= clamp(sampleChannel(texture(uOpacityTex, uv),
                                        uOpacityChannel) * uOpacityTexScale +
                        uOpacityTexBias, 0.0, 1.0);
+    }
+    float occlusion = clamp(uOcclusion, 0.0, 1.0);
+    if (uHasOcclusionTex) {
+        vec2 uv = applyUv(uOcclusionUvSet == 1 ? vUV1 : vUV,
+                          uOcclusionUv0, uOcclusionUv1);
+        occlusion *= clamp(channelOf(texture(uOcclusionTex, uv),
+                                     uOcclusionChannel) * uOcclusionTexScale +
+                           uOcclusionTexBias, 0.0, 1.0);
+    }
+    float coatWeight = clamp(uCoatWeight, 0.0, 1.0);
+    if (uHasCoatWeightTex) {
+        vec2 uv = applyUv(uCoatWeightUvSet == 1 ? vUV1 : vUV,
+                          uCoatWeightUv0, uCoatWeightUv1);
+        coatWeight *= channelOf(texture(uCoatWeightTex, uv), uCoatWeightChannel) *
+                      uCoatWeightScale.x + uCoatWeightBias.x;
+    }
+    vec3 coatColor = uCoatColor;
+    if (uHasCoatColorTex) {
+        vec2 uv = applyUv(uCoatColorUvSet == 1 ? vUV1 : vUV,
+                          uCoatColorUv0, uCoatColorUv1);
+        coatColor *= (texture(uCoatColorTex, uv) * uCoatColorScale +
+                      uCoatColorBias).rgb;
+    }
+    float coatRoughness = clamp(uCoatRoughness, 0.02, 1.0);
+    if (uHasCoatRoughnessTex) {
+        vec2 uv = applyUv(uCoatRoughnessUvSet == 1 ? vUV1 : vUV,
+                          uCoatRoughnessUv0, uCoatRoughnessUv1);
+        coatRoughness *= channelOf(texture(uCoatRoughnessTex, uv),
+                                   uCoatRoughnessChannel) *
+                         uCoatRoughnessScale.x + uCoatRoughnessBias.x;
+    }
+    coatRoughness = mix(coatRoughness, roughness,
+                        clamp(uCoatAffectRoughness, 0.0, 1.0));
+    vec3 coatN = N;
+    if (uHasCoatNormalTex) {
+        vec2 uv = applyUv(uCoatNormalUvSet == 1 ? vUV1 : vUV,
+                          uCoatNormalUv0, uCoatNormalUv1);
+        vec3 mapped = (texture(uCoatNormalTex, uv) * uCoatNormalScale +
+                       uCoatNormalBias).xyz;
+        vec3 dp1 = dFdx(vWorldPos), dp2 = dFdy(vWorldPos);
+        vec2 du1 = dFdx(uv), du2 = dFdy(uv);
+        float determinant = du1.x * du2.y - du2.x * du1.y;
+        vec3 tangent = dp1 * du2.y - dp2 * du1.y;
+        if (abs(determinant) > 1e-8) tangent /= determinant;
+        else tangent = cross(abs(N.z) < 0.9 ? vec3(0.0, 0.0, 1.0)
+                                            : vec3(0.0, 1.0, 0.0), N);
+        tangent = normalize(tangent - N * dot(N, tangent));
+        vec3 bitangent = normalize(cross(N, tangent)) *
+                         (determinant < 0.0 ? -1.0 : 1.0);
+        coatN = normalize(mat3(tangent, bitangent, N) * normalize(mapped));
+    }
+    if (uRenderMode == 2) { fragColor = vec4(N * 0.5 + 0.5, 1.0); return; }
+    if (uRenderMode == 35) { fragColor = vec4(coatN * 0.5 + 0.5, 1.0); return; }
+    if (uRenderMode == 36) { fragColor = vec4(vec3(clamp(coatWeight, 0.0, 1.0)), 1.0); return; }
+    if (uRenderMode == 37) { fragColor = vec4(coatColor, 1.0); return; }
+    if (uRenderMode == 38) { fragColor = vec4(vec3(coatRoughness), 1.0); return; }
+    vec3 sampledSpecularColor = uSpecularColor;
+    if (uHasSpecularColorTex) {
+        vec2 uv = applyUv(uSpecularColorUvSet == 1 ? vUV1 : vUV,
+                          uSpecularColorUv0, uSpecularColorUv1);
+        sampledSpecularColor *= (texture(uSpecularColorTex, uv) *
+                                 uSpecularColorScale + uSpecularColorBias).rgb;
+    }
+    float dielectric = pow((max(uIor, 1.0) - 1.0) /
+                           (max(uIor, 1.0) + 1.0), 2.0);
+    if (uRenderMode == 40) { fragColor = vec4(vec3(dielectric), 1.0); return; }
+    if (uRenderMode == 39) {
+        vec3 f0 = uUseSpecularWorkflow != 0 ? sampledSpecularColor :
+                  mix(vec3(dielectric), base, metallic);
+        if (uUseSpecularWorkflow == 0 && uOpenPbrSpecularModel != 0)
+            f0 *= sampledSpecularColor;
+        fragColor = vec4(f0, 1.0); return;
     }
     if (uAlphaMode == 1) opacity = opacity >= uAlphaCutoff ? 1.0 : 0.0;
     if (uAlphaMode == 1 && opacity <= 0.0) discard;
@@ -2051,7 +2179,7 @@ void main() {
                     max(4.0 * nv * nl, 1e-5);
         direct = (diff + spec) * lc * nl;
     }
-    vec3 color = base * 0.12 + direct + emissive;
+    vec3 color = base * 0.12 * occlusion + direct + emissive;
     color += uSubsurfaceColor * clamp(uSubsurface, 0.0, 1.0) * 0.03;
     color += uTransmissionColor * clamp(uTransmission, 0.0, 1.0) * 0.04;
     if (uRenderMode == 7) color = base;

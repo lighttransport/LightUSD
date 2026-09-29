@@ -50,7 +50,9 @@ def Xform "World"
 `;
 
 const wasm64 = process.env.LIGHTUSD_WASM64 === '1';
-const glue = wasm64 ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js';
+// The next pipeline lives in the combined product; legacy excludes next.
+const glue = wasm64 ? '../src/lightusd/lightusd_combined_64.js'
+                    : '../src/lightusd/lightusd_combined.js';
 const glueUrl = new URL(glue, import.meta.url).href;
 const native = await loadWasm(() => import(glueUrl));
 

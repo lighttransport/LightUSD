@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-next-render.hh"
+#include "tydra/next/render-extract.hh"
+#include "next/schema/usd-shade.hh"
 namespace lightusd {
 namespace web_next {
 tr::MeshConfig::TangentComputationMethod RenderStream::tangentMethod_() const {
@@ -16,6 +18,51 @@ tr::MeshConfig::TangentComputationMethod RenderStream::tangentMethod_() const {
     }
     return tr::MeshConfig::TangentComputationMethod::Hybrid;
   }
+
+bool RenderStream::hasNormalMap_(const lightusd::next::UsdPrim &prim) const {
+    const auto bound_has_normal_map = [&](const lightusd::next::UsdPrim &bound) {
+      const lightusd::next::UsdPrim mat = lightusd::next::GetBoundMaterial(stage_, bound);
+      if (!mat.IsValid()) return false;
+      const auto it = material_path_to_id_.find(mat.GetPath().str());
+      return it != material_path_to_id_.end() && it->second >= 0 &&
+             static_cast<size_t>(it->second) < materials_.size() &&
+             !materials_[static_cast<size_t>(it->second)].normal_texture.empty();
+    };
+    if (bound_has_normal_map(prim)) return true;
+    for (const lightusd::next::UsdPrim &child : prim.GetChildren()) {
+      if (child.IsValid() && child.GetTypeName() == "GeomSubset" &&
+          bound_has_normal_map(child)) return true;
+    }
+    return false;
+}
+
+bool RenderStream::wantsTangents_(int source_index) const {
+    if (source_index < 0 || static_cast<size_t>(source_index) >= meshes_.size())
+      return false;
+    const bool requested = static_cast<size_t>(source_index) < tangent_requests_.size() &&
+                           tangent_requests_[static_cast<size_t>(source_index)];
+    if (!compute_tangents_ && !requested) return false;
+    return hasNormalMap_(meshes_[static_cast<size_t>(source_index)].GetPrim());
+}
+
+int RenderStream::requestMeshTangents(int mesh_id) {
+    if (!loaded_ || mesh_id < 0 || mesh_id >= meshCount()) return 0;
+    int source_index = -1;
+    if (mesh_merge_) {
+      if (static_cast<size_t>(mesh_id) < outputs_.size()) {
+        const OutputMesh& record = outputs_[static_cast<size_t>(mesh_id)];
+        if (!record.merged) source_index = record.source_index;
+      }
+    } else if (static_cast<size_t>(mesh_id) < meshes_.size()) {
+      source_index = mesh_id;
+    }
+    // Merged and analytic outputs carry no tangent stream; like legacy's
+    // non-deferred meshes, the request still succeeds.
+    if (source_index >= 0 &&
+        static_cast<size_t>(source_index) < tangent_requests_.size())
+      tangent_requests_[static_cast<size_t>(source_index)] = 1;
+    return 1;
+}
 
 bool RenderStream::computeScratchTangents_() {
     s_tangents_.clear();
@@ -285,7 +332,8 @@ bool RenderStream::effectiveDoubleSided_(const lightusd::next::UsdPrim &prim,
     // An authored USD opinion always wins, including an explicit false.
     if (prim.HasAuthoredProperty("doubleSided")) {
       return matBool_(prim, "doubleSided", false);
-    }
+}
+
     if (material_id < 0 ||
         static_cast<size_t>(material_id) >= materials_.size()) {
       return false;
@@ -298,6 +346,28 @@ bool RenderStream::effectiveDoubleSided_(const lightusd::next::UsdPrim &prim,
         materials_[static_cast<size_t>(material_id)];
     return !material.opacity_texture.empty() && pointsArePlanar_(points);
   }
+
+void RenderStream::prepareScratchSkin_(const tr::RenderMesh* mesh) {
+    s_joint_indices_.clear();
+    s_joint_weights_.clear();
+    if (!mesh || !mesh->skin) return;
+    const size_t influences = mesh->skin->influences_per_vertex;
+    if (!influences || s_point_source_indices_.size() != s_points_.size() / 3) return;
+    if (s_point_source_indices_.size() > s_joint_indices_.max_size() / influences ||
+        s_point_source_indices_.size() > s_joint_weights_.max_size() / influences) return;
+    s_joint_indices_.reserve(s_point_source_indices_.size() * influences);
+    s_joint_weights_.reserve(s_point_source_indices_.size() * influences);
+    const size_t source_count = std::min(mesh->skin->joint_indices.size(),
+                                         mesh->skin->joint_weights.size()) / influences;
+    for (uint32_t source_point : s_point_source_indices_) {
+      if (static_cast<size_t>(source_point) >= source_count) continue;
+      const size_t source = static_cast<size_t>(source_point) * influences;
+      for (size_t influence = 0; influence < influences; ++influence) {
+        s_joint_indices_.push_back(mesh->skin->joint_indices[source + influence]);
+        s_joint_weights_.push_back(mesh->skin->joint_weights[source + influence]);
+      }
+    }
+}
 
 std::vector<uint32_t> RenderStream::faceTriangleStarts_(
       const std::vector<int32_t> &fvc) {
@@ -344,44 +414,6 @@ void RenderStream::computeNormals_(const std::vector<float> &pos,
       if (l > 0) { out[i * 3] = x / l; out[i * 3 + 1] = y / l; out[i * 3 + 2] = z / l; }
       else { out[i * 3 + 2] = 1.0f; }
     }
-  }
-
-emscripten::val RenderStream::heapF_(const std::vector<float> &v, int comps) const {
-    emscripten::val d = emscripten::val::object();
-    d.set("ptr", static_cast<double>(reinterpret_cast<uintptr_t>(v.data())));
-    d.set("length", static_cast<double>(v.size()));
-    d.set("comps", comps);
-    d.set("dtype", std::string("f32"));
-    d.set("byteLength", static_cast<double>(v.size() * sizeof(float)));
-    return d;
-  }
-
-emscripten::val RenderStream::heapU32_(const std::vector<uint32_t> &v) const {
-    emscripten::val d = emscripten::val::object();
-    d.set("ptr", static_cast<double>(reinterpret_cast<uintptr_t>(v.data())));
-    d.set("length", static_cast<double>(v.size()));
-    d.set("comps", 1);
-    d.set("dtype", std::string("u32"));
-    d.set("byteLength", static_cast<double>(v.size() * sizeof(uint32_t)));
-    return d;
-  }
-
-emscripten::val RenderStream::heapU16_(const std::vector<uint16_t> &v) const {
-    emscripten::val d = emscripten::val::object();
-    d.set("ptr", static_cast<double>(reinterpret_cast<uintptr_t>(v.data())));
-    d.set("length", static_cast<double>(v.size()));
-    d.set("comps", 1);
-    d.set("dtype", std::string("u16"));
-    d.set("byteLength", static_cast<double>(v.size() * sizeof(uint16_t)));
-    return d;
-  }
-
-emscripten::val RenderStream::arr3_(const float *c) {
-    emscripten::val a = emscripten::val::array();
-    a.call<void>("push", c[0]);
-    a.call<void>("push", c[1]);
-    a.call<void>("push", c[2]);
-    return a;
   }
 
 std::array<double, 16> RenderStream::identityMatrix_() {

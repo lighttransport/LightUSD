@@ -824,12 +824,8 @@ void security_findfile_traversal_rejected_test(void) {
 }
 
 void security_sha256_overflow_rejected_test(void) {
-  // sha256() guards against SIZE_MAX - 72 (the maximum safe input size
-  // before the `new_len + 8` allocation overflows). Verify it returns
-  // an empty string when given a too-large size rather than crashing.
-  //
-  // On 64-bit, SIZE_MAX - 71 can't be tested directly (would OOM).
-  // Instead we verify that normal input works and the guard exists.
+  // Retain rejection of the historical SIZE_MAX padding-overflow range,
+  // even though SHA-256 now uses only fixed-size padding scratch storage.
   {
     const char *input = "hello";
     std::string hash = sha256(input, 5);
@@ -843,6 +839,38 @@ void security_sha256_overflow_rejected_test(void) {
     size_t huge = (std::numeric_limits<size_t>::max)();
     std::string hash = sha256("dummy", huge);
     TEST_CHECK(hash.empty());
+  }
+}
+
+void security_sha256_digest_test(void) {
+  TEST_CHECK(sha256(nullptr, 1).empty());
+  TEST_CHECK(sha256(nullptr, 0) ==
+             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+  TEST_CHECK(sha256("abc", 3) ==
+             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+  const uint8_t binary[] = {0, 255, 128, 1};
+  TEST_CHECK(sha256(reinterpret_cast<const char *>(binary), sizeof(binary)) ==
+             "6509423fd9da5c225d2f8619ffae394b40f9f7686fee55a38c54b1424ac65f46");
+  struct DigestCase { size_t size; const char *digest; };
+  const DigestCase cases[] = {
+    {55, "463eb28e72f82e0a96c0a4cc53690c571281131f672aa229e0d45ae59b598b59"},
+    {56, "da2ae4d6b36748f2a318f23e7ab1dfdf45acdc9d049bd80e59de82a60895f562"},
+    {63, "29af2686fd53374a36b0846694cc342177e428d1647515f078784d69cdb9e488"},
+    {64, "fdeab9acf3710362bd2658cdc9a29e8f9c757fcf9811603a8c447cd1d9151108"},
+    {65, "4bfd2c8b6f1eec7a2afeb48b934ee4b2694182027e6d0fc075074f2fabb31781"},
+    {119, "da18797ed7c3a777f0847f429724a2d8cd5138e6ed2895c3fa1a6d39d18f7ec6"},
+    {120, "f52b23db1fbb6ded89ef42a23ce0c8922c45f25c50b568a93bf1c075420bbb7c"},
+    {127, "92ca0fa6651ee2f97b884b7246a562fa71250fedefe5ebf270d31c546bfea976"},
+    {128, "471fb943aa23c511f6f72f8d1652d9c880cfa392ad80503120547703e56a2be5"},
+    {129, "5099c6a56203f9687f7d33f4bfdf576d31dc91f6b695ecea38b2770c87631135"},
+    {1000, "a8af099bf2e878609558dbf69d8f88f4a31040a8cf84b549a0cfa912f12ffc3f"},
+  };
+  for (const DigestCase &test : cases) {
+    std::string data(test.size, '\0');
+    for (size_t i = 0; i < data.size(); ++i)
+      data[i] = static_cast<char>(i % 256);
+    TEST_CHECK(sha256(data.data(), data.size()) == test.digest);
+    TEST_MSG("SHA-256 length %zu", test.size);
   }
 }
 

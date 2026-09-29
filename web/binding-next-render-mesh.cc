@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-next-render.hh"
+#include "tydra/next/render-extract.hh"
 namespace lightusd {
 namespace web_next {
 bool RenderStream::buildRenderMesh_(const lightusd::next::UsdPrim &prim, bool *soup_out,
                         std::string *err) {
+    mesh_view_source_id_ = -1;
     if (soup_out) *soup_out = false;
     tr::ValueArrayRead<float> P;
     tr::ValueArrayRead<int32_t> fvc;
@@ -31,6 +33,36 @@ bool RenderStream::buildRenderMesh_(const lightusd::next::UsdPrim &prim, bool *s
     const size_t faceVtx = fvi.size();
     const size_t uvCount = UV.size() / 2;
     const size_t nCount = N.size() / 3;
+
+    auto fail = [&](const std::string &msg) {
+      if (err) *err = msg;
+      return false;
+    };
+    // RenderStream lazily materializes geometry from Stage on demand. Bound
+    // this path too: the converter's retained-scene budget does not cover the
+    // scratch vectors used by mesh views and per-buffer copies.
+    size_t materialize_bytes = 0;
+    const size_t max_materialize_bytes = remainingMemoryLimitBytes();
+    auto addEstimate = [&](size_t count, size_t element_size) {
+      if (element_size != 0 &&
+          count > (std::numeric_limits<size_t>::max)() / element_size) {
+        return false;
+      }
+      const size_t bytes = count * element_size;
+      if (bytes > max_materialize_bytes - materialize_bytes) return false;
+      materialize_bytes += bytes;
+      return true;
+    };
+    if (!addEstimate(P.size(), sizeof(float)) ||
+        !addEstimate(fvc.size(), sizeof(int32_t)) ||
+        !addEstimate(fvi.size(), sizeof(int32_t)) ||
+        !addEstimate(N.size(), sizeof(float)) ||
+        !addEstimate(UV.size(), sizeof(float)) ||
+        !addEstimate(stIdx.size(), sizeof(int32_t)) ||
+        !addEstimate(vtxCount, 8 * sizeof(float) + sizeof(uint32_t)) ||
+        !addEstimate(faceVtx, 3 * sizeof(uint32_t))) {
+      return fail("Mesh materialization exceeds configured memory limit");
+    }
 
     // The next render converter already performs robust earcut triangulation,
     // handles left-handed winding, holes and topology sanitization, and keeps
@@ -63,10 +95,6 @@ bool RenderStream::buildRenderMesh_(const lightusd::next::UsdPrim &prim, bool *s
       }
     }
 
-    auto fail = [&](const std::string &msg) {
-      if (err) *err = msg;
-      return false;
-    };
     if ((P.size() % 3) != 0) {
       return fail("Mesh points array length is not divisible by 3");
     }

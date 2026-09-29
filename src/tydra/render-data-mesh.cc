@@ -5757,108 +5757,69 @@ bool RenderSceneConverter::ComputeDeferredTangents(
     return false;
   }
 
-  // Use existing data from RenderMesh (no redundant copies).
-  const vec3 *normals_ptr = reinterpret_cast<const vec3 *>(mesh->normals.buffer());
-  size_t normals_count = mesh->normals.vertex_count();
-  const vec2 *texcoords_ptr = reinterpret_cast<const vec2 *>(mesh->texcoords[0].buffer());
-  size_t texcoords_count = mesh->texcoords[0].vertex_count();
-
-  // Determine if data is already facevarying or vertex-varying.
-  const auto &fvi = mesh->triangulatedFaceVertexIndices.size()
-                        ? mesh->triangulatedFaceVertexIndices
-                        : mesh->usdFaceVertexIndices;
-  const auto &fvc = mesh->triangulatedFaceVertexCounts.size()
-                        ? mesh->triangulatedFaceVertexCounts
-                        : mesh->usdFaceVertexCounts;
-
-  bool is_facevarying = (normals_count == fvi.size());
-
-  std::vector<vec3> tangents;
-  std::vector<vec3> binormals;
+  const auto &fvi = mesh->faceVertexIndices();
+  const auto &fvc = mesh->faceVertexCounts();
+  const auto &uv = mesh->texcoords.at(0);
+  if (uv.format != VertexAttributeFormat::Vec2 || uv.elementSize != 1) {
+    if (err) *err = "Cannot compute tangents: unsupported UV format.";
+    return false;
+  }
+  const size_t uv_stride = uv.stride ? uv.stride : sizeof(vec2);
+  if (uv_stride < sizeof(vec2) || uv.data.size() < sizeof(vec2)) {
+    if (err) *err = "Cannot compute tangents: invalid UV buffer.";
+    return false;
+  }
+  // Expand each input independently: equal counts do not imply equal indexing.
+  std::vector<vec3> fv_points(fvi.size()), fv_normals(fvi.size());
+  std::vector<vec2> fv_texcoords(fvi.size());
+  size_t corner = 0;
+  for (size_t face = 0; face < fvc.size(); ++face) {
+    if (fvc[face] < 3 || fvc[face] > fvi.size() - corner) {
+      if (err) *err = "Cannot compute tangents: invalid face topology.";
+      return false;
+    }
+    for (uint32_t v = 0; v < fvc[face]; ++v, ++corner) {
+      size_t normal_index = 0, uv_index = 0;
+      if (fvi[corner] >= mesh->points.size() ||
+          !MeshAttributeCornerIndex(*mesh, mesh->normals, corner, face, &normal_index) ||
+          !ReadNormalAttribute(mesh->normals, normal_index, &fv_normals[corner]) ||
+          !MeshAttributeCornerIndex(*mesh, uv, corner, face, &uv_index) ||
+          uv_index > (uv.data.size() - sizeof(vec2)) / uv_stride) {
+        if (err) *err = "Cannot compute tangents: invalid attribute index or buffer.";
+        return false;
+      }
+      fv_points[corner] = mesh->points[fvi[corner]];
+      memcpy(&fv_texcoords[corner], uv.data.data() + uv_index * uv_stride, sizeof(vec2));
+    }
+  }
+  if (corner != fvi.size() || corner == 0) {
+    if (err) *err = "Cannot compute tangents: invalid face topology.";
+    return false;
+  }
+  std::vector<vec3> tangents, binormals;
   std::vector<uint32_t> vertex_indices;
-
   bool used_mikktspace = false;
-
   if (method == MeshConverterConfig::TangentComputationMethod::MikkTSpace ||
       method == MeshConverterConfig::TangentComputationMethod::FastMikkTSpace ||
       method == MeshConverterConfig::TangentComputationMethod::Hybrid) {
-    bool use_fast = (method == MeshConverterConfig::TangentComputationMethod::FastMikkTSpace);
-    bool use_hybrid = (method == MeshConverterConfig::TangentComputationMethod::Hybrid);
     std::string mikk_err;
-    bool mikktspace_ok = false;
-
-    if (is_facevarying) {
-      std::vector<value::float3> fv_positions(fvi.size());
-      for (size_t i = 0; i < fvi.size(); i++) {
-        if (fvi[i] < mesh->points.size()) fv_positions[i] = mesh->points[fvi[i]];
-      }
-      std::vector<value::float3> fv_normals(normals_ptr, normals_ptr + normals_count);
-      std::vector<value::float2> fv_texcoords(texcoords_ptr, texcoords_ptr + texcoords_count);
-      if (use_hybrid) {
-        mikktspace_ok = fast_mikkt::ComputeTangentsHybrid(
-            fv_positions, fv_normals, fv_texcoords, fvc,
-            &tangents, &binormals, nullptr, &mikk_err);
-      } else if (use_fast) {
-        mikktspace_ok = fast_mikkt::ComputeTangentsFastMikkTSpace(
-            fv_positions, fv_normals, fv_texcoords, fvc,
-            &tangents, &binormals, &mikk_err);
-      } else {
-        mikktspace_ok = ComputeTangentsMikkTSpace(
-            fv_positions, fv_normals, fv_texcoords, fvc,
-            &tangents, &binormals, &mikk_err);
-      }
+    if (method == MeshConverterConfig::TangentComputationMethod::Hybrid) {
+      used_mikktspace = fast_mikkt::ComputeTangentsHybrid(
+          fv_points, fv_normals, fv_texcoords, fvc, &tangents, &binormals, nullptr, &mikk_err);
+    } else if (method == MeshConverterConfig::TangentComputationMethod::FastMikkTSpace) {
+      used_mikktspace = fast_mikkt::ComputeTangentsFastMikkTSpace(
+          fv_points, fv_normals, fv_texcoords, fvc, &tangents, &binormals, &mikk_err);
     } else {
-      std::vector<value::float3> fv_positions(fvi.size());
-      std::vector<value::float3> fv_normals(fvi.size());
-      std::vector<value::float2> fv_texcoords(fvi.size());
-      for (size_t i = 0; i < fvi.size(); i++) {
-        if (fvi[i] < mesh->points.size()) fv_positions[i] = mesh->points[fvi[i]];
-        if (fvi[i] < normals_count) fv_normals[i] = normals_ptr[fvi[i]];
-        if (fvi[i] < texcoords_count) fv_texcoords[i] = texcoords_ptr[fvi[i]];
-      }
-      if (use_hybrid) {
-        mikktspace_ok = fast_mikkt::ComputeTangentsHybrid(
-            fv_positions, fv_normals, fv_texcoords, fvc,
-            &tangents, &binormals, nullptr, &mikk_err);
-      } else if (use_fast) {
-        mikktspace_ok = fast_mikkt::ComputeTangentsFastMikkTSpace(
-            fv_positions, fv_normals, fv_texcoords, fvc,
-            &tangents, &binormals, &mikk_err);
-      } else {
-        mikktspace_ok = ComputeTangentsMikkTSpace(
-            fv_positions, fv_normals, fv_texcoords, fvc,
-            &tangents, &binormals, &mikk_err);
-      }
+      used_mikktspace = ComputeTangentsMikkTSpace(
+          fv_points, fv_normals, fv_texcoords, fvc, &tangents, &binormals, &mikk_err);
     }
-
-    if (mikktspace_ok) {
-      used_mikktspace = true;
-    } else {
-      if (err) *err = "MikkTSpace/Hybrid tangent computation failed: " + mikk_err + ". Falling back to Lengyel.";
-      // Fall through to Lengyel
-    }
+    if (!used_mikktspace && err) *err = "MikkTSpace/Hybrid tangent computation failed: " + mikk_err + ". Falling back to Lengyel.";
   }
-
   if (!used_mikktspace) {
-    // Lengyel method (default)
-    // Build facevarying points if needed
-    std::vector<vec3> fv_points;
-    const std::vector<vec3> *points_ptr = &mesh->points;
-    if (is_facevarying) {
-      fv_points.resize(fvi.size());
-      for (size_t i = 0; i < fvi.size(); i++) {
-        if (fvi[i] < mesh->points.size()) fv_points[i] = mesh->points[fvi[i]];
-      }
-      points_ptr = &fv_points;
-    }
-
-    std::vector<vec2> tc_vec(texcoords_ptr, texcoords_ptr + texcoords_count);
-    std::vector<vec3> nm_vec(normals_ptr, normals_ptr + normals_count);
     std::string lengyel_err;
-    if (!ComputeTangentsAndBinormals(*points_ptr, fvc,
-                                     fvi, tc_vec,
-                                     nm_vec, is_facevarying, &tangents,
-                                     &binormals, &vertex_indices, &lengyel_err)) {
+    if (!ComputeTangentsAndBinormals(fv_points, fvc, fvi, fv_texcoords,
+                                     fv_normals, true, &tangents, &binormals,
+                                     &vertex_indices, &lengyel_err)) {
       if (err) *err = "Lengyel tangent computation failed: " + lengyel_err;
       return false;
     }
@@ -5919,7 +5880,10 @@ bool RenderSceneConverter::ComputeDeferredTangents(
 
   // Quantize tangents if a packed format is requested.
   if (!mesh->tangents.empty() && !mesh->binormals.empty()) {
-    QuantizeMeshTangents(*mesh, storage);
+    if (!QuantizeMeshTangents(*mesh, storage)) {
+      if (err) *err = "Cannot quantize tangents: invalid normal data.";
+      return false;
+    }
   }
 
   mesh->tangent_computation_deferred = false;

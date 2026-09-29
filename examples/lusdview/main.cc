@@ -31,7 +31,7 @@
 #include "config.hh"
 #include "log.hh"
 #include "renderer.hh"
-#include "tydra/next/resource-budget.hh"
+#include "lightusd-render-cpp.hh"
 
 namespace {
 
@@ -218,7 +218,7 @@ bool ParseFiniteNonNegativeFloat(const char* text, float* value) {
 // would size the stage/geometry limits far past anything sensible). Falls back
 // to 32 GiB where /proc/meminfo does not exist (macOS, Windows).
 uint64_t HostMemoryCapacityBytes() {
-  constexpr uint64_t kTarget = lightusd::tydra::next::GiB(32);
+  constexpr uint64_t kTarget = (uint64_t{32} << 30);
   std::ifstream f("/proc/meminfo");
   std::string tok;
   while (f >> tok) {
@@ -409,7 +409,7 @@ int main(int argc, char** argv) {
   float envmapIntensity = 1.0f;
   float envmapRotation = 0.0f;
   bool maxTextureSizeExplicit = false;
-  lightusd::tydra::next::TextureFit textureFit{};  // Default (2/3 of VRAM)
+  lightusd::api::TextureFit textureFit{0, LIGHTUSD_TEXTURE_FIT_DEFAULT, 0};  // Default (2/3 of VRAM)
   bool textureFitExplicit = false;
   bool textureBudgetExplicit = false;
   bool textureCompressionExplicit = false;
@@ -802,14 +802,14 @@ int main(int argc, char** argv) {
       }
       subdivisionPrimLevels[prim] = level;
     } if (std::strcmp(argv[i], "--texture-fit") == 0 && (i + 1) < argc) {
-      if (!lightusd::tydra::next::ParseTextureFit(argv[++i], &textureFit)) {
+      if (!lightusd::api::ParseTextureFit(argv[++i], &textureFit)) {
         LOGE("--texture-fit must be modest|default|aggressive|never|always or a "
              "byte threshold like 4G");
         return 1;
       }
       textureFitExplicit = true;
     } if (std::strncmp(argv[i], "--texture-fit=", 14) == 0) {
-      if (!lightusd::tydra::next::ParseTextureFit(argv[i] + 14, &textureFit)) {
+      if (!lightusd::api::ParseTextureFit(argv[i] + 14, &textureFit)) {
         LOGE("--texture-fit must be modest|default|aggressive|never|always or a "
              "byte threshold like 4G");
         return 1;
@@ -1509,7 +1509,7 @@ int main(int argc, char** argv) {
   uint64_t vramCapacity = 0;
   if (vramBudgetExplicit && vramBudgetGiB > 0.0) {
     vramCapacity = static_cast<uint64_t>(
-        vramBudgetGiB * double(lightusd::tydra::next::GiB(1)));
+        vramBudgetGiB * double((uint64_t{1} << 30)));
   } else {
 #if defined(HAVE_VULKAN)
     // Enumerating physical devices through a throw-away instance can runtime-
@@ -1524,14 +1524,14 @@ int main(int argc, char** argv) {
 #endif
     // No Vulkan, or the probe failed: keep the historical 16 GiB assumption
     // rather than collapsing every budget to zero.
-    if (vramCapacity == 0) vramCapacity = lightusd::tydra::next::GiB(16);
+    if (vramCapacity == 0) vramCapacity = (uint64_t{16} << 30);
   }
-  const lightusd::tydra::next::ResourceBudget targetBudget =
-      lightusd::tydra::next::ComputeResourceBudget(hostCapacity, vramCapacity);
+  const lightusd::api::ResourceBudget targetBudget =
+      lightusd::api::ComputeResourceBudget(hostCapacity, vramCapacity);
   const double targetVramGiB =
-      double(targetBudget.vram_limit) / double(lightusd::tydra::next::GiB(1));
+      double(targetBudget.vram_limit) / double((uint64_t{1} << 30));
   const double targetHostGiB =
-      double(targetBudget.host_limit) / double(lightusd::tydra::next::GiB(1));
+      double(targetBudget.host_limit) / double((uint64_t{1} << 30));
 
   // Bound texture residency for ordinary --next loads as well as named
   // large-scene profiles. The decoder applies these limits while reading, so
@@ -1543,50 +1543,51 @@ int main(int argc, char** argv) {
   // unless the user asked for something specific. Must precede the derivation
   // below, which consumes textureFit.
   if (fullFidelity && !textureFitExplicit) {
-    textureFit.policy = lightusd::tydra::next::TextureFitPolicy::Never;
+    textureFit.policy = LIGHTUSD_TEXTURE_FIT_NEVER;
   }
-  const lightusd::tydra::next::TextureBudget derivedTextureBudget =
-      lightusd::tydra::next::DeriveTextureBudget(targetBudget);
   // The "comfort" budget (25% of resident VRAM) is what the mip decision keeps
   // using. It must NOT follow --texture-fit: widening the mip skip makes every
   // later frame sample minified textures at full resolution, which thrashes the
   // texture cache (it once took the texture-semantic AOV suite from 52 s to
   // over 300 s). Only compression and resize follow the policy.
-  const uint64_t textureComfortBytes = derivedTextureBudget.budget_bytes;
-  uint64_t textureFitThreshold =
-      lightusd::tydra::next::TextureFitThresholdBytes(textureFit, vramCapacity);
+  const uint64_t textureComfortBytes = targetBudget.gpu_texture_limit;
+  uint64_t textureFitThreshold = 0;
+  if (lightusd::api::TextureFitThresholdBytes(textureFit, vramCapacity,
+                                             &textureFitThreshold) != LIGHTUSD_OK) {
+    LOGE("invalid texture-fit policy");
+    return 1;
+  }
   // The threshold is a fraction of VRAM, but the decoded set is resident in
   // HOST memory while loading. On a big card with a small host (24 GiB GPU,
   // 16 GiB RAM) an aggressive policy would otherwise authorise ~21 GiB of host
   // allocation. Clamp, and say so.
   {
     const uint64_t hostClamp =
-        lightusd::tydra::next::Percent(targetBudget.host_limit, 60);
+        lightusd::api::BudgetPercent(targetBudget.host_limit, 60);
     // Only the fraction-of-VRAM policies are clamped. `never` and `always` are
     // explicit user intent -- "never" must mean never, or the escape hatch is
     // not one -- and `absolute` is already a number the user chose.
     const bool clampable =
-        textureFit.policy == lightusd::tydra::next::TextureFitPolicy::Modest ||
-        textureFit.policy == lightusd::tydra::next::TextureFitPolicy::Default ||
-        textureFit.policy == lightusd::tydra::next::TextureFitPolicy::Aggressive;
+        textureFit.policy == LIGHTUSD_TEXTURE_FIT_MODEST ||
+        textureFit.policy == LIGHTUSD_TEXTURE_FIT_DEFAULT ||
+        textureFit.policy == LIGHTUSD_TEXTURE_FIT_AGGRESSIVE;
     if (clampable && hostClamp > 0 && textureFitThreshold > hostClamp) {
       LOGI("texture-fit: threshold %.1f GiB clamped to %.1f GiB by host memory",
-           double(textureFitThreshold) / double(lightusd::tydra::next::GiB(1)),
-           double(hostClamp) / double(lightusd::tydra::next::GiB(1)));
+           double(textureFitThreshold) / double((uint64_t{1} << 30)),
+           double(hostClamp) / double((uint64_t{1} << 30)));
       textureFitThreshold = hostClamp;
     }
   }
   {
-    using lightusd::tydra::next::TextureFitPolicy;
-    if (textureFit.policy == TextureFitPolicy::Always) {
+    if (textureFit.policy == LIGHTUSD_TEXTURE_FIT_ALWAYS) {
       // Pre-policy behaviour: hard 2048 edge cap + 25% byte budget.
-      if (!maxTextureSizeExplicit && derivedTextureBudget.max_edge > 0) {
+      if (!maxTextureSizeExplicit && targetBudget.texture_max_edge > 0) {
         textureOptions.maxTextureSize =
-            static_cast<int>(derivedTextureBudget.max_edge);
+            static_cast<int>(targetBudget.texture_max_edge);
       }
-      if (!textureBudgetExplicit && derivedTextureBudget.budget_bytes > 0) {
+      if (!textureBudgetExplicit && targetBudget.gpu_texture_limit > 0) {
         textureOptions.textureBudgetMB = static_cast<int>(
-            derivedTextureBudget.budget_bytes / (1024ull * 1024ull));
+            targetBudget.gpu_texture_limit / (1024ull * 1024ull));
       }
     } else {
       // Threshold policies (and `never`) leave the edge uncapped: the decoder's
@@ -1597,7 +1598,7 @@ int main(int argc, char** argv) {
       if (!maxTextureSizeExplicit) textureOptions.maxTextureSize = 0;
       if (!textureBudgetExplicit) {
         textureOptions.textureBudgetMB =
-            (textureFit.policy == TextureFitPolicy::Never)
+            (textureFit.policy == LIGHTUSD_TEXTURE_FIT_NEVER)
                 ? 0
                 : static_cast<int>(textureFitThreshold / (1024ull * 1024ull));
       }
@@ -1758,10 +1759,10 @@ int main(int argc, char** argv) {
   if (effectiveProfile != LargeSceneProfile::Off) {
     LOGI("resource budget: vram capacity=%.1f GiB (%s) -> limit=%.1f GiB, "
          "host capacity=%.1f GiB -> limit=%.1f GiB",
-         double(vramCapacity) / double(lightusd::tydra::next::GiB(1)),
+         double(vramCapacity) / double((uint64_t{1} << 30)),
          vramBudgetExplicit ? "--vram-budget" : "probed",
          targetVramGiB,
-         double(hostCapacity) / double(lightusd::tydra::next::GiB(1)),
+         double(hostCapacity) / double((uint64_t{1} << 30)),
          targetHostGiB);
     LOGI("large-scene-profile %s resolved: backend=%s --next=%s "
          "--raster-lod=%s full=%.1f cull=%.1f --rt-lod=%s full=%.1f cull=%.1f "
@@ -1986,7 +1987,7 @@ int main(int argc, char** argv) {
         ? 0
         : static_cast<size_t>(
               maxGpuMemExplicit && maxGpuMemGiB > 0.0
-                  ? maxGpuMemGiB * double(lightusd::tydra::next::GiB(1))
+                  ? maxGpuMemGiB * double((uint64_t{1} << 30))
                   : double(targetBudget.gpu_geometry_limit));
     lo.uploadStagingBytes =
         static_cast<size_t>(targetBudget.upload_staging_limit);

@@ -10,6 +10,23 @@
 #include "../parser/lexer.hh"
 #include "../parser/value-parser.hh"
 #include "crate-data-source.hh"
+#include "crate-timing.hh"
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wall"
+#pragma GCC diagnostic ignored "-Wextra"
+#pragma GCC diagnostic ignored "-Wold-style-cast"
+#endif
+#define XXH_INLINE_ALL
+#include "../../external/xxhash.h"  // XXH3_128bits (streaming-write dedup)
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 #include "variant-holders.hh"
 #include "crate-writer-types.hh"
 #include "lazy-array.hh"
@@ -28,6 +45,7 @@
 #include <algorithm>
 #include <cstring>
 #include <string_view>
+#include <cstdio>
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include <thread>
 #endif
@@ -71,6 +89,50 @@ bool ValidateStrictCrateFields(const Layer& layer, std::string* error) {
   return true;
 }
 
+// File output for the streaming write: appends go through a fixed staging
+// buffer (large pass-through blocks bypass it), so a file write never holds
+// the whole crate in memory.
+class BufferedFileSink {
+ public:
+  explicit BufferedFileSink(std::ofstream* ofs) : ofs_(ofs) {
+    buf_.reserve(kCapacity);
+  }
+  bool Write(const uint8_t* data, size_t size) {
+    if (size == 0) return true;
+    if (buf_.size() + size > kCapacity && !Flush()) return false;
+    if (size >= kCapacity) {
+      ofs_->write(reinterpret_cast<const char*>(data),
+                  static_cast<std::streamsize>(size));
+      return ofs_->good();
+    }
+    buf_.insert(buf_.end(), data, data + size);
+    return true;
+  }
+  bool Flush() {
+    if (!buf_.empty()) {
+      ofs_->write(reinterpret_cast<const char*>(buf_.data()),
+                  static_cast<std::streamsize>(buf_.size()));
+      buf_.clear();
+    }
+    return ofs_->good();
+  }
+  // Overwrite bytes already written at absolute position `pos`, then resume
+  // appending at the end.
+  bool Patch(uint64_t pos, const uint8_t* data, size_t size) {
+    if (!Flush()) return false;
+    ofs_->seekp(static_cast<std::streamoff>(pos), std::ios::beg);
+    ofs_->write(reinterpret_cast<const char*>(data),
+                static_cast<std::streamsize>(size));
+    ofs_->seekp(0, std::ios::end);
+    return ofs_->good();
+  }
+
+ private:
+  static constexpr size_t kCapacity = size_t(4) << 20;
+  std::ofstream* ofs_;
+  std::vector<uint8_t> buf_;
+};
+
 }  // namespace
 
 
@@ -85,14 +147,7 @@ CrateWriteResult CrateWriter::WriteToFile(const char* filename, const Stage& sta
   if (!filename) { CrateWriteResult r; r.error = "Null filename"; return r; }
   const Layer* root_layer = stage.GetRootLayer();
   if (!root_layer) { CrateWriteResult r; r.error = "Stage has no root layer"; return r; }
-  std::vector<uint8_t> buffer;
-  CrateWriteResult result = WriteToMemory(buffer, stage);
-  if (!result.success) return result;
-  std::ofstream ofs(filename, std::ios::out | std::ios::binary);
-  if (!ofs) { result.success = false; result.error = "Failed to open file"; return result; }
-  ofs.write(reinterpret_cast<const char*>(buffer.data()), buffer.size());
-  if (!ofs.good()) { result.success = false; result.error = "Failed to write"; return result; }
-  return result;
+  return WriteLayerToFile(filename, *root_layer);
 }
 
 CrateWriteResult CrateWriter::WriteToFile(const std::string& filename, const Stage& stage) {
@@ -107,13 +162,32 @@ CrateWriteResult CrateWriter::WriteToMemory(std::vector<uint8_t>& buffer, const 
 
 CrateWriteResult CrateWriter::WriteLayerToFile(const char* filename, const Layer& layer) {
   if (!filename) { CrateWriteResult r; r.error = "Null filename"; return r; }
-  std::vector<uint8_t> buffer;
-  CrateWriteResult result = WriteLayerToMemory(buffer, layer);
-  if (!result.success) return result;
-  std::ofstream ofs(filename, std::ios::out | std::ios::binary);
-  if (!ofs) { result.success = false; result.error = "Failed to open file"; return result; }
-  ofs.write(reinterpret_cast<const char*>(buffer.data()), buffer.size());
-  if (!ofs.good()) { result.success = false; result.error = "Failed to write"; return result; }
+  // Stream straight to the file (byte-identical to WriteLayerToMemory): the
+  // VALUE section is copied block by block from its sources instead of first
+  // being staged, with the whole crate, in one output buffer.
+  std::ofstream ofs(filename, std::ios::out | std::ios::binary | std::ios::trunc);
+  if (!ofs) { CrateWriteResult r; r.error = "Failed to open file"; return r; }
+  BufferedFileSink file_sink(&ofs);
+  CrateWriteSink sink = [&file_sink](const uint8_t* data, size_t size) {
+    return file_sink.Write(data, size);
+  };
+  // Seekable: VALUE blocks stream to the file as they are built (never all
+  // staged in memory) and the bootstrap is backfilled at the end.
+  CrateWritePatch patch = [&file_sink](uint64_t pos, const uint8_t* data,
+                                       size_t size) {
+    return file_sink.Patch(pos, data, size);
+  };
+  CrateWriteResult result = WriteLayerToSeekableSink(sink, patch, layer);
+  const bool flushed = file_sink.Flush();
+  ofs.close();
+  if (result.success && (!flushed || ofs.fail())) {
+    result.success = false;
+    result.error = "Failed to write";
+  }
+  if (!result.success) {
+    // Do not leave a truncated crate behind.
+    std::remove(filename);
+  }
   return result;
 }
 
@@ -135,6 +209,22 @@ CrateWriteResult CrateWriter::WriteLayerToMemory(std::vector<uint8_t>& buffer, c
   CrateWriteResult result = impl_->Write(layer);
   if (result.success) buffer = impl_->take_buffer();
   return result;
+}
+
+CrateWriteResult CrateWriter::WriteLayerToSeekableSink(
+    const CrateWriteSink& sink, const CrateWritePatch& patch,
+    const Layer& layer) {
+  if (impl_->strict_aousd_conformance()) {
+    CrateWriteResult strict_result;
+    if (!ValidateStrictCrateFields(layer, &strict_result.error)) {
+      return strict_result;
+    }
+  }
+  if (LayerNeedsVariantHolders(layer)) {
+    Layer materialized = MaterializeVariantHolders(layer);
+    return impl_->Write(materialized, &sink, &patch);
+  }
+  return impl_->Write(layer, &sink, &patch);
 }
 
 CrateWriteResult CrateWriter::WriteLayerToSink(const CrateWriteSink& sink, const Layer& layer) {

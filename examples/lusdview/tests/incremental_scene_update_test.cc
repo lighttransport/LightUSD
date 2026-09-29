@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "incremental_scene_update.hh"
 
+
 #include <cstdio>
 #include <cstring>
 
@@ -30,14 +31,32 @@ lusdview::DrawMeshCPU MakeMesh(const char* path, float x) {
   return mesh;
 }
 
-lightusd::next::StageChangeSet TransformChange(uint64_t base) {
-  lightusd::next::StageChangeSet changes;
-  changes.base_revision = base;
-  changes.new_revision = base + 1;
-  lightusd::next::PrimChange prim;
-  prim.flags = lightusd::next::StageChangeFlag::Transform;
-  changes.prims.push_back(std::move(prim));
-  return changes;
+struct TestChanges {
+  uint64_t base_revision{0}, new_revision{0};
+  struct Prim {
+    const char* path{""};
+    uint32_t flags{0};
+    std::vector<lightusd_sv> properties;
+  };
+  std::vector<Prim> prims;
+};
+
+TestChanges TransformChange(uint64_t base) {
+  return {base, base + 1, {{"", LIGHTUSD_CHANGE_TRANSFORM, {}}}};
+}
+
+lusdview::IncrementalSceneUpdatePlan Plan(
+    const lusdview::DrawScene& current, lusdview::DrawScene* next,
+    const TestChanges& changes, uint64_t displayed, int meshes) {
+  std::vector<lightusd_prim_change> prims;
+  for (const auto& prim : changes.prims)
+    prims.push_back({prim.path, prim.flags, prim.properties.data(), prim.properties.size()});
+  lightusd_render_change_set view{};
+  view.struct_size = sizeof(view);
+  view.base_revision = changes.base_revision;
+  view.prims = prims.data();
+  view.prim_count = prims.size();
+  return lusdview::PlanIncrementalSceneUpdate(current, next, view, changes.new_revision, displayed, meshes);
 }
 
 void TestTargetsOnlyChangedSlots() {
@@ -48,7 +67,7 @@ void TestTargetsOnlyChangedSlots() {
   next.meshes[0].vertices[0].px = 0.25f;
   next.meshes[1].world[12] = 3.0f;
 
-  const auto plan = lusdview::PlanIncrementalSceneUpdate(
+  const auto plan = Plan(
       current, &next, TransformChange(7), 7, 2);
   CHECK(plan.compatible);
   CHECK((plan.vertexUpdates == std::vector<size_t>{0}));
@@ -59,27 +78,27 @@ void TestRejectsStaleOrStructuralChanges() {
   lusdview::DrawScene current;
   current.meshes.push_back(MakeMesh("/A", 0.0f));
   lusdview::DrawScene next = current;
-  CHECK(!lusdview::PlanIncrementalSceneUpdate(
+  CHECK(!Plan(
              current, &next, TransformChange(6), 7, 1)
              .compatible);
 
   auto topology = TransformChange(7);
-  topology.prims[0].flags = lightusd::next::StageChangeFlag::Topology;
-  CHECK(lusdview::PlanIncrementalSceneUpdate(current, &next, topology, 7, 1)
+  topology.prims[0].flags = LIGHTUSD_CHANGE_TOPOLOGY;
+  CHECK(Plan(current, &next, topology, 7, 1)
             .compatible);
 
   auto transform = TransformChange(7);
   next.meshes[0].indices = {0, 2, 1};
-  CHECK(!lusdview::PlanIncrementalSceneUpdate(current, &next, transform, 7, 1)
+  CHECK(!Plan(current, &next, transform, 7, 1)
              .compatible);
-  const auto replacement = lusdview::PlanIncrementalSceneUpdate(
+  const auto replacement = Plan(
       current, &next, topology, 7, 1);
   CHECK(replacement.compatible);
   CHECK((replacement.replacementUpdates == std::vector<size_t>{0}));
 
   next = current;
   next.meshes[0].instanceXforms.resize(12);
-  const auto instanced = lusdview::PlanIncrementalSceneUpdate(
+  const auto instanced = Plan(
       current, &next, transform, 7, 1);
   CHECK(instanced.compatible);
   CHECK((instanced.replacementUpdates == std::vector<size_t>{0}));
@@ -89,12 +108,12 @@ void TestRejectsStaleOrStructuralChanges() {
   current.meshes[0].jointWt = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
   next = current;
   next.meshes[0].vertices[0].px = 0.5f;
-  auto deform = lusdview::PlanIncrementalSceneUpdate(
+  auto deform = Plan(
       current, &next, transform, 7, 1);
   CHECK(deform.compatible);
   CHECK((deform.vertexUpdates == std::vector<size_t>{0}));
   next.meshes[0].jointIdx[0] = 1;
-  CHECK(!lusdview::PlanIncrementalSceneUpdate(current, &next, transform, 7, 1)
+  CHECK(!Plan(current, &next, transform, 7, 1)
              .compatible);
 }
 
@@ -108,7 +127,7 @@ void TestInstancedSlotUpdate() {
   lusdview::DrawScene next = current;
   next.meshes[0].instanceXforms[15] = 3.0f;
 
-  const auto plan = lusdview::PlanIncrementalSceneUpdate(
+  const auto plan = Plan(
       current, &next, TransformChange(40), 40, 1);
   CHECK(plan.compatible);
   CHECK((plan.instanceUpdates == std::vector<size_t>{0}));
@@ -117,7 +136,7 @@ void TestInstancedSlotUpdate() {
   CHECK(plan.worldUpdates.empty());
 
   next = current;
-  const auto unchanged = lusdview::PlanIncrementalSceneUpdate(
+  const auto unchanged = Plan(
       current, &next, TransformChange(40), 40, 1);
   CHECK(unchanged.compatible);
   CHECK(unchanged.replacementUpdates.empty());
@@ -125,7 +144,7 @@ void TestInstancedSlotUpdate() {
 
   next = current;
   next.meshes[0].instanceColors[0] = 0.25f;
-  auto colors = lusdview::PlanIncrementalSceneUpdate(
+  auto colors = Plan(
       current, &next, TransformChange(40), 40, 1);
   CHECK(colors.compatible);
   CHECK((colors.instanceUpdates == std::vector<size_t>{0}));
@@ -133,7 +152,7 @@ void TestInstancedSlotUpdate() {
   current.meshes[0].instanceOpacities = {1.0f, 0.5f};
   next = current;
   next.meshes[0].instanceOpacities[1] = 0.75f;
-  auto opacities = lusdview::PlanIncrementalSceneUpdate(
+  auto opacities = Plan(
       current, &next, TransformChange(40), 40, 1);
   CHECK(opacities.compatible);
   CHECK((opacities.instanceUpdates == std::vector<size_t>{0}));
@@ -141,14 +160,14 @@ void TestInstancedSlotUpdate() {
   current.meshes[0].instanceOpacities = {1.0f, 1.0f};
   next = current;
   next.meshes[0].instanceOpacities[1] = 0.75f;
-  auto opacity_class = lusdview::PlanIncrementalSceneUpdate(
+  auto opacity_class = Plan(
       current, &next, TransformChange(40), 40, 1);
   CHECK(opacity_class.compatible);
   CHECK((opacity_class.replacementUpdates == std::vector<size_t>{0}));
 
   next = current;
   next.meshes[0].instanceColors.clear();
-  auto color_layout = lusdview::PlanIncrementalSceneUpdate(
+  auto color_layout = Plan(
       current, &next, TransformChange(40), 40, 1);
   CHECK(color_layout.compatible);
   CHECK((color_layout.replacementUpdates == std::vector<size_t>{0}));
@@ -157,7 +176,7 @@ void TestInstancedSlotUpdate() {
   next.meshes[0].instanceXforms.resize(36, 0.0f);
   next.meshes[0].instanceColors.resize(9, 1.0f);
   next.meshes[0].instanceOpacities.resize(3, 1.0f);
-  auto count_layout = lusdview::PlanIncrementalSceneUpdate(
+  auto count_layout = Plan(
       current, &next, TransformChange(40), 40, 1);
   CHECK(count_layout.compatible);
   CHECK((count_layout.replacementUpdates == std::vector<size_t>{0}));
@@ -168,12 +187,12 @@ void TestStructuralSlotRemap() {
   current.meshes.push_back(MakeMesh("/A", 0.0f));
   current.meshes.push_back(MakeMesh("/B", 2.0f));
   auto changes = TransformChange(12);
-  changes.prims[0].flags = lightusd::next::StageChangeFlag::Resync;
+  changes.prims[0].flags = LIGHTUSD_CHANGE_RESYNC;
 
   lusdview::DrawScene replaced;
   replaced.meshes.push_back(MakeMesh("/B", 2.0f));
   replaced.meshes.push_back(MakeMesh("/C", 4.0f));
-  auto plan = lusdview::PlanIncrementalSceneUpdate(
+  auto plan = Plan(
       current, &replaced, changes, 12, 2);
   CHECK(plan.compatible);
   CHECK(replaced.meshes.size() == 2);
@@ -183,7 +202,7 @@ void TestStructuralSlotRemap() {
 
   lusdview::DrawScene removed;
   removed.meshes.push_back(MakeMesh("/B", 2.0f));
-  plan = lusdview::PlanIncrementalSceneUpdate(current, &removed, changes, 12, 2);
+  plan = Plan(current, &removed, changes, 12, 2);
   CHECK(plan.compatible);
   CHECK(removed.meshes.size() == 2);
   CHECK(removed.meshes[0].absPath.empty());
@@ -192,7 +211,7 @@ void TestStructuralSlotRemap() {
 
   lusdview::DrawScene added = current;
   added.meshes.push_back(MakeMesh("/C", 4.0f));
-  plan = lusdview::PlanIncrementalSceneUpdate(current, &added, changes, 12, 2);
+  plan = Plan(current, &added, changes, 12, 2);
   CHECK(plan.compatible);
   CHECK(added.meshes.size() == 3);
   CHECK((plan.replacementUpdates == std::vector<size_t>{2}));
@@ -207,9 +226,9 @@ void TestMaterialSlotUpdate() {
   next.materials[0].baseColor[0] = 0.25f;
 
   auto changes = TransformChange(20);
-  changes.prims[0].path = lightusd::next::Path("/Looks/Mat/Shader");
-  changes.prims[0].flags = lightusd::next::StageChangeFlag::Material;
-  const auto plan = lusdview::PlanIncrementalSceneUpdate(
+  changes.prims[0].path = "/Looks/Mat/Shader";
+  changes.prims[0].flags = LIGHTUSD_CHANGE_MATERIAL;
+  const auto plan = Plan(
       current, &next, changes, 20, 1);
   CHECK(plan.compatible);
   CHECK((plan.materialUpdates == std::vector<size_t>{0}));
@@ -237,11 +256,11 @@ void TestTextureSlotUpdate() {
   next.textures[1].image.data[0] = 80;
 
   auto changes = TransformChange(30);
-  changes.prims[0].path = lightusd::next::Path("/Looks/Texture");
-  changes.prims[0].flags = lightusd::next::StageChangeFlag::Texture |
-                           lightusd::next::StageChangeFlag::Material;
-  changes.prims[0].properties = {"inputs:file"};
-  const auto plan = lusdview::PlanIncrementalSceneUpdate(
+  changes.prims[0].path = "/Looks/Texture";
+  changes.prims[0].flags = LIGHTUSD_CHANGE_TEXTURE |
+                           LIGHTUSD_CHANGE_MATERIAL;
+  changes.prims[0].properties = {{"inputs:file", 11}};
+  const auto plan = Plan(
       current, &next, changes, 30, 1);
   CHECK(plan.compatible);
   CHECK((plan.textureUpdates == std::vector<size_t>{1}));
@@ -249,15 +268,71 @@ void TestTextureSlotUpdate() {
   CHECK(plan.materialUpdates.empty());
   CHECK(plan.replacementUpdates.empty());
 
+  // The public property span does not require a terminator. A suffix beyond
+  // its length must not affect Material-versus-Texture classification.
+  const char counted[] = {'f','i','l','e'};
+  changes.prims[0].properties = {{counted, sizeof(counted)}};
+  CHECK(Plan(current, &next, changes, 30, 1).compatible);
+  const char misleading[] = "roughnessfile";
+  changes.prims[0].properties = {{misleading, 9}};
+  CHECK(!Plan(current, &next, changes, 30, 1).compatible);
+  changes.prims[0].properties = {{"inputs:file", 11}};
+
   next = current;
   next.textures[0].isUdim = true;
-  CHECK(!lusdview::PlanIncrementalSceneUpdate(current, &next, changes, 30, 1)
+  CHECK(!Plan(current, &next, changes, 30, 1)
              .compatible);
+}
+
+void TestCChangeRecords() {
+  lusdview::DrawScene current;
+  current.meshes.push_back(MakeMesh("/A", 0.0f));
+  lusdview::DrawScene next = current;
+  next.meshes[0].world[12] = 4.0f;
+  lightusd_prim_change prim{"/A", LIGHTUSD_CHANGE_TRANSFORM, nullptr, 0};
+  lightusd_render_change_set changes{};
+  changes.struct_size = sizeof(changes);
+  changes.base_revision = 7;
+  changes.prims = &prim;
+  changes.prim_count = 1;
+  const auto plan = [&] {
+    return lusdview::PlanIncrementalSceneUpdate(current, &next, changes, 8, 7, 1);
+  };
+  CHECK(plan().compatible);
+  changes.struct_size -= 1;
+  CHECK(!plan().compatible);
+  changes.struct_size = sizeof(changes);
+  changes.prims = nullptr;
+  CHECK(!plan().compatible);
+  changes.prims = &prim;
+  prim.prim_path = nullptr;
+  CHECK(!plan().compatible);
+  prim.prim_path = "/A";
+  prim.property_count = 1;
+  CHECK(!plan().compatible);
+  lightusd_sv property{nullptr, 1};
+  prim.properties = &property;
+  CHECK(!plan().compatible);
+  property.len = 0;
+  CHECK(plan().compatible);
+  prim.flags = 1u << 31;
+  CHECK(!plan().compatible);
+  prim.flags = LIGHTUSD_CHANGE_TRANSFORM;
+  changes.full_resync = 1;
+  CHECK(!plan().compatible);
+  changes.full_resync = 0;
+  changes.stage_metadata_changed = 1;
+  CHECK(!plan().compatible);
+  changes.stage_metadata_changed = 0;
+  CHECK(!lusdview::PlanIncrementalSceneUpdate(current, &next, changes, 7, 7, 1).compatible);
+  CHECK(!lusdview::PlanIncrementalSceneUpdate(current, nullptr, changes, 8, 7, 1).compatible);
+  CHECK(current.meshes[0].world[12] == 0.0f);
 }
 
 }  // namespace
 
 int main() {
+  TestCChangeRecords();
   TestTargetsOnlyChangedSlots();
   TestRejectsStaleOrStructuralChanges();
   TestStructuralSlotRemap();

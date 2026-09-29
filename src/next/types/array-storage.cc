@@ -150,6 +150,25 @@ void* ArrayHandle::data() const {
   }
   return nullptr;
 }
+bool ArrayHandle::swap_payload(ArrayHandle& other) {
+  if (!control_ || !other.control_ || control_->kind != other.control_->kind) {
+    return false;
+  }
+  Control::Payload& a = control_->payload;
+  Control::Payload& b = other.control_->payload;
+  switch (control_->kind) {
+    case Control::Float: a.a_float.swap(b.a_float); break;
+    case Control::Int: a.a_int.swap(b.a_int); break;
+    case Control::Double: a.a_double.swap(b.a_double); break;
+    case Control::Int64: a.a_int64.swap(b.a_int64); break;
+    case Control::UInt: a.a_uint.swap(b.a_uint); break;
+    case Control::UInt64: a.a_uint64.swap(b.a_uint64); break;
+    case Control::Bool: a.a_bool.swap(b.a_bool); break;
+    case Control::Token: a.a_token.swap(b.a_token); break;
+  }
+  return true;
+}
+
 void* ArrayHandle::vector_object() const {
   if (!control_) return nullptr;
   switch (control_->kind) {

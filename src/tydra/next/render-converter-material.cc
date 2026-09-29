@@ -2,10 +2,11 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 // Tydra Next - Preview-surface material extraction
 #include "safe-arithmetic.hh"
+#include "../../next/layer/prim-spec.hh"
 #include "core/path-expression-eval.hh"
 #include "next/schema/usd-vol.hh"
 #include "next/schema/usd-geom-camera.hh"
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
 #include "mem-budget.hh"
 #include "next/schema/color-space.hh"
 #include "next/eval/value-clip.hh"
@@ -384,6 +385,13 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
           if (const std::string* type = spec->property_type_name(prop))
             os << ",\"type\":\"" << JsonEscape(*type) << '"';
         }
+      }
+      std::string color_space;
+      bool color_space_authored = false;
+      if (::lightusd::next::color_management::ComputeColorSpaceName(
+              node, prop, &color_space, &color_space_authored) &&
+          color_space_authored) {
+        os << ",\"colorspace\":\"" << JsonEscape(color_space) << '"';
       }
       os << '}';
     }
@@ -910,13 +918,13 @@ void ExtractMaterialXConfig(const UsdPrim& prim,
   }
 }
 
-bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
+bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
                                            const UsdPrim& prim,
                                            RenderMaterial* out) {
   return ConvertMaterial(stage, prim, out, nullptr);
 }
 
-bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
+bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
                                            const UsdPrim& prim,
                                            RenderMaterial* out,
                                            RenderScene* scene) {
@@ -1110,6 +1118,8 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
         out->shader_type = RenderMaterial::ShaderType::PreviewSurface;
         out->preview_surface = std::make_unique<PreviewSurfaceShader>();
         ExtractPreviewSurface(stage, child, out->preview_surface.get(), scene);
+        out->preview_surface_nodegraph_json =
+            BuildNextMaterialXGraphJson(stage, child);
         if (out->preview_surface->opacity.is_texture() ||
             out->preview_surface->opacity.value.x < 1.0f - kAlphaEpsilon) {
           out->alpha_mode = RenderMaterial::AlphaMode::Blend;

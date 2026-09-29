@@ -376,9 +376,9 @@
     return f;
   }
 
-  std::string AttrTypeName(const PrimSpec& prim, const std::string& prop_name,
+  std::string AttrTypeName(const PrimSpec& prim, PropNameId prop_id,
                            const Value* val, uint16_t slot_flags) {
-    if (const std::string* tn = prim.property_type_name(prop_name)) {
+    if (const std::string* tn = prim.property_type_name(prop_id)) {
       if (!tn->empty()) return *tn;
     }
     TypeId tid = val ? val->type_id() : static_cast<TypeId>(TypeId::Invalid);
@@ -483,8 +483,7 @@
       }
     }
     spline_block.data = std::move(raw);
-    const uint64_t data_idx = value_data_.size();
-    value_data_.push_back(std::move(spline_block));
+    const uint64_t data_idx = PushValueBlock(std::move(spline_block));
 
     // A version-2 blob (tangent algorithms) needs crate 0.13.0; version 1
     // needs 0.12.0.
@@ -557,8 +556,10 @@
       uint64_t vr = sample_reps[si].raw();
       std::memcpy(header_data.data() + hp, &vr, 8); hp += 8;
     }
-    uint64_t header_idx = value_data_.size();
-    value_data_.push_back({TypeId::Invalid, std::move(header_data)});
+    // Header embeds the times rep + per-sample reps built above: staged block
+    // indices get relocated by _PatchTimeSamplesBlock; streamed blocks already
+    // carry their absolute offsets.
+    uint64_t header_idx = PushValueBlock({TypeId::Invalid, std::move(header_data)});
 
     CrateField ts_field;
     ts_field.token_index.value = InternToken("timeSamples");
@@ -567,7 +568,7 @@
     return ts_field;
   }
 
-  void EmitPropertySpec(const std::string& prop_path, SpecType st,
+  void EmitPropertySpec(uint32_t path_index, SpecType st,
                         const std::vector<CrateField>& field_list) {
     std::vector<uint32_t> fs;
     fs.reserve(field_list.size());
@@ -578,7 +579,7 @@
     uint32_t fs_idx = static_cast<uint32_t>(fieldsets_.size());
     fieldsets_.push_back(std::move(fs));
     CrateSpec spec;
-    spec.path_index.value = InternPath(prop_path);
+    spec.path_index.value = path_index;
     spec.fieldset_index.value = fs_idx;
     spec.spec_type = st;
     specs_.push_back(spec);
@@ -685,32 +686,49 @@
     }
   }
 
-  std::vector<std::string> EmitPrimProperties(const PrimSpec& prim) {
-    std::vector<std::string> prop_names;
+  // Returns the emitted property names (views into the PropNameTable, which
+  // outlives the write), in spec order.
+  std::vector<std::string_view> EmitPrimProperties(const PrimSpec& prim) {
+    std::vector<std::string_view> prop_names;
     PropNameTable& name_table = GetPropNameTable();
-    const std::string base = prim.path().str();
-    std::unordered_set<std::string> emitted;
+    const std::string& base = prim.path().str();
+    // Emitted attribute names, by interned id (one id per name).
+    std::unordered_set<uint32_t> emitted;
+    // Property spec paths: (prim path, property name) views interned
+    // directly; the concatenated text is only built for irregular prim paths.
+    const bool clean_prop_paths = PropPathSplitsCleanly(base);
+    const uint64_t base_hash = clean_prop_paths ? HashStem(base) : 0;
+    auto prop_path_index = [&](std::string_view stable_name) -> uint32_t {
+      if (clean_prop_paths && !stable_name.empty() &&
+          stable_name.find('/') == std::string_view::npos) {
+        return InternPropPath(base, base_hash, stable_name);
+      }
+      return InternPath(base + "." + std::string(stable_name));
+    };
+    // EmitPropertySpec copies each field into the writer's own storage, so
+    // reuse this scratch vector instead of allocating one for every property.
+    std::vector<CrateField> flds;
 
     for (const auto& slot : prim.properties().slots()) {
-      const std::string prop_name(name_table.get(slot.name_id));
+      const std::string_view prop_name = name_table.get(slot.name_id);
       // Defense against duplicate slots for one property (the parser now
       // upserts, but crate-read or API-built layers could still carry them):
       // two Attribute specs with the same path make pxr reject the layer.
-      if (emitted.count(prop_name)) continue;
+      if (emitted.count(slot.name_id.id)) continue;
       const Value* val = prim.property_value(slot.name_id);
       const bool has_ts = prim.has_time_samples(slot.name_id);
-      std::vector<CrateField> flds;
+      flds.clear();
 
       CrateField tf;
-      tf.token_index.value = InternToken("typeName");
-      std::string tn = AttrTypeName(prim, prop_name, val, slot.flags);
+      tf.token_index.value = type_name_token_;
+      std::string tn = AttrTypeName(prim, slot.name_id, val, slot.flags);
       tf.value_rep =
           ValueRep::Make(CrateTypeId::Token, InternToken(tn), false, true);
       flds.push_back(tf);
 
       if (slot.flags & PropSlot::kFlagUniform) {
         CrateField vf;
-        vf.token_index.value = InternToken("variability");
+        vf.token_index.value = variability_token_;
         vf.value_rep = ValueRep::Make(CrateTypeId::Variability, 1, false, true);
         flds.push_back(vf);
       }
@@ -724,7 +742,7 @@
 
       if (val) {
         CrateField df;
-        df.token_index.value = InternToken("default");
+        df.token_index.value = default_token_;
         df.value_rep = EncodeValue(*val);
         // An unencodable value must not become a `default` field with type
         // enum 0 — pxr fails the whole layer on it. The typeName field above
@@ -735,7 +753,7 @@
       } else if (const ArrayEditData* aedit = prim.array_edit(slot.name_id)) {
         // Sparse array-edit default (VtArrayEdit, crate 0.14).
         CrateField df;
-        df.token_index.value = InternToken("default");
+        df.token_index.value = default_token_;
         df.value_rep = EncodeArrayEdit(
             *aedit, static_cast<TypeId>(slot.value_type));
         if (df.value_rep.type_id() != CrateTypeId::Invalid) {
@@ -744,14 +762,15 @@
       }
 
       if (slot.flags & PropSlot::kFlagConnection) {
-        if (const std::vector<Path>* conns = prim.connection(prop_name)) {
+        const std::string conn_name(prop_name);
+        if (const std::vector<Path>* conns = prim.connection(conn_name)) {
           std::vector<std::string> targets;
           targets.reserve(conns->size());
           for (const auto& p : *conns)
             if (!p.str().empty()) targets.push_back(p.str());
           // An authored-empty list is a connection BLOCK (`.connect = None`):
           // emit an explicit-empty PathListOp so it round-trips.
-          const ArcEdit* edit = prim.connection_edit(prop_name);
+          const ArcEdit* edit = prim.connection_edit(conn_name);
           uint64_t blk = (edit && edit->authored)
                              ? StorePathArcListOp(targets, edit)
                              : StorePathListOp(targets);
@@ -767,7 +786,8 @@
 
       if (const std::string* spline_text = prim.spline_source(slot.name_id)) {
         CrateField sf;
-        if (BuildSplineField(base + "." + prop_name, tn, *spline_text, &sf)) {
+        if (BuildSplineField(base + "." + std::string(prop_name), tn,
+                             *spline_text, &sf)) {
           flds.push_back(sf);
         } else if (!result_.error.empty()) {
           return prop_names;  // strict mode: abort on unencodable spline
@@ -778,21 +798,21 @@
         EmitPropMetaFields(*pm, flds);
       }
 
-      EmitPropertySpec(base + "." + prop_name, SpecType::Attribute, flds);
+      EmitPropertySpec(prop_path_index(prop_name), SpecType::Attribute, flds);
       prop_names.push_back(prop_name);
-      emitted.insert(prop_name);
+      emitted.insert(slot.name_id.id);
     }
 
     for (auto prop_id : prim.time_sampled_properties()) {
-      const std::string prop_name(name_table.get(prop_id));
-      if (emitted.count(prop_name)) continue;
-      std::vector<CrateField> flds;
+      const std::string_view prop_name = name_table.get(prop_id);
+      if (emitted.count(prop_id.id)) continue;
+      flds.clear();
       const Value* sv = nullptr;
       if (auto* s = prim.time_samples(prop_id))
         if (!s->empty()) sv = prim.time_sample_value((*s)[0].second);
       CrateField tf;
-      tf.token_index.value = InternToken("typeName");
-      std::string tn = AttrTypeName(prim, prop_name, sv, 0);
+      tf.token_index.value = type_name_token_;
+      std::string tn = AttrTypeName(prim, prop_id, sv, 0);
       tf.value_rep =
           ValueRep::Make(CrateTypeId::Token, InternToken(tn), false, true);
       flds.push_back(tf);
@@ -800,15 +820,15 @@
       if (const PropMeta* pm = prim.property_meta(prop_id)) {
         EmitPropMetaFields(*pm, flds);
       }
-      EmitPropertySpec(base + "." + prop_name, SpecType::Attribute, flds);
+      EmitPropertySpec(prop_path_index(prop_name), SpecType::Attribute, flds);
       prop_names.push_back(prop_name);
-      emitted.insert(prop_name);
+      emitted.insert(prop_id.id);
     }
 
     for (const auto& rel_name : prim.relationship_names()) {
-      std::vector<CrateField> flds;
+      flds.clear();
       CrateField vf;
-      vf.token_index.value = InternToken("variability");
+      vf.token_index.value = variability_token_;
       const bool varying =
           (prim.relationship_flags(rel_name) & PropSlot::kFlagVarying) != 0;
       vf.value_rep = ValueRep::Make(CrateTypeId::Variability,
@@ -858,8 +878,11 @@
               prim.property_meta(GetPropNameTable().intern(rel_name))) {
         EmitPropMetaFields(*pm, flds);
       }
-      EmitPropertySpec(base + "." + rel_name, SpecType::Relationship, flds);
-      prop_names.push_back(rel_name);
+      const std::string_view stable_rel_name =
+          name_table.get(name_table.intern(rel_name));
+      EmitPropertySpec(prop_path_index(stable_rel_name),
+                       SpecType::Relationship, flds);
+      prop_names.push_back(stable_rel_name);
     }
 
     return prop_names;

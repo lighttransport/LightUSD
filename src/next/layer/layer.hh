@@ -56,6 +56,10 @@ struct LayerMeta {
   bool doc_set = false;
   bool comment_set = false;
   bool owner_set = false;
+  bool autoPlay = true;
+  bool autoPlay_set = false;
+  std::string playbackMode;
+  bool playbackMode_set = false;
 
   // Authored pseudo-root namespace order (`reorder rootPrims = [...]`).
   std::vector<std::string> rootPrimOrder;
@@ -94,72 +98,7 @@ struct LayerMeta {
   /// layer stack in pxr (upAxis/metersPerUnit/timeCodesPerSecond/...), so a
   /// flatten engine must gap-fill before dropping the subLayers list. Call
   /// with sublayers strongest-first.
-  void FillAbsentStageMetaFrom(const LayerMeta& weaker) {
-    if (!rootPrimOrder_set &&
-        (weaker.rootPrimOrder_set || !weaker.rootPrimOrder.empty())) {
-      rootPrimOrder = weaker.rootPrimOrder;
-      rootPrimOrder_set = true;
-    }
-    if (!defaultPrim_set &&
-        (weaker.defaultPrim_set || !weaker.defaultPrim.empty())) {
-      defaultPrim = weaker.defaultPrim;
-      defaultPrim_set = true;
-    }
-    if (!doc_set && weaker.doc_set) {
-      doc = weaker.doc;
-      doc_set = true;
-    }
-    if (!owner_set && weaker.owner_set) {
-      owner = weaker.owner;
-      owner_set = true;
-    }
-    if (!comment_set && weaker.comment_set) {
-      comment = weaker.comment;
-      comment_set = true;
-    }
-    if (!colorConfiguration_set && weaker.colorConfiguration_set) {
-      colorConfiguration = weaker.colorConfiguration;
-      colorConfiguration_set = true;
-    }
-    if (!colorManagementSystem_set && weaker.colorManagementSystem_set) {
-      colorManagementSystem = weaker.colorManagementSystem;
-      colorManagementSystem_set = true;
-    }
-    if (!renderSettingsPrimPath_set && weaker.renderSettingsPrimPath_set) {
-      renderSettingsPrimPath = weaker.renderSettingsPrimPath;
-      renderSettingsPrimPath_set = true;
-    }
-    if (!upAxis_set && weaker.upAxis_set) {
-      upAxis = weaker.upAxis;
-      upAxis_set = true;
-    }
-    if (!metersPerUnit_set && weaker.metersPerUnit_set) {
-      metersPerUnit = weaker.metersPerUnit;
-      metersPerUnit_set = true;
-    }
-    if (!timeCodesPerSecond_set && weaker.timeCodesPerSecond_set) {
-      timeCodesPerSecond = weaker.timeCodesPerSecond;
-      timeCodesPerSecond_set = true;
-    }
-    if (!framesPerSecond_set && weaker.framesPerSecond_set) {
-      framesPerSecond = weaker.framesPerSecond;
-      framesPerSecond_set = true;
-    }
-    if (!kilogramsPerUnit_set && weaker.kilogramsPerUnit_set) {
-      kilogramsPerUnit = weaker.kilogramsPerUnit;
-      kilogramsPerUnit_set = true;
-    }
-    if (!startTimeCode_set && weaker.startTimeCode_set) {
-      startTimeCode = weaker.startTimeCode;
-      startTimeCode_set = true;
-    }
-    if (!endTimeCode_set && weaker.endTimeCode_set) {
-      endTimeCode = weaker.endTimeCode;
-      endTimeCode_set = true;
-    }
-    MergeWeakerRawFields(&unknownMeta, weaker.unknownMeta);
-    MergeWeakerExtensionFields(&unknownFields, weaker.unknownFields);
-  }
+  void FillAbsentStageMetaFrom(const LayerMeta& weaker);
 };
 
 /// Layer - owns all PrimSpecs for a USD file
@@ -219,6 +158,28 @@ public:
   Layer Clone() const;
 
   // ============================================================
+  // Parallel-subtree stitch support (USDA parallel prim parse)
+  // ============================================================
+
+  /// Placeholder marker bit: root/child index entries carrying this bit refer
+  /// to a not-yet-stitched worker fragment (low 31 bits = fragment id). Every
+  /// placeholder is resolved by splice_fragments() before finalize.
+  static constexpr uint32_t kPendingIndexBit = 0x80000000u;
+
+  /// Append a pending root marker (fragment id), preserving authored order.
+  void add_root_pending(uint32_t fragment_id);
+
+  /// Move the prims of every fragment into this layer, reproducing the exact
+  /// prim order a serial build would have produced: fragment f's prims are
+  /// placed right before this layer's prim number insert_before[f] (= how many
+  /// prims this layer held when f was dispatched; non-decreasing in f).
+  /// A placeholder expands to ALL of its fragment's roots, in order. All
+  /// indices are rebased and placeholders resolved. Returns false (layer
+  /// contents unspecified — callers discard it) on any inconsistency.
+  bool splice_fragments(const std::vector<Layer*>& fragments,
+                        const std::vector<size_t>& insert_before);
+
+  // ============================================================
   // Path-addressed authoring (post-load editing)
   // ============================================================
 
@@ -238,6 +199,13 @@ public:
   /// removed specs stay allocated but unreachable (writers traverse from
   /// root_indices). Returns false if no prim exists at `path`.
   bool remove_prim_at_path(const std::string& path);
+
+  /// Rename the prim at `path` in place (the last path component becomes
+  /// `new_name`); every descendant path and the path index are rewritten and
+  /// sibling order is kept. Fails for an invalid identifier, a missing prim,
+  /// or a sibling that already uses `new_name`. Paths that other specs author
+  /// (relationship targets, connections, arcs) are not retargeted.
+  bool rename_prim_at_path(const std::string& path, const std::string& new_name);
 
   // ============================================================
   // Access
@@ -350,8 +318,10 @@ public:
   /// Add property to current prim
   void add_property(const std::string& name, Value value, uint16_t flags = 0);
 
-  /// Add time sample to current prim
-  void add_time_sample(const std::string& prop_name, double time, Value value);
+  /// Add time sample to current prim. `dedup=false` skips content-hash dedup
+  /// (deferred-fill values from the batched USDA array parse; see PrimSpec).
+  void add_time_sample(const std::string& prop_name, double time, Value value,
+                       bool dedup = true);
 
   /// Add relationship to current prim
   void add_relationship(const std::string& name, const Path& target);
@@ -365,6 +335,18 @@ public:
 
   /// Finalize the layer
   void finalize();
+
+  /// True if the layer already holds a prim at `path_str` (same lookup
+  /// begin_prim() uses to re-open duplicate siblings).
+  bool contains_path(const std::string& path_str) {
+    return FindExistingPrim(path_str) != UINT32_MAX;
+  }
+
+  /// Absolute-path prefix applied to prims begun with an EMPTY parent stack
+  /// (path = prefix + "/" + name). Used by parallel subtree sub-parsers whose
+  /// fragment root is not a real layer root. Empty (default) keeps the normal
+  /// root behavior.
+  void set_path_prefix(std::string prefix) { path_prefix_ = std::move(prefix); }
 
 private:
   /// Index of the prim already at `path_str`, or UINT32_MAX.
@@ -388,6 +370,7 @@ private:
   std::unordered_map<std::string, uint32_t> path_index_;
   size_t indexed_prim_count_ = 0;
   bool path_index_built_ = false;
+  std::string path_prefix_;
 };
 
 }  // namespace next

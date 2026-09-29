@@ -17,13 +17,13 @@
 #include <unistd.h>
 #endif
 
-#include "next/lightusd-next.hh"
 #include "next/layer/layer.hh"
 #include "next/pcp/prim-index.hh"
 #include "next/crate/crate-reader.hh"
 #include "next/pipeline/flatten.hh"
 #include "next/reader/usda-reader.hh"
 #include "next/reader/usdc-reader.hh"
+#include "next/writer/usda-writer.hh"
 #include "next/writer/usdc-writer.hh"
 
 using namespace lightusd::next;

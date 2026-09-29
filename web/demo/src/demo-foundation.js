@@ -60,7 +60,6 @@ function escapeHTML(value) {
 const BACKEND_CHOICES = ['next', 'legacy', 'auto'];
 
 function selectedBackend() {
-  if (!__LIGHTUSD_LOCAL_DEV__) return 'legacy';
   const value = new URLSearchParams(window.location.search).get('backend');
   return BACKEND_CHOICES.includes(value) ? value : 'next';
 }
@@ -277,9 +276,7 @@ class DemoApp {
     this.gui.add({ open: () => this.fileInput.click() }, 'open').name('Open USD');
     this.gui.add({ sample: () => this.loadDefaultAsset() }, 'sample').name('Load sample');
     this.gui.add({ fit: () => this.fitScene() }, 'fit').name('Fit scene (F)');
-    if (__LIGHTUSD_LOCAL_DEV__) {
-      this.gui.add(this.params, 'backend', BACKEND_CHOICES).name('Backend').onChange(setBackendAndReload);
-    }
+    this.gui.add(this.params, 'backend', BACKEND_CHOICES).name('Backend').onChange(setBackendAndReload);
     this.gui.add(this.params, 'grid').name('Grid').onChange((value) => {
       this.grid.visible = value;
     });

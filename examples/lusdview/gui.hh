@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "lightusd-cpp.hh"
 #include "camera_nav.hh"
 #include "frame_packet.hh"
 #include "gpu_scene.hh"
@@ -26,10 +27,6 @@
 
 namespace lightusd {
 class Prim;
-namespace next {
-class Stage;
-class UsdPrim;
-}
 namespace tydra {
 struct Node;
 }
@@ -115,7 +112,7 @@ class Gui {
     domeDirty_ = false;
   }
   void setDomeStatus(const std::string& status) { domeStatus_ = status; }
-  void setNextStage(const lightusd::next::Stage* stage) { nextStage_ = stage; }
+  void setNextStage(const lightusd::api::Stage& stage) { nextStage_ = stage; }
   // StageSession owns the authoritative deferred set. The composed next Stage
   // may no longer expose payload metadata for arcs deliberately left unloaded.
   void setDeferredPayloadPaths(std::vector<std::string> paths) {
@@ -506,7 +503,7 @@ class Gui {
   void buildDefaultLayout(unsigned int dockId);
   void drawHierarchy();
   bool drawPrimTree(const lightusd::Prim& prim);
-  bool drawNextPrimTree(const lightusd::next::UsdPrim& prim);
+  bool drawNextPrimTree(lightusd_prim prim);
   void drawNextInspector();
   bool drawNodeTree(const lightusd::tydra::Node& node);
   void drawInspector();
@@ -599,7 +596,7 @@ class Gui {
   };
 
   const lightusd::Prim* selPrim_{nullptr};
-  const lightusd::next::Stage* nextStage_{nullptr};
+  lightusd::api::Stage nextStage_;
   std::vector<std::string> deferredPayloadPaths_;
   std::string selPath_;
   int selMeshIndex_{-1};

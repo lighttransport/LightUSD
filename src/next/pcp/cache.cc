@@ -341,6 +341,17 @@ std::vector<Cache::CompositionIssue> Cache::GetCompositionIssues() const {
   NEXT_PCP_READ_LOCK(impl_->api_mu_);
   return impl_->issues_;  // copy out under the lock (see header)
 }
+size_t Cache::GetCompositionIssueCount() const {
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  return impl_->issues_.size();
+}
+bool Cache::GetCompositionIssue(size_t index, CompositionIssue* out) const {
+  if (!out) return false;
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  if (index >= impl_->issues_.size()) return false;
+  *out = impl_->issues_[index];
+  return true;
+}
 void Cache::ClearCompositionIssues() {
   NEXT_PCP_WRITE_LOCK(impl_->api_mu_);
   impl_->issues_.clear();
@@ -373,16 +384,54 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
                            AssetResolver &resolver, Stage *out_stage,
                            const std::string &root_identifier,
                            const CompositionOptions &options, std::string *warn,
-                           std::string *err) {
+                           std::string *err, CompositionReport *report) {
   if (!root_layer || !out_stage) return false;
+
+  // A layer without sublayers or composition arcs is already a complete
+  // stage.  Building a Cache/PrimIndex for it would clone every PrimSpec and
+  // copy every lazy Value handle before the caller writes the stage again.
+  // Keep the source layer intact so crate-backed arrays remain eligible for
+  // the writer's byte-range pass-through path.  This is also the behavior of
+  // the public composed loader's no-composition fast path.
+  bool needs_composition = !root_layer->meta().subLayers.empty();
+  if (!needs_composition) {
+    for (const PrimSpec &prim : root_layer->prims()) {
+      // BuildStage also prunes descendants below an authored active=false
+      // prim. Keep that small semantic transform on the composed path rather
+      // than returning the raw layer with its inactive children still present.
+      if (HasCompositionArcs(prim) ||
+          (prim.meta().active_authored && !prim.meta().active)) {
+        needs_composition = true;
+        break;
+      }
+    }
+  }
+  if (!needs_composition) {
+    if (report) {
+      // Match the composed path's overwrite semantics when callers reuse a
+      // report object across loads.
+      report->layer_dependencies.clear();
+      report->issues.clear();
+      if (!root_identifier.empty()) {
+        report->layer_dependencies.push_back(root_identifier);
+      }
+    }
+    out_stage->SetRootLayer(std::move(*root_layer));
+    return true;
+  }
+
   const bool timing = options.enable_timing;
   using Clock = std::chrono::steady_clock;
   auto ms = [](Clock::duration d) {
     return std::chrono::duration<double, std::milli>(d).count();
   };
   const auto t0 = Clock::now();
+  // The Cache is local to this call and discarded right after BuildStage, so
+  // its cached composition sources can always be freed during the fill.
+  CompositionOptions build_options = options;
+  build_options.release_build_sources = true;
   auto opened = Cache::Open(resolver, std::move(root_layer), root_identifier,
-                            options);
+                            build_options);
   if (!opened) {
     if (err) *err += opened.error() + "\n";
     return false;
@@ -390,6 +439,10 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
   Cache cache = std::move(*opened);
   const auto t1 = Clock::now();
   bool ok = cache.BuildStage(out_stage, warn, err);
+  if (report) {
+    report->layer_dependencies = cache.GetLayerDependencies();
+    report->issues = cache.GetCompositionIssues();
+  }
   const auto t2 = Clock::now();
   if (timing) {
     LIGHTUSD_LOG_I("[next_compose] open=" + FormatMilliseconds(ms(t1 - t0)) +
@@ -404,6 +457,7 @@ bool ComposeStageFromFile(const std::string &filename, AssetResolver &resolver,
   LayerLoadOptions lopts;
   lopts.max_memory = options.max_layer_memory;
   lopts.max_array_elements = options.max_array_elements;
+  lopts.usdc_limits = options.usdc_limits;
   lopts.max_archive_entries = options.max_archive_entries;
   lopts.usdc_lazy_arrays = options.usdc_lazy_arrays;
   lopts.usdc_use_mmap = options.usdc_use_mmap;

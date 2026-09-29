@@ -5,6 +5,7 @@
 // Creates a stage with multiple schema types, writes to USDC,
 // and verifies the binary output by parsing TOC/sections.
 
+#include <algorithm>
 #include <iostream>
 #include <fstream>
 #include <cassert>
@@ -15,6 +16,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <iterator>
 
 #include "next/stage/stage.hh"
 #include "next/layer/layer.hh"
@@ -23,13 +25,16 @@
 #include "next/crate/crate-format.hh"
 #include "next/crate/crate-reader.hh"
 #include "next/crate/lazy-array.hh"
-#include "next/lightusd-next.hh"
+#include "next/load-usd.hh"
+#include "next/reader/usda-reader.hh"
+#include "next/reader/usdc-reader.hh"
 #include "next/writer/usdc-writer.hh"
 #include "next/writer/dtoa.hh"
 #include "next/parser/ascii-parser.hh"
 #include "next/layer/property-index.hh"
 #include "next/pcp/prim-index.hh"
 #include "next/schema/color-space.hh"
+#include "next/writer/usda-writer.hh"
 
 using namespace lightusd::next;
 
@@ -480,6 +485,8 @@ void test_roundtrip_layer_metadata() {
   layer.meta().startTimeCode = 1.0;
   layer.meta().endTimeCode = 48.0;
   layer.meta().doc = "Test layer";
+  layer.meta().playbackMode = "loop";
+  layer.meta().playbackMode_set = true;
 
   LayerBuilder builder(layer);
   builder.begin_prim("Root", "Xform");
@@ -515,6 +522,13 @@ void test_roundtrip_layer_metadata() {
             << "  Paths: " << result.path_count
             << "  Specs: " << result.spec_count
             << "  Fields: " << result.field_count << "\n";
+
+  CrateReader reader;
+  CrateReadResult reloaded = reader.Read(buffer.data(), buffer.size());
+  assert(reloaded.success);
+  const Layer* reloaded_layer = reloaded.stage.GetRootLayer();
+  assert(reloaded_layer && reloaded_layer->meta().playbackMode_set &&
+         reloaded_layer->meta().playbackMode == "loop");
 
   std::cout << "  roundtrip layer metadata test passed!\n\n";
 }
@@ -1655,6 +1669,15 @@ def Scope "T" (
   const PrimSpec* sp = MustPrim(src, "/T");
   const PrimSpec* dp = MustPrim(dst, "/T");
 
+  // String-family arrays must be decoded by the crate reader, so the Layer
+  // JSON retained-memory estimate includes their expanded strings. A lazy
+  // string array could multiply a small index block into many large copies
+  // only after the export budget had already been checked.
+  for (const char* name : {"sa", "ta", "aa"}) {
+    const Value* value = dp->property_value(name);
+    assert(value && value->is_array() && !value->is_lazy());
+  }
+
   // Every authored default value round-trips exactly (Value equality
   // materializes lazy arrays, so this also exercises lazy decode).
   PropNameTable& names = GetPropNameTable();
@@ -1779,6 +1802,7 @@ def Xform "Zeta" (
     custom rel material:binding
     prepend rel plist = </Zeta/M2>
     delete rel plist = </Zeta/M1>
+    delete rel deleteOnly = </Zeta/M1>
     float a = 1
     float b.connect = None
     widget w = 5
@@ -1825,6 +1849,14 @@ def Xform "Alpha"
          dst->meta().subLayerOffsets[0].second == 2.0);
 
   const PrimSpec* z = MustPrim(dst, "/Zeta");
+  // A delete-only authored relationship remains enumerable even when it has
+  // no effective local targets.
+  {
+    const auto names = z->relationship_names();
+    assert(std::find(names.begin(), names.end(), "deleteOnly") != names.end());
+    const auto* delete_targets = z->relationship("deleteOnly");
+    assert(!delete_targets || delete_targets->empty());
+  }
   // Authored active=true / hidden=false round-trip via the authored flags.
   assert(z->meta().active && z->meta().active_authored);
   assert(!z->meta().hidden && z->meta().hidden_authored);
@@ -2210,6 +2242,228 @@ void test_roundtrip_deferred_items() {
   std::cout << "  deferred-items crate roundtrip passed!\n\n";
 }
 
+// The parallel crate stage build (large crates, num_threads > 1) must produce
+// exactly the layer the serial build does: every prim, property, metadata
+// field, list-op, time sample, variant and the authored child order.
+void test_parallel_stage_build_matches_serial() {
+  std::cout << "Testing parallel crate stage build == serial...\n";
+
+  Layer layer;
+  LayerBuilder b(layer);
+  // Enough prims/specs to cross the parallel thresholds. Children are added in
+  // reverse name order so the authored primChildren order differs from the
+  // path-sorted build order the reader starts from.
+  const int kGroups = 40;
+  const int kPerGroup = 30;
+  for (int g = kGroups - 1; g >= 0; --g) {
+    b.begin_prim("Group_" + std::to_string(g), "Xform");
+    for (int m = kPerGroup - 1; m >= 0; --m) {
+      b.begin_prim("Mesh_" + std::to_string(m), "Mesh");
+      PrimSpec* ps = b.current();
+      const float fg = static_cast<float>(g), fm = static_cast<float>(m);
+      b.add_property("points", Value::MakeFloatCompArray(
+                                   std::vector<float>{fg, fm, 1.f, 2.f, 3.f, 4.f},
+                                   TypeId::Point3f, 3));
+      b.add_property("faceVertexCounts",
+                     Value::MakeIntArray(std::vector<int32_t>{3, 3}));
+      b.add_property("doubleSided", Value(true), PropSlot::kFlagUniform);
+      ps->set_property_type_name("points", "point3f[]");
+      ps->set_property_type_name("faceVertexCounts", "int[]");
+      ps->set_property_type_name("doubleSided", "bool");
+      PropMeta& pm = ps->ensure_property_meta("points");
+      pm.interpolation = "vertex";
+      pm.authored |= PropMeta::kInterpolation;
+      if (m % 3 == 0) {
+        ps->add_relationship("material:binding",
+                             Path("/Group_" + std::to_string(g)));
+      }
+      if (m % 4 == 0) {
+        const PropNameId nid = GetPropNameTable().intern("xformOp:translate");
+        ps->add_property_slot(nid, TypeId::Double3, PropSlot::kFlagTimeSampled);
+        ps->set_property_type_name("xformOp:translate", "double3");
+        for (int t = 0; t < 3; ++t) {
+          ps->add_time_sample(nid, double(t),
+                              Value::MakeDouble3(double(t), fg, fm));
+        }
+      }
+      b.end_prim();
+    }
+    b.end_prim();
+  }
+  b.finalize();
+
+  CrateWriter writer;
+  std::vector<uint8_t> buf;
+  CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
+  assert(wr.success);
+  assert(wr.spec_count > 4096 && "fixture must cross the parallel threshold");
+
+  auto read_with = [&](int threads, std::string* usda,
+                       std::vector<std::string>* warnings) {
+    CrateReadOptions opts;
+    opts.num_threads = threads;
+    CrateReader reader(opts);
+    CrateReadResult rr = reader.Read(buf.data(), buf.size());
+    assert(rr.success);
+    const Layer* rl = rr.stage.GetRootLayer();
+    assert(rl);
+    *usda = WriteLayerToString(*rl);
+    *warnings = rr.warnings;
+    // Authored child order survives (reverse name order).
+    const PrimSpec* g0 = rl->prim_at_path("/Group_0");
+    assert(g0 && !g0->child_indices().empty());
+    const PrimSpec* first = rl->prim(g0->child_indices().front());
+    assert(first && first->name() == "Mesh_" + std::to_string(kPerGroup - 1));
+  };
+  std::string serial_usda, parallel_usda;
+  std::vector<std::string> serial_warn, parallel_warn;
+  read_with(1, &serial_usda, &serial_warn);
+  read_with(4, &parallel_usda, &parallel_warn);
+  assert(!serial_usda.empty());
+  assert(serial_usda == parallel_usda);
+  assert(serial_warn == parallel_warn);
+  std::cout << "  parallel stage build matches serial!\n\n";
+}
+
+// File output streams VALUE blocks as they are built (seekable sink, bootstrap
+// backfilled); the bytes must equal the staged in-memory write and the plain
+// append-only sink write.
+void test_streamed_file_write_matches_memory() {
+  std::cout << "Testing streamed USDC file write == in-memory write...\n";
+  Layer layer;
+  LayerBuilder b(layer);
+  for (int i = 0; i < 64; ++i) {
+    b.begin_prim("P" + std::to_string(i), "Mesh");
+    PrimSpec* ps = b.current();
+    std::vector<float> pts(300 + static_cast<size_t>(i));
+    for (size_t k = 0; k < pts.size(); ++k) pts[k] = float(k % 97) * 0.5f;
+    b.add_property("points", Value::MakeFloatCompArray(std::move(pts),
+                                                       TypeId::Point3f, 3));
+    // Shared payload: exercises cross-spec block dedup.
+    b.add_property("faceVertexCounts",
+                   Value::MakeIntArray(std::vector<int32_t>(40, 4)));
+    b.add_property("doubleSided", Value(i % 2 == 0));
+    const PropNameId nid = GetPropNameTable().intern("radius");
+    ps->add_property_slot(nid, TypeId::Double, PropSlot::kFlagTimeSampled);
+    for (int t = 0; t < 4; ++t) {
+      ps->add_time_sample(nid, double(t), Value(double(t % 2) + 0.25));
+    }
+    Dict d;
+    d.set("index", Value(i));
+    d.set("label", Value(std::string("prim ") + std::to_string(i % 3)));
+    ps->meta().customData() = Value::MakeDictionary(std::move(d));
+    ps->meta().setCustomDataAuthored();
+    b.end_prim();
+  }
+  b.finalize();
+
+  CrateWriter writer;
+  std::vector<uint8_t> mem;
+  CrateWriteResult mr = writer.WriteLayerToMemory(mem, layer);
+  assert(mr.success && !mem.empty());
+
+  std::vector<uint8_t> sunk;
+  CrateWriter sink_writer;
+  CrateWriteResult sr = sink_writer.WriteLayerToSink(
+      [&sunk](const uint8_t* data, size_t size) {
+        sunk.insert(sunk.end(), data, data + size);
+        return true;
+      },
+      layer);
+  assert(sr.success);
+  assert(sunk == mem);
+
+  const char* path = "test_usdc_streamed_write.usdc";
+  CrateWriter file_writer;
+  CrateWriteResult fr = file_writer.WriteLayerToFile(path, layer);
+  assert(fr.success);
+  std::ifstream in(path, std::ios::binary);
+  std::vector<uint8_t> file((std::istreambuf_iterator<char>(in)),
+                            std::istreambuf_iterator<char>());
+  in.close();
+  std::remove(path);
+  assert(file == mem);
+  assert(fr.bytes_written == mem.size());
+  std::cout << "  streamed file write matches!\n\n";
+}
+
+// EncodeDeltaU32 picks the most frequent delta (ties -> smallest) as the
+// common delta; the fast histogram must agree with a std::map reference.
+void test_delta_encoding_common_delta() {
+  std::cout << "Testing integer-compression common delta...\n";
+  auto reference_common = [](const std::vector<uint32_t>& v) {
+    std::map<int32_t, size_t> freq;
+    int32_t prev = 0;
+    for (uint32_t x : v) {
+      freq[static_cast<int32_t>(static_cast<int64_t>(x) - prev)]++;
+      prev = static_cast<int32_t>(x);
+    }
+    int32_t common = 0;
+    size_t best = 0;
+    for (const auto& kv : freq) {
+      if (kv.second > best || (kv.second == best && kv.first < common)) {
+        common = kv.first;
+        best = kv.second;
+      }
+    }
+    return common;
+  };
+  uint64_t rng = 0x9E3779B97F4A7C15ull;
+  auto next = [&rng]() {
+    rng ^= rng << 13;
+    rng ^= rng >> 7;
+    rng ^= rng << 17;
+    return rng;
+  };
+  const size_t sizes[] = {1, 5, 100, 2047, 2048, 5000, 70000};
+  for (size_t n : sizes) {
+    for (int pattern = 0; pattern < 4; ++pattern) {
+      std::vector<uint32_t> v(n);
+      for (size_t i = 0; i < n; ++i) {
+        const uint64_t r = next();
+        switch (pattern) {
+          case 0: v[i] = static_cast<uint32_t>(i * 3); break;         // steady
+          case 1: v[i] = static_cast<uint32_t>(r % 50); break;        // small
+          case 2: v[i] = static_cast<uint32_t>(r); break;             // wide
+          default:                                                     // mixed
+            v[i] = (i % 5 == 4) ? 0xFFFFFFFFu : static_cast<uint32_t>(r % 100000);
+        }
+      }
+      const std::vector<uint8_t> enc = EncodeDeltaU32(v.data(), v.size());
+      int32_t common = 0;
+      assert(enc.size() >= 4);
+      std::memcpy(&common, enc.data(), 4);
+      assert(common == reference_common(v));
+      std::vector<uint32_t> back(n);
+      assert(DecodeDeltaU32(enc.data(), enc.size(), back.data(), n));
+      assert(back == v);
+    }
+  }
+  std::cout << "  common delta matches reference!\n\n";
+}
+
+// Property slots sort by NAME, not by the (run-order dependent) PropNameId.
+void test_property_slots_sorted_by_name() {
+  std::cout << "Testing property slot name order...\n";
+  // Intern the later name first so id order and name order disagree.
+  GetPropNameTable().intern("zz_slot_order_test");
+  GetPropNameTable().intern("aa_slot_order_test");
+  PrimSpec ps("P", "Scope");
+  ps.add_property("zz_slot_order_test", Value(1));
+  ps.add_property("aa_slot_order_test", Value(2));
+  ps.add_property("mm_slot_order_test", Value(3));
+  ps.finalize_properties();
+  const auto& slots = ps.properties().slots();
+  assert(slots.size() == 3);
+  assert(GetPropNameTable().get(slots[0].name_id) == "aa_slot_order_test");
+  assert(GetPropNameTable().get(slots[1].name_id) == "mm_slot_order_test");
+  assert(GetPropNameTable().get(slots[2].name_id) == "zz_slot_order_test");
+  const Value* v = ps.property_value("zz_slot_order_test");
+  assert(v && v->as_int() && *v->as_int() == 1);
+  assert(ps.property(GetPropNameTable().find("mm_slot_order_test")));
+  std::cout << "  property slots are name-sorted!\n\n";
+}
+
 int main() {
   std::cout << "=== LightUSD Next USDC Roundtrip Tests ===\n\n";
 
@@ -2235,6 +2489,10 @@ int main() {
     test_roundtrip_half_arrays();
     test_write_usdc_from_stage_api();
     test_roundtrip_variants();
+    test_parallel_stage_build_matches_serial();
+    test_delta_encoding_common_delta();
+    test_streamed_file_write_matches_memory();
+    test_property_slots_sorted_by_name();
 
     std::cout << "=== All USDC roundtrip tests passed! ===\n";
     return 0;

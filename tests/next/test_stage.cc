@@ -3,6 +3,7 @@
 //
 // Test for Stage functionality
 
+#include "next/layer/layer.hh"
 #include <iostream>
 #include <cassert>
 #include <cmath>

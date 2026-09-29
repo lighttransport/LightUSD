@@ -44,7 +44,7 @@
       // specifier (pxrUSD convention: specifier first, then typeName)
       if (!is_variant_holder) {
         CrateField f;
-        f.token_index.value = InternToken("specifier");
+        f.token_index.value = specifier_token_;
         uint64_t spec_val = static_cast<uint64_t>(prim.specifier());
         f.value_rep = ValueRep::Make(CrateTypeId::Specifier, spec_val, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
@@ -54,7 +54,7 @@
       // typeName
       if (!is_variant_holder && !prim.type_name().empty()) {
         CrateField f;
-        f.token_index.value = InternToken("typeName");
+        f.token_index.value = type_name_token_;
         f.value_rep = ValueRep::Make(CrateTypeId::Token,
                                      InternToken(prim.type_name()),
                                      false, true);
@@ -219,19 +219,21 @@
       // Properties, relationships, connections and time samples are emitted as
       // separate pxrUSD-style Attribute/Relationship specs (below). Collect the
       // child property names here for the prim's "properties" field.
-      std::vector<std::string> prop_names = EmitPrimProperties(prim);
+      std::vector<std::string_view> prop_names = EmitPrimProperties(prim);
       if (!prim.meta().propertyOrder().empty()) {
-        std::vector<std::string> ordered;
+        // Views of the emitted names (not of propertyOrder) keep the list
+        // pointing at PropNameTable storage.
+        std::vector<std::string_view> ordered;
         ordered.reserve(prop_names.size());
         for (const std::string& wanted : prim.meta().propertyOrder()) {
-          if (std::find(prop_names.begin(), prop_names.end(), wanted) !=
-                  prop_names.end() &&
-              std::find(ordered.begin(), ordered.end(), wanted) ==
-                  ordered.end()) {
-            ordered.push_back(wanted);
+          auto it = std::find(prop_names.begin(), prop_names.end(),
+                              std::string_view(wanted));
+          if (it != prop_names.end() &&
+              std::find(ordered.begin(), ordered.end(), *it) == ordered.end()) {
+            ordered.push_back(*it);
           }
         }
-        for (const std::string& name : prop_names) {
+        for (const std::string_view name : prop_names) {
           if (std::find(ordered.begin(), ordered.end(), name) == ordered.end())
             ordered.push_back(name);
         }
@@ -438,7 +440,11 @@
         }
         // variantSetChildren: sets that have CONTENT (holder prims present in
         // the layer) — pxr enumerates the child specs from it.
-        auto oit = variant_names.find(prim.path().str());
+        // Same gate as the holder specs above: after flattening, the
+        // compositor clears the owner's variant sets and its leftover holder
+        // specs are not emitted, so neither are their set/child lists.
+        auto oit = prim.meta().variantSets().empty() ? variant_names.end()
+                                                     : variant_names.find(prim.path().str());
         std::vector<std::string> content_sets;
         if (oit != variant_names.end()) {
           content_sets.reserve(oit->second.size());
@@ -522,13 +528,22 @@
       fieldsets_.push_back(std::move(fieldset));
       path_to_fs_idx[prim.path().str()] = fs_idx;
 
+      // consume_values: every field referencing this prim's values is now
+      // built (their blocks interned), and no later writer pass reads property
+      // values -- release them so the layer shrinks as value blocks accumulate
+      // instead of coexisting in full. Cross-prim reads (variant-owner check,
+      // child lists) touch meta and names only.
+      if (options_.consume_values) {
+        const_cast<PrimSpec&>(prim).release_value_payloads();
+      }
+
       // Create spec. A prim whose LAST path element is a variant selector
       // ("{vset=sel}") is a Variant spec; "{vset=}" is the VariantSet
       // declaration. (Variant CHILD prims like "/Prim/{vset=sel}/Geo" keep a
       // normal name -> Prim.) Using the right spec type keeps the unflattened
       // output readable by pxrUSD (which rejects a Prim named "{...}").
       CrateSpec spec;
-      spec.path_index.value = InternPath(prim.path().str());
+      spec.path_index.value = InternPathStable(prim.path().str());
       spec.fieldset_index.value = fs_idx;
       spec.spec_type = SpecType::Prim;
       {
@@ -667,7 +682,7 @@
         CrateField f;
         f.token_index.value = InternToken("documentation");
         uint32_t str_idx = InternString(layer.meta().doc);
-        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
+        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
@@ -677,7 +692,7 @@
         CrateField f;
         f.token_index.value = InternToken("comment");
         uint32_t str_idx = InternString(layer.meta().comment);
-        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
+        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
@@ -687,7 +702,25 @@
         f.token_index.value = InternToken("owner");
         uint32_t str_idx = InternString(layer.meta().owner);
         f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false,
-                                     false);
+                                     true);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // USDZ playback metadata is a typed boolean field on the pseudo-root.
+      if (layer.meta().autoPlay_set) {
+        CrateField f;
+        f.token_index.value = InternToken("autoPlay");
+        f.value_rep = EncodeValue(Value(layer.meta().autoPlay));
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+      if (layer.meta().playbackMode_set) {
+        CrateField f;
+        f.token_index.value = InternToken("playbackMode");
+        f.value_rep = ValueRep::Make(
+            CrateTypeId::Token, InternToken(layer.meta().playbackMode), false,
+            true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
@@ -704,7 +737,7 @@
         CrateField f;
         f.token_index.value = InternToken("__lightusd_unknownMeta");
         uint32_t str_idx = InternString(blob);
-        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
+        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
@@ -782,7 +815,7 @@
         f.token_index.value = InternToken("renderSettingsPrimPath");
         f.value_rep = ValueRep::Make(
             CrateTypeId::String,
-            InternString(layer.meta().renderSettingsPrimPath), false, false);
+            InternString(layer.meta().renderSettingsPrimPath), false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }

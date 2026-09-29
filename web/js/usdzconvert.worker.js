@@ -22,10 +22,13 @@ function progress(info) {
   post('progress', { info });
 }
 
-async function ensureWasm() {
+async function ensureWasm(pipeline) {
   if (native) return native;
   progress({ stage: 'wasm', current: 0, total: 1, message: 'Loading converter module' });
-  native = await loadWasm(() => import('./src/lightusd/lightusd.js'), {
+  const importer = pipeline === 'next-only'
+    ? () => import('./src/lightusd/lightusd_next.js')
+    : () => import('./src/lightusd/lightusd.js');
+  native = await loadWasm(importer, {
     onLightUSDDebug(event) {
       const now = performance.now();
       if (now - lastDebugPostMs < 120) return;
@@ -125,7 +128,7 @@ function streamingSourceFromFiles(files) {
 }
 
 async function runConversion(data) {
-  await ensureWasm();
+  await ensureWasm(data.opts && data.opts.pipeline);
   const opts = {
     ...data.opts,
     log,

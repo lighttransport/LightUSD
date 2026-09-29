@@ -42,7 +42,7 @@ function validateTransferInput(target, source) {
 self.onmessage = async ({ data }) => {
   if (data?.type !== 'project-rays' && data?.type !== 'transfer-uvs') return;
   try {
-    createLightUSD ||= (await import('../../src/lightusd/lightusd.js')).default;
+    createLightUSD ||= (await import('../../src/lightusd/lightusd_next.js')).default;
     if (data.type === 'transfer-uvs') {
       const normalized = validateTransferInput(data.target, data.source), targetData = normalized.target, sourceData = normalized.source, targetRays = vertexTransferRays(targetData.positions, targetData.normals, targetData.offset), module = await createLightUSD(), tracer = new module.LightRTPathTracer(), sourceSoupPositions = sourceSoup(sourceData), sourceNormals = soupNormals(sourceSoupPositions), sourceColors = new Float32Array(sourceSoupPositions.length).fill(1), params = new Float32Array(sourceData.indices.length / 3 * 12), materialIds = new Int32Array(sourceData.indices.length / 3), materials = new Float32Array(10);
       try {

@@ -17,6 +17,8 @@ src/lightusd/*.wasm.zst
 src/lightusd/lightusd.js
 src/lightusd/lightusd_64.js
 src/lightusd/lightusd_next.js
+src/lightusd/lightusd_mcp.js
+src/lightusd/lightusd_mcp_64.js
 src/lightusd/lightusd_next_64.js
 src/lightusd/lightusd_legacy.js
 src/lightusd/lightusd_legacy_64.js

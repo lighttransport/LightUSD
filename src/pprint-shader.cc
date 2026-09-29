@@ -584,8 +584,8 @@ std::string to_string(const Material &material, const uint32_t indent,
          << quote(mtlxConfig.mtlx_colorspace.get_value()) << "\n";
     }
     if (mtlxConfig.mtlx_sourceUri.authored()) {
-      ss << pprint::Indent(indent + 1) << "asset config:mtlx:sourceUri = "
-         << mtlxConfig.mtlx_sourceUri.get_value() << "\n";
+      ss << pprint::Indent(indent + 1) << "string config:mtlx:sourceUri = "
+         << quote(mtlxConfig.mtlx_sourceUri.get_value()) << "\n";
     }
   }
 

@@ -8,12 +8,225 @@
 #include "../../safe-arithmetic.hh"
 #include <algorithm>
 #include <cstring>
+#include <list>
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include <mutex>
 #endif
 
 namespace lightusd {
 namespace next {
+
+PrimSpecMetaExt::PrimSpecMetaExt(const PrimSpecMetaExt &o)
+      : doc(o.doc),
+        comment(o.comment),
+        doc_authored(o.doc_authored),
+        comment_authored(o.comment_authored),
+        kind(o.kind),
+        kind_authored(o.kind_authored),
+        displayName(o.displayName),
+        display_name_authored(o.display_name_authored),
+        permission(o.permission),
+        displayGroupOrder(o.displayGroupOrder),
+        displayGroupOrderAuthored(o.displayGroupOrderAuthored),
+        instance_prototype(o.instance_prototype),
+        apiSchemas(o.apiSchemas),
+        apiSchemasAuthored(o.apiSchemasAuthored),
+        apiSchemaEdits(o.apiSchemaEdits),
+        apiSchemasQualifier(o.apiSchemasQualifier),
+        variantSets(o.variantSets),
+        variantSetNameEdits(o.variantSetNameEdits),
+        variantSelections(o.variantSelections),
+        variantSelectionsAuthored(o.variantSelectionsAuthored),
+        relocates(o.relocates),
+        relocatesAuthored(o.relocatesAuthored),
+        customData(o.customData),
+        assetInfo(o.assetInfo),
+        sdrMetadata(o.sdrMetadata),
+        clips(o.clips),
+        clipSetEdits(o.clipSetEdits),
+        clipShadowedProps(o.clipShadowedProps),
+        customDataAuthored(o.customDataAuthored),
+        assetInfoAuthored(o.assetInfoAuthored),
+        sdrMetadataAuthored(o.sdrMetadataAuthored),
+        clipsAuthored(o.clipsAuthored),
+        primOrder(o.primOrder),
+        propertyOrder(o.propertyOrder),
+        primOrderAuthored(o.primOrderAuthored),
+        propertyOrderAuthored(o.propertyOrderAuthored),
+        unknownMeta(o.unknownMeta),
+        unknownFields(o.unknownFields),
+        arc_edits(o.arc_edits ? new ArcListOpEdits(*o.arc_edits) : nullptr) {}
+
+PrimSpecMetaExt::PrimSpecMetaExt() = default;
+
+PrimSpecMetaExt::~PrimSpecMetaExt() = default;
+
+PrimSpecMeta::PrimSpecMeta() = default;
+
+PrimSpecMeta::~PrimSpecMeta() = default;
+
+PrimSpecMeta::PrimSpecMeta(PrimSpecMeta&&) noexcept = default;
+
+PrimSpecMeta& PrimSpecMeta::operator=(PrimSpecMeta&&) noexcept = default;
+
+PrimSpecMeta::PrimSpecMeta(const PrimSpecMeta& other) { *this = other; }
+
+PrimSpecMeta &PrimSpecMeta::operator=(const PrimSpecMeta &o) {
+    active = o.active;
+    hidden = o.hidden;
+    active_authored = o.active_authored;
+    hidden_authored = o.hidden_authored;
+    loaded = o.loaded;
+    instanceable_authored = o.instanceable_authored;
+    instanceable = o.instanceable;
+    references = o.references;
+    payloads = o.payloads;
+    inherits = o.inherits;
+    specializes = o.specializes;
+    variantSelection = o.variantSelection;
+    layer_offset = o.layer_offset;
+    ext_ = o.ext_ ? std::unique_ptr<PrimSpecMetaExt>(
+                        new PrimSpecMetaExt(*o.ext_))
+                  : nullptr;
+    return *this;
+  }
+
+void MergeWeakerDictionaryValue(
+    Value* stronger, const Value& weaker,
+    std::vector<std::string>* conflicts,
+    const std::string& key_prefix) {
+  if (!stronger || !weaker.is_dictionary()) return;
+  if (!stronger->is_dictionary()) {
+    *stronger = weaker;
+    return;
+  }
+  // Explicit DFS avoids exhausting the C++ stack for deeply nested
+  // dictionaries created through the API. A frame processes one dictionary at
+  // a time; descending immediately also keeps Value pointers stable while a
+  // parent Dict's entry vector may grow.
+  struct Frame {
+    Value* destination_value;
+    const Value* source_value;
+    size_t next_entry;
+    std::string prefix;
+  };
+  std::vector<Frame> stack;
+  stack.push_back(Frame{stronger, &weaker, 0, key_prefix});
+  while (!stack.empty()) {
+    Frame& frame = stack.back();
+    Dict* destination = frame.destination_value->as_dictionary();
+    const Dict* source = frame.source_value->as_dictionary();
+    if (!destination || !source || frame.next_entry >= source->entries().size()) {
+      stack.pop_back();
+      continue;
+    }
+
+    const auto& entry = source->entries()[frame.next_entry++];
+    Value* existing = destination->find(entry.first);
+    if (!existing) {
+      destination->set(entry.first, entry.second);
+    } else if (existing->is_dictionary() && entry.second.is_dictionary()) {
+      stack.push_back(
+          Frame{existing, &entry.second, 0, frame.prefix + entry.first + "."});
+    } else if (conflicts &&
+               existing->is_dictionary() != entry.second.is_dictionary()) {
+      conflicts->push_back(frame.prefix + entry.first);
+    }
+  }
+}
+
+void MergeWeakerExtensionFields(
+    std::vector<TypedExtensionField>* stronger,
+    const std::vector<TypedExtensionField>& weaker) {
+  if (!stronger) return;
+  for (const TypedExtensionField& field : weaker) {
+    auto existing = std::find_if(
+        stronger->begin(), stronger->end(),
+        [&](const TypedExtensionField& own) { return own.name == field.name; });
+    if (existing == stronger->end()) {
+      stronger->push_back(field);
+    } else if (existing->value.is_dictionary() && field.value.is_dictionary()) {
+      MergeWeakerDictionaryValue(&existing->value, field.value);
+      // The authored source represented only the stronger dictionary. Force
+      // writers to regenerate the merged UnregisteredValue source.
+      if (existing->unregistered) existing->unregistered_source.clear();
+    }
+  }
+}
+
+void MergeWeakerRawFields(
+    std::vector<std::pair<std::string, std::string>>* stronger,
+    const std::vector<std::pair<std::string, std::string>>& weaker) {
+  if (!stronger) return;
+  for (const auto& field : weaker) {
+    const bool present = std::find_if(
+        stronger->begin(), stronger->end(),
+        [&](const auto& own) { return own.first == field.first; }) !=
+        stronger->end();
+    if (!present) stronger->push_back(field);
+  }
+}
+
+void ApplyStringListOrder(const std::vector<std::string> &order,
+                                 std::vector<std::string> *list) {
+  if (!list || list->empty() || order.empty()) return;
+  std::vector<std::string> unique_order;
+  for (const std::string &o : order) {
+    if (std::find(unique_order.begin(), unique_order.end(), o) ==
+        unique_order.end()) {
+      unique_order.push_back(o);
+    }
+  }
+  auto in_set = [&](const std::string &s) {
+    return std::find(unique_order.begin(), unique_order.end(), s) !=
+           unique_order.end();
+  };
+  std::list<std::string> scratch(list->begin(), list->end());
+  std::list<std::string> result;
+  for (const std::string &o : unique_order) {
+    auto j = std::find(scratch.begin(), scratch.end(), o);
+    if (j == scratch.end()) continue;
+    auto e = std::next(j);
+    while (e != scratch.end() && !in_set(*e)) ++e;
+    result.splice(result.end(), scratch, j, e);
+  }
+  result.splice(result.begin(), scratch);
+  list->assign(result.begin(), result.end());
+}
+
+std::vector<std::string> ApplyStringListOp(
+    const StringListOpEdits &edits,
+    const std::vector<std::string> &weaker) {
+  std::vector<std::string> result;
+  auto append_unique = [&](const std::string &item) {
+    if (std::find(result.begin(), result.end(), item) == result.end()) {
+      result.push_back(item);
+    }
+  };
+  if (!edits.authored) {
+    for (const std::string &item : weaker) append_unique(item);
+    return result;
+  }
+  if (edits.is_explicit) {
+    for (const std::string &item : edits.explicit_items) append_unique(item);
+    return result;
+  }
+
+  for (const std::string &item : edits.prepended) append_unique(item);
+  for (const std::string &item : weaker) {
+    if (std::find(edits.deleted.begin(), edits.deleted.end(), item) ==
+        edits.deleted.end()) {
+      append_unique(item);
+    }
+  }
+  for (const std::string &item : edits.added) append_unique(item);
+  for (const std::string &item : edits.appended) {
+    result.erase(std::remove(result.begin(), result.end(), item), result.end());
+    result.push_back(item);
+  }
+  ApplyStringListOrder(edits.ordered, &result);
+  return result;
+}
 
 namespace {
 
@@ -302,9 +515,14 @@ Value* ValueStorage::get(uint32_t offset) {
 size_t ValueStorage::memory_usage() const {
   size_t size = safe::saturating_mul(values_.capacity(), sizeof(Value));
   for (const auto& v : values_) {
+    size = safe::saturating_add(size, v.dynamic_string_memory_usage());
     if (v.is_array()) {
-      size = safe::saturating_add(
-          size, safe::saturating_mul(v.array_size(), size_t{4}));
+      // Type size is the full array element width (including vector/quaternion
+      // components); the old fixed four-byte multiplier undercounted double
+      // and multi-component arrays. Variable-sized string arrays are charged
+      // by dynamic_string_memory_usage above.
+      size = safe::saturating_add(size, safe::saturating_mul(
+          v.array_size(), GetTypeSize(v.type_id())));
     }
   }
   return size;
@@ -312,6 +530,14 @@ size_t ValueStorage::memory_usage() const {
 
 void ValueStorage::clear() {
   values_.clear();
+}
+
+void ValueStorage::release_payloads() {
+  for (auto& v : values_) {
+    // Keep AssetPath values: post-write asset collection reads them.
+    if (v.type_id() == TypeId::AssetPath) continue;
+    v = Value();
+  }
 }
 
 // ============================================================
@@ -380,7 +606,7 @@ uint32_t TimeSampleStorage::add_dedup(PropNameId name_id, double time, Value val
   // Lazy (crate-backed) arrays: skip content dedup. find_or_store() hashes the
   // value, and Value::hash() forces an in-place materialize — decoding every
   // array-valued time sample into the heap at parse time, which is the dominant
-  // peak-RSS cost on animation-heavy scenes (e.g. Caldera). Store the lazy ref
+  // peak-RSS cost on animation-heavy scenes (e.g. Scene C). Store the lazy ref
   // as-is via the no-dedup path so it stays a cheap byte-range reference until
   // the writer decodes it transiently. (Scalar samples are never lazy, so they
   // keep deduping through the path below.)
@@ -506,6 +732,13 @@ void TimeSampleStorage::clear() {
   values_.clear();
   hash_to_offsets_.clear();
   dedup_count_ = 0;
+}
+
+void TimeSampleStorage::release_payloads() {
+  for (auto& v : values_) v = Value();
+  // The dedup index only accelerates future add()s; a released store is
+  // write-and-discard, so free it too.
+  hash_to_offsets_.clear();
 }
 
 TimeSampleStorage::Stats TimeSampleStorage::stats() const {
@@ -822,16 +1055,28 @@ void PrimSpec::finalize_properties() {
   props_.sort();
 }
 
+void PrimSpec::release_value_payloads() {
+  if (values_) values_->release_payloads();
+  if (time_samples_) time_samples_->release_payloads();
+}
+
 void PrimSpec::mark_property_time_sampled(PropNameId name_id) {
   if (PropSlot* slot = props_.find_mutable(name_id)) {
     slot->flags |= PropSlot::kFlagTimeSampled;
   }
 }
 
-void PrimSpec::add_time_sample(PropNameId name_id, double time, Value value) {
-  // Use deduplicated storage for array values (common case for animation)
+void PrimSpec::add_time_sample(PropNameId name_id, double time, Value value,
+                               bool dedup) {
+  // Use deduplicated storage for array values (common case for animation).
+  // `dedup=false`: deferred-fill value (see header), stored as-is like the
+  // is_lazy() bypass in add_dedup.
   if (!time_samples_) time_samples_ = std::make_unique<TimeSampleStorage>();
-  time_samples_->add_dedup(name_id, time, std::move(value));
+  if (dedup) {
+    time_samples_->add_dedup(name_id, time, std::move(value));
+  } else {
+    time_samples_->add(name_id, time, std::move(value));
+  }
 }
 
 const std::vector<std::pair<double, uint32_t>>* PrimSpec::time_samples(PropNameId name_id) const {
@@ -1040,13 +1285,16 @@ const std::vector<Path>* PrimSpec::relationship(const std::string& name) const {
 
 std::vector<std::string> PrimSpec::relationship_names() const {
   std::vector<std::string> names;
-  names.reserve(relationships_.size());
+  names.reserve(relationships_.size() + relationship_edits().size());
   for (const auto& [name, _] : relationships_) {
     names.push_back(name);
   }
-  // relationships_ is an unordered_map; sort for a deterministic, stable order
-  // across runs/platforms (callers and tests rely on consistent ordering).
+  // A delete-only or otherwise inert list-op may have no effective target
+  // entries in relationships_, but remains an authored relationship opinion.
+  for (const auto& [name, _] : relationship_edits()) names.push_back(name);
+  // Both maps are unordered; sort and deduplicate for stable enumeration.
   std::sort(names.begin(), names.end());
+  names.erase(std::unique(names.begin(), names.end()), names.end());
   return names;
 }
 
@@ -1271,6 +1519,67 @@ size_t PrimSpec::memory_usage() const {
   };
   add(name_.capacity());
   add(path_.str().capacity());
+  const auto add_strings = [&add](const std::vector<std::string>& strings) {
+    add(safe::saturating_mul(strings.capacity(), sizeof(std::string)));
+    for (const std::string& text : strings) add(text.capacity());
+  };
+  const auto add_pairs = [&add](
+      const std::vector<std::pair<std::string, std::string>>& pairs) {
+    add(safe::saturating_mul(pairs.capacity(),
+                             sizeof(std::pair<std::string, std::string>)));
+    for (const auto& entry : pairs) {
+      add(entry.first.capacity());
+      add(entry.second.capacity());
+    }
+  };
+  const auto add_value = [&add](const Value& value) {
+    add(value.dynamic_string_memory_usage());
+    if (value.is_array() && !value.is_lazy()) {
+      add(safe::saturating_mul(value.array_size(),
+                               GetTypeSize(value.type_id())));
+    }
+    if (!value.as_dictionary()) return;
+    std::vector<const Value*> pending{&value};
+    while (!pending.empty()) {
+      const Value* current = pending.back();
+      pending.pop_back();
+      if (current != &value && current->is_array() && !current->is_lazy()) {
+        add(safe::saturating_mul(current->array_size(),
+                                 GetTypeSize(current->type_id())));
+      }
+      if (const Dict* dict = current->as_dictionary()) {
+        for (const auto& entry : dict->entries()) pending.push_back(&entry.second);
+      }
+    }
+  };
+  const auto add_extensions = [&add, &add_value](
+      const std::vector<TypedExtensionField>& fields) {
+    add(safe::saturating_mul(fields.capacity(), sizeof(TypedExtensionField)));
+    for (const TypedExtensionField& field : fields) {
+      add(field.name.capacity());
+      add(field.unregistered_source.capacity());
+      add_value(field.value);
+    }
+  };
+  const auto add_arc_edit = [&add_strings](const ArcEdit& edit) {
+    add_strings(edit.added);
+    add_strings(edit.prepended);
+    add_strings(edit.appended);
+    add_strings(edit.deleted);
+    add_strings(edit.ordered);
+  };
+  const auto add_string_edit = [&add_strings](const StringListOpEdits& edit) {
+    add_strings(edit.explicit_items);
+    add_strings(edit.added);
+    add_strings(edit.prepended);
+    add_strings(edit.appended);
+    add_strings(edit.deleted);
+    add_strings(edit.ordered);
+  };
+  const auto add_paths = [&add](const std::vector<Path>& paths) {
+    add(safe::saturating_mul(paths.capacity(), sizeof(Path)));
+    for (const Path& path : paths) add(path.str().capacity());
+  };
 
   // Properties
   add(safe::saturating_mul(props_.slots().capacity(), sizeof(PropSlot)));
@@ -1282,30 +1591,161 @@ size_t PrimSpec::memory_usage() const {
   if (time_samples_) {
     add(time_samples_->memory_usage());
   }
-  if (cold_data_) add(sizeof(ColdData));
+  if (cold_data_) {
+    add(sizeof(ColdData));
+    for (const auto& entry : cold_data_->rel_edits) {
+      add(entry.first.capacity() + sizeof(ArcEdit) + sizeof(void*) * 2);
+      add_arc_edit(entry.second);
+    }
+    for (const auto& entry : cold_data_->connection_edits) {
+      add(sizeof(entry) + sizeof(void*) * 2);
+      add_arc_edit(entry.second);
+    }
+    for (const auto& entry : cold_data_->rel_opinion_stacks) {
+      add(entry.first.capacity() + sizeof(entry) + sizeof(void*) * 2);
+      add(safe::saturating_mul(entry.second.capacity(),
+                               sizeof(RelationshipOpinion)));
+      for (const RelationshipOpinion& opinion : entry.second) {
+        add_paths(opinion.items);
+        add_arc_edit(opinion.edit);
+      }
+    }
+    for (const auto& entry : cold_data_->connection_opinion_stacks) {
+      add(sizeof(entry) + sizeof(void*) * 2);
+      add(safe::saturating_mul(entry.second.capacity(),
+                               sizeof(RelationshipOpinion)));
+      for (const RelationshipOpinion& opinion : entry.second) {
+        add_paths(opinion.items);
+        add_arc_edit(opinion.edit);
+      }
+    }
+    for (const auto& entry : cold_data_->rel_flags)
+      add(entry.first.capacity() + sizeof(entry) + sizeof(void*) * 2);
+    for (const auto& entry : cold_data_->spline_sources)
+      add(entry.second.capacity() + sizeof(entry) + sizeof(void*) * 2);
+    for (const auto& entry : cold_data_->raw_default_sources)
+      add(entry.second.capacity() + sizeof(entry) + sizeof(void*) * 2);
+    for (const auto& entry : cold_data_->array_edits) {
+      add(sizeof(entry) + sizeof(void*) * 2);
+      add(safe::saturating_mul(entry.second.ops.capacity(),
+                               sizeof(ArrayEditOpRec)));
+      for (const ArrayEditOpRec& op : entry.second.ops) add(op.literal.capacity());
+    }
+  }
 
   // Relationships
   for (const auto& rel : relationships_) {
-    add(rel.first.capacity());
-    add(safe::saturating_mul(rel.second.capacity(), sizeof(Path)));
+    add(rel.first.capacity() + sizeof(rel) + sizeof(void*) * 2);
+    add_paths(rel.second);
+  }
+  for (const auto& connection : connections_) {
+    add(sizeof(connection) + sizeof(void*) * 2);
+    add_paths(connection.second);
+  }
+  for (const auto& entry : prop_type_names_)
+    add(sizeof(entry) + sizeof(void*) * 2 + entry.second.capacity());
+  for (const auto& entry : prop_metas_) {
+    add(sizeof(entry) + sizeof(void*) * 2);
+    if (!entry.second) continue;
+    const PropMeta& meta = *entry.second;
+    add(sizeof(PropMeta));
+    for (const std::string* text : {&meta.interpolation, &meta.colorSpace,
+         &meta.renderType, &meta.connectability, &meta.outputName,
+         &meta.bindMaterialAs, &meta.kind, &meta.displayName,
+         &meta.displayGroup, &meta.doc, &meta.comment, &meta.permission})
+      add(text->capacity());
+    add_strings(meta.allowedTokens);
+    add_value(meta.customData);
+    add_value(meta.assetInfo);
+    add_value(meta.sdrMetadata);
+    add_pairs(meta.unknownMeta);
+    add_extensions(meta.unknownFields);
   }
 
   // Children
   add(safe::saturating_mul(child_indices_.capacity(), sizeof(uint32_t)));
 
   // Metadata (inline hot fields)
-  for (const auto& s : meta_.references) add(s.capacity());
-  for (const auto& s : meta_.payloads) add(s.capacity());
-  for (const auto& s : meta_.inherits) add(s.capacity());
-  for (const auto& s : meta_.specializes) add(s.capacity());
+  add_strings(meta_.references);
+  add_strings(meta_.payloads);
+  add_strings(meta_.inherits);
+  add_strings(meta_.specializes);
   add(meta_.variantSelection.capacity());
   // Cold fields only cost anything when the ext was allocated.
   if (const PrimSpecMetaExt* ext = meta_.ext()) {
     add(sizeof(PrimSpecMetaExt));
     add(ext->doc.capacity());
     add(ext->comment.capacity());
+    add(ext->kind.capacity());
+    add(ext->displayName.capacity());
+    add(ext->permission.capacity());
     add(ext->instance_prototype.capacity());
-    for (const auto& s : ext->apiSchemas) add(s.capacity());
+    add(ext->apiSchemasQualifier.capacity());
+    add_strings(ext->apiSchemas);
+    add_strings(ext->displayGroupOrder);
+    add_strings(ext->primOrder);
+    add_strings(ext->propertyOrder);
+    add_string_edit(ext->apiSchemaEdits);
+    add_string_edit(ext->variantSetNameEdits);
+    add_string_edit(ext->clipSetEdits);
+    add_pairs(ext->variantSelections);
+    add_pairs(ext->relocates);
+    add_pairs(ext->unknownMeta);
+    add_extensions(ext->unknownFields);
+    add_value(ext->customData);
+    add_value(ext->assetInfo);
+    add_value(ext->sdrMetadata);
+    add_value(ext->clips);
+    add(safe::saturating_mul(ext->variantSets.capacity(),
+                             sizeof(VariantSetData)));
+    std::vector<const VariantSetData*> pending_sets;
+    for (const VariantSetData& set : ext->variantSets) pending_sets.push_back(&set);
+    while (!pending_sets.empty()) {
+      const VariantSetData* set = pending_sets.back();
+      pending_sets.pop_back();
+      add(set->name.capacity());
+      add(set->selected.capacity());
+      add(safe::saturating_mul(set->variants.capacity(), sizeof(VariantData)));
+      for (const VariantData& variant : set->variants) {
+        for (const std::string* text : {&variant.name, &variant.doc,
+             &variant.kind}) add(text->capacity());
+        add(safe::saturating_mul(variant.properties.capacity(),
+                                 sizeof(VariantProperty)));
+        for (const VariantProperty& property : variant.properties) {
+          add(property.name.capacity());
+          add_value(property.value);
+        }
+        for (const auto& relationship : variant.relationships) {
+          add(relationship.first.capacity() + sizeof(relationship) +
+              sizeof(void*) * 2);
+          add_paths(relationship.second);
+        }
+        for (const auto& flag : variant.relationshipFlags)
+          add(flag.first.capacity() + sizeof(flag) + sizeof(void*) * 2);
+        add_strings(variant.references);
+        add_strings(variant.payloads);
+        add_strings(variant.inherits);
+        add_strings(variant.specializes);
+        add_pairs(variant.variantSelections);
+        add_pairs(variant.unknownMeta);
+        add_extensions(variant.unknownFields);
+        add(safe::saturating_mul(variant.variantSets.capacity(),
+                                 sizeof(VariantSetData)));
+        for (const VariantSetData& nested : variant.variantSets)
+          pending_sets.push_back(&nested);
+        // Shared variant content Layers can have multiple owners; they need
+        // deduplicated layer-level accounting rather than per-option charging.
+      }
+    }
+    add(safe::saturating_mul(ext->clipShadowedProps.capacity(),
+                             sizeof(PropNameId)));
+    if (ext->arc_edits) {
+      add(sizeof(ArcListOpEdits));
+      add_arc_edit(ext->arc_edits->references);
+      add_arc_edit(ext->arc_edits->payloads);
+      add_arc_edit(ext->arc_edits->inherits);
+      add_arc_edit(ext->arc_edits->specializes);
+    }
   }
 
   return size;

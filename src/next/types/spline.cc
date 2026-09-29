@@ -82,6 +82,13 @@ struct Scanner {
     while (p < end) {
       if (*p == '#') {  // comment to end of line
         while (p < end && *p != '\n') p++;
+      } else if (*p == '/' && p + 1 < end && p[1] == '*') {
+        // Block comments count as whitespace (AOUSD splines.usda).
+        p += 2;
+        while (p + 1 < end && !(p[0] == '*' && p[1] == '/')) p++;
+        p = (p + 1 < end) ? p + 2 : end;
+      } else if (*p == '/' && p + 1 < end && p[1] == '/') {
+        while (p < end && *p != '\n') p++;
       } else if (std::isspace(static_cast<unsigned char>(*p))) {
         p++;
       } else {

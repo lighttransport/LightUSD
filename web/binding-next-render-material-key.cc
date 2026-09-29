@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-next-render.hh"
+#include "binding-next-scene.hh"
+#include "next/layer/prim-spec.hh"
+#include "next/schema/usd-shade.hh"
 namespace lightusd {
 namespace web_next {
 std::string RenderStream::normTexKey_(const std::string &path) {

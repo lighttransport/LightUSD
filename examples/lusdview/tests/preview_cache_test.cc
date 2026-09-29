@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
+// Keep fixture setup and checks active in Release builds.
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
 
-#include "next/lightusd-next.hh"
+#include "lightusd-session-cpp.hh"
 #include "preview_cache.hh"
 
 namespace fs = std::filesystem;
@@ -33,9 +38,15 @@ def Cube "Bound" {
     output << "#usda 1.0\ndef Scope \"Dependency\" {}\n";
   }
 
-  lightusd::next::Stage preview;
-  std::string warn, err;
-  assert(lightusd::next::LoadUSDA(root.string(), &preview, &warn, &err));
+  lightusd::api::Stage preview;
+  {
+    lightusd::api::DocumentSession document;
+    assert(document.create() == LIGHTUSD_OK);
+    lightusd::api::DocumentSnapshot snapshot;
+    assert(document.open_file(root.string().c_str(), &snapshot) == LIGHTUSD_OK);
+    assert(lightusd::api::DocumentSnapshotStage(snapshot, &preview) == LIGHTUSD_OK);
+    assert(preview.is_read_only());
+  }
 
   lusdview::PreviewCacheOptions options;
   options.mode = lusdview::PreviewCacheMode::Auto;
@@ -51,7 +62,36 @@ def Cube "Bound" {
   lusdview::PreviewCacheLookup hit = lusdview::LoadPreviewCache(
       options, root.string(), fingerprint);
   assert(hit.hit);
-  assert(hit.stage.GetPrimAtPath("/Bound").IsValid());
+  assert(hit.stage && hit.stage.prim("/Bound"));
+  lightusd_value_view extent{};
+  assert(lightusd_attr_get(lightusd_stage_prim_at_path(hit.stage.get(), "/Bound"),
+                            "extent", &extent) == LIGHTUSD_OK);
+  const float expected_extent[] = {-1,-1,-1,1,1,1};
+  assert(extent.nbytes == sizeof(expected_extent));
+  assert(std::memcmp(extent.data, expected_extent, sizeof(expected_extent)) == 0);
+
+  const std::string key = lusdview::PreviewCacheFingerprint(root.string(), fingerprint);
+  const fs::path cached_stage = fs::path(options.directory) / (key + ".usdc");
+  // A valid manifest must not make a corrupt or wrong-format stage a cache hit.
+  for (const char* invalid : {"PXR-USDC", "#usda 1.0\ndef Scope \"WrongFormat\" {}\n"}) {
+    {
+      std::ofstream output(cached_stage, std::ios::binary | std::ios::trunc);
+      output << invalid;
+    }
+    const auto corrupt = lusdview::LoadPreviewCache(options, root.string(), fingerprint);
+    assert(!corrupt.hit && !corrupt.stage);
+    assert(corrupt.reason.find("preview USDC invalid:") == 0);
+    assert(lusdview::StorePreviewCache(options, root.string(), fingerprint,
+                                       preview, dependencies, &reason));
+  }
+  // Previously loaded public handles keep their data after the cache is replaced.
+  assert(hit.stage.prim("/Bound"));
+  lightusd::api::Stage invalid_stage;
+  assert(!lusdview::StorePreviewCache(options, root.string(), "invalid", invalid_stage,
+                                      dependencies, &reason));
+  assert(reason.find("preview write failed:") == 0);
+  assert(!fs::exists(fs::path(options.directory) /
+      (lusdview::PreviewCacheFingerprint(root.string(), "invalid") + ".json")));
 
   lusdview::PreviewCacheLookup different = lusdview::LoadPreviewCache(
       options, root.string(), fingerprint + ";variant=high");
@@ -74,8 +114,6 @@ def Cube "Bound" {
   assert(!stale.hit);
   assert(stale.reason.find("dependency changed") != std::string::npos);
 
-  const std::string key =
-      lusdview::PreviewCacheFingerprint(root.string(), fingerprint);
   {
     std::ofstream output(fs::path(options.directory) / (key + ".json"),
                          std::ios::trunc);

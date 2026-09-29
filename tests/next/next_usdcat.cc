@@ -24,7 +24,7 @@
 #include "next/pcp/layer-registry.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
-#include "next/lightusd-next.hh"
+#include "next/load-usd.hh"
 #include "next/writer/usda-writer.hh"
 #include "next/writer/usdc-writer.hh"
 
@@ -42,25 +42,54 @@ static void emit_lines(const std::string &msgs, const char *prefix) {
   }
 }
 
+// One-shot flattening can spend seconds destroying the composed Stage after
+// its output is already closed. Keep this opt-in: _Exit skips all remaining
+// destructors and atexit handlers, so it is suitable only after a successful
+// write whose C/C++ streams have been flushed explicitly.
+[[noreturn]] static void ExitAfterSuccessfulWrite() {
+  std::cout.flush();
+  std::cerr.flush();
+  std::fflush(nullptr);
+  std::_Exit(0);
+}
+
 int main(int argc, char **argv) {
   bool flatten = false;
   // Compose-free parse->write: LoadLayerFromFile (parse only, no composition) ->
   // WriteLayer. Measures RAW parse and RAW write throughput in isolation, and is
   // an idempotent parse-fidelity oracle (rewriting its own output is byte-identical).
   bool rewrite_layer = false;
+  // USDA parse fast paths (default on; byte-identical, serial fallback).
+  bool async_arrays = true;
+  bool parallel_prims = true;
   bool openusd_compat = false;
   bool aousd_strict = false;
   // Default instance flatten = holder (the historical -f behavior). `native`
   // keeps instancing; `prototypes` = usdcat-style /Flattened_Prototype_N.
   pcp::InstanceFlattenMode inst_mode = pcp::InstanceFlattenMode::Holder;
   pcp::PrototypeNumbering proto_num = pcp::PrototypeNumbering::Deterministic;
-  // Parallel composition is OPT-IN via --compose-threads N (default 1 = serial,
-  // no threading). -1 means auto = hardware concurrency.
-  // It is byte-identical to serial; it helps small compose-bound scenes and
-  // currently regresses huge instanced ones, so it stays off by default.
-  // (Independent of the writer's LIGHTUSD_NEXT_NUM_THREADS.)
-  int compose_threads = 1;
+  // Parallel composition: -1 (or 0) = auto (hardware concurrency, clamped to
+  // kMaxExecutionThreads), N = fixed, 1 = serial. Byte-identical to serial.
+  // It prefetches arc layers, pre-warms the sources cache (LIVRPS arc
+  // resolution, instance prototypes included) and fills opinions
+  // concurrently; a net win on every measured scene (Island, Scene A, Scene C,
+  // House), so it defaults ON like parse/write. Force serial with
+  // --compose-threads 1. (Independent of the writer's
+  // LIGHTUSD_NEXT_NUM_THREADS.) A build without LIGHTUSD_NEXT_ENABLE_THREAD
+  // composes serially regardless.
+  int compose_threads = -1;
+  // USDA writer threads: 0 = auto (default), 1 = serial, N = fixed. Overrides
+  // LIGHTUSD_NEXT_NUM_THREADS for the writer only (output is byte-identical
+  // for any count). -1 = not given (fall back to the env / auto).
+  int write_threads = -1;
   bool load_payloads = true;
+  // Flatten-to-USDC: release composed property values as the writer encodes
+  // them (--no-consume-values keeps the composed stage intact).
+  bool consume_values = true;
+  // One-shot mode: skip the composed Stage teardown after a successful output
+  // write. Disabled by default because it intentionally skips destructors and
+  // atexit handlers; see ExitAfterSuccessfulWrite().
+  bool fast_exit = false;
   // --variant-fallback set=opt1,opt2  (repeatable). Stock pxr registers NO
   // fallbacks; the AOUSD supplemental corpus expectations were generated in
   // an environment with the classic standin->render fallback, so its runner
@@ -74,6 +103,10 @@ int main(int argc, char **argv) {
       flatten = true;
     } else if (std::strcmp(argv[i], "--rewrite-layer") == 0) {
       rewrite_layer = true;
+    } else if (std::strcmp(argv[i], "--no-async-arrays") == 0) {
+      async_arrays = false;
+    } else if (std::strcmp(argv[i], "--no-parallel-prims") == 0) {
+      parallel_prims = false;
     } else if (std::strcmp(argv[i], "-l") == 0) {
       flatten = false;
     } else if ((std::strcmp(argv[i], "-o") == 0 ||
@@ -110,17 +143,29 @@ int main(int argc, char **argv) {
         return 2;
       }
     } else if (std::strcmp(argv[i], "--compose-threads") == 0 && i + 1 < argc) {
-      compose_threads = std::atoi(argv[++i]);  // opt-in parallel compose (>1)
+      compose_threads = std::atoi(argv[++i]);  // -1/0 = auto, 1 = serial
       if (compose_threads == 0) {
-        compose_threads = 1;
+        compose_threads = -1;
       } else if (compose_threads < -1) {
         std::fprintf(stderr,
-                     "Invalid --compose-threads value '%d' (must be -1 or >= 1)\n",
+                     "Invalid --compose-threads value '%d' (must be -1, 0 or >= 1)\n",
                      compose_threads);
+        return 2;
+      }
+    } else if (std::strcmp(argv[i], "--write-threads") == 0 && i + 1 < argc) {
+      write_threads = std::atoi(argv[++i]);  // 0 = auto, 1 = serial
+      if (write_threads < 0) {
+        std::fprintf(stderr,
+                     "Invalid --write-threads value '%d' (must be 0 or >= 1)\n",
+                     write_threads);
         return 2;
       }
     } else if (std::strcmp(argv[i], "--compose-threads-auto") == 0) {
       compose_threads = -1;
+    } else if (std::strcmp(argv[i], "--no-consume-values") == 0) {
+      consume_values = false;
+    } else if (std::strcmp(argv[i], "--fast-exit") == 0) {
+      fast_exit = true;
     } else if (std::strcmp(argv[i], "--load-payloads") == 0) {
       load_payloads = true;
     } else if (std::strcmp(argv[i], "--defer-payloads") == 0) {
@@ -152,8 +197,12 @@ int main(int argc, char **argv) {
                          "[--instance-mode native|holder|prototypes] "
                          "[--prototype-numbering deterministic|usdcat] "
                          "[--compose-threads N] [--compose-threads-auto] "
+                         "[--write-threads N] "
                          "[--load-payloads|--defer-payloads] "
+                         "[--no-consume-values] "
+                         "[--fast-exit] "
                          "[--aousd-strict] "
+                         "[--no-async-arrays] [--no-parallel-prims] "
                          "[--require-prim /Path] "
                          "file.usd[acz]\n");
     return 2;
@@ -195,7 +244,12 @@ int main(int argc, char **argv) {
     pcp::LayerLoadOptions load_opts;
     load_opts.parse_num_threads = parse_threads;
     load_opts.usda_parse_options.strict_aousd_conformance = aousd_strict;
+    load_opts.usda_parse_options.async_arrays = async_arrays;
+    load_opts.usda_parse_options.parallel_prims = parallel_prims;
     load_opts.strict_aousd_conformance = aousd_strict;
+    // Benchmark path: flattened scenes exceed the default input cap. 0 keeps
+    // only the unconditional 16 GiB readable-file ceiling.
+    load_opts.max_memory = 0;
     auto layer = pcp::LoadLayerFromFile(filename, &warn, &err,
                                         load_opts);  // PARSE only
     const auto t_parsed = Clock::now();
@@ -212,6 +266,7 @@ int main(int argc, char **argv) {
     if (const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS")) {
       wopts.num_threads = std::atoi(nt);
     }
+    if (write_threads >= 0) wopts.num_threads = write_threads;
     std::FILE* fp = stdout;
     if (out_path) {
       fp = std::fopen(out_path, "wb");
@@ -279,11 +334,17 @@ int main(int argc, char **argv) {
     opts.strict_aousd_conformance = aousd_strict;
     if (!variant_fallbacks.empty()) opts.variant_fallbacks = variant_fallbacks;
     opts.usda_parse_options.strict_aousd_conformance = aousd_strict;
+    opts.usda_parse_options.async_arrays = async_arrays;
+    opts.usda_parse_options.parallel_prims = parallel_prims;
+    // USDA parse-thread hint for every layer composition loads (0 = auto,
+    // 1 = serial parse); same env knob as the --rewrite-layer path.
+    if (const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS")) {
+      opts.usda_parse_options.num_threads = std::atoi(nt);
+    }
     opts.instance_flatten_mode = inst_mode;  // default Holder (self-contained)
     opts.prototype_numbering = proto_num;
-    // Parallel compose (pre-warm sources_cache) is OPT-IN via --compose-threads N
-    // and byte-identical to serial. Default 1 = serial (no threading),
-    // -1 = auto hardware concurrency.
+    // Parallel compose is byte-identical to serial. Default -1 = auto
+    // (hardware concurrency); --compose-threads 1 = serial.
     opts.num_threads = compose_threads;
     opts.load_payloads = load_payloads;
     // Forward the CLI timing flag to the library (which no longer reads the env):
@@ -319,6 +380,10 @@ int main(int argc, char **argv) {
   if (flatten && out_path && IsUSDCPath(out_path)) {
     USDCWriteOptions copts;
     copts.crate_options.num_threads = 0;  // auto; LIGHTUSD_NEXT_NUM_THREADS overrides
+    copts.crate_options.enable_timing = timing;  // [next_crate_write] phases
+    // The composed stage is discarded right after this write: let the writer
+    // release each prim's values once they are encoded (byte-identical).
+    copts.crate_options.consume_values = consume_values;
     if (const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS")) {
       copts.crate_options.num_threads = std::atoi(nt);
     }
@@ -344,6 +409,7 @@ int main(int argc, char **argv) {
                      out_path, res.token_count, res.path_count, res.spec_count);
       }
     }
+    if (fast_exit) ExitAfterSuccessfulWrite();
     return 0;
   }
 
@@ -363,6 +429,7 @@ int main(int argc, char **argv) {
     if (const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS")) {
       wopts.num_threads = std::atoi(nt);
     }
+    if (write_threads >= 0) wopts.num_threads = write_threads;
     // Write through the next StreamWriter with the native C-stdio backend
     // (buffered + blocked writes). `-o <file>` targets a FILE*; otherwise stdout.
     // This is the default native sink; a WASM/WASI host would supply its own
@@ -409,5 +476,6 @@ int main(int argc, char **argv) {
       std::fprintf(stderr, "[next_usdcat] load=%.1fms\n", ms(t_loaded - t_start));
     }
   }
+  if (flatten && fast_exit) ExitAfterSuccessfulWrite();
   return 0;
 }

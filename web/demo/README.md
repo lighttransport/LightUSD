@@ -1,18 +1,20 @@
 # LightUSD Web Demos
 
-24 interactive browser demos for USD loading, MaterialX, hair/fur, skinning, animation,
+Interactive browser demos for USD loading, MaterialX, hair/fur, skinning, animation,
 physics simulation, composition, export, and more.
 
 ## Quick Start
 
 ```bash
-# Production path (no build tools needed)
+# Production build (local next WASM)
 npm install
-npx vite build
+npm run prepare:openchess
+npm run build
 npx vite preview          # or serve dist/ with any static server
 
-# Development path (requires Emscripten + CMake)
+# Development server
 npm install
+npm run prepare:openchess
 npm run dev               # builds local WASM + starts Vite dev server
 ```
 
@@ -20,13 +22,14 @@ npm run dev               # builds local WASM + starts Vite dev server
 
 | Mode | Tools |
 |------|-------|
-| **Production** (npm package) | Node.js 18+, npm |
-| **Development** (local WASM) | Node.js 18+, npm, CMake, Ninja, Emscripten (`emcmake`) |
+| **Production and development** | Node.js 18+, npm, CMake, Ninja, Emscripten (`emcmake`) |
 
 ## Development Path
 
 The dev server (`npm run dev`) builds LightUSD WASM from source using the
 local Emscripten toolchain, then serves the demo from the local source tree.
+The production build uses the same next module and keeps the deprecated
+combined module for explicit compatibility demos.
 
 ```bash
 # One-time: verify Emscripten + CMake
@@ -42,6 +45,10 @@ npm run dev
 npm run prepare:local-lightusd
 vite --mode development
 ```
+
+Large optional hair fixtures are generated separately. Run
+`npm run check:optional-assets` when validating those fixtures; they are not
+required to build the site.
 
 ### OpenChessSet MaterialX showcase
 

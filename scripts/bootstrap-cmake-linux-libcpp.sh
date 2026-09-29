@@ -11,5 +11,6 @@ mkdir ${builddir}
 cd ${builddir} && CXX=clang++-18 CC=clang-18 cmake \
   -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
+  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   ..
 

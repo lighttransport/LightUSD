@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -171,7 +171,7 @@ bool CloneMeshForPointInstance(const RenderMesh& src,
 
 }  // namespace
 
-void RenderSceneConverter::DuplicatePointInstanceMeshes(RenderScene* scene) {
+void RenderSceneConverter::Impl::DuplicatePointInstanceMeshes(RenderScene* scene) {
   if (!scene) return;
   const size_t draw_count = scene->point_instance_draws.size();
   for (size_t draw_id = 0; draw_id < draw_count; ++draw_id) {

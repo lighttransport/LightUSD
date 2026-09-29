@@ -17,6 +17,12 @@
 namespace lightusd {
 namespace tydra {
 
+// Checked decoding shared by deferred computation and legacy WASM adapters.
+bool ReadNormalAttribute(const VertexAttribute &attribute, size_t index, vec3 *out);
+bool ReadNormalForTangent(const RenderMesh &mesh, size_t index, vec3 *out);
+bool MeshAttributeCornerIndex(const RenderMesh &mesh, const VertexAttribute &attribute,
+                              size_t corner, size_t face, size_t *out);
+
 // Tangent / normal computation + quantization (render-data-mesh-tangent.cc):
 bool ComputeTangentsAndBinormals(
     const std::vector<vec3> &vertices,

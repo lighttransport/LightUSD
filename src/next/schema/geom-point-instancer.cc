@@ -4,6 +4,7 @@
 // LightUSD Next - UsdGeomPointInstancer Schema Implementation
 
 #include "geom-point-instancer.hh"
+#include "../layer/property-index.hh"
 
 #include "../types/value-view.hh"
 

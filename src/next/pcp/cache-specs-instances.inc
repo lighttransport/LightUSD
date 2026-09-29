@@ -45,7 +45,12 @@
   const std::vector<SpecRef> &SpecsFor(const Src &s) const {
     if (s.specs_.p) return *s.specs_.p;
     const std::vector<SpecRef> &r = Specs(s.stack_idx, s.site);
-    s.specs_.p = &r;
+    // A parallel-warm worker (an Impl seeded with source_seed_cache) also
+    // reads Srcs that live in the MAIN Impl's cache. A memo written there
+    // would point into this worker's spec cache, which is discarded after the
+    // merge, and would race with the other workers -- so only an Impl that
+    // owns every Src it can see memoizes.
+    if (!source_seed_cache) s.specs_.p = &r;
     return r;
   }
   std::vector<SpecRef> FindSpecs(const LayerStack &st,

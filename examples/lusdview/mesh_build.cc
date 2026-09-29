@@ -973,12 +973,12 @@ void EncodeBC3AlphaBlock(const uint8_t rgba[16][4], uint8_t* out) {
 }
 #endif  // !LUSDVIEW_WITH_TEXTOOLS
 
-#if defined(LUSDVIEW_WITH_TEXTOOLS)
 // Resolve a requested compression mode to a concrete block format the device
 // can actually sample, given its capabilities. `opaque` only affects the BCn
 // (BC1 vs BC3) auto choice; ASTC/ETC2/BC7 carry alpha regardless. Falls back
 // gracefully (e.g. Astc on a BC-only desktop GPU -> BC7) and returns None when
 // nothing is available so the caller keeps the texture uncompressed.
+#if defined(LUSDVIEW_WITH_TEXTOOLS) || defined(LUSDVIEW_TEXTURE_GPU)
 DrawCompressedFormat ChooseCompressedFormat(TextureCompressionMode mode,
                                             const TextureCompressCaps& caps,
                                             bool opaque, bool normal_map) {
@@ -1023,7 +1023,7 @@ DrawCompressedFormat ChooseCompressedFormat(TextureCompressionMode mode,
   }
   return DrawCompressedFormat::None;
 }
-#endif  // LUSDVIEW_WITH_TEXTOOLS
+#endif
 
 bool EncodeBCn(const light3d::Image& img, bool srgb,
                TextureCompressionMode mode, const TextureCompressCaps& caps,
@@ -1127,14 +1127,6 @@ void CompressTexture(DrawTextureCPU* tex, TextureCompressionMode mode,
 // can still honor `--texture-compress`. Declared in mesh_build.hh, so these three
 // live outside the anonymous namespace (external linkage).
 void ClassifyTextureUsage(DrawScene* out);  // defined below (near FinalizeDrawTextures)
-
-#if defined(LUSDVIEW_WITH_TEXTOOLS)
-namespace {
-DrawCompressedFormat ChooseCompressedFormat(TextureCompressionMode mode,
-                                            const TextureCompressCaps& caps,
-                                            bool opaque, bool normal_map);
-}  // namespace
-#endif
 
 #if defined(LUSDVIEW_TEXTURE_GPU)
 namespace {
@@ -1351,7 +1343,7 @@ void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out) {
   // full-channel format (BC7/ASTC/ETC2) instead. FinalizeDrawTextures re-runs
   // this (idempotent).
   ClassifyTextureUsage(out);
-  // Block compression dominates a texture-heavy load: ALab alab_set01 spent
+  // Block compression dominates a texture-heavy load: Scene A texture set spent
   // 362 s of a 395 s load here, encoding 507 textures (2028 MB -> 507 MB BC7)
   // one at a time. EncodeBCn writes only into its own texture's buffer and
   // keeps no shared or static state, so the encode is embarrassingly parallel.

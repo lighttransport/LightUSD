@@ -3,7 +3,8 @@
 // tools/lusdrender/lusdr_lod.cc: compose the proxy scene, walk it at prim
 // granularity to aggregate per-district world bounds + proxy vert counts (the
 // viewer's --next DrawScene merges meshes, losing district granularity, so we
-// walk the next::Stage directly), rank by view importance, promote the nearest
+// walk the composed Stage through C/POD prim handles), rank by view importance,
+// promote the nearest
 // under host/VRAM budgets, and emit a wrapper layer the viewer then loads.
 #include "lod_stream.hh"
 
@@ -12,6 +13,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -27,17 +29,12 @@
 #endif
 
 #include "hipew.h"                     // HIP VRAM query
-#include "next/lightusd-next.hh"       // next::Stage, LoadUSDComposed, Value
-#include "next_scene_loader.hh"        // FindNextCamera, NextCameraPose
-#include "tydra/next/scene-access.hh"  // ComputeLocalTransform, HasResetXformStack
-#include "value-types.hh"             // value::matrix4d
+#include "c-api/lightusd-cpp.hh"
 
 namespace lusdview {
 
 namespace {
 
-namespace tnext = lightusd::next;
-using matrix4d = lightusd::value::matrix4d;
 constexpr double kGiB = 1024.0 * 1024.0 * 1024.0;
 
 struct District {
@@ -52,28 +49,59 @@ struct District {
   bool full = false;
 };
 
-// Row-major matrix helpers matching next_scene_loader.cc (row-vector p*M; world =
-// local applied first, i.e. local * parent).
-matrix4d Mat4dFromArray(const double d[16]) {
-  matrix4d m;
-  for (int i = 0; i < 4; ++i)
-    for (int j = 0; j < 4; ++j) m.m[i][j] = d[i * 4 + j];
-  return m;
+// Row-vector convention: translation occupies the fourth matrix row.
+void XformPoint(const double m[16], float x, float y, float z, float o[3]) {
+  for (int c = 0; c < 3; ++c) {
+    o[c] = float(double(x) * m[c] + double(y) * m[4 + c] +
+                 double(z) * m[8 + c] + m[12 + c]);
+  }
 }
-matrix4d Mul4(const matrix4d& a, const matrix4d& b) {
-  matrix4d r;
-  for (int j = 0; j < 4; ++j)
-    for (int i = 0; i < 4; ++i) {
-      double v = 0.0;
-      for (int k = 0; k < 4; ++k) v += a.m[j][k] * b.m[k][i];
-      r.m[j][i] = v;
+
+bool Equals(lightusd_sv value, const char* literal) {
+  const size_t n = std::strlen(literal);
+  return value.len == n && value.data && std::memcmp(value.data, literal, n) == 0;
+}
+
+std::string Copy(lightusd_sv value) {
+  return value.data ? std::string(value.data, value.len) : std::string();
+}
+
+struct CameraPose {
+  float eye[3]{};
+  float forward[3]{};
+};
+
+bool FindCamera(const lightusd_stage* stage, lightusd_prim prim,
+                const std::string& name, double time, CameraPose* out) {
+  if (!lightusd_prim_is_valid(prim) || !lightusd_prim_is_active(prim)) return false;
+  if (Equals(lightusd_prim_type_name(prim), "Camera")) {
+    const std::string path = Copy(lightusd_prim_path(prim));
+    const std::string pname = Copy(lightusd_prim_name(prim));
+    const bool match = name.empty() || pname == name || path == name ||
+        (path.size() > name.size() &&
+         path.compare(path.size() - name.size(), name.size(), name) == 0 &&
+         path[path.size() - name.size() - 1] == '/');
+    if (match) {
+      double m[16];
+      if (lightusd_prim_world_transform(stage, prim, time, m) == LIGHTUSD_OK) {
+        for (int c = 0; c < 3; ++c) {
+          out->eye[c] = float(m[12 + c]);
+          out->forward[c] = -float(m[8 + c]);
+        }
+        const float length = std::sqrt(out->forward[0] * out->forward[0] +
+                                       out->forward[1] * out->forward[1] +
+                                       out->forward[2] * out->forward[2]);
+        if (length > 1e-12f) {
+          for (float& component : out->forward) component /= length;
+        }
+        return true;
+      }
     }
-  return r;
-}
-void XformPoint(const matrix4d& m, float x, float y, float z, float o[3]) {
-  o[0] = float(x * m.m[0][0] + y * m.m[1][0] + z * m.m[2][0] + m.m[3][0]);
-  o[1] = float(x * m.m[0][1] + y * m.m[1][1] + z * m.m[2][1] + m.m[3][1]);
-  o[2] = float(x * m.m[0][2] + y * m.m[1][2] + z * m.m[2][2] + m.m[3][2]);
+  }
+  for (size_t i = 0; i < lightusd_prim_child_count(prim); ++i) {
+    if (FindCamera(stage, lightusd_prim_child(prim, i), name, time, out)) return true;
+  }
+  return false;
 }
 
 bool DistrictOf(const std::string& path, const std::string& container,
@@ -92,27 +120,25 @@ bool DistrictOf(const std::string& path, const std::string& container,
 
 // Recursively walk the composed stage, accumulating world transforms, and add
 // each Mesh's world-AABB + vert count to its district.
-void WalkDistricts(const tnext::UsdPrim& prim, const matrix4d& parent_world,
-                   double time, const std::string& container,
+void WalkDistricts(const lightusd_stage* stage, lightusd_prim prim, double time,
+                   const std::string& container,
                    std::map<std::string, District>* districts) {
-  if (!prim.IsActive()) return;
-  double dmat[16];
-  lightusd::tydra::next::ComputeLocalTransform(prim, dmat, time);
-  const matrix4d local = Mat4dFromArray(dmat);
-  const bool reset = lightusd::tydra::next::HasResetXformStack(prim);
-  const matrix4d world = reset ? local : Mul4(local, parent_world);
-
-  if (prim.GetTypeName() == "Mesh") {
+  if (!lightusd_prim_is_valid(prim) || !lightusd_prim_is_active(prim)) return;
+  if (Equals(lightusd_prim_type_name(prim), "Mesh")) {
     std::string dpath, dname;
-    if (DistrictOf(prim.GetPath().str(), container, &dpath, &dname)) {
-      const tnext::Value* val = prim.GetPropertyValue("points");
-      const std::vector<float>* pts = val ? val->as_float_array() : nullptr;
-      if (pts && !pts->empty()) {
-        const size_t nv = pts->size() / 3;
+    if (DistrictOf(Copy(lightusd_prim_path(prim)), container, &dpath, &dname)) {
+      lightusd_value_view points{};
+      double world[16];
+      if (lightusd_attr_get(prim, "points", &points) == LIGHTUSD_OK &&
+          points.storage == LIGHTUSD_COMP_FLOAT32 && points.components == 3 &&
+          points.data && points.count && points.nbytes >= 3 * sizeof(float) &&
+          lightusd_prim_world_transform(stage, prim, time, world) == LIGHTUSD_OK) {
+        const size_t nv = std::min(points.count, points.nbytes / (3 * sizeof(float)));
+        const auto* pts = static_cast<const float*>(points.data);
         float lmin[3] = {1e30f, 1e30f, 1e30f}, lmax[3] = {-1e30f, -1e30f, -1e30f};
         for (size_t i = 0; i < nv; ++i)
           for (int k = 0; k < 3; ++k) {
-            float v = (*pts)[i * 3 + k];
+            float v = pts[i * 3 + k];
             lmin[k] = std::min(lmin[k], v);
             lmax[k] = std::max(lmax[k], v);
           }
@@ -134,9 +160,9 @@ void WalkDistricts(const tnext::UsdPrim& prim, const matrix4d& parent_world,
   }
   // Mirror lusdrender: do not descend into a PointInstancer (its prototype
   // geometry is placed separately; counting it here would misplace it).
-  if (prim.GetTypeName() == "PointInstancer") return;
-  for (const tnext::UsdPrim& child : prim.GetChildren())
-    WalkDistricts(child, world, time, container, districts);
+  if (Equals(lightusd_prim_type_name(prim), "PointInstancer")) return;
+  for (size_t i = 0; i < lightusd_prim_child_count(prim); ++i)
+    WalkDistricts(stage, lightusd_prim_child(prim, i), time, container, districts);
 }
 
 std::string AbsolutePath(const std::string& p) {
@@ -187,22 +213,33 @@ size_t HipVramBytes() {
 
 std::string PrepareLodStream(const std::string& input, const LodStreamOptions& o) {
   // 1) Compose the proxy scene (authored districtLod=proxy selections).
-  tnext::Stage stage;
-  std::string warn, err;
-  if (!tnext::LoadUSDComposed(input, &stage, &warn, &err, nullptr)) {
-    std::cerr << "[lodStream] proxy compose failed: " << err << "\n";
+  lightusd::api::Stage stage;
+  lightusd_load_options load_options;
+  lightusd::api::InitLoadOptions(&load_options);
+  load_options.preserve_native_instances = 1;
+  if (stage.load(input.c_str(), &load_options) != LIGHTUSD_OK) {
+    std::cerr << "[lodStream] proxy compose failed: " << lightusd_last_error() << "\n";
     return "";
   }
 
   // 2) Reference camera (else scene centre).
-  NextCameraPose cam;
-  const bool have_cam =
-      !o.camera.empty() && FindNextCamera(stage, o.camera, o.time, &cam);
+  CameraPose cam;
+  bool have_cam = false;
+  if (!o.camera.empty()) {
+    for (size_t i = 0; i < stage.root_prim_count(); ++i) {
+      if (FindCamera(stage.get(), lightusd_stage_root_prim(stage.get(), i),
+                     o.camera, o.time, &cam)) {
+        have_cam = true;
+        break;
+      }
+    }
+  }
 
   // 3) Walk the stage and aggregate per district.
   std::map<std::string, District> districts;
-  for (const auto& root : stage.GetRootPrims())
-    WalkDistricts(root, matrix4d::identity(), o.time, o.container, &districts);
+  for (size_t i = 0; i < stage.root_prim_count(); ++i)
+    WalkDistricts(stage.get(), lightusd_stage_root_prim(stage.get(), i),
+                  o.time, o.container, &districts);
   if (districts.empty()) {
     std::cerr << "[lodStream] no districts under '" << o.container
               << "' -- loading scene as authored.\n";
@@ -320,13 +357,20 @@ std::string PrepareLodStream(const std::string& input, const LodStreamOptions& o
 #endif
   const std::string wrapper =
       TempDir() + "/lusdview_lod_" + std::to_string(pid) + ".usda";
+  std::string up_axis = "Y";
+  lightusd::api::Value axis_value;
+  lightusd_sv axis_text{};
+  if (stage.metadata("upAxis", &axis_value) == LIGHTUSD_OK &&
+      lightusd_value_get_string(axis_value.get(), &axis_text) == LIGHTUSD_OK) {
+    up_axis = Copy(axis_text);
+  }
   std::ofstream ofs(wrapper);
   if (!ofs) {
     std::cerr << "[lodStream] cannot write wrapper " << wrapper << "\n";
     return "";
   }
   ofs << "#usda 1.0\n(\n    subLayers = [\n        @" << abs_input
-      << "@\n    ]\n    upAxis = \"" << stage.GetUpAxis() << "\"\n)\n\n";
+      << "@\n    ]\n    upAxis = \"" << up_axis << "\"\n)\n\n";
   std::string indent;
   for (const std::string& comp : prefix) {
     ofs << indent << "over \"" << comp << "\"\n" << indent << "{\n";

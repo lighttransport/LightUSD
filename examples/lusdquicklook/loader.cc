@@ -12,8 +12,9 @@
 #include <memory>
 
 #include "image_decode.hh"
+#include "byte-budget.hh"
 #include "next/reader/usdz-reader.hh"
-#include "next/lightusd-next.hh"
+#include "next/stage/stage-session.hh"
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/render-data.hh"
 
@@ -37,12 +38,22 @@ const char* LoadPhaseName(LoadPhase phase) {
 }
 
 uint64_t LoadEvent::byte_size() const {
-  uint64_t n = sizeof(LoadEvent) + message.size() + error.size();
-  n += mesh.byte_size();
-  n += materials.size() * sizeof(QlMaterial);
-  n += lights.size() * sizeof(QlLight);
-  n += cameras.size() * sizeof(QlCameraDesc);
-  for (const QlTexture& t : textures) n += t.rgba.size();
+  uint64_t n = sizeof(LoadEvent);
+  n = budget_detail::SaturatingAdd(n, static_cast<uint64_t>(message.size()));
+  n = budget_detail::SaturatingAdd(n, static_cast<uint64_t>(error.size()));
+  n = budget_detail::SaturatingAdd(n, static_cast<uint64_t>(mesh.byte_size()));
+  n = budget_detail::SaturatingAdd(
+      n, budget_detail::SaturatingMul(static_cast<uint64_t>(materials.size()),
+                                      sizeof(QlMaterial)));
+  n = budget_detail::SaturatingAdd(
+      n, budget_detail::SaturatingMul(static_cast<uint64_t>(lights.size()),
+                                      sizeof(QlLight)));
+  n = budget_detail::SaturatingAdd(
+      n, budget_detail::SaturatingMul(static_cast<uint64_t>(cameras.size()),
+                                      sizeof(QlCameraDesc)));
+  for (const QlTexture& t : textures) {
+    n = budget_detail::SaturatingAdd(n, static_cast<uint64_t>(t.rgba.size()));
+  }
   return n;
 }
 
@@ -56,9 +67,12 @@ bool LoadStream::Push(LoadEvent&& ev) {
   // Always admit at least one event, however large, or an oversized mesh would
   // deadlock against its own byte bound.
   space_.wait(lk, [&] {
-    return cancelled_.load() || q_.empty() || queued_bytes_ + sz <= max_bytes_;
+    return cancelled_.load() || q_.empty() ||
+           budget_detail::FitsQueueBudget(queued_bytes_, sz, max_bytes_);
   });
   if (cancelled_.load()) return false;
+  // When the queue is empty the byte count is zero; otherwise the predicate
+  // above has proved this addition is within max_bytes_ and cannot overflow.
   queued_bytes_ += sz;
   q_.push_back(std::move(ev));
   lk.unlock();
@@ -237,11 +251,20 @@ bool ExpandToRgba8(const tyn::TextureImage& img, std::vector<uint8_t>* out) {
   const size_t ch = img.channels ? img.channels : 4;
   if (w == 0 || h == 0) return false;
 
-  const size_t texels = w * h;
-  out->assign(texels * 4, 255);
+  size_t texels = 0;
+  size_t rgba_bytes = 0;
+  size_t samples = 0;
+  size_t float_bytes = 0;
+  if (!budget_detail::CheckedMulSize(w, h, &texels) ||
+      !budget_detail::CheckedMulSize(texels, 4, &rgba_bytes) ||
+      !budget_detail::CheckedMulSize(texels, ch, &samples) ||
+      !budget_detail::CheckedMulSize(samples, sizeof(float), &float_bytes)) {
+    return false;
+  }
+  out->assign(rgba_bytes, 255);
 
   if (img.component_type == tyn::ComponentType::UInt8) {
-    if (img.data.size() < texels * ch) return false;
+    if (img.data.size() < samples) return false;
     for (size_t i = 0; i < texels; i++) {
       const size_t src = i * ch;
       uint8_t rgba[4] = {0, 0, 0, 255};
@@ -255,8 +278,7 @@ bool ExpandToRgba8(const tyn::TextureImage& img, std::vector<uint8_t>* out) {
   }
 
   if (img.component_type == tyn::ComponentType::Float32) {
-    const size_t floats = texels * ch;
-    if (img.data.size() < floats * sizeof(float)) return false;
+    if (img.data.size() < float_bytes) return false;
     // The chunked array is byte-addressed; read floats through a memcpy so we
     // never rely on chunk alignment.
     for (size_t i = 0; i < texels; i++) {
@@ -654,7 +676,8 @@ class QlSceneSink : public tyn::SceneSink {
       img.data.clear();
 
       if (!ok) continue;
-      if (texture_bytes + tex.rgba.size() > ctrl_->max_texture_bytes) {
+      if (!budget_detail::FitsQueueBudget(
+              texture_bytes, tex.rgba.size(), ctrl_->max_texture_bytes)) {
         degraded_.textures_dropped = true;
         degraded_.detail = "texture budget reached";
         break;
@@ -733,8 +756,9 @@ class QlSceneSink : public tyn::SceneSink {
                                       : tyn::GeometryDisposition::Skip;
     }
 
-    if (geometry_bytes_ + info.estimated_resident_bytes >
-        ctrl_->max_geometry_bytes) {
+    if (!budget_detail::FitsQueueBudget(geometry_bytes_,
+                                        info.estimated_resident_bytes,
+                                        ctrl_->max_geometry_bytes)) {
       degraded_.proxy_geometry = true;
       if (degraded_.detail.empty()) degraded_.detail = "geometry budget reached";
       if (info.has_authored_extent) return tyn::GeometryDisposition::Proxy;
@@ -775,7 +799,8 @@ class QlSceneSink : public tyn::SceneSink {
     ctrl_->meshes_done.fetch_add(1);
     if (!ok) return !ctrl_->cancel.load();
 
-    geometry_bytes_ += ev.mesh.byte_size();
+    geometry_bytes_ = budget_detail::SaturatingAdd(
+        geometry_bytes_, ev.mesh.byte_size());
     triangle_count_ += ev.mesh.triangle_count();
     vertex_count_ += ev.mesh.vertex_count();
     ctrl_->triangles_done.store(triangle_count_);
@@ -1336,8 +1361,6 @@ void RunLoad(const std::string& path, const Options& opts,
   cfg.material.custom_texture_loader =
       [&](const std::string& asset_path, tyn::TextureImage* out) -> bool {
     if (ctrl->cancel.load()) return false;
-    if (texture_bytes_loaded.load() >= budget.textures) return false;
-
     std::vector<uint8_t> bytes;
     if (!tex_source.Read(asset_path, &bytes)) return false;
 
@@ -1358,9 +1381,15 @@ void RunLoad(const std::string& path, const Options& opts,
     // guess (see the LoadTexture call site in render-converter.cc).
     out->color_space = tyn::ColorSpace::Unknown;
     out->resolved_path = asset_path;
-    if (!out->data.append(img.rgba.data(), img.rgba.size())) return false;
-
-    texture_bytes_loaded.fetch_add(img.rgba.size());
+    const uint64_t image_bytes = img.rgba.size();
+    if (!budget_detail::TryReserve(texture_bytes_loaded, image_bytes,
+                                   budget.textures)) {
+      return false;
+    }
+    if (!out->data.append(img.rgba.data(), img.rgba.size())) {
+      texture_bytes_loaded.fetch_sub(image_bytes, std::memory_order_relaxed);
+      return false;
+    }
     return true;
   };
   cfg.material.assign_default_material = true;

@@ -584,6 +584,68 @@ void test_define_prim_name_validation() {
   std::cout << "  define_prim name validation: PASSED" << std::endl;
 }
 
+void test_layer_metadata_memory_usage() {
+  Layer layer;
+  const size_t empty_bytes = layer.memory_usage();
+  Dict nested;
+  nested.set("text", Value(std::string(384u * 1024u, 'm')));
+  nested.set("samples", Value::MakeDoubleArray(std::vector<double>(16384, 0.0)));
+  layer.meta().customLayerData = Value::MakeDictionary(std::move(nested));
+  layer.meta().rootPrimOrder.emplace_back(64u * 1024u, 'r');
+  TypedExtensionField extension;
+  extension.name = "largeExtension";
+  extension.value = Value(std::string(64u * 1024u, 'e'));
+  layer.meta().unknownFields.push_back(std::move(extension));
+  assert(layer.memory_usage() >= empty_bytes + 600u * 1024u &&
+         "layer metadata payloads must count toward the import/export budget");
+}
+
+void test_prim_metadata_memory_usage() {
+  Layer layer;
+  LayerBuilder builder(layer);
+  builder.begin_prim("Root", "Xform");
+  builder.add_property("weight", Value(1.0f));
+  builder.end_prim();
+  builder.finalize();
+  PrimSpec* prim = layer.prim(0);
+  assert(prim);
+  const size_t empty_bytes = layer.memory_usage();
+  Dict property_data;
+  property_data.set("samples",
+      Value::MakeDoubleArray(std::vector<double>(32768, 0.0)));
+  PropMeta& property_meta = prim->ensure_property_meta("weight");
+  property_meta.customData = Value::MakeDictionary(std::move(property_data));
+  prim->meta().doc() = std::string(256u * 1024u, 'd');
+  prim->meta().unknownMeta().emplace_back("pipelineTag",
+      std::string(64u * 1024u, 'u'));
+  assert(layer.memory_usage() >= empty_bytes + 550u * 1024u &&
+         "prim/property cold metadata must count toward the layer budget");
+  const size_t before_variant = layer.memory_usage();
+  VariantData option;
+  option.name = "longOption";
+  option.doc = std::string(96u * 1024u, 'v');
+  VariantSetData set;
+  set.name = "detail";
+  set.variants.push_back(std::move(option));
+  prim->meta().variantSets().push_back(std::move(set));
+  assert(layer.memory_usage() >= before_variant + 96u * 1024u &&
+         "variant option metadata must count toward the layer budget");
+  auto content = std::make_shared<Layer>();
+  content->meta().doc = std::string(256u * 1024u, 'c');
+  const size_t before_content = layer.memory_usage();
+  prim->meta().variantSets().front().variants.front().content = content;
+  const size_t with_content = layer.memory_usage();
+  assert(with_content >= before_content + 256u * 1024u &&
+         "retained variant content Layer must count toward the budget");
+  VariantData shared_option;
+  shared_option.name = "sharedContent";
+  shared_option.content = content;
+  prim->meta().variantSets().front().variants.push_back(
+      std::move(shared_option));
+  assert(layer.memory_usage() < with_content + 128u * 1024u &&
+         "shared variant content Layer must not be charged twice");
+}
+
 int main() {
   std::cout << "=== Layer/PrimSpec Tests ===" << std::endl;
 
@@ -598,6 +660,8 @@ int main() {
   test_finalize_does_not_allocate_cold_prim_metadata();
   test_layer_sort_rebuilds_hierarchy();
   test_metadata();
+  test_layer_metadata_memory_usage();
+  test_prim_metadata_memory_usage();
   test_interpolation();
   test_time_samples();
   test_relationships();

@@ -50,9 +50,9 @@ bool CrateReader::Impl::UnpackInt(ValueRep rep, Value& out) {
     out = Value(static_cast<int32_t>(rep.payload()));
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   int32_t v;
-  if (!reader_->read_i32(v)) return false;
+  if (!reader()->read_i32(v)) return false;
   out = Value(v);
   return true;
 }
@@ -62,9 +62,9 @@ bool CrateReader::Impl::UnpackUInt(ValueRep rep, Value& out) {
     out = Value(static_cast<uint32_t>(rep.payload()));
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   uint32_t v;
-  if (!reader_->read_u32(v)) return false;
+  if (!reader()->read_u32(v)) return false;
   out = Value(v);
   return true;
 }
@@ -90,9 +90,9 @@ bool CrateReader::Impl::UnpackInt64(ValueRep rep, Value& out) {
     out = Value(value);
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   int64_t v;
-  if (!reader_->read_i64(v)) return false;
+  if (!reader()->read_i64(v)) return false;
   out = Value(v);
   return true;
 }
@@ -102,9 +102,9 @@ bool CrateReader::Impl::UnpackUInt64(ValueRep rep, Value& out) {
     out = Value(static_cast<uint64_t>(rep.payload()));
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   uint64_t v;
-  if (!reader_->read_u64(v)) return false;
+  if (!reader()->read_u64(v)) return false;
   out = Value(v);
   return true;
 }
@@ -117,9 +117,9 @@ bool CrateReader::Impl::UnpackFloat(ValueRep rep, Value& out) {
     out = Value(v);
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   float v;
-  if (!reader_->read_f32(v)) return false;
+  if (!reader()->read_f32(v)) return false;
   out = Value(v);
   return true;
 }
@@ -134,9 +134,9 @@ bool CrateReader::Impl::UnpackDouble(ValueRep rep, Value& out) {
     out = Value(static_cast<double>(f));
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   double v;
-  if (!reader_->read_f64(v)) return false;
+  if (!reader()->read_f64(v)) return false;
   out = Value(v);
   return true;
 }
@@ -165,13 +165,13 @@ bool CrateReader::Impl::UnpackTimeSamples(ValueRep rep, Value& out) {
   }
 
   uint64_t header_offset = rep.payload();
-  if (!reader_->seek(static_cast<size_t>(header_offset))) return false;
+  if (!reader()->seek(static_cast<size_t>(header_offset))) return false;
 
   // Skip fwd1(8) + times_rep(8) + fwd2(8) to reach the sample count.
-  if (!reader_->skip(24)) return false;
+  if (!reader()->skip(24)) return false;
 
   uint64_t num_samples;
-  if (!reader_->read_u64(num_samples)) return false;
+  if (!reader()->read_u64(num_samples)) return false;
   if (num_samples > 1000000) {
     AddWarning("Too many time samples");
     return false;
@@ -200,15 +200,15 @@ bool CrateReader::Impl::DecodeTimeSamples(
     return false;
   }
   const int64_t P = static_cast<int64_t>(payload);
-  if (!reader_->seek(static_cast<size_t>(P))) return false;
+  if (!reader()->seek(static_cast<size_t>(P))) return false;
 
   int64_t off_t = 0;
-  if (!reader_->read(&off_t, 8)) return false;
+  if (!reader()->read(&off_t, 8)) return false;
   int64_t times_pos = 0;
   if (!AddSignedOffset(P, off_t, &times_pos)) return false;
-  if (times_pos < 0 || !reader_->seek(static_cast<size_t>(times_pos))) return false;
+  if (times_pos < 0 || !reader()->seek(static_cast<size_t>(times_pos))) return false;
   uint64_t times_rep_raw = 0;
-  if (!reader_->read_u64(times_rep_raw)) return false;
+  if (!reader()->read_u64(times_rep_raw)) return false;
   int64_t off_v_field = 0;
   if (!AddSignedOffset(times_pos, 8, &off_v_field)) return false;
 
@@ -221,26 +221,26 @@ bool CrateReader::Impl::DecodeTimeSamples(
   }
 
   // Values block: follow the second recursive offset.
-  if (!reader_->seek(static_cast<size_t>(off_v_field))) return false;
+  if (!reader()->seek(static_cast<size_t>(off_v_field))) return false;
   int64_t off_v = 0;
-  if (!reader_->read(&off_v, 8)) return false;
+  if (!reader()->read(&off_v, 8)) return false;
   int64_t vals_pos = 0;
   if (!AddSignedOffset(off_v_field, off_v, &vals_pos)) return false;
-  if (vals_pos < 0 || !reader_->seek(static_cast<size_t>(vals_pos))) return false;
+  if (vals_pos < 0 || !reader()->seek(static_cast<size_t>(vals_pos))) return false;
   uint64_t n = 0;
-  if (!reader_->read_u64(n)) return false;
+  if (!reader()->read_u64(n)) return false;
   if (n > options_.max_array_elements || n > 100000000ull) return false;
   // Each sample ValueRep is an 8-byte read that immediately follows; require the
   // file to actually hold n*8 bytes before allocating the vector, so a tiny file
   // cannot demand an ~800 MB allocation via an absurd count (has_elements uses
   // division, so no count*8 overflow).
-  if (n > 0 && !reader_->has_elements(static_cast<size_t>(n), 8)) return false;
+  if (n > 0 && !reader()->has_elements(static_cast<size_t>(n), 8)) return false;
 
   // Read all sample ValueReps before decoding (decoding seeks elsewhere).
   std::vector<ValueRep> sample_reps(static_cast<size_t>(n));
   for (uint64_t i = 0; i < n; ++i) {
     uint64_t raw = 0;
-    if (!reader_->read_u64(raw)) return false;
+    if (!reader()->read_u64(raw)) return false;
     sample_reps[static_cast<size_t>(i)] = ValueRep(raw);
   }
 
@@ -261,17 +261,17 @@ bool CrateReader::Impl::DecodeTimeSamples(
 bool CrateReader::Impl::DecodeSplineToText(ValueRep rep, std::string* out) {
   if (!out) return false;
   if (rep.is_inlined()) return false;  // splines are heap-stored
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
 
   uint64_t blob_size = 0;
-  if (!reader_->read_u64(blob_size)) return false;
+  if (!reader()->read_u64(blob_size)) return false;
   // The blob is bounded by the file; guard the allocation against a bogus size.
   if (blob_size > options_.max_array_elements || blob_size > 100000000ull)
     return false;
-  if (blob_size > 0 && !reader_->has_elements(static_cast<size_t>(blob_size), 1))
+  if (blob_size > 0 && !reader()->has_elements(static_cast<size_t>(blob_size), 1))
     return false;
   std::vector<uint8_t> blob(static_cast<size_t>(blob_size));
-  if (blob_size > 0 && !reader_->read(blob.data(), static_cast<size_t>(blob_size)))
+  if (blob_size > 0 && !reader()->read(blob.data(), static_cast<size_t>(blob_size)))
     return false;
 
   SplineData sd;
@@ -281,14 +281,14 @@ bool CrateReader::Impl::DecodeSplineToText(ValueRep rep, std::string* out) {
   // Per-knot customData is an unordered_map<double, VtDictionary> written
   // directly after the spline blob.
   uint64_t custom_count = 0;
-  if (!reader_->read_u64(custom_count) ||
+  if (!reader()->read_u64(custom_count) ||
       custom_count > options_.max_array_elements) {
     return false;
   }
   for (uint64_t ci = 0; ci < custom_count; ++ci) {
     double knot_time = 0.0;
     uint64_t dict_count = 0;
-    if (!reader_->read_f64(knot_time) || !reader_->read_u64(dict_count) ||
+    if (!reader()->read_f64(knot_time) || !reader()->read_u64(dict_count) ||
         !std::isfinite(knot_time) ||
         dict_count > options_.max_array_elements) {
       return false;
@@ -297,18 +297,18 @@ bool CrateReader::Impl::DecodeSplineToText(ValueRep rep, std::string* out) {
     Dict* dict = dict_value.as_dictionary();
     for (uint64_t di = 0; di < dict_count; ++di) {
       uint32_t key_index = 0;
-      if (!reader_->read_u32(key_index)) return false;
+      if (!reader()->read_u32(key_index)) return false;
       std::string key;
       if (!GetString(key_index, key)) return false;
-      const size_t value_start = reader_->position();
+      const size_t value_start = reader()->position();
       uint64_t recursive_offset_raw = 0;
-      if (!reader_->read_u64(recursive_offset_raw)) return false;
+      if (!reader()->read_u64(recursive_offset_raw)) return false;
       if (recursive_offset_raw < 8) {
         AddError("Spline customData recursive offset is too small");
         return false;
       }
       const uint64_t value_start_u64 = static_cast<uint64_t>(value_start);
-      const uint64_t file_size = static_cast<uint64_t>(reader_->size());
+      const uint64_t file_size = static_cast<uint64_t>(reader()->size());
       if (file_size < sizeof(uint64_t) ||
           recursive_offset_raw > (std::numeric_limits<uint64_t>::max)() - value_start_u64 ||
           (value_start_u64 + recursive_offset_raw) > (file_size - sizeof(uint64_t))) {
@@ -316,10 +316,10 @@ bool CrateReader::Impl::DecodeSplineToText(ValueRep rep, std::string* out) {
         return false;
       }
       const size_t rep_position = static_cast<size_t>(value_start_u64 + recursive_offset_raw);
-      if (!reader_->seek(rep_position)) return false;
+      if (!reader()->seek(rep_position)) return false;
       uint64_t raw = 0;
-      if (!reader_->read_u64(raw)) return false;
-      const size_t next_entry = reader_->position();
+      if (!reader()->read_u64(raw)) return false;
+      const size_t next_entry = reader()->position();
       ValueRep value_rep(raw);
       Value value;
       if (value_rep.type_id() == CrateTypeId::Dictionary) {
@@ -329,7 +329,7 @@ bool CrateReader::Impl::DecodeSplineToText(ValueRep rep, std::string* out) {
         return false;
       }
       dict->set(std::move(key), std::move(value));
-      if (!reader_->seek(next_entry)) return false;
+      if (!reader()->seek(next_entry)) return false;
     }
     for (SplineKnot& knot : sd.knots) {
       if (knot.time == knot_time) {
@@ -373,9 +373,9 @@ bool CrateReader::Impl::UnpackVec2f(ValueRep rep, Value& out) {
     out = Value::MakeFloat2(float(b[0]), float(b[1]));
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   float data[2];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeFloat2(data[0], data[1]);
   return true;
 }
@@ -392,9 +392,9 @@ bool CrateReader::Impl::UnpackVec3f(ValueRep rep, Value& out) {
     out = Value::MakeFloat3(float(b[0]), float(b[1]), float(b[2]));
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   float data[3];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeFloat3(data[0], data[1], data[2]);
   return true;
 }
@@ -410,9 +410,9 @@ bool CrateReader::Impl::UnpackVec4f(ValueRep rep, Value& out) {
     out = Value::MakeFloat4(float(b[0]), float(b[1]), float(b[2]), float(b[3]));
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   float data[4];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeFloat4(data[0], data[1], data[2], data[3]);
   return true;
 }
@@ -427,9 +427,9 @@ bool CrateReader::Impl::UnpackVec2d(ValueRep rep, Value& out) {
     out = Value::MakeDouble2(double(b[0]), double(b[1]));
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   double data[2];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeDouble2(data[0], data[1]);
   return true;
 }
@@ -444,9 +444,9 @@ bool CrateReader::Impl::UnpackVec3d(ValueRep rep, Value& out) {
     out = Value::MakeDouble3(double(b[0]), double(b[1]), double(b[2]));
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   double data[3];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeDouble3(data[0], data[1], data[2]);
   return true;
 }
@@ -461,9 +461,9 @@ bool CrateReader::Impl::UnpackVec4d(ValueRep rep, Value& out) {
     out = Value::MakeDouble4(double(b[0]), double(b[1]), double(b[2]), double(b[3]));
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   double data[4];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeDouble4(data[0], data[1], data[2], data[3]);
   return true;
 }
@@ -479,9 +479,9 @@ bool CrateReader::Impl::UnpackQuatf(ValueRep rep, Value& out) {
     // garbage payload bits.
     return false;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   float data[4];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeQuatf(data[3], data[0], data[1], data[2]);
   return true;
 }
@@ -492,9 +492,9 @@ bool CrateReader::Impl::UnpackQuatd(ValueRep rep, Value& out) {
     // fabricating a value.
     return false;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   double data[4];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeQuatd(data[3], data[0], data[1], data[2]);
   return true;
 }
@@ -509,9 +509,9 @@ bool CrateReader::Impl::UnpackMatrix3d(ValueRep rep, Value& out) {
     double m[9] = {0}; m[0]=b[0]; m[4]=b[1]; m[8]=b[2]; out = Value::MakeMatrix3d(m);
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   double data[9];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeMatrix3d(data);
   return true;
 }
@@ -526,9 +526,9 @@ bool CrateReader::Impl::UnpackMatrix4d(ValueRep rep, Value& out) {
     double m[16] = {0}; m[0]=b[0]; m[5]=b[1]; m[10]=b[2]; m[15]=b[3]; out = Value::MakeMatrix4d(m);
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   double data[16];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeMatrix4d(data);
   return true;
 }
@@ -548,9 +548,9 @@ bool CrateReader::Impl::UnpackMatrix2d(ValueRep rep, Value& out) {
     out = Value::MakeMatrix2d(m);
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   double data[4];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeMatrix2d(data);
   return true;
 }
@@ -591,9 +591,9 @@ bool CrateReader::Impl::UnpackVec2i(ValueRep rep, Value& out) {
     out = Value::MakeInt2(int32_t(b[0]), int32_t(b[1]));
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   int32_t data[2];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeInt2(data[0], data[1]);
   return true;
 }
@@ -608,9 +608,9 @@ bool CrateReader::Impl::UnpackVec3i(ValueRep rep, Value& out) {
     out = Value::MakeInt3(int32_t(b[0]), int32_t(b[1]), int32_t(b[2]));
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   int32_t data[3];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeInt3(data[0], data[1], data[2]);
   return true;
 }
@@ -625,9 +625,9 @@ bool CrateReader::Impl::UnpackVec4i(ValueRep rep, Value& out) {
     out = Value::MakeInt4(int32_t(b[0]), int32_t(b[1]), int32_t(b[2]), int32_t(b[3]));
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   int32_t data[4];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeInt4(data[0], data[1], data[2], data[3]);
   return true;
 }
@@ -644,9 +644,9 @@ bool CrateReader::Impl::UnpackHalf(ValueRep rep, Value& out) {
   if (rep.is_inlined()) {
     h = static_cast<uint16_t>(rep.payload() & 0xFFFF);
   } else {
-    if (!SeekToPayload(reader_.get(), rep)) return false;
+    if (!SeekToPayload(reader(), rep)) return false;
     uint8_t hb[2];
-    if (!reader_->read(hb, 2)) return false;
+    if (!reader()->read(hb, 2)) return false;
     h = static_cast<uint16_t>(hb[0]) | (static_cast<uint16_t>(hb[1]) << 8);
   }
   out = Value::MakeFromRaw(TypeId::Half, &h);
@@ -661,8 +661,8 @@ bool CrateReader::Impl::UnpackVec2h(ValueRep rep, Value& out) {
     raw[0] = static_cast<uint16_t>(p & 0xFFFF);
     raw[1] = static_cast<uint16_t>((p >> 16) & 0xFFFF);
   } else {
-    if (!SeekToPayload(reader_.get(), rep)) return false;
-    if (!reader_->read(raw, sizeof(raw))) return false;
+    if (!SeekToPayload(reader(), rep)) return false;
+    if (!reader()->read(raw, sizeof(raw))) return false;
   }
   out = Value::MakeFromRaw(TypeId::Half2, raw);
   return true;
@@ -684,8 +684,8 @@ bool CrateReader::Impl::UnpackVec3h(ValueRep rep, Value& out) {
     return true;
   }
   {
-    if (!SeekToPayload(reader_.get(), rep)) return false;
-    if (!reader_->read(raw, sizeof(raw))) return false;
+    if (!SeekToPayload(reader(), rep)) return false;
+    if (!reader()->read(raw, sizeof(raw))) return false;
   }
   out = Value::MakeFromRaw(TypeId::Half3, raw);
   return true;
@@ -703,9 +703,9 @@ bool CrateReader::Impl::UnpackVec4h(ValueRep rep, Value& out) {
     out = Value::MakeFromRaw(TypeId::Half4, half_bits);
     return true;
   }
-  if (!SeekToPayload(reader_.get(), rep)) return false;
+  if (!SeekToPayload(reader(), rep)) return false;
   uint16_t raw[4];
-  if (!reader_->read(raw, sizeof(raw))) return false;
+  if (!reader()->read(raw, sizeof(raw))) return false;
   out = Value::MakeFromRaw(TypeId::Half4, raw);
   return true;
 }
@@ -720,8 +720,8 @@ bool CrateReader::Impl::UnpackQuath(ValueRep rep, Value& out) {
     return false;
   }
   {
-    if (!SeekToPayload(reader_.get(), rep)) return false;
-    if (!reader_->read(raw, sizeof(raw))) return false;
+    if (!SeekToPayload(reader(), rep)) return false;
+    if (!reader()->read(raw, sizeof(raw))) return false;
   }
   const uint16_t wxyz[4] = {raw[3], raw[0], raw[1], raw[2]};
   out = Value::MakeFromRaw(TypeId::Quath, wxyz);

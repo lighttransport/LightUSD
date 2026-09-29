@@ -94,6 +94,7 @@ public:
     has_current_ = false;  // invalidate cached token
     error_.clear();
     fatal_ = false;
+    position_reset_ = true;
     // line_/column_ will be recomputed by the next peek/next scan.  For a
     // short metadata string (typical caller) the cost is negligible.
     line_ = 1;
@@ -105,6 +106,12 @@ public:
 
   /// Get current token and advance
   Token next();
+
+  /// Advance past the current token without returning it. Equivalent to
+  /// calling next() and discarding the result, minus the Token (and value
+  /// string) copy — use for the peek-then-discard pattern. (next() itself must
+  /// keep copying: callers hold peek() references across next().)
+  void consume();
 
   /// Check if at end of input
   bool at_end() const { return pos_ >= length_; }
@@ -124,9 +131,86 @@ public:
   /// array contains ONLY "plain" bytes (no comment `#`, string/asset quote, or
   /// nested `[` ) — i.e. all commas/parens are pure structural separators, which
   /// lets a numeric array be safely split at separator boundaries for parallel
-  /// parsing.
+  /// parsing. When `out_commas` is non-null it receives the number of commas
+  /// seen in the SIMD-scanned (plain) bytes; trustworthy ONLY when the array is
+  /// simple, where it predicts the scalar count (scalars = commas + 1, or
+  /// commas with a trailing comma) so the parser can pre-size its output.
   bool capture_bracketed_literal(const char** out_data, size_t* out_len,
-                                 bool* out_simple = nullptr);
+                                 bool* out_simple = nullptr,
+                                 size_t* out_commas = nullptr);
+
+  /// Capture and consume one complete prim block
+  ///   def|over|class [Type] "name" [(meta)] { ...body... }
+  /// starting at the current (peeked) specifier token, without tokenizing its
+  /// contents (SIMD brace/paren matching; strings/assets/comments skipped). On
+  /// success the whole block is consumed and the returned span (a slice of the
+  /// input, from the specifier through the closing '}') can be re-parsed
+  /// independently — the basis of the parallel prim-subtree parse.
+  /// `out_line`/`out_column` receive the source location of the specifier so
+  /// a sub-parser reports file-absolute line numbers.
+  ///
+  /// If more than `max_bytes` would be scanned, the lexer state is fully
+  /// restored and false is returned with *out_too_big = true (the caller
+  /// parses the prim inline and its CHILDREN get their own capture attempts).
+  /// Blocks smaller than `min_bytes`, blocks containing a C-style block
+  /// comment, and malformed (unterminated) blocks are restored likewise
+  /// (*out_too_big = false), leaving them to the inline parser. The capture
+  /// is only a boundary guess: whoever re-parses the span must verify it
+  /// parses cleanly as whole prim blocks.
+  bool capture_prim_block(size_t min_bytes, size_t max_bytes,
+                          const char** out_block, size_t* out_len,
+                          size_t* out_line, size_t* out_column,
+                          bool* out_too_big);
+
+  /// Override the 1-based source location the lexer reports for the FIRST
+  /// input byte. Used by sub-parsers running on a slice of a larger file so
+  /// their diagnostics carry file-absolute line numbers.
+  void set_source_location(size_t line, size_t column) {
+    line_ = line;
+    column_ = column;
+  }
+
+  /// Complete scanning state (position, location, peeked token, error state)
+  /// for an exact rewind by restore_state(). Unlike set_position(), a
+  /// restore keeps line numbering intact.
+  struct SavedState {
+    size_t pos = 0;
+    size_t line = 1;
+    size_t column = 1;
+    Token current;
+    bool has_current = false;
+    std::string error;
+    bool fatal = false;
+    size_t token_start = 0;
+  };
+  SavedState save_state() const {
+    SavedState s;
+    s.pos = pos_;
+    s.line = line_;
+    s.column = column_;
+    s.current = current_;
+    s.has_current = has_current_;
+    s.error = error_;
+    s.fatal = fatal_;
+    s.token_start = token_start_;
+    return s;
+  }
+  void restore_state(const SavedState& s) {
+    pos_ = s.pos;
+    line_ = s.line;
+    column_ = s.column;
+    current_ = s.current;
+    has_current_ = s.has_current;
+    error_ = s.error;
+    fatal_ = s.fatal;
+    token_start_ = s.token_start;
+  }
+
+  /// True once set_position() has rewound the lexer (which also resets the
+  /// line counter). The parallel prim parse treats such a sub-parse as
+  /// unsafe to merge (its later line numbers would differ from a serial
+  /// parse of the whole file) and falls back to the serial parser.
+  bool position_reset() const { return position_reset_; }
 
   /// Get error message if in error state
   const std::string& error() const { return error_; }
@@ -176,11 +260,34 @@ private:
   bool has_current_ = false;
   std::string error_;
   bool fatal_ = false;
+  bool position_reset_ = false;
   size_t token_start_ = 0;
 
-  void advance();
-  char current_char() const;
-  char peek_char(size_t offset = 1) const;
+  // Per-byte primitives, inline: they sit in every scanning loop.
+  void advance() {
+    if (pos_ < length_) {
+      if (data_[pos_] == '\n') {
+        line_++;
+        column_ = 1;
+      } else {
+        column_++;
+      }
+      pos_++;
+    }
+  }
+  // Skip a quoted string / asset literal starting at the current opening
+  // delimiter (raw byte skipping, no token production; same termination rules
+  // as capture_bracketed_literal). Used by capture_prim_block.
+  void skip_quoted_raw();
+  void skip_asset_raw();
+  char current_char() const {
+    return (pos_ < length_) ? data_[pos_] : '\0';
+  }
+  char peek_char(size_t offset = 1) const {
+    if (offset > static_cast<size_t>(-1) - pos_) return '\0';
+    const size_t idx = pos_ + offset;
+    return (idx < length_) ? data_[idx] : '\0';
+  }
   void skip_whitespace();
   void skip_comment();
 
@@ -192,7 +299,7 @@ private:
   Token scan_asset_ref();
 
   Token make_token(TokenType type, size_t start_line, size_t start_col);
-  Token make_token(TokenType type, const std::string& value, size_t start_line, size_t start_col);
+  Token make_token(TokenType type, std::string value, size_t start_line, size_t start_col);
 };
 
 /// Get string name for token type (for debugging)

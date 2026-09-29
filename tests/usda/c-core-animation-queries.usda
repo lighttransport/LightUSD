@@ -1,0 +1,19 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    timeCodesPerSecond = 24
+)
+def Xform "World" (displayName = "動き") {
+    double3 xformOp:translate.timeSamples = {0: (0, 1, 2), 24: (3, 4, 5)}
+    float3 xformOp:rotateXYZ.timeSamples = {0: (0, 0, 0), 24: (30, 45, 60)}
+    float3 xformOp:scale.timeSamples = {0: (1, 1, 1), 24: (2, 3, 4)}
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+    custom float gain.timeSamples = {0: 0.25, 24: 0.75}
+    custom float2 offset.timeSamples = {0: (1, 2), 24: (3, 4)}
+    custom float3 velocity.timeSamples = {0: (1, 2, 3), 24: (4, 5, 6)}
+    custom float4 tint.timeSamples = {0: (1, 0, 0, 1), 24: (0, 1, 0, 0.5)}
+    def Xform "Child" {
+        double3 xformOp:translate.timeSamples = {0: (1, 0, 0), 24: (2, 0, 0)}
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}

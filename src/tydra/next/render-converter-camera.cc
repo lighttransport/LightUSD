@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 // Tydra Next - camera conversion
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
+#include "../../next/layer/prim-spec.hh"
 #include "next/schema/usd-geom-camera.hh"
 #include <cstring>
 #include <string>
@@ -36,7 +37,7 @@ bool GetToken(const UsdPrim& prim, const char* name, std::string* out) {
 
 }  // namespace
 
-bool RenderSceneConverter::ConvertCamera(const Stage& stage,
+bool RenderSceneConverter::Impl::ConvertCamera(const Stage& stage,
                                          const UsdPrim& prim,
                                          RenderCamera* out) {
   if (!out || !::lightusd::tydra::next::IsCamera(prim)) {

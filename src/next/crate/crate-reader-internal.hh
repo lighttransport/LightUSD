@@ -14,7 +14,11 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include <atomic>
+#endif
 
 namespace lightusd {
 namespace next {
@@ -52,6 +56,10 @@ class TokenPool {
     const Span& s = spans_[i];
     return std::string(blob_.data() + s.off, s.len);
   }
+  std::string_view view(size_t i) const {
+    const Span& s = spans_[i];
+    return std::string_view(blob_.data() + s.off, s.len);
+  }
   std::vector<std::string> to_vector() const {
     std::vector<std::string> out;
     out.reserve(spans_.size());
@@ -68,6 +76,59 @@ class TokenPool {
   std::vector<Span> spans_;
 };
 
+// Arena storage for the crate PATHS table (same idea as TokenPool): one blob
+// plus {off,len} spans, so reconstructing millions of path strings does not
+// cost one std::string allocation (and later one free) each.
+//
+// Two fill modes:
+//   - serial:   resize(n) then set(i, sv). set() appends to the blob, so blob
+//     growth may REALLOCATE -- views returned by view() before a later set()
+//     are invalidated.
+//   - parallel: resize(n), resize_blob(total) ONCE, then tasks write raw bytes
+//     through blob_at(off) into disjoint windows and record spans with
+//     place(). The blob never grows after resize_blob(), so views are stable.
+class PathPool {
+ public:
+  void clear() {
+    blob_.clear();
+    spans_.clear();
+  }
+  // (Re)size the span table; every slot becomes the empty path. Also drops
+  // previously appended blob bytes.
+  void resize(size_t n) {
+    blob_.clear();
+    spans_.assign(n, Span{0, 0});
+  }
+  size_t size() const { return spans_.size(); }
+  std::string_view view(size_t i) const {
+    const Span& s = spans_[i];
+    return std::string_view(blob_.data() + s.off, s.len);
+  }
+  std::string str(size_t i) const { return std::string(view(i)); }
+  bool empty_at(size_t i) const { return spans_[i].len == 0; }
+  void set(size_t i, std::string_view sv) {
+    spans_[i] = Span{static_cast<uint64_t>(blob_.size()), sv.size()};
+    blob_.append(sv.data(), sv.size());
+  }
+  void resize_blob(size_t total_bytes) { blob_.resize(total_bytes); }
+  void place(size_t i, uint64_t off, size_t len) { spans_[i] = Span{off, len}; }
+  char* blob_at(uint64_t off) { return &blob_[0] + off; }
+  std::vector<std::string> to_vector() const {
+    std::vector<std::string> out;
+    out.reserve(spans_.size());
+    for (size_t i = 0; i < spans_.size(); ++i) out.emplace_back(view(i));
+    return out;
+  }
+
+ private:
+  struct Span {
+    uint64_t off;
+    size_t len;
+  };
+  std::string blob_;
+  std::vector<Span> spans_;
+};
+
 class CrateReader::Impl {
  public:
   explicit Impl(const CrateReadOptions& options) : options_(options) {}
@@ -77,7 +138,8 @@ class CrateReader::Impl {
   CrateReadResult ReadFile(const char* filename);
 
   std::vector<std::string> tokens() const { return tokens_.to_vector(); }
-  const std::vector<std::string>& paths() const { return paths_; }
+  // Materialized copy (diagnostics only; paths are stored pooled).
+  std::vector<std::string> paths() const { return paths_.to_vector(); }
   const std::vector<CrateField>& fields() const { return fields_; }
   const std::vector<CrateSpec>& specs() const { return specs_; }
   const std::vector<uint32_t>& fieldset_indices() const {
@@ -87,6 +149,59 @@ class CrateReader::Impl {
  private:
   CrateReadOptions options_;
   std::unique_ptr<StreamReader> reader_;
+
+  // Per-task decode context for the parallel stage build. Every decode path
+  // reaches the byte stream through reader() and reports diagnostics through
+  // AddError/AddWarning; a worker task installs its OWN StreamReader cursor (a
+  // cheap {data,size,pos} copy over the same immutable buffer -- UnpackValue
+  // seeks, so one shared cursor cannot be used concurrently) plus private
+  // diagnostic lists, via ScopedThreadDecodeCtx. The lists are merged back in
+  // task (= spec/prim range) order, so errors and warnings keep exactly the
+  // serial order. No context installed = the members are used directly
+  // (identical single-threaded behavior).
+  struct ThreadDecodeCtx {
+    const Impl* owner;
+    StreamReader reader;
+    std::vector<CrateError> errors;
+    std::vector<std::string> warnings;
+    ThreadDecodeCtx(const Impl* o, const StreamReader& r)
+        : owner(o), reader(r) {}
+  };
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  static thread_local ThreadDecodeCtx* tls_decode_ctx_;
+  class ScopedThreadDecodeCtx {
+   public:
+    explicit ScopedThreadDecodeCtx(ThreadDecodeCtx* ctx)
+        : prev_(tls_decode_ctx_) {
+      tls_decode_ctx_ = ctx;
+    }
+    ~ScopedThreadDecodeCtx() { tls_decode_ctx_ = prev_; }
+    ScopedThreadDecodeCtx(const ScopedThreadDecodeCtx&) = delete;
+    ScopedThreadDecodeCtx& operator=(const ScopedThreadDecodeCtx&) = delete;
+
+   private:
+    ThreadDecodeCtx* prev_;
+  };
+  ThreadDecodeCtx* decode_ctx() const {
+    ThreadDecodeCtx* ctx = tls_decode_ctx_;
+    return (ctx && ctx->owner == this) ? ctx : nullptr;
+  }
+#else
+  ThreadDecodeCtx* decode_ctx() const { return nullptr; }
+#endif
+  StreamReader* reader() {
+    if (ThreadDecodeCtx* ctx = decode_ctx()) return &ctx->reader;
+    return reader_.get();
+  }
+  const StreamReader* reader() const {
+    if (const ThreadDecodeCtx* ctx = decode_ctx()) return &ctx->reader;
+    return reader_.get();
+  }
+  // Append a finished task context's diagnostics to the result (main thread,
+  // in task order).
+  void MergeDecodeCtx(ThreadDecodeCtx& ctx);
+  // Worker count for the parallel stage build (1 = serial).
+  int ResolveBuildThreads() const;
   std::shared_ptr<CrateDataSource> source_;
   CrateReadResult result_;
 
@@ -97,7 +212,11 @@ class CrateReader::Impl {
   std::vector<CrateField> fields_;
   std::vector<uint32_t> fieldset_indices_;
   std::vector<CrateSpec> specs_;
-  std::vector<std::string> paths_;
+  PathPool paths_;
+  // PATHS slot of each path's parent in the path tree (UINT32_MAX for roots,
+  // unencoded slots and depth-capped subtrees). Lets the stage build resolve
+  // a property spec's owning prim without hashing its path string.
+  std::vector<uint32_t> path_parent_;
 
   CrateReadResult ReadFromString(std::string&& bytes);
   CrateReadResult ParseFromSource();
@@ -171,7 +290,12 @@ class CrateReader::Impl {
   // Running total of bytes admitted through CheckByteAllocation, checked
   // against AllocationBudget(). The per-allocation caps alone let N separate
   // allocations each just under the cap sum without bound.
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  // Atomic: parallel stage-build tasks charge decode allocations concurrently.
+  std::atomic<uint64_t> alloc_total_{0};
+#else
   uint64_t alloc_total_ = 0;
+#endif
   static constexpr uint64_t kU64MaxBytes = ~uint64_t(0);
   uint64_t AllocationBudget() const;
 

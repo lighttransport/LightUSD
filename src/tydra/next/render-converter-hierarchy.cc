@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
 #include "next/schema/usd-lux.hh"
 #include <string>
 namespace lightusd { namespace tydra { namespace next {
@@ -18,7 +18,7 @@ bool LocalVisibility(const UsdPrim& prim) {
 }
 }  // namespace
 
-void RenderSceneConverter::BuildNodeHierarchy(const RenderExtractResult& extracted,
+void RenderSceneConverter::Impl::BuildNodeHierarchy(const RenderExtractResult& extracted,
                                               RenderScene* scene) {
   const size_t record_count = extracted.records.size();
   scene->nodes.reserve(record_count);
@@ -30,6 +30,9 @@ void RenderSceneConverter::BuildNodeHierarchy(const RenderExtractResult& extract
     SceneNode node;
     node.name = prim.GetName();
     node.prim_path = rec.path;
+    node.has_reset_xform = rec.has_reset_xform;
+    node.is_instance = rec.kind == RenderPrimKind::NativeInstance;
+    node.prototype_path = rec.native_prototype;
 
     // Determine node type
     const std::string& type = rec.type_name;

@@ -298,7 +298,9 @@ function initControls() {
 
 async function initLoader() {
     updateStatus('Initializing LightUSD WASM...');
-    loaderState.loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
+    // Still on the legacy product: this demo drives LightUSDLoaderNative and
+    // converts legacy material JSON for WebGPU. Pinned while next is default.
+    loaderState.loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512, backend: 'legacy' });
     await loaderState.loader.init({ useMemory64: false });
     updateStatus('LightUSD initialized');
 }

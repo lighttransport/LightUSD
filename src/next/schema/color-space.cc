@@ -2,6 +2,7 @@
 // Copyright 2026-Present Light Transport Entertainment Inc.
 
 #include "color-space.hh"
+#include "../layer/prim-spec.hh"
 
 #include <cmath>
 #include <vector>

@@ -1,0 +1,16 @@
+[
+  {
+    "legacyMethod": "getMeshCopy",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getMeshCopy",
+    "ownership": "owned JavaScript typed arrays copied through bounded C buffers",
+    "parityStatus": "known_behavior_gap"
+  },
+  {
+    "legacyMethod": "getMeshPtr",
+    "nextSurface": "RenderStream",
+    "nextEquivalent": "getMeshGeometryView",
+    "ownership": "borrowed WASM heap offsets; valid only while the RenderStream retains the scene",
+    "parityStatus": "known_behavior_gap"
+  }
+]

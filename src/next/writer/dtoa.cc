@@ -7,6 +7,14 @@
 // hardcoded to OpenUSD/usdcat notation. Only `jkj::dragonbox::to_decimal` is
 // used (header-only in dragonbox.h); the digit layout / exponent formatting is
 // ours, mirroring pxr_double_conversion ToShortest/ToShortestSingle.
+//
+// Hot path: a vendored zmij (src/external/zmij) `write_usd_fast` renders the
+// common fixed-notation window directly (SSE4.1/NEON shuffle when available,
+// portable scalar code otherwise, e.g. WASM); everything else (special values,
+// subnormals, scientific / out-of-window exponents) falls back to the dragonbox
+// renderer below. The two are byte-identical for every input (see
+// tests/next/test_dtoa.cc). Define LIGHTUSD_NEXT_NO_ZMIJ_DTOA to build the
+// dragonbox-only formatter.
 
 #include "dtoa.hh"
 #include "../crate/crate-format.hh"
@@ -15,8 +23,14 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include <mutex>
+#endif
 
 #include "../../external/dragonbox/dragonbox.h"
+#if !defined(LIGHTUSD_NEXT_NO_ZMIJ_DTOA)
+#include "../../external/zmij/zmij.h"
+#endif
 
 // GCC's optimizer mis-analyses the inlined two-digit writes below and reports a
 // bogus out-of-bounds (offset ~2^32 into a 32-byte buffer). The buffer is always
@@ -206,7 +220,8 @@ char* dtoa_impl_t(const Float f, char* buf, int max_digits) {
   return format_decimal(buf, significand, static_cast<uint32_t>(significand_size));
 }
 
-char* dtoa_impl(const double f, char* buf) {
+// Dragonbox-only renderer (the reference; also the fallback of dtoa_impl).
+char* dtoa_ref_impl(const double f, char* buf) {
   uint64_t bits;
   std::memcpy(&bits, &f, sizeof(double));
   if (bits == 0x3FF0000000000000ULL) { *buf++ = '1'; return buf; }
@@ -303,7 +318,7 @@ char* dtoa_g_impl(double f, char* buf, int precision) {
   return format_decimal(buf, significand, static_cast<uint32_t>(significand_size));
 }
 
-char* dtoa_impl(const float f, char* buf) {
+char* dtoa_ref_impl(const float f, char* buf) {
   uint32_t bits;
   std::memcpy(&bits, &f, sizeof(float));
   if (bits == 0x3F800000U) { *buf++ = '1'; return buf; }
@@ -311,22 +326,72 @@ char* dtoa_impl(const float f, char* buf) {
   return dtoa_impl_t(f, buf, /*max_digits=*/9);
 }
 
+// Fast path: zmij's fixed-notation block emits usdcat notation directly for the
+// common leading-exponent window (~all authored coords/normals/uvs); it returns
+// nullptr for special / subnormal / scientific / out-of-window values, which go
+// to the dragonbox renderer. REQUIRES buf capacity >= kDtoaBufSize.
+char* dtoa_impl(const double f, char* buf) {
+  uint64_t bits;
+  std::memcpy(&bits, &f, sizeof(bits));
+  if ((bits & 0x7FFFFFFFFFFFFFFFULL) == 0) {
+    if (bits >> 63) *buf++ = '-';
+    *buf++ = '0';
+    return buf;
+  }
+  if (bits == 0x3FF0000000000000ULL) {
+    *buf++ = '1';
+    return buf;
+  }
+  if (bits == 0xBFF0000000000000ULL) {
+    *buf++ = '-';
+    *buf++ = '1';
+    return buf;
+  }
+#if !defined(LIGHTUSD_NEXT_NO_ZMIJ_DTOA)
+  if (char* e = zmij::write_usd_fast(buf, f)) return e;
+#endif
+  return dtoa_ref_impl(f, buf);
+}
+
+char* dtoa_impl(const float f, char* buf) {
+  uint32_t bits;
+  std::memcpy(&bits, &f, sizeof(bits));
+  if ((bits & 0x7FFFFFFFU) == 0) {
+    if (bits >> 31) *buf++ = '-';
+    *buf++ = '0';
+    return buf;
+  }
+  if (bits == 0x3F800000U) {
+    *buf++ = '1';
+    return buf;
+  }
+  if (bits == 0xBF800000U) {
+    *buf++ = '-';
+    *buf++ = '1';
+    return buf;
+  }
+#if !defined(LIGHTUSD_NEXT_NO_ZMIJ_DTOA)
+  if (char* e = zmij::write_usd_fast(buf, f)) return e;
+#endif
+  return dtoa_ref_impl(f, buf);
+}
+
 }  // namespace
 
 std::string dtos(float v) {
-  char buffer[24];
+  char buffer[kDtoaBufSize];
   char* end = dtoa_impl(v, buffer);
   return std::string(buffer, end);
 }
 
 std::string dtos(double v) {
-  char buffer[32];
+  char buffer[kDtoaBufSize];
   char* end = dtoa_impl(v, buffer);
   return std::string(buffer, end);
 }
 
 // Format straight into a caller-provided buffer, returning the byte count.
-// `dst` must have capacity >= 24 (float) / >= 32 (double). Reuses the same
+// `dst` must have capacity >= kDtoaBufSize. Reuses the same
 // dtoa_impl as dtos()/dtos_append (byte-for-byte identical result), so the value
 // printer's hot path can format a scalar into a stack buffer and append it to the
 // chunk buffer in a single copy (no intermediate std::string).
@@ -340,15 +405,23 @@ size_t dtos_to(char* dst, double v) {
   return static_cast<size_t>(end - dst);
 }
 
+size_t dtos_to_reference(char* dst, float v) {
+  return static_cast<size_t>(dtoa_ref_impl(v, dst) - dst);
+}
+
+size_t dtos_to_reference(char* dst, double v) {
+  return static_cast<size_t>(dtoa_ref_impl(v, dst) - dst);
+}
+
 // Append variants: format straight into `out` with no intermediate std::string,
 // reusing the exact same dtoa_impl as dtos() (byte-for-byte identical result).
 void dtos_append(std::string& out, float v) {
-  char buffer[24];
+  char buffer[kDtoaBufSize];
   out.append(buffer, dtos_to(buffer, v));
 }
 
 void dtos_append(std::string& out, double v) {
-  char buffer[32];
+  char buffer[kDtoaBufSize];
   out.append(buffer, dtos_to(buffer, v));
 }
 
@@ -369,7 +442,80 @@ std::string htos(uint16_t bits) {
   return std::string(buffer, htos_to(buffer, bits));
 }
 
+namespace {
+
+size_t HalfToShortestUncached(char* dst, uint16_t bits);
+
+// binary16 has only 65536 values, and the shortest-spelling search below
+// costs up to five dtoa + parse round trips per value, which made half-backed
+// arrays (quath orientations, half3 ...) several times slower to print than
+// floats. Memoize the spelling per value, filled lazily in blocks of 256 so a
+// small write only pays for the blocks it touches.
+struct HalfSpellingCache {
+  static constexpr size_t kBlockBits = 8;
+  static constexpr size_t kBlocks = size_t(1) << (16 - kBlockBits);
+  static constexpr size_t kMaxLen = 15;
+  struct Entry {
+    uint8_t len;  // 0 = not cacheable (spelling longer than kMaxLen)
+    char s[kMaxLen];
+  };
+  struct Block {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    std::once_flag once;
+#else
+    bool filled = false;
+#endif
+    Entry e[size_t(1) << kBlockBits];
+  };
+  Block blocks[kBlocks];
+
+  const Entry& get(uint16_t bits) {
+    Block& b = blocks[bits >> kBlockBits];
+    auto fill = [&]() {
+      const uint16_t base = uint16_t(bits & ~((1u << kBlockBits) - 1u));
+      for (size_t i = 0; i < (size_t(1) << kBlockBits); ++i) {
+        char buf[kDtoaBufSize + 48];
+        const size_t n = HalfToShortestUncached(buf, uint16_t(base + i));
+        Entry& e = b.e[i];
+        if (n <= kMaxLen) {
+          e.len = uint8_t(n);
+          std::memcpy(e.s, buf, n);
+        } else {
+          e.len = 0;
+        }
+      }
+    };
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    std::call_once(b.once, fill);
+#else
+    if (!b.filled) {
+      fill();
+      b.filled = true;
+    }
+#endif
+    return b.e[bits & ((1u << kBlockBits) - 1u)];
+  }
+};
+
+HalfSpellingCache& GetHalfSpellingCache() {
+  static HalfSpellingCache* cache = new HalfSpellingCache();  // ~1 MiB, never freed
+  return *cache;
+}
+
+}  // namespace
+
 size_t htos_to(char* dst, uint16_t bits) {
+  const HalfSpellingCache::Entry& e = GetHalfSpellingCache().get(bits);
+  if (e.len != 0) {
+    std::memcpy(dst, e.s, e.len);
+    return e.len;
+  }
+  return HalfToShortestUncached(dst, bits);
+}
+
+namespace {
+
+size_t HalfToShortestUncached(char* dst, uint16_t bits) {
   const float value = HalfToFloat(bits);
   if (!std::isfinite(value) || value == 0.0f) return dtos_to(dst, value);
 
@@ -392,6 +538,8 @@ size_t htos_to(char* dst, uint16_t bits) {
   }
   return dtos_to(dst, value);
 }
+
+}  // namespace
 
 void htos_append(std::string& out, uint16_t bits) {
   char buffer[48];

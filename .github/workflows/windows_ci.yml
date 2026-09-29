@@ -29,7 +29,7 @@ jobs:
       - name: Configure
         # Use the modern -S/-B form (not the legacy -H. from vcsetup.bat): this
         # `run:` step executes in PowerShell, which mis-parses `-H.`.
-        run: cmake -S . -B build_next -G "Visual Studio 18 2026" -A x64 -DLIGHTUSD_WITH_OPENSUBDIV=On -DLIGHTUSD_WITH_TINYSUBDIV=Off -DLIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=On
+        run: cmake -S . -B build_next -G "Visual Studio 18 2026" -A x64 -DLIGHTUSD_WITH_OPENSUBDIV=On -DLIGHTUSD_WITH_TINYSUBDIV=Off -DLIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=On -DLIGHTUSD_NATIVE_PRODUCT=legacy
       - name: Build
         run: cmake --build build_next --config Release
       - name: Test

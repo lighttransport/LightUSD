@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
+#include "next/layer/prim-spec.hh"
 #include "binding-next-scene.hh"
+#include "next/schema/color-space.hh"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -34,6 +36,18 @@ lightusd::minijson::Value NextValueJSON(const tn::Value& value) {
   if (const std::string* v = value.as_string()) return *v;
   if (const std::string* v = value.as_token()) return *v;
   if (const std::string* v = value.as_asset_path()) return *v;
+  if (const tn::Dict* dictionary = value.as_dictionary()) {
+    lightusd::minijson::Value out = lightusd::minijson::Value::object();
+    for (const auto& entry : dictionary->entries())
+      out[entry.first] = NextValueJSON(entry.second);
+    return out;
+  }
+  if (const std::vector<uint8_t>* v = value.as_bool_array()) {
+    lightusd::minijson::Value out = lightusd::minijson::Value::array();
+    out.reserve(v->size());
+    for (uint8_t element : *v) out.push_back(element != 0);
+    return out;
+  }
   if (const std::vector<float>* v = value.as_float_array()) {
     lightusd::minijson::Value out = lightusd::minijson::Value::array();
     out.reserve(v->size());

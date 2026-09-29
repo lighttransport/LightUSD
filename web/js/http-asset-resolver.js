@@ -31,12 +31,10 @@
 //     re-convert. tydra resolves MaterialX and UsdPreviewSurface into the SAME
 //     material record, so "simple MaterialX shading" needs no JS network eval.
 //
-// Memory: rendering goes through StreamingUSDRenderer.renderComposedNative(),
-// which keeps textures ENCODED in the WASM heap (decoded per-texture in JS via
-// createImageBitmap, off-heap), uploads geometry through zero-copy heap views,
-// then reset()s the WASM scene — the low-memory streaming technique, applied to
-// an HTTP-composed scene. (The RenderStream incremental path can't compose
-// external references, so the composition demos use this eager+encoded path.)
+// Memory: the legacy path keeps textures encoded in WASM until JS decodes them
+// and resets the scene after upload. The next path resolves dependency layers
+// with NextFlattenSession and packages the composed layer with fetched assets
+// before the RenderStream loader builds the scene.
 //
 // Usage (module): include http-asset-resolver.html, which calls
 // mountHttpAssetResolverDemo().
@@ -355,7 +353,28 @@ function openNextFlattenSession(native, usd, prepared) {
   throw new Error('next flatten bindings are unavailable in this WASM module');
 }
 
-async function flattenNextOverHttp({ renderer, rootBytes, filename, resolver, onStatus }) {
+async function resolveNextAsset(resolver, assetPath) {
+  const path = normalizeAssetKey(assetPath);
+  // A root served from an assets directory may also author that prefix.
+  const candidates = path.startsWith('assets/') ? [path, path.slice(7)] : [path];
+  let lastError = null;
+  for (const candidate of candidates) {
+    try {
+      const result = await resolver.resolveAsync(candidate);
+      const bytes = result[1] instanceof Uint8Array ? result[1] : new Uint8Array(result[1]);
+      const prefix = new TextDecoder().decode(bytes.subarray(0, 32));
+      if (/^\s*(<!doctype html|<html)/i.test(prefix)) {
+        throw new Error(`Asset URL returned an HTML page: ${candidate}`);
+      }
+      return [result[0], bytes, result[2]];
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error(`Could not resolve ${assetPath}`);
+}
+
+export async function flattenNextOverHttp({ renderer, rootBytes, filename, resolver, onStatus }) {
   const native = renderer.native;
   if (!native) {
     throw new Error('next HTTP composition requires a LightUSD WASM module');
@@ -376,7 +395,7 @@ async function flattenNextOverHttp({ renderer, rootBytes, filename, resolver, on
           const key = normalizeAssetKey(step.key);
           let bytes = findAssetByKey(prepared.seedAssets, key);
           if (!bytes) {
-            const [, fetched, url] = await resolver.resolveAsync(key);
+            const [, fetched, url] = await resolveNextAsset(resolver, key);
             bytes = new Uint8Array(fetched);
             resolver.setAsset(key, bytes, url || '');
             onStatus && onStatus(`Fetched next dependency layer: ${key}`);
@@ -427,7 +446,7 @@ async function flattenNextOverHttp({ renderer, rootBytes, filename, resolver, on
       let bytes = findAssetByKey(prepared.seedAssets, key);
       if (!bytes) {
         try {
-          const [, fetched, url] = await resolver.resolveAsync(assetPath);
+          const [, fetched, url] = await resolveNextAsset(resolver, assetPath);
           bytes = new Uint8Array(fetched);
           resolver.setAsset(assetPath, bytes, url || '');
           fetchedAssets++;

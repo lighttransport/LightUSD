@@ -12,5 +12,6 @@ cd ${builddir} && cmake \
   -DLIGHTUSD_WITH_TIFF=1 \
   -DLIGHTUSD_BUILD_TESTS=Off \
   -DLIGHTUSD_BUILD_EXAMPLES=Off \
+  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   ..
 

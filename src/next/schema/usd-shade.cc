@@ -4,6 +4,7 @@
 // LightUSD Next - UsdShade Schema Implementation
 
 #include "usd-shade.hh"
+#include "../layer/prim-spec.hh"
 
 #include <algorithm>
 #include <cmath>

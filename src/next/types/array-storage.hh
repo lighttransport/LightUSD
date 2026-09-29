@@ -15,6 +15,9 @@ namespace detail {
 // no virtual classes or per-element shared_ptr control blocks are involved.
 class ArrayHandle {
  public:
+  /// Empty handle (no storage). Only used as a placeholder by deferred-array
+  /// fill handles; a Value never holds an empty handle.
+  ArrayHandle() noexcept = default;
   explicit ArrayHandle(const std::vector<float>& data);
   explicit ArrayHandle(std::vector<float>&& data);
   explicit ArrayHandle(const std::vector<int32_t>& data);
@@ -40,6 +43,10 @@ class ArrayHandle {
   void* data() const;
   // Internal only: the active std::vector object, selected by Value's TypeId.
   void* vector_object() const;
+  /// Exchange the payload vectors of two handles of the same storage kind in
+  /// place (every holder of either handle observes the swap). Returns false,
+  /// changing nothing, when either handle is empty or the kinds differ.
+  bool swap_payload(ArrayHandle& other);
  private:
   struct Control;
   Control* control_ = nullptr;

@@ -120,6 +120,12 @@ set_target_properties(${EXAMPLE_TARGET} PROPERTIES
 # Headless smoke test. Runs with no display and no GPU (that is the whole point
 # of --screenshot), so it is safe in CI.
 if(LIGHTUSD_BUILD_TESTS AND UNIX)
+  add_executable(lusdquicklook-budget-test tests/byte_budget_test.cc)
+  target_include_directories(lusdquicklook-budget-test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(NAME example-lusdquicklook-budget
+           COMMAND lusdquicklook-budget-test)
+
   add_test(NAME example-lusdquicklook-smoke
            COMMAND ${CMAKE_COMMAND} -E env bash
                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/run-quicklook-smoke.sh

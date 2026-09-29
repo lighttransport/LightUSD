@@ -177,6 +177,7 @@ jobs:
     - name: configure
       run: |
         CXX=clang++ CC=clang cmake -B build_mcp -S . \
+          -DLIGHTUSD_NATIVE_PRODUCT=legacy \
           -DCMAKE_BUILD_TYPE=Release \
           -DLIGHTUSD_WITH_MCP_SERVER=On \
           -DLIGHTUSD_WITH_QJS=On \
@@ -188,6 +189,28 @@ jobs:
       run: cmake --build build_mcp -j2
     - name: tests
       run: cd build_mcp && ctest --output-on-failure
+
+  # Default product: the root configure builds the next implementation
+  # (LIGHTUSD_NATIVE_PRODUCT defaults to next). The legacy jobs pin
+  # -DLIGHTUSD_NATIVE_PRODUCT=legacy explicitly.
+  build-next-product:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v5
+    - name: configure
+      run: |
+        CXX=clang++ CC=clang cmake -B build_next_product -S . -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DLIGHTUSD_WITH_TYDRA=On \
+          -DLIGHTUSD_WITH_MCP_SERVER=On \
+          -DLIGHTUSD_BUILD_EXAMPLES=On \
+          -DLIGHTUSD_BUILD_TESTS=On
+    - name: make
+      run: cmake --build build_next_product -j2
+    - name: tests
+      run: cd build_next_product && ctest --output-on-failure
 
   # Build and run the lusdview unit tests (no GPU required). These compiled
   # unit tests validate lighting, texture, material, geometry, and camera
@@ -206,6 +229,7 @@ jobs:
     - name: configure
       run: |
         CXX=clang++ CC=clang cmake -B build_lusdview -S . -G Ninja \
+          -DLIGHTUSD_NATIVE_PRODUCT=legacy \
           -DCMAKE_BUILD_TYPE=Release \
           -DLIGHTUSD_WITH_TYDRA=On \
           -DLIGHTUSD_BUILD_EXAMPLES=On \
@@ -240,6 +264,7 @@ jobs:
     - name: configure
       run: |
         CXX=clang++ CC=clang cmake -B build_next -S . -G Ninja \
+          -DLIGHTUSD_NATIVE_PRODUCT=legacy \
           -DCMAKE_BUILD_TYPE=Release \
           -DLIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=On \
           -DLIGHTUSD_WITH_TYDRA=On \

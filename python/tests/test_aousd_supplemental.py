@@ -83,13 +83,28 @@ def _enumerate_file_formats(limit=CAP):
     return files[:limit] if limit else files
 
 
+# file_formats assets next does not load, with the reason. Each entry must
+# still fail (so a fix is noticed and the entry pruned); every other asset
+# must load.
+KNOWN_FILE_FORMAT_FAILURES = {}
+
+
 def test_aousd_file_formats_load():
     files = _enumerate_file_formats()
     assert files, "no file_formats assets"
+    assets_root = AOUSD_ROOT / "file_formats" / "tests" / "assets"
     ok = 0
     for f in files:
+        known = KNOWN_FILE_FORMAT_FAILURES.get(f.relative_to(assets_root).as_posix())
+        if known:
+            with pytest.raises(lightusd.UsdError):
+                lightusd.load(str(f), composed=False)
+            continue
         try:
-            st = lightusd.load(str(f))
+            # The file_formats suite is parser-level: its assets reference
+            # dependency layers (e.g. layermetadata.usda's subLayers) that the
+            # corpus does not ship, so load them uncomposed.
+            st = lightusd.load(str(f), composed=False)
         except lightusd.UsdError as e:
             pytest.fail(f"file_formats load failed {f}: {e}")
         assert st.stats["prim_count"] >= 0

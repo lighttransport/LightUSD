@@ -11,6 +11,9 @@
 #include <set>
 #include <utility>
 
+#include "next/stage/stage.hh"
+#include "render-converter.hh"
+
 namespace lightusd {
 namespace tydra {
 namespace next {
@@ -125,11 +128,13 @@ class AcceptSceneUpdateSink final : public SceneUpdateSink {
 
 struct RenderSession::Impl {
   explicit Impl(const ConverterConfig& config)
-      : converter(config), transaction_owner(new int(0)) {}
+      : converter(config), max_resident_bytes(config.limits.max_resident_bytes),
+        transaction_owner(new int(0)) {}
 
   mutable std::recursive_mutex operation_mu;
   mutable std::mutex publication_mu;
   RenderSceneConverter converter;
+  size_t max_resident_bytes;
   std::shared_ptr<int> transaction_owner;
   std::shared_ptr<RenderScene> scene;
   uint64_t revision = 0;
@@ -364,6 +369,12 @@ struct RenderSession::Impl {
       return out;
     }
     RenderScene& next = *committed;
+    const size_t retained_bytes = next.memory_usage();
+    if (retained_bytes > max_resident_bytes) {
+      out.error = "RenderSession: candidate scene exceeds resident memory limit";
+      out.status = ::lightusd::next::OperationStatus::ResourceLimit;
+      return out;
+    }
     if (!mesh_patch) {
       out.converted_resource_count =
           next.images.size() + next.textures.size() + next.materials.size() +
@@ -371,7 +382,7 @@ struct RenderSession::Impl {
           next.point_instancers.size() + next.skeletons.size() +
           next.animations.size() + next.lights.size() + next.cameras.size() +
           next.nodes.size();
-      out.converted_scene_bytes = next.memory_usage();
+      out.converted_scene_bytes = retained_bytes;
     }
     if (!sink->BeginUpdate(revision, snapshot.revision, changes.full_resync) ||
         !sink->UpdateCatalog(next)) {
@@ -472,7 +483,17 @@ uint64_t PreparedRenderUpdate::base_revision() const {
 uint64_t PreparedRenderUpdate::new_revision() const {
   return impl_ ? impl_->new_revision : 0;
 }
+const RenderScene* PreparedRenderUpdate::scene() const {
+  return impl_ ? impl_->scene.get() : nullptr;
+}
+std::shared_ptr<const RenderScene> PreparedRenderUpdate::scene_owner() const {
+  return impl_ ? impl_->scene : nullptr;
+}
+const std::vector<std::string>* PreparedRenderUpdate::warnings() const {
+  return impl_ ? &impl_->result.warnings : nullptr;
+}
 
+RenderSession::RenderSession() : RenderSession(ConverterConfig{}) {}
 RenderSession::RenderSession(const ConverterConfig& config)
     : impl_(new Impl(config)) {}
 RenderSession::~RenderSession() = default;
@@ -689,6 +710,15 @@ RenderSceneSnapshot RenderSession::GetSnapshot() const {
   return snapshot;
 }
 uint64_t RenderSession::revision() const { return GetSnapshot().revision; }
+RenderId RenderSession::ResourceId(RenderResourceKind kind,
+                                   const std::string& key) const {
+  std::lock_guard<std::recursive_mutex> lock(impl_->operation_mu);
+  const auto kind_it = impl_->ids.find(kind);
+  if (kind_it == impl_->ids.end()) return kInvalidRenderId;
+  const auto resource_it = kind_it->second.find(key);
+  return resource_it == kind_it->second.end() ? kInvalidRenderId
+                                              : resource_it->second;
+}
 void RenderSession::Reset() {
   if (RenderOperationActive(impl_.get())) return;
   std::lock_guard<std::recursive_mutex> operation_lock(impl_->operation_mu);

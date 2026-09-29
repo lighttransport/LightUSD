@@ -2,6 +2,7 @@
 // Copyright 2026-Present Light Transport Entertainment Inc.
 
 #include "usd-semantics.hh"
+#include "../layer/prim-spec.hh"
 
 #include "../eval/attribute-eval.hh"
 #include "../prim/identifier.hh"

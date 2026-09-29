@@ -3,7 +3,7 @@
 //
 // Tydra Next - Mesh topology and geometry extraction
 
-#include "render-converter.hh"
+#include "render-converter-internal.hh"
 
 #include <algorithm>
 #include <cstdint>
@@ -32,7 +32,7 @@ bool GetToken(const UsdPrim& prim, const char* name, std::string* out) {
 
 }  // namespace
 
-bool RenderSceneConverter::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* mesh) {
+bool RenderSceneConverter::Impl::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* mesh) {
   // Get face vertex counts
   ValueArrayRead<int32_t> face_counts;
   ReadIntArray(prim, "faceVertexCounts", config_.time_code, &face_counts);
@@ -80,7 +80,7 @@ bool RenderSceneConverter::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* 
   return true;
 }
 
-bool RenderSceneConverter::ExtractMeshGeometry(const UsdPrim& prim, RenderMesh* mesh) {
+bool RenderSceneConverter::Impl::ExtractMeshGeometry(const UsdPrim& prim, RenderMesh* mesh) {
   ValueArrayRead<float> points;
   ReadFloatArray(prim, "points", config_.time_code, &points);
   if (points.empty()) {

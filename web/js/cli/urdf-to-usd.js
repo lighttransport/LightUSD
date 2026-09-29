@@ -11,6 +11,7 @@ import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { LightUSDLoader } from '../src/lightusd/LightUSDLoader.js';
 import { LightUSDLoaderUtils } from '../src/lightusd/LightUSDLoaderUtils.js';
+import { weldMeshGeometry } from '../src/mjcf-mesh-weld.js';
 import LightUSDFactory from '../src/lightusd/lightusd.js';
 
 const SUPPORTED_FORMATS = new Set(['usda', 'usdc', 'usdz', 'all']);
@@ -705,7 +706,9 @@ function flattenToSingleMesh(object, name) {
   if (hasNormals && normals.length) geom.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
   if (hasUVs && uvs.length) geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geom.setIndex(indices);
-  return primitiveObjectFromGeometry(geom, name);
+  // Loaders return per-corner vertices (OBJ); share corners that agree on
+  // position, normal and uv so the exported mesh is indexed.
+  return primitiveObjectFromGeometry(weldMeshGeometry(geom, { mode: 'keep' }), name);
 }
 
 async function loadOBJObject(resolvedAsset) {
@@ -716,7 +719,11 @@ async function loadOBJObject(resolvedAsset) {
 async function loadSTLObject(resolvedAsset) {
   const data = fs.readFileSync(resolvedAsset.path);
   const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-  return primitiveObjectFromGeometry(new STLLoader().parse(arrayBuffer), path.basename(resolvedAsset.path, path.extname(resolvedAsset.path)));
+  // STL is a triangle soup: weld repeated positions and use MuJoCo-style
+  // vertex normals, as the native converter and MuJoCo itself do.
+  const welded = weldMeshGeometry(new STLLoader().parse(arrayBuffer),
+    { mode: 'stl', smoothnormal: !!resolvedAsset.smoothnormal });
+  return primitiveObjectFromGeometry(welded, path.basename(resolvedAsset.path, path.extname(resolvedAsset.path)));
 }
 
 let usdMeshLoader = null;
@@ -1065,7 +1072,8 @@ function collectMujocoAssets(root, baseDir, opts) {
         path: resolveMujocoMeshFile(file, meshBaseDir, baseDir, opts, meshIndex),
         scale: parseNumbers(mesh.attrs.scale, [1, 1, 1]),
         refpos: parseNumbers(mesh.attrs.refpos, [0, 0, 0]),
-        refquat: parseNumbers(mesh.attrs.refquat, [1, 0, 0, 0])
+        refquat: parseNumbers(mesh.attrs.refquat, [1, 0, 0, 0]),
+        smoothnormal: mesh.attrs.smoothnormal === 'true'
       });
     }
   }

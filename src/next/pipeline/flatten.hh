@@ -68,6 +68,18 @@ struct FlattenOptions {
   // Asset-valued property rewrite applied after composition and before writing.
   // Used by USDZ texture conversion when packed texture names change.
   std::map<std::string, std::string> asset_path_remap;
+
+  // Compose with the parallel `pcp::Cache` engine (as `next_usdcat -f`)
+  // instead of the serial `Compositor`: much faster on multi-reference scenes
+  // and it resolves the full LIVRPS + variant + instancing set; the output is
+  // a self-contained (instance Holder) flattened layer. External arcs resolve
+  // through `resolver` (a default AssetResolver when unset) and load through
+  // pcp's own LayerRegistry, so `layer_loader` and `composition` are unused on
+  // this path. Default off preserves the streaming Compositor path (e.g. the
+  // WASM asset-cache loader). Only available where the pcp::Cache engine is
+  // linked (the lightusd_next library); elsewhere the Compositor path runs.
+  bool use_pcp_compose = false;
+  int compose_num_threads = -1;  // pcp worker hint (-1 = auto, 1 = serial)
 };
 
 /// Filesystem-backed LayerLoader for native multi-file flattens: reads the

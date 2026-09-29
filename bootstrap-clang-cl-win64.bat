@@ -2,7 +2,7 @@ rmdir /s /q build
 mkdir build
 
 cd build
-cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE="cmake/clang-cl-msvc-windows.cmake" ^
+cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE="cmake/clang-cl-msvc-windows.cmake" -DLIGHTUSD_NATIVE_PRODUCT=legacy ^
   -DHOST_ARCH=x64 ^
   -DLLVM_NATIVE_TOOLCHAIN="C:/Program Files/LLVM/" ^
   -DMSVC_BASE:FILEPATH="C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\BuildTools\\VC\\Tools\\MSVC\\14.26.28801\\" ^

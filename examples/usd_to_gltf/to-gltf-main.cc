@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "next/lightusd-next.hh"
-#include "next/reader/usdz-reader.hh"
-#include "tydra/next/render-converter.hh"
-#include "tydra/next/gltf-export.hh"
+#include "lightusd-render-cpp.hh"
 #include "minijson.hh"
+
 #include <fstream>
-#include <filesystem>
 #include <iostream>
+#include <string>
+#include <vector>
 
 int main(int argc, char** argv) {
-  namespace usd = lightusd::next;
-  namespace render = lightusd::tydra::next;
   bool strict = false;
   std::string input, output, report;
   for (int i = 1; i < argc; ++i) {
@@ -24,50 +21,56 @@ int main(int argc, char** argv) {
   if (input.empty() || output.empty() || output == input || report == input || report == output) {
     std::cerr << "Supply distinct input, output and optional report paths\n"; return 2;
   }
-  usd::StageSession session;
-  usd::StageSessionOptions options;
-  options.resolver.enable_suffix_fallback = false;
-  options.load.limits.max_resident_bytes = size_t(1) << 30;
-  const auto opened = session.OpenFile(input, options);
-  if (!opened) { std::cerr << opened.error << '\n'; return 1; }
-  usd::AssetResolver resolver;
-  resolver.SetConfig(options.resolver);
-  render::ConverterConfig config;
-  config.asset_resolver = &resolver;
-  config.asset_base_dir = std::filesystem::path(resolver.Resolve(input).resolved_path).parent_path().string();
-  config.material.load_textures = false;
-  render::RenderSceneConverter converter(config);
-  auto converted = converter.Convert(*session.GetSnapshot());
-  if (!converted.success) { std::cerr << converted.error << '\n'; return 1; }
-  std::string root_anchor = resolver.Resolve(input).resolved_path;
-  if (std::filesystem::path(root_anchor).extension() == ".usdz") {
-    usd::USDZReader package;
-    usd::USDZReadOptions read;
-    read.max_archive_size = options.load.limits.max_resident_bytes;
-    if (package.OpenFile(root_anchor, read) && package.FindRootLayer() >= 0)
-      root_anchor += "[" + package.EntryName(size_t(package.FindRootLayer())) + "]";
+
+  lightusd_load_options load_options;
+  lightusd::api::InitLoadOptions(&load_options);
+  load_options.max_resident_bytes = uint64_t(1) << 30;
+  lightusd::api::Stage stage;
+  if (stage.load(input.c_str(), &load_options) != LIGHTUSD_OK) {
+    std::cerr << lightusd_last_error() << '\n';
+    return 1;
   }
-  for (auto& image : converted.scene.images) {
-    const auto asset = resolver.Resolve(image.resolved_path, root_anchor);
-    if (asset.exists) image.resolved_path = asset.resolved_path;
+
+  lightusd_render_config render_config;
+  lightusd::api::InitRenderConfig(&render_config);
+  render_config.load_textures = 0;
+  lightusd::api::RenderScene scene;
+  if (lightusd::api::Convert(stage, &scene, &render_config) != LIGHTUSD_OK) {
+    std::cerr << lightusd_last_error() << '\n';
+    return 1;
   }
-  render::GltfExportOptions export_options;
-  export_options.resolver = &resolver;
-  export_options.fail_on_loss = strict;
-  auto result = render::ExportGLB(converted.scene, export_options);
-  for (const auto& warning : converted.warnings) result.losses.push_back(warning);
-  if (strict && !result.losses.empty()) { result.success = false; result.error = "strict export refuses conversion losses"; }
-  for (const auto& loss : result.losses) std::cerr << "loss: " << loss << '\n';
+  lightusd::api::String glb;
+  lightusd::api::StringList losses;
+  const lightusd_status export_status = lightusd::api::ExportGLB(
+      scene, input.c_str(), strict, uint64_t(1) << 30, &glb, &losses);
+  const std::string error = export_status == LIGHTUSD_OK
+                                ? std::string() : lightusd_last_error();
+  std::vector<std::string> all_losses;
+  const auto append = [&all_losses](const lightusd::api::StringList& list) {
+    for (size_t i = 0; i < lightusd_strlist_size(list.get()); ++i) {
+      const lightusd_sv item = lightusd_strlist_get(list.get(), i);
+      all_losses.emplace_back(item.data, item.len);
+    }
+  };
+  append(losses);
+  const bool success = export_status == LIGHTUSD_OK;
+  for (const std::string& loss : all_losses) std::cerr << "loss: " << loss << '\n';
   if (!report.empty()) {
-    auto losses = lightusd::minijson::Value::array();
-    for (const auto& loss : result.losses) losses.push_back(loss);
-    lightusd::minijson::Value json{{"schemaVersion", 1}, {"success", result.success}, {"error", result.error}, {"losses", losses}};
+    auto json_losses = lightusd::minijson::Value::array();
+    for (const std::string& loss : all_losses) json_losses.push_back(loss);
+    lightusd::minijson::Value json{{"schemaVersion", 1}, {"success", success},
+        {"error", success ? "" : (error.empty() ? "strict export refuses conversion losses" : error)},
+        {"losses", json_losses}};
     std::ofstream out(report); out << json.dump(2) << '\n'; out.close();
     if (!out) { std::cerr << "Cannot write loss report\n"; return 1; }
   }
-  if (!result.success) { std::cerr << result.error << '\n'; return 1; }
+  if (!success) {
+    std::cerr << (error.empty() ? "strict export refuses conversion losses" : error) << '\n';
+    return 1;
+  }
+  const lightusd_sv bytes = lightusd_string_view(glb.get());
   std::ofstream out(output, std::ios::binary);
-  out.write(reinterpret_cast<const char*>(result.glb.data()), std::streamsize(result.glb.size()));
+  out.write(bytes.data, std::streamsize(bytes.len));
   out.close();
   if (!out) { std::cerr << "Cannot write GLB\n"; return 1; }
   return 0;

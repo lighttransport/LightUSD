@@ -16,6 +16,8 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -221,6 +223,38 @@ void TestLosslessUnsupportedValues() {
     const std::string rew = WriteUSDAToString(pe_res.stage);
     assert(rew.find("pathExpression expr = \"/World//Mesh*\"") !=
            std::string::npos);
+  }
+  // pathExpression[] (AOUSD gen_pathexpression.usdc): USDA and a Crate round
+  // trip preserve every element.
+  {
+    LoadResult arr = Parse(
+        "def Xform \"root\" {\n"
+        "    pathExpression[] array = [\"/root/Spam\", \"/root/Eggs\"]\n"
+        "}\n",
+        true);
+    assert(arr.success);
+    const char* kExpected =
+        "pathExpression[] array = [\"/root/Spam\", \"/root/Eggs\"]";
+    assert(WriteUSDAToString(arr.stage).find(kExpected) != std::string::npos);
+    std::vector<uint8_t> crate;
+    assert(WriteUSDCToMemory(crate, arr.stage).success);
+    if (const char* dump = std::getenv("LIGHTUSD_TEST_PE_USDC")) {
+      if (FILE* f = std::fopen(dump, "wb")) {
+        std::fwrite(crate.data(), 1, crate.size(), f);
+        std::fclose(f);
+      }
+    }
+    USDCLoadOptions strict_crate;
+    strict_crate.crate_options.strict_aousd_conformance = true;
+    USDCLoadResult back =
+        LoadUSDCFromMemory(crate.data(), crate.size(), strict_crate);
+    assert(back.success);
+    const Value* v =
+        back.stage.GetPrimAtPath("/root").GetPropertyValue("array");
+    assert(v && v->type_id() == TypeId::PathExpression && v->is_array());
+    assert(v->as_token_array() && v->as_token_array()->size() == 2 &&
+           (*v->as_token_array())[1] == "/root/Eggs");
+    assert(WriteUSDAToString(back.stage).find(kExpected) != std::string::npos);
   }
 
   // `opaque` and its `group` semantic alias can only agree with a ValueBlock.
@@ -557,6 +591,21 @@ void TestDefaultPrimReferenceEncoding() {
   const Value* marker = host->property_value("marker");
   assert(marker && marker->as_int() && *marker->as_int() == 7 &&
          "omitted reference path must compose the target defaultPrim");
+}
+
+void TestEmptyPathReference() {
+  // AOUSD's own corpus authors `<>` (RelocateToNone, BasicReference_session);
+  // strict parsing must accept the empty path while still rejecting invalid
+  // non-empty path text.
+  LoadOptions strict;
+  strict.parse_options.strict_aousd_conformance = true;
+  assert(LoadUSDAFromFile(UsdaFixturePath("relocates_basic.usda"), strict).success);
+  assert(LoadUSDAFromString(
+      "#usda 1.0\n(\n relocates = {\n  </A/Gone>: <>\n }\n)\n"
+      "def \"A\" (\n references = <>\n) {\n}\n", strict).success);
+  assert(!LoadUSDAFromString(
+      "#usda 1.0\n(\n relocates = {\n  </A/Gone>: </Root//Bad>\n }\n)\n",
+      strict).success);
 }
 
 void TestRelationshipForwarding() {
@@ -2270,6 +2319,20 @@ void TestRemainingElectiveFieldCoverage() {
   // Comment round-trips as a BARE empty string literal (pxr spelling).
   assert(text.find("\"\"") != std::string::npos);
 
+  // Strict parsing keeps elective and unregistered layer metadata, as the
+  // AOUSD file_formats corpus does (empty.usda: framePrecision;
+  // layermetadata.usda: `foo = bar`, `baz = None`).
+  LoadOptions strict;
+  strict.parse_options.strict_aousd_conformance = true;
+  LoadResult opaque = LoadUSDAFromString(
+      "#usda 1.0\n(\n    framesPerSecond = 24\n    framePrecision = 3\n    foo = bar\n"
+      "    baz = None\n)\n", strict);
+  assert(opaque.success);
+  const std::string opaque_text = WriteUSDAToString(opaque.stage);
+  assert(opaque_text.find("framePrecision = 3") != std::string::npos);
+  assert(opaque_text.find("foo = bar") != std::string::npos);
+  assert(opaque_text.find("baz = None") != std::string::npos);
+
   std::vector<uint8_t> crate;
   assert(WriteUSDCToMemory(crate, parsed.stage, USDCWriteOptions{}).success);
   USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
@@ -2823,16 +2886,32 @@ void TestMetadataAndListOpFidelity() {
       "  prepend references = @sub.usda@</R> "
       "(offset = 5; scale = -2)\n"
       ") {}\n";
-  assert(!Parse(invalid_arc_offset, true).success &&
-         "negative reference scale must be rejected in strict mode");
-  LoadResult compat_arc = Parse(invalid_arc_offset, false);
+  // A finite negative arc scale is valid file-format data (AOUSD
+  // primmetadata.usda keeps `scale = -2.0`); both modes preserve it and
+  // composition maps it to identity when applying the arc.
+  for (bool strict_mode : {true, false}) {
+    LoadResult arc = Parse(invalid_arc_offset, strict_mode);
+    assert(arc.success && "finite negative reference scale must parse");
+    const UsdPrim arc_prim = arc.stage.GetPrimAtPath("/R");
+    assert(arc_prim && !arc_prim.GetMeta().references.empty() &&
+           arc_prim.GetMeta().references.front().find(":-2") !=
+               std::string::npos &&
+           "negative reference scale must be preserved");
+  }
+  const std::string nan_arc_offset =
+      "def Xform \"R\" (\n"
+      "  prepend references = @sub.usda@</R> (offset = 5; scale = nan)\n"
+      ") {}\n";
+  assert(!Parse(nan_arc_offset, true).success &&
+         "non-finite reference scale must be rejected in strict mode");
+  LoadResult compat_arc = Parse(nan_arc_offset, false);
   assert(compat_arc.success);
   const UsdPrim compat_arc_prim = compat_arc.stage.GetPrimAtPath("/R");
   assert(compat_arc_prim &&
          !compat_arc_prim.GetMeta().references.empty() &&
          compat_arc_prim.GetMeta().references.front().find("layerOffset=") ==
              std::string::npos &&
-         "invalid reference offset must degrade to identity");
+         "non-finite reference offset must degrade to identity");
 
   // apiSchemas listop qualifier survives a USDC round trip: a bare authoring
   // stays explicit (not flipped to prepend); an authored prepend stays prepend.
@@ -3160,6 +3239,7 @@ int main() {
   TestDictionaryAndRelationshipComposition();
   TestNamespaceOrdering();
   TestDefaultPrimReferenceEncoding();
+  TestEmptyPathReference();
   TestRelationshipForwarding();
   TestAuthoredEmptyMetadata();
   TestVariantSetListOpFidelity();

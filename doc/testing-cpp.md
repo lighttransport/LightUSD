@@ -1096,12 +1096,25 @@ The current infrastructure has a few operational gaps worth keeping in mind:
 - Feature fixture directories (`lux/`, `node-mtlx/`, `skinning/`) provide test data but are not exercised by any automated runner.
 - The experimental `next` module (`src/next/`, `tests/next/`) is a standalone CMake project excluded from `build/` `ctest` and the regression gate by design (`LIGHTUSD_NEXT_BUILD_TESTS=OFF`); its `assert()`-based tests are only meaningful in Debug builds. See [Experimental `next` library tests](#experimental-next-library-tests).
 
+`security_sha256_digest_test` checks empty/null handling, standard ASCII and
+binary SHA-256 vectors, and both padding/block boundaries. The asset-cache
+fixture in `web/js/tests/apply-variant-selection-overload.test.mjs` compares
+against Node's crypto implementation on wasm32 and memory64, where native-only
+coverage would miss size_t-width bugs in bit-count encoding.
+
 ## Workflow tools and next examples
 
 `next_workflow_examples` generates small inputs and checks composition, typed
 queries, USDA/USDC reopening, payload/variant edits after snapshot publication,
 cancellation, sampled/spline/skeletal evaluation and portable package relocation.
 It is also registered in standalone next builds with examples enabled.
+All four C++ workflow examples consume the public ownership facade; the
+animation traversal keeps stage-retaining `Prim` objects through its work list.
+The interactive workflow exercises the installed-header C++ document/render
+session facade over the C boundary, including RAII snapshot ownership and
+retained-snapshot prim queries. `next_test_document_session_c` separately compiles as strict
+C11 and checks retained snapshots, revisions, render updates, stale snapshots,
+prepare/abort/commit, and cancellation; it is registered when Tydra is enabled.
 
 `workflow_tools` additionally exercises JSON crate limits, bounded dependency
 reports and all-authored variants, variant/property provenance, checker baseline
@@ -1110,6 +1123,13 @@ When `lusdrender` is built, it runs the two-camera synthetic capture and checks
 raw depth, world normals and source IDs numerically. Temporary assets are removed
 after the run. `next_gltf_export` tests API budget failures, invalid attribute
 indices, malformed corner mappings, non-finite values and cyclic node graphs.
+`next_test_render_session_c` also checks the public GLB export's binary result
+and output-limit validation through a strict C11 consumer. The GLB writer is
+isolated in its own object file; a render-only static consumer does not link it.
+`lusdview_lod_stream_test` covers the C/POD viewer pre-pass with a composed
+camera and two transformed districts, checking the generated promotion wrapper.
+`next_test_c_api` loads the instancing fixture in both holder and native modes
+to verify the new traversal option without changing the export default.
 
 ```sh
 ctest --test-dir build_ninja -R '^(workflow_tools|next_workflow_examples|next_gltf_export)$' --output-on-failure
@@ -1117,3 +1137,538 @@ ctest --test-dir build_ninja -R '^(workflow_tools|next_workflow_examples|next_gl
 
 These headless checks require no GPU or display. They supplement the native and
 standalone next regression gates; they do not replace viewer GPU tests.
+
+## Core/render boundary regression
+
+For C ABI 4 and the C++ ownership facade, run both configurations. The core-only
+build must not compile Tydra or link the legacy library. The facade smoke test
+covers stage retention, moves, generation invalidation, and render ownership
+when enabled. C smoke tests also reject cross-owner evaluation, validate
+caller-owned size queries, and exercise the animation and material payload
+POD entrypoints' invalid-handle behavior.
+The core C smoke test also covers optioned attribute evaluation at numeric and
+default time, including held/linear selection and invalid modes.
+The `lusdcat --explain` path is also a public-C-API consumer and should be
+smoke-tested with a USDA fixture when changing property-trace behavior.
+
+```sh
+cmake -S src/next -B build_ninja/next-core -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_NEXT_BUILD_TESTS=ON \
+  -DLIGHTUSD_WITH_TYDRA=OFF
+cmake --build build_ninja/next-core
+ctest --test-dir build_ninja/next-core --output-on-failure
+cmake -S src/next -B build_ninja/next-render -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_NEXT_BUILD_TESTS=ON \
+  -DLIGHTUSD_WITH_TYDRA=ON
+cmake --build build_ninja/next-render
+ctest --test-dir build_ninja/next-render --output-on-failure
+```
+
+To validate the root product-selection path and its public consumer gate:
+
+```sh
+cmake -S . -B build_ninja/root-next -G Ninja \
+  -DLIGHTUSD_NATIVE_PRODUCT=next -DLIGHTUSD_BUILD_TESTS=ON \
+  -DLIGHTUSD_BUILD_EXAMPLES=ON -DLIGHTUSD_WITH_TYDRA=OFF
+cmake --build build_ninja/root-next --target next_c_api_example
+ctest --test-dir build_ninja/root-next -R '^next_c_api_example_smoke$' \
+  --output-on-failure
+```
+
+Rebuild the Python extension after C ABI changes. Validate installed consumers
+with `find_package(LightUSD CONFIG)` using only the installed public headers.
+For comparable full compile measurements, use target `lightusd_render_c` after
+the split: measuring only `lightusd_c` would omit render functionality present
+in the old combined target. `scripts/bench-compile.py --target ... --changed
+src/next/stage/stage.hh` measures incremental rebuild time and compilation
+count, restoring the input timestamp afterward. Run measurements without
+concurrent builds or regression workloads.
+
+The combined WASM loading fixture in
+`web/js/tests/apply-variant-selection-overload.test.mjs` checks synchronous,
+layer/cached and async loading, validation JSON, lifecycle/progress state, and
+memory-probe size_t results on wasm32 and memory64. It also exercises the typed
+C task/record validation and JS ownership across async yields, including a
+callback deleting the original loader and a callback throwing `TypeError`.
+Memory probes reject negative lengths and lengths whose conservative scratch
+estimate exceeds the configured load-memory limit. The combined async binding
+uses C++17 tasks and remains available independently of the legacy-only
+`LIGHTUSD_WASM_COROUTINE` option. Select isolated rebuilt modules with
+`LIGHTUSD_COMBINED_MODULE`; see `web/js/docs/regression.md` for the Node override
+loader and full product regression procedure.
+
+The same combined fixture covers MCP context isolation across sessions and
+loader instances, counted Unicode/NUL-containing inputs, tool/resource JSON,
+invalid C calls and stale JS receivers. It instruments all six MCP operations
+and verifies that a dispatch `TypeError` is propagated without repeating a
+potentially mutating tool call. These checks exercise the combined compatibility
+backend, not next-only MCP feature parity.
+
+Layer/export coverage in the combined fixture checks empty and populated
+text/JSON exports, current JSON importer limitations for custom properties,
+flatten/render conversion, owned USDC copies and reopening. The raw C export
+result is retained across subsequent exports, loader reset and destruction to
+verify ownership independently of JS wrapper behavior. Null/short records,
+invalid operation IDs and stale receivers are covered on both pointer widths.
+
+The completed combined export-family fixture covers caller-supplied USDC
+buffers (validation order, duck-typed outputs, subviews, retry and reentrant
+copies), USDZ root formats/ARKit overrides, asset filtering and remapping,
+optimization aliases and field limits, and stage-snapshot behavior across JS
+getters. Actual optimization fixtures check preview material deduplication,
+aggregate mesh creation with deactivated source prims, and merge admission
+limits. Raw C checks include malformed maps, invalid option masks, cross-loader
+package handles and cleanup after throwing JS callbacks. USDC buffer exports
+still materialize a native byte vector; USDZ results retain their borrowed-view
+contract. Oversized byteLength values are rejected before integer conversion.
+
+Combined render-query regressions cover counts, root ID/URI/up-axis,
+configuration booleans, camera data, scene metadata and texture records. They
+exercise authored time/unit metadata, owned arrays, camera FOV calculation,
+transforms/bias/scale and both sparse and atlas UDIM linkage. The UDIM fixture
+uses generated one-pixel PNGs in the asset cache and a generated USDZ package;
+it catches filesystem probes in filesystem-free WASM builds. Cached sparse
+loading and packaged atlas loading pass. Missing cache tile names still need
+an existence-aware resolver test before cache-atlas extent parity is claimed.
+
+Combined inspection JSON regressions cover MetaHuman attributes/relationships,
+Unicode strings, authored shader connections, color values and asset paths.
+The fixture pins unloaded/reset behavior and verifies that retained JS strings
+survive reset. Raw C calls reject null loaders and unknown query IDs; adapter
+checks cover wrong argument counts, stale receivers and TypeError propagation
+without repeating native inspection. Both methods use the existing native JSON
+producers and bounded string-table copies through `render_json`.
+
+Combined instance query fixtures verify scaled/translated local and world
+matrices, prototype/material/mesh IDs, missing IDs, fractional-index coercion,
+ordered mesh matches and independent returned arrays. Native instances without
+geometry explicitly exercise matching mesh ID `-1`. C record checks cover
+null/short outputs and null loaders; JS checks include wrong types/counts,
+stale receivers and rejection of result sizes exceeding the 32-bit allocator.
+
+Combined root-node queries are covered by a hierarchy fixture with multiple
+roots, ordered siblings, Unicode display names, parent-relative transforms and
+reset-transform descendants. Separate resource rows pin mesh/camera/light
+categories and the existing native-instance flags/IDs. Cursor tests verify
+missing roots, null/short records without traversal advancement, repeated end
+of traversal, cleanup after a TypeError and receiver retention through a query.
+Returned child/matrix arrays remain owned JS values after scene reset.
+
+Combined sparse-UDIM metadata tests preserve the tile container's existing
+iteration order, tile coordinates/image IDs, asset identifier and owned JS
+results. The unresolved-image fixture compares results with the image catalog
+in image order and covers Unicode paths, reset, and missing results. Boundary
+checks reject null pointers, invalid JS receivers/arguments and tile counts
+that would overflow the 32-bit temporary allocator. This does not close the
+separately recorded cache-atlas tile-discovery limitation.
+
+Combined image-query regressions cover decoded pixels, encoded USDZ bytes,
+matching metadata across borrowed-view/pointer/copy methods, independent owned
+copies and metadata arrays, and custom ColorSpaceDefinitionAPI matrices without
+pixel buffers. A forced heap growth during string-table copying verifies that
+image bytes are read from the current heap. Warning checks preserve once-per-
+loader state across clones/reset, including a throwing console callback. Raw C
+records reject null/short outputs and invalid modes; JS rejects stale receivers
+and invalid arguments without replaying a failed lazy-copy dispatch.
+
+Combined light-query checks compare complete structured objects and exact JSON/
+XML strings with `web/js/tests/fixtures/combined-light-queries.json`, captured
+from the pre-migration combined product on both pointer widths. Signed zero
+is encoded as `{"$negativeZero":true}` in this baseline. The checked light
+fixtures cover the legacy output as observed, including omitted spectral data;
+their filenames alone are not evidence of spectral or mesh-light support.
+An injected C-record test separately checks owned spectral pair copies, empty
+samples and invalid-span rejection. Other checks cover error precedence,
+counted format inputs, null/short records, stale receivers and one-shot format
+dispatch. The legacy GeometryLight fixture fails before querying and remains
+an explicit backend limitation, not a passing migration gate.
+
+Combined skeleton queries now have a skinned branching fixture whose preorder
+joint IDs differ from authored indices. It checks names/paths, Unicode display
+metadata, bind/rest matrices, parent indices, owned outputs and reset behavior.
+A two-rig animation fixture checks all-skeleton enumeration and animation IDs.
+Cursor checks cover null/short records without advancement, repeated end of
+traversal, cleanup after exceptions and receiver retention during flat output.
+
+Combined animation queries use the checked per-width snapshot in
+`web/js/tests/fixtures/combined-animation-queries.json`, captured before their
+C-boundary migration. The fixture retains native clip ordering, signed zero
+and Float32Array payloads across transform, skeletal, blend-shape and custom
+property scenes. It checks summaries, track filtering, independent sampler and
+track arrays, and ownership after reset. Boundary checks reject null/short
+records, invalid indices and unsafe sampler spans, and exercise retained loader
+ownership and exceptions without replay. STEP/CUBICSPLINE interpolation mapping
+uses injected C records; this does not establish native value-clip parity.
+The negative animation-summary index check is a bounds-fix regression rather
+than a baseline assertion against the formerly unchecked legacy access.
+
+Combined mesh-operation tests cover indexed authored primvar inspection through
+layer loading and deferred tangent generation using a normal-map material.
+They verify repeat queries, reset, invalid IDs, argument validation, retained
+receivers and exceptions without replaying mutations. Baseline checks retain
+the current direct-load empty-primvars result and the pointer-width difference
+in the float-array JSON type label; these limitations are not backend parity
+passes.
+
+Combined bone-texture tests cover every influence-rounding threshold, RGBA
+packing, padding, vertex offsets, positive-weight filtering and the existing
+cap-before-sort order. Both pointer-width baselines pass; memory64's former
+size_t-to-Emval dimension bug is recorded separately, and migrated tests require
+numeric dimensions. Raw C results retain both arrays across another generation
+and loader reset. Adapter checks cover invalid records/arguments, cleanup after
+invalid spans, exceptions without replay and retained receiver ownership.
+
+The complete mesh accessor snapshot (`combined-mesh-queries.json`) compares
+owned/view outputs and normalized pointer descriptors on both WASM widths,
+including subset expansion, skinning, UV slots, display colors/opacity and
+packed tangent ordering. Its sources use eager tangent computation: the
+separate deferred probe with `c-core-mesh-queries.usda` revealed quantized normals
+being reinterpreted as float3 in `ComputeDeferredTangents()` and the legacy
+Vec3 tangent decoder, with potentially mismatched attribute counts. That
+unsafe path is an open issue requiring dedicated native/WASM regressions;
+the snapshot is not evidence that it is fixed.
+
+`tydra_deferred_packed_normals_test` now closes the reproduced deferred-normal
+issue described above. It covers Float3/SNorm8/SNorm16/1010102 input under
+Lengyel, MikkTSpace, FastMikkTSpace and Hybrid computation, a mixed-indexing UV
+seam, equal-count remapping, indexed normals and rejected short/invalid buffers.
+The web fixture repeats deferred load/compute/reset and compares copied,
+borrowed and descriptor tangent payloads against eager generation. It also
+checks that reset and meshes without tangents cannot expose stale cached data.
+The eager baseline snapshots remain unchanged and continue to check unrelated
+mesh payload behavior.
+
+The typed `getMeshPtr()` boundary runs against the existing complete mesh
+snapshots and repeated deferred-normal fixture. Record tests cover metadata,
+attribute and submesh validation; end-of-list reads; independent `uv0`/UV-slot
+descriptor objects; invalid span cleanup; exceptions without replay; and loader
+retention when the original receiver is deleted during reads. Ordinary spans
+remain borrowed; tangents remain owned JS arrays.
+
+The mesh value boundary tests verify borrowed `getMesh()` arrays versus owned
+`getMeshCopy()` arrays, signed joint indices, double bind matrices, once-only
+warnings across reset/clones and exceptions, result cleanup and retained copies
+when the original receiver is deleted during reads. The complete mesh snapshot
+is still the pre-migration baseline; its memory64 UV-count expectations apply
+an explicit correction for the old size_t-to-Emval BigInt bug. This does not
+claim new area-light loading support or close general backend parity.
+
+The combined material-query snapshot (`combined-material-queries.json`) stores
+pre-migration JSON/XML byte hashes and complete legacy property payloads for
+both WASM widths. Fixtures cover textured PreviewSurface, specular workflow,
+MaterialX configuration with Unicode strings and OpenPBR's missing-PreviewSurface
+error. Tests also cover empty-format legacy output, error precedence, owned
+arrays after reset, invalid records/arguments, all thirteen texture slots via
+injected records, exceptions without replay and loader retention during reads.
+These checks establish boundary compatibility, not new material backend support.
+
+Combined schema utilities use the pre-migration per-width
+`combined-schema-utilities.json` baseline for exact scene-export/physics-JSON
+hashes and diagnostics. It exercises sample creation, malformed URDF, visual
+and collision mesh uploads, copied input lifetime and registry clearing.
+Boundary checks cover heap-backed inputs, failed replacement preserving the
+previous mesh, invalid pointer/count/alignment combinations, empty-name
+diagnostic precedence, stale receivers and exceptions without replay. These
+are combined-loader checks; next-only schema authoring parity is a separate gate.
+
+`combined-image-encoding.json` pins pre-migration encoded-byte hashes and
+diagnostics for PNG/BMP/TIFF/DNG/EXR with one through four channels on both
+WASM widths. It includes unsupported/case-sensitive formats, invalid
+dimensions, short pixel buffers and extra bytes. The typed encoding tests
+also validate C records, JS arguments, borrowed-output aliasing and bounds,
+exceptions without replay and receiver retention. Explicit copies survive
+reset; returned heap views retain the existing borrowed-buffer lifetime.
+
+`next_test_render_session_c` covers the render C configuration's extended
+controls: unchanged v4 layout/defaults, fan triangulation, each tangent method,
+animation suppression, geometry release, instancer arrays required for draw
+expansion, persistent resolver lifetime and rejected invalid control values.
+`tydra-next-c-api-smoke` exercises the `tydra_to_renderscene --next` facade path
+with animation enabled/disabled and a mesh triangulation/tangent configuration;
+it checks both exit status and scene counts. The command's legacy conversion
+path remains separate.
+
+`lusdview_incremental_scene_update_test` now builds without linking next core
+and exercises the public C change-record planner interface. It retains the
+slot/remap/deformation/material/texture cases and checks short records, null
+path/property spans, unsupported flags, stale revisions, full resync, and
+counted property names whose trailing bytes must not affect classification.
+The `lusdview-incremental-*` Vulkan/OpenGL tests cover the viewer's temporary
+adapter from native next changes to those borrowed C records during real
+topology, layer-reload and texture updates.
+
+`next_test_document_session_c` also creates a temporary shader layer in its
+build directory, reloads property/stage-metadata edits, and verifies the full
+caller-owned snapshot change export. It checks required counts, flags,
+revisions, property names, short-buffer atomicity, invalid arguments, empty
+changes and snapshot-backed string lifetime after later publications and
+session destruction. `next_workflow_examples` verifies the C++ facade exposes
+the variant-edited `/World.level` property in the interactive-session example.
+
+The same C document test covers uncomposed loading, source-layer-only cache
+retention and memory estimates using temporary root/reference layers. It checks
+that trimming reduces transient bytes while keeping source layers, rejects
+invalid controls/outputs, and verifies stage transfer is blocked by retained
+snapshots. After transfer, snapshot access fails until reopen; transferred data
+remains valid and independently editable after reopen and session destruction.
+The interactive workflow also exercises the C++ memory query and stage transfer.
+
+`next_test_document_session_c` also tests batch variant replacement and payload
+loading on two sibling prims. It verifies single-revision publication, omitted
+override removal, empty batches, malformed paths, duplicate selections, count
+overflow, retained snapshots, and cancellation rollback followed by rebuild.
+Loading both sibling payloads exercises pseudo-root cache invalidation with
+previously retained composition data. `next_workflow_examples` uses the C++ batch
+facade for its variant edit and deferred payload loads.
+
+Document-session coverage also checks public state/dependency queries and cache
+controls: bounded counted UTF-8 copies, invalid indices, retained dependency
+ordering after release, zero source-cache accounting, unchanged snapshot/revision,
+restored source layers on rebuild, preserved variant/payload rules, repeated
+release and BUSY for cache mutation from a progress callback. The interactive
+workflow exercises these operations through the installed C++ facade.
+
+The render C test also checks public capacity/texture-budget planning, fixed-width
+record sizes, all texture-fit policies and quality tiers, suffix parsing,
+overflow/invalid-input rejection, and unchanged outputs on failure. The existing
+`lusdview-texture-fit` Vulkan test exercises the viewer's public C/C++ budget
+path and validates its resize/compression choices, including explicit policies,
+capacity-dependent thresholds and full-fidelity behavior.
+
+Document-session tests cover immutable snapshot-backed C stage handles through
+the existing stage API: read-only detection, rejection of root and prim/property
+authoring, independent editable flattening, USDC export/reload, retained prim
+handles after edits and session destruction, and BUSY on destructive transfer
+until views are released. Direct and session render conversion accept the views;
+scene data survives release of the view owner. The interactive C++ workflow also
+queries a snapshot via ordinary Stage/Prim wrappers.
+
+Preview callback tests use a composed mesh with extent and a non-spatial property.
+They verify both phases and flags, retained read-only stage handles, absence of
+the non-spatial property in the spatial preview, cancellation without publication,
+root reload, disabled delivery, authored-only previews for uncomposed loads, and
+stage lifetime after the session is destroyed. The interactive workflow exercises
+registration and retention through the C++ facade.
+
+Geometry-release coverage verifies per-prim release with retained snapshots,
+thresholds, repeated and whole-stage release, payload/element counts, omitted
+per-prim byte scans, preserved animation/non-geometry data, unchanged revision,
+cache retirement followed by reconstruction, and invalid/closed/uncomposed/BUSY
+requests. Native tests explicitly pass a prim from a retained snapshot through
+the legacy per-prim entry point to catch stale-layer use after copy-on-write.
+
+`lusdview_vchar_control_map_test` exercises the public-C facial-control reader:
+depth-first first-match selection, string/token names, short optional arrays,
+inverted ranges, malformed numeric types, empty data and retained snapshot views.
+It also checks owned dictionary string-list lifetime and error handling. The
+portable C++ API test covers DictionaryView's string-array copy operation without
+requiring the viewer build.
+
+`lusdview_preview_cache_test` uses public document snapshots and Stage handles to
+verify USDC extent roundtrips, lifetime after document/snapshot destruction,
+retained cache hits after replacement, corrupt and wrong-format payload misses,
+and failed writes without manifest publication. It also covers fingerprint,
+dependency and malformed-manifest invalidation. Run both migrated leaf tests with:
+
+```sh
+ctest --test-dir build_ninja -R '^lusdview_(preview_cache|vchar_control_map)_test$' --output-on-failure
+```
+
+For a live composition-preview cache check, run the interactive viewer twice
+against the same reference scene with authored mesh extents and an initially
+empty cache directory. Use `--next --backend vk --no-threaded
+--large-scene-profile balanced --preview-cache auto --preview-cache-dir <dir>
+--timing`, under the documented Xvfb/offload environment when needed. Verify
+`preview cache: stored` on the cold run, then `preview cache: hit` and
+`composition preview uploaded` on the warm run. Headless/fixed-frame runs and
+the default threaded interactive Vulkan path bypass this progressive cache path.
+
+The document C regression also checks payload policy/notification callbacks:
+selective composition against both default load policies, replacement followed by
+rebuild, cache release/restoration, root reload, explicit load/unload precedence,
+clearing callbacks without stale userdata delivery, retained snapshot stability,
+and BUSY on reentrant registration. Callback counters use serial composition in
+this fixture; the API requires thread-safe userdata for parallel composition.
+The interactive C++ workflow demonstrates an atomic selection counter.
+
+Pre-open document configuration tests cover initial variants on the first
+published snapshot, copied input strings, invalid replacement atomicity,
+duplicate/count validation, root reload, BUSY while open or reentrant, and
+reconfiguration after stage transfer. A referenced-layer fixture containing a
+parent path verifies the untrusted default, explicit trusted resolution, trusted
+resolution with parent paths disabled, and cache restoration for each policy.
+
+The viewer's public render-session ownership is exercised by the five
+`lusdview-incremental-*` GL/Vulkan tests. They require preparation at document
+revision 2 and reject commit-failure fallback, in addition to checking GPU updates.
+The remaining native-stage query adapter is covered by the viewer bridge tests
+for shared stage retention and independent read-only views. Document revisions
+now pass directly through the public API, with coverage described below.
+
+`lusdview_document_test` covers the viewer's public document owner and temporary
+native query views: initial variants, payload loading, change revisions, cache
+retirement, geometry release, root reload, callback cleanup, cancellation and
+retained stage lifetime after owner destruction. Run it alongside the GPU
+incremental, VRAM-budget and blendshape tests when changing viewer ownership.
+The document C test checks owned bulk dependency/deferred lists against indexed
+queries and verifies that list storage survives edits and document destruction.
+
+Document render preparation also accepts caller-aggregated changes. Its C test
+skips an intermediate document revision, checks that abort leaves the render
+revision unchanged, and commits at the final snapshot revision. It covers forced
+resync and invalid/overflowing record counts. The viewer uses this public path
+directly; the former native document-snapshot bridge has been removed.
+
+For changes to the viewer's retained public Stage owner, include
+`lusdview-camera-motion-cpu`, `lusdview-camera-motion-vulkan`, and
+`lusdview-camera-motion-raster-gl` alongside incremental, VRAM-budget and
+blendshape regressions. These exercise native camera/animation borrowers while
+the public handle supplies stage lifetime across rendering and reloads.
+
+`lusdview_public_stage_queries_test` verifies the public metadata/traversal
+helpers, including inactive prims, ordering, empty stages, failure preservation
+and early stopping. The two incremental-layer-reload GL/Vulkan regressions also
+exercise live MCP `stage_info`, `list_prims`, `prim_list`, `query_prims_by_type`
+and `search` calls, checking caps and filters before their reload checks.
+
+The incremental-topology regression also checks MCP `prim_get`, `attr_list` and
+`attr_get` through the public stage API, including schema fallback visibility and
+array type/count summaries. Variant queries preserve the empty enumeration of a
+flattened composed snapshot; subsequent topology/material edits still verify
+recomposition. `next_test_c_api` covers owned resolved property-name lists,
+schema defaults, scalar/string views, array summaries without data buffers,
+blocked/missing defaults, invalid handles and list lifetime after stage destruction.
+
+When changing viewer document payload interfaces, run
+`lusdview-usdz-deferred-payload` alongside the document unit and incremental
+regressions. It checks the exact deferred prim/arc reported through MCP, the
+next loader's proxy geometry, and successful deferred USDZ payload loading in
+both loaders. The document unit verifies owned path-list contents survive edits
+and memory queries return the public C stats layout.
+
+The viewer document unit queries published snapshots using public C handles.
+Its geometry-release case retains a prior Stage view, checks that its points
+survive while the new publication loses the released default, and covers repeated
+release and missing paths. Include VRAM-budget, USDZ deferred-payload and
+incremental GL/Vulkan tests when changing loader snapshot or release ownership.
+
+Viewer document callbacks now expose public C events; preview handles are
+borrowed until explicitly retained. The document unit retains a preview past
+owner destruction and checks callback cleanup and cancellation. For preview
+handoff changes, also verify an interactive non-threaded Vulkan load with
+`--large-scene-profile balanced --preview-cache refresh`, then `auto`, using an
+isolated config/cache directory and a fixture with a composition arc. Require
+cold cache storage, warm cache hit and composition-preview upload in the logs.
+
+Viewer document change aggregation is covered by `lusdview_document_test`:
+consecutive revision ranges, combined flags, property deduplication, metadata
+changes, owned strings and full resync for a revision gap. Run incremental
+GL/Vulkan regressions after changing these records to check render preparation
+and the GPU planner consume the resulting public C views correctly.
+
+The facial-control unit obtains its retained read-only view through the public
+document API and verifies control data after session destruction. The former
+private native-snapshot retention adapter has been removed; its symbol should
+not appear in shared-library exports.
+
+The GUI scene hierarchy uses public prim handles and retains its own Stage
+owner. `next_test_c_api` covers its authored-payload presence query. Include
+reload/incremental, deferred-payload and camera/animation runtime tests when
+changing GUI Stage ownership; native inspector/deformation borrowers must remain
+valid across replacement and recomposition.
+
+`lusdview_public_stage_queries_test` also checks inspector summary formatting
+from public default views: scalars, strings/assets, schema fallback, blocked
+defaults and arrays without data buffers. Pair it with incremental regressions
+and a visible-window selected-prim run when changing inspector property queries.
+
+The C API suite includes `c-core-relationships.usda` with native instances. It
+checks reference target remapping, local overrides, empty targets and inherited
+lookup after deleting a local relationship opinion, plus owned-list lifetime
+and invalid-handle behavior. The inspector consumes these public queries; pair
+API checks with incremental/payload regressions and a selected-prim GUI smoke
+run when modifying relationship inspection.
+
+For inspector composition metadata, the C unit checks all arc kinds and authored
+variant-selection keys (including sets without local definitions). Use a visible
+`--no-composition` inspector smoke run to retain authored arcs and variant sets,
+and run incremental variant/payload regressions for edits. Material-link display
+uses the first unforwarded relationship target, matching its previous helper.
+
+Stage metadata authored-state coverage distinguishes an explicit zero time code
+from an absent field and covers empty strings/default values and setter updates.
+The viewer public-stage-query unit checks those timing flags plus frame rate and
+comment/documentation fields. Include camera/animation and incremental reload
+regressions when changing this shared metadata helper.
+
+The public arc-text query is covered for reference, payload, inherit and
+specialize encodings, invalid handles/types and out-of-range indices. The GUI
+payload panel queries only deferred prim paths; run the deferred USDZ payload
+and incremental regressions after changes to this lookup/display path.
+
+For the public-handle deformation/posed-bounds boundary, run blendshape morph,
+skin-animation, combined morph-skin and instanced-prototype RT regressions.
+The GUI retains the Stage during synchronous evaluation; native borrowing is
+private to the loader. Report hardware RT skips separately: normal cold startup
+can choose software tracing, as documented in `doc/lusdview.md`.
+
+The bone-frame/morph-coefficient viewer entry points accept public Stage handles.
+Use blendshape, skin-animation and combined morph-skin regressions for those
+interfaces. Animated mesh-world updates query the public transform API directly;
+include CPU/Vulkan/OpenGL camera-motion tests for their matrix and bounds users.
+
+Camera lookup/shutter sampling use public Stage handles and C queries. Run
+`lusdview-camera-record-equivalence`, `lusdview-camera-clipping-planes`,
+`lusdview-camera-shutter-contract`, `lusdview-camera-stereo-contract`, and the
+CPU/Vulkan/OpenGL camera-motion regressions after changing these queries.
+Clipping-plane coverage must exercise complete float4 components; scalar
+defaults remain unsampled while camera transforms sample the requested time.
+
+For camera-gathering changes, also run
+`bash examples/lusdview/tests/run-backplate-display.sh ./build_ninja/lusdview .`
+under the documented NVIDIA offload/Xvfb environment. It checks the selected
+camera's public BackPlate handoff, including visibility, multiple instances,
+Vulkan images and OpenGL draw/resource counts (pixel differences when supported).
+
+The C API backplate test covers applied/missing instances, scalar/vector
+fallbacks, midpoint interpolation, authored image/alpha/depth paths, visibility,
+stale and wrong-owner prims, invalid time, failure output clearing, and result
+lifetime after stage mutation/destruction. Pair it with the backplate-display
+regression when modifying the schema/query boundary.
+
+`lightusd_attr_copy_default` coverage checks schema fallbacks, failure output
+clearing, owned array lifetime and lazy materialization without stage memory
+growth. `lusdview_public_stage_queries_test` pins preview extent precedence,
+float/double arrays, short arrays, blocked fallback and unsampled defaults.
+For checkpoint-preview changes, run the preview-cache/document/query units and
+cold/warm interactive preview probes through full scene presentation. Camera
+regressions cover clipping arrays that share this default-copy query.
+
+The public-stage-query unit covers blend-weight source resolution and sampling,
+including explicit ancestor bindings, SkelRoot fallback, inactive/nested roots,
+clamped endpoints, midpoint interpolation, unequal sample lengths and empty
+name fallback. Run noninstanced blendshape, blendshape morph, combined
+morph-skin and instanced-prototype deformation regressions to compare live
+weights with load-time CPU baking after changes to this helper.
+
+The C API skeleton-sample test checks parent topology, rest matrices, evaluated
+animation channels, absent animation, invalid indices, and ownership after
+Stage destruction. For posing changes, run the `lusdview-deform-skin-xform`,
+`lusdview-deform-skin-animation`, `lusdview-deform-morph-skin`, and
+`lusdview-deform-instanced-proto` rendering regressions; they exercise both
+load-time baking and live bone rows.
+
+The C API material-binding query test checks inherited all-purpose and
+purpose-specific bindings, the preview fallback chain, unbound purposes, and
+invalid handles. It also checks surface-terminal lookup and scalar shader-port
+value evaluation. Pair it with `lusdview-material-binding-inheritance`,
+`lusdview-degraded-material`, `lusdview-displacement-udim`, and
+`lusdview-rt-geomsubset-material` when changing viewer material binding or
+terminal queries.
+
+Render extraction category/traversal views point into address-stable storage:
+composed native-instance proxies may exceed authored `GetPrimCount()`. The
+Tydra `TestRenderExtract` growth test checks pointer validity and release. Run
+`lusdview-deform-instanced-proto` on Vulkan after extraction storage changes;
+the regression now treats allocation aborts and process signals as failures,
+not backend skips.

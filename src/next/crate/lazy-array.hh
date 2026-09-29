@@ -14,6 +14,7 @@
 #include "crate-format.hh"      // ValueRep, CrateTypeId
 #include "../types/type-id.hh"  // next::TypeId
 
+#include <atomic>
 #include <memory>
 #include <cstdint>
 
@@ -23,7 +24,19 @@ namespace next {
 class CrateDataSource;
 class LazyArraySource {
 public:
+  LazyArraySource() noexcept : identity_(NextIdentity()) {}
   virtual ~LazyArraySource() = default;
+  LazyArraySource(const LazyArraySource&) = delete;
+  LazyArraySource& operator=(const LazyArraySource&) = delete;
+  LazyArraySource(LazyArraySource&&) = delete;
+  LazyArraySource& operator=(LazyArraySource&&) = delete;
+
+  // A source identity remains unique after the source is destroyed. Writers
+  // use it for non-owning caches whose entries must not keep a multi-GB crate
+  // buffer alive merely to avoid a repeated hash. Pointer addresses are not
+  // suitable there: consume_values may release the last shared_ptr, allowing
+  // an allocator to reuse the address for a later source.
+  uint64_t identity() const noexcept { return identity_; }
 
   virtual bool MaterializeArray(const struct LazyArrayRef& ref, class Value* out) const = 0;
   virtual const uint8_t* base() const = 0;
@@ -35,6 +48,14 @@ public:
     (void)offset;
     (void)length;
   }
+
+ private:
+  static uint64_t NextIdentity() noexcept {
+    static std::atomic<uint64_t> next{1};
+    return next.fetch_add(1, std::memory_order_relaxed);
+  }
+
+  const uint64_t identity_;
 };
 
 /// Lightweight descriptor for an array value stored in a retained crate buffer.

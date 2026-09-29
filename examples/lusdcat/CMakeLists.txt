@@ -11,13 +11,17 @@ set(LIGHTUSD_SIMPLE_DUMP_SOURCES
 add_executable(${EXAMPLE_TARGET} ${LIGHTUSD_SIMPLE_DUMP_SOURCES})
 add_sanitizers(${EXAMPLE_TARGET})
 
-target_include_directories(${EXAMPLE_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_include_directories(${EXAMPLE_TARGET} PRIVATE
+    ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/src/c-api)
 # Allocator (if enabled) must precede the rest so it wins symbol resolution.
 target_link_libraries(${EXAMPLE_TARGET} ${LIGHTUSD_TOOLS_ALLOCATOR_LIB} lightusd_static)
 if(NOT TARGET lightusd_next)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/next ${CMAKE_BINARY_DIR}/lusdcat_next_build)
 endif()
 target_link_libraries(${EXAMPLE_TARGET} lightusd_next)
+if(TARGET lightusd_c)
+  target_link_libraries(${EXAMPLE_TARGET} lightusd_c)
+endif()
 
 
 set_target_properties(${EXAMPLE_TARGET} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

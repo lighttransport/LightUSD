@@ -11,11 +11,14 @@ option(LIGHTUSD_WASM64 "Use wasm64(memory64). Available only for Chrome and Fire
 option(LIGHTUSD_WASM_DEBUG "Enable WASM debug mode with source maps and assertions" OFF)
 option(LIGHTUSD_WASM_SIMD "Enable WebAssembly SIMD (128-bit, widely supported since 2021)" ON)
 option(LIGHTUSD_WASM_RELAXED_SIMD "Enable WebAssembly Relaxed SIMD (requires recent browsers)" OFF)
-option(LIGHTUSD_WASM_COROUTINE "Enable C++20 coroutine-based async loading (allows browser repaint during loading)" ON)
+option(LIGHTUSD_WASM_WITH_EXR "Include bounded EXR encoding in next-only WASM" ON)
+option(LIGHTUSD_WASM_COROUTINE "Enable legacy C++20 coroutine async loading (combined uses typed C tasks)" ON)
 option(LIGHTUSD_WITH_XATLAS "Include the vendored xatlas UV atlas generator" ON)
-set(LIGHTUSD_WASM_PRODUCT "legacy" CACHE STRING
-    "WASM product to build: legacy, next, or combined (combined is compatibility-only)")
-set_property(CACHE LIGHTUSD_WASM_PRODUCT PROPERTY STRINGS legacy next combined)
+# next is the default product; legacy and combined remain available for a
+# transition period.
+set(LIGHTUSD_WASM_PRODUCT "next" CACHE STRING
+    "WASM product to build: next, legacy, or combined (combined is compatibility-only)")
+set_property(CACHE LIGHTUSD_WASM_PRODUCT PROPERTY STRINGS next legacy combined mcp)
 
 # Keep the historical switches as compatibility aliases for existing build
 # scripts. New callers should select the product explicitly.
@@ -31,12 +34,28 @@ endif()
 
 if (NOT LIGHTUSD_WASM_PRODUCT STREQUAL "legacy" AND
     NOT LIGHTUSD_WASM_PRODUCT STREQUAL "next" AND
-    NOT LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
+    NOT LIGHTUSD_WASM_PRODUCT STREQUAL "combined" AND
+    NOT LIGHTUSD_WASM_PRODUCT STREQUAL "mcp")
   message(FATAL_ERROR
-    "LIGHTUSD_WASM_PRODUCT must be legacy, next, or combined (got '${LIGHTUSD_WASM_PRODUCT}')")
+    "LIGHTUSD_WASM_PRODUCT must be next, legacy, combined, or mcp (got '${LIGHTUSD_WASM_PRODUCT}')")
+endif()
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "legacy" OR
+    LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
+  # The legacy WASM bindings link lightusd_static from the root project.
+  # Select that native product even when the root default is next.
+  set(LIGHTUSD_NATIVE_PRODUCT "legacy" CACHE STRING
+      "Native implementation required by the selected WASM product" FORCE)
+  message(DEPRECATION
+    "The legacy WASM product is deprecated; use LIGHTUSD_WASM_PRODUCT=next for new integrations. Legacy and combined builds remain available for compatibility and CI.")
 endif()
 
-if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "mcp")
+  if (LIGHTUSD_WASM64)
+    set(BUILD_TARGET "lightusd_mcp_64")
+  else()
+    set(BUILD_TARGET "lightusd_mcp")
+  endif()
+elseif (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
   if (LIGHTUSD_WASM64)
     set(BUILD_TARGET "lightusd_next_64")
   else()
@@ -68,9 +87,13 @@ if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
       "Debug" "Release" "RelWithDebInfo" "MinSizeRel")
 endif()
 
-# Make C++20 default to use C++20 coroutine.
-# Emscripten 4.0 or above supports(C++20)
-set(CMAKE_CXX_STANDARD 20)
+# Only the legacy Embind async loader requires native coroutines. Combined
+# async loading uses C++17 tasks stepped by the JavaScript event loop.
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "legacy" AND LIGHTUSD_WASM_COROUTINE)
+  set(CMAKE_CXX_STANDARD 20)
+else()
+  set(CMAKE_CXX_STANDARD 17)
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -304,29 +327,104 @@ endif()
 # browser-threading build option opts into it.
 set(LIGHTUSD_ENABLE_THREAD OFF CACHE BOOL "Disable std::thread paths for default WASM builds" FORCE)
 
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "mcp")
+  # The MCP server product: a separate module so the next-only scene module
+  # stays lean. Built on the next C API; no render conversion.
+  message(STATUS "LightUSD WASM: building the MCP server module")
+  set(LIGHTUSD_NEXT_ENABLE_THREAD OFF CACHE BOOL "Disable next std::thread paths for WASM" FORCE)
+  set(LIGHTUSD_NEXT_BUILD_SHARED_C_API OFF CACHE BOOL "Do not build a shared C API in WASM" FORCE)
+  set(LIGHTUSD_WITH_TYDRA OFF CACHE BOOL "The MCP server needs no render conversion" FORCE)
+  set(LIGHTUSD_WITH_MCP_SERVER ON CACHE BOOL "Build the MCP server library" FORCE)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/../src/next lightusd_next_build EXCLUDE_FROM_ALL)
+
+  add_executable(lightusd_mcp_wasm binding-mcp.cc)
+  target_link_libraries(lightusd_mcp_wasm PRIVATE lightusd_mcp)
+  # Untrusted tool arguments: JSON type errors are thrown and reported as
+  # tool errors, so this module keeps C++ exceptions.
+  target_compile_options(lightusd_mcp_wasm PRIVATE -fexceptions)
+  set_property(TARGET lightusd_mcp_wasm APPEND PROPERTY LINK_DEPENDS
+    "${PROJECT_SOURCE_DIR}/mcp-api.js")
+
+  set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/js/src/lightusd/)
+  if(LIGHTUSD_WASM_OUTPUT_DIRECTORY)
+    set(OUTPUT_WASM_DIR "${LIGHTUSD_WASM_OUTPUT_DIRECTORY}")
+  endif()
+  if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(LIGHTUSD_MCP_EMCC_LINK_FLAGS "-g ")
+  elseif (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+    set(LIGHTUSD_MCP_EMCC_LINK_FLAGS "-Oz ")
+  else()
+    set(LIGHTUSD_MCP_EMCC_LINK_FLAGS "")
+  endif()
+  string(APPEND LIGHTUSD_MCP_EMCC_LINK_FLAGS "-fexceptions \
+     -sENVIRONMENT='web,worker,node' \
+     -sALLOW_MEMORY_GROWTH=1 \
+     -sSTACK_SIZE=512000 \
+     -sFILESYSTEM=0 \
+     -sWASM_BIGINT=1 \
+     -sMODULARIZE=1 -sEXPORT_ES6 -sEXPORT_NAME=createLightUSDMCP \
+     -sINVOKE_RUN=0 \
+     -sEXPORTED_FUNCTIONS=['_malloc','_free'] \
+     -sEXPORTED_RUNTIME_METHODS=['UTF8ToString','stringToNewUTF8'] \
+     --post-js \"${PROJECT_SOURCE_DIR}/mcp-api.js\"")
+  if (LIGHTUSD_WASM64)
+    string(APPEND LIGHTUSD_MCP_EMCC_LINK_FLAGS " -sMEMORY64 -sMAXIMUM_MEMORY=16GB")
+  endif()
+  set_target_properties(
+      lightusd_mcp_wasm
+      PROPERTIES OUTPUT_NAME ${BUILD_TARGET}
+                 SUFFIX ".js"
+                 RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR}
+                 LINK_FLAGS "${LIGHTUSD_MCP_EMCC_LINK_FLAGS}")
+  return()
+endif()
+
 if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
   message(STATUS "LightUSD WASM: building next-core + tydra-next only module")
   set(LIGHTUSD_CXX_RTTI OFF CACHE BOOL "Disable RTTI in next/tydra-next libs" FORCE)
   set(LIGHTUSD_CXX_EXCEPTIONS OFF CACHE BOOL "Disable C++ exceptions in next/tydra-next libs" FORCE)
   set(LIGHTUSD_NEXT_ENABLE_THREAD OFF CACHE BOOL "Disable next std::thread paths for WASM" FORCE)
+  set(LIGHTUSD_NEXT_BUILD_SHARED_C_API OFF CACHE BOOL
+      "Do not build a shared C API in WASM" FORCE)
 
   add_subdirectory(${PROJECT_SOURCE_DIR}/../src/next lightusd_next_build EXCLUDE_FROM_ALL)
 
   add_executable(lightusd_next_wasm binding-next.cc binding-next-scene.cc
+    binding-next-layer.cc
     binding-next-api.cc
+    binding-next-image.cc
+    binding-next-assets.cc
     binding-next-util.cc
     binding-next-render-lifecycle.cc
-    binding-next-render-scene.cc
-    binding-next-render-animation.cc
+    ${PROJECT_SOURCE_DIR}/../src/image-loader.cc
+    binding-next-render-primvars.cc
     binding-next-render-outputs.cc
     binding-next-render-mesh-helpers.cc
     binding-next-render-mesh.cc
     binding-next-render-material-key.cc
     binding-next-render-material.cc
+    ${PROJECT_SOURCE_DIR}/../src/tydra/material-serializer.cc
     binding-next-render-merge.cc
     binding-next-render-material-output.cc)
+  if (LIGHTUSD_WASM_WITH_EXR)
+    file(GLOB TINYEXR_V3_SOURCES
+      ${PROJECT_SOURCE_DIR}/../src/external/tinyexr/src/*.c)
+    set_source_files_properties(${TINYEXR_V3_SOURCES} PROPERTIES
+      INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/../src/external/tinyexr/include;${PROJECT_SOURCE_DIR}/../src/external/tinyexr/src"
+      COMPILE_DEFINITIONS "EXR_NO_JPH;EXR_NO_ZSTD")
+    target_sources(lightusd_next_wasm PRIVATE
+      ${PROJECT_SOURCE_DIR}/../src/image-writer.cc
+      ${TINYEXR_V3_SOURCES})
+    set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/image-writer.cc PROPERTIES
+      COMPILE_DEFINITIONS "LIGHTUSD_WITH_EXR=1;LIGHTUSD_EXR_V3=1;LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION=1")
+    target_include_directories(lightusd_next_wasm PRIVATE
+      "${PROJECT_SOURCE_DIR}/../src/external/tinyexr/include"
+      "${PROJECT_SOURCE_DIR}/../src/external/tinyexr/src")
+    target_compile_definitions(lightusd_next_wasm PRIVATE LIGHTUSD_NEXT_WASM_WITH_EXR=1)
+  endif()
   # tinysubdiv (tsd): dependency-free subdivision streaming for SubdivStreamer.
   target_sources(lightusd_next_wasm PRIVATE
+    ${PROJECT_SOURCE_DIR}/../src/sha256.cc
     ${PROJECT_SOURCE_DIR}/lightrt-wasm.cc
     ${PROJECT_SOURCE_DIR}/../src/external/lightrt/lightrt_c.c
     ${PROJECT_SOURCE_DIR}/../src/external/lightrt/lightrt_c_tri.c
@@ -345,17 +443,9 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vcacheoptimizer.cpp
     ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vertexcodec.cpp
     ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vertexfilter.cpp
-    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vfetchoptimizer.cpp
-    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-validate.cc
-    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-topology.cc
-    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-bilinear.cc
-    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-catmark.cc
-    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-loop.cc
-    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-fvar.cc
-    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-refine.cc
-    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-stream.cc
-    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-limit.cc)
-  target_link_libraries(lightusd_next_wasm PRIVATE tydra_next lightusd_next)
+    ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vfetchoptimizer.cpp)
+  target_link_libraries(lightusd_next_wasm PRIVATE
+    tydra_next lightusd_c lightusd_next)
   target_include_directories(lightusd_next_wasm PRIVATE "${PROJECT_SOURCE_DIR}/../src/")
   target_compile_features(lightusd_next_wasm PRIVATE cxx_std_17)
   set_property(TARGET lightusd_next_wasm APPEND PROPERTY LINK_DEPENDS
@@ -364,7 +454,8 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
                          PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
   target_compile_definitions(lightusd_next_wasm
                              PRIVATE JSON_NOEXCEPTION=1
-                                     LIGHTUSD_CXX_EXCEPTIONS=0)
+                                     LIGHTUSD_CXX_EXCEPTIONS=0
+                                     LIGHTUSD_NEXT_TYPED_BINDINGS=1)
   if (LIGHTUSD_WASM64)
     target_compile_definitions(lightusd_next_wasm PRIVATE LIGHTUSD_WASM_MEMORY64=1)
   endif()
@@ -387,7 +478,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
      -sFILESYSTEM=0 \
      -sWASM_BIGINT=1 \
      -sMODULARIZE=1 -sEXPORT_ES6 \
-     -sINVOKE_RUN=0 --bind ")
+     -sINVOKE_RUN=0 ")
   else()
     if (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
       set(LIGHTUSD_NEXT_EMCC_LINK_OPT_FLAGS "-Oz ")
@@ -403,7 +494,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
      -sSAFE_HEAP=0 \
      -sWASM_BIGINT=1 \
      -sMODULARIZE=1 -sEXPORT_ES6 \
-     -sINVOKE_RUN=0 --bind ")
+     -sINVOKE_RUN=0 ")
   endif()
   if (LIGHTUSD_SIMD_FLAGS)
     string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " ${LIGHTUSD_SIMD_FLAGS}")
@@ -474,6 +565,7 @@ endif()
 # remains available for compatibility testing, but is not the shipped default.
 if (LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
   list(APPEND SOURCES ${NEXT_SOURCES})
+  list(APPEND SOURCES binding-combined-api.cc)
 endif()
 
 
@@ -501,8 +593,8 @@ if (LIGHTUSD_WITH_EXR)
   target_compile_definitions(${BUILD_TARGET} PRIVATE LIGHTUSD_WITH_EXR=1)
 endif()
 
-# C++20 coroutine support for async loading
-if (LIGHTUSD_WASM_COROUTINE)
+# C++20 coroutine support belongs to the legacy async binding.
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "legacy" AND LIGHTUSD_WASM_COROUTINE)
   message(STATUS "LightUSD WASM: C++20 coroutine async loading enabled")
   target_compile_definitions(${BUILD_TARGET} PRIVATE LIGHTUSD_USE_COROUTINE=1)
 endif()
@@ -618,6 +710,12 @@ endif()
 # Export heap views for zero-copy streaming and typed pointer descriptors used
 # by the web loader fast path.
 string(APPEND LIGHTUSD_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8','HEAP8','HEAP16','HEAPU32','HEAPF32']")
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
+  string(APPEND LIGHTUSD_EMCC_LINK_FLAGS
+    " --post-js \"${PROJECT_SOURCE_DIR}/combined-api.js\"")
+  set_property(TARGET ${BUILD_TARGET} APPEND PROPERTY LINK_DEPENDS
+    "${PROJECT_SOURCE_DIR}/combined-api.js")
+endif()
 
 message(STATUS ${LIGHTUSD_EMCC_LINK_FLAGS})
 
