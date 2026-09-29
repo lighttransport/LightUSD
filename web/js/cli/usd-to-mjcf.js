@@ -30,6 +30,7 @@ Usage:
 Options:
   -o, --output <path>  Output .mjcf/.xml path (default: <input>.roundtrip.mjcf)
   --model-name <name>  <mujoco model="..."> name (default: input basename)
+  --placeholder-meshes  Write small OBJ placeholders without render extraction
   --no-meshes          Reference mesh names but do not write companion OBJ files
   --dump-json          Print the extracted physics scene JSON and exit
   -v, --verbose        Print conversion details
@@ -43,6 +44,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     outputFile: null,
     modelName: null,
     emitMeshes: true,
+    placeholderMeshes: false,
     dumpJson: false,
     verbose: false
   };
@@ -57,6 +59,8 @@ function parseArgs(argv = process.argv.slice(2)) {
       opts.modelName = requireValue(argv, ++i, arg);
     } else if (arg === '--no-meshes') {
       opts.emitMeshes = false;
+    } else if (arg === '--placeholder-meshes') {
+      opts.placeholderMeshes = true;
     } else if (arg === '--dump-json') {
       opts.dumpJson = true;
     } else if (arg === '-v' || arg === '--verbose') {
@@ -70,6 +74,9 @@ function parseArgs(argv = process.argv.slice(2)) {
     }
   }
   if (!opts.inputFile) throw new Error('Input USD file is required.');
+  if (opts.placeholderMeshes && !opts.emitMeshes) {
+    throw new Error('--placeholder-meshes and --no-meshes cannot be combined.');
+  }
   return opts;
 }
 
@@ -574,7 +581,7 @@ async function main() {
     const jsonText = native.extractPhysicsSceneJSON();
     if (!jsonText) throw new Error(native.error() || 'extractPhysicsSceneJSON failed');
     extracted = JSON.parse(jsonText);
-    if (opts.emitMeshes) {
+    if (opts.emitMeshes && !opts.placeholderMeshes) {
       if (native.layerToRenderScene()) {
         renderMeshes = collectRenderMeshes(native, renderWarnings);
       } else {

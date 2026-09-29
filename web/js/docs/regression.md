@@ -327,7 +327,9 @@ startup budget; the default is 120 seconds for clean CI workspaces.
 - The physics fixture extracts its Physics/MuJoCo annotations and completes the
   MuJoCo simulation.
 - Every discovered primary Menagerie MJCF has a successful forward conversion,
-  return conversion, and closure count match.
+  return conversion, and closure count match. The structural sweep uses small
+  placeholder OBJ meshes in the return leg; use `run-mjcf-roundtrip.sh --real-meshes`
+  to exercise full mesh return/export.
 - The regular browser smoke models load without page errors and produce
   nonblank split-view output.
 - The OffscreenCanvas Worker loads every converted model without worker errors
