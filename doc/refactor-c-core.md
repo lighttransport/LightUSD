@@ -4,15 +4,13 @@
 
 The renewed consolidation work prioritizes native and WASM compile time and
 allows public API breakage. The former 512 KiB WASM goal is not an acceptance
-criterion. Feature parity remains required before switching defaults or
-removing the legacy product.
+criterion. The next product is now the default; remaining compatibility
+decisions and consumer migrations govern eventual legacy retirement.
 
-The target is one default implementation based on `src/next`, compiled as
-C++17 with explicit storage and non-template algorithms. Legacy remains an
-explicit compatibility product. The native and WASM defaults must not switch
-until the current default products' supported capabilities have regression
-coverage on next. API changes are allowed; removing capabilities is not an
-optimization.
+The default implementation is based on `src/next`, compiled as C++17 with
+explicit storage and non-template algorithms. Legacy is a deprecated, explicit
+compatibility product kept in the repository and CI. API changes are allowed;
+removing supported capabilities is not an optimization.
 
 ## Current build and API changes
 
@@ -196,13 +194,12 @@ the input memory budget; they do not replace either one. The crate-limits
 regression covers direct reads, PCP layer loads, referenced USDC files, and
 root USDC composition.
 
-The native viewer has migrated to the public C boundary, but the product
-migration remains incomplete. Remaining requirements are a complete
-method-level next-only WASM parity inventory, closure or explicit product
-decisions for aggregate getters and resource payloads, parity validation across
-native/Python/WASM/browser consumers, and legacy removal. Existing native
-internal C++ consumers remain supported during that migration. Root native and
-WASM defaults have not changed.
+The native viewer uses the public C boundary, and native, Python, WASM, and JS
+loader defaults select next. The 208-method WASM parity inventory records 170
+behavior-verified methods, 31 known behavior differences, six explicit product
+decisions, and one test-only exclusion. Legacy retirement still needs review
+of those differences and migration of consumers that explicitly select the
+deprecated product. Existing native internal C++ consumers remain supported.
 
 The first WASM POD slice is `lightusd_next_render_count`, paired with the
 bounded-buffer `lightusd_next_render_error`: they validate the
@@ -614,7 +611,7 @@ The latest next-only linked WASM sizes after the retained-scene guard are
 small size increase for the limit check, not a compile-time improvement claim.
 | Shared binding boundary | Partial: next WASM class registration is replaced by generation-checked C exports and JS wrappers. Existing method coverage is retained. Native C now has a persistent render session with POD change input, owning snapshots, transactional resource events with tested begin/resource/end ordering, stable resource lookup, allocation-free scene-record enumeration, scene render-settings/color-space strings, and fixed-width scene stats matching the WASM boundary. Native C now also exposes typed animation clip/channel metadata, key/value/remap buffers, bounded order/clip-asset strings, material diagnostics, fallback/displacement/volume flags, terminal paths, and retained OpenPBR, volume, and PreviewSurface-utility node-graph JSON copies. The installed C++ facade now forwards every published render C export, including MaterialX configuration, alongside the common node, mesh, material, texture, image, light, camera, skeleton, instancer, point-draw, and unsupported-record info/buffer calls without requiring consumers to spell the C handles. WASM now has typed RenderStream counts/stats/animation-channel/skeleton summaries and resource/scene-record paths, node metadata/transforms, mesh fields (including optional tangents, secondary UVs, colors, skin, bounds, skeleton association, material-subset ranges, and primvar names/metadata plus raw data/indices buffers when retained), mesh/point-cloud/curves/point-instancer and point-draw fields, curve topology/interpolation metadata, point-instancer prototype paths and binding buffers, animation target/order strings, light, camera, material scalar fields (including clearcoat), texture fields (including wrap modes, output channel, UV rotation, and a fixed-layout sampling payload), scene scalar metadata and strings, plus bounded geometry, animation, skeleton, decoded-image, and USD Physics payload copies and bounded-error exports; remaining aggregate getters outside the published inventory and other resource payloads remain pending. A standalone next-only WASM `NextAssetStore` now wraps the next `AssetResolver` through generation-checked C exports: it supports generated `usd-anon:` IDs, named registration, unregister/read, aliases, sorted identifier enumeration, per-entry RFC 4122 UUID and SHA-256 queries, UUID reverse lookup/deletion, hash verification, owned structured reads by name/UUID, cache mutation/query aliases, clear, a hard payload-memory cap (512 MiB default, configurable up to 1 GiB), and a separate legacy-compatible cache cap (zero means unlimited) with sorted-key eviction on insertion. A checked method inventory and dispatch fixtures cover registration/readback, alias lookup, hash bytes and verification, UUID replacement/deletion, structured copy ownership, limit enforcement, and lifecycle on wasm32 and memory64. The store now supports sorted-key eviction and a borrowed view invalidated by replacement, deletion, eviction, clear, or store destruction; its resolver-owned bytes remain shared without a payload copy. The general store is not injected into RenderStream composition/dependency resolution. The next-only WASM module no longer links embind or uses emval; the combined legacy module retains its embind API. |
 | Tydra chunk ownership | Implemented: one compiled, element-size/alignment-aware storage engine replaces per-type vector/shared-pointer chunk ownership. The thin typed facade provides read-only indexing and explicit mutation. |
-| Product selection and defaults | Root CMake accepts `LIGHTUSD_NATIVE_PRODUCT=next` and returns before configuring legacy dependencies; `legacy` remains the default. With `LIGHTUSD_BUILD_EXAMPLES=ON`, the next product now builds the migrated `asset_resolution_example` against `lightusd_next` plus the public `next_c_api_example`; the asset example exercises virtual memory resolution, byte reads, USDA parsing, and writing. Tydra-enabled builds also register `next_render_session_example`, which exercises persistent C render-session revision, event-sink streaming, and record enumeration. A next-native `variant-lister` consumer now builds against `lightusd_c`, loads the authored root layer without composition, and lists variant sets/options; its smoke test verifies a five-option fixture. The core-only `LIGHTUSD_WITH_TYDRA=OFF` configuration remains supported. Full parity and the default switch remain pending. No implicit legacy fallback is permitted in the final next product. |
+| Product selection and defaults | Root CMake accepts `LIGHTUSD_NATIVE_PRODUCT=next` and returns before configuring legacy dependencies; `next` is the default and `legacy` is deprecated but still built in CI. With `LIGHTUSD_BUILD_EXAMPLES=ON`, the next product now builds the migrated `asset_resolution_example` against `lightusd_next` plus the public `next_c_api_example`; the asset example exercises virtual memory resolution, byte reads, USDA parsing, and writing. Tydra-enabled builds also register `next_render_session_example`, which exercises persistent C render-session revision, event-sink streaming, and record enumeration. A next-native `variant-lister` consumer now builds against `lightusd_c`, loads the authored root layer without composition, and lists variant sets/options; its smoke test verifies a five-option fixture. The core-only `LIGHTUSD_WITH_TYDRA=OFF` configuration remains supported. The default switch is complete. Legacy retirement and review of documented behavior differences remain pending. Next does not silently fall back to legacy. |
 
 The root `LIGHTUSD_NATIVE_PRODUCT=next` path now has a clean Release/Ninja
 build with tests and examples enabled. All 45 registered tests pass; the
@@ -717,15 +714,14 @@ flat at 1,665,684 to 1,665,666 bytes. These are object/file sizes, not a
 measured compile-time gain or whole-product size claim. The post-split Node
 profile passes all 24 suites.
 
-This inventory is the parity checklist for removing aggregate emval consumers;
-each remaining gap must gain a bounded C/POD export before the next product can
-become the default.
+This inventory tracks bounded C/POD coverage and the behavior differences that
+remain after switching the default product to next. A documented difference
+may be an accepted product contract; it does not imply a missing implementation.
 
 ### Remaining next-only parity work after the native viewer migration
 
 The combined-module typed-C migration and the native viewer boundary are
-complete, but neither closes the next-only product gate. Keep the remaining
-work separated into these explicit tracks:
+complete. Keep legacy retirement work separated into these explicit tracks:
 
 | Priority | Gap | Next step | Exit evidence |
 |---|---|---|---|
@@ -1138,7 +1134,11 @@ Demo status:
   `main.js` gained that branch; `offscreengl.worker.js` moved earlier.
 - `LightUSDWorker` imports the legacy module only on the legacy path, so
   next-only deployments load it.
-- Two demos remain pinned to `backend: 'legacy'` until they are ported:
+- The `web/demo` site builds local next WASM for its default backend. Its
+  standalone pages use next rendering, composition, and export; the explicit
+  backend comparison and path tracing worker retain the deprecated combined
+  module. The online viewer composes payloads during loading. Two separate
+  `web/js` demos remain pinned to `backend: 'legacy'` until they are ported:
   - `phys-sim.js` consumes legacy's physics JSON through
     `LightUSDLoaderNative`;
   - `materialx-webgpu.js` converts legacy material JSON for WebGPU.
@@ -1404,7 +1404,7 @@ next-only APIs cover a narrower contract than the whole legacy family.
 | Schema and image utilities | Partial | The nine-method legacy family is crosswalked to live next-only methods in `web/js/tests/schema-image-next-api-inventory.json`, checked on wasm32 and memory64. Next-only C dispatch exposes bounded PNG/BMP/TIFF/DNG output; the baseline TIFF writer emits the same pixel representation for TIFF and DNG, with input/output caps of 256 MiB and 512 MiB. Optional next-only EXR output uses the TinyEXR v3 writer, accepts 1/3/4-channel 8-bit input, emits half-float channels, preflights output against the 512 MiB cap, and has two-width dispatch plus independent `exrheader`/OpenEXR decode verification. The `dng` selector retains legacy behavior and does not add DNG camera metadata. `RenderStream.generateBoneTexture` builds the legacy packed influence texture from typed skin buffers and mesh element size; it checks combined float-texture and vertex-offset output against a 256 MiB cap before allocation, with oversized-geometry and influence-width coverage on both widths. The URDF converter's mesh and scene APIs remain covered. `RenderStream.computeMeshTangents(meshId)` provides the legacy operation's success contract by requesting the bounded next tangent buffer, triggering deferred generation without a separate mutable cache; tests cover generation, unavailable output, wrong arguments, and invalid IDs on both widths. `NextUSDZConverterNative.createSampleScene()` authors the textured quad, PreviewSurface graph, and checkerboard path through the next USDA loader; callers supply the texture with `setAsset` before USDZ export. Two-width dispatch tests inspect USDA output and confirm the supplied asset is packaged. | EXR can be disabled with `LIGHTUSD_WASM_WITH_EXR=OFF`; DNG camera metadata and broader image utility parity remain. |
 | MCP | Product decision | MCP context/resource/tool registration is an application/server integration surface, rather than a scene-core capability; it remains in the dedicated MCP server/example product. | No next-only RenderStream implementation is planned; the next-only module does not ship a server transport. |
 | Allocation safety | Partial | `RenderStream.begin` and `beginAsync` now call a C-side byte/resident-budget preflight before copying input into JS/WASM staging buffers; rejected payloads preserve specific limit diagnostics and the dispatch test confirms no input-sized WASM allocation. A memory64/wasm32 regression forces WASM memory growth during attached-store refresh after capturing a heap-backed input view and verifies the root still loads correctly after offset rebinding. `LayerDocument.load` caps input at 512 MiB before heap staging, copies existing WASM-heap views by offset across possible memory growth, uses the stage loader's input/resident limits, and preserves the current document when parsing a replacement fails. USDA export retains the C-owned serialized buffer and decodes directly into an owned JS string; USDC export retains C-owned Crate bytes and copies directly into the returned JS-owned byte array. Both avoid a second output-sized WASM staging buffer, asserted by wasm32/memory64 dispatch tests. Other bounded input, resident-memory, provided-asset, and resource-limit paths remain; oversized lazy mesh materialization is rejected before scratch copies. NextFlattenSession caps root plus supplied dependency-layer bytes at 512 MiB by default (configurable to 1 GiB), applies the Crate writer hard output-size limit before output-buffer growth (also configurable up to 1 GiB), and NextUSDZConverterNative accounts the retained root input, packaged assets, and URDF mesh buffers against one configurable 1 GiB aggregate budget, while retaining per-family caps; root replacement preflight runs before the JS/WASM staging allocation. Crate export preflights a retained-Layer estimate with numeric array widths and scalar/string-array/dictionary string capacities; USDZ preflights retained USDC/assets plus archive and directory storage. The optional EXR bridge retains one encoded result for its synchronous JS copy instead of encoding twice and allocating a second WASM output buffer; dispatch tests assert that allocation shape on wasm32 and memory64. `getMaterialRecord()`/`getAllMaterials()` preflight diagnostic strings, material names/paths, and parameter buffers against a 512 MiB aggregate estimate before constructing records. `getSkeleton()` preflights matrix, parent, child, joint-name/path, and compatibility-alias string payloads against a 512 MiB estimate; `getAllSkeletons()` preflights the scene-wide sum before constructing any skeleton object, and `getSkeletonJointsFlat()` reserves a higher matrix-copy allowance for its extra flat arrays. Oversized C buffer reports are rejected by wasm32/memory64 dispatch fixtures. The hierarchy is built iteratively, and the flat getter pre-sizes its numeric output and fills it in one pass instead of allocating `flatMap` intermediates. `getAnimation()`/`getAnimationView()` and `getAllAnimations()` preflight weighted channel-buffer and order-array sizes against a 512 MiB materialization budget before copying keyframe/value/remap arrays; wasm32/memory64 tests inject oversized C buffer sizes and verify rejection before payload copies. String buffers are charged at twice their UTF-8 byte length plus 64 bytes per string; UDIM tile records and all four UDIM metadata strings are size-queried and preflighted before allocation. Residual JS engine object overhead is not exact. `getImageCopy()` borrows the retained contiguous image span only during a synchronous JS `.slice()`; non-contiguous image storage uses the bounded C copy path, with each image capped at 512 MiB. `getAllImages()` uses C size queries for the aggregate decoded pixel bytes and weighted name/path/object estimate before allocating image records or pixel copies. `getMeshPrimvarsJSON()` size-queries the mesh path, all primvar names, and raw/index buffers before allocating those strings or payloads, then bounds raw, expanded, and JSON estimates against 512 MiB; wasm32/memory64 fault-injection tests verify preflight rejection for oversized names and buffers plus indexed expansion and element-size grouping. `getTextureRecord()` rejects oversized decoded images before copying, and `getTextureRecord()` and `getAllTextures()` preflight names, URIs, three texture strings, sampling/color-transform buffers, and decoded image copies against a weighted 512 MiB per-record and aggregate estimate before materialization. Next converter byte exports expose a borrowed pointer into the retained C++ vector for the synchronous JS copy, avoiding a temporary WASM output allocation; dispatch tests verify no `_lightusd_next_alloc` call and confirm the returned Uint8Array remains owned. Native and wasm32/memory64 converter regressions cover memory-budget rejection and success. | Systematic allocation-failure behavior and coverage for all retained/render/export payloads and returned JS copies; estimates still omit exact hash-table/allocator costs and temporary value encodings. |
-| Product selection | Open | Native viewer has migrated to public C queries and document/session boundaries in many paths. | Complete consumer migration, parity decisions, full regression evidence, and default backend switch. |
+| Product selection | Default switched | Native, Python, WASM, and JS loader defaults select next. Legacy is deprecated and retained in CI. | Migrate explicit legacy consumers, review documented behavior differences, and retain full regression evidence before legacy retirement. |
 
 The asset/cache row expands to this method-level crosswalk for all 28 methods
 classified as `asset_resolution_and_cache` in

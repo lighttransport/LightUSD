@@ -1,3 +1,4 @@
+// LightRTPathTracer is retained in the deprecated combined module for this path tracing worker.
 import createLightUSDModule from 'lightusd/lightusd.js';
 
 let native = null;

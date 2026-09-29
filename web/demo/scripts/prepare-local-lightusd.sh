@@ -8,6 +8,8 @@ LEGACY_BUILD_DIR="${WEB_DIR}/build_ninja"
 NEXT_BUILD_DIR="${WEB_DIR}/build_next_ninja"
 BUILD_TYPE="${CMAKE_BUILD_TYPE:-MinSizeRel}"
 JOBS="${JOBS:-16}"
+export EM_CACHE="${EM_CACHE:-${WEB_DIR}/build_ninja/emscripten-cache}"
+mkdir -p "${EM_CACHE}"
 
 for tool in emcmake cmake ninja; do
   if ! command -v "${tool}" >/dev/null 2>&1; then
@@ -20,19 +22,26 @@ configure_build() {
   local build_dir="$1"
   local target="$2"
   shift 2
-  emcmake cmake -S "${WEB_DIR}" -B "${build_dir}" -G Ninja \
-    -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" "$@"
+  local cmake_refresh=()
+  if [[ -f "${build_dir}/CMakeCache.txt" ]] &&
+     ! grep -Fqx "CMAKE_HOME_DIRECTORY:INTERNAL=${WEB_DIR}" "${build_dir}/CMakeCache.txt"; then
+    cmake_refresh=(--fresh)
+  fi
+  emcmake cmake "${cmake_refresh[@]}" -S "${WEB_DIR}" -B "${build_dir}" -G Ninja \
+    -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
+    -DLIGHTUSD_WASM_OUTPUT_DIRECTORY="${WEB_DIR}/js/src/lightusd" "$@"
   cmake --build "${build_dir}" --target "${target}" --parallel "${JOBS}"
 }
 
-# The default browser module is the combined product: the web regression suite
-# exercises both legacy and next APIs through the same LightUSDLoader instance.
-# Keep the next-only module separate for backend-specific tests.
+# Build the next product for the demo's default backend. Keep the combined
+# product for explicit legacy comparison and compatibility checks.
 configure_build "${LEGACY_BUILD_DIR}" lightusd_combined \
+  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   -DLIGHTUSD_WASM_PRODUCT=combined \
   -DLIGHTUSD_WASM_DEMODEV=OFF \
   -DLIGHTUSD_WASM64=OFF
 configure_build "${NEXT_BUILD_DIR}" lightusd_next_wasm \
+  -DLIGHTUSD_NATIVE_PRODUCT=next \
   -DLIGHTUSD_WASM_PRODUCT=next \
   -DLIGHTUSD_WASM_DEMODEV=OFF \
   -DLIGHTUSD_WASM64=OFF
@@ -61,4 +70,4 @@ for artifact in lightusd.js lightusd.wasm; do
   fi
 done
 
-echo "Local LightUSD legacy and next WASM modules are ready."
+echo "Local LightUSD next and legacy compatibility modules are ready."

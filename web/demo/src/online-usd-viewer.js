@@ -1,5 +1,4 @@
-import { parseUSDZEntries } from 'lightusd-js/src/usdzconvert.js';
-import { LightUSDComposer } from 'lightusd-js/src/lightusd/LightUSDComposer.js';
+import { flattenNextOverHttp } from 'lightusd-js/http-asset-resolver.js';
 export { AssetBudget, chooseRootFile, formatBytes, githubContentsRequest, MAX_ASSET_BYTES, normalizeAssetKey } from './online-usd-viewer-core.js';
 import { AssetBudget, chooseRootFile, formatBytes, githubContentsRequest, MAX_ASSET_BYTES, normalizeAssetKey } from './online-usd-viewer-core.js';
 
@@ -146,59 +145,14 @@ export class HttpAssetResolver {
   }
 }
 
-export function seedUSDZ(layer, bytes, filename) {
-  if (!/\.usdz$/i.test(filename)) return { rootBytes: bytes, rootName: filename, entries: [] };
-  const entries = parseUSDZEntries(bytes);
-  const root = entries.find((entry) => /\.(usd|usda|usdc)$/i.test(entry.name)) || entries[0];
-  if (!root) throw new Error('USDZ archive has no USD layer.');
-  for (const entry of entries) layer.setAsset(entry.name, entry.data);
-  return { rootBytes: root.data, rootName: root.name, entries };
-}
-
-export async function hydrateLayerTextures(layer, resolver, onStatus = () => {}) {
-  if (typeof layer.setLoadTextureInNative === 'function') layer.setLoadTextureInNative(false);
-  if (!layer.layerToRenderScene()) throw new Error(layer.error?.() || 'Could not create the USD render scene.');
-  const count = Number(layer.numImages?.() || 0);
-  let fetched = 0;
-  for (let i = 0; i < count; i++) {
-    const image = layer.getImagePtr?.(i);
-    if (!image || image.byteLength > 0 || !image.uri) continue;
-    const [, bytes] = await resolver.resolveAsync(image.uri);
-    for (const key of resolver.aliases(image.uri)) layer.setAsset(key, bytes);
-    fetched++;
-    onStatus(`Fetched texture: ${image.uri}`);
-  }
-  // Keep encoded image bytes in the native scene. LightUSDLoaderUtils then
-  // gives browser-supported formats (JPEG/PNG/WebP) to Three.js via Blob and
-  // TextureLoader, avoiding native RGB/JPEG decode failures and long WASM
-  // texture conversion stalls. EXR/HDR/KTX2 still use their dedicated paths.
-  if (typeof layer.setLoadTextureInNative === 'function') layer.setLoadTextureInNative(false);
-  if (!layer.layerToRenderScene()) throw new Error(layer.error?.() || 'Could not load USD textures.');
-  return fetched;
-}
-
-export async function composeLayer({ loader, bytes, filename, resolver, composePayload = false, onStatus = () => {} }) {
-  const layer = new loader.native_.LightUSDLoaderNative();
-  layer.setMaxMemoryLimitMB?.(512);
-  layer.setAllowParentRelativeAssetPaths?.(true);
-  layer.setLoadTextureInNative?.(false);
-  const archive = seedUSDZ(layer, bytes, filename);
-  if (!layer.loadAsLayerFromBinary(archive.rootBytes, archive.rootName)) {
-    throw new Error(layer.error?.() || `Failed to parse ${filename}.`);
-  }
-  // Keep USDZ entries in the JS resolver too. The native layer is seeded above,
-  // but texture hydration intentionally goes through the resolver so encoded
-  // images can be handled consistently with external files.
-  for (const entry of archive.entries) {
-    resolver.setAsset?.(entry.name, entry.data);
-  }
-  const composer = new LightUSDComposer();
-  composer.setLayer(layer);
-  composer.setUSDLoader(loader);
-  composer.setAssetResolver(resolver);
-  composer.setBaseWorkingPath('./');
-  composer.setAssetSearchPaths(['./']);
-  await composer.progressiveComposition({ composePayload });
-  await hydrateLayerTextures(layer, resolver, onStatus);
-  return { layer, composer, archive, hasPayload: LightUSDComposer.hasPayload(layer) };
+export async function composeLayer({ loader, bytes, filename, resolver, onStatus = () => {} }) {
+  const flattened = await flattenNextOverHttp({
+    renderer: { native: loader.native_ }, rootBytes: bytes, filename, resolver, onStatus,
+  });
+  const layer = await new Promise((resolve, reject) => {
+    loader.parse(flattened.usdz, 'scene.usdz', resolve, reject, {
+      backend: 'next', maxMemoryLimitMB: 512,
+    });
+  });
+  return { layer, composition: 'references and payloads' };
 }

@@ -23,6 +23,7 @@ const NODE_TESTS = [
   ['next usdzconvert', 'tests/usdzconvert-next.test.mjs'],
   ['next-only usdzconvert', 'tests/usdzconvert-next-only.test.mjs'],
   ['next USDA composition', 'tests/next-usda-composition.test.mjs'],
+  ['next HTTP asset fallback', 'tests/next-http-asset-fallback.test.mjs'],
   ['next C dispatch', 'tests/next-c-dispatch.test.mjs'],
   ['next material format parity', 'tests/material-format-parity.test.mjs'],
   ['next WASM parity gap matrix', 'tests/next-wasm-parity-matrix.test.mjs'],

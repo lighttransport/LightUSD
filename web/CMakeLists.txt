@@ -39,6 +39,15 @@ if (NOT LIGHTUSD_WASM_PRODUCT STREQUAL "legacy" AND
   message(FATAL_ERROR
     "LIGHTUSD_WASM_PRODUCT must be next, legacy, combined, or mcp (got '${LIGHTUSD_WASM_PRODUCT}')")
 endif()
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "legacy" OR
+    LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
+  # The legacy WASM bindings link lightusd_static from the root project.
+  # Select that native product even when the root default is next.
+  set(LIGHTUSD_NATIVE_PRODUCT "legacy" CACHE STRING
+      "Native implementation required by the selected WASM product" FORCE)
+  message(DEPRECATION
+    "The legacy WASM product is deprecated; use LIGHTUSD_WASM_PRODUCT=next for new integrations. Legacy and combined builds remain available for compatibility and CI.")
+endif()
 
 if (LIGHTUSD_WASM_PRODUCT STREQUAL "mcp")
   if (LIGHTUSD_WASM64)

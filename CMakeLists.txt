@@ -41,6 +41,10 @@ if(NOT LIGHTUSD_NATIVE_PRODUCT STREQUAL "legacy" AND
    NOT LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
   message(FATAL_ERROR "LIGHTUSD_NATIVE_PRODUCT must be legacy or next")
 endif()
+if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "legacy")
+  message(DEPRECATION
+    "LIGHTUSD_NATIVE_PRODUCT=legacy is deprecated; use next for new integrations. The legacy product remains available for compatibility and CI.")
+endif()
 if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
   # The next product returns before the legacy dependency/configuration block
   # below. Load sanitizer support here as well so SANITIZE_ADDRESS and

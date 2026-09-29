@@ -10,12 +10,13 @@
     "check:hair-demo": "node scripts/generate-hair-demo.mjs --check",
     "generate:blender-hair": "node scripts/generate-blender-hair.mjs",
     "check:blender-hair": "node scripts/generate-blender-hair.mjs --check",
+    "check:optional-assets": "npm run check:hair-demo && npm run check:blender-hair",
     "test:hair-demo": "node tests/hair-ribbon.mjs",
     "test:metahuman-demo": "node tests/metahuman-fixture.mjs",
     "test:online-viewer": "node tests/online-viewer-helpers.mjs",
     "prepare:local-lightusd": "bash scripts/prepare-local-lightusd.sh",
     "dev": "bash scripts/prepare-local-lightusd.sh && vite --mode development",
-    "build": "npm run check:openchess && npm run check:hair-demo && npm run test:metahuman-demo && npm run check:blender-hair && vite build",
+    "build": "bash scripts/prepare-local-lightusd.sh && npm run check:openchess && npm run test:metahuman-demo && vite build",
     "preview": "vite preview",
     "capture-previews": "node scripts/capture-previews.mjs"
   },
@@ -32,7 +33,6 @@
     "fzstd": "^0.1.1",
     "lil-gui": "^0.19.2",
     "three": ">=0.179.0",
-    "lightusd": "0.9.9-rc1",
     "vite-plugin-compression2": "^2.2.0"
   },
   "0module": "index.ts"

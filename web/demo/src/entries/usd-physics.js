@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildNextDemoScene } from '../next-scene.js';
 import { showLoader, hideLoader } from "../lightusd-loader.js";
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
@@ -626,27 +627,29 @@ async function loadUSDScene(loader) {
   usdaSource.textContent = text;
 
   const bytes = new TextEncoder().encode(text);
+  const sourceName = USDA.split('/').pop() || 'scene.usda';
   const scene = await new Promise((resolve, reject) => {
-    loader.parse(bytes.buffer, 'robot-arm.usda', resolve, reject, { backend: 'legacy' });
+    loader.parse(bytes.buffer, sourceName, resolve, reject, { backend: 'next' });
   });
-  const rootNode = scene.getDefaultRootNode();
-  const mat = LightUSDLoaderUtils.createDefaultMaterial();
-  const usdObj = await LightUSDLoaderUtils.buildThreeNode(rootNode, mat, scene, { overrideMaterial: false });
+  const { node: usdObj } = await buildNextDemoScene(scene, { sourceUrl: USDA });
   usdObj.name = 'USD rest pose';
   styleRestPose(usdObj);
   restRoot.add(usdObj);
 
   // Extract physics JSON
-  const native = new loader.native_.LightUSDLoaderNative();
-  const loaded = native.loadAsLayerFromBinary(bytes, 'robot-arm.usda');
-  if (loaded) {
+  const native = new loader.native_.NextUSDZConverterNative();
+  try {
+    if (!native.loadFromBinary(bytes, sourceName)) {
+      throw new Error(native.error?.() || 'Physics scene conversion failed.');
+    }
     const json = native.extractPhysicsSceneJSON();
     if (json) {
       physicsJson.textContent = json;
       const parsed = JSON.parse(json);
       usdStats.textContent = `${parsed.prims?.length || 0} prims`;
     }
-    native.delete();
+  } finally {
+    native.delete?.();
   }
   usdStats.textContent = usdStats.textContent || '—';
   setStatus('USD scene loaded.');
@@ -674,7 +677,7 @@ async function main() {
   const loader = new LightUSDLoader(null, { maxMemoryLimitMB: 256 });
   showLoader("Loading LightUSD WASM...", document.getElementById("viewport"));
   try {
-    await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'legacy' });
+    await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'next' });
   } finally {
     hideLoader();
   }
