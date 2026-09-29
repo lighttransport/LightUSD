@@ -5,6 +5,7 @@
 
 #include "ascii-parser-internal.hh"
 #include "value-parser.hh"
+#include "value-parser-numeric.hh"
 
 namespace lightusd {
 namespace next {
@@ -17,12 +18,21 @@ bool AsciiParser::Impl::ParseTimeSamples(const std::string& prop_name,
   }
 
   while (!Check(TokenType::CloseBrace) && !AtEnd()) {
-    ParseResult time_result = ParseValue(*lexer_, TypeId::Double);
-    if (!time_result.success || !time_result.value.as_double()) {
-      AddError("Expected time value in timeSamples");
-      return false;
+    // Numeric keys use the same conversion as ParseDouble, without building
+    // a temporary Value for every sample. Special spellings take that path.
+    double time = 0.0;
+    const Token& time_tok = lexer_->peek();
+    if (time_tok.type == TokenType::Number) {
+      time = value_parser_detail::FastFloatParseToken<double>(time_tok.value);
+      lexer_->consume();
+    } else {
+      ParseResult time_result = ParseValue(*lexer_, TypeId::Double);
+      if (!time_result.success || !time_result.value.as_double()) {
+        AddError("Expected time value in timeSamples");
+        return false;
+      }
+      time = *time_result.value.as_double();
     }
-    double time = *time_result.value.as_double();
 
     if (!Match(TokenType::Colon)) {
       AddError("Expected ':' after time in timeSamples");
