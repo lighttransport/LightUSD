@@ -705,6 +705,9 @@
       }
       return InternPath(base + "." + std::string(stable_name));
     };
+    // EmitPropertySpec copies each field into the writer's own storage, so
+    // reuse this scratch vector instead of allocating one for every property.
+    std::vector<CrateField> flds;
 
     for (const auto& slot : prim.properties().slots()) {
       const std::string_view prop_name = name_table.get(slot.name_id);
@@ -714,10 +717,10 @@
       if (emitted.count(slot.name_id.id)) continue;
       const Value* val = prim.property_value(slot.name_id);
       const bool has_ts = prim.has_time_samples(slot.name_id);
-      std::vector<CrateField> flds;
+      flds.clear();
 
       CrateField tf;
-      tf.token_index.value = InternToken("typeName");
+      tf.token_index.value = type_name_token_;
       std::string tn = AttrTypeName(prim, slot.name_id, val, slot.flags);
       tf.value_rep =
           ValueRep::Make(CrateTypeId::Token, InternToken(tn), false, true);
@@ -725,7 +728,7 @@
 
       if (slot.flags & PropSlot::kFlagUniform) {
         CrateField vf;
-        vf.token_index.value = InternToken("variability");
+        vf.token_index.value = variability_token_;
         vf.value_rep = ValueRep::Make(CrateTypeId::Variability, 1, false, true);
         flds.push_back(vf);
       }
@@ -739,7 +742,7 @@
 
       if (val) {
         CrateField df;
-        df.token_index.value = InternToken("default");
+        df.token_index.value = default_token_;
         df.value_rep = EncodeValue(*val);
         // An unencodable value must not become a `default` field with type
         // enum 0 — pxr fails the whole layer on it. The typeName field above
@@ -750,7 +753,7 @@
       } else if (const ArrayEditData* aedit = prim.array_edit(slot.name_id)) {
         // Sparse array-edit default (VtArrayEdit, crate 0.14).
         CrateField df;
-        df.token_index.value = InternToken("default");
+        df.token_index.value = default_token_;
         df.value_rep = EncodeArrayEdit(
             *aedit, static_cast<TypeId>(slot.value_type));
         if (df.value_rep.type_id() != CrateTypeId::Invalid) {
@@ -803,12 +806,12 @@
     for (auto prop_id : prim.time_sampled_properties()) {
       const std::string_view prop_name = name_table.get(prop_id);
       if (emitted.count(prop_id.id)) continue;
-      std::vector<CrateField> flds;
+      flds.clear();
       const Value* sv = nullptr;
       if (auto* s = prim.time_samples(prop_id))
         if (!s->empty()) sv = prim.time_sample_value((*s)[0].second);
       CrateField tf;
-      tf.token_index.value = InternToken("typeName");
+      tf.token_index.value = type_name_token_;
       std::string tn = AttrTypeName(prim, prop_id, sv, 0);
       tf.value_rep =
           ValueRep::Make(CrateTypeId::Token, InternToken(tn), false, true);
@@ -823,9 +826,9 @@
     }
 
     for (const auto& rel_name : prim.relationship_names()) {
-      std::vector<CrateField> flds;
+      flds.clear();
       CrateField vf;
-      vf.token_index.value = InternToken("variability");
+      vf.token_index.value = variability_token_;
       const bool varying =
           (prim.relationship_flags(rel_name) & PropSlot::kFlagVarying) != 0;
       vf.value_rep = ValueRep::Make(CrateTypeId::Variability,

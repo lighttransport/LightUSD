@@ -27,6 +27,13 @@ private:
   // views of them (no std::string construction per lookup).
   std::deque<std::string> tokens_;
   std::unordered_map<std::string_view, uint32_t> token_to_index_;
+  // BuildTables pre-registers these field names. Reuse their indices while
+  // emitting millions of property specs instead of hashing the same strings
+  // for every field. BuildTables refreshes them on each Write call.
+  uint32_t type_name_token_ = 0;
+  uint32_t specifier_token_ = 0;
+  uint32_t default_token_ = 0;
+  uint32_t variability_token_ = 0;
 
   // STRINGS: each entry is a token index
   std::vector<uint32_t> string_indices_;

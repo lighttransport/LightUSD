@@ -113,6 +113,11 @@ written crate retained the same read-back USDA hash and was read by Pixar
 `usdcat`. A self-contained root layer also bypasses the PCP build walk when
 there are no composition arcs or inactive subtrees.
 
+The crate field/spec pass reuses pre-registered field-name token indices and
+a scratch field vector across properties of each prim. This avoids repeated
+hash lookups and temporary allocations on large layers while preserving the
+written crate bytes.
+
 `next_usdcat` exposes independent controls for composition and writing:
 
 ```text

@@ -44,7 +44,7 @@
       // specifier (pxrUSD convention: specifier first, then typeName)
       if (!is_variant_holder) {
         CrateField f;
-        f.token_index.value = InternToken("specifier");
+        f.token_index.value = specifier_token_;
         uint64_t spec_val = static_cast<uint64_t>(prim.specifier());
         f.value_rep = ValueRep::Make(CrateTypeId::Specifier, spec_val, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
@@ -54,7 +54,7 @@
       // typeName
       if (!is_variant_holder && !prim.type_name().empty()) {
         CrateField f;
-        f.token_index.value = InternToken("typeName");
+        f.token_index.value = type_name_token_;
         f.value_rep = ValueRep::Make(CrateTypeId::Token,
                                      InternToken(prim.type_name()),
                                      false, true);

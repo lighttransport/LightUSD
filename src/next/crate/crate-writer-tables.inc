@@ -257,9 +257,9 @@
     InternToken("");
 
     // Common field name tokens
-    InternToken("typeName");
-    InternToken("specifier");
-    InternToken("default");
+    type_name_token_ = InternToken("typeName");
+    specifier_token_ = InternToken("specifier");
+    default_token_ = InternToken("default");
     InternToken("active");
     InternToken("hidden");
     InternToken("doc");
@@ -267,7 +267,7 @@
     InternToken("apiSchemas");
     InternToken("kind");
     InternToken("permission");
-    InternToken("variability");
+    variability_token_ = InternToken("variability");
     InternToken("defaultPrim");
     InternToken("upAxis");
     InternToken("metersPerUnit");
