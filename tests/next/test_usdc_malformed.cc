@@ -19,6 +19,9 @@
 #include <vector>
 
 #include "next/crate/crate-format.hh"
+#include "next/crate/crate-writer.hh"
+#include "next/crate/crate-data-source.hh"
+#include "next/layer/layer.hh"
 #include "next/reader/usdc-reader.hh"
 
 using namespace lightusd::next;
@@ -260,7 +263,7 @@ std::vector<uint8_t> PathsCompressed(const std::vector<uint32_t>& path_indices,
 std::vector<uint8_t> BuildMalformedAttributeFieldCase(
     const std::string& field_name, CrateTypeId field_type,
     const std::vector<uint8_t>& payload, bool field_is_array = false,
-    bool field_is_compressed = false) {
+    bool field_is_compressed = false, const std::string& extra_token = {}) {
   std::vector<uint8_t> token_raw;
   auto append_token = [&](const std::string& token) {
     token_raw.insert(token_raw.end(), token.begin(), token.end());
@@ -272,8 +275,11 @@ std::vector<uint8_t> BuildMalformedAttributeFieldCase(
   append_token("typeName");
   append_token(field_name);
   append_token("double");
-  const std::vector<uint8_t> tokens = TokensFromRaw(6, token_raw);
-  const std::vector<uint8_t> strings = StringsTable({0});
+  if (!extra_token.empty()) append_token(extra_token);
+  const std::vector<uint8_t> tokens = TokensFromRaw(
+      extra_token.empty() ? 6 : 7, token_raw);
+  const std::vector<uint8_t> strings = extra_token.empty()
+      ? StringsTable({0}) : StringsTable({0, 6});
   const std::vector<uint8_t> fieldsets =
       FieldsetsCompressed({0xFFFFFFFFu, 0xFFFFFFFFu, 0, 1, 0xFFFFFFFFu});
   const std::vector<uint8_t> specs = SpecsCompressed(
@@ -446,9 +452,195 @@ void ExpectWarningAndStrictReject(const char* name,
   std::cout << "  warned and strict-rejected " << name << std::endl;
 }
 
+void TestWidenedArrayBudget() {
+  for (CrateTypeId type : {CrateTypeId::Half, CrateTypeId::UChar}) {
+    std::vector<uint8_t> payload;
+    PutU64(&payload, 2000);
+    payload.resize(payload.size() + 2000 * CrateArrayElemStride(type), 0);
+    const auto bytes = BuildMalformedAttributeFieldCase(
+        "default", type, payload, true, false);
+    CrateReadOptions options;
+    options.lazy_arrays = false;
+    options.strict_aousd_conformance = true;
+    options.max_memory = 7000;  // raw bytes fit; widened 8000-byte output does not
+    CrateReader reader(options);
+    const auto result = reader.Read(bytes.data(), bytes.size());
+    assert(!result.success);
+    assert(std::any_of(result.errors.begin(), result.errors.end(),
+                      [](const CrateError& error) {
+                        return error.message.find("Array payload exceeds max_memory") !=
+                               std::string::npos;
+                      }));
+  }
+}
+
+void TestStringExpansionBudget() {
+  for (TypeId type : {TypeId::Token, TypeId::String, TypeId::AssetPath,
+                      TypeId::PathExpression}) {
+    Layer layer;
+    LayerBuilder builder(layer);
+    builder.begin_prim("Data", "Scope");
+    builder.add_property("words", Value::MakeStringLikeArray(
+        std::vector<std::string>(256, std::string(4096, 'a')), type));
+    builder.end_prim();
+    builder.finalize();
+    CrateWriter writer;
+    std::vector<uint8_t> bytes;
+    assert(writer.WriteLayerToMemory(bytes, layer).success);
+    CrateReadOptions options;
+    options.max_memory = 65536;
+    options.lazy_arrays = false;
+    CrateReader reader(options);
+    const auto result = reader.Read(bytes.data(), bytes.size());
+    assert(!result.success);
+    assert(std::any_of(result.errors.begin(), result.errors.end(),
+                      [](const CrateError& error) {
+                        return error.message.find("String array contents") != std::string::npos;
+                      }));
+  }
+  for (CrateTypeId type : {CrateTypeId::TokenVector, CrateTypeId::StringVector}) {
+    std::vector<uint8_t> payload;
+    PutU64(&payload, 256);
+    for (size_t i = 0; i < 256; ++i)
+      PutU32(&payload, type == CrateTypeId::TokenVector ? 6 : 1);
+    const auto bytes = BuildMalformedAttributeFieldCase(
+        "default", type, payload, false, false, std::string(4096, 'a'));
+    CrateReadOptions options;
+    options.max_memory = 65536;
+    CrateReader reader(options);
+    const auto result = reader.Read(bytes.data(), bytes.size());
+    assert(!result.success);
+    assert(std::any_of(result.errors.begin(), result.errors.end(),
+                      [](const CrateError& error) {
+                        return error.message.find("String array contents") != std::string::npos;
+                      }));
+  }
+}
+
+void TestDeferredAndCompressedBudget() {
+  std::vector<uint8_t> payload;
+  PutU64(&payload, 2000);
+  payload.resize(4008, 0);
+  const auto half_bytes = BuildMalformedAttributeFieldCase(
+      "default", CrateTypeId::Half, payload, true, false);
+  Value deferred;
+  {
+    CrateReadOptions options;
+    options.max_memory = 7000;
+    CrateReader reader(options);
+    const auto result = reader.Read(half_bytes.data(), half_bytes.size());
+    assert(result.success);
+    deferred = *result.stage.GetRootLayer()->prim_at_path("/P")->property_value("a");
+    assert(deferred.is_lazy());
+  }
+  // The configured budget remains attached after both reader and stage die.
+  assert(deferred.materialized_copy().is_empty());
+  assert(deferred.is_lazy());
+  assert(deferred.as_float_array() == nullptr);
+
+  payload.clear();
+  PutU64(&payload, 2000);
+  AppendCompressedU32Array(&payload, std::vector<uint32_t>(2000, 1));
+  const auto bool_bytes = BuildMalformedAttributeFieldCase(
+      "default", CrateTypeId::Bool, payload, true, true);
+  CrateReadOptions options;
+  options.max_memory = 7000;
+  options.lazy_arrays = false;
+  CrateReader reader(options);
+  const auto result = reader.Read(bool_bytes.data(), bool_bytes.size());
+  assert(!result.success);
+  assert(std::any_of(result.errors.begin(), result.errors.end(),
+                    [](const CrateError& error) {
+                      return error.message.find("Compressed bool integer lanes") != std::string::npos;
+                    }));
+
+  // Noncanonical raw bool bytes are normalized without losing array identity.
+  payload.clear();
+  PutU64(&payload, 5);
+  payload.insert(payload.end(), {0, 1, 2, 128, 255});
+  const auto raw_bytes = BuildMalformedAttributeFieldCase(
+      "default", CrateTypeId::Bool, payload, true, false);
+  for (bool lazy : {false, true}) {
+    CrateReadOptions raw_options;
+    raw_options.lazy_arrays = lazy;
+    CrateReader raw_reader(raw_options);
+    const auto raw = raw_reader.Read(raw_bytes.data(), raw_bytes.size());
+    assert(raw.success);
+    const auto* actual = raw.stage.GetRootLayer()->prim_at_path("/P")
+        ->property_value("a")->as_bool_array();
+    assert(actual && *actual == std::vector<uint8_t>({0, 1, 1, 1, 1}));
+  }
+}
+
+// Generated valid compressed arrays exercise both floating codecs in eager
+// decode and lazy materialization; the writer emits half arrays raw today.
+void TestCompressedFloatingArrays() {
+  for (CrateTypeId type : {CrateTypeId::Float, CrateTypeId::Half,
+                           CrateTypeId::Vec3h, CrateTypeId::Quath}) {
+    const size_t comps = CrateArrayElemStride(type) /
+        (type == CrateTypeId::Float ? sizeof(float) : sizeof(uint16_t));
+    for (char code : {'i', 't'}) {
+      std::vector<uint8_t> payload;
+      PutU64(&payload, 2);
+      payload.push_back(static_cast<uint8_t>(code));
+      const float lut[] = {1.0f, -2.0f, 2049.0f, 4.0f};
+      std::vector<uint32_t> lanes(2 * comps);
+      std::vector<float> expected(lanes.size());
+      if (code == 't') {
+        PutU32(&payload, 4);
+        for (float value : lut) {
+          if (type == CrateTypeId::Float) {
+            uint32_t bits;
+            std::memcpy(&bits, &value, sizeof(bits));
+            PutU32(&payload, bits);
+          } else {
+            const uint16_t bits = FloatToHalf(value);
+            payload.push_back(static_cast<uint8_t>(bits));
+            payload.push_back(static_cast<uint8_t>(bits >> 8));
+          }
+        }
+      }
+      for (size_t i = 0; i < lanes.size(); ++i) {
+        const float value = lut[i % 4];
+        lanes[i] = code == 'i'
+            ? static_cast<uint32_t>(static_cast<int32_t>(value))
+            : static_cast<uint32_t>(i % 4);
+        expected[i] = type == CrateTypeId::Float
+            ? value : HalfToFloat(FloatToHalf(value));
+      }
+      AppendCompressedU32Array(&payload, lanes);
+      if (type == CrateTypeId::Quath) {
+        for (size_t i = 0; i < expected.size(); i += 4) {
+          std::rotate(expected.begin() + i, expected.begin() + i + 3,
+                      expected.begin() + i + 4);
+        }
+      }
+      const auto bytes = BuildMalformedAttributeFieldCase(
+          "default", type, payload, true, true);
+      for (bool lazy : {false, true}) {
+        CrateReadOptions options;
+        options.lazy_arrays = lazy;
+        CrateReader reader(options);
+        const auto result = reader.Read(bytes.data(), bytes.size());
+        assert(result.success);
+        const auto* prim = result.stage.GetRootLayer()->prim_at_path("/P");
+        assert(prim);
+        const auto* value = prim->property_value("a");
+        assert(value);
+        const auto* actual = value->as_float_array();
+        assert(actual && *actual == expected);
+      }
+    }
+  }
+}
+
 }  // namespace
 
 int main() {
+  TestCompressedFloatingArrays();
+  TestWidenedArrayBudget();
+  TestStringExpansionBudget();
+  TestDeferredAndCompressedBudget();
   std::cout << "=== LightUSD Next Malformed USDC Tests ===" << std::endl;
 
   {

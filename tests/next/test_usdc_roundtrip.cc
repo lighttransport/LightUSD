@@ -955,7 +955,8 @@ void test_roundtrip_half_arrays() {
   b.begin_prim("Geo", "Mesh");
   std::vector<float> h1 = {1.0f, -2.0f, 0.5f, 0.25f};            // 4 x Half
   std::vector<float> h3 = {1.0f, 2.0f, 3.0f, -1.0f, 0.5f, 4.0f}; // 2 x Half3
-  std::vector<float> qh = {0.0f, 0.0f, 0.0f, 1.0f};             // 1 x Quath
+  std::vector<float> qh = {4.0f, 1.0f, 2.0f, 3.0f,
+                           -8.0f, -5.0f, 6.0f, -7.0f};          // 2 x Quath
   b.add_property("h1", Value::MakeFloatCompArray(std::vector<float>(h1), TypeId::Half, 1));
   b.add_property("h3", Value::MakeFloatCompArray(std::vector<float>(h3), TypeId::Half3, 3));
   b.add_property("qh", Value::MakeFloatCompArray(std::vector<float>(qh), TypeId::Quath, 4));
@@ -967,23 +968,98 @@ void test_roundtrip_half_arrays() {
   CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
   assert(wr.success);
 
-  CrateReader reader;
-  CrateReadResult rr = reader.Read(buf.data(), buf.size());
-  assert(rr.success && "re-read of half arrays failed");
-  const PrimSpec* geo = rr.stage.GetRootLayer()->prim_at_path("/Geo");
-  assert(geo);
+  // Exercise eager decoding as well as default lazy materialization. Distinct
+  // quaternion lanes catch overlap when widening packed halfs in place.
+  for (bool lazy : {false, true}) {
+    CrateReadOptions options;
+    options.lazy_arrays = lazy;
+    CrateReader reader(options);
+    CrateReadResult rr = reader.Read(buf.data(), buf.size());
+    assert(rr.success && "re-read of half arrays failed");
+    const PrimSpec* geo = rr.stage.GetRootLayer()->prim_at_path("/Geo");
+    assert(geo);
 
-  auto check = [&](const char* name, const std::vector<float>& expect, TypeId t) {
-    const Value* v = geo->property_value(name);
-    assert(v && v->is_array() && v->type_id() == t);
-    const std::vector<float>* arr = v->as_float_array();  // materializes half->float
-    assert(arr && *arr == expect);
-  };
-  check("h1", h1, TypeId::Half);
-  check("h3", h3, TypeId::Half3);
-  check("qh", qh, TypeId::Quath);
+    auto check = [&](const char* name, const std::vector<float>& expect, TypeId t) {
+      const Value* v = geo->property_value(name);
+      assert(v && v->is_array() && v->type_id() == t);
+      const std::vector<float>* arr = v->as_float_array();  // materializes half->float
+      assert(arr && *arr == expect);
+    };
+    check("h1", h1, TypeId::Half);
+    check("h3", h3, TypeId::Half3);
+    check("qh", qh, TypeId::Quath);
+  }
 
   std::cout << "  half array roundtrip passed!\n\n";
+}
+
+void test_roundtrip_arc_offset_precision() {
+  Layer layer;
+  LayerBuilder builder(layer);
+  builder.begin_prim("Data", "Scope");
+  builder.end_prim();
+  builder.finalize();
+  auto* prim = layer.prim_at_path_mutable("/Data");
+  const std::vector<std::string> arcs = {
+      "@ref.usda@</Data>?layerOffset=0.123456789:1.000000123",
+      "@ref.usda@</Data>?layerOffset=1.23e-7:1.23e-7",
+      "@ref.usda@</Data>?layerOffset=-1.2345678901234567:123456789.12345679"};
+  prim->meta().references = arcs;
+  prim->meta().payloads = arcs;
+  // A second write/read must preserve the same binary64 offsets and scales.
+  for (int pass = 0; pass < 2; ++pass) {
+    CrateWriter writer;
+    std::vector<uint8_t> bytes;
+    assert(writer.WriteLayerToMemory(bytes, layer).success);
+    CrateReader reader;
+    auto result = reader.Read(bytes.data(), bytes.size());
+    assert(result.success);
+    const auto& meta = MustPrim(result.stage.GetRootLayer(), "/Data")->meta();
+    assert(meta.references == arcs);
+    assert(meta.payloads == arcs);
+    layer = result.stage.GetRootLayer()->Clone();
+  }
+}
+
+// Raw byte arrays use a bounded view of the source during eager widening.
+// Cover empty input and values throughout the byte range, including tails.
+void test_roundtrip_byte_arrays() {
+  for (size_t count : {size_t(0), size_t(1), size_t(1025)}) {
+    std::vector<uint32_t> bytes(count);
+    std::vector<bool> flags(count);
+    for (size_t i = 0; i < count; ++i) {
+      bytes[i] = static_cast<uint32_t>(i % 256);
+      flags[i] = (i % 3) != 0;
+    }
+    Layer layer;
+    LayerBuilder b(layer);
+    b.begin_prim("Data", "Scope");
+    b.add_property("bytes", Value::MakeUIntCompArray(
+        std::vector<uint32_t>(bytes), TypeId::UChar, 1));
+    b.add_property("flags", Value::MakeBoolArray(flags));
+    b.end_prim();
+    b.finalize();
+    CrateWriteOptions write_options;
+    write_options.compress_arrays = false;
+    CrateWriter writer(write_options);
+    std::vector<uint8_t> buf;
+    assert(writer.WriteLayerToMemory(buf, layer).success);
+    for (bool lazy : {false, true}) {
+      CrateReadOptions options;
+      options.lazy_arrays = lazy;
+      CrateReader reader(options);
+      CrateReadResult rr = reader.Read(buf.data(), buf.size());
+      assert(rr.success);
+      const PrimSpec* prim = MustPrim(rr.stage.GetRootLayer(), "/Data");
+      const auto* actual_bytes = MustProp(prim, "bytes")->as_uint_array();
+      const auto* actual_flags = MustProp(prim, "flags")->as_bool_array();
+      assert(actual_bytes && *actual_bytes == bytes);
+      assert(actual_flags && actual_flags->size() == flags.size());
+      for (size_t i = 0; i < count; ++i) {
+        assert((*actual_flags)[i] == (flags[i] ? 1 : 0));
+      }
+    }
+  }
 }
 
 // Phase 7 S5: arc list-op qualifiers survive a USDC write -> read cycle via the
@@ -2487,6 +2563,8 @@ int main() {
     test_load_usdcomposed_usda_parse_options();
     test_half_shortest_decimal();
     test_roundtrip_half_arrays();
+    test_roundtrip_byte_arrays();
+    test_roundtrip_arc_offset_precision();
     test_write_usdc_from_stage_api();
     test_roundtrip_variants();
     test_parallel_stage_build_matches_serial();

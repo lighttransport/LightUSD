@@ -698,6 +698,13 @@ Value Value::MakeBoolArray(const std::vector<bool>& data) {
   for (size_t i = 0; i < data.size(); i++) tmp[i] = data[i] ? 1 : 0;
   new (v.storage_) ArrayHandle(std::move(tmp)); return v;
 }
+Value Value::MakeBoolByteArray(std::vector<uint8_t>&& data) {
+  if (!FitsValueArraySize(data.size())) return Value();
+  for (uint8_t& lane : data) lane = lane != 0 ? uint8_t(1) : uint8_t(0);
+  Value v; v.type_id_ = TypeId::Bool; v.is_array_ = true;
+  v.array_size_ = static_cast<uint32_t>(data.size());
+  new (v.storage_) ArrayHandle(std::move(data)); return v;
+}
 Value Value::MakeTokenArray(const std::vector<std::string>& data) {
   if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::Token; v.is_array_ = true;

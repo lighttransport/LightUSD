@@ -861,7 +861,13 @@ Current USDC-focused next coverage:
 - `next_test_usdc_malformed` uses generated in-memory crate fixtures for bad
   magic, truncated bootstrap, invalid TOC offsets/ranges, excessive section
   counts, missing required sections, allocation caps, and malformed
-  FIELD/FIELDSET/SPECS payloads. Prefer adding compact generated cases here when
+  FIELD/FIELDSET/SPECS payloads. Generated valid compressed float/half arrays
+  also exercise integer and lookup-table codecs in eager and lazy readers,
+  including half rounding and quaternion swizzling. Widened half/uchar outputs
+  must fit the configured memory budget. Additional cases reject repeated
+  long token/string/asset/path-expression copies and token/string vectors,
+  preserve deferred memory limits after reader destruction, and charge
+  compressed bool integer scratch before allocation. Prefer compact cases when
   a malformed input can be described structurally.
 - `next_test_crash_regressions` replays minimized fuzzer-found binary inputs
   from `tests/next/crash_regressions/`. Prefer this only when the exact byte
@@ -870,7 +876,24 @@ Current USDC-focused next coverage:
   generated fixture covering layer metadata, dictionaries, composition arcs,
   mesh arrays, per-property metadata, relationships, connection-flagged
   properties, Shader/Material links, PointInstancer arrays/prototypes, ids, and
-  time samples.
+  time samples. It also checks half/quaternion arrays with distinct component
+  values in both eager and lazy readers, plus empty and full-byte-range
+  uchar/bool arrays with non-aligned tails. These cover overlap-safe half
+  widening and bounded source views used by eager array decoding. Reference
+  and payload offsets/scales retain binary64 precision through two crate cycles,
+  including tiny scales that must not round to zero.
+- `next_test_lazy_array` checks that separate materializations share a cumulative
+  allocation budget (including after source-owner release). Threaded builds
+  race independent lazy copies under a budget admitting only one decode.
+  The byte-backed bool factory must canonicalize nonzero lanes while adopting
+  the original buffer.
+
+Crate allocation limits continue after loading: lazy sources retain the same
+cumulative budget as their reader. Temporary codec buffers are charged
+conservatively, and repeated materialized copies consume the shared budget;
+borrowed array views and verbatim write-through do not decode array storage.
+A deferred decode that exceeds the budget follows the existing failure contract:
+`materialized_copy()` returns an empty Value and typed access returns null.
 
 ### CMake targets not in ctest
 

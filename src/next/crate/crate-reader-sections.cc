@@ -407,6 +407,9 @@ bool CrateReader::Impl::ReadFields() {
     AddError("Field indices payload size overflow");
     return false;
   }
+  if (!CheckByteAllocation(indices_with_prefix_size, "Field index prefix buffer") ||
+      !CheckIntegerWorkspace(static_cast<size_t>(num_fields), indices_data.data(),
+                             indices_data.size())) return false;
   std::vector<uint8_t> indices_with_prefix(indices_with_prefix_size);
   std::memcpy(indices_with_prefix.data(), &indices_size, 8);
   if (!indices_data.empty()) {
@@ -418,6 +421,8 @@ bool CrateReader::Impl::ReadFields() {
                                                  static_cast<size_t>(num_fields));
   if (!dr.success) {
     // Fall back to legacy format
+    if (!CheckElementAllocation(num_fields, sizeof(uint32_t),
+                                "Legacy field index workspace")) return false;
     dr = DecompressIntegers(indices_with_prefix.data() + 8, indices_with_prefix.size() - 8,
                             static_cast<size_t>(num_fields), false);
     if (!dr.success) {
@@ -773,12 +778,17 @@ bool CrateReader::Impl::ReadFieldsets() {
     return false;
   }
 
+  if (!CheckIntegerWorkspace(static_cast<size_t>(num_fieldsets),
+                             data.size() >= 8 ? data.data() + 8 : nullptr,
+                             data.size() >= 8 ? data.size() - 8 : 0)) return false;
   fieldset_indices_.resize(static_cast<size_t>(num_fieldsets));
   DecompressResult dr = DecompressCompressedU32(data.data(), data.size(),
                                                  fieldset_indices_.data(),
                                                  static_cast<size_t>(num_fieldsets));
   if (!dr.success) {
     // Legacy fallback: try EncodeIntegers (common-prefix, no LZ4)
+    if (!CheckElementAllocation(num_fieldsets, sizeof(uint32_t),
+                                "Legacy fieldset workspace")) return false;
     dr = DecompressIntegers(data.data(), data.size(),
                             static_cast<size_t>(num_fieldsets), false);
     if (!dr.success) {
@@ -854,7 +864,12 @@ bool CrateReader::Impl::ReadSpecs() {
     }
 
     // Include u64 compressed_size prefix (DecompressCompressedU32 expects it)
-    std::vector<uint8_t> comp_data(8 + static_cast<size_t>(comp_size));
+    size_t prefixed_size;
+    if (!safe::add(size_t(8), comp_size, &prefixed_size) ||
+        !CheckByteAllocation(prefixed_size, "Specs compressed input") ||
+        !CheckIntegerWorkspace(count, reader_->current(),
+                               static_cast<size_t>(comp_size))) return false;
+    std::vector<uint8_t> comp_data(prefixed_size);
     std::memcpy(comp_data.data(), &comp_size, 8);
     if (!reader_->read(comp_data.data() + 8, static_cast<size_t>(comp_size))) {
       AddError("Failed to read specs compressed data");
@@ -866,6 +881,8 @@ bool CrateReader::Impl::ReadSpecs() {
                                                    dst, count);
     if (!dr.success) {
       // Fallback: try legacy EncodeIntegers (common-prefix, no LZ4)
+      if (!CheckElementAllocation(count, sizeof(uint32_t),
+                                  "Legacy specs workspace")) return false;
       dr = DecompressIntegers(comp_data.data(), comp_data.size(), count, false);
       if (!dr.success) {
         AddError("Failed to decompress specs array: " + dr.error);
@@ -1041,7 +1058,14 @@ bool CrateReader::Impl::ReadPaths() {
       return false;
     }
     // Include u64 compressed_size prefix (DecompressCompressedU32 expects it)
-    a.data.resize(8 + static_cast<size_t>(comp_size));
+    size_t prefixed_size;
+    if (!safe::add(size_t(8), comp_size, &prefixed_size) ||
+        !CheckByteAllocation(prefixed_size, "Paths compressed input") ||
+        !CheckIntegerWorkspace(n, reader_->current(), static_cast<size_t>(comp_size))) {
+      a.read_error = "Path compressed allocation budget exceeded";
+      return false;
+    }
+    a.data.resize(prefixed_size);
     std::memcpy(a.data.data(), &comp_size, 8);
     if (!reader_->read(a.data.data() + 8, static_cast<size_t>(comp_size))) {
       a.read_error = std::string("Failed to read ") + a.name + " compressed data";
@@ -1050,12 +1074,21 @@ bool CrateReader::Impl::ReadPaths() {
     a.read_ok = true;
     return true;
   };
-  auto decode_comp_blob = [](CompArray& a, size_t count) {
+  auto decode_comp_blob = [budget = allocation_budget_](CompArray& a, size_t count) {
     const size_t comp_size = a.data.size() - 8;
     DecompressResult dr =
         DecompressCompressedU32(a.data.data(), a.data.size(), a.dst, count);
     if (!dr.success) {
       // Fallback: legacy EncodeIntegers (common-prefix, no LZ4)
+      size_t legacy_bytes;
+      if (!safe::mul(count, sizeof(uint32_t), &legacy_bytes)) {
+        a.decode_error = "Legacy path workspace size overflow";
+        return;
+      }
+      if (const char* error = budget->Charge(legacy_bytes)) {
+        a.decode_error = std::string("Legacy path workspace") + error;
+        return;
+      }
       dr = DecompressIntegers(a.data.data() + 8, comp_size, count, false);
       if (!dr.success) {
         a.decode_error = std::string("Failed to decompress ") + a.name + ": " + dr.error;

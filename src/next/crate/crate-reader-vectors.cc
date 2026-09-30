@@ -26,10 +26,12 @@ bool CrateReader::Impl::UnpackTokenOrStringVector(ValueRep rep,
   if (!reader()->has_elements(static_cast<size_t>(n), sizeof(uint32_t))) {
     return false;
   }
+  if (!CheckElementAllocation(n, sizeof(uint32_t), "String vector indices")) return false;
   std::vector<uint32_t> idxs(static_cast<size_t>(n));
   size_t bytes;
   if (!safe::mul(static_cast<size_t>(n), sizeof(uint32_t), &bytes)) return false;
   if (n && !reader()->read(idxs.data(), bytes)) return false;
+  if (!CheckStringArrayAllocation(idxs, type_id == CrateTypeId::StringVector)) return false;
   std::vector<std::string> data(static_cast<size_t>(n));
   for (size_t i = 0; i < n; i++) {
     std::string s;

@@ -385,8 +385,8 @@ bool ParseScalarArray(SliceParser* sp, std::vector<T>* out, ParseOne parse_one) 
   while (true) {
     T v{};
     if (!parse_one(sp, &v)) return false;
+    if (out->size() >= kMaxArrayScalars) return false;
     out->push_back(v);
-    if ((out->size() & 0xFF) == 0 && out->size() > kMaxArrayScalars) return false;
     if (sp->maybe_consume(',')) {
       // Trailing comma before ']' is valid USDA ([0, 1, 2,]).
       if (sp->at_array_end()) return sp->finish_array();

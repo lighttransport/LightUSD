@@ -36,7 +36,10 @@ struct CrateReadOptions : CrateLimits {
   /// count triggering an enormous allocation).
   size_t max_array_elements = 16 * 1024 * 1024;
 
-  /// Maximum memory budget (bytes, 0 = unlimited)
+  /// Cumulative allocation budget for the read and later lazy materializations
+  /// (bytes, 0 disables the explicit budget; file-relative guards remain).
+  /// Temporary decode buffers count too. Deferred copies of a value share the
+  /// retained source's budget, which outlives the reader and is not refunded.
   size_t max_memory = security_policy::kDefaultInputLimitBytes;
 
   /// Keep numeric POD arrays as lazy references into the retained source buffer

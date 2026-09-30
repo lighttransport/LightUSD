@@ -6,6 +6,7 @@
 #include "crate-data-source.hh"
 
 #include "lazy-array.hh"
+#include "crate-allocation-budget.hh"
 #include "safe-arithmetic.hh"
 #include "stream-reader.hh"
 #include "../types/value.hh"
@@ -134,7 +135,8 @@ bool CrateDataSource::MaterializeArray(const LazyArrayRef& ref, Value* out) cons
                                ? (std::numeric_limits<size_t>::max)()
                                : static_cast<size_t>(ref.max_elements);
   return DecodeCrateArray(base(), size(), ref.rep, version_, tokens_,
-                          std::min(ref_limit, max_array_elements_), out);
+                          std::min(ref_limit, max_array_elements_), out,
+                          allocation_budget_.get());
 }
 
 // ============================================================
@@ -154,6 +156,7 @@ uint32_t CrateArrayElemStride(CrateTypeId id) {
     case CrateTypeId::Token:
     case CrateTypeId::String:
     case CrateTypeId::AssetPath:
+    case CrateTypeId::PathExpression:
       return 4;
     case CrateTypeId::Int64:
     case CrateTypeId::UInt64:
@@ -440,6 +443,24 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
                       CrateVersion version,
                       const std::vector<std::string>& tokens, size_t max_elements,
                       Value* out) {
+  CrateAllocationBudget budget(size, 0);
+  return DecodeCrateArray(base, size, rep, version, tokens, max_elements, out,
+                          &budget);
+}
+
+bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
+                      CrateVersion version,
+                      const std::vector<std::string>& tokens, size_t max_elements,
+                      Value* out, CrateAllocationBudget* budget) {
+  CrateAllocationBudget fallback(size, 0);
+  if (!budget) budget = &fallback;
+  auto charge = [&](uint64_t bytes) -> bool {
+    return budget->Charge(bytes) == nullptr;
+  };
+  auto charge_elements = [&](size_t count, size_t stride) -> bool {
+    size_t bytes;
+    return safe::mul(count, stride, &bytes) && charge(bytes);
+  };
   if (!out) return false;
   const CrateTypeId type_id = rep.type_id();
 
@@ -466,7 +487,11 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
   // CheckByteAllocation).
   {
     const uint64_t stride = CrateArrayElemStride(type_id);
-    const uint64_t elem_bytes = stride ? stride : 1;
+    uint64_t elem_bytes = stride ? stride : 1;
+    if (type_id == CrateTypeId::Half || type_id == CrateTypeId::Vec2h ||
+        type_id == CrateTypeId::Vec3h || type_id == CrateTypeId::Vec4h ||
+        type_id == CrateTypeId::Quath) elem_bytes *= 2;
+    else if (type_id == CrateTypeId::UChar) elem_bytes = sizeof(uint32_t);
     if (!compressed && stride > 0 &&
         !r.has_elements(static_cast<size_t>(count), static_cast<size_t>(stride))) {
       return false;
@@ -478,7 +503,7 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
     const uint64_t cap = (fsz > (kU64Max - kSlack) / kMaxRatio)
                              ? kU64Max
                              : fsz * kMaxRatio + kSlack;
-    if (count > cap / elem_bytes) return false;  // count*elem_bytes > cap
+    if (count > cap / elem_bytes || !charge(count * elem_bytes)) return false;
   }
 
   auto read_compressed_u32_n = [&](uint32_t* dst, size_t n) -> bool {
@@ -488,13 +513,15 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       return false;
     }
     if (static_cast<size_t>(comp_size) > r.remaining()) return false;
-    std::vector<uint8_t> blob;
-    if (!r.read(blob, static_cast<size_t>(comp_size))) return false;
-    size_t prefixed_size = 0;
-    if (!safe::add(size_t(8), blob.size(), &prefixed_size)) return false;
+    size_t prefixed_size;
+    size_t workspace;
+    if (!safe::add(size_t(8), static_cast<size_t>(comp_size), &prefixed_size) ||
+        !CrateIntegerWorkspaceBytes(n, sizeof(*dst), r.current(),
+                                    static_cast<size_t>(comp_size), &workspace) ||
+        !charge(prefixed_size) || !charge(workspace)) return false;
     std::vector<uint8_t> with_prefix(prefixed_size);
     std::memcpy(with_prefix.data(), &comp_size, 8);
-    if (!blob.empty()) std::memcpy(with_prefix.data() + 8, blob.data(), blob.size());
+    if (!r.read(with_prefix.data() + 8, static_cast<size_t>(comp_size))) return false;
     DecompressResult dr = DecompressCompressedU32(
         with_prefix.data(), with_prefix.size(), dst, n);
     return dr.success;
@@ -510,13 +537,15 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       return false;
     }
     if (static_cast<size_t>(comp_size) > r.remaining()) return false;
-    std::vector<uint8_t> blob;
-    if (!r.read(blob, static_cast<size_t>(comp_size))) return false;
-    size_t prefixed_size = 0;
-    if (!safe::add(size_t{8}, blob.size(), &prefixed_size)) return false;
+    size_t prefixed_size;
+    size_t workspace;
+    if (!safe::add(size_t(8), static_cast<size_t>(comp_size), &prefixed_size) ||
+        !CrateIntegerWorkspaceBytes(n, sizeof(*dst), r.current(),
+                                    static_cast<size_t>(comp_size), &workspace) ||
+        !charge(prefixed_size) || !charge(workspace)) return false;
     std::vector<uint8_t> with_prefix(prefixed_size);
     std::memcpy(with_prefix.data(), &comp_size, 8);
-    if (!blob.empty()) std::memcpy(with_prefix.data() + 8, blob.data(), blob.size());
+    if (!r.read(with_prefix.data() + 8, static_cast<size_t>(comp_size))) return false;
     DecompressResult dr = DecompressCompressedU64(
         with_prefix.data(), with_prefix.size(), dst, n);
     return dr.success;
@@ -538,6 +567,7 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
     int8_t code = 0;
     if (!r.read_i8(code)) return false;
     if (code == 'i') {
+      if (!charge_elements(n, sizeof(uint32_t))) return false;
       std::vector<uint32_t> ints(n);
       if (!read_compressed_u32_n(ints.data(), n)) return false;
       for (size_t i = 0; i < n; ++i) {
@@ -550,10 +580,12 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       if (!r.read_u32(lut_size)) return false;
       if (lut_size == 0 || lut_size > max_elements) return false;
       if (!r.has_elements(size_t(lut_size), sizeof(T))) return false;
+      if (!charge_elements(lut_size, sizeof(T))) return false;
       std::vector<T> lut(lut_size);
       size_t lut_bytes;
       if (!safe::mul(size_t(lut_size), sizeof(T), &lut_bytes)) return false;
       if (!r.read(lut.data(), lut_bytes)) return false;
+      if (!charge_elements(n, sizeof(uint32_t))) return false;
       std::vector<uint32_t> idxs(n);
       if (!read_compressed_u32_n(idxs.data(), n)) return false;
       for (size_t i = 0; i < n; ++i) {
@@ -565,14 +597,15 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
     return false;
   };
 
-  auto read_compressed_half_n = [&](uint16_t* dst, size_t n) -> bool {
+  auto read_compressed_half_n = [&](float* dst, size_t n) -> bool {
     int8_t code = 0;
     if (!r.read_i8(code)) return false;
     if (code == 'i') {
+      if (!charge_elements(n, sizeof(uint32_t))) return false;
       std::vector<uint32_t> ints(n);
       if (!read_compressed_u32_n(ints.data(), n)) return false;
       for (size_t i = 0; i < n; ++i) {
-        dst[i] = FloatToHalf(static_cast<float>(static_cast<int32_t>(ints[i])));
+        dst[i] = HalfToFloat(FloatToHalf(static_cast<float>(static_cast<int32_t>(ints[i]))));
       }
       return true;
     }
@@ -581,15 +614,17 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       if (!r.read_u32(lut_size)) return false;
       if (lut_size == 0 || lut_size > max_elements) return false;
       if (!r.has_elements(size_t(lut_size), sizeof(uint16_t))) return false;
+      if (!charge_elements(lut_size, sizeof(uint16_t))) return false;
       std::vector<uint16_t> lut(lut_size);
       size_t lut_bytes;
       if (!safe::mul(size_t(lut_size), sizeof(uint16_t), &lut_bytes)) return false;
       if (!r.read(lut.data(), lut_bytes)) return false;
+      if (!charge_elements(n, sizeof(uint32_t))) return false;
       std::vector<uint32_t> idxs(n);
       if (!read_compressed_u32_n(idxs.data(), n)) return false;
       for (size_t i = 0; i < n; ++i) {
         if (idxs[i] >= lut_size) return false;
-        dst[i] = lut[idxs[i]];
+        dst[i] = HalfToFloat(lut[idxs[i]]);
       }
       return true;
     }
@@ -676,9 +711,10 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       // array storage in Value. Keep the authored UChar identity while
       // widening each lane on materialization.
       if (compressed) return false;
-      std::vector<uint8_t> raw8(static_cast<size_t>(count));
-      if (!read_raw(raw8.data(), sizeof(uint8_t))) return false;
-      std::vector<uint32_t> data(raw8.begin(), raw8.end());
+      std::vector<uint32_t> data(static_cast<size_t>(count));
+      const uint8_t* raw = r.current();
+      if (!r.skip(static_cast<size_t>(count))) return false;
+      for (size_t i = 0; i < count; ++i) data[i] = raw[i];
       *out = Value::MakeUIntCompArray(std::move(data), TypeId::UChar, 1);
       return true;
     }
@@ -695,6 +731,7 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
     case CrateTypeId::Bool: {
       std::vector<uint8_t> bytes(static_cast<size_t>(count));
       if (compressed) {
+        if (!charge_elements(static_cast<size_t>(count), sizeof(uint32_t))) return false;
         std::vector<uint32_t> lanes(static_cast<size_t>(count));
         if (!read_compressed_u32(lanes.data())) return false;
         for (size_t i = 0; i < lanes.size(); ++i) {
@@ -703,9 +740,7 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       } else if (!read_raw(bytes.data(), sizeof(uint8_t))) {
         return false;
       }
-      std::vector<bool> out_bool(static_cast<size_t>(count));
-      for (size_t i = 0; i < count; i++) out_bool[i] = (bytes[i] != 0);
-      *out = Value::MakeBoolArray(out_bool);
+      *out = Value::MakeBoolByteArray(std::move(bytes));
       return true;
     }
     case CrateTypeId::TimeCode: {
@@ -728,6 +763,15 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       } else if (!read_raw(idxs.data(), sizeof(uint32_t))) {
         return false;
       }
+      size_t text_bytes = 0;
+      for (uint32_t index : idxs) {
+        if (index >= tokens.size()) return false;
+        size_t length;
+        if (!safe::add(tokens[index].size(), uint64_t(1), &length) ||
+            !safe::add(text_bytes, length, &text_bytes)) return false;
+      }
+      if (!charge_elements(static_cast<size_t>(count), sizeof(std::string)) ||
+          !charge(text_bytes)) return false;
       std::vector<std::string> data(static_cast<size_t>(count));
       for (size_t i = 0; i < count; i++) {
         if (idxs[i] >= tokens.size()) return false;
@@ -804,22 +848,27 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
           count > (std::numeric_limits<size_t>::max)() / comps) {
         return false;
       }
-      std::vector<uint16_t> halfs(static_cast<size_t>(count) * comps);
+      std::vector<float> data(static_cast<size_t>(count) * comps);
       if (compressed) {
-        if (!read_compressed_half_n(halfs.data(), halfs.size())) return false;
-      } else if (!read_raw(halfs.data(), comps * 2)) {
-        return false;
+        if (!read_compressed_half_n(data.data(), data.size())) return false;
+      } else {
+        size_t bytes;
+        if (!safe::mul(data.size(), sizeof(uint16_t), &bytes)) return false;
+        const uint8_t* raw = r.current();
+        if (!r.skip(bytes)) return false;
+        for (size_t i = 0; i < data.size(); ++i) {
+          uint16_t half;
+          std::memcpy(&half, raw + i * sizeof(half), sizeof(half));
+          data[i] = HalfToFloat(half);
+        }
       }
       if (type_id == CrateTypeId::Quath) {
-        // Imaginary-first on disk -> real-first internal (see Quatf above).
         for (size_t e = 0; e < count; ++e) {
-          uint16_t* q = halfs.data() + e * 4;
-          const uint16_t w = q[3];
+          float* q = data.data() + e * 4;
+          const float w = q[3];
           q[3] = q[2]; q[2] = q[1]; q[1] = q[0]; q[0] = w;
         }
       }
-      std::vector<float> data(halfs.size());
-      for (size_t i = 0; i < halfs.size(); ++i) data[i] = HalfToFloat(halfs[i]);
       *out = Value::MakeFloatCompArray(std::move(data),
                                        CrateArrayValueType(type_id), comps);
       return true;

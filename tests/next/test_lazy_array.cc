@@ -13,12 +13,16 @@
 #include <fstream>
 #include <iostream>
 #include <vector>
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include <thread>
+#endif
 #if defined(__unix__) || defined(__APPLE__) || defined(__linux__)
 #include <unistd.h>
 #endif
 
 #include "next/composition/composition.hh"
 #include "next/crate/crate-data-source.hh"
+#include "next/crate/crate-allocation-budget.hh"
 #include "next/crate/crate-format.hh"
 #include "next/crate/crate-writer.hh"
 #include "next/crate/lazy-array.hh"
@@ -48,7 +52,51 @@ std::string LazyArrayScratchDirectory() {
 }
 }  // namespace
 
+static std::shared_ptr<CrateDataSource> MakeBudgetSource(LazyArrayRef* ref) {
+  std::string bytes(16, '\0');
+  const uint64_t count = 500;
+  bytes.append(reinterpret_cast<const char*>(&count), sizeof(count));
+  bytes.append(500 * sizeof(uint16_t), '\0');
+  auto source = CrateDataSource::Adopt(std::move(bytes), CrateVersion{0, 8, 0});
+  source->set_allocation_budget(std::make_shared<CrateAllocationBudget>(
+      source->size(), 3500));
+  assert(ProbeArrayBlock(source, ValueRep::Make(CrateTypeId::Half, 16, true),
+                         500, ref));
+  return source;
+}
+
+static void TestSharedDeferredBudget() {
+  LazyArrayRef ref;
+  auto source = MakeBudgetSource(&ref);
+  Value first = Value::MakeLazyArray(ref);
+  Value second = first;
+  source.reset();
+  ref.source.reset();
+  Value decoded = first.materialized_copy();
+  assert(decoded.as_float_array() && decoded.as_float_array()->size() == 500);
+  // Each decode alone fits 3500 bytes; their cumulative 4000 bytes do not.
+  assert(second.materialized_copy().is_empty());
+  assert(first.is_lazy() && second.is_lazy());
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  source = MakeBudgetSource(&ref);
+  Value left = Value::MakeLazyArray(ref);
+  Value right = left;
+  Value results[2];
+  std::thread a([&]() { results[0] = left.materialized_copy(); });
+  std::thread b([&]() { results[1] = right.materialized_copy(); });
+  a.join(); b.join();
+  assert(results[0].is_empty() != results[1].is_empty());
+#endif
+  std::vector<uint8_t> flags{0, 1, 2, 128, 255};
+  const uint8_t* storage = flags.data();
+  Value bools = Value::MakeBoolByteArray(std::move(flags));
+  assert(bools.type_id() == TypeId::Bool && bools.array_size() == 5);
+  assert(bools.as_bool_array()->data() == storage);
+  assert(*bools.as_bool_array() == std::vector<uint8_t>({0, 1, 1, 1, 1}));
+}
+
 int main() {
+  TestSharedDeferredBudget();
   std::cout << "=== LightUSD Next Lazy Array Tests ===" << std::endl;
 
   // Empty ArrayView must be safe to use with begin()/end() range APIs.

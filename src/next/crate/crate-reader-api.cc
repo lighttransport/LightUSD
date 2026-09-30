@@ -44,6 +44,9 @@ CrateReadResult CrateReader::Impl::ParseFromSource() {
   }
 
   reader_ = std::make_unique<StreamReader>(source_->base(), source_->size());
+  allocation_budget_ = std::make_shared<CrateAllocationBudget>(
+      source_->size(), options_.max_memory);
+  source_->set_allocation_budget(allocation_budget_);
 
   constexpr size_t kPhaseTotal = 10;
   if (!ReportProgress("bootstrap", 0, kPhaseTotal)) return std::move(result_);

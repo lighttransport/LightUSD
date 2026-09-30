@@ -149,6 +149,8 @@ public:
   static Value MakeUInt64Array(const std::vector<uint64_t>& data);
   static Value MakeUInt64Array(std::vector<uint64_t>&& data);
   static Value MakeBoolArray(const std::vector<bool>& data);
+  /// Adopt byte storage, canonicalizing each nonzero lane to true (1).
+  static Value MakeBoolByteArray(std::vector<uint8_t>&& data);
   static Value MakeTokenArray(const std::vector<std::string>& data);
   static Value MakeTokenArray(std::vector<std::string>&& data);
 

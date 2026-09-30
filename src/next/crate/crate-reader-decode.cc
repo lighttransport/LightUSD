@@ -6,6 +6,7 @@
 #include "crate-reader-internal.hh"
 #include "safe-arithmetic.hh"
 #include "../execution.hh"
+#include "../writer/dtoa.hh"
 
 #include <cmath>
 #include <cstdint>
@@ -118,18 +119,21 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
     if (!CheckElementAllocation(n, sizeof(std::string), "Path list-op")) {
       return false;
     }
-    size_t batch_size = 0;
+    // Preflight the whole run before creating any strings. A copied cursor
+    // avoids temporary index storage and charges the budget once per run.
+    StreamReader scan = *reader();
+    size_t string_bytes = 0;
+    for (uint64_t i = 0; i < n; ++i) {
+      uint32_t idx = 0;
+      if (!scan.read_u32(idx) || idx >= paths_.size()) return false;
+      if (!safe::add(string_bytes,
+                     static_cast<uint64_t>(paths_.view(idx).size()),
+                     &string_bytes)) return false;
+    }
+    if (!CheckByteAllocation(string_bytes, "Path list-op targets")) return false;
     for (uint64_t i = 0; i < n; ++i) {
       uint32_t idx = 0;
       if (!reader()->read_u32(idx)) return false;
-      if (idx >= paths_.size()) return false;
-      batch_size += paths_.view(idx).size();
-      if ((i & 0x3F) == 0x3F) {
-        if (!CheckByteAllocation(batch_size, "Path list-op targets")) {
-          return false;
-        }
-        batch_size = 0;
-      }
       // paths_ renders a property path as ".<primpath>/<prop>"; convert to the
       // canonical USD form "<primpath>.<prop>" so targets re-intern correctly
       // (and survive repeated round-trips). Prim targets pass through as-is.
@@ -146,11 +150,6 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
         }
       } else {
         out.emplace_back(p);                        // prim path "/a/b"
-      }
-    }
-    if (batch_size > 0) {
-      if (!CheckByteAllocation(batch_size, "Path list-op targets")) {
-        return false;
       }
     }
     return true;
@@ -273,8 +272,8 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
     if (!asset.empty()) arc = "@" + asset + "@";
     if (!prim.empty() && prim != "/") arc += "<" + prim + ">";
     if (offset != 0.0 || scale != 1.0) {
-      arc += "?layerOffset=" + std::to_string(offset) + ":" +
-             std::to_string(scale);
+      arc += "?layerOffset=" + dtos(offset) + ":" +
+             dtos(scale);
     }
     out.push_back(std::move(arc));
     return true;
@@ -481,84 +480,20 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
 }
 
 bool CrateReader::Impl::CheckByteAllocation(uint64_t bytes, const char* what) {
-  if (bytes > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
-    AddError(std::string(what) + " size exceeds addressable memory");
-    return false;
-  }
-  // Always-on guard: a decoded in-memory buffer cannot plausibly exceed the
-  // input file size by more than the maximum stream compression ratio. This
-  // bounds allocations driven by a malformed/hostile count even when no
-  // explicit max_memory budget is configured (a tiny file can otherwise claim a
-  // multi-GB array/section and exhaust memory). The +slack admits small files
-  // with legitimately larger decoded buffers.
-  if (reader_) {
-    const uint64_t file_size = static_cast<uint64_t>(reader_->size());
-    constexpr uint64_t kMaxRatio = 256;  // LZ4-ish worst-case headroom
-    constexpr uint64_t kSlack = 64ull * 1024 * 1024;  // 64 MiB
-    constexpr uint64_t kU64Max = (std::numeric_limits<uint64_t>::max)();
-    const uint64_t cap = (file_size > (kU64Max - kSlack) / kMaxRatio)
-                             ? kU64Max
-                             : file_size * kMaxRatio + kSlack;
-    if (bytes > cap) {
-      AddError(std::string(what) +
-               " exceeds file-size-relative allocation cap");
-      return false;
-    }
-  }
-  if (options_.max_memory && bytes > static_cast<uint64_t>(options_.max_memory)) {
-    AddError(std::string(what) + " exceeds max_memory budget");
-    return false;
-  }
-
-  // CUMULATIVE budget. The checks above are per-allocation, so N separate
-  // allocations each just under the cap summed without any limit -- a file with
-  // many fields could still drive total RSS arbitrarily high. Track the running
-  // total against the same bound.
-  const uint64_t budget = AllocationBudget();
-#if defined(LIGHTUSD_ENABLE_THREAD)
-  // Parallel stage-build tasks charge concurrently: reserve with a CAS so the
-  // running total never admits more than the budget.
-  uint64_t cur = alloc_total_.load(std::memory_order_relaxed);
-  for (;;) {
-    if (bytes > kU64MaxBytes - cur || cur + bytes > budget) {
-      AddError(std::string(what) + " exceeds cumulative allocation budget");
-      return false;
-    }
-    if (alloc_total_.compare_exchange_weak(cur, cur + bytes,
-                                           std::memory_order_relaxed)) {
-      return true;
-    }
-  }
-#else
-  if (bytes > kU64MaxBytes - alloc_total_) {
-    AddError(std::string(what) + " exceeds cumulative allocation budget");
-    return false;
-  }
-  const uint64_t new_total = alloc_total_ + bytes;
-  if (new_total > budget) {
-    AddError(std::string(what) + " exceeds cumulative allocation budget");
-    return false;
-  }
-  alloc_total_ = new_total;
-  return true;
-#endif
+  const char* error = allocation_budget_->Charge(bytes);
+  if (!error) return true;
+  AddError(std::string(what) + error);
+  return false;
 }
 
-// Total decoded bytes this reader may accumulate. Deliberately looser than the
-// per-allocation cap (a valid file legitimately decodes to several times its
-// on-disk size across many sections) while still bounded by the input.
-uint64_t CrateReader::Impl::AllocationBudget() const {
-  if (options_.max_memory) {
-    return static_cast<uint64_t>(options_.max_memory);
+bool CrateReader::Impl::CheckIntegerWorkspace(size_t count,
+                                               const uint8_t* data, size_t size) {
+  size_t bytes;
+  if (!CrateIntegerWorkspaceBytes(count, sizeof(uint32_t), data, size, &bytes)) {
+    AddError("Compressed integer workspace size overflow");
+    return false;
   }
-  const uint64_t file_size =
-      reader_ ? static_cast<uint64_t>(reader_->size()) : 0;
-  constexpr uint64_t kCumulativeRatio = 512;
-  constexpr uint64_t kCumulativeSlack = 256ull * 1024 * 1024;  // 256 MiB
-  if (file_size > (kU64MaxBytes - kCumulativeSlack) / kCumulativeRatio) {
-    return kU64MaxBytes;
-  }
-  return file_size * kCumulativeRatio + kCumulativeSlack;
+  return CheckByteAllocation(bytes, "Compressed integer workspace");
 }
 
 bool CrateReader::Impl::CheckElementAllocation(uint64_t count, size_t elem_size,
@@ -576,6 +511,25 @@ bool CrateReader::Impl::CheckElementAllocation(uint64_t count, size_t elem_size,
     return false;
   }
   return CheckByteAllocation(static_cast<uint64_t>(total), what);
+}
+
+bool CrateReader::Impl::CheckStringArrayAllocation(
+    const std::vector<uint32_t>& indices, bool use_string_indices) {
+  size_t bytes = 0;
+  for (uint32_t index : indices) {
+    if (use_string_indices) {
+      if (index >= string_indices_.size()) return false;
+      index = string_indices_[index];
+    }
+    if (index >= tokens_.size()) return false;
+    size_t length;
+    if (!safe::add(tokens_.view(index).size(),
+                   uint64_t(1), &length) ||
+        !safe::add(bytes, length, &bytes)) return false;
+  }
+  return CheckElementAllocation(indices.size(), sizeof(std::string),
+                                "String array objects") &&
+         CheckByteAllocation(bytes, "String array contents");
 }
 
 bool CrateReader::Impl::GetToken(uint32_t index, std::string& out) {

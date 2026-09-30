@@ -19,6 +19,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace lightusd {
@@ -47,6 +48,8 @@ inline bool SeekToPayload(StreamReader* r, ValueRep rep) {
 
 
 class Value;
+class CrateAllocationBudget;
+
 class CrateDataSource : public LazyArraySource {
  public:
   /// Adopt the crate bytes by move (no copy) together with the decoded
@@ -111,6 +114,9 @@ class CrateDataSource : public LazyArraySource {
   /// (The buffer is adopted before the header is read.)
   void set_version(CrateVersion v) { version_ = v; }
   void set_max_array_elements(size_t n) { max_array_elements_ = n; }
+  void set_allocation_budget(std::shared_ptr<CrateAllocationBudget> budget) {
+    allocation_budget_ = std::move(budget);
+  }
 
   /// Install the decoded token / string-index tables (used for token-array
   /// materialization and write-time index remapping).
@@ -151,6 +157,7 @@ class CrateDataSource : public LazyArraySource {
   CrateVersion version_{};  // value-initialized to 0.0.0
   std::vector<std::string> tokens_;
   std::vector<uint32_t> string_indices_;
+  std::shared_ptr<CrateAllocationBudget> allocation_budget_;
   size_t max_array_elements_ = 1024ull * 1024ull * 1024ull;
 };
 
@@ -162,6 +169,12 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
                       CrateVersion version,
                       const std::vector<std::string>& tokens, size_t max_elements,
                       Value* out);
+
+// Internal budget-aware entry point; the existing overload remains available.
+bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
+                      CrateVersion version,
+                      const std::vector<std::string>& tokens, size_t max_elements,
+                      Value* out, CrateAllocationBudget* budget);
 
 /// Convenience overload assuming the modern (>= 0.7.0) u64 count header.
 inline bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,

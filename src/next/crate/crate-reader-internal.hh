@@ -8,6 +8,7 @@
 #include "crate-reader.hh"
 
 #include "crate-data-source.hh"
+#include "crate-allocation-budget.hh"
 #include "stream-reader.hh"
 #include "../layer/prim-spec.hh"  // PropMeta (property metadata decode)
 
@@ -287,21 +288,14 @@ class CrateReader::Impl {
   bool UnpackVec4h(ValueRep rep, Value& out);
   bool UnpackQuath(ValueRep rep, Value& out);
 
-  // Running total of bytes admitted through CheckByteAllocation, checked
-  // against AllocationBudget(). The per-allocation caps alone let N separate
-  // allocations each just under the cap sum without bound.
-#if defined(LIGHTUSD_ENABLE_THREAD)
-  // Atomic: parallel stage-build tasks charge decode allocations concurrently.
-  std::atomic<uint64_t> alloc_total_{0};
-#else
-  uint64_t alloc_total_ = 0;
-#endif
-  static constexpr uint64_t kU64MaxBytes = ~uint64_t(0);
-  uint64_t AllocationBudget() const;
+  std::shared_ptr<CrateAllocationBudget> allocation_budget_;
 
   bool CheckByteAllocation(uint64_t bytes, const char* what);
+  bool CheckIntegerWorkspace(size_t count, const uint8_t* data, size_t size);
   bool CheckElementAllocation(uint64_t count, size_t elem_size,
                               const char* what);
+  bool CheckStringArrayAllocation(const std::vector<uint32_t>& indices,
+                                  bool use_string_indices);
   bool GetToken(uint32_t index, std::string& out);
   bool GetString(uint32_t index, std::string& out);
   bool ResolveFieldset(uint32_t fieldset_index,
