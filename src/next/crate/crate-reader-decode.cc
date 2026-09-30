@@ -118,12 +118,17 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
     if (!CheckElementAllocation(n, sizeof(std::string), "Path list-op")) {
       return false;
     }
+    size_t batch_size = 0;
     for (uint64_t i = 0; i < n; ++i) {
       uint32_t idx = 0;
       if (!reader()->read_u32(idx)) return false;
       if (idx >= paths_.size()) return false;
-      if (!CheckByteAllocation(paths_.view(idx).size(), "Path list-op targets")) {
-        return false;
+      batch_size += paths_.view(idx).size();
+      if ((i & 0x3F) == 0x3F) {
+        if (!CheckByteAllocation(batch_size, "Path list-op targets")) {
+          return false;
+        }
+        batch_size = 0;
       }
       // paths_ renders a property path as ".<primpath>/<prop>"; convert to the
       // canonical USD form "<primpath>.<prop>" so targets re-intern correctly
@@ -141,6 +146,11 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
         }
       } else {
         out.emplace_back(p);                        // prim path "/a/b"
+      }
+    }
+    if (batch_size > 0) {
+      if (!CheckByteAllocation(batch_size, "Path list-op targets")) {
+        return false;
       }
     }
     return true;

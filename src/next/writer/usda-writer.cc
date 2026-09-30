@@ -216,7 +216,7 @@ std::string EscapeString(const std::string& s) {
           result += hexd[uc >> 4];
           result += hexd[uc & 0xf];
         } else {
-          result += c;
+          result.push_back(c);
         }
         break;
       }
@@ -233,7 +233,7 @@ std::string IndentContinuation(const std::string& s, const std::string& prefix) 
   std::string out;
   out.reserve(s.size());
   for (char c : s) {
-    out += c;
+    out.push_back(c);
     if (c == '\n') out += prefix;
   }
   return out;

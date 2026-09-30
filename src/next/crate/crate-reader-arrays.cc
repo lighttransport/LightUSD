@@ -99,13 +99,13 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
         static_cast<size_t>(comp_size) > reader()->remaining()) {
       return false;
     }
-    std::vector<uint8_t> blob;
-    if (!reader()->read(blob, static_cast<size_t>(comp_size))) return false;
     size_t prefixed_size = 0;
-    if (!safe::add(size_t{8}, blob.size(), &prefixed_size)) return false;
+    if (!safe::add(size_t{8}, static_cast<size_t>(comp_size), &prefixed_size)) return false;
     std::vector<uint8_t> with_prefix(prefixed_size);
     std::memcpy(with_prefix.data(), &comp_size, 8);
-    if (!blob.empty()) std::memcpy(with_prefix.data() + 8, blob.data(), blob.size());
+    if (comp_size > 0) {
+      if (!reader()->read(with_prefix.data() + 8, static_cast<size_t>(comp_size))) return false;
+    }
     DecompressResult dr = DecompressCompressedU32(
         with_prefix.data(), with_prefix.size(), dst, n);
     if (!dr.success) {
@@ -126,13 +126,13 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
         static_cast<size_t>(comp_size) > reader()->remaining()) {
       return false;
     }
-    std::vector<uint8_t> blob;
-    if (!reader()->read(blob, static_cast<size_t>(comp_size))) return false;
     size_t prefixed_size = 0;
-    if (!safe::add(size_t{8}, blob.size(), &prefixed_size)) return false;
+    if (!safe::add(size_t{8}, static_cast<size_t>(comp_size), &prefixed_size)) return false;
     std::vector<uint8_t> with_prefix(prefixed_size);
     std::memcpy(with_prefix.data(), &comp_size, 8);
-    if (!blob.empty()) std::memcpy(with_prefix.data() + 8, blob.data(), blob.size());
+    if (comp_size > 0) {
+      if (!reader()->read(with_prefix.data() + 8, static_cast<size_t>(comp_size))) return false;
+    }
     DecompressResult dr = DecompressCompressedU64(
         with_prefix.data(), with_prefix.size(), dst, n);
     if (!dr.success) {
@@ -162,10 +162,18 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     int8_t code = 0;
     if (!reader()->read_i8(code)) return false;
     if (code == 'i') {
-      std::vector<uint32_t> ints(n);
-      if (!read_compressed_u32_n(ints.data(), n)) return false;
-      for (size_t i = 0; i < n; ++i) {
-        dst[i] = static_cast<T>(static_cast<int32_t>(ints[i]));
+      if (sizeof(T) == 4) {
+        if (!read_compressed_u32_n(reinterpret_cast<uint32_t*>(dst), n)) return false;
+        uint32_t* u32_dst = reinterpret_cast<uint32_t*>(dst);
+        for (size_t i = 0; i < n; ++i) {
+          dst[i] = static_cast<T>(static_cast<int32_t>(u32_dst[i]));
+        }
+      } else {
+        std::vector<uint32_t> ints(n);
+        if (!read_compressed_u32_n(ints.data(), n)) return false;
+        for (size_t i = 0; i < n; ++i) {
+          dst[i] = static_cast<T>(static_cast<int32_t>(ints[i]));
+        }
       }
       return true;
     }
@@ -313,9 +321,12 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       // uchar[]: tightly packed uint8 on disk (pxr never int-compresses
       // 8-bit arrays); widened into the uint32 array storage in memory.
       // Previously these were dropped as unsupported.
-      std::vector<uint8_t> raw8(static_cast<size_t>(count));
-      if (!read_raw(raw8.data(), sizeof(uint8_t))) return false;
-      std::vector<uint32_t> data(raw8.begin(), raw8.end());
+      std::vector<uint32_t> data(static_cast<size_t>(count));
+      for (size_t i = 0; i < count; ++i) {
+        uint8_t b;
+        if (!reader()->read(&b, 1)) return false;
+        data[i] = static_cast<uint32_t>(b);
+      }
       out = Value::MakeUIntCompArray(std::move(data), TypeId::UChar, 1);
       return true;
     }
@@ -330,7 +341,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       return true;
     }
     case CrateTypeId::Bool: {
-      std::vector<uint8_t> bytes(static_cast<size_t>(count));
+      std::vector<bool> out_bool(static_cast<size_t>(count));
       if (compressed) {
         // Bool participates in Crate's compressed-integral array encoding.
         // Decode the integer lanes first, then canonicalize every non-zero
@@ -338,14 +349,16 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
         std::vector<uint32_t> lanes(static_cast<size_t>(count));
         if (!read_compressed_u32(lanes.data())) return false;
         for (size_t i = 0; i < lanes.size(); ++i) {
-          bytes[i] = lanes[i] != 0 ? uint8_t(1) : uint8_t(0);
+          out_bool[i] = (lanes[i] != 0);
         }
-      } else if (!read_raw(bytes.data(), sizeof(uint8_t))) {
-        return false;
+      } else {
+        for (size_t i = 0; i < count; ++i) {
+          uint8_t b;
+          if (!reader()->read(&b, 1)) return false;
+          out_bool[i] = (b != 0);
+        }
       }
-      std::vector<bool> out_bool(static_cast<size_t>(count));
-      for (size_t i = 0; i < count; i++) out_bool[i] = (bytes[i] != 0);
-      out = Value::MakeBoolArray(out_bool);
+      out = Value::MakeBoolArray(std::move(out_bool));
       return true;
     }
     case CrateTypeId::Token: {
@@ -505,15 +518,15 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     case CrateTypeId::Quath: {
       size_t scalars;
       if (!safe::mul(static_cast<size_t>(count), size_t(4), &scalars)) return false;
-      std::vector<uint16_t> halfs(scalars);
+      std::vector<float> data(scalars);
       if (compressed) {
-        if (!read_compressed_half_n(halfs.data(), scalars)) return false;
-      } else if (!read_raw(halfs.data(), 8)) {
+        if (!read_compressed_half_n(reinterpret_cast<uint16_t*>(data.data()), scalars)) return false;
+      } else if (!read_raw(data.data(), 8)) {
         return false;
       }
-      std::vector<float> data(scalars);
+      uint16_t* halfs = reinterpret_cast<uint16_t*>(data.data());
       for (size_t e = 0; e < count; ++e) {
-        const uint16_t* q = halfs.data() + e * 4;
+        const uint16_t* q = halfs + e * 4;
         data[e * 4 + 0] = HalfToFloat(q[3]);
         data[e * 4 + 1] = HalfToFloat(q[0]);
         data[e * 4 + 2] = HalfToFloat(q[1]);
@@ -530,14 +543,16 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       const uint32_t comps = CrateArrayElemStride(type_id) / 2;  // 2 bytes/half
       size_t scalars;
       if (comps == 0 || !safe::mul(static_cast<size_t>(count), size_t(comps), &scalars)) return false;
-      std::vector<uint16_t> halfs(scalars);
+      std::vector<float> data(scalars);
       if (compressed) {
-        if (!read_compressed_half_n(halfs.data(), scalars)) return false;
-      } else if (!read_raw(halfs.data(), comps * 2)) {
+        if (!read_compressed_half_n(reinterpret_cast<uint16_t*>(data.data()), scalars)) return false;
+      } else if (!read_raw(data.data(), comps * 2)) {
         return false;
       }
-      std::vector<float> data(scalars);
-      for (size_t i = 0; i < scalars; ++i) data[i] = HalfToFloat(halfs[i]);
+      uint16_t* halfs = reinterpret_cast<uint16_t*>(data.data());
+      for (size_t i = scalars; i > 0; --i) {
+        data[i - 1] = HalfToFloat(halfs[i - 1]);
+      }
       out = Value::MakeFloatCompArray(std::move(data),
                                       CrateArrayValueType(type_id), comps);
       return true;
