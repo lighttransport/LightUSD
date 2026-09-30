@@ -145,8 +145,24 @@ class StreamReader {
   // Check both stream bounds and host addressability without adding offsets.
   bool can_read(const uint64_t n) const {
     const uint64_t max_size = (std::numeric_limits<size_t>::max)();
-    return idx_ <= length_ && n <= length_ - idx_ &&
-           idx_ <= max_size && n <= max_size - idx_;
+    if (idx_ > length_ || n > length_ - idx_ || n > max_size - idx_) {
+      return false;
+    }
+    // `idx_ <= max_size` only carries meaning where size_t is narrower than
+    // uint64_t. On 64-bit hosts max_size is UINT64_MAX, so the term is
+    // tautological and trips -Wtautological-type-limit-compare under
+    // -Weverything. The test must be a preprocessor one: clang diagnoses
+    // tautological comparisons while building the AST, before discarded
+    // `if constexpr` branches are dropped, so `if constexpr` still warns.
+    //
+    // The `n <= max_size - idx_` term above is NOT tautological on any host --
+    // it is what stops idx_ + n wrapping size_t -- so it is always evaluated.
+#if SIZE_MAX < UINT64_MAX
+    if (idx_ > max_size) {
+      return false;
+    }
+#endif
+    return true;
   }
 
   // All-or-nothing read: failure leaves the cursor and destination unchanged.

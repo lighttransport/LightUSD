@@ -12,8 +12,20 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstrict-aliasing"
 #endif
+#if defined(__clang__)
+// Vendored AMD tiny_dng_writer reinterprets between 16- and 32-bit lanes and
+// dereferences the result. That is undefined behavior in the abstract machine,
+// but it is the access pattern upstream code relies on for the DNG tag writer.
+// Suppress it around this include only, so LightUSD's own translation units
+// keep the diagnostic under -Weverything -Werror.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wundefined-reinterpret-cast"
+#endif
 #define TINY_DNG_WRITER_IMPLEMENTATION
 #include "external/tiny_dng_writer.h"
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif

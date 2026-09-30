@@ -25,10 +25,14 @@
 namespace lightusd {
 namespace next {
 
+#if defined(LIGHTUSD_ENABLE_THREAD)
 // Below these sizes the stage build stays serial: task setup and thread
-// wake-up would cost more than the decode saves.
+// wake-up would cost more than the decode saves. Only referenced from the
+// threaded paths, so keep them out of non-threaded builds where they would
+// otherwise trip -Wunused-const-variable.
 constexpr size_t kParallelBuildMinSpecs = 4096;
 constexpr size_t kParallelBuildMinPrims = 512;
+#endif
 
 // Decode a dictionary that was written as USDA dict text in a String field
 // (see crate-writer add_dict_field). Returns an empty Value on failure.

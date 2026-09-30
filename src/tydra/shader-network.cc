@@ -439,7 +439,7 @@ bool GetBoundMaterial(
       const MaterialBinding *material_binding = nullptr;
       ApplyToMaterialBinding(
           _stage, *prim,
-          [&](const Stage &stage, const MaterialBinding *mb) -> bool {
+          [&](const Stage &, const MaterialBinding *mb) -> bool {
             material_binding = mb;
             return true;
           });

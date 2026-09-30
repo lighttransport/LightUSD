@@ -307,11 +307,16 @@ struct CrateVersion {
   uint8_t patch;
 
   bool is_valid() const {
-    // Check minimum version
-    if (major < kCrateMinVersionMajor) return false;
+    // Check minimum version.
+    // Compare as int: major is uint8_t, so `major < 0` is always false and
+    // trips -Wtautological-unsigned-zero-compare under -Weverything. The cast
+    // keeps the check meaningful if kCrateMinVersionMajor ever rises above 0.
+    if (static_cast<int>(major) < kCrateMinVersionMajor) return false;
     if (major == kCrateMinVersionMajor) {
       if (minor < kCrateMinVersionMinor) return false;
-      if (minor == kCrateMinVersionMinor && patch < kCrateMinVersionPatch) return false;
+      if (minor == kCrateMinVersionMinor &&
+          static_cast<int>(patch) < kCrateMinVersionPatch)
+        return false;
     }
     // Check maximum version
     if (major > kCrateMaxVersionMajor) return false;

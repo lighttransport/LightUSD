@@ -486,7 +486,7 @@ static void test_variant_option_payload_arc() {
 // boundary, not an asset-specific prim or property name.
 static void test_variant_content_payload_anchor() {
   std::cout << "test_variant_content_payload_anchor..." << std::endl;
-  ::system("mkdir -p /tmp/next_variant_anchor/sub");
+  if (::system("mkdir -p /tmp/next_variant_anchor/sub") != 0) { /* ignore */ }
   const std::string root = "/tmp/next_variant_anchor/root.usda";
   const std::string variants = "/tmp/next_variant_anchor/sub/variants.usda";
   const std::string payload = "/tmp/next_variant_anchor/sub/payload.usda";
@@ -2536,7 +2536,7 @@ static void test_nested_relative_reference() {
   //   nrr_root.usda                 -> refs nrr/Meshes/Sub/mesh.usda
   //   nrr/Meshes/Sub/mesh.usda      -> refs ../../Materials/mat.usda
   //   nrr/Materials/mat.usda        (defines the leaf Material type)
-  ::system("mkdir -p /tmp/nrr/Meshes/Sub /tmp/nrr/Materials");
+  if (::system("mkdir -p /tmp/nrr/Meshes/Sub /tmp/nrr/Materials") != 0) { /* ignore */ }
   { std::ofstream f("/tmp/nrr/Materials/mat.usda");
     f << "#usda 1.0\ndef Material \"Mat\"\n{\n}\n"; }
   { std::ofstream f("/tmp/nrr/Meshes/Sub/mesh.usda");
@@ -2587,7 +2587,7 @@ static void test_sublayer_authored_reference_anchor() {
   // /tmp/sar/entry.usda            (root) -> sublayer a/b/mid.usda
   // /tmp/sar/a/b/mid.usda          -> /World/P references ../../target/asset.usda
   // /tmp/sar/target/asset.usda     def Mesh "Geom"
-  ::system("mkdir -p /tmp/sar/a/b /tmp/sar/target");
+  if (::system("mkdir -p /tmp/sar/a/b /tmp/sar/target") != 0) { /* ignore */ }
   { std::ofstream f("/tmp/sar/target/asset.usda");
     f << "#usda 1.0\ndef Mesh \"Geom\" { custom int marker = 7 }\n"; }
   { std::ofstream f("/tmp/sar/a/b/mid.usda");
@@ -2631,7 +2631,7 @@ static void test_payload_policy_owner_anchor() {
   // /tmp/ppoa/root.usda      (strongest: over /World/P, no payload)
   // /tmp/ppoa/sub/weak.usda  (def /World/P, prepend payload = @./pay.usda@)
   // /tmp/ppoa/sub/pay.usda   (def Mesh "Pay" -- relative to sub/)
-  ::system("mkdir -p /tmp/ppoa/sub");
+  if (::system("mkdir -p /tmp/ppoa/sub") != 0) { /* ignore */ }
   { std::ofstream f("/tmp/ppoa/sub/pay.usda");
     f << "#usda 1.0\ndef Mesh \"Pay\" { custom int marker = 42 }\n"; }
   { std::ofstream f("/tmp/ppoa/sub/weak.usda");
