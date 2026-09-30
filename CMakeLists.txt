@@ -1371,7 +1371,13 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
       "-Weverything -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function -Wno-switch-enum -Wno-exit-time-destructors"
   )
 
-  # Suppress pragma message warnings from external libraries (miniz.c)
+  # Suppress informational `#pragma message` output. miniz.c no longer needs
+  # this, but src/prim-types.hh and some vendored deps (wamr, wuffs) still
+  # emit it, and it is not worth a diagnostic per translation unit.
+  #
+  # The _LARGEFILE*_SOURCE feature-test macros that miniz.c must define before
+  # its first include are handled per-source in cmake/lightusd-render-support.cmake,
+  # so the vendored file itself needs no diagnostic pragma.
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-#pragma-messages")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-#pragma-messages")
 

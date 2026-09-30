@@ -11,6 +11,14 @@ function(lightusd_add_render_support)
   set(support "${LIGHTUSD_RENDER_SUPPORT_DIR}")
   add_library(lightusd_ptex_objects OBJECT
       "${support}/ptx-loader.cc" "${support}/external/miniz.c")
+  # Vendored miniz.c has to define the _LARGEFILE*_SOURCE feature-test macros
+  # before its first include so the 64-bit stdio entry points get declared;
+  # doing so trips -Wreserved-macro-identifier. Suppress it per-source rather
+  # than with a diagnostic pragma inside miniz.c, keeping the vendored file
+  # free of local edits so it stays easy to re-vendor / merge upstream. GCC
+  # silently accepts the unknown -Wno- spelling, so no per-compiler guard.
+  set_source_files_properties("${support}/external/miniz.c"
+      PROPERTIES COMPILE_FLAGS "-Wno-reserved-macro-identifier")
   add_library(lightusd_subdiv_objects OBJECT
       "${support}/tsd/tsd-validate.cc"
       "${support}/tsd/tsd-topology.cc"
