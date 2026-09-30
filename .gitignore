@@ -42,6 +42,13 @@ ref/dist*/
 web/demo/dist/
 web/demo/assets-src/
 web/demo/public/assets/openchess/
+# The whole demo asset folder is ignored: it is a staging area for large
+# third-party sample downloads (AnimFinal_LowRes.usdz ~58 MB,
+# StandingRunForward.usdz ~29 MB, DamagedHelmet.usdz ~5 MB, ...), not source.
+# The ~130 fixtures already tracked under it stay tracked -- .gitignore only
+# affects untracked paths. Anything new added here must be force-added:
+#   git add -f web/demo/public/assets/<file>
+web/demo/public/assets/
 web/site/dist/
 web/build_ninja/
 web/cmake-build/
@@ -408,8 +415,13 @@ CMakeUserPresets.json
 # LightUSD/Crate-Writer specific
 *.usdc
 *.usda
-!web/demo/public/assets/metahuman-fixture/
-!web/demo/public/assets/metahuman-fixture/*.usda
+# Note: the former
+#   !web/demo/public/assets/metahuman-fixture/
+#   !web/demo/public/assets/metahuman-fixture/*.usda
+# exemptions were removed as dead rules. web/demo/public/assets/ is now
+# ignored wholesale, and Git cannot re-include a path whose parent directory
+# is excluded. The already-tracked fixtures there are unaffected; new ones
+# need `git add -f`. See the assets/ rule above.
 # But keep test fixtures
 !tests/usda/*.usda
 !tests/usda/spec/*.usda
