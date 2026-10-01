@@ -323,6 +323,10 @@ The same test includes direct and indirect PointInstancer prototype cycles.
 The loader must diagnose and skip each cyclic branch while rendering the valid
 meshes. Prototype expansion also stops at depth 64. Placement products are
 bounded before allocation, and budget truncation marks the scene truncated.
+Additional panels check analytic Cube prototypes, PointInstancer prototype roots,
+inactive descendants, and instance-budget admission. Hidden or unresolved
+placements must not consume the budget; omitted visible placements must set the
+structured truncation report. `--case` selects an individual fixture for diagnosis.
 Island report validation expects schema version 2. The cold-promotion test
 warms only the compact hardware pipeline before checking a cold full shader;
 it sets its own cold-compile policy independently of the surrounding suite.

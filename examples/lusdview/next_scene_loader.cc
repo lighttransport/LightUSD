@@ -2791,7 +2791,7 @@ bool BuildProtoMesh(const lightusd_stage* stageHandle,
 
 // Split a prototype subtree into its DIRECT mesh prims and its NESTED instancers
 // (PointInstancer / scenegraph instanceable), WITHOUT descending into the latter.
-// The prototype root itself is collected only if it is a Mesh. Mirrors the
+// Renderable prototype roots and root PointInstancers are included. Mirrors the
 // instancer skips in the static-batching gather + lusdrender CollectProtoMeshNesting.
 void SplitProtoSubtree(const lightusd_stage* stageHandle,
                        const std::string& rootPath,
@@ -2803,16 +2803,16 @@ void SplitProtoSubtree(const lightusd_stage* stageHandle,
   if (!lightusd_prim_is_valid(root)) return;
   std::function<void(lightusd_prim, bool)> rec =
       [&](lightusd_prim p, bool isRoot) {
+        if (!lightusd_prim_is_active(p)) return;
         const std::string type = PublicString(lightusd_prim_type_name(p));
         const std::string path = PublicString(lightusd_prim_path(p));
-        if (!isRoot) {
-          if (type == "PointInstancer" ||
-              !PublicString(lightusd_prim_instance_prototype_path(p)).empty()) {
-            instancers->push_back(path);
-            return;
-          }
+        if (type == "PointInstancer" ||
+            (!isRoot &&
+             !PublicString(lightusd_prim_instance_prototype_path(p)).empty())) {
+          instancers->push_back(path);
+          return;
         }
-        if (type == "Mesh") meshes->push_back(path);
+        if (tydn::IsMeshRenderableTypeName(type)) meshes->push_back(path);
         const size_t count = lightusd_prim_child_count(p);
         for (size_t i = 0; i < count; ++i) {
           const lightusd_prim child = lightusd_prim_child(p, i);
@@ -2830,7 +2830,8 @@ void GatherPublicMeshPaths(const lightusd_stage* stage,
       lightusd_stage_prim_at_path(stage, rootPath.c_str());
   if (!lightusd_prim_is_valid(root)) return;
   std::function<void(lightusd_prim)> rec = [&](lightusd_prim prim) {
-    if (PublicString(lightusd_prim_type_name(prim)) == "Mesh")
+    if (!lightusd_prim_is_active(prim)) return;
+    if (tydn::IsMeshRenderableTypeName(PublicString(lightusd_prim_type_name(prim))))
       meshes->push_back(PublicString(lightusd_prim_path(prim)));
     const size_t count = lightusd_prim_child_count(prim);
     for (size_t i = 0; i < count; ++i) {
@@ -7154,6 +7155,13 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
 
       const std::vector<std::string>& protos = instanceData.prototype_paths;
       if (!protos.empty()) {
+        std::vector<bool> validPrototypes(protos.size(), false);
+        for (size_t pi = 0; pi < protos.size(); ++pi) {
+          const lightusd_prim proto = lightusd_stage_prim_at_path(
+              stage_owner.get(), protos[pi].c_str());
+          validPrototypes[pi] = lightusd_prim_is_valid(proto) &&
+                                lightusd_prim_is_active(proto);
+        }
         static const float kIdentQuat[4] = {1, 0, 0, 0};  // real-first (w,x,y,z)
         static const float kUnitScale[3] = {1, 1, 1};
         if (stream) {
@@ -7171,24 +7179,20 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                     1, opts.streamBufferBytes /
                            ((12u + 3u) * sizeof(float)));
           std::vector<std::string> protoRoots(protos.size());
+          // Grow only buckets receiving placements. Reserving a full chunk for
+          // every target multiplies peak memory by unused prototype count.
           std::vector<std::vector<matrix4d>> placementChunks(protos.size());
           std::vector<std::vector<float>> colorChunks;
           if (perInstColor) colorChunks.resize(protos.size());
           std::vector<std::vector<float>> opacityChunks;
           if (perInstOpacity) opacityChunks.resize(protos.size());
           for (size_t pi = 0; pi < protos.size(); ++pi) {
-            if (!lightusd_prim_is_valid(lightusd_stage_prim_at_path(
-                    stage_owner.get(), protos[pi].c_str()))) continue;
+            if (!validPrototypes[pi]) continue;
             protoRoots[pi] = protos[pi];
             std::vector<std::string> protoMeshes;
             GatherPublicMeshPaths(stage_owner.get(), protoRoots[pi],
                                   &protoMeshes);
             consumed.insert(protoMeshes.begin(), protoMeshes.end());
-            placementChunks[pi].reserve(progressiveInstanceChunk);
-            if (perInstColor)
-              colorChunks[pi].reserve(progressiveInstanceChunk * 3u);
-            if (perInstOpacity)
-              opacityChunks[pi].reserve(progressiveInstanceChunk);
           }
           auto flushPlacementChunk = [&](size_t pi) {
             if (placementChunks[pi].empty() || protoRoots[pi].empty()) return;
@@ -7207,13 +7211,16 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           size_t pendingInstances = 0;
           bool previewPublished = false;
           for (size_t i = 0; i < n && streamOk; ++i) {
-            if (static_cast<size_t>(instTotal) + pendingInstances >= instBudget)
-              break;
             if (PointInstanceHidden(i, n, ids, hiddenSet)) continue;
             const int protoIndex = (i < protoIdx.size()) ? protoIdx[i] : 0;
             if (protoIndex < 0 || protoIndex >= int(protos.size())) continue;
             const size_t pi = static_cast<size_t>(protoIndex);
             if (protoRoots[pi].empty()) continue;
+            if (static_cast<size_t>(instTotal) >= instBudget ||
+                pendingInstances >= instBudget - static_cast<size_t>(instTotal)) {
+              draw->truncated = true;
+              break;
+            }
             const float* q =
                 (orients.size() >= (i + 1) * 4) ? &orients[i * 4] : kIdentQuat;
             const float* s =
@@ -7256,10 +7263,15 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                 : 0u;
         std::vector<size_t> placementCounts(protos.size(), 0u);
         size_t countedInstances = 0;
-        for (size_t i = 0; i < n && countedInstances < remainingInstances; ++i) {
+        for (size_t i = 0; i < n; ++i) {
           if (PointInstanceHidden(i, n, ids, hiddenSet)) continue;
           const int pi = (i < protoIdx.size()) ? protoIdx[i] : 0;
-          if (pi < 0 || pi >= int(protos.size())) continue;
+          if (pi < 0 || pi >= int(protos.size()) ||
+              !validPrototypes[static_cast<size_t>(pi)]) continue;
+          if (countedInstances >= remainingInstances) {
+            draw->truncated = true;
+            break;
+          }
           ++placementCounts[static_cast<size_t>(pi)];
           ++countedInstances;
         }
@@ -7272,7 +7284,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         for (size_t i = 0; i < n && bucketedInstances < remainingInstances; ++i) {
           if (PointInstanceHidden(i, n, ids, hiddenSet)) continue;
           const int pi = (i < protoIdx.size()) ? protoIdx[i] : 0;
-          if (pi < 0 || pi >= int(protos.size())) continue;
+          if (pi < 0 || pi >= int(protos.size()) ||
+              !validPrototypes[static_cast<size_t>(pi)]) continue;
           const float* q =
               (orients.size() >= (i + 1) * 4) ? &orients[i * 4] : kIdentQuat;
           const float* s =
