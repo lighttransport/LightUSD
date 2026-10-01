@@ -1525,6 +1525,24 @@
       }
     });
   }
+  for (const [name, apply] of [['describeUDIM', 0], ['applyUDIM', 1]]) {
+    Object.defineProperty(Module.LightUSDLoaderNative.prototype, name, {
+      configurable: true,
+      value: function(request) {
+        const ptr = requireLiveLoader(this);
+        if (arguments.length !== apply) throw new TypeError(name + ': wrong argument count');
+        const bytes = new TextEncoder().encode(apply ? JSON.stringify(request) : '');
+        if (bytes.length > 4*1024*1024) throw new RangeError(name + ': edit plans exceed 4 MiB');
+        const owner = this.clone();
+        try {
+          return withStreamBytes(name, [bytes], ([data], [size]) => {
+            if (loadingCall((loader, input) => Module['_lightusd_combined_udim_layer'](loader, apply, input, size), [ptr, data]) !== 0) throw new TypeError(name + ': invalid layer request');
+            return JSON.parse(streamTableString(name, 0));
+          });
+        } finally { Module['_lightusd_combined_table_release'](); owner.delete(); }
+      }
+    });
+  }
   Object.defineProperty(Module.LightUSDLoaderNative.prototype, 'remapLayerAssetPaths', {
     configurable: true,
     value: function(map) {

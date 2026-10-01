@@ -8,6 +8,7 @@
 #include "../strfmt.hh"
 #include "usda-lazy-source.hh"
 #include "value-parser.hh"
+#include "../writer/value-printer.hh"
 #include "../../external/fast_float/include/fast_float/fast_float.h"
 
 #include <algorithm>
@@ -639,12 +640,25 @@ bool AsciiParser::Impl::ReadArcRef(std::string* out) {
   if (Check(TokenType::OpenParen)) {
     Match(TokenType::OpenParen);
     double off = 0.0, scl = 1.0;
+    std::string custom_data;
     while (!Check(TokenType::CloseParen) && !AtEnd()) {
       if (Check(TokenType::Identifier)) {
         std::string k;
         lexer_->expect(TokenType::Identifier, k);
         Match(TokenType::Equals);
-        if (Check(TokenType::Number)) {
+        if (k == "customData") {
+          ParseResult parsed = ParseValue(*lexer_, TypeId::Dictionary);
+          if (!parsed.success || !parsed.value.is_dictionary()) {
+            AddError("Invalid reference customData dictionary");
+            return false;
+          }
+          PrintOptions print;
+          print.float_precision = 9;
+          print.double_precision = 17;
+          print.sort_dictionary_keys = true;
+          if (!parsed.value.as_dictionary()->empty())
+            custom_data = PrintValue(parsed.value, print);
+        } else if (Check(TokenType::Number)) {
           std::string num;
           lexer_->expect(TokenType::Number, num);
           // Freestanding double parse (fast_float; no libc strtod).
@@ -697,6 +711,7 @@ bool AsciiParser::Impl::ReadArcRef(std::string* out) {
     if (off != 0.0 || scl != 1.0) {
       ref += "?layerOffset=" + std::to_string(off) + ":" + std::to_string(scl);
     }
+    if (!custom_data.empty()) ref += '\x1f' + custom_data;
   }
   *out = ref;
   return true;

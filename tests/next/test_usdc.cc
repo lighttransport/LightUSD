@@ -19,6 +19,7 @@
 #include "next/reader/usdc-reader.hh"
 #include "next/types/value-view.hh"
 #include "next/writer/usdc-writer.hh"
+#include "next/writer/usda-writer.hh"
 
 using namespace lightusd::next;
 
@@ -526,8 +527,7 @@ void test_crate_reader_audit_cluster() {
                            "extensionPrimProbe"));
   }
 
-  // Reference with per-arc customData: the ARC must survive (the dict is
-  // skipped). Previously the whole listop was dropped.
+  // Reference customData must survive in both compatibility and strict modes.
   {
     std::string fx = FindUsdcFixture("refs-customdata-001.usdc");
     if (fx.empty()) { std::cout << "  Skipping (fixture missing)\n"; return; }
@@ -539,18 +539,16 @@ void test_crate_reader_audit_cluster() {
     assert(a.GetMeta().references[0].find("b.usda") != std::string::npos);
     assert(a.HasProperty("after"));
 
-    // Compatibility mode preserves the arc while diagnosing the unmodeled
-    // per-reference dictionary. Strict fidelity mode must fail closed instead
-    // of silently presenting the load as lossless.
+    const std::string text = WriteUSDAToString(r.stage);
+    assert(text.find("customData") != std::string::npos);
+    assert(text.find("priority = 7") != std::string::npos);
+    assert(text.find("note = \"hello\"") != std::string::npos);
     USDCLoadOptions strict_options;
     strict_options.crate_options.strict_aousd_conformance = true;
     USDCLoadResult strict = LoadUSDCFromFile(fx.c_str(), strict_options);
-    assert(!strict.success);
-    assert(std::any_of(strict.errors.begin(), strict.errors.end(),
-                       [](const CrateError& error) {
-                         return error.message.find("Reference customData is ignored") !=
-                                std::string::npos;
-                       }));
+    assert(strict.success);
+    assert(strict.warnings.empty());
+
   }
 
   // Explicit-clear (`references = None`, pxr ListOpHeader 0x01 with no

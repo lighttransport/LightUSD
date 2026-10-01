@@ -247,7 +247,9 @@ bool CrateReader::Impl::ReadTokens() {
     AddError("Failed to read token compression info");
     return false;
   }
-  if (!CheckByteAllocation(compressed_size, "Compressed token table") ||
+  if (!CheckElementAllocation(num_tokens, TokenPool::span_bytes(),
+                              "Token spans") ||
+      !CheckByteAllocation(compressed_size, "Compressed token table") ||
       !CheckByteAllocation(uncompressed_size, "Uncompressed token table")) {
     return false;
   }
@@ -276,8 +278,11 @@ bool CrateReader::Impl::ReadTokens() {
   }
 
   tokens_.reserve(static_cast<size_t>(num_tokens));
-  const char* ptr = reinterpret_cast<const char*>(dr.data.data());
-  const char* end = ptr + dr.data.size();
+  const size_t blob_size = dr.data.size();
+  tokens_.adopt(std::move(dr.data));
+  const char* const base = tokens_.data();
+  const char* ptr = base;
+  const char* end = blob_size ? base + blob_size : base;
 
   while (ptr < end && tokens_.size() < num_tokens) {
     // Bounded scan: a malformed blob whose last token lacks the NUL terminator
@@ -288,7 +293,8 @@ bool CrateReader::Impl::ReadTokens() {
       AddError("Token table not NUL-terminated");
       return false;
     }
-    tokens_.push(ptr, static_cast<size_t>(nul - ptr));
+    tokens_.push(static_cast<size_t>(ptr - base),
+                 static_cast<size_t>(nul - ptr));
     ptr = nul + 1;
   }
 
@@ -680,9 +686,13 @@ bool CrateReader::Impl::ReadFields() {
               AddError("List-op ValueRep payload is truncated");
               return false;
             }
-            const uint64_t item_bytes =
-                (tid == CrateTypeId::ReferenceListOp ||
-                 tid == CrateTypeId::PayloadListOp) ? 8u : 4u;
+            const bool arc_items = tid == CrateTypeId::ReferenceListOp ||
+                                   tid == CrateTypeId::PayloadListOp;
+            const bool reference_items = tid == CrateTypeId::ReferenceListOp;
+            const uint64_t arc_prefix_bytes =
+                reference_items || version_.minor >= 8 ? 24u : 8u;
+            const uint64_t item_bytes = arc_items
+                ? arc_prefix_bytes + (reference_items ? 8u : 0u) : 4u;
             uint64_t pos = static_cast<uint64_t>(off + 1);
             const uint8_t order[] = {0x02, 0x04, 0x20, 0x40, 0x08, 0x10};
             for (uint8_t bit : order) {
@@ -719,7 +729,46 @@ bool CrateReader::Impl::ReadFields() {
                 AddError("List-op ValueRep run is truncated");
                 return false;
               }
-              pos += run_bytes;
+              if (!reference_items) {
+                pos += run_bytes;
+              } else {
+                // Reference items include a variable-size recursive dictionary.
+                // A fixed stride misreads a later bucket's count from inside
+                // the first reference (especially prepend + delete opinions).
+                if (!reader_->seek(static_cast<size_t>(pos + 8u))) return false;
+                for (uint64_t item = 0; item < count; ++item) {
+                  const uint64_t item_start = reader_->position();
+                  if (item_start > file_size - arc_prefix_bytes ||
+                      !reader_->seek(static_cast<size_t>(
+                          item_start + arc_prefix_bytes))) return false;
+                  uint64_t dict_count = 0;
+                  if (!reader_->read_u64(dict_count) ||
+                      dict_count > options_.max_array_elements) {
+                    AddError("Reference customData count is invalid");
+                    return false;
+                  }
+                  for (uint64_t entry = 0; entry < dict_count; ++entry) {
+                    uint32_t key = 0;
+                    if (!reader_->read_u32(key) || key >= string_indices_.size()) {
+                      AddError("Reference customData key index out of range");
+                      return false;
+                    }
+                    const uint64_t value_start = reader_->position();
+                    uint64_t recursive_offset = 0;
+                    if (!reader_->read_u64(recursive_offset) ||
+                        recursive_offset < 8u ||
+                        value_start > file_size - 8u ||
+                        recursive_offset > file_size - 8u - value_start) {
+                      AddError("Reference customData recursive ValueRep is outside file");
+                      return false;
+                    }
+                    if (!reader_->seek(static_cast<size_t>(
+                            value_start + recursive_offset + 8u))) return false;
+                  }
+                }
+                pos = reader_->position();
+                if (!reader_->seek(saved)) return false;
+              }
             }
           }
         }

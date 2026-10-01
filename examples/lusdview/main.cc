@@ -429,6 +429,7 @@ int main(int argc, char** argv) {
   bool playAnim = false;                  // --play: start timeline playback on load
 
   for (int i = 1; i < argc; ++i) {
+    const int argumentIndex = i;
     if (std::strcmp(argv[i], "--config") == 0) {
       if ((i + 1) >= argc) {
         LOGE("--config requires a path");
@@ -1465,7 +1466,7 @@ int main(int argc, char** argv) {
           "  --stream-idle-ms MS  Input-quiet time before the lossless refine "
           "frame is sent (default 350).\n");
       return 0;
-    } else if (argv[i][0] != '-') {
+    } else if (i == argumentIndex && argv[i][0] != '-') {
       file = argv[i];
     }
   }

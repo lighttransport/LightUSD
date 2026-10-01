@@ -20,6 +20,7 @@
 
 #include "core/prim-enums.hh"  // Axis
 #include "image-writer.hh"     // image::PngEncoder
+#include "udim-bake.hh"
 
 namespace lightusd {
 namespace usdz {
@@ -122,6 +123,15 @@ struct UsdzConvertOptions {
   // still exceed the budget on its own.
   size_t texture_memory_budget_bytes{0};
 
+  // Opt-in UDIM stitching. Caps reject the conversion instead of dropping tiles.
+  udim::BakeMode udim_bake{udim::BakeMode::Off};
+  size_t udim_max_tiles{100};
+  int udim_max_atlas_size{8192};
+  size_t udim_memory_budget_bytes{size_t(512) << 20};
+  udim::CrossTilePolicy udim_cross_tile{udim::CrossTilePolicy::Reject};
+  int udim_dense_padding{2};
+  int udim_subdivision_level{2};
+
   // Optional material/shader optimization. Disabled by default to preserve
   // authored materials exactly.
   MaterialOptimizationMode material_optimization{
@@ -156,6 +166,11 @@ struct UsdzConvertOptions {
 };
 
 struct UsdzConvertStats {
+  size_t num_udim_sets_baked{0};
+  size_t num_udim_tiles_baked{0};
+  size_t num_udim_atlases{0};
+  size_t num_udim_meshes_remapped{0};
+  size_t num_udim_faces_generated{0};
   size_t num_textures{0};
   size_t num_textures_resized{0};
   size_t num_textures_reencoded{0};

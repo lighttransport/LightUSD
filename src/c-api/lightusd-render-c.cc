@@ -2009,6 +2009,7 @@ lightusd_status lightusd_render_mesh_get_info(const lightusd_render_scene* scene
   out->has_bbox = m->has_bbox ? 1 : 0;
   out->normals_interp = static_cast<uint8_t>(m->normals_interp);
   out->texcoords0_interp = static_cast<uint8_t>(m->texcoords_0_interp);
+  out->texcoords1_interp = static_cast<uint8_t>(m->texcoords_1_interp);
   out->colors_interp = static_cast<uint8_t>(m->colors_interp);
   out->subset_count = static_cast<uint32_t>(m->material_subsets.size());
   out->primvar_count = static_cast<uint32_t>(m->primvars.size());
@@ -2115,6 +2116,9 @@ lightusd_status lightusd_render_mesh_buffer(lightusd_render_scene* scene, int32_
     case LIGHTUSD_MESH_BUF_FACE_TRIANGLE_OFFSETS:
       return ViewFromVector(m->face_triangle_offsets,
                             LIGHTUSD_COMP_UINT32, 1, out);
+    case LIGHTUSD_MESH_BUF_SANITIZE_FACE_REMAP:
+      return ViewFromVector(m->sanitize_face_remap,
+                            LIGHTUSD_COMP_INT32, 1, out);
     case LIGHTUSD_MESH_BUF_NORMALS:
       return ViewFromChunked(scene, m->normals, key, LIGHTUSD_COMP_FLOAT32, 3,
                              out);

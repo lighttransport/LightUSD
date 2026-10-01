@@ -376,6 +376,10 @@ class AssetResolutionResolver {
   bool open_asset(const std::string &resolvedPath, const std::string &assetPath,
                   Asset *asset, std::string *warn, std::string *err) const;
 
+  // Additional per-call cap, enforced before allocation for built-in and sized custom handlers.
+  bool open_asset(const std::string& resolvedPath, const std::string& assetPath,
+                  Asset*, std::string* warn, std::string* err, size_t max_bytes) const;
+
   void set_userdata(void *userdata) { _userdata = userdata; }
   void *get_userdata() { return _userdata; }
   const void *get_userdata() const { return _userdata; }

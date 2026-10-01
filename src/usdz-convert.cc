@@ -35,6 +35,9 @@
 #include "tydra/texture-util.hh"
 #include "usdz-geometry-optimize.hh"
 #include "usdz-material-optimize.hh"
+#include "usdz-udim-bake.hh"
+#include <atomic>
+#include <chrono>
 
 // Emscripten's <stdio.h> defines `stdout` as a self-referential macro
 // (`#define stdout (stdout)`) so the same identifier works both as a
@@ -873,13 +876,13 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
 
 bool ReadAssetBytes(AssetResolutionResolver &resolver, const std::string &assetPath,
                     std::vector<uint8_t> *out, std::string *warn,
-                    std::string *err) {
+                    std::string *err, size_t max_bytes = size_t(256) << 20) {
   const std::string resolved = resolver.resolve(assetPath);
   if (resolved.empty()) {
     // The resolver may not handle absolute filesystem paths.  Fall back to
     // reading the path directly if it is already a filesystem path.
     std::string ioerr;
-    if (io::ReadWholeFile(out, &ioerr, assetPath)) {
+    if (io::ReadWholeFile(out, &ioerr, assetPath, max_bytes, nullptr)) {
       return true;
     }
     if (err) (*err) = "Asset not found: " + assetPath;
@@ -887,17 +890,16 @@ bool ReadAssetBytes(AssetResolutionResolver &resolver, const std::string &assetP
   }
   Asset asset;
   std::string owarn;
-  if (!resolver.open_asset(resolved, assetPath, &asset, &owarn, err)) {
+  if (!resolver.open_asset(resolved, assetPath, &asset, &owarn, err, max_bytes)) {
     return false;
   }
   if (warn && !owarn.empty()) {
     (*warn) += owarn;
   }
   // Cap asset size to avoid unbounded allocation from malicious assets.
-  constexpr size_t kMaxAssetBytes = size_t(256) * 1024 * 1024;  // 256 MiB
-  if (asset.size() > kMaxAssetBytes) {
+  if (asset.size() > max_bytes) {
     if (err) {
-      (*err) = "Asset size exceeds 256 MiB limit.";
+      (*err) = "Asset size exceeds configured byte limit.";
     }
     return false;
   }
@@ -911,24 +913,16 @@ bool ReadAssetBytesWithBase(AssetResolutionResolver &resolver,
                             const std::string &assetPath,
                             const std::string &base_dir,
                             std::vector<uint8_t> *out, std::string *warn,
-                            std::string *err) {
-  std::string local_err;
-  if (ReadAssetBytes(resolver, assetPath, out, warn, &local_err)) {
-    return true;
-  }
-
+                            std::string *err, size_t max_bytes = size_t(256) << 20) {
   if (!base_dir.empty() && !io::IsAbsPath(assetPath)) {
     const std::string candidate = io::JoinPath(base_dir, assetPath);
-    std::string ioerr;
-    if (io::ReadWholeFile(out, &ioerr, candidate)) {
-      return true;
+    // A dependency's relative assets belong to that layer. A root-layer tile
+    // with the same filename must not win through the shared search paths.
+    if (io::FileExists(candidate)) {
+      return io::ReadWholeFile(out, err, candidate, max_bytes, nullptr);
     }
   }
-
-  if (err) {
-    *err = local_err.empty() ? ("Asset not found: " + assetPath) : local_err;
-  }
-  return false;
+  return ReadAssetBytes(resolver, assetPath, out, warn, err, max_bytes);
 }
 
 // Process one texture's bytes: optionally decode -> resize -> re-encode.
@@ -1542,6 +1536,18 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
     std::string source_path;
   };
 
+  std::map<std::string, std::vector<uint8_t>> assets;
+  if (options.udim_bake != udim::BakeMode::Off) {
+    for (auto& package : packages) {
+      const auto fetch = [&](const std::string& path, std::vector<uint8_t>* bytes, std::string* error, size_t limit) {
+        return ReadAssetBytesWithBase(resolver, path, package.base_dir, bytes, warn, error, limit);
+      };
+      const auto exists = [&](const std::string& path) {
+        return io::FileExists(io::JoinPath(package.base_dir, path)) || resolver.find(path);
+      };
+      if (!BakeUDIMInLayer(options, &package.layer, fetch, exists, &assets, stats, err)) return false;
+    }
+  }
   std::vector<TextureRef> texture_refs;
   for (size_t i = 0; i < packages.size(); i++) {
     std::vector<std::string> paths;
@@ -1558,7 +1564,6 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
   Log(options.verbose, "Found " + std::to_string(texture_refs.size()) +
                            " texture reference(s).");
 
-  std::map<std::string, std::vector<uint8_t>> assets;
   std::map<std::string, std::string> source_to_archive;
   std::vector<std::map<std::string, std::string>> texture_remaps;
   texture_remaps.resize(packages.size());
@@ -1593,6 +1598,11 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
   std::map<std::string, size_t> source_to_job;
 
   for (const TextureRef &ref : texture_refs) {
+    if (assets.count(ref.authored_path)) {
+      texture_remaps[ref.package_index][ref.authored_path] = ref.authored_path;
+      if (stats) { ++stats->num_textures; ++stats->num_textures_reencoded; }
+      continue;
+    }
     auto existing = source_to_archive.find(ref.source_path);
     if (existing != source_to_archive.end()) {
       texture_remaps[ref.package_index][ref.authored_path] = existing->second;
@@ -1843,6 +1853,12 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   }
   if (options.max_texture_size < 0) {
     if (err) (*err) = "max_texture_size must be non-negative.";
+    return false;
+  }
+
+  if (!udim::ValidateOptions(UDIMOptions(options), err)) return false;
+  if (options.udim_bake == udim::BakeMode::Dense && !options.flatten) {
+    if (err) *err = "Dense UDIM baking requires flattened output.";
     return false;
   }
 
@@ -2102,6 +2118,31 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     }
   }
 
+  std::map<std::string, std::vector<uint8_t>> assets;
+  std::map<std::string, std::string> udim_sidecars;
+  std::string udim_sidecar_directory;
+  if (options.udim_bake != udim::BakeMode::Off) {
+    const auto fetch = [&](const std::string& path, std::vector<uint8_t>* bytes, std::string* error, size_t limit) {
+      return ReadAssetBytes(resolver, path, bytes, warn, error, limit);
+    };
+    const auto exists = [&](const std::string& path) {
+      return io::FileExists(path) || resolver.find(path);
+    };
+    if (!BakeUDIMInLayer(options, &layer_for_write, fetch, exists, &assets, stats, err)) return false;
+    if (options.output_format != OutputFormat::USDZ && !assets.empty()) {
+      std::string dir = io::GetBaseFilename(options.output) + "_textures";
+      const std::string out_dir = io::GetBaseDir(options.output);
+      udim_sidecar_directory = io::JoinPath(out_dir, dir);
+      std::map<std::string, std::string> remap;
+      for (const auto& asset : assets) {
+        const std::string rel = dir + "/" + io::GetBaseFilename(asset.first);
+        udim_sidecars[asset.first] = io::JoinPath(out_dir, rel);
+        remap[asset.first] = rel;
+      }
+      RemapLayerAssetPaths(layer_for_write, remap);
+    }
+  }
+
   // --- Enumerate textures ---
   timer.begin("enumerate-textures");
   std::vector<std::pair<UsdUVTexture *, std::string>> textures;
@@ -2137,7 +2178,6 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
 
   // Texture packing is only relevant when writing a USDZ archive.
   // For flat USDC/USDA output, textures remain as external references.
-  std::map<std::string, std::vector<uint8_t>> assets;  // archive name -> bytes
   std::map<std::string, std::string> path_to_archive;  // original -> archive name
 
   if (options.output_format == OutputFormat::USDZ) {
@@ -2164,7 +2204,8 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
 
       std::vector<uint8_t> src_bytes;
       std::string rerr;
-      if (!ReadAssetBytes(resolver, orig, &src_bytes, warn, &rerr)) {
+      if (assets.count(orig)) src_bytes = assets.at(orig);
+      if (src_bytes.empty() && !ReadAssetBytes(resolver, orig, &src_bytes, warn, &rerr)) {
         const std::string missing_ref =
             SafeMissingArchiveReference(orig, search_paths);
         if (missing_ref.empty()) {
@@ -2271,6 +2312,12 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       continue;
     }
 
+    if (!budget_mode && assets.count(orig)) {
+      // These images were already decoded, resized, and encoded by the baker.
+      path_to_archive[orig] = orig;
+      if (stats) { ++stats->num_textures; ++stats->num_textures_reencoded; }
+      continue;
+    }
     FlattenTextureJob job;
     job.orig = orig;
     job.archive_name =
@@ -2321,7 +2368,8 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
         return true;
       }
       std::string rerr;
-      if (!ReadAssetBytes(resolver, job.orig, &job.src_bytes, warn, &rerr)) {
+      if (assets.count(job.orig)) job.src_bytes = assets.at(job.orig);
+      if (job.src_bytes.empty() && !ReadAssetBytes(resolver, job.orig, &job.src_bytes, warn, &rerr)) {
         const std::string missing_ref =
             SafeMissingArchiveReference(job.orig, search_paths);
         if (missing_ref.empty()) {
@@ -2448,7 +2496,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
 
   } else {
     Log(options.verbose,
-        "Rewriting absolute texture paths to relative (flat output).");
+        "Rebasing external texture paths for flat output.");
     std::string out_dir = io::GetBaseDir(options.output);
     if (out_dir.empty()) {
       out_dir = ".";
@@ -2456,11 +2504,38 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     std::map<std::string, std::string> remap;
     for (const std::string &orig : texture_paths) {
       if (remap.count(orig)) continue;
-      // Only relativize absolute paths.
-      if (orig.empty() || !io::IsAbsPath(orig)) {
+      if (orig.empty()) continue;
+      std::string source = orig;
+      std::string pre, post, marker;
+      if (udim::SplitPattern(orig, &pre, &post, &marker)) {
+        std::string resolved_pattern;
+        for (uint32_t id = 1001; id <= 9999; ++id) {
+          const std::string tile = pre + std::to_string(id) + post;
+          std::string resolved = io::IsAbsPath(tile) ? tile : resolver.resolve(tile);
+          if (resolved.empty() || !io::FileExists(resolved)) continue;
+          resolved = io::AbsPath(resolved);
+          if (resolved.size() < post.size() + 4 || resolved.compare(resolved.size() - post.size(), post.size(), post) != 0) continue;
+          const std::string candidate = resolved.substr(0, resolved.size() - post.size() - 4) + marker + post;
+          if (!resolved_pattern.empty() && resolved_pattern != candidate) {
+            if (err) *err = "UDIM tiles resolve to different filesystem patterns: " + orig;
+            return false;
+          }
+          resolved_pattern = candidate;
+        }
+        if (resolved_pattern.empty()) continue;
+        const std::string rel = io::RelativePath(resolved_pattern, io::AbsPath(out_dir));
+        remap[orig] = rel.empty() ? resolved_pattern : rel;
         continue;
       }
-      std::string rel = ToRelativePath(out_dir, orig);
+      if (!io::IsAbsPath(source)) {
+        source = resolver.resolve(orig);
+      }
+      // Preserve unresolved and archive-only references. A filesystem asset
+      // must remain reachable when the flat layer moves to another directory.
+      if (source.empty() || !io::FileExists(source)) continue;
+      source = io::AbsPath(source);
+      std::string rel = io::RelativePath(source, io::AbsPath(out_dir));
+      if (rel.empty()) rel = source;
       if (rel != orig) {
         remap[orig] = rel;
       }
@@ -2476,6 +2551,22 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
 
   // --- Write output ---
   timer.begin("write-output");
+  struct UDIMOutputGuard {
+    std::string temporary;
+    std::vector<std::string> created;
+    bool committed{false};
+    ~UDIMOutputGuard() {
+      if (!temporary.empty()) io::RemoveFile(temporary);
+      if (!committed) for (const auto& path : created) io::RemoveFile(path);
+    }
+  } udim_output_guard;
+  std::string write_output = options.output;
+  if (!udim_sidecars.empty()) {
+    static std::atomic<uint64_t> sequence{0};
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    write_output += ".udim-tmp-" + std::to_string(stamp) + "-" + std::to_string(sequence.fetch_add(1));
+    udim_output_guard.temporary = write_output;
+  }
   bool write_ok = false;
   std::string swarn, serr;
   switch (options.output_format) {
@@ -2509,16 +2600,16 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     case OutputFormat::USDC: {
       Log(options.verbose, "Writing USDC: " + options.output);
       write_ok = has_layer_for_write
-          ? lightusd::usdc::SaveAsUSDCToFile(options.output, layer_for_write,
+          ? lightusd::usdc::SaveAsUSDCToFile(write_output, layer_for_write,
                                              &swarn, &serr)
-          : lightusd::usdc::SaveAsUSDCToFile(options.output, stage, &swarn, &serr);
+          : lightusd::usdc::SaveAsUSDCToFile(write_output, stage, &swarn, &serr);
       if (!write_ok && err) (*err) = "Failed to write USDC: " + serr;
       break;
     }
     case OutputFormat::USDA: {
       Log(options.verbose, "Writing USDA: " + options.output);
       if (has_layer_for_write) {
-        std::ofstream ofs(options.output);
+        std::ofstream ofs(write_output);
         if (ofs) {
           ofs << lightusd::print_layer(layer_for_write, 0);
           write_ok = bool(ofs);
@@ -2527,7 +2618,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
           write_ok = false;
         }
       } else {
-        write_ok = lightusd::usda::SaveAsUSDA(options.output, stage, &swarn, &serr);
+        write_ok = lightusd::usda::SaveAsUSDA(write_output, stage, &swarn, &serr);
       }
       if (!write_ok && err) (*err) = "Failed to write USDA: " + serr;
       break;
@@ -2535,6 +2626,30 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   }
   if (!write_ok) {
     return false;
+  }
+  if (!udim_sidecars.empty()) {
+    if (!io::CreateDirectories(udim_sidecar_directory)) {
+      if (err) *err = "Cannot create UDIM sidecar directory.";
+      return false;
+    }
+    for (const auto& sidecar : udim_sidecars) {
+      const auto& bytes = assets.at(sidecar.first);
+      if (io::FileExists(sidecar.second)) {
+        std::vector<uint8_t> existing;
+        if (!io::ReadWholeFile(&existing, err, sidecar.second, bytes.size() + 1, nullptr) || existing != bytes) {
+          if (err) *err = "UDIM sidecar name collides with different existing data.";
+          return false;
+        }
+      } else {
+        udim_output_guard.created.push_back(sidecar.second);
+        if (!io::WriteWholeFile(sidecar.second, bytes.data(), bytes.size(), err)) return false;
+      }
+    }
+    if (std::rename(write_output.c_str(), options.output.c_str()) != 0) {
+      if (err) *err = "Cannot publish staged UDIM root layer.";
+      return false;
+    }
+    udim_output_guard.committed = true;
   }
   if (warn) (*warn) += swarn;
 

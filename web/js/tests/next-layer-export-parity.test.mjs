@@ -428,15 +428,24 @@ try {
       assert.equal(rejected.success, false,
         'property dictionary metadata must reject untyped JSON arrays');
     } finally { invalidPropertyMetaDoc.delete(); }
-    const unsupportedArcJSON = structuredClone(oldJSON);
-    unsupportedArcJSON.primSpecs.Root.references[0].items[0].customData =
-      {tag: 'requires-arc-metadata'};
-    const unsupportedArcDoc = new nextModule.LayerDocument();
+    const referenceJSON = structuredClone(oldJSON);
+    referenceJSON.primSpecs.Root.references[0].items[0].customData =
+      {tag: 'retained-arc-metadata', nested: {weights: {type: 'double[]', value: [0.25, 0.75]}}};
+    const referenceDoc = new nextModule.LayerDocument();
     try {
-      const rejected = unsupportedArcDoc.loadJSON(JSON.stringify(unsupportedArcJSON));
-      assert.equal(rejected.success, false,
-        'reference customData must be rejected until the arc model retains it');
-    } finally { unsupportedArcDoc.delete(); }
+      const loaded = referenceDoc.loadJSON(JSON.stringify(referenceJSON));
+      assert.equal(loaded.success, true, loaded.error);
+      assert.deepEqual(JSON.parse(referenceDoc.exportJSON().text)
+        .primSpecs.Root.references[0].items[0].customData,
+        referenceJSON.primSpecs.Root.references[0].items[0].customData);
+      const crate = referenceDoc.exportUSDC();
+      assert.equal(crate.success, true, crate.error);
+      assert.equal(referenceDoc.load(crate.data).success, true);
+      assert.match(referenceDoc.exportUSDA().text, /retained-arc-metadata/);
+      referenceJSON.primSpecs.Root.references[0].items[0].customData = ['untyped'];
+      assert.equal(referenceDoc.loadJSON(JSON.stringify(referenceJSON)).success, false,
+        'reference dictionaries reject untyped JSON arrays');
+    } finally { referenceDoc.delete(); }
     assert.equal(oldJSON.primSpecs.Root.properties.label.isCustom, true);
     assert.equal(importedPrimSpecs.Root.properties.label.isCustom, true);
     assert.deepEqual(JSON.parse(jsonNext.exportJSON().text).metas,

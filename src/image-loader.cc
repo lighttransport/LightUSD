@@ -192,7 +192,17 @@ namespace {
 // We reject anything above this ceiling with a clean error instead. This is a
 // ceiling, not a policy limit: legitimate textures are far smaller (a 16K RGBA8
 // image is 1 GiB; fp32 would be 4 GiB).
-static constexpr size_t kMaxDecodedImageBytes = size_t(2048) * 1024 * 1024;  // 2 GiB
+static thread_local size_t kMaxDecodedImageBytes = size_t(2048) * 1024 * 1024;
+
+class ScopedDecodeLimit {
+ public:
+  explicit ScopedDecodeLimit(size_t bytes) : previous_(kMaxDecodedImageBytes) {
+    kMaxDecodedImageBytes = std::min(previous_, bytes);
+  }
+  ~ScopedDecodeLimit() { kMaxDecodedImageBytes = previous_; }
+ private:
+  size_t previous_;
+};
 
 // Compute max bytes from a memory-limit-in-MB setting using uint64_t to avoid
 // overflow on 32-bit platforms. Clamps to SIZE_MAX if the result exceeds it.
@@ -606,6 +616,21 @@ bool DecodeImageNanoimage(const uint8_t *bytes, const size_t size,
                           std::string *warn, std::string *err) {
   (void)warn;
 
+#if !defined(LIGHTUSD_NO_BUILTIN_IMAGE_LOADER) && !defined(LIGHTUSD_USE_WUFFS_IMAGE_LOADER)
+  uint32_t width = 0, height = 0, channels = 0;
+  size_t pixels = 0, scratch = 0, encoded_scratch = 0;
+  if (!GetImageInfoSTB(bytes, size, uri, &width, &height, &channels, warn, err) ||
+      !safe::mul(size_t(width), size_t(height), &pixels) ||
+      !safe::mul(pixels, size_t(64), &scratch) ||
+      !safe::mul(size, size_t(2), &encoded_scratch) ||
+      !safe::add(scratch, encoded_scratch, &scratch) || scratch > kMaxDecodedImageBytes) {
+    if (err) *err += "Image decode exceeds memory limit or has an invalid header: " + uri;
+    return false;
+  }
+#else
+  // Without a header reader, decline tightened budgets before pixel decoding.
+  if (kMaxDecodedImageBytes < size_t(2) * 1024 * 1024 * 1024) return false;
+#endif
   char errbuf[256];
   errbuf[0] = 0;
 
@@ -675,6 +700,15 @@ bool DecodeImageNanoimage(const uint8_t *bytes, const size_t size,
   {
     const uint8_t *src = reinterpret_cast<const uint8_t *>(ni_img.data);
     image->data.assign(src, src + ni_img.data_size);
+    // nanoimage retains PNG's network byte order; Image samples use host order.
+    if (image->bpp == 16) {
+      const uint16_t one = 1;
+      uint8_t low = 0;
+      std::memcpy(&low, &one, 1);
+      if (low == 1)
+        for (size_t i = 0; i + 1 < image->data.size(); i += 2)
+          std::swap(image->data[i], image->data[i + 1]);
+    }
   }
   ni_image_free(&ni_img);
 
@@ -685,6 +719,10 @@ bool GetImageInfoNanoimage(const uint8_t *bytes, const size_t size,
                            const std::string &uri, uint32_t *width,
                            uint32_t *height, uint32_t *channels,
                            std::string *warn, std::string *err) {
+#if !defined(LIGHTUSD_NO_BUILTIN_IMAGE_LOADER) && !defined(LIGHTUSD_USE_WUFFS_IMAGE_LOADER)
+  // Read metadata without allocating a decoded image.
+  return GetImageInfoSTB(bytes, size, uri, width, height, channels, warn, err);
+#else
   // Reuse the decode path for info extraction — nanoimage has no info-only API.
   Image img;
   if (!DecodeImageNanoimage(bytes, size, uri, &img, warn, err)) {
@@ -694,6 +732,7 @@ bool GetImageInfoNanoimage(const uint8_t *bytes, const size_t size,
   if (height) *height = uint32_t(img.height);
   if (channels) *channels = uint32_t(img.channels);
   return true;
+#endif
 }
 
 #endif
@@ -2278,5 +2317,15 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromFile(
   return LoadImageFromMemory(data.data(), data.size(), filename);
 }
 
+nonstd::expected<ImageResult, std::string> LoadImageFromMemoryBounded(
+    const uint8_t* bytes, size_t size, const std::string& uri, size_t limit) {
+  ScopedDecodeLimit scoped(limit);
+  return LoadImageFromMemory(bytes, size, uri);
+}
+nonstd::expected<ImageInfoResult, std::string> GetImageInfoFromMemoryBounded(
+    const uint8_t* bytes, size_t size, const std::string& uri, size_t limit) {
+  ScopedDecodeLimit scoped(limit);
+  return GetImageInfoFromMemory(bytes, size, uri);
+}
 }  // namespace image
 }  // namespace lightusd

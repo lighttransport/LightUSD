@@ -14,6 +14,7 @@
 #include "core/prim.hh"
 #include "value-types.hh"
 #include "usdc-writer.hh"
+#include "usda-writer.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "usdLux.hh"
@@ -640,7 +641,10 @@ void usdc_reader_prim_metadata_roundtrip_test(void) {
 
 def Scope "test" (
     kind = "component"
+    inherits = None
+    specializes = None
 ) {
+    rel cleared = None
 }
 )";
   Stage stage;
@@ -655,6 +659,11 @@ def Scope "test" (
 
   // Verify prim type survives (kind metadata stored as TokenIndex in binary format — known gap)
   TEST_CHECK((*result)->as<Scope>() != nullptr);
+  std::string text;
+  TEST_CHECK(usda::ExportToUSDAString(stage, &text, &warn, &err));
+  TEST_CHECK(text.find("inherits = None") != std::string::npos);
+  TEST_CHECK(text.find("specializes = None") != std::string::npos);
+  TEST_CHECK(text.find("rel cleared = None") != std::string::npos);
 }
 
 void usdc_reader_stage_metadata_roundtrip_test(void) {

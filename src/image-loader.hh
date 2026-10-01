@@ -103,6 +103,13 @@ nonstd::expected<ImageInfoResult, std::string> GetImageInfoFromFile(const std::s
 ///
 nonstd::expected<ImageResult, std::string> LoadImageFromMemory(const uint8_t *addr, const size_t datasize, const std::string &uri);
 
+// Tighten built-in decoder allocation guards for one call. The limit includes
+// decoder scratch; installed custom loader callbacks retain their own policy.
+nonstd::expected<ImageResult, std::string> LoadImageFromMemoryBounded(
+    const uint8_t*, size_t, const std::string&, size_t max_decoded_bytes);
+nonstd::expected<ImageInfoResult, std::string> GetImageInfoFromMemoryBounded(
+    const uint8_t*, size_t, const std::string&, size_t max_decoded_bytes);
+
 /// Load every decoded TIFF/DNG directory as a separate image layer.
 ///
 /// This is intentionally a TIFF/DNG-specific API. The regular single-image

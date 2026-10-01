@@ -429,7 +429,9 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
         ss << to_string(listEditQual) << " ";
       }
 
-      if (var.size() == 1) {
+      if (var.empty() && listEditQual == ListEditQual::ResetToExplicit) {
+        ss << "inherits = None";
+      } else if (var.size() == 1) {
         // print as scalar
         ss << "inherits = " << var[0];
       } else {
@@ -450,7 +452,9 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
         ss << to_string(listEditQual) << " ";
       }
 
-      if (var.size() == 1) {
+      if (var.empty() && listEditQual == ListEditQual::ResetToExplicit) {
+        ss << "specializes = None";
+      } else if (var.size() == 1) {
         // print as scalar
         ss << "specializes = " << var[0];
       } else {

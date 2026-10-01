@@ -99,6 +99,7 @@ set(LUSDVIEW_SOURCES
     scene_optimize.cc
     incremental_scene_update.cc
     next_scene_loader.cc
+    next_mesh_adapter.cc
     viewer_document.cc
     public_stage_queries.cc
     preview_cache.cc
@@ -620,6 +621,15 @@ if(LIGHTUSD_BUILD_TESTS)
       ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(lusdview_public_stage_queries_test PRIVATE lightusd_c)
 
+  add_executable(lusdview_next_mesh_adapter_test
+      tests/next_mesh_adapter_test.cc next_mesh_adapter.cc)
+  target_compile_features(lusdview_next_mesh_adapter_test PRIVATE cxx_std_17)
+  lusdview_set_warning_flags(lusdview_next_mesh_adapter_test)
+  target_include_directories(lusdview_next_mesh_adapter_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src)
+  target_link_libraries(lusdview_next_mesh_adapter_test PRIVATE
+      lightusd_render_c tydra_next)
+
   add_executable(lusdview_document_test tests/viewer_document_test.cc viewer_document.cc)
   target_compile_features(lusdview_document_test PRIVATE cxx_std_17)
   lusdview_set_warning_flags(lusdview_document_test)
@@ -715,6 +725,7 @@ if(LIGHTUSD_BUILD_TESTS)
       lusdview_preview_cache_test
       lusdview_vchar_control_map_test
       lusdview_document_test
+      lusdview_next_mesh_adapter_test
       lusdview_public_stage_queries_test
       lusdview_texture_residency_policy_test
       lusdview_incremental_scene_update_test

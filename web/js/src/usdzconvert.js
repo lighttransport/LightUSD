@@ -7,6 +7,8 @@
 // its USD-relative name -> exportAsUSDZ() (which flattens the stage and packs
 // the cached image assets).
 
+import { bakeUDIMAtlas, bakeLayerUDIM, udimOptions } from './udim-bake.js';
+
 import { normalizeTextureConcurrency } from './texture-memory-budget.mjs';
 
 const USD_RE = /\.(usd|usda|usdc|usdz)$/i;
@@ -187,21 +189,33 @@ export function parseUSDZEntries(bytes) {
   const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
   const td = new TextDecoder();
 
-  let eocd = -1;
-  const minStart = Math.max(0, u8.length - 22 - 0xffff);
-  for (let i = u8.length - 22; i >= minStart; i--) {
-    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
-  }
-  if (eocd < 0) throw new Error('Not a valid USDZ/ZIP (no EOCD record).');
-
+  // Work is shared across candidates: forged comment records must not cause
+  // unbounded reparsing of a large directory.
+  let work = Math.max(65536, Math.ceil(u8.length / ZIP_CENTRAL_DIR_HEADER_SIZE) * 4);
+  const readDirectory = (eocd) => {
   const count = dv.getUint16(eocd + 10, true);
-  let off = dv.getUint32(eocd + 16, true);
+  if (dv.getUint16(eocd + 4, true) !== 0 ||
+      dv.getUint16(eocd + 6, true) !== 0 ||
+      dv.getUint16(eocd + 8, true) !== count) {
+    throw new Error('Unsupported USDZ: multi-disk ZIP archive.');
+  }
+  const centralStart = dv.getUint32(eocd + 16, true);
+  const centralSize = dv.getUint32(eocd + 12, true);
+  const centralEnd = centralStart + centralSize;
+  if (centralEnd !== eocd || centralSize < count * ZIP_CENTRAL_DIR_HEADER_SIZE) {
+    throw new Error('Corrupt USDZ: invalid central directory range.');
+  }
+  let off = centralStart;
   const entries = [];
+  const names = new Set();
+  const ranges = [];
   for (let n = 0; n < count; n++) {
-    if (off + ZIP_CENTRAL_DIR_HEADER_SIZE > u8.length ||
+    if (--work < 0) throw new Error('Corrupt USDZ: EOCD validation work limit exceeded.');
+    if (off + ZIP_CENTRAL_DIR_HEADER_SIZE > centralEnd ||
         dv.getUint32(off, true) !== 0x02014b50) {
       throw new Error('Corrupt USDZ: bad central directory header.');
     }
+    const flags = dv.getUint16(off + 8, true);
     const method = dv.getUint16(off + 10, true);
     const crc = dv.getUint32(off + 16, true);
     const compSize = dv.getUint32(off + 20, true);
@@ -211,12 +225,20 @@ export function parseUSDZEntries(bytes) {
     const commentLen = dv.getUint16(off + 32, true);
     const lho = dv.getUint32(off + 42, true);
     if (off + ZIP_CENTRAL_DIR_HEADER_SIZE + nameLen + extraLen + commentLen >
-        u8.length) {
+        centralEnd) {
       throw new Error('Corrupt USDZ: truncated central directory entry.');
     }
     const name = td.decode(u8.subarray(off + 46, off + 46 + nameLen));
+    if (!name || names.has(name)) {
+      throw new Error(`Corrupt USDZ: empty or duplicate entry name "${name}".`);
+    }
+    names.add(name);
+    if (dv.getUint16(off + 34, true) !== 0 || (flags & 0x41) !== 0) {
+      throw new Error(`Unsupported USDZ: encrypted or multi-disk entry "${name}".`);
+    }
 
-    if (!name.endsWith('/')) {
+    if (name.endsWith('/')) throw new Error('Unsupported USDZ: directory entry.');
+    {
       if (method !== 0) {
         throw new Error(`USDZ entry "${name}" is compressed (method ${method}); ` +
           'only STORE is supported.');
@@ -224,7 +246,7 @@ export function parseUSDZEntries(bytes) {
       if (compSize !== uncompSize) {
         throw new Error(`USDZ entry "${name}" has mismatched compressed/uncompressed size.`);
       }
-      if (lho + ZIP_LOCAL_HEADER_SIZE > u8.length ||
+      if (lho + ZIP_LOCAL_HEADER_SIZE > centralStart ||
           dv.getUint32(lho, true) !== 0x04034b50) {
         throw new Error(`Corrupt USDZ: bad local header for "${name}".`);
       }
@@ -232,8 +254,17 @@ export function parseUSDZEntries(bytes) {
       const lExtraLen = dv.getUint16(lho + 28, true);
       const dataStart = lho + ZIP_LOCAL_HEADER_SIZE + lNameLen + lExtraLen;
       const dataEnd = dataStart + compSize;
-      if (dataEnd > u8.length) {
+      if (dataEnd > centralStart) {
         throw new Error(`Corrupt USDZ: truncated data for "${name}".`);
+      }
+      if (dv.getUint16(lho + 6, true) !== flags ||
+          dv.getUint16(lho + 8, true) !== method || lNameLen !== nameLen ||
+          u8.subarray(lho + 30, lho + 30 + lNameLen).some(
+            (byte, i) => byte !== u8[off + 46 + i]) ||
+          (!(flags & 8) && (dv.getUint32(lho + 14, true) !== crc ||
+            dv.getUint32(lho + 18, true) !== compSize ||
+            dv.getUint32(lho + 22, true) !== uncompSize))) {
+        throw new Error(`Corrupt USDZ: local header disagrees with directory for "${name}".`);
       }
       if (dataStart % USDZ_ALIGNMENT !== 0) {
         throw new Error(`USDZ entry "${name}" is not 64-byte aligned.`);
@@ -244,11 +275,71 @@ export function parseUSDZEntries(bytes) {
         size: compSize,
         crc32: crc >>> 0,
         index: n,
+        localHeaderOffset: lho,
       });
+      let recordEnd = dataEnd;
+      if (flags & 8) {
+        const signed = recordEnd + 4 <= centralStart && dv.getUint32(recordEnd, true) === 0x08074b50;
+        const descriptor = recordEnd + (signed ? 4 : 0);
+        if (descriptor + 12 > centralStart || dv.getUint32(descriptor, true) !== crc ||
+            dv.getUint32(descriptor + 4, true) !== compSize ||
+            dv.getUint32(descriptor + 8, true) !== uncompSize) {
+          throw new Error(`Corrupt USDZ: bad data descriptor for "${name}".`);
+        }
+        recordEnd = descriptor + 12;
+      }
+      ranges.push([lho, recordEnd]);
     }
     off += ZIP_CENTRAL_DIR_HEADER_SIZE + nameLen + extraLen + commentLen;
   }
+  if (off !== centralEnd) {
+    throw new Error('Corrupt USDZ: central directory entry count mismatch.');
+  }
+  ranges.sort((a, b) => a[0] - b[0]);
+  for (let i = 1; i < ranges.length; i++) {
+    if (ranges[i][0] < ranges[i - 1][1]) {
+      throw new Error('Corrupt USDZ: overlapping local entries.');
+    }
+  }
+  if (ranges.length && (ranges[0][0] !== 0 || ranges[ranges.length - 1][1] !== centralStart ||
+      ranges.some((range, i) => i > 0 && range[0] !== ranges[i - 1][1]))) {
+    throw new Error('Corrupt USDZ: central directory omits physical entries or contains gaps.');
+  }
+  entries.sort((a, b) => a.localHeaderOffset - b.localHeaderOffset);
+  if (!entries.length || entries[0].localHeaderOffset !== 0) {
+    throw new Error('Corrupt USDZ: missing first local entry.');
+  }
   return entries;
+  };
+
+  let candidateError = null;
+  const minStart = Math.max(0, u8.length - 22 - 0xffff);
+  for (let i = u8.length - 22; i >= minStart; i--) {
+    if (dv.getUint32(i, true) !== 0x06054b50 ||
+        i + 22 + dv.getUint16(i + 20, true) !== u8.length) continue;
+    try { return readDirectory(i); }
+    catch (error) {
+      candidateError = error;
+      if (work < 0) throw error;
+    }
+  }
+  throw candidateError || new Error('Not a valid USDZ/ZIP (no EOCD record).');
+}
+
+// Match the native reader: the first physical entry is the package root,
+// including extension-neutral .usd files. A later layer cannot replace it.
+export function usdRootEntry(entries) {
+  const root = entries[0];
+  const data = root && root.data;
+  const magic = data && new TextDecoder().decode(data.subarray(0, 8));
+  const usda = magic && magic.startsWith('#usda');
+  const usdc = magic === 'PXR-USDC';
+  if (!root || !(/\.usda$/i.test(root.name) && usda ||
+                 /\.usdc$/i.test(root.name) && usdc ||
+                 /\.usd$/i.test(root.name) && (usda || usdc))) {
+    throw new Error('Corrupt USDZ: first physical entry is not a valid USD root layer.');
+  }
+  return root;
 }
 
 export function buildUSDZWithNewRoot(rootName, rootData, passthroughEntries,
@@ -749,7 +840,7 @@ export function expandUsdzInputs(assetMap, opts = {}) {
       continue;
     }
     for (const name of unpacked.order) out.set(name, unpacked.entries.get(name));
-    const root = unpacked.order.find(isUsdName);
+    const root = usdRootEntry(unpacked.order.map((name) => ({ name, data: unpacked.entries.get(name) }))).name;
     if (root && !innerRoot) innerRoot = root;
     log(`Unpacked ${path}: ${unpacked.order.length} entr${unpacked.order.length === 1 ? 'y' : 'ies'}` +
         (root ? ` (root layer: ${root})` : ''));
@@ -789,10 +880,12 @@ function assertNextOnlyUSDZConvertOptions(assetMap, rootPath, opts, textureForma
       (opts.variantSelections && Object.keys(opts.variantSelections).length > 0)) {
     throw new Error('next-only WASM usdzconvert rewrites one root USD layer; flattening and variant overrides require the legacy module.');
   }
-  if ((opts.maxTextureSize || 0) > 0 || opts.reencode === true ||
+  if ((opts.targetTextureBytes || 0) > 0 ||
+      typeof opts.textureProcessor === 'function' || typeof opts.audioProcessor === 'function' ||
+      (udimOptions(opts).mode === 'off' && ((opts.maxTextureSize || 0) > 0 || opts.reencode === true ||
       (opts.targetTextureBytes || 0) > 0 || textureFormat !== 'keep' ||
       typeof opts.textureProcessor === 'function' ||
-      typeof opts.audioProcessor === 'function') {
+      typeof opts.audioProcessor === 'function'))) {
     throw new Error('next-only WASM usdzconvert supports USD layer rewrite and asset passthrough only; texture/audio processing requires the legacy module.');
   }
   if (opts.arkitCompatible || isMaterialOptimizationEnabled(opts) ||
@@ -848,11 +941,21 @@ async function convertFolderToUSDZNextOnly(native, inputAssetMap, opts, log, rep
   try {
     const rootBytes = assetMap.get(rootPath);
     reportProgress('flatten', 0, 2, 'Parsing root USD layer', rootPath);
-    const result = converter.rewriteRoot(rootBytes, rootPath.split('/').pop(), {
+    let baked = null;
+    let result;
+    if (udimOptions(opts).mode !== 'off') {
+      if (!converter.loadFromBinary(rootBytes, rootPath.split('/').pop())) throw new Error(converter.error());
+      baked = await bakeLayerUDIM(native, converter, {keys: [...assetMap.keys()], fetch: async key => assetMap.get(key)}, opts, rootDir);
+      const data = rootLayerFormat === 'usda' ? new TextEncoder().encode(converter.exportAsUSDA()) : converter.exportAsUSDC();
+      result = {success: !!data?.length, data, rootName: rootLayerFormat === 'usda' ? 'root.usda' : 'root.usdc'};
+    } else {
+      result = converter.rewriteRoot(rootBytes, rootPath.split('/').pop(), {
       rootLayerFormat,
       maxMemory: opts.maxMemory || 0,
       usdaLazy: opts.nextEager !== true,
     });
+    }
+
     if (!result || !result.success) {
       throw new Error((result && result.error) || converter.error() || 'next-only root rewrite failed');
     }
@@ -863,7 +966,9 @@ async function convertFolderToUSDZNextOnly(native, inputAssetMap, opts, log, rep
     const rewrittenRoot = new Uint8Array(result.data);
     const rootName = result.rootName || (rootLayerFormat === 'usda' ? 'root.usda' : 'root.usdc');
     reportProgress('package', 0, 1, 'Writing USDZ package', rootName);
-    const usdz = buildUSDZWithNewRoot(rootName, rewrittenRoot, passthroughEntries);
+    const entries = baked ? passthroughEntries.filter(entry => opts.includeUnusedTextures === true ||
+      !baked.consumed.has(rootDir + entry.name)).concat(baked.assets) : passthroughEntries;
+    const usdz = buildUSDZWithNewRoot(rootName, rewrittenRoot, entries);
     reportProgress('complete', 1, 1, 'USDZ package ready', rootName);
     return {
       usdz,
@@ -878,6 +983,7 @@ async function convertFolderToUSDZNextOnly(native, inputAssetMap, opts, log, rep
         flatten: false,
         arkitCompatible: false,
         pipeline: 'next-only',
+        udimSets: baked?.jobs.length || 0, udimTiles: baked?.tiles || 0,
         singleLayerRewrite: true,
         rootBytes: rewrittenRoot.length,
       },
@@ -885,6 +991,44 @@ async function convertFolderToUSDZNextOnly(native, inputAssetMap, opts, log, rep
   } finally {
     converter.delete();
   }
+}
+
+async function convertSourceToUSDZNextOnly(native, source, opts, rootPath) {
+  const keys = source.keys;
+  assertNextOnlyUSDZConvertOptions(new Map(keys.map(key => [key, null])), rootPath,
+    {...opts, flatten: false}, normalizedTextureFormat(opts.textureFormat));
+  const rootDir = rootPath.includes('/') ? rootPath.slice(0, rootPath.lastIndexOf('/') + 1) : '';
+  const rootLayerFormat = opts.rootLayerFormat === 'usda' ? 'usda' : 'usdc';
+  const converter = new native.NextUSDZConverterNative();
+  try {
+    const bytes = await source.fetch(rootPath);
+    if (!converter.loadFromBinary(bytes, rootPath.split('/').pop())) throw new Error(converter.error());
+    const baked = await bakeLayerUDIM(native, converter, source, opts, rootDir, false);
+    const root = rootLayerFormat === 'usda' ? new TextEncoder().encode(converter.exportAsUSDA()) : converter.exportAsUSDC();
+    if (!root?.length) throw new Error(converter.error() || 'Root export failed');
+    const chunks = [];
+    const writer = new ZipStreamWriter(opts.zipSink || (bytes => chunks.push(bytes.slice())));
+    writer.addEntry('root.' + rootLayerFormat, root);
+    for (const job of baked.jobs) {
+      const atlas = await bakeUDIMAtlas(native, source, job.site.pattern, {...opts, udimSharedLayout: job.sharedLayout}, rootDir, job.site.srgb);
+      if (atlas.name !== job.digestName) throw new Error('UDIM source changed during streaming conversion');
+      writer.addEntry(job.name, atlas.data);
+    }
+    let textures = baked.jobs.length;
+    for (const key of keys) {
+      if (isUsdName(key) || (baked.consumed.has(key) && opts.includeUnusedTextures !== true)) continue;
+      writer.addEntry(rootDir && key.startsWith(rootDir) ? key.slice(rootDir.length) : key, await source.fetch(key));
+      if (isImageName(key)) textures++;
+    }
+    writer.finalize();
+    let usdz = null;
+    if (!opts.zipSink) {
+      usdz = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
+      let offset = 0; for (const chunk of chunks) { usdz.set(chunk, offset); offset += chunk.length; }
+    }
+    return {usdz, streamedToSink: !!opts.zipSink, stats: {pipeline: 'next-only', streaming: true,
+      flatten: false, singleLayerRewrite: true, rootLayerFormat, textures, udimSets: baked.jobs.length, udimTiles: baked.tiles}};
+  } finally { converter.delete(); }
 }
 
 // Convert an asset map (Map<path, Uint8Array>) into a USDZ Uint8Array.
@@ -1126,7 +1270,7 @@ function exportLayerAsUSDCOutsideWasmHeap(usd, inputBytes, opts, log) {
 async function convertSingleUSDZToLowHeapFlattenedUSDZ(native, rootPath, bytes,
                                                        opts, log, mode = 'layer') {
   const archiveEntries = parseUSDZEntries(bytes);
-  const rootEntry = archiveEntries.find((entry) => isUsdName(entry.name));
+  const rootEntry = usdRootEntry(archiveEntries);
   if (!rootEntry) {
     throw new Error('USDZ archive contained no USD layer.');
   }
@@ -1294,7 +1438,7 @@ function variantSelectionsFromOptions(opts = {}) {
 // nested/sublayered roots decline.
 async function convertSingleUSDZToNextLowMemUSDZ(native, bytes, opts, log) {
   const archiveEntries = parseUSDZEntries(bytes);
-  const rootEntry = archiveEntries.find((entry) => isUsdName(entry.name));
+  const rootEntry = usdRootEntry(archiveEntries);
   if (!rootEntry) throw new Error('USDZ archive contained no USD layer.');
 
   if (!/\.usdc$/i.test(rootEntry.name)) {
@@ -1419,7 +1563,7 @@ async function convertSingleUSDZToNextLowMemUSDZ(native, bytes, opts, log) {
 // rewrites the renamed asset references inside the layer).
 async function convertSingleUSDZStreamTextures(native, bytes, opts, log) {
   const archiveEntries = parseUSDZEntries(bytes);
-  const rootEntry = archiveEntries.find((e) => isUsdName(e.name));
+  const rootEntry = usdRootEntry(archiveEntries);
   if (!rootEntry) throw new Error('USDZ archive contained no USD layer.');
   if (rootEntry.name.includes('/')) {
     log(`stream-textures: inner root "${rootEntry.name}" in subdir; falling back.`);
@@ -1488,6 +1632,7 @@ async function convertSingleUSDZStreamTextures(native, bytes, opts, log) {
 // }
 // returns { usdz: Uint8Array, stats: { textures, resized, reencoded, rootPath } }
 export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
+  const bake = udimOptions(opts).mode !== 'off';
   const log = opts.log || (() => {});
   const progress = typeof opts.progress === 'function' ? opts.progress : null;
   const reportProgress = (stage, current, total, message, path) => {
@@ -1506,7 +1651,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
     textureFormat === 'keep' &&
     (opts.maxTextureSize || 0) <= 0 &&
     (opts.targetTextureBytes || 0) <= 0 &&
-    !opts.arkitCompatible;
+    !opts.arkitCompatible && !bake;
   if (canPassthroughUsdz) {
     const data = assetMap.get(rootPath);
     log(`Passing through USDZ unchanged: ${rootPath}`);
@@ -1537,7 +1682,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
   // USDC root (keeping textures as JS passthrough); declines (and falls back to
   // the legacy paths below) otherwise. Output fidelity is still limited (the
   // next writer drops some property types), so this is not the default.
-  if (opts.pipeline === 'next' && hasSingleUsdzInput) {
+  if (!bake && opts.pipeline === 'next' && hasSingleUsdzInput) {
     try {
       const next = await convertSingleUSDZToNextLowMemUSDZ(
         native, assetMap.get(rootPath), opts, log);
@@ -1557,7 +1702,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
   // to force the in-heap path. Declines (falls back) for nested roots / non-keep
   // formats / custom texture processors.
   const wantTextureWork = (opts.maxTextureSize || 0) > 0 || opts.reencode === true;
-  if (opts.streamTextures !== false && hasSingleUsdzInput &&
+  if (!bake && opts.streamTextures !== false && hasSingleUsdzInput &&
       textureFormat === 'keep' && wantTextureWork &&
       typeof opts.textureProcessor !== 'function') {
     try {
@@ -1571,7 +1716,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
     }
   }
 
-  if (shouldUseLowHeapFlattenedUSDZ(rootPath, assetMap, opts, textureFormat)) {
+  if (!bake && shouldUseLowHeapFlattenedUSDZ(rootPath, assetMap, opts, textureFormat)) {
     const lowHeap = await convertSingleUSDZToLowHeapFlattenedUSDZ(
       native, rootPath, assetMap.get(rootPath), opts, log);
     if (lowHeap) {
@@ -1587,7 +1732,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
   // Layer->Layer flatten then write Layer — no typed Stage, no layer copy:
   // lighter on the wasm heap and faithful). Set opts.lowHeapStageMode='stage'
   // to force the typed-Prim Stage reconstruction instead.
-  if (shouldUseLowHeapStageFlattenedUSDZ(rootPath, assetMap, opts, textureFormat)) {
+  if (!bake && shouldUseLowHeapStageFlattenedUSDZ(rootPath, assetMap, opts, textureFormat)) {
     const mode = opts.lowHeapStageMode === 'stage' ? 'stage' : 'flatten-layer';
     const lowHeap = await convertSingleUSDZToLowHeapFlattenedUSDZ(
       native, rootPath, assetMap.get(rootPath), opts, log, mode);
@@ -1613,7 +1758,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
   const flatten = opts.flatten !== false || !!opts.arkitCompatible ||
     isMaterialOptimizationEnabled(opts) || isGeometryOptimizationEnabled(opts);
 
-  const images = [...assetMap.keys()].filter(isImageName);
+  let images = [...assetMap.keys()].filter(isImageName);
   if (/\.usdz$/i.test(rootPath)) {
     log('WARN: root is still a .usdz (could not be unpacked for texture repack); ' +
         'passing it through as an opaque layer.');
@@ -1727,7 +1872,54 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
       usd.setUSDCExportLimitMB(opts.maxUsdcMb || 0, opts.maxMemMb || 0);
     }
 
+    let dependencyTiles = 0, dependencySets = 0, dependencyRetained = 0;
+    const dependencyAtlases = [];
+    if (bake && !flatten) {
+      assetMap = new Map(assetMap);
+      let retained = 0;
+      for (const path of [...assetMap.keys()].filter(path => path !== rootPath && isUsdName(path))) {
+        const dependency = new native.LightUSDLoaderNative();
+        try {
+          if (!loadLayerFromBinary(dependency, assetMap.get(path), path.split('/').pop()))
+            throw new Error('Failed to load dependency layer: ' + dependency.error());
+          const base = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
+          const result = await bakeLayerUDIM(native, dependency,
+            {keys: [...assetMap.keys()], fetch: async key => assetMap.get(key)},
+            {...opts, udimMemoryBudgetBytes: udimOptions(opts).memoryBudgetBytes - retained}, base);
+          const data = /\.usda$/i.test(path) ? new TextEncoder().encode(dependency.layerToString())
+            : new Uint8Array(dependency.exportLayerAsUSDCWithOptions({}));
+          if (!data.length) throw new Error('Failed to export baked dependency layer');
+          assetMap.set(path, data);
+          for (const asset of result.assets) {
+            const key = base + asset.name;
+            if (!assetMap.has(key)) {retained += asset.data.length; dependencyAtlases.push(key);}
+            assetMap.set(key, asset.data);
+          }
+          dependencyTiles += result.tiles; dependencySets += result.jobs.length;
+          images = images.filter(key => opts.includeUnusedTextures === true || !result.consumed.has(key));
+        } finally {dependency.delete();}
+      }
+      images.push(...dependencyAtlases);
+      dependencyRetained = retained;
+    }
     registerDependencyLayers(usd);
+    let baked = null;
+    const bakedNames = new Set(dependencyAtlases);
+    if (bake) {
+      loadRootLayer(usd);
+      baked = await bakeLayerUDIM(native, usd,
+        {keys: [...assetMap.keys()], fetch: async key => assetMap.get(key)},
+        {...opts, udimMemoryBudgetBytes: udimOptions(opts).memoryBudgetBytes - dependencyRetained}, rootDir);
+      assetMap = new Map(assetMap);
+      images = images.filter(path => opts.includeUnusedTextures === true || !baked.consumed.has(path));
+      for (const asset of baked.assets) {
+        const path = rootDir + asset.name;
+        assetMap.set(path, asset.data);
+        bakedNames.add(path);
+        images.push(path);
+      }
+      stats.udimSets = baked.jobs.length + dependencySets; stats.udimTiles = baked.tiles + dependencyTiles;
+    }
 
     // --- Budget-fit path: shrink all textures to a total byte budget. ---
     const budget = opts.targetTextureBytes || 0;
@@ -1765,7 +1957,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
       }
 
       await registerPassthroughAssets(usd);
-      loadRootLayer(usd);
+      if (!bake) loadRootLayer(usd);
 
       reportProgress('package', 0, 1, 'Writing USDZ package', rootPath);
       const data = exportUSDZ(usd, remap, opts);
@@ -1793,6 +1985,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
       const runOne = async () => {
         while (nextImage < images.length) {
           const path = images[nextImage++];
+          if (bakedNames.has(path)) continue;
           const bytes = assetMap.get(path);
           const assetName = (rootDir && path.startsWith(rootDir)) ? path.slice(rootDir.length) : path;
           try {
@@ -1848,7 +2041,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
         if (processed.resized) stats.resized++;
         if (processed.reencoded || outBytes !== bytes) stats.reencoded++;
         log(`  ${assetName}: ${bytes.length} -> ${outBytes.length} bytes [browser]`);
-      } else if (fmtInfo.format && (wantResize || opts.reencode || textureFormat !== 'keep')) {
+      } else if (!bakedNames.has(path) && fmtInfo.format && (wantResize || opts.reencode || textureFormat !== 'keep')) {
         const res = native.convertImage(bytes, {
           maxSize: opts.maxTextureSize || 0,
           format: fmtInfo.format,
@@ -1881,7 +2074,8 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
     }
 
     await registerPassthroughAssets(usd);
-    loadRootLayer(usd);
+    if (!bake) loadRootLayer(usd);
+
 
     reportProgress('package', 0, 1, 'Writing USDZ package', rootPath);
     const data = exportUSDZ(usd, textureRemap, opts);
@@ -1917,6 +2111,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
 // first zip entry, so the remap cannot wait for texture processing).
 // ---------------------------------------------------------------------------
 export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
+  const bake = udimOptions(opts).mode !== 'off';
   const log = opts.log || (() => {});
   const progress = typeof opts.progress === 'function' ? opts.progress : null;
   const reportProgress = (stage, current, total, message, path) => {
@@ -1924,7 +2119,7 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
   };
   const keys = source.keys;
   if (!keys || !keys.length) throw new Error('streaming source has no files');
-  if (opts.flatten === false) {
+  if (opts.flatten === false && hasLegacyConverter(native)) {
     throw new Error('streaming conversion requires flatten (composition arcs cannot reference streamed entries)');
   }
 
@@ -1934,6 +2129,10 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
   if (!rootPath) throw new Error('No USD file (.usd/.usda/.usdc) found in the input.');
   if (/\.usdz$/i.test(rootPath)) {
     throw new Error('streaming conversion takes a scene folder/url-list, not a packed .usdz root');
+  }
+
+  if (!hasLegacyConverter(native) && hasNextOnlyConverter(native)) {
+    return convertSourceToUSDZNextOnly(native, source, opts, rootPath);
   }
 
   const textureFormat = normalizedTextureFormat(opts.textureFormat);
@@ -1966,11 +2165,11 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
       usdKeyByAssetName.set(normalizeArchiveAssetName(key), key);
     }
     const canFetchUsdLayerSync =
-      opts.pipeline === 'next' &&
+      !bake && opts.pipeline === 'next' &&
       typeof source.fetchSync === 'function' &&
       typeof usd.nextFlattenMultiBufferToSinkFetch === 'function';
     const canFetchUsdLayerAsync =
-      opts.pipeline === 'next' &&
+      !bake && opts.pipeline === 'next' &&
       opts.nextPreloadUsdLayers !== true &&
       !canFetchUsdLayerSync &&
       typeof usd.nextFlattenAsyncBegin === 'function' &&
@@ -2026,7 +2225,7 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
     }
     if (!rootBytes) throw new Error(`root ${rootPath} not fetchable from source`);
     const canProvidePreloadedUsdLayerSync =
-      opts.pipeline === 'next' &&
+      !bake && opts.pipeline === 'next' &&
       opts.nextPreloadUsdLayers === true &&
       !canFetchUsdLayerSync &&
       typeof usd.nextFlattenMultiBufferToSinkFetch === 'function';
@@ -2054,7 +2253,7 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
     // re-encoded copies. Texture rename remaps are passed into the next flatten
     // call and applied after composition before the root crate is streamed.
     let nextRoot = null;  // { uuid, anchor } when the next pipeline is armed
-    if (opts.pipeline === 'next') {
+    if (!bake && opts.pipeline === 'next') {
       const rootIsUSDC = rootBytes.length >= 8 &&
         rootBytes[0] === 0x50 && rootBytes[1] === 0x58 && rootBytes[2] === 0x52 &&
         rootBytes[3] === 0x2d && rootBytes[4] === 0x55 && rootBytes[5] === 0x53 &&
@@ -2106,9 +2305,12 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
       if (typeof usd.clearAssets === 'function') usd.clearAssets();
     }
 
+    const baked = bake ? await bakeLayerUDIM(native, usd, source, opts, rootDir, false) : null;
+    if (baked) { stats.udimSets = baked.jobs.length; stats.udimTiles = baked.tiles; }
+
     // 3. Precompute texture output names; remap renamed references in the
     //    composed layer before the root is written.
-    const images = keys.filter(isImageName);
+    const images = keys.filter(key => isImageName(key) && (!baked || opts.includeUnusedTextures === true || !baked.consumed.has(key)));
     const plans = images.map((path) => {
       const name = assetNameFor(path);
       const fmtInfo = outputFormatForImage(path, textureFormat);
@@ -2343,6 +2545,14 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
       }
     } else {
       zw.addEntry(rootName, rootOut);
+    }
+
+    // No encoded atlases are retained during root preparation. Replay each
+    // validated bake after root emission, keeping only one atlas in memory.
+    if (baked) for (const job of baked.jobs) {
+      const atlas = await bakeUDIMAtlas(native, source, job.site.pattern, {...opts, udimSharedLayout: job.sharedLayout}, rootDir, job.site.srgb);
+      if (atlas.name !== job.digestName) throw new Error('UDIM source changed during streaming conversion');
+      zw.addEntry(job.name, atlas.data); stats.textures++;
     }
 
     const pickResizeCs = makeResizeCsPicker(native, rootBytes, opts);

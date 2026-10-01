@@ -156,8 +156,8 @@ const layerCases = [
   ['tests/usdc/cube-000.usdc', true, true],
   ['tests/usdc/variantSet-000.usdc', true, true],
   ['tests/usda/aousd-unknown-property-metadata.usda', true, true],
-  // Strict AOUSD parsing under the untrusted policy.
-  ['tests/usdc/refs-customdata-001.usdc', true, false],
+  // Reference dictionaries are retained under strict, untrusted parsing.
+  ['tests/usdc/refs-customdata-001.usdc', true, true],
 ];
 for (const [name, legacyOk, nextOk] of layerCases) {
   const bytes = fixture(name);
@@ -170,6 +170,17 @@ for (const [name, legacyOk, nextOk] of layerCases) {
     const loaded = plain.load(bytes);
     assert.equal(loaded.success, nextOk, `next layer ${name}: ${loaded.error}`);
     if (nextOk) assert.ok(Number.isInteger(loaded.primCount));
+    if (name.includes('refs-customdata')) {
+      const text = plain.exportUSDA();
+      assert.equal(text.success, true, text.error);
+      assert.match(text.text, /customData = \{/);
+      const crate = plain.exportUSDC();
+      assert.equal(crate.success, true, crate.error);
+      const roundtrip = progress.load(crate.data);
+      assert.equal(roundtrip.success, true, roundtrip.error);
+      assert.equal(progress.exportUSDA().text, text.text,
+        'WASM Crate roundtrip must preserve reference customData');
+    }
     assert.equal(loader.loadAsLayerFromBinaryWithProgress(bytes, file), legacyOk);
     let callbacks = 0;
     assert.equal(progress.loadWithProgress(bytes, () => { ++callbacks; return true; }).success, nextOk);

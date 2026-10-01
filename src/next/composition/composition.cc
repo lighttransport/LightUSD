@@ -6,6 +6,7 @@
 
 #include "composition.hh"
 #include "../layer/array-edit.hh"
+#include "../layer/arc-reference.hh"
 #include "../layer/listop-field-table.hh"
 #include "../../external/fast_float/include/fast_float/fast_float.h"
 #include <algorithm>
@@ -2237,7 +2238,7 @@ CompositionArc Compositor::ParseReference(const std::string& ref_str) {
 
   // Format: @asset_path@</prim/path> or </prim/path> for internal
   // Also supports: @asset_path@?layerOffset=offset:scale
-  std::string str = ref_str;
+  std::string str = ArcReferenceBody(ref_str);
 
   // Check for asset path
   if (!str.empty() && str[0] == '@') {

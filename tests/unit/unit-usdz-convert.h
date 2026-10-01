@@ -42,3 +42,8 @@ void usdz_convert_cleanup_test(void);
 // EXR encode/decode + fp32 resize (HDR texture support)
 void usdz_convert_exr_roundtrip_test(void);
 void usdz_convert_resize_float_test(void);
+
+void usdz_convert_udim_bake_test(void);
+void usdz_convert_udim_layout_test(void);
+
+void usdz_convert_udim_clip_test(void);

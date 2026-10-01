@@ -61,6 +61,7 @@ await testAsync('combined LightUSDLoaderNative methods match the checked API inv
     boundary === 'embind' || boundary === 'typed-c'));
   assert.deepEqual(classified.filter(({boundary}) => boundary === 'typed-c')
     .map(({name}) => name).sort(), [
+      'describeUDIM', 'applyUDIM',
       'getAnimation',
       'getAllAnimations',
       'getAnimationInfo',

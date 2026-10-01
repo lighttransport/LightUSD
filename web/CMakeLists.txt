@@ -389,7 +389,13 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
 
   add_subdirectory(${PROJECT_SOURCE_DIR}/../src/next lightusd_next_build EXCLUDE_FROM_ALL)
 
-  add_executable(lightusd_next_wasm binding-next.cc binding-next-scene.cc
+  add_executable(lightusd_next_wasm binding-udim.cc binding-next-udim.cc
+    ${PROJECT_SOURCE_DIR}/../src/imageio/png-stream.cc
+    ${PROJECT_SOURCE_DIR}/../src/udim-layer.cc
+    ${PROJECT_SOURCE_DIR}/../src/udim-layer-geometry.cc
+    ${PROJECT_SOURCE_DIR}/../src/udim-bake.cc
+    ${PROJECT_SOURCE_DIR}/../src/udim-mesh.cc
+    binding-next.cc binding-next-scene.cc
     binding-next-layer.cc
     binding-next-api.cc
     binding-next-image.cc
@@ -397,6 +403,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     binding-next-util.cc
     binding-next-render-lifecycle.cc
     ${PROJECT_SOURCE_DIR}/../src/image-loader.cc
+    ${PROJECT_SOURCE_DIR}/../src/image-writer.cc
     binding-next-render-primvars.cc
     binding-next-render-outputs.cc
     binding-next-render-mesh-helpers.cc
@@ -406,6 +413,8 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     ${PROJECT_SOURCE_DIR}/../src/tydra/material-serializer.cc
     binding-next-render-merge.cc
     binding-next-render-material-output.cc)
+  set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/image-writer.cc PROPERTIES
+    COMPILE_DEFINITIONS "LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION=1")
   if (LIGHTUSD_WASM_WITH_EXR)
     file(GLOB TINYEXR_V3_SOURCES
       ${PROJECT_SOURCE_DIR}/../src/external/tinyexr/src/*.c)
@@ -413,7 +422,6 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
       INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/../src/external/tinyexr/include;${PROJECT_SOURCE_DIR}/../src/external/tinyexr/src"
       COMPILE_DEFINITIONS "EXR_NO_JPH;EXR_NO_ZSTD")
     target_sources(lightusd_next_wasm PRIVATE
-      ${PROJECT_SOURCE_DIR}/../src/image-writer.cc
       ${TINYEXR_V3_SOURCES})
     set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/image-writer.cc PROPERTIES
       COMPILE_DEFINITIONS "LIGHTUSD_WITH_EXR=1;LIGHTUSD_EXR_V3=1;LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION=1")
@@ -589,6 +597,11 @@ if (LIGHTUSD_WASM64)
 endif()
 
 # Pass through compile definitions for feature flags
+target_sources(${BUILD_TARGET} PRIVATE binding-udim.cc)
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
+  target_sources(${BUILD_TARGET} PRIVATE binding-next-udim.cc)
+endif()
+
 if (LIGHTUSD_WITH_EXR)
   target_compile_definitions(${BUILD_TARGET} PRIVATE LIGHTUSD_WITH_EXR=1)
 endif()

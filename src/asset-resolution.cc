@@ -242,6 +242,11 @@ std::string AssetResolutionResolver::resolve_literal(
 
 bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const std::string &assetPath,
                   Asset *asset_out, std::string *warn, std::string *err) const {
+  return open_asset(resolvedPath, assetPath, asset_out, warn, err,
+                    (std::numeric_limits<size_t>::max)());
+}
+bool AssetResolutionResolver::open_asset(const std::string& resolvedPath, const std::string& assetPath,
+                  Asset* asset_out, std::string* warn, std::string* err, size_t call_limit) const {
 
   if (!asset_out) {
     if (err) {
@@ -305,7 +310,7 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
           : static_cast<uint64_t>(_max_asset_bytes_in_mb) * kBytesPerMiB;
   const uint64_t max_addressable_asset_bytes =
       (std::min)(max_asset_bytes,
-                 static_cast<uint64_t>((std::numeric_limits<size_t>::max)()));
+                 static_cast<uint64_t>(call_limit));
 
   if (_asset_resolution_handlers.count(ext)) {
     if (_asset_resolution_handlers.at(ext).size_fun && _asset_resolution_handlers.at(ext).read_fun) {
@@ -445,11 +450,7 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
 
   // Default: read from a file.
   std::vector<uint8_t> data;
-  size_t max_bytes = (std::numeric_limits<size_t>::max)();
-  if (_max_asset_bytes_in_mb <=
-      ((std::numeric_limits<size_t>::max)() / size_t(kBytesPerMiB))) {
-    max_bytes = size_t(kBytesPerMiB) * _max_asset_bytes_in_mb;
-  }
+  const size_t max_bytes = static_cast<size_t>(max_addressable_asset_bytes);
   if (!io::ReadWholeFile(&data, err, resolvedPath, max_bytes,
                            /* userdata */ nullptr)) {
 

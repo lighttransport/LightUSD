@@ -66,6 +66,14 @@ static void test_converter_controls(void) {
   assert(sizeof(lightusd_render_config) == 64);
   assert(offsetof(lightusd_render_config, time_code) == 16);
   assert(offsetof(lightusd_render_config, max_resident_bytes) == 32);
+  /* Secondary-UV interpolation consumes a reserved byte in the existing ABI. */
+  assert(offsetof(lightusd_render_mesh_info, texcoords1_interp) ==
+         offsetof(lightusd_render_mesh_info, colors_interp) + 1);
+  if (sizeof(void*) == 8) {
+    assert(sizeof(lightusd_render_mesh_info) == 104);
+    assert(offsetof(lightusd_render_mesh_info, subset_count) == 64);
+    assert(offsetof(lightusd_render_mesh_info, bbox_min) == 80);
+  }
   const char source[] =
       "#usda 1.0\n"
       "def Xform \"Root\" {\n"
@@ -79,6 +87,7 @@ static void test_converter_controls(void) {
       "  float[] primvars:displayOpacity = [1,0.5,0.75,1] (interpolation = \"vertex\")\n"
       "  rel material:binding = </Root/Material>\n"
       "  texCoord2f[] primvars:st = [(0,0),(1,0),(1,1),(0,1)] (interpolation = \"vertex\")\n"
+      "  texCoord2f[] primvars:st1 = [(0.75,0.5)] (interpolation = \"constant\")\n"
       " }\n"
       " def Material \"Material\" {\n"
       "  token outputs:surface.connect = </Root/Material/Surface.outputs:surface>\n"
@@ -285,6 +294,8 @@ static void test_converter_controls(void) {
   assert(mesh_info.prim_path.len == strlen("/Root/Quad") &&
          memcmp(mesh_info.prim_path.data, "/Root/Quad", strlen("/Root/Quad")) == 0);
   assert(mesh_info.point_count == 4 && mesh_info.face_count == 1);
+  assert(mesh_info.has_texcoords1 && mesh_info.texcoords0_interp == 2 &&
+         mesh_info.texcoords1_interp == 0);
   lightusd_render_mesh_extra_info mesh_extra;
   assert(lightusd_render_mesh_get_extra_info(mesh_scene, 0, &mesh_extra) ==
          LIGHTUSD_OK);

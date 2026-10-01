@@ -291,7 +291,7 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
     case CrateTypeId::PayloadListOp: {
       std::vector<std::string> arcs;
       if (!DecodeReferenceListOp(rep, type_id == CrateTypeId::PayloadListOp,
-                                 arcs)) {
+                                 arcs, depth)) {
         return false;
       }
       out = Value::MakeTokenArray(std::move(arcs));

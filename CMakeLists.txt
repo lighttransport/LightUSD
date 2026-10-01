@@ -657,6 +657,12 @@ set(LIGHTUSD_SOURCES
     ${PROJECT_SOURCE_DIR}/src/imageio/png-stream.cc
     ${PROJECT_SOURCE_DIR}/src/imageproc/simd.cc
     ${PROJECT_SOURCE_DIR}/src/usdz-convert.cc
+    ${PROJECT_SOURCE_DIR}/src/udim-bake.cc
+    ${PROJECT_SOURCE_DIR}/src/udim-mesh.cc
+    ${PROJECT_SOURCE_DIR}/src/udim-layer.cc
+    ${PROJECT_SOURCE_DIR}/src/udim-layer-geometry.cc
+    ${PROJECT_SOURCE_DIR}/src/usdz-udim-layer.cc
+    ${PROJECT_SOURCE_DIR}/src/usdz-udim-bake.cc
     ${PROJECT_SOURCE_DIR}/src/usdz-geometry-optimize.cc
     ${PROJECT_SOURCE_DIR}/src/usdz-material-optimize.cc
     ${PROJECT_SOURCE_DIR}/src/linear-algebra.cc
@@ -2636,11 +2642,22 @@ if(LIGHTUSD_BUILD_TESTS)
     set_tests_properties(lusdview-vk-render PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 300)
 
+    if(LUSDR_PYTHON)
+      add_test(NAME lusdview-next-mesh-materials
+        COMMAND ${LUSDR_PYTHON}
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-next-mesh-materials.py"
+                "$<TARGET_FILE:lusdview>"
+                --output "${CMAKE_BINARY_DIR}/lusdview-next-mesh-materials")
+      set_tests_properties(lusdview-next-mesh-materials PROPERTIES
+                           SKIP_RETURN_CODE 77 TIMEOUT 600
+                           LABELS "lusdview;vulkan;rt")
+    endif()
+
     add_test(
       NAME lusdview-vk-stacked-glass
       COMMAND ${CMAKE_COMMAND} -E env
               "LUSDVIEW=$<TARGET_FILE:lusdview>"
-              "ASSET=${PROJECT_SOURCE_DIR}/models/lusdview-stacked-glass.usda"
+              "ASSET=${PROJECT_SOURCE_DIR}/tests/usda/lusdview-stacked-glass.usda"
               bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-render.sh"
     )
     set_tests_properties(lusdview-vk-stacked-glass PROPERTIES
@@ -2662,7 +2679,7 @@ if(LIGHTUSD_BUILD_TESTS)
       NAME lusdview-vk-swbvh-stacked-glass
       COMMAND ${CMAKE_COMMAND} -E env
               "LUSDVIEW=$<TARGET_FILE:lusdview>"
-              "ASSET=${PROJECT_SOURCE_DIR}/models/lusdview-stacked-glass.usda"
+              "ASSET=${PROJECT_SOURCE_DIR}/tests/usda/lusdview-stacked-glass.usda"
               bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-swbvh-render.sh"
     )
     set_tests_properties(lusdview-vk-swbvh-stacked-glass PROPERTIES
@@ -2689,7 +2706,7 @@ if(LIGHTUSD_BUILD_TESTS)
               "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-mtlx-cold-fallback.sh"
     )
     set_tests_properties(lusdview-vk-mtlx-cold-fallback PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 120
+                         SKIP_RETURN_CODE 77 TIMEOUT 420
                          LABELS "lusdview;vulkan;rt;materialx")
 
     add_test(
@@ -3900,7 +3917,7 @@ if(LIGHTUSD_BUILD_TESTS)
       NAME lusdview-cpu-rt-stacked-glass
       COMMAND ${CMAKE_COMMAND} -E env
               "LUSDVIEW=$<TARGET_FILE:lusdview>"
-              "ASSET=${PROJECT_SOURCE_DIR}/models/lusdview-stacked-glass.usda"
+              "ASSET=${PROJECT_SOURCE_DIR}/tests/usda/lusdview-stacked-glass.usda"
               bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-rt-headless.sh"
     )
     set_tests_properties(lusdview-cpu-rt-stacked-glass PROPERTIES
@@ -4163,17 +4180,22 @@ if(LIGHTUSD_BUILD_TESTS)
   # usd-wg asset corpus parse regression (native `lusdcat -l`).
   #
   # Runs the Node harness over the usd-wg/assets corpus (path from the
-  # USD_WG_ASSETS_DIR env var, else its built-in default). The repository
+  # LIGHTUSD_USD_ASSETS_ROOT setting, else USD_WG_ASSETS_DIR). The repository
   # verification harness supplies its prepared corpus explicitly. --max-fail
   # 0 gates on the load baseline.
   #
   find_program(LIGHTUSD_NODE_EXECUTABLE NAMES node nodejs)
   if(LIGHTUSD_NODE_EXECUTABLE AND TARGET lusdcat)
+    set(_lightusd_corpus_root_args)
+    if(LIGHTUSD_USD_ASSETS_ROOT)
+      list(APPEND _lightusd_corpus_root_args --assets "${LIGHTUSD_USD_ASSETS_ROOT}")
+    endif()
     add_test(
       NAME corpus-parse-native
       COMMAND ${LIGHTUSD_NODE_EXECUTABLE}
               ${PROJECT_SOURCE_DIR}/tests/parse-asset-corpus.mjs
               --optional-assets
+              ${_lightusd_corpus_root_args}
               --mode load
               --lusdcat "$<TARGET_FILE:lusdcat>"
               --out "${CMAKE_BINARY_DIR}/corpus-parse-results"

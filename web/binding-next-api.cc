@@ -118,6 +118,19 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_next_subdiv_error(
   return lightusd::web_next::NextSubdivError(slot->object, out, cap);
 }
 
+EMSCRIPTEN_KEEPALIVE int32_t lightusd_next_converter_udim(
+    uint32_t handle, uint32_t apply, const uint8_t* data, uint32_t size) {
+  const Slot* slot = Lookup(handle);
+  if (!slot || slot->kind != 1 || apply > 1 || size > 4*1024*1024 ||
+      (size && (!data || reinterpret_cast<uintptr_t>(data) > emscripten_get_heap_size() || size > emscripten_get_heap_size() - reinterpret_cast<uintptr_t>(data)))) return -1;
+  return lightusd::web_next::NextConverterUDIM(slot->object, apply != 0, data, size);
+}
+EMSCRIPTEN_KEEPALIVE int32_t lightusd_next_converter_udim_copy(uint32_t handle, uint8_t* out, uint32_t cap) {
+  const Slot* slot = Lookup(handle);
+  if (!slot || slot->kind != 1 || (cap && (!out || reinterpret_cast<uintptr_t>(out) > emscripten_get_heap_size() || cap > emscripten_get_heap_size()-reinterpret_cast<uintptr_t>(out)))) return -1;
+  return lightusd::web_next::NextConverterUDIMCopy(slot->object, out, cap);
+}
+
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_next_converter_rewrite(
     uint32_t handle, const uint8_t* data, uint32_t size,
     const lightusd_next_rewrite_options* options,

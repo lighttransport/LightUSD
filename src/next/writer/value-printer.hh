@@ -30,6 +30,10 @@ struct PrintOptions {
 
   /// Use compact format (single line arrays)
   bool compact = false;
+
+  /// Canonicalize dictionary key order (including nested dictionaries).
+  /// Reference-item identity uses this; ordinary metadata keeps authored order.
+  bool sort_dictionary_keys = false;
 };
 
 /// Print a Value to string (USDA format)

@@ -70,6 +70,7 @@
 #include "image-writer.hh"
 #include "io-util.hh"
 #include "safe-arithmetic.hh"
+#include "imageio/png-stream.hh"
 #include "str-util.hh"
 
 #include <climits>
@@ -479,6 +480,32 @@ bool EncodePNG(const Image &image, PngEncoder encoder,
     }
   }
 #endif
+
+  // Preserve 16-bit samples even in lean builds without fpnge. PNG scanline
+  // encoding needs only a row buffer and writes samples in network byte order.
+  if (image.bpp == 16 && image.format == Image::PixelFormat::UInt) {
+    imageio::PngImageInfo info;
+    info.width = static_cast<uint32_t>(image.width);
+    info.height = static_cast<uint32_t>(image.height);
+    info.bit_depth = 16;
+    info.color_type = static_cast<uint8_t>(image.channels == 1 ? 0 :
+                                          image.channels == 2 ? 4 :
+                                          image.channels == 3 ? 2 : 6);
+    imageio::PngScanlineWriter writer;
+    if (!writer.Begin(info)) { if (err) *err = "16-bit PNG writer initialization failed"; return false; }
+    const size_t stride = size_t(image.width) * size_t(image.channels) * 2;
+    std::vector<uint8_t> row(stride);
+    for (int y = 0; y < image.height; ++y) {
+      for (size_t x = 0; x < stride; x += 2) {
+        uint16_t sample;
+        std::memcpy(&sample, image.data.data() + size_t(y) * stride + x, 2);
+        row[x] = static_cast<uint8_t>(sample >> 8);
+        row[x + 1] = static_cast<uint8_t>(sample);
+      }
+      if (!writer.WriteRow(row.data())) { if (err) *err = "16-bit PNG row encode failed"; return false; }
+    }
+    return writer.Finish(*out);
+  }
 
 #if defined(LIGHTUSD_HAVE_FPNG)
   if (EncodePNG_fpng(image, out, &local_err)) {

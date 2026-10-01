@@ -3,6 +3,8 @@
 // PointInstancer extraction into GPU-instanced draws.
 
 #include "next_scene_loader.hh"
+#include "next_mesh_adapter.hh"
+#include "prototype_expansion.hh"
 #include "viewer_document.hh"
 #include "public_stage_queries.hh"
 #include "c-api/c-stage-bridge.hh"
@@ -1296,40 +1298,6 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
   return true;
 }
 
-template <typename Chunked, typename Element>
-bool AppendPublicBuffer(const lightusd::api::RenderScene& scene, int32_t meshId,
-                        uint8_t kind, Chunked* output) {
-  if (!output) return false;
-  lightusd_buffer_view view{};
-  if (lightusd::api::RenderMeshBuffer(
-          const_cast<lightusd::api::RenderScene&>(scene), meshId, kind,
-          &view) != LIGHTUSD_OK ||
-      view.nbytes % sizeof(Element) != 0) {
-    return false;
-  }
-  return output->append(static_cast<const Element*>(view.data),
-                        view.nbytes / sizeof(Element));
-}
-
-template <typename Element>
-bool CopyPublicVectorBuffer(const lightusd::api::RenderScene& scene,
-                            int32_t meshId, uint8_t kind,
-                            std::vector<Element>* output) {
-  if (!output) return false;
-  lightusd_buffer_view view{};
-  if (lightusd::api::RenderMeshBuffer(
-          const_cast<lightusd::api::RenderScene&>(scene), meshId, kind,
-          &view) != LIGHTUSD_OK ||
-      view.nbytes % sizeof(Element) != 0) {
-    return false;
-  }
-  const Element* data = static_cast<const Element*>(view.data);
-  const size_t count = view.nbytes / sizeof(Element);
-  if (count == 0) output->clear();
-  else output->assign(data, data + count);
-  return true;
-}
-
 bool ReadPublicWorldTransform(const lightusd_stage* stage,
                               const std::string& path, double time,
                               double out16[16]) {
@@ -1451,204 +1419,6 @@ bool ReadPublicFloatArray(const lightusd_stage* stage, const std::string& path,
   }
   lightusd_value_destroy(value);
   return ok;
-}
-
-bool ConvertMeshThroughPublicAPI(
-    const lightusd_stage* stage, const std::string& path,
-    const tydn::ConverterConfig& converterConfig, tydn::RenderMesh* out,
-    uint8_t proxyMode = 0) {
-  if (!stage || !out) return false;
-  const lightusd_prim prim = lightusd_stage_prim_at_path(stage, path.c_str());
-  if (!lightusd_prim_is_valid(prim)) return false;
-
-  lightusd_render_config config;
-  lightusd_render_config_init(&config);
-  config.triangulate = converterConfig.mesh.triangulate ? 1 : 0;
-  config.compute_normals = converterConfig.mesh.compute_normals ? 1 : 0;
-  config.compute_tangents = converterConfig.mesh.compute_tangents ? 1 : 0;
-  config.build_vertex_indices =
-      converterConfig.mesh.build_vertex_indices ? 1 : 0;
-  config.triangulation_method =
-      converterConfig.mesh.triangulation_method ==
-              tydn::MeshConfig::TriangulationMethod::Fan
-          ? 1
-          : 0;
-  config.tangent_method =
-      static_cast<uint8_t>(converterConfig.mesh.tangent_method);
-  config.load_textures = converterConfig.material.load_textures ? 1 : 0;
-  config.allow_missing_textures =
-      converterConfig.material.allow_missing_textures ? 1 : 0;
-  config.target_color_space =
-      static_cast<uint8_t>(converterConfig.material.target_color_space);
-  if (converterConfig.material.binding_purpose == "preview")
-    config.material_binding_purpose = LIGHTUSD_MATERIAL_BINDING_PREVIEW;
-  else if (converterConfig.material.binding_purpose == "full")
-    config.material_binding_purpose = LIGHTUSD_MATERIAL_BINDING_FULL;
-  config.time_code = converterConfig.time_code;
-  config.max_threads = 1;
-  config.use_default_asset_resolver = 0;
-  const auto levelIt = converterConfig.mesh.subdivision_prim_levels.find(path);
-  const int subdivisionLevel =
-      levelIt == converterConfig.mesh.subdivision_prim_levels.end()
-          ? converterConfig.mesh.subdivision_level
-          : levelIt->second;
-
-  lightusd::api::RenderScene scene;
-  lightusd_status convertStatus = LIGHTUSD_OK;
-  if (proxyMode == 0) {
-    convertStatus = lightusd_render_convert_mesh(
-        stage, prim, &config, subdivisionLevel, scene.put());
-  } else {
-    static const float boundsMin[3] = {-1.0f, -1.0f, -1.0f};
-    static const float boundsMax[3] = {1.0f, 1.0f, 1.0f};
-    convertStatus = lightusd_render_convert_mesh_proxy(
-        stage, prim, proxyMode == 1 ? 0 : 1,
-        proxyMode == 1 ? nullptr : boundsMin,
-        proxyMode == 1 ? nullptr : boundsMax, scene.put());
-  }
-  if (convertStatus != LIGHTUSD_OK) {
-    return false;
-  }
-  lightusd_render_mesh_info info{};
-  lightusd_render_mesh_extra_info extra{};
-  if (lightusd::api::RenderMeshInfo(scene, 0, &info) != LIGHTUSD_OK ||
-      lightusd::api::RenderMeshExtraInfo(scene, 0, &extra) != LIGHTUSD_OK) {
-    return false;
-  }
-
-  tydn::RenderMesh mesh;
-  mesh.name.assign(info.name.data ? info.name.data : "", info.name.len);
-  mesh.prim_path.assign(info.prim_path.data ? info.prim_path.data : "",
-                        info.prim_path.len);
-  mesh.material_id = info.material_id;
-  mesh.is_triangulated = info.is_triangulated != 0;
-  mesh.double_sided = extra.double_sided != 0;
-  mesh.normals_interp = static_cast<tydn::Interpolation>(info.normals_interp);
-  mesh.texcoords_0_interp =
-      static_cast<tydn::Interpolation>(info.texcoords0_interp);
-  mesh.texcoords_1_interp = mesh.texcoords_0_interp;
-  mesh.colors_interp = static_cast<tydn::Interpolation>(info.colors_interp);
-  mesh.tangents_interp =
-      static_cast<tydn::Interpolation>(extra.tangents_interp);
-  mesh.opacities_interp =
-      static_cast<tydn::Interpolation>(extra.opacities_interp);
-  mesh.texcoords_0_name.assign(
-      extra.texcoords0_name.data ? extra.texcoords0_name.data : "",
-      extra.texcoords0_name.len);
-  mesh.texcoords_1_name.assign(
-      extra.texcoords1_name.data ? extra.texcoords1_name.data : "",
-      extra.texcoords1_name.len);
-
-  if (!AppendPublicBuffer<tydn::FloatChunked, float>(
-          scene, 0, LIGHTUSD_MESH_BUF_POINTS, &mesh.points) ||
-      !AppendPublicBuffer<tydn::UInt32Chunked, uint32_t>(
-          scene, 0, LIGHTUSD_MESH_BUF_FACE_COUNTS,
-          &mesh.face_vertex_counts) ||
-      !AppendPublicBuffer<tydn::UInt32Chunked, uint32_t>(
-          scene, 0, LIGHTUSD_MESH_BUF_FACE_INDICES,
-          &mesh.face_vertex_indices) ||
-      !AppendPublicBuffer<tydn::UInt32Chunked, uint32_t>(
-          scene, 0, LIGHTUSD_MESH_BUF_TRI_INDICES,
-          &mesh.triangulated_indices) ||
-      !AppendPublicBuffer<tydn::UInt32Chunked, uint32_t>(
-          scene, 0, LIGHTUSD_MESH_BUF_TRI_FACEVARYING_INDICES,
-          &mesh.triangulated_face_vertex_indices) ||
-      !CopyPublicVectorBuffer<uint32_t>(
-          scene, 0, LIGHTUSD_MESH_BUF_SUBDIVISION_FACE_SOURCE,
-          &mesh.subdivision_face_source) ||
-      !CopyPublicVectorBuffer<uint32_t>(
-          scene, 0, LIGHTUSD_MESH_BUF_FACE_TRIANGLE_OFFSETS,
-          &mesh.face_triangle_offsets) ||
-      !AppendPublicBuffer<tydn::FloatChunked, float>(
-          scene, 0, LIGHTUSD_MESH_BUF_NORMALS, &mesh.normals) ||
-      !AppendPublicBuffer<tydn::FloatChunked, float>(
-          scene, 0, LIGHTUSD_MESH_BUF_TANGENTS, &mesh.tangents) ||
-      !AppendPublicBuffer<tydn::FloatChunked, float>(
-          scene, 0, LIGHTUSD_MESH_BUF_TEXCOORDS0, &mesh.texcoords_0) ||
-      !AppendPublicBuffer<tydn::FloatChunked, float>(
-          scene, 0, LIGHTUSD_MESH_BUF_TEXCOORDS1, &mesh.texcoords_1) ||
-      !AppendPublicBuffer<tydn::FloatChunked, float>(
-          scene, 0, LIGHTUSD_MESH_BUF_COLORS, &mesh.colors) ||
-      !AppendPublicBuffer<tydn::FloatChunked, float>(
-          scene, 0, LIGHTUSD_MESH_BUF_OPACITIES, &mesh.opacities)) {
-    return false;
-  }
-  if (info.has_skin) {
-    mesh.skin = std::make_shared<tydn::RenderMesh::SkinBinding>();
-    mesh.skin->skeleton_id = info.skeleton_id;
-    mesh.skin->influences_per_vertex = 4;
-    if (!AppendPublicBuffer<tydn::UInt16Chunked, uint16_t>(
-            scene, 0, LIGHTUSD_MESH_BUF_JOINT_INDICES,
-            &mesh.skin->joint_indices) ||
-        !AppendPublicBuffer<tydn::FloatChunked, float>(
-            scene, 0, LIGHTUSD_MESH_BUF_JOINT_WEIGHTS,
-            &mesh.skin->joint_weights)) {
-      return false;
-    }
-  }
-  mesh.blend_shapes.resize(info.blend_shape_count);
-  for (size_t i = 0; i < info.primvar_count; ++i) {
-    lightusd_render_primvar_info primvarInfo{};
-    if (lightusd::api::RenderMeshPrimvarInfo(scene, 0, i, &primvarInfo) !=
-        LIGHTUSD_OK) {
-      return false;
-    }
-    tydn::VertexAttribute& primvar = mesh.primvars.emplace_back();
-    primvar.name.assign(primvarInfo.name.data ? primvarInfo.name.data : "",
-                        primvarInfo.name.len);
-    primvar.format = static_cast<tydn::VertexFormat>(primvarInfo.format);
-    primvar.interpolation =
-        static_cast<tydn::Interpolation>(primvarInfo.interpolation);
-    lightusd_buffer_view dataView{};
-    lightusd_buffer_view indexView{};
-    if (lightusd::api::RenderMeshPrimvarBuffer(scene, 0, i, 0, &dataView) !=
-            LIGHTUSD_OK ||
-        lightusd::api::RenderMeshPrimvarBuffer(scene, 0, i, 1, &indexView) !=
-            LIGHTUSD_OK) {
-      return false;
-    }
-    const auto appendTyped = [&](auto* destination, const auto* source,
-                                 size_t byteCount) {
-      using Element = typename std::remove_pointer<decltype(destination)>::type;
-      return byteCount % sizeof(Element) == 0 &&
-             destination->append(source, byteCount / sizeof(Element));
-    };
-    switch (primvar.format) {
-      case tydn::VertexFormat::Float:
-      case tydn::VertexFormat::Vec2:
-      case tydn::VertexFormat::Vec3:
-      case tydn::VertexFormat::Vec4:
-      case tydn::VertexFormat::Matrix33:
-      case tydn::VertexFormat::Matrix44:
-        if (!appendTyped(&primvar.float_data,
-                         static_cast<const float*>(dataView.data),
-                         dataView.nbytes)) return false;
-        break;
-      case tydn::VertexFormat::Int:
-      case tydn::VertexFormat::IVec2:
-      case tydn::VertexFormat::IVec3:
-      case tydn::VertexFormat::IVec4:
-        if (!appendTyped(&primvar.int_data,
-                         static_cast<const int32_t*>(dataView.data),
-                         dataView.nbytes)) return false;
-        break;
-      case tydn::VertexFormat::UInt:
-      case tydn::VertexFormat::UVec2:
-      case tydn::VertexFormat::UVec3:
-      case tydn::VertexFormat::UVec4:
-        if (!appendTyped(&primvar.uint_data,
-                         static_cast<const uint32_t*>(dataView.data),
-                         dataView.nbytes)) return false;
-        break;
-    }
-    if (primvarInfo.has_indices &&
-        !primvar.indices.append(static_cast<const uint32_t*>(indexView.data),
-                                indexView.nbytes / sizeof(uint32_t))) {
-      return false;
-    }
-  }
-  *out = std::move(mesh);
-  return true;
 }
 
 bool MaterialUsesPtex(const DrawScene& draw, int materialId) {
@@ -3108,9 +2878,30 @@ void EmitInstancedProto(const lightusd_stage* stageHandle,
                         // Resolve a bound-material path to a DrawScene material
                         // index (the loader's cached resolveMaterialPath).
                         // Null = keep material 0 (default gray).
-                        const std::function<int(const std::string&)>* resolveMat =
-                            nullptr) {
+                        const std::function<int(const std::string&,
+                                                const std::string&,
+                                                const std::string&)>* resolveMat =
+                            nullptr,
+                        std::vector<std::string>* activePrototypes = nullptr) {
   if (placements.empty()) return;
+  if (static_cast<size_t>(*instTotal) >= instBudget) {
+    draw->truncated = true;
+    return;
+  }
+  std::vector<std::string> rootActivePrototypes;
+  if (!activePrototypes) activePrototypes = &rootActivePrototypes;
+  PrototypeExpansionGuard expansion(*activePrototypes, protoRootPath);
+  if (!expansion.entered()) {
+    LOGW("Skipping cyclic or over-depth instance prototype '%s'",
+         protoRootPath.c_str());
+    const std::string reason = "instance prototype '" + protoRootPath +
+                               "': cycle or expansion depth limit";
+    if (std::find(draw->skipped.begin(), draw->skipped.end(), reason) ==
+        draw->skipped.end()) draw->skipped.push_back(reason);
+    if (activePrototypes->size() >= PrototypeExpansionGuard::kMaxDepth)
+      draw->truncated = true;
+    return;
+  }
   double pr16[16];
   if (!ReadPublicWorldTransform(stageHandle, protoRootPath, time, pr16)) return;
   const matrix4d inv_proto = ::lightusd::inverse(Mat4dFromArray(pr16));
@@ -3125,6 +2916,10 @@ void EmitInstancedProto(const lightusd_stage* stageHandle,
       placementOpacities && placementOpacities->size() == placements.size();
 
   for (const std::string& meshPath : directMeshes) {
+    if (static_cast<size_t>(*instTotal) >= instBudget) {
+      draw->truncated = true;
+      break;
+    }
     if (consumed) consumed->insert(meshPath);
     DrawMeshCPU dm;
     matrix4d mesh_rel = matrix4d::identity();
@@ -3158,9 +2953,10 @@ void EmitInstancedProto(const lightusd_stage* stageHandle,
     // (the flat instanced raster shader shades per-vertex color regardless).
     if (resolveMat) {
       const std::string bind = PublicBoundMaterialPath(
-          stageHandle, meshPath);
+          stageHandle, meshPath, converterConfig.material.binding_purpose.c_str());
       if (!bind.empty()) {
-        const int protoMat = (*resolveMat)(bind);
+        const int protoMat = (*resolveMat)(bind, renderMesh.texcoords_0_name,
+                                          renderMesh.texcoords_1_name);
         if (protoMat > 0) {
           for (DrawSubmesh& sub : dm.submeshes) sub.materialId = protoMat;
           if (MaterialUsesPtex(*draw, protoMat) &&
@@ -3190,13 +2986,13 @@ void EmitInstancedProto(const lightusd_stage* stageHandle,
         dm.protoAabbMax[k] = hi[k] + dm.morphExtent[k];
       }
     }
-    dm.instanceXforms.reserve(placements.size() * 12);
-    if (haveColors) dm.instanceColors.reserve(placements.size() * 3);
-    if (haveOpacities) dm.instanceOpacities.reserve(placements.size());
-    for (size_t k = 0; k < placements.size(); ++k) {
-      if (static_cast<size_t>(*instTotal) + dm.instanceXforms.size() / 12 >=
-          instBudget)
-        break;
+    const size_t admittedInstances = std::min(
+        placements.size(), instBudget - static_cast<size_t>(*instTotal));
+    if (admittedInstances < placements.size()) draw->truncated = true;
+    dm.instanceXforms.reserve(admittedInstances * 12);
+    if (haveColors) dm.instanceColors.reserve(admittedInstances * 3);
+    if (haveOpacities) dm.instanceOpacities.reserve(admittedInstances);
+    for (size_t k = 0; k < admittedInstances; ++k) {
       const matrix4d fin = Mul4(mesh_rel, placements[k]);
       float o2w[12];
       Mat4dToO2W(fin, o2w);
@@ -3287,13 +3083,18 @@ void EmitInstancedProto(const lightusd_stage* stageHandle,
         if (!lightusd_prim_is_valid(lightusd_stage_prim_at_path(
                 stageHandle, innerPath.c_str()))) continue;
         std::vector<matrix4d> innerPl;
-        innerPl.reserve(byProto[pix].size() * placements.size());
+        const size_t remainingInstances =
+            instBudget - std::min(instBudget, static_cast<size_t>(*instTotal));
+        const size_t admittedPlacements = BoundedInstanceProduct(
+            placements.size(), byProto[pix].size(), remainingInstances);
+        innerPl.reserve(admittedPlacements);
         bool capped = false;
         for (const matrix4d& P : placements) {
           const matrix4d eff = Mul4(ni_rel, P);  // instancer effective world
           for (uint32_t j : byProto[pix]) {
-            if (static_cast<size_t>(*instTotal) + innerPl.size() >= instBudget) {
+            if (innerPl.size() >= admittedPlacements) {
               capped = true;
+              draw->truncated = true;
               break;
             }
             const float* q =
@@ -3307,7 +3108,7 @@ void EmitInstancedProto(const lightusd_stage* stageHandle,
         EmitInstancedProto(stageHandle, converterConfig, innerPath,
                            innerPl, nullptr, nullptr, time,
                            gpuSkinning, draw, bounds, instTotal, effectiveTris,
-                           instBudget, consumed, resolveMat);
+                           instBudget, consumed, resolveMat, activePrototypes);
       }
     } else {
       const std::string ipath = PublicString(
@@ -3325,12 +3126,16 @@ void EmitInstancedProto(const lightusd_stage* stageHandle,
       if (!lightusd_prim_is_valid(lightusd_stage_prim_at_path(
               stageHandle, ipath.c_str()))) continue;
       std::vector<matrix4d> innerPl;
-      innerPl.reserve(placements.size());
-      for (const matrix4d& P : placements) innerPl.push_back(Mul4(m_rel, P));
+      const size_t admittedPlacements = std::min(
+          placements.size(), instBudget - static_cast<size_t>(*instTotal));
+      if (admittedPlacements < placements.size()) draw->truncated = true;
+      innerPl.reserve(admittedPlacements);
+      for (size_t i = 0; i < admittedPlacements; ++i)
+        innerPl.push_back(Mul4(m_rel, placements[i]));
       EmitInstancedProto(stageHandle, converterConfig, ipath,
                          innerPl, nullptr, nullptr, time,
                          gpuSkinning, draw, bounds, instTotal, effectiveTris,
-                         instBudget, consumed, resolveMat);
+                         instBudget, consumed, resolveMat, activePrototypes);
     }
   }
 }
@@ -6741,6 +6546,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   }
   ViewerDocument::Options session_options;
   session_options.document.skip_composition = !opts.composition;
+  // The explicit local-file compatibility flag must also permit references
+  // outside the entry layer's directory (e.g. a temporary shot rig). Keep the
+  // default untrusted policy and all finite memory limits otherwise.
+  if (opts.allowParentRelativePaths)
+    session_options.open.input_policy = LIGHTUSD_INPUT_TRUSTED;
   if (opts.maxMemoryBytes > 0) {
     session_options.document.max_resident_bytes = opts.maxMemoryBytes;
   }
@@ -7133,12 +6943,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     matIndexByPath[cacheKey] = idx;
     return idx;
   };
-  // Prototype-material wrapper for EmitInstancedProto (no per-mesh UV-set names
-  // for a shared prototype; secondary-UV routing falls back to set 0).
-  const std::function<int(const std::string&)> resolveProtoMat =
-      [&](const std::string& mpath) -> int {
-        return resolveMaterialPath(mpath, std::string(), std::string());
-      };
+  // A shared prototype still has a specific UV layout. Preserve its names in
+  // material routing and the cache key, just as for an ordinary mesh.
+  const std::function<int(const std::string&, const std::string&,
+                          const std::string&)> resolveProtoMat =
+      resolveMaterialPath;
 
   size_t streamedMeshCount = 0;
   size_t streamedGuideCount = 0;

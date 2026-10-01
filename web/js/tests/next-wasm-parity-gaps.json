@@ -27,6 +27,15 @@
     "nextEquivalent": "appendAssetChunk"
   },
   {
+    "legacyMethod": "applyUDIM",
+    "family": "layer_export_and_validation",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextUSDZConverterNative",
+    "nextEquivalent": "applyUDIM",
+    "behaviorTest": "udim-bake.test.mjs"
+  },
+  {
     "legacyMethod": "applyVariantSelection",
     "family": "composition_and_variants",
     "nextNameMatch": false,
@@ -231,6 +240,15 @@
     "nextSurface": "NextAssetStore",
     "nextEquivalent": "deleteAssetByUUID",
     "behaviorTest": "next-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "describeUDIM",
+    "family": "layer_export_and_validation",
+    "nextNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "nextSurface": "NextUSDZConverterNative",
+    "nextEquivalent": "describeUDIM",
+    "behaviorTest": "udim-bake.test.mjs"
   },
   {
     "legacyMethod": "encodeImageNative",
@@ -1263,7 +1281,7 @@
     "nextSurface": "NextLayerDocument",
     "nextEquivalent": "load",
     "behaviorTest": "next-loading-behavior-parity.test.mjs",
-    "edgeDifference": "Returns {success, primCount} instead of a boolean. Next applies its untrusted input policy: strict AOUSD parsing rejects ignored reference customData that legacy accepts."
+    "edgeDifference": "Returns {success, primCount} instead of a boolean."
   },
   {
     "legacyMethod": "loadAsLayerFromBinaryWithProgress",
@@ -1276,7 +1294,7 @@
     ],
     "nextNameMatch": false,
     "behaviorTest": "next-loading-behavior-parity.test.mjs",
-    "edgeDifference": "Returns {success, primCount} and reports progress to the loadWithProgress callback. Next applies its untrusted input policy: strict AOUSD parsing rejects ignored reference customData that legacy accepts."
+    "edgeDifference": "Returns {success, primCount} and reports progress to the loadWithProgress callback."
   },
   {
     "legacyMethod": "loadAsLayerFromCachedAsset",
@@ -1305,7 +1323,7 @@
     "nextSurface": "RenderStream",
     "nextEquivalent": "begin",
     "behaviorTest": "next-loading-behavior-parity.test.mjs",
-    "edgeDifference": "Success agrees on the shared corpus; next returns the begin() record (success, counts, error) instead of a boolean. Next applies its untrusted input policy: strict AOUSD parsing rejects ignored reference customData that legacy accepts. A missing sublayer or reference asset also fails next composition, while legacy never composes on load. Next loads some meshes that legacy's converter rejects."
+    "edgeDifference": "Success agrees on the shared corpus; next returns the begin() record (success, counts, error) instead of a boolean. A missing sublayer or reference asset also fails next composition, while legacy never composes on load. Next loads some meshes that legacy's converter rejects."
   },
   {
     "legacyMethod": "loadFromBinaryAsync",
@@ -1370,7 +1388,7 @@
       "load"
     ],
     "behaviorTest": "next-loading-behavior-parity.test.mjs",
-    "edgeDifference": "Maps to NextLayerDocument.load(bytes), returning {success, primCount} instead of a boolean. Next applies its untrusted input policy: strict AOUSD parsing rejects ignored reference customData that legacy accepts."
+    "edgeDifference": "Maps to NextLayerDocument.load(bytes), returning {success, primCount} instead of a boolean."
   },
   {
     "legacyMethod": "lodVariantCount",

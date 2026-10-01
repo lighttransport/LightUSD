@@ -26,6 +26,8 @@
 #include "io-util.hh"
 #include "tydra/texture-util.hh"
 #include "usdz-convert.hh"
+#include "usdz-udim-bake.hh"
+#include "udim-mesh.hh"
 #include "usdz-geometry-optimize.hh"
 #include "usdz-material-optimize.hh"
 #include "usdShade.hh"
@@ -2159,4 +2161,161 @@ void usdz_convert_resize_float_test(void) {
   TEST_CHECK(out.bpp == 32 && out.format == Image::PixelFormat::Float);
   const float *of = reinterpret_cast<const float *>(out.data.data());
   TEST_CHECK(std::fabs(of[0] - 0.5f) < 0.001f);
+}
+
+void usdz_convert_udim_bake_test(void) {
+  using namespace lightusd;
+  const std::string dir = io::JoinPath(TempDir(), "udim_bake");
+  TEST_ASSERT(io::CreateDirectories(dir));
+  std::string err;
+  const uint32_t ids[] = {1001, 1002, 1101};
+  const uint8_t colors[][4] = {{255, 0, 0, 255}, {0, 255, 0, 255}, {0, 0, 255, 255}};
+  for (size_t i = 0; i < 3; ++i) {
+    auto bytes = EncodePNG(MakeSolidImage(2, 2, 4, colors[i][0], colors[i][1], colors[i][2], colors[i][3]));
+    TEST_ASSERT(!bytes.empty());
+    TEST_ASSERT(io::WriteWholeFile(io::JoinPath(dir, "tile." + std::to_string(ids[i]) + ".png"), bytes.data(), bytes.size(), &err));
+  }
+  const std::string source = "#usda 1.0\ndef Shader \"Texture\" {\n uniform token info:id = \"UsdUVTexture\"\n asset inputs:file = @tile.<UDIM>.png@\n float2 inputs:st = (0, 0)\n}\n";
+  const std::string input = io::JoinPath(dir, "scene.usda");
+  TEST_ASSERT(io::WriteWholeFile(input, reinterpret_cast<const uint8_t*>(source.data()), source.size(), &err));
+  usdz::UsdzConvertOptions options;
+  options.inputs = {input}; options.output = io::JoinPath(dir, "baked.usda");
+  options.output_format = usdz::OutputFormat::USDA;
+  options.udim_bake = udim::BakeMode::Grid; options.udim_max_atlas_size = 64;
+  usdz::UsdzConvertStats stats;
+  std::string warn;
+  TEST_ASSERT(usdz::Convert(options, &stats, &warn, &err));
+  TEST_CHECK(stats.num_udim_tiles_baked == 3);
+  TEST_CHECK(stats.num_udim_atlases == 1);
+  Layer layer;
+  TEST_ASSERT(LoadLayerFromFile(options.output, &layer, &warn, &err));
+  auto root = layer.primspecs().find("Texture");
+  TEST_ASSERT(root != layer.primspecs().end());
+  value::AssetPath asset;
+  TEST_ASSERT(root->second.props().at("inputs:file").get_attribute().get_value(&asset));
+  TEST_CHECK(asset.GetAssetPath().find("<UDIM>") == std::string::npos);
+  auto image = image::LoadImageFromFile(io::JoinPath(dir, asset.GetAssetPath()));
+  TEST_ASSERT(image.has_value());
+  TEST_CHECK(image->image.width == 4 && image->image.height == 22);
+  TEST_CHECK(image->image.data[2] == 255);  // v=10 tile occupies the top row.
+  const size_t bottom = size_t(20 * 4 * 4);
+  TEST_CHECK(image->image.data[bottom] == 255);
+  TEST_CHECK(image->image.data[bottom + 2 * 4 + 1] == 255);
+  options.udim_max_tiles = 2;
+  options.output = io::JoinPath(dir, "rejected.usdz");
+  options.output_format = usdz::OutputFormat::USDZ;
+  TEST_CHECK(!usdz::Convert(options, &stats, &warn, &err));
+  TEST_CHECK(err.find("tile count") != std::string::npos);
+
+  // Without baking, relocation must retain a resolvable placeholder reference.
+  options.udim_bake = udim::BakeMode::Off;
+  options.output_format = usdz::OutputFormat::USDA;
+  const std::string moved = io::JoinPath(dir, "moved");
+  TEST_ASSERT(io::CreateDirectories(moved));
+  options.output = io::JoinPath(moved, "scene.usda");
+  TEST_ASSERT(usdz::Convert(options, &stats, &warn, &err));
+  TEST_ASSERT(LoadLayerFromFile(options.output, &layer, &warn, &err));
+  TEST_ASSERT(layer.primspecs().at("Texture").props().at("inputs:file").get_attribute().get_value(&asset));
+  TEST_CHECK(asset.GetAssetPath() == "../tile.<UDIM>.png");
+
+  // Dependency-layer baking shares one cap for all retained atlases.
+  TEST_ASSERT(LoadLayerFromFile(input, &layer, &warn, &err));
+  options.udim_bake = udim::BakeMode::Grid;
+  options.udim_max_tiles = 3;
+  options.udim_memory_budget_bytes = size_t(2) << 20;
+  std::map<std::string, std::vector<uint8_t>> retained_assets;
+  retained_assets["textures/previous.png"].resize(options.udim_memory_budget_bytes);
+  const auto fetch = [&](const std::string& name, std::vector<uint8_t>* bytes,
+                         std::string* error, size_t limit) {
+    return io::ReadWholeFile(bytes, error, io::JoinPath(dir, name), limit, nullptr);
+  };
+  const auto exists = [&](const std::string& name) {
+    return io::FileExists(io::JoinPath(dir, name));
+  };
+  TEST_CHECK(!usdz::BakeUDIMInLayer(options, &layer, fetch, exists,
+                                  &retained_assets, &stats, &err));
+  TEST_CHECK(err.find("retained atlases") != std::string::npos);
+}
+
+void usdz_convert_udim_layout_test(void) {
+  using namespace lightusd;
+  udim::Options o; o.mode = udim::BakeMode::Dense;
+  udim::Layout l; std::string err;
+  TEST_ASSERT(udim::MakeLayout({1001, 1101}, 4, 8, o, &l, &err));
+  TEST_CHECK(l.cols == 2 && l.rows == 2);
+  TEST_CHECK(l.width == 16 && l.height == 24);
+  auto red = l.remap(0.5f, 0.5f);
+  auto blue = l.remap(0.5f, 10.5f);
+  TEST_CHECK(std::fabs(red[0] - 0.25f) < 1e-6f);
+  TEST_CHECK(std::fabs(blue[0] - 0.75f) < 1e-6f);
+  TEST_CHECK(std::fabs(red[1] - 0.25f) < 1e-6f);
+  TEST_CHECK(udim::TileAt(0.5f, 10.5f) == 1101);
+  TEST_CHECK(udim::TileAt(-1, 0) == 0);
+  o.max_tiles = 1;
+  TEST_CHECK(!udim::MakeLayout({1001, 1101}, 4, 8, o, &l, &err));
+  o.max_tiles = 2; o.memory_budget_bytes = 1;
+  TEST_CHECK(!udim::MakeLayout({1001, 1101}, 4, 8, o, &l, &err));
+  std::string pre, post;
+  TEST_CHECK(udim::SplitPattern("x.%04d.png", &pre, &post));
+  TEST_CHECK(udim::SplitPattern("x.%(UDIM)d.png", &pre, &post));
+  TEST_CHECK(!udim::SplitPattern("x.<UDIM>.%04d.png", &pre, &post));
+  // Integer atlas encoding retains 16-bit values in lean codec builds.
+  Image image16; image16.width=2; image16.height=2; image16.channels=4;
+  image16.bpp=16; image16.format=Image::PixelFormat::UInt; image16.data.resize(32);
+  const uint16_t samples[] = {12345,23456,34567,65535};
+  for(size_t pixel=0;pixel<4;++pixel)std::memcpy(image16.data.data()+pixel*8,samples,8);
+  image::WriteOption write; write.format=image::WriteImageFormat::PNG;
+  auto png16=image::WriteImageToMemory(image16,write); TEST_ASSERT(png16.has_value());
+  udim::Atlas atlas16; o.mode=udim::BakeMode::Grid;o.max_atlas_size=64;o.memory_budget_bytes=2<<20;
+  const auto fetch16=[&](const std::string&,std::vector<uint8_t>* data,std::string*,size_t limit){if(png16->size()>limit)return false;*data=*png16;return true;};
+  TEST_ASSERT(udim::BakeAtlas("tile.<UDIM>.png",{1001},fetch16,o,false,"keep",90,&atlas16,&err));
+  auto decoded16=image::LoadImageFromMemory(atlas16.bytes.data(),atlas16.bytes.size(),"atlas.png");
+  TEST_ASSERT(decoded16.has_value());TEST_CHECK(decoded16->image.bpp==16);
+  TEST_CHECK(decoded16->image.data==image16.data);
+  #if defined(LIGHTUSD_WITH_EXR)
+  Image hdr=image16;hdr.bpp=32;hdr.format=Image::PixelFormat::Float;hdr.data.resize(64);
+  const float hdr_samples[]={2.5f,0.25f,-0.5f,1.0f};
+  for(size_t pixel=0;pixel<4;++pixel)std::memcpy(hdr.data.data()+pixel*16,hdr_samples,16);
+  write.format=image::WriteImageFormat::EXR;auto exr=image::WriteImageToMemory(hdr,write);
+  TEST_ASSERT(exr.has_value());const auto fetchhdr=[&](const std::string&,std::vector<uint8_t>* data,std::string*,size_t limit){if(exr->size()>limit)return false;*data=*exr;return true;};
+  udim::Atlas atlas_hdr;TEST_ASSERT(udim::BakeAtlas("tile.<UDIM>.exr",{1001},fetchhdr,o,false,"keep",90,&atlas_hdr,&err));
+  TEST_CHECK(atlas_hdr.extension=="exr");auto decoded_hdr=image::LoadImageFromMemory(atlas_hdr.bytes.data(),atlas_hdr.bytes.size(),"atlas.exr");
+  TEST_ASSERT(decoded_hdr.has_value());TEST_CHECK(decoded_hdr->image.bpp==32);
+  TEST_CHECK(decoded_hdr->image.data==hdr.data);
+  #endif
+
+}
+
+void usdz_convert_udim_clip_test(void) {
+  using namespace lightusd;
+  udim::Options options; options.mode = udim::BakeMode::Dense;
+  udim::UVSet uv; uv.name = "baked";
+  std::string error;
+  TEST_ASSERT(udim::MakeLayout({1001, 1002}, 4, 4, options, &uv.layout, &error));
+  uv.values = {0.2, 0.2, 1.8, 0.2, 0.2, 0.8};
+  const std::vector<double> points = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+  udim::MeshRemap remap;
+  TEST_CHECK(!udim::RemapDenseMesh(points, {3}, {0, 1, 2}, {uv}, options, &remap, &error));
+  TEST_CHECK(error.find("crosses tile") != std::string::npos);
+  options.cross_tile = udim::CrossTilePolicy::Split;
+  TEST_ASSERT(udim::RemapDenseMesh(points, {3}, {0, 1, 2}, {uv}, options, &remap, &error));
+  TEST_CHECK(remap.topology_changed);
+  TEST_CHECK(remap.counts.size() == 3);
+  std::vector<double> result;
+  TEST_ASSERT(udim::RemapNumeric(points, 3, "vertex", false, remap, options.memory_budget_bytes, &result, &error));
+  double area = 0;
+  for (size_t i = 0; i < result.size(); i += 9) {
+    const double a = (result[i + 3] - result[i]) * (result[i + 7] - result[i + 1]) -
+                     (result[i + 4] - result[i + 1]) * (result[i + 6] - result[i]);
+    TEST_CHECK(a > 0);
+    area += a * 0.5;
+  }
+  TEST_CHECK(std::fabs(area - 0.5) < 1e-10);
+  TEST_ASSERT(udim::RemapNumeric({7}, 1, "uniform", true, remap, options.memory_budget_bytes, &result, &error));
+  TEST_CHECK(result == std::vector<double>({7, 7, 7}));
+  TEST_CHECK(!udim::RemapNumeric({1, 2, 3}, 1, "vertex", true, remap, options.memory_budget_bytes, &result, &error));
+  uv.values = {0.1, 0.2, 0.9, 0.2, 0.1, 0.8};
+  TEST_ASSERT(udim::RemapDenseMesh(points, {3}, {0, 1, 2}, {uv}, options, &remap, &error));
+  TEST_CHECK(!remap.topology_changed);
+  TEST_CHECK(remap.uv_values.at("baked").size() == 6);
 }

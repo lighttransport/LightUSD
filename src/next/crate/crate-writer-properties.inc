@@ -65,12 +65,13 @@
   // Encode an SdfReferenceListOp / SdfPayloadListOp in pxr's on-disk layout:
   //   [u8 ListOpHeader=0x03 explicit][u64 n] then per item
   //   [u32 assetStrIdx][u32 pathIdx][f64 offset][f64 scale]
-  //   (+ [u64 customDataCount=0] for references only).
+  //   (+ the recursive customData dictionary for references only).
   // Items come from next's canonical arc strings
   // ("@asset@<prim>?layerOffset=offset:scale"; empty asset = internal arc).
   uint64_t StoreReferenceListOp(const std::vector<std::string>& arcs,
                                 bool is_payload, const ArcEdit* edits) {
     std::vector<uint8_t> blob;
+    std::vector<size_t> embedded_reps;
     auto put_bytes = [&](const void* d, size_t n) {
       const uint8_t* b = static_cast<const uint8_t*>(d);
       blob.insert(blob.end(), b, b + n);
@@ -79,7 +80,7 @@
       uint64_t count = items.size();
       put_bytes(&count, 8);
       for (const std::string& arc : items) {
-        EncodeArcItem(arc, is_payload, put_bytes);
+        EncodeArcItem(arc, is_payload, put_bytes, &blob, &embedded_reps);
       }
     };
     // Authored non-explicit list-op edits round-trip natively via pxr's
@@ -102,7 +103,10 @@
       DataBlock block;
       block.type = TypeId::Invalid;
       block.data = std::move(blob);
-      return InternBlock(std::move(block));
+      block.embedded_value_rep_offsets = std::move(embedded_reps);
+      return block.embedded_value_rep_offsets.empty()
+                 ? InternBlock(std::move(block))
+                 : PushValueBlock(std::move(block));
     }
     if (arcs.empty()) {
       // Explicit-clear (`references = None`): pxr's form is IsExplicit with
@@ -116,19 +120,23 @@
     DataBlock block;
     block.type = TypeId::Invalid;
     block.data = std::move(blob);
-    return InternBlock(std::move(block));
+    block.embedded_value_rep_offsets = std::move(embedded_reps);
+    return block.embedded_value_rep_offsets.empty()
+               ? InternBlock(std::move(block))
+               : PushValueBlock(std::move(block));
   }
 
   // Encode a single SdfReference/SdfPayload item from next's canonical arc
   // string ("@asset@<prim>?layerOffset=offset:scale").
   template <typename PutBytes>
   void EncodeArcItem(const std::string& arc, bool is_payload,
-                     PutBytes& put_bytes) {
+                     PutBytes& put_bytes, std::vector<uint8_t>* blob,
+                     std::vector<size_t>* embedded_reps) {
     {
       // Parse the canonical arc string (mirrors Compositor::ParseReference).
       std::string asset, prim_path;
       double offset = 0.0, scale = 1.0;
-      std::string str = arc;
+      std::string str = ArcReferenceBody(arc);
       if (!str.empty() && str[0] == '@') {
         size_t end = str.find('@', 1);
         if (end != std::string::npos) {
@@ -158,8 +166,33 @@
       put_bytes(&offset, 8);
       put_bytes(&scale, 8);
       if (!is_payload) {
-        uint64_t custom_data_count = 0;  // reference customData: none
+        const std::string source = ArcReferenceCustomData(arc);
+        Value dictionary = Value::MakeDictionary();
+        if (!source.empty()) {
+          Lexer lexer(source.data(), source.size());
+          ParseResult parsed = ParseValue(lexer, TypeId::Dictionary);
+          if (!parsed.success || !parsed.value.is_dictionary() ||
+              lexer.peek().type != TokenType::Eof) {
+            result_.error = "Cannot encode reference customData dictionary";
+          } else {
+            dictionary = std::move(parsed.value);
+          }
+        }
+        const Dict* dict = dictionary.as_dictionary();
+        const uint64_t custom_data_count = dict->entries().size();
         put_bytes(&custom_data_count, 8);
+        for (const auto& entry : dict->entries()) {
+          const uint32_t key = InternString(entry.first);
+          const int64_t recursive_offset = 8;
+          const ValueRep rep = EncodeValue(entry.second);
+          if (rep.type_id() == CrateTypeId::Invalid && !entry.second.is_empty())
+            result_.error = "Cannot encode reference customData value";
+          put_bytes(&key, 4);
+          put_bytes(&recursive_offset, 8);
+          embedded_reps->push_back(blob->size());
+          const uint64_t raw = rep.raw();
+          put_bytes(&raw, 8);
+        }
       }
     }
   }

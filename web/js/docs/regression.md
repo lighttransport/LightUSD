@@ -284,9 +284,24 @@ node tests/screenshot-offscreen-batch.mjs --all --sw \
   --converted-dir .regression/mjcf-roundtrip
 ```
 
+`tests/test-usdzconvert.js` checks STORE archive header consistency, directory
+bounds, duplicate names, overlapping entries, and archive comments containing
+ZIP signatures. Valid nonzero-offset input views retain borrowed entry data.
+The conversion suites exercise USDA/USDC roots with both combined and next-only
+WASM; repeat them with `LIGHTUSD_WASM64=1` after rebuilding memory64 modules.
+`tests/udim-bake.test.mjs` covers atlas pixels/precision, tile and memory caps,
+direct layer edits, clipping, geometry/file animation, skins, blendshapes,
+subdivision, variants, instances, and streaming. Run it with
+`LIGHTUSD_UDIM_COMBINED=1` as well as the default next-only selection on each
+pointer width. `LIGHTUSD_UDIM_GLUE` selects an isolated artifact; setting
+`LIGHTUSD_NATIVE_USDZCONVERT` includes native output/sidecar checks.
+See [UDIM baking](udim-baking.md) for API controls and source requirements.
+
 The full runner writes temporary output under `web/js/.regression`. Successful
 runs remove it; use `--keep-output` to retain screenshots, converted USD/MJCF,
 per-model summaries, and the aggregate `summary.json`.
+Default output directories use unique temporary names so concurrent runs remain
+isolated even when their containers report the same process ID.
 
 `npm run test:browser` is independently runnable: if the Menagerie conversion
 summary is absent or incomplete, it first creates the full MJCF/USD/MJCF

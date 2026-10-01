@@ -2,7 +2,8 @@
 """Run lightusd-next against an external AOUSD Core supplemental release.
 
 The corpus is intentionally not vendored. Point --suite-root (or
-AOUSD_CORE_SUPPLEMENTAL_ROOT) at core-spec-supplemental-release_dec2025.
+AOUSD_CORE_SUPPLEMENTAL_ROOT) at releases/1.0.1 in the official
+aousd/core-spec-supplemental-public checkout, or a standalone release.
 """
 
 import argparse
@@ -38,7 +39,12 @@ def main():
     if not args.suite_root:
         parser.error("--suite-root or AOUSD_CORE_SUPPLEMENTAL_ROOT is required")
     root = pathlib.Path(args.suite_root).resolve()
-    if not (root / "LICENSE").is_file() or not (root / "composition").is_dir():
+    # Official releases inherit the checkout's license two levels above;
+    # older standalone release archives carry it directly in the suite root.
+    licensed = (root / "LICENSE").is_file() or (
+        root.parent.name == "releases" and
+        (root.parent.parent / "LICENSE").is_file())
+    if not licensed or not (root / "composition").is_dir():
         parser.error(f"not an AOUSD Core supplemental checkout: {root}")
     categories = set(args.category or
                      ("data_types", "file_formats", "composition",

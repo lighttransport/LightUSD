@@ -12357,6 +12357,7 @@ void VulkanRenderer::selectFullRtShaderIfNeeded(
       VkShaderModule module = createShader(code, bytes);
       if (!module) return false;
       const std::string cachePath = RtPipelineCachePath(properties, code, bytes);
+      const std::string readyPath = RtPipelineReadyPath(cachePath, code, bytes);
       std::vector<uint8_t> initial;
       if (!cachePath.empty()) {
         std::ifstream input(cachePath, std::ios::binary);
@@ -12370,6 +12371,17 @@ void VulkanRenderer::selectFullRtShaderIfNeeded(
               initial.clear();
           }
         }
+      }
+      // A full software-RT promotion is optional too. Keep the compact BVH
+      // pipeline until this shader has completed compilation. The shared cache
+      // may contain only unrelated raster or compact pipelines.
+      if (pipelineCompileRequiredSupported_ &&
+          (initial.empty() || readyPath.empty() ||
+           !std::filesystem::is_regular_file(readyPath))) {
+        vkDestroyShaderModule(device_, module, nullptr);
+        LOGW("Vulkan compute-BVH full %s pipeline requires a cold driver "
+             "compile; active pipeline retained", label);
+        return false;
       }
       VkPipelineCache cache = VK_NULL_HANDLE;
       VkPipelineCacheCreateInfo cacheInfo{};
@@ -12387,6 +12399,9 @@ void VulkanRenderer::selectFullRtShaderIfNeeded(
       info.stage.module = module;
       info.stage.pName = "main";
       info.layout = swRtPipelineLayout_;
+      if (pipelineCompileRequiredSupported_) {
+        info.flags = VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+      }
       VkPipeline pipeline = VK_NULL_HANDLE;
       const auto pipelineStart = std::chrono::steady_clock::now();
       const VkResult result = vkCreateComputePipelines(
@@ -12427,6 +12442,10 @@ void VulkanRenderer::selectFullRtShaderIfNeeded(
       }
       if (cache) vkDestroyPipelineCache(device_, cache, nullptr);
       if (result != VK_SUCCESS) return false;
+      if (!readyPath.empty()) {
+        std::ofstream marker(readyPath, std::ios::binary | std::ios::trunc);
+        if (marker) marker << "ready\n";
+      }
       *destination = pipeline;
       return true;
     };
@@ -13616,6 +13635,8 @@ bool VulkanRenderer::reloadRayTracingShader(const uint32_t* words,
   const size_t shaderBytes = wordCount * sizeof(uint32_t);
   const std::string cachePath =
       RtPipelineCachePath(props, words, shaderBytes);
+  const std::string readyPath =
+      RtPipelineReadyPath(cachePath, words, shaderBytes);
   std::vector<uint8_t> cacheBlob;
   if (!cachePath.empty()) {
     std::ifstream input(cachePath, std::ios::binary);
@@ -13629,6 +13650,20 @@ bool VulkanRenderer::reloadRayTracingShader(const uint32_t* words,
           cacheBlob.clear();
       }
     }
+  }
+  // Some drivers block on an optional live promotion despite advertising
+  // FAIL_ON_PIPELINE_COMPILE_REQUIRED. A shared cache may contain only other
+  // shaders; require evidence that this variant completed compilation before
+  // entering the driver compiler on the render thread.
+  if (pipelineCompileRequiredSupported_ &&
+      (cacheBlob.empty() || readyPath.empty() ||
+       !std::filesystem::is_regular_file(readyPath))) {
+    vkDestroyShaderModule(device_, shader, nullptr);
+    if (err) {
+      *err = "Vulkan RT full pipeline requires a cold driver compile; "
+             "active pipeline retained";
+    }
+    return false;
   }
   VkPipelineCache pipelineCache = VK_NULL_HANDLE;
   VkPipelineCacheCreateInfo cacheInfo{};
@@ -13685,6 +13720,10 @@ bool VulkanRenderer::reloadRayTracingShader(const uint32_t* words,
   }
   if (pipelineCache)
     vkDestroyPipelineCache(device_, pipelineCache, nullptr);
+  if (!readyPath.empty()) {
+    std::ofstream marker(readyPath, std::ios::binary | std::ios::trunc);
+    if (marker) marker << "ready\n";
+  }
   LOGI("Vulkan RT live reload: replacement pipeline created; deferring old pipeline retirement");
   // The replacement was fully validated before touching the active pipeline.
   VkPipeline old = *livePipeline;
@@ -13744,11 +13783,13 @@ bool VulkanRenderer::beginReloadRayTracingShaderAsync(
   const size_t shaderBytes = words.size() * sizeof(uint32_t);
   const std::string cachePath =
       RtPipelineCachePath(props, words.data(), shaderBytes);
+  const std::string readyPath =
+      RtPipelineReadyPath(cachePath, words.data(), shaderBytes);
   const VkDevice device = device_;
   asyncRtReload_.worker = std::async(
       std::launch::async,
       [this, device, layout, technique, path, words = std::move(words),
-       cachePath]() mutable {
+       cachePath, readyPath]() mutable {
         std::lock_guard<std::mutex> compileLock(pipelineCompileMutex_);
         const auto started = std::chrono::steady_clock::now();
         VkPipeline candidate = VK_NULL_HANDLE;
@@ -13818,6 +13859,10 @@ bool VulkanRenderer::beginReloadRayTracingShaderAsync(
           }
         }
         if (cache) vkDestroyPipelineCache(device, cache, nullptr);
+        if (candidate != VK_NULL_HANDLE && !readyPath.empty()) {
+          std::ofstream marker(readyPath, std::ios::binary | std::ios::trunc);
+          if (marker) marker << "ready\n";
+        }
         std::lock_guard<std::mutex> lock(asyncRtReload_.mutex);
         asyncRtReload_.pipeline = candidate;
         asyncRtReload_.ok = candidate != VK_NULL_HANDLE;
@@ -14516,7 +14561,11 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
       pathTrace_.seed != params.pathTrace.seed) {
     ++rtAccumGen_;
   }
+  const bool enteringPathTrace = !pathTrace_.enabled && params.pathTrace.enabled;
   pathTrace_ = params.pathTrace;
+  // Initial scene upload precedes the first frame's path-tracing parameters.
+  // Revisit optional graph promotion when path tracing becomes active.
+  if (enteringPathTrace) selectFullRtShaderIfNeeded(rtMaterialsCpu_);
   if (cameraLens_.focusDistance != params.cameraLens.focusDistance ||
       cameraLens_.apertureRadius != params.cameraLens.apertureRadius) {
     cameraLens_ = params.cameraLens;

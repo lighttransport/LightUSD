@@ -7,6 +7,7 @@
 #include "safe-arithmetic.hh"
 #include "../execution.hh"
 #include "../writer/dtoa.hh"
+#include "../writer/value-printer.hh"
 
 #include <cmath>
 #include <cstdint>
@@ -195,7 +196,7 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
 }
 
 bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
-                                              std::vector<std::string>& out) {
+                                              std::vector<std::string>& out, int depth) {
   out.clear();
   const CrateTypeId tid = rep.type_id();
   if (tid != CrateTypeId::ReferenceListOp && tid != CrateTypeId::PayloadListOp) {
@@ -224,42 +225,27 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
       }
       if (!std::isfinite(offset) || !std::isfinite(scale)) return false;
     }
+    std::string custom_data;
     if (!is_payload) {
-      // customData dict: pxr WriteMap layout — u64 count, then per entry
-      // [u32 key idx][i64 forward offset to the 8-byte ValueRep][nested
-      // data][ValueRep]. The dict has no slot in the canonical arc string,
-      // so walk-skip it structurally (dropping the whole ARC because it
-      // carries customData loses the reference itself).
-      uint64_t dict_count = 0;
-      if (!reader()->read_u64(dict_count)) return false;
-      if (dict_count > options_.max_array_elements) return false;
-      if (dict_count != 0) {
-        AddWarning("Reference customData is ignored");
-        for (uint64_t d = 0; d < dict_count; ++d) {
-          uint32_t key_idx = 0;
-          if (!reader()->read_u32(key_idx)) return false;
-          std::string key;
-          if (!GetString(key_idx, key)) return false;
-          const size_t val_start = reader()->position();
-          uint64_t rec_off_raw = 0;
-          if (!reader()->read_u64(rec_off_raw)) return false;
-          const int64_t rec_off = static_cast<int64_t>(rec_off_raw);
-          const uint64_t val_start_u64 = static_cast<uint64_t>(val_start);
-          const uint64_t file_size = static_cast<uint64_t>(reader()->size());
-          if (rec_off < 8 || file_size < sizeof(uint64_t) ||
-              static_cast<uint64_t>(rec_off) >
-                  (std::numeric_limits<uint64_t>::max)() - val_start_u64 ||
-              val_start_u64 + static_cast<uint64_t>(rec_off) >
-                  file_size - sizeof(uint64_t)) {
-            AddError("Reference customData recursive ValueRep is outside file");
-            return false;
-          }
-          const size_t rep_pos = static_cast<size_t>(
-              val_start_u64 + static_cast<uint64_t>(rec_off));
-          // Skip past this entry's ValueRep; the next entry (or the rest of
-          // the reference item) begins right after it.
-          if (!reader()->seek(rep_pos + 8)) return false;
-        }
+      // A reference embeds the ordinary recursive dictionary layout directly
+      // after its offset. Reuse the bounded value decoder, preserving nested
+      // values and the nesting budget even for discarded list-op buckets.
+      const size_t dict_start = reader()->position();
+      uint64_t count = 0;
+      if (!reader()->read_u64(count) ||
+          !CheckElementAllocation(count, sizeof(std::pair<std::string, Value>),
+                                  "Reference customData")) return false;
+      if (!reader()->seek(dict_start)) return false;
+      Value dictionary;
+      if (!DecodeDictionary(ValueRep::Make(CrateTypeId::Dictionary,
+                                           dict_start, false, false),
+                            dictionary, depth + 1)) return false;
+      if (keep && count != 0) {
+        PrintOptions print;
+        print.float_precision = 9;
+        print.double_precision = 17;
+        print.sort_dictionary_keys = true;
+        custom_data = PrintValue(dictionary, print);
       }
     }
     if (!keep) return true;
@@ -275,6 +261,7 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
       arc += "?layerOffset=" + dtos(offset) + ":" +
              dtos(scale);
     }
+    if (!custom_data.empty()) arc += '\x1f' + custom_data;
     out.push_back(std::move(arc));
     return true;
   };

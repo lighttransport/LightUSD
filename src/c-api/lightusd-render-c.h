@@ -610,7 +610,7 @@ typedef struct lightusd_render_mesh_info {
   uint8_t normals_interp;    /* tydra Interpolation */
   uint8_t texcoords0_interp;
   uint8_t colors_interp;
-  uint8_t _pad;
+  uint8_t texcoords1_interp; /* Former reserved byte; struct layout unchanged. */
   uint32_t subset_count;
   uint32_t primvar_count;
   uint32_t blend_shape_count;
@@ -694,7 +694,10 @@ typedef enum lightusd_mesh_buffer_kind {
                                                 normals against the triangles) */,
   LIGHTUSD_MESH_BUF_OPACITIES = 12,      /* f32 x1 */
   LIGHTUSD_MESH_BUF_SUBDIVISION_FACE_SOURCE = 13, /* u32 x1 */
-  LIGHTUSD_MESH_BUF_FACE_TRIANGLE_OFFSETS = 14 /* u32 x1, face_count + 1 */
+  LIGHTUSD_MESH_BUF_FACE_TRIANGLE_OFFSETS = 14, /* u32 x1, face_count + 1 */
+  LIGHTUSD_MESH_BUF_SANITIZE_FACE_REMAP = 15 /* i32 x1: authored face ->
+                                             sanitized face, -1 when dropped;
+                                             empty if no faces were dropped */
 } lightusd_mesh_buffer_kind;
 
 LIGHTUSD_API lightusd_status lightusd_render_mesh_buffer(lightusd_render_scene* scene,

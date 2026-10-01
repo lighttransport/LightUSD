@@ -80,6 +80,25 @@ without fetching.
 
 ## Build
 
+Native `lusdzconvert` currently requires `LIGHTUSD_NATIVE_PRODUCT=legacy` and
+`LIGHTUSD_BUILD_TOOLS=ON`; use a separate Ninja tree such as
+`build_ninja/legacy-convert` (see [converter build instructions](../tools/lusdzconvert/README.md#build)).
+With tests enabled, `lusdzconvert-regression-driver` checks JPEG asset remapping,
+material deduplication, directory root discovery, both USDA/USDC package roots,
+and both flat layer formats. Flat outputs written into a different directory
+must retain reachable references to the original external images.
+
+UDIM baking has registered `usdz_convert_udim_bake_test`,
+`usdz_convert_udim_layout_test`, and `usdz_convert_udim_clip_test` cases for
+flat-path rebasing, retained-atlas budgets, atlas orientation/limits, PNG16/EXR precision, clipping
+area/winding, and discrete attributes. The shared WASM/native fixture in
+`web/js/tests/udim-bake.test.mjs` adds grid/dense layer edits, deformation and
+texture-file animation, skins, blendshapes/in-betweens, subdivision, variants,
+instances, streaming, shared-tile references, overlapping dependency tile names,
+and transactional sidecars. Set
+`LIGHTUSD_NATIVE_USDZCONVERT` to the built converter to exercise all three native
+output formats. See [UDIM conversion options](../tools/lusdzconvert/README.md#bake-udims-into-one-texture).
+
 Configure the native build with tests enabled:
 
 ```bash
@@ -253,6 +272,74 @@ should use the command-line option. True headless Vulkan/CUDA/HIP tests do not
 need Xvfb. For the complete variable reference, direct commands, AMD behavior,
 and recovery from a broken sandbox X socket, see
 [`doc/lusdview.md`](lusdview.md#vulkan-on-nvidia-primeoffload-under-xvfb).
+
+#### External asset gates
+
+Point the ignored repository-local `usd-assets` symlink at an existing
+`usd-wg/assets` checkout. Set `LIGHTUSD_USD_ASSETS_ROOT` at configure time as
+well as `USD_ASSETS_ROOT` at runtime. The batch runner resolves symlink roots
+after argument parsing, including `--root`, so its corpus scan cannot silently
+run against an empty list.
+
+```bash
+# If the repository-local link does not already exist:
+ln -s "$USD_ASSETS_ROOT" usd-assets
+cmake -S . -B build_ninja/legacy-convert -G Ninja \
+  -DLIGHTUSD_NATIVE_PRODUCT=legacy -DLIGHTUSD_BUILD_TOOLS=ON \
+  -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_GUI_VIEWER=ON \
+  -DLIGHTUSD_LUSDVIEW_NVIDIA_OFFLOAD=ON \
+  -DLIGHTUSD_USD_ASSETS_ROOT="$PWD/usd-assets"
+cmake --build build_ninja/legacy-convert -j16
+xvfb-run -a -s "-screen 0 1280x800x24" env \
+  USD_ASSETS_ROOT="$PWD/usd-assets" LUSDVIEW_RUN_GOLDEN=1 \
+  LUSDVIEW_RUN_USD_ASSETS_BROAD=1 LUSDVIEW_RUN_USD_ASSETS_ANIMATION=1 \
+  LUSDVIEW_RT_ALLOW_COLD_COMPILE=1 \
+  ctest --test-dir build_ninja/legacy-convert --output-on-failure
+```
+
+The external native gates cover the material resolver, alpha sorting, three
+stacked-glass modes, OpenChess materials/path tracing, corpus parsing, broad
+and animation rendering, cold MaterialX promotion, and golden fingerprints.
+The thirteenth gate, Island production smoke, also needs `ISLAND_USD` pointing
+at that separately downloaded scene. The small stacked-glass fixture is now
+tracked under `tests/usda/`, so those three gates need no model download.
+The native corpus test also receives the configured asset root directly.
+The Vulkan render smoke also requires meshes with custom scalar float/int and
+vector rest-position primvars to survive the public API buffer copy. Sizes are
+measured in scalar elements; using the chunk-container size discards geometry
+such as the composed public Teapot asset even though composition succeeds.
+The CPU `lusdview_next_mesh_adapter_test` checks copied bounds, independently
+interpolated UV sets, indexed/custom primvars, proxies, and ownership after the
+temporary render record and stage are destroyed. Secondary-UV interpolation
+uses a formerly reserved byte of the public mesh info, preserving its ABI layout.
+`lusdview-next-mesh-materials` compares ordinary meshes with PointInstancer
+and native-instance panels using generated textures under Vulkan ray query.
+Both panels must use the secondary UV set for preview bindings and the full
+material for `--material-purpose full`. A malformed-topology panel also checks
+that GeomSubset bindings retain authored face numbering after invalid faces
+are removed; the public render buffer API preserves that remap. A nonblank
+capture alone cannot pass these color checks.
+The same test includes direct and indirect PointInstancer prototype cycles.
+The loader must diagnose and skip each cyclic branch while rendering the valid
+meshes. Prototype expansion also stops at depth 64. Placement products are
+bounded before allocation, and budget truncation marks the scene truncated.
+Island report validation expects schema version 2. The cold-promotion test
+warms only the compact hardware pipeline before checking a cold full shader;
+it sets its own cold-compile policy independently of the surrounding suite.
+It uses a self-contained procedural MaterialX fixture in path-tracing mode,
+which requests full promotion. Optional promotion requires a readiness marker
+for the requested shader, since a shared cache can contain unrelated shaders.
+The OpenChess production gate is separately enabled with
+`LUSDVIEW_RUN_OPENCHESS_PATH=1`; select `LUSDVIEW_OPENCHESS_PT_BACKENDS=cuda`
+to omit HIP. It requires actual geometry and completed sample targets, as well
+as image/report output. Its temporary referencing rig uses the explicit
+`--allow-parent-paths` local-file compatibility mode. The viewer now applies
+that mode to the document input policy while keeping finite memory limits.
+
+Golden comparison is opt-in and the checked-in fingerprints are a per-machine
+baseline. Inspect failures and their images before refreshing fingerprints.
+Finish the build before starting a corpus sweep: linking a new viewer binary
+while a batch is launching it can produce spurious permission errors.
 
 If `xvfb-run` cannot create `/tmp/.X11-unix` sockets in a container or managed
 sandbox, start Xvfb externally with Unix sockets disabled and use its TCP
@@ -786,6 +873,38 @@ Run it explicitly when changing shared code or the next product:
 - Its tests are gated behind `LIGHTUSD_NEXT_BUILD_TESTS` (**OFF by default**).
 - These checks are a required regression gate in addition to the default
   native suite; passing one does not replace the other.
+
+#### AOUSD Core supplemental inputs
+
+The official [Core supplemental repository](https://github.com/aousd/core-spec-supplemental-public)
+keeps releases under `releases/`, with the license at the checkout root.
+Download the pinned public release into an ignored build directory, then point
+the standalone Debug suite at the release directory:
+
+```bash
+git clone --depth 1 --branch release/1.0.1.post0 \
+  https://github.com/aousd/core-spec-supplemental-public.git \
+  build_ninja/aousd-supplemental
+cmake -S src/next -B build_ninja/next-debug -G Ninja \
+  -DLIGHTUSD_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug \
+  -DLIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT="$PWD/build_ninja/aousd-supplemental/releases/1.0.1"
+cmake --build build_ninja/next-debug -j16
+ctest --test-dir build_ninja/next-debug --output-on-failure
+ctest --test-dir build_ninja/next-debug -L aousd -V
+```
+
+This release pins commit `c15ae0cad3ed9e07a25dffd6699627d2c166cab0`.
+The supplemental bridge loads 54 file-format fixtures, checks expected prim
+population across 138 composition cases, and checks resolved samples in eight
+value-resolution cases. Its data-type bridge runs the library's AOUSD type
+checks; it does not execute the upstream Python/OpenUSD test runner or compare
+every PCP field. Keep these coverage limits separate from full spec conformance.
+
+Reference `customData` tests now require strict USDC loads, typed nested-value
+retention, qualified list-op identity, and memory/streaming writer roundtrips.
+Legacy metadata roundtrip tests also require explicit `None` opinions for
+relationships, inherits, and specializes. WASM layer tests cover reference
+dictionaries through USDA, USDC, and JSON exports.
 
 Regression coverage to keep in mind when touching `next`:
 

@@ -7,6 +7,7 @@
 
 #include "dtoa.hh"
 #include "value-printer.hh"
+#include "../layer/arc-reference.hh"
 
 namespace lightusd {
 namespace next {
@@ -15,7 +16,8 @@ namespace next {
 // stored as "@asset@</prim>", "</prim>", or a bare asset path, optionally
 // followed by "?layerOffset=offset:scale".
 inline std::string FormatArcRef(const std::string& arc) {
-  std::string body = arc;
+  std::string body = ArcReferenceBody(arc);
+  const std::string custom_data = ArcReferenceCustomData(arc);
   std::string suffix;
   const size_t q = body.find("?layerOffset=");
   if (q != std::string::npos) {
@@ -62,6 +64,13 @@ inline std::string FormatArcRef(const std::string& arc) {
     }
   } else {
     out = FormatAssetPathForUsda(body);
+  }
+  if (!custom_data.empty()) {
+    if (suffix.empty()) suffix = " (customData = " + custom_data + ")";
+    else {
+      suffix.pop_back();
+      suffix += "; customData = " + custom_data + ")";
+    }
   }
   return out + suffix;
 }

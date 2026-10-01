@@ -942,7 +942,7 @@ Shared USDA, USDC and USDZ fixtures load on both products. Each row records
 its differences:
 - next returns result records instead of booleans;
 - next's untrusted input policy rejects unregistered stage metadata and
-  ignored reference customData under strict AOUSD parsing, and fails
+  malformed metadata under strict AOUSD parsing, and fails
   composition on a missing sublayer or reference asset (legacy never composes
   on load);
 - next loads some meshes legacy's converter rejects;
@@ -5446,9 +5446,8 @@ use the legacy empty `op` string and asset-only targets use the legacy
 on import so authored opinions write valid USDA. Paired legacy fixtures check
 all four arc fields, variant metadata, and the resulting USDA on both WASM
 widths. Variant body content is outside the legacy PrimSpec JSON fields.
-Reference
-`customData` remains unsupported by the next arc model and is rejected on JSON
-import rather than silently discarded. Dictionary-valued
+Reference `customData` is now retained by the next arc model, including nested
+values through USDA, USDC, and JSON roundtrips. Dictionary-valued
 `customLayerData` and `expressionVariables` now import and export recursively
 for JSON booleans, numbers, strings, nested dictionaries, and typed-value
 envelopes for supported USD arrays/compound values. Typed arrays retain their

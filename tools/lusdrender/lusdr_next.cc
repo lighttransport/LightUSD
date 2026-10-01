@@ -6237,7 +6237,13 @@ bool LoadNextStageBudgeted(const Options &opt, lightusd::next::Stage *stage,
     return false;
   }
   lightusd::next::StageSessionOptions session_options;
+  // The local-file CLI supports ordinary USD layer-relative references,
+  // including sibling directories. Keep its finite load/memory limits while
+  // opting into compatibility resolution; API sessions remain untrusted by
+  // default.
+  session_options.load.input_policy = lightusd::next::InputPolicy::Trusted;
   session_options.compose = true;
+  session_options.composition.load_payloads = true;
   session_options.composition.variant_overrides = opt.variant_overrides;
   // A render mask is also a composition boundary. Loading every payload and
   // filtering its geometry afterwards defeats the memory purpose of -mask on
@@ -6303,6 +6309,7 @@ bool LoadNextStageBudgeted(const Options &opt, lightusd::next::Stage *stage,
         return false;
       }
       lightusd::next::StageSessionOptions clip_options;
+      clip_options.load.input_policy = lightusd::next::InputPolicy::Trusted;
       clip_options.resolver = resolver_config;
       clip_options.composition.load_payloads = true;
       lightusd::next::StageSession clip_session;

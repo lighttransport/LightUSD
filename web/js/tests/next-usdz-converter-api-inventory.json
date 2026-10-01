@@ -1,9 +1,11 @@
 [
+  "applyUDIM",
   "assetBytes",
   "clearURDFMeshBuffers",
   "createSampleScene",
   "createURDFPhysicsScene",
   "delete",
+  "describeUDIM",
   "error",
   "exportAsUSDA",
   "exportAsUSDC",

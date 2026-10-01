@@ -46,20 +46,24 @@ class TokenPool {
     spans_.clear();
   }
   void reserve(size_t n) { spans_.reserve(n); }
-  void push(const char* begin, size_t len) {
-    spans_.push_back(Span{static_cast<uint32_t>(blob_.size()),
+  static constexpr size_t span_bytes() { return 2 * sizeof(uint32_t); }
+  void adopt(std::vector<uint8_t>&& bytes) { blob_ = std::move(bytes); }
+  const char* data() const {
+    return reinterpret_cast<const char*>(blob_.data());
+  }
+  void push(size_t offset, size_t len) {
+    spans_.push_back(Span{static_cast<uint32_t>(offset),
                           static_cast<uint32_t>(len)});
-    blob_.append(begin, len);
   }
   size_t size() const { return spans_.size(); }
   bool empty() const { return spans_.empty(); }
   std::string str(size_t i) const {
     const Span& s = spans_[i];
-    return std::string(blob_.data() + s.off, s.len);
+    return std::string(data() + s.off, s.len);
   }
   std::string_view view(size_t i) const {
     const Span& s = spans_[i];
-    return std::string_view(blob_.data() + s.off, s.len);
+    return std::string_view(data() + s.off, s.len);
   }
   std::vector<std::string> to_vector() const {
     std::vector<std::string> out;
@@ -73,7 +77,7 @@ class TokenPool {
     uint32_t off;
     uint32_t len;
   };
-  std::string blob_;
+  std::vector<uint8_t> blob_;
   std::vector<Span> spans_;
 };
 
@@ -306,7 +310,7 @@ class CrateReader::Impl {
   bool DecodePathTargets(ValueRep rep, std::vector<std::string>& out,
                          bool with_markers);
   bool DecodeReferenceListOp(ValueRep rep, bool is_payload,
-                             std::vector<std::string>& out);
+                             std::vector<std::string>& out, int depth);
   bool DecodeVariantSelectionMap(
       ValueRep rep, std::vector<std::pair<std::string, std::string>>& out);
   bool DecodeTokenListOp(ValueRep rep, std::vector<std::string>& out);

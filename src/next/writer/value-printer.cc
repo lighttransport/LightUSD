@@ -1322,14 +1322,27 @@ std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
     const Dict* dict{nullptr};
     int depth{0};
     size_t next_entry{0};
+    std::vector<size_t> order;
+    Frame(const Dict* d, int level, bool sort_keys) : dict(d), depth(level) {
+      if (sort_keys) {
+        order.resize(d->entries().size());
+        for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+        std::sort(order.begin(), order.end(), [d](size_t a, size_t b) {
+          return d->entries()[a].first < d->entries()[b].first;
+        });
+      }
+    }
   };
   std::vector<Frame> stack;
-  stack.push_back(Frame{&d, base_depth, 0});
+  stack.emplace_back(&d, base_depth, opts.sort_dictionary_keys);
 
   while (!stack.empty()) {
     Frame& frame = stack.back();
     if (frame.next_entry < frame.dict->entries().size()) {
-      const auto& kv = frame.dict->entries()[frame.next_entry++];
+      const size_t index = frame.order.empty()
+          ? frame.next_entry : frame.order[frame.next_entry];
+      ++frame.next_entry;
+      const auto& kv = frame.dict->entries()[index];
       const std::string& key = kv.first;
       const Value& val = kv.second;
       for (int i = 0; i <= frame.depth; ++i) s += opts.indent;
@@ -1343,7 +1356,7 @@ std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
           continue;
         }
         s += "{\n";
-        stack.push_back(Frame{nested, frame.depth + 1, 0});
+        stack.emplace_back(nested, frame.depth + 1, opts.sort_dictionary_keys);
         continue;
       }
 

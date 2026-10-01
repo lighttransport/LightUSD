@@ -100,9 +100,11 @@ function streamingSourceFromFiles(files) {
   let readBytes = 0;
   return {
     keys,
-    fetch: async (key) => {
+    fetch: async (key, {maxBytes} = {}) => {
       const file = fileByPath.get(key);
       if (!file) throw new Error(`Missing uploaded file: ${key}`);
+      if (maxBytes !== undefined && file.size > maxBytes)
+        throw new Error(`UDIM bake: encoded tile exceeds memory limit: ${key}`);
       const stage = isImageName(key) ? 'textures' : isUsdName(key) ? 'layers' : 'assets';
       const bucket = isImageName(key) ? 'images' : isUsdName(key) ? 'usd' : 'other';
       progress({

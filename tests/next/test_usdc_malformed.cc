@@ -738,6 +738,21 @@ int main() {
   }
 
   {
+    // Empty tokens compress to a tiny input but still need an eight-byte span
+    // each. Reject before reserving the span array, not after decompression.
+    CrateShell c;
+    c.AddSection("TOKENS", TokensFromRaw(1000000,
+                                         std::vector<uint8_t>(1000000, 0)));
+    c.AddSection("STRINGS", StringsTable({}));
+    c.AddSection("FIELDS", FieldsEmpty());
+    c.AddSection("FIELDSETS", FieldsetsEmpty());
+    c.AddSection("SPECS", SpecsCompressed({}, {}, {}));
+    c.AddSection("PATHS", PathsCompressed({}, {}, {}));
+    ExpectReject("token spans exceed memory budget", c.Build(),
+                 TightMemoryOptions(2 * 1024 * 1024));
+  }
+
+  {
     CrateShell c;
     c.AddSection("TOKENS", TokensFromRaw(1, {'\0'}));
     c.AddSection("STRINGS", StringsTable({1}));
@@ -1119,16 +1134,15 @@ int main() {
     PutU32(&payload, 0);  // root path
     PutF64(&payload, 0.0);
     PutF64(&payload, 1.0);
-    PutU64(&payload, 1);    // one ignored customData entry
+    PutU64(&payload, 1);    // one customData entry
     PutU32(&payload, 999);  // invalid key string index
     PutU64(&payload, 8);
     PutU64(&payload,
            ValueRep::Make(CrateTypeId::Invalid, 0, false, true).raw());
-    ExpectWarningAndStrictReject(
-        "ignored reference customData key index out of range",
+    ExpectReject(
+        "reference customData key index out of range",
         BuildMalformedAttributeFieldCase("default",
-                                         CrateTypeId::ReferenceListOp, payload),
-        "Failed to decode default value");
+                                         CrateTypeId::ReferenceListOp, payload));
   }
   {
     std::vector<uint8_t> payload;

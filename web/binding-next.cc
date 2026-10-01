@@ -8,6 +8,7 @@
 
 #include <new>
 #include "binding-next-api.h"
+#include "binding-next-udim.hh"
 #include "binding-next-assets.hh"
 #include "binding-next-layer.hh"
 #include "binding-next-render.hh"
@@ -1367,6 +1368,16 @@ class NextUSDZConverterNative {
   }
   const std::vector<uint8_t>& exportBytes() const { return export_data_; }
 
+  int udimLayer(bool apply, const uint8_t* input, uint32_t size) {
+    if (!has_stage_ || !stage_.GetRootLayer()) { error_ = "No layer loaded"; return -1; }
+    udim_json_ = lightusd::web_next::UDIMLayerJSON(*stage_.GetRootLayer(), apply,
+        size ? std::string(reinterpret_cast<const char*>(input), size) : std::string());
+    return static_cast<int>(udim_json_.size());
+  }
+  int udimCopy(uint8_t* out, uint32_t cap) const {
+    if (out && cap >= udim_json_.size()) std::memcpy(out, udim_json_.data(), udim_json_.size());
+    return static_cast<int>(udim_json_.size());
+  }
   bool rewriteRoot(const uint8_t* bytes, uint32_t size,
                    const lightusd_next_rewrite_options& options,
                    lightusd_next_rewrite_info* out) {
@@ -1435,6 +1446,7 @@ class NextUSDZConverterNative {
     return true;
   }
 
+  std::string udim_json_;
   const std::vector<uint8_t>& rewriteData() const { return rewrite_data_; }
 
  private:
@@ -1778,6 +1790,12 @@ static std::string usddiffJson(const uint8_t* left, size_t left_size,
 // templates or per-signature invoker registration.
 namespace lightusd {
 namespace web_next {
+int NextConverterUDIM(void* object, bool apply, const uint8_t* data, uint32_t size) {
+  return static_cast<NextUSDZConverterNative*>(object)->udimLayer(apply, data, size);
+}
+int NextConverterUDIMCopy(void* object, uint8_t* out, uint32_t cap) {
+  return static_cast<NextUSDZConverterNative*>(object)->udimCopy(out, cap);
+}
 int NextConverterRewrite(void* object, const uint8_t* data, uint32_t size,
                          const lightusd_next_rewrite_options* options,
                          lightusd_next_rewrite_info* out) {

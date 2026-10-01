@@ -702,7 +702,7 @@ class UsdaLexer {
       }
     }
 
-    return { type: TokenType.STRING, value };
+    return { type: TokenType.STRING, value, isPath: true };
   }
 
   nextToken() {
@@ -940,12 +940,55 @@ class UsdaParser {
       }
 
       if (this.match(TokenType.EQUALS)) {
-        metadata[key] = this.parseValue();
+        const field = key.split(' ').at(-1);
+        metadata[key] = (field === 'references' || field === 'payload')
+          ? this.parseReferenceList() : this.parseValue();
       }
     }
 
     this.expect(TokenType.RPAREN);
     return metadata;
+  }
+
+  parseReferenceList() {
+    if (this.peek().type === TokenType.IDENTIFIER && this.peek().value === 'None') {
+      return this.parseValue();
+    }
+    const list = this.match(TokenType.LBRACKET);
+    const items = [];
+    do {
+      if (list && this.peek().type === TokenType.RBRACKET) break;
+      this.checkIterations();
+      const fields = {
+        asset: { type: 'asset', value: '' },
+        primPath: { type: 'string', value: '' },
+      };
+      const asset = this.peek();
+      if (asset.type === TokenType.STRING && asset.isAsset) {
+        fields.asset = this.parseValue();
+      }
+      const primPath = this.peek();
+      if (primPath.type === TokenType.STRING && primPath.isPath) {
+        fields.primPath = { type: 'string', value: this.advance().value };
+      } else if (!asset.isAsset) {
+        throw new Error(`Expected reference asset or prim path at position ${this.pos}`);
+      }
+      if (this.peek().type === TokenType.LPAREN) {
+        const parameters = this.parseMetadata();
+        for (const [key, value] of Object.entries(parameters)) {
+          // OpenUSD omits identity layer offsets and empty customData.
+          if (key === 'offset' && value.type === 'number' && Number(value.value) === 0) continue;
+          if (key === 'scale' && value.type === 'number' && Number(value.value) === 1) continue;
+          if (key === 'customData' && value.type === 'dictionary' &&
+              Object.keys(value.value).length === 0) continue;
+          fields[key] = value;
+        }
+      }
+      items.push({ type: 'dictionary', value: fields });
+      if (!list || !this.match(TokenType.COMMA)) break;
+    } while (this.peek().type !== TokenType.EOF);
+    if (list) this.expect(TokenType.RBRACKET);
+    return { type: 'array', value: items };
   }
 
   parseAttributeName() {
@@ -2255,15 +2298,6 @@ function compareSingleFile(inputFile, options) {
     'utf8-assetpath-001.usdc':
       'pixar-usdcat-parse — pxr <= 23.08 rejects UTF-8 in asset paths ' +
       '(fixed in 24.x per OpenUSD#2560)',
-    'refs-customdata-001.usdc':
-      'reference customData has no slot in the next arc model (arc itself ' +
-      'is preserved; dict is skipped by design)',
-    'delete-apischemas-001.usdc':
-      'delete-apiSchemas sublists apply as in-place removals; the writer ' +
-      'does not re-emit a delete qualifier (known crate-writer P1)',
-    'rel-inherits-none-001.usdc':
-      'legacy lusdcat prints explicit-empty inherits as [] where pxr keeps ' +
-      'None (legacy-side gap; the next reader preserves the clear)',
   };
   const base = require('path').basename(inputFile);
   if (usdcXfails[base]) {

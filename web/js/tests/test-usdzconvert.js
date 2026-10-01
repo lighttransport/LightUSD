@@ -316,6 +316,120 @@ await testAsync('node texture processor caps concurrency to its memory budget', 
 });
 
 // ============================================================
+console.log('USDZ archive validation');
+// ============================================================
+const archiveFixture = () => buildUSDZWithNewRoot('root.usda',
+  new TextEncoder().encode('#usda 1.0\n'), [{
+    name: 'next.usda', data: new Uint8Array([1, 2, 3]), crc32: 0x55bc801d,
+  }]);
+const malformedArchives = [
+  ['local compression method', (dv) => dv.setUint16(8, 8, true)],
+  ['local flags', (dv) => dv.setUint16(6, 1, true)],
+  ['local CRC', (dv) => dv.setUint32(14, 0, true)],
+  ['local size', (dv) => dv.setUint32(18, 1, true)],
+  ['local name', (dv) => dv.setUint8(30, 120)],
+  ['multi-disk archive', (dv, cd, end) => dv.setUint16(end + 4, 1, true)],
+  ['directory size', (dv, cd, end) => dv.setUint32(end + 12, 1, true)],
+  ['directory entry count', (dv, cd, end) => {
+    dv.setUint16(end + 8, 1, true);
+    dv.setUint16(end + 10, 1, true);
+  }],
+  ['encrypted entry', (dv, cd) => dv.setUint16(cd + 8, 1, true)],
+  ['data extends into directory', (dv, cd) => {
+    dv.setUint32(cd + 20, cd, true);
+    dv.setUint32(cd + 24, cd, true);
+  }],
+  ['duplicate names', (dv, cd) => {
+    const second = cd + 46 + dv.getUint16(cd + 28, true);
+    for (let i = 0; i < 9; i++) dv.setUint8(second + 46 + i, dv.getUint8(cd + 46 + i));
+  }],
+  ['overlapping entries', (dv, cd) => {
+    const second = cd + 46 + dv.getUint16(cd + 28, true);
+    const secondLocal = dv.getUint32(second + 42, true);
+    const size = secondLocal + 1 - 64;
+    dv.setUint32(18, size, true);
+    dv.setUint32(22, size, true);
+    dv.setUint32(cd + 20, size, true);
+    dv.setUint32(cd + 24, size, true);
+  }],
+];
+for (const [label, mutate] of malformedArchives) {
+  test(`reject ${label}`, () => {
+    const bytes = archiveFixture();
+    const dv = new DataView(bytes.buffer);
+    const end = bytes.length - 22;
+    mutate(dv, dv.getUint32(end + 16, true), end);
+    assert.throws(() => unpackUSDZ(bytes), /Corrupt USDZ|Unsupported USDZ/);
+  });
+}
+test('accept valid archive views and comments containing EOCD signatures', () => {
+  const bytes = archiveFixture();
+  const commented = new Uint8Array(bytes.length + 32);
+  commented.set(bytes);
+  const dv = new DataView(commented.buffer);
+  dv.setUint16(bytes.length - 2, 32, true);
+  dv.setUint32(bytes.length, 0x06054b50, true);
+  // The false signature also has a plausible EOF-reaching comment length.
+  dv.setUint16(bytes.length + 20, 10, true);
+  const padded = new Uint8Array(commented.length + 7);
+  padded.set(commented, 7);
+  const view = padded.subarray(7);
+  const entries = parseUSDZEntries(view);
+  assert.deepEqual(entries.map((entry) => entry.name), ['root.usda', 'next.usda']);
+  assert.equal(entries[0].data.buffer, padded.buffer, 'entry data stays borrowed');
+  assert.deepEqual(Array.from(entries[1].data), [1, 2, 3]);
+});
+test('accept signed and unsigned STORE data descriptors and reject mismatches', () => {
+  for (const signed of [false, true]) {
+    const original = buildUSDZWithNewRoot('root.usda', new TextEncoder().encode('#usda 1.0\n'), []);
+    const oldView = new DataView(original.buffer);
+    const oldEnd = original.length - 22;
+    const oldCD = oldView.getUint32(oldEnd + 16, true);
+    const added = signed ? 16 : 12;
+    const bytes = new Uint8Array(original.length + added);
+    bytes.set(original.subarray(0, oldCD));
+    bytes.set(original.subarray(oldCD), oldCD + added);
+    const view = new DataView(bytes.buffer);
+    const cd = oldCD + added;
+    const end = oldEnd + added;
+    view.setUint16(6, 8, true);
+    view.setUint16(cd + 8, 8, true);
+    view.setUint32(14, 0, true); view.setUint32(18, 0, true); view.setUint32(22, 0, true);
+    view.setUint32(end + 16, cd, true);
+    let descriptor = oldCD;
+    if (signed) {view.setUint32(descriptor, 0x08074b50, true); descriptor += 4;}
+    view.setUint32(descriptor, view.getUint32(cd + 16, true), true);
+    view.setUint32(descriptor + 4, view.getUint32(cd + 20, true), true);
+    view.setUint32(descriptor + 8, view.getUint32(cd + 24, true), true);
+    assert.equal(parseUSDZEntries(bytes)[0].name, 'root.usda');
+    view.setUint32(descriptor + 4, 0, true);
+    assert.throws(() => parseUSDZEntries(bytes), /descriptor/);
+  }
+});
+test('central-directory reordering preserves the physical USDZ root', () => {
+  const bytes = archiveFixture();
+  const dv = new DataView(bytes.buffer);
+  const cd = dv.getUint32(bytes.length - 6, true);
+  const second = cd + 46 + dv.getUint16(cd + 28, true);
+  const end = bytes.length - 22;
+  const firstRecord = bytes.slice(cd, second);
+  const secondRecord = bytes.slice(second, end);
+  bytes.set(secondRecord, cd);
+  bytes.set(firstRecord, cd + secondRecord.length);
+  assert.deepEqual(parseUSDZEntries(bytes).map((entry) => entry.name),
+    ['root.usda', 'next.usda']);
+  assert.equal(expandUsdzInputs(new Map([['scene.usdz', bytes]])).innerRoot,
+    'root.usda');
+});
+test('a later USD entry cannot replace a non-USD physical root', () => {
+  const bytes = buildUSDZWithNewRoot('image.png', new Uint8Array([1]), [{
+    name: 'later.usda', data: new TextEncoder().encode('#usda 1.0\n'),
+  }]);
+  assert.throws(() => expandUsdzInputs(new Map([['scene.usdz', bytes]])),
+    /first physical entry/);
+});
+
+// ============================================================
 console.log('Integration: loadWasm + convertFolderToUSDZ');
 // ============================================================
 // The next-backed conversion paths need the combined product; the legacy

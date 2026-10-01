@@ -15,6 +15,11 @@
     "boundary": "typed-c"
   },
   {
+    "name": "applyUDIM",
+    "family": "layer_export_and_validation",
+    "boundary": "typed-c"
+  },
+  {
     "name": "applyVariantSelection",
     "family": "composition_and_variants",
     "boundary": "typed-c"
@@ -107,6 +112,11 @@
   {
     "name": "deleteAssetByUUID",
     "family": "asset_resolution_and_cache",
+    "boundary": "typed-c"
+  },
+  {
+    "name": "describeUDIM",
+    "family": "layer_export_and_validation",
     "boundary": "typed-c"
   },
   {

@@ -76,4 +76,38 @@ if [ "${material_count}" -ne 1 ]; then
   exit 1
 fi
 
-echo "PASS: lusdzconvert texture remap and material dedupe regression"
+# Exercise both package root formats and both flat-output paths. A directory
+# input must resolve the same root and assets as the explicit layer path.
+mkdir "${WORK}/outputs" || exit 1
+mv "${OUT_USDZ}" "${OUT_USDA}" "${WORK}/outputs/" || exit 1
+for format in usda usdc; do
+  for output in usdz "${format}"; do
+    converted="${WORK}/outputs/converted-${format}.${output}"
+    log="${WORK}/convert.log"
+    if ! "${LUSDZCONVERT}" "${WORK}" "${converted}" \
+        --outputFormat "${output}" --rootLayerFormat "${format}" \
+        -textureFormat jpeg -optimizeMaterials preview >"${log}" 2>&1; then
+      echo "FAIL: ${format} root / ${output} output conversion failed"
+      cat "${log}"
+      exit 1
+    fi
+    if ! "${LUSDCAT}" "${converted}" -o "${WORK}/outputs/checked.usda" >"${log}" 2>&1; then
+      echo "FAIL: cannot read ${format} root / ${output} output"
+      cat "${log}"
+      exit 1
+    fi
+    expected_texture='Texture.jpg'
+    if [ "${output}" != usdz ]; then
+      # Flat output retains external image bytes and must rebase the reference
+      # to the original image when written into another directory.
+      expected_texture='../Texture.png'
+    fi
+    if ! grep -Fq "@${expected_texture}@" "${WORK}/outputs/checked.usda" ||
+        [ "$(grep -c 'def Material' "${WORK}/outputs/checked.usda")" -ne 1 ]; then
+      echo "FAIL: ${format} root / ${output} lost texture reference or material dedupe"
+      exit 1
+    fi
+  done
+done
+
+echo "PASS: lusdzconvert texture remap, material dedupe, directory input, and output formats"

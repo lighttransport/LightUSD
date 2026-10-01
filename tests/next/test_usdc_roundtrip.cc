@@ -33,6 +33,7 @@
 #include "next/parser/ascii-parser.hh"
 #include "next/layer/property-index.hh"
 #include "next/pcp/prim-index.hh"
+#include "next/composition/composition.hh"
 #include "next/schema/color-space.hh"
 #include "next/writer/usda-writer.hh"
 
@@ -991,6 +992,57 @@ void test_roundtrip_half_arrays() {
   }
 
   std::cout << "  half array roundtrip passed!\n\n";
+}
+
+void test_roundtrip_reference_custom_data() {
+  const char* source = R"(#usda 1.0
+def Scope "P" (
+  prepend references = [
+    @ref.usda@</Data> (offset = 0.125; scale = 2; customData = {
+      int priority = 7
+      string note = "<Decoy>?layerOffset=99:99"
+      dictionary nested = { double[] weights = [0.12345678901234567, 2.0] }
+    }),
+    @ref.usda@ (customData = { int priority = 8 })
+  ]
+  delete references = @ref.usda@</Data> (customData = { int priority = 9 })
+  delete apiSchemas = ["PhysicsRigidBodyAPI"]
+  prepend apiSchemas = ["CollectionAPI:foo"]
+) { int after = 5 }
+)";
+  auto parsed = LoadUSDAFromString(source);
+  assert(parsed.success);
+  Layer layer = parsed.stage.GetRootLayer()->Clone();
+  const std::string expected = WriteLayerToString(layer);
+  for (int pass = 0; pass < 2; ++pass) {
+    CrateWriter writer;
+    std::vector<uint8_t> bytes;
+    assert(writer.WriteLayerToMemory(bytes, layer).success);
+    CrateReadOptions options;
+    options.strict_aousd_conformance = true;
+    CrateReader reader(options);
+    auto result = reader.Read(bytes.data(), bytes.size());
+    for (const auto& error : result.errors) std::cerr << error.message << "\n";
+    assert(result.success);
+    assert(WriteUSDAToString(result.stage) == expected);
+    const auto& meta = MustPrim(result.stage.GetRootLayer(), "/P")->meta();
+    assert(meta.apiSchemaEdits().deleted ==
+           std::vector<std::string>{"PhysicsRigidBodyAPI"});
+    assert(meta.references.size() == 2);
+    const auto arc = Compositor::ParseReference(meta.references[0]);
+    assert(arc.prim_path == "/Data" && arc.layer_offset == "0.125:2");
+    const auto default_arc = Compositor::ParseReference(meta.references[1]);
+    assert(default_arc.prim_path.empty());
+    layer = result.stage.GetRootLayer()->Clone();
+
+    const char* file_path = "reference_custom_data_streamed.usdc";
+    CrateWriter file_writer;
+    assert(file_writer.WriteLayerToFile(file_path, layer).success);
+    auto streamed = LoadUSDCFromFile(file_path);
+    std::remove(file_path);
+    assert(streamed.success);
+    assert(WriteUSDAToString(streamed.stage) == expected);
+  }
 }
 
 void test_roundtrip_arc_offset_precision() {
@@ -2565,6 +2617,7 @@ int main() {
     test_roundtrip_half_arrays();
     test_roundtrip_byte_arrays();
     test_roundtrip_arc_offset_precision();
+    test_roundtrip_reference_custom_data();
     test_write_usdc_from_stage_api();
     test_roundtrip_variants();
     test_parallel_stage_build_matches_serial();

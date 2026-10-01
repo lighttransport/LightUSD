@@ -6,6 +6,7 @@
 #include "c-stage-bridge.hh"
 #include "next/composition/composition.hh"
 #include "next/layer/prim-spec.hh"
+#include "next/layer/arc-reference.hh"
 #include "next/stage/stage.hh"
 #include "next/writer/usda-writer.hh"
 #include "next/writer/usdc-writer.hh"
@@ -235,6 +236,17 @@ minijson::Value LayerPrimJSON(const tn::Layer& layer, uint32_t index,
               value["offset"] = offset;
               value["scale"] = scale;
             }
+          }
+          const std::string custom_data = tn::ArcReferenceCustomData(item);
+          if (!custom_data.empty()) {
+            if (!charge_text(custom_data.size(), 128)) return false;
+            tn::Lexer lexer(custom_data.data(), custom_data.size());
+            tn::ParseResult parsed = tn::ParseValue(lexer, tn::TypeId::Dictionary);
+            if (!parsed.success || lexer.peek().type != tn::TokenType::Eof ||
+                !parsed.value.as_dictionary() ||
+                !ChargeLayerJSONValue(parsed.value,
+                    MetadataValueEntryCount(parsed.value), estimate)) return false;
+            value["customData"] = LayerMetadataValueJSON(parsed.value);
           }
           encoded_items.push_back(std::move(value));
           continue;
@@ -942,8 +954,7 @@ bool ParseLayerJSONPrim(const minijson::Value& encoded, tn::LayerBuilder* builde
         if (structured) {
           if (!encoded_path.is_object() ||
               !encoded_path["assetPath"].is_string() ||
-              !encoded_path["primPath"].is_string() ||
-              encoded_path.contains("customData")) {
+              !encoded_path["primPath"].is_string()) {
             if (error) *error = std::string("Unsupported Layer JSON ") + field + " target";
             return false;
           }
@@ -968,6 +979,25 @@ bool ParseLayerJSONPrim(const minijson::Value& encoded, tn::LayerBuilder* builde
             }
             arc += "?layerOffset=" + std::to_string(encoded_offset.get_double()) +
                    ":" + std::to_string(encoded_scale.get_double());
+          }
+          if (encoded_path.contains("customData")) {
+            tn::Value custom_data;
+            size_t value_count = 0;
+            if (std::strcmp(field, "references") != 0 ||
+                !encoded_path["customData"].is_object() ||
+                !ParseLayerJSONMetadataValue(encoded_path["customData"],
+                    &custom_data, 0, &value_count) || !custom_data.as_dictionary()) {
+              if (error) *error = "Invalid Layer JSON reference customData";
+              return false;
+            }
+            if (!custom_data.as_dictionary()->empty()) {
+              tn::PrintOptions options;
+              options.float_precision = 9;
+              options.double_precision = 17;
+              options.sort_dictionary_keys = true;
+              arc.push_back('\x1f');
+              arc += tn::PrintValue(custom_data, options);
+            }
           }
           items.push_back(std::move(arc));
           continue;

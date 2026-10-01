@@ -943,6 +943,9 @@ TEST_LIST = {
   { "usdz_convert_missing_texture_reference_test", usdz_convert_missing_texture_reference_test },
   { "usdz_convert_pipeline_jpeg_test", usdz_convert_pipeline_jpeg_test },
   { "usdz_convert_cleanup_test", usdz_convert_cleanup_test },
+  { "usdz_convert_udim_bake_test", usdz_convert_udim_bake_test },
+  { "usdz_convert_udim_layout_test", usdz_convert_udim_layout_test },
+  { "usdz_convert_udim_clip_test", usdz_convert_udim_clip_test },
   // Pretty-printer column wrap tests
   { "column_wrap_disabled_test", column_wrap_disabled_test },
   { "column_wrap_float3_array_test", column_wrap_float3_array_test },

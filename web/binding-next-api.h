@@ -1091,6 +1091,8 @@ int NextSubdivRefine(void* object, const float* points, uint32_t point_values,
                     const lightusd_next_subdiv_options* options,
                     uint32_t callback_id);
 int NextSubdivError(void* object, uint8_t* out, uint32_t cap);
+int NextConverterUDIM(void*, bool, const uint8_t*, uint32_t);
+int NextConverterUDIMCopy(void*, uint8_t*, uint32_t);
 int NextConverterRewrite(void* object, const uint8_t* data, uint32_t size,
                          const lightusd_next_rewrite_options* options,
                          lightusd_next_rewrite_info* out);

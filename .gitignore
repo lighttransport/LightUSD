@@ -5,6 +5,8 @@
 
 # App-specific
 .opencode/
+# External regression corpus (directory or local symlink).
+/usd-assets
 
 # UE MetaHuman USD bridge: generated project/build/export data.  The small
 # project descriptor, plugin source and orchestration scripts remain tracked.

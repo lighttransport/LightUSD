@@ -2430,6 +2430,32 @@ def Xform "root"
       return converterString(this, kind, name);
     }});
   }
+  for (const [name, apply] of [['describeUDIM', 0], ['applyUDIM', 1]]) {
+    Object.defineProperty(Module.NextUSDZConverterNative.prototype, name, {value: function(request) {
+      const state = live.get(this);
+      if (!state?.handle || state.kind !== 1) throw new TypeError('Invalid LightUSD receiver');
+      if (arguments.length !== apply) throw new TypeError(name + ': wrong argument count');
+      const bytes = converterEncoder.encode(apply ? JSON.stringify(request) : '');
+      if (bytes.length > 4 * 1024 * 1024) throw new RangeError(name + ': edit plans exceed 4 MiB');
+      let input = 0, output = 0;
+      ++state.busy;
+      try {
+        input = Module['_lightusd_next_alloc'](Math.max(1, bytes.length));
+        if (!input) throw new RangeError(name + ': allocation failed');
+        Module.HEAPU8.set(bytes, Number(input));
+        const size = Module['_lightusd_next_converter_udim'](state.handle, apply, input, bytes.length);
+        if (size < 0) throw new RangeError(name + ': layer query failed');
+        output = Module['_lightusd_next_alloc'](Math.max(1, size));
+        if (!output) throw new RangeError(name + ': allocation failed');
+        if (Module['_lightusd_next_converter_udim_copy'](state.handle, output, size) !== size) throw new RangeError(name + ': output changed');
+        return JSON.parse(converterDecoder.decode(Module.HEAPU8.subarray(Number(output), Number(output) + size)));
+      } finally {
+        if (output) Module['_lightusd_next_free'](output);
+        if (input) Module['_lightusd_next_free'](input);
+        --state.busy;
+      }
+    }});
+  }
   Object.defineProperty(Module.NextUSDZConverterNative.prototype, 'rewriteRoot', {value: function(
       bytes, filename, options) {
     const state = live.get(this);

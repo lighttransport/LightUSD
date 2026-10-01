@@ -100,6 +100,7 @@
 #include "safe-arithmetic.hh"
 #include "tydra/texture-util.hh"
 #include "usdz-convert.hh"
+#include "usdz-udim-layer.hh"
 #if defined(LIGHTUSD_WITH_XATLAS)
 #include "external/xatlas/xatlas.h"
 #endif
@@ -9967,6 +9968,21 @@ class LightUSDLoaderNative {
 
 #endif
 
+  std::string udimLayerJSONC(bool apply, const std::string& input) {
+    if (!loaded_) return "{\"success\":false,\"error\":\"No layer loaded\"}";
+    lightusd::usdz::LegacyUDIMLayer access(composited_ ? composed_layer_ : layer_);
+    return apply ? lightusd::udim::ApplyJSON(access, input) : lightusd::udim::DescribeJSON(access);
+  }
+#if !defined(LIGHTUSD_WASM_WITH_NEXT)
+  emscripten::val describeUDIM() {
+    return emscripten::val::global("JSON").call<emscripten::val>("parse", udimLayerJSONC(false, ""));
+  }
+  emscripten::val applyUDIM(const emscripten::val& request) {
+    const auto json = emscripten::val::global("JSON").call<std::string>("stringify", request);
+    return emscripten::val::global("JSON").call<emscripten::val>("parse", udimLayerJSONC(true, json));
+  }
+#endif
+
   /// Create a sample scene with a textured quad (checkerboard).
   /// The texture PNG must be set from JS via setAsset("textures/checkerboard.png", pngBytes)
   /// BEFORE calling exportAsUSDZ.
@@ -11248,6 +11264,17 @@ extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_package_write(
 
 extern "C" EMSCRIPTEN_KEEPALIVE void lightusd_combined_package_end(void *package) {
   delete static_cast<LightUSDLoaderNative::PackageExportState *>(package);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_udim_layer(
+    void* loader, uint32_t apply, const uint8_t* input, uint32_t size) {
+  const uintptr_t start = reinterpret_cast<uintptr_t>(input);
+  const size_t heap = emscripten_get_heap_size();
+  if (!loader || apply > 1 || size > 4*1024*1024 ||
+      (size && (!start || start > heap || size > heap - start))) return -1;
+  lightusd::web::combined::StoreStringTable({static_cast<LightUSDLoaderNative*>(loader)->udimLayerJSONC(
+      apply != 0, size ? std::string(reinterpret_cast<const char*>(input), size) : std::string())}, {});
+  return 0;
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE int32_t lightusd_combined_export_remap(
@@ -14069,6 +14096,8 @@ EMSCRIPTEN_BINDINGS(lightusd_module) {
 #if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("layerToString",
                 &LightUSDLoaderNative::layerToString)
+      .function("describeUDIM", &LightUSDLoaderNative::describeUDIM)
+      .function("applyUDIM", &LightUSDLoaderNative::applyUDIM)
 #endif
 #if !defined(LIGHTUSD_WASM_WITH_NEXT)
       .function("validateFromBinary",

@@ -206,6 +206,9 @@ if [ ! -d "$USD_ASSETS_ROOT" ]; then
   echo "SKIP: USD_ASSETS_ROOT does not exist: $USD_ASSETS_ROOT"
   exit "$SKIP"
 fi
+# --root overrides the environment-derived path after the initial setup.
+# Resolve it here as well: find does not descend through a symlink root.
+USD_ASSETS_ROOT="$(cd "$USD_ASSETS_ROOT" && pwd -P)"
 
 # Opt-in gate: if LUSDVIEW_USD_ASSETS_GATE names an env var and that var is
 # empty/unset, SKIP. Golden fingerprints are a per-machine baseline, so the
@@ -539,6 +542,7 @@ run_one() {
   local expected_status="${EXPECT_STATUS[$expect_key]:-}"
   local expected_warning="${EXPECT_WARNING[$expect_key]:-}"
   local entry_tol="${EXPECT_TOL[$expect_key]:-$GOLDEN_TOL}"
+  local observed_status="$status"
 
   # Golden-fingerprint check: only meaningful for a real (non-blank) render.
   # A mismatch overrides the status so the existing FAIL_ON path handles it.
@@ -576,7 +580,7 @@ run_one() {
 
   if [ -n "$expected_status" ] && [ "$expected_status" != "*" ]; then
     case ",$expected_status," in
-      *",$status,"*) ;;
+      *",$observed_status,"*) ;;
       *) status="expectation_mismatch" ;;
     esac
   fi

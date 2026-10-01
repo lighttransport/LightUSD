@@ -93,6 +93,13 @@ void PrintUsage(const char *prog) {
       "  --texture-memory-budget <size>\n"
       "                            Best-effort texture worker-memory budget (e.g. 1GB).\n"
       "                            Reduces worker count; unset preserves defaults.\n"
+      "  --bake-udim <off|grid|dense>  Stitch UDIMs into one texture (default off).\n"
+      "  --udim-max-tiles <N>     Reject sets exceeding N tiles (default 100).\n"
+      "  --udim-max-atlas-size <N> Maximum atlas edge (default 8192).\n"
+      "  --udim-memory-budget <size> Hard baking budget (default 512 MiB).\n"
+      "  --udim-cross-tile <reject|split> Dense crossing-face policy.\n"
+      "  --udim-dense-padding <N> Dense gutter pixels (default 2).\n"
+      "  --udim-subdivision-level <N> Refinement level (default 2).\n"
       "  -noReencode               Copy unmodified textures through byte-for-byte.\n"
       "  -includeUnusedTextures    Also convert/package image files in the input layer\n"
       "                            directories that are not referenced by UsdUVTexture.\n"
@@ -522,6 +529,13 @@ int main(int argc, char **argv) {
   parser.add_option("-numThreads", true, "Texture worker threads (0 = auto)");
   parser.add_option("--texture-memory-budget", true,
                     "Best-effort texture worker-memory budget");
+  parser.add_option("--bake-udim", true, "off|grid|dense");
+  parser.add_option("--udim-max-tiles", true, "Maximum tiles per atlas");
+  parser.add_option("--udim-max-atlas-size", true, "Maximum atlas edge");
+  parser.add_option("--udim-memory-budget", true, "Hard baking memory budget");
+  parser.add_option("--udim-cross-tile", true, "reject|split");
+  parser.add_option("--udim-dense-padding", true, "Dense gutter pixels");
+  parser.add_option("--udim-subdivision-level", true, "Subdivision refinement level");
   parser.add_option("-noReencode", false, "Passthrough unmodified textures");
   parser.add_option("-includeUnusedTextures", false,
                     "Package unreferenced image files from input directories");
@@ -715,6 +729,32 @@ int main(int argc, char **argv) {
                 << "' as a positive byte size.\n";
       return 1;
     }
+  }
+  if (parser.is_set("--bake-udim")) {
+    std::string mode; parser.get("--bake-udim", mode);
+    if (mode == "grid") opts.udim_bake = udim::BakeMode::Grid;
+    else if (mode == "dense") opts.udim_bake = udim::BakeMode::Dense;
+    else if (mode != "off") { std::cerr << "ERROR: --bake-udim must be off, grid, or dense.\n"; return 1; }
+  }
+  for (const char* flag : {"--udim-max-tiles", "--udim-max-atlas-size", "--udim-dense-padding", "--udim-subdivision-level"}) {
+    if (!parser.is_set(flag)) continue;
+    std::string text; parser.get(flag, text); int n;
+    if (!ParseIntStrict(text, &n) || n < 0) { std::cerr << "ERROR: invalid integer for " << flag << "\n"; return 1; }
+    const std::string name = flag;
+    if (name == "--udim-max-tiles") opts.udim_max_tiles = static_cast<size_t>(n);
+    else if (name == "--udim-max-atlas-size") opts.udim_max_atlas_size = n;
+    else if (name == "--udim-dense-padding") opts.udim_dense_padding = n;
+    else opts.udim_subdivision_level = n;
+  }
+  if (parser.is_set("--udim-memory-budget")) {
+    std::string text; parser.get("--udim-memory-budget", text);
+    opts.udim_memory_budget_bytes = ParseByteSize(text);
+    if (!opts.udim_memory_budget_bytes) { std::cerr << "ERROR: invalid UDIM memory budget.\n"; return 1; }
+  }
+  if (parser.is_set("--udim-cross-tile")) {
+    std::string policy; parser.get("--udim-cross-tile", policy);
+    if (policy == "split") opts.udim_cross_tile = udim::CrossTilePolicy::Split;
+    else if (policy != "reject") { std::cerr << "ERROR: --udim-cross-tile must be reject or split.\n"; return 1; }
   }
   if (parser.is_set("-optimizeMaterials")) {
     std::string mode;

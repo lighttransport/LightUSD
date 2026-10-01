@@ -58,6 +58,7 @@ const NODE_TESTS = [
   ['xatlas WASM mapping', 'tests/xatlas-wasm.mjs'],
   ['Lucia Code core processors', 'lucia-code/tests/core.test.mjs'],
   ['texture memory budget', 'tests/texture-memory-budget.test.mjs'],
+  ['UDIM baking', 'tests/udim-bake.test.mjs'],
   ['MaterialX JSON regression', 'tests/materialx-json-regression.js'],
   ['USD skeleton animation', 'tests/usdskel-animation-test.js'],
 ];
@@ -90,8 +91,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     profile: 'full',
     menagerie: process.env.MENAGERIE_DIR || process.env.MUJOCO_MENAGERIE ||
       path.join(WEB_JS_DIR, '.cache', 'mujoco_menagerie'),
-    out: process.env.LIGHTUSD_REGRESSION_OUT ||
-      path.join(WEB_JS_DIR, '.regression', `run-${process.pid}`),
+    out: process.env.LIGHTUSD_REGRESSION_OUT || null,
     browserMode: 'auto',
     keepOutput: false,
   };
@@ -246,6 +246,9 @@ async function runPhysics(results, opts) {
 }
 
 async function runBrowserTests(results, opts) {
+  results.push(await run('UDIM browser and Worker baking', NODE,
+    ['tests/udim-bake-browser.test.mjs'], {}));
+  if (!results.at(-1).ok) return;
   if (!fs.existsSync(opts.menagerie)) {
     results.push({
       label: 'Browser dataset setup', ok: false, code: 2,
@@ -298,6 +301,13 @@ async function runBrowserTests(results, opts) {
 
 async function main() {
   const opts = parseArgs();
+  if (!opts.out) {
+    const parent = path.join(WEB_JS_DIR, '.regression');
+    fs.mkdirSync(parent, { recursive: true });
+    // Separate containers can share a PID and the same workspace. A unique
+    // directory prevents one successful gate from deleting another's output.
+    opts.out = fs.mkdtempSync(path.join(parent, 'run-'));
+  }
   fs.mkdirSync(opts.out, { recursive: true });
   const results = [];
 

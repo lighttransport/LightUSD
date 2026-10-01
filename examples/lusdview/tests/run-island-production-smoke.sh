@@ -73,8 +73,8 @@ render_required = ("visible_meshes", "total_meshes", "visible_instances",
                    "drawn_triangles", "draw_calls", "elapsed_seconds")
 missing += ["render." + key for key in render_required
             if key not in r.get("render", {})]
-if r.get("schema_version") != 1:
-    missing.append("schema_version=1")
+if r.get("schema_version") != 2:
+    missing.append("schema_version=2")
 if r.get("status") != "ok":
     missing.append("status=ok")
 if missing:

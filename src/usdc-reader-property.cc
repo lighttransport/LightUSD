@@ -415,11 +415,17 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         auto items = std::get<1>(ps[0]);
 
         if (items.empty() && (spec_type != SpecType::Connection)) {
-          // An authored but EMPTY bucket: a list-edit qualifier on a
-          // relationship with no targets (`append rel myval`). rel.set({}) would
-          // make it a PathVector of zero targets and print `rel myval = []`;
-          // it is declaration-only, and the qualifier below is all it carries.
-          rel.set_novalue();
+          if (qual == ListEditQual::ResetToExplicit) {
+            // An explicit empty target list clears weaker targets. Keep the
+            // opinion; a declaration-only relationship has no targetPaths.
+            rel.set(std::vector<Path>{});
+          } else {
+            // An authored but EMPTY bucket: a list-edit qualifier on a
+            // relationship with no targets (`append rel myval`). rel.set({}) would
+            // make it a PathVector of zero targets and print `rel myval = []`;
+            // it is declaration-only, and the qualifier below is all it carries.
+            rel.set_novalue();
+          }
         } else if (items.size() == 1 && (spec_type != SpecType::Connection)) {
           // Single (relationship)
           const Path path = items[0];
