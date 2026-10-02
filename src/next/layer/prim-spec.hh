@@ -755,7 +755,9 @@ struct PropMeta {
   std::vector<std::pair<std::string, std::string>> unknownMeta;
   std::vector<TypedExtensionField> unknownFields;
 
-  bool empty() const { return authored == 0; }
+  bool empty() const {
+    return authored == 0 && unknownMeta.empty() && unknownFields.empty();
+  }
 };
 
 /// Value storage block

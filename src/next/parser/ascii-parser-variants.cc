@@ -77,10 +77,14 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
       // `reorder` is a no-op on the flat list.
       enum class ArcOp { Bare, Prepend, Append, Delete, Reorder } arc_op =
           ArcOp::Bare;
+      bool add_spelling = false;
       if (Match(TokenType::Prepend)) {
         arc_op = ArcOp::Prepend;
-      } else if (Match(TokenType::Append) || Match(TokenType::Add)) {
+      } else if (Match(TokenType::Append)) {
         arc_op = ArcOp::Append;
+      } else if (Match(TokenType::Add)) {
+        arc_op = ArcOp::Append;
+        add_spelling = true;
       } else if (Match(TokenType::Delete)) {
         arc_op = ArcOp::Delete;
       } else if (Match(TokenType::Reorder)) {
@@ -225,7 +229,7 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
             std::string qual_prefix;
             switch (arc_op) {
               case ArcOp::Prepend: qual_prefix = "prepend "; break;
-              case ArcOp::Append: qual_prefix = "append "; break;
+              case ArcOp::Append: qual_prefix = add_spelling ? "add " : "append "; break;
               case ArcOp::Delete: qual_prefix = "delete "; break;
               case ArcOp::Reorder: qual_prefix = "reorder "; break;
               default: break;

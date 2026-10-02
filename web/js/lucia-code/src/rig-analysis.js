@@ -78,6 +78,7 @@ export function compareSkinnedDeformation({ positions, skinIndices, skinWeights,
   if (hasInvalidValue(positions, (value) => !finite(value)) || hasInvalidValue(skinIndices, (value) => !finite(value)) || hasInvalidValue(skinWeights, (value) => !finite(value)) || hasInvalidValue(boneMatrices, (value) => !finite(value))) throw new Error('Skinned deformation comparison requires finite buffers.');
   const boneCount = boneMatrices.length / 16, count = positions.length / 3, samples = [];
   if (hasInvalidValue(skinIndices, (joint) => !Number.isSafeInteger(joint) || joint < 0 || joint >= boneCount) || hasInvalidValue(skinWeights, (weight) => weight < 0)) throw new Error('Skinned deformation comparison requires non-negative in-range joint indices and weights.');
+  const sampleLimit = Math.max(1, Math.min(256, Math.floor(maxSamples) || 256));
   let totalDistance = 0, maxDistance = 0;
   for (let vertex = 0; vertex < count; vertex++) {
     const px = positions[vertex * 3], py = positions[vertex * 3 + 1], pz = positions[vertex * 3 + 2]; let x = 0, y = 0, z = 0, weightTotal = 0;
@@ -89,6 +90,10 @@ export function compareSkinnedDeformation({ positions, skinIndices, skinWeights,
     }
     if (weightTotal > 1e-12) { x /= weightTotal; y /= weightTotal; z /= weightTotal; } else { x = px; y = py; z = pz; }
     const distance = Math.hypot(x - px, y - py, z - pz); totalDistance += distance; maxDistance = Math.max(maxDistance, distance); samples.push({ vertex, distance });
+    if (samples.length >= sampleLimit * 2) {
+      samples.sort((a, b) => b.distance - a.distance || a.vertex - b.vertex);
+      samples.length = sampleLimit;
+    }
   }
   samples.sort((a, b) => b.distance - a.distance || a.vertex - b.vertex);
   return { compared: count, meanDistance: totalDistance / count, maxDistance, samples: samples.slice(0, Math.max(1, Math.min(256, Math.floor(maxSamples) || 256))) };
@@ -188,4 +193,19 @@ export function buildInfluenceHeatmap({ positions, skinIndices, skinWeights, bon
   }
   const extent = [maxX - minX, maxY - minY, maxZ - minZ], dropAxis = extent.indexOf(Math.max(...extent)), axes = [[1, 2], [0, 2], [0, 1]][dropAxis];
   return { samples, bounds: { min: [minX, minY, minZ], max: [maxX, maxY, maxZ] }, axes, droppedAxis: dropAxis, boneCount: boneCount == null ? null : boneCount, audit };
+}
+
+// Bounded sampled-animation diagnostics. Frames are explicit packed skinning
+// matrices, so callers can sample their animation system without mutating it.
+export function analyzeRigPoseSequence({ poses, ...mesh } = {}) {
+  if (!Array.isArray(poses) || !poses.length || poses.length > 32) throw new Error('Rig pose diagnostics require 1–32 frames.');
+  const frames = []; let previous = -Infinity, components = null;
+  for (const pose of poses) {
+    if (!Number.isFinite(pose?.time) || pose.time <= previous || !ArrayBuffer.isView(pose.boneMatrices) ||
+        components != null && pose.boneMatrices.length !== components) throw new Error('Rig frames require increasing finite times and matching bone matrices.');
+    previous = pose.time; components = pose.boneMatrices.length;
+    frames.push({ time: pose.time, ...compareSkinnedDeformation({ ...mesh, boneMatrices: pose.boneMatrices }) });
+  }
+  const peak = frames.reduce((best, frame) => frame.maxDistance > best.maxDistance ? frame : best);
+  return { frames, frameCount: frames.length, peakTime: peak.time, maxDistance: peak.maxDistance };
 }

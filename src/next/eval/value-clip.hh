@@ -4,6 +4,7 @@
 #pragma once
 
 #include "../stage/stage.hh"
+#include "../types/interpolation.hh"
 
 #include <functional>
 #include <memory>
@@ -74,7 +75,8 @@ bool ResolveValueClip(const UsdPrim& prim, const std::string& property,
                       std::string* error = nullptr,
                       std::string* source_clip_set = nullptr,
                       ValueClipStageCache* stage_cache = nullptr,
-                      ValueClipResolutionInfo* resolution_info = nullptr);
+                      ValueClipResolutionInfo* resolution_info = nullptr,
+                      TimeInterpolation interpolation = TimeInterpolation::Linear);
 
 /// Same resolution over PRE-PARSED clip sets (from ParseValueClipSets):
 /// callers issuing many queries against one prim (e.g. Tydra's animation
@@ -88,7 +90,8 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
                               std::string* error = nullptr,
                               std::string* source_clip_set = nullptr,
                               ValueClipStageCache* stage_cache = nullptr,
-                              ValueClipResolutionInfo* resolution_info = nullptr);
+                              ValueClipResolutionInfo* resolution_info = nullptr,
+                      TimeInterpolation interpolation = TimeInterpolation::Linear);
 
 }  // namespace next
 }  // namespace lightusd

@@ -499,9 +499,14 @@ void TestDictionaryAndRelationshipComposition() {
       extension_back.stage.GetRootLayer()->prim_at_path("/P");
   const PropMeta* extension_back_meta =
       extension_back_prim->property_meta("x");
-  assert(extension_back_meta && extension_back_meta->unknownFields.size() == 1);
-  const Dict* extension_back_dict =
-      extension_back_meta->unknownFields[0].value.as_dictionary();
+  assert(extension_back_meta && extension_back_meta->unknownFields.size() == 3);
+  const auto extension_dict = std::find_if(extension_back_meta->unknownFields.begin(),
+      extension_back_meta->unknownFields.end(), [](const TypedExtensionField& field) {
+        return field.name == "extensionDict";
+      });
+  assert(extension_dict != extension_back_meta->unknownFields.end());
+  const Dict* extension_back_dict = extension_dict->value.as_dictionary();
+  assert(WriteUSDAToString(extension_back.stage).find("strongMeta = \"yes\"") != std::string::npos);
   assert(extension_back_dict && extension_back_dict->find("weak") &&
          extension_back_dict->find("nested")->as_dictionary()->find("a") &&
          extension_back_dict->find("nested")->as_dictionary()->find("b"));
@@ -2342,6 +2347,88 @@ void TestRemainingElectiveFieldCoverage() {
   assert(binary_text.find("\"\"") != std::string::npos);
 }
 
+void TestGeneratedElectiveAuthoredRoundtrips() {
+  struct Field { const char* scope; const char* name; const char* mode; };
+  const Field fields[] = {
+#define AOUSD_FIELD(scope, name, mode) {#scope, #name, #mode},
+#include "next/schema/generated/aousd-elective-field-coverage.inc"
+#undef AOUSD_FIELD
+  };
+  size_t tested = 0;
+  for (const Field& field : fields) {
+    if (std::string(field.mode) != "Typed") continue;
+    const std::string name(field.name), scope(field.scope);
+    // Type and namespace order are structural USDA syntax, covered by the
+    // namespace-order and crate-version matrices rather than metadata syntax.
+    if (name == "typeName" || name == "primOrder" || name == "propertyOrder") continue;
+    std::string value = "\"\"";
+    if (name == "active" || name == "instanceable" || name == "hidden") value = "false";
+    else if (name == "timeCodesPerSecond" || name == "framesPerSecond") value = "24";
+    else if (name == "startTimeCode" || name == "endTimeCode") value = "0";
+    else if (name == "customLayerData" || name == "expressionVariables" || name == "customData" || name == "assetInfo") value = "{}";
+    else if (name == "colorConfiguration") value = "@@";
+    else if (name == "allowedTokens" || name == "displayGroupOrder") value = "[]";
+    const std::string assignment = name + " = " + value;
+    const bool layer = scope == "Layer", prim = scope == "Prim";
+    const std::string absent = layer || prim ? "def Scope \"P\" {}\n" : "def Scope \"P\" { int a = 1 }\n";
+    const std::string source = layer ? "(" + assignment + ")\n" + absent : prim ?
+        "def Scope \"P\" (" + assignment + ") {}\n" :
+        "def Scope \"P\" { int a = 1 (" + assignment + ") }\n";
+    LoadResult loaded = Parse(source, true), bare = Parse(absent, true);
+    if (!loaded.success) std::cerr << "elective parse: " << scope << "." << name << "\n";
+    assert(loaded.success && bare.success);
+    const std::string canonical = WriteUSDAToString(loaded.stage);
+    if (canonical == WriteUSDAToString(bare.stage)) std::cerr << "lost authored field: " << scope << "." << name << "\n";
+    assert(canonical != WriteUSDAToString(bare.stage));
+    LoadResult text = LoadUSDAFromString(canonical);
+    assert(text.success && WriteUSDAToString(text.stage) == canonical);
+    std::vector<uint8_t> bytes;
+    assert(WriteUSDCToMemory(bytes, loaded.stage).success);
+    USDCLoadResult binary = LoadUSDCFromMemory(bytes.data(), bytes.size());
+    if (!binary.success || WriteUSDAToString(binary.stage) != canonical)
+      std::cerr << "elective crate mismatch: " << scope << "." << name << "\n";
+    assert(binary.success && WriteUSDAToString(binary.stage) == canonical);
+    ++tested;
+  }
+  assert(tested >= 30);
+}
+
+void TestUnregisteredListOpAuthoredRoundtrips() {
+  // Unregistered extension fields have no schema-defined merge semantics.
+  // Preserve their authored qualifier/value spelling in layer round trips;
+  // do not reinterpret them as a registered composition operation.
+  for (const char* scope : {"Layer", "Prim", "Variant"}) {
+    for (const char* qualifier : {"", "prepend ", "append ", "delete ", "add ", "reorder "}) {
+      for (const char* value : {"None", "[]", "[\"a\", \"b\"]"}) {
+        const std::string assignment = std::string(qualifier) + "pipelineTags = " + value;
+        const std::string source = std::string(scope) == "Layer" ?
+            "(" + assignment + ")\ndef Scope \"P\" {}\n" :
+            std::string(scope) == "Prim" ? "def Scope \"P\" (" + assignment + ") {}\n" :
+            "def Scope \"P\" { variantSet \"v\" = { \"a\" (" + assignment + ") {} } }\n";
+        LoadResult loaded = Parse(source);
+        if (std::string(scope) == "Layer" && qualifier[0]) {
+          // Layer metadata has no generic list-edit authoring grammar.
+          assert(!loaded.success);
+          continue;
+        }
+        if (!loaded.success) std::cerr << "extension parse: " << scope << ": " << assignment << "\n";
+        assert(loaded.success);
+        const std::string canonical = WriteUSDAToString(loaded.stage);
+        if (canonical.find(assignment) == std::string::npos) std::cerr << "extension qualifier lost: " << assignment << "\n" << canonical;
+        assert(canonical.find(assignment) != std::string::npos);
+        LoadResult text = LoadUSDAFromString(canonical);
+        assert(text.success && WriteUSDAToString(text.stage) == canonical);
+        std::vector<uint8_t> bytes;
+        assert(WriteUSDCToMemory(bytes, loaded.stage).success);
+        USDCLoadResult binary = LoadUSDCFromMemory(bytes.data(), bytes.size());
+        if (!binary.success || WriteUSDAToString(binary.stage) != canonical)
+          std::cerr << "extension crate: " << scope << ": " << assignment << "\nBEFORE\n" << canonical << "\nAFTER\n" << WriteUSDAToString(binary.stage);
+        assert(binary.success && WriteUSDAToString(binary.stage) == canonical);
+      }
+    }
+  }
+}
+
 void TestTypedSplines() {
   // A linear spline: value ramps 0->10 over t in [0,10], held outside.
   const std::string body =
@@ -3259,6 +3346,8 @@ int main() {
   TestStringListOpFieldTable();
   TestVariantExtensionFields();
   TestRemainingElectiveFieldCoverage();
+  TestGeneratedElectiveAuthoredRoundtrips();
+  TestUnregisteredListOpAuthoredRoundtrips();
   std::cout << "AOUSD conformance regressions: PASSED\n";
   return 0;
 }

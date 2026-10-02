@@ -365,12 +365,13 @@ bool ResolveValueClip(const UsdPrim& prim, const std::string& property,
                       Value* out, std::string* source_asset,
                       std::string* error, std::string* source_clip_set,
                       ValueClipStageCache* stage_cache,
-                      ValueClipResolutionInfo* resolution_info) {
+                      ValueClipResolutionInfo* resolution_info,
+                      TimeInterpolation interpolation) {
   std::vector<ValueClipSet> sets;
   if (!ParseValueClipSets(prim, &sets, error)) return false;
   return ResolveValueClipFromSets(sets, prim, property, stage_time, loader,
                                   out, source_asset, error, source_clip_set,
-                                  stage_cache, resolution_info);
+                                  stage_cache, resolution_info, interpolation);
 }
 
 bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
@@ -380,7 +381,8 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
                               std::string* source_asset, std::string* error,
                               std::string* source_clip_set,
                               ValueClipStageCache* stage_cache,
-                              ValueClipResolutionInfo* resolution_info) {
+                              ValueClipResolutionInfo* resolution_info,
+                      TimeInterpolation interpolation) {
   if (!out || sets.empty()) return false;
   if (!loader) {
     if (error) *error = "Value clips require a clip_stage_loader";
@@ -455,8 +457,12 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
       if (!clip_prim.IsValid() || !clip_prim.HasProperty(property)) {
         return none;
       }
-      Value v = clip_prim.GetInterpolatedValue(property,
-                                               ClipTime(set, at_time));
+      Value v;
+      if (interpolation == TimeInterpolation::Held) {
+        const Value* sample = clip_prim.GetValueAtTime(property, ClipTime(set, at_time));
+        if (!sample) sample = clip_prim.GetPropertyValue(property);
+        if (sample) v = *sample;
+      } else v = clip_prim.GetInterpolatedValue(property, ClipTime(set, at_time));
       if ((v.is_empty() || v.is_block()) && clip_prim.GetPrimSpec() &&
           clip_prim.GetPrimSpec()->meta().clips().is_dictionary()) {
         const std::string key = asset + "|" + clip_path + "." + property;
@@ -477,7 +483,7 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
         std::string nested_asset;
         const bool resolved = ResolveValueClip(
             clip_prim, property, ClipTime(set, at_time), loader, &nested,
-            &nested_asset, error, nullptr, cache, nullptr);
+            &nested_asset, error, nullptr, cache, nullptr, interpolation);
         cache->resolution_stack.pop_back();
         if (resolved) {
           if (asset_out)
@@ -538,10 +544,10 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
         // vectors, colors, matrices, quats, half, and their arrays) and HOLDS
         // (returns the earlier value) for non-interpolatable types or a
         // cross-clip type mismatch — exactly pxr's clip-value semantics.
-        value = LerpValue(v_lo, v_hi, alpha);
+        value = interpolation == TimeInterpolation::Held ? v_lo : LerpValue(v_lo, v_hi, alpha);
         asset = a_lo;
         if (resolution_info) {
-          resolution_info->interpolated_missing = true;
+          resolution_info->interpolated_missing = interpolation != TimeInterpolation::Held;
           resolution_info->lower_asset = a_lo;
           resolution_info->upper_asset = a_hi;
           resolution_info->lower_stage_time = t_lo;

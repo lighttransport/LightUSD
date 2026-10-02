@@ -1,3 +1,6 @@
+import { workerPayloadBytes, monitorWorker } from './worker-policy.js';
+import { localizeProjectDependencies } from './dependency-localization.js';
+import { composeProject } from './composition.js';
 import { LuciaError, decoder, encoder, escapeRegExp, validIdentifier, validPrimPath } from './utils.js';
 import { recomputeVertexTangents } from './tangent-recompute.js';
 import { projectUVs } from './uv-projection.js';
@@ -78,7 +81,16 @@ export function normalizeOperationProgressCallback(onProgress, fallbackMessage =
 }
 
 export function postWorkerMessage(owner, worker, data, transfer, reject, code) {
-  try { worker.postMessage(data, transfer); }
+  try {
+    workerPayloadBytes(data, owner.workerOptions?.maxBytes);
+    if (!monitorWorker(owner, worker, reject, owner.workerOptions)) return;
+    worker.onmessageerror = () => {
+      if (owner.worker !== worker) return;
+      owner.worker = null; owner.workerReject = null; worker.terminate();
+      reject(new LuciaError(code, 'Worker returned an unreadable result.'));
+    };
+    worker.postMessage(data, [...new Set(transfer)]);
+  }
   catch (error) {
     if (owner.worker === worker) { owner.worker = null; owner.workerReject = null; }
     worker.terminate();
@@ -329,6 +341,11 @@ export function transferXatlasMaterialGroups(groups, sourceIndices, resultIndice
 
 export class LuciaOperations {
   constructor(session, project, renderBridge) { this.session = session; this.project = project; this.renderBridge = renderBridge; this.worker = null; this.workerReject = null; this.lastStats = null; }
+  setWorkerOptions(options = {}) {
+    workerPayloadBytes(null, options.maxBytes);
+    if (options.timeoutMs != null && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > 600000)) throw new LuciaError('LUCIA_WORKER_TIMEOUT', 'Invalid worker timeout.');
+    this.workerOptions = { ...options };
+  }
   setUVSeamLockPolicy(value) { if (typeof value !== 'boolean') throw new LuciaError('LUCIA_RETOPO_SEAMS', 'lockUVSeams must be boolean.'); this.lockUVSeamsPolicy = value; return value; }
 
   async extractSelectedToReference(path, assetPath = null) {
@@ -351,16 +368,13 @@ export class LuciaOperations {
     if (typeof path !== 'string' || !path.startsWith('/') || path === '/') throw new LuciaError('LUCIA_FLATTEN_PATH', 'Flatten requires a non-root USD prim path.');
     const source = this.session.usda, block = findPrimBlock(source, path);
     if (!block) throw new LuciaError('LUCIA_FLATTEN_PATH', `Prim not found: ${path}.`);
-    const declarationStart = source.lastIndexOf('\n', block.open) + 1, declaration = source.slice(declarationStart, block.open), reference = declaration.match(/@([^@]+\.usda)@/i);
-    if (!reference) throw new LuciaError('LUCIA_FLATTEN_REFERENCE', `Selected prim has no package-local USDA reference: ${path}.`);
-    const assetPath = reference[1], asset = this.project.assets.get(assetPath), bytes = asset?.bytes;
-    if (!/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9_./-]+\.usda$/i.test(assetPath) || assetPath.includes('\\') || assetPath.includes('//')) throw new LuciaError('LUCIA_FLATTEN_REFERENCE', `Reference is not a safe package-relative USDA path: ${assetPath}.`);
-    if (!bytes || !(bytes instanceof Uint8Array)) throw new LuciaError('LUCIA_FLATTEN_ASSET', `Referenced USDA layer is not loaded: ${assetPath}.`);
-    const layer = decoder.decode(bytes), name = path.split('/').at(-1), layerBlock = findPrimBlock(layer, `/${name}`);
-    if (!layerBlock) throw new LuciaError('LUCIA_FLATTEN_LAYER', `Referenced layer does not contain root prim ${name}.`);
-    const layerDeclarationStart = layer.lastIndexOf('\n', layerBlock.open) + 1, flattened = layer.slice(layerDeclarationStart, layerBlock.close + 1);
-    return this.session.replaceUSDA(`${source.slice(0, declarationStart)}${flattened}${source.slice(block.close + 1)}`, `Flatten ${path} from ${assetPath}`);
+    const flattenedSource = await composeProject(source, this.project.assets, { resolveAsset: this.project.resolveAsset });
+    const composed = findPrimBlock(flattenedSource, path);
+    if (!composed) throw new LuciaError('LUCIA_FLATTEN_LAYER', `Composed prim does not exist: ${path}.`);
+    const flattened = flattenedSource.slice(composed.declarationStart, composed.close + 1);
+    return this.session.replaceUSDA(`${source.slice(0, block.declarationStart)}${flattened}${source.slice(block.close + 1)}`, `Flatten ${path}`);
   }
+
   textureReferences() {
     const refs = [], re = /@([^@]+)@/g; let match;
     while ((match = re.exec(this.session.usda))) {
@@ -382,18 +396,16 @@ export class LuciaOperations {
     return previous;
   }
   async localizeDependencies(mapping) {
-    const result = localizeUSDDependencies(this.session.usda, mapping), entries = result.mappings;
-    if (!result.changed) throw new LuciaError('LUCIA_DEPENDENCY_LOCALIZATION_NOOP', 'No exact USD asset references matched the requested localization map.');
-    const sourcePaths = new Set(entries.map(({ from }) => from));
-    for (const { to } of entries) if (this.project.assets.has(to) && !sourcePaths.has(to)) throw new LuciaError('LUCIA_ASSET_COLLISION', `An asset already exists at ${to}.`);
-    const previous = await this.session.replaceUSDA(result.source, `Localize ${result.changed} USD dependenc${result.changed === 1 ? 'y' : 'ies'}`);
-    const originalAssets = this.project.assets, localizedAssets = new Map(originalAssets);
-    for (const { from } of entries) localizedAssets.delete(from);
-    for (const { from, to } of entries) if (originalAssets.has(from)) localizedAssets.set(to, originalAssets.get(from));
-    this.project.assets = localizedAssets;
-    for (const { from, to } of entries) this.project.exportRemap[from] = to;
-    return previous;
+    const result = await localizeProjectDependencies(this.session.usda, this.project.assets, mapping, this.project.resolveAsset);
+    const originalAssets = this.project.assets;
+    this.project.assets = result.assets;
+    try {
+      const previous = await this.session.replaceUSDA(result.source, `Localize ${result.changed} USD dependencies`);
+      for (const { from, to } of result.mappings) this.project.exportRemap[from] = to;
+      return previous;
+    } catch (error) { this.project.assets = originalAssets; throw error; }
   }
+
   async packChannels({ name = 'textures/packed.png', channels = {}, outputChannels = 4, colorSpace = 'linear' } = {}) {
     if (typeof name !== 'string' || !/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9_./-]+\.png$/i.test(name) || name.includes('\\') || name.includes('//')) throw new LuciaError('LUCIA_ASSET_PATH', 'Packed texture output must be a safe package-relative .png path.');
     if (this.project.assets.has(name)) throw new LuciaError('LUCIA_ASSET_COLLISION', `An asset already exists at ${name}.`);
@@ -544,14 +556,41 @@ export class LuciaOperations {
     onProgress?.({ percentage: 100, message: `${result.before} → ${result.after} triangles` });
     return previous;
   }
+  async analyzeRigPoses(path, poses, onProgress) {
+    const object = this.renderBridge.objectForPath(path), mesh = object?.isMesh ? object : object?.getObjectByProperty?.('isMesh', true);
+    const geometry = mesh?.geometry;
+    validateGeometryData(geometry);
+    const positions = new Float32Array(geometry.attributes.position.array), skinIndices = geometry.attributes.skinIndex?.array?.slice(), skinWeights = geometry.attributes.skinWeight?.array?.slice();
+    if (!skinIndices || !skinWeights) throw new LuciaError('LUCIA_RIG_POSES', 'Pose diagnostics require skin indices and weights.');
+    const data = { type: 'poses', positions, skinIndices, skinWeights, poses };
+    workerPayloadBytes(data, this.workerOptions?.maxBytes);
+    onProgress?.({ percentage: 0, message: 'Analyzing sampled rig poses…' });
+    const result = await new Promise((resolve, reject) => {
+      this.cancel(); this.workerReject = reject;
+      const worker = this.worker = new Worker(new URL('./rig-worker.js', import.meta.url), { type: 'module' });
+      const finish = () => { if (this.worker === worker) this.releaseWorker(); };
+      worker.onerror = event => { finish(); reject(new LuciaError('LUCIA_RIG_POSES', event.message)); };
+      worker.onmessage = ({ data }) => {
+        if (this.worker !== worker) return;
+        finish(); data.type === 'result' ? resolve(data.result) : reject(new LuciaError('LUCIA_RIG_POSES', data.message || 'Rig analysis failed.'));
+      };
+      postWorkerMessage(this, worker, data, [positions.buffer, skinIndices.buffer, skinWeights.buffer], reject, 'LUCIA_RIG_POSES');
+    });
+    onProgress?.({ percentage: 100, message: 'Rig pose analysis complete' });
+    return result;
+  }
+
   async generateLODChain(path, options = {}, onProgress) {
     onProgress = normalizeOperationProgressCallback(onProgress, 'Generating LODs…');
-    const { ratios = [.5, .25, .125], targetError = 0, lockBorder = true, lockUVSeams = this.lockUVSeamsPolicy ?? true } = options;
+    const { authorVariants = false, ratios = [.5, .25, .125], targetError = 0, lockBorder = true, lockUVSeams = this.lockUVSeamsPolicy ?? true } = options;
+    if (typeof authorVariants !== 'boolean') throw new LuciaError('LUCIA_LOD_VARIANT', 'authorVariants must be boolean.');
     if (typeof lockBorder !== 'boolean') throw new LuciaError('LUCIA_LOD_BORDER', 'lockBorder must be boolean.');
     if (typeof lockUVSeams !== 'boolean') throw new LuciaError('LUCIA_LOD_SEAMS', 'lockUVSeams must be boolean.');
     const requested = Array.isArray(ratios) ? ratios : [ratios];
     const levels = [...new Set(requested.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0 && value < 1))].sort((a, b) => b - a);
     if (!levels.length) throw new LuciaError('LUCIA_LOD_TARGET', 'LOD ratios must contain at least one value between 0 and 1.');
+    if (levels.length > 15) throw new LuciaError('LUCIA_LOD_TARGET', 'A LOD chain supports at most 15 generated levels.');
+    if (authorVariants && path.lastIndexOf('/') <= 0) throw new LuciaError('LUCIA_LOD_VARIANT', 'LOD selectors require a mesh inside a named parent prim.');
     const generated = [];
     for (let i = 0; i < levels.length; i++) {
       const ratio = levels[i];
@@ -564,6 +603,10 @@ export class LuciaOperations {
       const name = `${base}_LOD${i + 1}`;
       await this.session.setMeshGeometrySibling(path, name, generated[i], `Create ${name} from ${path}`);
       onProgress?.({ percentage: 70 + Math.round((i + 1) / generated.length * 30), message: `Authored ${name} (${generated[i].after} triangles)` });
+    }
+    if (authorVariants) {
+      const parent = path.slice(0, path.lastIndexOf('/'));
+      await this.session.setLODVariants([path, ...generated.map((_, index) => `${parent}/${base}_LOD${index + 1}`)]);
     }
     this.lastStats = { kind: 'lod-chain', levels: generated.map((result, index) => ({ name: `${base}_LOD${index + 1}`, ratio: levels[index], beforeTriangles: result.before, afterTriangles: result.after, normalizedError: result.error || 0 })) };
     return initial;

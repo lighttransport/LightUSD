@@ -485,7 +485,7 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
     kv(DictMetaLine("assetInfo", m->assetInfo, md, opts));
   if (m->authored & PropMeta::kSdrMetadata)
     kv(DictMetaLine("sdrMetadata", m->sdrMetadata, md, opts));
-  if (m->authored & PropMeta::kUnknownMeta) {
+  if (!m->unknownMeta.empty()) {
     for (const auto& um : m->unknownMeta) {
       kv(um.first + " = " + um.second);  // verbatim raw source text
     }

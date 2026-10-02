@@ -713,6 +713,15 @@ Relative class-arc targets (`inherits = <../_Y>`) now resolve against the author
 
 The native legacy USDA parser/round-trip pair was also rerun after placing the two new regressions under `tests/next/fixtures` rather than widening the shared legacy corpus. It still reports the four pre-existing unexpected files (`aousd-namespace-order.usda`, `aousd-unknown-property-metadata.usda`, `rel-inherits-none-001.usda`, and `token-string-escapes.usda`); neither new next-only fixture appears in that failure set.
 
+A later rebuild of the current legacy library confirms that
+`rel-inherits-none-001.usda` and its Pixar-authored USDC counterpart retain both
+`inherits = None` and `rel r = None` and compare equal to Pixar. The old binary
+used for the earlier comparison predates that preservation fix. Empty `[]`
+list-op spelling is also semantically equivalent to `None` under AOUSD; the
+comparator now recognizes that equivalence without accepting an unassigned
+relationship or an attribute value block as an empty list. The native
+`usdc_reader_prim_metadata_roundtrip_test` covers both spellings.
+
 The corpus-labelled gate also passed:
 
 ```text
@@ -808,3 +817,24 @@ At minimum add named tests for:
 LightUSD `next` is already credible as a bounded, portable USD ingestion and rendering foundation, especially for controlled content profiles. Its USDZ writer, broad Crate machinery, composition graph work, diagnostics, and Tydra conversion coverage are notable strengths.
 
 For arbitrary AOUSD Core 1.0.1 content, the current implementation remains **profile-based, not fully conformant**. The renewed passes closed the reviewed defaultPrim-reference and authored-empty defaultPrim, population/order, AOUSD Core generated schemas, generated elective-field inventory, expression asset paths, `apiSchemas`/`variantSetNames` authored sublists, compression-bit, interpolation, relationship-forwarding, documentation/dictionary/color fields, reviewed specifier matrices, ancestry/model queries, explicit-empty relationship/API-schema, and strict all-spec-scope field-loss gaps. The supplemental composition delta is now closed as well (138/138; per-layer-stack relocates, prefix-map sets, ancestral arc targets, and full implied-class chains). The measured critical path is now direct sampled-value oracle comparison, non-core OpenUSD schema breadth, the general variable-expression function language, and registry-driven cross-site composition for unregistered list-op fields.
+
+### Sampled-value differential follow-up
+
+The pinned supplemental expected-value assertions are now paired with a
+304-query OpenUSD differential grid: DefaultTime, exact/intermediate samples,
+held/linear interpolation, out-of-range times, and clip transition neighbors.
+This found and fixed held interpolation being replaced by linear interpolation
+inside clips, including nested clips and interpolation of missing clip values.
+Six clip-timing queries retain the pinned AOUSD corpus's expected extrapolation
+instead of OpenUSD's clamping and are reported as explicit oracle differences.
+The grid has zero unexpected mismatches. This is targeted sample coverage,
+not an exhaustive conformance claim.
+
+The generated elective-field inventory also drives 30 authored-state cases
+through USDA and USDC; typed empty/default metadata must remain different from
+an absent opinion. Structural type and namespace-order cases remain in their
+existing specialized matrices.
+Unknown-metadata coverage adds 39 accepted raw opinions and 15 rejected qualified
+layer spellings. It caught lost `add` qualifiers in prim/variant metadata and an
+inferred variant-set list incorrectly encoded as explicit in USDC; both now
+preserve their authored/composable form.

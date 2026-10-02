@@ -109,6 +109,14 @@ assets have a 256 MiB limit; the 128 MiB undo-history budget includes texture
 snapshots. An edit too large to remain undoable is rejected and rolled back.
 Unchanged texture snapshots share storage across edits; an in-place byte change
 creates a separate snapshot, preserving previous undo states.
+Independently allocated equal assets share immutable history storage too;
+restoring an asset creates separate mutable bytes. Scene history stores changed
+USDA intervals with SHA-256 checks rather than two complete stage strings.
+Distant edits on aligned lines retain separate intervals, bounded to 256 edits;
+changed line structure uses a lossless single-interval fallback.
+Transform and visibility edits use next-core typed attributes, with explicit
+custom/uniform flags and double-precision translation values. Other processors
+still use validated USDA reconstruction.
 Independent export-time stitching and assistant tools are not part of this UI.
 
 Scene replacement cancels active workers and waits for edit rollback. The latest
@@ -116,8 +124,30 @@ Open or New Project request supersedes earlier file reads. Editing, history,
 export, and UDIM viewport previews share a session activity gate, preventing
 overlapping native authoring and viewport conversion.
 
+Health geometry analysis runs in a disposable worker with a 256 MiB input
+budget and a 60-second deadline. Scene replacement or inspector navigation
+cancels pending analysis; revision checks reject stale reports. Export refreshes
+its report before evaluating quality gates. Unindexed face-varying UVs and
+custom primvars retain corner identity; malformed indices fail before editing.
+USD Doctor scans nested package layers using assignment-aware dependency kinds.
+Binary layers require a host-supplied decoded USDA view through `layerSources`;
+otherwise Doctor reports the inspection gap explicitly.
+
 Run `npm run test:lucia:performance` from `web/js` to measure undo retention and
 two 1024-pixel UDIM tiles. The Lucia browser smoke test also reports import and
 viewport rebuild times for a 131072-triangle grid. These workloads assert
 buffer sharing, transfer counts, and geometry counts rather than machine-specific
 timing thresholds.
+
+Local project saves use the **Save locally** and **Open saved** header controls.
+They keep the current USD and asset bytes in IndexedDB on this browser origin,
+verify content hashes on recovery, and replace old unreferenced blobs atomically.
+**Clear history** releases retained undo/redo states without changing the scene.
+Saving a project does not export a portable file; use Export to share it.
+
+LOD generation offers an optional selector variant set for sibling meshes.
+Authored local visibility conflicts must be resolved before enabling the selector.
+Host integrations can register an asynchronous asset resolver with
+`LuciaProject.setAssetResolver()` for native composition and explicit localization.
+Archival output requires recorded source provenance. Printing output requires
+verified wall-thickness evidence; topology readiness alone cannot certify it.

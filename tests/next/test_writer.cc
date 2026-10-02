@@ -1414,10 +1414,55 @@ def Scope "V"
   std::cout << "  usda audit roundtrip (wave 2) passed!\n\n";
 }
 
+void test_authored_empty_property_metadata_matrix() {
+  const char* fields[] = {
+      "allowedTokens = []", "customData = {}", "assetInfo = {}",
+      "sdrMetadata = {}", "displayName = \"\"", "displayGroup = \"\"",
+      "doc = \"\"", "hidden = false", "elementSize = 1",
+      "unauthoredValuesIndex = -1"};
+  for (const char* field : fields) {
+    for (const char* declaration : {"token value = \"x\"", "rel target = </P>"}) {
+      const std::string source = std::string("#usda 1.0\ndef Xform \"P\" {\n") +
+          declaration + " ( " + field + " )\n}\n";
+      LoadResult loaded = LoadUSDAFromString(source.data(), source.size());
+      assert(loaded.success);
+      const auto normalized = [](std::string text) {
+        text.erase(std::remove_if(text.begin(), text.end(), [](char c) {
+          return c == ' ' || c == '\n' || c == '\r' || c == '\t';
+        }), text.end());
+        return text;
+      };
+      assert(contains(normalized(WriteUSDAToString(loaded.stage)), normalized(field)));
+      std::vector<uint8_t> bytes;
+      assert(WriteUSDCToMemory(bytes, loaded.stage).success);
+      USDCLoadResult reread = LoadUSDCFromMemory(bytes.data(), bytes.size());
+      assert(reread.success);
+      assert(contains(normalized(WriteUSDAToString(reread.stage)), normalized(field)));
+    }
+  }
+  // Use a layer directly to exercise programmatic metadata without authored
+  // bits; extension storage itself is an authored opinion.
+  Layer layer;
+  LayerBuilder builder(layer);
+  builder.begin_prim("P", "Xform");
+  builder.add_property("value", Value(1.0f));
+  builder.end_prim();
+  PropMeta& meta = layer.prim(0)->ensure_property_meta("value");
+  meta.unknownMeta.emplace_back("pipelineHint", "\"retained\"");
+  assert(!meta.empty());
+  assert(contains(WriteLayerToString(layer), "pipelineHint = \"retained\""));
+  std::vector<uint8_t> bytes;
+  assert(WriteLayerToUSDCMemory(bytes, layer).success);
+  USDCLoadResult reread = LoadUSDCFromMemory(bytes.data(), bytes.size());
+  assert(reread.success);
+  assert(contains(WriteUSDAToString(reread.stage), "pipelineHint = \"retained\""));
+}
+
 int main() {
   std::cout << "=== LightUSD Next Writer Tests ===\n\n";
 
   try {
+    test_authored_empty_property_metadata_matrix();
     test_value_printer();
     test_hot_array_formatting_parity();
     test_array_range_split_parity();

@@ -1117,6 +1117,37 @@ void ReleaseSourceMeshStaticArrays(Stage& stage, const UsdPrim& mesh_prim) {
 
 
 
+namespace {
+void NormalizeConversionDiagnostics(std::vector<ConversionDiagnostic>* diagnostics) {
+  std::sort(diagnostics->begin(), diagnostics->end(),
+            [](const ConversionDiagnostic& a, const ConversionDiagnostic& b) {
+    if (a.prim_path != b.prim_path) return a.prim_path < b.prim_path;
+    if (a.disposition != b.disposition) return a.disposition < b.disposition;
+    return a.message < b.message;
+  });
+}
+void AppendDegradationDiagnostics(RenderScene* scene) {
+  for (const auto& unsupported : scene->unsupported_renderables) {
+    scene->conversion_diagnostics.push_back({
+        ConversionDisposition::PreservedUnsupported, unsupported.prim_path,
+        unsupported.reason});
+  }
+  for (const auto& material : scene->materials) {
+    if (material.default_fallback && material.diagnostics.empty()) {
+      scene->conversion_diagnostics.push_back({
+          ConversionDisposition::Approximated, material.prim_path,
+          "material uses a fallback surface"});
+    }
+    for (const auto& diagnostic : material.diagnostics) {
+      scene->conversion_diagnostics.push_back({
+          material.default_fallback ? ConversionDisposition::Approximated
+                                    : ConversionDisposition::PreservedUnsupported,
+          material.prim_path, diagnostic.message});
+    }
+  }
+}
+}  // namespace
+
 StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
                                                         SceneSink* sink) {
   StreamConvertResult result;
@@ -1266,6 +1297,8 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
       catalog.materials.push_back(std::move(material));
     } else {
       AddWarning("Failed to convert material: " + rec.path);
+      catalog.conversion_diagnostics.push_back({ConversionDisposition::Failed,
+                                               rec.path, "material conversion failed"});
     }
   }
 
@@ -1281,7 +1314,12 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
 
   for (const RenderPrimRecord& rec : extracted.lights) {
     RenderLight light;
-    if (!ConvertLight(stage, rec.prim, &light)) continue;
+    if (!ConvertLight(stage, rec.prim, &light)) {
+      AddWarning("Failed to convert light: " + rec.path);
+      catalog.conversion_diagnostics.push_back({ConversionDisposition::Failed,
+                                               rec.path, "light conversion failed"});
+      continue;
+    }
     for (int i = 0; i < 16; ++i) light.transform.m[i] = float(rec.world[i]);
     if (light.type == LightType::Dome) {
       std::string texture;
@@ -1347,7 +1385,8 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
   for (const RenderPrimRecord& rec : extracted.point_instancers) {
     RenderPointInstancer instancer;
     if (!ConvertPointInstancer(rec.prim, &instancer)) {
-      AddWarning("Failed to convert PointInstancer: " + rec.path);
+      AddConversionWarning(rec.path, "Failed to convert PointInstancer: " + rec.path,
+                           ConversionDisposition::Failed);
       continue;
     }
     const int32_t id = static_cast<int32_t>(catalog.point_instancers.size());
@@ -1377,6 +1416,17 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
     result.warnings = std::move(warnings_);
     return result;
   }
+  AppendDegradationDiagnostics(&catalog);
+  catalog.conversion_diagnostics.insert(catalog.conversion_diagnostics.end(),
+      conversion_diagnostics_.begin(), conversion_diagnostics_.end());
+  conversion_diagnostics_.clear();
+  NormalizeConversionDiagnostics(&catalog.conversion_diagnostics);
+  result.conversion_diagnostics = catalog.conversion_diagnostics;
+  if (config_.strict_conversion && !warnings_.empty()) {
+    result.error = "strict render conversion rejected warnings: " + warnings_.front();
+    result.warnings = std::move(warnings_);
+    return result;
+  }
   if (!sink->BeginScene(std::move(catalog))) {
     result.status = ::lightusd::next::OperationStatus::SinkRejected;
     result.error = "scene sink rejected catalog";
@@ -1387,7 +1437,14 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
   // payload is decoded; category lists reference the single owned records.
   extracted.release_records();
 
+  const auto capture_diagnostics = [&]() {
+    result.conversion_diagnostics.insert(result.conversion_diagnostics.end(),
+        conversion_diagnostics_.begin(), conversion_diagnostics_.end());
+    conversion_diagnostics_.clear();
+    NormalizeConversionDiagnostics(&result.conversion_diagnostics);
+  };
   const auto abort = [&](const std::string& error, bool cancelled) {
+    capture_diagnostics();
     sink->AbortScene();
     result.status = cancelled
                         ? ::lightusd::next::OperationStatus::Cancelled
@@ -1425,8 +1482,9 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
       converted = ConvertRenderableMesh(stage, prim, &mesh);
     }
     if (!converted || mesh.has_alloc_failure()) {
-      AddWarning("Failed to convert renderable mesh prim: " +
-                          prim.GetPath().str());
+      AddConversionWarning(prim.GetPath().str(),
+          "Failed to convert renderable mesh prim: " + prim.GetPath().str(),
+          ConversionDisposition::Failed);
       continue;
     }
     if (!config_.mesh.retain_geometry) {
@@ -1472,8 +1530,8 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
     RenderPoints points;
     if (ConvertPoints(stage, rec.prim, &points)) {
       if (points.has_alloc_failure()) {
-        AddWarning("Out of memory converting Points '" + rec.path +
-                            "'; the prim was skipped");
+        AddConversionWarning(rec.path, "Out of memory converting Points '" + rec.path +
+                            "'; the prim was skipped", ConversionDisposition::Failed);
         ++points_id;
         continue;
       }
@@ -1486,6 +1544,9 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
         return result;
       }
       ++result.point_count;
+    } else {
+      AddConversionWarning(rec.path, "Failed to convert Points: " + rec.path,
+                           ConversionDisposition::Failed);
     }
     ++points_id;
   }
@@ -1511,10 +1572,16 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
       continue;
     }
     RenderCurves curves;
-    if (!ConvertCurves(extracted.curves[i].prim, &curves)) continue;
+    if (!ConvertCurves(extracted.curves[i].prim, &curves)) {
+      AddConversionWarning(extracted.curves[i].path,
+          "Failed to convert curves prim: " + extracted.curves[i].path,
+          ConversionDisposition::Failed);
+      continue;
+    }
     if (curves.has_alloc_failure()) {
-      AddWarning("Out of memory converting curves '" +
-                          extracted.curves[i].path + "'; the prim was skipped");
+      AddConversionWarning(extracted.curves[i].path, "Out of memory converting curves '" +
+                          extracted.curves[i].path + "'; the prim was skipped",
+                          ConversionDisposition::Failed);
       continue;
     }
     if (!config_.mesh.retain_geometry) {
@@ -1542,6 +1609,15 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
   RenderExtractResult::release_list(&extracted.cameras);
   extracted.release_storage();
 
+  if (config_.strict_conversion && !warnings_.empty()) {
+    sink->AbortScene();
+    capture_diagnostics();
+    result.status = ::lightusd::next::OperationStatus::InvalidData;
+    result.error = "strict render conversion rejected warnings: " + warnings_.front();
+    result.warnings = std::move(warnings_);
+    return result;
+  }
+  capture_diagnostics();
   if (!sink->EndScene()) {
     abort("scene sink failed to finalize", false);
     return result;
@@ -1603,12 +1679,21 @@ bool RenderSceneConverter::Impl::BudgetWouldExceed(size_t estimate,
 
 void RenderSceneConverter::Impl::ResetOperationState() {
   warnings_.clear();
+  conversion_diagnostics_.clear();
   budget_accounted_bytes_ = 0;
   budget_exceeded_ = false;
 }
 
 void RenderSceneConverter::Impl::AddWarning(std::string msg) {
   ConverterStateLock lk(state_mu_);
+  warnings_.push_back(std::move(msg));
+}
+
+void RenderSceneConverter::Impl::AddConversionWarning(
+    const std::string& path, std::string msg,
+    ConversionDisposition disposition) {
+  ConverterStateLock lk(state_mu_);
+  conversion_diagnostics_.push_back({disposition, path, msg});
   warnings_.push_back(std::move(msg));
 }
 
@@ -1895,6 +1980,8 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
         }
         AddWarning("Failed to convert renderable mesh prim: " +
                             extracted.meshes[mi].prim.GetPath().str());
+        result.scene.conversion_diagnostics.push_back({ConversionDisposition::Failed,
+            extracted.meshes[mi].prim.GetPath().str(), "mesh conversion failed"});
         continue;
       }
       if (config_.progress_callback) {
@@ -1910,9 +1997,9 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
       RenderMesh& mesh = mesh_out[mi];
       if (mesh.has_alloc_failure()) {
         // ConvertGeomPrimitive does not run ConvertMesh's alloc check.
-        AddWarning("Out of memory converting prim '" +
+        AddConversionWarning(mesh_prim.GetPath().str(), "Out of memory converting prim '" +
                             mesh_prim.GetPath().str() +
-                            "'; the prim was skipped");
+                            "'; the prim was skipped", ConversionDisposition::Failed);
         continue;
       }
       const bool analytic = mesh_prim.GetTypeName() != "Mesh";
@@ -1955,8 +2042,8 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
         RenderPoints& points = points_out[bi];
         if (points_ok[bi]) {
           if (points.has_alloc_failure()) {
-            AddWarning("Out of memory converting Points '" + rec.path +
-                                "'; the prim was skipped");
+            AddConversionWarning(rec.path, "Out of memory converting Points '" + rec.path +
+                                "'; the prim was skipped", ConversionDisposition::Failed);
             continue;
           }
           int32_t points_id = static_cast<int32_t>(result.scene.points.size());
@@ -1965,7 +2052,8 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
           result.scene.points.push_back(std::move(points));
           AssignNodeDataId(&result.scene, rec.path, points_id);
         } else {
-          AddWarning("Failed to convert Points: " + rec.path);
+          AddConversionWarning(rec.path, "Failed to convert Points: " + rec.path,
+                               ConversionDisposition::Failed);
         }
       }
     }
@@ -1984,8 +2072,8 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
         RenderCurves& curves = curves_out[bi];
         if (curves_ok[bi]) {
           if (curves.has_alloc_failure()) {
-            AddWarning("Out of memory converting curves '" + rec.path +
-                                "'; the prim was skipped");
+            AddConversionWarning(rec.path, "Out of memory converting curves '" + rec.path +
+                                "'; the prim was skipped", ConversionDisposition::Failed);
             continue;
           }
           int32_t curves_id = static_cast<int32_t>(result.scene.curves.size());
@@ -1994,7 +2082,8 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
           result.scene.curves.push_back(std::move(curves));
           AssignNodeDataId(&result.scene, rec.path, curves_id);
         } else {
-          AddWarning("Failed to convert curves prim: " + rec.path);
+          AddConversionWarning(rec.path, "Failed to convert curves prim: " + rec.path,
+                               ConversionDisposition::Failed);
         }
       }
     }
@@ -2021,7 +2110,8 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
         const auto& rec = extracted.point_instancers[batch_start + bi];
         RenderPointInstancer& instancer = batch_inst[bi];
         if (!batch_ok[bi]) {
-          AddWarning("Failed to convert PointInstancer: " + rec.path);
+          AddConversionWarning(rec.path, "Failed to convert PointInstancer: " + rec.path,
+                               ConversionDisposition::Failed);
           continue;
         }
         int32_t instancer_id =
@@ -2179,6 +2269,8 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
           result.scene.materials.push_back(std::move(material));
         } else {
           AddWarning("Failed to convert material: " + mat_prim.GetPath().str());
+          result.scene.conversion_diagnostics.push_back({ConversionDisposition::Failed,
+              mat_prim.GetPath().str(), "material conversion failed"});
         }
       }
     }
@@ -2223,7 +2315,13 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
                            &batch_light[bi]) ? 1 : 0;
       });
       for (size_t bi = 0; bi < n; ++bi) {
-        if (!batch_ok[bi]) continue;
+        if (!batch_ok[bi]) {
+          const auto& failed = extracted.lights[batch_start + bi];
+          AddWarning("Failed to convert light: " + failed.path);
+          result.scene.conversion_diagnostics.push_back({ConversionDisposition::Failed,
+                                                        failed.path, "light conversion failed"});
+          continue;
+        }
         const auto& rec = extracted.lights[batch_start + bi];
         RenderLight& light = batch_light[bi];
         for (int i = 0; i < 16; ++i) {
@@ -2410,6 +2508,16 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
     ResolveLightLinking(stage, &result.scene);
     extracted.release_storage();
 
+    AppendDegradationDiagnostics(&result.scene);
+    result.scene.conversion_diagnostics.insert(result.scene.conversion_diagnostics.end(),
+        conversion_diagnostics_.begin(), conversion_diagnostics_.end());
+    NormalizeConversionDiagnostics(&result.scene.conversion_diagnostics);
+    if (config_.strict_conversion && !warnings_.empty()) {
+      result.status = ::lightusd::next::OperationStatus::InvalidData;
+      result.error = "strict render conversion rejected warnings: " + warnings_.front();
+      result.warnings = std::move(warnings_);
+      return result;
+    }
     if (result.scene.memory_usage() > config_.limits.max_resident_bytes) {
       result.status = ::lightusd::next::OperationStatus::ResourceLimit;
       result.error = "converted render scene exceeds resident memory limit";

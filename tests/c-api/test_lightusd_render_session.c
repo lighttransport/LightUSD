@@ -538,7 +538,35 @@ static void test_resource_budget(void) {
   assert(lightusd_texture_fit_threshold(&old_fit, gib, NULL) == LIGHTUSD_ERR_INVALID_ARG);
 }
 
+static void test_conversion_diagnostics(void) {
+  const char source[] = "#usda 1.0\ndef Volume \"V\" {}\n";
+  lightusd_stage* stage = NULL;
+  assert(lightusd_stage_load_from_memory((const uint8_t*)source,
+      sizeof(source) - 1, NULL, &stage) == LIGHTUSD_OK);
+  lightusd_render_config config;
+  lightusd_render_config_init(&config);
+  lightusd_render_scene* scene = NULL;
+  assert(lightusd_render_convert(stage, &config, &scene) == LIGHTUSD_OK);
+  assert(lightusd_render_conversion_diagnostic_count(scene) == 1);
+  lightusd_render_conversion_diagnostic diagnostic;
+  assert(lightusd_render_conversion_diagnostic_get(scene, 0, &diagnostic) == LIGHTUSD_OK);
+  assert(diagnostic.disposition == LIGHTUSD_RENDER_PRESERVED_UNSUPPORTED);
+  assert(diagnostic.prim_path.len == 2 && memcmp(diagnostic.prim_path.data, "/V", 2) == 0);
+  assert(lightusd_render_conversion_diagnostic_get(scene, 1, &diagnostic) == LIGHTUSD_ERR_NOT_FOUND);
+  assert(lightusd_render_config_set_strict(&config, 2) == LIGHTUSD_ERR_INVALID_ARG);
+  assert(lightusd_render_config_set_strict(&config, 1) == LIGHTUSD_OK);
+  lightusd_render_scene_destroy(scene);
+  scene = NULL;
+  assert(lightusd_render_convert(stage, &config, &scene) != LIGHTUSD_OK);
+  assert(scene == NULL);
+  assert(lightusd_render_config_set_strict(&config, 0) == LIGHTUSD_OK);
+  assert(lightusd_render_convert(stage, &config, &scene) == LIGHTUSD_OK);
+  lightusd_render_scene_destroy(scene);
+  lightusd_stage_destroy(stage);
+}
+
 int main(void) {
+  test_conversion_diagnostics();
   test_resource_budget();
   test_converter_controls();
   test_clip_curve_query();

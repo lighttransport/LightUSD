@@ -2356,10 +2356,12 @@ test('target profiles evaluate deterministic advisory budgets', () => {
   assert.equal(print.pass, false);
   assert.deepEqual(print.checks.find((item) => item.id === 'watertight').affectedPaths, ['/World/Mesh']);
   const printable = { stage: { triangles: 1, estimatedGpuBytes: 1, meshes: 0, uvMeshes: 0, boundaryEdges: 0, nonManifoldEdges: 0 }, materials: [], textures: [] };
-  assert.equal(evaluateTargetProfile(printable, '3d-printing', { metersPerUnit: 1 }).pass, true);
+  assert.equal(evaluateTargetProfile(printable, '3d-printing', { metersPerUnit: 1 }).pass, false);
+  const verifiedPrintable = { ...printable, stage: { ...printable.stage, meshes: 1 }, meshes: [{ path: '/World/Mesh', physics: { wallThicknessMeters: .001, wallThicknessVerified: true } }] };
+  assert.equal(evaluateTargetProfile(verifiedPrintable, '3d-printing', { metersPerUnit: 1 }).pass, true);
   assert.equal(evaluateTargetProfile({ ...printable, textures: [{ width: 16384, height: 16384 }] }, '3d-printing', { metersPerUnit: 1 }).checks.some((item) => item.id === 'texture-dimension'), false);
   assert.equal(evaluateTargetProfile(printable, '3d-printing').checks.find((item) => item.id === 'physical-units').message, 'Physical-scale output requires a USD Doctor report before export.');
-  assert.equal(evaluateTargetProfile({ stage: { triangles: 1, estimatedGpuBytes: 1, meshes: 0, uvMeshes: 0 }, materials: [], textures: [] }, 'archival').pass, true);
+  assert.equal(evaluateTargetProfile({ stage: { triangles: 1, estimatedGpuBytes: 1, meshes: 0, uvMeshes: 0 }, materials: [], textures: [] }, 'archival').pass, false);
 });
 
 test('target profiles fail closed when the stage report is omitted', () => {
@@ -2729,6 +2731,8 @@ test('retopology operation rejects malformed seam policies', async () => {
   assert.throws(() => operations.setUVSeamLockPolicy('no'), /lockUVSeams must be boolean/);
   await assert.rejects(() => operations.retopo('/World/Mesh', { lockUVSeams: 'no' }), /lockUVSeams must be boolean/);
   await assert.rejects(() => operations.generateLODChain('/World/Mesh', { lockUVSeams: 'no' }), /lockUVSeams must be boolean/);
+  await assert.rejects(() => operations.generateLODChain('/Mesh', { authorVariants: true }), /named parent prim/);
+  await assert.rejects(() => operations.generateLODChain('/World/Mesh', { ratios: Array.from({ length: 16 }, (_, index) => (index + 1) / 17) }), /at most 15/);
 });
 
 test('retopology remaps lossless face-varying primvars and expands seams', () => {
@@ -3530,7 +3534,8 @@ test('mesh authoring normalizes finite normals and rejects zero vectors', async 
   assert.throws(() => normalizeMeshNormals(new Float32Array([0, 0, 0])), /non-zero finite vectors/);
   const session = new LuciaUsdSession(); session.usda = '#usda 1.0\ndef Mesh "M" {}\n'; session.replaceUSDA = async (source) => { session.usda = source; return source; };
   await session.setMeshGeometry('/M', { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]), normals: new Float32Array([0, 3, 4, 0, 0, 2, 1, 0, 0]) });
-  assert.match(session.usda, /normal3f\[\] normals[\s\S]*\(0, 0\.6000000[0-9]*, 0\.8000000[0-9]*\)/);
+  const components = session.usda.match(/normals = \[\(0, ([^,]+), ([^)]+)\)/);
+  assert.ok(Math.abs(Number(components[1]) - .6) < 1e-6); assert.ok(Math.abs(Number(components[2]) - .8) < 1e-6);
   await assert.rejects(() => session.setMeshGeometry('/M', { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]), normals: new Float32Array([0, 0, 0, 0, 0, 1, 1, 0, 0]) }), /non-zero finite vectors/);
 });
 
@@ -3720,9 +3725,9 @@ test('mesh authoring can target the separate lightmap UV set', async () => {
 test('mesh authoring writes vertex tangent directions and preserves handedness convention', async () => {
   const session = new LuciaUsdSession(); session.usda = '#usda 1.0\ndef Mesh "M" { }\n'; session.replaceUSDA = async (source) => { session.usda = source; return source; };
   await session.setMeshGeometry('/M', { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]), uvs: new Float32Array([0, 0, 1, 0, 0, 1]), tangents: new Float32Array([1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1]) });
-  assert.match(session.usda, /float3\[\] primvars:tangents/);
+  assert.match(session.usda, /float4\[\] primvars:tangents/);
   assert.match(session.usda, /interpolation = "vertex"/);
-  assert.match(session.usda, /\(1, 0, 0\)/);
+  assert.match(session.usda, /\(1, 0, 0, 1\)/);
 });
 
 test('mesh authoring invalidates stale tangents when no replacement is supplied', async () => {
@@ -3743,7 +3748,7 @@ test('mesh authoring removes stale indices for vertex primvars', async () => {
 test('mesh authoring writes face-varying normals and corner indices', async () => {
   const session = new LuciaUsdSession(); session.usda = '#usda 1.0\ndef Mesh "M" {}\n'; session.replaceUSDA = async (source) => { session.usda = source; return source; };
   await session.setMeshGeometry('/M', { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]), normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]), normalIndices: new Uint32Array([0, 1, 2]) });
-  assert.match(session.usda, /normal3f\[\] normals = \[\(0, 0, 1\), \(0, 0, 1\), \(0, 0, 1\)\] \( interpolation = "faceVarying" \)/);
+  assert.match(session.usda, /normal3f\[\] normals = \[\(0, 0, 1\), \(0, 0, 1\), \(0, 0, 1\)\] \(\s*interpolation = "faceVarying"\s*\)/);
   assert.match(session.usda, /int\[\] normals:indices = \[0, 1, 2\]/);
 });
 
@@ -4478,12 +4483,12 @@ test('extract selected nested subtree preserves quoted braces and children', asy
 });
 
 test('flatten selected package reference restores the USDA subtree', async () => {
-  const layer = '#usda 1.0\ndef Mesh "Hero" {\n    string note = "restored"\n}\n';
+  const layer = '#usda 1.0\n(defaultPrim = "Hero")\ndef Mesh "Hero" {\n    string note = "restored"\n}\n';
   const session = { usda: '#usda 1.0\ndef Xform "World" {\n    def Mesh "Hero" ( references = @layers/hero.usda@ ) { }\n}\n', replaceUSDA: async function (source) { this.usda = source; return source; } };
   const project = { assets: new Map([['layers/hero.usda', { bytes: new TextEncoder().encode(layer) }]]) }, operations = new LuciaOperations(session, project, {});
   await operations.flattenSelectedReference('/World/Hero');
-  assert.match(session.usda, /def Mesh "Hero" \{\n    string note = "restored"\n\}/);
-  await assert.rejects(() => operations.flattenSelectedReference('/World/Hero'), /no package-local USDA reference/);
+  assert.match(session.usda, /def Mesh "Hero"\s*\{\s*string note = "restored"\s*\}/);
+  const flattened = session.usda; await operations.flattenSelectedReference('/World/Hero'); assert.equal(session.usda, flattened);
 });
 
 test('flatten selected reference rejects resolver and traversal paths', async () => {
@@ -4962,7 +4967,7 @@ test('asset report uses bounded exact matching for large duplicate geometry', ()
 test('USD Doctor classifies available composition dependencies', () => {
   const source = '#usda 1.0\n( defaultPrim = "World" )\ndef Xform "World" { references = @base.usda@ payload = @payload.usdc@ subLayers = [@layer.usda@] }';
   const asset = { bytes: new Uint8Array([1]) };
-  const report = diagnoseUSD(source, new Map([['base.usda', asset], ['payload.usdc', asset], ['layer.usda', asset]]));
+  const report = diagnoseUSD(source, new Map([['base.usda', asset], ['payload.usdc', asset], ['layer.usda', asset]]), { layerSources: new Map(['base.usda', 'payload.usdc', 'layer.usda'].map(path => [path, '#usda 1.0\n'])) });
   assert.deepEqual(report.dependencies.map((item) => item.kind), ['references', 'sublayers', 'payload']);
   assert.deepEqual(report.dependencies.map((item) => item.status), ['available', 'available', 'available']);
   assert.deepEqual(report.dependencyGraph.edges.map((edge) => edge.to), ['asset:base.usda', 'asset:layer.usda', 'asset:payload.usdc']);
@@ -4989,7 +4994,7 @@ test('USD Doctor tolerates malformed package-member byte payloads', () => {
 });
 
 test('USD Doctor creates a deterministic dependency manifest', () => {
-  const report = diagnoseUSD('#usda 1.0\n( defaultPrim = "World" metersPerUnit = 1 upAxis = "Y" )\ndef Xform "World" { references = @base.usda@ }', new Map([['base.usda', { bytes: new Uint8Array([1]) }]]));
+  const report = diagnoseUSD('#usda 1.0\n( defaultPrim = "World" metersPerUnit = 1 upAxis = "Y" )\ndef Xform "World" { references = @base.usda@ }', new Map([['base.usda', { bytes: new Uint8Array([1]) }]]), { layerSources: new Map([['base.usda', '#usda 1.0\n']]) });
   assert.deepEqual(createDependencyManifest(report, 'model.usda'), {
     schemaVersion: 1,
     source: 'model.usda',

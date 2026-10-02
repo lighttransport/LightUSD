@@ -150,6 +150,21 @@ try {
     await page.waitForFunction(() => [...document.querySelectorAll('.message')].some((el) => /Valid|issues/i.test(el.textContent)), { timeout: 30000 });
     await runUDIMBrowserChecks(page);
     await runConcurrencyBrowserChecks(page);
+    const stored = await page.evaluate(async () => {
+      const { app } = await import('/lucia-code/src/main.js');
+      app.project.assets.set('storage-check.bin', { bytes: Uint8Array.of(1, 2, 3), colorSpace: 'raw' });
+      const source = app.session.exportUSDA(), assetCount = app.project.assets.size;
+      await app.$('#save-project').onclick();
+      const recovered = await app.projectStorage.load();
+      if (!recovered || recovered.source !== source || recovered.assets.size !== assetCount) throw new Error('IndexedDB project recovery mismatch.');
+      const asset = recovered.assets.get('storage-check.bin');
+      if (asset.colorSpace !== 'raw' || asset.bytes.join(',') !== '1,2,3') throw new Error('Saved asset bytes or metadata changed.');
+      app.project.assets.delete('storage-check.bin');
+      await app.$('#restore-project').onclick();
+      if (app.session.exportUSDA() !== source || app.project.assets.size !== assetCount) throw new Error('Saved project UI restore mismatch.');
+      return { assets: assetCount, sourceBytes: new TextEncoder().encode(source).byteLength };
+    });
+    console.log('Lucia persistent project browser:', JSON.stringify(stored));
     await runPerformanceBrowserChecks(page);
     assert.equal(errors.length, 0, errors.join('\n'));
   } finally { await browser.close(); }

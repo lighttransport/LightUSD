@@ -1,7 +1,9 @@
+import { LuciaProjectStorage, hashContent } from './project-storage.js';
 import { LuciaUDIMWorkflow, packageAssets } from './udim-workflow.js';
 import { renderUDIMPanel } from './udim-panel.js';
 import { LuciaActivityGate } from './activity-gate.js';
 import { validationSummary } from './validation.js';
+import { HealthAnalysis } from './health-analysis.js';
 import * as THREE from 'three';
 import { LuciaProject } from './project.js';
 import { LuciaUsdSession } from './usd-session.js';
@@ -45,8 +47,9 @@ const componentPartCandidates = (paths, parentPath, base, componentId) => {
 
 export class LuciaApp {
   constructor(root) {
-    this.root = root; this.project = new LuciaProject(); this.session = new LuciaUsdSession(); this.commands = new LuciaCommandStack();
-    this.activity = new LuciaActivityGate(() => this.operations?.cancel());
+    this.root = root; this.project = new LuciaProject(); this.session = new LuciaUsdSession(); this.commands = new LuciaCommandStack(); this.projectStorage = new LuciaProjectStorage();
+    this.healthAnalysis = new HealthAnalysis(); this.inspectorRequest = 0;
+    this.activity = new LuciaActivityGate(() => { this.operations?.cancel(); this.healthAnalysis.cancel(); });
     this.currentInspectorTab = 'transform'; this.currentBottomTab = 'changes'; this.validation = { state: 'warn', label: 'Not validated' }; this.assetReport = null; this.usdReport = null; this.reportCache = createReportCache(); this.healthProfile = 'web-viewer'; this.qualityGateBlocking = false; this.loadedRecipe = null; this.repairPlanDraft = null; this.previewNotice = null; this.previewGeometryDecimatedCount = null; this.previewTextureDegradedCount = null; this.previewTextureSkippedCount = null; this.frameBaseline = null; this.frameBaselinePath = null; this.healthIssuePage = 0; this.healthIssueRevision = null; this.retopoVertexLocks = new Map();
   }
 
@@ -76,7 +79,7 @@ export class LuciaApp {
           <button id="panel-tree" class="icon-button" title="Scene tree" aria-label="Toggle scene tree" aria-controls="left-panel" aria-expanded="true">☰</button>
           <button id="new-button">New</button>
           <label class="file-button">Open<input id="file-input" class="sr-only" type="file" accept=".usd,.usda,.usdc,.usdz"></label>
-          <button id="export-button">Export</button>
+          <button id="export-button">Export</button><button id="save-project">Save locally</button><button id="restore-project">Open saved</button><button id="prune-history" title="Discard retained undo and redo history">Clear history</button>
           <button id="undo-button" class="icon-button" title="Undo" disabled>↶</button>
           <button id="redo-button" class="icon-button" title="Redo" disabled>↷</button>
           <span id="dirty-indicator" class="status"><i class="status-dot"></i><span>Saved</span></span>
@@ -118,6 +121,30 @@ export class LuciaApp {
     this.$('#file-input').onchange = ({ target }) => target.files[0] && this.openFile(target.files[0]);
     this.$('#export-button').onclick = () => this.$('#export-dialog').showModal();
     this.$$('#export-dialog [data-export-format]').forEach((button) => button.onclick = async () => { this.$('#export-dialog').close(); await this.exportDialog(button.dataset.exportFormat); });
+    this.$('#save-project').onclick = async () => {
+      if (this.commands.busy || this.activity.active || this.savingProject) return;
+      this.savingProject = true; this.$('#save-project').disabled = true;
+      try { await this.projectStorage.save(this.project, await this.session.exportUSDA()); this.$('#save-project').title = 'Project saved locally.'; }
+      catch (error) { this.showError(error); }
+      finally { this.savingProject = false; this.$('#save-project').disabled = false; }
+    };
+    this.$('#restore-project').onclick = async () => {
+      try {
+        const saved = await this.projectStorage.load();
+        if (!saved) throw new Error('No locally saved project is available.');
+        await this.runMutation('Open saved project', ['/'], async () => {
+          this.project.assets = saved.assets; this.project.exportRemap = saved.exportRemap; this.project.provenance = saved.provenance;
+          this.project.name = saved.name;
+          await this.session.replaceUSDA(saved.source, 'Open saved project');
+        });
+      } catch (error) { this.showError(error); }
+    };
+    this.$('#prune-history').onclick = async () => {
+      if (this.commands.busy || this.activity.active) return;
+      if (await this.confirmAction('Clear undo history?', 'The scene stays as authored. Retained undo and redo states will be discarded.')) {
+        try { this.commands.prune(); } catch (error) { this.showError(error); }
+      }
+    };
     this.$('#undo-button').onclick = () => this.restoreHistory('undo');
     this.$('#redo-button').onclick = () => this.restoreHistory('redo');
     this.$('#frame-button').onclick = () => this.bridge.frame(this.project.selectedPath);
@@ -182,7 +209,7 @@ export class LuciaApp {
       this.setBusy(true, 'Creating USD stage…', 20);
       this.project.assets = new Map();
       await this.session.loadUSDA(templateUSDA(kind), `${kind}.usda`);
-      this.project.reset(kind === 'product' ? 'Lucia Product' : `Lucia ${kind}`);
+      this.project.reset(kind === 'product' ? 'Lucia Product' : `Lucia ${kind}`, { name: `${kind}.usda`, sha256: await hashContent(new TextEncoder().encode(templateUSDA(kind))) });
       this.loadedRecipe = null;
       this.commands.clear();
       this.validation = { state: 'warn', label: 'Not validated' };
@@ -210,6 +237,7 @@ export class LuciaApp {
       if (file.size > 256 * 1048576) throw new LuciaError('LUCIA_PARSE_MEMORY', 'Input exceeds the 256 MiB browser limit.');
       this.setBusy(true, `Reading ${file.name}…`, 10);
       const bytes = new Uint8Array(await file.arrayBuffer());
+      const sha256 = await hashContent(bytes);
       if (!this.activity.current(epoch)) return false;
       let archive = null;
       if (/\.usdz$/i.test(file.name)) {
@@ -229,7 +257,7 @@ export class LuciaApp {
       this.setBusy(true, 'Parsing untrusted USD…', 35);
       await this.session.loadBytes(archive?.rootBytes || bytes, archive?.rootName || file.name);
       this.project.assets = new Map();
-      this.project.reset(file.name, {name:file.name,bytes});
+      this.project.reset(file.name, {name:file.name,bytes,sha256});
       if (archive) this.project.assets = archive.assets;
       this.loadedRecipe = null; this.commands.clear();
       this.udim?.discard(); this.udimInventory = null; this.udimSelection = new Set();
@@ -314,12 +342,33 @@ export class LuciaApp {
 
   select(path, options = {}) { if (path !== this.project.selectedPath) { this.frameBaseline = null; this.frameBaselinePath = null; this.bridge.clearWireframePreview?.(); } this.project.select(path, options); this.bridge.selectPaths?.([...this.project.selectedPaths]); this.bridge.showVertexLockPreview(path, [...(this.retopoVertexLocks.get(path) || [])]); this.renderTree(); this.renderInspector(); }
   toggleRetopoVertexLock({ path, vertexIndex, toggle = false }) { if (path !== this.project.selectedPath || !Number.isInteger(vertexIndex) || vertexIndex < 0) return; const locks = this.retopoVertexLocks.get(path) || new Set(); if (toggle && locks.has(vertexIndex)) locks.delete(vertexIndex); else locks.add(vertexIndex); this.retopoVertexLocks.set(path, locks); this.bridge.showVertexLockPreview(path, [...locks]); this.renderInspector(); }
-  currentUSDReport() { const domains = this.project.domainRevisions; if (!this.usdReport || this.usdReport.usdRevision !== domains.usd || this.usdReport.assetsRevision !== domains.assets) this.usdReport = { ...diagnoseUSD(this.session.usda, this.project.assets, { resolverPlugins: this.project.resolverPlugins }), usdRevision: domains.usd, assetsRevision: domains.assets }; return this.usdReport; }
-  showHealthReport() {
+  currentUSDReport() { const domains = this.project.domainRevisions; if (!this.usdReport || this.usdReport.usdRevision !== domains.usd || this.usdReport.assetsRevision !== domains.assets) this.usdReport = { ...diagnoseUSD(this.session.usda, this.project.assets, { resolverPlugins: this.project.resolverPlugins }), provenance: this.project.provenance ? { ...this.project.provenance, operations: this.project.changes.map(change => ({ summary: change.summary, paths: change.paths })) } : null, usdRevision: domains.usd, assetsRevision: domains.assets }; return this.usdReport; }
+  cachedAssetReport() {
     const domains = this.project.domainRevisions;
-    const healthRevision = `${domains.scene}:${domains.assets}:${domains.usd}`; if (this.healthIssueRevision !== healthRevision) { this.healthIssuePage = 0; this.healthIssueRevision = healthRevision; }
-    if (!this.assetReport || this.assetReport.sceneRevision !== domains.scene || this.assetReport.assetsRevision !== domains.assets) { const cacheKey = this.reportCache.keyFor({ source: this.session.usda, assets: this.project.assets }), cached = this.reportCache.load(cacheKey), report = cached || analyzeAsset(this.bridge.content); this.assetReport = { sceneRevision: domains.scene, assetsRevision: domains.assets, cacheKey, report }; if (!cached) this.reportCache.save(cacheKey, report); }
-    const report = this.assetReport.report;
+    return this.assetReport?.sceneRevision === domains.scene && this.assetReport?.assetsRevision === domains.assets ? this.assetReport.report : null;
+  }
+  async currentAssetReport() {
+    const cachedReport = this.cachedAssetReport();
+    if (cachedReport) return cachedReport;
+    const { scene: sceneRevision, assets: assetsRevision } = this.project.domainRevisions;
+    const cacheKey = this.reportCache.keyFor({ source: this.session.usda, assets: this.project.assets });
+    const cached = this.reportCache.load(cacheKey);
+    const report = cached || await this.healthAnalysis.analyze(this.bridge.content);
+    if (!report || this.project.domainRevisions.scene !== sceneRevision || this.project.domainRevisions.assets !== assetsRevision) return null;
+    this.assetReport = { sceneRevision, assetsRevision, cacheKey, report };
+    if (!cached) this.reportCache.save(cacheKey, report);
+    return report;
+  }
+  async showHealthReport() {
+    const request = ++this.inspectorRequest;
+    const domains = this.project.domainRevisions;
+    const healthRevision = `${domains.scene}:${domains.assets}:${domains.usd}`;
+    if (this.healthIssueRevision !== healthRevision) { this.healthIssuePage = 0; this.healthIssueRevision = healthRevision; }
+    if (!this.cachedAssetReport()) this.$('#inspector').innerHTML = '<p class="empty" role="status">Analyzing asset…</p>';
+    let report;
+    try { report = await this.currentAssetReport(); }
+    catch (error) { if (request === this.inspectorRequest) this.showError(error); return; }
+    if (!report || request !== this.inspectorRequest) return;
     const usdReport = this.currentUSDReport();
     report.score.usd = usdReport.score;
     const mib = (report.stage.estimatedGpuBytes / (1024 * 1024)).toFixed(2);
@@ -554,6 +603,7 @@ export class LuciaApp {
     if (previewSampled) { context.fillStyle = '#f3c969'; context.font = '11px sans-serif'; context.fillText(`Preview sampled to ${configuredBudget.toLocaleString()} triangles`, 12, canvas.height - 8); }
   }
   showUSDDoctor() {
+    this.inspectorRequest++; this.healthAnalysis.cancel();
     const domains = this.project.domainRevisions;
     const report = this.currentUSDReport();
     const rows = report.issues.length ? report.issues.map((item) => `<div class="change"><span class="issue-${esc(item.severity)}">${esc(item.severity.toUpperCase())}</span> ${esc(item.ruleId)}<small>${esc(item.message)}</small>${item.path && item.path !== '/' ? `<button class="small-button" data-usd-select="${esc(item.path)}">Select path</button>` : ''}</div>`).join('') : '<p class="empty">No USD portability issues detected.</p>';
@@ -573,7 +623,7 @@ export class LuciaApp {
     this.$('#usd-repair-button')?.addEventListener('click', async () => { if (await this.confirmAction('Repair USD metadata?', 'Lucia will update only safe stage metadata and invalid kind/purpose tokens. The operation is undoable.')) await this.runMutation('Repair USD metadata', ['/'], () => this.session.replaceUSDA(repairUSDMetadata(this.session.usda, fixes), 'Repair USD metadata'), ['usd']); });
     this.$$('[data-usd-inherited-repair]').forEach((button) => button.onclick = async () => { const path = button.dataset.usdInheritedRepair, materialPath = button.dataset.usdInheritedMaterial; if (await this.confirmAction(`Author inherited material binding on ${path}?`, `This will add a direct binding to ${materialPath} based on same-layer evidence. Composition strength and external layers were not evaluated; review remains your responsibility. The operation is undoable.`)) await this.runMutation('Repair inherited material binding', [path], () => this.session.repairInheritedMaterialBindings([{ path, materialPath }]), ['usd']); });
     this.$('#usd-manifest-button').onclick = () => {
-      const assetReport = this.assetReport?.report || analyzeAsset(this.bridge.content);
+      const assetReport = this.cachedAssetReport() || analyzeAsset(this.bridge.content);
       const qualityGate = createQualityGate(assetReport, { profile: this.healthProfile, usdReport: report, blocking: this.qualityGateBlocking }); const manifest = createDependencyManifest(report, this.session.filename, qualityGate, this.project.activity);
       downloadBlob(new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' }), `${this.project.name.replace(/[^A-Za-z0-9_-]+/g, '_').toLowerCase() || 'scene'}-manifest.json`);
     };
@@ -598,6 +648,7 @@ export class LuciaApp {
   selectedObject() { return this.bridge.objectForPath(this.project.selectedPath); }
   retopoLockUVSeams = true;
   renderInspector() {
+    this.inspectorRequest++; this.healthAnalysis.cancel();
     this.udimPanelCleanup?.(); this.udimPanelCleanup = null;
     const path = this.project.selectedPath; const object = this.selectedObject(); const mesh = object?.isMesh ? object : null; this.$('#selection-label').textContent = path || 'Inspector'; const inspector = this.$('#inspector'); if (!inspector._luciaSeamPolicyBound) { inspector._luciaSeamPolicyBound = true; inspector.addEventListener('change', ({ target }) => { if (target?.id === 'retopo-lock-uv-seams') { this.retopoLockUVSeams = target.checked; this.operations.setUVSeamLockPolicy(target.checked); } }, true); inspector._luciaSeamPolicyObserver = new MutationObserver(() => { const control = inspector.querySelector('#retopo-lock-uv-seams'); if (control) control.checked = this.retopoLockUVSeams; }); inspector._luciaSeamPolicyObserver.observe(inspector, { childList: true, subtree: true }); } this.$('#inspector').onchange = ({ target }) => { if (target?.id === 'retopo-lock-uv-seams') { this.retopoLockUVSeams = target.checked; this.operations.setUVSeamLockPolicy(target.checked); } };
     if (!path) { this.$('#inspector').innerHTML = '<p class="empty">Select a prim to inspect it.</p>'; return; }
@@ -651,7 +702,7 @@ export class LuciaApp {
       this.$('#retopo-error').insertAdjacentHTML('afterend', '<label><input id="retopo-lock-border" type="checkbox" checked> Lock open boundaries</label><label><input id="retopo-lock-uv-seams" type="checkbox" checked> Lock UV seams</label><label>Sharp edges <input id="retopo-sharp-edges" type="text" placeholder="e.g. 0:2; 4:5" spellcheck="false" aria-describedby="retopo-sharp-help"></label><small id="retopo-sharp-help" class="empty">Optional zero-based edge pairs. Blank uses authored crease edges; endpoints remain locked during reduction.</small><label>Crease chains <input id="retopo-sharp-chains" type="text" placeholder="e.g. 0&gt;1&gt;2@0.5; 4&gt;5" spellcheck="false" aria-describedby="retopo-sharp-chain-help"></label><small id="retopo-sharp-chain-help" class="empty">Optional chains; use &gt; between vertices and @strength for per-chain sharpness.</small><label>Lock vertices <input id="retopo-locked-vertices" type="text" placeholder="e.g. 0, 4, 10-13" spellcheck="false" aria-describedby="retopo-lock-help"></label><small id="retopo-lock-help" class="empty">Shift-click a vertex to add it; Alt-click removes it. You can also enter zero-based indices or inclusive ranges.</small>');
       this.$('#retopo-lock-uv-seams').checked = this.retopoLockUVSeams;
       const selectedLocks = this.retopoVertexLocks.get(path); if (selectedLocks?.size) this.$('#retopo-locked-vertices').value = [...selectedLocks].sort((a, b) => a - b).join(', '); const authoredChains = this.session.getMeshSharpChainData?.(path); if (authoredChains?.chains?.length) this.$('#retopo-sharp-chains').value = authoredChains.chains.map((chain, index) => `${chain.join('>')}${authoredChains.sharpness?.[index] !== 1 ? `@${authoredChains.sharpness[index]}` : ''}`).join('; ');
-      this.$('#retopo-button').insertAdjacentHTML('afterend', '<button id="lod-button">Generate LOD chain</button>');
+      this.$('#retopo-button').insertAdjacentHTML('afterend', '<button id="lod-button">Generate LOD chain</button><label><input id="lod-variants" type="checkbox">Author LOD selector variants</label>');
       const previewMaterial = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material, materialGraph = previewMaterial?.userData?.nodes || previewMaterial?.nodes;
       if (materialGraph && typeof materialGraph === 'object') { this.$('#retopo-button').insertAdjacentHTML('beforebegin', '<button id="material-graph-preview-button">Preview material graph optimization</button><small id="material-graph-preview-status" class="empty">Preview only; authored graph changes are not applied.</small><div class="field-grid"><label>Graph source<select id="material-graph-source"><option value="materialx-standard-surface" selected>MaterialX Standard Surface</option><option value="usd-preview-surface">UsdPreviewSurface</option><option value="metallic-roughness">Metallic-roughness</option></select></label><label>Graph target<select id="material-graph-target"><option value="usd-preview-surface" selected>UsdPreviewSurface</option><option value="materialx-standard-surface">MaterialX Standard Surface</option><option value="metallic-roughness">Metallic-roughness</option></select></label></div><button id="material-graph-translate-preview">Preview graph translation</button><small id="material-graph-translate-status" class="empty">Connections are preserved; no graph changes are authored.</small>'); this.$('#material-graph-preview-button').onclick = async () => { try { const result = await this.operations.previewMaterialGraph(path), removedInputCount = (result.removedInputs || []).reduce((count, item) => count + item.inputs.length, 0); this.$('#material-graph-preview-status').textContent = `${result.nodes.length} rewritten nodes · ${result.folded.length} folded · ${result.removed.length} unreachable removed · ${removedInputCount} folded input${removedInputCount === 1 ? '' : 's'} removed in preview${result.changed ? '' : ' · no changes proposed'}`; } catch (error) { this.$('#material-graph-preview-status').textContent = error.message; } }; this.$('#material-graph-translate-preview').onclick = async () => { try { const result = await this.operations.previewMaterialGraphTranslation(path, { from: this.$('#material-graph-source').value, to: this.$('#material-graph-target').value }); this.$('#material-graph-translate-status').textContent = `${result.nodes.length} nodes · ${result.changedNodes.length} translated · ${result.unsupported.length} unsupported · ${result.collisions.length} collisions`; } catch (error) { this.$('#material-graph-translate-status').textContent = error.message; } }; }
       this.$('#retopo-button').insertAdjacentHTML('beforebegin', '<div class="section"><h3>Material parameterization</h3><p class="empty">Preview finite material-only differences, then author them as validated face-varying primvars or selectable USD material variants.</p><label>Representation <select id="material-parameterization-mode"><option value="auto" selected>Automatic (primvar)</option><option value="primvar">Primvar</option><option value="variant">Material variants</option></select></label><button id="material-parameterization-preview" class="small-button">Preview material differences</button><button id="material-parameterization-apply">Author reviewed representation</button><small id="material-parameterization-status" class="empty">No material parameterization preview yet.</small></div>');
@@ -670,7 +721,7 @@ export class LuciaApp {
       this.$('#frame-capture').onclick = () => { this.frameBaseline = this.captureFrame(mesh); this.frameBaselinePath = path; this.$('#frame-before-wrap').hidden = !this.frameBaseline; if (this.frameBaseline) { this.drawFramePreview(this.frameBaseline, this.$('#frame-before-preview')); this.$('#frame-difference').textContent = 'Baseline captured. Apply a normal or tangent operation to compare.'; } };
       this.$('#frame-normal-heatmap').onclick = ({ target }) => { if (this.bridge.comparisonHeatmap && this.bridge.changeOverlay?.name === 'LuciaNormalDeviationHeatmap') { this.bridge.clearChangeOverlay(); target.textContent = 'Show normal-deviation heatmap'; } else { this.bridge.showNormalDeviationHeatmap(this.bridge.frameComparison); target.textContent = 'Clear normal-deviation heatmap'; } };
       this.$('#retopo-button').onclick = async () => { if (await this.confirmAction(`Retopologize ${path}?`, 'meshoptimizer will reduce triangles using geometric, normal, and UV error metrics. Open boundaries, UV seams, selected sharp edges, and listed vertices remain locked when enabled. The operation is undoable.')) await this.runMutation('Retopology', [path], () => { const vertexCount = mesh.geometry.attributes.position.count, lockText = this.$('#retopo-locked-vertices').value, sharpText = this.$('#retopo-sharp-edges').value, chainText = this.$('#retopo-sharp-chains').value, chainData = chainText.trim() ? parseSharpChainSelection(chainText, vertexCount) : null, sharpEdges = sharpText.trim() ? parseSharpEdgeSelection(sharpText, vertexCount) : null; this.retopoVertexLocks.set(path, new Set([...parseVertexLockSelection(lockText, vertexCount)].flatMap((value, index) => value ? [index] : []))); const locks = parseVertexLockSelection(lockText, vertexCount); return this.operations.retopo(path, { tolerance: Number(this.$('#retopo-tolerance').value), targetRatio: Number(this.$('#retopo-ratio').value) / 100, targetError: Number(this.$('#retopo-error').value), lockBorder: this.$('#retopo-lock-border').checked, lockUVSeams: this.$('#retopo-lock-uv-seams').checked, lockedVertices: locks, ...(chainData ? { sharpChains: chainData.chains, sharpChainSharpness: chainData.sharpness } : { sharpEdges }) }, (p) => this.setBusy(true,p.message,p.percentage)); }); };
-      this.$('#lod-button').onclick = async () => { if (await this.confirmAction(`Generate LODs for ${path}?`, 'Three deterministic sibling meshes (50%, 25%, 12%) will be authored; the source mesh remains unchanged and the operation is undoable.')) await this.runMutation('Generate LOD chain', [path], () => this.operations.generateLODChain(path, { ratios: [.5, .25, .125], targetError: Number(this.$('#retopo-error').value) }, (p) => this.setBusy(true,p.message,p.percentage))); };
+      this.$('#lod-button').onclick = async () => { if (await this.confirmAction(`Generate LODs for ${path}?`, 'Three deterministic sibling meshes (50%, 25%, 12%) will be authored; the source mesh remains unchanged and the operation is undoable.')) await this.runMutation('Generate LOD chain', [path], () => this.operations.generateLODChain(path, { authorVariants: this.$('#lod-variants').checked, ratios: [.5, .25, .125], targetError: Number(this.$('#retopo-error').value) }, (p) => this.setBusy(true,p.message,p.percentage))); };
       this.$('#lod-button').insertAdjacentHTML('afterend', '<button id="lod-preview-button" aria-pressed="false">Preview LOD distances</button>');
       this.$('#lod-preview-button').onclick = () => { const enabled = !this.bridge.lodPreview; this.bridge.setLODPreview(enabled); this.$('#lod-preview-button').textContent = enabled ? 'Show all LODs' : 'Preview LOD distances'; this.$('#lod-preview-button').setAttribute('aria-pressed', String(enabled)); };
       this.$('#lod-preview-button').insertAdjacentHTML('afterend', '<button id="wireframe-button" aria-pressed="false">Show wireframe density</button>');
@@ -723,7 +774,10 @@ export class LuciaApp {
       await this.hideUDIMPreview();
       if (lease.cancelled) throw new LuciaError('LUCIA_CANCELLED','Scene replacement cancelled this edit.');
       this.setBusy(true, summary, 25);
-      const beforeIssueCount = ['Clean mesh', 'Merge cracked mesh seams', 'Recompute normals', 'Recompute tangents', 'Generate UV atlas', 'Retopology'].includes(summary) ? analyzeAsset(this.bridge.content).issues.length : null;
+      const inspectIssues = ['Clean mesh', 'Merge cracked mesh seams', 'Recompute normals', 'Recompute tangents', 'Generate UV atlas', 'Retopology'].includes(summary);
+      const beforeReport = inspectIssues ? await this.currentAssetReport() : null;
+      if (lease.cancelled || (inspectIssues && !beforeReport)) throw new LuciaError('LUCIA_CANCELLED', 'Scene replacement cancelled analysis.');
+      const beforeIssueCount = beforeReport?.issues.length ?? null;
       const beforeEdges = paths.length ? this.bridge.captureGeometry(paths[0]) : null;
       const beforeMaterial = paths.length ? this.bridge.captureMaterialSnapshot(paths[0]) : null;
       this.operations.lastStats = null;
@@ -753,9 +807,9 @@ export class LuciaApp {
       this.$('#comparison-material').hidden = !hasMaterialDifference;
       if (beforeEdges || afterEdges || hasMaterialDifference) this.$('#comparison-clear').hidden = false;
       if (beforeIssueCount != null) {
-        const afterIssueCount = analyzeAsset(this.bridge.content).issues.length;
+        const afterReport = await this.currentAssetReport();
         const change = this.project.changes.at(-1);
-        if (change) change.summary += `, issues ${beforeIssueCount} → ${afterIssueCount}`;
+        if (change && afterReport && !lease.cancelled) change.summary += `, issues ${beforeIssueCount} → ${afterReport.issues.length}`;
         this.renderActivity();
       }
       return true;
@@ -821,7 +875,9 @@ export class LuciaApp {
       if (lease.cancelled) return;
       if (!validation || validationSummary(validation).hasErrors)
         throw new LuciaError('LUCIA_VALIDATION', 'Export requires successful USD validation. Review the validation issues and try again.');
-      const assetReport = this.assetReport?.report || analyzeAsset(this.bridge.content);
+      const assetReport = await this.currentAssetReport();
+      if (lease.cancelled) return;
+      if (!assetReport) throw new LuciaError('LUCIA_ANALYSIS', 'Export requires a current asset report.');
       const usdReport = this.currentUSDReport();
       const qualityGate = createQualityGate(assetReport, { profile: this.healthProfile, usdReport, blocking: this.qualityGateBlocking });
       const exportProfile = this.healthProfile === 'external-reference' ? 'external-reference' : 'portable-usdz';
@@ -851,7 +907,7 @@ export class LuciaApp {
     if (name === 'scene.inspect_material_merges') { const result = this.session.previewEquivalentMaterialDefinitions(); return { message: result.candidates.length ? `Equivalent material preview found ${result.candidates.length} deterministic merge candidate${result.candidates.length === 1 ? '' : 's'}; no USD changes were made.` : 'Equivalent material preview found no structurally identical definitions; no USD changes were made.', result }; }
     if (name === 'scene.inspect_material_parameterization') { const path = args.path || this.project.selectedPath; if (!path) throw new LuciaError('LUCIA_MATERIAL_PARAMETERIZATION_PATH', 'Select a mesh before inspecting material parameterization.'); const result = await this.operations.previewMaterialParameterization(path, args); return { message: `Material parameterization ${path}: ${result.candidates.length} ${result.candidates.length === 1 ? 'candidate' : 'candidates'}, ${result.unsupported.length} unsupported differences; no authored changes were made.`, result }; }
     if (name === 'scene.parameterize_materials') { const path = args.path || this.project.selectedPath; if (!path) throw new LuciaError('LUCIA_MATERIAL_PARAMETERIZATION_PATH', 'Select a mesh before authoring material parameterization.'); const variant = args.mode === 'variant'; await this.runMutation(variant ? 'Author material variants' : 'Author material primvars', [path], () => this.operations.parameterizeMaterials(path, args, (p) => this.setBusy(true, p.message, p.percentage)), ['scene', 'usd']); return { message: `Authored reviewed material ${variant ? 'variants' : 'primvars'} on ${path}. The operation is undoable.` }; }
-    if (name === 'scene.inspect_semantic_suggestions') { const report = this.assetReport?.report || analyzeAsset(this.bridge.content), selected = args.path ? new Set([args.path]) : null, suggestions = proposeSemanticSuggestions(report, { approvedInference: args.approvedInference === true, inference: args.inference }).filter((item) => !selected || selected.has(item.path)); return { message: `Semantic analysis found ${suggestions.length} ${args.approvedInference === true ? 'reviewed' : 'deterministic'} suggestion${suggestions.length === 1 ? '' : 's'}; no USD structure or names were changed.`, suggestions }; }
+    if (name === 'scene.inspect_semantic_suggestions') { const report = this.cachedAssetReport() || analyzeAsset(this.bridge.content), selected = args.path ? new Set([args.path]) : null, suggestions = proposeSemanticSuggestions(report, { approvedInference: args.approvedInference === true, inference: args.inference }).filter((item) => !selected || selected.has(item.path)); return { message: `Semantic analysis found ${suggestions.length} ${args.approvedInference === true ? 'reviewed' : 'deterministic'} suggestion${suggestions.length === 1 ? '' : 's'}; no USD structure or names were changed.`, suggestions }; }
     if (name === 'scene.optimize_material_graph') { const requestedPath = args.path || this.project.selectedPath, boundShader = requestedPath ? this.session.getBoundMaterialShaderPath?.(requestedPath) : null, path = boundShader ? boundShader.slice(0, boundShader.lastIndexOf('/')) : requestedPath; if (!path) throw new LuciaError('LUCIA_MATERIAL_GRAPH_PATH', 'Select a mesh with a bound Material or a Material prim before optimizing its graph.'); await this.runMutation(`Optimize material graph ${path}`, [path], () => this.session.optimizeMaterialGraph(path), ['usd']); return { message: `Applied safe literal folding and unreachable-shader cleanup to ${path}. Values, connections, and externally referenced shaders were preserved; the operation is undoable.` }; }
     if (name === 'scene.generate_template') { await this.runMutation(`Generate ${args.template}`, ['/World'], () => this.session.replaceUSDA(templateUSDA(args.template), `Generate ${args.template}`)); return { message: `Generated the ${args.template} scene. Undo is available.` }; }
     if (name === 'scene.rename_texture') { await this.runMutation('Rename texture', [], () => this.operations.renameTexture(args.oldPath, args.newPath), ['usd', 'assets']); return { message: `Renamed exact references from ${args.oldPath} to ${args.newPath}.` }; }
@@ -884,7 +940,7 @@ export class LuciaApp {
     if (name === 'scene.unwrap_uv') { await this.runMutation('Generate UV atlas', [args.path], () => this.operations.unwrap(args.path, args, (p) => this.setBusy(true,p.message,p.percentage))); return { message: 'UV atlas generated. Undo is available.' }; }
     if (name === 'scene.project_uv') { await this.runMutation(`Project ${args.mode || 'planar'} UVs`, [args.path], () => this.operations.projectUV(args.path, args, (p) => this.setBusy(true,p.message,p.percentage))); return { message: 'UV projection applied. Undo is available.' }; }
     if (name === 'scene.transfer_uvs') { await this.runMutation('Transfer UVs', [args.targetPath, args.sourcePath], () => this.operations.transferUVs(args.targetPath, args.sourcePath, args, (p) => this.setBusy(true, p.message, p.percentage))); return { message: 'Source UVs transferred to the target mesh. Undo is available.' }; }
-    if (name === 'scene.health_report') { this.showHealthReport(); return { message: 'Asset health report generated.' }; }
+    if (name === 'scene.health_report') { await this.showHealthReport(); return { message: 'Asset health report generated.' }; }
     if (name === 'scene.bake_shading') { const result = await this.runBake(args.path, args.resolution, args.dilation, args.channel, args.samples, args.radius, args.maxResolution, args.normalY, args.normalSpace); return result ? { message: 'UV texture baked and downloaded.' } : { message: 'UV texture bake did not complete; no download was produced.' }; }
     if (name === 'scene.bake_projection') { const result = await this.runProjectedBake(args.targetPath || args.path, args.sourcePath, args); return { message: result ? `Projected texture baked with ${result.projectedHits} hits, ${result.missedTexels} misses, and ${result.dilatedTexels || 0} dilated texels across ${result.islandCount || 0} UV islands.` : 'Projected bake failed.' }; }
     if (name === 'scene.pack_channels') { await this.runMutation('Pack texture channels', [], () => this.operations.packChannels(args), ['assets']); return { message: `Packed texture channels into ${args.name ?? 'textures/packed.png'}. Undo is available.` }; }

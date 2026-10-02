@@ -1199,6 +1199,18 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         set_tests_properties(next_aousd_supplemental
             PROPERTIES LABELS "next;aousd;supplemental" TIMEOUT 600)
     endif()
+    set(LIGHTUSD_NEXT_PXR_PYTHON "${CMAKE_CURRENT_SOURCE_DIR}/../../../OpenUSD/dist/lib/python"
+        CACHE PATH "Pinned OpenUSD Python package for sampled-value differential tests")
+    if(Python3_Interpreter_FOUND AND EXISTS "${LIGHTUSD_NEXT_PXR_PYTHON}/pxr/Usd/__init__.py")
+        add_test(NAME next_aousd_sampled_value_pxrdiff
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/compare-aousd-sampled-values.py
+                --test "$<TARGET_FILE:test_aousd_value_resolution>"
+                --root "${LIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT}"
+                --pxr-python "${LIGHTUSD_NEXT_PXR_PYTHON}")
+        set_tests_properties(next_aousd_sampled_value_pxrdiff PROPERTIES
+            SKIP_RETURN_CODE 77 LABELS "next;aousd;pxrdiff" TIMEOUT 120)
+    endif()
     # Sampled-value oracle also runs as its own ctest entry; the binary
     # self-skips (exit 77) when the corpus is missing.
     add_test(NAME next_test_aousd_value_resolution
@@ -1230,6 +1242,12 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
             COMMAND ${LIGHTUSD_NEXT_NODE_EXECUTABLE}
                     ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test-compare-usda-booleans.cjs)
         set_tests_properties(next_compare_usda_booleans
+            PROPERTIES LABELS "next;pxrdiff")
+        add_test(
+            NAME next_compare_usda_listops
+            COMMAND ${LIGHTUSD_NEXT_NODE_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test-compare-usda-listops.cjs)
+        set_tests_properties(next_compare_usda_listops
             PROPERTIES LABELS "next;pxrdiff")
         add_test(
             NAME next_compare_usda_references

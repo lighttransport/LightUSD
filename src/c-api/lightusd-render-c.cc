@@ -199,7 +199,7 @@ lightusd_status BuildConverterConfig(const lightusd_stage* stage,
       cfg->max_threads < 0 || cfg->triangulation_method > 1 || cfg->tangent_method > 3 ||
       cfg->material_binding_purpose > 2 ||
       cfg->discard_geometry > 1 || cfg->disable_animation > 1 ||
-      cfg->discard_instance_source_arrays > 1 || cfg->use_default_asset_resolver > 1 ||
+      cfg->discard_instance_source_arrays > 1 || cfg->use_default_asset_resolver > 1 || cfg->_pad1 > 1 ||
       (cfg->max_render_records > static_cast<uint64_t>(INT32_MAX) &&
        cfg->max_render_records != LIGHTUSD_LIMIT_UNLIMITED) ||
       !ToSizeLimit(cfg->max_resident_bytes,
@@ -225,6 +225,7 @@ lightusd_status BuildConverterConfig(const lightusd_stage* stage,
   config->animation.enabled = !cfg->disable_animation;
   config->point_instancer.retain_source_arrays = !cfg->discard_instance_source_arrays;
   config->mesh.triangulate = cfg->triangulate != 0;
+  config->strict_conversion = cfg->_pad1 != 0;
   config->mesh.compute_normals = cfg->compute_normals != 0;
   config->mesh.compute_tangents = cfg->compute_tangents != 0;
   config->mesh.build_vertex_indices = cfg->build_vertex_indices != 0;
@@ -2379,6 +2380,33 @@ lightusd_status lightusd_render_material_terminal_path_copy(
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "unknown material terminal kind");
   }
   return lightusd_sv_copy(SV(*path), out, cap, required);
+}
+
+lightusd_status lightusd_render_config_set_strict(
+    lightusd_render_config* cfg, uint8_t enabled) {
+  if (!cfg || cfg->struct_size < sizeof(*cfg) || enabled > 1)
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid strict conversion config");
+  cfg->_pad1 = enabled;
+  return LIGHTUSD_OK;
+}
+
+size_t lightusd_render_conversion_diagnostic_count(
+    const lightusd_render_scene* scene) {
+  return scene ? scene->data().conversion_diagnostics.size() : 0;
+}
+
+lightusd_status lightusd_render_conversion_diagnostic_get(
+    const lightusd_render_scene* scene, size_t index,
+    lightusd_render_conversion_diagnostic* out) {
+  if (!scene || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "scene/out is null");
+  const auto& diagnostics = scene->data().conversion_diagnostics;
+  if (index >= diagnostics.size()) return Fail(LIGHTUSD_ERR_NOT_FOUND, "conversion diagnostic index out of range");
+  const auto& diagnostic = diagnostics[index];
+  std::memset(out, 0, sizeof(*out));
+  out->disposition = static_cast<uint8_t>(diagnostic.disposition);
+  out->prim_path = SV(diagnostic.prim_path);
+  out->message = SV(diagnostic.message);
+  return LIGHTUSD_OK;
 }
 
 size_t lightusd_render_material_diagnostic_count(

@@ -1966,32 +1966,25 @@ function compareAttributes(attrs1, attrs2, primPath, options = {}) {
   return differences;
 }
 
-/**
- * Normalize relationship name by stripping qualifiers (listops and custom)
- * E.g., "delete myheight" -> "myheight", "append custom myval" -> "myval"
- */
+// Custom authoring does not change targets, but list-op qualifiers do:
+// an explicit empty list clears weaker targets; prepend/append/delete do not.
 function normalizeRelationshipName(name) {
-  const qualifierPrefixes = ['delete ', 'prepend ', 'append ', 'add ', 'reorder ', 'custom '];
-  let normalized = name;
-  let changed = true;
-  // Keep stripping qualifiers until no more are found
-  while (changed) {
-    changed = false;
-    for (const prefix of qualifierPrefixes) {
-      if (normalized.startsWith(prefix)) {
-        normalized = normalized.slice(prefix.length);
-        changed = true;
-        break;
-      }
-    }
-  }
-  return normalized;
+  const words = name.split(' ');
+  const targetName = words.pop();
+  return [...words.filter(word => word !== 'custom'), targetName].join(' ');
 }
 
-/**
- * Compare relationships between two prims
- * Normalizes listop qualifiers (delete/prepend/append/add/reorder) for comparison
- */
+// AOUSD Core 1.0.1, "A General Note on Listops": None and [] are
+// equivalent except for attributes (where None is a value block).
+function normalizeListOpValueForCompare(val, options, side) {
+  if (val && typeof val === 'object' && val.value !== undefined && val.line !== undefined) {
+    val = val.value;
+  }
+  if (val && val.type === 'keyword' && val.value === 'None') return '[]';
+  return normalizeValueForCompare(val, options, side);
+}
+
+/** Compare relationship target opinions, preserving list-op qualifiers. */
 function compareRelationships(rels1, rels2, primPath, options = {}) {
   const differences = [];
 
@@ -2045,8 +2038,8 @@ function compareRelationships(rels1, rels2, primPath, options = {}) {
       continue; // Both are declaration-only, equivalent
     }
 
-    const norm1 = normalizeValueForCompare(val1, options, 1);
-    const norm2 = normalizeValueForCompare(val2, options, 2);
+    const norm1 = normalizeListOpValueForCompare(val1, options, 1);
+    const norm2 = normalizeListOpValueForCompare(val2, options, 2);
 
     if (norm1 !== norm2) {
       differences.push({
@@ -2108,9 +2101,15 @@ function compareObjects(obj1, obj2, context, options = {}) {
         actualVal2 && typeof actualVal2 === 'object' && actualVal2.type === 'timeSamples') {
       valuesEqual = areTimeSamplesEqual(actualVal1, actualVal2, 1e-6, options);
     } else {
-      // Normal comparison path
-      const norm1 = normalizeValueForCompare(val1, options, 1);
-      const norm2 = normalizeValueForCompare(val2, options, 2);
+      // Restrict empty-list normalization to known list-op metadata fields.
+      // Custom metadata, subLayers arrays and attribute value blocks retain
+      // their ordinary comparison semantics.
+      const listOpFields = ['inherits', 'specializes', 'references', 'payload',
+                            'apiSchemas', 'variantSets', 'clipSets'];
+      const normalize = listOpFields.includes(key.split(' ').pop())
+        ? normalizeListOpValueForCompare : normalizeValueForCompare;
+      const norm1 = normalize(val1, options, 1);
+      const norm2 = normalize(val2, options, 2);
 
       // Use epsilon comparison for numeric values
       if (isNumericValue(norm1) && isNumericValue(norm2)) {

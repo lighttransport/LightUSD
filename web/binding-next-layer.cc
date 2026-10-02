@@ -2953,9 +2953,17 @@ int32_t NextLayerDocument::setAttribute(
   if (!CopyCString(path, path_size, &path_text) || path_text.empty() ||
       !CopyCString(name, name_size, &name_text) || name_text.empty() ||
       !CopyCString(type_name, type_size, &type_text) || type_text.empty() ||
-      is_array > 1) {
+      ((is_array & 0x80u) ? (is_array & ~0x87u) != 0 : is_array > 1)) {
     return fail_("Invalid prim path, property name, type, or array flag");
   }
+
+  // Preserve the existing 0/1 ABI. The high bit opts into explicit custom
+  // and uniform flags without adding or reordering exported parameters.
+  const uint16_t flags = (is_array & 0x80u)
+      ? static_cast<uint16_t>(((is_array & 2u) ? LIGHTUSD_PROP_CUSTOM : 0) |
+                              ((is_array & 4u) ? LIGHTUSD_PROP_UNIFORM : 0))
+      : static_cast<uint16_t>(LIGHTUSD_PROP_CUSTOM);
+  is_array &= 1u;
 
   const lightusd_type type = lightusd_type_from_name(type_text.c_str());
   if (type == LIGHTUSD_TYPE_INVALID)
@@ -2989,7 +2997,7 @@ int32_t NextLayerDocument::setAttribute(
       for (const auto& value : values) items.push_back(value.c_str());
       const lightusd_status status = lightusd_attr_set_token_array(
           stage_, path_text.c_str(), name_text.c_str(), type, items.data(),
-          items.size(), LIGHTUSD_PROP_CUSTOM);
+          items.size(), flags);
       if (status != LIGHTUSD_OK) {
         error_ = lightusd_last_error();
         return -1;
@@ -3004,7 +3012,7 @@ int32_t NextLayerDocument::setAttribute(
       return fail_("Invalid string attribute value");
     const lightusd_status status = lightusd_attr_set(
         stage_, path_text.c_str(), name_text.c_str(), type, 0,
-        value.c_str(), 1, LIGHTUSD_PROP_CUSTOM);
+        value.c_str(), 1, flags);
     if (status != LIGHTUSD_OK) {
       error_ = lightusd_last_error();
       return -1;
@@ -3013,7 +3021,7 @@ int32_t NextLayerDocument::setAttribute(
     const size_t element_size = lightusd_type_size(type);
     const size_t storage_size = is_array && IsHalfType(type)
         ? lightusd_type_component_count(type) * sizeof(float) : element_size;
-    if (element_size == 0 || count == 0 ||
+    if (element_size == 0 || (!is_array && count == 0) ||
         static_cast<size_t>(count) >
             (static_cast<size_t>((std::numeric_limits<uint32_t>::max)()) /
              storage_size) ||
@@ -3024,7 +3032,7 @@ int32_t NextLayerDocument::setAttribute(
       return fail_("Scalar typed attributes require one value");
     const lightusd_status status = lightusd_attr_set(
         stage_, path_text.c_str(), name_text.c_str(), type, is_array,
-        data, count, LIGHTUSD_PROP_CUSTOM);
+        data, count, flags);
     if (status != LIGHTUSD_OK) {
       error_ = lightusd_last_error();
       return -1;
@@ -3169,7 +3177,9 @@ int32_t NextLayerDocument::exportUsdz(NextAssetStore* asset_store,
   options.max_memory_bytes = remaining_working_bytes;
   tn::USDZWriteResult result;
   if (root_format == 0) {
-    const std::string root = tn::WriteUSDAToString(*stage);
+    tn::USDAWriteOptions usda_options;
+    usda_options.emit_custom = true;
+    const std::string root = tn::WriteUSDAToString(*stage, usda_options);
     if (root.empty()) return fail_("USDA root serialization failed");
     result = tn::WriteUSDZFromUSDAAndAssetsToMemory(
         export_usdz_, reinterpret_cast<const uint8_t*>(root.data()), root.size(),

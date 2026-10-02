@@ -20,7 +20,13 @@ export async function runPerformanceBrowserChecks(page) {
     for(let i=0;i<2;i++){const start=performance.now();await app.refreshAll(false);rebuilds.push(performance.now()-start);}
     let triangles=0;
     app.bridge.content.traverse(object=>{if(object.isMesh)triangles+=(object.geometry.index?.count || object.geometry.attributes.position.count)/3;});
-    return {workload:'131072-triangle USDA grid',sourceBytes:new TextEncoder().encode(source).length,importMs,rebuildMs:rebuilds,triangles};
+    let heartbeats=0;
+    const timer=setInterval(()=>heartbeats++,10),analysisStart=performance.now();
+    try { await app.showHealthReport(); } finally { clearInterval(timer); }
+    const analysisMs=performance.now()-analysisStart;
+    if(!app.assetReport || app.assetReport.report.stage.triangles!==triangles)throw new Error('Worker Health report lost geometry');
+    if(!heartbeats)throw new Error('Health analysis blocked the UI event loop');
+    return {workload:'131072-triangle USDA grid',sourceBytes:new TextEncoder().encode(source).length,importMs,rebuildMs:rebuilds,triangles,analysisMs,heartbeats};
   });
   assert.equal(result.triangles,131072);
   assert.ok(result.rebuildMs.every(Number.isFinite));

@@ -1069,7 +1069,7 @@
       throw new TypeError('setAttribute: value length does not match type components');
     }
     const count = typed.length / spec.components;
-    if (!count || (!isArray && count !== 1)) {
+    if (!isArray && count !== 1) {
       throw new TypeError('setAttribute: scalar value must match one type element');
     }
     if (spec.half && !isArray) {
@@ -1088,9 +1088,9 @@
       count, isArray, heapOffset: typed.buffer === Module.HEAPU8.buffer
         ? typed.byteOffset : -1};
   };
-  Object.defineProperty(Module.LayerDocument.prototype, 'setAttribute', {value: function(path, name, type, value, isArray) {
-    if (arguments.length < 4 || arguments.length > 5) {
-      throw new TypeError('setAttribute: expected path, name, type, value and optional isArray');
+  Object.defineProperty(Module.LayerDocument.prototype, 'setAttribute', {value: function(path, name, type, value, isArray, options) {
+    if (arguments.length < 4 || arguments.length > 6) {
+      throw new TypeError('setAttribute: expected path, name, type, value, optional isArray and flags');
     }
     if (typeof type !== 'string') throw new TypeError('setAttribute: type must be a string');
     const state = layerState(this);
@@ -1101,6 +1101,16 @@
     const pathBytes = layerEncoder.encode(path), nameBytes = layerEncoder.encode(name);
     const typeBytes = layerEncoder.encode(type);
     const typed = layerTypedValue(type, value, isArray);
+    let flags = typed.isArray ? 1 : 0;
+    if (options !== undefined) {
+      if (!options || typeof options !== 'object' || Array.isArray(options) ||
+          Object.keys(options).some(key => !['uniform', 'custom'].includes(key)) ||
+          (options.uniform !== undefined && typeof options.uniform !== 'boolean') ||
+          (options.custom !== undefined && typeof options.custom !== 'boolean'))
+        throw new TypeError('setAttribute: flags require boolean uniform/custom options');
+      flags |= 0x80 | (options.uniform ? 4 : 0) | (options.custom ? 2 : 0);
+    }
+
     const stringBytes = pathBytes.length + nameBytes.length + typeBytes.length;
     const dataPadding = (8 - (stringBytes & 7)) & 7;
     const total = stringBytes + dataPadding + typed.bytes.length;
@@ -1128,7 +1138,7 @@
       const pointer = at => typeof ptr === 'bigint' ? ptr + BigInt(at) : ptr + at;
       const args = [state.handle, pointer(offsets[0]), pathBytes.length,
         pointer(offsets[1]), nameBytes.length, pointer(offsets[2]), typeBytes.length,
-        typed.isArray ? 1 : 0, pointer(dataOffset), typed.bytes.length, typed.count];
+        flags, pointer(dataOffset), typed.bytes.length, typed.count];
       const status = layerCall('_lightusd_next_layer_set_typed', args, [1, 3, 5, 8]);
       return status === 0 ? {success: true} : {success: false, error: layerError(state)};
     } finally {

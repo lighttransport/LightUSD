@@ -10,8 +10,8 @@ export const TARGET_PROFILES = Object.freeze({
   bullet: Object.freeze({ version: 1, label: 'Bullet collider', maxTriangles: 100000, maxHullVertices: 64, maxMaterials: 1, maxTextureDimension: null, maxGpuBytes: 256 * 1024 * 1024, requireUVs: false, requireWatertight: true, materialParameterization: Object.freeze({ primvar: false, variant: false }) }),
   jolt: Object.freeze({ version: 1, label: 'Jolt collider', maxTriangles: 100000, maxHullVertices: 64, maxMaterials: 1, maxTextureDimension: null, maxGpuBytes: 256 * 1024 * 1024, requireUVs: false, requireWatertight: true, materialParameterization: Object.freeze({ primvar: false, variant: false }) }),
   'generic-usd': Object.freeze({ version: 1, label: 'Generic USD physics', maxTriangles: 500000, maxHullVertices: 255, maxMaterials: 1, maxTextureDimension: null, maxGpuBytes: 512 * 1024 * 1024, requireUVs: false, requireWatertight: true, materialParameterization: Object.freeze({ primvar: false, variant: false }) }),
-  archival: Object.freeze({ version: 1, label: 'Archival USD', maxTriangles: 10000000, maxMaterials: 256, maxTextureDimension: 32768, maxGpuBytes: 8 * 1024 * 1024 * 1024, requireUVs: false, materialParameterization: Object.freeze({ primvar: true, variant: true }) }),
-  '3d-printing': Object.freeze({ version: 1, label: '3D printing', maxTriangles: 2000000, maxMaterials: 1, maxTextureDimension: null, maxGpuBytes: 8 * 1024 * 1024 * 1024, requireUVs: false, requireWatertight: true, requirePhysicalUnits: true, materialParameterization: Object.freeze({ primvar: false, variant: false }) }),
+  archival: Object.freeze({ version: 1, label: 'Archival USD', requireProvenance: true, maxTriangles: 10000000, maxMaterials: 256, maxTextureDimension: 32768, maxGpuBytes: 8 * 1024 * 1024 * 1024, requireUVs: false, materialParameterization: Object.freeze({ primvar: true, variant: true }) }),
+  '3d-printing': Object.freeze({ version: 1, label: '3D printing', minWallThicknessMeters: 0.0005, maxTriangles: 2000000, maxMaterials: 1, maxTextureDimension: null, maxGpuBytes: 8 * 1024 * 1024 * 1024, requireUVs: false, requireWatertight: true, requirePhysicalUnits: true, materialParameterization: Object.freeze({ primvar: false, variant: false }) }),
 });
 
 export const QUALITY_GATE_SCHEMA_VERSION = 1;
@@ -69,6 +69,20 @@ export function evaluateTargetProfile(report, profile = 'web-viewer', usdReport 
     const boundaryEdges = stageMetric(stage.boundaryEdges), nonManifoldEdges = stageMetric(stage.nonManifoldEdges);
     results.push(annotate({ id: 'watertight', label: 'Watertight mesh', value: boundaryEdges + nonManifoldEdges, limit: 0, pass: boundaryEdges === 0 && nonManifoldEdges === 0, message: 'Collider meshes must have no boundary or non-manifold edges.' }, affected, ['mesh.cleanup']));
   }
+  if (constraints.minWallThicknessMeters != null) {
+    const failed = meshes.filter(mesh => !Number.isFinite(mesh?.physics?.wallThicknessMeters) ||
+      mesh.physics.wallThicknessMeters < constraints.minWallThicknessMeters || mesh.physics.wallThicknessVerified !== true);
+    const missing = !meshInventoryValid || !meshes.length;
+    results.push(annotate({ id: 'wall-thickness', label: 'Verified wall thickness', value: failed.length + Number(missing), limit: 0,
+      pass: !missing && failed.length === 0, message: `Every mesh requires verified wall thickness ≥ ${constraints.minWallThicknessMeters * 1000} mm; an unsampled surface cannot pass.` }, failed.map(mesh => mesh.path), []));
+  }
+  if (constraints.requireProvenance) {
+    const provenance = usdReport?.provenance;
+    const valid = typeof provenance?.sourceSHA256 === 'string' && /^[a-f0-9]{64}$/.test(provenance.sourceSHA256) &&
+      typeof provenance?.origin === 'string' && provenance.origin.trim().length > 0 && Array.isArray(provenance.operations);
+    results.push(annotate({ id: 'provenance', label: 'Source and operation provenance', value: valid ? 0 : 1, limit: 0,
+      pass: valid, message: 'Archival output requires a source SHA-256, origin and recorded operation history.' }, valid ? [] : ['/'], []));
+  }
   if (constraints.maxHullVertices != null) {
     const hullCandidates = meshes.filter((mesh) => mesh?.physics?.convexHull?.vertexCount != null), malformedHullMeshes = hullCandidates.filter((mesh) => !Number.isSafeInteger(mesh.physics.convexHull.vertexCount) || mesh.physics.convexHull.vertexCount < 0), hullMeshes = hullCandidates.filter((mesh) => Number.isSafeInteger(mesh.physics.convexHull.vertexCount) && mesh.physics.convexHull.vertexCount >= 0);
     let maxHullVertices = 0;
@@ -113,6 +127,8 @@ function expectedQualityCheckIds(profile) {
   ids.push('texture-validity');
   if (constraints.requireUVs) ids.push('uvs');
   if (constraints.requireWatertight) ids.push('watertight');
+  if (constraints.minWallThicknessMeters != null) ids.push('wall-thickness');
+  if (constraints.requireProvenance) ids.push('provenance');
   if (constraints.maxHullVertices != null) {
     ids.push('hull-vertices');
     if (['physx', 'bullet', 'jolt'].includes(profile)) ids.push('dynamic-concave-collider', 'hull-cooking-readiness');

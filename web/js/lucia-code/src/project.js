@@ -6,6 +6,7 @@ export class LuciaProject extends EventTarget {
     super();
     this.name = 'Untitled';
     this.source = null;
+    this.provenance = null;
     this.selectedPath = '/World/Hero';
     this.selectedPaths = new Set([this.selectedPath]);
     this.selectionAnchor = this.selectedPath;
@@ -17,6 +18,12 @@ export class LuciaProject extends EventTarget {
     this.changes = [];
     this.activity = [];
     this.exportRemap = {};
+  }
+  setAssetResolver(resolveAsset) {
+    if (resolveAsset != null && typeof resolveAsset !== 'function') throw new TypeError('Asset resolver must be a function or null.');
+    this.resolveAsset = resolveAsset;
+    this.domainRevisions.usd++;
+    this.emit();
   }
   select(path, { additive = false, range = null } = {}) {
     if (Array.isArray(range) && range.length) this.selectedPaths = additive ? new Set([...this.selectedPaths, ...range]) : new Set(range);
@@ -71,6 +78,7 @@ export class LuciaProject extends EventTarget {
   reset(name, source = null) {
     this.name = name.replace(/\.(usd[acz]?)$/i, '') || 'Untitled';
     this.source = source;
+    this.provenance = source?.sha256 ? { sourceSHA256: source.sha256, origin: source.name || name } : null;
     this.selectedPath = '/World';
     this.selectedPaths = new Set([this.selectedPath]);
     this.selectionAnchor = this.selectedPath;

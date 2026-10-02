@@ -517,6 +517,23 @@ values, and declarations without values. The comparison test accepts equivalent
 boolean spellings only on matching `bool` declarations, while preserving real
 value differences. It also runs in the standalone `next` CTest suite.
 
+Explicit empty list-op regressions can be run with:
+
+```sh
+./build_ninja/unit-test-lightusd usdc_reader_prim_metadata_roundtrip_test
+node tests/next/test-compare-usda-listops.cjs
+```
+
+AOUSD Core 1.0.1 makes `None` and `[]` equivalent for list ops. Both author an
+explicit empty opinion without a list-op qualifier; a bare relationship authors
+no target opinion. The native test checks both spellings through USDA → USDC →
+USDA and keeps bare declarations and populated targets distinct. The legacy
+writer uses `None` as its canonical empty spelling. The comparator accepts both
+spellings for relationship targets and known list-op metadata, preserves
+list-op qualifiers and multiple edits on one relationship, and does not equate
+attribute value blocks with empty arrays. The comparator test is also registered
+as `next_compare_usda_listops` in the standalone `next` suite.
+
 For Vulkan transparency changes, run the persistent-viewer promotion tests as
 well as the fixed-frame transparency matrix:
 
@@ -1838,6 +1855,19 @@ HDR-to-EXR and EXR round-trip thumbnails on combined/next wasm32/memory64, with
 16-bit atlas precision preserved. Rebuild next-only WASM with
 `LIGHTUSD_WASM_WITH_EXR=ON` to enable both EXR reading and writing.
 
+The Lucia source-delta gate checks compact history, Unicode, stale/damaged
+records, and equal-asset snapshot sharing without mutable restore aliases.
+It also checks bounded multiple intervals for distant edits, shifted undo
+offsets, and lossless fallback when the line structure changes.
+Its fidelity gate checks typed native transforms, atomic failed batches,
+unindexed face-varying corner data, nested dependencies, and worker input
+parity. The large browser workload also asserts that Health analysis yields
+to the UI timer. Full native next checks include generated empty-property
+metadata round trips, unknown property metadata through USDC, strict retained
+and streaming conversion, approximation diagnostics, and inert light filters.
+Malformed Points/Curves must produce failed diagnostics in both retained and
+streaming conversion; strict streaming conversion must reject those skips.
+
 
 ## Strict lusdchecker regression
 
@@ -1861,3 +1891,30 @@ The native checker and `Module.checkUSD` in the next WASM product share their
 runner and report implementation. For web changes, also run the
 [WASM checker and browser demo regressions](../web/js/docs/regression.md#full-lusdchecker-wasm-validation).
 They compare native/WASM reports and exercise both existing web applications.
+
+### Typed authoring and sampled-value follow-up
+
+The standalone `next_test_c_api` covers empty numeric arrays, integer-vector
+arrays, and authored custom flags. `next_test_aousd_conformance` generates 30
+round-trip cases from the elective-field inventory: explicit empty/default
+values must differ from unauthored fields through both USDA and USDC.
+Structural type/order fields retain their separate syntax-specific matrices.
+An additional unknown-metadata matrix checks 39 accepted raw list-op opinions
+across layer, prim and variant scopes, plus 15 invalid qualified layer spellings.
+This locks in `add` versus `append` authoring and composable inferred variant-set
+names through both formats without inventing semantics for extension fields.
+
+When the AOUSD checkout and pinned OpenUSD Python package are available,
+`next_aousd_sampled_value_pxrdiff` checks 304 DefaultTime/numeric queries across
+held/linear interpolation and clip transitions. Set
+`LIGHTUSD_NEXT_PXR_PYTHON` to relocate the oracle. Six queries have the pinned
+AOUSD corpus's explicitly checked extrapolated timing values where OpenUSD
+clamps; these are reported separately. Every other mismatch fails. Held
+interpolation now propagates into nested clips and missing-value interpolation.
+
+Lucia's `workflow-depth.test.mjs` and `project-storage.test.mjs` cover typed mesh
+and primvar authoring, semantic undo, IndexedDB snapshot contracts, nested
+composition, relocated dependencies, LOD selectors, worker budgets/cancellation
+and sampled rig diagnostics. Run the complete Lucia Node suite and browser smoke
+suite after editing those paths. Printing/archival quality gates now require
+verified wall-thickness/provenance evidence; missing evidence fails explicitly.

@@ -2400,6 +2400,22 @@ maximum reduction error <= 0.5%
 
 ### Session-layer editing
 
+Current implementation: transform and visibility mutations use next-core typed
+attribute setters with explicit custom/uniform flags. Undo records retain only
+changed USDA intervals and verify both states with SHA-256. Asset snapshots
+intern equal content through a bounded weak index and restore mutable assets
+independently. Edits on separate aligned lines use bounded multiple intervals;
+changed line structure falls back to a single interval. Topology and mesh primvars
+now use the typed next-layer API, including indexed UV buffers, integer-vector
+arrays, double precision, four-component tangents, and skinning element sizes.
+Constant/uniform/vertex/varying/face-varying primvar authoring checks cardinality
+against the owning prim's parsed topology. Property-only undo uses semantic
+layer deltas when authored-data round trips are exact; unsupported fields or
+precision loss retain the lossless source fallback. Local project saves use
+IndexedDB content-addressed blobs with atomic manifests, verified hashes,
+independent restored buffers, a 256 MiB budget and orphan-blob pruning. The
+header exposes Save locally, Open saved and Clear history controls.
+
 - Move from whole-stage USDA snapshots toward typed, validated session-layer
   deltas.
 - Keep one logical user action atomic across prim edits and generated assets.
@@ -2520,3 +2536,20 @@ A module is complete only when:
 - Export validation catches missing or invalid generated dependencies.
 - User-facing descriptions explain tradeoffs without promising lossless results.
 - Third-party notices and version information are present where required.
+
+## Follow-up implementation and verification
+
+- Selected flattening uses bounded native composition with nested layers and an
+  optional host asset resolver. Localization rewrites loaded layer dependencies
+  relative to both old and new layer locations; binary layers retain USDC format.
+- Worker posting shares memory checks, transfer deduplication, abort handling,
+  unreadable-result errors and bounded watchdogs. Health also checks its full
+  serialized input shape before posting.
+- LOD chains can author an opt-in `luciaLOD` sibling selector, retaining existing
+  variant selections. Conflicting local visibility opinions are rejected.
+- Rig workers accept 1–32 explicitly sampled poses; deformation reports retain
+  bounded vertex samples. This is diagnostics, not animation authoring.
+- Archival gates require source provenance, and printing gates require verified
+  wall-thickness evidence. Unmeasured surfaces fail the gate; no automatic
+  thickness verification or general volumetric repair is claimed. General convex
+  decomposition (LC-244) remains explicitly deferred.

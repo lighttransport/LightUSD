@@ -103,14 +103,14 @@ bool RenderSceneConverter::Impl::ConvertLight(
     case LightKind::PortalLight: out->type = LightType::Rect; break;
     case LightKind::PluginLight:
       out->type = LightType::Point;
-      AddWarning("PluginLight '" + prim.GetPath().str() +
+      AddConversionWarning(prim.GetPath().str(), "PluginLight '" + prim.GetPath().str() +
                           "': shader registry evaluation is unsupported; "
                           "using point light fallback");
       break;
     case LightKind::LightFilter:
     case LightKind::PluginLightFilter:
       out->type = LightType::Point;
-      AddWarning("Light filter '" + prim.GetPath().str() +
+      AddConversionWarning(prim.GetPath().str(), "Light filter '" + prim.GetPath().str() +
                           "': filter evaluation is unsupported; "
                           "using inert point light fallback");
       out->intensity = 0.0f;
@@ -219,6 +219,10 @@ bool RenderSceneConverter::Impl::ConvertLight(
   GetFloat(eval, prim, "inputs:shadow:distance", &out->shadow_distance);
   GetFloat(eval, prim, "inputs:shadow:falloff", &out->shadow_falloff);
   GetFloat(eval, prim, "inputs:shadow:falloffGamma", &out->shadow_falloff_gamma);
+
+  // Authored intensity must not turn a filter approximation into an emitter.
+  if (kind == LightKind::LightFilter || kind == LightKind::PluginLightFilter)
+    out->intensity = 0.0f;
 
   return true;
 }

@@ -394,10 +394,13 @@ bool ValueFromRaw(lightusd_type type, uint8_t is_array, const void* data,
     return true;
   }
 
-  if (!data || count == 0) {
+  if ((!data || count == 0) && !(is_array && count == 0)) {
     SetError("value data is null/empty");
     return false;
   }
+  // Empty typed arrays are authored values, not missing values or blocks.
+  alignas(16) const uint8_t empty_storage[16] = {};
+  if (!data) data = empty_storage;
 
   const bool array = is_array || count > 1;
 
@@ -452,6 +455,22 @@ bool ValueFromRaw(lightusd_type type, uint8_t is_array, const void* data,
   }
 
   const lightusd_component_type storage = StorageFor(t, true);
+  if (comps && count > (std::numeric_limits<size_t>::max)() / comps) {
+    SetError("array component count overflows");
+    return false;
+  }
+  if (storage == LIGHTUSD_COMP_INT32 && comps > 0) {
+    const int32_t* p = static_cast<const int32_t*>(data);
+    *out = n::Value::MakeIntCompArray(std::vector<int32_t>(p, p + count * comps), t,
+                                    static_cast<uint32_t>(comps));
+    return true;
+  }
+  if (storage == LIGHTUSD_COMP_UINT32 && comps > 0) {
+    const uint32_t* p = static_cast<const uint32_t*>(data);
+    *out = n::Value::MakeUIntCompArray(std::vector<uint32_t>(p, p + count * comps), t,
+                                     static_cast<uint32_t>(comps));
+    return true;
+  }
   if (storage == LIGHTUSD_COMP_FLOAT32 && comps > 0) {
     const float* p = static_cast<const float*>(data);
     std::vector<float> flat(p, p + count * comps);
@@ -1034,7 +1053,9 @@ lightusd_status lightusd_stage_export_usda(const lightusd_stage* stage,
   if (!stage || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "stage/out is null");
   lightusd_string* s = new (std::nothrow) lightusd_string();
   if (!s) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "alloc failed");
-  s->s = n::WriteUSDAToString(stage->ReadStage());
+  n::USDAWriteOptions options;
+  options.emit_custom = true;  // Editable layers must preserve authored flags.
+  s->s = n::WriteUSDAToString(stage->ReadStage(), options);
   *out = s;
   return LIGHTUSD_OK;
 }

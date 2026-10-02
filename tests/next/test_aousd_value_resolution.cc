@@ -138,8 +138,8 @@ bool TestTimeSamples(const std::string& assets_root) {
   {
     EvalResult r = c.Eval("/Root", "root", c.Options(TimeQuery(15.0)));
     const double v = AsDouble(r);
-    if (!(v > 5.0 && v < 10.0)) {
-      std::fprintf(stderr, "FAIL /Root.root t=15: expected (5,10) got %g\n", v);
+    if (!Near(v, 5.0 + 14.0 * 5.0 / 29.0)) {
+      std::fprintf(stderr, "FAIL /Root.root t=15: expected exact linear interpolation got %g\n", v);
       return false;
     }
   }
@@ -253,6 +253,37 @@ bool TestClipMulti(const std::string& assets_root) {
   return true;
 }
 
+bool DumpSampleMatrix(const std::string& assets_root) {
+  struct Binding { const char* name; const char* path; const char* attr; };
+  const Binding bindings[] = {{"default", "/Root", "root"},
+      {"timesamples", "/Root", "root"}, {"clip_timings", "/Model", "size"},
+      {"clip_basic", "/Model", "size"}, {"clip_advanced", "/Model", "local"},
+      {"clip_advanced", "/Model", "ref"}, {"clip_sets", "/DefaultOrderTest", "attr"},
+      {"clip_multi", "/Model_1", "size"}};
+  const double times[] = {-1, 0, .5, 1, 5, 10, 15, 16 - 1e-9, 16, 16 + 1e-9,
+                         19, 20, 22, 25, 30, 40, 50, 60};
+  for (const Binding& binding : bindings) {
+    Case c;
+    if (!c.Open(assets_root, binding.name)) return false;
+    for (TimeInterpolation interp : {TimeInterpolation::Linear, TimeInterpolation::Held}) {
+      auto emit = [&](const char* time, TimeQuery query) {
+        const EvalResult result = c.Eval(binding.path, binding.attr, c.Options(query, interp));
+        const bool valued = result.success && (result.value.as_float() || result.value.as_double());
+        std::printf("%s\t%s\t%s\t%s\t%s\t%d\t%.17g\n", binding.name,
+                    binding.path, binding.attr,
+                    interp == TimeInterpolation::Linear ? "linear" : "held", time,
+                    valued ? 1 : 0, valued ? AsDouble(result) : 0.0);
+      };
+      emit("Default", TimeQuery::Default());
+      for (double time : times) {
+        char label[64]; std::snprintf(label, sizeof(label), "%.17g", time);
+        emit(label, TimeQuery(time));
+      }
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -269,6 +300,9 @@ int main(int argc, char** argv) {
         "argv[1] or set AOUSD_CORE_SUPPLEMENTAL_ROOT)\n");
     return 77;
   }
+
+  if (argc > 2 && std::string(argv[2]) == "--dump-samples")
+    return DumpSampleMatrix(assets_root) ? 0 : 1;
 
   bool ok = true;
   ok &= TestDefault(assets_root);

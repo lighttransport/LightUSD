@@ -167,7 +167,7 @@ typedef struct lightusd_render_config {
   uint8_t discard_instance_source_arrays; /* preference; draw expansion still retains required arrays */
   uint8_t use_default_asset_resolver; /* filesystem resolver anchored to source directory */
   uint8_t material_binding_purpose; /* lightusd_material_binding_purpose */
-  uint8_t _pad1;
+  uint8_t _pad1; /* strict conversion flag; use config_set_strict below */
   uint64_t max_resident_bytes; /* estimated retained scene must fit; zero invalid */
   uint64_t max_render_records; /* 1..INT32_MAX or UNLIMITED (capped at INT32_MAX) */
   uint64_t max_render_depth;
@@ -175,6 +175,29 @@ typedef struct lightusd_render_config {
 } lightusd_render_config;
 
 LIGHTUSD_API void lightusd_render_config_init(lightusd_render_config* cfg);
+/* Require warning-free conversion without changing the config struct ABI. */
+LIGHTUSD_API lightusd_status lightusd_render_config_set_strict(
+    lightusd_render_config* cfg, uint8_t enabled);
+
+typedef enum lightusd_render_conversion_disposition {
+  LIGHTUSD_RENDER_PRESERVED_UNSUPPORTED = 0,
+  LIGHTUSD_RENDER_APPROXIMATED = 1,
+  LIGHTUSD_RENDER_FAILED = 2
+} lightusd_render_conversion_disposition;
+
+typedef struct lightusd_render_conversion_diagnostic {
+  uint8_t disposition; /* lightusd_render_conversion_disposition */
+  uint8_t _pad[7];
+  lightusd_sv prim_path;
+  lightusd_sv message;
+} lightusd_render_conversion_diagnostic;
+
+/* String views remain valid for the lifetime of this immutable scene. */
+LIGHTUSD_API size_t lightusd_render_conversion_diagnostic_count(
+    const lightusd_render_scene* scene);
+LIGHTUSD_API lightusd_status lightusd_render_conversion_diagnostic_get(
+    const lightusd_render_scene* scene, size_t index,
+    lightusd_render_conversion_diagnostic* out);
 
 typedef enum lightusd_render_light_type {
   LIGHTUSD_RENDER_LIGHT_POINT = 0,

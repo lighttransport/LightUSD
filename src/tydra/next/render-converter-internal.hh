@@ -188,6 +188,7 @@ class RenderSceneConverter::Impl {
   ConverterConfig config_;
   std::string last_error_;
   std::vector<std::string> warnings_;
+  std::vector<ConversionDiagnostic> conversion_diagnostics_;
   // Guards last_error_, warnings_ and the BudgetWouldExceed bookkeeping
   // (budget_*_ below) for the parallel per-record conversion phases (meshes
   // today; see the mesh-conversion loop in Convert()). No-op cost on the
@@ -195,6 +196,9 @@ class RenderSceneConverter::Impl {
   // BudgetWouldExceed() from the main thread only.
   mutable ConverterStateMutex state_mu_;
   void AddWarning(std::string msg);
+  void AddConversionWarning(const std::string& path, std::string msg,
+                            ConversionDisposition disposition =
+                                ConversionDisposition::Approximated);
   void SetLastError(std::string msg);
   const RenderScene* image_cache_scene_ = nullptr;
   // Keep only a compact path hash in the transient dedup index.  The

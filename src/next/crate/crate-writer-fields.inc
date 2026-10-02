@@ -498,7 +498,13 @@
               MakeStringListOpField("variantSetNames", edits));
         } else if (!decl_sets.empty()) {
           fieldset.push_back(static_cast<uint32_t>(fields_.size()));
-          fields_.push_back(MakeStringListOpField("variantSetNames", decl_sets));
+          // Variant declarations imply a composable prepend, matching the
+          // USDA writer. Explicit authoring would erase weaker set names.
+          StringListOpEdits inferred;
+          inferred.authored = true;
+          inferred.is_explicit = false;
+          inferred.prepended = decl_sets;
+          fields_.push_back(MakeStringListOpField("variantSetNames", inferred));
         }
       }
 

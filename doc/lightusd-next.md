@@ -3,6 +3,25 @@
 This note explains the "next" stack in LightUSD and how it is used by the web
 `usdzconvert` pipeline.
 
+Property metadata round trips preserve authored empty `allowedTokens` arrays
+and unknown USDA property metadata through USDC unregistered values. The writer
+test generates an attribute/relationship matrix for empty lists, dictionaries,
+strings, and authored default scalars.
+
+Tydra Next exposes `RenderScene::conversion_diagnostics` with preserved
+unsupported, approximated, and failed dispositions. `StreamConvertResult`
+also retains diagnostics produced after the scene catalog was emitted.
+`ConverterConfig::strict_conversion` requires warning-free full conversion;
+this includes resolver and colorspace warnings, so it is deliberately stricter
+than merely rejecting shader approximations. The default remains permissive.
+The C API exposes `lightusd_render_config_set_strict` and conversion diagnostic
+count/get functions without changing the render-config layout. Light-filter
+fallbacks remain inert even when their source authors a nonzero intensity.
+
+The WASM `LayerDocument.setAttribute(path, name, type, value, isArray, options)`
+accepts optional `{uniform, custom}` boolean flags. Existing calls retain their
+custom-attribute default; explicit flags support schema-authored attributes.
+
 ## Terminology
 
 LightUSD currently has two USD implementations:

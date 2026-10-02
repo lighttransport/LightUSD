@@ -1,3 +1,6 @@
+import { authorLODVariants } from './lod-variants.js';
+import { createLayerPropertyDelta, applyLayerPropertyDelta } from './layer-delta.js';
+import { meshAttributeEdits } from './mesh-edits.js';
 import { bytesToBase64, decoder, encoder, escapeRegExp, LuciaError, validIdentifier, validPrimPath } from './utils.js';
 import { localizeUSDDependencies, repairInheritedMaterialBindings, validateUSDZArchive } from './usd-doctor.js';
 import { findEquivalentMaterialMapping, foldLiteralUSDShaderNodes, mergeMaterialDefinitions, removeUnreachableMaterialShaders, rewriteMaterialBindings, rewriteMaterialCollectionBindings } from './material-repair.js';
@@ -266,9 +269,18 @@ function parseFaceVaryingPrimvars(source, path, indexCount) {
     const itemSize = typeSizes[match[1]], values = [], scalarPattern = /[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?/g;
     let value;
     while ((value = scalarPattern.exec(match[3]))) values.push(Number(value[0]));
-    const indices = parseIntegerArrayProperty(source, path, `primvars:${name}:indices`);
+    const indexProperty = `primvars:${name}:indices`;
+    const hasIndices = new RegExp(`\\bint\\[\\]\\s+${escapeRegExp(indexProperty)}\\s*=`).test(body);
+    const indices = hasIndices ? parseIntegerArrayProperty(source, path, indexProperty)
+      : values.length / itemSize === indexCount ? Array.from({ length: indexCount }, (_, index) => index) : null;
+    if (!/^[\s(),]*$/.test(match[3].replace(scalarPattern, ''))) throw new LuciaError('LUCIA_CLEANUP_FACEVARYING', `Face-varying primvar ${name} contains invalid value syntax.`);
     if (!values.length || values.length % itemSize || !indices || indices.length !== indexCount || !values.every(Number.isFinite) || !indices.every((index) => Number.isSafeInteger(index) && index >= 0 && index < values.length / itemSize)) throw new LuciaError('LUCIA_CLEANUP_FACEVARYING', `Face-varying primvar ${name} has malformed values or corner indices.`);
-    attributes.push({ name, itemSize, array: new (match[1].startsWith('int') ? Int32Array : Float32Array)(values), indices: Uint32Array.from(indices), interpolation: 'faceVarying' });
+    const integer = match[1].startsWith('int');
+    if (integer && !values.every(value => Number.isInteger(value) && value >= -2147483648 && value <= 2147483647))
+      throw new LuciaError('LUCIA_CLEANUP_FACEVARYING', `Face-varying primvar ${name} contains invalid int32 values.`);
+    const array = new (integer ? Int32Array : Float32Array)(values);
+    if (!array.every(Number.isFinite)) throw new LuciaError('LUCIA_CLEANUP_FACEVARYING', `Face-varying primvar ${name} exceeds its numeric range.`);
+    attributes.push({ name, itemSize, array, indices: Uint32Array.from(indices), interpolation: 'faceVarying' });
   }
   return attributes;
 }
@@ -352,12 +364,22 @@ export class LuciaUsdSession extends EventTarget {
   }
 
   async nativeMutation(tool, args, summary) {
+    return this.nativeMutations([{ tool, args }], summary);
+  }
+
+  async nativeMutations(edits, summary) {
     const previous = this.usda;
-    this.call(tool, args);
-    this.usda = this.call('stage_to_string').usda;
-    await this.rebuildRender();
-    this.dispatchEvent(new CustomEvent('stagechange', { detail: { summary } }));
-    return previous;
+    try {
+      for (const { tool, args } of edits) this.call(tool, args);
+      this.usda = this.call('stage_to_string').usda;
+      await this.rebuildRender();
+      this.dispatchEvent(new CustomEvent('stagechange', { detail: { summary } }));
+      return previous;
+    } catch (error) {
+      this.call('stage_load_data', { data: bytesToBase64(encoder.encode(previous)), name: this.filename, format: 'usda' });
+      this.usda = previous;
+      throw error;
+    }
   }
 
   async restore(source) { await this.replaceUSDA(source, 'Restore scene'); }
@@ -380,18 +402,84 @@ export class LuciaUsdSession extends EventTarget {
     return this.nativeMutation('prim_create', { path, type_name: type, specifier: 'def' }, `Create ${type} ${path}`);
   }
 
+  async nativeAttributeEdits(edits, summary) {
+    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd_next.js').then(({ default: factory }) => factory()));
+    const document = new native.LayerDocument();
+    const checked = result => { if (!result.success) throw new LuciaError('LUCIA_NATIVE_ATTRIBUTE', result.error || 'Native attribute edit failed.'); return result; };
+    try {
+      checked(document.load(encoder.encode(this.usda)));
+      for (const { args } of edits) {
+        if (args.remove) {
+          const result = document.removeAttribute(args.path, args.attr_name);
+          if (!result.success && !result.error?.includes(`no property: ${args.attr_name}`)) checked(result);
+          continue;
+        }
+        const isArray = args.value.type.endsWith('[]');
+        checked(document.setAttribute(args.path, args.attr_name, args.value.type.replace(/\[\]$/, ''), args.value.value, isArray,
+          { uniform: args.uniform === true, custom: args.custom === true }));
+        for (const [key, value] of Object.entries(args.metadata || {}))
+          checked(document.setAttributeMetadata(args.path, args.attr_name, key, value));
+      }
+      return await this.replaceUSDA(checked(document.exportUSDA()).text, summary);
+    } finally { document.delete(); }
+  }
+
+  async compactPropertyHistory(before, after) {
+    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd_next.js').then(({ default: factory }) => factory()));
+    const document = new native.LayerDocument();
+    try {
+      const read = source => {
+        if (!document.load(encoder.encode(source)).success) return null;
+        return JSON.parse(document.exportJSON().text);
+      };
+      const left = read(before), right = read(after);
+      if (!left || !right) return null;
+      const delta = createLayerPropertyDelta(left, right);
+      if (!delta) return null;
+      // Generic JSON cannot express every elective USD field. Verify both
+      // directions before choosing it over the lossless source fallback.
+      for (const [layer, direction, expected] of [[right, 'undo', before], [left, 'redo', after]]) {
+        const target = read(expected);
+        if (!document.loadJSON(JSON.stringify(applyLayerPropertyDelta(layer, delta, direction))).success) return null;
+        // Verify authored data after USDA serialization, independent of the
+        // legacy preview writer's whitespace. Any precision/field loss falls
+        // back to the exact source delta.
+        const roundtrip = read(document.exportUSDA().text);
+        if (JSON.stringify(roundtrip) !== JSON.stringify(target)) return null;
+      }
+      return delta;
+    } finally { document.delete(); }
+  }
+
+  async restorePropertyHistory(delta, direction) {
+    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd_next.js').then(({ default: factory }) => factory()));
+    const document = new native.LayerDocument();
+    try {
+      if (!document.load(encoder.encode(this.usda)).success) throw new LuciaError('LUCIA_HISTORY', document.error());
+      const layer = applyLayerPropertyDelta(JSON.parse(document.exportJSON().text), delta, direction);
+      const loaded = document.loadJSON(JSON.stringify(layer));
+      if (!loaded.success) throw new LuciaError('LUCIA_HISTORY', loaded.error);
+      const result = document.exportUSDA();
+      if (!result.success) throw new LuciaError('LUCIA_HISTORY', result.error);
+      return this.replaceUSDA(result.text, 'Restore property edit');
+    } finally { document.delete(); }
+  }
+
   async setTransform(path, transform) {
-    let source = this.usda;
-    const vec = (v) => `(${v.map((n) => Number(n).toFixed(6).replace(/\.?0+$/, '') || '0').join(', ')})`;
-    source = setAttributeText(source, path, 'double3 xformOp:translate', vec(transform.translate));
-    source = setAttributeText(source, path, 'float3 xformOp:rotateXYZ', vec(transform.rotate));
-    source = setAttributeText(source, path, 'float3 xformOp:scale', vec(transform.scale));
-    source = setAttributeText(source, path, 'uniform token[] xformOpOrder', '["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]');
-    return this.replaceUSDA(source, `Transform ${path}`);
+    const edits = [['translate', 'double3'], ['rotate', 'float3'], ['scale', 'float3']].map(([key, type]) => {
+      const value = transform?.[key];
+      if (!value || value.length !== 3 || !Array.from(value).every(Number.isFinite))
+        throw new LuciaError('LUCIA_TRANSFORM', 'Transform components must contain three finite numbers.');
+      return { tool: 'attr_set', args: { path, attr_name: `xformOp:${key === 'rotate' ? 'rotateXYZ' : key}`, value: { type, value: Array.from(value) } } };
+    });
+    edits.push({ tool: 'attr_set', args: { path, attr_name: 'xformOpOrder', uniform: true,
+      value: { type: 'token[]', value: ['xformOp:translate', 'xformOp:rotateXYZ', 'xformOp:scale'] } } });
+    return this.nativeAttributeEdits(edits, `Transform ${path}`);
   }
 
   async setVisibility(path, visible) {
-    return this.replaceUSDA(setAttributeText(this.usda, path, 'token visibility', visible ? '"inherited"' : '"invisible"'), `${visible ? 'Show' : 'Hide'} ${path}`);
+    if (typeof visible !== 'boolean') throw new LuciaError('LUCIA_VISIBILITY', 'Visibility must be a boolean.');
+    return this.nativeAttributeEdits([{ args: { path, attr_name: 'visibility', value: { type: 'token', value: visible ? 'inherited' : 'invisible' } } }], `${visible ? 'Show' : 'Hide'} ${path}`);
   }
 
   async setMaterialVariants(path, variants, variantSet = 'luciaMaterial') {
@@ -513,6 +601,50 @@ export class LuciaUsdSession extends EventTarget {
     return this.replaceUSDA(source, `Set color on ${path}`);
   }
 
+  async setPrimvar(path, attribute) {
+    validateCustomMeshAttribute(attribute, 'Primvar');
+    const interpolation = normalizeInterpolationToken(attribute.interpolation, 'vertex');
+    if (!['constant', 'uniform', 'vertex', 'varying', 'faceVarying'].includes(interpolation))
+      throw new LuciaError('LUCIA_MESH_ATTRIBUTE', 'Mesh primvars require constant, uniform, vertex, varying or faceVarying interpolation.');
+    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd_next.js').then(({ default: factory }) => factory()));
+    const document = new native.LayerDocument();
+    let vertexCount, counts, corners;
+    try {
+      const loaded = document.load(encoder.encode(this.usda));
+      if (!loaded.success) throw new LuciaError('LUCIA_MESH_ATTRIBUTE', loaded.error);
+      const layer = JSON.parse(document.exportJSON().text);
+      let owners = layer.primSpecs, prim;
+      for (const name of path.split('/').filter(Boolean)) { prim = owners?.[name]; owners = prim?.children; }
+      if (!prim) throw new LuciaError('LUCIA_PATH_NOT_FOUND', `Prim not found: ${path}`);
+      const array = (name, types) => {
+        const attribute = prim.properties?.[name]?.attribute;
+        if (!attribute?.hasValue || attribute.hasTimeSamples || !types.includes(attribute.typeName)) return null;
+        try { return JSON.parse(attribute.value.replaceAll('(', '[').replaceAll(')', ']')); }
+        catch { return null; }
+      };
+      const points = array('points', ['point3f[]', 'float3[]', 'double3[]']);
+      vertexCount = Array.isArray(points) && points.every(point => Array.isArray(point) && point.length === 3 && point.every(Number.isFinite)) ? points.length : null;
+      counts = array('faceVertexCounts', ['int[]']); corners = array('faceVertexIndices', ['int[]']);
+      if (counts && (!Array.isArray(counts) || counts.some(count => !Number.isSafeInteger(count) || count < 3))) counts = null;
+      if (corners && (!Array.isArray(corners) || corners.some(index => !Number.isSafeInteger(index) || index < 0 || index >= vertexCount))) corners = null;
+      if (counts && corners && counts.reduce((sum, count) => sum + count, 0) !== corners.length) { counts = null; corners = null; }
+    } finally { document.delete(); }
+    const expected = interpolation === 'constant' ? 1 : interpolation === 'uniform' ? counts?.length : interpolation === 'faceVarying' ? corners?.length : vertexCount;
+    const valueCount = attribute.array.length / attribute.itemSize;
+    if (!Number.isSafeInteger(expected) || expected < 1 || !Number.isSafeInteger(valueCount))
+      throw new LuciaError('LUCIA_MESH_ATTRIBUTE', 'Primvar cardinality requires valid authored mesh topology.');
+    if (attribute.indices) {
+      if (!isSupportedNumericArray(attribute.indices) || attribute.indices.length !== expected || hasInvalidValue(attribute.indices, index => !Number.isSafeInteger(index) || index < 0 || index >= valueCount))
+        throw new LuciaError('LUCIA_MESH_ATTRIBUTE', 'Indexed primvars need one in-range index per interpolated element.');
+    } else if (valueCount !== expected) throw new LuciaError('LUCIA_MESH_ATTRIBUTE', 'Primvar values do not match the interpolation cardinality.');
+    const kind = numericArrayKind(attribute.array), scalar = attribute.array instanceof Float64Array ? 'double' : kind;
+    const type = `${scalar}${attribute.itemSize === 1 ? '' : attribute.itemSize}[]`, name = `primvars:${attribute.name}`;
+    return this.nativeAttributeEdits([
+      { args: { path, attr_name: name, value: { type, value: kind === 'int' ? Array.from(attribute.array) : attribute.array }, metadata: { interpolation } } },
+      { args: { path, attr_name: `${name}:indices`, ...(attribute.indices ? { value: { type: 'int[]', value: Array.from(attribute.indices) } } : { remove: true }) } },
+    ], `Set ${interpolation} primvar ${attribute.name}`);
+  }
+
   async setMeshGeometry(path, data, summary = 'Update mesh geometry') {
     if (data?.uvSet != null && !['default', 'lightmap'].includes(data.uvSet)) throw new LuciaError('LUCIA_UV_SET', `Unsupported UV set: ${data.uvSet}`);
     try { data = { ...data, indices: validateIndexedMesh({ positions: data?.positions, indices: data?.indices || null }).indices, subdivisionScheme: normalizeSubdivisionScheme(data?.subdivisionScheme), ...Object.fromEntries(Object.keys(SUBDIVISION_METADATA).map((name) => [name, normalizeSubdivisionMetadata(name, data?.[name])])) }; } catch (error) { throw error.code === 'LUCIA_SUBDIVISION_SCHEME' || error.code === 'LUCIA_SUBDIVISION_METADATA' ? error : new LuciaError('LUCIA_MESH_AUTHORING', `Mesh authoring received invalid indexed data: ${error.message}`); }
@@ -557,111 +689,28 @@ export class LuciaUsdSession extends EventTarget {
     const authoredAttributeNames = new Set(['st', 'st1', 'displayColor', 'tangents', 'skel:jointIndices', 'skel:jointWeights']);
     for (const attribute of data.customAttributes) { validateCustomMeshAttribute(attribute, 'Custom attributes', vertexCount); validateAttributeInterpolation(attribute, 'vertex', 'Custom attributes'); if (authoredAttributeNames.has(attribute.name)) throw new LuciaError('LUCIA_MESH_ATTRIBUTE', `Mesh attribute name is reserved or duplicated: ${attribute.name}`); authoredAttributeNames.add(attribute.name); }
     for (const attribute of data.faceVaryingAttributes) { if (attribute.name === 'st1') { if (data.faceVaryingAttributes.filter((candidate) => candidate.name === 'st1').length !== 1 || !attribute.array || attribute.itemSize !== 2 || attribute.array.length % 2 || hasInvalidValue(attribute.array, (value) => !Number.isFinite(value)) || !attribute.indices || attribute.indices.length !== data.indices.length || hasInvalidValue(attribute.indices, (index) => !Number.isSafeInteger(index) || index < 0 || index >= attribute.array.length / 2)) throw new LuciaError('LUCIA_MESH_ATTRIBUTE', 'Lightmap UVs must contain finite two-component values and one valid index per face corner.'); continue; } validateCustomMeshAttribute(attribute, 'Face-varying attributes'); validateAttributeInterpolation(attribute, 'faceVarying', 'Face-varying attributes'); if (authoredAttributeNames.has(attribute.name)) throw new LuciaError('LUCIA_MESH_ATTRIBUTE', `Mesh attribute name is reserved or duplicated: ${attribute.name}`); authoredAttributeNames.add(attribute.name); if (!attribute.indices || attribute.indices.length !== data.indices.length || hasInvalidValue(attribute.indices, (index) => !Number.isSafeInteger(index) || index < 0 || index >= attribute.array.length / attribute.itemSize)) throw new LuciaError('LUCIA_MESH_ATTRIBUTE', 'Face-varying attribute indices must align with face corners and reference the value buffer.'); }
-    let source = this.usda;
-    const points = `[${Array.from({ length: data.positions.length / 3 }, (_, i) => `(${data.positions[i * 3]}, ${data.positions[i * 3 + 1]}, ${data.positions[i * 3 + 2]})`).join(', ')}]`;
-    const indices = `[${Array.from(data.indices).join(', ')}]`;
-    const counts = `[${Array.from({ length: data.indices.length / 3 }, () => 3).join(', ')}]`;
-    source = setAttributeText(source, path, 'point3f[] points', points);
-    source = setAttributeText(source, path, 'int[] faceVertexIndices', indices);
-    source = setAttributeText(source, path, 'int[] faceVertexCounts', counts);
-    if (data.subdivisionScheme) source = setAttributeText(source, path, 'token subdivisionScheme', `"${data.subdivisionScheme}"`);
-    for (const name of Object.keys(SUBDIVISION_METADATA)) if (data[name]) source = setAttributeText(source, path, `token ${name}`, `"${data[name]}"`);
-    if (sharpChains || sharpEdges) {
-      const chains = sharpChains || sharpEdges.map((edge) => edge), sharpness = sharpChainSharpness || sharpEdgeSharpness || chains.map(() => 1);
-      source = setAttributeText(source, path, 'int[] creaseIndices', `[${chains.flat().join(', ')}]`);
-      source = setAttributeText(source, path, 'int[] creaseLengths', `[${chains.map((chain) => chain.length).join(', ')}]`);
-      source = setAttributeText(source, path, 'float[] creaseSharpness', `[${sharpness.join(', ')}]`);
-    }
-    const uvDeclaration = data.uvSet === 'lightmap' ? 'texCoord2f[] primvars:st1' : 'texCoord2f[] primvars:st';
-    if (data.uvs?.length && data.uvIndices?.length === data.indices.length) {
-      const uvs = `[${Array.from({ length: data.uvIndices.length }, (_, i) => { const uvIndex = data.uvIndices[i] * 2; return `(${data.uvs[uvIndex]}, ${data.uvs[uvIndex + 1]})`; }).join(', ')}]`;
-      source = setAttributeText(source, path, uvDeclaration, `${uvs} ( interpolation = "faceVarying" )`);
-      source = setAttributeText(source, path, `${data.uvSet === 'lightmap' ? 'int[] primvars:st1:indices' : 'int[] primvars:st:indices'}`, `[${Array.from(data.uvIndices).join(', ')}]`);
-    } else if (data.uvs?.length === data.positions.length / 3 * 2) {
-      const uvs = `[${Array.from({ length: data.uvs.length / 2 }, (_, i) => `(${data.uvs[i * 2]}, ${data.uvs[i * 2 + 1]})`).join(', ')}]`;
-      source = setAttributeText(source, path, uvDeclaration, `${uvs} ( interpolation = "vertex" )`);
-      source = removeAttributeText(source, path, `${data.uvSet === 'lightmap' ? 'int[] primvars:st1:indices' : 'int[] primvars:st:indices'}`);
-    }
-    const lightmapAttribute = (data.faceVaryingAttributes || []).find((attribute) => attribute.name === 'st1');
-    if (lightmapAttribute) {
-      const values = `[${Array.from({ length: lightmapAttribute.array.length / 2 }, (_, i) => `(${lightmapAttribute.array[i * 2]}, ${lightmapAttribute.array[i * 2 + 1]})`).join(', ')}]`;
-      source = setAttributeText(source, path, 'texCoord2f[] primvars:st1', `${values} ( interpolation = "faceVarying" )`);
-      source = setAttributeText(source, path, 'int[] primvars:st1:indices', `[${Array.from(lightmapAttribute.indices).join(', ')}]`);
-    }
-    if (normalIndices != null) {
-      const normals = `[${Array.from({ length: normalizedNormals.length / 3 }, (_, i) => `(${normalizedNormals[i * 3]}, ${normalizedNormals[i * 3 + 1]}, ${normalizedNormals[i * 3 + 2]})`).join(', ')}]`;
-      source = setAttributeText(source, path, 'normal3f[] normals', `${normals} ( interpolation = "faceVarying" )`);
-      source = setAttributeText(source, path, 'int[] normals:indices', `[${Array.from(normalIndices).join(', ')}]`);
-    } else if (normalizedNormals?.length === data.positions.length) {
-      const normals = `[${Array.from({ length: normalizedNormals.length / 3 }, (_, i) => `(${normalizedNormals[i * 3]}, ${normalizedNormals[i * 3 + 1]}, ${normalizedNormals[i * 3 + 2]})`).join(', ')}]`;
-      source = setAttributeText(source, path, 'normal3f[] normals', `${normals} ( interpolation = "vertex" )`);
-      source = removeAttributeText(source, path, 'int[] normals:indices');
-    }
-    if (data.colors?.length === data.positions.length) {
-      const colors = `[${Array.from({ length: data.colors.length / 3 }, (_, i) => `(${data.colors[i * 3]}, ${data.colors[i * 3 + 1]}, ${data.colors[i * 3 + 2]})`).join(', ')}]`;
-      source = setAttributeText(source, path, 'color3f[] primvars:displayColor', `${colors} ( interpolation = "vertex" )`);
-      source = removeAttributeText(source, path, 'int[] primvars:displayColor:indices');
-    }
-    if (data.jointIndices?.length === data.positions.length / 3 * 4) {
-      const jointIndices = `[${Array.from(data.jointIndices).join(', ')}]`;
-      source = setAttributeText(source, path, 'int[] primvars:skel:jointIndices', `${jointIndices} ( interpolation = "vertex" )`);
-      source = removeAttributeText(source, path, 'int[] primvars:skel:jointIndices:indices');
-    }
-    if (data.jointWeights?.length === data.positions.length / 3 * 4) {
-      const jointWeights = `[${Array.from(data.jointWeights).join(', ')}]`;
-      source = setAttributeText(source, path, 'float[] primvars:skel:jointWeights', `${jointWeights} ( interpolation = "vertex" )`);
-      source = removeAttributeText(source, path, 'int[] primvars:skel:jointWeights:indices');
-    }
-    if (data.tangents?.length === data.positions.length / 3 * 4) {
-      const tangents = `[${Array.from({ length: data.tangents.length / 4 }, (_, i) => `(${data.tangents[i * 4]}, ${data.tangents[i * 4 + 1]}, ${data.tangents[i * 4 + 2]})`).join(', ')}]`;
-      source = setAttributeText(source, path, 'float3[] primvars:tangents', `${tangents} ( interpolation = "vertex" )`);
-      source = removeAttributeText(source, path, 'int[] primvars:tangents:indices');
-    } else source = removeAttributeText(source, path, 'float3[] primvars:tangents');
-    if (data.clearMissingAttributes) {
-      if (!data.uvs) for (const declaration of ['texCoord2f[] primvars:st', 'int[] primvars:st:indices', 'texCoord2f[] primvars:st1', 'int[] primvars:st1:indices']) source = removeAttributeText(source, path, declaration);
-      if (!data.normals) for (const declaration of ['normal3f[] normals', 'int[] normals:indices']) source = removeAttributeText(source, path, declaration);
-      if (!data.colors) for (const declaration of ['color3f[] primvars:displayColor', 'int[] primvars:displayColor:indices']) source = removeAttributeText(source, path, declaration);
-      if (!data.jointIndices) for (const declaration of ['int[] primvars:skel:jointIndices', 'int[] primvars:skel:jointIndices:indices']) source = removeAttributeText(source, path, declaration);
-      if (!data.jointWeights) for (const declaration of ['float[] primvars:skel:jointWeights', 'int[] primvars:skel:jointWeights:indices']) source = removeAttributeText(source, path, declaration);
-      const retainedFaceVarying = new Set((data.faceVaryingAttributes || []).map((attribute) => attribute?.name));
-      for (const name of findFaceVaryingPrimvarNames(source, path)) if (!retainedFaceVarying.has(name) && name !== 'st' && name !== 'st1') for (const declaration of [`float[] primvars:${name}`, `float2[] primvars:${name}`, `float3[] primvars:${name}`, `float4[] primvars:${name}`, `int[] primvars:${name}`, `int2[] primvars:${name}`, `int3[] primvars:${name}`, `int4[] primvars:${name}`, `color3f[] primvars:${name}`, `texCoord2f[] primvars:${name}`, `normal3f[] primvars:${name}`, `int[] primvars:${name}:indices`]) source = removeAttributeText(source, path, declaration);
-      if (Array.isArray(data.customAttributeNames)) {
-        const retained = new Set((data.customAttributes || []).map((attribute) => attribute?.name));
-        for (const name of data.customAttributeNames) if (/^[A-Za-z_][\w:]*$/.test(name) && !retained.has(name)) for (const declaration of [`float[] primvars:${name}`, `float2[] primvars:${name}`, `float3[] primvars:${name}`, `float4[] primvars:${name}`, `int[] primvars:${name}`, `int2[] primvars:${name}`, `int3[] primvars:${name}`, `int4[] primvars:${name}`, `int[] primvars:${name}:indices`]) source = removeAttributeText(source, path, declaration);
-      }
-    }
-    for (const attribute of data.customAttributes || []) {
-      if (!/^[A-Za-z_][\w:]*$/.test(attribute.name) || !attribute.array?.length || attribute.array.length !== data.positions.length / 3 * attribute.itemSize) continue;
-      const kind = numericArrayKind(attribute.array), type = kind ? (attribute.itemSize === 1 ? `${kind}[]` : `${kind}${attribute.itemSize}[]`) : null;
-      if (!type) continue;
-      const values = attribute.itemSize === 1 ? `[${Array.from(attribute.array).join(', ')}]` : `[${Array.from({ length: attribute.array.length / attribute.itemSize }, (_, i) => `(${Array.from({ length: attribute.itemSize }, (_, c) => attribute.array[i * attribute.itemSize + c]).join(', ')})`).join(', ')}]`;
-      source = setAttributeText(source, path, `${type} primvars:${attribute.name}`, `${values} ( interpolation = "vertex" )`);
-      source = removeAttributeText(source, path, `int[] primvars:${attribute.name}:indices`);
-    }
-    for (const attribute of data.faceVaryingAttributes || []) {
-      if (attribute.name === 'st1') continue;
-      if (!/^[A-Za-z_][\w:]*$/.test(attribute.name) || !attribute.array?.length || !attribute.indices?.length || attribute.indices.length !== data.indices.length || !Number.isInteger(attribute.itemSize) || attribute.itemSize < 1 || attribute.itemSize > 4 || attribute.array.length % attribute.itemSize) continue;
-      const kind = numericArrayKind(attribute.array), type = kind ? (attribute.itemSize === 1 ? `${kind}[]` : `${kind}${attribute.itemSize}[]`) : null;
-      if (!type || hasInvalidValue(attribute.indices, (index) => !Number.isInteger(index) || index < 0 || index >= attribute.array.length / attribute.itemSize) || hasInvalidValue(attribute.array, (value) => !Number.isFinite(value))) continue;
-      const values = attribute.itemSize === 1 ? `[${Array.from(attribute.array).join(', ')}]` : `[${Array.from({ length: attribute.array.length / attribute.itemSize }, (_, i) => `(${Array.from({ length: attribute.itemSize }, (_, c) => attribute.array[i * attribute.itemSize + c]).join(', ')})`).join(', ')}]`;
-      source = setAttributeText(source, path, `${type} primvars:${attribute.name}`, `${values} ( interpolation = "faceVarying" )`);
-      source = setAttributeText(source, path, `int[] primvars:${attribute.name}:indices`, `[${Array.from(attribute.indices).join(', ')}]`);
-    }
+    const subsetPaths = findGeomSubsetPaths(this.usda, path);
     if (Array.isArray(data.groups) && data.groups.length) {
-      const subsetPaths = findGeomSubsetPaths(source, path);
       const maxMaterialIndex = data.groups.reduce((max, group) => Math.max(max, Number.isInteger(group?.materialIndex) ? group.materialIndex : -1), -1);
       if (subsetPaths.length && maxMaterialIndex >= subsetPaths.length) throw new LuciaError('LUCIA_MATERIAL_GROUPS', 'Cleaned material groups do not match the mesh GeomSubset bindings.');
-      for (let subsetIndex = 0; subsetIndex < subsetPaths.length; subsetIndex++) {
-        const indices = [];
-        for (const group of data.groups) if (group?.materialIndex === subsetIndex && Number.isInteger(group.start) && Number.isInteger(group.count)) for (let index = group.start / 3; index < (group.start + group.count) / 3; index++) indices.push(index);
-        source = setAttributeText(source, subsetPaths[subsetIndex], 'int[] indices', `[${indices.join(', ')}]`);
-      }
-    } else {
-      // A cleanup can legitimately remove all material groups. Clear authored
-      // subset indices so they cannot continue to describe the old topology.
-      for (const subsetPath of findGeomSubsetPaths(source, path)) source = setAttributeText(source, subsetPath, 'int[] indices', '[]');
     }
-    return this.replaceUSDA(source, summary);
+    const staleNames = [...findFaceVaryingPrimvarNames(this.usda, path), ...(data.customAttributeNames || [])];
+    return this.nativeAttributeEdits(meshAttributeEdits(path, { ...data, sharpChains, sharpChainSharpness, sharpEdgeSharpness }, normalizedNormals, staleNames, subsetPaths), summary);
+  }
+
+  async setLODVariants(paths, variantSet = 'luciaLOD') {
+    const parent = paths?.[0]?.slice(0, paths[0].lastIndexOf('/'));
+    const block = findPrimBlock(this.usda, parent);
+    if (!block) throw new LuciaError('LUCIA_LOD_VARIANT', 'LOD variants need a named parent prim.');
+    // Local visibility is stronger than parent variants. Reject conflicting
+    // authored opinions instead of producing a nonfunctional selector.
+    for (const path of paths) {
+      const child = findPrimBlock(this.usda, path);
+      if (!child) throw new LuciaError('LUCIA_LOD_VARIANT', `LOD prim does not exist: ${path}`);
+      if (/\btoken\s+visibility\b/.test(this.usda.slice(child.start, child.end)))
+        throw new LuciaError('LUCIA_LOD_VARIANT', 'Remove local LOD visibility opinions before authoring a variant selector.');
+    }
+    return this.replaceUSDA(authorLODVariants(this.usda, parent, paths, block, variantSet), 'Author LOD selection variants');
   }
 
   async setMeshGeometrySibling(path, name, data, summary = 'Create mesh LOD') {
@@ -800,8 +849,11 @@ export class LuciaUsdSession extends EventTarget {
     if (!values) return null;
     const faceVarying = declaration?.[2] === 'faceVarying';
     if (!faceVarying) return { uvs: values, uvIndices: null };
-    const indices = parseIntegerArrayProperty(this.usda, path, indicesProperty);
-    if (!indices) throw new LuciaError('LUCIA_UV_DATA', `Face-varying mesh UV indices are malformed: ${path} (${uvSet}).`);
+    const corners = parseIntegerArrayProperty(this.usda, path, 'faceVertexIndices');
+    const hasIndices = new RegExp(`\\bint\\[\\]\\s+${escapeRegExp(indicesProperty)}\\s*=`).test(body);
+    const indices = hasIndices ? parseIntegerArrayProperty(this.usda, path, indicesProperty)
+      : corners && values.length / 2 === corners.length ? corners.map((_, index) => index) : null;
+    if (!indices || (corners && indices.length !== corners.length) || !indices.every(index => Number.isSafeInteger(index) && index >= 0 && index < values.length / 2)) throw new LuciaError('LUCIA_UV_DATA', `Face-varying mesh UV indices are malformed: ${path} (${uvSet}).`);
     return { uvs: values, uvIndices: Uint32Array.from(indices) };
   }
 

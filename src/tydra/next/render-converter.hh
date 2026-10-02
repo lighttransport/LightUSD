@@ -220,6 +220,11 @@ struct ConverterConfig {
   // stops conversion before the next large attribute is materialized.
   using CancelCallback = std::function<bool()>;
   CancelCallback cancel_callback;
+
+  // Require warning-free conversion. This rejects unsupported renderables,
+  // fallback materials, approximation warnings and failed conversions. It is
+  // intentionally conservative and also rejects resolver/color warnings.
+  bool strict_conversion = false;
 };
 
 /// Fail-closed render-conversion preset. A zero memory limit clamps to one byte
@@ -264,6 +269,7 @@ struct StreamConvertResult {
   bool cancelled = false;
   std::string error;
   std::vector<std::string> warnings;
+  std::vector<ConversionDiagnostic> conversion_diagnostics;
   size_t mesh_count = 0;
   size_t point_count = 0;
   size_t curve_count = 0;

@@ -637,33 +637,38 @@ def Material "mat" {
 }
 
 void usdc_reader_prim_metadata_roundtrip_test(void) {
-  const char *usda = R"(#usda 1.0
+  // AOUSD: None and [] are the same explicit empty list-op opinion.
+  // A bare relationship has no target opinion and must remain distinct.
+  for (const char *empty : {"None", "[]"}) {
+    const std::string usda = std::string(R"(#usda 1.0
 
 def Scope "test" (
     kind = "component"
-    inherits = None
-    specializes = None
+    inherits = )") + empty + "\n    specializes = " + empty + R"(
 ) {
-    rel cleared = None
+    rel cleared = )" + empty + R"(
+    rel declared
+    rel targeted = </Target>
 }
 )";
-  Stage stage;
-  std::string warn, err;
-  bool ok = usda_to_usdc_roundtrip(usda, &stage, &warn, &err);
-  if (!ok) { TEST_MSG("roundtrip failed: %s", err.c_str()); }
-  TEST_CHECK(ok);
+    Stage stage;
+    std::string warn, err;
+    const bool ok = usda_to_usdc_roundtrip(usda.c_str(), &stage, &warn, &err);
+    if (!ok) { TEST_MSG("%s roundtrip failed: %s", empty, err.c_str()); }
+    TEST_ASSERT(ok);
 
-  auto result = stage.GetPrimAtPath(Path("/test", ""));
-  TEST_CHECK(bool(result));
-  if (!result) return;
-
-  // Verify prim type survives (kind metadata stored as TokenIndex in binary format — known gap)
-  TEST_CHECK((*result)->as<Scope>() != nullptr);
-  std::string text;
-  TEST_CHECK(usda::ExportToUSDAString(stage, &text, &warn, &err));
-  TEST_CHECK(text.find("inherits = None") != std::string::npos);
-  TEST_CHECK(text.find("specializes = None") != std::string::npos);
-  TEST_CHECK(text.find("rel cleared = None") != std::string::npos);
+    auto result = stage.GetPrimAtPath(Path("/test", ""));
+    TEST_ASSERT(bool(result));
+    TEST_CHECK((*result)->as<Scope>() != nullptr);
+    std::string text;
+    TEST_ASSERT(usda::ExportToUSDAString(stage, &text, &warn, &err));
+    TEST_CHECK(text.find("inherits = None") != std::string::npos);
+    TEST_CHECK(text.find("specializes = None") != std::string::npos);
+    TEST_CHECK(text.find("rel cleared = None") != std::string::npos);
+    TEST_CHECK(text.find("rel declared\n") != std::string::npos);
+    TEST_CHECK(text.find("rel declared =") == std::string::npos);
+    TEST_CHECK(text.find("rel targeted = </Target>") != std::string::npos);
+  }
 }
 
 void usdc_reader_stage_metadata_roundtrip_test(void) {

@@ -124,7 +124,7 @@ EvalResult AttributeEval::EvalInternal(const UsdPrim& prim, const std::string& a
     if (ResolveValueClip(prim, attr_name, opts.time.numeric_time(),
                          opts.clip_stage_loader, &clipped, &asset, &clip_error,
                          &clip_set, opts.clip_stage_cache.get(),
-                         &clip_resolution)) {
+                         &clip_resolution, opts.interp)) {
       result = EvalResult();
       result.value = std::move(clipped);
       result.success = true;

@@ -691,7 +691,7 @@
                                    false, true);
       flds.push_back(f);
     }
-    if ((pm.authored & PropMeta::kAllowedTokens) && !pm.allowedTokens.empty()) {
+    if (pm.authored & PropMeta::kAllowedTokens) {
       // pxr's schema type is VtTokenArray (a Token rep with the array bit),
       // NOT TokenVector — pxr eagerly unpacks a TokenVector to a held type
       // its typed metadata APIs cannot extract, and even fails to re-read
@@ -704,6 +704,18 @@
     if (pm.authored & PropMeta::kCustomData) dict_field("customData", pm.customData);
     if (pm.authored & PropMeta::kAssetInfo) dict_field("assetInfo", pm.assetInfo);
     if (pm.authored & PropMeta::kSdrMetadata) dict_field("sdrMetadata", pm.sdrMetadata);
+    for (const auto& raw : pm.unknownMeta) {
+      // Preserve unknown USDA metadata as an interoperable unregistered
+      // value, rather than silently dropping it during crate conversion.
+      if (std::any_of(pm.unknownFields.begin(), pm.unknownFields.end(),
+                      [&](const TypedExtensionField& field) {
+                        return field.name == raw.first;
+                      })) continue;
+      CrateField f;
+      f.token_index.value = InternToken(raw.first);
+      f.value_rep = EncodeUnregisteredValue(raw.second);
+      flds.push_back(f);
+    }
     for (const auto& field : pm.unknownFields) {
       CrateField f;
       f.token_index.value = InternToken(field.name);

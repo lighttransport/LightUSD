@@ -971,6 +971,112 @@ class RetainedStreamSink : public SceneSink {
   RenderScene scene;
 };
 
+void TestStrictConversionDiagnostics() {
+  const std::string unsupported = "#usda 1.0\ndef Volume \"V\" {}\n";
+  auto loaded = LoadUSDAFromString(unsupported.data(), unsupported.size());
+  assert(loaded.success);
+  RenderSceneConverter permissive;
+  auto result = permissive.Convert(loaded.stage);
+  assert(result.success);
+  assert(result.scene.conversion_diagnostics.size() == 1);
+  assert(result.scene.conversion_diagnostics[0].prim_path == "/V");
+  assert(result.scene.conversion_diagnostics[0].disposition ==
+         ConversionDisposition::PreservedUnsupported);
+  ConverterConfig config;
+  config.strict_conversion = true;
+  RenderSceneConverter strict(config);
+  auto refused = strict.Convert(loaded.stage);
+  assert(!refused.success && refused.status == OperationStatus::InvalidData);
+  assert(!refused.warnings.empty());
+  RetainedStreamSink sink;
+  assert(!strict.ConvertToSink(loaded.stage, &sink).success);
+  assert(!sink.began);
+  const std::string supported = "#usda 1.0\ndef Xform \"World\" {}\n";
+  auto clean = LoadUSDAFromString(supported.data(), supported.size());
+  assert(clean.success);
+  assert(strict.Convert(clean.stage).success);
+  RetainedStreamSink clean_sink;
+  assert(strict.ConvertToSink(clean.stage, &clean_sink).success);
+  const std::string material = R"(#usda 1.0
+def Material "M" {
+ token outputs:surface.connect = </M/S.outputs:surface>
+ def Shader "S" {
+  uniform token info:id = "UnsupportedVendorSurface"
+  token outputs:surface
+ }
+}
+)";
+  auto fallback = LoadUSDAFromString(material.data(), material.size());
+  assert(fallback.success);
+  auto degraded = permissive.Convert(fallback.stage);
+  assert(degraded.success && degraded.scene.materials.size() == 1);
+  assert(degraded.scene.materials[0].default_fallback);
+  assert(!degraded.scene.conversion_diagnostics.empty());
+  assert(degraded.scene.conversion_diagnostics[0].disposition ==
+         ConversionDisposition::Approximated);
+  assert(!strict.Convert(fallback.stage).success);
+  const std::string filter = R"(#usda 1.0
+def PluginLightFilter "Filter" {
+ float inputs:intensity = 100
+}
+)";
+  auto filter_stage = LoadUSDAFromString(filter.data(), filter.size());
+  assert(filter_stage.success);
+  RenderLight light;
+  RenderSceneConverter light_converter;
+  assert(light_converter.ConvertLight(filter_stage.stage,
+      filter_stage.stage.GetPrimAtPath("/Filter"), &light));
+  assert(light.intensity == 0.0f);
+  const std::string curves = R"(#usda 1.0
+def BasisCurves "Curves" {
+ uniform token type = "cubic"
+ uniform token basis = "unsupported"
+ point3f[] points = [(0,0,0), (1,0,0), (2,1,0), (3,1,0)]
+ int[] curveVertexCounts = [4]
+}
+)";
+  auto curve_stage = LoadUSDAFromString(curves.data(), curves.size());
+  assert(curve_stage.success);
+  auto approximate = permissive.Convert(curve_stage.stage);
+  assert(approximate.success && !approximate.scene.conversion_diagnostics.empty());
+  assert(approximate.scene.conversion_diagnostics[0].disposition ==
+         ConversionDisposition::Approximated);
+  RetainedStreamSink curve_sink;
+  auto strict_stream = strict.ConvertToSink(curve_stage.stage, &curve_sink);
+  assert(!strict_stream.success && !strict_stream.conversion_diagnostics.empty());
+  for (const char* type : {"Points", "BasisCurves"}) {
+    const std::string broken = std::string("#usda 1.0\ndef ") + type + " \"Broken\" {}\n";
+    auto failed_stage = LoadUSDAFromString(broken.data(), broken.size());
+    assert(failed_stage.success);
+    auto retained = permissive.Convert(failed_stage.stage);
+    assert(retained.success && !retained.scene.conversion_diagnostics.empty());
+    assert(retained.scene.conversion_diagnostics.back().disposition == ConversionDisposition::Failed);
+    RetainedStreamSink permissive_sink;
+    auto stream = permissive.ConvertToSink(failed_stage.stage, &permissive_sink);
+    assert(stream.success && !stream.conversion_diagnostics.empty());
+    assert(stream.conversion_diagnostics.back().disposition == ConversionDisposition::Failed);
+    RetainedStreamSink failed_sink;
+    auto rejected = strict.ConvertToSink(failed_stage.stage, &failed_sink);
+    assert(!rejected.success && rejected.status == OperationStatus::InvalidData);
+    assert(!rejected.conversion_diagnostics.empty());
+  }
+  class CancelCurvesSink : public RetainedStreamSink {
+   public:
+    GeometryDisposition SelectGeometry(const GeometryInfo& info) override {
+      return info.kind == GeometryKind::Curves ? GeometryDisposition::Cancel
+                                               : GeometryDisposition::Full;
+    }
+  };
+  const std::string partial = "#usda 1.0\ndef Points \"Broken\" {}\ndef BasisCurves \"Later\" {}\n";
+  auto partial_stage = LoadUSDAFromString(partial.data(), partial.size());
+  assert(partial_stage.success);
+  CancelCurvesSink cancelled_sink;
+  auto cancelled = permissive.ConvertToSink(partial_stage.stage, &cancelled_sink);
+  assert(cancelled.cancelled && cancelled.status == OperationStatus::Cancelled);
+  assert(cancelled.conversion_diagnostics.size() == 1);
+  assert(cancelled.conversion_diagnostics[0].prim_path == "/Broken");
+}
+
 class SelectiveStreamSink : public RetainedStreamSink {
  public:
   GeometryDisposition SelectGeometry(const GeometryInfo& info) override {
@@ -7748,6 +7854,7 @@ int main() {
   TestPtexMaterialInterfaceAsset();
   TestSurfaceUnlitMaterialXConversion();
   TestParallelMaterialTextureRemapAndCallbackPolicy();
+  TestStrictConversionDiagnostics();
   TestSparseUDIMTextureRetention();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";

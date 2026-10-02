@@ -1308,6 +1308,18 @@ struct UnsupportedRenderable {
   std::string reason;
 };
 
+enum class ConversionDisposition : uint8_t {
+  PreservedUnsupported,
+  Approximated,
+  Failed
+};
+
+struct ConversionDiagnostic {
+  ConversionDisposition disposition = ConversionDisposition::Failed;
+  std::string prim_path;
+  std::string message;
+};
+
 //
 // RenderScene - top-level container
 //
@@ -1361,6 +1373,9 @@ class RenderScene {
   std::vector<AnimationClip> animations;
   std::vector<Skeleton> skeletons;
   std::vector<UnsupportedRenderable> unsupported_renderables;
+  // Degradation is separate from success: unsupported data remains in the
+  // source Stage, approximations have render output, and failures omit output.
+  std::vector<ConversionDiagnostic> conversion_diagnostics;
   PhysicsAnnotations physics;
 
   // Root nodes

@@ -522,6 +522,11 @@ size_t RenderScene::memory_usage() const {
     AddBytes(&total, unsupported.type_name.capacity());
     AddBytes(&total, unsupported.reason.capacity());
   }
+  add_size(conversion_diagnostics.capacity(), sizeof(ConversionDiagnostic));
+  for (const auto& diagnostic : conversion_diagnostics) {
+    AddBytes(&total, diagnostic.prim_path.capacity());
+    AddBytes(&total, diagnostic.message.capacity());
+  }
 
   // Physics annotations are part of the retained render snapshot too. Keep
   // their string and extension-property storage in the public memory budget;

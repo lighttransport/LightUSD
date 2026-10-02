@@ -318,7 +318,7 @@ bool RenderSceneConverter::Impl::ConvertCurves(const UsdPrim& prim,
       } else if (tok == "catmullRom") {
         out->basis = CurveBasis::CatmullRom;
       } else {
-        AddWarning("BasisCurves '" + out->prim_path +
+        AddConversionWarning(out->prim_path, "BasisCurves '" + out->prim_path +
                             "': unsupported basis '" + tok +
                             "', treating as bezier");
       }
@@ -339,7 +339,7 @@ bool RenderSceneConverter::Impl::ConvertCurves(const UsdPrim& prim,
   if (out->is_nurbs) {
     nurbs_order = ReadIntArrayCopy(prim, "order", config_.time_code);
     if (!ReadFloatsFlexible(prim, "knots", config_.time_code, &nurbs_knots)) {
-      AddWarning("NurbsCurves '" + out->prim_path +
+      AddConversionWarning(out->prim_path, "NurbsCurves '" + out->prim_path +
                           "': missing/unreadable knots; using control-polygon "
                           "passthrough");
       nurbs_data_ok = false;
@@ -349,7 +349,7 @@ bool RenderSceneConverter::Impl::ConvertCurves(const UsdPrim& prim,
     if (!ReadFloatsFlexible(prim, "tangents", config_.time_code,
                             &hermite_tangents) ||
         hermite_tangents.size() != points.view.size) {
-      AddWarning("HermiteCurves '" + out->prim_path +
+      AddConversionWarning(out->prim_path, "HermiteCurves '" + out->prim_path +
                           "': tangents must match points; using control-polygon "
                           "passthrough");
       hermite_tangents.clear();
@@ -373,7 +373,7 @@ bool RenderSceneConverter::Impl::ConvertCurves(const UsdPrim& prim,
       plan.linear = true;
       plan.periodic = (!out->is_nurbs && out->wrap == CurveWrap::Periodic);
       plan.varying_count = n;
-      AddWarning("Curves '" + out->prim_path + "' curve " +
+      AddConversionWarning(out->prim_path, "Curves '" + out->prim_path + "' curve " +
                           std::to_string(ci) + ": " + why +
                           "; using control-polygon passthrough");
     };
@@ -519,7 +519,7 @@ bool RenderSceneConverter::Impl::ConvertCurves(const UsdPrim& prim,
       out->widths.append_exact(widths.view.data, m);
       out->widths_interp = Interpolation::Varying;
     } else {
-      AddWarning("Curves '" + out->prim_path +
+      AddConversionWarning(out->prim_path, "Curves '" + out->prim_path +
                           "': ignoring widths with mismatched element count");
     }
   }
@@ -558,7 +558,7 @@ bool RenderSceneConverter::Impl::ConvertCurves(const UsdPrim& prim,
       else if (elems == ncurves) interp = Interpolation::Uniform;
       else if (elems == varying_total) interp = Interpolation::Varying;
       else {
-        AddWarning(
+        AddConversionWarning(out->prim_path,
             "Curves '" + out->prim_path +
             "': ignoring displayColor with mismatched element count");
         interp = Interpolation::Constant;  // expected(Constant)==1 != elems
@@ -605,7 +605,7 @@ bool RenderSceneConverter::Impl::ConvertCurves(const UsdPrim& prim,
       out->opacities.append_exact(opacities.view.data, elems);
       out->opacities_interp = interp;
     } else {
-      AddWarning(
+      AddConversionWarning(out->prim_path,
           "Curves '" + out->prim_path +
           "': ignoring displayOpacity with mismatched element count");
     }

@@ -1,3 +1,4 @@
+import { scanUSDAssetReferences } from './usd-dependencies.js';
 import { validateQualityGate } from './target-profiles.js';
 import { validPrimPath } from './utils.js';
 
@@ -196,12 +197,8 @@ export function diagnoseUSD(source, assets = new Map(), options = {}) {
   if (!collectionMaterialBindings.length && !inheritedMaterialBindings.length) for (const name of materialDefinitions) if (!boundMaterials.has(name)) issues.push(issue('info', 'usd.unusedMaterial', `/${name}`, `Material ${name} has no explicit material:binding in this layer; inherited or collection bindings are not evaluated.`));
   const seen = new Set(), dependencies = new Map(), normalizedPackagePaths = new Map();
   for (const path of assets.keys()) { const normalized = normalizeAssetPath(path); if (normalizedPackagePaths.has(normalized)) issues.push(issue('error', 'usdz.pathCollision', '/', `Package members collide after path normalization: ${normalizedPackagePaths.get(normalized)} and ${path}.`)); else normalizedPackagePaths.set(normalized, path); }
-  const dependencySource = structuralSource(text);
-  for (const match of dependencySource.matchAll(/@([^@]+)@/g)) {
-    const path = text.slice(match.index + 1, match.index + match[0].length - 1).trim(); if (!path || seen.has(path)) continue; seen.add(path);
-    const context = text.slice(Math.max(0, match.index - 120), match.index);
-    const kindMatches = [...context.matchAll(/\b(references|payload|subLayers|asset)\b/gi)];
-    const kind = kindMatches.at(-1)?.[1].toLowerCase() || 'asset';
+  for (const { path, kind } of scanUSDAssetReferences(text)) {
+    if (seen.has(path)) continue; seen.add(path);
     const present = path.startsWith('anon:') || (!unsafeAssetReference(path) && (assets.has(path) || normalizedPackagePaths.has(normalizeAssetPath(path))));
     dependencies.set(path, { path, kind, present, status: dependencyStatus(path, present) });
     if (/^(?:[A-Za-z]:[\\/]|\/)/.test(path)) issues.push(issue('warning', 'usd.absoluteAssetPath', '/', `Asset path is absolute: ${path}`));
@@ -238,11 +235,6 @@ export function diagnoseUSD(source, assets = new Map(), options = {}) {
     const directory = fromPath.includes('/') ? fromPath.slice(0, fromPath.lastIndexOf('/')) : '';
     return normalizeAssetPath(directory ? `${directory}/${value}` : value);
   };
-  const graphReferences = (layer) => { const text = String(layer || ''), structural = structuralSource(text); return [...structural.matchAll(/@([^@]+)@/g)].map((match) => {
-    const path = text.slice(match.index + 1, match.index + match[0].length - 1).trim(), context = text.slice(Math.max(0, match.index - 120), match.index);
-    const kind = [...context.matchAll(/\b(references|payload|subLayers|asset)\b/gi)].at(-1)?.[1].toLowerCase() || 'asset';
-    return { path, kind };
-  }).filter(({ path }) => path); };
   const addGraphReference = (from, dependency) => {
     const knownDependency = dependencies.get(dependency.path);
     if (!knownDependency) {
@@ -267,16 +259,23 @@ export function diagnoseUSD(source, assets = new Map(), options = {}) {
       graphEdgeIds.add(edgeId);
     }
     if (dependency.present && !graphQueued.has(id)) {
+      graphQueued.add(id);
       const entry = packageEntry(dependency.path), bytes = entry?.bytes;
-      if (/\.usd(a)?$/i.test(dependency.path) && bytes) {
-        try { graphQueue.push({ id, path: dependency.path, text: new TextDecoder().decode(bytes) }); graphQueued.add(id); } catch { /* Binary or malformed members stay terminal. */ }
+      if (/\.usd[ac]?$/i.test(dependency.path) && bytes) {
+        const decoded = options.layerSources?.get?.(dependency.path);
+        let layerText = typeof decoded === 'string' ? decoded : '';
+        if (!layerText) {
+          try { const candidate = new TextDecoder('utf-8', { fatal: true }).decode(bytes); if (/^\s*#usda\s/.test(candidate)) layerText = candidate; } catch { /* Binary layers require a decoded host view. */ }
+        }
+        if (layerText) { graphQueue.push({ id, path: dependency.path, text: layerText }); graphQueued.add(id); }
+        else issues.push(issue('warning', 'usd.uninspectedLayer', dependency.path, 'Layer dependencies cannot be inspected without a decoded USDA view.'));
       }
     }
   };
   for (const dependency of dependencies.values()) addGraphReference('root', dependency);
   for (let cursor = 0; cursor < graphQueue.length; cursor++) {
     const layer = graphQueue[cursor];
-    for (const reference of graphReferences(layer.text)) {
+    for (const reference of scanUSDAssetReferences(layer.text)) {
       const resolvedPath = resolveGraphPath(reference.path, layer.id === 'root' ? '' : layer.path);
       const present = resolvedPath.startsWith('anon:') || (!unsafeAssetReference(resolvedPath) && (assets.has(resolvedPath) || normalizedPackagePaths.has(normalizeAssetPath(resolvedPath))));
       addGraphReference(layer.id, { ...reference, path: resolvedPath, present });
@@ -292,7 +291,7 @@ export function diagnoseUSD(source, assets = new Map(), options = {}) {
   const graphAdjacency = new Map();
   for (const edge of dependencyGraphEdges) {
     if (!graphAdjacency.has(edge.from)) graphAdjacency.set(edge.from, []);
-    graphAdjacency.get(edge.from).push(edge.to);
+    if (['references', 'payload', 'sublayers'].includes(edge.kind)) graphAdjacency.get(edge.from).push(edge.to);
   }
   for (const targets of graphAdjacency.values()) targets.sort();
   const graphState = new Map(), cycleEdges = new Set();

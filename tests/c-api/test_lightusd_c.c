@@ -29,6 +29,34 @@
     }                                                                     \
   } while (0)
 
+static int test_empty_and_vector_arrays(void) {
+  lightusd_stage* stage = NULL;
+  CHECK_OK(lightusd_stage_create(&stage));
+  lightusd_prim prim;
+  CHECK_OK(lightusd_stage_define_prim(stage, "/P", "Scope", 0, &prim));
+  const lightusd_type types[] = {LIGHTUSD_TYPE_INT, LIGHTUSD_TYPE_FLOAT,
+      LIGHTUSD_TYPE_DOUBLE, LIGHTUSD_TYPE_INT2, LIGHTUSD_TYPE_INT3,
+      LIGHTUSD_TYPE_INT4, LIGHTUSD_TYPE_FLOAT4};
+  for (size_t i = 0; i < sizeof(types) / sizeof(types[0]); ++i) {
+    CHECK_OK(lightusd_attr_set(stage, "/P", "empty", types[i], 1, NULL, 0, LIGHTUSD_PROP_CUSTOM));
+    lightusd_value_view view;
+    CHECK_OK(lightusd_attr_get(prim, "empty", &view));
+    CHECK(view.is_array && view.count == 0 && view.type == types[i] && !view.is_block);
+  }
+  const int32_t values[] = {1, -2, 3, 4};
+  CHECK_OK(lightusd_attr_set(stage, "/P", "vector", LIGHTUSD_TYPE_INT2, 1, values, 2, LIGHTUSD_PROP_CUSTOM));
+  lightusd_value_view view;
+  CHECK_OK(lightusd_attr_get(prim, "vector", &view));
+  CHECK(view.count == 2 && view.components == 2 && view.nbytes == sizeof(values));
+  CHECK(memcmp(view.data, values, sizeof(values)) == 0);
+  lightusd_string* text = NULL;
+  CHECK_OK(lightusd_stage_export_usda(stage, &text));
+  CHECK(strstr(lightusd_string_view(text).data, "custom int2[] vector") != NULL);
+  lightusd_string_destroy(text);
+  lightusd_stage_destroy(stage);
+  return 0;
+}
+
 static int test_authoring_roundtrip(void) {
   lightusd_stage* stage = NULL;
   CHECK_OK(lightusd_stage_create(&stage));
@@ -1106,6 +1134,7 @@ int main(int argc, char** argv) {
   CHECK(lightusd_type_from_name("float3") == LIGHTUSD_TYPE_FLOAT3);
   CHECK(lightusd_type_component_count(LIGHTUSD_TYPE_MATRIX4D) == 16);
 
+  if (test_empty_and_vector_arrays()) return 1;
   if (test_authoring_roundtrip()) return 1;
   printf("  authoring round-trip: PASSED\n");
   if (test_error_handling()) return 1;

@@ -1318,6 +1318,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
           // weirdKey = [...]` re-emitted bare).
           std::string qual_prefix;
           switch (arc_qual) {
+            case ArcQual::Add: qual_prefix = "add "; break;
             case ArcQual::Prepend: qual_prefix = "prepend "; break;
             case ArcQual::Append: qual_prefix = "append "; break;
             case ArcQual::Delete: qual_prefix = "delete "; break;
