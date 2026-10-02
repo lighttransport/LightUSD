@@ -51,16 +51,34 @@ export function templateUSDA(kind = 'product') {
 def Xform "World"
 {
 ${cameraAndLights}
-    def Cube "Floor" { double size = 8 float3 xformOp:scale = (1, .03, 1) uniform token[] xformOpOrder = ["xformOp:scale"] }
-    def Cube "BackWall" { double size = 8 float3 xformOp:translate = (0, 4, -4) float3 xformOp:scale = (1, 1, .03) uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"] }
-    def Cube "SideWall" { double size = 8 float3 xformOp:translate = (-4, 4, 0) float3 xformOp:scale = (.03, 1, 1) uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"] }
+    def Cube "Floor" {
+        double size = 8
+        float3 xformOp:scale = (1, .03, 1)
+        uniform token[] xformOpOrder = ["xformOp:scale"]
+    }
+    def Cube "BackWall" {
+        double size = 8
+        float3 xformOp:translate = (0, 4, -4)
+        float3 xformOp:scale = (1, 1, .03)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+    def Cube "SideWall" {
+        double size = 8
+        float3 xformOp:translate = (-4, 4, 0)
+        float3 xformOp:scale = (.03, 1, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
 }
 `;
   if (kind === 'materials') {
     const balls = Array.from({ length: 9 }, (_, i) => {
       const x = (i % 3) * 2.4 - 2.4;
       const z = Math.floor(i / 3) * 2.4 - 2.4;
-      return `    def Sphere "Ball_${i + 1}" { rel material:binding = </World/Looks/Mat_${i + 1}> float3 xformOp:translate = (${x}, 1, ${z}) uniform token[] xformOpOrder = ["xformOp:translate"] }`;
+      return `    def Sphere "Ball_${i + 1}" {
+        rel material:binding = </World/Looks/Mat_${i + 1}>
+        float3 xformOp:translate = (${x}, 1, ${z})
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }`;
     }).join('\n');
     const mats = Array.from({ length: 9 }, (_, i) => material(`Mat_${i + 1}`, `(${(i % 3) / 2}, ${Math.floor(i / 3) / 2}, .7)`, (i % 3) / 2, Math.floor(i / 3) / 2)).join('');
     return `${header}\ndef Xform "World"\n{\n${cameraAndLights}\n${balls}\n    def Scope "Looks"\n    {${mats}    }\n}\n`;

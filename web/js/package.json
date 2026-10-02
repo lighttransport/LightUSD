@@ -39,6 +39,7 @@
     "test:physics": "node tests/run-regression.mjs --profile physics",
     "test:browser": "node tests/run-regression.mjs --profile browser",
     "test:lucia": "node --test lucia-code/tests/*.test.mjs",
+    "test:lucia:performance": "node --expose-gc lucia-code/tests/performance-node.mjs",
     "test:lucia:browser": "node lucia-code/tests/browser-smoke.mjs",
     "test:setup": "./setup-mujoco-menagerie.sh",
     "preview": "vite preview",

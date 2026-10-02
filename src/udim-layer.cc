@@ -595,13 +595,33 @@ std::string DescribeJSON(const LayerAccess& a) {
   out["success"] = DescribeLayer(a, &sites, &error);
   out["error"] = error;
   out["sites"] = minijson::Value::array();
-  for (const auto& s : sites)
+  const auto paths = a.paths();
+  std::map<std::pair<std::string, std::string>, bool> reachable;
+  for (const auto& s : sites) {
+    minijson::Value consumers = minijson::Value::array();
+    for (const auto& path : paths) {
+      const auto type = a.type(path);
+      if (type != "Mesh" && type != "GeomSubset" &&
+          a.referenceRoots(path).empty()) continue;
+      const auto material = BoundMaterial(a, path);
+      const auto key = std::make_pair(material, s.path);
+      auto found = reachable.find(key);
+      if (found == reachable.end())
+        found = reachable.emplace(key, Reachable(a, material, s.path)).first;
+      if (found->second) consumers.push_back(path);
+    }
     out["sites"].push_back(minijson::Value{
         {"path", s.path},
         {"pattern", s.pattern},
         {"srgb", s.srgb},
+        {"consumers", std::move(consumers)},
         {"time", std::isfinite(s.time) ? minijson::Value(s.time)
                                        : minijson::Value(nullptr)}});
+  }
+  if (!a.accessError().empty()) {
+    out["success"] = false;
+    out["error"] = a.accessError();
+  }
   return out.dump();
 }
 std::string ApplyJSON(LayerAccess& a, const std::string& input) {
@@ -657,6 +677,28 @@ std::string ApplyJSON(LayerAccess& a, const std::string& input) {
     a.setMemoryBudget(o.memory_budget_bytes);
     std::vector<Site> sites;
     if (ok) ok = DescribeLayer(a, &sites, &error);
+    if (ok && args.find("shaderPaths")) {
+      const auto* selected = args["shaderPaths"].array_items();
+      std::set<std::string> paths;
+      if (!selected || selected->empty() || selected->size() > 4096) {
+        ok = Fail(&error, "invalid shader selection");
+      } else {
+        for (const auto& value : *selected) {
+          const auto path = value.get_string();
+          if (!value.is_string() || path.empty() || !paths.insert(path).second ||
+              std::none_of(sites.begin(), sites.end(), [&](const Site& site) {
+                return site.path == path;
+              })) {
+            ok = Fail(&error, "unknown or duplicate selected shader");
+            break;
+          }
+        }
+        sites.erase(std::remove_if(sites.begin(), sites.end(),
+                                  [&](const Site& site) {
+                                    return !paths.count(site.path);
+                                  }), sites.end());
+      }
+    }
     std::set<std::string> planned_paths;
     if (ok)
       for (const auto& value : *list) {

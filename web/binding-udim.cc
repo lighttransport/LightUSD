@@ -20,6 +20,7 @@ namespace {
 struct Job {
   lightusd::udim::AtlasBuilder builder;
   lightusd::udim::Atlas atlas;
+  std::vector<uint8_t> thumbnail;
   std::string error, info, name;
   size_t retained{0};
   bool finished{false};
@@ -85,7 +86,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_udim_image_info(const uint8_t* data,
     return -1;
   auto info = lightusd::image::GetImageInfoFromMemoryBounded(
       data, size, "UDIM tile", budget);
-  if (!info) return -1;
+  if (!info) { last_error = info.error(); return -1; }
   out[0] = info->width;
   out[1] = info->height;
   out[2] = info->channels;
@@ -163,13 +164,14 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_udim_finish(uint32_t handle,
   Job* job = Find(handle);
   if (!job || job->finished || format < 0 || format > 3) return -1;
   const char* formats[] = {"keep", "png", "jpeg", "exr"};
-  if (!job->builder.finish(formats[format], quality, &job->atlas, &job->error))
+  if (!job->builder.finish(formats[format], quality, &job->atlas, &job->error,
+                           job->thumbnail.size()))
     return -1;
   if (job->atlas.bytes.size() > size_t(std::numeric_limits<int32_t>::max())) {
     job->error = "UDIM bake: encoded output exceeds ABI size limit";
     return -1;
   }
-  job->retained = job->atlas.bytes.size();
+  job->retained = job->atlas.bytes.size() + job->thumbnail.size();
   job->name =
       "textures/udim_" +
       lightusd::sha256(reinterpret_cast<const char*>(job->atlas.bytes.data()),
@@ -177,6 +179,31 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_udim_finish(uint32_t handle,
       "." + job->atlas.extension;
   job->finished = true;
   return 1;
+}
+EMSCRIPTEN_KEEPALIVE int32_t lightusd_udim_thumbnail(uint32_t handle, int32_t edge) {
+  Job* job = Find(handle);
+  if (!job || job->finished || edge < 1 || edge > 256 || !job->thumbnail.empty()) return -1;
+  size_t retained = 0;
+  // Reserve conservative thumbnail scratch against the aggregate retained
+  // job limit as well as the builder's own working-memory budget.
+  const size_t scratch = size_t(edge) * size_t(edge) * 12 + size_t(edge) * 64 + 65536;
+  for (const auto& entry : jobs) {
+    if (entry.second->retained > kMaxRetainedBytes - retained) return 0;
+    retained += entry.second->retained;
+  }
+  if (scratch > kMaxRetainedBytes - retained) return 0;
+  std::string error;
+  if (!job->builder.thumbnail(edge, &job->thumbnail, &error)) return 0;
+  job->retained += job->thumbnail.size();
+  return 1;
+}
+EMSCRIPTEN_KEEPALIVE int32_t lightusd_udim_thumbnail_size(uint32_t handle) {
+  const Job* job = Find(handle);
+  return job ? int32_t(job->thumbnail.size()) : -1;
+}
+EMSCRIPTEN_KEEPALIVE uintptr_t lightusd_udim_thumbnail_data(uint32_t handle) {
+  const Job* job = Find(handle);
+  return job && !job->thumbnail.empty() ? reinterpret_cast<uintptr_t>(job->thumbnail.data()) : 0;
 }
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_udim_info_size(uint32_t handle) {
   const std::string& text = Info(handle);

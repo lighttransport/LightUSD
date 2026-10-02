@@ -73,3 +73,23 @@ Run `node tests/udim-bake.test.mjs` from `web/js`. Use
 `LIGHTUSD_NATIVE_USDZCONVERT` to include native USDA/USDC/USDZ CLI checks.
 The Node regression profile includes the next-only bake suite. The fixture
 creates its images in memory and leaves no binary assets in Git.
+
+### Selected shader sets
+
+`bakeLayerUDIM` accepts `udimShaderPaths: ['/World/Material/Texture']` to bake
+only selected texture shaders. Its layer-edit request passes `shaderPaths` to
+`applyUDIM`. Omit this option to retain whole-layer conversion. Selections must
+be nonempty, unique, and known; plans must include every default and animated
+file opinion of each selected shader. Plans outside the selection are rejected.
+`describeUDIM().sites` also reports bound mesh/subset/reference consumers for
+review. Existing unsupported-network/composition diagnostics still apply.
+
+Lucia exposes this through an undoable preview/apply workflow in its Textures
+inspector. `npm run test:lucia:browser` covers real worker discovery, grid/dense
+stitching, viewport texture loading, atlas pixel preservation, USDZ packaging,
+undo/redo, stale results, cancellation, and nested package roots.
+Lucia requests optional `udimThumbnails` when baking. These display-only PNGs
+are generated from resident atlas pixels in the shared C++ core, including
+HDR/EXR inputs; floating-point previews use Reinhard tone mapping followed by
+sRGB encoding. The encoded atlas retains its original precision. Thumbnail
+scratch and retained bytes count toward the working-memory limit.

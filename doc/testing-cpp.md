@@ -1818,3 +1818,22 @@ Tydra `TestRenderExtract` growth test checks pointer validity and release. Run
 `lusdview-deform-instanced-proto` on Vulkan after extraction storage changes;
 the regression now treats allocation aborts and process signals as failures,
 not backend skips.
+
+The shared UDIM layer JSON engine accepts an optional selected shader scope.
+Default conversion still requires complete plans for the entire layer; selected
+conversion requires complete default/time-sampled plans for every selected
+shader. The WASM UDIM regression exercises grid/dense isolation and rejects
+unknown, duplicate, empty, and incomplete selections against the same C++ core.
+Lucia's browser gate checks staged texture loading, atlas pixels, package roots,
+and atomic USD/asset undo and cancellation.
+Lucia's activity-gate and browser checks cover superseded imports, New Project
+while an edit worker is being cancelled, busy undo/redo, failed creation rollback,
+and every built-in scene template. Validation tests cover native failure flags,
+malformed results, validation superseded by New Project, blocked failed exports,
+and warning-only exports. The UDIM browser check rejects Apply when an edited
+tile limit is invalid. `npm run test:lucia:performance` measures
+unchanged asset snapshot retention and bounded tile streaming; the browser smoke
+also reports a 131072-triangle viewport workload. Shared WASM UDIM tests cover
+HDR-to-EXR and EXR round-trip thumbnails on combined/next wasm32/memory64, with
+16-bit atlas precision preserved. Rebuild next-only WASM with
+`LIGHTUSD_WASM_WITH_EXR=ON` to enable both EXR reading and writing.

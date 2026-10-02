@@ -57,6 +57,8 @@ const NODE_TESTS = [
   ['LightRT BVH occlusion WASM ABI', 'tests/lightrt-wasm.mjs'],
   ['xatlas WASM mapping', 'tests/xatlas-wasm.mjs'],
   ['Lucia Code core processors', 'lucia-code/tests/core.test.mjs'],
+  ['Lucia UDIM workflow', 'lucia-code/tests/udim-workflow.test.mjs'],
+  ['Lucia scene activity gate', 'lucia-code/tests/activity-gate.test.mjs'],
   ['texture memory budget', 'tests/texture-memory-budget.test.mjs'],
   ['UDIM baking', 'tests/udim-bake.test.mjs'],
   ['MaterialX JSON regression', 'tests/materialx-json-regression.js'],

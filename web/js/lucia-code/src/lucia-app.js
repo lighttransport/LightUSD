@@ -1,3 +1,7 @@
+import { LuciaUDIMWorkflow, packageAssets } from './udim-workflow.js';
+import { renderUDIMPanel } from './udim-panel.js';
+import { LuciaActivityGate } from './activity-gate.js';
+import { validationSummary } from './validation.js';
 import * as THREE from 'three';
 import { LuciaProject } from './project.js';
 import { LuciaUsdSession } from './usd-session.js';
@@ -42,6 +46,7 @@ const componentPartCandidates = (paths, parentPath, base, componentId) => {
 export class LuciaApp {
   constructor(root) {
     this.root = root; this.project = new LuciaProject(); this.session = new LuciaUsdSession(); this.commands = new LuciaCommandStack();
+    this.activity = new LuciaActivityGate(() => this.operations?.cancel());
     this.currentInspectorTab = 'transform'; this.currentBottomTab = 'changes'; this.validation = { state: 'warn', label: 'Not validated' }; this.assetReport = null; this.usdReport = null; this.reportCache = createReportCache(); this.healthProfile = 'web-viewer'; this.qualityGateBlocking = false; this.loadedRecipe = null; this.repairPlanDraft = null; this.previewNotice = null; this.previewGeometryDecimatedCount = null; this.previewTextureDegradedCount = null; this.previewTextureSkippedCount = null; this.frameBaseline = null; this.frameBaselinePath = null; this.healthIssuePage = 0; this.healthIssueRevision = null; this.retopoVertexLocks = new Map();
   }
 
@@ -51,6 +56,8 @@ export class LuciaApp {
     await this.session.init();
     this.bridge = new LuciaRenderBridge(this.$('#viewport'));
     this.operations = new LuciaOperations(this.session, this.project, this.bridge);
+    this.session.assetProvider = () => this.project.assets;
+    this.udim = new LuciaUDIMWorkflow(this.session, this.project, this.operations);
     this.assistant = new LuciaAssistant({ executeTool: (call) => this.executeTool(call), getSelection: () => this.project.selectedPath, getSceneSummary: () => ({ name: this.project.name, selectedPath: this.project.selectedPath, selectedPaths: [...this.project.selectedPaths], prims: this.flattenTree(this.safeTree()).slice(0, 80) }), confirm: (call) => this.confirmAction(`Run ${call.name}?`, JSON.stringify(call.arguments, null, 2)), recordDecision: (call, decision) => this.project.recordAssistantDecision(call, decision) });
     this.bridge.addEventListener('select', ({ detail }) => this.select(detail));
     this.bridge.addEventListener('vertex-select', ({ detail }) => this.toggleRetopoVertexLock(detail));
@@ -111,8 +118,8 @@ export class LuciaApp {
     this.$('#file-input').onchange = ({ target }) => target.files[0] && this.openFile(target.files[0]);
     this.$('#export-button').onclick = () => this.$('#export-dialog').showModal();
     this.$$('#export-dialog [data-export-format]').forEach((button) => button.onclick = async () => { this.$('#export-dialog').close(); await this.exportDialog(button.dataset.exportFormat); });
-    this.$('#undo-button').onclick = async () => { await this.commands.undo(); this.validation = { state: 'warn', label: 'Validation stale' }; await this.refreshAll(false); };
-    this.$('#redo-button').onclick = async () => { await this.commands.redo(); this.validation = { state: 'warn', label: 'Validation stale' }; await this.refreshAll(false); };
+    this.$('#undo-button').onclick = () => this.restoreHistory('undo');
+    this.$('#redo-button').onclick = () => this.restoreHistory('redo');
     this.$('#frame-button').onclick = () => this.bridge.frame(this.project.selectedPath);
     this.$('#comparison-wipe').oninput = ({ target }) => this.bridge.setComparisonWipe(Number(target.value) / 100);
     this.$('#comparison-ghost').onclick = ({ target }) => { if (this.bridge.comparisonGhost) { this.bridge.restoreBeforeAfter(); target.textContent = 'Show ghost overlay'; } else { this.bridge.showGhostCompare(); target.textContent = 'Show wipe compare'; } };
@@ -163,31 +170,116 @@ export class LuciaApp {
   }
 
   async newProject(kind) {
-    this.setBusy(true, 'Creating USD stage…', 20);
-    this.validation = { state: 'warn', label: 'Not validated' };
-    this.project.reset(kind === 'product' ? 'Lucia Product' : `Lucia ${kind}`);
-    this.loadedRecipe = null;
-    this.commands.clear();
-    await this.session.loadUSDA(templateUSDA(kind), `${kind}.usda`);
-    this.project.select(kind === 'product' ? '/World/Hero' : '/World');
-    await this.refreshAll(); this.setBusy(false);
+    const epoch = this.activity.beginReplacement();
+    const lease = await this.activity.replacement(epoch);
+    if (!lease) return false;
+    if (!this.activity.current(epoch)) { lease.release(); this.activity.finishReplacement(epoch); return false; }
+    const previous = {...this.project, domainRevisions:{...this.project.domainRevisions}}, source = this.session.exportUSDA(), filename = this.session.filename;
+    const history = {undo:[...this.commands.undoItems],redo:[...this.commands.redoItems]};
+    const metadata = {loadedRecipe:this.loadedRecipe,validation:this.validation,udimInventory:this.udimInventory,udimSelection:this.udimSelection};
+    try {
+      await this.hideUDIMPreview();
+      this.setBusy(true, 'Creating USD stage…', 20);
+      this.project.assets = new Map();
+      await this.session.loadUSDA(templateUSDA(kind), `${kind}.usda`);
+      this.project.reset(kind === 'product' ? 'Lucia Product' : `Lucia ${kind}`);
+      this.loadedRecipe = null;
+      this.commands.clear();
+      this.validation = { state: 'warn', label: 'Not validated' };
+      this.udim?.discard(); this.udimInventory = null; this.udimSelection = new Set();
+      this.project.select(kind === 'product' ? '/World/Hero' : '/World');
+      await this.refreshAll();
+      return true;
+    } catch(error) {
+      Object.assign(this.project, previous);
+      Object.assign(this, metadata);
+      this.commands.undoItems = history.undo; this.commands.redoItems = history.redo; this.commands.emit();
+      try { await this.session.loadUSDA(source, filename); await this.refreshAll(false); }
+      catch { /* Report the original creation error. */ }
+      this.showError(error);
+      return false;
+    } finally { lease.release(); this.activity.finishReplacement(epoch); if (this.activity.current(epoch)) this.setBusy(false); }
   }
 
   async openFile(file) {
     if (!/\.usd[acz]?$/i.test(file.name)) return this.showError(new LuciaError('LUCIA_FILE_TYPE', 'Choose a USDA, USDC, or USDZ file.'));
+    const epoch = this.activity.beginReplacement();
+    let previous, source, filename, history, lease, metadata;
+    let replacing = false;
     try {
-      this.setBusy(true, `Reading ${file.name}…`, 10); const bytes = new Uint8Array(await file.arrayBuffer());
-      if (/\.usdz$/i.test(file.name)) { try { validateUSDZArchive(bytes); } catch (error) { throw new LuciaError('LUCIA_USDZ_LAYOUT', error.message); } }
-      this.validation = { state: 'warn', label: 'Not validated' };
-      this.project.reset(file.name, { name: file.name, bytes }); this.loadedRecipe = null; this.commands.clear();
-      this.setBusy(true, 'Parsing untrusted USD…', 35); await this.session.loadBytes(bytes, file.name);
+      if (file.size > 256 * 1048576) throw new LuciaError('LUCIA_PARSE_MEMORY', 'Input exceeds the 256 MiB browser limit.');
+      this.setBusy(true, `Reading ${file.name}…`, 10);
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (!this.activity.current(epoch)) return false;
+      let archive = null;
+      if (/\.usdz$/i.test(file.name)) {
+        try { validateUSDZArchive(bytes); archive = packageAssets(bytes); }
+        catch(error) { throw new LuciaError('LUCIA_USDZ_LAYOUT', error.message); }
+      }
+      lease = await this.activity.replacement(epoch);
+      if (!lease || !this.activity.current(epoch)) return false;
+      previous = {...this.project, domainRevisions:{...this.project.domainRevisions}}; source = this.session.exportUSDA(); filename = this.session.filename;
+      history = {undo:[...this.commands.undoItems],redo:[...this.commands.redoItems]};
+      metadata = {loadedRecipe:this.loadedRecipe,validation:this.validation,udimInventory:this.udimInventory,udimSelection:this.udimSelection};
+      await this.hideUDIMPreview();
+      // Stage package assets for render conversion, but retain the old project
+      // and history until the new stage has loaded successfully.
+      this.project.assets = archive?.assets || new Map();
+      replacing = true;
+      this.setBusy(true, 'Parsing untrusted USD…', 35);
+      await this.session.loadBytes(archive?.rootBytes || bytes, archive?.rootName || file.name);
+      this.project.assets = new Map();
+      this.project.reset(file.name, {name:file.name,bytes});
+      if (archive) this.project.assets = archive.assets;
+      this.loadedRecipe = null; this.commands.clear();
+      this.udim?.discard(); this.udimInventory = null; this.udimSelection = new Set();
+      this.validation = {state:'warn',label:'Not validated'};
       await this.refreshAll(); this.setBusy(false);
-    } catch (error) { this.setBusy(false); this.showError(error); }
+    } catch(error) {
+      if (replacing) {
+        Object.assign(this.project, previous);
+        Object.assign(this, metadata);
+        this.commands.undoItems = history.undo; this.commands.redoItems = history.redo; this.commands.emit();
+        this.session.filename = filename;
+        try { await this.session.loadUSDA(source, filename); await this.refreshAll(false); }
+        catch { /* Surface the original import error. */ }
+      }
+      if (this.activity.current(epoch)) this.showError(error);
+    } finally {
+      lease?.release(); this.activity.finishReplacement(epoch);
+      if (this.activity.current(epoch)) this.setBusy(false);
+    }
   }
 
   safeTree() { try { return this.session.tree(); } catch { return []; } }
   flattenTree(nodes, parent = '') { return nodes.flatMap((node) => { const path = `${parent}/${node.name}`; return [{ path, type: node.type }, ...this.flattenTree(node.children || [], path)]; }); }
+  async restoreHistory(direction) {
+    if (direction === 'undo' ? !this.commands.canUndo : !this.commands.canRedo) return;
+    const command = (direction === 'undo' ? this.commands.undoItems : this.commands.redoItems).at(-1);
+    let lease;
+    try {
+      lease = this.activity.acquire();
+      this.operations?.cancel();
+      await this.hideUDIMPreview();
+      await this.commands[direction]();
+      this.udim?.discard();
+      this.udimInventory = null;
+      this.project.changed(`${direction === 'undo' ? 'Undo' : 'Redo'}: ${command.summary}`, command.affectedPaths);
+      this.validation = {state:'warn',label:'Validation stale'};
+      await this.refreshAll(false);
+    } catch(error) { if (lease) this.setBusy(false); this.showError(error); }
+    finally { lease?.release(); }
+  }
+
+  async hideUDIMPreview() {
+    if (this.udimViewportPreview) {
+      this.udimViewportPreview = false;
+      await this.bridge.rebuild(this.session.render);
+    }
+  }
+
   async refreshAll(frame = true) {
+    this.udimViewportPreview = false;
     this.setBusy(true, 'Building viewport…', 70);
     await this.bridge.rebuild(this.session.render, (p) => this.setBusy(true, p.message, Math.round(p.percentage)));
     const previewNotice = this.bridge.previewBudget?.reason || null;
@@ -506,6 +598,7 @@ export class LuciaApp {
   selectedObject() { return this.bridge.objectForPath(this.project.selectedPath); }
   retopoLockUVSeams = true;
   renderInspector() {
+    this.udimPanelCleanup?.(); this.udimPanelCleanup = null;
     const path = this.project.selectedPath; const object = this.selectedObject(); const mesh = object?.isMesh ? object : null; this.$('#selection-label').textContent = path || 'Inspector'; const inspector = this.$('#inspector'); if (!inspector._luciaSeamPolicyBound) { inspector._luciaSeamPolicyBound = true; inspector.addEventListener('change', ({ target }) => { if (target?.id === 'retopo-lock-uv-seams') { this.retopoLockUVSeams = target.checked; this.operations.setUVSeamLockPolicy(target.checked); } }, true); inspector._luciaSeamPolicyObserver = new MutationObserver(() => { const control = inspector.querySelector('#retopo-lock-uv-seams'); if (control) control.checked = this.retopoLockUVSeams; }); inspector._luciaSeamPolicyObserver.observe(inspector, { childList: true, subtree: true }); } this.$('#inspector').onchange = ({ target }) => { if (target?.id === 'retopo-lock-uv-seams') { this.retopoLockUVSeams = target.checked; this.operations.setUVSeamLockPolicy(target.checked); } };
     if (!path) { this.$('#inspector').innerHTML = '<p class="empty">Select a prim to inspect it.</p>'; return; }
     if (this.currentInspectorTab === 'transform') {
@@ -551,6 +644,7 @@ export class LuciaApp {
       this.$$('[data-resize-texture]').forEach((button) => button.onclick = async () => { if (await this.confirmAction(`Resize ${button.dataset.resizeTexture}?`, 'The image will be resized with aspect ratio preserved and re-encoded as PNG. The operation is undoable.')) await this.runMutation('Resize texture', [], () => this.operations.resizeTexture(button.dataset.resizeTexture, textureLimit), ['assets']); });
       this.$$('[data-strip-alpha]').forEach((button) => button.onclick = async () => { if (await this.confirmAction(`Remove unused alpha from ${button.dataset.stripAlpha}?`, 'LightUSD will re-encode this proven-opaque image as RGB PNG. The operation is undoable.')) await this.runMutation('Remove unused alpha', [], () => this.operations.stripUnusedAlpha(button.dataset.stripAlpha), ['assets']); });
       this.$$('[data-convert-normal]').forEach((button) => button.onclick = async () => { if (await this.confirmAction(`Convert ${button.dataset.convertNormal} to ${button.dataset.normalTarget}?`, 'The normal map green channel will be inverted and the asset convention updated. The operation is undoable.')) await this.runMutation('Convert normal-map Y convention', [], () => this.operations.convertNormalMapY(button.dataset.convertNormal, button.dataset.normalTarget === 'opengl' ? 'directx' : 'opengl', button.dataset.normalTarget), ['assets']); });
+      renderUDIMPanel(this);
     } else {
       this.$('#inspector').innerHTML = `<div class="section"><h3>Retopology</h3><div class="field-grid"><label>Tolerance</label><input id="retopo-tolerance" type="number" min="0.000001" max="1" step="0.0001" value="0.0001"><label>Target</label><input id="retopo-ratio" type="number" min="5" max="100" value="100"></div><button id="retopo-button">Preview & apply</button></div><div class="section"><h3>Safe cleanup</h3><p class="empty">Removes degenerate and duplicate triangles, then compacts unused vertices while preserving aligned normals and UVs.</p><label>Preset <select id="cleanup-preset"><option value="preserve">Preserve original</option><option value="game-ready" selected>Game-ready</option><option value="physics-ready">Physics-ready</option><option value="aggressive">Aggressive</option></select></label><label>Minimum face area <input id="cleanup-min-area" type="number" min="0" max="1" step="0.0000001" value="0"></label><label>Minimum component area <input id="cleanup-min-component-area" type="number" min="0" max="1" step="0.0000001" value="0"></label><label>Minimum closed-component volume <input id="cleanup-min-component-volume" type="number" min="0" max="1" step="0.0000001" value="0"></label><small class="empty">Area thresholds use mesh extent squared; volume uses extent cubed and only filters closed components. Zero preserves all components.</small><button id="cleanup-button">Clean mesh</button></div><div class="section"><h3>UV unwrap</h3><div class="field-grid"><label>Resolution</label><select id="uv-resolution"><option>512</option><option selected>1024</option><option>2048</option><option>4096</option></select><label>Padding</label><input id="uv-padding" type="number" min="0" max="64" value="2"></div><button id="uv-button">Generate & apply UVs</button></div><div class="section"><h3>Shading bake</h3><div class="field-grid"><label>Channel</label><select id="bake-channel"><option value="baseColor">Base color</option><option value="normal">Object-space normal</option></select><label>Resolution</label><select id="bake-resolution"><option>256</option><option>512</option><option selected>1024</option><option>2048</option></select><label>Max dimension</label><select id="bake-max-resolution"><option>512</option><option>1024</option><option selected>2048</option><option>4096</option></select><label>Dilation</label><input id="bake-dilation" type="number" min="0" max="32" value="2"></div><button id="bake-button">Bake texture</button></div>`;
       this.$('#retopo-ratio').insertAdjacentHTML('afterend', '<label>Max error <input id="retopo-error" type="number" min="0" max="1" step="0.0001" value="0"></label>');
@@ -623,7 +717,11 @@ export class LuciaApp {
   applyTransform() { const read = (p) => [0,1,2].map((i) => Number(this.$(`#${p}${i}`).value)); return this.runMutation('Transform prim', [this.project.selectedPath], () => this.session.setTransform(this.project.selectedPath, { translate: read('t'), rotate: read('r'), scale: read('s') })); }
 
   async runMutation(summary, paths, operation, domains = ['scene', 'usd', 'assets']) {
+    let lease;
     try {
+      lease = this.activity.acquire();
+      await this.hideUDIMPreview();
+      if (lease.cancelled) throw new LuciaError('LUCIA_CANCELLED','Scene replacement cancelled this edit.');
       this.setBusy(true, summary, 25);
       const beforeIssueCount = ['Clean mesh', 'Merge cracked mesh seams', 'Recompute normals', 'Recompute tangents', 'Generate UV atlas', 'Retopology'].includes(summary) ? analyzeAsset(this.bridge.content).issues.length : null;
       const beforeEdges = paths.length ? this.bridge.captureGeometry(paths[0]) : null;
@@ -632,7 +730,9 @@ export class LuciaApp {
       const executed = await this.commands.execute(sessionCommand(this.session, summary, paths, operation, this.project));
       if (!executed) { this.setBusy(false); return false; }
       const stats = this.operations.lastStats;
-      const activitySummary = stats?.kind === 'cleanup' ? `${summary}: ${stats.beforeTriangles} → ${stats.afterTriangles} triangles, ${stats.beforeVertices} → ${stats.afterVertices} vertices${stats.filledHoles ? `, ${stats.filledHoles} planar hole${stats.filledHoles === 1 ? '' : 's'} filled` : ''}` : stats?.kind === 'crack-merge' ? `${summary}: tolerance ${stats.tolerance}, ${stats.beforeTriangles} → ${stats.afterTriangles} triangles, ${stats.beforeVertices} → ${stats.afterVertices} vertices` : stats?.kind === 'convex-hull' ? `${summary}: ${stats.sourceVertices} → ${stats.hullVertices} vertices, ${stats.triangles} triangles` : stats?.kind === 'triangle-collider' ? `${summary}: ${stats.sourceTriangles} → ${stats.colliderTriangles} triangles, error ${Number(stats.normalizedError || 0).toFixed(6)}` : stats?.kind === 'collision-group' ? `${summary}: ${stats.groupPath}, ${stats.members.length} member${stats.members.length === 1 ? '' : 's'}${stats.filteredGroups.length ? `, ${stats.filteredGroups.length} filtered group${stats.filteredGroups.length === 1 ? '' : 's'}` : ''}${stats.mergeGroup ? `, mergeGroup ${stats.mergeGroup}` : ''}${stats.invertFilteredGroups ? ', inverted filtering' : ''}` : stats?.kind === 'components' ? `${summary}: ${stats.count} parts (minimum ${stats.minFaces} faces), ${stats.discardedFaces} small-component triangles omitted` : summary;
+      this.udim?.discard();
+      this.udimInventory = null;
+      const activitySummary = stats?.kind === 'cleanup' ? `${summary}: ${stats.beforeTriangles} → ${stats.afterTriangles} triangles, ${stats.beforeVertices} → ${stats.afterVertices} vertices${stats.filledHoles ? `, ${stats.filledHoles} planar hole${stats.filledHoles === 1 ? '' : 's'} filled` : ''}` : stats?.kind === 'crack-merge' ? `${summary}: tolerance ${stats.tolerance}, ${stats.beforeTriangles} → ${stats.afterTriangles} triangles, ${stats.beforeVertices} → ${stats.afterVertices} vertices` : stats?.kind === 'convex-hull' ? `${summary}: ${stats.sourceVertices} → ${stats.hullVertices} vertices, ${stats.triangles} triangles` : stats?.kind === 'triangle-collider' ? `${summary}: ${stats.sourceTriangles} → ${stats.colliderTriangles} triangles, error ${Number(stats.normalizedError || 0).toFixed(6)}` : stats?.kind === 'collision-group' ? `${summary}: ${stats.groupPath}, ${stats.members.length} member${stats.members.length === 1 ? '' : 's'}${stats.filteredGroups.length ? `, ${stats.filteredGroups.length} filtered group${stats.filteredGroups.length === 1 ? '' : 's'}` : ''}${stats.mergeGroup ? `, mergeGroup ${stats.mergeGroup}` : ''}${stats.invertFilteredGroups ? ', inverted filtering' : ''}` : stats?.kind === 'components' ? `${summary}: ${stats.count} parts (minimum ${stats.minFaces} faces), ${stats.discardedFaces} small-component triangles omitted` : stats?.kind === 'udim' ? `${summary}: ${stats.sets} shaders, ${stats.tiles} tiles, ${stats.atlases} atlases` : summary;
       this.project.changed(activitySummary, paths, domains);
       this.validation = { state: 'warn', label: 'Validation stale' };
       this.operations.lastStats = null;
@@ -660,10 +760,10 @@ export class LuciaApp {
       }
       return true;
     } catch (error) {
-      this.setBusy(false);
+      if (lease) this.setBusy(false);
       if (!isCancellation(error)) this.showError(error);
       return false;
-    }
+    } finally { lease?.release(); }
   }
   async runBake(path, resolution, dilation = 2, channel = 'baseColor', samples = 1, radius = 1, maxResolution = 2048, normalY = 'opengl', normalSpace = 'object') {
     try {
@@ -681,31 +781,68 @@ export class LuciaApp {
     try { this.setBusy(true, 'Projecting…', 10); let result; await this.runMutation('Bake projected texture', [targetPath, sourcePath], async () => { result = await this.operations.bakeProjected(targetPath, sourcePath, options, (p) => this.setBusy(true, p.message, p.percentage)); return this.session.exportUSDA(); }, ['assets']); if (!result) return null; this.setBusy(false); this.assistant.add('tool', `Projected bake coverage: ${(result.coveredRatio * 100).toFixed(2)}% target UVs across ${result.islandCount || 0} island${(result.islandCount || 0) === 1 ? '' : 's'}, ${result.projectedHits} hits, ${result.missedTexels} misses, ${result.dilatedTexels || 0} dilated texels; ${result.assetName}.`); downloadBlob(new Blob([this.project.assets.get(result.assetName).bytes], { type: 'image/png' }), basename(result.assetName)); return result; } catch (error) { this.setBusy(false); if (!isCancellation(error)) this.showError(error); return null; }
   }
 
-  async runValidation() {
+  async runValidation(borrowedLease = null) {
     const button = this.$('#validation-status');
     if (button?.dataset.validating === 'true') return null;
+    let lease;
+    try { lease = borrowedLease || this.activity.acquire(); }
+    catch (error) { this.showError(error); return null; }
     if (button) { button.dataset.validating = 'true'; button.disabled = true; }
     this.validation = { state: 'warn', label: 'Validating…' }; this.updateToolbar();
     try {
-      const result = await this.session.validate(), issues = result.issues || result.errors || [];
-      const hasErrors = issues.some((issue) => /error/i.test(typeof issue === 'string' ? issue : issue.severity || issue.message || ''));
-      this.validation = { state: hasErrors ? 'warn' : 'ok', label: issues.length ? `${issues.length} issues` : 'Valid USD' };
+      const result = await this.session.validate();
+      if (lease.cancelled) return null;
+      const { issues, hasErrors } = validationSummary(result);
+      this.validation = { state: hasErrors ? 'warn' : 'ok', label: issues.length ? `${issues.length} issues` : hasErrors ? 'Validation failed' : 'Valid USD' };
       this.updateToolbar();
-      this.assistant.add('tool', issues.length ? issues.slice(0, 8).map((issue) => `${issue.location || issue.path || ''} ${issue.message || issue}`).join('\n') : 'Validation passed with no reported issues.');
+      this.assistant.add('tool', issues.length ? issues.slice(0, 8).map((issue) => `${issue.location || issue.path || ''} ${issue.message || issue}`).join('\n') : hasErrors ? 'Validation failed.' : 'Validation passed with no reported issues.');
       return result;
     } catch (error) {
-      this.validation = { state: 'warn', label: 'Validation failed' }; this.updateToolbar(); this.showError(error); return null;
+      if (!lease.cancelled) {
+        this.validation = { state: 'warn', label: 'Validation failed' }; this.updateToolbar(); this.showError(error);
+      }
+      return null;
     } finally {
       if (button) { button.dataset.validating = 'false'; button.disabled = false; }
+      if (!borrowedLease) lease.release();
     }
   }
 
   async exportDialog(format = null) {
+    let lease;
     const chosen = format;
     if (!['usda', 'usdz'].includes(chosen)) return;
     if (!(await this.confirmAction(`Export ${chosen.toUpperCase()}?`, 'Lucia will validate the working stage, then download a new file. The imported source is never overwritten.'))) return;
-    try { await this.runValidation(); const assetReport = this.assetReport?.report || analyzeAsset(this.bridge.content), usdReport = this.currentUSDReport(), qualityGate = createQualityGate(assetReport, { profile: this.healthProfile, usdReport, blocking: this.qualityGateBlocking }), exportProfile = this.healthProfile === 'external-reference' ? 'external-reference' : 'portable-usdz', exportGate = chosen === 'usdz' ? createQualityGate(assetReport, { profile: exportProfile, usdReport, blocking: true }) : qualityGate; if ((this.qualityGateBlocking || chosen === 'usdz') && !exportGate.pass) { const profile = chosen === 'usdz' ? exportProfile : this.healthProfile; throw new LuciaError('LUCIA_QUALITY_GATE', `${TARGET_PROFILES[profile].label} quality gate failed: ${exportGate.checks.filter((item) => !item.pass).map((item) => item.label).join(', ')}`); } const name = this.project.name.replace(/[^A-Za-z0-9_-]+/g,'_').toLowerCase(); if (chosen === 'usdz') { const bytes = this.session.exportUSDZ(this.project.assets, this.project.exportRemap); try { validateUSDZArchive(bytes); } catch (error) { throw new LuciaError('LUCIA_USDZ_LAYOUT', `Generated USDZ failed archive validation: ${error.message}`); } downloadBlob(new Blob([bytes], { type: 'model/vnd.usdz+zip' }), `${name}.usdz`); } else downloadBlob(new Blob([this.session.exportUSDA()], { type: 'text/plain' }), `${name}.usda`); this.assistant.add('tool', `Exported ${name}.${chosen}`); }
+    try {
+      lease = this.activity.acquire();
+      await this.hideUDIMPreview();
+      if (lease.cancelled) return;
+      const validation = await this.runValidation(lease);
+      if (lease.cancelled) return;
+      if (!validation || validationSummary(validation).hasErrors)
+        throw new LuciaError('LUCIA_VALIDATION', 'Export requires successful USD validation. Review the validation issues and try again.');
+      const assetReport = this.assetReport?.report || analyzeAsset(this.bridge.content);
+      const usdReport = this.currentUSDReport();
+      const qualityGate = createQualityGate(assetReport, { profile: this.healthProfile, usdReport, blocking: this.qualityGateBlocking });
+      const exportProfile = this.healthProfile === 'external-reference' ? 'external-reference' : 'portable-usdz';
+      const exportGate = chosen === 'usdz' ? createQualityGate(assetReport, { profile: exportProfile, usdReport, blocking: true }) : qualityGate;
+      if ((this.qualityGateBlocking || chosen === 'usdz') && !exportGate.pass) {
+        const profile = chosen === 'usdz' ? exportProfile : this.healthProfile;
+        throw new LuciaError('LUCIA_QUALITY_GATE', `${TARGET_PROFILES[profile].label} quality gate failed: ${exportGate.checks.filter((item) => !item.pass).map((item) => item.label).join(', ')}`);
+      }
+      const name = this.project.name.replace(/[^A-Za-z0-9_-]+/g, '_').toLowerCase();
+      if (chosen === 'usdz') {
+        const bytes = this.session.exportUSDZ(this.project.assets, this.project.exportRemap);
+        try { validateUSDZArchive(bytes); }
+        catch (error) { throw new LuciaError('LUCIA_USDZ_LAYOUT', `Generated USDZ failed archive validation: ${error.message}`); }
+        downloadBlob(new Blob([bytes], { type: 'model/vnd.usdz+zip' }), `${name}.usdz`);
+      } else {
+        downloadBlob(new Blob([this.session.exportUSDA()], { type: 'text/plain' }), `${name}.usda`);
+      }
+      this.assistant.add('tool', `Exported ${name}.${chosen}`);
+    }
     catch (error) { this.showError(error); }
+    finally { lease?.release(); }
   }
 
   async executeTool({ name, arguments: args }) {
@@ -770,5 +907,5 @@ export class LuciaApp {
   showError(error) { if (globalThis.__LUCIA_DEBUG__) console.error(error); this.assistant?.add('assistant', `${error.code || 'LUCIA_ERROR'}: ${error.message}`); }
   inputDialog(title, detail, { label = 'Value', value = '' } = {}) { return new Promise((resolve) => { const dialog = this.$('#input-dialog'), input = this.$('#input-value'), previousFocus = document.activeElement; this.$('#input-title').textContent = title; this.$('#input-detail').textContent = detail; this.$('#input-label').textContent = label; input.value = value; let settled = false; const finish = (result) => { if (settled) return; settled = true; dialog.removeEventListener('click', click); dialog.removeEventListener('cancel', cancel); dialog.removeEventListener('keydown', keydown); if (dialog.open) dialog.close(); if (previousFocus?.isConnected && typeof previousFocus.focus === 'function') previousFocus.focus(); resolve(result); }; const click = (event) => { if (event.target.matches('[value="confirm"]')) finish(input.value.trim()); else if (event.target.matches('[value="cancel"]')) finish(null); }; const cancel = (event) => { event.preventDefault(); finish(null); }; const keydown = (event) => { if (event.key === 'Enter' && document.activeElement === input) { event.preventDefault(); finish(input.value.trim()); } }; dialog.addEventListener('click', click); dialog.addEventListener('cancel', cancel); dialog.addEventListener('keydown', keydown); dialog.showModal(); input.focus(); input.select(); }); }
   confirmAction(title, detail) { return new Promise((resolve) => { const dialog = this.$('#confirm-dialog'), previousFocus = document.activeElement; this.$('#confirm-title').textContent = title; this.$('#confirm-detail').textContent = detail; let settled = false; const finish = (value) => { if (settled) return; settled = true; dialog.removeEventListener('click', click); dialog.removeEventListener('cancel', cancel); if (dialog.open) dialog.close(); if (previousFocus?.isConnected && typeof previousFocus.focus === 'function') previousFocus.focus(); resolve(value); }; const click = (event) => { if (event.target.matches('[value]')) finish(event.target.value === 'confirm'); }; const cancel = (event) => { event.preventDefault(); finish(false); }; dialog.addEventListener('click', click); dialog.addEventListener('cancel', cancel); dialog.showModal(); }); }
-  destroy() { if (this.keyHandler) window.removeEventListener('keydown', this.keyHandler); this.operations?.dispose(); this.bridge?.dispose(); this.session.dispose(); }
+  destroy() { if (this.keyHandler) window.removeEventListener('keydown', this.keyHandler); this.udimPanelCleanup?.(); this.udim?.discard(); this.operations?.dispose(); this.bridge?.dispose(); this.session.dispose(); }
 }

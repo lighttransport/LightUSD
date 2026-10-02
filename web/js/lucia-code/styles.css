@@ -80,6 +80,20 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .section { padding: 11px 0; border-bottom: 1px solid var(--line); }
 .section:first-child { padding-top: 0; }
 .section h3 { font-size: 12px; margin: 0 0 9px; }
+#udim-panel { display: grid; gap: 9px; }
+#udim-panel > label, #udim-dense-controls > label { display: grid; gap: 5px; color: var(--muted); }
+#udim-panel input:not([type="checkbox"]):not([type="file"]), #udim-panel select { width: 100%; min-width: 0; border: 1px solid var(--line); background: #101017; border-radius: 6px; padding: 7px 8px; }
+#udim-panel input:invalid { border-color: var(--danger); }
+#udim-panel small { display: block; color: var(--muted); }
+#udim-panel code, #udim-panel small { overflow-wrap: anywhere; }
+#udim-panel .udim-error { color: var(--danger); }
+.udim-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.udim-set { display: flex; align-items: flex-start; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.udim-set > span { min-width: 0; display: grid; gap: 4px; }
+.udim-set input { flex: none; margin-top: 2px; }
+#udim-dense-controls:not([hidden]) { display: grid; gap: 9px; }
+.udim-atlas { display: grid; gap: 6px; margin-top: 10px; padding: 9px; border: 1px solid var(--line); border-radius: 7px; }
+.udim-atlas img { max-width: 100%; height: auto; border-radius: 4px; }
 .report-grid { display: grid; grid-template-columns: 1fr auto; gap: 7px 12px; color: var(--muted); }
 .report-grid > * { min-width: 0; overflow-wrap: anywhere; }
 .report-grid strong { color: var(--text); font-variant-numeric: tabular-nums; }

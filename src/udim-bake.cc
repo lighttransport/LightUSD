@@ -345,8 +345,51 @@ bool AtlasBuilder::blank(uint32_t id, std::string* error) {
   seen_[index] = 1;
   return true;
 }
+bool AtlasBuilder::thumbnail(int max_edge, std::vector<uint8_t>* output,
+                             std::string* error) const {
+  if (!output || max_edge < 1 || max_edge > 256 || pixels_.empty() ||
+      std::find(seen_.begin(), seen_.end(), 0) != seen_.end())
+    return Fail(error, "invalid or incomplete thumbnail input");
+  const float scale = std::min(1.0f, float(max_edge) /
+                                       float(std::max(layout_.width, layout_.height)));
+  Image image;
+  image.width = std::max(1, int(std::floor(float(layout_.width) * scale)));
+  image.height = std::max(1, int(std::floor(float(layout_.height) * scale)));
+  image.channels = 4;
+  image.bpp = 8;
+  image.format = Image::PixelFormat::UInt;
+  const size_t bytes = size_t(image.width) * size_t(image.height) * 4;
+  const size_t scratch = bytes * 3 + size_t(image.height) * 64 + 65536;
+  if (!Fits(pixels_.size() * sizeof(float), scratch, options_.memory_budget_bytes))
+    return Fail(error, "thumbnail exceeds working-memory limit");
+  image.data.resize(bytes);
+  for (int y = 0; y < image.height; ++y) {
+    const int sy = std::min(layout_.height - 1,
+                           int((float(y) + 0.5f) * float(layout_.height) / float(image.height)));
+    for (int x = 0; x < image.width; ++x) {
+      const int sx = std::min(layout_.width - 1,
+                             int((float(x) + 0.5f) * float(layout_.width) / float(image.width)));
+      for (int c = 0; c < 4; ++c) {
+        float value = pixels_[(size_t(sy) * size_t(layout_.width) + size_t(sx)) * 4 + size_t(c)];
+        if (!std::isfinite(value)) return Fail(error, "non-finite thumbnail sample");
+        value = std::max(0.0f, value);
+        if (floating_ && c < 3) value = Encoded(value / (1.0f + value));
+        image.data[(size_t(y) * size_t(image.width) + size_t(x)) * 4 + size_t(c)] =
+            uint8_t(std::lround(std::min(1.0f, value) * 255));
+      }
+    }
+  }
+  image::WriteOption encoding;
+  encoding.format = image::WriteImageFormat::PNG;
+  auto encoded = image::WriteImageToMemory(image, encoding);
+  if (!encoded) return Fail(error, "cannot encode thumbnail: " + encoded.error());
+  if (!Fits(pixels_.size() * sizeof(float), encoded->size(), options_.memory_budget_bytes))
+    return Fail(error, "encoded thumbnail exceeds working-memory limit");
+  *output = std::move(encoded.value());
+  return true;
+}
 bool AtlasBuilder::finish(const std::string& format, int quality, Atlas* output,
-                          std::string* error) {
+                          std::string* error, size_t retained_bytes) {
   if (!output || pixels_.empty() ||
       std::find(seen_.begin(), seen_.end(), 0) != seen_.end())
     return Fail(error, "atlas is incomplete");
@@ -389,7 +432,8 @@ bool AtlasBuilder::finish(const std::string& format, int quality, Atlas* output,
   size_t scratch;
   if (!safe::mul(final_bytes, size_t(3), &scratch) ||
       !safe::add(scratch, size_t(l.height) * 64 + 65536, &scratch) ||
-      !Fits(atlas_bytes, scratch, o.memory_budget_bytes))
+      !Fits(atlas_bytes, retained_bytes, o.memory_budget_bytes) ||
+      !Fits(atlas_bytes + retained_bytes, scratch, o.memory_budget_bytes))
     return Fail(error, "image encoding exceeds working-memory limit");
   image.data.resize(final_bytes);
   for (size_t i = 0; i < count; ++i)

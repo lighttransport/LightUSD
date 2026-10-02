@@ -301,6 +301,8 @@ export class LuciaUsdSession extends EventTarget {
     const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
     if (u8.byteLength > MAX_INPUT_MB * 1024 * 1024) throw new LuciaError('LUCIA_PARSE_MEMORY', `Input exceeds the ${MAX_INPUT_MB} MB browser limit.`);
     const format = String(filename).toLowerCase().endsWith('.usda') ? 'usda' : String(filename).toLowerCase().endsWith('.usdc') ? 'usdc' : 'auto';
+    this.author.clearAssets();
+    for (const [name, asset] of this.assetProvider?.() || []) this.author.setAsset(name, asset.bytes);
     this.call('stage_load_data', { data: bytesToBase64(u8), name: filename, format });
     this.filename = filename;
     this.usda = this.call('stage_to_string').usda;
@@ -313,12 +315,25 @@ export class LuciaUsdSession extends EventTarget {
   }
 
   async rebuildRender(onProgress) {
-    if (this.render) this.render.delete();
-    this.render = new this.module.LightUSDLoaderNative();
-    this.render.setMaxMemoryLimitMB(MAX_INPUT_MB);
-    const ok = this.render.loadFromBinary(encoder.encode(this.usda), this.filename);
-    if (!ok) throw new LuciaError('LUCIA_RENDER_CONVERT', this.render.error() || 'Could not build the preview scene.');
+    const replacement = this.createRender(this.usda);
+    this.render?.delete();
+    this.render = replacement;
+
     onProgress?.({ stage: 'preview', percentage: 100, message: 'Preview ready' });
+  }
+
+  createRender(source, assets = this.assetProvider?.() || new Map()) {
+    const render = new this.module.LightUSDLoaderNative();
+    try {
+      render.setMaxMemoryLimitMB(MAX_INPUT_MB);
+      // Cached loose assets must be decoded while their resolver is live;
+      // the legacy lazy image path only rereads embedded USDZ members.
+      render.setLoadTextureInNative(true);
+      for (const [name, asset] of assets) render.setAsset(name, asset.bytes);
+      if (!render.loadFromBinary(encoder.encode(source), this.filename))
+        throw new LuciaError('LUCIA_RENDER_CONVERT', render.error() || 'Could not build the preview scene.');
+      return render;
+    } catch (error) { render.delete(); throw error; }
   }
 
   async replaceUSDA(source, summary = 'Edit scene') {

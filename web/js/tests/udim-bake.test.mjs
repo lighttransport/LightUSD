@@ -52,6 +52,19 @@ const atlas16 = await bakeUDIMAtlas(native, {keys: ['tile.1001.png'],fetch: asyn
 const output16 = PNG.sync.read(Buffer.from(atlas16.data), {skipRescale: true});
 assert.equal(output16.depth, 16);assert.deepEqual([...output16.data], [...samples16]);
 console.log(`UDIM shared image core: ${wasm64 ? 'memory64' : 'wasm32'} grid/dense passed`);
+// HDR thumbnails are generated from resident float pixels, without browser
+// decoding, while the encoded atlas remains floating-point EXR.
+const hdr=new Uint8Array([...new TextEncoder().encode('#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 2\n'),128,0,0,129,0,128,0,130]);
+const hdrAtlas=await bakeUDIMAtlas(native,{keys:['hdr.1001.hdr'],fetch:async()=>hdr},'hdr.<UDIM>.hdr',{udimBake:'grid',udimThumbnails:true});
+assert.match(hdrAtlas.name,/\.exr$/);assert.equal(new DataView(hdrAtlas.data.buffer,hdrAtlas.data.byteOffset).getUint32(0,true),20000630);
+const hdrThumb=PNG.sync.read(Buffer.from(hdrAtlas.thumbnail));
+assert.equal(hdrThumb.width,2);assert.equal(hdrThumb.height,1);
+assert.ok(hdrThumb.data[0]>170 && hdrThumb.data[0]<200);assert.equal(hdrThumb.data[1],0);assert.equal(hdrThumb.data[3],255);
+const exrAtlas=await bakeUDIMAtlas(native,{keys:['exr.1001.exr'],fetch:async()=>hdrAtlas.data},'exr.<UDIM>.exr',{udimBake:'grid',udimThumbnails:true});
+assert.deepEqual(PNG.sync.read(Buffer.from(exrAtlas.thumbnail)).data,hdrThumb.data);
+const thumb16=await bakeUDIMAtlas(native,{keys:['tile.1001.png'],fetch:async()=>input16},'tile.<UDIM>.png',{udimBake:'grid',udimThumbnails:true});
+assert.equal(PNG.sync.read(Buffer.from(thumb16.data),{skipRescale:true}).depth,16);
+assert.equal(PNG.sync.read(Buffer.from(thumb16.thumbnail)).depth,8);
 
 const {convertFolderToUSDZ, parseUSDZEntries} = await import('../src/usdzconvert.js');
 const scene = `#usda 1.0
@@ -302,3 +315,35 @@ def Xform "World" (prepend references = @asset/scene.usda@</World>) {}
     console.log('Native CLI: USDA/USDC/USDZ grid, dense, deformation and subdivision passed');
   } finally {fs.rmSync(dir,{recursive:true,force:true});}
 }
+
+// Selected texture sets retain complete animation opinions without baking
+// unrelated sets. The default all-sites contract stays strict.
+const {bakeLayerUDIM} = await import('../src/udim-bake.js');
+function layerFor(text) {
+  const layer = combined ? new native.LightUSDLoaderNative() : new native.NextUSDZConverterNative();
+  assert.equal(combined ? layer.loadAsLayerFromBinary(new TextEncoder().encode(text),'root.usda') : layer.loadFromBinary(new TextEncoder().encode(text),'root.usda'),true);
+  return layer;
+}
+const spare = `\n def Shader "Spare" { uniform token info:id = "UsdUVTexture"\n asset inputs:file = @missing.%04d.png@\n }\n`;
+const twoSets=scene.slice(0,scene.lastIndexOf('}'))+spare+scene.slice(scene.lastIndexOf('}'));
+for(const mode of ['grid','dense']) {
+  const layer=layerFor(twoSets);
+  try {
+    const baked=await bakeLayerUDIM(native,layer,source,{udimBake:mode,udimShaderPaths:['/World/Mat/Texture']});
+    const text=combined ? layer.layerToString() : layer.exportAsUSDA();
+    assert.equal(baked.assets.length,1);assert.match(text,/@missing\.%04d\.png@/);assert.doesNotMatch(text,/@textures\/tile\.<UDIM>\.png@/);
+  }finally{layer.delete();}
+}
+const layout=(await bakeUDIMAtlas(native,source,'textures/tile.<UDIM>.png',{udimBake:'grid'})).layout;
+for(const [text,selection,count] of [[twoSets,['/Missing'],1],[twoSets,['/World/Mat/Texture','/World/Mat/Texture'],1],[twoSets,[],1],[twoSets,undefined,1],[animatedFiles,['/World/Mat/Texture'],1]]) {
+ const layer=layerFor(text);
+ try {
+  const sites=layer.describeUDIM().sites.filter(site=>site.path==='/World/Mat/Texture');
+  const plans=sites.slice(0,count).map(site=>({...site,asset:'atlas.png',layout}));
+  const before=combined?layer.layerToString():layer.exportAsUSDA();
+  const result=layer.applyUDIM({options:{mode:'grid'},plans,...(selection===undefined?{}:{shaderPaths:selection})});
+  assert.equal(result.success,false,'incomplete or invalid scope must fail');
+  assert.equal(combined?layer.layerToString():layer.exportAsUSDA(),before);
+ }finally{layer.delete();}
+}
+console.log('UDIM selected sets: grid/dense isolation, strict scope and complete animation plans passed');

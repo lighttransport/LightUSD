@@ -68,13 +68,13 @@ if(LIGHTUSD_BUILD_TESTS)
 
   add_test(NAME lusdchecker_composed_missing_reference
     COMMAND lusdchecker --composed --groups core
-            ${CMAKE_CURRENT_SOURCE_DIR}/testdata/missing-reference.usda)
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/feat/lusdchecker/missing-reference.usda)
   set_tests_properties(lusdchecker_composed_missing_reference PROPERTIES
     WILL_FAIL TRUE)
 
   add_test(NAME lusdchecker_schema_placement
     COMMAND lusdchecker --groups geom,physics
-            ${CMAKE_CURRENT_SOURCE_DIR}/testdata/invalid-schema-placement.usda)
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/feat/lusdchecker/invalid-schema-placement.usda)
   set_tests_properties(lusdchecker_schema_placement PROPERTIES
     WILL_FAIL TRUE)
 

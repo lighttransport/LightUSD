@@ -11,7 +11,7 @@ option(LIGHTUSD_WASM64 "Use wasm64(memory64). Available only for Chrome and Fire
 option(LIGHTUSD_WASM_DEBUG "Enable WASM debug mode with source maps and assertions" OFF)
 option(LIGHTUSD_WASM_SIMD "Enable WebAssembly SIMD (128-bit, widely supported since 2021)" ON)
 option(LIGHTUSD_WASM_RELAXED_SIMD "Enable WebAssembly Relaxed SIMD (requires recent browsers)" OFF)
-option(LIGHTUSD_WASM_WITH_EXR "Include bounded EXR encoding in next-only WASM" ON)
+option(LIGHTUSD_WASM_WITH_EXR "Include bounded EXR decoding and encoding in next-only WASM" ON)
 option(LIGHTUSD_WASM_COROUTINE "Enable legacy C++20 coroutine async loading (combined uses typed C tasks)" ON)
 option(LIGHTUSD_WITH_XATLAS "Include the vendored xatlas UV atlas generator" ON)
 # next is the default product; legacy and combined remain available for a
@@ -425,6 +425,8 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
       ${TINYEXR_V3_SOURCES})
     set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/image-writer.cc PROPERTIES
       COMPILE_DEFINITIONS "LIGHTUSD_WITH_EXR=1;LIGHTUSD_EXR_V3=1;LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION=1")
+    set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/image-loader.cc PROPERTIES
+      COMPILE_DEFINITIONS "LIGHTUSD_WITH_EXR=1;LIGHTUSD_EXR_V3=1")
     target_include_directories(lightusd_next_wasm PRIVATE
       "${PROJECT_SOURCE_DIR}/../src/external/tinyexr/include"
       "${PROJECT_SOURCE_DIR}/../src/external/tinyexr/src")

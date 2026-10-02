@@ -91,7 +91,7 @@ export async function inspectUDIMTiles(native, source, pattern, opts = {}, baseD
   for (const tile of tiles) {
     const bytes = await fetch(tile.key);
     const dims = wasmBytes(native, bytes, (ptr, out) => {
-      if (native._lightusd_udim_image_info(ptr, bytes.byteLength, out, options.memoryBudgetBytes - bytes.byteLength) !== 1) throw new Error(`UDIM bake: invalid image header: ${tile.key}`);
+      if (native._lightusd_udim_image_info(ptr, bytes.byteLength, out, options.memoryBudgetBytes - bytes.byteLength) !== 1) throw new Error(`UDIM bake: invalid image header: ${tile.key}: ${info(native, 0).error}`);
       const dv = new DataView(native.HEAPU8.buffer, Number(out), 12);
       return [dv.getUint32(0, true), dv.getUint32(4, true)];
     }, 12);
@@ -148,13 +148,35 @@ export async function bakeUDIMAtlas(native, source, pattern, opts = {}, baseDir 
     const format = String(opts.textureFormat || 'keep').toLowerCase();
     const encoding = {keep: 0, png: 1, jpg: 2, jpeg: 2, exr: 3}[format];
     if (encoding === undefined) throw new Error('UDIM bake: unsupported texture format');
+    let thumbnail;
+    if (opts.udimThumbnails) {
+      if (typeof native._lightusd_udim_thumbnail !== 'function') throw new Error('Rebuild WASM to enable UDIM thumbnails');
+      if (native._lightusd_udim_thumbnail(handle, 256) === 1) {
+        const length = native._lightusd_udim_thumbnail_size(handle);
+        const start = Number(native._lightusd_udim_thumbnail_data(handle));
+        if (length <= 0 || start <= 0 || start + length > native.HEAPU8.byteLength) throw new Error('UDIM bake: invalid thumbnail output');
+        thumbnail = native.HEAPU8.slice(start, start + length);
+      }
+    }
     if (native._lightusd_udim_finish(handle, encoding, opts.jpegQuality ?? 90) !== 1) throw new Error(info(native, handle).error);
     const layout = info(native, handle);
     const size = native._lightusd_udim_data_size(handle);
     const ptr = Number(native._lightusd_udim_data(handle));
     if (size <= 0 || ptr <= 0 || ptr + size > native.HEAPU8.byteLength) throw new Error('UDIM bake: invalid WASM output');
-    return {data: native.HEAPU8.slice(ptr, ptr + size), layout, name: layout.name, tiles};
+    return {data: native.HEAPU8.slice(ptr, ptr + size), thumbnail, layout, name: layout.name, tiles};
   } finally { native._lightusd_udim_release(handle); }
+}
+
+export function selectUDIMSites(sites, shaderPaths) {
+  if (shaderPaths === undefined) return sites;
+  if (!Array.isArray(shaderPaths) || !shaderPaths.length || shaderPaths.length > 4096 ||
+      shaderPaths.some(path => typeof path !== 'string' || !path) ||
+      new Set(shaderPaths).size !== shaderPaths.length ||
+      shaderPaths.some(path => !sites.some(site => site.path === path))) {
+    throw new Error('UDIM bake: unknown, empty, or duplicate shader selection');
+  }
+  const selected = new Set(shaderPaths);
+  return sites.filter(site => selected.has(site.path));
 }
 
 export async function bakeLayerUDIM(native, layer, source, opts, baseDir = '', retain = true) {
@@ -163,8 +185,9 @@ export async function bakeLayerUDIM(native, layer, source, opts, baseDir = '', r
   if (typeof layer.describeUDIM !== 'function' || typeof layer.applyUDIM !== 'function') throw new Error('Rebuild WASM to enable UDIM layer edits');
   const description = layer.describeUDIM();
   if (!description.success) throw new Error(description.error);
+  const sites = selectUDIMSites(description.sites, opts.udimShaderPaths);
   const groups = new Map(), sharedLayouts = new Map();
-  for (const site of description.sites) {
+  for (const site of sites) {
     if (!groups.has(site.path)) groups.set(site.path, []);
     groups.get(site.path).push(site);
   }
@@ -187,7 +210,7 @@ export async function bakeLayerUDIM(native, layer, source, opts, baseDir = '', r
   }
   const cache = new Map(), plans = [], assets = [], consumed = new Set(), jobs = [];
   let retained = 0, tiles = 0;
-  for (const site of description.sites) {
+  for (const site of sites) {
     const shared = sharedLayouts.get(site.path);
     const key = JSON.stringify([site.pattern, site.srgb, shared]);
     let atlas = cache.get(key);
@@ -205,16 +228,17 @@ export async function bakeLayerUDIM(native, layer, source, opts, baseDir = '', r
       const duplicate = jobs.some(job => job.name === atlas.name);
       if (!duplicate) jobs.push({site, sharedLayout: shared, name: atlas.name, digestName: atlas.layout.name});
       if (retain && !duplicate) {
-        retained += atlas.data.length;
+        retained += atlas.data.length + (atlas.thumbnail?.byteLength || 0);
         if (retained > options.memoryBudgetBytes) throw new Error('UDIM bake: retained atlases exceed memory limit');
-        assets.push({name: atlas.name, data: atlas.data});
+        assets.push({name: atlas.name, data: atlas.data, thumbnail:atlas.thumbnail, layout: atlas.layout});
       }
       // The layer edit cache contains only layouts and names.
       cache.set(key, {layout: atlas.layout, name: atlas.name});
     }
     plans.push({path: site.path, pattern: site.pattern, time: site.time, asset: atlas.name, layout: atlas.layout});
   }
-  const result = layer.applyUDIM({options: {...options, memoryBudgetBytes: options.memoryBudgetBytes - retained}, plans});
+  const result = layer.applyUDIM({options: {...options, memoryBudgetBytes: options.memoryBudgetBytes - retained}, plans,
+    ...(opts.udimShaderPaths === undefined ? {} : {shaderPaths: opts.udimShaderPaths})});
   if (!result.success) throw new Error(result.error);
   for (const reference of result.remainingReferences || []) {
     consumed.delete(normalize(baseDir + '/' + reference));

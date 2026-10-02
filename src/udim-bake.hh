@@ -54,7 +54,9 @@ class AtlasBuilder {
            const std::string& uri, std::string* error);
   bool blank(uint32_t id, std::string* error);
   bool finish(const std::string& format, int quality, Atlas*,
-              std::string* error);
+              std::string* error, size_t retained_bytes = 0);
+  // Display-only PNG from resident atlas pixels; never alters source precision.
+  bool thumbnail(int max_edge, std::vector<uint8_t>*, std::string* error) const;
   const Layout& layout() const { return layout_; }
   size_t inputBudget() const {
     return options_.memory_budget_bytes - pixels_.size() * sizeof(float);
