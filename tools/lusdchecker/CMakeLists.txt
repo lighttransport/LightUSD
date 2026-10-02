@@ -7,7 +7,7 @@ if(NOT TARGET lightusd_next)
                    ${CMAKE_BINARY_DIR}/lusdchecker_next_build)
 endif()
 
-add_library(lusdchecker_lib STATIC lusdchecker.cc report.cc)
+add_library(lusdchecker_lib STATIC lusdchecker.cc report.cc checker-memory.cc)
 target_link_libraries(lusdchecker_lib PUBLIC lightusd_next)
 target_compile_features(lusdchecker_lib PUBLIC cxx_std_17)
 target_include_directories(lusdchecker_lib PUBLIC ${PROJECT_SOURCE_DIR}/src

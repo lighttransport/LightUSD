@@ -92,7 +92,7 @@
     }
   };
   const validateEncoder = new TextEncoder();
-  Module['validateFromBinary'] = (bytes, filename, options) => {
+  const validateBytes = (bytes, filename, options, checker = false, assetHandle = 0) => {
     if (!ArrayBuffer.isView(bytes)) throw new TypeError('validateFromBinary: expected byte view');
     if (typeof filename !== 'string' || typeof options !== 'string') {
       throw new TypeError('validateFromBinary: expected filename and options strings');
@@ -101,7 +101,9 @@
     if (source.length > 0x40000000) throw new RangeError('validateFromBinary: input exceeds 1 GiB');
     if (source.buffer === Module.HEAPU8.buffer) source = source.slice();
     const name = validateEncoder.encode(filename);
+    if (checker && name.length > 65536) throw new RangeError('checkUSD: filename exceeds 64 KiB');
     const config = validateEncoder.encode(options);
+    if (checker && config.length > 0x1000000) throw new RangeError('checkUSD: options exceed 16 MiB');
     const total = source.length + name.length + config.length;
     if (total > 0xffffffff) throw new RangeError('validateFromBinary: input too large');
     let input = 0, output = 0;
@@ -114,9 +116,9 @@
       Module.HEAPU8.set(config, base + source.length + name.length);
       const pointer = offset => typeof input === 'bigint' ? input + BigInt(offset)
                                                           : input + offset;
-      const call = (data, namePtr, configPtr) =>
-        Module['_lightusd_next_validate_json'](
-          data, source.length, namePtr, name.length, configPtr, config.length);
+      const call = (data, namePtr, configPtr) => checker
+        ? Module['_lightusd_next_check_json'](data, source.length, namePtr, name.length, configPtr, config.length, assetHandle)
+        : Module['_lightusd_next_validate_json'](data, source.length, namePtr, name.length, configPtr, config.length);
       try { output = call(input, pointer(source.length), pointer(source.length + name.length)); }
       catch (error) {
         if (!(error instanceof TypeError)) throw error;
@@ -129,6 +131,16 @@
       if (output) Module['_lightusd_next_free'](output);
       if (input) Module['_lightusd_next_free'](input);
     }
+  };
+  Module['validateFromBinary'] = (bytes, filename, options) => validateBytes(bytes, filename, options);
+  // Standalone lusdchecker engine. No implicit filesystem/network access.
+  Module['checkUSD'] = (bytes, filename, options = {}, assetStore = null) => {
+    if (!options || typeof options !== 'object' || Array.isArray(options))
+      throw new TypeError('checkUSD: options must be an object');
+    const store = assetStore === null ? null : live.get(assetStore);
+    if (assetStore !== null && (!store?.handle || store.kind !== 5))
+      throw new TypeError('checkUSD: assetStore must be a live NextAssetStore');
+    return JSON.parse(validateBytes(bytes, filename, JSON.stringify(options), true, store?.handle || 0));
   };
   defineClass('NextUSDZConverterNative', 1);
   defineClass('NextAssetStore', 5);

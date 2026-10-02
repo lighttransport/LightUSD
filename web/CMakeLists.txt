@@ -397,6 +397,10 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     ${PROJECT_SOURCE_DIR}/../src/udim-mesh.cc
     binding-next.cc binding-next-scene.cc
     binding-next-layer.cc
+    binding-next-checker.cc
+    ${PROJECT_SOURCE_DIR}/../tools/lusdchecker/lusdchecker.cc
+    ${PROJECT_SOURCE_DIR}/../tools/lusdchecker/checker-memory.cc
+    ${PROJECT_SOURCE_DIR}/../tools/lusdchecker/report.cc
     binding-next-api.cc
     binding-next-image.cc
     binding-next-assets.cc

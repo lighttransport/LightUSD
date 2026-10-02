@@ -1,4 +1,6 @@
-import { mountBackendSelector } from './src/lightusd/LoaderConfigUtils.js';
+import body from './validation-body.html?raw';
+import './validation.css';
+document.body.insertAdjacentHTML('afterbegin', body);
 
 const samples = [
   {
@@ -8,6 +10,7 @@ const samples = [
 (
     defaultPrim = "World"
     metersPerUnit = 1
+    upAxis = "Y"
 )
 
 def Xform "World"
@@ -330,7 +333,9 @@ def BasisCurves "curves"
 ];
 
 const state = {
-  nativeModule: null,
+  ready: false,
+  busy: false,
+  assets: new Map(),
   currentBytes: null,
   currentName: '',
   lastResult: null
@@ -371,6 +376,8 @@ function selectedGroups() {
   if (groupLux.checked) groups.push('lux');
   if (groupPhysics.checked) groups.push('physics');
   if (groupCrate.checked) groups.push('crate');
+  for (const [id, name] of [['groupRender', 'render'], ['groupPackage', 'package'], ['groupArkit', 'arkit']])
+    if (document.getElementById(id).checked) groups.push(name);
   return groups.length ? groups : ['core'];
 }
 
@@ -378,10 +385,22 @@ function updateGroupsSummary() {
   summaryGroups.textContent = selectedGroups().join(', ');
 }
 
+function invalidateResult() {
+  state.lastResult = null;
+  issueRows.innerHTML = '<tr><td colspan="4">No validation run for the current input and options.</td></tr>';
+  reportEl.textContent = '{}';
+  summaryErrors.textContent = summaryWarnings.textContent = '0';
+  document.getElementById('coverage').textContent = 'Coverage has not been checked.';
+  summaryStatus.textContent = 'Not checked';
+  summaryStatus.className = 'value';
+  for (const id of ['copyReport', 'downloadReport', 'downloadSarif']) document.getElementById(id).disabled = true;
+}
+
 function setCurrentInput(bytes, filename) {
+  invalidateResult();
   state.currentBytes = bytes;
   state.currentName = filename;
-  validateBtn.disabled = !state.nativeModule;
+  validateBtn.disabled = !state.ready;
   fileInfoEl.textContent = `${filename} - ${bytes.byteLength.toLocaleString()} bytes`;
 }
 
@@ -391,22 +410,24 @@ function formatResult(result) {
 
 function renderResult(result) {
   state.lastResult = result;
-  const parseOk = result.parse_ok !== false;
-  const ok = parseOk && result.ok === true;
-  const warningCount = Number(result.warning_count || 0);
-  summaryStatus.textContent = parseOk
-    ? (ok ? (warningCount > 0 ? 'Passed with warnings' : 'Passed') : 'Failed')
-    : 'Parse failed';
+  const full = result.tool === 'lusdchecker';
+  const parseOk = full ? result.executionSuccessful !== false : result.parse_ok !== false;
+  const ok = parseOk && (full ? result.valid : result.ok) === true;
+  const warningCount = Number(result.warningCount ?? result.warning_count ?? 0);
+  summaryStatus.textContent = !parseOk ? 'Execution failed'
+    : full && result.complete === false ? 'Incomplete'
+    : ok ? (warningCount > 0 ? 'Passed with warnings' : 'Passed') : 'Failed';
   summaryStatus.className = `value ${ok ? (warningCount > 0 ? 'warning' : 'ok') : 'error'}`;
-  summaryErrors.textContent = String(result.error_count || 0);
+  summaryErrors.textContent = String(result.errorCount ?? result.error_count ?? 0);
   summaryWarnings.textContent = String(warningCount);
-  summaryGroups.textContent = Array.isArray(result.checked_groups)
-    ? result.checked_groups.join(', ')
-    : selectedGroups().join(', ');
+  summaryGroups.textContent = (result.checkedGroups || result.checked_groups || selectedGroups()).join(', ');
+  document.getElementById('coverage').textContent = full
+    ? `Coverage: ${result.complete ? 'complete' : 'incomplete'} · Conformance: ${result.conformance} · Variant passes: ${result.variantPasses ?? 0}. ${result.conformanceScope || ''}`
+    : 'Legacy validation: strict coverage and conformance profiles are unavailable.';
 
   const issues = Array.isArray(result.issues) ? result.issues : [];
   issueRows.innerHTML = '';
-  if (!parseOk) {
+  if (!parseOk && !issues.length) {
     const row = document.createElement('tr');
     row.innerHTML = `<td><span class="severity error">error</span></td><td>parse</td><td>${escapeHTML(state.currentName)}</td><td>${escapeHTML(result.error || 'Failed to parse input')}</td>`;
     issueRows.appendChild(row);
@@ -420,8 +441,8 @@ function renderResult(result) {
       const row = document.createElement('tr');
       row.innerHTML = `
         <td><span class="severity ${severity}">${severity}</span></td>
-        <td>${escapeHTML(issue.rule_id || '')}</td>
-        <td>${escapeHTML(issue.location || '')}</td>
+        <td>${escapeHTML(issue.ruleId || issue.rule_id || '')}</td>
+        <td>${escapeHTML(issue.location || '')}<div class="issue-context">${escapeHTML([issue.sourceAsset, issue.variants, issue.time !== undefined ? `Time: ${issue.time}` : '', issue.category].filter(Boolean).join('\n'))}</div></td>
         <td>${escapeHTML(issue.message || '')}</td>
       `;
       issueRows.appendChild(row);
@@ -431,6 +452,7 @@ function renderResult(result) {
   reportEl.textContent = formatResult(result);
   copyReportBtn.disabled = false;
   downloadReportBtn.disabled = false;
+  document.getElementById('downloadSarif').disabled = !full || state.busy;
 }
 
 function escapeHTML(text) {
@@ -442,25 +464,45 @@ function escapeHTML(text) {
     .replaceAll("'", '&#039;');
 }
 
+const backend = new URLSearchParams(location.search).get('backend') === 'legacy' ? 'legacy' : 'next';
+const backendSelect = document.getElementById('backend');
+backendSelect.value = backend;
+backendSelect.addEventListener('change', () => {
+  const url = new URL(location.href); url.searchParams.set('backend', backendSelect.value); location.href = url.href;
+});
+let worker, requestId = 0;
+const pending = new Map();
+function request(type, payload = {}) {
+  const id = ++requestId;
+  return new Promise((resolve, reject) => {
+    pending.set(id, {resolve, reject});
+    worker.postMessage({id, type, ...payload});
+  });
+}
+function stopWorker(message) {
+  worker?.terminate();
+  for (const task of pending.values()) task.reject(new Error(message));
+  pending.clear(); state.ready = false;
+}
 async function initWasm() {
+  worker = new Worker(new URL('./validation-worker.js', import.meta.url), {type: 'module'});
+  worker.onmessage = ({data}) => {
+    const task = pending.get(data.id); if (!task) return;
+    pending.delete(data.id);
+    if (data.error) task.reject(new Error(data.error)); else task.resolve(data.result);
+  };
+  worker.onerror = event => { stopWorker(event.message || 'Validation worker failed'); setStatus('Validation worker failed; reload to retry.'); };
   try {
-    // backend=next / wasm=next load the next-only module (its
-    // validateFromBinary free function shares the legacy JSON contract).
-    const params = new URLSearchParams(window.location.search);
-    const useNext = params.get('backend') === 'next' || params.get('wasm') === 'next';
-    const glue = useNext ? './src/lightusd/lightusd_next.js' : './src/lightusd/lightusd.js';
-    const factory = (await import(/* @vite-ignore */ new URL(glue, import.meta.url).href)).default;
-    state.nativeModule = await factory();
-    setStatus('Ready');
-    validateBtn.disabled = !state.currentBytes;
-  } catch (error) {
-    setStatus(`WASM load failed: ${error.message}`);
-    throw error;
-  }
+    await request('init', {backend});
+    state.ready = true;
+    setStatus('Ready'); validateBtn.disabled = !state.currentBytes;
+  } catch (error) { setStatus(`WASM load failed: ${error.message}`); }
 }
 
 async function loadFile(file) {
+  if (state.busy) return;
   if (!file) return;
+  if (file.size > 512 * 1024 * 1024) { setStatus('Input exceeds the 512 MiB demo limit'); return; }
   const bytes = new Uint8Array(await file.arrayBuffer());
   setCurrentInput(bytes, file.name);
   setStatus('File loaded');
@@ -473,35 +515,107 @@ function loadSample(index) {
   setStatus('Sample loaded');
 }
 
-function validateCurrentInput() {
-  if (!state.nativeModule || !state.currentBytes) return;
-  // Legacy module: LightUSDLoaderNative member; next-only module: free function.
-  const native = typeof state.nativeModule.LightUSDLoaderNative === 'function'
-    ? new state.nativeModule.LightUSDLoaderNative() : null;
-  try {
-    setStatus('Validating...');
-    const options = JSON.stringify({ groups: selectedGroups() });
-    const raw = native
-      ? native.validateFromBinary(state.currentBytes, state.currentName, options)
-      : state.nativeModule.validateFromBinary(state.currentBytes, state.currentName, options);
-    const result = JSON.parse(raw);
-    renderResult(result);
-    setStatus('Validation complete');
-  } catch (error) {
-    renderResult({
-      parse_ok: false,
-      ok: false,
-      error: error.message,
-      issues: [],
-      error_count: 1,
-      warning_count: 0,
-      checked_groups: selectedGroups()
-    });
-    setStatus('Validation failed');
-  } finally {
-    if (native) native.delete();
+const profile = document.getElementById('profile');
+function updateProfile() {
+  const fullProfile = profile.value !== 'default';
+  document.getElementById('ruleGroups').disabled = fullProfile;
+  for (const id of ['strictWarnings', 'composed', 'allSamples']) {
+    const input = document.getElementById(id);
+    input.disabled = fullProfile || backend === 'legacy';
+    if (fullProfile) input.checked = id !== 'strictWarnings' || profile.value === 'strict';
   }
 }
+profile.addEventListener('change', () => { updateProfile(); invalidateResult(); });
+if (backend === 'legacy') {
+  profile.disabled = true;
+  for (const id of ['definitions', 'advancedChecks']) document.getElementById(id).hidden = true;
+  for (const id of ['groupRender', 'groupPackage', 'groupArkit']) document.getElementById(id).disabled = true;
+  document.getElementById('profileHelp').textContent = 'Legacy checks only. Select the next backend for lusdchecker profiles, dependencies, and conformance reports.';
+}
+updateProfile();
+const manifestOptions = async id => Promise.all(Array.from(document.getElementById(id).files)
+  .map(async file => {
+    if (file.size > 16 * 1024 * 1024) throw new Error('Definition manifest exceeds 16 MiB');
+    return JSON.parse(await file.text());
+  }));
+async function validateCurrentInput(format = 'json') {
+  if (!state.ready || !state.currentBytes || state.busy) return;
+  const activeWorker = worker;
+  state.busy = true; validateBtn.disabled = true;
+  const controls = Array.from(document.querySelectorAll('input, select, #chooseFile, #loadSample, #clearAssets'));
+  const disabledBefore = controls.map(control => control.disabled);
+  controls.forEach(control => { control.disabled = true; });
+  document.getElementById('cancel').disabled = false;
+  document.getElementById('downloadSarif').disabled = true;
+  try {
+    setStatus('Validating...');
+    let options = {groups: selectedGroups()};
+    if (backend === 'next') {
+      options = {profile: profile.value, format,
+        maxSamples: Number(document.getElementById('maxSamples').value),
+        maxMemoryMB: Number(document.getElementById('maxMemory').value),
+        schemaDefinitions: await manifestOptions('schemaDefinitions'),
+        shaderDefinitions: await manifestOptions('shaderDefinitions')};
+      if (profile.value === 'default') Object.assign(options, {
+        groups: selectedGroups(), strict: document.getElementById('strictWarnings').checked,
+        composed: document.getElementById('composed').checked,
+        allTimeSamples: document.getElementById('allSamples').checked});
+    }
+    if (worker !== activeWorker) throw new Error('Validation cancelled');
+    const result = await request('check', {bytes: state.currentBytes, filename: state.currentName, options,
+      assets: Array.from(state.assets, ([identifier, bytes]) => ({identifier, bytes}))});
+    if (format === 'sarif') downloadJSON(result, 'sarif'); else renderResult(result);
+    setStatus('Validation complete');
+  } catch (error) {
+    invalidateResult();
+    setStatus(`Validation failed: ${error.message}`);
+    summaryStatus.textContent = 'Execution failed'; summaryStatus.className = 'value error';
+  } finally {
+    controls.forEach((control, i) => { control.disabled = disabledBefore[i]; });
+    state.busy = false; validateBtn.disabled = !state.ready;
+    document.getElementById('cancel').disabled = true;
+    document.getElementById('downloadSarif').disabled = backend !== 'next' || !state.lastResult;
+  }
+}
+document.getElementById('cancel').addEventListener('click', async () => {
+  stopWorker('Validation cancelled');
+  await initWasm();
+});
+document.getElementById('downloadSarif').addEventListener('click', () => validateCurrentInput('sarif'));
+function downloadJSON(result, extension) {
+  const blob = new Blob([formatResult(result)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a'); link.href = url;
+  link.download = `${state.currentName || 'validation'}.${extension}`; link.click();
+  URL.revokeObjectURL(url);
+}
+const rootFile = document.getElementById('rootFile');
+function updateAssets() {
+  rootFile.replaceChildren();
+  for (const name of state.assets.keys()) if (/\.usd[acz]?$/i.test(name)) {
+    const option = document.createElement('option'); option.value = name; option.textContent = name;
+    option.selected = name === state.currentName; rootFile.appendChild(option);
+  }
+  document.getElementById('assetInfo').textContent = `${state.assets.size} supplied files`;
+}
+async function addFiles(files, folder = false) {
+  try {
+    const entries = Array.from(files);
+    let total = Array.from(state.assets.values()).reduce((n, bytes) => n + bytes.byteLength, 0);
+    for (const file of entries) {
+      total += file.size;
+      if (total > 512 * 1024 * 1024) throw new Error('Supplied files exceed the 512 MiB demo limit');
+    }
+    for (const file of entries) state.assets.set(folder ? file.webkitRelativePath : file.name, new Uint8Array(await file.arrayBuffer()));
+    updateAssets(); invalidateResult();
+    if (folder && rootFile.value) setCurrentInput(state.assets.get(rootFile.value), rootFile.value);
+    setStatus('Dependencies loaded');
+  } catch (error) { setStatus(error.message); }
+}
+document.getElementById('dependencies').addEventListener('change', event => addFiles(event.target.files));
+document.getElementById('folder').addEventListener('change', event => addFiles(event.target.files, true));
+rootFile.addEventListener('change', () => setCurrentInput(state.assets.get(rootFile.value), rootFile.value));
+document.getElementById('clearAssets').addEventListener('click', () => { state.assets.clear(); updateAssets(); invalidateResult(); });
 
 function downloadReport() {
   if (!state.lastResult) return;
@@ -524,7 +638,7 @@ for (let i = 0; i < samples.length; i++) {
 
 chooseFileBtn.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => loadFile(fileInput.files[0]));
-validateBtn.addEventListener('click', validateCurrentInput);
+validateBtn.addEventListener('click', () => validateCurrentInput());
 loadSampleBtn.addEventListener('click', () => loadSample(Number(sampleSelect.value)));
 copyReportBtn.addEventListener('click', async () => {
   await navigator.clipboard.writeText(reportEl.textContent);
@@ -532,8 +646,8 @@ copyReportBtn.addEventListener('click', async () => {
 });
 downloadReportBtn.addEventListener('click', downloadReport);
 
-for (const checkbox of [groupCore, groupGeom, groupShade, groupCrate]) {
-  checkbox.addEventListener('change', updateGroupsSummary);
+for (const checkbox of document.querySelectorAll('#ruleGroups input')) {
+  checkbox.addEventListener('change', () => { updateGroupsSummary(); invalidateResult(); });
 }
 
 dropzone.addEventListener('dragover', (event) => {
@@ -551,8 +665,9 @@ dropzone.addEventListener('drop', (event) => {
   loadFile(event.dataTransfer.files[0]);
 });
 
+for (const input of document.querySelectorAll('#advancedChecks input, #definitions input')) input.addEventListener('change', invalidateResult);
 updateGroupsSummary();
 loadSample(0);
 // Backend switch reloads the page (the WASM module is chosen at startup).
-mountBackendSelector(document.querySelector('.controls'), { append: true });
+
 initWasm();

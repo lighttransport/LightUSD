@@ -148,6 +148,11 @@ uint8_t* lightusd_next_validate_json(const uint8_t* data, uint32_t size,
                                     uint32_t filename_size,
                                     const uint8_t* options_json,
                                     uint32_t options_size);
+/* Full lusdchecker report. asset_store is 0 or a live NextAssetStore handle.
+ * Reads only supplied memory assets. Same ownership as validate_json. */
+uint8_t* lightusd_next_check_json(const uint8_t* data, uint32_t size,
+    const uint8_t* filename, uint32_t filename_size,
+    const uint8_t* options_json, uint32_t options_size, uint32_t asset_store);
 /* Pre-composition layer diff. format: 0=text, 1=json, 2=both, 3=neither.
  * The owned NUL-terminated result is a JSON object; free it with
  * lightusd_next_free. Negative ulps/eps select the default tolerance. */
@@ -1127,6 +1132,9 @@ int NextConverterExportBuffer(void* object, uint8_t* out, uint32_t cap);
 uint8_t* NextValidateJSON(const uint8_t* data, uint32_t size,
                           const uint8_t* filename, uint32_t filename_size,
                           const uint8_t* options, uint32_t options_size);
+uint8_t* NextCheckJSON(const uint8_t* data, uint32_t size,
+    const uint8_t* filename, uint32_t filename_size,
+    const uint8_t* options, uint32_t options_size, const void* asset_store);
 uint8_t* NextDiffJSON(const lightusd_next_diff_options* options,
                       const uint8_t* left, uint32_t left_size,
                       const uint8_t* left_name, uint32_t left_name_size,

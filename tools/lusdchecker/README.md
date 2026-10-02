@@ -231,3 +231,74 @@ The harness includes generated positive and negative physics/shading/package
 fixtures. Crashes, timeouts, missing reports, unknown reference validators, and
 unmapped findings fail comparison. It skips an unavailable reference unless
 `--require-reference` or `REQUIRE_USDCHECKER=1` is set.
+
+## JavaScript / WASM
+
+The next WASM module compiles the same checker engine and built-in definitions
+as the native executable. The existing validation page is shared by
+`web/js/validation.html` and `web/demo/validation.html`; both run checks in a
+cancellable worker. The next backend is the default. The legacy backend retains
+its original lightweight validation contract.
+
+```sh
+emcmake cmake -S web -B web/build_ninja/checker -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DLIGHTUSD_WASM_PRODUCT=next \
+  -DLIGHTUSD_WASM_OUTPUT_DIRECTORY="$PWD/web/js/src/lightusd"
+cmake --build web/build_ninja/checker -j8
+cd web/js
+npm run dev:validation
+```
+
+```js
+import createModule from './lightusd_next.js';
+const usd = await createModule();
+const assets = new usd.NextAssetStore();
+try {
+  assets.registerMemoryAsset('parts/mesh.usda', meshBytes);
+  const report = usd.checkUSD(rootBytes, 'scene.usda', {
+    profile: 'strict', maxMemoryMB: 512, maxSamples: 10000,
+  }, assets);
+  console.log(report.valid, report.complete, report.conformance, report.issues);
+} finally {
+  assets.delete();
+}
+```
+
+`checkUSD(bytes, filename, options = {}, assetStore = null)` returns a report
+object, including `valid`, `complete`, `executionSuccessful`, `gatePassed`, issue
+categories, source assets, variant selections, and sampled times. It accepts
+ArrayBuffer views, including WASM heap views, and supports wasm32 and memory64.
+It is synchronous; use a worker for large inputs. It performs no network or
+filesystem reads. Supply dependencies through `NextAssetStore` using their
+relative paths, or upload a folder in the demo to preserve those paths. Missing
+required dependencies fail strict coverage. USDZ members are read in memory.
+
+Options:
+
+- `profile`: `default`, `strict`, or `aousd-core-1.0.1` (default: `default`).
+- `groups`: nonempty array of group names, defaulting to the CLI's defect-class
+  groups. Full profiles reject coverage-reducing group/variant selections.
+- Boolean flags: `strict`, `strictParse`, `composed`, `allTimeSamples`,
+  `skipVariants`, `rootPackageOnly`, `noAssetChecks`, `usdcheckerCompat`,
+  `requireAllGroups`, `arkit`.
+- `maxMemoryMB`: 1–1024, default 1024; bounds input/parser memory and the parsed
+  layer cache. The caller owns and separately budgets its asset store. The demo
+  limits supplied files to 512 MiB. `maxSamples`: 1–1,000,000, default 10,000.
+  The 1,000-pass variant cap remains enabled in WASM.
+- `variants`: array of comma-separated `set:variant` selections (one pass per
+  string), `variantSets`: array of set names, `includeKeywords`: array of validator
+  keywords. These have the same meaning as the native flags.
+- `schemaDefinitions`, `shaderDefinitions`: arrays of JSON manifest objects,
+  loaded transactionally into a run-local registry. No executable plugins.
+- `baseline`: a previous lusdchecker JSON report object. Baselines cannot bless
+  missing coverage. `format`: `json` (default) or `sarif`.
+
+Unknown options and malformed definitions return unsuccessful reports; invalid
+JS argument types throw. Options JSON is limited to 16 MiB. The existing
+`validateFromBinary(bytes, filename, optionsJson)` and
+`LayerDocument.validateLoadedLayer(optionsJson)` remain available with their
+previous JSON-string contracts. `checkUSD` is the full checker API.
+
+A successful AOUSD result covers the engine's **implemented AOUSD Core 1.0.1
+constraints**, not complete specification certification. Native engine limits
+and coverage scope apply equally to WASM.

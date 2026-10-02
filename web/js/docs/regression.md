@@ -368,3 +368,32 @@ it provides ownership/lifetime semantics; it does not enable parallel
 execution. The next-core WASM build uses `shared_ptr::use_count()` ownership
 checks because `shared_ptr::unique()` is unavailable in the active C++20
 standard library.
+
+### Full lusdchecker WASM validation
+
+`tests/next-checker.test.mjs` exercises the shared native/WASM checker engine:
+strict and AOUSD profiles, missing coverage, run-local JSON definitions,
+coherent time samples, dependency variants, stored packages, baselines, SARIF,
+and counted/heap-view input contracts. It runs in the Node profile on wasm32
+and memory64. When `LUSDCHECKER_PATH` (default `../../build_ninja/lusdchecker`)
+is available, it compares complete reports with the native executable.
+
+`tests/validation-browser.test.mjs` exercises **both** `web/js/validation.html`
+and `web/demo/validation.html`, including strict profile controls, missing
+coverage, supplied dependencies, and narrow-screen layout. It runs in the
+browser profile and accepts `LIGHTUSD_NEXT_MODULE` to test an isolated build:
+
+```sh
+LIGHTUSD_NEXT_MODULE="$PWD/../build_ninja/checker/artifacts/lightusd_next.js" \
+  NODE_OPTIONS="--loader $PWD/tests/next-module-override.mjs" \
+  node tests/next-checker.test.mjs
+LIGHTUSD_NEXT_MODULE="$PWD/../build_ninja/checker/artifacts/lightusd_next.js" \
+  node tests/validation-browser.test.mjs
+```
+
+Append `--production` to the browser test command to build and verify both
+static bundles. `PUPPETEER_EXECUTABLE_PATH` selects an installed Chrome.
+
+See [the checker API guide](../../../tools/lusdchecker/README.md#javascript--wasm)
+for build options and the browser API. Legacy validation parity remains covered
+separately by `next-validation-parity.test.mjs`.

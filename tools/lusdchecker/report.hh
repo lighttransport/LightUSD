@@ -8,5 +8,7 @@ namespace lusdchecker {
 // whole-input validity. gatePassed is the CI result after baseline comparison.
 bool ApplyBaseline(lightusd::minijson::Value* report, const std::string& path,
                    std::string* error);
+bool ApplyBaselineReport(lightusd::minijson::Value* report,
+                         const lightusd::minijson::Value* baseline, std::string* error);
 lightusd::minijson::Value ToSarif(const lightusd::minijson::Value& report);
 }  // namespace lusdchecker

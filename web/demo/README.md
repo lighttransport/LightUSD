@@ -292,3 +292,10 @@ CORS, and 403/429 responses are reported in the viewer.
 | 22 | USD Diff | Side-by-side comparison |
 | 23 | Backend Comparison | Legacy vs next rendering comparison |
 | 24 | Online USD Viewer | File/folder upload, deferred payloads, materials, and animation |
+
+### USD validation
+
+Open `validation.html` for the same validation UI as `web/js/validation.html`.
+It shares the worker and full next-WASM lusdchecker API, including strict and
+AOUSD profiles, dependency folders, custom JSON definitions, coverage reporting,
+and JSON/SARIF downloads. See [the checker API guide](../../tools/lusdchecker/README.md#javascript--wasm).

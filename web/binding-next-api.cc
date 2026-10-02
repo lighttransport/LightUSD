@@ -276,6 +276,16 @@ EMSCRIPTEN_KEEPALIVE uint8_t* lightusd_next_validate_json(
       data, size, filename, filename_size, options_json, options_size);
 }
 
+EMSCRIPTEN_KEEPALIVE uint8_t* lightusd_next_check_json(
+    const uint8_t* data, uint32_t size, const uint8_t* filename,
+    uint32_t filename_size, const uint8_t* options_json,
+    uint32_t options_size, uint32_t asset_store) {
+  const Slot* store = asset_store ? Lookup(asset_store) : nullptr;
+  if (asset_store && (!store || store->kind != 5)) return nullptr;
+  return lightusd::web_next::NextCheckJSON(data, size, filename, filename_size,
+      options_json, options_size, store ? store->object : nullptr);
+}
+
 EMSCRIPTEN_KEEPALIVE uint8_t* lightusd_next_diff_json(
     const lightusd_next_diff_options* options,
     const uint8_t* left, uint32_t left_size,

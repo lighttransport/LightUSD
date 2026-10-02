@@ -57,6 +57,7 @@ export default defineConfig(({ command }) => {
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, 'index.html'),
+        validation: path.resolve(__dirname, 'validation.html'),
         lucia: path.resolve(__dirname, 'lucia-code/index.html'),
       },
     },

@@ -1856,3 +1856,8 @@ package fixtures. Set `USDCHECKER_PATH` and `REQUIRE_USDCHECKER=1` in reference
 CI; use `--report /tmp/checker-parity.json` to retain observed and unexercised
 error IDs. See [the checker guide](../tools/lusdchecker/README.md) for profile
 scope, extension APIs, manifest formats, and coverage limits.
+
+The native checker and `Module.checkUSD` in the next WASM product share their
+runner and report implementation. For web changes, also run the
+[WASM checker and browser demo regressions](../web/js/docs/regression.md#full-lusdchecker-wasm-validation).
+They compare native/WASM reports and exercise both existing web applications.

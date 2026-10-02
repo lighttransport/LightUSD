@@ -43,10 +43,12 @@ export default defineConfig(() => {
             { find: 'lightusd-js', replacement: path.resolve(__dirname, '../js') },
         ],
     },
+    worker: { format: 'es' },
     build: {
         rollupOptions: {
           input: {
             main: path.resolve(__dirname, 'index.html'),
+            validation: path.resolve(__dirname, 'validation.html'),
             hair_fur: path.resolve(__dirname, 'hair-fur.html'),
             materialx_openchess: path.resolve(__dirname, 'materialx-openchess.html'),
             materialx_node: path.resolve(__dirname, 'materialx-node.html'),

@@ -31,6 +31,7 @@ const NODE_TESTS = [
   ['next composition workflow parity map', 'tests/next-composition-parity.test.mjs'],
   ['next loading workflow parity map', 'tests/next-loading-parity.test.mjs'],
   ['next layer export workflow parity map', 'tests/next-layer-export-parity.test.mjs'],
+  ['next lusdchecker', 'tests/next-checker.test.mjs'],
   ['next validation parity', 'tests/next-validation-parity.test.mjs'],
   ['next layer-to-render parity', 'tests/next-layer-render-parity.test.mjs'],
   ['next mesh ownership parity map', 'tests/next-mesh-access-parity.test.mjs'],
@@ -248,6 +249,8 @@ async function runPhysics(results, opts) {
 }
 
 async function runBrowserTests(results, opts) {
+  results.push(await run('USD validation demos', NODE,
+    ['tests/validation-browser.test.mjs'], {}));
   results.push(await run('UDIM browser and Worker baking', NODE,
     ['tests/udim-bake-browser.test.mjs'], {}));
   if (!results.at(-1).ok) return;

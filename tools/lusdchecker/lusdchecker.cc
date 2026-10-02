@@ -50,6 +50,7 @@ constexpr int kExitError = 2;
 constexpr size_t kDefaultMaxMemoryMb = 1024;
 
 struct Args {
+  const lusdchecker::Environment* environment = nullptr;
   std::string input;
   std::string output = "stdout";
   ValidationOptions groups;
@@ -621,6 +622,10 @@ int ReportError(const Args& args, const std::string& rule, const std::string& me
   report["newIssueCount"] = uint64_t(1);
   report["existingIssueCount"] = uint64_t(0);
   if (rule == "parser.error" && args.profile != "default") report["conformance"] = "failed";
+  if (args.environment && args.environment->report) {
+    *args.environment->report = std::move(report);
+    return kExitError;
+  }
   std::ofstream file;
   std::ostream* output = args.output == "stderr" ? &std::cerr : &std::cout;
   if (args.output != "stdout" && args.output != "stderr") {
@@ -657,7 +662,8 @@ bool ReadStdin(size_t limit, std::string* data, std::string* error) {
 }
 
 bool ReadFile(const std::string& filename, size_t limit, std::string* data,
-              std::string* error) {
+              std::string* error, const lusdchecker::Environment* environment = nullptr) {
+  if (environment) return environment->read(filename, limit, data, error);
   if (!data) return false;
   std::ifstream stream(filename, std::ios::binary | std::ios::ate);
   if (!stream) {
@@ -677,6 +683,16 @@ bool ReadFile(const std::string& filename, size_t limit, std::string* data,
     return false;
   }
   return true;
+}
+
+std::shared_ptr<Layer> LoadInput(const std::string& path, std::string* warnings,
+    std::string* errors, const lightusd::next::pcp::LayerLoadOptions& options,
+    const lusdchecker::Environment* environment) {
+  if (!environment) return lightusd::next::pcp::LoadLayerFromFile(path, warnings, errors, options);
+  std::string bytes;
+  if (!ReadFile(path, options.max_memory, &bytes, errors, environment)) return {};
+  return lightusd::next::pcp::LoadLayerFromMemory(path,
+      reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), warnings, errors, options);
 }
 
 void AddIssue(USDValidationResult* result, USDValidationSeverity severity,
@@ -1234,7 +1250,8 @@ std::string ResolveDependencyPath(const std::string& anchor,
   return path.lexically_normal().string();
 }
 
-bool HasResolvableUdimTile(const std::string& resolved_template) {
+bool HasResolvableUdimTile(const std::string& resolved_template,
+    const lusdchecker::Environment* environment) {
   namespace fs = std::filesystem;
   constexpr char kUdimToken[] = "<UDIM>";
   constexpr int kFirstUdimTile = 1001;
@@ -1255,7 +1272,8 @@ bool HasResolvableUdimTile(const std::string& resolved_template) {
     const std::string candidate =
         prefix + std::to_string(tile) + suffix;
     std::error_code ec;
-    if (fs::exists(directory / candidate, ec) && !ec) return true;
+    if (environment ? environment->resolver->Exists((directory / candidate).string())
+                    : (fs::exists(directory / candidate, ec) && !ec)) return true;
   }
   return false;
 }
@@ -1330,17 +1348,19 @@ void CompareLayerTypes(const Layer& stronger, const Layer& weaker,
 void AuditLayerTypesRecursive(
     const Layer& layer, const std::string& anchor,
     const lightusd::next::pcp::LayerLoadOptions& options,
-    std::unordered_set<std::string>* visited, USDValidationResult* result) {
+    std::unordered_set<std::string>* visited, USDValidationResult* result,
+    const lusdchecker::Environment* environment) {
   if (!visited || !result) return;
   const auto load_and_audit = [&](const std::string& asset,
                                   const std::string& source_prefix,
                                   const std::string& target_prefix) {
     if (asset.empty()) return;
-    const std::string resolved = ResolveDependencyPath(anchor, asset);
+    const std::string resolved = environment
+        ? environment->resolver->ResolvePath(asset, anchor, false)
+        : ResolveDependencyPath(anchor, asset);
     std::string warnings, errors;
     std::shared_ptr<Layer> dependency =
-        lightusd::next::pcp::LoadLayerFromFile(
-            resolved, &warnings, &errors, options);
+        LoadInput(resolved, &warnings, &errors, options, environment);
     if (!dependency) return;
     std::string effective_prefix = source_prefix;
     if (effective_prefix.empty()) {
@@ -1356,7 +1376,7 @@ void AuditLayerTypesRecursive(
                         result);
     }
     if (visited->insert(resolved).second) {
-      AuditLayerTypesRecursive(*dependency, resolved, options, visited, result);
+      AuditLayerTypesRecursive(*dependency, resolved, options, visited, result, environment);
     }
   };
 
@@ -1384,16 +1404,22 @@ void AuditLayerTypesRecursive(
 void ValidateDependencyResolution(const Layer& layer,
                                   const std::string& anchor,
                                   USDValidationResult* result,
-                                  bool require_complete = false,
-                                  size_t max_memory = size_t(512) << 20) {
+                                  bool require_complete,
+                                  size_t max_memory,
+                                  const lusdchecker::Environment* environment) {
   lightusd::next::ResolverConfig resolver_config;
   resolver_config.enable_suffix_fallback = false;
-  lightusd::next::AssetResolver resolver(resolver_config);
+  lightusd::next::AssetResolver resolver = environment
+      ? *environment->resolver : lightusd::next::AssetResolver(resolver_config);
   const auto package_exists = [&](const lightusd::next::ResolvedAsset& asset) {
     lightusd::next::USDZReadOptions options;
     options.max_archive_size = options.max_entry_size = max_memory;
     lightusd::next::USDZReader archive;
-    if (!archive.OpenFile(asset.package_path, options)) return false;
+    std::string package_bytes, read_error;
+    if (environment) {
+      if (!ReadFile(asset.package_path, max_memory, &package_bytes, &read_error, environment) ||
+          !archive.Open(reinterpret_cast<const uint8_t*>(package_bytes.data()), package_bytes.size(), options)) return false;
+    } else if (!archive.OpenFile(asset.package_path, options)) return false;
     std::function<bool(const lightusd::next::USDZReader&, const std::string&, size_t)> contains;
     contains = [&](const lightusd::next::USDZReader& zip, const std::string& path, size_t depth) {
       if (depth > 32) return false;
@@ -1415,7 +1441,7 @@ void ValidateDependencyResolution(const Layer& layer,
   std::vector<std::string> ordered(dependencies.begin(), dependencies.end());
   std::sort(ordered.begin(), ordered.end());
   for (const std::string& authored : ordered) {
-    if (authored.find("://") != std::string::npos) {
+    if (!environment && authored.find("://") != std::string::npos) {
       if (require_complete) {
         result->complete = false;
         AddIssue(result, USDValidationSeverity::Error, "checker.coverage.resolver", "<layer>",
@@ -1426,10 +1452,10 @@ void ValidateDependencyResolution(const Layer& layer,
     bool exists = false;
     const auto asset = resolver.Resolve(authored, anchor, false);
     if (asset.is_package) exists = asset.exists && package_exists(asset);
-    else if (authored.find("<UDIM>") != std::string::npos) exists = HasResolvableUdimTile(resolved);
+    else if (authored.find("<UDIM>") != std::string::npos) exists = HasResolvableUdimTile(resolved, environment);
     else {
       std::error_code ec;
-      exists = std::filesystem::is_regular_file(resolved, ec);
+      exists = environment ? asset.exists : std::filesystem::is_regular_file(resolved, ec);
     }
     if (!exists) {
       if (require_complete) {
@@ -1509,8 +1535,12 @@ void MergeDedupedIssues(USDValidationResult* dst,
 }  // namespace
 
 int lusdchecker::RunChecker(int argc, char** argv,
-    const lightusd::next::ValidationRegistry& initial_registry) {
+    const lightusd::next::ValidationRegistry& initial_registry,
+    const Environment* environment) {
   Args args;
+  args.environment = environment;
+  if (environment && (!environment->read || !environment->resolver))
+    return ReportError(args, "checker.usage", "checker environment requires a reader and resolver");
   args.groups = AllAvailableGroups();
   std::string error;
   const ParseArgsResult parsed = ParseArgs(argc, argv, &args, &error);
@@ -1531,14 +1561,14 @@ int lusdchecker::RunChecker(int argc, char** argv,
   lightusd::next::ValidationRegistry registry = initial_registry;
   for (const auto& file : args.schema_files) {
     std::string text;
-    if (!ReadFile(file, std::min(max_memory, size_t(16) << 20), &text, &error))
+    if (!ReadFile(file, std::min(max_memory, size_t(16) << 20), &text, &error, environment))
       return ReportError(args, "checker.definitions", error);
     auto loaded = registry.LoadSchemaDefinitions(text);
     if (!loaded) return ReportError(args, "checker.definitions", loaded.error());
   }
   for (const auto& file : args.shader_files) {
     std::string text;
-    if (!ReadFile(file, std::min(max_memory, size_t(16) << 20), &text, &error))
+    if (!ReadFile(file, std::min(max_memory, size_t(16) << 20), &text, &error, environment))
       return ReportError(args, "checker.definitions", error);
     auto loaded = registry.LoadShaderDefinitions(text);
     if (!loaded) return ReportError(args, "checker.definitions", loaded.error());
@@ -1580,15 +1610,14 @@ int lusdchecker::RunChecker(int argc, char** argv,
         input_bytes.size(), &parser_warnings, &parser_errors,
         load_options);
   } else if (args.groups.package || args.groups.crate) {
-    if (!ReadFile(args.input, max_memory, &input_bytes, &error)) {
+    if (!ReadFile(args.input, max_memory, &input_bytes, &error, environment)) {
       return ReportError(args, "checker.io", error);
     }
     layer = lightusd::next::pcp::LoadLayerFromMemory(
         args.input, reinterpret_cast<const uint8_t*>(input_bytes.data()),
         input_bytes.size(), &parser_warnings, &parser_errors, load_options);
   } else {
-    layer = lightusd::next::pcp::LoadLayerFromFile(
-        args.input, &parser_warnings, &parser_errors, load_options);
+    layer = LoadInput(args.input, &parser_warnings, &parser_errors, load_options, environment);
   }
   if (!layer) return ReportError(args, "parser.error", parser_errors.empty() ? "failed to parse input" : parser_errors);
 
@@ -1602,7 +1631,7 @@ int lusdchecker::RunChecker(int argc, char** argv,
     const auto existing = loaded_layers.find(path);
     if (existing != loaded_layers.end()) return existing->second;
     std::string warnings, errors;
-    auto loaded = lightusd::next::pcp::LoadLayerFromFile(path, &warnings, &errors, load_options);
+    auto loaded = LoadInput(path, &warnings, &errors, load_options, environment);
     if (!warnings.empty()) parser_warnings += warnings;
     if (!loaded) { if (load_error) *load_error = errors; return {}; }
     const size_t bytes = loaded->memory_usage();
@@ -1620,7 +1649,9 @@ int lusdchecker::RunChecker(int argc, char** argv,
       std::vector<lightusd::next::CompositionError>* errors) -> std::unique_ptr<Layer> {
     lightusd::next::ResolverConfig config;
     config.enable_suffix_fallback = !args.strict_parse;
-    lightusd::next::AssetResolver resolver(config);
+    lightusd::next::AssetResolver resolver = environment
+        ? *environment->resolver : lightusd::next::AssetResolver(config);
+    resolver.SetConfig(config);
     lightusd::next::Compositor compositor(&resolver);
     lightusd::next::CompositionOptions options;
     options.strict_aousd_conformance = args.strict_parse;
@@ -1675,7 +1706,8 @@ int lusdchecker::RunChecker(int argc, char** argv,
       eval.clip_stage_cache = std::make_shared<lightusd::next::ValueClipStageCache>();
       eval.clip_stage_loader = [&](const std::string& path, lightusd::next::Stage* out,
                                     std::string*, std::string* error) {
-        lightusd::next::AssetResolver resolver;
+        lightusd::next::AssetResolver resolver = environment
+            ? *environment->resolver : lightusd::next::AssetResolver();
         const std::string resolved = resolver.ResolvePath(path, args.input);
         auto loaded = load_cached(resolved.empty() ? path : resolved, error);
         if (!loaded) return false;
@@ -1786,7 +1818,7 @@ int lusdchecker::RunChecker(int argc, char** argv,
       if (entry.first.find('[') != std::string::npos || LowerExtension(entry.first) == "usdz") continue;
       USDValidationResult dependencies;
       dependencies.checked_groups.core = false;
-      ValidateDependencyResolution(*entry.second, entry.first, &dependencies, args.groups.require_complete, max_memory);
+      ValidateDependencyResolution(*entry.second, entry.first, &dependencies, args.groups.require_complete, max_memory, environment);
       for (auto& issue : dependencies.issues) issue.source_asset = entry.first;
       MergeDedupedIssues(&result, &seen_issue_keys, dependencies);
     }
@@ -1796,7 +1828,7 @@ int lusdchecker::RunChecker(int argc, char** argv,
     std::unordered_set<std::string> visited;
     visited.insert(std::filesystem::path(args.input).lexically_normal().string());
     AuditLayerTypesRecursive(*layer, args.input, load_options, &visited,
-                             &result);
+                             &result, environment);
   }
   // Inspect every loaded file container and every stored nested member. Magic
   // bytes also identify crates whose portable filename ends in .usd.
@@ -1847,7 +1879,7 @@ int lusdchecker::RunChecker(int argc, char** argv,
     if (!args.root_package_only) for (const auto& entry : loaded_layers) {
       if (entry.first == args.input || entry.first.find('[') != std::string::npos) continue;
       std::string bytes, read_error;
-      if (!ReadFile(entry.first, max_memory, &bytes, &read_error)) {
+      if (!ReadFile(entry.first, max_memory, &bytes, &read_error, environment)) {
         result.complete = false;
         AddIssue(&result, USDValidationSeverity::Error, "checker.coverage.io", entry.first, read_error);
         continue;
@@ -1906,8 +1938,25 @@ int lusdchecker::RunChecker(int argc, char** argv,
   const bool valid = result.ok() && !warnings_fail && result.complete;
   auto report = MakeReport(args, result, parser_warnings, valid,
                            variant_pass_count, variant_limit_hit);
-  if (!lusdchecker::ApplyBaseline(&report, args.baseline, &error))
-    return ReportError(args, "checker.baseline", error);
+  bool baseline_ok = false;
+  if (environment && !args.baseline.empty()) {
+    std::string bytes;
+    lightusd::minijson::Value baseline;
+    if (ReadFile(args.baseline, size_t(16) << 20, &bytes, &error, environment) &&
+        lightusd::minijson::Parse(bytes, &baseline)) {
+      baseline_ok = lusdchecker::ApplyBaselineReport(&report, &baseline, &error);
+    }
+    if (!baseline_ok && error.empty()) error = "baseline must be a lusdchecker JSON report";
+  } else {
+    baseline_ok = lusdchecker::ApplyBaseline(&report, args.baseline, &error);
+  }
+  if (!baseline_ok) return ReportError(args, "checker.baseline", error);
+
+  if (environment && environment->report) {
+    const bool passed = report["gatePassed"].get_bool();
+    *environment->report = std::move(report);
+    return passed ? kExitValid : kExitInvalid;
+  }
 
   std::ofstream file_output;
   std::ostream* output = &std::cout;

@@ -1,0 +1,122 @@
+
+    <main class="shell">
+      <div class="topbar">
+        <div>
+          <h1>LightUSD USD Validation</h1>
+          <p class="subtitle">lusdchecker in your browser. Files stay on your device; validation reads only the files you supply.</p>
+        </div>
+        <div class="status" id="status">Loading WASM module...</div>
+      </div>
+
+      <section class="grid">
+        <div class="panel">
+          <h2>Input</h2>
+          <div class="dropzone" id="dropzone">
+            <div>
+              <strong>Drop a USD file here</strong><br>
+              <span>.usd, .usda, .usdc, or .usdz</span>
+            </div>
+          </div>
+          <input id="fileInput" class="hidden" type="file" accept=".usd,.usda,.usdc,.usdz">
+          <div class="controls">
+            <button id="chooseFile">Choose File</button>
+            <button id="validate" class="primary" disabled>Validate</button>
+            <button id="cancel" disabled>Cancel</button>
+            <label>Backend <select id="backend"><option value="next">next</option><option value="legacy">legacy</option></select></label>
+          </div>
+          <p class="subtitle" id="fileInfo">No file selected.</p>
+
+          <details style="margin-top:16px">
+            <summary>Dependencies and folders</summary>
+            <p class="checker-note">Add files beside the root, or select a folder to preserve relative paths. Missing dependencies are reported as incomplete strict coverage.</p>
+            <label>Add dependencies <input id="dependencies" type="file" multiple></label><br>
+            <label>Choose folder <input id="folder" type="file" webkitdirectory multiple></label>
+            <label>Root layer <select id="rootFile" aria-label="Root layer"></select></label>
+            <button id="clearAssets">Clear dependencies</button>
+            <p id="assetInfo" class="checker-note">No dependencies supplied.</p>
+          </details>
+          <h2 style="margin-top:22px">Samples</h2>
+          <select class="sample-select" id="sampleSelect"></select>
+          <div class="controls">
+            <button id="loadSample">Load Sample</button>
+          </div>
+
+          <h2 style="margin-top:22px">Validation profile</h2>
+          <label>Profile <select id="profile">
+            <option value="default">Default — selected checks</option>
+            <option value="strict">Strict — all checks and complete coverage</option>
+            <option value="aousd-core-1.0.1">AOUSD Core 1.0.1 — implemented constraints</option>
+          </select></label>
+          <p id="profileHelp" class="checker-note">Default preserves warnings. Strict includes composition, every reachable variant, and time samples. AOUSD checks cover implemented document constraints; a pass is not full specification certification.</p>
+          <div class="checks" id="advancedChecks">
+            <label><input type="checkbox" id="strictWarnings"> Fail on warnings</label>
+            <label><input type="checkbox" id="composed"> Compose dependencies and variants</label>
+            <label><input type="checkbox" id="allSamples"> All time samples</label>
+            <label>Sample limit <input type="number" id="maxSamples" value="10000" min="1" max="1000000"></label>
+            <label>Memory limit (MiB) <input type="number" id="maxMemory" value="512" min="1" max="1024"></label>
+          </div>
+          <details id="definitions">
+            <summary>Custom JSON definitions</summary>
+            <label>Schema manifests <input id="schemaDefinitions" type="file" accept=".json" multiple></label><br>
+            <label>Shader manifests <input id="shaderDefinitions" type="file" accept=".json" multiple></label>
+            <p class="checker-note">Choose JSON schema or shader manifests to use for this validation run.</p>
+          </details>
+          <h2 style="margin-top:22px">Rule Groups</h2>
+          <fieldset class="checks" id="ruleGroups">
+            <label><input type="checkbox" id="groupCore" checked> Core</label>
+            <label><input type="checkbox" id="groupGeom" checked> Geometry</label>
+            <label><input type="checkbox" id="groupShade" checked> Shading</label>
+            <label><input type="checkbox" id="groupLux" checked> Lighting</label>
+            <label><input type="checkbox" id="groupPhysics" checked> Physics</label>
+            <label><input type="checkbox" id="groupCrate" checked> Crate</label>
+            <label><input type="checkbox" id="groupRender" checked> Render</label>
+            <label><input type="checkbox" id="groupPackage" checked> Package</label>
+            <label><input type="checkbox" id="groupArkit"> ARKit</label>
+          </fieldset>
+        </div>
+
+        <div class="panel">
+          <h2>Results</h2>
+          <div class="summary">
+            <div class="metric">
+              <div class="label">Status</div>
+              <div class="value" id="summaryStatus">Idle</div>
+            </div>
+            <div class="metric">
+              <div class="label">Errors</div>
+              <div class="value error" id="summaryErrors">0</div>
+            </div>
+            <div class="metric">
+              <div class="label">Warnings</div>
+              <div class="value warning" id="summaryWarnings">0</div>
+            </div>
+            <div class="metric">
+              <div class="label">Groups</div>
+              <div class="value" id="summaryGroups">core, geom, shade, lux, physics</div>
+            </div>
+          </div>
+
+          <p id="coverage" class="checker-note">Coverage has not been checked.</p>
+          <div class="issue-table"><table>
+            <thead>
+              <tr>
+                <th style="width:92px">Severity</th>
+                <th style="width:210px">Rule</th>
+                <th style="width:230px">Location / context</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody id="issueRows">
+              <tr><td colspan="4">No validation run yet.</td></tr>
+            </tbody>
+          </table></div>
+
+          <div class="controls">
+            <button id="copyReport" disabled>Copy Report</button>
+            <button id="downloadReport" disabled>Download JSON</button>
+            <button id="downloadSarif" disabled>Download SARIF</button>
+          </div>
+          <pre id="report">{}</pre>
+        </div>
+      </section>
+    </main>

@@ -262,6 +262,15 @@ export const DEMOS = [
     href: './usdz-packager.html'
   },
   {
+    id: 'validation',
+    title: 'USD Validation',
+    subtitle: 'Run lusdchecker with strict and AOUSD Core profiles, dependencies, time samples, and JSON/SARIF reports.',
+    defaultAsset: '',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/usd-diff.svg',
+    href: './validation.html'
+  },
+  {
     id: 'usd-diff',
     title: 'USD Diff',
     subtitle: 'Compare two USD files side by side with synchronized camera and detailed metric differences.',

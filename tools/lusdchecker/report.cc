@@ -34,7 +34,7 @@ std::string Uri(const std::string& path) {
 }  // namespace
 
 bool ApplyBaseline(Json* report, const std::string& path, std::string* error) {
-  std::set<std::string> accepted;
+  Json baseline;
   if (!path.empty()) {
     constexpr size_t cap = 16 * 1024 * 1024;
     std::ifstream in(path, std::ios::binary);
@@ -47,14 +47,23 @@ bool ApplyBaseline(Json* report, const std::string& path, std::string* error) {
       if (n > cap - text.size()) { *error = "baseline exceeds 16 MiB"; return false; }
       text.append(block, n);
     }
-    Json baseline;
     lightusd::minijson::Error parse_error;
     if (in.bad() || !lightusd::minijson::Parse(text, &baseline, &parse_error) ||
         baseline["tool"].get_string() != "lusdchecker" ||
         !baseline["issues"].is_array()) {
       *error = "baseline must be a lusdchecker JSON report"; return false;
     }
-    for (const Json& issue : baseline["issues"]) {
+  }
+  return ApplyBaselineReport(report, path.empty() ? nullptr : &baseline, error);
+}
+
+bool ApplyBaselineReport(Json* report, const Json* baseline, std::string* error) {
+  std::set<std::string> accepted;
+  if (baseline) {
+    if ((*baseline)["tool"].get_string() != "lusdchecker" || !(*baseline)["issues"].is_array()) {
+      *error = "baseline must be a lusdchecker JSON report"; return false;
+    }
+    for (const Json& issue : (*baseline)["issues"]) {
       if (!IsIssue(issue)) { *error = "malformed baseline issue"; return false; }
       accepted.insert(Key(issue));
     }
@@ -67,7 +76,7 @@ bool ApplyBaseline(Json* report, const std::string& path, std::string* error) {
     // A baseline cannot bless incomplete validation coverage.
     const std::string rule = issue["ruleId"].get_string();
     const bool known = rule.rfind("checker.", 0) != 0 && accepted.count(Key(issue));
-    if (!path.empty()) issue["baselineState"] = known ? "unchanged" : "new";
+    if (baseline) issue["baselineState"] = known ? "unchanged" : "new";
     if (known) ++existing;
     else {
       ++fresh;
@@ -77,7 +86,7 @@ bool ApplyBaseline(Json* report, const std::string& path, std::string* error) {
   }
   (*report)["newIssueCount"] = uint64_t(fresh);
   (*report)["existingIssueCount"] = uint64_t(existing);
-  (*report)["gatePassed"] = path.empty() ? (*report)["valid"].get_bool() : passed;
+  (*report)["gatePassed"] = !baseline ? (*report)["valid"].get_bool() : passed;
   return true;
 }
 
