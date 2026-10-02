@@ -1,0 +1,10 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+def Sphere "Root"
+{
+    double radius = -1
+}

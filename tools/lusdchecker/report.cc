@@ -10,7 +10,7 @@ namespace {
 std::string Key(const Json& issue) {
   // A JSON tuple avoids delimiter collisions in user-authored messages/paths.
   return Json::array({issue["ruleId"], issue["location"], issue["severity"],
-                      issue["message"]}).dump();
+                      issue["message"], issue["sourceAsset"], issue["variants"], issue["time"]}).dump();
 }
 bool IsIssue(const Json& i) {
   return i.is_object() && i["ruleId"].is_string() &&
@@ -60,7 +60,8 @@ bool ApplyBaseline(Json* report, const std::string& path, std::string* error) {
     }
   }
   size_t existing = 0, fresh = 0;
-  bool passed = !(*report)["variantLimitHit"].get_bool() &&
+  bool passed = (!(*report).contains("complete") || (*report)["complete"].get_bool()) &&
+      !(*report)["variantLimitHit"].get_bool() &&
       (!(*report)["strict"].get_bool() || (*report)["parserWarnings"].get_string().empty());
   for (Json& issue : (*report)["issues"]) {
     // A baseline cannot bless incomplete validation coverage.
@@ -84,18 +85,29 @@ Json ToSarif(const Json& report) {
   Json results = Json::array(), rules = Json::array();
   std::set<std::string> rule_ids;
   for (const Json& issue : report["issues"]) rule_ids.insert(issue["ruleId"].get_string());
-  for (const auto& id : rule_ids) rules.push_back(Json{{"id", id}});
+  for (const auto& id : rule_ids) {
+    Json rule{{"id", id}};
+    for (const Json& issue : report["issues"]) if (issue["ruleId"].get_string() == id) {
+      rule["properties"] = Json{{"category", issue["category"]}, {"referenceErrors", issue["referenceErrors"]}};
+      if (!issue["specification"].get_string().empty()) rule["helpUri"] = issue["specification"];
+      break;
+    }
+    rules.push_back(std::move(rule));
+  }
   for (const Json& issue : report["issues"]) {
     Json result{{"ruleId", issue["ruleId"]}, {"level", issue["severity"]},
                 {"message", Json{{"text", issue["message"]}}}};
     Json location{{"logicalLocations", Json::array({Json{{"fullyQualifiedName", issue["location"]}}})}};
     if (report["input"].get_string() != "-")
-      location["physicalLocation"] = Json{{"artifactLocation", Json{{"uri", Uri(report["input"].get_string())}}}};
+      location["physicalLocation"] = Json{{"artifactLocation", Json{{"uri", Uri(issue.contains("sourceAsset") ? issue["sourceAsset"].get_string() : report["input"].get_string())}}}};
     result["locations"] = Json::array({location});
+    result["properties"] = Json{{"category", issue["category"]},
+        {"referenceErrors", issue["referenceErrors"]}, {"variants", issue["variants"]}};
+    if (issue.contains("time")) result["properties"]["time"] = issue["time"];
     if (issue.contains("baselineState")) result["baselineState"] = issue["baselineState"];
     results.push_back(std::move(result));
   }
-  Json invocation{{"executionSuccessful", true}};
+  Json invocation{{"executionSuccessful", report["executionSuccessful"]}};
   if (!report["parserWarnings"].get_string().empty())
     invocation["toolExecutionNotifications"] = Json::array({Json{{"level", "warning"},
         {"message", Json{{"text", report["parserWarnings"]}}}}});
@@ -103,7 +115,9 @@ Json ToSarif(const Json& report) {
       {"results", results}, {"invocations", Json::array({invocation})},
       {"properties", Json{{"valid", report["valid"]}, {"gatePassed", report["gatePassed"]},
           {"newIssueCount", report["newIssueCount"]}, {"existingIssueCount", report["existingIssueCount"]},
-          {"variantLimitHit", report["variantLimitHit"]}, {"checkedGroups", report["checkedGroups"]},
+          {"variantLimitHit", report["variantLimitHit"]}, {"complete", report["complete"]},
+          {"conformance", report["conformance"]}, {"profile", report["profile"]},
+          {"checkedGroups", report["checkedGroups"]},
           {"skippedGroups", report["skippedGroups"]}}}};
   return Json{{"version", "2.1.0"},
       {"$schema", "https://docs.oasis-open.org/sarif/sarif/v2.1.0/cos02/schemas/sarif-schema-2.1.0.json"},

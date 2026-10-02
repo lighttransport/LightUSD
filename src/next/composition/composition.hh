@@ -80,6 +80,10 @@ struct CompositionOptions {
   // prim only and wins over the bare-set key; pxr keys selections per prim).
   // Empty keeps authored selections.
   std::map<std::string, std::string> variant_overrides;
+  // Borrowed, synchronous observer of reachable sets after namespace mapping.
+  // Called before flattening consumes the set, including nested selections.
+  std::function<void(const std::string&, const VariantSetData&,
+                     const std::string&)> variant_observer;
 };
 
 /// Composition error

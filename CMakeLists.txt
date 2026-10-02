@@ -83,6 +83,10 @@ if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
   endif()
   # Explicit next names prevent consumers from silently binding legacy APIs.
   add_library(lightusd::next ALIAS lightusd_next)
+  option(LIGHTUSD_BUILD_TOOLS "Build next-compatible command-line tools" OFF)
+  if(LIGHTUSD_BUILD_TOOLS)
+    add_subdirectory(tools/lusdchecker)
+  endif()
   return()
 endif()
 

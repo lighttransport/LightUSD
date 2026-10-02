@@ -22,6 +22,8 @@
 namespace lightusd {
 namespace next {
 
+class ValidationRegistry;
+
 enum class USDValidationSeverity {
   Error,
   Warning,
@@ -71,6 +73,14 @@ struct ValidationOptions {
   // ValidateStageMetadataPresence on the authored root layer instead.
   bool stage_presence_checks{true};
 
+  // Borrowed immutable definitions/callbacks for this validation run.
+  // Null selects the built-in registry. Existing callers need no changes.
+  const ValidationRegistry* registry{nullptr};
+  bool normative_only{false};
+  bool require_complete{false};
+  bool run_callbacks{true};
+  std::vector<std::string> validator_keywords{};
+
   // Human-readable list of enabled groups, e.g. "core, geom, shade".
   std::string group_summary() const;
 };
@@ -80,6 +90,10 @@ struct USDValidationIssue {
   std::string rule_id;
   std::string location;
   std::string message;
+  std::string source_asset{};
+  std::string variants{};
+  bool has_time{false};
+  double time{0.0};
 };
 
 struct USDValidationResult {
@@ -88,6 +102,7 @@ struct USDValidationResult {
   // The rule groups that were actually run to produce this result, so a report
   // can state coverage (a core-only "OK" did not check geom/shade).
   ValidationOptions checked_groups;
+  bool complete{true};
 
   size_t error_count() const;
   size_t warning_count() const;

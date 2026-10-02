@@ -1789,6 +1789,8 @@ void Compositor::ApplyOneVariant(PrimSpec& prim, const Layer& layer,
         }
       }
     }
+    if (options_.variant_observer)
+      options_.variant_observer(prim.path().str(), nvs, chosen);
     if (chosen.empty()) continue;
     for (const auto& nested : nvs.variants) {
       if (nested.name == chosen) {
@@ -1858,6 +1860,8 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
     if (chosen.empty() && set_name == legacy.variant_set) {
       chosen = legacy.variant_name;
     }
+    if (options_.variant_observer)
+      options_.variant_observer(prim.path().str(), *vs_p, chosen);
     if (chosen.empty()) continue;
 
     // Copy the selected option out before applying it: ApplyOneVariant mutates

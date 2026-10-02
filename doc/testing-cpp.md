@@ -1837,3 +1837,22 @@ also reports a 131072-triangle viewport workload. Shared WASM UDIM tests cover
 HDR-to-EXR and EXR round-trip thumbnails on combined/next wasm32/memory64, with
 16-bit atlas precision preserved. Rebuild next-only WASM with
 `LIGHTUSD_WASM_WITH_EXR=ON` to enable both EXR reading and writing.
+
+
+## Strict lusdchecker regression
+
+Configure `build_ninja` with `LIGHTUSD_BUILD_TOOLS=ON` and
+`LIGHTUSD_BUILD_TESTS=ON`. Run `ctest --test-dir build_ninja -R
+'lusdchecker|validation_registry' --output-on-failure`. The contracts assert
+exact exit status and structured diagnostics for strict/Core profiles, schema
+and shader manifests, compiled callbacks, sampled topology, reachable variants,
+resource limits, JSON/SARIF failures, and baselines. Generated table freshness
+is checked separately. Standalone Debug `next` testing and AOUSD supplemental
+checks remain required when changing the shared validators or compositor.
+
+`tests/checker-parity.py` compares exact IDs, severity, sites, and rejection
+status against the pinned OpenUSD checker, including generated physics and
+package fixtures. Set `USDCHECKER_PATH` and `REQUIRE_USDCHECKER=1` in reference
+CI; use `--report /tmp/checker-parity.json` to retain observed and unexercised
+error IDs. See [the checker guide](../tools/lusdchecker/README.md) for profile
+scope, extension APIs, manifest formats, and coverage limits.

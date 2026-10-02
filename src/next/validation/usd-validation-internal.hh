@@ -545,7 +545,6 @@ bool IsDecodableButNonPortableTextureExtension(const std::string &ext);
 bool IsEightBitTextureExtension(const std::string &ext);
 bool IsArkitLayerExtension(const std::string &ext);
 bool IsArkitShaderId(const std::string &shader_id);
-bool IsBuiltinRegistryShaderId(const std::string &shader_id);
 bool ValueToFloat4(const Value &v, std::array<double, 4> *out);
 bool GetFloat4Property(const PrimSpec &ps, const std::string &name,
                        std::array<double, 4> *out);

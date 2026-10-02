@@ -7,10 +7,13 @@ if(NOT TARGET lightusd_next)
                    ${CMAKE_BINARY_DIR}/lusdchecker_next_build)
 endif()
 
-add_executable(lusdchecker lusdchecker.cc report.cc)
-target_link_libraries(lusdchecker PRIVATE lightusd_next)
-target_compile_features(lusdchecker PRIVATE cxx_std_17)
-target_include_directories(lusdchecker PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_library(lusdchecker_lib STATIC lusdchecker.cc report.cc)
+target_link_libraries(lusdchecker_lib PUBLIC lightusd_next)
+target_compile_features(lusdchecker_lib PUBLIC cxx_std_17)
+target_include_directories(lusdchecker_lib PUBLIC ${PROJECT_SOURCE_DIR}/src
+                                               ${CMAKE_CURRENT_SOURCE_DIR})
+add_executable(lusdchecker main.cc)
+target_link_libraries(lusdchecker PRIVATE lusdchecker_lib)
 
 if(COMMAND add_sanitizers)
   add_sanitizers(lusdchecker)
@@ -20,6 +23,15 @@ set_target_properties(lusdchecker PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
 if(LIGHTUSD_BUILD_TESTS)
+  add_executable(lusdchecker_custom_example custom-checker-example.cc)
+  target_link_libraries(lusdchecker_custom_example PRIVATE lusdchecker_lib)
+  add_test(NAME lusdchecker_validation_contracts
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test-validation.py $<TARGET_FILE:lusdchecker>
+      --custom-checker $<TARGET_FILE:lusdchecker_custom_example>)
+  add_test(NAME lusdchecker_definition_export
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test-export-definitions.py)
+  add_test(NAME lusdchecker_definition_tables
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/generate-checker-definitions.py --check)
   add_test(NAME lusdchecker_valid
     COMMAND lusdchecker --groups core
             ${PROJECT_SOURCE_DIR}/tests/usda/cube.usda)
@@ -27,10 +39,8 @@ if(LIGHTUSD_BUILD_TESTS)
     PASS_REGULAR_EXPRESSION "Result: PASSED")
 
   add_test(NAME lusdchecker_invalid
-    COMMAND lusdchecker --groups core
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/assert-check.py --exit 1 --rule core.layer.metersPerUnit -- $<TARGET_FILE:lusdchecker> --groups core
             ${CMAKE_CURRENT_SOURCE_DIR}/testdata/invalid-layer.usda)
-  set_tests_properties(lusdchecker_invalid PROPERTIES
-    WILL_FAIL TRUE)
 
   add_test(NAME lusdchecker_json
     COMMAND lusdchecker --json --groups core
@@ -47,42 +57,32 @@ if(LIGHTUSD_BUILD_TESTS)
             ${PROJECT_SOURCE_DIR}/models/cube.usdz)
 
   add_test(NAME lusdchecker_strict_warning
-    COMMAND lusdchecker --strict --core-only
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/assert-check.py --exit 1 --rule core.composition.over -- $<TARGET_FILE:lusdchecker> --strict --core-only
             ${CMAKE_CURRENT_SOURCE_DIR}/testdata/warning-only.usda)
-  set_tests_properties(lusdchecker_strict_warning PROPERTIES
-    WILL_FAIL TRUE)
 
   add_test(NAME lusdchecker_materialx
     COMMAND lusdchecker
             ${PROJECT_SOURCE_DIR}/tests/feat/mtlx/data/basic_openpbr.mtlx)
 
   add_test(NAME lusdchecker_materialx_invalid
-    COMMAND lusdchecker
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/assert-check.py --exit 1 --rule shade.materialX.nodeReference -- $<TARGET_FILE:lusdchecker>
             ${CMAKE_CURRENT_SOURCE_DIR}/testdata/missing-materialx-node.mtlx)
-  set_tests_properties(lusdchecker_materialx_invalid PROPERTIES
-    WILL_FAIL TRUE)
 
   add_test(NAME lusdchecker_composed
     COMMAND lusdchecker --composed --groups core
             ${PROJECT_SOURCE_DIR}/tests/usda/aousd-defaultprim-reference.usda)
 
   add_test(NAME lusdchecker_composed_missing_reference
-    COMMAND lusdchecker --composed --groups core
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/assert-check.py --exit 1 --rule core.composition.error -- $<TARGET_FILE:lusdchecker> --composed --groups core
             ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/feat/lusdchecker/missing-reference.usda)
-  set_tests_properties(lusdchecker_composed_missing_reference PROPERTIES
-    WILL_FAIL TRUE)
 
   add_test(NAME lusdchecker_schema_placement
-    COMMAND lusdchecker --groups geom,physics
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/assert-check.py --exit 1 --rule geom.primitive.size -- $<TARGET_FILE:lusdchecker> --groups geom,physics
             ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/feat/lusdchecker/invalid-schema-placement.usda)
-  set_tests_properties(lusdchecker_schema_placement PROPERTIES
-    WILL_FAIL TRUE)
 
   add_test(NAME lusdchecker_composed_type_mismatch
-    COMMAND lusdchecker --composed --groups core
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/assert-check.py --exit 1 --rule core.composition.attributeTypeMismatch -- $<TARGET_FILE:lusdchecker> --composed --groups core
             ${CMAKE_CURRENT_SOURCE_DIR}/testdata/type-mismatch-root.usda)
-  set_tests_properties(lusdchecker_composed_type_mismatch PROPERTIES
-    WILL_FAIL TRUE)
 
   add_test(NAME lusdchecker_package_regressions
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test-package.py
@@ -95,28 +95,20 @@ if(LIGHTUSD_BUILD_TESTS)
     PASS_REGULAR_EXPRESSION "Checked rule groups: crate")
 
   add_test(NAME lusdchecker_require_all_groups
-    COMMAND lusdchecker --require-all-groups --all
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/assert-check.py --exit 1 --rule checker.coverage.skipped -- $<TARGET_FILE:lusdchecker> --require-all-groups --all
             ${PROJECT_SOURCE_DIR}/tests/usda/cube.usda)
-  set_tests_properties(lusdchecker_require_all_groups PROPERTIES
-    WILL_FAIL TRUE)
 
   add_test(NAME lusdchecker_unselected_variant
-    COMMAND lusdchecker --groups geom
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/assert-check.py --exit 1 --rule geom.mesh.topology.index -- $<TARGET_FILE:lusdchecker> --groups geom
             ${CMAKE_CURRENT_SOURCE_DIR}/testdata/invalid-variant-body.usda)
-  set_tests_properties(lusdchecker_unselected_variant PROPERTIES
-    WILL_FAIL TRUE)
 
   add_test(NAME lusdchecker_unknown_api_schema
-    COMMAND lusdchecker --strict --groups core
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/assert-check.py --exit 1 --rule core.apiSchema.unknown -- $<TARGET_FILE:lusdchecker> --strict --groups core
             ${CMAKE_CURRENT_SOURCE_DIR}/testdata/unknown-api-schema.usda)
-  set_tests_properties(lusdchecker_unknown_api_schema PROPERTIES
-    WILL_FAIL TRUE)
 
   add_test(NAME lusdchecker_relationship_variability
-    COMMAND lusdchecker --strict --groups core
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/assert-check.py --exit 1 --rule core.relationship.variability -- $<TARGET_FILE:lusdchecker> --strict --groups core
             ${CMAKE_CURRENT_SOURCE_DIR}/testdata/varying-relationship.usda)
-  set_tests_properties(lusdchecker_relationship_variability PROPERTIES
-    WILL_FAIL TRUE)
 
   # --- ARKit / RealityKit profile -----------------------------------------
   add_test(NAME lusdchecker_arkit_clean
@@ -126,10 +118,8 @@ if(LIGHTUSD_BUILD_TESTS)
     PASS_REGULAR_EXPRESSION "Result: PASSED - no issues found")
 
   add_test(NAME lusdchecker_arkit_violations
-    COMMAND lusdchecker --arkit
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/assert-check.py --exit 1 --rule arkit.normalMap.scaleBias -- $<TARGET_FILE:lusdchecker> --arkit
             ${CMAKE_CURRENT_SOURCE_DIR}/testdata/arkit-violations.usda)
-  set_tests_properties(lusdchecker_arkit_violations PROPERTIES
-    WILL_FAIL TRUE)
 
   # PASS_REGULAR_EXPRESSION ignores the exit status, so this asserts the rule
   # ids reported for the same (failing) asset.
@@ -157,10 +147,8 @@ if(LIGHTUSD_BUILD_TESTS)
     PASS_REGULAR_EXPRESSION "\"checkedGroups\":\\[.*\"arkit\"\\]")
 
   add_test(NAME lusdchecker_arkit_package
-    COMMAND lusdchecker --arkit
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/assert-check.py --exit 1 --rule arkit.package.rootLayer -- $<TARGET_FILE:lusdchecker> --arkit
             ${CMAKE_CURRENT_SOURCE_DIR}/testdata/arkit-bad-package.usdz)
-  set_tests_properties(lusdchecker_arkit_package PROPERTIES
-    WILL_FAIL TRUE)
 
   add_test(NAME lusdchecker_arkit_package_rules
     COMMAND lusdchecker --arkit
@@ -228,10 +216,8 @@ if(LIGHTUSD_BUILD_TESTS)
     COMMAND lusdchecker
             ${CMAKE_CURRENT_SOURCE_DIR}/testdata/parity-stage-metadata.usda)
   add_test(NAME lusdchecker_parity_compat_fails_with
-    COMMAND lusdchecker --usdchecker-compat
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/assert-check.py --exit 1 --rule geom.stage.upAxis -- $<TARGET_FILE:lusdchecker> --usdchecker-compat
             ${CMAKE_CURRENT_SOURCE_DIR}/testdata/parity-stage-metadata.usda)
-  set_tests_properties(lusdchecker_parity_compat_fails_with PROPERTIES
-    WILL_FAIL TRUE)
 
   # Variant sweep: the defect hides in a NON-selected variant. --composed
   # enumerates all combinations and finds it; --skip-variants must not.

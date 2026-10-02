@@ -20,6 +20,7 @@
 //    rule ids.
 
 #include "usd-validation-internal.hh"
+#include "validation-context.hh"
 
 #include "../prim/identifier.hh"
 #include "../schema/schema-registry.hh"
@@ -3570,7 +3571,8 @@ std::set<std::string> CollectAppliedCollectionInstances(
 
 void ValidateAPISchemasMetadata(const std::vector<AppliedSchema> &schemas,
                                 const std::string &prim_location,
-                                USDValidationResult *result) {
+                                USDValidationResult *result,
+                                const ValidationRegistry& registry) {
   std::set<std::string> seen;
   for (const AppliedSchema &schema : schemas) {
     if (schema.name.empty() || !IsValidIdentifier(schema.name)) {
@@ -3584,20 +3586,29 @@ void ValidateAPISchemasMetadata(const std::vector<AppliedSchema> &schemas,
                "apiSchemas instance `" + schema.instance_name +
                    "` is not a valid namespaced identifier");
     }
-    if (IsMultipleApplySchemaName(schema.name) &&
-        schema.instance_name.empty()) {
+    const auto* definition = registry.FindSchema(schema.name);
+    // The exported source manifest records classes without an explicit
+    // apiSchemaType as abstract. APISchemaBase descendants default to
+    // singleApply in OpenUSD; explicit nonApplied definitions stay non-applied.
+    const bool implicit_single = definition && definition->kind == "abstract" &&
+        schema.name != "APISchemaBase" && registry.InheritsFrom(schema.name, "APISchemaBase");
+    if (definition && definition->kind != "multipleApply" && definition->kind != "singleApply" && !implicit_single)
+      AddError(result, "core.apiSchema.kind", prim_location,
+               schema.name + " is not an applied API schema");
+    const bool multiple = definition ? definition->kind == "multipleApply" : IsMultipleApplySchemaName(schema.name);
+    const bool known = definition || IsKnownAPISchemaName(schema.name);
+    if (multiple && schema.instance_name.empty()) {
       AddError(result, "core.apiSchema.instance", prim_location,
                schema.name + " is a multiple-apply API schema and requires "
                              "an instance name");
     }
-    if (IsKnownAPISchemaName(schema.name) &&
-        !IsMultipleApplySchemaName(schema.name) &&
+    if (known && !multiple &&
         !schema.instance_name.empty()) {
       AddError(result, "core.apiSchema.instance", prim_location,
                schema.name + " is a single-apply API schema and must not "
                              "have an instance name");
     }
-    if (!schema.name.empty() && !IsKnownAPISchemaName(schema.name)) {
+    if (!schema.name.empty() && !known) {
       AddWarning(result, "core.apiSchema.unknown", prim_location,
                  "API schema `" + schema.name +
                      "` is not present in LightUSD's built-in schema registry");
@@ -3612,7 +3623,7 @@ void ValidateAPISchemasMetadata(const std::vector<AppliedSchema> &schemas,
 
 void ValidatePrimMetadata(const PrimSpec &ps, const std::string &prim_location,
                           const std::vector<AppliedSchema> &applied_schemas,
-                          USDValidationResult *result) {
+                          USDValidationResult *result, const ValidationRegistry& registry) {
   const PrimSpecMeta &m = ps.meta();
 
   if (!m.kind().empty() && !IsValidNamespacedIdentifier(m.kind())) {
@@ -3664,7 +3675,7 @@ void ValidatePrimMetadata(const PrimSpec &ps, const std::string &prim_location,
     }
   }
 
-  ValidateAPISchemasMetadata(applied_schemas, prim_location, result);
+  ValidateAPISchemasMetadata(applied_schemas, prim_location, result, registry);
 }
 
 void ValidateMaterialXReferenceConventions(const PrimSpec &ps,
@@ -4608,15 +4619,6 @@ bool IsArkitShaderId(const std::string &shader_id) {
          StartsWith(shader_id, "ND_");
 }
 
-// The shader ids lightusd's built-in registry knows: the UsdPreviewSurface
-// node family plus MaterialX ND_* definitions. OpenUSD's sdr registry is
-// plugin-extensible, so an id outside this set is only a WARNING (it may be
-// perfectly valid in a pipeline that ships the plugin) -- mirrors
-// ShaderSdrCompliance's MissingShaderIdInRegistry.
-bool IsBuiltinRegistryShaderId(const std::string &shader_id) {
-  return IsArkitShaderId(shader_id);
-}
-
 bool ValueToFloat4(const Value &v, std::array<double, 4> *out) {
   if (!out || v.is_array()) {
     return false;
@@ -4706,11 +4708,15 @@ void ValidateNormalMapTextureImpl(const Layer &layer, const PrimSpec &surface,
     const PrimSpec *tex = layer.prim_at_path(prim_part);
     if (!tex || tex->type_name() != "Shader" ||
         GetShaderInfoId(*tex) != "UsdUVTexture") {
-      // Cross-layer or non-texture source; nothing structural to check.
+      if (tex && tex->type_name() != "Shader" && tex->type_name() != "Material" && tex->type_name() != "NodeGraph")
+        AddIssue(result, severity, "shade.normalMap.connection", surface_location,
+                 "Normal input is connected to a non-Shader prim");
       continue;
     }
     std::string file;
     if (!GetAssetPathProperty(*tex, "inputs:file", &file) || file.empty()) {
+      AddIssue(result, severity, "shade.normalMap.file", prim_part + ".inputs:file",
+               "Normal texture needs a nonempty inputs:file asset");
       continue;
     }
     if (!IsEightBitTextureExtension(LowerAssetExtension(file))) {
@@ -5142,7 +5148,8 @@ bool ValidateOnePrimSpec(const Layer &layer, uint32_t prim_index,
 
   if (options.core) {
     ValidateCompositionMetadata(ps, prim_location, prim_specifiers, result);
-    ValidatePrimMetadata(ps, prim_location, applied_schemas, result);
+    ValidatePrimMetadata(ps, prim_location, applied_schemas, result,
+        options.registry ? *options.registry : GetBuiltinValidationRegistry());
     ValidateClipsMetadata(ps, prim_location, result);
   }
 
@@ -5210,11 +5217,11 @@ bool ValidateOnePrimSpec(const Layer &layer, uint32_t prim_index,
                    MakePropertyLocation(prim_location, "info:id"),
                    "Shader should author an `info:id` token (or use a "
                    "sourceAsset/sourceCode implementation source)");
-      } else if (!IsBuiltinRegistryShaderId(shader_id)) {
+      } else if (!(options.registry ? *options.registry : GetBuiltinValidationRegistry()).FindShader(shader_id)) {
         AddWarning(result, "shade.shader.id",
                    MakePropertyLocation(prim_location, "info:id"),
                    "shader id `" + shader_id +
-                       "` is not in the built-in shader registry");
+                       "` is not in the active shader registry");
       }
     } else if (impl_source == "sourceAsset" || impl_source == "sourceCode") {
       // ShaderSdrCompliance.MissingSourceTypeInRegistry: the sourceType
@@ -5232,11 +5239,12 @@ bool ValidateOnePrimSpec(const Layer &layer, uint32_t prim_index,
         if (source_type.empty() || source_type.find(':') != std::string::npos) {
           continue;  // info:sourceAsset (untyped) or a nested key
         }
-        if (source_type != "osl" && source_type != "glslfx") {
+        if (source_type != "osl" && source_type != "glslfx" &&
+            !(options.registry ? *options.registry : GetBuiltinValidationRegistry()).FindShader(shader_id, source_type)) {
           AddWarning(result, "shade.shader.id",
                      MakePropertyLocation(prim_location, prop_name),
                      "shader source type `" + source_type +
-                         "` is not in the built-in shader registry");
+                         "` is not in the active shader registry");
         }
       }
     }
@@ -5402,7 +5410,7 @@ bool ValidateOnePrimSpec(const Layer &layer, uint32_t prim_index,
         AddError(result, "shade.material.binding", prop_location,
                  "`" + prop_name + "` must be a relationship");
       } else if (!has_arc && !is_over &&
-                 !HasAppliedSchema(applied_schemas, "MaterialBindingAPI")) {
+                 std::find(ps.meta().apiSchemas().begin(), ps.meta().apiSchemas().end(), "MaterialBindingAPI") == ps.meta().apiSchemas().end()) {
         AddWarning(result, "shade.material.bindingAPI", prop_location,
                    "`" + prop_name +
                        "` is authored without applying MaterialBindingAPI");
@@ -5536,7 +5544,7 @@ size_t USDValidationResult::warning_count() const {
   return count;
 }
 
-bool USDValidationResult::ok() const { return error_count() == 0; }
+bool USDValidationResult::ok() const { return complete && error_count() == 0; }
 
 const char *GetAOUSDCoreSpecVersionString() { return kSpecVersion; }
 
@@ -5619,7 +5627,9 @@ void MergeValidationResults(USDValidationResult *dst,
   if (!dst) {
     return;
   }
+  dst->complete = dst->complete && src.complete;
   dst->issues.insert(dst->issues.end(), src.issues.begin(), src.issues.end());
+  dst->checked_groups.render = dst->checked_groups.render || src.checked_groups.render;
   dst->checked_groups.core =
       dst->checked_groups.core || src.checked_groups.core;
   dst->checked_groups.geom =
@@ -5756,6 +5766,36 @@ USDValidationResult ValidateLayerLocal(const Layer &layer,
                       &result);
   }
 
+  ValidateRegisteredProperties(layer, options, &result);
+  ValidateRegisteredStage(layer, options, &result);
+  // Declared shader outputs come from the supplied definition even when the
+  // instance does not author an outputs:* attribute explicitly.
+  result.issues.erase(std::remove_if(result.issues.begin(), result.issues.end(),
+      [&](const USDValidationIssue& issue) {
+        if (issue.rule_id != "shade.materialX.output") return false;
+        const PrimSpec* prim = layer.prim_at_path(issue.location);
+        if (!prim) return false;
+        const auto& registry = options.registry ? *options.registry : GetBuiltinValidationRegistry();
+        const auto* shader = registry.FindShader(GetShaderInfoId(*prim));
+        return shader && !shader->outputs.empty();
+      }), result.issues.end());
+
+  if (options.normative_only) {
+    result.issues.erase(std::remove_if(result.issues.begin(), result.issues.end(),
+        [](const USDValidationIssue& issue) {
+          const auto category = GetValidationRuleMetadata(issue.rule_id).category;
+          return category != "normative" && category != "coverage";
+        }), result.issues.end());
+  }
+  if (options.run_callbacks) {
+    ValidationContext context;
+    context.layer = &layer;
+    context.options = options;
+    const auto& registry = options.registry ? *options.registry : GetBuiltinValidationRegistry();
+    registry.RunCallbacks(ValidationScope::Layer, context, nullptr, &result);
+    for (const auto& prim : layer.prims())
+      registry.RunCallbacks(ValidationScope::Prim, context, &prim, &result);
+  }
   return result;
 }
 
@@ -5823,6 +5863,7 @@ USDValidationResult ValidateLayerImpl(const Layer &layer,
 
     USDValidationResult local =
         ValidateLayerLocal(*action.layer, options, action.is_root_layer);
+    result.complete = result.complete && local.complete;
     for (USDValidationIssue &issue : local.issues) {
       issue.location =
           MapVariantContentLocation(action.location, issue.location);

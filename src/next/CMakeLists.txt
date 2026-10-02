@@ -76,6 +76,8 @@ set(LIGHTUSD_NEXT_SOURCES
     validation/usd-validation.cc
     validation/usd-validation-report.cc
     validation/usd-validation-physics.cc
+    validation/validation-context.cc
+    validation/validation-stage-physics.cc
 
     # High-level API
     lightusd-next.cc
@@ -560,6 +562,11 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_memory_flatten.cc
     )
     target_link_libraries(test_memory_flatten PRIVATE lightusd_next)
+
+    add_executable(test_validation_registry
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_validation_registry.cc)
+    target_link_libraries(test_validation_registry PRIVATE lightusd_next)
+    add_test(NAME next_test_validation_registry COMMAND test_validation_registry)
 
     add_executable(test_validation
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_validation.cc

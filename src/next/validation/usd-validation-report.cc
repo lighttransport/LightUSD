@@ -2,6 +2,8 @@
 // Copyright 2026 Light Transport Entertainment Inc.
 #include "usd-validation.hh"
 #include <sstream>
+#include <algorithm>
+#include <cstring>
 namespace lightusd {
 namespace next {
 
@@ -25,6 +27,46 @@ const ValidationRuleInfo* GetValidationRuleTable(size_t* count) {
   // are emitted by the byte-container checks in lusdchecker, which shares
   // this registry.
   static constexpr ValidationRuleInfo kRules[] = {
+      {"core.apiSchema.kind", "core", "only single-apply and multiple-apply schemas may appear in apiSchemas"},
+      {"shade.collection.binding", "shade", "collection material bindings must identify a collection and a material"},
+      {"checker.coverage.version", "checker", "the declared file version must be covered by the pinned specification"},
+      {"checker.coverage.dependencies", "checker", "required dependencies must be available"},
+      {"checker.coverage.package", "checker", "nested package validation must fit the depth limit"},
+      {"checker.coverage.io", "checker", "loaded layer bytes must remain readable"},
+      {"checker.coverage.resolver", "checker", "required dependency resolvers must be available"},
+      {"shade.normalMap.file", "shade", "normal texture assets must resolve"},
+      {"shade.normalMap.connection", "shade", "normal input sources must be shader or interface attributes"},
+      {"checker.baseline", "checker", "Validation requirement: checker.baseline"},
+      {"checker.coverage.memory", "checker", "Validation requirement: checker.coverage.memory"},
+      {"checker.coverage.stage", "checker", "Validation requirement: checker.coverage.stage"},
+      {"checker.definitions", "checker", "Validation requirement: checker.definitions"},
+      {"checker.io", "checker", "Validation requirement: checker.io"},
+      {"checker.usage", "checker", "Validation requirement: checker.usage"},
+      {"parser.error", "parser", "Validation requirement: parser.error"},
+      {"physics.collider.nonUniformScale", "physics", "Validation requirement: physics.collider.nonUniformScale"},
+      {"physics.density", "physics", "Validation requirement: physics.density"},
+      {"physics.joint.bodyCount", "physics", "Validation requirement: physics.joint.bodyCount"},
+      {"physics.joint.bodyTarget", "physics", "Validation requirement: physics.joint.bodyTarget"},
+      {"physics.mass", "physics", "Validation requirement: physics.mass"},
+      {"physics.rigidBody.instanceProxy", "physics", "Validation requirement: physics.rigidBody.instanceProxy"},
+      {"physics.rigidBody.scaleOrientation", "physics", "Validation requirement: physics.rigidBody.scaleOrientation"},
+
+      {"core.schema.propertyKind", "core", "property kind must match its schema definition"},
+      {"geom.subset.familyOverlap", "geom", "restricted subset families must not overlap"},
+      {"geom.subset.familyPartition", "geom", "partitions must cover every parent element"},
+      {"shade.shader.sourceType", "shade", "source-based shaders must declare a source type"},
+      {"shade.shader.implementationSource", "shade", "shader implementationSource must be id/sourceAsset/sourceCode"},
+      {"shade.shader.sourceTypeConflict", "shade", "shader source definitions must agree on input types"},
+      {"checker.coverage.schema", "checker", "required schema definitions must be available"},
+      {"checker.coverage.shader", "checker", "required shader definitions must be available"},
+      {"checker.coverage.callback", "checker", "registered callbacks must complete successfully"},
+      {"checker.coverage.variants", "checker", "requested variant validation must complete"},
+      {"checker.coverage.samples", "checker", "sample validation must fit the configured limit"},
+      {"checker.coverage.evaluation", "checker", "required sampled values must resolve"},
+      {"checker.coverage.clips", "checker", "clip assets and sample times must be available"},
+      {"checker.coverage.spline", "checker", "spline knots must be decodable"},
+      {"checker.coverage.subset", "checker", "subset element domains must be supported"},
+
       {"arkit.layer.extension", "arkit",
        "subLayer assets must be usd/usda/usdc/usdz layers"},
       {"arkit.material.binding", "arkit",
@@ -526,8 +568,16 @@ const ValidationRuleInfo* GetValidationRuleTable(size_t* count) {
       {"shade.uvTexture.wrap", "shade",
        "wrapS/wrapT must be valid wrap tokens"},
   };
-  if (count) *count = sizeof(kRules) / sizeof(kRules[0]);
-  return kRules;
+  static const std::vector<ValidationRuleInfo> rules = [] {
+    std::vector<ValidationRuleInfo> sorted(std::begin(kRules), std::end(kRules));
+    std::sort(sorted.begin(), sorted.end(), [](const ValidationRuleInfo& a, const ValidationRuleInfo& b) {
+      const int group = std::strcmp(a.group, b.group);
+      return group != 0 ? group < 0 : std::strcmp(a.id, b.id) < 0;
+    });
+    return sorted;
+  }();
+  if (count) *count = rules.size();
+  return rules.data();
 }
 
 void ApplyUsdcheckerCompatSeverities(USDValidationResult *result) {
@@ -539,11 +589,22 @@ void ApplyUsdcheckerCompatSeverities(USDValidationResult *result) {
   // rule id so the upgrade also covers issues merged in from the
   // byte-container checks.
   static constexpr const char* kErrorRules[] = {
+      "package.entry.extension",
+      "geom.subset.indices",
+      "shade.normalMap.file",
+      "shade.normalMap.connection",
       "geom.stage.upAxis",
       "geom.stage.metersPerUnit",
       "core.layer.defaultPrim.missing",
       "core.dependency.unresolvable",
       "core.schema.attributeType",
+      "core.schema.propertyKind",
+      "geom.subset.familyOverlap",
+      "geom.subset.familyPartition",
+      "shade.shader.sourceType",
+      "shade.shader.implementationSource",
+      "shade.material.binding",
+      "shade.collection.binding",
       "geom.encapsulation.nestedGprim",
       "geom.subset.parent",
       "geom.subset.familyType",
@@ -586,6 +647,9 @@ std::string FormatValidationResult(const USDValidationResult &result) {
       if (!issue->location.empty()) {
         ss << issue->location << ": ";
       }
+      if (!issue->source_asset.empty()) ss << "[source=" << issue->source_asset << "] ";
+      if (!issue->variants.empty()) ss << "[variants=" << issue->variants << "] ";
+      if (issue->has_time) ss << "[time=" << issue->time << "] ";
       ss << issue->message << "\n";
     }
   }
@@ -594,7 +658,9 @@ std::string FormatValidationResult(const USDValidationResult &result) {
   const size_t warnings = result.warning_count();
 
   ss << "\nResult: ";
-  if (errors > 0) {
+  if (!result.complete) {
+    ss << "FAILED - validation coverage is incomplete (" << errors << " errors, " << warnings << " warnings)\n";
+  } else if (errors > 0) {
     ss << "FAILED - " << Pluralize(errors, "error") << ", "
        << Pluralize(warnings, "warning") << "\n";
   } else if (warnings > 0) {
