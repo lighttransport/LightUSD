@@ -2256,6 +2256,48 @@ Acceptance criteria:
 Automatic rig generation and animation authoring remain out of scope until these
 diagnostics and transfer operations are reliable.
 
+### LC-400 — Procedural Geometry Nodes
+
+- [x] LC-401 Node registry, graph model, and deterministic evaluator.
+      `src/geonodes/`: typed sockets (geometry/float/int/bool/vector/enum),
+      a minimal field system (Position/Normal/Index, Math, Vector Math,
+      Separate XYZ, Noise Texture), primitives (Grid, Cube, UV Sphere,
+      Cylinder), geometry ops (Transform, Set Position, Displace, Subdivide,
+      Merge by Distance, Join), points/instances (Distribute Points on Faces,
+      Instance on Points, Realize Instances). Graphs are validated (types,
+      socket compatibility, single input links, cycles, budgets) and evaluated
+      with a hash-keyed per-node cache, so a parameter edit only re-evaluates
+      downstream nodes. Seeded nodes are deterministic.
+- [x] LC-402 Non-destructive persistence. The graph is stored on the source
+      mesh as `custom string lucia:geomNodes`; the result is authored to the
+      sibling `<Name>_geonodes`, which records `lucia:geomNodesSource`
+      (source path + input hash) for staleness detection. The source is hidden
+      while the modifier is active. Commit, Re-evaluate, Apply (collapse into
+      the source), and Remove are each one undoable native layer pass.
+      Foreign prims at the output path are never overwritten.
+- [x] LC-403 Node editor UI: a floating canvas over the viewport (drag nodes,
+      drag output→input to link, click an input to unlink, inline parameters),
+      with a debounced live preview evaluated in a persistent worker.
+      Assistant tool `scene.geometry_nodes` evaluates a supplied/stored graph.
+      Pending: loose points cannot be authored on a Mesh prim (instances are
+      realized on commit; a PointInstancer output is a follow-up), and the
+      output carries no UVs or GeomSubset material partitions.
+
+### LC-410 — Sculpt Brushes
+
+- [x] LC-411 Fixed-topology sculpt kernel (`src/sculpt/`): Draw, Smooth,
+      Inflate, Grab, Flatten, Pinch, and Mask brushes with smooth/sphere/
+      linear/constant falloff, X/Y/Z symmetry via mirrored dabs, spacing-based
+      dab interpolation, and seam welding so UV/normal-split render vertices
+      move together.
+- [x] LC-412 Interactive sculpt mode: in-place preview deformation with no USD
+      round-trip during a stroke; Ctrl inverts, Shift smooths, `[`/`]` resize,
+      1–7 select brushes, middle-drag orbits. Each stroke commits a single
+      undoable `points` edit mapped back onto the authored point order;
+      UVs/primvars/topology are preserved and stale authored normals removed.
+      Animated, skinned, blend-shape, and instanced meshes are refused.
+      Pending: the mask is session-only, and dynamic topology/multires are out of scope.
+
 ## 8. Cross-cutting UX
 
 ### Comparison modes

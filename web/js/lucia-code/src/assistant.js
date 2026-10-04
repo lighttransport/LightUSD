@@ -1,5 +1,6 @@
 import { validIdentifier, validPrimPath, LuciaError } from './utils.js';
 import { normalizePBRFormat } from './material-translation.js';
+import { validateGraph } from './geonodes/graph.js';
 
 const BAKE_MAX_RESOLUTION = 4096;
 const BAKE_MAX_DILATION = 32;
@@ -15,7 +16,7 @@ export const LUCIA_TOOLS = [
   ['scene.inspect', false], ['scene.create_prim', false], ['scene.rename_prim', false], ['scene.rename_component_parts', true], ['scene.create_instance', true], ['scene.generate_convex_hull', true], ['scene.generate_triangle_collider', true], ['scene.split_components', true], ['scene.correct_components', true], ['scene.propose_component_names', false], ['scene.inspect_component_segmentation', false], ['scene.inspect_semantic_suggestions', false],
   ['scene.delete_prim', true], ['scene.set_transform', false], ['scene.set_attribute', false], ['scene.inspect_material_graph', false], ['scene.inspect_material_parameterization', false], ['scene.parameterize_materials', true], ['scene.optimize_material_graph', true],
   ['scene.rename_texture', false], ['scene.inspect_material_merges', false], ['scene.merge_material_bindings', true], ['scene.rewrite_collection_material_bindings', true], ['scene.repair_inherited_material_bindings', true], ['scene.merge_material_definitions', true], ['scene.translate_material', true], ['scene.transfer_skin_weights', true], ['scene.generate_template', false], ['scene.retopo', true], ['scene.generate_lods', true], ['scene.unwrap_uv', true], ['scene.extract_reference', true], ['scene.flatten_reference', true], ['scene.health_report', false],
-  ['scene.bake_shading', true], ['scene.bake_projection', true], ['scene.transfer_uvs', true], ['scene.pack_channels', true], ['scene.resize_texture', true], ['scene.cleanup_mesh', true], ['scene.merge_cracks', true], ['scene.recompute_normals', true], ['scene.recompute_tangents', true], ['scene.create_collision_group', true], ['scene.validate', false], ['scene.usd_doctor', false], ['scene.repair_usd_metadata', true], ['scene.localize_dependencies', true], ['scene.export', true],
+  ['scene.bake_shading', true], ['scene.bake_projection', true], ['scene.transfer_uvs', true], ['scene.pack_channels', true], ['scene.resize_texture', true], ['scene.cleanup_mesh', true], ['scene.merge_cracks', true], ['scene.recompute_normals', true], ['scene.recompute_tangents', true], ['scene.create_collision_group', true], ['scene.validate', false], ['scene.usd_doctor', false], ['scene.repair_usd_metadata', true], ['scene.localize_dependencies', true], ['scene.export', true], ['scene.geometry_nodes', true],
   ['scene.undo', false], ['scene.redo', false],
 ].map(([name, confirm]) => ({ name, confirm }));
 
@@ -96,6 +97,7 @@ export class LuciaAssistant extends EventTarget {
     if (call.name === 'scene.inspect_material_graph' && call.arguments?.output != null && (typeof call.arguments.output !== 'string' || !/^[A-Za-z_][\w:]*$/.test(call.arguments.output))) throw new LuciaError('LUCIA_TOOL_MATERIAL_OUTPUT', 'Material graph output must be a valid channel name.');
     if (call.name === 'scene.inspect_material_parameterization' && call.arguments?.mode != null && !['auto', 'primvar', 'variant'].includes(call.arguments.mode)) throw new LuciaError('LUCIA_TOOL_MATERIAL_PARAMETERIZATION', 'Material parameterization mode must be auto, primvar, or variant.');
     if (call.name === 'scene.parameterize_materials' && call.arguments?.mode != null && !['auto', 'primvar', 'variant'].includes(call.arguments.mode)) throw new LuciaError('LUCIA_TOOL_MATERIAL_PARAMETERIZATION', 'Material authoring mode must be auto, primvar, or variant.');
+    if (call.name === 'scene.geometry_nodes' && call.arguments?.graph != null) validateGraph(call.arguments.graph);
     if (call.name === 'scene.localize_dependencies') {
       const mapping = call.arguments?.mapping;
       if (!mapping || Array.isArray(mapping) || typeof mapping !== 'object' || Object.entries(mapping).some(([from, to]) => !String(from) || !String(to))) throw new LuciaError('LUCIA_TOOL_DEPENDENCY_MAPPING', 'Dependency localization requires a non-empty old-to-new path map.');

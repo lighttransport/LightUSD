@@ -194,3 +194,33 @@ dialog::backdrop { background: #050508bb; }
   .viewport-tools input[type="range"] { width: min(96px, 30vw); }
   .viewport-tools > button { padding-inline: 7px; }
 }
+
+/* Sculpt */
+.sculpt-brushes { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
+.sculpt-brushes button.active { border-color: var(--accent); color: var(--text); background: var(--panel-3); }
+.sculpt-symmetry { display: inline-flex; gap: 10px; }
+
+/* Geometry nodes editor (floats over the lower viewport) */
+.geonodes-editor { position: absolute; left: 8px; right: 8px; bottom: 8px; height: 46%; min-height: 220px; display: flex; flex-direction: column; border: 1px solid var(--line-strong); border-radius: 8px; background: #11111bf2; z-index: 5; }
+.geonodes-toolbar { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--line); font-size: 12px; flex-wrap: wrap; }
+.geonodes-toolbar code { color: var(--muted); }
+.geonodes-canvas { position: relative; flex: 1; overflow: auto; }
+.geonodes-links { position: absolute; inset: 0; width: 3000px; height: 2000px; pointer-events: none; }
+.gn-link { fill: none; stroke: var(--accent-2); stroke-width: 2; }
+.gn-link-pending { stroke-dasharray: 5 4; }
+.gn-node { position: absolute; min-width: 170px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--panel-2); font-size: 11px; box-shadow: 0 4px 14px #0008; }
+.gn-header { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px; background: var(--panel-3); border-radius: 6px 6px 0 0; cursor: grab; font-weight: 600; user-select: none; }
+.gn-delete { border: 0; background: none; color: var(--muted); padding: 0 4px; min-height: 0; }
+.gn-socket { display: flex; align-items: center; gap: 6px; padding: 2px 6px; }
+.gn-out { justify-content: flex-end; }
+.gn-socket input[type="number"] { width: 56px; padding: 1px 3px; }
+.gn-vec-inputs { display: inline-flex; gap: 2px; }
+.gn-vec-inputs input[type="number"] { width: 42px; }
+.gn-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; cursor: crosshair; background: var(--muted); border: 1px solid #0006; }
+.gn-in .gn-dot { margin-left: -11px; }
+.gn-out .gn-dot { margin-right: -11px; }
+.gn-geometry { background: var(--accent-2); }
+.gn-dot.gn-vector { background: var(--accent); }
+.gn-float, .gn-int { background: #a0a0b0; }
+.gn-bool { background: var(--warning); }
+@media (max-width: 720px) { .geonodes-editor { height: 60%; } }

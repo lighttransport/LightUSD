@@ -31,11 +31,12 @@ export class LuciaRenderBridge extends EventTarget {
     this.grid = new THREE.GridHelper(40, 40, 0x605784, 0x2c2c38); this.scene.add(this.grid);
     this.axes = new THREE.AxesHelper(1.5); this.scene.add(this.axes);
     this.resizeObserver = new ResizeObserver(() => this.resize()); this.resizeObserver.observe(container);
-    this.renderer.domElement.addEventListener('pointerdown', (event) => this.pick(event));
+    // An active tool (sculpt) may consume the pointer before prim picking.
+    this.renderer.domElement.addEventListener('pointerdown', (event) => { if (this.pointerTool?.(event)) return; this.pick(event); });
     this.running = true; this.animate(); this.resize();
   }
   async rebuild(nativeScene, onProgress) {
-    this.clearWireframePreview();
+    this.clearWireframePreview(); this.clearBrushCursor(); this.clearMaskPreview(); this.clearPreview();
     if (this.content) { this.scene.remove(this.content); this.disposeObject(this.content); }
     this.clearSelection();
     this.clearVertexLockPreview();
@@ -55,7 +56,7 @@ export class LuciaRenderBridge extends EventTarget {
     this.previewBudget.textureDegradedCount = await this.downsamplePreviewTextures(root, this.previewBudget.maxTextureDimension, this.previewBudget.maxTextureBytes);
     this.previewBudget.textureSkippedCount = this.previewTextureSkippedCount || 0;
     this.renderer.setPixelRatio(this.previewBudget.pixelRatio);
-    this.content = root; this.scene.add(root); this.discoverLODGroups(); this.discoverColliderObjects(); this.setColliderPreview(this.colliderPreview); this.updateLODVisibility(); this.frameAll(); if (this.pendingTransferError) { const pending = this.pendingTransferError; this.pendingTransferError = null; this.showTransferErrorPreview(pending.path, pending.distances); }
+    this.content = root; this.scene.add(root); this.discoverLODGroups(); this.discoverColliderObjects(); this.setColliderPreview(this.colliderPreview); this.updateLODVisibility(); if (!this.preserveCamera) this.frameAll(); if (this.pendingTransferError) { const pending = this.pendingTransferError; this.pendingTransferError = null; this.showTransferErrorPreview(pending.path, pending.distances); }
   }
   async downsamplePreviewTextures(root, maxDimension, maxBytes = Infinity) {
     if (!Number.isInteger(maxDimension) || maxDimension < 1 || typeof document === 'undefined') return 0;
@@ -97,6 +98,77 @@ export class LuciaRenderBridge extends EventTarget {
     let best = candidates[0], distance = Infinity;
     for (const candidate of candidates) { const point = new THREE.Vector3().fromBufferAttribute(position, candidate).applyMatrix4(mesh.matrixWorld); const next = point.distanceToSquared(intersection.point); if (next < distance) { distance = next; best = candidate; } }
     return best;
+  }
+  pointerRay(event) {
+    const box = this.renderer.domElement.getBoundingClientRect();
+    const pointer = new THREE.Vector2((event.clientX - box.left) / box.width * 2 - 1, -(event.clientY - box.top) / box.height * 2 + 1);
+    const ray = new THREE.Raycaster(); ray.setFromCamera(pointer, this.camera);
+    return ray;
+  }
+  // Surface hit on one prim's mesh, returned in mesh-local space.
+  surfaceHit(event, path) {
+    const mesh = this.renderableMeshForPath(path);
+    if (!mesh?.geometry) return null;
+    mesh.geometry.computeBoundingSphere(); mesh.geometry.computeBoundingBox?.();
+    const hit = this.pointerRay(event).intersectObject(mesh, false)[0];
+    if (!hit) return null;
+    return { mesh, point: mesh.worldToLocal(hit.point.clone()).toArray(), normal: hit.face ? hit.face.normal.toArray() : [0, 0, 1] };
+  }
+  // Pointer projected on the camera-facing plane through a mesh-local point
+  // (grab brush drags in screen space, not along the surface).
+  pointerOnPlane(event, mesh, localPoint) {
+    const anchor = mesh.localToWorld(new THREE.Vector3(...localPoint)), normal = this.camera.getWorldDirection(new THREE.Vector3());
+    const target = this.pointerRay(event).ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(normal, anchor), new THREE.Vector3());
+    return target ? mesh.worldToLocal(target).toArray() : null;
+  }
+  setBrushCursor(mesh, point, normal, radius) {
+    if (!this.brushCursor) {
+      this.brushCursor = new THREE.Mesh(new THREE.RingGeometry(0.97, 1, 64), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthTest: false, side: THREE.DoubleSide }));
+      this.brushCursor.renderOrder = 1000;
+    }
+    if (this.brushCursor.parent !== mesh) mesh.add(this.brushCursor);
+    this.brushCursor.position.set(...point);
+    this.brushCursor.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(...normal).normalize());
+    this.brushCursor.scale.setScalar(radius);
+    this.brushCursor.visible = true;
+  }
+  clearBrushCursor() {
+    if (!this.brushCursor) return;
+    this.brushCursor.parent?.remove(this.brushCursor); this.brushCursor.geometry.dispose(); this.brushCursor.material.dispose(); this.brushCursor = null;
+  }
+  // Sculpt mask overlay: masked vertices drawn as dark points on the mesh.
+  setMaskPreview(mesh, positions, mask) {
+    this.clearMaskPreview();
+    const masked = [];
+    for (let i = 0; i < mask.length; i++) if (mask[i] > 0.05) masked.push(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
+    if (!masked.length || !mesh) return;
+    const geometry = new THREE.BufferGeometry(); geometry.setAttribute('position', new THREE.Float32BufferAttribute(masked, 3));
+    this.maskPreview = new THREE.Points(geometry, new THREE.PointsMaterial({ color: 0x1b1530, size: 4, sizeAttenuation: false, depthTest: true }));
+    mesh.add(this.maskPreview);
+  }
+  clearMaskPreview() {
+    if (!this.maskPreview) return;
+    this.maskPreview.parent?.remove(this.maskPreview); this.maskPreview.geometry.dispose(); this.maskPreview.material.dispose(); this.maskPreview = null;
+  }
+  // Uncommitted geometry-nodes result, placed with the source prim's world
+  // transform. The committed output prim is hidden while a preview shows.
+  setPreviewMesh(path, positions, indices, hiddenPath = null) {
+    this.clearPreview();
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3)); geometry.setIndex(new THREE.BufferAttribute(indices, 1)); geometry.computeVertexNormals();
+    const preview = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0x9d8cff, roughness: 0.55, metalness: 0.05, side: THREE.DoubleSide }));
+    const anchor = this.pathObjects.get(path) || (hiddenPath && this.pathObjects.get(hiddenPath));
+    anchor?.updateWorldMatrix(true, false);
+    preview.matrixAutoUpdate = false; if (anchor) preview.matrix.copy(anchor.matrixWorld);
+    preview.name = 'LuciaGeoNodesPreview';
+    this.scene.add(preview); this.geoNodesPreview = preview;
+    const hidden = hiddenPath && this.pathObjects.get(hiddenPath);
+    if (hidden) { this.geoNodesHidden = { object: hidden, visible: hidden.visible }; hidden.visible = false; }
+  }
+  clearPreview() {
+    if (this.geoNodesHidden) { this.geoNodesHidden.object.visible = this.geoNodesHidden.visible; this.geoNodesHidden = null; }
+    if (!this.geoNodesPreview) return;
+    this.scene.remove(this.geoNodesPreview); this.geoNodesPreview.geometry.dispose(); this.geoNodesPreview.material.dispose(); this.geoNodesPreview = null;
   }
   clearSelection() {
     if (!this.selection) return;

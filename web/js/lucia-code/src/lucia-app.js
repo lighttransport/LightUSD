@@ -1,6 +1,10 @@
 import { LuciaProjectStorage, hashContent } from './project-storage.js';
 import { LuciaUDIMWorkflow, packageAssets } from './udim-workflow.js';
 import { renderUDIMPanel } from './udim-panel.js';
+import { renderSculptPanel, handleSculptKey } from './sculpt-panel.js';
+import { LuciaSculptController } from './sculpt/sculpt-session.js';
+import { LuciaGeoNodesEditor, renderGeoNodesPanel } from './geonodes-panel.js';
+import { triangulateAuthoredMesh } from './geonodes/runner.js';
 import { LuciaActivityGate } from './activity-gate.js';
 import { validationSummary } from './validation.js';
 import { HealthAnalysis } from './health-analysis.js';
@@ -64,6 +68,9 @@ export class LuciaApp {
     this.assistant = new LuciaAssistant({ executeTool: (call) => this.executeTool(call), getSelection: () => this.project.selectedPath, getSceneSummary: () => ({ name: this.project.name, selectedPath: this.project.selectedPath, selectedPaths: [...this.project.selectedPaths], prims: this.flattenTree(this.safeTree()).slice(0, 80) }), confirm: (call) => this.confirmAction(`Run ${call.name}?`, JSON.stringify(call.arguments, null, 2)), recordDecision: (call, decision) => this.project.recordAssistantDecision(call, decision) });
     this.bridge.addEventListener('select', ({ detail }) => this.select(detail));
     this.bridge.addEventListener('vertex-select', ({ detail }) => this.toggleRetopoVertexLock(detail));
+    this.sculpt = new LuciaSculptController(this); this.geoNodes = new LuciaGeoNodesEditor(this);
+    this.session.addEventListener('stagechange', () => this.geoNodes.refreshSource());
+    this.$('#viewport').addEventListener('keydown', (event) => { if (handleSculptKey(this, event)) event.preventDefault(); });
     this.assistant.addEventListener('change', () => this.renderMessages());
     this.commands.addEventListener('change', () => this.updateToolbar());
     this.bindShell();
@@ -96,7 +103,7 @@ export class LuciaApp {
             <div class="viewport-tools"><button id="frame-button">Frame</button><button id="frame-all-button">All</button><label id="comparison-control" hidden>Wipe <input id="comparison-wipe" type="range" min="0" max="100" value="50" aria-label="Before and after wipe position"></label><button id="comparison-ghost" hidden>Show ghost overlay</button><button id="comparison-heatmap" hidden>Show surface-distance heatmap</button><button id="comparison-material" hidden>Show material difference</button><button id="comparison-clear" hidden>Clear compare</button></div>
             <span class="viewport-hint">Orbit: drag · Pan: right-drag · Zoom: wheel · Shift/Alt-click vertex: lock/unlock</span>
           </section>
-          <aside class="panel right-panel" id="right-panel"><div class="panel-header"><span id="selection-label">Inspector</span></div><nav class="tabs" id="inspector-tabs" role="tablist" aria-label="Inspector sections"><button class="tab active" role="tab" aria-selected="true" data-tab="transform">Transform</button><button class="tab" role="tab" aria-selected="false" data-tab="attributes">Attributes</button><button class="tab" role="tab" aria-selected="false" data-tab="material">Material</button><button class="tab" role="tab" aria-selected="false" data-tab="textures">Textures</button><button class="tab" role="tab" aria-selected="false" data-tab="operations">Operations</button></nav><div id="inspector" class="panel-content" role="tabpanel" tabindex="0"></div></aside>
+          <aside class="panel right-panel" id="right-panel"><div class="panel-header"><span id="selection-label">Inspector</span></div><nav class="tabs" id="inspector-tabs" role="tablist" aria-label="Inspector sections"><button class="tab active" role="tab" aria-selected="true" data-tab="transform">Transform</button><button class="tab" role="tab" aria-selected="false" data-tab="attributes">Attributes</button><button class="tab" role="tab" aria-selected="false" data-tab="material">Material</button><button class="tab" role="tab" aria-selected="false" data-tab="textures">Textures</button><button class="tab" role="tab" aria-selected="false" data-tab="operations">Operations</button><button class="tab" role="tab" aria-selected="false" data-tab="sculpt">Sculpt</button><button class="tab" role="tab" aria-selected="false" data-tab="nodes">Nodes</button></nav><div id="inspector" class="panel-content" role="tabpanel" tabindex="0"></div></aside>
         </main>
         <section class="bottom-panel">
           <div class="chat"><div id="messages" class="messages" aria-live="polite"></div><form id="chat-form" class="composer"><input id="chat-input" placeholder="Ask Lucia to edit the scene…" aria-label="Assistant prompt"><button class="primary">Send</button></form></div>
@@ -197,6 +204,7 @@ export class LuciaApp {
   }
 
   async newProject(kind) {
+    this.sculpt?.exit(); this.geoNodes?.close();
     const epoch = this.activity.beginReplacement();
     const lease = await this.activity.replacement(epoch);
     if (!lease) return false;
@@ -230,6 +238,7 @@ export class LuciaApp {
 
   async openFile(file) {
     if (!/\.usd[acz]?$/i.test(file.name)) return this.showError(new LuciaError('LUCIA_FILE_TYPE', 'Choose a USDA, USDC, or USDZ file.'));
+    this.sculpt?.exit(); this.geoNodes?.close();
     const epoch = this.activity.beginReplacement();
     let previous, source, filename, history, lease, metadata;
     let replacing = false;
@@ -340,7 +349,7 @@ export class LuciaApp {
     this.treeScrollHandler = renderWindow; viewport.addEventListener('scroll', this.treeScrollHandler, { passive: true }); renderWindow();
   }
 
-  select(path, options = {}) { if (path !== this.project.selectedPath) { this.frameBaseline = null; this.frameBaselinePath = null; this.bridge.clearWireframePreview?.(); } this.project.select(path, options); this.bridge.selectPaths?.([...this.project.selectedPaths]); this.bridge.showVertexLockPreview(path, [...(this.retopoVertexLocks.get(path) || [])]); this.renderTree(); this.renderInspector(); }
+  select(path, options = {}) { if (this.sculpt?.active && path !== this.sculpt.path) this.sculpt.exit(); if (path !== this.project.selectedPath) { this.frameBaseline = null; this.frameBaselinePath = null; this.bridge.clearWireframePreview?.(); } this.project.select(path, options); this.bridge.selectPaths?.([...this.project.selectedPaths]); this.bridge.showVertexLockPreview(path, [...(this.retopoVertexLocks.get(path) || [])]); this.renderTree(); this.renderInspector(); }
   toggleRetopoVertexLock({ path, vertexIndex, toggle = false }) { if (path !== this.project.selectedPath || !Number.isInteger(vertexIndex) || vertexIndex < 0) return; const locks = this.retopoVertexLocks.get(path) || new Set(); if (toggle && locks.has(vertexIndex)) locks.delete(vertexIndex); else locks.add(vertexIndex); this.retopoVertexLocks.set(path, locks); this.bridge.showVertexLockPreview(path, [...locks]); this.renderInspector(); }
   currentUSDReport() { const domains = this.project.domainRevisions; if (!this.usdReport || this.usdReport.usdRevision !== domains.usd || this.usdReport.assetsRevision !== domains.assets) this.usdReport = { ...diagnoseUSD(this.session.usda, this.project.assets, { resolverPlugins: this.project.resolverPlugins }), provenance: this.project.provenance ? { ...this.project.provenance, operations: this.project.changes.map(change => ({ summary: change.summary, paths: change.paths })) } : null, usdRevision: domains.usd, assetsRevision: domains.assets }; return this.usdReport; }
   cachedAssetReport() {
@@ -696,6 +705,10 @@ export class LuciaApp {
       this.$$('[data-strip-alpha]').forEach((button) => button.onclick = async () => { if (await this.confirmAction(`Remove unused alpha from ${button.dataset.stripAlpha}?`, 'LightUSD will re-encode this proven-opaque image as RGB PNG. The operation is undoable.')) await this.runMutation('Remove unused alpha', [], () => this.operations.stripUnusedAlpha(button.dataset.stripAlpha), ['assets']); });
       this.$$('[data-convert-normal]').forEach((button) => button.onclick = async () => { if (await this.confirmAction(`Convert ${button.dataset.convertNormal} to ${button.dataset.normalTarget}?`, 'The normal map green channel will be inverted and the asset convention updated. The operation is undoable.')) await this.runMutation('Convert normal-map Y convention', [], () => this.operations.convertNormalMapY(button.dataset.convertNormal, button.dataset.normalTarget === 'opengl' ? 'directx' : 'opengl', button.dataset.normalTarget), ['assets']); });
       renderUDIMPanel(this);
+    } else if (this.currentInspectorTab === 'sculpt') {
+      renderSculptPanel(this, path);
+    } else if (this.currentInspectorTab === 'nodes') {
+      renderGeoNodesPanel(this, path);
     } else {
       this.$('#inspector').innerHTML = `<div class="section"><h3>Retopology</h3><div class="field-grid"><label>Tolerance</label><input id="retopo-tolerance" type="number" min="0.000001" max="1" step="0.0001" value="0.0001"><label>Target</label><input id="retopo-ratio" type="number" min="5" max="100" value="100"></div><button id="retopo-button">Preview & apply</button></div><div class="section"><h3>Safe cleanup</h3><p class="empty">Removes degenerate and duplicate triangles, then compacts unused vertices while preserving aligned normals and UVs.</p><label>Preset <select id="cleanup-preset"><option value="preserve">Preserve original</option><option value="game-ready" selected>Game-ready</option><option value="physics-ready">Physics-ready</option><option value="aggressive">Aggressive</option></select></label><label>Minimum face area <input id="cleanup-min-area" type="number" min="0" max="1" step="0.0000001" value="0"></label><label>Minimum component area <input id="cleanup-min-component-area" type="number" min="0" max="1" step="0.0000001" value="0"></label><label>Minimum closed-component volume <input id="cleanup-min-component-volume" type="number" min="0" max="1" step="0.0000001" value="0"></label><small class="empty">Area thresholds use mesh extent squared; volume uses extent cubed and only filters closed components. Zero preserves all components.</small><button id="cleanup-button">Clean mesh</button></div><div class="section"><h3>UV unwrap</h3><div class="field-grid"><label>Resolution</label><select id="uv-resolution"><option>512</option><option selected>1024</option><option>2048</option><option>4096</option></select><label>Padding</label><input id="uv-padding" type="number" min="0" max="64" value="2"></div><button id="uv-button">Generate & apply UVs</button></div><div class="section"><h3>Shading bake</h3><div class="field-grid"><label>Channel</label><select id="bake-channel"><option value="baseColor">Base color</option><option value="normal">Object-space normal</option></select><label>Resolution</label><select id="bake-resolution"><option>256</option><option>512</option><option selected>1024</option><option>2048</option></select><label>Max dimension</label><select id="bake-max-resolution"><option>512</option><option>1024</option><option selected>2048</option><option>4096</option></select><label>Dilation</label><input id="bake-dilation" type="number" min="0" max="32" value="2"></div><button id="bake-button">Bake texture</button></div>`;
       this.$('#retopo-ratio').insertAdjacentHTML('afterend', '<label>Max error <input id="retopo-error" type="number" min="0" max="1" step="0.0001" value="0"></label>');
@@ -767,7 +780,7 @@ export class LuciaApp {
   vecInputs(prefix, values) { return `<div class="vec3">${values.map((v,i) => `<input id="${prefix}${i}" type="number" step="0.1" value="${Number(v).toFixed(3)}" aria-label="${prefix}${'XYZ'[i]}">`).join('')}</div>`; }
   applyTransform() { const read = (p) => [0,1,2].map((i) => Number(this.$(`#${p}${i}`).value)); return this.runMutation('Transform prim', [this.project.selectedPath], () => this.session.setTransform(this.project.selectedPath, { translate: read('t'), rotate: read('r'), scale: read('s') })); }
 
-  async runMutation(summary, paths, operation, domains = ['scene', 'usd', 'assets']) {
+  async runMutation(summary, paths, operation, domains = ['scene', 'usd', 'assets'], { comparison = true } = {}) {
     let lease;
     try {
       lease = this.activity.acquire();
@@ -778,8 +791,9 @@ export class LuciaApp {
       const beforeReport = inspectIssues ? await this.currentAssetReport() : null;
       if (lease.cancelled || (inspectIssues && !beforeReport)) throw new LuciaError('LUCIA_CANCELLED', 'Scene replacement cancelled analysis.');
       const beforeIssueCount = beforeReport?.issues.length ?? null;
-      const beforeEdges = paths.length ? this.bridge.captureGeometry(paths[0]) : null;
-      const beforeMaterial = paths.length ? this.bridge.captureMaterialSnapshot(paths[0]) : null;
+      // Interactive tools (sculpt strokes, node commits) skip the diff overlay.
+      const beforeEdges = comparison && paths.length ? this.bridge.captureGeometry(paths[0]) : null;
+      const beforeMaterial = comparison && paths.length ? this.bridge.captureMaterialSnapshot(paths[0]) : null;
       this.operations.lastStats = null;
       const executed = await this.commands.execute(sessionCommand(this.session, summary, paths, operation, this.project));
       if (!executed) { this.setBusy(false); return false; }
@@ -791,8 +805,8 @@ export class LuciaApp {
       this.validation = { state: 'warn', label: 'Validation stale' };
       this.operations.lastStats = null;
       await this.refreshAll(false);
-      const afterEdges = paths.length ? this.bridge.captureGeometry(paths[0]) : null;
-      const afterMaterial = paths.length ? this.bridge.captureMaterialSnapshot(paths[0]) : null;
+      const afterEdges = comparison && paths.length ? this.bridge.captureGeometry(paths[0]) : null;
+      const afterMaterial = comparison && paths.length ? this.bridge.captureMaterialSnapshot(paths[0]) : null;
       const hasMaterialDifference = materialSnapshotsDiffer(beforeMaterial, afterMaterial);
       this.bridge.materialBefore = beforeMaterial;
       this.bridge.materialAfter = afterMaterial;
@@ -940,6 +954,13 @@ export class LuciaApp {
     if (name === 'scene.unwrap_uv') { await this.runMutation('Generate UV atlas', [args.path], () => this.operations.unwrap(args.path, args, (p) => this.setBusy(true,p.message,p.percentage))); return { message: 'UV atlas generated. Undo is available.' }; }
     if (name === 'scene.project_uv') { await this.runMutation(`Project ${args.mode || 'planar'} UVs`, [args.path], () => this.operations.projectUV(args.path, args, (p) => this.setBusy(true,p.message,p.percentage))); return { message: 'UV projection applied. Undo is available.' }; }
     if (name === 'scene.transfer_uvs') { await this.runMutation('Transfer UVs', [args.targetPath, args.sourcePath], () => this.operations.transferUVs(args.targetPath, args.sourcePath, args, (p) => this.setBusy(true, p.message, p.percentage))); return { message: 'Source UVs transferred to the target mesh. Undo is available.' }; }
+    if (name === 'scene.geometry_nodes') {
+      const path = args.path || this.project.selectedPath; if (!path) throw new LuciaError('LUCIA_GEONODES_PATH', 'Select a mesh before adding geometry nodes.');
+      const graph = args.graph || this.session.getGeomNodesGraph(path); if (!graph) throw new LuciaError('LUCIA_GEONODES_GRAPH', 'Provide a geometry node graph or select a prim that already has one.');
+      const outputPath = `${path.slice(0, path.lastIndexOf('/'))}/${this.session.geomNodesOutputName(path)}`;
+      await this.runMutation(`Geometry Nodes: ${path}`, [path, outputPath], async () => { const result = await this.geoNodes.runner.evaluate(graph, triangulateAuthoredMesh(await this.session.getAuthoredMesh(path))); return this.session.commitGeomNodes(path, graph, result, { inputHash: result.inputHash, graphKey: result.key }); }, ['scene', 'usd'], { comparison: false });
+      return { message: `Geometry nodes evaluated into ${outputPath}. Undo is available.` };
+    }
     if (name === 'scene.health_report') { await this.showHealthReport(); return { message: 'Asset health report generated.' }; }
     if (name === 'scene.bake_shading') { const result = await this.runBake(args.path, args.resolution, args.dilation, args.channel, args.samples, args.radius, args.maxResolution, args.normalY, args.normalSpace); return result ? { message: 'UV texture baked and downloaded.' } : { message: 'UV texture bake did not complete; no download was produced.' }; }
     if (name === 'scene.bake_projection') { const result = await this.runProjectedBake(args.targetPath || args.path, args.sourcePath, args); return { message: result ? `Projected texture baked with ${result.projectedHits} hits, ${result.missedTexels} misses, and ${result.dilatedTexels || 0} dilated texels across ${result.islandCount || 0} UV islands.` : 'Projected bake failed.' }; }

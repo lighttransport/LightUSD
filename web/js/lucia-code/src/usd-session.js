@@ -1,6 +1,7 @@
 import { authorLODVariants } from './lod-variants.js';
 import { createLayerPropertyDelta, applyLayerPropertyDelta } from './layer-delta.js';
 import { meshAttributeEdits } from './mesh-edits.js';
+import { parseGraph, serializeGraph } from './geonodes/graph.js';
 import { bytesToBase64, decoder, encoder, escapeRegExp, LuciaError, validIdentifier, validPrimPath } from './utils.js';
 import { localizeUSDDependencies, repairInheritedMaterialBindings, validateUSDZArchive } from './usd-doctor.js';
 import { findEquivalentMaterialMapping, foldLiteralUSDShaderNodes, mergeMaterialDefinitions, removeUnreachableMaterialShaders, rewriteMaterialBindings, rewriteMaterialCollectionBindings } from './material-repair.js';
@@ -285,6 +286,30 @@ function parseFaceVaryingPrimvars(source, path, indexCount) {
   return attributes;
 }
 
+// Bounds edit for rewritten points; cloned/edited meshes must not keep a
+// stale authored extent (renderers cull by it).
+function extentEdit(path, positions) {
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < positions.length; i += 3) for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], positions[i + k]); max[k] = Math.max(max[k], positions[i + k]); }
+  return positions.length ? { args: { path, attr_name: 'extent', value: { type: 'float3[]', value: new Float32Array([...min, ...max]) } } } : { args: { path, attr_name: 'extent', remove: true } };
+}
+
+const GEONODES_GRAPH_ATTR = 'lucia:geomNodes', GEONODES_SOURCE_ATTR = 'lucia:geomNodesSource';
+
+// Reads a custom string attribute authored directly on a prim (not on its
+// children). Handles both quote styles the native writer may emit.
+function readCustomString(source, path, name) {
+  const block = findPrimBlock(source, path);
+  if (!block) return null;
+  let body = source.slice(block.start, block.end);
+  const child = /\b(?:def|over|class)\s+(?:[A-Za-z_][\w:]*\s*)?"/.exec(body);
+  if (child) body = body.slice(0, child.index);
+  const match = new RegExp(`(?:custom\\s+)?(?:uniform\\s+)?string\\s+${escapeRegExp(name)}\\s*=\\s*(?:'((?:[^'\\\\]|\\\\.)*)'|"((?:[^"\\\\]|\\\\.)*)")`).exec(body);
+  if (!match) return null;
+  const escapes = { n: '\n', t: '\t', r: '\r' };
+  return (match[1] ?? match[2]).replace(/\\(.)/g, (_all, ch) => escapes[ch] ?? ch);
+}
+
 export class LuciaUsdSession extends EventTarget {
   constructor() {
     super();
@@ -409,6 +434,7 @@ export class LuciaUsdSession extends EventTarget {
     try {
       checked(document.load(encoder.encode(this.usda)));
       for (const { args } of edits) {
+        if (args.removePrim) { checked(document.removePrim(args.path)); continue; }
         if (args.remove) {
           const result = document.removeAttribute(args.path, args.attr_name);
           if (!result.success && !result.error?.includes(`no property: ${args.attr_name}`)) checked(result);
@@ -645,7 +671,8 @@ export class LuciaUsdSession extends EventTarget {
     ], `Set ${interpolation} primvar ${attribute.name}`);
   }
 
-  async setMeshGeometry(path, data, summary = 'Update mesh geometry') {
+  // extraEdits ride along in the same native layer pass (one render rebuild).
+  async setMeshGeometry(path, data, summary = 'Update mesh geometry', extraEdits = []) {
     if (data?.uvSet != null && !['default', 'lightmap'].includes(data.uvSet)) throw new LuciaError('LUCIA_UV_SET', `Unsupported UV set: ${data.uvSet}`);
     try { data = { ...data, indices: validateIndexedMesh({ positions: data?.positions, indices: data?.indices || null }).indices, subdivisionScheme: normalizeSubdivisionScheme(data?.subdivisionScheme), ...Object.fromEntries(Object.keys(SUBDIVISION_METADATA).map((name) => [name, normalizeSubdivisionMetadata(name, data?.[name])])) }; } catch (error) { throw error.code === 'LUCIA_SUBDIVISION_SCHEME' || error.code === 'LUCIA_SUBDIVISION_METADATA' ? error : new LuciaError('LUCIA_MESH_AUTHORING', `Mesh authoring received invalid indexed data: ${error.message}`); }
     const vertexCount = data.positions.length / 3, sharpEdges = normalizeSharpEdges(data.sharpEdges, vertexCount);
@@ -695,7 +722,7 @@ export class LuciaUsdSession extends EventTarget {
       if (subsetPaths.length && maxMaterialIndex >= subsetPaths.length) throw new LuciaError('LUCIA_MATERIAL_GROUPS', 'Cleaned material groups do not match the mesh GeomSubset bindings.');
     }
     const staleNames = [...findFaceVaryingPrimvarNames(this.usda, path), ...(data.customAttributeNames || [])];
-    return this.nativeAttributeEdits(meshAttributeEdits(path, { ...data, sharpChains, sharpChainSharpness, sharpEdgeSharpness }, normalizedNormals, staleNames, subsetPaths), summary);
+    return this.nativeAttributeEdits([...meshAttributeEdits(path, { ...data, sharpChains, sharpChainSharpness, sharpEdgeSharpness }, normalizedNormals, staleNames, subsetPaths), ...extraEdits], summary);
   }
 
   async setLODVariants(paths, variantSet = 'luciaLOD') {
@@ -713,7 +740,7 @@ export class LuciaUsdSession extends EventTarget {
     return this.replaceUSDA(authorLODVariants(this.usda, parent, paths, block, variantSet), 'Author LOD selection variants');
   }
 
-  async setMeshGeometrySibling(path, name, data, summary = 'Create mesh LOD') {
+  async setMeshGeometrySibling(path, name, data, summary = 'Create mesh LOD', extraEdits = []) {
     if (!validIdentifier(name)) throw new LuciaError('LUCIA_INVALID_IDENTIFIER', 'LOD names must be valid USD identifiers.');
     const block = findPrimBlock(this.usda, path);
     if (!block) return [];
@@ -728,12 +755,129 @@ export class LuciaUsdSession extends EventTarget {
     const original = this.usda, clonedSource = original.slice(0, end) + `\n${clone}` + original.slice(end);
     this.usda = clonedSource;
     try {
-      await this.setMeshGeometry(siblingPath, data, summary);
+      await this.setMeshGeometry(siblingPath, data, summary, extraEdits);
       return original;
     } catch (error) {
       this.usda = original;
       throw error;
     }
+  }
+
+  // Geometry Nodes persistence. The graph lives on the source mesh as a custom
+  // string attribute; the evaluated result is a sibling mesh that records its
+  // source and input stamp so edits to the source mark it stale.
+  getGeomNodesGraph(path) {
+    const text = readCustomString(this.usda, path, GEONODES_GRAPH_ATTR);
+    return text == null ? null : parseGraph(text);
+  }
+
+  getGeomNodesOutputInfo(path) {
+    const text = readCustomString(this.usda, path, GEONODES_SOURCE_ATTR);
+    if (text == null) return null;
+    try { const info = JSON.parse(text); return validPrimPath(info?.source) && typeof info.inputHash === 'string' ? info : null; } catch { return null; }
+  }
+
+  geomNodesOutputName(path) { return `${path.split('/').at(-1)}_geonodes`; }
+
+  geomNodesCleanupEdits(path, outputPath) {
+    return [
+      { args: { path, attr_name: GEONODES_GRAPH_ATTR, remove: true } }, { args: { path, attr_name: 'visibility', remove: true } },
+      ...(this.getGeomNodesOutputInfo(outputPath)?.source === path ? [{ args: { path: outputPath, removePrim: true } }] : []),
+    ];
+  }
+
+  async commitGeomNodes(path, graph, data, { inputHash, graphKey = '' } = {}, summary = `Evaluate geometry nodes on ${path}`) {
+    if (!findPrimBlock(this.usda, path)) throw new LuciaError('LUCIA_PATH_NOT_FOUND', `Prim not found: ${path}`, { path });
+    if (typeof inputHash !== 'string' || !inputHash) throw new LuciaError('LUCIA_GEONODES_COMMIT', 'Geometry node commits need the evaluated input hash.');
+    const serialized = serializeGraph(graph), name = this.geomNodesOutputName(path), parent = path.slice(0, path.lastIndexOf('/')) || '/', outputPath = `${parent === '/' ? '' : parent}/${name}`;
+    const existing = findPrimBlock(this.usda, outputPath);
+    if (existing && this.getGeomNodesOutputInfo(outputPath)?.source !== path) throw new LuciaError('LUCIA_GEONODES_COLLISION', `A prim not owned by this modifier already exists: ${outputPath}`);
+    const original = this.usda, mesh = { ...data, clearMissingAttributes: true };
+    try {
+      const edits = [
+        { args: { path, attr_name: GEONODES_GRAPH_ATTR, value: { type: 'string', value: serialized }, custom: true } },
+        { args: { path, attr_name: 'visibility', value: { type: 'token', value: 'invisible' } } },
+        { args: { path: outputPath, attr_name: GEONODES_GRAPH_ATTR, remove: true } },
+        { args: { path: outputPath, attr_name: 'visibility', remove: true } },
+        { args: { path: outputPath, attr_name: GEONODES_SOURCE_ATTR, value: { type: 'string', value: JSON.stringify({ source: path, inputHash, graphKey }) }, custom: true } },
+        extentEdit(outputPath, data.positions),
+      ];
+      if (existing) await this.setMeshGeometry(outputPath, mesh, summary, edits);
+      else await this.setMeshGeometrySibling(path, name, mesh, summary, edits);
+      return original;
+    } catch (error) {
+      if (this.usda !== original) await this.replaceUSDA(original, 'Roll back geometry nodes');
+      throw error;
+    }
+  }
+
+  // Collapse the modifier: the evaluated mesh replaces the source geometry and
+  // the graph/output are removed (Blender's "Apply").
+  async applyGeomNodes(path, data, summary = `Apply geometry nodes on ${path}`) {
+    const name = this.geomNodesOutputName(path), parent = path.slice(0, path.lastIndexOf('/')) || '/', outputPath = `${parent === '/' ? '' : parent}/${name}`, original = this.usda;
+    try {
+      await this.setMeshGeometry(path, { ...data, clearMissingAttributes: true }, summary, [...this.geomNodesCleanupEdits(path, outputPath), extentEdit(path, data.positions)]);
+      return original;
+    } catch (error) {
+      if (this.usda !== original) await this.replaceUSDA(original, 'Roll back geometry nodes');
+      throw error;
+    }
+  }
+
+  // Authored, untimed mesh points and topology. Animated or missing points
+  // yield null so callers can refuse instead of silently dropping samples.
+  async getAuthoredMesh(path) {
+    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd_next.js').then(({ default: factory }) => factory()));
+    const document = new native.LayerDocument();
+    try {
+      const loaded = document.load(encoder.encode(this.usda));
+      if (!loaded.success) throw new LuciaError('LUCIA_MESH_ATTRIBUTE', loaded.error);
+      let owners = JSON.parse(document.exportJSON().text).primSpecs, prim;
+      for (const name of path.split('/').filter(Boolean)) { prim = owners?.[name]; owners = prim?.children; }
+      if (!prim) return null;
+      const read = (name, types) => {
+        const attribute = prim.properties?.[name]?.attribute;
+        if (!attribute?.hasValue || attribute.hasTimeSamples || !types.includes(attribute.typeName)) return { value: null, animated: Boolean(attribute?.hasTimeSamples) };
+        try { return { value: JSON.parse(attribute.value.replaceAll('(', '[').replaceAll(')', ']')), animated: false }; } catch { return { value: null, animated: false }; }
+      };
+      const points = read('points', ['point3f[]', 'float3[]', 'double3[]']), counts = read('faceVertexCounts', ['int[]']), corners = read('faceVertexIndices', ['int[]']);
+      if (!Array.isArray(points.value) || points.value.some((point) => !Array.isArray(point) || point.length !== 3 || !point.every(Number.isFinite))) return { animated: points.animated, points: null };
+      const vertexCount = points.value.length;
+      const validTopology = Array.isArray(counts.value) && Array.isArray(corners.value) && counts.value.every((count) => Number.isSafeInteger(count) && count >= 3) && corners.value.every((index) => Number.isSafeInteger(index) && index >= 0 && index < vertexCount) && counts.value.reduce((sum, count) => sum + count, 0) === corners.value.length;
+      return { animated: points.animated || counts.animated || corners.animated, points: Float32Array.from(points.value.flat()), faceVertexCounts: validTopology ? Int32Array.from(counts.value) : null, faceVertexIndices: validTopology ? Int32Array.from(corners.value) : null };
+    } finally { document.delete(); }
+  }
+
+  async getMeshPoints(path) {
+    const mesh = await this.getAuthoredMesh(path);
+    return mesh && !mesh.animated ? mesh.points : null;
+  }
+
+  async removeGeomNodes(path, summary = `Remove geometry nodes from ${path}`) {
+    const name = this.geomNodesOutputName(path), parent = path.slice(0, path.lastIndexOf('/')) || '/', outputPath = `${parent === '/' ? '' : parent}/${name}`, original = this.usda;
+    try {
+      await this.nativeAttributeEdits(this.geomNodesCleanupEdits(path, outputPath), summary);
+      return original;
+    } catch (error) {
+      if (this.usda !== original) await this.replaceUSDA(original, 'Roll back geometry nodes');
+      throw error;
+    }
+  }
+
+  // Sculpt commits rewrite only `points` (topology is fixed), so authored
+  // normals/UVs/primvars stay untouched; stale authored normals are removed.
+  async setMeshPoints(path, positions, summary = `Sculpt ${path}`) {
+    const block = findPrimBlock(this.usda, path);
+    if (!block) throw new LuciaError('LUCIA_PATH_NOT_FOUND', `Prim not found: ${path}`, { path });
+    if (!(positions instanceof Float32Array) || positions.length % 3 || hasInvalidValue(positions, (value) => !Number.isFinite(value))) throw new LuciaError('LUCIA_SCULPT_POINTS', 'Sculpted points must be a finite Float32Array of xyz triples.');
+    return this.nativeAttributeEdits([
+      { args: { path, attr_name: 'points', value: { type: 'point3f[]', value: positions } } },
+      { args: { path, attr_name: 'normals', remove: true } },
+      { args: { path, attr_name: 'normals:indices', remove: true } },
+      { args: { path, attr_name: 'primvars:normals', remove: true } },
+      { args: { path, attr_name: 'primvars:normals:indices', remove: true } },
+      extentEdit(path, positions),
+    ], summary);
   }
 
   async setMeshGeometryChild(path, name, data, summary = 'Create child mesh') {

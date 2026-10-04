@@ -31,3 +31,17 @@ assert.equal(fetches,4);assert.equal(atlas.layout.width,2048);assert.equal(atlas
 assert.ok(atlas.thumbnail?.length);assert.ok(PNG.sync.read(Buffer.from(atlas.thumbnail)).width<=256);
 console.log(JSON.stringify({workload:'two 1024px tiles, bounded atlas and thumbnail',elapsedMs:performance.now()-bakeStart,
   fetches,fetchedBytes,atlasBytes:atlas.data.length,thumbnailBytes:atlas.thumbnail.length,wasmHeapMiB:native.HEAPU8.byteLength/1048576}));
+{
+  // Sculpt dab budget: ~100k-vertex mesh, interactive strokes must stay responsive.
+  const { SculptMesh } = await import('../src/sculpt/sculpt-mesh.js');
+  const { SculptStroke } = await import('../src/sculpt/brushes.js');
+  const { getNodeType } = await import('../src/geonodes/index.js');
+  const mesh = getNodeType('MeshGrid').evaluate({ sizeX: 2, sizeY: 2, verticesX: 317, verticesY: 317 }).mesh.mesh;
+  const buildStart = performance.now(), sculptMesh = new SculptMesh(mesh), buildMs = performance.now() - buildStart;
+  const stroke = new SculptStroke(sculptMesh, { brush: 'draw', radius: 0.1, strength: 0.5, symmetry: [true, false, false] });
+  const dabStart = performance.now();
+  for (let i = 0; i < 100; i++) stroke.dab([-0.5 + i * 0.01, 0, 0]);
+  const dabMs = (performance.now() - dabStart) / 100;
+  assert.ok(sculptMesh.changed());
+  console.log(JSON.stringify({ workload: 'sculpt 100k-vertex grid, mirrored draw dabs', buildMs, perDabMs: dabMs }));
+}

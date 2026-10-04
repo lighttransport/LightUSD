@@ -2,6 +2,7 @@
 import { runUDIMBrowserChecks } from './udim-browser-checks.mjs';
 import { runConcurrencyBrowserChecks } from './concurrency-browser-checks.mjs';
 import { runPerformanceBrowserChecks } from './performance-browser-checks.mjs';
+import { runToolsBrowserChecks } from './tools-browser-checks.mjs';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import net from 'node:net';
@@ -150,6 +151,7 @@ try {
     await page.waitForFunction(() => [...document.querySelectorAll('.message')].some((el) => /Valid|issues/i.test(el.textContent)), { timeout: 30000 });
     await runUDIMBrowserChecks(page);
     await runConcurrencyBrowserChecks(page);
+    await runToolsBrowserChecks(page);
     const stored = await page.evaluate(async () => {
       const { app } = await import('/lucia-code/src/main.js');
       app.project.assets.set('storage-check.bin', { bytes: Uint8Array.of(1, 2, 3), colorSpace: 'raw' });
