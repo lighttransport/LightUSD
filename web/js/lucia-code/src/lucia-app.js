@@ -312,7 +312,7 @@ export class LuciaApp {
     if (this.udimViewportPreview) {
       this.udimViewportPreview = false;
       await this.bridge.rebuild(this.session.render);
-      try { this.bridge.showPointInstancers(await this.session.getPointInstancers()); } catch (error) { console.warn('PointInstancer preview failed', error); }
+      try { this.bridge.applyViewportOverrides(await this.session.getViewportOverrides()); } catch (error) { console.warn('Viewport override failed', error); }
     }
   }
 
@@ -320,7 +320,7 @@ export class LuciaApp {
     this.udimViewportPreview = false;
     this.setBusy(true, 'Building viewport…', 70);
     await this.bridge.rebuild(this.session.render, (p) => this.setBusy(true, p.message, Math.round(p.percentage)));
-    try { this.bridge.showPointInstancers(await this.session.getPointInstancers()); } catch (error) { console.warn('PointInstancer preview failed', error); }
+    try { this.bridge.applyViewportOverrides(await this.session.getViewportOverrides()); } catch (error) { console.warn('Viewport override failed', error); }
     const previewNotice = this.bridge.previewBudget?.reason || null;
     if (previewNotice !== this.previewNotice) { this.previewNotice = previewNotice; if (previewNotice) this.assistant.add('tool', `Viewport preview budget: ${previewNotice}`); }
     const decimatedMeshes = this.bridge.previewBudget?.geometryDecimatedCount || 0, omittedTriangles = this.bridge.previewBudget?.geometryOmittedTriangles || 0; if (decimatedMeshes !== this.previewGeometryDecimatedCount) { this.previewGeometryDecimatedCount = decimatedMeshes; if (decimatedMeshes) this.assistant.add('tool', `Viewport preview capped geometry on ${decimatedMeshes} mesh${decimatedMeshes === 1 ? '' : 'es'} (${omittedTriangles.toLocaleString()} triangles omitted); authored geometry remains unchanged.`); }

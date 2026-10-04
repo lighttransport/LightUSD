@@ -66,6 +66,14 @@ export async function runToolsBrowserChecks(page) {
     const instances = scattered.match(/int\[\] protoIndices = \[([^\]]*)\]/)[1].split(',').length;
     let rendered = 0; app.bridge.pathObjects.get(instancerPath)?.traverse((object) => { if (object.isInstancedMesh) rendered += object.count; else if (object.isMesh) rendered++; });
     check(rendered >= instances, `PointInstancer was not rendered (${rendered} of ${instances})`);
+    // Clicking an instance selects the instancer; hidden geometry (the
+    // prototype at the instancer origin, the hidden source) is never picked.
+    const first = scattered.match(/point3f\[\] positions = \[\(([^)]*)\)/)[1].split(',').map(Number), click = (x, z) => { fire(canvas, 'pointerdown', screen(x, z)); fire(window, 'pointerup', screen(x, z)); };
+    camera.updateMatrixWorld();
+    app.select(path); click(first[0], first[2]);
+    check(app.project.selectedPath === instancerPath, `Instance click selected ${app.project.selectedPath}`);
+    app.select(instancerPath); click(0, 0);
+    check(app.project.selectedPath === instancerPath, `Click on hidden geometry selected ${app.project.selectedPath}`);
     await app.commands.undo(); await app.refreshAll(false);
     check(!/PointInstancer/.test(app.session.exportUSDA()), 'Undo did not remove the PointInstancer');
     return { sculptMaxY: maxY, outputVertices, instances, rendered };

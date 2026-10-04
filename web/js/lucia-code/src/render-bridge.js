@@ -8,6 +8,11 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { LightUSDLoaderUtils } from '../../src/lightusd/LightUSDLoaderUtils.js';
 import { choosePreviewBudget, previewGeometryDrawCount, previewTextureScale } from './preview-budget.js';
 
+export function isRenderedObject(object) {
+  for (let current = object; current; current = current.parent) if (!current.visible) return false;
+  return true;
+}
+
 export class LuciaRenderBridge extends EventTarget {
   constructor(container) {
     super(); this.container = container; this.pathObjects = new Map(); this.content = null; this.selection = null;
@@ -78,7 +83,8 @@ export class LuciaRenderBridge extends EventTarget {
     const box = this.renderer.domElement.getBoundingClientRect();
     const pointer = new THREE.Vector2((event.clientX - box.left) / box.width * 2 - 1, -(event.clientY - box.top) / box.height * 2 + 1);
     const ray = new THREE.Raycaster(); ray.setFromCamera(pointer, this.camera);
-    const intersection = ray.intersectObject(this.content, true)[0], hit = intersection?.object;
+    // Raycasts include invisible objects (hidden prototypes, hidden sources).
+    const intersection = ray.intersectObject(this.content, true).find(({ object }) => isRenderedObject(object)), hit = intersection?.object;
     let object = hit;
     while (object && !object.userData?.['primMeta.absPath']) object = object.parent;
     if (object) {
@@ -170,6 +176,10 @@ export class LuciaRenderBridge extends EventTarget {
     this.geoNodesHidden = null;
     if (!this.geoNodesPreview) return;
     this.scene.remove(this.geoNodesPreview); this.geoNodesPreview.geometry.dispose(); this.geoNodesPreview.material.dispose(); this.geoNodesPreview = null;
+  }
+  applyViewportOverrides({ instancers = [], invisible = [] } = {}) {
+    for (const path of invisible) { const object = this.pathObjects.get(path); if (object) object.visible = false; }
+    this.showPointInstancers(instancers);
   }
   // Draw PointInstancers as InstancedMeshes under the instancer's object,
   // hiding the prototype meshes the loader drew in place.

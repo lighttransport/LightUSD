@@ -910,13 +910,18 @@ export class LuciaUsdSession extends EventTarget {
 
   // Authored, untimed PointInstancers for viewport display (the legacy Three
   // loader draws only prototypes). Prototype meshes are fan-triangulated.
-  async getPointInstancers() {
-    // Runs on every viewport refresh: skip the full layer walk when absent.
-    if (!/\bPointInstancer\b/.test(this.usda)) return [];
+  async getPointInstancers() { return (await this.getViewportOverrides()).instancers; }
+
+  // Authored state the legacy Three loader ignores: PointInstancers (it draws
+  // only prototypes) and default-time `visibility = "invisible"` opinions.
+  // Runs on every viewport refresh, so skip the layer walk when neither occurs.
+  async getViewportOverrides() {
+    const hasInstancers = /\bPointInstancer\b/.test(this.usda), hasInvisible = /\bvisibility\s*=\s*"invisible"/.test(this.usda);
+    if (!hasInstancers && !hasInvisible) return { instancers: [], invisible: [] };
     const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd_next.js').then(({ default: factory }) => factory()));
     const document = new native.LayerDocument();
     try {
-      if (!document.load(encoder.encode(this.usda)).success) return [];
+      if (!document.load(encoder.encode(this.usda)).success) return { instancers: [], invisible: [] };
       const specs = new Map(), walk = (owners, parent) => { for (const [name, prim] of Object.entries(owners || {})) { const path = `${parent}/${name}`; specs.set(path, prim); walk(prim.children, path); } };
       walk(JSON.parse(document.exportJSON().text).primSpecs, '');
       const read = (prim, name, types) => {
@@ -924,8 +929,10 @@ export class LuciaUsdSession extends EventTarget {
         if (!attribute?.hasValue || attribute.hasTimeSamples || !types.includes(attribute.typeName)) return null;
         try { const value = JSON.parse(attribute.value.replaceAll('(', '[').replaceAll(')', ']')); return Array.isArray(value) ? value.flat() : null; } catch { return null; }
       };
-      const instancers = [];
+      const instancers = [], invisible = [];
       for (const [path, prim] of specs) {
+        const visibility = prim.properties?.visibility?.attribute;
+        if (visibility?.hasValue && String(visibility.value).replaceAll('"', '') === 'invisible') invisible.push(path);
         if (prim.typeName !== 'PointInstancer') continue;
         const positions = read(prim, 'positions', ['point3f[]', 'float3[]']), protoIndices = read(prim, 'protoIndices', ['int[]']);
         if (!positions || !protoIndices || protoIndices.length * 3 !== positions.length) continue;
@@ -940,7 +947,7 @@ export class LuciaUsdSession extends EventTarget {
         });
         instancers.push({ path, positions: Float32Array.from(positions), protoIndices: Int32Array.from(protoIndices), orientations: orientations?.length === protoIndices.length * 4 ? Float32Array.from(orientations) : null, scales: scales?.length === positions.length ? Float32Array.from(scales) : null, prototypes });
       }
-      return instancers;
+      return { instancers, invisible };
     } finally { document.delete(); }
   }
 
