@@ -312,6 +312,7 @@ export class LuciaApp {
     if (this.udimViewportPreview) {
       this.udimViewportPreview = false;
       await this.bridge.rebuild(this.session.render);
+      try { this.bridge.showPointInstancers(await this.session.getPointInstancers()); } catch (error) { console.warn('PointInstancer preview failed', error); }
     }
   }
 
@@ -319,6 +320,7 @@ export class LuciaApp {
     this.udimViewportPreview = false;
     this.setBusy(true, 'Building viewport…', 70);
     await this.bridge.rebuild(this.session.render, (p) => this.setBusy(true, p.message, Math.round(p.percentage)));
+    try { this.bridge.showPointInstancers(await this.session.getPointInstancers()); } catch (error) { console.warn('PointInstancer preview failed', error); }
     const previewNotice = this.bridge.previewBudget?.reason || null;
     if (previewNotice !== this.previewNotice) { this.previewNotice = previewNotice; if (previewNotice) this.assistant.add('tool', `Viewport preview budget: ${previewNotice}`); }
     const decimatedMeshes = this.bridge.previewBudget?.geometryDecimatedCount || 0, omittedTriangles = this.bridge.previewBudget?.geometryOmittedTriangles || 0; if (decimatedMeshes !== this.previewGeometryDecimatedCount) { this.previewGeometryDecimatedCount = decimatedMeshes; if (decimatedMeshes) this.assistant.add('tool', `Viewport preview capped geometry on ${decimatedMeshes} mesh${decimatedMeshes === 1 ? '' : 'es'} (${omittedTriangles.toLocaleString()} triangles omitted); authored geometry remains unchanged.`); }
@@ -957,9 +959,9 @@ export class LuciaApp {
     if (name === 'scene.geometry_nodes') {
       const path = args.path || this.project.selectedPath; if (!path) throw new LuciaError('LUCIA_GEONODES_PATH', 'Select a mesh before adding geometry nodes.');
       const graph = args.graph || this.session.getGeomNodesGraph(path); if (!graph) throw new LuciaError('LUCIA_GEONODES_GRAPH', 'Provide a geometry node graph or select a prim that already has one.');
-      const outputPath = `${path.slice(0, path.lastIndexOf('/'))}/${this.session.geomNodesOutputName(path)}`;
-      await this.runMutation(`Geometry Nodes: ${path}`, [path, outputPath], async () => { const result = await this.geoNodes.runner.evaluate(graph, triangulateAuthoredMesh(await this.session.getAuthoredMesh(path))); return this.session.commitGeomNodes(path, graph, result, { inputHash: result.inputHash, graphKey: result.key }); }, ['scene', 'usd'], { comparison: false });
-      return { message: `Geometry nodes evaluated into ${outputPath}. Undo is available.` };
+      const { meshPath, instancerPath } = this.session.geomNodesOutputPaths(path);
+      await this.runMutation(`Geometry Nodes: ${path}`, [path, meshPath, instancerPath], async () => { const result = await this.geoNodes.runner.evaluate(graph, triangulateAuthoredMesh(await this.session.getAuthoredMesh(path))); return this.session.commitGeomNodes(path, graph, result, { inputHash: result.inputHash, graphKey: result.key }); }, ['scene', 'usd'], { comparison: false });
+      return { message: `Geometry nodes evaluated into ${meshPath} / ${instancerPath}. Undo is available.` };
     }
     if (name === 'scene.health_report') { await this.showHealthReport(); return { message: 'Asset health report generated.' }; }
     if (name === 'scene.bake_shading') { const result = await this.runBake(args.path, args.resolution, args.dilation, args.channel, args.samples, args.radius, args.maxResolution, args.normalY, args.normalSpace); return result ? { message: 'UV texture baked and downloaded.' } : { message: 'UV texture bake did not complete; no download was produced.' }; }

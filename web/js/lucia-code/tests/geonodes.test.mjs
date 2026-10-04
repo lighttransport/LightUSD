@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDefaultGraph, evaluateGraph, GeoNodesCache, geometryStats, geometryToMeshData, getNodeType, listNodeTypes, mergeByDistance, meshGeometry, realize, registerNode, subdivideMidpoint, topoOrder, validateGraph, valueNoise3 } from '../src/geonodes/index.js';
+import { composeTRS, createDefaultGraph, decomposeInstanceTransform, evaluateGraph, geometryToOutput, GeoNodesCache, geometryStats, geometryToMeshData, getNodeType, listNodeTypes, mergeByDistance, meshGeometry, realize, registerNode, subdivideMidpoint, topoOrder, validateGraph, valueNoise3 } from '../src/geonodes/index.js';
 import { evaluateGraphToMesh, GeoNodesRunner, sourceInputHash, triangulateAuthoredMesh } from '../src/geonodes/runner.js';
 import { LuciaUsdSession } from '../src/usd-session.js';
 import { LuciaCommandStack, sessionCommand } from '../src/command-stack.js';
@@ -141,5 +141,73 @@ test('geometry node commits refuse to overwrite foreign prims', async () => {
     const source = triangulateAuthoredMesh(await session.getAuthoredMesh('/World/Plane')), result = await evaluateGraphToMesh(createDefaultGraph(), source), before = session.exportUSDA();
     await assert.rejects(session.commitGeomNodes('/World/Plane', createDefaultGraph(), result, { inputHash: result.inputHash }), /not owned/);
     assert.equal(session.exportUSDA(), before);
+  } finally { session.dispose(); }
+});
+
+test('instance transforms decompose into PointInstancer TRS and reject shear', () => {
+  const rotate = ([w, x, y, z], v) => { const t = [2 * (y * v[2] - z * v[1]), 2 * (z * v[0] - x * v[2]), 2 * (x * v[1] - y * v[0])]; return [v[0] + w * t[0] + y * t[2] - z * t[1], v[1] + w * t[1] + z * t[0] - x * t[2], v[2] + w * t[2] + x * t[1] - y * t[0]]; };
+  for (const [t, r, k] of [[[1, 2, 3], [0, 0, 0], [1, 1, 1]], [[-4, 0, 9], [30, 45, 60], [2, 0.5, 3]], [[0, 0, 0], [170, -80, 10], [1, 1, 1]], [[1, 1, 1], [0, 90, 0], [-1, 2, 1]]]) {
+    const m = composeTRS(t, r, k), d = decomposeInstanceTransform(m);
+    assert.ok(d, `decomposable ${r}`);
+    assert.ok(Math.abs(Math.hypot(...d.orientation) - 1) < 1e-5);
+    for (const v of [[1, 0, 0], [0, 1, 0], [0.3, -2, 5]]) {
+      const expected = [0, 1, 2].map((i) => m[i] * v[0] + m[4 + i] * v[1] + m[8 + i] * v[2] + m[12 + i]);
+      const actual = rotate(d.orientation, v.map((x, i) => x * d.scale[i])).map((x, i) => x + d.translate[i]);
+      for (let i = 0; i < 3; i++) assert.ok(Math.abs(actual[i] - expected[i]) < 1e-4, `${r} ${k}: ${actual} vs ${expected}`);
+    }
+  }
+  const shear = composeTRS(); shear[4] = 0.5;
+  assert.equal(decomposeInstanceTransform(shear), null);
+});
+
+test('instances become a PointInstancer unless Group Output realizes them', async () => {
+  const result = await evaluateGraph(scatter());
+  const output = geometryToOutput(result.geometry, { realizeInstances: result.realizeInstances });
+  const count = geometryStats(result.geometry).instances;
+  assert.equal(result.realizeInstances, false);
+  assert.equal(output.instancer.protoIndices.length, count);
+  assert.equal(output.instancer.prototypes.length, 1);
+  assert.equal(output.instancer.positions.length, count * 3);
+  assert.equal(output.instancer.orientations.length, count * 4);
+  assert.equal(output.mesh.positions.length / 3, 36, 'displaced grid stays a mesh');
+  const realizedGraph = scatter(); realizedGraph.nodes.find((node) => node.type === 'GroupOutput').params = { realizeInstances: true };
+  const realized = await evaluateGraphToMesh(realizedGraph, null);
+  assert.equal(realized.output.instancer, null);
+  assert.equal(realized.output.mesh.positions.length, realized.positions.length);
+});
+
+test('PointInstancer output is authored with prototypes, rebuilt on re-commit and cleaned up', async () => {
+  const session = new LuciaUsdSession(); await session.init();
+  try {
+    await session.loadUSDA(MESH_USDA.replace('def Mesh "Plane" {', 'def Mesh "Plane" {\n        double3 xformOp:translate = (0, 2, 0)\n        uniform token[] xformOpOrder = ["xformOp:translate"]'));
+    const commands = new LuciaCommandStack(), original = session.exportUSDA(), path = '/World/Plane';
+    const graph = graphOf([{ id: 'in', type: 'GroupInput' }, { id: 'pts', type: 'DistributePointsOnFaces', params: { density: 6, seed: 2 } }, { id: 'cube', type: 'MeshCube', params: { size: [0.1, 0.1, 0.1] } }, { id: 'inst', type: 'InstanceOnPoints' }, { id: 'join', type: 'JoinGeometry' }],
+      [{ from: ['in', 'geometry'], to: ['pts', 'mesh'] }, { from: ['pts', 'points'], to: ['inst', 'points'] }, { from: ['cube', 'mesh'], to: ['inst', 'instance'] }, { from: ['in', 'geometry'], to: ['join', 'a'] }, { from: ['inst', 'instances'], to: ['join', 'b'] }, { from: ['join', 'geometry'], to: ['out', 'geometry'] }]);
+    const commit = async (g = graph) => { const result = await evaluateGraphToMesh(g, triangulateAuthoredMesh(await session.getAuthoredMesh(path))); await session.commitGeomNodes(path, g, result, { inputHash: result.inputHash, graphKey: result.key }); return result; };
+    let result;
+    assert.equal(await commands.execute(sessionCommand(session, 'Geometry Nodes', [path], async () => { const before = session.exportUSDA(); result = await commit(); return before; })), true);
+    const usda = session.exportUSDA(), count = result.output.instancer.protoIndices.length;
+    assert.ok(count > 0);
+    assert.match(usda, /def PointInstancer "Plane_geonodes_instances"/);
+    assert.match(usda, /rel prototypes = <\/World\/Plane_geonodes_instances\/Prototypes\/Proto0>/);
+    assert.match(usda, /def PointInstancer "Plane_geonodes_instances"\s*\{[^}]*xformOp:translate = \(0, 2, 0\)/, 'instancer inherits the source transform');
+    assert.equal(usda.match(/int\[\] protoIndices = \[([^\]]*)\]/)[1].split(',').length, count);
+    assert.equal(session.getGeomNodesOutputInfo('/World/Plane_geonodes_instances').source, path);
+    assert.match(usda, /def Mesh "Plane_geonodes"/, 'joined source mesh stays a mesh output');
+    await commands.undo();
+    assert.equal(session.exportUSDA(), original, 'mesh + instancer commit undoes as one step');
+    await commit(); await commit();
+    assert.equal(session.exportUSDA().match(/def PointInstancer/g).length, 1);
+    // Instance-only graph drops the now-empty mesh output.
+    const instancesOnly = structuredClone(graph); instancesOnly.links = instancesOnly.links.filter((link) => link.to[0] !== 'join'); instancesOnly.links.push({ from: ['inst', 'instances'], to: ['join', 'a'] });
+    await commit(instancesOnly);
+    assert.doesNotMatch(session.exportUSDA(), /def Mesh "Plane_geonodes"/);
+    // Realizing removes the instancer.
+    const realized = structuredClone(graph); realized.nodes.find((node) => node.id === 'out').params = { realizeInstances: true };
+    await commit(realized);
+    assert.doesNotMatch(session.exportUSDA(), /PointInstancer/);
+    await commit();
+    await session.removeGeomNodes(path);
+    assert.doesNotMatch(session.exportUSDA(), /Plane_geonodes|lucia:geomNodes|visibility/);
   } finally { session.dispose(); }
 });

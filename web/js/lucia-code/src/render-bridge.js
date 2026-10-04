@@ -152,23 +152,52 @@ export class LuciaRenderBridge extends EventTarget {
   }
   // Uncommitted geometry-nodes result, placed with the source prim's world
   // transform. The committed output prim is hidden while a preview shows.
-  setPreviewMesh(path, positions, indices, hiddenPath = null) {
+  setPreviewMesh(path, positions, indices, hiddenPaths = []) {
     this.clearPreview();
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3)); geometry.setIndex(new THREE.BufferAttribute(indices, 1)); geometry.computeVertexNormals();
     const preview = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0x9d8cff, roughness: 0.55, metalness: 0.05, side: THREE.DoubleSide }));
-    const anchor = this.pathObjects.get(path) || (hiddenPath && this.pathObjects.get(hiddenPath));
+    hiddenPaths = [].concat(hiddenPaths || []);
+    const anchor = this.pathObjects.get(path) || hiddenPaths.map((hidden) => this.pathObjects.get(hidden)).find(Boolean);
     anchor?.updateWorldMatrix(true, false);
     preview.matrixAutoUpdate = false; if (anchor) preview.matrix.copy(anchor.matrixWorld);
     preview.name = 'LuciaGeoNodesPreview';
     this.scene.add(preview); this.geoNodesPreview = preview;
-    const hidden = hiddenPath && this.pathObjects.get(hiddenPath);
-    if (hidden) { this.geoNodesHidden = { object: hidden, visible: hidden.visible }; hidden.visible = false; }
+    this.geoNodesHidden = hiddenPaths.map((hidden) => this.pathObjects.get(hidden)).filter(Boolean).map((object) => { const entry = { object, visible: object.visible }; object.visible = false; return entry; });
   }
   clearPreview() {
-    if (this.geoNodesHidden) { this.geoNodesHidden.object.visible = this.geoNodesHidden.visible; this.geoNodesHidden = null; }
+    for (const { object, visible } of this.geoNodesHidden || []) object.visible = visible;
+    this.geoNodesHidden = null;
     if (!this.geoNodesPreview) return;
     this.scene.remove(this.geoNodesPreview); this.geoNodesPreview.geometry.dispose(); this.geoNodesPreview.material.dispose(); this.geoNodesPreview = null;
+  }
+  // Draw PointInstancers as InstancedMeshes under the instancer's object,
+  // hiding the prototype meshes the loader drew in place.
+  showPointInstancers(instancers = []) {
+    for (const instancer of instancers) {
+      const owner = this.pathObjects.get(instancer.path);
+      if (!owner) continue;
+      for (const [path, object] of this.pathObjects) if (path.startsWith(`${instancer.path}/`)) object.visible = false;
+      const counts = new Map();
+      for (const index of instancer.protoIndices) counts.set(index, (counts.get(index) || 0) + 1);
+      instancer.prototypes.forEach((prototype, protoIndex) => {
+        if (!prototype || !counts.get(protoIndex)) return;
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.BufferAttribute(prototype.positions, 3)); geometry.setIndex(new THREE.BufferAttribute(prototype.indices, 1)); geometry.computeVertexNormals();
+        const source = this.renderableMeshForPath(prototype.path), material = source?.material || new THREE.MeshStandardMaterial({ color: 0xb8b3cc, roughness: 0.6 });
+        const mesh = new THREE.InstancedMesh(geometry, material, counts.get(protoIndex)), matrix = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), k = new THREE.Vector3();
+        let slot = 0;
+        instancer.protoIndices.forEach((index, i) => {
+          if (index !== protoIndex) return;
+          p.fromArray(instancer.positions, i * 3);
+          if (instancer.orientations) q.set(instancer.orientations[i * 4 + 1], instancer.orientations[i * 4 + 2], instancer.orientations[i * 4 + 3], instancer.orientations[i * 4]).normalize(); else q.identity();
+          if (instancer.scales) k.fromArray(instancer.scales, i * 3); else k.set(1, 1, 1);
+          mesh.setMatrixAt(slot++, matrix.compose(p, q, k));
+        });
+        mesh.name = 'LuciaPointInstances'; mesh.userData.luciaPointInstancer = instancer.path;
+        owner.add(mesh);
+      });
+    }
   }
   clearSelection() {
     if (!this.selection) return;

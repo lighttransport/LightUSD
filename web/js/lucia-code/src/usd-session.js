@@ -294,6 +294,40 @@ function extentEdit(path, positions) {
   return positions.length ? { args: { path, attr_name: 'extent', value: { type: 'float3[]', value: new Float32Array([...min, ...max]) } } } : { args: { path, attr_name: 'extent', remove: true } };
 }
 
+// Delete a prim block (declaration line through closing brace) from USDA text.
+function removePrimText(source, path) {
+  const block = findPrimBlock(source, path);
+  if (!block) return source;
+  const start = source.lastIndexOf('\n', block.declarationStart) + 1;
+  return source.slice(0, start) + source.slice(block.close + 1).replace(/^[ \t]*\n/, '');
+}
+
+// Insert an empty PointInstancer sibling after `sourcePath`, carrying the
+// source's local xformOps so instances land in the same space as the mesh.
+function insertInstancerSkeleton(source, sourcePath, name) {
+  const block = findPrimBlock(source, sourcePath);
+  let body = source.slice(block.open + 1, block.close);
+  const child = /\b(?:def|over|class)\s+(?:[A-Za-z_][\w:]*\s*)?"/.exec(body);
+  if (child) body = body.slice(0, child.index);
+  const xformLines = body.split('\n').filter((line) => /^\s*(?:uniform\s+)?[\w\[\]]+\s+xformOp(?:Order|:[\w:]+)\s*=/.test(line)).map((line) => `    ${line.trim()}`);
+  const skeleton = `\ndef PointInstancer "${name}"\n{\n${xformLines.join('\n')}\n    def Scope "Prototypes"\n    {\n    }\n}\n`;
+  return source.slice(0, block.close + 1) + skeleton + source.slice(block.close + 1);
+}
+
+function pointInstancerEdits(path, instancer) {
+  const prototypePaths = instancer.prototypes.map((_prototype, index) => `${path}/Prototypes/Proto${index}`), edits = [];
+  instancer.prototypes.forEach((prototype, index) => {
+    edits.push({ args: { path: prototypePaths[index], definePrim: 'Mesh' } }, ...meshAttributeEdits(prototypePaths[index], { positions: prototype.positions, indices: prototype.indices }, null), extentEdit(prototypePaths[index], prototype.positions));
+  });
+  const set = (attr_name, type, value) => edits.push({ args: { path, attr_name, value: { type, value } } });
+  set('positions', 'point3f[]', instancer.positions);
+  set('orientations', 'quath[]', instancer.orientations);
+  set('scales', 'float3[]', instancer.scales);
+  set('protoIndices', 'int[]', Array.from(instancer.protoIndices));
+  edits.push({ args: { path, attr_name: 'prototypes', relationship: prototypePaths } });
+  return edits;
+}
+
 const GEONODES_GRAPH_ATTR = 'lucia:geomNodes', GEONODES_SOURCE_ATTR = 'lucia:geomNodesSource';
 
 // Reads a custom string attribute authored directly on a prim (not on its
@@ -435,6 +469,8 @@ export class LuciaUsdSession extends EventTarget {
       checked(document.load(encoder.encode(this.usda)));
       for (const { args } of edits) {
         if (args.removePrim) { checked(document.removePrim(args.path)); continue; }
+        if (args.definePrim) { checked(document.definePrim(args.path, args.definePrim)); continue; }
+        if (args.relationship) { checked(document.setRelationshipTargets(args.path, args.attr_name, args.relationship)); continue; }
         if (args.remove) {
           const result = document.removeAttribute(args.path, args.attr_name);
           if (!result.success && !result.error?.includes(`no property: ${args.attr_name}`)) checked(result);
@@ -779,31 +815,54 @@ export class LuciaUsdSession extends EventTarget {
 
   geomNodesOutputName(path) { return `${path.split('/').at(-1)}_geonodes`; }
 
-  geomNodesCleanupEdits(path, outputPath) {
+  geomNodesOutputPaths(path) {
+    const parent = path.slice(0, path.lastIndexOf('/')) || '/', base = `${parent === '/' ? '' : parent}/${this.geomNodesOutputName(path)}`;
+    return { meshPath: base, instancerPath: `${base}_instances` };
+  }
+
+  // Removes the graph, restores source visibility and deletes owned outputs.
+  geomNodesCleanupEdits(path) {
+    const owned = Object.values(this.geomNodesOutputPaths(path)).filter((output) => this.getGeomNodesOutputInfo(output)?.source === path);
     return [
       { args: { path, attr_name: GEONODES_GRAPH_ATTR, remove: true } }, { args: { path, attr_name: 'visibility', remove: true } },
-      ...(this.getGeomNodesOutputInfo(outputPath)?.source === path ? [{ args: { path: outputPath, removePrim: true } }] : []),
+      ...owned.map((output) => ({ args: { path: output, removePrim: true } })),
     ];
   }
 
-  async commitGeomNodes(path, graph, data, { inputHash, graphKey = '' } = {}, summary = `Evaluate geometry nodes on ${path}`) {
+  // `result` is an evaluateGraphToMesh() result: `output.mesh` becomes the
+  // sibling Mesh and `output.instancer` a sibling UsdGeomPointInstancer (both
+  // optional). A bare { positions, indices } is accepted as mesh-only output.
+  async commitGeomNodes(path, graph, result, { inputHash, graphKey = '' } = {}, summary = `Evaluate geometry nodes on ${path}`) {
     if (!findPrimBlock(this.usda, path)) throw new LuciaError('LUCIA_PATH_NOT_FOUND', `Prim not found: ${path}`, { path });
     if (typeof inputHash !== 'string' || !inputHash) throw new LuciaError('LUCIA_GEONODES_COMMIT', 'Geometry node commits need the evaluated input hash.');
-    const serialized = serializeGraph(graph), name = this.geomNodesOutputName(path), parent = path.slice(0, path.lastIndexOf('/')) || '/', outputPath = `${parent === '/' ? '' : parent}/${name}`;
-    const existing = findPrimBlock(this.usda, outputPath);
-    if (existing && this.getGeomNodesOutputInfo(outputPath)?.source !== path) throw new LuciaError('LUCIA_GEONODES_COLLISION', `A prim not owned by this modifier already exists: ${outputPath}`);
-    const original = this.usda, mesh = { ...data, clearMissingAttributes: true };
+    const output = result?.output ?? { mesh: result, instancer: null };
+    if (!output.mesh?.positions?.length && !output.instancer) throw new LuciaError('LUCIA_GEONODES_EMPTY', 'The geometry node graph produced no mesh or instances.');
+    const serialized = serializeGraph(graph), { meshPath, instancerPath } = this.geomNodesOutputPaths(path), stamp = JSON.stringify({ source: path, inputHash, graphKey });
+    for (const outputPath of [meshPath, instancerPath])
+      if (findPrimBlock(this.usda, outputPath) && this.getGeomNodesOutputInfo(outputPath)?.source !== path) throw new LuciaError('LUCIA_GEONODES_COLLISION', `A prim not owned by this modifier already exists: ${outputPath}`);
+    const original = this.usda, stampEdit = (target) => ({ args: { path: target, attr_name: GEONODES_SOURCE_ATTR, value: { type: 'string', value: stamp }, custom: true } });
     try {
       const edits = [
         { args: { path, attr_name: GEONODES_GRAPH_ATTR, value: { type: 'string', value: serialized }, custom: true } },
         { args: { path, attr_name: 'visibility', value: { type: 'token', value: 'invisible' } } },
-        { args: { path: outputPath, attr_name: GEONODES_GRAPH_ATTR, remove: true } },
-        { args: { path: outputPath, attr_name: 'visibility', remove: true } },
-        { args: { path: outputPath, attr_name: GEONODES_SOURCE_ATTR, value: { type: 'string', value: JSON.stringify({ source: path, inputHash, graphKey }) }, custom: true } },
-        extentEdit(outputPath, data.positions),
       ];
-      if (existing) await this.setMeshGeometry(outputPath, mesh, summary, edits);
-      else await this.setMeshGeometrySibling(path, name, mesh, summary, edits);
+      // The instancer is rebuilt from scratch each commit (prototype count may change).
+      if (findPrimBlock(this.usda, instancerPath)) this.usda = removePrimText(this.usda, instancerPath);
+      if (output.instancer) {
+        this.usda = insertInstancerSkeleton(this.usda, path, instancerPath.split('/').at(-1));
+        edits.push(...pointInstancerEdits(instancerPath, output.instancer), stampEdit(instancerPath));
+      }
+      if (output.mesh?.positions?.length) {
+        edits.push(
+          { args: { path: meshPath, attr_name: GEONODES_GRAPH_ATTR, remove: true } }, { args: { path: meshPath, attr_name: 'visibility', remove: true } },
+          stampEdit(meshPath), extentEdit(meshPath, output.mesh.positions));
+        const mesh = { positions: output.mesh.positions, indices: output.mesh.indices, clearMissingAttributes: true };
+        if (findPrimBlock(this.usda, meshPath)) await this.setMeshGeometry(meshPath, mesh, summary, edits);
+        else await this.setMeshGeometrySibling(path, this.geomNodesOutputName(path), mesh, summary, edits);
+      } else {
+        if (findPrimBlock(this.usda, meshPath)) edits.push({ args: { path: meshPath, removePrim: true } });
+        await this.nativeAttributeEdits(edits, summary);
+      }
       return original;
     } catch (error) {
       if (this.usda !== original) await this.replaceUSDA(original, 'Roll back geometry nodes');
@@ -811,12 +870,13 @@ export class LuciaUsdSession extends EventTarget {
     }
   }
 
+
   // Collapse the modifier: the evaluated mesh replaces the source geometry and
   // the graph/output are removed (Blender's "Apply").
   async applyGeomNodes(path, data, summary = `Apply geometry nodes on ${path}`) {
-    const name = this.geomNodesOutputName(path), parent = path.slice(0, path.lastIndexOf('/')) || '/', outputPath = `${parent === '/' ? '' : parent}/${name}`, original = this.usda;
+    const original = this.usda;
     try {
-      await this.setMeshGeometry(path, { ...data, clearMissingAttributes: true }, summary, [...this.geomNodesCleanupEdits(path, outputPath), extentEdit(path, data.positions)]);
+      await this.setMeshGeometry(path, { ...data, clearMissingAttributes: true }, summary, [...this.geomNodesCleanupEdits(path), extentEdit(path, data.positions)]);
       return original;
     } catch (error) {
       if (this.usda !== original) await this.replaceUSDA(original, 'Roll back geometry nodes');
@@ -848,15 +908,51 @@ export class LuciaUsdSession extends EventTarget {
     } finally { document.delete(); }
   }
 
+  // Authored, untimed PointInstancers for viewport display (the legacy Three
+  // loader draws only prototypes). Prototype meshes are fan-triangulated.
+  async getPointInstancers() {
+    // Runs on every viewport refresh: skip the full layer walk when absent.
+    if (!/\bPointInstancer\b/.test(this.usda)) return [];
+    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd_next.js').then(({ default: factory }) => factory()));
+    const document = new native.LayerDocument();
+    try {
+      if (!document.load(encoder.encode(this.usda)).success) return [];
+      const specs = new Map(), walk = (owners, parent) => { for (const [name, prim] of Object.entries(owners || {})) { const path = `${parent}/${name}`; specs.set(path, prim); walk(prim.children, path); } };
+      walk(JSON.parse(document.exportJSON().text).primSpecs, '');
+      const read = (prim, name, types) => {
+        const attribute = prim?.properties?.[name]?.attribute;
+        if (!attribute?.hasValue || attribute.hasTimeSamples || !types.includes(attribute.typeName)) return null;
+        try { const value = JSON.parse(attribute.value.replaceAll('(', '[').replaceAll(')', ']')); return Array.isArray(value) ? value.flat() : null; } catch { return null; }
+      };
+      const instancers = [];
+      for (const [path, prim] of specs) {
+        if (prim.typeName !== 'PointInstancer') continue;
+        const positions = read(prim, 'positions', ['point3f[]', 'float3[]']), protoIndices = read(prim, 'protoIndices', ['int[]']);
+        if (!positions || !protoIndices || protoIndices.length * 3 !== positions.length) continue;
+        const orientations = read(prim, 'orientations', ['quath[]', 'quatf[]']), scales = read(prim, 'scales', ['float3[]']);
+        const targets = document.getRelationshipTargets(path, 'prototypes');
+        const prototypes = (targets?.success ? targets.targets : []).map((target) => {
+          const mesh = specs.get(target), points = read(mesh, 'points', ['point3f[]', 'float3[]']), counts = read(mesh, 'faceVertexCounts', ['int[]']), corners = read(mesh, 'faceVertexIndices', ['int[]']);
+          if (mesh?.typeName !== 'Mesh' || !points || !counts || !corners) return null;
+          const indices = [];
+          for (let face = 0, offset = 0; face < counts.length; offset += counts[face++]) for (let k = 1; k + 1 < counts[face]; k++) indices.push(corners[offset], corners[offset + k], corners[offset + k + 1]);
+          return indices.every((index) => Number.isInteger(index) && index >= 0 && index < points.length / 3) ? { path: target, positions: Float32Array.from(points), indices: Uint32Array.from(indices) } : null;
+        });
+        instancers.push({ path, positions: Float32Array.from(positions), protoIndices: Int32Array.from(protoIndices), orientations: orientations?.length === protoIndices.length * 4 ? Float32Array.from(orientations) : null, scales: scales?.length === positions.length ? Float32Array.from(scales) : null, prototypes });
+      }
+      return instancers;
+    } finally { document.delete(); }
+  }
+
   async getMeshPoints(path) {
     const mesh = await this.getAuthoredMesh(path);
     return mesh && !mesh.animated ? mesh.points : null;
   }
 
   async removeGeomNodes(path, summary = `Remove geometry nodes from ${path}`) {
-    const name = this.geomNodesOutputName(path), parent = path.slice(0, path.lastIndexOf('/')) || '/', outputPath = `${parent === '/' ? '' : parent}/${name}`, original = this.usda;
+    const original = this.usda;
     try {
-      await this.nativeAttributeEdits(this.geomNodesCleanupEdits(path, outputPath), summary);
+      await this.nativeAttributeEdits(this.geomNodesCleanupEdits(path), summary);
       return original;
     } catch (error) {
       if (this.usda !== original) await this.replaceUSDA(original, 'Roll back geometry nodes');

@@ -1,6 +1,6 @@
 import { LuciaError } from '../utils.js';
 import { workerPayloadBytes } from '../worker-policy.js';
-import { GeoNodesCache, evaluateGraph, geometryToMeshData } from './evaluate.js';
+import { GeoNodesCache, evaluateGraph, geometryToMeshData, geometryToOutput } from './evaluate.js';
 import { geometryStats, hashValue, meshGeometry } from './geometry.js';
 
 // Fan-triangulate authored USD topology into the indexed-mesh interchange.
@@ -16,13 +16,28 @@ export function sourceInputHash(source) {
   return hashValue(source ? [source.positions, source.indices] : 'empty');
 }
 
+// Evaluates a graph into:
+//   positions/indices — the fully realized mesh (preview and Apply)
+//   output            — what Commit authors: { mesh|null, instancer|null }
+// Arrays are fresh copies: cached node outputs may share buffers and results
+// are transferred (detached) when posted back from the worker.
 export async function evaluateGraphToMesh(graph, source, cache = null) {
   const groupInput = source ? meshGeometry(source.positions, source.indices) : undefined;
   const result = await evaluateGraph(graph, { groupInput, inputHash: sourceInputHash(source), cache });
-  const mesh = geometryToMeshData(result.geometry);
-  // Copy: the arrays may be shared with cached node outputs and are
-  // transferred (detached) when posted back from the worker.
-  return { positions: Float32Array.from(mesh.positions), indices: Uint32Array.from(mesh.indices), key: result.key, inputHash: result.inputHash, stats: geometryStats(result.geometry) };
+  const mesh = geometryToMeshData(result.geometry), output = geometryToOutput(result.geometry, { realizeInstances: result.realizeInstances });
+  const copyMesh = (m) => m && { positions: Float32Array.from(m.positions), indices: Uint32Array.from(m.indices) };
+  return {
+    positions: Float32Array.from(mesh.positions), indices: Uint32Array.from(mesh.indices),
+    output: { mesh: copyMesh(output.mesh), instancer: output.instancer && { ...output.instancer, prototypes: output.instancer.prototypes.map(copyMesh) } },
+    key: result.key, inputHash: result.inputHash, stats: geometryStats(result.geometry),
+  };
+}
+
+export function resultTransferables(result) {
+  const buffers = [result.positions.buffer, result.indices.buffer], output = result.output;
+  if (output?.mesh) buffers.push(output.mesh.positions.buffer, output.mesh.indices.buffer);
+  if (output?.instancer) { const i = output.instancer; buffers.push(i.positions.buffer, i.orientations.buffer, i.scales.buffer, i.protoIndices.buffer); for (const p of i.prototypes) buffers.push(p.positions.buffer, p.indices.buffer); }
+  return buffers;
 }
 
 // Owns a persistent evaluation worker so its node cache survives between

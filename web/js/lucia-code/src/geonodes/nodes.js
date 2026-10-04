@@ -37,7 +37,8 @@ const checkBudget = (count, label) => { if (count > GEONODES_MAX_ELEMENTS) throw
 // ---------------------------------------------------------------------------
 // Group IO
 registerNode('GroupInput', { label: 'Group Input', category: 'Input', outputs: [{ name: 'geometry', type: 'geometry' }], evaluate: (_inputs, ctx) => ({ geometry: ctx.groupInput || EMPTY_GEOMETRY }) });
-registerNode('GroupOutput', { label: 'Group Output', category: 'Output', inputs: [{ name: 'geometry', type: 'geometry' }], evaluate: ({ geometry }) => ({ geometry: geometryIn(geometry) }) });
+// realizeInstances=false authors instances as a UsdGeomPointInstancer on commit.
+registerNode('GroupOutput', { label: 'Group Output', category: 'Output', inputs: [{ name: 'geometry', type: 'geometry' }, { name: 'realizeInstances', type: 'bool', default: false }], evaluate: ({ geometry, realizeInstances }) => ({ geometry: geometryIn(geometry), realizeInstances: Boolean(realizeInstances) }) });
 registerNode('Value', { label: 'Value', category: 'Input', inputs: [{ name: 'value', type: 'float', default: 1 }], outputs: [{ name: 'value', type: 'float' }], evaluate: ({ value }) => ({ value: Number(value) }) });
 registerNode('Vector', { label: 'Vector', category: 'Input', inputs: [{ name: 'x', type: 'float', default: 0 }, { name: 'y', type: 'float', default: 0 }, { name: 'z', type: 'float', default: 0 }], outputs: [{ name: 'vector', type: 'vector' }], evaluate: ({ x, y, z }) => ({ vector: lift('vector', (a, b, c) => [a, b, c], x, y, z) }) });
 registerNode('Position', { label: 'Position', category: 'Field', outputs: [{ name: 'position', type: 'vector' }], evaluate: () => ({ position: makeField('vector', (ctx) => ctx.position) }) });

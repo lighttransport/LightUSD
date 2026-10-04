@@ -15,7 +15,7 @@ export function geoNodesOwner(session, path) {
 export class LuciaGeoNodesEditor {
   constructor(app) { this.app = app; this.runner = new GeoNodesRunner(); this.path = null; this.graph = null; this.source = null; this.status = ''; this.error = null; this.timer = null; }
 
-  get outputPath() { const parent = this.path.slice(0, this.path.lastIndexOf('/')) || '/'; return `${parent === '/' ? '' : parent}/${this.app.session.geomNodesOutputName(this.path)}`; }
+  get outputPaths() { const { meshPath, instancerPath } = this.app.session.geomNodesOutputPaths(this.path); return [meshPath, instancerPath]; }
 
   async open(path) {
     const authored = await this.app.session.getAuthoredMesh(path);
@@ -73,7 +73,7 @@ export class LuciaGeoNodesEditor {
     try {
       const result = await this.runner.evaluate(this.graph, this.source);
       if (path !== this.path) return;
-      this.app.bridge.setPreviewMesh(path, result.positions, result.indices, this.outputPath);
+      this.app.bridge.setPreviewMesh(path, result.positions, result.indices, this.outputPaths);
       this.status = `${result.stats.vertices.toLocaleString()} vertices · ${result.stats.triangles.toLocaleString()} triangles${result.stats.instances ? ` · ${result.stats.instances} instances (realized on commit)` : ''}`;
       this.error = null;
     } catch (error) {
@@ -84,8 +84,8 @@ export class LuciaGeoNodesEditor {
   }
 
   async commit() {
-    const path = this.path, graph = this.graph, source = this.source, outputPath = this.outputPath;
-    const ok = await this.app.runMutation(`Geometry Nodes: ${path}`, [path, outputPath], async () => {
+    const path = this.path, graph = this.graph, source = this.source, outputPaths = this.outputPaths;
+    const ok = await this.app.runMutation(`Geometry Nodes: ${path}`, [path, ...outputPaths], async () => {
       const result = await this.runner.evaluate(graph, source);
       return this.app.session.commitGeomNodes(path, graph, result, { inputHash: result.inputHash, graphKey: result.key });
     }, ['scene', 'usd'], { comparison: false });
@@ -207,11 +207,11 @@ export async function renderGeoNodesPanel(app, selectedPath) {
   const session = app.session, path = geoNodesOwner(session, selectedPath);
   let graph = null, error = null;
   try { graph = session.getGeomNodesGraph(path); } catch (e) { error = e.message; }
-  const name = session.geomNodesOutputName(path), parent = path.slice(0, path.lastIndexOf('/')) || '/', outputPath = `${parent === '/' ? '' : parent}/${name}`;
-  const info = session.getGeomNodesOutputInfo(outputPath);
+  const { meshPath, instancerPath } = session.geomNodesOutputPaths(path);
+  const info = session.getGeomNodesOutputInfo(meshPath) || session.getGeomNodesOutputInfo(instancerPath);
   const editing = app.geoNodes.path === path;
   app.$('#inspector').innerHTML = `<section class="section" id="geonodes-panel"><h3>Geometry Nodes</h3>
-    <p class="empty">Non-destructive procedural modifier. The graph is stored on <code>${esc(path)}</code>; the result is written to <code>${esc(outputPath)}</code> and the source is hidden.</p>
+    <p class="empty">Non-destructive procedural modifier. The graph is stored on <code>${esc(path)}</code>; the result is written to <code>${esc(meshPath)}</code> and, for instances, a PointInstancer <code>${esc(instancerPath)}</code> (enable <em>realizeInstances</em> on Group Output to bake them into the mesh). The source is hidden.</p>
     ${error ? `<p class="issue-error">${esc(error)}</p>` : ''}
     <p id="geonodes-state" class="empty">${graph ? `${graph.nodes.length} nodes · ${graph.links.length} links` : 'No modifier on this prim.'}</p>
     <div class="stack">
@@ -229,7 +229,7 @@ export async function renderGeoNodesPanel(app, selectedPath) {
     state.classList.toggle('issue-warning', stale);
   }).catch(() => {});
   const evaluateCommitted = async () => { const authored = await session.getAuthoredMesh(path); return app.geoNodes.runner.evaluate(graph, triangulateAuthoredMesh(authored)); };
-  app.$('#geonodes-reevaluate').onclick = () => app.runMutation(`Geometry Nodes: ${path}`, [path, outputPath], async () => { const result = await evaluateCommitted(); return session.commitGeomNodes(path, graph, result, { inputHash: result.inputHash, graphKey: result.key }); }, ['scene', 'usd'], { comparison: false });
+  app.$('#geonodes-reevaluate').onclick = () => app.runMutation(`Geometry Nodes: ${path}`, [path, meshPath, instancerPath], async () => { const result = await evaluateCommitted(); return session.commitGeomNodes(path, graph, result, { inputHash: result.inputHash, graphKey: result.key }); }, ['scene', 'usd'], { comparison: false });
   app.$('#geonodes-apply').onclick = async () => { if (await app.confirmAction(`Apply geometry nodes on ${path}?`, 'The evaluated mesh replaces the source geometry; the graph and generated output are removed. The operation is undoable.')) await app.runMutation(`Apply geometry nodes: ${path}`, [path], async () => session.applyGeomNodes(path, await evaluateCommitted()), ['scene', 'usd']); };
   app.$('#geonodes-remove').onclick = async () => { if (await app.confirmAction(`Remove geometry nodes from ${path}?`, 'The graph and generated output are removed and the source is shown again. The operation is undoable.')) await app.runMutation(`Remove geometry nodes: ${path}`, [path], () => session.removeGeomNodes(path), ['scene', 'usd']); };
 }

@@ -57,7 +57,18 @@ export async function runToolsBrowserChecks(page) {
     app.select('/World/Plane_geonodes'); app.renderInspector();
     await app.commands.undo(); await app.refreshAll(false);
     check(!/Plane_geonodes|lucia:geomNodes/.test(app.session.exportUSDA()), 'Undo did not remove the procedural output');
-    return { sculptMaxY: maxY, outputVertices };
+    const scatterGraph = { version: 1, nodes: [{ id: 'in', type: 'GroupInput' }, { id: 'pts', type: 'DistributePointsOnFaces', params: { density: 3, seed: 4 } }, { id: 'cube', type: 'MeshCube', params: { size: [0.05, 0.05, 0.05] } }, { id: 'inst', type: 'InstanceOnPoints' }, { id: 'out', type: 'GroupOutput' }],
+      links: [{ from: ['in', 'geometry'], to: ['pts', 'mesh'] }, { from: ['pts', 'points'], to: ['inst', 'points'] }, { from: ['cube', 'mesh'], to: ['inst', 'instance'] }, { from: ['inst', 'instances'], to: ['out', 'geometry'] }] };
+    await app.executeTool({ name: 'scene.geometry_nodes', arguments: { path, graph: scatterGraph } });
+    await until(() => !app.activity.active, 'PointInstancer commit did not finish');
+    const instancerPath = '/World/Plane_geonodes_instances', scattered = app.session.exportUSDA();
+    check(/def PointInstancer "Plane_geonodes_instances"/.test(scattered) && !/def Mesh "Plane_geonodes"/.test(scattered), 'PointInstancer output was not authored');
+    const instances = scattered.match(/int\[\] protoIndices = \[([^\]]*)\]/)[1].split(',').length;
+    let rendered = 0; app.bridge.pathObjects.get(instancerPath)?.traverse((object) => { if (object.isInstancedMesh) rendered += object.count; else if (object.isMesh) rendered++; });
+    check(rendered >= instances, `PointInstancer was not rendered (${rendered} of ${instances})`);
+    await app.commands.undo(); await app.refreshAll(false);
+    check(!/PointInstancer/.test(app.session.exportUSDA()), 'Undo did not remove the PointInstancer');
+    return { sculptMaxY: maxY, outputVertices, instances, rendered };
   });
   console.log('Lucia sculpt + geometry nodes browser:', JSON.stringify(results));
   assert.ok(results.outputVertices > 0);

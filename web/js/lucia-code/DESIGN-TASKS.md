@@ -2279,9 +2279,16 @@ diagnostics and transfer operations are reliable.
       drag output→input to link, click an input to unlink, inline parameters),
       with a debounced live preview evaluated in a persistent worker.
       Assistant tool `scene.geometry_nodes` evaluates a supplied/stored graph.
-      Pending: loose points cannot be authored on a Mesh prim (instances are
-      realized on commit; a PointInstancer output is a follow-up), and the
-      output carries no UVs or GeomSubset material partitions.
+      Pending: loose points are dropped on commit, and the output carries no
+      UVs or GeomSubset material partitions.
+- [x] LC-404 PointInstancer output. Instances are authored as a sibling
+      `<Name>_geonodes_instances` UsdGeomPointInstancer (copied source
+      xformOps, `Prototypes/Proto<i>` meshes, positions/quath orientations/
+      scales/protoIndices) next to the realized `<Name>_geonodes` mesh part,
+      which is omitted when empty. Group Output `realizeInstances` bakes
+      instances into the mesh instead; sheared instance transforms fall back
+      to realization. The viewport draws PointInstancers as InstancedMeshes
+      because the legacy Three loader only draws prototypes.
 
 ### LC-410 — Sculpt Brushes
 
