@@ -80,6 +80,7 @@ export function applyDab(mesh, settings, dab) {
     const ring = new Set(touched);
     for (const v of touched) for (let k = mesh.neighborOffsets[v]; k < mesh.neighborOffsets[v + 1]; k++) ring.add(mesh.neighbors[k]);
     mesh.updateNormals(ring);
+    for (const v of ring) mesh.dirty.add(v);
   }
   return touched;
 }

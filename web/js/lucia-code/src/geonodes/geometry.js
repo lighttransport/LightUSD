@@ -101,18 +101,22 @@ export function mulberry32(seed) {
   };
 }
 
-// FNV-1a over typed-array bytes and JSON; used for cache keys and staleness stamps.
+// FNV-1a over a self-delimiting serialization (type tag + length per item),
+// used for node-cache keys and staleness stamps. Delimiting matters:
+// [1, 23] and [12, 3] must not hash alike.
 export function hashValue(value, seed = 0x811c9dc5) {
   let hash = seed >>> 0;
-  const mix = (byte) => { hash ^= byte; hash = Math.imul(hash, 0x01000193) >>> 0; };
+  const mix = (byte) => { hash ^= byte & 255; hash = Math.imul(hash, 0x01000193) >>> 0; };
+  const mixLength = (n) => { mix(n); mix(n >>> 8); mix(n >>> 16); mix(n >>> 24); };
+  const mixText = (tag, text) => { mix(tag); mixLength(text.length); for (let i = 0; i < text.length; i++) { const c = text.charCodeAt(i); mix(c); mix(c >>> 8); } };
   const visit = (item) => {
     if (ArrayBuffer.isView(item)) {
       const bytes = new Uint8Array(item.buffer, item.byteOffset, item.byteLength);
-      mix(item.constructor.name.length);
+      mixText(1, item.constructor.name); mixLength(bytes.length);
       for (let i = 0; i < bytes.length; i++) mix(bytes[i]);
-    } else if (Array.isArray(item)) { mix(91); item.forEach(visit); mix(93); }
-    else if (item && typeof item === 'object') { mix(123); for (const key of Object.keys(item).sort()) { if (typeof item[key] === 'function') continue; for (const ch of key) mix(ch.charCodeAt(0) & 255); visit(item[key]); } mix(125); }
-    else for (const ch of String(item)) mix(ch.charCodeAt(0) & 255);
+    } else if (Array.isArray(item)) { mix(2); mixLength(item.length); item.forEach(visit); }
+    else if (item && typeof item === 'object') { const keys = Object.keys(item).filter((key) => typeof item[key] !== 'function').sort(); mix(3); mixLength(keys.length); for (const key of keys) { mixText(4, key); visit(item[key]); } }
+    else mixText(typeof item === 'number' ? 5 : typeof item === 'boolean' ? 6 : item == null ? 7 : 8, String(item));
   };
   visit(value);
   return hash.toString(16).padStart(8, '0');

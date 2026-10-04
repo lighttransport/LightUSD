@@ -41,7 +41,7 @@ export function resultTransferables(result) {
 }
 
 // Owns a persistent evaluation worker so its node cache survives between
-// parameter tweaks. Only the newest request resolves; superseded requests
+// parameter tweaks. Only the newest preview resolves; superseded previews
 // reject with LUCIA_CANCELLED. Falls back to in-thread evaluation when
 // Workers are unavailable (Node tests).
 export class GeoNodesRunner {
@@ -60,14 +60,16 @@ export class GeoNodesRunner {
     return worker;
   }
 
-  async evaluate(graph, source) {
-    for (const [id, request] of this.pending) { request.reject(new LuciaError('LUCIA_CANCELLED', 'Superseded by a newer geometry node evaluation.')); this.pending.delete(id); }
+  // Previews (preview: true) supersede earlier previews only; commit-path
+  // evaluations are never cancelled by a later preview.
+  async evaluate(graph, source, { preview = false } = {}) {
+    if (preview) for (const [id, request] of this.pending) if (request.preview) { request.reject(new LuciaError('LUCIA_CANCELLED', 'Superseded by a newer geometry node evaluation.')); this.pending.delete(id); }
     const worker = this.ensureWorker();
     if (!worker) return evaluateGraphToMesh(graph, source, this.cache);
     const id = this.nextId++, payload = { type: 'evaluate', id, graph, source: source ? { positions: new Float32Array(source.positions), indices: new Uint32Array(source.indices) } : null };
     workerPayloadBytes(payload);
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      this.pending.set(id, { resolve, reject, preview });
       worker.postMessage(payload, payload.source ? [payload.source.positions.buffer, payload.source.indices.buffer] : []);
     });
   }

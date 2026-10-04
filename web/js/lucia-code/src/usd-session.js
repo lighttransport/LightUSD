@@ -294,12 +294,48 @@ function extentEdit(path, positions) {
   return positions.length ? { args: { path, attr_name: 'extent', value: { type: 'float3[]', value: new Float32Array([...min, ...max]) } } } : { args: { path, attr_name: 'extent', remove: true } };
 }
 
+// Copy of a prim block (declaration incl. metadata `( ... )` through the
+// closing brace) renamed to `name`. Uses findPrimBlock offsets, so metadata
+// such as kind/apiSchemas between the name and `{` is preserved.
+function clonePrimBlockText(source, block, leaf, name) {
+  const start = source.lastIndexOf('\n', block.declarationStart) + 1, header = source.slice(block.declarationStart, block.open), quoted = `"${leaf}"`, at = header.indexOf(quoted);
+  if (at < 0) return null;
+  return source.slice(start, block.declarationStart) + header.slice(0, at) + `"${name}"` + header.slice(at + quoted.length) + source.slice(block.open, block.close + 1);
+}
+
+// Authored normals no longer match rewritten topology; renderers derive them.
+function staleNormalRemovals(path) {
+  return ['normals', 'normals:indices'].map((attr_name) => ({ args: { path, attr_name, remove: true } }));
+}
+
 // Delete a prim block (declaration line through closing brace) from USDA text.
 function removePrimText(source, path) {
   const block = findPrimBlock(source, path);
   if (!block) return source;
   const start = source.lastIndexOf('\n', block.declarationStart) + 1;
   return source.slice(0, start) + source.slice(block.close + 1).replace(/^[ \t]*\n/, '');
+}
+
+// Complete xformOp statements of a prim body, including multi-line values
+// (matrix4d) and `.timeSamples = { ... }` blocks: each statement runs until
+// its (), [], {} nest closes and the line ends. Strings are skipped.
+function xformStatements(body) {
+  const statements = [], start = /(^|\n)[ \t]*((?:uniform\s+)?[\w\[\]]+\s+xformOp(?:Order|:[\w:]+)(?:\.timeSamples)?\s*=)/g;
+  let match;
+  while ((match = start.exec(body))) {
+    let i = match.index + match[0].length, depth = 0, quote = null;
+    for (; i < body.length; i++) {
+      const ch = body[i];
+      if (quote) { if (ch === '\\') i++; else if (ch === quote) quote = null; continue; }
+      if (ch === '"' || ch === "'") quote = ch;
+      else if ('([{'.includes(ch)) depth++;
+      else if (')]}'.includes(ch)) depth--;
+      else if (ch === '\n' && depth <= 0) break;
+    }
+    statements.push(body.slice(match.index + match[1].length, i).trim());
+    start.lastIndex = i;
+  }
+  return statements;
 }
 
 // Insert an empty PointInstancer sibling after `sourcePath`, carrying the
@@ -309,8 +345,7 @@ function insertInstancerSkeleton(source, sourcePath, name) {
   let body = source.slice(block.open + 1, block.close);
   const child = /\b(?:def|over|class)\s+(?:[A-Za-z_][\w:]*\s*)?"/.exec(body);
   if (child) body = body.slice(0, child.index);
-  const xformLines = body.split('\n').filter((line) => /^\s*(?:uniform\s+)?[\w\[\]]+\s+xformOp(?:Order|:[\w:]+)\s*=/.test(line)).map((line) => `    ${line.trim()}`);
-  const skeleton = `\ndef PointInstancer "${name}"\n{\n${xformLines.join('\n')}\n    def Scope "Prototypes"\n    {\n    }\n}\n`;
+  const skeleton = `\ndef PointInstancer "${name}"\n{\n${xformStatements(body).map((statement) => `    ${statement}`).join('\n')}\n    def Scope "Prototypes"\n    {\n    }\n}\n`;
   return source.slice(0, block.close + 1) + skeleton + source.slice(block.close + 1);
 }
 
@@ -328,7 +363,26 @@ function pointInstancerEdits(path, instancer) {
   return edits;
 }
 
-const GEONODES_GRAPH_ATTR = 'lucia:geomNodes', GEONODES_SOURCE_ATTR = 'lucia:geomNodesSource';
+const GEONODES_GRAPH_ATTR = 'lucia:geomNodes', GEONODES_SOURCE_ATTR = 'lucia:geomNodesSource', GEONODES_VISIBILITY_ATTR = 'lucia:geomNodesVisibility';
+
+// Default-time visibility token authored directly on a prim (not children).
+function authoredVisibility(source, path) {
+  const block = findPrimBlock(source, path);
+  if (!block) return null;
+  let body = source.slice(block.start, block.end);
+  const child = /\b(?:def|over|class)\s+(?:[A-Za-z_][\w:]*\s*)?"/.exec(body);
+  if (child) body = body.slice(0, child.index);
+  return /\btoken\s+visibility\s*=\s*"(\w+)"/.exec(body)?.[1] || null;
+}
+
+function hasAnimatedVisibility(source, path) {
+  const block = findPrimBlock(source, path);
+  if (!block) return false;
+  let body = source.slice(block.start, block.end);
+  const child = /\b(?:def|over|class)\s+(?:[A-Za-z_][\w:]*\s*)?"/.exec(body);
+  if (child) body = body.slice(0, child.index);
+  return /\bvisibility\.(?:timeSamples|spline)\s*=/.test(body);
+}
 
 // Reads a custom string attribute authored directly on a prim (not on its
 // children). Handles both quote styles the native writer may emit.
@@ -782,12 +836,8 @@ export class LuciaUsdSession extends EventTarget {
     if (!block) return [];
     const parent = path.slice(0, path.lastIndexOf('/')) || '/', siblingPath = `${parent === '/' ? '' : parent}/${name}`;
     if (findPrimBlock(this.usda, siblingPath)) throw new LuciaError('LUCIA_LOD_COLLISION', `LOD prim already exists: ${siblingPath}`);
-    let start = this.usda.lastIndexOf('\n', block.open) + 1;
-    if (/^\s*\{$/.test(this.usda.slice(start, block.open + 1))) start = this.usda.lastIndexOf('\n', start - 2) + 1;
-    const end = block.close + 1, originalBlock = this.usda.slice(start, end), leaf = path.split('/').at(-1);
-    const declaration = new RegExp(`(\\b(?:def|over|class)\\s+(?:[A-Za-z_][\\w:]*)?\\s*")${escapeRegExp(leaf)}("\\s*\\{)`).exec(originalBlock);
-    if (!declaration) throw new LuciaError('LUCIA_LOD_SOURCE', `Could not clone mesh declaration: ${path}`);
-    const clone = originalBlock.slice(0, declaration.index) + declaration[1] + name + declaration[2] + originalBlock.slice(declaration.index + declaration[0].length);
+    const end = block.close + 1, clone = clonePrimBlockText(this.usda, block, path.split('/').at(-1), name);
+    if (clone == null) throw new LuciaError('LUCIA_LOD_SOURCE', `Could not clone mesh declaration: ${path}`);
     const original = this.usda, clonedSource = original.slice(0, end) + `\n${clone}` + original.slice(end);
     this.usda = clonedSource;
     try {
@@ -821,12 +871,23 @@ export class LuciaUsdSession extends EventTarget {
   }
 
   // Removes the graph, restores source visibility and deletes owned outputs.
+  // Removes the graph, restores the source's own visibility opinion (saved at
+  // first commit) and deletes owned outputs.
   geomNodesCleanupEdits(path) {
     const owned = Object.values(this.geomNodesOutputPaths(path)).filter((output) => this.getGeomNodesOutputInfo(output)?.source === path);
+    const saved = readCustomString(this.usda, path, GEONODES_VISIBILITY_ATTR);
     return [
-      { args: { path, attr_name: GEONODES_GRAPH_ATTR, remove: true } }, { args: { path, attr_name: 'visibility', remove: true } },
+      { args: { path, attr_name: GEONODES_GRAPH_ATTR, remove: true } }, { args: { path, attr_name: GEONODES_VISIBILITY_ATTR, remove: true } },
+      // Never touch visibility that became animated after the commit.
+      ...(hasAnimatedVisibility(this.usda, path) ? [] : [saved ? { args: { path, attr_name: 'visibility', value: { type: 'token', value: saved } } } : { args: { path, attr_name: 'visibility', remove: true } }]),
       ...owned.map((output) => ({ args: { path: output, removePrim: true } })),
     ];
+  }
+
+  // GeomSubsets index faces; a topology rewrite invalidates them, so remove
+  // them instead of leaving empty subsets (which silently drop materials).
+  geomSubsetRemovals(sourcePath, targetPath = sourcePath) {
+    return findGeomSubsetPaths(this.usda, sourcePath).map((subset) => ({ args: { path: `${targetPath}${subset.slice(sourcePath.length)}`, removePrim: true } }));
   }
 
   // `result` is an evaluateGraphToMesh() result: `output.mesh` becomes the
@@ -837,6 +898,9 @@ export class LuciaUsdSession extends EventTarget {
     if (typeof inputHash !== 'string' || !inputHash) throw new LuciaError('LUCIA_GEONODES_COMMIT', 'Geometry node commits need the evaluated input hash.');
     const output = result?.output ?? { mesh: result, instancer: null };
     if (!output.mesh?.positions?.length && !output.instancer) throw new LuciaError('LUCIA_GEONODES_EMPTY', 'The geometry node graph produced no mesh or instances.');
+    // A default-time `invisible` cannot override time samples, and replacing
+    // them would destroy the user's animation: refuse instead.
+    if (hasAnimatedVisibility(this.usda, path)) throw new LuciaError('LUCIA_GEONODES_VISIBILITY', `Geometry nodes cannot hide ${path} because its visibility is animated. Remove the visibility animation or apply the graph to a copy.`);
     const serialized = serializeGraph(graph), { meshPath, instancerPath } = this.geomNodesOutputPaths(path), stamp = JSON.stringify({ source: path, inputHash, graphKey });
     for (const outputPath of [meshPath, instancerPath])
       if (findPrimBlock(this.usda, outputPath) && this.getGeomNodesOutputInfo(outputPath)?.source !== path) throw new LuciaError('LUCIA_GEONODES_COLLISION', `A prim not owned by this modifier already exists: ${outputPath}`);
@@ -846,6 +910,9 @@ export class LuciaUsdSession extends EventTarget {
         { args: { path, attr_name: GEONODES_GRAPH_ATTR, value: { type: 'string', value: serialized }, custom: true } },
         { args: { path, attr_name: 'visibility', value: { type: 'token', value: 'invisible' } } },
       ];
+      // First commit: remember the source's own visibility for Remove/Apply.
+      if (readCustomString(this.usda, path, GEONODES_GRAPH_ATTR) == null)
+        edits.push({ args: { path, attr_name: GEONODES_VISIBILITY_ATTR, value: { type: 'string', value: authoredVisibility(this.usda, path) || '' }, custom: true } });
       // The instancer is rebuilt from scratch each commit (prototype count may change).
       if (findPrimBlock(this.usda, instancerPath)) this.usda = removePrimText(this.usda, instancerPath);
       if (output.instancer) {
@@ -856,8 +923,12 @@ export class LuciaUsdSession extends EventTarget {
         edits.push(
           { args: { path: meshPath, attr_name: GEONODES_GRAPH_ATTR, remove: true } }, { args: { path: meshPath, attr_name: 'visibility', remove: true } },
           stampEdit(meshPath), extentEdit(meshPath, output.mesh.positions));
-        const mesh = { positions: output.mesh.positions, indices: output.mesh.indices, clearMissingAttributes: true };
-        if (findPrimBlock(this.usda, meshPath)) await this.setMeshGeometry(meshPath, mesh, summary, edits);
+        const mesh = { positions: output.mesh.positions, indices: output.mesh.indices }, existingMesh = findPrimBlock(this.usda, meshPath);
+        // A new output is cloned from the source, so it inherits the source's primvars.
+        edits.push(...await this.topologyPrimvarRemovals(existingMesh ? meshPath : path, meshPath));
+        edits.push(...staleNormalRemovals(meshPath));
+        edits.push(...this.geomSubsetRemovals(existingMesh ? meshPath : path, meshPath));
+        if (existingMesh) await this.setMeshGeometry(meshPath, mesh, summary, edits);
         else await this.setMeshGeometrySibling(path, this.geomNodesOutputName(path), mesh, summary, edits);
       } else {
         if (findPrimBlock(this.usda, meshPath)) edits.push({ args: { path: meshPath, removePrim: true } });
@@ -876,7 +947,7 @@ export class LuciaUsdSession extends EventTarget {
   async applyGeomNodes(path, data, summary = `Apply geometry nodes on ${path}`) {
     const original = this.usda;
     try {
-      await this.setMeshGeometry(path, { ...data, clearMissingAttributes: true }, summary, [...this.geomNodesCleanupEdits(path), extentEdit(path, data.positions)]);
+      await this.setMeshGeometry(path, { positions: data.positions, indices: data.indices }, summary, [...this.geomNodesCleanupEdits(path), extentEdit(path, data.positions), ...await this.topologyPrimvarRemovals(path), ...staleNormalRemovals(path), ...this.geomSubsetRemovals(path)]);
       return original;
     } catch (error) {
       if (this.usda !== original) await this.replaceUSDA(original, 'Roll back geometry nodes');
@@ -932,7 +1003,8 @@ export class LuciaUsdSession extends EventTarget {
       const instancers = [], invisible = [];
       for (const [path, prim] of specs) {
         const visibility = prim.properties?.visibility?.attribute;
-        if (visibility?.hasValue && String(visibility.value).replaceAll('"', '') === 'invisible') invisible.push(path);
+        // Animated visibility is left to the loader (default value may not apply).
+        if (visibility?.hasValue && !visibility.hasTimeSamples && String(visibility.value).replaceAll('"', '') === 'invisible') invisible.push(path);
         if (prim.typeName !== 'PointInstancer') continue;
         const positions = read(prim, 'positions', ['point3f[]', 'float3[]']), protoIndices = read(prim, 'protoIndices', ['int[]']);
         if (!positions || !protoIndices || protoIndices.length * 3 !== positions.length) continue;
@@ -948,6 +1020,22 @@ export class LuciaUsdSession extends EventTarget {
         instancers.push({ path, positions: Float32Array.from(positions), protoIndices: Int32Array.from(protoIndices), orientations: orientations?.length === protoIndices.length * 4 ? Float32Array.from(orientations) : null, scales: scales?.length === positions.length ? Float32Array.from(scales) : null, prototypes });
       }
       return { instancers, invisible };
+    } finally { document.delete(); }
+  }
+
+  // Primvars whose element count depends on topology (anything not
+  // constant; unauthored interpolation means constant). A topology rewrite
+  // must drop them or the mesh is left with mismatched primvar arrays.
+  async topologyPrimvarRemovals(sourcePath, targetPath = sourcePath) {
+    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd_next.js').then(({ default: factory }) => factory()));
+    const document = new native.LayerDocument();
+    try {
+      if (!document.load(encoder.encode(this.usda)).success) return [];
+      let owners = JSON.parse(document.exportJSON().text).primSpecs, prim;
+      for (const name of sourcePath.split('/').filter(Boolean)) { prim = owners?.[name]; owners = prim?.children; }
+      const names = Object.keys(prim?.properties || {}).filter((name) => name.startsWith('primvars:') && !name.endsWith(':indices'));
+      return names.filter((name) => { const interpolation = document.getAttributeMetadata(sourcePath, name, 'interpolation'); return interpolation.success && interpolation.value !== 'constant'; })
+        .flatMap((name) => [{ args: { path: targetPath, attr_name: name, remove: true } }, { args: { path: targetPath, attr_name: `${name}:indices`, remove: true } }]);
     } finally { document.delete(); }
   }
 
@@ -989,11 +1077,8 @@ export class LuciaUsdSession extends EventTarget {
     if (!block) return [];
     const childPath = `${path}/${name}`;
     if (findPrimBlock(this.usda, childPath)) throw new LuciaError('LUCIA_CHILD_COLLISION', `Child mesh already exists: ${childPath}`);
-    let start = this.usda.lastIndexOf('\n', block.open) + 1;
-    if (/^\s*\{$/.test(this.usda.slice(start, block.open + 1))) start = this.usda.lastIndexOf('\n', start - 2) + 1;
-    const originalBlock = this.usda.slice(start, block.close + 1), leaf = path.split('/').at(-1), declaration = new RegExp(`(\\b(?:def|over|class)\\s+(?:[A-Za-z_][\\w:]*)?\\s*")${escapeRegExp(leaf)}("\\s*\\{)`).exec(originalBlock);
-    if (!declaration) throw new LuciaError('LUCIA_CHILD_SOURCE', `Could not clone mesh declaration: ${path}`);
-    const clone = originalBlock.slice(0, declaration.index) + declaration[1] + name + declaration[2] + originalBlock.slice(declaration.index + declaration[0].length), original = this.usda;
+    const clone = clonePrimBlockText(this.usda, block, path.split('/').at(-1), name), original = this.usda;
+    if (clone == null) throw new LuciaError('LUCIA_CHILD_SOURCE', `Could not clone mesh declaration: ${path}`);
     this.usda = original.slice(0, block.close) + `\n${clone}\n` + original.slice(block.close);
     try { await this.setMeshGeometry(childPath, data, summary); return original; }
     catch (error) { this.usda = original; throw error; }
@@ -1172,4 +1257,4 @@ export class LuciaUsdSession extends EventTarget {
   }
 }
 
-export { findPrimBlock, setAttributeText };
+export { findPrimBlock, setAttributeText, xformStatements };

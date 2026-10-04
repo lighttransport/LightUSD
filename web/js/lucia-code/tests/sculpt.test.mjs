@@ -119,3 +119,15 @@ def Xform "World" {
     await assert.rejects(session.setMeshPoints('/World/Plane', new Float32Array([NaN, 0, 0])), /finite/);
   } finally { session.dispose(); }
 });
+
+test('stroke-local raycasts match full raycasts and track dirty vertices', () => {
+  const mesh = new SculptMesh(grid());
+  stroke(mesh, { brush: 'draw', radius: 0.3, strength: 1 }, [[0, 0, 0]]);
+  assert.ok(mesh.dirty.size > 0); mesh.dirty.clear();
+  for (const [x, y] of [[0.05, 0.02], [0.2, -0.1], [0.9, 0.9]]) {
+    const full = mesh.raycast([x, y, 5], [0, 0, -1]), near = mesh.raycast([x, y, 5], [0, 0, -1], mesh.facesNear([0, 0, 0], 0.9));
+    if (Math.hypot(x, y) < 0.5) { assert.ok(near); assert.ok(Math.abs(near.distance - full.distance) < 1e-9); }
+  }
+  assert.equal(mesh.raycast([3, 3, 5], [0, 0, -1], mesh.facesNear([0, 0, 0], 0.2)), null, 'far rays miss the local set (caller falls back)');
+  assert.ok(mesh.facesNear([0, 0, 0], 0.1).length < mesh.indices.length / 3 / 10);
+});

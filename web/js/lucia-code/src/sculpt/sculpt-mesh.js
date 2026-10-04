@@ -25,6 +25,8 @@ export class SculptMesh {
     this.normals = new Float32Array(count * 3);
     this.updateNormals(null);
     this.grid = null;
+    // Reps whose position or normal changed since the last drain (viewport sync).
+    this.dirty = new Set();
   }
 
   weld() {
@@ -121,10 +123,19 @@ export class SculptMesh {
 
   // Raycast in mesh-local space (Möller–Trumbore); used by headless tests and
   // as a fallback when no renderer is available.
-  raycast(origin, direction) {
-    const p = this.positions; let best = null;
-    for (let f = 0; f < this.indices.length; f += 3) {
-      const a = this.indices[f] * 3, b = this.indices[f + 1] * 3, c = this.indices[f + 2] * 3;
+  // `faces` (triangle indices) restricts the test, e.g. to facesNear().
+  // Triangles incident to reps within `radius` of `center` (stroke-local
+  // raycasts stay O(brush area) instead of O(mesh)).
+  facesNear(center, radius) {
+    const faces = new Set();
+    for (const [v] of this.queryRadius(center, radius)) for (let k = this.faceOffsets[v]; k < this.faceOffsets[v + 1]; k++) faces.add(this.vertexFaces[k]);
+    return [...faces];
+  }
+
+  raycast(origin, direction, faces = null) {
+    const p = this.positions, count = faces ? faces.length : this.indices.length / 3; let best = null;
+    for (let n = 0; n < count; n++) {
+      const f = (faces ? faces[n] : n) * 3, a = this.indices[f] * 3, b = this.indices[f + 1] * 3, c = this.indices[f + 2] * 3;
       const e1 = [p[b] - p[a], p[b + 1] - p[a + 1], p[b + 2] - p[a + 2]], e2 = [p[c] - p[a], p[c + 1] - p[a + 1], p[c + 2] - p[a + 2]];
       const h = [direction[1] * e2[2] - direction[2] * e2[1], direction[2] * e2[0] - direction[0] * e2[2], direction[0] * e2[1] - direction[1] * e2[0]];
       const det = e1[0] * h[0] + e1[1] * h[1] + e1[2] * h[2]; if (Math.abs(det) < 1e-12) continue;

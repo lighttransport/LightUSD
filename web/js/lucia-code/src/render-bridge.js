@@ -45,7 +45,7 @@ export class LuciaRenderBridge extends EventTarget {
     if (this.content) { this.scene.remove(this.content); this.disposeObject(this.content); }
     this.clearSelection();
     this.clearVertexLockPreview();
-    this.pathObjects.clear(); this.lodGroups = new Map(); this.colliderObjects = [];
+    this.pathObjects.clear(); this.lodGroups = new Map(); this.authoredHidden = new Set(); this.colliderObjects = [];
     const root = new THREE.Group(); root.name = 'LuciaUSD';
     const total = nativeScene.numRootNodes();
     for (let i = 0; i < total; i++) {
@@ -89,7 +89,8 @@ export class LuciaRenderBridge extends EventTarget {
     while (object && !object.userData?.['primMeta.absPath']) object = object.parent;
     if (object) {
       const path = object.userData['primMeta.absPath'];
-      if ((event.shiftKey || event.altKey) && intersection?.object?.isMesh) {
+      // Instance hits index prototype vertices, not the instancer's: no vertex pick.
+      if ((event.shiftKey || event.altKey) && intersection?.object?.isMesh && intersection.instanceId == null) {
         const vertexIndex = this.closestHitVertex(intersection.object, intersection);
         if (vertexIndex != null) { this.dispatchEvent(new CustomEvent('vertex-select', { detail: { path, vertexIndex, toggle: event.altKey } })); return; }
       }
@@ -115,10 +116,17 @@ export class LuciaRenderBridge extends EventTarget {
   surfaceHit(event, path) {
     const mesh = this.renderableMeshForPath(path);
     if (!mesh?.geometry) return null;
-    mesh.geometry.computeBoundingSphere(); mesh.geometry.computeBoundingBox?.();
+    // Bounds are O(n); sculpt invalidates them (sets null) only when it deforms.
+    if (!mesh.geometry.boundingSphere) mesh.geometry.computeBoundingSphere();
+    if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
     const hit = this.pointerRay(event).intersectObject(mesh, false)[0];
     if (!hit) return null;
     return { mesh, point: mesh.worldToLocal(hit.point.clone()).toArray(), normal: hit.face ? hit.face.normal.toArray() : [0, 0, 1] };
+  }
+  // Pointer ray in a mesh's local space, as plain arrays.
+  localRay(event, mesh) {
+    const ray = this.pointerRay(event).ray.clone().applyMatrix4(mesh.matrixWorld.clone().invert());
+    return { origin: ray.origin.toArray(), direction: ray.direction.toArray() };
   }
   // Pointer projected on the camera-facing plane through a mesh-local point
   // (grab brush drags in screen space, not along the surface).
@@ -178,7 +186,8 @@ export class LuciaRenderBridge extends EventTarget {
     this.scene.remove(this.geoNodesPreview); this.geoNodesPreview.geometry.dispose(); this.geoNodesPreview.material.dispose(); this.geoNodesPreview = null;
   }
   applyViewportOverrides({ instancers = [], invisible = [] } = {}) {
-    for (const path of invisible) { const object = this.pathObjects.get(path); if (object) object.visible = false; }
+    this.authoredHidden = new Set(invisible.map((path) => this.pathObjects.get(path)).filter(Boolean));
+    for (const object of this.authoredHidden) object.visible = false;
     this.showPointInstancers(instancers);
   }
   // Draw PointInstancers as InstancedMeshes under the instancer's object,
@@ -418,13 +427,18 @@ export class LuciaRenderBridge extends EventTarget {
     }
   }
   setLODPreview(enabled) { this.lodPreview = Boolean(enabled); this.updateLODVisibility(); }
+  // Authored invisibility and geometry-node preview hiding must survive the
+  // per-frame LOD visibility update.
+  isForcedHidden(object) {
+    return Boolean(this.authoredHidden?.has(object) || this.geoNodesHidden?.some((entry) => entry.object === object));
+  }
   updateLODVisibility() {
     if (!this.lodGroups?.size) return;
     for (const levels of this.lodGroups.values()) {
-      if (!this.lodPreview) { for (const level of levels) level.object.visible = true; continue; }
+      if (!this.lodPreview) { for (const level of levels) level.object.visible = !this.isForcedHidden(level.object); continue; }
       const source = levels[0].object, box = new THREE.Box3().setFromObject(source), center = box.getCenter(new THREE.Vector3()), size = Math.max(box.getSize(new THREE.Vector3()).length(), 1), distance = this.camera.position.distanceTo(center) / size;
       const selected = Math.min(levels.length - 1, Math.max(0, Math.floor(Math.log2(Math.max(1, distance / 8)))));
-      levels.forEach((level, index) => { level.object.visible = index === selected; });
+      levels.forEach((level, index) => { level.object.visible = index === selected && !this.isForcedHidden(level.object); });
     }
   }
   discoverColliderObjects() { this.colliderObjects = [...this.pathObjects.entries()].filter(([path]) => /_(?:Collider|TriangleCollider)$/.test(path)).map(([, object]) => object); }

@@ -37,6 +37,7 @@ export class LuciaGeoNodesEditor {
   }
 
   close() {
+    this.endDrag(true);
     clearTimeout(this.timer); this.runner.reset();
     this.app.bridge?.clearPreview();
     this.app.$('#geonodes-editor')?.remove();
@@ -71,7 +72,7 @@ export class LuciaGeoNodesEditor {
     const path = this.path;
     this.status = 'Evaluating…'; this.renderStatus();
     try {
-      const result = await this.runner.evaluate(this.graph, this.source);
+      const result = await this.runner.evaluate(this.graph, this.source, { preview: true });
       if (path !== this.path) return;
       this.app.bridge.setPreviewMesh(path, result.positions, result.indices, this.outputPaths);
       this.status = `${result.stats.vertices.toLocaleString()} vertices · ${result.stats.triangles.toLocaleString()} triangles${result.stats.instances ? ` · ${result.stats.instances} instances (realized on commit)` : ''}`;
@@ -84,12 +85,14 @@ export class LuciaGeoNodesEditor {
   }
 
   async commit() {
+    clearTimeout(this.timer);
     const path = this.path, graph = this.graph, source = this.source, outputPaths = this.outputPaths;
     const ok = await this.app.runMutation(`Geometry Nodes: ${path}`, [path, ...outputPaths], async () => {
       const result = await this.runner.evaluate(graph, source);
       return this.app.session.commitGeomNodes(path, graph, result, { inputHash: result.inputHash, graphKey: result.key });
     }, ['scene', 'usd'], { comparison: false });
-    if (ok) this.close();
+    // The user may have discarded or reopened the editor on another prim meanwhile.
+    if (ok && this.path === path) this.close();
     return ok;
   }
 
@@ -116,6 +119,7 @@ export class LuciaGeoNodesEditor {
   }
 
   renderCanvas() {
+    this.endDrag(true);
     const container = this.app.$('#geonodes-nodes'); if (!container) return;
     const linked = new Set(this.graph.links.map((link) => `${link.to[0]}.${link.to[1]}`));
     container.innerHTML = this.graph.nodes.map((node) => {
@@ -147,8 +151,8 @@ export class LuciaGeoNodesEditor {
       if (event.target.closest('button')) return;
       const id = header.dataset.drag, element = header.parentElement, start = [event.clientX, event.clientY], origin = [parseFloat(element.style.left), parseFloat(element.style.top)];
       const move = (e) => { element.style.left = `${Math.max(0, origin[0] + e.clientX - start[0])}px`; element.style.top = `${Math.max(0, origin[1] + e.clientY - start[1])}px`; this.drawLinks(); };
-      const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); const node = this.graph.nodes.find((candidate) => candidate.id === id); if (node) node.position = [parseFloat(element.style.left), parseFloat(element.style.top)]; };
-      window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+      const up = () => { this.endDrag(); const node = this.graph?.nodes.find((candidate) => candidate.id === id); if (node) node.position = [parseFloat(element.style.left), parseFloat(element.style.top)]; };
+      this.beginDrag(move, up);
     });
     app.$$('#geonodes-nodes [data-out]').forEach((dot) => dot.onpointerdown = (event) => {
       event.preventDefault();
@@ -156,14 +160,30 @@ export class LuciaGeoNodesEditor {
       const line = document.createElementNS('http://www.w3.org/2000/svg', 'path'); line.setAttribute('class', 'gn-link gn-link-pending'); svg.appendChild(line);
       const move = (e) => { const box = app.$('#geonodes-canvas').getBoundingClientRect(), canvas = app.$('#geonodes-canvas'); line.setAttribute('d', curve(start, [e.clientX - box.left + canvas.scrollLeft, e.clientY - box.top + canvas.scrollTop])); };
       const up = (e) => {
-        window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); line.remove();
+        this.endDrag(); line.remove();
+        if (e.type === 'pointercancel' || !this.graph) return;
         const target = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('[data-in]');
         if (!target) return;
         const to = target.dataset.in.split('.');
         this.edit((graph) => { graph.links = graph.links.filter((link) => !(link.to[0] === to[0] && link.to[1] === to[1])); graph.links.push({ from, to }); });
       };
-      window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+      this.beginDrag(move, up, () => line.remove());
     });
+  }
+
+  // One window-level drag at a time; ended by pointerup/pointercancel, by a
+  // re-render, or by close(), so no listener outlives its editor.
+  beginDrag(move, up, abort = null) {
+    this.endDrag();
+    this.drag = { move, up, abort };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+  }
+
+  endDrag(abort = false) {
+    const drag = this.drag; if (!drag) return;
+    this.drag = null;
+    window.removeEventListener('pointermove', drag.move); window.removeEventListener('pointerup', drag.up); window.removeEventListener('pointercancel', drag.up);
+    if (abort) drag.abort?.();
   }
 
   socketCenter(dot) {

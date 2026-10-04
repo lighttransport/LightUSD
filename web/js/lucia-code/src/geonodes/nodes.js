@@ -32,6 +32,9 @@ function evaluateFieldOnMesh(field, mesh, normals = null) {
 const vec = (value, fallback = [0, 0, 0]) => Array.isArray(value) && value.length === 3 ? value.map(Number) : typeof value === 'number' ? [value, value, value] : fallback;
 const int = (value, min, max) => Math.min(max, Math.max(min, Math.round(Number(value) || 0)));
 const geometryIn = (value) => value?.kind === 'geometry' ? value : EMPTY_GEOMETRY;
+// Elements a geometry value holds (vertices + points + instances); untrusted
+// graphs (stored in USD files) must not be able to grow this unboundedly.
+const elementCount = (g) => (g.mesh ? g.mesh.positions.length / 3 : 0) + (g.points ? g.points.positions.length / 3 : 0) + g.instances.reduce((sum, group) => sum + group.transforms.length / 16, 0);
 const checkBudget = (count, label) => { if (count > GEONODES_MAX_ELEMENTS) throw new LuciaError('LUCIA_GEONODES_BUDGET', `${label} would create ${count} elements (limit ${GEONODES_MAX_ELEMENTS}).`); };
 
 // ---------------------------------------------------------------------------
@@ -130,10 +133,25 @@ registerNode('Transform', { label: 'Transform Geometry', category: 'Geometry', i
     const m = composeTRS(vec(translation), vec(rotation), vec(scale, [1, 1, 1])), g = geometryIn(geometry);
     return { geometry: createGeometry({
       mesh: g.mesh ? { positions: transformPositions(g.mesh.positions, m), indices: g.mesh.indices } : null,
-      points: g.points ? { positions: transformPositions(g.points.positions, m), normals: g.points.normals } : null,
+      points: g.points ? { positions: transformPositions(g.points.positions, m), normals: g.points.normals && transformNormals(g.points.normals, m) } : null,
       instances: g.instances.map((group) => ({ mesh: group.mesh, transforms: multiplyTransforms(m, group.transforms) })),
     }) };
   } });
+// Normals transform by the inverse-transpose, which is the cofactor matrix
+// (row-major `cof`) up to 1/det,
+// then renormalize; correct under non-uniform scale.
+export function transformNormals(normals, m) {
+  const a = m[0], b = m[4], c = m[8], d = m[1], e = m[5], f = m[9], g = m[2], h = m[6], i = m[10];
+  const cof = [e * i - f * h, -(d * i - f * g), d * h - e * g, -(b * i - c * h), a * i - c * g, -(a * h - b * g), b * f - c * e, -(a * f - c * d), a * e - b * d];
+  // cof = det * inverse-transpose; mirroring (det < 0) must not flip normals.
+  const sign = a * cof[0] + b * cof[1] + c * cof[2] < 0 ? -1 : 1, out = new Float32Array(normals.length);
+  for (let k = 0; k < normals.length; k += 3) {
+    const x = normals[k], y = normals[k + 1], z = normals[k + 2];
+    const nx = cof[0] * x + cof[1] * y + cof[2] * z, ny = cof[3] * x + cof[4] * y + cof[5] * z, nz = cof[6] * x + cof[7] * y + cof[8] * z, l = Math.hypot(nx, ny, nz) || 1;
+    out[k] = sign * nx / l; out[k + 1] = sign * ny / l; out[k + 2] = sign * nz / l;
+  }
+  return out;
+}
 function multiplyTransforms(m, transforms) {
   const out = new Float32Array(transforms.length);
   for (let t = 0; t < transforms.length; t += 16) for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
@@ -182,6 +200,7 @@ registerNode('MergeByDistance', { label: 'Merge by Distance', category: 'Geometr
 registerNode('JoinGeometry', { label: 'Join Geometry', category: 'Geometry', inputs: [{ name: 'a', type: 'geometry' }, { name: 'b', type: 'geometry' }, { name: 'c', type: 'geometry' }], outputs: [{ name: 'geometry', type: 'geometry' }],
   evaluate: ({ a, b, c }) => {
     const parts = [a, b, c].map(geometryIn), pointParts = parts.map((g) => g.points).filter(Boolean);
+    checkBudget(parts.reduce((sum, g) => sum + elementCount(g), 0), 'Join Geometry');
     const points = pointParts.length ? { positions: Float32Array.from(pointParts.flatMap((p) => Array.from(p.positions))), normals: pointParts.every((p) => p.normals) ? Float32Array.from(pointParts.flatMap((p) => Array.from(p.normals))) : null } : null;
     return { geometry: createGeometry({ mesh: joinMeshes(parts.map((g) => g.mesh)), points, instances: parts.flatMap((g) => g.instances) }) };
   } });
@@ -233,6 +252,7 @@ registerNode('InstanceOnPoints', { label: 'Instance on Points', category: 'Insta
 export function realize(geometry) {
   const g = geometryIn(geometry);
   if (!g.instances.length) return g;
+  checkBudget((g.mesh ? g.mesh.positions.length / 3 : 0) + g.instances.reduce((sum, group) => sum + group.transforms.length / 16 * group.mesh.positions.length / 3, 0), 'Realize Instances');
   const meshes = [g.mesh];
   for (const group of g.instances) for (let t = 0; t < group.transforms.length; t += 16) meshes.push({ positions: transformPositions(group.mesh.positions, group.transforms.subarray(t, t + 16)), indices: group.mesh.indices });
   return createGeometry({ mesh: joinMeshes(meshes), points: g.points });

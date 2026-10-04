@@ -2279,8 +2279,11 @@ diagnostics and transfer operations are reliable.
       drag output→input to link, click an input to unlink, inline parameters),
       with a debounced live preview evaluated in a persistent worker.
       Assistant tool `scene.geometry_nodes` evaluates a supplied/stored graph.
+      Topology rewrites (commit output, Apply) drop non-constant primvars,
+      authored normals and GeomSubsets instead of leaving them mismatched;
+      the source's own visibility is saved and restored on Remove/Apply.
       Pending: loose points are dropped on commit, and the output carries no
-      UVs or GeomSubset material partitions.
+      UVs or per-face material partitions.
 - [x] LC-404 PointInstancer output. Instances are authored as a sibling
       `<Name>_geonodes_instances` UsdGeomPointInstancer (copied source
       xformOps, `Prototypes/Proto<i>` meshes, positions/quath orientations/

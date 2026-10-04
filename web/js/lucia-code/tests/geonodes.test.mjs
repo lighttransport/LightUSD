@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { composeTRS, createDefaultGraph, decomposeInstanceTransform, evaluateGraph, geometryToOutput, GeoNodesCache, geometryStats, geometryToMeshData, getNodeType, listNodeTypes, mergeByDistance, meshGeometry, realize, registerNode, subdivideMidpoint, topoOrder, validateGraph, valueNoise3 } from '../src/geonodes/index.js';
 import { evaluateGraphToMesh, GeoNodesRunner, sourceInputHash, triangulateAuthoredMesh } from '../src/geonodes/runner.js';
-import { LuciaUsdSession } from '../src/usd-session.js';
+import { LuciaUsdSession, xformStatements } from '../src/usd-session.js';
+import { hashValue, transformNormals } from '../src/geonodes/index.js';
 import { LuciaCommandStack, sessionCommand } from '../src/command-stack.js';
 if (!globalThis.CustomEvent) globalThis.CustomEvent = class extends Event { constructor(type, options = {}) { super(type); this.detail = options.detail; } };
 
@@ -209,5 +210,116 @@ test('PointInstancer output is authored with prototypes, rebuilt on re-commit an
     await commit();
     await session.removeGeomNodes(path);
     assert.doesNotMatch(session.exportUSDA(), /Plane_geonodes|lucia:geomNodes|visibility/);
+  } finally { session.dispose(); }
+});
+
+test('topology rewrites drop non-constant primvars but keep constant ones', async () => {
+  const session = new LuciaUsdSession(); await session.init();
+  try {
+    await session.loadUSDA(MESH_USDA.replace('int[] faceVertexCounts = [4]', 'int[] faceVertexCounts = [4]\n        float[] primvars:mask = [1, 2, 3, 4] (interpolation = "vertex")\n        float[] primvars:faceId = [7] (interpolation = "uniform")\n        color3f[] primvars:displayColor = [(1, 0, 0)] (interpolation = "constant")'));
+    const path = '/World/Plane', graph = graphOf([{ id: 'in', type: 'GroupInput' }, { id: 'sub', type: 'Subdivide', params: { level: 1 } }], [{ from: ['in', 'geometry'], to: ['sub', 'geometry'] }, { from: ['sub', 'geometry'], to: ['out', 'geometry'] }]);
+    const result = await evaluateGraphToMesh(graph, triangulateAuthoredMesh(await session.getAuthoredMesh(path)));
+    await session.commitGeomNodes(path, graph, result, { inputHash: result.inputHash });
+    const output = session.exportUSDA().slice(session.exportUSDA().indexOf('"Plane_geonodes"'));
+    assert.doesNotMatch(output, /primvars:(mask|faceId)/);
+    assert.match(output, /primvars:displayColor/);
+    assert.match(session.exportUSDA().slice(0, session.exportUSDA().indexOf('"Plane_geonodes"')), /primvars:mask/, 'source keeps its primvars while the modifier is live');
+    await session.applyGeomNodes(path, result);
+    assert.doesNotMatch(session.exportUSDA(), /primvars:(mask|faceId)/);
+    assert.match(session.exportUSDA(), /primvars:displayColor/);
+  } finally { session.dispose(); }
+});
+
+test('review fixes: delimited cache keys, normal transforms and element budgets', async () => {
+  assert.notEqual(hashValue({ t: [1, 23, 0] }), hashValue({ t: [12, 3, 0] }));
+  assert.notEqual(hashValue([1]), hashValue(['1']));
+  const cache = new GeoNodesCache(), moved = (t) => graphOf([{ id: 'c', type: 'MeshCube' }, { id: 'x', type: 'Transform', params: { translation: t } }], [{ from: ['c', 'mesh'], to: ['x', 'geometry'] }, { from: ['x', 'geometry'], to: ['out', 'geometry'] }]);
+  const a = geometryToMeshData((await evaluateGraph(moved([1, 23, 0]), { cache })).geometry), b = geometryToMeshData((await evaluateGraph(moved([12, 3, 0]), { cache })).geometry);
+  assert.notDeepEqual(a.positions, b.positions, 'cache must not alias distinct parameters');
+  const rotated = transformNormals(new Float32Array([0, 0, 1]), composeTRS([5, 5, 5], [90, 0, 0]));
+  assert.deepEqual([...rotated].map((v) => Math.round(v * 1e5) / 1e5 + 0), [0, -1, 0]);
+  const stretched = transformNormals(new Float32Array([Math.SQRT1_2, Math.SQRT1_2, 0]), composeTRS([0, 0, 0], [0, 0, 0], [2, 1, 1])), l = Math.hypot(0.5, 1);
+  assert.ok(Math.abs(stretched[0] - 0.5 / l) < 1e-6 && Math.abs(stretched[1] - 1 / l) < 1e-6);
+  const mirrored = transformNormals(new Float32Array([1, 0, 0]), composeTRS([0, 0, 0], [0, 0, 0], [-1, 1, 1]));
+  assert.deepEqual([...mirrored].map((v) => v + 0), [-1, 0, 0], 'mirroring flips the normal with the surface, not inward');
+  // Points through Transform keep normals consistent with the rotated surface.
+  const scatterRotated = graphOf([{ id: 'g', type: 'MeshGrid' }, { id: 'p', type: 'DistributePointsOnFaces', params: { density: 2 } }, { id: 'x', type: 'Transform', params: { rotation: [90, 0, 0] } }, { id: 'c', type: 'MeshCube' }, { id: 'i', type: 'InstanceOnPoints' }],
+    [{ from: ['g', 'mesh'], to: ['p', 'mesh'] }, { from: ['p', 'points'], to: ['x', 'geometry'] }, { from: ['x', 'geometry'], to: ['i', 'points'] }, { from: ['c', 'mesh'], to: ['i', 'instance'] }, { from: ['i', 'instances'], to: ['out', 'geometry'] }]);
+  const instanced = (await evaluateGraph(scatterRotated)).geometry.instances[0].transforms;
+  assert.ok(Math.abs(instanced[9] + 1) < 1e-5, 'instance Z axis follows the rotated normal (0,-1,0)');
+  // Chained joins of the same input grow 3^n: rejected by the budget.
+  const nodes = [{ id: 'j0', type: 'MeshCube' }], links = [];
+  for (let k = 1; k <= 14; k++) { nodes.push({ id: `j${k}`, type: 'JoinGeometry' }); for (const socket of ['a', 'b', 'c']) links.push({ from: [`j${k - 1}`, k === 1 ? 'mesh' : 'geometry'], to: [`j${k}`, socket] }); }
+  links.push({ from: ['j14', 'geometry'], to: ['out', 'geometry'] });
+  await assert.rejects(evaluateGraph(graphOf(nodes, links)), /limit/);
+});
+
+test('previews never cancel commit evaluations in the worker runner', async () => {
+  const previous = globalThis.Worker;
+  globalThis.Worker = class { constructor() { this.onmessage = null; } postMessage(data) { setTimeout(async () => { try { this.onmessage({ data: { type: 'result', id: data.id, result: await evaluateGraphToMesh(data.graph, data.source) } }); } catch (error) { this.onmessage({ data: { type: 'error', id: data.id, message: error.message } }); } }, 5); } terminate() {} };
+  try {
+    const runner = new GeoNodesRunner(), source = triangulateAuthoredMesh({ points: [0, 0, 0, 1, 0, 0, 1, 1, 0], faceVertexCounts: [3], faceVertexIndices: [0, 1, 2] });
+    const firstPreview = runner.evaluate(createDefaultGraph(), source, { preview: true }), commit = runner.evaluate(createDefaultGraph(), source), secondPreview = runner.evaluate(createDefaultGraph(), source, { preview: true });
+    await assert.rejects(firstPreview, /Superseded/);
+    assert.equal((await commit).positions.length, 9);
+    assert.equal((await secondPreview).positions.length, 9);
+    runner.dispose();
+  } finally { globalThis.Worker = previous; }
+});
+
+test('instancer xform copy keeps multi-line and time-sampled ops whole', () => {
+  const body = `
+        matrix4d xformOp:transform = ( (1, 0, 0, 0),
+            (0, 1, 0, 0), (0, 0, 1, 0), (5, 6, 7, 1) )
+        double3 xformOp:translate.timeSamples = {
+            0: (0, 0, 0),
+            10: (1, 2, 3),
+        }
+        string label = "xformOp:fake = (" 
+        uniform token[] xformOpOrder = ["xformOp:transform", "xformOp:translate"]
+        point3f[] points = [(0, 0, 0)]`;
+  const statements = xformStatements(body);
+  assert.equal(statements.length, 3);
+  assert.match(statements[0], /\(5, 6, 7, 1\) \)$/);
+  assert.match(statements[1], /^double3 xformOp:translate\.timeSamples = \{[\s\S]*10: \(1, 2, 3\),\s*\}$/);
+  assert.match(statements[2], /^uniform token\[\] xformOpOrder/);
+});
+
+test('subsets are removed on topology rewrites and source visibility is restored', async () => {
+  const session = new LuciaUsdSession(); await session.init();
+  try {
+    await session.loadUSDA(MESH_USDA.replace('int[] faceVertexCounts = [4]', 'int[] faceVertexCounts = [4]\n        token visibility = "inherited"\n        def GeomSubset "Front" {\n            uniform token elementType = "face"\n            int[] indices = [0]\n        }'));
+    const path = '/World/Plane', graph = graphOf([{ id: 'in', type: 'GroupInput' }, { id: 'sub', type: 'Subdivide', params: { level: 1 } }], [{ from: ['in', 'geometry'], to: ['sub', 'geometry'] }, { from: ['sub', 'geometry'], to: ['out', 'geometry'] }]);
+    const commit = async () => { const result = await evaluateGraphToMesh(graph, triangulateAuthoredMesh(await session.getAuthoredMesh(path))); await session.commitGeomNodes(path, graph, result, { inputHash: result.inputHash }); return result; };
+    await commit(); await commit();
+    const usda = session.exportUSDA(), output = usda.slice(usda.indexOf('"Plane_geonodes"'));
+    assert.doesNotMatch(output, /GeomSubset/, 'output does not inherit stale subsets');
+    assert.match(usda, /lucia:geomNodesVisibility = '?"?inherited/);
+    await session.removeGeomNodes(path);
+    assert.match(session.exportUSDA(), /token visibility = "inherited"/, 'remove restores the authored visibility');
+    assert.match(session.exportUSDA(), /GeomSubset "Front"/, 'source subsets survive a live modifier');
+    const result = await commit();
+    await session.applyGeomNodes(path, result);
+    assert.doesNotMatch(session.exportUSDA(), /GeomSubset|lucia:geomNodes/);
+    assert.match(session.exportUSDA(), /token visibility = "inherited"/);
+  } finally { session.dispose(); }
+});
+
+test('commits clone sources with declaration metadata and refuse animated visibility', async () => {
+  const session = new LuciaUsdSession(); await session.init();
+  try {
+    await session.loadUSDA(MESH_USDA.replace('def Mesh "Plane" {', 'def Mesh "Plane" (\n        kind = "component"\n        prepend apiSchemas = ["MaterialBindingAPI"]\n    ) {'));
+    const path = '/World/Plane', graph = graphOf([{ id: 'in', type: 'GroupInput' }, { id: 'sub', type: 'Subdivide', params: { level: 1 } }], [{ from: ['in', 'geometry'], to: ['sub', 'geometry'] }, { from: ['sub', 'geometry'], to: ['out', 'geometry'] }]);
+    const result = await evaluateGraphToMesh(graph, triangulateAuthoredMesh(await session.getAuthoredMesh(path)));
+    await session.commitGeomNodes(path, graph, result, { inputHash: result.inputHash });
+    assert.match(session.exportUSDA(), /def Mesh "Plane_geonodes"\s*\(\s*kind = "component"/, 'metadata is cloned with the declaration');
+    assert.equal((await session.getMeshPoints('/World/Plane_geonodes')).length / 3, 9);
+    await session.setMeshGeometrySibling(path, 'Plane_LOD1', { positions: result.positions, indices: result.indices });
+    assert.match(session.exportUSDA(), /def Mesh "Plane_LOD1"/, 'LOD creation shares the metadata-safe clone');
+    await session.loadUSDA(MESH_USDA.replace('int[] faceVertexCounts = [4]', 'int[] faceVertexCounts = [4]\n        token visibility.timeSamples = {\n            0: "inherited",\n            10: "invisible",\n        }'));
+    const before = session.exportUSDA();
+    await assert.rejects(session.commitGeomNodes(path, graph, result, { inputHash: result.inputHash }), /visibility is animated/);
+    assert.equal(session.exportUSDA(), before);
+    assert.deepEqual((await session.getViewportOverrides()).invisible, [], 'animated visibility is not forced hidden');
   } finally { session.dispose(); }
 });

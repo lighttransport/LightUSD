@@ -76,6 +76,17 @@ export async function runToolsBrowserChecks(page) {
     check(app.project.selectedPath === instancerPath, `Click on hidden geometry selected ${app.project.selectedPath}`);
     await app.commands.undo(); await app.refreshAll(false);
     check(!/PointInstancer/.test(app.session.exportUSDA()), 'Undo did not remove the PointInstancer');
+    // Authored invisibility survives the per-frame LOD visibility update.
+    const quad = (name, extra = '') => ` def Mesh "${name}" {\n${extra}  point3f[] points = [(-1, 0, -1), (1, 0, -1), (1, 0, 1), (-1, 0, 1)]\n  int[] faceVertexCounts = [4]\n  int[] faceVertexIndices = [0, 1, 2, 3]\n }\n`;
+    await app.openFile(new File([`#usda 1.0\n(defaultPrim = "World" upAxis = "Y")\ndef Xform "World" {\n${quad('Rock', '  token visibility = "invisible"\n')}${quad('Rock_LOD1')}}\n`], 'lod.usda'));
+    const frames = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    check(app.bridge.lodGroups.get('/World/Rock')?.length === 2, 'LOD group was not discovered');
+    for (const preview of [false, true]) {
+      app.bridge.setLODPreview(preview); await frames();
+      check(!app.bridge.pathObjects.get('/World/Rock').visible, `Invisible LOD0 became visible (lodPreview=${preview})`);
+    }
+    app.bridge.setLODPreview(false); await frames();
+    check(app.bridge.pathObjects.get('/World/Rock_LOD1').visible, 'Visible LOD level was hidden');
     return { sculptMaxY: maxY, outputVertices, instances, rendered };
   });
   console.log('Lucia sculpt + geometry nodes browser:', JSON.stringify(results));
