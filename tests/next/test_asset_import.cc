@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <cassert>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <iostream>
 
@@ -211,5 +212,25 @@ int main() {
                                 "memory:cable.xml", &options, &stage) == LIGHTUSD_OK);
   assert(lightusd_prim_is_valid(lightusd_stage_prim_at_path(stage, "/World/Links/B_last")));
   lightusd_stage_destroy(stage);
+  // Progress callbacks: cancellation and callers built before the fields.
+  {
+    lightusd_import_options progress_options;
+    lightusd_import_options_init(&progress_options);
+    progress_options.format = LIGHTUSD_IMPORT_MJCF;
+    static int calls = 0;
+    progress_options.progress = [](void*, const char* phase, uint64_t, uint64_t) {
+      ++calls;
+      return std::strcmp(phase, "convert") == 0 ? 1 : 0;
+    };
+    assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(cable), std::strlen(cable),
+                                  "memory:cable.xml", &progress_options, &stage) == LIGHTUSD_ERR_CANCELLED);
+    assert(!stage && calls > 0);
+    lightusd_import_options old_options = progress_options;
+    old_options.struct_size = static_cast<uint32_t>(offsetof(lightusd_import_options, progress));
+    old_options.progress = nullptr;
+    assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(cable), std::strlen(cable),
+                                  "memory:cable.xml", &old_options, &stage) == LIGHTUSD_OK);
+    lightusd_stage_destroy(stage);
+  }
   std::cout << "Native import C API tests passed\n";
 }

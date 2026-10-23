@@ -101,6 +101,20 @@ Filesystem assets are size-checked before allocation; custom resolvers supply
 bytes before their size can be checked. Neither limit replaces the resolver's
 own I/O or security policy.
 
+## Progress and cancellation
+
+`lightusd_import_options.progress(user_data, phase, done, total)` (C; the
+fields follow `settings_json`, and callers built against the shorter struct
+keep working) and `progress=callable` (Python `import_obj/urdf/mjcf`) report
+the import as it proceeds: phase `"import"` with a monotonic count of bytes
+accounted against the memory budget (at most once per MiB) and the budget as
+`total`, then `"convert"` before the USD stage is built. A nonzero C return,
+or a Python `False`, cancels: the import fails with `LIGHTUSD_ERR_CANCELLED`
+(Python `UsdError`, message "Import cancelled") and the report records the
+failure. An exception raised by the Python callback cancels too and is
+re-raised from the import call. The callback runs on the importing thread
+(Python re-acquires the GIL for it).
+
 ## Unsupported-feature policy
 
 The default `unsupported_policy="warn"` retains previous behavior. `"error"`

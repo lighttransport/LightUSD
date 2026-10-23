@@ -29,6 +29,13 @@ typedef struct lightusd_import_options {
    * packages (object mapping URDF package names to directories).
    * The importer copies these settings during the synchronous call. */
   const char* settings_json;
+  /* Optional progress callback (fields added after settings_json; a smaller
+   * struct_size from older callers leaves them unset). Called on the
+   * importing thread with a phase ("import", "convert"), a monotonic count of
+   * bytes accounted so far and the memory budget; return nonzero to cancel the import, which
+   * then fails with LIGHTUSD_ERR_CANCELLED. */
+  int (*progress)(void* user_data, const char* phase, uint64_t done, uint64_t total);
+  void* progress_user_data;
 } lightusd_import_options;
 LIGHTUSD_API void lightusd_import_options_init(
     lightusd_import_options* options);

@@ -29,17 +29,52 @@ static void attach_import_report(void) {
   PyErr_Restore(type, value, traceback);
 }
 
+/* progress(phase, done, total) runs on the importing thread with the GIL
+ * re-acquired. Returning False cancels; an exception cancels and is
+ * re-raised after the import returns. */
+typedef struct {
+  PyObject* fn;
+  PyObject *exc_type, *exc_value, *exc_tb;
+} import_progress;
+
+static int import_progress_call(void* user, const char* phase, uint64_t done,
+                                uint64_t total) {
+  import_progress* ctx = (import_progress*)user;
+  if (ctx->exc_type) return 1;
+  PyGILState_STATE gil = PyGILState_Ensure();
+  PyObject* result = PyObject_CallFunction(ctx->fn, "sKK", phase,
+                                           (unsigned long long)done,
+                                           (unsigned long long)total);
+  int cancel = 0;
+  if (!result) {
+    PyErr_Fetch(&ctx->exc_type, &ctx->exc_value, &ctx->exc_tb);
+    cancel = 1;
+  } else {
+    cancel = result == Py_False;
+    Py_DECREF(result);
+  }
+  PyGILState_Release(gil);
+  return cancel;
+}
+
 PyObject* lightusd_import_scene(PyObject* module, PyObject* args,
                                 PyObject* kwargs) {
   static char* names[] = {"path",     "data",       "source",   "format",
-                          "settings", "max_memory", "resolver", "max_input", "max_depth", NULL};
+                          "settings", "max_memory", "resolver", "max_input", "max_depth",
+                          "progress", NULL};
   const char *path = NULL, *source = "", *format = "auto", *settings = "{}";
-  PyObject *data = Py_None, *resolver_obj = Py_None;
+  PyObject *data = Py_None, *resolver_obj = Py_None, *progress_obj = Py_None;
   PyObject *memory_obj = Py_None, *input_obj = Py_None, *depth_obj = Py_None;
-  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|zOsssOOOO:_import_scene",
+  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|zOsssOOOOO:_import_scene",
                                    names, &path, &data, &source, &format,
-                                   &settings, &memory_obj, &resolver_obj, &input_obj, &depth_obj))
+                                   &settings, &memory_obj, &resolver_obj, &input_obj, &depth_obj,
+                                   &progress_obj))
     return NULL;
+  if (progress_obj != Py_None && !PyCallable_Check(progress_obj)) {
+    PyErr_SetString(PyExc_TypeError, "progress must be callable");
+    return NULL;
+  }
+  import_progress progress = {progress_obj, NULL, NULL, NULL};
   lightusd_state* st = lightusd_state_from_module(module);
   if (!st) return NULL;
   lightusd_import_options opts;
@@ -80,6 +115,10 @@ PyObject* lightusd_import_scene(PyObject* module, PyObject* args,
     }
     opts.max_depth = (uint32_t)depth;
   }
+  if (progress_obj != Py_None) {
+    opts.progress = import_progress_call;
+    opts.progress_user_data = &progress;
+  }
   opts.resolver = lightusd_resolver_handle(st, resolver_obj);
   if (resolver_obj != Py_None && !opts.resolver) return NULL;
   if ((path != NULL) == (data != Py_None)) {
@@ -97,6 +136,12 @@ PyObject* lightusd_import_scene(PyObject* module, PyObject* args,
   else status = lightusd_import_memory((const uint8_t*)view.buf,
                                        (size_t)view.len, source, &opts, &stage);
   Py_END_ALLOW_THREADS if (data != Py_None) PyBuffer_Release(&view);
+  if (progress.exc_type) {
+    if (stage) lightusd_stage_destroy(stage);
+    PyErr_Restore(progress.exc_type, progress.exc_value, progress.exc_tb);
+    attach_import_report();
+    return NULL;
+  }
   if (lightusd_resolver_restore_error(resolver_obj)) {
     if (stage) lightusd_stage_destroy(stage);
     attach_import_report();

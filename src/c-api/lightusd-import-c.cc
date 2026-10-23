@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
+#include <cstddef>
 #include "lightusd-import-c.h"
 
 #include <algorithm>
 #include <cctype>
 #include <limits>
+#include <memory>
 #include <new>
 
 #include "c-internal.hh"
@@ -18,14 +20,29 @@ namespace ia = lightusd::tydra::import_asset;
 using lightusd_internal::Fail;
 namespace {
 thread_local std::string last_import_report = "{}";
+thread_local bool import_cancelled = false;  // set by the progress trampoline
 lightusd_status Options(const lightusd_import_options* in, ia::Options* out) {
   // Finish() hands Result::meshes to the converter.
   out->typed_meshes = true;
   if (!in) return LIGHTUSD_OK;
-  if (in->struct_size < sizeof(*in) || in->format > LIGHTUSD_IMPORT_MJCF ||
+  // Callers built before the progress fields pass the shorter struct.
+  constexpr size_t kBaseSize = offsetof(lightusd_import_options, progress);
+  if (in->struct_size < kBaseSize || in->format > LIGHTUSD_IMPORT_MJCF ||
       in->max_memory_bytes > SIZE_MAX || in->max_input_bytes > SIZE_MAX ||
       !in->max_depth || in->max_depth > 1024)
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "Invalid import options");
+  if (in->struct_size >= sizeof(*in) && in->progress) {
+    auto fn = in->progress;
+    void* user = in->progress_user_data;
+    // Nested readers account separately; report a monotonic high-water mark.
+    auto high = std::make_shared<uint64_t>(0);
+    out->progress = [fn, user, high](const char* phase, uint64_t done, uint64_t total) {
+      *high = std::max(*high, done);
+      if (fn(user, phase, *high, total) == 0) return true;
+      import_cancelled = true;
+      return false;
+    };
+  }
   const char* formats[] = {"auto", "obj", "urdf", "mjcf"};
   out->format = formats[in->format];
   if (in->max_memory_bytes)
@@ -122,7 +139,14 @@ lightusd_status Options(const lightusd_import_options* in, ia::Options* out) {
   }
   return LIGHTUSD_OK;
 }
+// Phase-boundary progress report; false (with *err) when cancelled.
+bool Proceed(const ia::Options& options, const char* phase, std::string* err) {
+  if (!options.progress || options.progress(phase, 0, 0)) return true;
+  *err = "Import cancelled";
+  return false;
+}
 lightusd_status Failure(const std::string& error) {
+  if (import_cancelled) return Fail(LIGHTUSD_ERR_CANCELLED, error);
   if (error.find("budget") != std::string::npos ||
       error.find("limit") != std::string::npos)
     return Fail(LIGHTUSD_ERR_RESOURCE_LIMIT, error);
@@ -227,6 +251,7 @@ lightusd_status lightusd_import_file(const char* filename,
                                      const lightusd_import_options* options,
                                      lightusd_stage** out) {
   last_import_report = "{}";
+  import_cancelled = false;
   if (out) *out = nullptr;
   if (!filename || !out)
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "Import filename/output is null");
@@ -244,6 +269,7 @@ lightusd_status lightusd_import_file(const char* filename,
     }
 #endif
     if (!ia::BuildPayloadFile(filename, opts, &result, err)) return Failure(*err);
+    if (!Proceed(opts, "convert", err)) return Failure(*err);
     return Finish(result, filename, out);
   });
 }
@@ -252,6 +278,7 @@ lightusd_status lightusd_import_memory(const uint8_t* data, size_t size,
                                        const lightusd_import_options* options,
                                        lightusd_stage** out) {
   last_import_report = "{}";
+  import_cancelled = false;
   if (out) *out = nullptr;
   if ((!data && size) || !out)
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "Import data/output is null");
@@ -278,6 +305,7 @@ lightusd_status lightusd_import_memory(const uint8_t* data, size_t size,
     std::string text(size ? reinterpret_cast<const char*>(data) : "", size);
     if (!ia::BuildPayload(text, source ? source : "", opts, &result, err))
       return Failure(*err);
+    if (!Proceed(opts, "convert", err)) return Failure(*err);
     return Finish(result, source ? source : "", out);
   });
 }

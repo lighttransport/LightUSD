@@ -188,7 +188,7 @@ def _import(*, path=None, data=None, source="", format="auto", max_memory=0,
             resolver=None, up_axis="Z", asset_dirs=(), packages=None,
             allow_missing=False, tessellate_collision_shapes=False,
             max_input=None, max_depth=None, unsupported_policy="warn",
-            profile="newton", obj_topology="expanded", layout="flat"):
+            profile="newton", obj_topology="expanded", layout="flat", progress=None):
     import json
     if max_memory < 0:
         raise ValueError("max_memory must be non-negative")
@@ -215,7 +215,7 @@ def _import(*, path=None, data=None, source="", format="auto", max_memory=0,
     })
     return _core._import_scene(path=path, data=data, source=source, format=format,
                                settings=settings, max_memory=max_memory, resolver=resolver,
-                               max_input=max_input, max_depth=max_depth)
+                               max_input=max_input, max_depth=max_depth, progress=progress)
 
 
 def import_obj(path: _PathLike, **options) -> Stage:

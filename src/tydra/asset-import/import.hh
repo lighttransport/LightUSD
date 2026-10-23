@@ -69,6 +69,10 @@ struct Options {
   // URDF/MJCF link prims: "flat" (all under /World/Links) or "nested" (each
   // dynamic link under its parent link, following the kinematic tree).
   std::string layout = "flat";
+  // Progress/cancellation: called with a phase name, bytes accounted so far
+  // and the memory budget as the import proceeds; returning false cancels it
+  // ("Import cancelled").
+  std::function<bool(const char* phase, uint64_t done, uint64_t total)> progress;
   // OBJ import topology: "expanded" (split points per unique corner) or
   // "indexed" (source positions, face-varying indexed normals/UVs).
   std::string obj_topology = "expanded";
@@ -126,6 +130,7 @@ struct Reader {
   size_t bytes = 0;
   std::string warnings, failure, root_source;
   bool allow_unanchored = true;
+  size_t reported_bytes = 0;  // last progress callback
   AssetMap textures;
   std::map<std::string, MeshBuffer> meshes;
   bool obj_indexed = false;  // set by the OBJ scene import (obj_topology)

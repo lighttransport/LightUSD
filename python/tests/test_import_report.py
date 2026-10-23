@@ -243,3 +243,30 @@ assert 'unhandled_eq' in data[1]['data']
         result = subprocess.run([executable, "-c", script, str(path)],
                                 capture_output=True, text=True, env=env)
         assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_import_progress_and_cancellation(tmp_path):
+    # Enough geometry to cross the 1 MiB progress granularity.
+    obj = b''.join(b'v %d 0 0\nv %d 1 0\nv %d 0 1\n' % (i, i, i) for i in range(20000))
+    obj += b''.join(b'f %d %d %d\n' % (3 * i + 1, 3 * i + 2, 3 * i + 3) for i in range(20000))
+    mesh = tmp_path / 'big.obj'
+    mesh.write_bytes(obj)
+    xml = tmp_path / 'robot.xml'
+    xml.write_bytes(b'<mujoco><asset><mesh name="m" file="big.obj"/></asset><worldbody>'
+                    b'<body name="b"><freejoint/><geom type="mesh" mesh="m"/></body></worldbody></mujoco>')
+    calls = []
+    lightusd.import_mjcf(xml, progress=lambda phase, done, total: calls.append((phase, done, total)))
+    phases = [c[0] for c in calls]
+    assert 'import' in phases and phases[-1] == 'convert'
+    done = [c[1] for c in calls if c[0] == 'import']
+    assert done == sorted(done) and done[0] > 0
+    with pytest.raises(lightusd.UsdError, match='cancelled'):
+        lightusd.import_mjcf(xml, progress=lambda *args: False)
+    class Stop(Exception):
+        pass
+    def boom(*args):
+        raise Stop('stop')
+    with pytest.raises(Stop):
+        lightusd.import_mjcf(xml, progress=boom)
+    with pytest.raises(TypeError):
+        lightusd.import_mjcf(xml, progress=42)

@@ -121,6 +121,14 @@ bool Reader::Charge(size_t amount, std::string* err) {
   }
   bytes += amount;
   if (options.report) options.report->ObserveMemory(bytes);
+  if (options.progress && bytes - reported_bytes >= (size_t(1) << 20)) {
+    reported_bytes = bytes;
+    if (!options.progress("import", bytes, options.max_memory)) {
+      failure = "Import cancelled";
+      if (err) *err = failure;
+      return false;
+    }
+  }
   return true;
 }
 bool Reader::ChargeArray(size_t count, size_t stride, std::string* err) {
