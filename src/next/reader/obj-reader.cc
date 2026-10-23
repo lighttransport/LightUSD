@@ -329,6 +329,7 @@ static bool ConvertOBJSceneToLayer(tydra::import_asset::OBJ& obj,
   for (auto& g : obj.meshes) {
     auto& positions = g.positions;
     const size_t num_points = positions.size() / 3;
+    const size_t corners = g.indices.size();
     if (positions.empty() || positions.size() % 3) {
       if (err) *err = "Invalid OBJ points";
       return false;
@@ -370,6 +371,28 @@ static bool ConvertOBJSceneToLayer(tydra::import_asset::OBJ& obj,
     std::vector<int32_t>().swap(g.counts);
     std::vector<int32_t>().swap(g.indices);
     std::vector<int32_t>().swap(g.source_vertices);
+    // Compact topology: indexed face-varying normals and UVs (primvars:normals
+    // overrides the unindexable normals attribute).
+    for (bool uv : {false, true}) {
+      auto& table = uv ? g.uvs : g.normals;
+      auto& ids = uv ? g.uv_indices : g.normal_indices;
+      if (ids.empty()) continue;
+      const size_t width = uv ? 2 : 3;
+      bool valid = ids.size() == corners && table.size() % width == 0;
+      for (int32_t id : ids) valid &= id >= 0 && size_t(id) < table.size() / width;
+      if (!valid) {
+        if (err) *err = "Invalid OBJ indexed primvar";
+        return false;
+      }
+      const char* name = uv ? "primvars:st" : "primvars:normals";
+      Set(p, name,
+          Value::MakeFloatCompArray(std::move(table), uv ? TypeId::Texcoord2f : TypeId::Normal3f,
+                                    static_cast<uint32_t>(width)),
+          uv ? "texCoord2f[]" : "normal3f[]");
+      Interpolation(p, name, "faceVarying");
+      Set(p, std::string(name) + ":indices", Value::MakeIntArray(std::move(ids)), "int[]");
+      std::vector<float>().swap(table);
+    }
     for (const char* key : {"normals", "uvs", "colors"}) {
       auto& values = std::string(key) == "uvs" ? g.uvs :
                      std::string(key) == "colors" ? g.colors : g.normals;

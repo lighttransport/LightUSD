@@ -48,6 +48,10 @@ struct URDFMeshBuffer {
 // and a second full parse (large mesh payloads can exceed JSON text caps).
 bool ConvertURDFPayloadToUSDStage(const ::lightusd::minijson::Value& payload,
     ::lightusd::next::Stage* stage, std::string* warn = nullptr, std::string* err = nullptr);
+/// Same, with the payload's `meshRef` geometry in `mesh_buffers`.
+bool ConvertURDFPayloadToUSDStage(const ::lightusd::minijson::Value& payload,
+    const std::map<std::string, URDFMeshBuffer>* mesh_buffers,
+    ::lightusd::next::Stage* stage, std::string* warn = nullptr, std::string* err = nullptr);
 
 bool ConvertURDFJsonToUSDStage(
     const std::string &robot_json,

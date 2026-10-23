@@ -67,7 +67,10 @@ int main() {
   assert(std::abs(static_cast<const double*>(values.data)[1] - .8) < 1e-12);
   assert(Report(stage)["counts"]["completed_solver_arrays"].get<int>() > 0);
   lightusd_stage_destroy(stage);
-  stage = Import("<robot><link name='base'/></robot>", LIGHTUSD_IMPORT_URDF);
+  // A link without inertia or shapes would be a ghost frame (no APIs).
+  stage = Import("<robot><link name='base'><inertial><mass value='1'/>"
+                 "<inertia ixx='1' iyy='1' izz='1' ixy='0' ixz='0' iyz='0'/></inertial>"
+                 "</link></robot>", LIGHTUSD_IMPORT_URDF);
   auto base = lightusd_stage_prim_at_path(stage, "/World/Links/base");
   lightusd_value* schemas = nullptr;
   assert(lightusd_prim_get_metadata(base, "apiSchemas", &schemas) ==
@@ -103,7 +106,7 @@ int main() {
   assert(!stage);
   assert(Report(nullptr)["error"].get<std::string>().find("Too many MJCF solver values") != std::string::npos);
   options.settings_json = "{\"unsupported_policy\":\"error\"}";
-  const char* unsupported = "<mujoco><worldbody><body name='base'/><flexcomp name='cloth' type='gmsh'/></worldbody></mujoco>";
+  const char* unsupported = "<mujoco><worldbody><body name='base'/></worldbody><deformable><flex name='cloth'/></deformable></mujoco>";
   assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(unsupported),
       std::strlen(unsupported), "memory:physics.xml", &options, &stage) == LIGHTUSD_ERR_PARSE);
   assert(!stage);
@@ -199,6 +202,14 @@ int main() {
   lightusd_value_view segments{};
   assert(lightusd_attr_get(tendon, "mjc:path:segments", &segments) == LIGHTUSD_OK);
   assert(segments.count == 5 && static_cast<const int32_t*>(segments.data)[4] == 1);
+  lightusd_stage_destroy(stage);
+  // The longest accepted cable nests 511 bodies: every tree walker must cope.
+  const char* cable = "<mujoco><worldbody><body name='h'><composite type='cable' curve='s' "
+                      "count='512 1 1' size='10'><geom type='capsule' size='.001'/></composite>"
+                      "</body></worldbody></mujoco>";
+  assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(cable), std::strlen(cable),
+                                "memory:cable.xml", &options, &stage) == LIGHTUSD_OK);
+  assert(lightusd_prim_is_valid(lightusd_stage_prim_at_path(stage, "/World/Links/B_last")));
   lightusd_stage_destroy(stage);
   std::cout << "Native import C API tests passed\n";
 }

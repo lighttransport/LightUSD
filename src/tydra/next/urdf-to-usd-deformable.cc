@@ -92,6 +92,8 @@ void AddDeformablesFromJson(tn::Layer *layer, const Json &items,
       Set(prim, "faceVertexIndices", tn::Value::MakeIntArray(elements), "int[]");
       SetToken(prim, "subdivisionScheme", "none", true);
       Set(prim, "doubleSided", tn::Value(true), "bool", true);
+      // MuJoCo bends a shell relative to its initial shape, not a flat sheet.
+      SetToken(prim, "physics:restBendAnglesDefault", "restShape", true);
       sim_api = "PhysicsSurfaceDeformableSimAPI";
       material_api = "PhysicsSurfaceDeformableMaterialAPI";
     } else {

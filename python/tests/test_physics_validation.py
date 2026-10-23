@@ -162,14 +162,18 @@ def test_mjcf_solver_defaults_tokens_and_zero_tolerance(integrator):
 
 def test_ellipsoid_collision_policy_and_mesh_profile():
     source = b'<mujoco><worldbody><body name="b"><geom type="ellipsoid" size=".1 .2 .3"/></body></worldbody></mujoco>'
+    # Non-legacy profiles bake the radii into a convex mesh collider.
     stage = lightusd.load_bytes(source, format="mjcf")
-    assert any(d["code"] == "mjcf.ellipsoid_collision_approximated" for d in stage.import_report()["diagnostics"])
-    assert not physics.validate(stage).valid
-    mesh = lightusd.load_bytes(source, format="mjcf", tessellate_collision_shapes=True)
+    assert physics.validate(stage).valid
+    assert physics.inspect(stage).colliders[0].type_name == "Mesh"
+    legacy = lightusd._import(data=source, format="mjcf", profile="legacy")
+    assert any(d["code"] == "mjcf.ellipsoid_collision_approximated" for d in legacy.import_report()["diagnostics"])
+    assert not physics.validate(legacy).valid
+    mesh = lightusd._import(data=source, format="mjcf", profile="legacy", tessellate_collision_shapes=True)
     assert physics.validate(mesh).valid
     assert physics.inspect(mesh).colliders[0].type_name == "Mesh"
     with pytest.raises(lightusd.UsdError, match="Ellipsoid collider"):
-        lightusd.load_bytes(source, format="mjcf", unsupported_policy="error")
+        lightusd._import(data=source, format="mjcf", profile="legacy", unsupported_policy="error")
 
 
 def test_oversized_solver_array_is_rejected():
@@ -281,3 +285,28 @@ def test_newton_mass_and_joint_rules(diag, tensor, stiffness, armature, rule, se
         assert not newton, newton
     else:
         assert any(i.rule_id == rule and i.severity == severity for i in newton), report.issues
+
+
+
+def test_composed_load_validates_sublayer_targets(tmp_path):
+    # Validation sees the composed stage: a joint targeting bodies defined in
+    # a sublayer resolves (and only fails when composition is skipped).
+    (tmp_path / 'bodies.usda').write_text('''#usda 1.0
+def Xform "World" {
+    def Xform "A" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {}
+    def Xform "B" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {}
+}
+''')
+    (tmp_path / 'robot.usda').write_text('''#usda 1.0
+( subLayers = [@./bodies.usda@] upAxis = "Z" metersPerUnit = 1 )
+over "World" {
+    def PhysicsRevoluteJoint "J" {
+        rel physics:body0 = </World/A>
+        rel physics:body1 = </World/B>
+    }
+}
+''')
+    composed = physics.validate(lightusd.load(tmp_path / 'robot.usda'), include_core=False)
+    assert not any(i.rule_id == 'physics.joint.bodyTarget' for i in composed.issues)
+    layer_only = physics.validate(lightusd.load(tmp_path / 'robot.usda', composed=False), include_core=False)
+    assert any(i.rule_id == 'physics.joint.bodyTarget' for i in layer_only.issues)

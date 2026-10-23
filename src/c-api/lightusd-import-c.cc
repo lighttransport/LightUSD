@@ -19,6 +19,8 @@ using lightusd_internal::Fail;
 namespace {
 thread_local std::string last_import_report = "{}";
 lightusd_status Options(const lightusd_import_options* in, ia::Options* out) {
+  // Finish() hands Result::meshes to the converter.
+  out->typed_meshes = true;
   if (!in) return LIGHTUSD_OK;
   if (in->struct_size < sizeof(*in) || in->format > LIGHTUSD_IMPORT_MJCF ||
       in->max_memory_bytes > SIZE_MAX || in->max_input_bytes > SIZE_MAX ||
@@ -49,6 +51,11 @@ lightusd_status Options(const lightusd_import_options* in, ia::Options* out) {
             out->profile != "legacy")
           return Fail(LIGHTUSD_ERR_INVALID_ARG,
                       "profile must be newton, openusd or legacy");
+      }
+      else if (key == "obj_topology" && v.is_string()) {
+        out->obj_topology = v.get<std::string>();
+        if (out->obj_topology != "expanded" && out->obj_topology != "indexed")
+          return Fail(LIGHTUSD_ERR_INVALID_ARG, "obj_topology must be expanded or indexed");
       }
       else if (key == "allow_missing" && v.is_boolean())
         out->allow_missing = v.get<bool>();
@@ -145,8 +152,17 @@ lightusd_status Finish(ia::Result& result, const std::string& source,
   if (!handle)
     return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "Cannot allocate imported stage");
   std::string warn, err;
+  std::map<std::string, lightusd::tydra::next::URDFMeshBuffer> meshes;
+  for (auto& entry : result.meshes) {
+    auto& buffer = meshes[entry.first];
+    buffer.positions = std::move(entry.second.positions);
+    buffer.normals = std::move(entry.second.normals);
+    buffer.uvs = std::move(entry.second.uvs);
+    buffer.indices = std::move(entry.second.indices);
+  }
+  result.meshes.clear();
   if (!lightusd::tydra::next::ConvertURDFPayloadToUSDStage(
-          result.payload, &handle->stage, &warn, &err)) {
+          result.payload, &meshes, &handle->stage, &warn, &err)) {
     delete handle;
     return Failure(err);
   }

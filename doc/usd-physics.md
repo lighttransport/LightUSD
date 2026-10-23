@@ -63,6 +63,9 @@ in one of three profiles, selected with `profile=` (Python), `"profile"` in the 
 | MJCF `ref` | `mjc:ref` only (Newton measures joint coordinates from it) | omitted | also `state:*:physics:position` |
 | MJCF stacked joints with a ball | intermediate-link chain (Newton merges only hinges/slides into a D6) | stacked | massless intermediate links |
 | MJCF `<flexcomp>` | UsdPhysics deformables (below) | unsupported (reported) | unsupported (reported) |
+| MJCF primitive visuals | native `Sphere`/`Cube`/`Cylinder`/`Capsule`/`Plane` (as mujoco-usd-converter), material bound, `displayColor`/`displayOpacity` from geom `rgba` | same | tessellated meshes |
+| MJCF ellipsoids (non-uniform) | mesh with the radii baked in (convex hull as a collider): a scaled `Sphere` is read as a unit sphere by Newton and rejected by OpenUSD | same | scaled `Sphere` (reported) |
+| URDF ghost / dummy-inertia links | urdf-usd-converter rules: inertia-, visual- and collision-less links on fixed joints (or the root) lose `RigidBodyAPI`, their fixed joint is dropped and child joints re-anchor on the nearest rigid ancestor (or the world); an inertial-only childless child on a fixed joint under a geometry-only parent is merged into it | same | as authored |
 | MJCF `<flag>` | `newton:gravityEnabled` follows `gravity`; `filterparent="disable"` sets `physics:collisionEnabled` on joints; `spring`/`damper` flags authored | flags only | flags only |
 | OBJ stage | `metersPerUnit = 1`, root `kind = component` | same | no units |
 
@@ -84,12 +87,15 @@ suffixes first) and elements referencing replicated names in `<tendon>`,
 them. `<composite type="cable">` becomes MuJoCo's body chain (capsule/
 cylinder/box segments on ball joints in a parallel-transported frame,
 `initial` free/ball/none, `B_first`/`B_<i>`/`B_last`, `S_first`/`S_last`,
-neighbour excludes); the cable elasticity plugin is reported and dropped.
+neighbour excludes; at most 512 vertices so body traversal stays
+stack-safe); the cable elasticity plugin becomes ball-joint stiffness E·I/L toward the initial shape (exact for bending, twist approximated; reported).
 Both match MuJoCo's compiled body poses on MuJoCo's sample models.
 
-In the `newton` profile, MJCF `<flexcomp>` of type `grid`, `circle`,
-`square`, `disc` or `direct` (MuJoCo's point/element generation, pins,
-pose and unused-point removal) becomes one soft body under
+In the `newton` profile, MJCF `<flexcomp>` of every type (`grid`, `circle`,
+`square`, `disc`, `direct`, `box`, `cylinder`, `ellipsoid`, `mesh` from OBJ
+or STL, ASCII `gmsh` 4.1/2.2; MuJoCo's point/element generation including
+its vertex order, pins, pose, scaling and unused-point removal) becomes one
+soft body under
 `/World/Deformables` in the AOUSD UsdPhysics deformable layout Newton reads:
 
 | flex dim | Prim | Simulation / material API | Notes |
@@ -105,10 +111,19 @@ the material is bound with `material:binding:physics`, and
 become one `PhysicsAttachment` (`type0 = point`, `type1 = xform`, `coords1` in
 the owning body frame, no `src1` for the world); Newton imports attachments
 only for cables. Non-`full` `dof`, plugins, 2D/3D damping and edge equality
-are reported as approximated or dropped; other flexcomp types, raw `<flex>`
-and `<skin>` stay unsupported. On MuJoCo's flex sample models the vertices
+are reported as approximated or dropped; binary GMSH, raw `<flex>` and
+`<skin>` stay unsupported. Shells carry `physics:restBendAnglesDefault =
+restShape` (MuJoCo bends relative to the initial shape). On MuJoCo's flex sample models the vertices
 match MuJoCo's compiled `flexvert_xpos` and the element counts match;
 Newton imports them as particles, triangles, tetrahedra and cable rods.
+
+MJCF visuals: capsule meshes have hemispherical caps (previously plain
+cylinders), cameras default to MuJoCo's 45 degree `fovy` and take
+`clippingRange` from `<visual><map znear zfar>` times an authored
+`<statistic extent>`, lights carry `intensity` and spot `exponent`
+(`inputs:shaping:focus`), and material `texrepeat` becomes a
+`UsdTransform2d` scale on the diffuse texture. Builtin textures are reported
+(`mjcf.texture_builtin_unsupported`).
 
 Profile-independent fixes also changed `legacy` output for affected inputs:
 MuJoCo mesh-fit primitives (`mesh=` on a primitive type) are sized from the

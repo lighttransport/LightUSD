@@ -45,6 +45,7 @@ thread_local std::vector<GeomMass>* active_geom_masses = nullptr;
 // Bodies authored with stacked joints (non-legacy profiles).
 thread_local std::set<std::string>* stacked_joint_bodies = nullptr;
 constexpr double kPi = 3.14159265358979323846;
+bool IsSupportedFlexcompType(const std::string& type);
 std::string ToLower(std::string s) {
   for (char& c : s)
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -374,8 +375,7 @@ bool ExpandIncludes(const std::string& xml, const fs::path& base_dir,
       // The newton profile converts <flexcomp> into a soft body later.
       const std::string flex_type = ToLower(node.attribute("type").as_string("grid"));
       const bool soft_body = tag == "flexcomp" && active_reader->options.profile == "newton" &&
-                             (flex_type == "grid" || flex_type == "circle" || flex_type == "square" ||
-                              flex_type == "disc" || flex_type == "direct");
+                             IsSupportedFlexcompType(flex_type);
       if (!soft_body && (tag == "flex" || tag == "flexcomp" || tag == "deformable" ||
                          tag == "skin")) {
         if (!UnsupportedXML(node, "Unsupported MJCF element: " + tag,
@@ -810,6 +810,38 @@ Mesh MakeSphereMesh(double radius, int slices = 16, int stacks = 8) {
   return mesh;
 }
 
+// Capsule along Z: the sphere's upper and lower hemispheres shifted by
+// +-half_length, joined at the equator (a cylinder side between them).
+Mesh MakeCapsuleMesh(double radius, double half_length, int slices = 16, int stacks = 8) {
+  Mesh mesh;
+  const double r = std::max(radius, 1.0e-6);
+  const double h = std::max(half_length, 0.0);
+  std::vector<std::array<float, 3>> verts;
+  // stacks + 2 rings: the equator is duplicated, once per hemisphere.
+  for (int iy = 0; iy <= stacks + 1; iy++) {
+    const int k = iy <= stacks / 2 ? iy : iy - 1;
+    const double phi = double(k) / double(stacks) * kPi;
+    const double z = r * std::cos(phi) + (iy <= stacks / 2 ? h : -h);
+    for (int ix = 0; ix <= slices; ix++) {
+      const double theta = double(ix) / double(slices) * 2.0 * kPi;
+      verts.push_back({{static_cast<float>(r * std::sin(phi) * std::cos(theta)),
+                        static_cast<float>(r * std::sin(phi) * std::sin(theta)),
+                        static_cast<float>(z)}});
+    }
+  }
+  for (int iy = 0; iy <= stacks; iy++) {
+    for (int ix = 0; ix < slices; ix++) {
+      const int a = iy * (slices + 1) + ix;
+      const int b = a + 1;
+      const int c = a + slices + 1;
+      const int d = c + 1;
+      AppendTri(&mesh, verts[a], verts[c], verts[b]);
+      AppendTri(&mesh, verts[b], verts[c], verts[d]);
+    }
+  }
+  return mesh;
+}
+
 Mesh MakeCylinderMesh(double radius, double half_length, int slices = 20) {
   Mesh mesh;
   const float r = static_cast<float>(std::max(radius, 1.0e-6));
@@ -1074,7 +1106,7 @@ Json MeshPayloadToJson(const MeshPayload& payload) {
     return {{"name", payload.name},
             {"matrix", Array(payload.matrix)},
             {"shape", payload.shape}};
-  Json j = MeshJSON(payload.mesh);
+  Json j = MeshRefJSON(payload.mesh, *active_reader);
   j["name"] = payload.name;
   j["matrix"] = Array(payload.matrix);
   return j;
@@ -1630,7 +1662,7 @@ bool BuildGeomPayload(const pugi::xml_node& geom_node, const AttrMap& cls,
                       const Options& opts, const Context& ctx,
                       const std::vector<double>& body_world,
                       MeshPayload* payload, bool* is_visual, std::string* err,
-                      bool force_collision = false) {
+                      bool force_collision = false, bool native_shape = false) {
   const std::string type = HasEff(geom_node, cls, "type")
                                ? Eff(geom_node, cls, "type")
                            : HasEff(geom_node, cls, "mesh") ? "mesh"
@@ -1689,6 +1721,9 @@ bool BuildGeomPayload(const pugi::xml_node& geom_node, const AttrMap& cls,
   }
 
   if (force_collision) *is_visual = false;
+  // Native gprim (collider, or a primitive visual in non-legacy profiles)
+  // instead of a tessellated mesh.
+  const bool native = native_shape || (!(*is_visual) && !opts.tessellate_collision_shapes);
 
   if (type == "mesh") {
     const std::string mesh_name = Eff(geom_node, cls, "mesh");
@@ -1723,7 +1758,7 @@ bool BuildGeomPayload(const pugi::xml_node& geom_node, const AttrMap& cls,
   } else if (type == "box") {
     auto half = geom_size3({{0.05, 0.05, 0.05}});
     ApplyFromtoFrame(geom_node, cls, body_world, 2, &half, &payload->matrix);
-    if (!(*is_visual) && !opts.tessellate_collision_shapes) {
+    if (native) {
       payload->shape = {{"type", "box"}};
       payload->matrix = MultiplyMatrix(payload->matrix, ScaleMatrix(half));
     } else {
@@ -1732,7 +1767,7 @@ bool BuildGeomPayload(const pugi::xml_node& geom_node, const AttrMap& cls,
   } else if (type == "sphere") {
     const auto size = geom_sizes();
     const double radius = size.empty() ? 0.05 : size[0];
-    if (!(*is_visual) && !opts.tessellate_collision_shapes) {
+    if (native) {
       payload->shape = {{"type", "sphere"}, {"radius", radius}};
     } else {
       payload->mesh = MakeSphereMesh(radius);
@@ -1740,8 +1775,16 @@ bool BuildGeomPayload(const pugi::xml_node& geom_node, const AttrMap& cls,
   } else if (type == "ellipsoid") {
     auto radii = geom_size3({{0.05, 0.05, 0.05}});
     ApplyFromtoFrame(geom_node, cls, body_world, 2, &radii, &payload->matrix);
-    if (!(*is_visual) && !opts.tessellate_collision_shapes) {
-      if ((radii[0] != radii[1] || radii[1] != radii[2]) &&
+    const bool uniform = radii[0] == radii[1] && radii[1] == radii[2];
+    if (!uniform && opts.profile != "legacy") {
+      // UsdGeom has no ellipsoid and consumers ignore a nonuniformly scaled
+      // sphere's scale (Newton keeps the unit radius; OpenUSD rejects such
+      // colliders): bake the radii into a mesh, a convex hull as a collider.
+      payload->mesh = MakeSphereMesh(1.0, 24, 12);
+      for (size_t i = 0; i < payload->mesh.positions.size(); ++i)
+        payload->mesh.positions[i] = static_cast<float>(payload->mesh.positions[i] * radii[i % 3]);
+    } else if (native) {
+      if (!uniform && !(*is_visual) &&
           !UnsupportedXML(geom_node,
               "Ellipsoid collider is represented by a nonuniformly scaled sphere; enable tessellate_collision_shapes for a mesh collider",
               "mjcf.ellipsoid_collision_approximated", "mjcf.ellipsoid_collision",
@@ -1775,20 +1818,21 @@ bool BuildGeomPayload(const pugi::xml_node& geom_node, const AttrMap& cls,
           body_world,
           MatrixFromPosQuat(center, QuatFromTwoVecs({{0.0, 0.0, 1.0}}, dir)));
     }
-    if (!(*is_visual) && !opts.tessellate_collision_shapes) {
+    if (native) {
       payload->shape = {{"type", type},
                         {"radius", radius},
                         {"height", half_length * 2.0},
                         {"axis", "Z"}};
     } else {
-      payload->mesh = MakeCylinderMesh(radius, half_length);
+      payload->mesh = type == "capsule" ? MakeCapsuleMesh(radius, half_length)
+                                        : MakeCylinderMesh(radius, half_length);
     }
   } else if (type == "plane") {
     const auto size = ParseDoubles(Eff(geom_node, cls, "size"));
     const double sx = size.size() >= 1 && size[0] > 0.0 ? size[0] : 1.0;
     const double sy = size.size() >= 2 && size[1] > 0.0 ? size[1] : 1.0;
     const double sz = size.size() >= 3 && size[2] > 0.0 ? size[2] : 0.001;
-    if (!(*is_visual) && !opts.tessellate_collision_shapes) {
+    if (native) {
       payload->shape = {{"type", "plane"},
                         {"width", sx * 2.0},
                         {"length", sy * 2.0},
@@ -1856,16 +1900,354 @@ void DecomposePosQuat(const std::vector<double>&, std::array<double, 3>*,
                       Quat*);
 bool MjcBoolAttr(const std::string& v);  // defined below
 
+bool IsSupportedFlexcompType(const std::string& type) {
+  for (const char* t : {"grid", "circle", "square", "disc", "direct", "box", "cylinder",
+                        "ellipsoid", "mesh", "gmsh"})
+    if (type == t) return true;
+  return false;
+}
+
+// Directory flexcomp `file` attributes resolve against (MuJoCo meshdir, or
+// assetdir, relative to the model file).
+fs::path FlexMeshDir(const pugi::xml_node& root, const fs::path& base_dir) {
+  const auto compiler = Child(root, "compiler");
+  std::string dir = compiler ? Attr(compiler, "meshdir") : std::string();
+  if (dir.empty() && compiler) dir = Attr(compiler, "assetdir");
+  return dir.empty() ? base_dir : base_dir / dir;
+}
+
+// mjCFlexcomp::MakeBox with MuJoCo's default open=true: points on the box
+// surface projected to a box, cylinder or ellipsoid (dim 3 adds the center
+// as point 0 and builds tets to it; dim 2 has no top face).
+void MakeFlexBox(const std::string& type, int dim, const std::array<int, 3>& count,
+                 const std::array<double, 3>& spacing, std::vector<double>* point,
+                 std::vector<int>* element) {
+  const bool open = true;
+  auto project = [&](int ix, int iy, int iz) {
+    double p[3] = {2.0 * ix / (count[0] - 1) - 1, 2.0 * iy / (count[1] - 1) - 1,
+                   2.0 * iz / (count[2] - 1) - 1};
+    const double size[3] = {0.5 * spacing[0] * (count[0] - 1), 0.5 * spacing[1] * (count[1] - 1),
+                            0.5 * spacing[2] * (count[2] - 1)};
+    auto normalize = [&](int n) {
+      double l = 0;
+      for (int k = 0; k < n; ++k) l += p[k] * p[k];
+      if (l < 1e-6) return;  // mjuu_normvec: tiny vectors are left as is
+      l = std::sqrt(l);
+      if (std::abs(l - 1) > 1e-6)
+        for (int k = 0; k < n; ++k) p[k] /= l;
+    };
+    if (type == "cylinder") {
+      const double l0 = std::max(std::abs(p[0]), std::abs(p[1]));
+      normalize(2);
+      p[0] *= size[0] * l0;
+      p[1] *= size[1] * l0;
+      p[2] *= size[2];
+    } else {
+      if (type == "ellipsoid") normalize(3);
+      for (int k = 0; k < 3; ++k) p[k] *= size[k];
+    }
+    point->insert(point->end(), {p[0], p[1], p[2]});
+  };
+  auto lin = [&](int ix, int iy, int iz) { return ix * count[1] * count[2] + iy * count[2] + iz; };
+  auto box_id = [&](int ix, int iy, int iz) {
+    if (iz == 0) return ix * count[1] + iy + 1;
+    if (iz == count[2] - 1) return count[0] * count[1] + ix * count[1] + iy + 1;
+    if (iy == 0) return 2 * count[0] * count[1] + ix * (count[2] - 2) + iz - 1 + 1;
+    if (iy == count[1] - 1)
+      return 2 * count[0] * count[1] + count[0] * (count[2] - 2) + ix * (count[2] - 2) + iz - 1 + 1;
+    if (ix == 0)
+      return 2 * count[0] * count[1] + 2 * count[0] * (count[2] - 2) + (iy - 1) * (count[2] - 2) +
+             iz - 1 + 1;
+    return 2 * count[0] * count[1] + 2 * count[0] * (count[2] - 2) +
+           (count[1] - 2) * (count[2] - 2) + (iy - 1) * (count[2] - 2) + iz - 1 + 1;
+  };
+  if (dim == 3) point->insert(point->end(), {0, 0, 0});
+  std::vector<int> idx(static_cast<size_t>(count[0] * count[1] * count[2]), 0);
+  int n = 0;
+  const bool open2 = open && dim == 2;
+  for (int iz = 0; iz < count[2]; iz += count[2] - 1)
+    for (int ix = 0; ix < count[0]; ++ix)
+      for (int iy = 0; iy < count[1]; ++iy) {
+        if (open2 && iz != 0) continue;
+        project(ix, iy, iz);
+        idx[size_t(lin(ix, iy, iz))] = n++;
+      }
+  for (int iy = 0; iy < count[1]; iy += count[1] - 1)
+    for (int ix = 0; ix < count[0]; ++ix)
+      for (int iz = 0; iz < count[2]; ++iz)
+        if (iz > 0 && (open2 || iz < count[2] - 1)) {
+          project(ix, iy, iz);
+          idx[size_t(lin(ix, iy, iz))] = n++;
+        }
+  for (int ix = 0; ix < count[0]; ix += count[0] - 1)
+    for (int iy = 0; iy < count[1]; ++iy)
+      for (int iz = 0; iz < count[2]; ++iz)
+        if (iz > 0 && (open2 || iz < count[2] - 1) && iy > 0 && iy < count[1] - 1) {
+          project(ix, iy, iz);
+          idx[size_t(lin(ix, iy, iz))] = n++;
+        }
+  auto id = [&](int ix, int iy, int iz) { return idx[size_t(lin(ix, iy, iz))]; };
+  auto push = [&](std::initializer_list<int> v) { element->insert(element->end(), v); };
+  for (int iz = 0; iz < count[2]; iz += count[2] - 1)
+    for (int ix = 0; ix < count[0]; ++ix)
+      for (int iy = 0; iy < count[1]; ++iy) {
+        if (open2 && iz != 0) continue;
+        if (ix >= count[0] - 1 || iy >= count[1] - 1) continue;
+        if (dim == 3) {
+          push({0, box_id(ix, iy, iz), box_id(ix + 1, iy, iz), box_id(ix + 1, iy + 1, iz)});
+          push({0, box_id(ix, iy, iz), box_id(ix, iy + 1, iz), box_id(ix + 1, iy + 1, iz)});
+        } else {
+          const int s1 = iz == 0 ? 1 : 0, s2 = iz == 0 ? 0 : 1;
+          push({id(ix, iy, iz), id(ix + 1, iy + s1, iz), id(ix + 1, iy + s2, iz)});
+          push({id(ix, iy, iz), id(ix + s2, iy + 1, iz), id(ix + s1, iy + 1, iz)});
+        }
+      }
+  for (int iy = 0; iy < count[1]; iy += count[1] - 1)
+    for (int ix = 0; ix < count[0]; ++ix)
+      for (int iz = 0; iz < count[2]; ++iz) {
+        if (ix >= count[0] - 1 || iz >= count[2] - 1) continue;
+        if (dim == 3) {
+          push({0, box_id(ix, iy, iz), box_id(ix + 1, iy, iz), box_id(ix + 1, iy, iz + 1)});
+          push({0, box_id(ix, iy, iz), box_id(ix, iy, iz + 1), box_id(ix + 1, iy, iz + 1)});
+        } else {
+          const int ix0 = iy == 0 ? ix : ix + 1, dx = iy == 0 ? 1 : -1;
+          push({id(ix0, iy, iz), id(ix0 + dx, iy, iz), id(ix0 + dx, iy, iz + 1)});
+          push({id(ix0, iy, iz), id(ix0 + dx, iy, iz + 1), id(ix0, iy, iz + 1)});
+        }
+      }
+  for (int ix = 0; ix < count[0]; ix += count[0] - 1)
+    for (int iy = 0; iy < count[1]; ++iy)
+      for (int iz = 0; iz < count[2]; ++iz) {
+        if (iy >= count[1] - 1 || iz >= count[2] - 1) continue;
+        if (dim == 3) {
+          push({0, box_id(ix, iy, iz), box_id(ix, iy + 1, iz), box_id(ix, iy + 1, iz + 1)});
+          push({0, box_id(ix, iy, iz), box_id(ix, iy, iz + 1), box_id(ix, iy + 1, iz + 1)});
+        } else {
+          const int iy0 = ix != 0 ? iy : iy + 1, dy = ix != 0 ? 1 : -1;
+          push({id(ix, iy0, iz), id(ix, iy0 + dy, iz), id(ix, iy0 + dy, iz + 1)});
+          push({id(ix, iy0, iz), id(ix, iy0 + dy, iz + 1), id(ix, iy0, iz + 1)});
+        }
+      }
+}
+
+// mjCFlexcomp::MakeMesh: the surface mesh's vertices (exact repeats merged
+// in first-occurrence order, OBJ vertices in file order) and faces; dim 1
+// takes edge pairs from degenerate triangles and dim 3 builds tets from the
+// origin to every face that sees it with positive volume.
+bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
+                  const std::array<double, 3>& origin, bool has_origin,
+                  std::vector<double>* point, std::vector<int>* element, std::string* err) {
+  Mesh mesh;
+  const std::string ext = ToLower(path.extension().string());
+  if (ext == ".obj") {
+    OBJ obj;
+    if (!ReadOBJ(text, path.string(), *active_reader, true, &obj, err)) return false;
+    if (!obj.meshes.empty()) mesh = std::move(obj.meshes[0]);
+  } else if (ext == ".stl") {
+    if (!LoadBinarySTL(path, false, &mesh, err)) return false;
+  } else {
+    if (err) *err = "mesh flexcomp supports OBJ and STL files";
+    return false;
+  }
+  std::vector<int32_t> tri;
+  if (!MeshTriangles(mesh, &tri) || tri.empty()) {
+    if (err) *err = "mesh has no faces";
+    return false;
+  }
+  const size_t corners = mesh.positions.size() / 3;
+  std::vector<int> remap(corners, -1);
+  if (mesh.source_vertices.size() == corners) {
+    // OBJ: rebuild the file's vertex array, then merge exact repeats.
+    int32_t max_source = -1;
+    for (int32_t v : mesh.source_vertices) max_source = std::max(max_source, v);
+    std::vector<float> raw(size_t(max_source + 1) * 3, 0.0f);
+    std::vector<bool> seen(size_t(max_source + 1), false);
+    for (size_t i = 0; i < corners; ++i) {
+      const size_t v = size_t(mesh.source_vertices[i]);
+      std::copy(&mesh.positions[3 * i], &mesh.positions[3 * i] + 3, &raw[3 * v]);
+      seen[v] = true;
+    }
+    std::map<std::array<float, 3>, int> keys;
+    std::vector<int> vertex_id(seen.size(), -1);
+    for (size_t v = 0; v < seen.size(); ++v) {
+      if (!seen[v]) continue;  // unreferenced: dropped later anyway
+      const std::array<float, 3> key{{raw[3 * v], raw[3 * v + 1], raw[3 * v + 2]}};
+      auto it = keys.emplace(key, static_cast<int>(point->size() / 3));
+      if (it.second) point->insert(point->end(), key.begin(), key.end());
+      vertex_id[v] = it.first->second;
+    }
+    for (size_t i = 0; i < corners; ++i) remap[i] = vertex_id[size_t(mesh.source_vertices[i])];
+  } else {
+    std::map<std::array<float, 3>, int> keys;
+    for (size_t i = 0; i < corners; ++i) {
+      const std::array<float, 3> key{{mesh.positions[3 * i], mesh.positions[3 * i + 1],
+                                      mesh.positions[3 * i + 2]}};
+      auto it = keys.emplace(key, static_cast<int>(point->size() / 3));
+      if (it.second) point->insert(point->end(), key.begin(), key.end());
+      remap[i] = it.first->second;
+    }
+  }
+  if (dim == 2) {
+    for (int32_t c : tri) element->push_back(remap[size_t(c)]);
+  } else if (dim == 1) {
+    for (size_t i = 0; i + 2 < tri.size(); i += 3)
+      element->insert(element->end(), {remap[size_t(tri[i])], remap[size_t(tri[i + 1])]});
+  } else {
+    if (!has_origin) {
+      if (err) *err = "origin must be specified for mesh flexcomps if dim=3";
+      return false;
+    }
+    point->insert(point->begin(), origin.begin(), origin.end());
+    for (size_t i = 0; i + 2 < tri.size(); i += 3) {
+      const int t[3] = {remap[size_t(tri[i])] + 1, remap[size_t(tri[i + 1])] + 1,
+                        remap[size_t(tri[i + 2])] + 1};
+      double e[3][3];
+      for (int a = 0; a < 3; ++a)
+        for (int k = 0; k < 3; ++k) e[a][k] = (*point)[3 * size_t(t[a]) + size_t(k)] - origin[size_t(k)];
+      const double nx = e[0][1] * e[1][2] - e[0][2] * e[1][1];
+      const double ny = e[0][2] * e[1][0] - e[0][0] * e[1][2];
+      const double nz = e[0][0] * e[1][1] - e[0][1] * e[1][0];
+      if (nx * e[2][0] + ny * e[2][1] + nz * e[2][2] < 1e-15) continue;  // mjMINVAL
+      element->insert(element->end(), {0, t[0], t[1], t[2]});
+    }
+  }
+  return true;
+}
+
+// ASCII GMSH 4.1 (single node and element block) and 2.2, as
+// mjCFlexcomp::LoadGMSH reads them; binary files are rejected.
+bool ParseGMSH(const std::string& text, int* dim, std::vector<double>* point,
+               std::vector<int>* element, std::string* err) {
+  if (text.compare(0, 11, "$MeshFormat") != 0) {
+    *err = "GMSH file must begin with $MeshFormat";
+    return false;
+  }
+  std::istringstream header(text.substr(11, 64));
+  double version = 0;
+  int binary = 0;
+  if (!(header >> version >> binary)) {
+    *err = "could not read the GMSH header";
+    return false;
+  }
+  const long v = std::lround(100 * version);
+  if (v != 220 && v != 410) {
+    *err = "only GMSH file format versions 4.1 and 2.2 are supported";
+    return false;
+  }
+  if (binary) {
+    *err = "binary GMSH files are not supported";
+    return false;
+  }
+  const size_t nb = text.find("$Nodes"), ne = text.find("$EndNodes");
+  const size_t eb = text.find("$Elements"), ee = text.find("$EndElements");
+  if (nb == std::string::npos || ne == std::string::npos || eb == std::string::npos ||
+      ee == std::string::npos || ne < nb || ee < eb) {
+    *err = "GMSH file is missing its $Nodes or $Elements section";
+    return false;
+  }
+  std::istringstream nodes(text.substr(nb + 6, ne - nb - 6));
+  std::istringstream elems(text.substr(eb + 9, ee - eb - 9));
+  const size_t kMax = 50000000;
+  if (v == 410) {
+    size_t blocks = 0, num = 0, min_tag = 0, max_tag = 0, in_block = 0;
+    int edim = 0, etag = 0, param = 0;
+    if (!(nodes >> blocks >> num >> min_tag >> max_tag >> edim >> etag >> param >> in_block) ||
+        blocks != 1 || num != in_block || max_tag != in_block || num > kMax || edim < 1 || edim > 3) {
+      *err = "GMSH nodes must be one sequential block of 1D, 2D or 3D entities";
+      return false;
+    }
+    *dim = edim;
+    for (size_t i = 0; i < num; ++i) {
+      size_t tag = 0;
+      if (!(nodes >> tag) || tag != i + min_tag) {
+        *err = "GMSH node tags must be sequential";
+        return false;
+      }
+    }
+    for (size_t i = 0; i < 3 * num; ++i) {
+      double x = 0;
+      if (!(nodes >> x)) {
+        *err = "error reading GMSH nodes";
+        return false;
+      }
+      point->push_back(x);
+    }
+    size_t eblocks = 0, enumb = 0, emin = 0, emax = 0, ein = 0;
+    int type = 0;
+    if (!(elems >> eblocks >> enumb >> emin >> emax >> edim >> etag >> type >> ein) ||
+        eblocks != 1 || enumb != ein || edim != *dim || enumb > kMax ||
+        type != (edim == 1 ? 1 : edim == 2 ? 2 : 4)) {
+      *err = "GMSH elements must be one block matching the node dimension";
+      return false;
+    }
+    for (size_t i = 0; i < enumb; ++i) {
+      size_t tag = 0, node = 0;
+      elems >> tag;
+      for (int k = 0; k <= edim; ++k) {
+        if (!(elems >> node) || node < min_tag || node - min_tag >= num) {
+          *err = "error reading GMSH elements";
+          return false;
+        }
+        element->push_back(static_cast<int>(node - min_tag));
+      }
+    }
+    return true;
+  }
+  size_t num = 0;
+  if (!(nodes >> num) || num > kMax) {
+    *err = "error reading the GMSH node count";
+    return false;
+  }
+  for (size_t i = 0; i < num; ++i) {
+    size_t tag = 0;
+    double x[3];
+    if (!(nodes >> tag >> x[0] >> x[1] >> x[2])) {
+      *err = "error reading GMSH nodes";
+      return false;
+    }
+    point->insert(point->end(), {x[0], x[1], x[2]});
+  }
+  size_t count = 0;
+  if (!(elems >> count) || count > kMax) {
+    *err = "error reading the GMSH element count";
+    return false;
+  }
+  int nodes_per = 0;
+  for (size_t i = 0; i < count; ++i) {
+    int tag = 0, type = 0, ntags = 0;
+    if (!(elems >> tag >> type >> ntags) || ntags < 0 || ntags > 64) {
+      *err = "error reading GMSH elements";
+      return false;
+    }
+    const int per = type == 2 ? 3 : type == 4 ? 4 : 0;
+    if (!per || (nodes_per && per != nodes_per)) {
+      *err = "GMSH 2.2 elements must all be triangles or tetrahedra";
+      return false;
+    }
+    nodes_per = per;
+    for (int k = 0; k < ntags; ++k) elems >> tag;
+    for (int k = 0; k < per; ++k) {
+      long node = 0;
+      if (!(elems >> node) || node < 1 || size_t(node) > num) {
+        *err = "invalid GMSH node tag";
+        return false;
+      }
+      element->push_back(static_cast<int>(node - 1));
+    }
+  }
+  *dim = nodes_per == 3 ? 2 : 3;
+  return true;
+}
+
 // MJCF <flexcomp> (grid, circle, square, disc, direct) expanded the way
 // MuJoCo's mjCFlexcomp::Make does, but kept as one soft body instead of a
 // point-mass body per vertex: world-space points, elements, the pinned
 // vertices (attached to the owning body) and the elasticity/contact values.
-bool CollectMujocoFlexcompsJson(const pugi::xml_node& body_node,
-                                const std::vector<double>& parent_world,
-                                const Context& ctx, bool is_world, Json* out,
-                                std::string* err) {
-  const std::vector<double> body_world =
-      is_world ? parent_world : MultiplyMatrix(parent_world, PoseMatrix(body_node, ctx));
+bool CollectBodyFlexcompsJson(const pugi::xml_node& body_node,
+                              const std::vector<double>& body_world,
+                              const Context& ctx, bool is_world,
+                              const fs::path& mesh_dir, Json* out,
+                              std::string* err) {
   for (const auto& f : Children(body_node, "flexcomp")) {
     const std::string name = Attr(f, "name");
     const std::string type = ToLower(Attr(f, "type", "grid"));
@@ -1877,12 +2259,11 @@ bool CollectMujocoFlexcompsJson(const pugi::xml_node& body_node,
       return false;
     };
     // Other types were already reported as unsupported while reading the XML.
-    if (type != "grid" && type != "circle" && type != "square" && type != "disc" &&
-        type != "direct")
-      continue;
+    if (!IsSupportedFlexcompType(type)) continue;
     int dim = ToInt32(ParseDoubleAttr(f, "dim", 2.0), "dim");
     if (type == "circle") dim = 1;
     if (type == "square" || type == "disc") dim = 2;
+    const bool box_type = type == "box" || type == "cylinder" || type == "ellipsoid";
     if (dim < 1 || dim > 3) {
       if (err) *err = "flexcomp `" + name + "`: dim must be between 1 and 3";
       return false;
@@ -1914,12 +2295,41 @@ bool CollectMujocoFlexcompsJson(const pugi::xml_node& body_node,
         if (err) *err = "flexcomp `" + name + "`: invalid count";
         return false;
       }
+    if (double(count[0]) * count[1] * count[2] > 1e7) {
+      if (err) *err = "flexcomp `" + name + "`: more than 10 million grid points";
+      return false;
+    }
     std::vector<double> point;
     std::vector<int> element;
+    const bool direct = type == "direct" || type == "mesh" || type == "gmsh";
     if (type == "direct") {
       point = ParseDoubles(Attr(f, "point"));
       for (double v : ParseDoubles(Attr(f, "element"))) element.push_back(ToInt32(v, "element"));
-      for (size_t i = 0; i < point.size(); ++i) point[i] *= scale[i % 3];
+    } else if (type == "mesh" || type == "gmsh") {
+      const std::string file = Attr(f, "file");
+      if (file.empty()) {
+        if (err) *err = "flexcomp `" + name + "`: file is required";
+        return false;
+      }
+      const fs::path path = ResolveMeshPath(mesh_dir, mesh_dir, file, {});
+      std::string text;
+      if (!ReadFile(path, &text, err)) return false;
+      if (type == "gmsh") {
+        if (!ParseGMSH(text, &dim, &point, &element, err)) {
+          if (err) *err = "flexcomp `" + name + "`: " + *err;
+          return false;
+        }
+      } else if (!LoadFlexMesh(path, text, dim, ParseDouble3(Attr(f, "origin"), {{0, 0, 0}}),
+                               HasAttr(f, "origin"), &point, &element, err)) {
+        if (err) *err = "flexcomp `" + name + "`: " + *err;
+        return false;
+      }
+    } else if (box_type) {
+      if (count[0] < 2 || count[1] < 2 || count[2] < 2) {
+        if (err) *err = "flexcomp `" + name + "`: box, cylinder and ellipsoid need count >= 2";
+        return false;
+      }
+      MakeFlexBox(type, dim, count, spacing, &point, &element);
     } else if (dim == 1) {
       for (int ix = 0; ix < count[0]; ++ix) {
         if (type == "circle") {
@@ -1984,6 +2394,8 @@ bool CollectMujocoFlexcompsJson(const pugi::xml_node& body_node,
             }
           }
     }
+    if (direct)
+      for (size_t i = 0; i < point.size(); ++i) point[i] *= scale[i % 3];
     const int npnt = static_cast<int>(point.size() / 3);
     if (point.empty() || point.size() % 3 || element.empty() ||
         element.size() % static_cast<size_t>(dim + 1)) {
@@ -2038,8 +2450,8 @@ bool CollectMujocoFlexcompsJson(const pugi::xml_node& body_node,
         return false;
       }
     }
-    // Direct types drop unreferenced points.
-    if (type == "direct") {
+    // Direct, mesh and gmsh types drop unreferenced points.
+    if (direct) {
       std::vector<int> remap(static_cast<size_t>(npnt), -1);
       for (int e : element) remap[size_t(e)] = 0;
       std::vector<double> kept;
@@ -2116,8 +2528,29 @@ bool CollectMujocoFlexcompsJson(const pugi::xml_node& body_node,
     entry["collides"] = contype != 0 || conaffinity != 0;
     out->push_back(std::move(entry));
   }
-  for (const auto& child : Children(body_node, "body"))
-    if (!CollectMujocoFlexcompsJson(child, body_world, ctx, false, out, err)) return false;
+  return true;
+}
+
+// Depth-first over the body tree with an explicit stack: cables nest one body
+// per segment, deeper than this walker's frame allows recursively.
+bool CollectMujocoFlexcompsJson(const pugi::xml_node& worldbody, const Context& ctx,
+                                const fs::path& mesh_dir, Json* out, std::string* err) {
+  struct Item {
+    pugi::xml_node node;
+    std::vector<double> world;
+  };
+  std::vector<Item> stack{{worldbody, IdentityMatrix()}};
+  bool world = true;
+  while (!stack.empty()) {
+    Item item = std::move(stack.back());
+    stack.pop_back();
+    if (!CollectBodyFlexcompsJson(item.node, item.world, ctx, world, mesh_dir, out, err))
+      return false;
+    world = false;
+    std::vector<pugi::xml_node> children = Children(item.node, "body");
+    for (auto it = children.rbegin(); it != children.rend(); ++it)
+      stack.push_back({*it, MultiplyMatrix(item.world, PoseMatrix(*it, ctx))});
+  }
   return true;
 }
 
@@ -2773,13 +3206,16 @@ void CollectMujocoLightsCamerasJson(const pugi::xml_node& frame_node,
       light["castshadow"] = MjcBoolAttr(Attr(l, "castshadow"));
     if (HasAttr(l, "cutoff"))
       light["cutoff"] = ParseDoubleAttr(l, "cutoff", 45.0);
+    for (const char* key : {"intensity", "exponent"})
+      if (HasAttr(l, key)) light[key] = ParseDoubleAttr(l, key, 0.0);
     lights->push_back(std::move(light));
   }
   for (const auto& c : Children(frame_node, "camera")) {
     Json cam = Json::object();
     cam["name"] = Attr(c, "name", "camera");
     cam["matrix"] = Array(MultiplyMatrix(frame_world, PoseMatrix(c, ctx)));
-    if (HasAttr(c, "fovy")) cam["fovy"] = ParseDoubleAttr(c, "fovy", 45.0);
+    // MuJoCo's default vertical field of view is 45 degrees.
+    cam["fovy"] = ParseDoubleAttr(c, "fovy", 45.0);
     const std::string proj = Attr(c, "projection");
     if (proj == "orthographic" || MjcBoolAttr(Attr(c, "orthographic", "false")))
       cam["orthographic"] = true;
@@ -3030,6 +3466,11 @@ void AddMujocoMaterialsJson(const pugi::xml_node& root,
   for (const auto& t_node : Children(asset, "texture")) {
     const std::string tname = Attr(t_node, "name");
     const std::string tfile = Attr(t_node, "file");
+    if (tfile.empty() && HasAttr(t_node, "builtin") && Attr(t_node, "builtin") != "none" &&
+        active_reader)
+      active_reader->Warn("MJCF builtin texture `" + tname +
+                              "` is not generated; materials using it keep their rgba",
+                          "mjcf.texture_builtin_unsupported");
     if (tname.empty() || tfile.empty()) continue;
     tex_files[tname] =
         ResolveMeshPath(base_dir, tex_dir, tfile, index).string();
@@ -3051,6 +3492,9 @@ void AddMujocoMaterialsJson(const pugi::xml_node& root,
       mat["emission"] = ParseDoubleAttr(m_node, "emission", 0.0);
     if (HasAttr(m_node, "reflectance"))
       mat["reflectance"] = ParseDoubleAttr(m_node, "reflectance", 0.0);
+    const auto repeat = ParseDoubles(Attr(m_node, "texrepeat"));
+    if (repeat.size() >= 2 && (repeat[0] != 1.0 || repeat[1] != 1.0))
+      mat["texrepeat"] = Json::array({repeat[0], repeat[1]});
     const std::string tref = Attr(m_node, "texture");
     if (!tref.empty()) {
       const auto it = tex_files.find(tref);
@@ -3440,10 +3884,17 @@ bool AppendGeomToLink(const pugi::xml_node& geom_node, const std::string& cc,
     if (visible || !collides) {
       MeshPayload payload;
       bool ignored = true;
+      // Primitive visuals stay native gprims (as mujoco-usd-converter writes
+      // them); meshes and heightfields are triangles.
+      const bool primitive = geom_type != "mesh" && geom_type != "hfield";
       if (!BuildGeomPayload(geom_node, cls, cls_name, assets, hfields, opts, ctx,
-                            body_world, &payload, &ignored, err, native_wrap))
+                            body_world, &payload, &ignored, err, native_wrap, primitive))
         return false;
       Json visual_json = MeshPayloadToJson(payload);
+      // MuJoCo's geom color (default 0.5 0.5 0.5 1); a material, when bound,
+      // takes precedence in renderers.
+      const auto rgba = ParseDoubles(Eff(geom_node, cls, "rgba", "0.5 0.5 0.5 1"));
+      if (rgba.size() >= 4) visual_json["rgba"] = Array(rgba);
       if (native_wrap) visual_json["mjcGeom"] = geom_name;
       AddGeomPhysicsAttrs(geom_node, cls, &visual_json);
       const std::string mat = Eff(geom_node, cls, "material");
@@ -3991,6 +4442,10 @@ void DecomposePosQuat(const std::vector<double>& m, std::array<double, 3>* pos,
 // free or no joint for the first per `initial`) in a parallel-transported
 // frame, boundary sites S_first/S_last and contact excludes between
 // neighbours. Names follow MuJoCo (prefix + B_first, B_<i>, B_last, J_*, G<i>).
+// A cable nests one body per segment; bound the chain so body traversal
+// stays stack-safe (the XML depth limit is re-checked after expansion).
+constexpr int kMaxCableVertices = 512;
+
 bool ExpandCableComposites(pugi::xml_node root, const Context& ctx, std::string* err) {
   auto norm = [](std::array<double, 3>& v) {
     const double n = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
@@ -4056,8 +4511,8 @@ bool ExpandCableComposites(pugi::xml_node root, const Context& ctx, std::string*
       }
       const std::vector<double> q = ParseDoubles(Attr(comp, "quat"));
       const Quat cq = q.size() >= 4 ? QuatNormalize({{q[0], q[1], q[2], q[3]}}) : Quat{{1, 0, 0, 0}};
-      if (count < 2 || count > 100000) {
-        if (err) *err = "MJCF cable composite needs between 2 and 100000 vertices";
+      if (count < 2 || count > kMaxCableVertices) {
+        if (err) *err = "MJCF cable composite needs between 2 and 512 vertices";
         return false;
       }
       for (int ix = 0; ix < count; ++ix) {
@@ -4074,15 +4529,44 @@ bool ExpandCableComposites(pugi::xml_node root, const Context& ctx, std::string*
       }
     }
     const int n = static_cast<int>(vert.size() / 3);
-    if (n < 2 || vert.size() % 3) {
+    if (n < 2 || n > kMaxCableVertices || vert.size() % 3) {
       if (err) *err = "MJCF cable composite needs at least two vertices";
       return false;
     }
-    if (Child(comp, "plugin") &&
-        !UnsupportedXML(comp, "Cable elasticity plugin is not carried; segments keep only joint stiffness",
-                        "mjcf.cable_plugin_ignored", "mjcf.composite", active_reader->root_source, true)) {
-      if (err) *err = active_reader->failure;
-      return false;
+    // mujoco.elasticity.cable: bend torque E*I*(w - w0)/L between segments,
+    // twist G*J*(w - w0)/L. A ball-joint spring toward the initial pose with
+    // k = E*I/L reproduces bending; twist uses the same isotropic stiffness.
+    double bend_modulus = 0.0;
+    bool flat = false;
+    if (const pugi::xml_node plugin = Child(comp, "plugin")) {
+      double twist_modulus = 0.0;
+      for (const auto& config : Children(plugin, "config")) {
+        const std::string key = Attr(config, "key");
+        if (key == "bend") bend_modulus = ParseDoubleAttr(config, "value", 0.0);
+        if (key == "twist") twist_modulus = ParseDoubleAttr(config, "value", 0.0);
+        if (key == "flat") flat = MjcBoolAttr(Attr(config, "value", "false"));
+      }
+      const bool exact = bend_modulus > 0 && !flat && twist_modulus == 0.0;
+      if (!exact &&
+          !UnsupportedXML(comp, bend_modulus > 0
+                                    ? "Cable elasticity is approximated by isotropic ball-joint stiffness E*I/L"
+                                    : "Cable elasticity plugin has no inline bend config; it is dropped",
+                          "mjcf.cable_plugin_approximated", "mjcf.composite",
+                          active_reader->root_source, true)) {
+        if (err) *err = active_reader->failure;
+        return false;
+      }
+      if (flat) bend_modulus = 0.0;  // a straight rest shape has no joint-spring form
+    }
+    double second_moment = 0.0;
+    {
+      const auto gs = ParseDoubles(Attr(geom, "size"));
+      if (geom_type == "box") {
+        const double h = gs.size() > 1 ? gs[1] : 0.0, w = gs.size() > 2 ? gs[2] : 0.0;
+        second_moment = 0.5 * (std::pow(2 * w, 3) * 2 * h + std::pow(2 * h, 3) * 2 * w) / 12.0;
+      } else if (!gs.empty()) {
+        second_moment = kPi * std::pow(gs[0], 4) / 4.0;
+      }
     }
     const auto offset = ParseDouble3(Attr(comp, "offset"), {{0, 0, 0}});
     const std::string initial = Attr(comp, "initial", "ball");
@@ -4155,6 +4639,11 @@ bool ExpandCableComposites(pugi::xml_node root, const Context& ctx, std::string*
             (prefix + (first ? "J_first" : is_last ? "J_last" : "J_" + std::to_string(ix))).c_str());
         if (j.attribute("type")) j.remove_attribute("type");
         j.append_attribute("type").set_value(free ? "free" : "ball");
+        if (!first && bend_modulus > 0 && length_prev > 0 && !j.attribute("stiffness")) {
+          char buf[40];
+          std::snprintf(buf, sizeof(buf), "%.17g", bend_modulus * second_moment / length_prev);
+          j.append_attribute("stiffness").set_value(buf);
+        }
       }
       pugi::xml_node g = body.append_copy(geom);
       g.remove_attribute("name");
@@ -4575,6 +5064,10 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
   ctx.defaults = ParseDefaults(root);
   if (!ExpandCableComposites(root, ctx, err)) return false;
   if (!ExpandReplicates(root, ctx, err)) return false;
+  // Expanded cables may nest deeper than the source XML.
+  if (!ValidateXMLDepth(root.root(), opts.max_depth + kMaxCableVertices,
+                        active_reader->root_source, err))
+    return false;
   if (const auto tendon_root = Child(root, "tendon")) {
     for (const auto& spatial : Children(tendon_root, "spatial"))
       for (const auto& wrap : Children(spatial, "geom"))
@@ -4634,7 +5127,8 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
     }
     CollectMujocoSitesJson(worldbody, IdentityMatrix(), ctx, &sites, stats);
     if (opts.profile == "newton" &&
-        !CollectMujocoFlexcompsJson(worldbody, IdentityMatrix(), ctx, true, &deformables, err))
+        !CollectMujocoFlexcompsJson(worldbody, ctx, FlexMeshDir(root, input_filename.parent_path()),
+                                    &deformables, err))
       return false;
     CollectMujocoLightsCamerasJson(worldbody, IdentityMatrix(), ctx, &lights,
                                    &cameras);
@@ -4681,10 +5175,11 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
                 {"upAxis", opts.up_axis}, {"profile", opts.profile},
                 {"sourceFormat", "mjcf"},
                 {"gravity", opts.up_axis == "Z" ? Json::array({0, 0, -1})
-                                                : Json::array({0, -1, 0})},
-                {"links", std::move(links)},
-                {"joints", std::move(joints)},
-                {"actuators", std::move(actuators)}};
+                                                : Json::array({0, -1, 0})}};
+  // Assign the large arrays by move (a braced list would copy them).
+  (*payload)["links"] = std::move(links);
+  (*payload)["joints"] = std::move(joints);
+  (*payload)["actuators"] = std::move(actuators);
   if (!tendons.empty()) (*payload)["tendons"] = std::move(tendons);
   if (!equalities.empty()) (*payload)["equalities"] = std::move(equalities);
   if (!filtered_pairs.empty())
@@ -4697,6 +5192,17 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
   if (!mjc_scene.empty()) (*payload)["mjcScene"] = std::move(mjc_scene);
   if (!keyframes.empty()) (*payload)["keyframes"] = std::move(keyframes);
   if (!lights.empty()) (*payload)["lights"] = std::move(lights);
+  // Clipping planes are <visual><map znear/zfar> scaled by the model extent;
+  // only an authored <statistic extent> makes them known before compiling.
+  if (const auto statistic = Child(root, "statistic")) {
+    if (HasAttr(statistic, "extent")) {
+      const double extent = ParseDoubleAttr(statistic, "extent", 1.0);
+      const auto map = Child(Child(root, "visual"), "map");
+      const double znear = map ? ParseDoubleAttr(map, "znear", 0.01) : 0.01;
+      const double zfar = map ? ParseDoubleAttr(map, "zfar", 50.0) : 50.0;
+      for (auto& cam : cameras) cam["clippingRange"] = Json::array({znear * extent, zfar * extent});
+    }
+  }
   if (!cameras.empty()) (*payload)["cameras"] = std::move(cameras);
   if (!materials.empty()) (*payload)["materials"] = std::move(materials);
   if (!sensors.empty()) (*payload)["sensors"] = std::move(sensors);
@@ -4762,7 +5268,7 @@ bool URDFGeometry(const pugi::xml_node& node, const std::string& source,
       for (auto& part : obj.meshes) {
         for (auto& mi : part.materials)
           if (mi >= 0) mi += offset;
-        Json part_json = MeshJSON(part);
+        Json part_json = MeshRefJSON(part, *active_reader);
         part_json["name"] = name + "_" + part.name;
         part_json["matrix"] = Array(matrix);
         geometries->push_back(std::move(part_json));
@@ -4771,7 +5277,7 @@ bool URDFGeometry(const pugi::xml_node& node, const std::string& source,
     }
     Mesh m;
     if (!LoadMeshFile(fs::path(resolved), false, &m, err)) return false;
-    j = MeshJSON(m);
+    j = MeshRefJSON(m, *active_reader);
     j["name"] = name;
     j["matrix"] = Array(matrix);
   } else {
@@ -4829,12 +5335,190 @@ bool URDFGeometry(const pugi::xml_node& node, const std::string& source,
     if (collision)
       j["shape"] = std::move(shape);
     else {
-      Json built = MeshJSON(generated);
-      j["geometry"] = built["geometry"];
+      Json built = MeshRefJSON(generated, *active_reader);
+      j["geometry"] = std::move(built["geometry"]);
+      if (built.contains("meshRef")) j["meshRef"] = std::move(built["meshRef"]);
     }
   }
   geometries->push_back(std::move(j));
   return true;
+}
+
+// Inverse of a rigid column-major transform: [R t] -> [R^T  -R^T t].
+std::vector<double> InverseRigidMatrix(const std::vector<double>& m) {
+  std::vector<double> r(16, 0.0);
+  for (int c = 0; c < 3; ++c)
+    for (int k = 0; k < 3; ++k) r[size_t(c * 4 + k)] = m[size_t(k * 4 + c)];
+  for (int k = 0; k < 3; ++k)
+    r[size_t(12 + k)] = -(r[size_t(k)] * m[12] + r[size_t(4 + k)] * m[13] + r[size_t(8 + k)] * m[14]);
+  r[15] = 1.0;
+  return r;
+}
+
+// urdf-usd-converter's ghost links: a link with no (or zero) inertia, no
+// visuals and no collisions on a fixed joint (or the root) is a pure frame.
+// It is authored without RigidBodyAPI, its fixed joint is dropped, and joints
+// from it re-anchor on the nearest rigid ancestor (or the world). A link on a
+// fixed joint that a mimic joint references is kept.
+// KDL-style dummy inertia (urdf-usd-converter, Gazebo lumping): a parent
+// with geometry but no inertia and an inertial-only, childless child on a
+// fixed joint. The first such child's inertia moves into the parent frame
+// (com = R c + t, I = R I R^T) and the child link and joint are dropped.
+size_t MergeDummyInertiaLinks(Json* links, Json* joints,
+                              const std::map<std::string, std::string>& parent,
+                              const std::map<std::string, std::vector<double>>& origins) {
+  std::map<std::string, Json*> by_name;
+  for (auto& link : *links) by_name[link["name"].get<std::string>()] = &link;
+  auto zero_inertia = [](const Json& link) {
+    if (!link.contains("inertial")) return true;
+    const Json& in = link["inertial"];
+    if (in["mass"].get<double>() > 0.0) return false;
+    for (const auto& v : in["fullInertia"])
+      if (v.get<double>() != 0.0) return false;
+    return true;
+  };
+  auto has_geometry = [](const Json& link) {
+    return !link["visuals"].empty() || !link["collisions"].empty();
+  };
+  std::set<std::string> has_children, mimic_children, merged_into;
+  std::map<std::string, std::string> joint_child;
+  for (const auto& j : *joints) {
+    has_children.insert(j["parent"].get<std::string>());
+    joint_child[j["name"].get<std::string>()] = j["child"].get<std::string>();
+  }
+  for (const auto& j : *joints)
+    if (j.contains("mimic")) {
+      auto child = joint_child.find(j["mimic"]["joint"].get<std::string>());
+      if (child != joint_child.end()) mimic_children.insert(child->second);
+    }
+  std::set<std::string> dropped;
+  for (const auto& j : *joints) {
+    const std::string child = j["child"].get<std::string>();
+    const std::string from = j["parent"].get<std::string>();
+    if (j["type"].get<std::string>() != "fixed" || !by_name.count(child) || !by_name.count(from) ||
+        merged_into.count(from) || has_children.count(child) || mimic_children.count(child))
+      continue;
+    Json& p = *by_name[from];
+    const Json& c = *by_name[child];
+    if (!zero_inertia(p) || !has_geometry(p) || has_geometry(c) || zero_inertia(c)) continue;
+    const std::vector<double>& m = origins.at(child);  // child frame in parent
+    const Json& in = c["inertial"];
+    double com[3] = {in["centerOfMass"][0].get<double>(), in["centerOfMass"][1].get<double>(),
+                     in["centerOfMass"][2].get<double>()};
+    double t[3][3];
+    const double f[6] = {in["fullInertia"][0].get<double>(), in["fullInertia"][1].get<double>(),
+                         in["fullInertia"][2].get<double>(), in["fullInertia"][3].get<double>(),
+                         in["fullInertia"][4].get<double>(), in["fullInertia"][5].get<double>()};
+    const double full[3][3] = {{f[0], f[3], f[4]}, {f[3], f[1], f[5]}, {f[4], f[5], f[2]}};
+    for (int a = 0; a < 3; ++a)
+      for (int b = 0; b < 3; ++b) {
+        t[a][b] = 0;
+        for (int k = 0; k < 3; ++k)
+          for (int l = 0; l < 3; ++l) t[a][b] += m[size_t(k * 4 + a)] * full[k][l] * m[size_t(l * 4 + b)];
+      }
+    const Json moved_com = Json::array({m[0] * com[0] + m[4] * com[1] + m[8] * com[2] + m[12],
+                                        m[1] * com[0] + m[5] * com[1] + m[9] * com[2] + m[13],
+                                        m[2] * com[0] + m[6] * com[1] + m[10] * com[2] + m[14]});
+    p["inertial"] = Json{{"mass", in["mass"].get<double>()},
+                         {"centerOfMass", moved_com},
+                         {"fullInertia", Json::array({t[0][0], t[1][1], t[2][2], t[0][1], t[0][2], t[1][2]})}};
+    merged_into.insert(from);
+    dropped.insert(child);
+  }
+  if (dropped.empty()) return 0;
+  Json kept_links = Json::array(), kept_joints = Json::array();
+  for (auto& link : *links)
+    if (!dropped.count(link["name"].get<std::string>())) kept_links.push_back(std::move(link));
+  for (auto& j : *joints)
+    if (!dropped.count(j["child"].get<std::string>())) kept_joints.push_back(std::move(j));
+  *links = std::move(kept_links);
+  *joints = std::move(kept_joints);
+  (void)parent;
+  return dropped.size();
+}
+
+size_t CollapseGhostLinks(Json* links, Json* joints, const std::map<std::string, std::string>& parent,
+                          const std::map<std::string, std::vector<double>>& worlds) {
+  std::map<std::string, std::string> parent_joint_type, joint_child;
+  for (const auto& j : *joints) {
+    parent_joint_type[j["child"].get<std::string>()] = j["type"].get<std::string>();
+    joint_child[j["name"].get<std::string>()] = j["child"].get<std::string>();
+  }
+  std::set<std::string> mimic_children;
+  for (const auto& j : *joints)
+    if (j.contains("mimic")) {
+      const std::string leader = j["mimic"]["joint"].get<std::string>();
+      auto child = joint_child.find(leader);
+      if (child != joint_child.end() && parent_joint_type[child->second] == "fixed")
+        mimic_children.insert(child->second);
+    }
+  std::set<std::string> ghosts;
+  for (auto& link : *links) {
+    if (link.contains("static") && link["static"].is_boolean() && link["static"].get<bool>()) continue;
+    const std::string name = link["name"].get<std::string>();
+    bool massless = true;
+    if (link.contains("inertial")) {
+      const Json& in = link["inertial"];
+      const double mass = in["mass"].get<double>();
+      massless = mass <= 0.0;
+      if (massless && in.contains("fullInertia"))
+        for (const auto& v : in["fullInertia"]) massless &= v.get<double>() == 0.0;
+    }
+    const bool shapes = !link["visuals"].empty() || !link["collisions"].empty();
+    const auto type = parent_joint_type.find(name);
+    const bool root = !parent.count(name);
+    if (!massless || shapes || mimic_children.count(name) ||
+        !(root || (type != parent_joint_type.end() && type->second == "fixed")))
+      continue;
+    ghosts.insert(name);
+    link["static"] = true;
+    link["ghost"] = true;
+    link["articulationRoot"] = false;
+  }
+  if (ghosts.empty()) return 0;
+  auto rigid_ancestor = [&](std::string name) {
+    while (ghosts.count(name)) {
+      auto up = parent.find(name);
+      if (up == parent.end()) return active_world_name;
+      name = up->second;
+    }
+    return name;
+  };
+  Json kept = Json::array();
+  std::set<std::string> new_roots;
+  for (auto& j : *joints) {
+    const std::string child = j["child"].get<std::string>();
+    std::string from = j["parent"].get<std::string>();
+    if (ghosts.count(child)) continue;  // the ghost's own fixed joint
+    if (ghosts.count(from)) {
+      const std::string anchor = rigid_ancestor(from);
+      auto read = [&](const char* key, std::initializer_list<double> fallback) {
+        std::vector<double> v(fallback);
+        if (j.contains(key) && j[key].is_array() && j[key].size() == v.size())
+          for (size_t k = 0; k < v.size(); ++k) v[k] = j[key][k].get<double>();
+        return v;
+      };
+      const auto pos = read("localPos0", {0, 0, 0});
+      const auto rot = read("localRot0", {1, 0, 0, 0});
+      const std::vector<double> frame = MultiplyMatrix(
+          worlds.at(from), MatrixFromPosQuat({{pos[0], pos[1], pos[2]}},
+                                             {{rot[0], rot[1], rot[2], rot[3]}}));
+      const std::vector<double> anchor_world =
+          anchor == active_world_name ? IdentityMatrix() : worlds.at(anchor);
+      std::array<double, 3> p;
+      Quat q;
+      DecomposePosQuat(MultiplyMatrix(InverseRigidMatrix(anchor_world), frame), &p, &q);
+      j["parent"] = anchor;
+      j["localPos0"] = Json::array({p[0], p[1], p[2]});
+      j["localRot0"] = Json::array({q[0], q[1], q[2], q[3]});
+      if (anchor == active_world_name) new_roots.insert(child);
+    }
+    kept.push_back(std::move(j));
+  }
+  *joints = std::move(kept);
+  for (auto& link : *links)
+    if (new_roots.count(link["name"].get<std::string>())) link["articulationRoot"] = true;
+  return ghosts.size();
 }
 
 bool BuildURDF(const pugi::xml_node& root, const std::string& source,
@@ -5059,6 +5743,18 @@ bool BuildURDF(const pugi::xml_node& root, const std::string& source,
     if (j["type"].get<std::string>() != "floating")
       filtered.push_back(std::move(j));
   joints = std::move(filtered);
+  if (opts.profile != "legacy") {
+    const size_t dummies = MergeDummyInertiaLinks(&links, &joints, parent, origins);
+    if (dummies && opts.report) {
+      auto& count = opts.report->counts["merged_dummy_inertia_links"];
+      count = (count.is_number() ? count.get<uint64_t>() : uint64_t(0)) + dummies;
+    }
+    const size_t ghosts = CollapseGhostLinks(&links, &joints, parent, worlds);
+    if (ghosts && opts.report) {
+      auto& count = opts.report->counts["ghost_links"];
+      count = (count.is_number() ? count.get<uint64_t>() : uint64_t(0)) + ghosts;
+    }
+  }
   for (auto transmission : root.children("transmission")) {
     auto joint = transmission.child("joint"),
          act = transmission.child("actuator");
@@ -5082,11 +5778,12 @@ bool BuildURDF(const pugi::xml_node& root, const std::string& source,
                   {"upAxis", opts.up_axis}, {"profile", opts.profile},
                   {"sourceFormat", "urdf"},
                   {"gravity", opts.up_axis == "Z" ? Json::array({0, 0, -1})
-                                                  : Json::array({0, -1, 0})},
-                  {"links", std::move(links)},
-                  {"joints", std::move(joints)},
-                  {"materials", std::move(materials)},
-                  {"actuators", std::move(actuators)}};
+                                                  : Json::array({0, -1, 0})}};
+  // Assign the large arrays by move (a braced list would copy them).
+  (*payload)["links"] = std::move(links);
+  (*payload)["joints"] = std::move(joints);
+  (*payload)["materials"] = std::move(materials);
+  (*payload)["actuators"] = std::move(actuators);
   return true;
 }
 
@@ -5223,6 +5920,7 @@ bool BuildPayload(const std::string& text, const std::string& source,
   if (!reader.preserved.empty()) result->payload["unsupported"] = std::move(reader.preserved);
   result->warnings = reader.warnings;
   result->memory_estimate = reader.bytes;
+  result->meshes = std::move(reader.meshes);
   for (const char* key : {"links", "joints", "materials", "actuators", "tendons",
                          "equalities", "sites", "sensors", "contactPairs", "filteredPairs", "keyframes",
                          "deformables"})

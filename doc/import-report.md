@@ -62,8 +62,10 @@ Some conversion warnings still use the general `import.warning` or
 `mjcf.tendon_wrap_type` (a wrap geom that is not a sphere or cylinder) and
 `mjcf.ellipsoid_collision_approximated`. Soft bodies report
 `mjcf.flexcomp_dof_approximated`, `mjcf.flexcomp_plugin`,
-`mjcf.flexcomp_rigid` and `mjcf.cable_plugin_ignored`; the `deformables`
-count lists converted flexcomps.
+`mjcf.flexcomp_rigid` and `mjcf.cable_plugin_approximated` (cable bending as ball-joint stiffness E·I/L); the `deformables`
+count lists converted flexcomps. URDF imports count `ghost_links` and
+`merged_dummy_inertia_links`; `mjcf.texture_builtin_unsupported` reports a
+builtin texture that is not generated.
 Further codes: `mjcf.integer_range` (an integer attribute outside int32 was
 clamped), `mjcf.hfield_size`, `mjcf.unknown_class`, `mjcf.obj_first_object`
 (MuJoCo converts only the first object of an OBJ mesh asset),

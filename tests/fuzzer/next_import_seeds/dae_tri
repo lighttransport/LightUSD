@@ -1,0 +1,6 @@
+<?xml version="1.0"?><COLLADA><asset><unit meter="0.5"/><up_axis>Z_UP</up_axis></asset>
+<library_geometries><geometry id="g"><mesh><source id="p"><float_array id="pa" count="9">0 0 0 1 0 0 0 1 0</float_array>
+<technique_common><accessor source="#pa" count="3" stride="3"><param name="X" type="float"/><param name="Y" type="float"/><param name="Z" type="float"/></accessor></technique_common></source>
+<vertices id="v"><input semantic="POSITION" source="#p"/></vertices><triangles count="1"><input semantic="VERTEX" source="#v" offset="0"/><p>0 1 2</p></triangles></mesh></geometry></library_geometries>
+<library_visual_scenes><visual_scene id="s"><node><translate>1 2 3</translate><rotate>0 0 1 90</rotate><instance_geometry url="#g"/></node></visual_scene></library_visual_scenes>
+<scene><instance_visual_scene url="#s"/></scene></COLLADA>

@@ -87,6 +87,18 @@ cmake --build build-fuzz --target fuzz_minijson -j
 build-fuzz/fuzz_minijson -runs=1000 tests/fuzzer/minijson-seeds
 ```
 
+`fuzz_next_import` covers native OBJ, URDF and MJCF import through the C
+import API (parsers, MJCF `replicate`/cable `composite`/`flexcomp` expansion
+and the USD writer, in the `newton` and `legacy` profiles) and the COLLADA
+reader. The first input byte selects the format (`& 3`: OBJ, URDF, MJCF,
+COLLADA) and profile (`& 4`: legacy); inputs have no anchor, so referenced
+files are not opened:
+
+```sh
+cmake --build build-fuzz --target fuzz_next_import -j
+build-fuzz/fuzz_next_import -fork=4 -max_len=16384 corpus tests/fuzzer/next_import_seeds
+```
+
 For containerized runs where LeakSanitizer is unavailable, use
 `LSAN_OPTIONS=detect_leaks=0`; sanitizer-enabled CI should keep leak checking
 enabled.

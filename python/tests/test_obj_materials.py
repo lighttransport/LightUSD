@@ -166,3 +166,36 @@ def test_obj_units_and_kind_by_profile(tmp_path):
     assert stage.prim_at("/World").kind == "component"
     legacy = _mtl_stage(tmp_path, "newmtl m\n", profile="legacy")
     assert legacy.prim_at("/World").kind in (None, "")
+
+
+def test_obj_indexed_topology_keeps_source_points(tmp_path):
+    # Two quads sharing an edge, with per-face normals and a UV seam.
+    source = b'''v 0 0 0
+v 1 0 0
+v 1 1 0
+v 0 1 0
+v 2 0 0
+v 2 1 0
+vt 0 0
+vt 1 0
+vt 1 1
+vt 0 1
+vt .5 .5
+vn 0 0 1
+vn 0 0 -1
+f 1/1/1 2/2/1 3/3/1 4/4/1
+f 2/5/2 5/2/2 6/3/2 3/5/2
+'''
+    path = tmp_path / 'quads.obj'
+    path.write_bytes(source)
+    expanded = next(p for p in lightusd.import_obj(path) if p.type_name == 'Mesh')
+    indexed = next(p for p in lightusd.import_obj(path, obj_topology='indexed') if p.type_name == 'Mesh')
+    assert len(expanded['points']) == 8  # split where normals/UVs differ
+    assert len(indexed['points']) == 6
+    assert list(indexed['faceVertexIndices']) == [0, 1, 2, 3, 1, 4, 5, 2]
+    assert list(indexed['primvars:normals:indices']) == [0, 0, 0, 0, 1, 1, 1, 1]
+    assert len(indexed['primvars:normals']) == 2
+    assert list(indexed['primvars:st:indices']) == [0, 1, 2, 3, 4, 1, 2, 4]
+    assert 'normals' not in indexed.attributes
+    with pytest.raises(ValueError):
+        lightusd.import_obj(path, obj_topology='compact')

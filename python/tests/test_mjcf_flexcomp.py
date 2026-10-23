@@ -117,3 +117,71 @@ def test_cable_composite_expands_like_mujoco():
         assert prim['physics:mass'] == pytest.approx(model.body_mass[body.id], rel=1e-5)
     assert sum(1 for p in stage if p.path.startswith('/World/Links/cB_') and 'Site' not in p.type_name
                and p.name.startswith('cS_')) == 2
+
+
+CUBE_OBJ = '\n'.join(['v -.1 -.1 -.1', 'v .1 -.1 -.1', 'v .1 .1 -.1', 'v -.1 .1 -.1',
+                      'v -.1 -.1 .1', 'v .1 -.1 .1', 'v .1 .1 .1', 'v -.1 .1 .1',
+                      'f 1 3 2', 'f 1 4 3', 'f 5 6 7', 'f 5 7 8', 'f 1 2 6', 'f 1 6 5',
+                      'f 2 3 7', 'f 2 7 6', 'f 3 4 8', 'f 3 8 7', 'f 4 1 5', 'f 4 5 8']) + '\n'
+TET_GMSH = '''$MeshFormat
+4.1 0 8
+$EndMeshFormat
+$Nodes
+1 4 1 4
+3 1 0 4
+1
+2
+3
+4
+0 0 0
+1 0 0
+0 1 0
+0 0 1
+$EndNodes
+$Elements
+1 1 1 1
+3 1 4 1
+1 1 2 3 4
+$EndElements
+'''
+
+
+@pytest.mark.parametrize('flexcomp,kind,count', [
+    ('type="box" dim="2" count="4 3 5"', 'Mesh', 52),
+    ('type="ellipsoid" dim="3" count="5 6 5" euler="10 20 30"', 'TetMesh', 115),
+    ('type="mesh" dim="3" file="cube.obj" origin="0 0 0"', 'TetMesh', 9),
+    ('type="gmsh" file="tet.msh"', 'TetMesh', 4),
+])
+def test_box_mesh_and_gmsh_flexcomps(tmp_path, flexcomp, kind, count):
+    (tmp_path / 'cube.obj').write_text(CUBE_OBJ)
+    (tmp_path / 'tet.msh').write_text(TET_GMSH)
+    xml = (f'<mujoco><worldbody><body name="b" pos="0 0 1"><flexcomp name="f" {flexcomp} '
+           'spacing=".1 .1 .1" radius=".001"/></body></worldbody></mujoco>')
+    path = tmp_path / 'scene.xml'
+    path.write_text(xml)
+    prim = lightusd.import_mjcf(path).prim_at('/World/Deformables/f')
+    assert prim.type_name == kind
+    pts = _points(prim)
+    assert len(pts) == count
+    mujoco = pytest.importorskip('mujoco')
+    model = mujoco.MjModel.from_xml_path(str(path))
+    data = mujoco.MjData(model)
+    mujoco.mj_kinematics(model, data)
+    mujoco.mj_flex(model, data)
+    np.testing.assert_allclose(pts, data.flexvert_xpos, atol=1e-6)
+
+
+def test_cable_plugin_bending_becomes_joint_stiffness():
+    xml = CABLE.replace('<joint kind="main" damping=".02" stiffness=".1"/>',
+                        '<plugin plugin="mujoco.elasticity.cable"><config key="bend" value="1e6"/>'
+                        '<config key="twist" value="1e6"/></plugin><joint kind="main" damping=".02"/>')
+    stage = lightusd.load_bytes(xml.encode(), format='mjcf')
+    joints = [p for p in stage if p.type_name == 'PhysicsSphericalJoint']
+    stiff = sorted(p['mjc:stiffness'] for p in joints if 'mjc:stiffness' in p.attributes)
+    assert len(stiff) == 7  # every joint except the first segment's
+    names = ['cB_first'] + [f'cB_{i}' for i in range(1, 7)] + ['cB_last']
+    pos = [np.asarray(stage.prim_at(f'/World/Links/{n}').world_transform())[3, :3] for n in names]
+    seg = [np.linalg.norm(b - a) for a, b in zip(pos, pos[1:])]
+    expected = sorted(1e6 * np.pi * .01 ** 4 / 4 / s for s in seg)
+    assert stiff == pytest.approx(expected, rel=1e-5)
+    assert 'isotropic ball-joint stiffness' in stage.warnings()

@@ -62,6 +62,13 @@ struct Options {
   // MuJoCo 3.16 decoder parity), "openusd" (standard schemas only) or
   // "legacy" (historical output). See doc/usd-physics.md.
   std::string profile = "newton";
+  // Keep mesh positions/normals/uvs/indices as typed buffers (Result::meshes)
+  // instead of one JSON value per scalar. Consumers must pass them to the
+  // converter; JSON dumps then carry only `meshRef`.
+  bool typed_meshes = false;
+  // OBJ import topology: "expanded" (split points per unique corner) or
+  // "indexed" (source positions, face-varying indexed normals/UVs).
+  std::string obj_topology = "expanded";
   bool allow_missing = false;
   bool tessellate_collision_shapes = false;
   UnsupportedPolicy unsupported_policy = UnsupportedPolicy::Warn;
@@ -96,8 +103,15 @@ struct ImportSession {
   std::chrono::steady_clock::time_point started_;
   bool success_ = false;
 };
+// Mesh arrays moved out of the payload JSON (Options::typed_meshes); the
+// payload references them with `meshRef`.
+struct MeshBuffer {
+  std::vector<float> positions, normals, uvs;
+  std::vector<int32_t> indices;
+};
 struct Result {
   Json payload;
+  std::map<std::string, MeshBuffer> meshes;
   size_t memory_estimate = 0;  // OBJ conversion budget, including the input.
   AssetMap assets;
   std::string warnings;
@@ -110,6 +124,8 @@ struct Reader {
   std::string warnings, failure, root_source;
   bool allow_unanchored = true;
   AssetMap textures;
+  std::map<std::string, MeshBuffer> meshes;
+  bool obj_indexed = false;  // set by the OBJ scene import (obj_topology)
   struct TextureRequest {
     std::string resolved;   // authored/resolved identifier for USD output
     std::string canonical;  // retained-payload cache key (alias target)
@@ -139,6 +155,8 @@ struct Mesh {
   std::vector<float> positions, normals, uvs, colors;
   std::vector<int32_t> indices, counts, materials;
   std::vector<int32_t> source_vertices, joint_indices;
+  // Compact OBJ topology: per-corner indices into the normals/uvs tables.
+  std::vector<int32_t> normal_indices, uv_indices;
   std::vector<float> joint_weights;
   int32_t influences = 0;
 };
@@ -167,6 +185,9 @@ bool BuildOBJPayload(std::string_view text, const std::string& source,
 bool BuildOBJPayloadFile(const std::string& filename, const Options& options,
                          Result* result, std::string* err);
 Json MeshJSON(const Mesh& mesh);
+// MeshJSON, or with Options::typed_meshes the large arrays registered in
+// reader.meshes and referenced by `meshRef`.
+Json MeshRefJSON(const Mesh& mesh, Reader& reader);
 bool BuildPayload(const std::string& text, const std::string& source,
                   const Options& options, Result* result, std::string* err);
 bool BuildPayloadFile(const std::string& filename, const Options& options,

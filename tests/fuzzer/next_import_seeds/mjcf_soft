@@ -1,0 +1,15 @@
+<mujoco><compiler angle="radian"/><option><flag gravity="disable" filterparent="disable"/></option>
+<default><joint damping=".1"/><default class="c"><geom rgba="1 0 0 1"/></default></default>
+<worldbody><geom name="floor" type="plane" size="1 1 .1"/>
+<replicate count="3" offset=".2 0 0" euler="0 0 .3" sep="_"><body name="b" pos="0 0 1"><freejoint/><geom size=".05" class="c"/><site name="s"/></body></replicate>
+<body name="hook" pos="0 1 1"><joint name="h" type="hinge" axis="0 1 0" range="-1 1" ref=".2"/><joint name="h2" type="slide"/><geom type="box" size=".1 .1 .1"/>
+<composite type="cable" prefix="c" curve="s cos(s) 0" count="6 1 1" size="1 .1 2"><plugin plugin="mujoco.elasticity.cable"><config key="bend" value="1e6"/></plugin><joint kind="main" damping=".01"/><geom type="capsule" size=".01"/></composite>
+<flexcomp name="cloth" type="grid" dim="2" count="3 3 1" spacing=".1 .1 .1"><pin id="0 2"/><elasticity young="1e3" thickness=".01" elastic2d="both"/></flexcomp>
+<flexcomp name="jelly" type="ellipsoid" dim="3" count="3 3 3" spacing=".1 .1 .1"/>
+<flexcomp name="rope" type="circle" count="6 1 1" spacing=".05 .05 .05"><edge stiffness="10" damping="1"/></flexcomp>
+<site name="s0" pos="0 0 .2"/><geom name="w" type="cylinder" size=".03 .02" contype="0" conaffinity="0"/><site name="side" pos="0 .05 0"/></body></worldbody>
+<tendon><spatial name="t" springlength=".2"><site site="s0"/><geom geom="w" sidesite="side"/><site site="s_1"/><pulley divisor="2"/><site site="s_1"/><site site="s_2"/></spatial>
+<fixed name="f"><joint joint="h" coef="2"/></fixed></tendon>
+<equality><weld body1="b_0" body2="b_1" relpose="0 0 0 1 0 0 0"/><joint joint1="h" joint2="h2"/></equality>
+<contact><exclude body1="world" body2="hook"/></contact>
+<actuator><motor tendon="t"/><position joint="h" kp="10"/></actuator></mujoco>

@@ -219,7 +219,7 @@ def test_import_budget_and_resolver(tmp_path):
     assert mesh(stage).type_name == 'Mesh'
     with pytest.raises(ValueError): lightusd.load_bytes(OBJ, format='obj', up_axis='X')
     path = tmp_path / 'robot.xml'
-    path.write_text('<robot name="r"><link name="b"/></robot>')
+    path.write_text('<robot name="r"><link name="b"><inertial><mass value="1"/><inertia ixx=".1" iyy=".1" izz=".1" ixy="0" ixz="0" iyz="0"/></inertial></link></robot>')
     assert physics.inspect(lightusd.load(path)).rigid_bodies
 
 
@@ -267,7 +267,7 @@ def test_mjcf_motor_bounds_are_not_constant_commands():
 
 
 def test_reserved_world_name_and_filtered_pairs():
-    stage = lightusd.load_bytes(b'<robot><link name="__world"/></robot>', format='urdf')
+    stage = lightusd.load_bytes(b'<robot><link name="__world"><inertial><mass value="1"/><inertia ixx=".1" iyy=".1" izz=".1" ixy="0" ixz="0" iyz="0"/></inertial></link></robot>', format='urdf')
     assert stage.prim_at('/World/Links/__world')['physics:rigidBodyEnabled'] is True
     data = lightusd.loads('''#usda 1.0
     def Xform "a" (prepend apiSchemas = ["PhysicsFilteredPairsAPI"]) {
@@ -488,7 +488,7 @@ URDF_PLANAR = b'''<robot name="r"><link name="base"/><link name="slider">
   <inertial><mass value="1"/><inertia ixx=".1" iyy=".1" izz=".1" ixy="0" ixz="0" iyz="0"/></inertial>
   <visual><geometry><mesh filename="missing_geometry_type.xyz"/></geometry></visual>
   <collision><geometry/></collision></link>
-  <link name="tip"/>
+  <link name="tip"><inertial><mass value="1"/><inertia ixx=".1" iyy=".1" izz=".1" ixy="0" ixz="0" iyz="0"/></inertial></link>
   <joint name="plane" type="planar"><parent link="base"/><child link="slider"/><axis xyz="0 0 1"/></joint>
   <joint name="weld" type="fixed"><parent link="slider"/><child link="tip"/><axis xyz="0 0 0"/></joint>
 </robot>'''
@@ -567,3 +567,65 @@ def test_collada_rejects_bad_indices(tmp_path):
         '<mesh filename="bad.dae"/></geometry></visual></link></robot>')
     with pytest.raises(Exception, match="out of range"):
         lightusd.import_urdf(tmp_path / "r.urdf")
+
+
+def test_urdf_ghost_links_collapse_like_urdf_usd_converter():
+    inertial = b'<inertial><mass value="1"/><inertia ixx=".1" iyy=".1" izz=".1" ixy="0" ixz="0" iyz="0"/></inertial>'
+    urdf = (b'<robot name="r"><link name="base_footprint"/><link name="base">' + inertial +
+            b'</link><link name="tool0"/><link name="tip">' + inertial + b'</link>'
+            b'<joint name="fp" type="fixed"><parent link="base_footprint"/><child link="base"/>'
+            b'<origin xyz="0 0 .1"/></joint>'
+            b'<joint name="flange" type="fixed"><parent link="base"/><child link="tool0"/>'
+            b'<origin xyz=".5 0 0" rpy="0 0 1.5707963"/></joint>'
+            b'<joint name="j" type="revolute"><parent link="tool0"/><child link="tip"/>'
+            b'<origin xyz=".2 0 0"/><axis xyz="0 0 1"/><limit lower="-1" upper="1"/></joint></robot>')
+    stage = lightusd.load_bytes(urdf, format='urdf')
+    for ghost in ('base_footprint', 'tool0'):
+        prim = stage.prim_at(f'/World/Links/{ghost}')
+        assert 'PhysicsRigidBodyAPI' not in (prim.metadata('apiSchemas') or ())
+    names = {p.name for p in stage.prim_at('/World/Joints').children}
+    assert 'flange' not in names
+    # The root ghost's joint re-anchors on the world (no body0).
+    assert 'physics:body0' not in stage.prim_at('/World/Joints/fp').relationships
+    # j re-anchors on `base`: tool0's frame is folded into localPos0/Rot0.
+    j = stage.prim_at('/World/Joints/j')
+    assert j.relationship('physics:body0').targets == ('/World/Links/base',)
+    assert tuple(j['physics:localPos0']) == pytest.approx((.5, .2, 0), abs=1e-6)
+    tip = np.asarray(stage.prim_at('/World/Links/tip').world_transform())[3, :3]
+    assert tip == pytest.approx([.5, .2, .1], abs=1e-6)
+    assert stage.import_report()['counts']['ghost_links'] == 2
+    legacy = lightusd._import(data=urdf, format='urdf', profile='legacy')
+    assert 'flange' in {p.name for p in legacy.prim_at('/World/Joints').children}
+
+
+def test_urdf_dummy_inertia_child_merges_into_parent():
+    urdf = (b'<robot name="r"><link name="base"><visual><geometry><box size="1 1 1"/></geometry></visual></link>'
+            b'<link name="inertia"><inertial><origin xyz=".05 0 0"/><mass value="2"/>'
+            b'<inertia ixx="1" iyy="2" izz="3" ixy="0" ixz="0" iyz="0"/></inertial></link>'
+            b'<joint name="lump" type="fixed"><parent link="base"/><child link="inertia"/>'
+            b'<origin xyz="1 2 3" rpy="0 0 1.5707963267948966"/></joint></robot>')
+    stage = lightusd.load_bytes(urdf, format='urdf')
+    base = stage.prim_at('/World/Links/base')
+    assert base['physics:mass'] == pytest.approx(2)
+    assert tuple(base['physics:centerOfMass']) == pytest.approx((1, 2.05, 3), abs=1e-6)
+    # Rotating 90 degrees about Z swaps Ixx and Iyy.
+    assert list(base['newton:inertia']) == pytest.approx([2, 1, 3, 0, 0, 0], abs=1e-6)
+    with pytest.raises(KeyError):
+        stage.prim_at('/World/Links/inertia')
+    assert stage.import_report()['counts']['merged_dummy_inertia_links'] == 1
+
+
+def test_typed_mesh_path_keeps_urdf_and_mjcf_geometry():
+    # The C/Python import passes mesh arrays as typed buffers (meshRef);
+    # every generated visual must still be authored.
+    urdf = (b'<robot name="r"><link name="b"><inertial><mass value="1"/>'
+            b'<inertia ixx="1" iyy="1" izz="1" ixy="0" ixz="0" iyz="0"/></inertial>'
+            b'<visual><geometry><box size="1 2 3"/></geometry></visual>'
+            b'<visual><geometry><sphere radius=".5"/></geometry></visual></link></robot>')
+    meshes = [p for p in lightusd.load_bytes(urdf, format='urdf') if p.type_name == 'Mesh']
+    assert len(meshes) == 2 and all(len(m['points']) > 8 for m in meshes)
+    mjcf = (b'<mujoco><worldbody><body name="b"><freejoint/>'
+            b'<geom type="hfield" hfield="h"/></body></worldbody>'
+            b'<asset><hfield name="h" nrow="3" ncol="3" size="1 1 .1 .1" elevation="0 1 0 1 0 1 0 1 0"/></asset></mujoco>')
+    hfield = [p for p in lightusd.load_bytes(mjcf, format='mjcf') if p.type_name == 'Mesh']
+    assert hfield and len(hfield[0]['points']) >= 9

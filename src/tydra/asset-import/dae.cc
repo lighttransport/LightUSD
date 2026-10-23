@@ -343,7 +343,15 @@ bool ReadDAE(std::string_view text, const std::string& source, Reader& reader,
   pugi::xml_document doc;
   // pugixml parses in place from a copy; charge it like the input text.
   if (!reader.Charge(text.size(), err)) return false;
-  const auto parsed = doc.load_buffer(text.data(), text.size());
+  // pugixml reads UTF-16/32 input in 2/4-byte units; give it an aligned copy
+  // when the caller's view is not.
+  std::string aligned;
+  std::string_view source_text = text;
+  if (reinterpret_cast<uintptr_t>(text.data()) % alignof(uint32_t)) {
+    aligned.assign(text.data(), text.size());
+    source_text = aligned;
+  }
+  const auto parsed = doc.load_buffer(source_text.data(), source_text.size());
   if (!parsed) {
     if (err) *err = std::string("COLLADA parse failed: ") + parsed.description() + ": " + source;
     return false;

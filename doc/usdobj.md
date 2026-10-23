@@ -71,6 +71,14 @@ into several USD points. Point count and index order therefore need not match
 the source OBJ position array. A mesh with incomplete corner UVs omits
 `primvars:st` and warns instead of inventing UVs for the missing corners.
 
+`obj_topology="indexed"` (Python `import_obj(..., obj_topology="indexed")`, C
+`settings_json` `"obj_topology"`) keeps one point per source position used by
+each mesh, in first-use order, and writes normals and UVs as indexed
+face-varying primvars (`primvars:normals` / `primvars:st` with `:indices`).
+Positions, vertex colors and `vw` skin weights are then not duplicated across
+seams. The default `expanded` keeps the per-corner representation above. URDF
+and MJCF mesh assets are always expanded.
+
 Standalone imports use `/World` as the default prim, with geometry under
 `/World/Links/Geometry` and materials under `/World/Materials`. Names are made
 valid and collision-safe. Reference composition can replace the `/World` prefix;

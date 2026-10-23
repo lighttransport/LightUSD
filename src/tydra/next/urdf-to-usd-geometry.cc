@@ -227,6 +227,19 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
   SetToken(prim, "purpose", "guide", true);
 }
 
+// MJCF geom rgba -> constant displayColor/displayOpacity (as
+// mujoco-usd-converter writes them).
+void SetDisplayColorFromRGBA(tn::PrimSpec *prim, const Json &source) {
+  const std::vector<float> rgba = JsonFloats(source, "rgba");
+  if (rgba.size() < 4) return;
+  Set(prim, "primvars:displayColor",
+      tn::Value::MakeFloatCompArray({rgba[0], rgba[1], rgba[2]}, tn::TypeId::Color3f, 3),
+      "color3f[]");
+  SetInterpolation(prim, "primvars:displayColor", "constant");
+  Set(prim, "primvars:displayOpacity", tn::Value::MakeFloatArray({rgba[3]}), "float[]");
+  SetInterpolation(prim, "primvars:displayOpacity", "constant");
+}
+
 bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
                      std::set<std::string> *siblings, const Json &mesh_json,
                      const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
@@ -362,6 +375,8 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
         tn::Value::MakeFloatCompArray(colors, tn::TypeId::Color3f, 3),
         "color3f[]");
     SetInterpolation(prim, "primvars:displayColor", "vertex");
+  } else {
+    SetDisplayColorFromRGBA(prim, mesh_json);
   }
   const int32_t influences = JsonInt(*geom, "influences", 0);
   if (influences > 0) {
@@ -508,15 +523,22 @@ bool AddNativeCollisionShapeFromJson(tn::Layer *layer,
   if (collision) {
     AddCollisionAPIs(prim, false, shape_json, mjcf_source);
   } else {
-    // Native visual-only shape (a tendon wrap surface): no CollisionAPI, so
-    // MuJoCo decodes a contype=0 geom and Newton a visual shape.
+    // Native visual-only shape: no CollisionAPI, so MuJoCo decodes a
+    // contype=0 geom and Newton a visual shape.
     const std::string purpose = JsonString(shape_json, "purpose");
     if (!purpose.empty()) SetToken(prim, "purpose", purpose, true);
-    int32_t group = 0;
-    if (mjcf_source && ReadIntFrom(shape_json, "mjc", "group", &group)) {
-      AddAPIs(prim, {"MjcImageableAPI"});
-      Set(prim, "mjc:group", tn::Value(group), "int", true);
+    if (mjcf_source) {
+      AddAPI(prim, "MjcImageableAPI");
+      int32_t group = 0;
+      if (ReadIntFrom(shape_json, "mjc", "group", &group) || shape_json.contains("group"))
+        Set(prim, "mjc:group", tn::Value(JsonInt(shape_json, "group", group)), "int", true);
     }
+    const std::string material = JsonString(shape_json, "material");
+    if (!material.empty()) {
+      AddAPI(prim, "MaterialBindingAPI");
+      SetRel(prim, "material:binding", {"/World/Materials/" + Sanitize(material, "material")});
+    }
+    SetDisplayColorFromRGBA(prim, shape_json);
   }
   if (out_name) *out_name = name;
   return true;

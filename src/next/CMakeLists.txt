@@ -1020,6 +1020,20 @@ if(LIGHTUSD_WITH_TYDRA)
     target_link_libraries(lightusd_render_c PUBLIC lightusd_c tydra_next)
     lightusd_next_harden(lightusd_render_c)
     list(APPEND LIGHTUSD_C_TARGETS lightusd_render_c)
+    # Native OBJ/URDF/MJCF/COLLADA import (parsers, MJCF macro expansion and
+    # the USD writer) through the C import API.
+    if(LIGHTUSD_NEXT_BUILD_FUZZERS AND TARGET lightusd_asset_import)
+        foreach(_lib lightusd_render_c tydra_next lightusd_asset_import lightusd_obj_import)
+            target_compile_options(${_lib} PRIVATE ${NEXT_FUZZ_LIB_FLAGS})
+        endforeach()
+        add_executable(fuzz_next_import
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fuzzer/next_import_fuzzmain.cc)
+        target_include_directories(fuzz_next_import PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/.. ${CMAKE_CURRENT_SOURCE_DIR}/../external)
+        target_link_libraries(fuzz_next_import PRIVATE lightusd_render_c)
+        target_compile_options(fuzz_next_import PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
+        target_link_options(fuzz_next_import PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
+    endif()
     if(LIGHTUSD_NEXT_BUILD_C_API_EXAMPLE)
         add_executable(next_render_session_example
                        ../../examples/c_api_example/next-render-session-example.c)

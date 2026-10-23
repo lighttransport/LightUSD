@@ -6,6 +6,7 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <unordered_map>
 #include <tuple>
 
 #include "external/filesystem/include/ghc/filesystem.hpp"
@@ -145,19 +146,42 @@ std::array<double, 3> FaceNormal(const tobj_index* indices, size_t count,
 Json RGB(const float* v) { return Json::array({v[0], v[1], v[2]}); }
 }  // namespace
 
+Json MeshRefJSON(const Mesh& m, Reader& reader) {
+  if (!reader.options.typed_meshes) return MeshJSON(m);
+  Mesh rest;
+  rest.name = m.name;
+  rest.type = m.type;
+  rest.counts = m.counts;
+  rest.colors = m.colors;
+  rest.materials = m.materials;
+  rest.joint_indices = m.joint_indices;
+  rest.joint_weights = m.joint_weights;
+  rest.influences = m.influences;
+  Json mesh = MeshJSON(rest);
+  const std::string id = "mesh_" + std::to_string(reader.meshes.size());
+  reader.meshes[id] = MeshBuffer{m.positions, m.normals, m.uvs, m.indices};
+  mesh["meshRef"] = id;
+  return mesh;
+}
+
 Json MeshJSON(const Mesh& m) {
-  return Json{{"name", m.name},
-              {"type", m.type},
-              {"geometry", Json{{"positions", Array(m.positions)},
-                                {"normals", Array(m.normals)},
-                                {"uvs", Array(m.uvs)},
-                                {"colors", Array(m.colors)},
-                                {"indices", Array(m.indices)},
-                                {"faceVertexCounts", Array(m.counts)},
-                                {"materialIndices", Array(m.materials)},
-                                {"jointIndices", Array(m.joint_indices)},
-                                {"jointWeights", Array(m.joint_weights)},
-                                {"influences", m.influences}}}};
+  // Assign by move: braced initializer lists copy every (large) array.
+  Json geometry = Json::object();
+  geometry["positions"] = Array(m.positions);
+  geometry["normals"] = Array(m.normals);
+  geometry["uvs"] = Array(m.uvs);
+  geometry["colors"] = Array(m.colors);
+  geometry["indices"] = Array(m.indices);
+  geometry["faceVertexCounts"] = Array(m.counts);
+  geometry["materialIndices"] = Array(m.materials);
+  geometry["jointIndices"] = Array(m.joint_indices);
+  geometry["jointWeights"] = Array(m.joint_weights);
+  geometry["influences"] = m.influences;
+  Json mesh = Json::object();
+  mesh["name"] = m.name;
+  mesh["type"] = m.type;
+  mesh["geometry"] = std::move(geometry);
+  return mesh;
 }
 
 bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
@@ -445,8 +469,41 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
     mesh.name = shape.name && *shape.name ? shape.name : "mesh";
     size_t off = 0;
     bool uv_complete = true;
-    using Key = std::tuple<int, int, int, unsigned, size_t>;
-    std::map<Key, int32_t> corners;
+    // Corner dedup on (vertex, normal, uv, smoothing group, face): open
+    // addressing over the corner list. Indices follow first insertion, so the
+    // result matches an ordered map.
+    struct Key {
+      int v, n, t;
+      unsigned sg;
+      size_t face;
+      bool operator==(const Key& o) const {
+        return v == o.v && n == o.n && t == o.t && sg == o.sg && face == o.face;
+      }
+    };
+    std::vector<Key> keys;
+    std::vector<int32_t> slots;
+    {
+      size_t capacity = 16;
+      while (capacity < 2 * shape.mesh.num_indices) capacity <<= 1;
+      slots.assign(capacity, -1);
+      keys.reserve(std::min(shape.mesh.num_indices, a.vertices.count / 3 + 16));
+    }
+    auto hash = [](const Key& k) {
+      uint64_t h = 1469598103934665603ull;
+      for (uint64_t x : {uint64_t(uint32_t(k.v)), uint64_t(uint32_t(k.n)), uint64_t(uint32_t(k.t)),
+                         uint64_t(k.sg), uint64_t(k.face)}) {
+        h ^= x + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+        h *= 1099511628211ull;
+      }
+      return h;
+    };
+    // Slot holding `key`, or the empty slot to claim for it.
+    auto probe = [&](const Key& key) -> int32_t& {
+      const size_t mask = slots.size() - 1;
+      size_t i = static_cast<size_t>(hash(key)) & mask;
+      while (slots[i] >= 0 && !(keys[size_t(slots[i])] == key)) i = (i + 1) & mask;
+      return slots[i];
+    };
     // Output vectors (including capacity slack), corner-map nodes and scratch.
     // Use checked multiplication before any large allocations or int casts.
     if (shape.mesh.num_indices > size_t(INT32_MAX) ||
@@ -463,55 +520,128 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
     mesh.materials.reserve(shape.mesh.num_faces);
     if (a.texcoords.count) mesh.uvs.reserve(initial_points * 2);
     if (a.colors.count) mesh.colors.reserve(initial_points * 3);
-    for (size_t f = 0; f < shape.mesh.num_faces; f++) {
-      unsigned count = shape.mesh.num_face_vertices[f];
-      unsigned sg = shape.mesh.smoothing_group_ids
-                        ? shape.mesh.smoothing_group_ids[f]
-                        : 0;
-      mesh.counts.push_back(static_cast<int32_t>(count));
-      mesh.materials.push_back(
-          shape.mesh.material_ids ? shape.mesh.material_ids[f] : -1);
-      std::array<double, 3> face_normal{};
-      bool have_face_normal = false;
-      for (unsigned k = 0; k < count; k++) {
-        const auto ix = shape.mesh.indices[off + k];
-        const bool hn = has_normal(ix);
-        bool ht = ix.texcoord_index >= 0 &&
-                  size_t(ix.texcoord_index) < a.texcoords.count / 2;
-        uv_complete &= ht;
-        Key key{ix.vertex_index, hn ? ix.normal_index : -1,
-                ht ? ix.texcoord_index : -1, hn ? 0 : sg, hn || sg ? 0 : f + 1};
-        auto found = corners.find(key);
-        if (found == corners.end()) {
-          int32_t index = static_cast<int32_t>(mesh.positions.size() / 3);
-          found = corners.emplace(key, index).first;
-          mesh.source_vertices.push_back(ix.vertex_index);
-          const float* p = a.vertices.ptr + size_t(ix.vertex_index) * 3;
-          mesh.positions.insert(mesh.positions.end(), p, p + 3);
-          if (!hn && !sg && !have_face_normal) {
-            face_normal = Unit(FaceNormal(shape.mesh.indices + off, count, a.vertices.ptr));
-            have_face_normal = true;
-          }
-          auto n = hn ? std::array<
-                            double,
-                            3>{{a.normals.ptr[size_t(ix.normal_index) * 3],
-                                a.normals.ptr[size_t(ix.normal_index) * 3 + 1],
-                                a.normals.ptr[size_t(ix.normal_index) * 3 + 2]}}
-                      : (sg ? smooth.find({ix.vertex_index, sg})->second
-                            : face_normal);
-          for (double c : n) mesh.normals.push_back(static_cast<float>(c));
-          mesh.uvs.push_back(ht ? a.texcoords.ptr[size_t(ix.texcoord_index) * 2]
-                                : 0);
-          mesh.uvs.push_back(
-              ht ? a.texcoords.ptr[size_t(ix.texcoord_index) * 2 + 1] : 0);
-          if (a.colors.count == a.vertices.count)
-            mesh.colors.insert(mesh.colors.end(),
-                               a.colors.ptr + size_t(ix.vertex_index) * 3,
-                               a.colors.ptr + size_t(ix.vertex_index) * 3 + 3);
+    if (reader.obj_indexed) {
+      // Compact topology: points are the shape's source vertices (first-use
+      // order); normals and UVs are face-varying tables with per-corner
+      // indices, so positions and per-vertex skin weights are not split.
+      std::vector<int32_t> point_of(a.vertices.count / 3, -1);
+      std::vector<int32_t> uv_of(a.texcoords.count / 2, -1);
+      struct NormalKey {
+        int kind, a;
+        size_t b;
+        bool operator==(const NormalKey& o) const { return kind == o.kind && a == o.a && b == o.b; }
+      };
+      struct NormalHash {
+        size_t operator()(const NormalKey& k) const {
+          return std::hash<uint64_t>()((uint64_t(k.kind) << 60) ^ (uint64_t(uint32_t(k.a)) << 28) ^ k.b);
         }
-        mesh.indices.push_back(found->second);
+      };
+      std::unordered_map<NormalKey, int32_t, NormalHash> normal_of;
+      for (size_t f = 0; f < shape.mesh.num_faces; f++) {
+        const unsigned count = shape.mesh.num_face_vertices[f];
+        const unsigned sg = shape.mesh.smoothing_group_ids ? shape.mesh.smoothing_group_ids[f] : 0;
+        mesh.counts.push_back(static_cast<int32_t>(count));
+        mesh.materials.push_back(shape.mesh.material_ids ? shape.mesh.material_ids[f] : -1);
+        std::array<double, 3> face_normal{};
+        bool have_face_normal = false;
+        for (unsigned k = 0; k < count; k++) {
+          const auto ix = shape.mesh.indices[off + k];
+          int32_t& point = point_of[size_t(ix.vertex_index)];
+          if (point < 0) {
+            point = static_cast<int32_t>(mesh.positions.size() / 3);
+            mesh.source_vertices.push_back(ix.vertex_index);
+            const float* p = a.vertices.ptr + size_t(ix.vertex_index) * 3;
+            mesh.positions.insert(mesh.positions.end(), p, p + 3);
+            if (a.colors.count == a.vertices.count)
+              mesh.colors.insert(mesh.colors.end(), a.colors.ptr + size_t(ix.vertex_index) * 3,
+                                 a.colors.ptr + size_t(ix.vertex_index) * 3 + 3);
+          }
+          mesh.indices.push_back(point);
+          const bool hn = has_normal(ix);
+          const NormalKey key = hn ? NormalKey{0, ix.normal_index, 0}
+                                   : sg ? NormalKey{1, ix.vertex_index, sg} : NormalKey{2, 0, f};
+          auto found = normal_of.find(key);
+          if (found == normal_of.end()) {
+            if (!hn && !sg && !have_face_normal) {
+              face_normal = Unit(FaceNormal(shape.mesh.indices + off, count, a.vertices.ptr));
+              have_face_normal = true;
+            }
+            const std::array<double, 3> n =
+                hn ? std::array<double, 3>{{a.normals.ptr[size_t(ix.normal_index) * 3],
+                                            a.normals.ptr[size_t(ix.normal_index) * 3 + 1],
+                                            a.normals.ptr[size_t(ix.normal_index) * 3 + 2]}}
+                   : (sg ? smooth.find({ix.vertex_index, sg})->second : face_normal);
+            found = normal_of.emplace(key, static_cast<int32_t>(mesh.normals.size() / 3)).first;
+            for (double c : n) mesh.normals.push_back(static_cast<float>(c));
+          }
+          mesh.normal_indices.push_back(found->second);
+          const bool ht = ix.texcoord_index >= 0 && size_t(ix.texcoord_index) < a.texcoords.count / 2;
+          uv_complete &= ht;
+          if (ht) {
+            int32_t& uv = uv_of[size_t(ix.texcoord_index)];
+            if (uv < 0) {
+              uv = static_cast<int32_t>(mesh.uvs.size() / 2);
+              mesh.uvs.push_back(a.texcoords.ptr[size_t(ix.texcoord_index) * 2]);
+              mesh.uvs.push_back(a.texcoords.ptr[size_t(ix.texcoord_index) * 2 + 1]);
+            }
+            mesh.uv_indices.push_back(uv);
+          }
+        }
+        off += count;
       }
-      off += count;
+      if (!uv_complete) mesh.uv_indices.clear();
+    } else
+    {
+    for (size_t f = 0; f < shape.mesh.num_faces; f++) {
+        unsigned count = shape.mesh.num_face_vertices[f];
+        unsigned sg = shape.mesh.smoothing_group_ids
+                          ? shape.mesh.smoothing_group_ids[f]
+                          : 0;
+        mesh.counts.push_back(static_cast<int32_t>(count));
+        mesh.materials.push_back(
+            shape.mesh.material_ids ? shape.mesh.material_ids[f] : -1);
+        std::array<double, 3> face_normal{};
+        bool have_face_normal = false;
+        for (unsigned k = 0; k < count; k++) {
+          const auto ix = shape.mesh.indices[off + k];
+          const bool hn = has_normal(ix);
+          bool ht = ix.texcoord_index >= 0 &&
+                    size_t(ix.texcoord_index) < a.texcoords.count / 2;
+          uv_complete &= ht;
+          const Key key{ix.vertex_index, hn ? ix.normal_index : -1,
+                        ht ? ix.texcoord_index : -1, hn ? 0u : sg, hn || sg ? 0 : f + 1};
+          int32_t& slot = probe(key);
+          if (slot < 0) {
+            slot = static_cast<int32_t>(keys.size());
+            keys.push_back(key);
+            mesh.source_vertices.push_back(ix.vertex_index);
+            const float* p = a.vertices.ptr + size_t(ix.vertex_index) * 3;
+            mesh.positions.insert(mesh.positions.end(), p, p + 3);
+            if (!hn && !sg && !have_face_normal) {
+              face_normal = Unit(FaceNormal(shape.mesh.indices + off, count, a.vertices.ptr));
+              have_face_normal = true;
+            }
+            auto n = hn ? std::array<
+                              double,
+                              3>{{a.normals.ptr[size_t(ix.normal_index) * 3],
+                                  a.normals.ptr[size_t(ix.normal_index) * 3 + 1],
+                                  a.normals.ptr[size_t(ix.normal_index) * 3 + 2]}}
+                        : (sg ? smooth.find({ix.vertex_index, sg})->second
+                              : face_normal);
+            for (double c : n) mesh.normals.push_back(static_cast<float>(c));
+            mesh.uvs.push_back(ht ? a.texcoords.ptr[size_t(ix.texcoord_index) * 2]
+                                  : 0);
+            mesh.uvs.push_back(
+                ht ? a.texcoords.ptr[size_t(ix.texcoord_index) * 2 + 1] : 0);
+            if (a.colors.count == a.vertices.count)
+              mesh.colors.insert(mesh.colors.end(),
+                                 a.colors.ptr + size_t(ix.vertex_index) * 3,
+                                 a.colors.ptr + size_t(ix.vertex_index) * 3 + 3);
+          }
+          mesh.indices.push_back(slot);
+        }
+        off += count;
+      }
     }
     if (!uv_complete) {
       mesh.uvs.clear();
@@ -604,6 +734,7 @@ bool BuildOBJScene(std::string_view text, const std::string& source,
   Reader reader(effective);
   reader.root_source = source;
   reader.allow_unanchored = !source.empty();
+  reader.obj_indexed = options.obj_topology == "indexed";
   *obj = OBJ{};
   if (!reader.Charge(text.size(), err) ||
       !ReadOBJ(text, source, reader, false, obj, err)) return false;
@@ -635,6 +766,8 @@ bool BuildOBJScene(std::string_view text, const std::string& source,
 bool BuildOBJPayload(std::string_view text, const std::string& source,
                      const Options& options, Result* result, std::string* err) {
   Options effective = options;
+  // The JSON payload carries expanded (per-corner) meshes only.
+  effective.obj_topology = "expanded";
   ImportSession session(&effective, source, "obj", err);
   OBJ obj;
   if (!BuildOBJScene(text, source, effective, &obj, result, err)) return false;
@@ -658,8 +791,13 @@ bool BuildOBJPayload(std::string_view text, const std::string& source,
     visual["geometry"]["materialNames"] = names;
     visuals.push_back(std::move(visual));
   }
-  result->payload["links"] = Json::array({Json{{"name", "Geometry"},
-      {"visuals", std::move(visuals)}}});
+  // Moves, not a braced initializer list (which would copy every mesh).
+  Json link = Json::object();
+  link["name"] = "Geometry";
+  link["visuals"] = std::move(visuals);
+  Json links = Json::array();
+  links.push_back(std::move(link));
+  result->payload["links"] = std::move(links);
   session.Succeed();
   return true;
 }

@@ -139,7 +139,7 @@ def test_report_thread_isolation_and_large_warning_limit():
 
 
 UNSUPPORTED = (b'<mujoco><worldbody><body name="base"><geom type="sphere" size=".1"/></body>'
-               b'<flexcomp name="unhandled" type="gmsh" count="2 2 2"/></worldbody>'
+               b'</worldbody><deformable><flex name="unhandled" dim="2"/></deformable>'
                b'<equality><tendon name="unhandled_eq" tendon1="source"/></equality></mujoco>')
 
 
@@ -155,7 +155,7 @@ def test_unsupported_policy_preserves_source_metadata_and_roundtrips(tmp_path):
         data = json.loads(raw)
         assert len(data) == 2 and all(not item["executable"] for item in data)
         assert all(item["encoding"] == "xml" for item in data)
-        assert "flexcomp" in data[0]["data"] and "unhandled_eq" in data[1]["data"]
+        assert "flex" in data[0]["data"] and "unhandled_eq" in data[1]["data"]
         assert sum(f["disposition"] == "preserved" for f in stage.import_report()["features"]) == 2
         for extension in ("usda", "usdc", "usdz"):
             path = tmp_path / f"preserved.{extension}"
@@ -167,7 +167,7 @@ def test_unsupported_policy_preserves_source_metadata_and_roundtrips(tmp_path):
 
 def test_unsupported_included_xml_and_depth_are_checked(tmp_path):
     included = tmp_path / "included.xml"
-    included.write_bytes(b'<mujoco><worldbody><flexcomp name="included" type="gmsh"/></worldbody></mujoco>')
+    included.write_bytes(b'<mujoco><deformable><flex name="included"/></deformable></mujoco>')
     root = tmp_path / "scene.xml"
     root.write_bytes(b'<mujoco><include file="included.xml"/><worldbody><body name="base"/></worldbody></mujoco>')
     stage = lightusd.import_mjcf(root, unsupported_policy="preserve")
@@ -198,7 +198,7 @@ def test_obj_material_unsupported_preservation():
 
 
 def test_preservation_memory_limit_fails_instead_of_dropping_source():
-    source = b'<mujoco><worldbody><body name="base"/><flexcomp type="gmsh" note="' + b'x' * 20000 + b'"/></worldbody></mujoco>'
+    source = b'<mujoco><worldbody><body name="base"/></worldbody><deformable><flex note="' + b'x' * 20000 + b'"/></deformable></mujoco>'
     base = lightusd.load_bytes(source, format="mjcf").import_report()["estimated_peak_memory_bytes"]
     full = lightusd.load_bytes(source, format="mjcf", unsupported_policy="preserve").import_report()["estimated_peak_memory_bytes"]
     assert full > base
@@ -216,7 +216,7 @@ def test_invalid_policy():
 
 def test_preserved_invalid_utf8_fails_instead_of_losing_data():
     with pytest.raises(lightusd.UsdError, match="(UTF-8|XML)") as error:
-        lightusd.load_bytes(b'<mujoco><worldbody><flexcomp type="gmsh" note="\xff"/></worldbody></mujoco>',
+        lightusd.load_bytes(b'<mujoco><worldbody/><deformable><flex note="\xff"/></deformable></mujoco>',
                            format="mjcf", unsupported_policy="preserve")
     assert error.value.import_report["status"] == "failed"
 

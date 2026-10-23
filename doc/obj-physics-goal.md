@@ -215,15 +215,37 @@ avoid implementing a second conversion or validation engine in Python.
   - Validator: `physics.extension.newton.inertia` (6 finite values, PSD,
     triangle inequality, agreement with `diagonalInertia`) and NewtonJointAPI
     ranges (armature/friction/damping >= 0, limit gains >= 0 or -inf).
-- Still pending: Atomic Component layout, nested body hierarchy, ghost-link
-  collapse, unit conversion (Priority 2.5), compact OBJ topology (2.6),
-  supplied-skeleton binding (2.7), flexcomp mesh/gmsh/box/cylinder/
-  ellipsoid types, raw `<flex>`, interpolated (trilinear/quadratic) dofs,
-  the cable elasticity plugin, composed-stage
-  physics validation, MJCF visual completeness (camera clipping, light
-  intensity, texrepeat, capsule caps, builtin textures), the typed mesh path
-  and other Phase E performance work, a COLLADA/MJCF fuzz harness, and
-  Priority 3.
+- 2026-10-24 round 2: every flexcomp type (box/cylinder/ellipsoid, OBJ/STL
+  mesh, ASCII GMSH) matching MuJoCo vertex for vertex; cable elasticity as
+  ball-joint stiffness E*I/L (sag within ~4 mm of MuJoCo's plugin through
+  Newton); native primitive visuals with rgba display colors, baked
+  ellipsoid meshes, capsule caps, camera fovy/clipping, light intensity,
+  texrepeat; URDF ghost-link collapse and dummy-inertia merge matching the
+  urdf-usd-converter test corpus; `fuzz_next_import` libFuzzer harness
+  (OBJ/URDF/MJCF via the C API, COLLADA directly) with seeds in
+  `tests/fuzzer/next_import_seeds` - it found an unaligned pugixml read in
+  the COLLADA path and deep-cable stack overflows (now an iterative flexcomp
+  walk and a 512-vertex cable cap).
+- Phase E (first pass): the C/Python import keeps mesh positions, normals,
+  UVs and indices as typed buffers referenced by `meshRef`
+  (`Options::typed_meshes`, set by the C API; the CLI's `--dump-json` keeps
+  plain JSON), mesh/link/payload JSON is assembled by move instead of
+  braced initializer lists (which deep-copied every array), and OBJ corner
+  deduplication uses an open-addressed table instead of `std::map`. Output is
+  byte-identical (typed vs JSON path on all 68 Menagerie first models and 56
+  urdf-usd-converter corpus files). Import time: unitree_g1 1.52 -> 0.27 s,
+  aloha 1.41 -> 0.30 s, ms_human_700 0.78 -> 0.24 s, stretch 2.54 -> 1.87 s,
+  fruitfly 5.97 -> 2.32 s (134 MB of OBJ text; OBJ parsing now dominates).
+- Compact OBJ topology (Priority 2.6): `obj_topology="indexed"` keeps source
+  positions with indexed face-varying normals/UVs (OpenUSD flattens them to
+  one value per corner; no validator issues).
+- Still pending: Atomic Component layout, nested body hierarchy, unit
+  conversion (Priority 2.5), supplied-skeleton
+  binding (2.7), raw `<flex>`, interpolated (trilinear/quadratic) dofs,
+  builtin texture generation, further Phase E (OBJ parser throughput,
+  parallel per-mesh conversion), and Priority 3. Composed-stage physics
+  validation needs no separate mode: stages loaded with composition (the
+  default) validate their composed prims and targets (covered by a test).
 
 Reference specifications: [UsdPhysics](https://openusd.org/dev/api/usd_physics_page_front.html),
 [MJCF](https://mujoco.readthedocs.io/en/stable/XMLreference.html), and

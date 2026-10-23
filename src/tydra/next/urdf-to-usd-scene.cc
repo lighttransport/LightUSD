@@ -73,7 +73,13 @@ void AddLightFromJson(Scope *scope, std::set<std::string> *used,
     ReadNumber(l, "cutoff", &cutoff);
     Set(prim, "inputs:shaping:cone:angle",
         tn::Value(static_cast<float>(cutoff)), "float");
+    double exponent = 0.0;
+    if (ReadNumber(l, "exponent", &exponent))
+      Set(prim, "inputs:shaping:focus", tn::Value(static_cast<float>(exponent)), "float");
   }
+  double intensity = 0.0;
+  if (ReadNumber(l, "intensity", &intensity) && intensity > 0.0)
+    Set(prim, "inputs:intensity", tn::Value(static_cast<float>(intensity)), "float");
   SetTransform(prim, xform);
 }
 
@@ -98,6 +104,9 @@ void AddCameraFromJson(Scope *scope, std::set<std::string> *used,
   if (ReadBool(c, "orthographic", &ortho) && ortho) {
     SetToken(prim, "projection", "orthographic");
   }
+  const std::vector<float> clip = JsonFloats(c, "clippingRange");
+  if (clip.size() == 2 && clip[0] > 0.0f && clip[1] > clip[0])
+    Set(prim, "clippingRange", tn::Value::MakeFloat2(clip[0], clip[1]), "float2");
 }
 
 void AddMaterialFromJson(Scope *scope, std::set<std::string> *used,
@@ -221,14 +230,26 @@ void AddMaterialFromJson(Scope *scope, std::set<std::string> *used,
   Set(reader, "inputs:varname", tn::Value(std::string("st")), "string");
   Declare(reader, "outputs:result", tn::TypeId::Float2, "float2");
 
+  // MJCF texrepeat tiles the texture: st scaled through a UsdTransform2d.
+  std::string st_source = mat_path + "/stReader.outputs:result";
+  const std::vector<float> repeat = JsonFloats(m, "texrepeat");
+  if (repeat.size() == 2) {
+    tn::PrimSpec *transform = scope->Add(name + "/stTransform", "Shader");
+    if (!transform) return;
+    SetToken(transform, "info:id", "UsdTransform2d", true);
+    Connect(transform, "inputs:in", tn::TypeId::Float2, "float2", st_source);
+    Set(transform, "inputs:scale", tn::Value::MakeFloat2(repeat[0], repeat[1]), "float2");
+    Declare(transform, "outputs:result", tn::TypeId::Float2, "float2");
+    st_source = mat_path + "/stTransform.outputs:result";
+  }
+
   tn::PrimSpec *tex = scope->Add(name + "/DiffuseTexture", "Shader");
   if (!tex) return;
   SetToken(tex, "info:id", "UsdUVTexture", true);
   Set(tex, "inputs:file", tn::Value::MakeAssetPath(tex_file), "asset");
   // UsdUVTexture declares inputs:st as float2 (texCoord2f fails OpenUSD's
   // MismatchedPropertyType validator).
-  Connect(tex, "inputs:st", tn::TypeId::Float2, "float2",
-          mat_path + "/stReader.outputs:result");
+  Connect(tex, "inputs:st", tn::TypeId::Float2, "float2", st_source);
   SetToken(tex, "inputs:wrapS", "repeat");
   SetToken(tex, "inputs:wrapT", "repeat");
   SetToken(tex, "inputs:sourceColorSpace", "sRGB");

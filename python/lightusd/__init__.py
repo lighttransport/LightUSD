@@ -188,7 +188,7 @@ def _import(*, path=None, data=None, source="", format="auto", max_memory=0,
             resolver=None, up_axis="Z", asset_dirs=(), packages=None,
             allow_missing=False, tessellate_collision_shapes=False,
             max_input=None, max_depth=None, unsupported_policy="warn",
-            profile="newton"):
+            profile="newton", obj_topology="expanded"):
     import json
     if max_memory < 0:
         raise ValueError("max_memory must be non-negative")
@@ -202,12 +202,14 @@ def _import(*, path=None, data=None, source="", format="auto", max_memory=0,
         raise ValueError("up_axis must be Y or Z")
     if profile not in ("newton", "openusd", "legacy"):
         raise ValueError("profile must be newton, openusd or legacy")
+    if obj_topology not in ("expanded", "indexed"):
+        raise ValueError("obj_topology must be expanded or indexed")
     settings = json.dumps({
         "up_axis": up_axis, "profile": profile, "asset_dirs": [_os.fspath(p) for p in asset_dirs],
         "packages": {k: _os.fspath(v) for k, v in (packages or {}).items()},
         "allow_missing": allow_missing,
         "tessellate_collision_shapes": tessellate_collision_shapes,
-        "unsupported_policy": unsupported_policy,
+        "unsupported_policy": unsupported_policy, "obj_topology": obj_topology,
     })
     return _core._import_scene(path=path, data=data, source=source, format=format,
                                settings=settings, max_memory=max_memory, resolver=resolver,
