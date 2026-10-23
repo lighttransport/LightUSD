@@ -2346,6 +2346,24 @@ lightusd_status lightusd_attr_set_metadata(lightusd_stage* stage, const char* pr
   return LIGHTUSD_OK;
 }
 
+lightusd_status lightusd_attr_declare(lightusd_stage* stage, const char* prim_path,
+                                     const char* name, const char* type_name, int uniform) {
+  if (!name || !type_name) return Fail(LIGHTUSD_ERR_INVALID_ARG, "name/type is null");
+  if (!IsValidAttrName(name)) return Fail(LIGHTUSD_ERR_INVALID_ARG, "name is not a valid identifier");
+  std::string base = type_name;
+  if (base.size() > 2 && base.compare(base.size() - 2, 2, "[]") == 0) base.resize(base.size() - 2);
+  const n::TypeId type = n::GetTypeIdFromName(base.c_str());
+  if (type == n::TypeId::Invalid) return Fail(LIGHTUSD_ERR_INVALID_ARG, "unknown type name");
+  lightusd_status st;
+  n::PrimSpec* spec = MutablePrimAt(stage, prim_path, &st);
+  if (!spec) return st;
+  const n::PropNameId id = n::GetPropNameTable().intern(name);
+  if (!spec->property(id))
+    spec->add_property_slot(id, type, uniform ? n::PropSlot::kFlagUniform : 0);
+  spec->set_property_type_name(name, type_name);
+  return LIGHTUSD_OK;
+}
+
 lightusd_status lightusd_attr_add_connection(lightusd_stage* stage, const char* prim_path,
                                      const char* name, const char* target) {
   if (!name || !target) {
@@ -2546,7 +2564,16 @@ lightusd_status lightusd_prim_set_metadata_token_array(
   if (!key || (count && !items)) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid token-array arguments");
   }
-  if (std::string(key) != "apiSchemas") {
+  // An optional USDA list-op qualifier precedes the key ("prepend apiSchemas").
+  std::string name = key, qualifier;
+  const size_t space = name.find(' ');
+  if (space != std::string::npos) {
+    qualifier = name.substr(0, space);
+    name = name.substr(space + 1);
+    if (qualifier != "prepend" && qualifier != "append" && qualifier != "delete")
+      return Fail(LIGHTUSD_ERR_INVALID_ARG, "unknown list-op qualifier: " + qualifier);
+  }
+  if (name != "apiSchemas") {
     return Fail(LIGHTUSD_ERR_NOT_FOUND, "unknown token-array metadata key");
   }
   lightusd_status st;
@@ -2559,6 +2586,8 @@ lightusd_status lightusd_prim_set_metadata_token_array(
     values.emplace_back(items[i]);
   }
   spec->meta().apiSchemas() = std::move(values);
+  spec->meta().apiSchemasQualifier() = qualifier;
+  spec->meta().apiSchemaEdits() = n::StringListOps();
   spec->meta().setApiSchemasAuthored();
   return LIGHTUSD_OK;
 }

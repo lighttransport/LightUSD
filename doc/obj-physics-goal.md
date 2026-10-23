@@ -251,7 +251,12 @@ avoid implementing a second conversion or validation engine in Python.
 - OBJ/MTL export (Priority 3): `lightusd.objexport.export_obj` with world or
   local space, polygon/triangle topology, MTL from UsdPreviewSurface and
   optional `vw`, verified by import round trips.
-- Still pending: Atomic Component layout, native unit conversion API, raw
+- Atomic component layout: `lightusd.asset.save_component` (interface +
+  Payload/Contents + Geometry/Materials/Physics layers + copied textures),
+  composing in OpenUSD to the flat output. Supporting API: `Prim.declare` /
+  C `lightusd_attr_declare` (typed attribute without a value) and list-op
+  qualified `apiSchemas` metadata (`"prepend apiSchemas"`).
+- Still pending: geometry/material library layers, native unit conversion API, raw
   `<flex>`, interpolated (trilinear/quadratic) dofs,
   builtin texture generation, parallel per-mesh conversion and mapped input
   for URDF/MJCF mesh assets. Import progress/cancellation callbacks (C

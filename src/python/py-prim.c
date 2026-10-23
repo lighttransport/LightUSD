@@ -1882,6 +1882,23 @@ static PyObject* Prim_add_variant_set(PyObject* self, PyObject* args) {
   Py_RETURN_NONE;
 }
 
+static PyObject* Prim_declare(PyObject* self, PyObject* args, PyObject* kwargs) {
+  static char* names[] = {"name", "type", "uniform", NULL};
+  const char *name, *type_name;
+  int uniform = 0;
+  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "ss|p:declare", names, &name, &type_name,
+                                   &uniform))
+    return NULL;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = prim_context(self, &prim, &stage);
+  if (!st) return NULL;
+  lightusd_status status =
+      lightusd_attr_declare(stage, prim_path_cstr(prim), name, type_name, uniform);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, name);
+  Py_RETURN_NONE;
+}
+
 static PyObject* Prim_remove_property(PyObject* self, PyObject* args) {
   const char* name;
   if (!PyArg_ParseTuple(args, "s:remove_property", &name)) return NULL;
@@ -1951,6 +1968,8 @@ static PyMethodDef Prim_methods[] = {
      "add_relationship(name, targets)"},
     {"add_variant_set", Prim_add_variant_set, METH_VARARGS,
      "add_variant_set(name)"},
+    {"declare", (PyCFunction)(void (*)(void))Prim_declare, METH_VARARGS | METH_KEYWORDS,
+     "declare(name, type, *, uniform=False)\nDeclare a typed attribute without a value."},
     {"remove_property", Prim_remove_property, METH_VARARGS,
      "remove_property(name)"},
     {NULL, NULL, 0, NULL},

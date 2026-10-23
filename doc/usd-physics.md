@@ -644,6 +644,33 @@ nested paths. World transforms equal the default `flat` layout; OpenUSD's
 validators and UsdPhysics parser see the same bodies and shapes, and Newton's
 comparison passes on sampled Menagerie models in both layouts.
 
+### Atomic component layout
+
+`lightusd.asset.save_component(stage, directory, name="Robot")` writes a
+converted stage in the layer layout urdf-usd-converter and
+mujoco-usd-converter produce:
+
+```
+<directory>/Robot.usda              defaultPrim /Robot, kind=component,
+                                    assetInfo, payload ./Payload/Contents.usda
+<directory>/Payload/Contents.usda   sublayers Physics, Materials, Geometry
+<directory>/Payload/Geometry.usda   prims, transforms, meshes and gprims
+<directory>/Payload/Materials.usda  Material networks and material:binding
+<directory>/Payload/Physics.usda    physics/newton/mjc/urdf API schemas and
+                                    attributes as overs; joints, tendons,
+                                    actuators, equalities, the PhysicsScene
+<directory>/Payload/Textures/       copied textures (textures="copy")
+```
+
+The stage's root prim (`/World`) is renamed to `/<name>` and every
+relationship target and connection follows it. API schemas are split per
+layer as `prepend` list ops, so the composed prims carry the original list.
+Opened in OpenUSD, the interface file composes to the same prims, schemas,
+values, connections and targets as the flat output (checked on Menagerie
+panda, spot and g1). It is a Python helper; `format="usdc"` writes binary
+layers. Mesh/material library layers (`GeometryLibrary.usdc` with
+references) are not split out.
+
 ### Unit conversion
 
 Native imports author SI units (`metersPerUnit = 1`, `kilogramsPerUnit = 1`,

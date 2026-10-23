@@ -952,6 +952,12 @@ LIGHTUSD_API lightusd_status lightusd_attr_set_metadata(lightusd_stage* stage,
                                             const char* name, const char* key,
                                             lightusd_type type, const void* data,
                                             size_t count);
+/* Declare a typed attribute without a default value (for example a shader
+ * output that is only connected). An existing attribute keeps its value and
+ * takes the type name. */
+LIGHTUSD_API lightusd_status lightusd_attr_declare(lightusd_stage* stage, const char* prim_path,
+                                                   const char* name, const char* type_name,
+                                                   int uniform);
 LIGHTUSD_API lightusd_status lightusd_attr_add_connection(lightusd_stage* stage,
                                               const char* prim_path,
                                               const char* name,
@@ -1001,6 +1007,9 @@ LIGHTUSD_API lightusd_status lightusd_prim_set_metadata(lightusd_stage* stage,
                                             const char* prim_path,
                                             const char* key, lightusd_type type,
                                             const void* data, size_t count);
+/* key is "apiSchemas", optionally prefixed by a list-op qualifier as in USDA
+ * ("prepend apiSchemas", "append apiSchemas", "delete apiSchemas"); without
+ * one the list is explicit. */
 LIGHTUSD_API lightusd_status lightusd_prim_set_metadata_token_array(
     lightusd_stage* stage, const char* prim_path, const char* key,
     const char* const* items, size_t count);
