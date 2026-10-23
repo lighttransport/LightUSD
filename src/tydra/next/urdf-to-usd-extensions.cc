@@ -133,8 +133,9 @@ void AuthorMjcSite(tn::PrimSpec *prim, const Json &site,
 
 void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
                           const Json &t, const NameMap &joint_names,
-                          const NameMap &site_names, NameMap *tendon_names,
-                          size_t index, std::string *warn) {
+                          const NameMap &site_names, const NameMap &geom_names,
+                          NameMap *tendon_names, size_t index,
+                          std::string *warn) {
   std::string source = JsonString(t, "name");
   if (source.empty()) {
     const std::string prim_path = JsonString(t, "path");
@@ -197,6 +198,12 @@ void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
   };
 
   std::vector<std::string> targets;
+  // Spatial waypoint encoding: per ordered element segment id and side site,
+  // and one divisor per segment.
+  bool spatial_waypoints = false;
+  std::vector<int32_t> segments;
+  std::vector<std::string> ordered_sides;
+  std::vector<double> divisors;
   std::vector<double> coefs = JsonDoubles(t, "routeCoef");
   const std::vector<std::string> route = JsonStrings(t, "route");
   const Json *route_items = JsonArray(t, "route");
@@ -210,22 +217,61 @@ void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
       append_route_ref(ref, &targets);
     }
   } else if (type == "spatial") {
-    // Spatial (muscle) tendon: ordered site/sidesite waypoints -> mjc:path
-    // (wrap geoms approximated by their sidesite), one coef per site.
-    if (path_items) {
-      for (const Json &wp : *path_items) {
-        if (!wp.is_object()) continue;
-        std::string site_ref;
-        if (wp.contains("site")) site_ref = JsonString(wp, "site");
-        else if (wp.contains("sidesite")) site_ref = JsonString(wp, "sidesite");
-        if (site_ref.empty()) {
-          append_route_object(wp, &targets);
-          continue;  // pulley / unresolvable geom wrap
-        }
-        append_route_ref(site_ref, &targets);
-        coefs.push_back(1.0);
+    // Spatial (muscle) tendon: ordered site / wrap-geom / pulley waypoints.
+    // Every pulley, including a leading one, starts a new segment with its
+    // divisor; segment 0 has divisor 1 (decoders emit a pulley whenever the
+    // segment id increases, as in Newton's tendon import tests).
+    spatial_waypoints = true;
+    divisors.push_back(1.0);
+    bool skip = false;
+    static const Json kNoPath = Json::array();
+    for (const Json &wp : path_items ? *path_items : kNoPath) {
+      if (!wp.is_object()) continue;
+      if (wp.contains("pulley")) {
+        double divisor = 1.0;
+        ReadNumber(wp, "pulley", &divisor);
+        divisors.push_back(divisor);
+        continue;
       }
+      std::string resolved;
+      std::string side;
+      bool found = false;
+      if (wp.contains("site")) {
+        found = resolve_site_ref(JsonString(wp, "site"), &resolved);
+        if (!found) {
+          AppendWarn(warn, "Tendon `" + name + "` site `" + JsonString(wp, "site") +
+                               "` could not be resolved; skipping the tendon.\n");
+        }
+      } else if (wp.contains("geom")) {
+        const std::string geom = JsonString(wp, "geom");
+        found = resolve_in(geom_names, "/World/", geom, &resolved);
+        if (!found) {
+          AppendWarn(warn, "Tendon `" + name + "` wrap geom `" + geom +
+                               "` was not exported as a native sphere/cylinder; "
+                               "skipping the tendon.\n");
+        }
+        const std::string side_ref = JsonString(wp, "sidesite");
+        if (found && !side_ref.empty() && !resolve_site_ref(side_ref, &side)) {
+          AppendWarn(warn, "Tendon `" + name + "` sidesite `" + side_ref +
+                               "` could not be resolved; wrapping without it.\n");
+        }
+      } else {
+        found = append_route_object(wp, &targets);
+        if (found) {
+          segments.push_back(static_cast<int32_t>(divisors.size() - 1));
+          ordered_sides.emplace_back();
+        }
+        continue;
+      }
+      if (!found) {
+        skip = true;
+        break;
+      }
+      targets.push_back(resolved);
+      segments.push_back(static_cast<int32_t>(divisors.size() - 1));
+      ordered_sides.push_back(side);
     }
+    if (skip) targets.clear();
   } else if (const Json *joints = JsonArray(t, "joints")) {
     // Fixed tendon: linear combination of joint coordinates.
     for (const Json &je : *joints) {
@@ -276,14 +322,36 @@ void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
     route_indices.push_back(inserted.first->second);
   }
   SetRel(prim, "mjc:path", unique_targets);
-  if (unique_targets.size() != targets.size())
+  if (spatial_waypoints || unique_targets.size() != targets.size())
     Set(prim, "mjc:path:indices", tn::Value::MakeIntArray(route_indices), "int[]", true);
+  if (spatial_waypoints) {
+    Set(prim, "mjc:path:segments", tn::Value::MakeIntArray(segments), "int[]", true);
+    SetDoubles(prim, "mjc:path:divisors", divisors, true);
+    std::vector<std::string> sides;
+    std::vector<int32_t> side_indices;
+    bool any_side = false;
+    for (const std::string &side : ordered_sides) {
+      if (side.empty()) {
+        side_indices.push_back(-1);
+        continue;
+      }
+      any_side = true;
+      auto at = std::find(sides.begin(), sides.end(), side);
+      side_indices.push_back(static_cast<int32_t>(at - sides.begin()));
+      if (at == sides.end()) sides.push_back(side);
+    }
+    if (any_side) {
+      SetRel(prim, "mjc:sideSites", sides);
+      Set(prim, "mjc:sideSites:indices", tn::Value::MakeIntArray(side_indices), "int[]", true);
+    }
+  }
   std::vector<double> route_coef = JsonDoubles(t, "routeCoef");
   if (!route_coef.empty()) coefs = std::move(route_coef);
   if (!coefs.empty()) SetDoubles(prim, "mjc:path:coef", coefs, true);
 
   std::vector<std::string> side_sites;
   for (const std::string &ref : JsonStrings(t, "sideSites")) {
+    if (spatial_waypoints) break;
     std::string resolved;
     if (resolve_site_ref(ref, &resolved)) {
       side_sites.push_back(resolved);
@@ -293,7 +361,7 @@ void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
     }
   }
   const Json *side_items = JsonArray(t, "sideSites");
-  if (side_sites.empty() && side_items) {
+  if (!spatial_waypoints && side_sites.empty() && side_items) {
     for (const Json &item : *side_items) {
       if (!item.is_object()) continue;
       std::string ref = JsonString(item, "target");
@@ -309,7 +377,7 @@ void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
       }
     }
   }
-  SetRel(prim, "mjc:sideSites", side_sites);
+  if (!spatial_waypoints) SetRel(prim, "mjc:sideSites", side_sites);
 
   const std::pair<const char *, const char *> int_arrays[] = {
       {"routeIndices", "mjc:path:indices"},
@@ -322,8 +390,9 @@ void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
           "int[]", true);
     }
   }
-  std::vector<double> divisors = JsonDoubles(t, "routeDivisors");
-  if (!divisors.empty()) SetDoubles(prim, "mjc:path:divisors", divisors, true);
+  std::vector<double> route_divisors = JsonDoubles(t, "routeDivisors");
+  if (!spatial_waypoints && !route_divisors.empty())
+    SetDoubles(prim, "mjc:path:divisors", route_divisors, true);
 
   const std::vector<double> rgba = JsonDoubles(t, "rgba");
   if (rgba.size() >= 4) {
@@ -457,6 +526,10 @@ void AddEqualityConstraint(tn::Layer *layer, Scope *scope,
     if (leader == joint_names.end()) {
       // A single-joint equality pins joint1 to coef0; keep the MJC form.
       Set(prim, "mjc:coef0", tn::Value(coef[0]), "double");
+      if (ActiveProfile().newton)
+        AppendWarn(warn, "Joint equality `" + name +
+                             "` has no second joint; Newton's USD importer has "
+                             "no mimic form for it and skips it.\n");
       return;
     }
     SetRel(prim, "mjc:target", {"/World/Joints/" + leader->second});
@@ -512,6 +585,9 @@ void AddEqualityConstraint(tn::Layer *layer, Scope *scope,
   anchor.resize(3, 0.0);
   const double rot_identity[4] = {1, 0, 0, 0};
   Matrix4 frame_world;
+  // A weld relpose fixes body2's target pose relative to body1, so body2's
+  // frame is the anchor in body2 itself rather than its rest-pose offset.
+  bool body2_anchor_frame = false;
   if (type == "weld") {
     const std::vector<double> rel = JsonDoubles(e, "relpose");
     const bool has_rel = rel.size() == 7 &&
@@ -523,6 +599,7 @@ void AddEqualityConstraint(tn::Layer *layer, Scope *scope,
       const double ap[3] = {anchor[0], anchor[1], anchor[2]};
       frame_world = MultiplyRowMajor(
           MultiplyRowMajor(PoseMatrix(ap, 1, 0, 0, 0), rel_m), w1);
+      body2_anchor_frame = !world2;
     } else {
       const double ap[3] = {anchor[0], anchor[1], anchor[2]};
       frame_world = MultiplyRowMajor(PoseMatrix(ap, 1, 0, 0, 0), w2);
@@ -539,6 +616,10 @@ void AddEqualityConstraint(tn::Layer *layer, Scope *scope,
   struct Side { std::string body; Matrix4 world; bool is_world; };
   Side a{body1, w1, world1}, b{body2, w2, world2};
   Matrix4 frame_a = frame_world, frame_b = frame_world;
+  if (body2_anchor_frame) {
+    const double ap[3] = {anchor[0], anchor[1], anchor[2]};
+    frame_b = MultiplyRowMajor(PoseMatrix(ap, 1, 0, 0, 0), w2);
+  }
   if (site_json[0]) {
     frame_a = MatrixFromArray(JsonDoubles(*site_json[0], "matrix"));
     frame_b = MatrixFromArray(JsonDoubles(*site_json[1], "matrix"));
@@ -613,13 +694,8 @@ void AddMjcActuatorFromJson(Scope *scope, std::set<std::string> *used,
                             const Json &a, const NameMap &joint_names,
                             const NameMap &tendon_names,
                             const NameMap &site_names,
-                            const NameMap &link_names, size_t index) {
-  const std::string name = Unique(
-      JsonString(a, "name", "actuator_" + std::to_string(index)), "actuator",
-      used);
-  tn::PrimSpec *prim = scope->Add(name, "MjcActuator");
-  if (!prim) return;
-
+                            const NameMap &link_names, size_t index,
+                            std::string *warn) {
   auto resolve = [](const NameMap &names, const char *scope_path,
                     const std::string &n) -> std::vector<std::string> {
     auto found = names.find(n);
@@ -643,6 +719,18 @@ void AddMjcActuatorFromJson(Scope *scope, std::set<std::string> *used,
   } else if (!t_body.empty()) {  // <adhesion body=..>
     targets = resolve(link_names, "/World/Links/", t_body);
   }
+  const std::string source_name =
+      JsonString(a, "name", "actuator_" + std::to_string(index));
+  if (targets.empty()) {
+    // MuJoCo skips and Newton rejects an actuator without exactly one target
+    // (e.g. one driving a tendon that could not be exported).
+    AppendWarn(warn, "Skipping actuator `" + source_name +
+                         "`: its transmission target was not exported.\n");
+    return;
+  }
+  const std::string name = Unique(source_name, "actuator", used);
+  tn::PrimSpec *prim = scope->Add(name, "MjcActuator");
+  if (!prim) return;
   SetRel(prim, "mjc:target", targets);
 
   for (const char *key : {"gainPrm", "biasPrm", "dynPrm", "gear"}) {

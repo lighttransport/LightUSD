@@ -141,11 +141,16 @@ static bool ConvertPayload(
     const std::string child = JsonString(joint, "child");
     if (!child.empty()) child_links.insert(child);
   }
+  bool filter_parent = true;
+  if (const Json *ms = JsonObject(root, "mjcScene"))
+    if (const Json *flags = JsonObject(*ms, "flag")) ReadBool(*flags, "filterparent", &filter_parent);
   bool self_collision_enabled = true;
   if (const Json *newton = JsonObject(root, "newton")) {
     ReadBool(*newton, "selfCollisionEnabled", &self_collision_enabled);
   }
   NameMap link_names;
+  NameMap geom_names;  // MJCF tendon wrap geom -> native prim under /World
+  std::map<std::string, std::vector<std::string>> link_colliders;  // by source name
   std::set<std::string> static_links;                          // by source name
   std::map<std::string, urdf_detail::Matrix4> link_worlds;                 // by source name
   std::map<std::string, std::set<std::string>> link_children;  // by USD name
@@ -257,26 +262,41 @@ static bool ConvertPayload(
     if (const Json *visuals = JsonArray(link, "visuals")) {
       size_t n = 0;
       for (const Json &visual : *visuals) {
-        if (!AddMeshFromJson(&layer, path, &siblings, visual, mesh_buffers,
-                             "visual_" + std::to_string(n++), false,
-                             mjcf_source, warn, err)) {
-          return false;
-        }
+        const std::string fallback = "visual_" + std::to_string(n++);
+        std::string prim_name;
+        const bool ok =
+            JsonObject(visual, "shape")
+                ? AddNativeCollisionShapeFromJson(&layer, path, &siblings,
+                                                  visual, fallback, mjcf_source,
+                                                  warn, err, false, &prim_name)
+                : AddMeshFromJson(&layer, path, &siblings, visual, mesh_buffers,
+                                  fallback, false, mjcf_source, warn, err);
+        if (!ok) return false;
+        const std::string geom = JsonString(visual, "mjcGeom");
+        if (!geom.empty() && !prim_name.empty())
+          geom_names.emplace(geom, "Links/" + name + "/" + prim_name);
       }
     }
     if (const Json *collisions = JsonArray(link, "collisions")) {
       size_t n = 0;
       for (const Json &collision : *collisions) {
         const std::string fallback = "collision_" + std::to_string(n++);
+        std::string prim_name;
         const bool ok =
             JsonObject(collision, "shape")
                 ? AddNativeCollisionShapeFromJson(&layer, path, &siblings,
                                                   collision, fallback,
-                                                  mjcf_source, warn, err)
+                                                  mjcf_source, warn, err, true,
+                                                  &prim_name)
                 : AddMeshFromJson(&layer, path, &siblings, collision,
                                   mesh_buffers, fallback, true, mjcf_source,
                                   warn, err);
         if (!ok) return false;
+        const std::string geom = JsonString(collision, "mjcGeom");
+        if (!geom.empty() && !prim_name.empty())
+          geom_names[geom] = "Links/" + name + "/" + prim_name;
+        if (!prim_name.empty())
+          link_colliders[source].push_back(path + "/" + prim_name);
       }
     }
   }
@@ -295,9 +315,22 @@ static bool ConvertPayload(
                              "`: link was not exported.\n");
         continue;
       }
+      // A static link has no RigidBodyAPI outside legacy output; filter
+      // against its collider prims from the dynamic side instead.
+      const bool static1 = !profile.legacy && static_links.count(body1);
+      const bool static2 = !profile.legacy && static_links.count(body2);
+      if (static1 && static2) continue;
+      if (static1 || static2) {
+        const std::string &dynamic = static1 ? body2 : body1;
+        const auto &shapes = link_colliders[static1 ? body1 : body2];
+        auto &out = filtered[dynamic];
+        out.insert(out.end(), shapes.begin(), shapes.end());
+        continue;
+      }
       filtered[body1].push_back("/World/Links/" + it2->second);
     }
     for (const auto &entry : filtered) {
+      if (entry.second.empty()) continue;
       tn::PrimSpec *prim = layer.prim_at_path_mutable(
           "/World/Links/" + link_names[entry.first]);
       if (!prim) continue;
@@ -371,6 +404,9 @@ static bool ConvertPayload(
                     !profile.legacy && static_links.count(parent)
                         ? std::string() : link_names[parent],
                     link_names[child], joint_names);
+    // <flag filterparent="disable"> lets jointed parent/child bodies collide.
+    if (!profile.legacy && !filter_parent)
+      Set(prim, "physics:collisionEnabled", tn::Value(true), "bool", true);
     if (usd_type != "PhysicsFixedJoint" && usd_type != "PhysicsJoint") {
       SetToken(prim, "physics:axis", axis, true);
     }
@@ -382,6 +418,14 @@ static bool ConvertPayload(
         AddAPI(prim, std::string("PhysicsLimitAPI:") + dof);
         Set(prim, std::string("limit:") + dof + ":physics:low", tn::Value(1.0f), "float");
         Set(prim, std::string("limit:") + dof + ":physics:high", tn::Value(-1.0f), "float");
+      }
+      // Free axes are unlimited, but Newton creates a D6 DOF only for an
+      // axis with a LimitAPI whose low < high.
+      const float inf = std::numeric_limits<float>::infinity();
+      for (const char *dof : {"transY", "transZ", "rotX"}) {
+        AddAPI(prim, std::string("PhysicsLimitAPI:") + dof);
+        Set(prim, std::string("limit:") + dof + ":physics:low", tn::Value(-inf), "float");
+        Set(prim, std::string("limit:") + dof + ":physics:high", tn::Value(inf), "float");
       }
     }
     double cone = 0.0;
@@ -467,6 +511,8 @@ static bool ConvertPayload(
     }
   }
 
+  if (!profile.legacy) AddDeformablesFromJson(&layer, payload.Array("deformables"), link_names, warn);
+
   NameMap tendon_names;
   Scope tendons_scope(&layer, "Tendons");
   {
@@ -474,7 +520,7 @@ static bool ConvertPayload(
     const Json &items = payload.Array("tendons");
     for (size_t i = 0; engine_section("tendons", "MuJoCo tendons") && i < items.size(); ++i) {
       AddMjcTendonFromJson(&tendons_scope, &siblings, items[i], joint_names,
-                           site_names, &tendon_names, i, warn);
+                           site_names, geom_names, &tendon_names, i, warn);
     }
   }
 
@@ -507,7 +553,7 @@ static bool ConvertPayload(
     for (size_t i = 0; engine_section("mjcActuators", "MuJoCo actuators") && i < items.size(); ++i) {
       AddMjcActuatorFromJson(&mjc_actuators_scope, &used, items[i],
                              joint_names, tendon_names, site_names, link_names,
-                             i);
+                             i, warn);
     }
   }
 

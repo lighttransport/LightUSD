@@ -139,7 +139,7 @@ def test_report_thread_isolation_and_large_warning_limit():
 
 
 UNSUPPORTED = (b'<mujoco><worldbody><body name="base"><geom type="sphere" size=".1"/></body>'
-               b'<flexcomp name="unhandled" type="grid" count="2 2 2"/></worldbody>'
+               b'<flexcomp name="unhandled" type="gmsh" count="2 2 2"/></worldbody>'
                b'<equality><tendon name="unhandled_eq" tendon1="source"/></equality></mujoco>')
 
 
@@ -167,7 +167,7 @@ def test_unsupported_policy_preserves_source_metadata_and_roundtrips(tmp_path):
 
 def test_unsupported_included_xml_and_depth_are_checked(tmp_path):
     included = tmp_path / "included.xml"
-    included.write_bytes(b'<mujoco><worldbody><flexcomp name="included"/></worldbody></mujoco>')
+    included.write_bytes(b'<mujoco><worldbody><flexcomp name="included" type="gmsh"/></worldbody></mujoco>')
     root = tmp_path / "scene.xml"
     root.write_bytes(b'<mujoco><include file="included.xml"/><worldbody><body name="base"/></worldbody></mujoco>')
     stage = lightusd.import_mjcf(root, unsupported_policy="preserve")
@@ -198,7 +198,7 @@ def test_obj_material_unsupported_preservation():
 
 
 def test_preservation_memory_limit_fails_instead_of_dropping_source():
-    source = b'<mujoco><worldbody><body name="base"/><flexcomp note="' + b'x' * 20000 + b'"/></worldbody></mujoco>'
+    source = b'<mujoco><worldbody><body name="base"/><flexcomp type="gmsh" note="' + b'x' * 20000 + b'"/></worldbody></mujoco>'
     base = lightusd.load_bytes(source, format="mjcf").import_report()["estimated_peak_memory_bytes"]
     full = lightusd.load_bytes(source, format="mjcf", unsupported_policy="preserve").import_report()["estimated_peak_memory_bytes"]
     assert full > base
@@ -216,7 +216,7 @@ def test_invalid_policy():
 
 def test_preserved_invalid_utf8_fails_instead_of_losing_data():
     with pytest.raises(lightusd.UsdError, match="(UTF-8|XML)") as error:
-        lightusd.load_bytes(b'<mujoco><worldbody><flexcomp note="\xff"/></worldbody></mujoco>',
+        lightusd.load_bytes(b'<mujoco><worldbody><flexcomp type="gmsh" note="\xff"/></worldbody></mujoco>',
                            format="mjcf", unsupported_policy="preserve")
     assert error.value.import_report["status"] == "failed"
 

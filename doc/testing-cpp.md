@@ -2397,13 +2397,20 @@ PYTHONPATH="$ISOLATED_PYTHON_PACKAGE" "$NEWTON_PYTHON" tests/next/run-newton-com
   --menagerie "$MENAGERIE_ROOT" --profile newton --out newton-compare.json
 ```
 
-At Menagerie `cda5236f` with Newton 1.8.0.dev0 (`3ab62ae9`), warp 1.18 and
-MuJoCo 3.15 (Newton's pin), 52 of 56 compared first models pass in the `newton`
-profile (13 more were skipped because Newton's `add_mjcf` needed Pillow, which
-the test venv lacked). Remaining: `shadow_hand/keyframes.xml` is a fragment
-picked as a model, thin-shell `ms_human_700` rib masses (within 1.2% of MuJoCo),
-an all-zero authored `ufactory_lite6` base inertia that is left unauthored
-(as mujoco-usd-converter does), and `robotiq_2f85_v4` (not yet investigated).
+At Menagerie `cda5236f` with Newton 1.8.0.dev0 (`2c86f4a4`), warp 1.18 and
+MuJoCo 3.15 (Newton's pin), 65 of 69 first models pass in the `newton`
+profile. The remaining four are understood: thin-shell `ms_human_700` rib
+masses (within 1.2% of MuJoCo), the `stretch` gripper body whose mesh has
+non-convex n-gons up to 215 sides that MuJoCo triangulates differently (0.2%
+inertia), an all-zero authored `ufactory_lite6` base inertia left unauthored
+(as mujoco-usd-converter does), and `rby1`, where Newton's MJCF importer
+applies a default-class range despite `limited="false"` (LightUSD keeps the
+wheel unlimited, as MuJoCo does) and Newton's USD importer has no way to keep
+an explicitly massless body with colliders massless. The harness skips
+include fragments without `<worldbody>`, writes each input to a unique file
+(USD caches layers by path), matches joints one-to-one, and reports a merged
+D6 whose DOFs differ only in order as `dof_order` (Newton orders merged
+joints by sorted prim path, not authored order).
 
 `tests/next/run-openusd-physics-check.py` saves every profile as USDA, runs all
 registered OpenUSD `UsdValidation` validators (including

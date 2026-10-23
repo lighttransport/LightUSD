@@ -103,7 +103,7 @@ int main() {
   assert(!stage);
   assert(Report(nullptr)["error"].get<std::string>().find("Too many MJCF solver values") != std::string::npos);
   options.settings_json = "{\"unsupported_policy\":\"error\"}";
-  const char* unsupported = "<mujoco><worldbody><body name='base'/><flexcomp name='cloth'/></worldbody></mujoco>";
+  const char* unsupported = "<mujoco><worldbody><body name='base'/><flexcomp name='cloth' type='gmsh'/></worldbody></mujoco>";
   assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(unsupported),
       std::strlen(unsupported), "memory:physics.xml", &options, &stage) == LIGHTUSD_ERR_PARSE);
   assert(!stage);
@@ -168,5 +168,37 @@ int main() {
   options.settings_json = "{\"profile\":\"bogus\"}";
   assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(robot), std::strlen(robot),
                                 "memory:robot.xml", &options, &stage) == LIGHTUSD_ERR_INVALID_ARG);
+  // Macro elements and soft bodies (newton profile): replicate, a cable
+  // composite, a pinned flexcomp cloth and a spatial tendon with a wrap
+  // cylinder, side site and pulley.
+  const char* soft = R"(<mujoco><worldbody>
+    <replicate count="2" offset=".3 0 0" sep="r"><body name="ball" pos="0 0 1"><freejoint/>
+      <geom size=".05"/><site name="tip"/></body></replicate>
+    <body name="hook" pos="0 1 1">
+      <composite type="cable" prefix="c" curve="s" count="5 1 1" size=".4">
+        <geom type="capsule" size=".01"/></composite>
+      <flexcomp name="cloth" type="grid" dim="2" count="3 3 1" spacing=".1 .1 .1"><pin id="0"/></flexcomp>
+      <site name="s0" pos="0 0 .2"/>
+      <geom name="wrap" type="cylinder" size=".03 .02" pos=".1 0 0" contype="0" conaffinity="0"/>
+      <site name="side" pos=".1 .05 0"/></body>
+    <body name="arm" pos="0 1 0"><joint name="h" axis="0 1 0"/><geom size=".05"/>
+      <site name="s1" pos="0 0 .2"/><site name="s2" pos=".1 0 .2"/></body>
+  </worldbody>
+  <tendon><spatial name="rope"><site site="s0"/><site site="tip"/></spatial>
+    <spatial name="t"><site site="s0"/><geom geom="wrap" sidesite="side"/><site site="s1"/>
+      <pulley divisor="2"/><site site="s1"/><site site="s2"/></spatial></tendon></mujoco>)";
+  options.settings_json = "{\"profile\":\"newton\"}";
+  assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(soft), std::strlen(soft),
+                                "memory:soft.xml", &options, &stage) == LIGHTUSD_OK);
+  for (const char* path : {"/World/Links/ballr0", "/World/Links/ballr1", "/World/Links/cB_first",
+                           "/World/Links/cB_last", "/World/Tendons/roper0", "/World/Tendons/roper1",
+                           "/World/Deformables/cloth", "/World/Deformables/cloth_pins"})
+    assert(lightusd_prim_is_valid(lightusd_stage_prim_at_path(stage, path)));
+  auto tendon = lightusd_stage_prim_at_path(stage, "/World/Tendons/t");
+  assert(lightusd_rel_target_count(tendon, "mjc:path") == 4);
+  lightusd_value_view segments{};
+  assert(lightusd_attr_get(tendon, "mjc:path:segments", &segments) == LIGHTUSD_OK);
+  assert(segments.count == 5 && static_cast<const int32_t*>(segments.data)[4] == 1);
+  lightusd_stage_destroy(stage);
   std::cout << "Native import C API tests passed\n";
 }

@@ -197,10 +197,29 @@ avoid implementing a second conversion or validation engine in Python.
   validators report no issues for sampled Menagerie models in all profiles
   after the `inputs:st` fix. Newton comparison results are in
   [testing](testing-cpp.md#downstream-newton-and-openusd-checks).
+- 2026-10-24 round (soft bodies, tendons, Newton contract):
+  - Tendons: exact MuJoCo path encoding (native wrap geoms, side-site
+    indices, pulley segments/divisors), tendon group/armature/sol*/
+    actuatorfrc*, two-value springlength; actuators with unexported
+    targets are skipped. Verified against MuJoCo through Newton.
+  - `<replicate>` and `<composite type="cable">` expansion; `<flexcomp>`
+    grid/circle/square/disc/direct → UsdPhysics deformables (newton
+    profile) with pins as `PhysicsAttachment`.
+  - Newton contract fixes: URDF planar free axes, URDF effort as
+    `mjc:actuatorfrcrange`, no ref-mirroring joint state, gravity flag,
+    `filterparent`, spring/damper flags, weld `relpose` body2 frame,
+    ball-containing joint stacks as chains, URDF colliders keep Newton's
+    gap/margin defaults, revolute-only mimic degree conversion, world
+    `<exclude>` filters world colliders, mesh `maxhullvert`, static meshes
+    collide as convex hulls (hfields stay exact).
+  - Validator: `physics.extension.newton.inertia` (6 finite values, PSD,
+    triangle inequality, agreement with `diagonalInertia`) and NewtonJointAPI
+    ranges (armature/friction/damping >= 0, limit gains >= 0 or -inf).
 - Still pending: Atomic Component layout, nested body hierarchy, ghost-link
   collapse, unit conversion (Priority 2.5), compact OBJ topology (2.6),
-  supplied-skeleton binding (2.7), tendon wrap evaluation (2.8), Newton
-  validator rules for `NewtonMassAPI`/`NewtonJointAPI`, composed-stage
+  supplied-skeleton binding (2.7), flexcomp mesh/gmsh/box/cylinder/
+  ellipsoid types, raw `<flex>`, interpolated (trilinear/quadratic) dofs,
+  the cable elasticity plugin, composed-stage
   physics validation, MJCF visual completeness (camera clipping, light
   intensity, texrepeat, capsule caps, builtin textures), the typed mesh path
   and other Phase E performance work, a COLLADA/MJCF fuzz harness, and

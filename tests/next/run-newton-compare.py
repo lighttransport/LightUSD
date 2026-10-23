@@ -68,14 +68,22 @@ def _usd_name(label):
 def _match(reference, candidates):
     """Map Newton MJCF labels (model/worldbody/body/.../name, where MJCF names
     may themselves contain '/') to LightUSD prim names by longest suffix."""
-    mapping = {}
+    mapping, used = {}, set()
+    # Exact names first, then longest suffixes; each candidate is used once.
     for label in reference:
+        if label in candidates:
+            mapping[label] = label
+            used.add(label)
+    for label in sorted(reference, key=len, reverse=True):
+        if label in mapping:
+            continue
         best = None
         for name in candidates:
-            if (label == name or label.endswith("_" + name)) and (best is None or len(name) > len(best)):
+            if name not in used and label.endswith("_" + name) and (best is None or len(name) > len(best)):
                 best = name
         if best is not None:
             mapping[label] = best
+            used.add(best)
     return mapping
 
 
@@ -208,11 +216,13 @@ def compare(ref, cand, np, oracle=None, notes=None):
     joint_map = _match(ref["joints"], cand["joints"])
     # Newton merges stacked joints into one D6 labeled by all member names;
     # LightUSD's stacked joints merge under the first joint's name.
+    used = set(joint_map.values())
     for label, value in ref["joints"].items():
         if label in joint_map or value[0] != 6:
             continue
         for name, other in cand["joints"].items():
-            if other[0] == 6 and ("_" + name + "_") in ("_" + label + "_"):
+            if name not in used and other[0] == 6 and ("_" + name + "_") in ("_" + label + "_"):
+                used.add(name)
                 joint_map[label] = name
                 break
     ref = dict(ref, joints={joint_map.get(n, n): v for n, v in ref["joints"].items()})
@@ -227,6 +237,7 @@ def compare(ref, cand, np, oracle=None, notes=None):
         if other[0] != jtype or other[2] != ndof:
             issues.append(f"joint[{name}] type/dofs {jtype}/{ndof} vs {other[0]}/{other[2]}")
             continue
+        diffs, permuted = [], True
         for key in per_dof:
             if ref[key] is None or cand[key] is None:
                 continue
@@ -234,7 +245,16 @@ def compare(ref, cand, np, oracle=None, notes=None):
             b = cand[key][other[1]:other[1] + ndof]
             finite = np.isfinite(a) & np.isfinite(b)
             if (np.isfinite(a) != np.isfinite(b)).any() or not _close(a[finite], b[finite], atol=1e-5):
-                issues.append(f"{key}[{name}]: {a.tolist()} vs {b.tolist()}")
+                diffs.append(f"{key}[{name}]: {a.tolist()} vs {b.tolist()}")
+                sa, sb = np.sort(a), np.sort(b)
+                permuted &= bool((np.isfinite(sa) == np.isfinite(sb)).all() and
+                                 _close(sa[np.isfinite(sa)], sb[np.isfinite(sb)], atol=1e-5))
+        if diffs and jtype == 6 and permuted:
+            # add_usd orders a merged D6 by sorted joint path, not prim order.
+            if notes is not None:
+                notes.append(f"dof_order[{name}]")
+        else:
+            issues.extend(diffs)
     if len(ref["mu"]) == len(cand["mu"]) and not _close(ref["mu"], cand["mu"]):
         issues.append("shape friction (sorted mu) differs")
     return issues
@@ -266,7 +286,9 @@ def main():
     if args.menagerie:
         for robot in sorted(p for p in args.menagerie.iterdir() if p.is_dir()):
             candidates = sorted(robot.glob("*.xml"))
-            models = [p for p in candidates if not p.name.startswith("scene")]
+            # Skip include fragments (keyframes, assets): a model has a body tree.
+            models = [p for p in candidates if not p.name.startswith("scene")
+                      and b"<worldbody" in p.read_bytes()]
             inputs.extend(models[:1] or candidates[:1])
     if args.limit:
         inputs = inputs[:args.limit]
@@ -290,7 +312,7 @@ def main():
                 record = {}
                 try:
                     stage = lightusd.import_mjcf(path, profile=profile)
-                    out = pathlib.Path(tmp) / f"{path.stem}.{profile}.{args.format}"
+                    out = pathlib.Path(tmp) / f"{len(results)}-{path.stem}.{profile}.{args.format}"  # unique: USD caches layers by path
                     stage.save(str(out))
                     cand = _summary(_model_from_usd(newton, SolverMuJoCo, resolvers, out), np, True)
                     notes = []

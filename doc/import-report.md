@@ -59,7 +59,11 @@ Some conversion warnings still use the general `import.warning` or
 `obj.parse_error`, `obj.parser_warning`, `obj.material_unresolved`,
 `import.texture_unresolved`, `import.memory_limit`, `import.input_limit`,
 `import.depth_limit`, `mjcf.element_unsupported`, `mjcf.equality_unsupported`,
-`mjcf.tendon_wrap_approximated` and `mjcf.ellipsoid_collision_approximated`.
+`mjcf.tendon_wrap_type` (a wrap geom that is not a sphere or cylinder) and
+`mjcf.ellipsoid_collision_approximated`. Soft bodies report
+`mjcf.flexcomp_dof_approximated`, `mjcf.flexcomp_plugin`,
+`mjcf.flexcomp_rigid` and `mjcf.cable_plugin_ignored`; the `deformables`
+count lists converted flexcomps.
 Further codes: `mjcf.integer_range` (an integer attribute outside int32 was
 clamped), `mjcf.hfield_size`, `mjcf.unknown_class`, `mjcf.obj_first_object`
 (MuJoCo converts only the first object of an OBJ mesh asset),

@@ -642,6 +642,89 @@ void ValidateMjcPhysics(const PrimSpec &ps,
   }
 }
 
+// NewtonMassAPI newton:inertia = [Ixx, Iyy, Izz, Ixy, Ixz, Iyz] about the COM
+// in body axes. Newton ignores a tensor that is not finite and positive
+// semidefinite, and rebalances one that violates the triangle inequality.
+void ValidateNewtonInertia(const PrimSpec &ps, const std::string &prim_location,
+                           USDValidationResult *result) {
+  std::vector<double> t;
+  if (!GetDoubleArrayProperty(ps, "newton:inertia", &t)) return;
+  const std::string location = MakePropertyLocation(prim_location, "newton:inertia");
+  if (t.size() != 6) {
+    AddError(result, "physics.extension.newton.inertia", location,
+             "newton:inertia must have 6 elements [Ixx, Iyy, Izz, Ixy, Ixz, Iyz]");
+    return;
+  }
+  for (double v : t) {
+    if (!std::isfinite(v)) {
+      AddError(result, "physics.extension.newton.inertia", location,
+               "newton:inertia must be finite");
+      return;
+    }
+  }
+  // Eigenvalues of the symmetric tensor (closed form for 3x3).
+  const double a = t[0], b = t[1], c = t[2], d = t[3], e = t[4], f = t[5];
+  const double scale = std::max({std::abs(a), std::abs(b), std::abs(c), 1e-300});
+  const double off = d * d + e * e + f * f;
+  double eig[3];
+  if (off <= 1e-30 * scale * scale) {
+    eig[0] = a; eig[1] = b; eig[2] = c;
+  } else {
+    const double q = (a + b + c) / 3.0;
+    const double p2 = (a - q) * (a - q) + (b - q) * (b - q) + (c - q) * (c - q) + 2.0 * off;
+    const double p = std::sqrt(p2 / 6.0);
+    // det((A - qI) / p) / 2, clamped into acos's domain.
+    const double ba = (a - q) / p, bb = (b - q) / p, bc = (c - q) / p;
+    const double bd = d / p, be = e / p, bf = f / p;
+    double r = (ba * (bb * bc - bf * bf) - bd * (bd * bc - bf * be) +
+                be * (bd * bf - bb * be)) / 2.0;
+    r = std::min(1.0, std::max(-1.0, r));
+    const double phi = std::acos(r) / 3.0;
+    constexpr double kTwoPiOver3 = 2.0943951023931954923;
+    eig[0] = q + 2.0 * p * std::cos(phi);
+    eig[2] = q + 2.0 * p * std::cos(phi + kTwoPiOver3);
+    eig[1] = 3.0 * q - eig[0] - eig[2];
+  }
+  std::sort(eig, eig + 3);
+  const double tol = 1e-9 * std::max(eig[2], 1e-300);
+  if (eig[0] < -tol) {
+    AddError(result, "physics.extension.newton.inertia", location,
+             "newton:inertia must be positive semidefinite");
+    return;
+  }
+  if (eig[0] + eig[1] < eig[2] * (1.0 - 1e-6)) {
+    AddWarning(result, "physics.extension.newton.inertia", location,
+               "newton:inertia principal moments violate the triangle "
+               "inequality; Newton rebalances the tensor");
+  }
+  // The authored principal moments must describe the same tensor.
+  const Value *diag = GetAttrValue(ps, "physics:diagonalInertia");
+  std::array<double, 3> principal{};
+  if (diag && ValueToVec3(*diag, &principal) &&
+      (principal[0] != 0.0 || principal[1] != 0.0 || principal[2] != 0.0)) {
+    const double trace = a + b + c;
+    const double other = principal[0] + principal[1] + principal[2];
+    if (std::abs(trace - other) > 1e-4 * std::max(std::abs(trace), std::abs(other))) {
+      AddWarning(result, "physics.extension.newton.inertia", location,
+                 "newton:inertia and physics:diagonalInertia disagree; "
+                 "Newton uses newton:inertia");
+    }
+  }
+}
+
+// Newton reads -inf as "use the engine default" for the joint limit gains.
+void ValidateNewtonLimitGain(const PrimSpec &ps, const char *name,
+                             const std::string &prim_location,
+                             USDValidationResult *result) {
+  double v = 0.0;
+  if (!GetNumericScalarProperty(ps, name, &v)) return;
+  if (std::isnan(v) || (v < 0.0 && v != -std::numeric_limits<double>::infinity())) {
+    AddError(result, "physics.extension.newton.range",
+             MakePropertyLocation(prim_location, name),
+             std::string(name) + " must be >= 0 or -inf (engine default)");
+  }
+}
+
 void ValidateNewtonPhysics(const PrimSpec &ps,
                            const std::vector<AppliedSchema> &schemas,
                            const std::string &prim_location,
@@ -682,11 +765,15 @@ void ValidateNewtonPhysics(const PrimSpec &ps,
         "newton:torsionalFriction", "newton:rollingFriction", "newton:kp",
         "newton:kd", "newton:ki", "newton:maxEffort",
         "newton:maxMotorEffort", "newton:saturationEffort",
-        "newton:velocityLimit"}) {
+        "newton:velocityLimit", "newton:armature", "newton:friction",
+        "newton:damping"}) {
     ValidateNonNegativeNumericProperty(ps, prop_name,
                                        "physics.extension.newton.range",
                                        prim_location, result);
   }
+  ValidateNewtonInertia(ps, prim_location, result);
+  ValidateNewtonLimitGain(ps, "newton:limitStiffness", prim_location, result);
+  ValidateNewtonLimitGain(ps, "newton:limitDamping", prim_location, result);
   ValidateTokenSetProperty(ps, "newton:kamino:padmm:warmstarting",
                            {"none", "containers", "reduced"},
                            "physics.extension.newton.token", prim_location,

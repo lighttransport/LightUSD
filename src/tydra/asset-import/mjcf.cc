@@ -44,6 +44,7 @@ struct GeomMass {
 thread_local std::vector<GeomMass>* active_geom_masses = nullptr;
 // Bodies authored with stacked joints (non-legacy profiles).
 thread_local std::set<std::string>* stacked_joint_bodies = nullptr;
+constexpr double kPi = 3.14159265358979323846;
 std::string ToLower(std::string s) {
   for (char& c : s)
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -59,6 +60,7 @@ struct MeshAsset {
   bool has_refquat = false;
   bool smoothnormal = false;  // <mesh smoothnormal>; MuJoCo default false
   std::string inertia = "legacy";  // <mesh inertia>: legacy|exact|convex|shell
+  int maxhullvert = -1;            // <mesh maxhullvert>; -1 = no limit
 };
 
 struct UnusedMeshData {
@@ -119,6 +121,9 @@ struct Context {
   std::string inertiafromgeom = "auto";        // <compiler inertiafromgeom>
   int inertia_group_min = 0, inertia_group_max = 5;  // inertiagrouprange
   Defaults defaults;
+  // Geoms named by <spatial><geom geom=...>: wrap surfaces must stay native
+  // Sphere/Cylinder prims that tendons can reference.
+  std::set<std::string> wrap_geoms;
 };
 
 bool ParseInt(const std::string& text, int* out) {
@@ -366,7 +371,13 @@ bool ExpandIncludes(const std::string& xml, const fs::path& base_dir,
     while (node) {
       auto next = node.next_sibling();
       const std::string tag = node.name();
-      if (tag == "flex" || tag == "flexcomp" || tag == "deformable" || tag == "skin") {
+      // The newton profile converts <flexcomp> into a soft body later.
+      const std::string flex_type = ToLower(node.attribute("type").as_string("grid"));
+      const bool soft_body = tag == "flexcomp" && active_reader->options.profile == "newton" &&
+                             (flex_type == "grid" || flex_type == "circle" || flex_type == "square" ||
+                              flex_type == "disc" || flex_type == "direct");
+      if (!soft_body && (tag == "flex" || tag == "flexcomp" || tag == "deformable" ||
+                         tag == "skin")) {
         if (!UnsupportedXML(node, "Unsupported MJCF element: " + tag,
                             "mjcf.element_unsupported", "mjcf.deformable", source)) {
           if (err) *err = active_reader->failure;
@@ -1240,6 +1251,8 @@ std::map<std::string, MeshAsset> CollectMujocoAssets(const pugi::xml_node& root,
         asset.has_refpos = true;
       }
       asset.smoothnormal = Attr(mesh_node, "smoothnormal") == "true";
+      if (HasAttr(mesh_node, "maxhullvert"))
+        asset.maxhullvert = ToInt32(ParseDoubleAttr(mesh_node, "maxhullvert", -1.0), "maxhullvert");
       if (HasAttr(mesh_node, "inertia")) asset.inertia = ToLower(Attr(mesh_node, "inertia"));
       const std::vector<double> rq = ParseDoubles(Attr(mesh_node, "refquat"));
       if (rq.size() >= 4) {
@@ -1842,6 +1855,273 @@ Json InertialToJson(const pugi::xml_node& body_node, const Context& ictx) {
 void DecomposePosQuat(const std::vector<double>&, std::array<double, 3>*,
                       Quat*);
 bool MjcBoolAttr(const std::string& v);  // defined below
+
+// MJCF <flexcomp> (grid, circle, square, disc, direct) expanded the way
+// MuJoCo's mjCFlexcomp::Make does, but kept as one soft body instead of a
+// point-mass body per vertex: world-space points, elements, the pinned
+// vertices (attached to the owning body) and the elasticity/contact values.
+bool CollectMujocoFlexcompsJson(const pugi::xml_node& body_node,
+                                const std::vector<double>& parent_world,
+                                const Context& ctx, bool is_world, Json* out,
+                                std::string* err) {
+  const std::vector<double> body_world =
+      is_world ? parent_world : MultiplyMatrix(parent_world, PoseMatrix(body_node, ctx));
+  for (const auto& f : Children(body_node, "flexcomp")) {
+    const std::string name = Attr(f, "name");
+    const std::string type = ToLower(Attr(f, "type", "grid"));
+    auto fail = [&](const std::string& message, const char* code) {
+      if (UnsupportedXML(f, "flexcomp `" + name + "`: " + message, code, "mjcf.flexcomp",
+                         active_reader->root_source, false))
+        return true;  // skipped
+      if (err) *err = active_reader->failure;
+      return false;
+    };
+    // Other types were already reported as unsupported while reading the XML.
+    if (type != "grid" && type != "circle" && type != "square" && type != "disc" &&
+        type != "direct")
+      continue;
+    int dim = ToInt32(ParseDoubleAttr(f, "dim", 2.0), "dim");
+    if (type == "circle") dim = 1;
+    if (type == "square" || type == "disc") dim = 2;
+    if (dim < 1 || dim > 3) {
+      if (err) *err = "flexcomp `" + name + "`: dim must be between 1 and 3";
+      return false;
+    }
+    const std::string dof = ToLower(Attr(f, "dof", "full"));
+    if (dof != "full" &&
+        !UnsupportedXML(f, "flexcomp `" + name + "` dof=`" + dof +
+                               "` is approximated by free vertices (dof=full)",
+                        "mjcf.flexcomp_dof_approximated", "mjcf.flexcomp",
+                        active_reader->root_source, true)) {
+      if (err) *err = active_reader->failure;
+      return false;
+    }
+    if (Child(f, "plugin") &&
+        !UnsupportedXML(f, "flexcomp `" + name + "` plugin is ignored",
+                        "mjcf.flexcomp_plugin", "mjcf.flexcomp", active_reader->root_source, true)) {
+      if (err) *err = active_reader->failure;
+      return false;
+    }
+    std::array<int, 3> count{{10, 10, 10}};
+    {
+      const auto c = ParseDoubles(Attr(f, "count"));
+      for (size_t i = 0; i < 3 && i < c.size(); ++i) count[i] = ToInt32(c[i], "count");
+    }
+    const auto spacing = ParseDouble3(Attr(f, "spacing"), {{0.02, 0.02, 0.02}});
+    const auto scale = ParseDouble3(Attr(f, "scale"), {{1, 1, 1}});
+    for (int c : count)
+      if (c < 1 || c > 100000) {
+        if (err) *err = "flexcomp `" + name + "`: invalid count";
+        return false;
+      }
+    std::vector<double> point;
+    std::vector<int> element;
+    if (type == "direct") {
+      point = ParseDoubles(Attr(f, "point"));
+      for (double v : ParseDoubles(Attr(f, "element"))) element.push_back(ToInt32(v, "element"));
+      for (size_t i = 0; i < point.size(); ++i) point[i] *= scale[i % 3];
+    } else if (dim == 1) {
+      for (int ix = 0; ix < count[0]; ++ix) {
+        if (type == "circle") {
+          if (ix >= count[0] - 1) continue;
+          const double theta = 2 * kPi / (count[0] - 1);
+          const double radius = spacing[0] / std::sin(theta / 2) / 2;
+          point.insert(point.end(), {radius * std::cos(theta * ix), radius * std::sin(theta * ix), 0});
+          element.insert(element.end(), {ix, ix == count[0] - 2 ? 0 : ix + 1});
+        } else {
+          point.insert(point.end(), {spacing[0] * (ix - 0.5 * (count[0] - 1)), 0, 0});
+          if (ix < count[0] - 1) element.insert(element.end(), {ix, ix + 1});
+        }
+      }
+    } else if (dim == 2) {
+      for (int ix = 0; ix < count[0]; ++ix)
+        for (int iy = 0; iy < count[1]; ++iy) {
+          double pos[2] = {spacing[0] * (ix - 0.5 * (count[0] - 1)),
+                           spacing[1] * (iy - 0.5 * (count[1] - 1))};
+          int tri[2][3] = {{0, 1, 2}, {0, 2, 3}};
+          if (type == "disc" && ((pos[0] < -1e-6 && pos[1] > -1e-6) || (pos[0] > -1e-6 && pos[1] < -1e-6))) {
+            tri[0][2] = 3;
+            tri[1][0] = 1;
+          }
+          point.insert(point.end(), {pos[0], pos[1], 0});
+          if (ix < count[0] - 1 && iy < count[1] - 1) {
+            const int v[4] = {count[2] * count[1] * ix + count[2] * iy,
+                              count[2] * count[1] * (ix + 1) + count[2] * iy,
+                              count[2] * count[1] * (ix + 1) + count[2] * (iy + 1),
+                              count[2] * count[1] * ix + count[2] * (iy + 1)};
+            for (auto& t : tri) element.insert(element.end(), {v[t[0]], v[t[1]], v[t[2]]});
+          }
+        }
+      if (type == "disc") {
+        const double size[2] = {0.5 * spacing[0] * (count[0] - 1), 0.5 * spacing[1] * (count[1] - 1)};
+        for (size_t i = 0; i + 2 < point.size(); i += 3) {
+          double* p = &point[i];
+          const double l0 = std::max(std::abs(p[0]), std::abs(p[1]));
+          const double n = std::sqrt(p[0] * p[0] + p[1] * p[1]);
+          if (n >= 1e-6 && std::abs(n - 1) > 1e-6) { p[0] /= n; p[1] /= n; }
+          p[0] *= size[0] * l0;
+          p[1] *= size[1] * l0;
+        }
+      }
+    } else {
+      static const int kCube2Tets[6][4] = {{0, 3, 1, 7}, {0, 1, 4, 7}, {1, 3, 2, 7},
+                                           {1, 2, 6, 7}, {1, 5, 4, 7}, {1, 6, 5, 7}};
+      for (int ix = 0; ix < count[0]; ++ix)
+        for (int iy = 0; iy < count[1]; ++iy)
+          for (int iz = 0; iz < count[2]; ++iz) {
+            point.insert(point.end(), {spacing[0] * (ix - 0.5 * (count[0] - 1)),
+                                       spacing[1] * (iy - 0.5 * (count[1] - 1)),
+                                       spacing[2] * (iz - 0.5 * (count[2] - 1))});
+            if (ix < count[0] - 1 && iy < count[1] - 1 && iz < count[2] - 1) {
+              const int cz = count[2], cyz = count[2] * count[1];
+              const int v[8] = {cyz * ix + cz * iy + iz,           cyz * (ix + 1) + cz * iy + iz,
+                                cyz * (ix + 1) + cz * (iy + 1) + iz, cyz * ix + cz * (iy + 1) + iz,
+                                cyz * ix + cz * iy + iz + 1,       cyz * (ix + 1) + cz * iy + iz + 1,
+                                cyz * (ix + 1) + cz * (iy + 1) + iz + 1,
+                                cyz * ix + cz * (iy + 1) + iz + 1};
+              for (const auto& t : kCube2Tets)
+                element.insert(element.end(), {v[t[0]], v[t[1]], v[t[2]], v[t[3]]});
+            }
+          }
+    }
+    const int npnt = static_cast<int>(point.size() / 3);
+    if (point.empty() || point.size() % 3 || element.empty() ||
+        element.size() % static_cast<size_t>(dim + 1)) {
+      if (err) *err = "flexcomp `" + name + "`: point and element sizes are invalid";
+      return false;
+    }
+    for (int e : element)
+      if (e < 0 || e >= npnt) {
+        if (err) *err = "flexcomp `" + name + "`: element references a missing point";
+        return false;
+      }
+    // Pins (ids before compaction, as MuJoCo applies them).
+    std::vector<bool> pinned(static_cast<size_t>(npnt), MjcBoolAttr(Attr(f, "rigid", "false")));
+    for (const auto& pin : Children(f, "pin")) {
+      auto ints = [&](const char* key) {
+        std::vector<int> v;
+        for (double d : ParseDoubles(Attr(pin, key))) v.push_back(ToInt32(d, key));
+        return v;
+      };
+      auto grid_id = [&](const std::vector<int>& g, size_t i) {
+        return dim == 2 ? g[i] * count[1] + g[i + 1]
+                        : g[i] * count[1] * count[2] + g[i + 1] * count[2] + g[i + 2];
+      };
+      auto set = [&](int id) {
+        if (id < 0 || id >= npnt) return false;
+        pinned[size_t(id)] = true;
+        return true;
+      };
+      bool ok = true;
+      for (int id : ints("id")) ok &= set(id);
+      const auto range = ints("range");
+      for (size_t i = 0; i + 1 < range.size(); i += 2)
+        for (int k = range[i]; ok && k <= range[i + 1]; ++k) ok &= set(k);
+      const size_t d = static_cast<size_t>(dim);
+      const auto grid = ints("grid");
+      const auto gridrange = ints("gridrange");
+      if ((!grid.empty() || !gridrange.empty()) && (type != "grid" || dim == 1)) ok = false;
+      for (size_t i = 0; ok && i + d <= grid.size(); i += d) ok &= set(grid_id(grid, i));
+      for (size_t i = 0; ok && i + 2 * d <= gridrange.size(); i += 2 * d) {
+        std::vector<int> g(3, 0);
+        if (dim == 2) {
+          for (g[0] = gridrange[i]; g[0] <= gridrange[i + 2]; ++g[0])
+            for (g[1] = gridrange[i + 1]; g[1] <= gridrange[i + 3]; ++g[1]) ok &= set(grid_id(g, 0));
+        } else {
+          for (g[0] = gridrange[i]; g[0] <= gridrange[i + 3]; ++g[0])
+            for (g[1] = gridrange[i + 1]; g[1] <= gridrange[i + 4]; ++g[1])
+              for (g[2] = gridrange[i + 2]; g[2] <= gridrange[i + 5]; ++g[2]) ok &= set(grid_id(g, 0));
+        }
+      }
+      if (!ok) {
+        if (err) *err = "flexcomp `" + name + "`: pin is out of range";
+        return false;
+      }
+    }
+    // Direct types drop unreferenced points.
+    if (type == "direct") {
+      std::vector<int> remap(static_cast<size_t>(npnt), -1);
+      for (int e : element) remap[size_t(e)] = 0;
+      std::vector<double> kept;
+      std::vector<bool> kept_pins;
+      for (int i = 0; i < npnt; ++i)
+        if (remap[size_t(i)] == 0) {
+          remap[size_t(i)] = static_cast<int>(kept.size() / 3);
+          kept.insert(kept.end(), point.begin() + 3 * i, point.begin() + 3 * i + 3);
+          kept_pins.push_back(pinned[size_t(i)]);
+        }
+      for (int& e : element) e = remap[size_t(e)];
+      point.swap(kept);
+      pinned.swap(kept_pins);
+    }
+    // Pose in the owning body, then world.
+    const std::array<double, 3> fpos = ParseDouble3(Attr(f, "pos"), {{0, 0, 0}});
+    const Quat fq = OrientationQuat(Attr(f, "quat"), Attr(f, "axisangle"), Attr(f, "euler"),
+                                    Attr(f, "xyaxes"), Attr(f, "zaxis"), ctx);
+    const std::vector<double> local = MatrixFromPosQuat(fpos, fq);
+    const std::vector<double> world = MultiplyMatrix(body_world, local);
+    auto apply = [](const std::vector<double>& m, const double* p) {
+      return std::array<double, 3>{{m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12],
+                                    m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13],
+                                    m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14]}};
+    };
+    Json points = Json::array(), pins = Json::array(), pin_coords = Json::array();
+    for (size_t i = 0; i < point.size() / 3; ++i) {
+      const auto w = apply(world, &point[3 * i]);
+      points.push_back(Json::array({w[0], w[1], w[2]}));
+      if (pinned[i]) {
+        const auto b = apply(local, &point[3 * i]);
+        pins.push_back(static_cast<int>(i));
+        pin_coords.push_back(Json::array({b[0], b[1], b[2]}));
+      }
+    }
+    if (pins.size() == points.size()) {
+      if (!fail("rigid (fully pinned) flexes are not supported", "mjcf.flexcomp_rigid")) return false;
+      continue;
+    }
+    Json entry = {{"name", name.empty() ? "flexcomp_" + std::to_string(out->size()) : name},
+                  {"type", type},
+                  {"dim", dim},
+                  {"points", std::move(points)},
+                  {"elements", Array(std::vector<double>(element.begin(), element.end()))},
+                  {"mass", ParseDoubleAttr(f, "mass", 1.0)},
+                  {"radius", ParseDoubleAttr(f, "radius", 0.005)},
+                  {"periodic", type == "circle"}};
+    if (!pins.empty()) {
+      entry["pins"] = std::move(pins);
+      entry["pinCoords"] = std::move(pin_coords);
+      auto owner = active_body_names.find(body_node.internal_object());
+      if (!is_world && owner != active_body_names.end()) entry["pinBody"] = owner->second;
+    }
+    const auto rgba = ParseDoubles(Attr(f, "rgba"));
+    if (rgba.size() >= 4) entry["rgba"] = Array(rgba);
+    if (const auto el = Child(f, "elasticity")) {
+      for (const char* key : {"young", "poisson", "damping", "thickness"})
+        if (HasAttr(el, key)) entry[key] = ParseDoubleAttr(el, key, 0.0);
+      if (HasAttr(el, "elastic2d")) entry["elastic2d"] = ToLower(Attr(el, "elastic2d"));
+    }
+    if (const auto edge = Child(f, "edge")) {
+      if (HasAttr(edge, "stiffness")) entry["edgeStiffness"] = ParseDoubleAttr(edge, "stiffness", 0.0);
+      if (HasAttr(edge, "damping")) entry["edgeDamping"] = ParseDoubleAttr(edge, "damping", 0.0);
+      if (HasAttr(edge, "equality")) entry["edgeEquality"] = ToLower(Attr(edge, "equality"));
+    }
+    int contype = 1, conaffinity = 1;
+    if (const auto contact = Child(f, "contact")) {
+      contype = ToInt32(ParseDoubleAttr(contact, "contype", 1.0), "contype");
+      conaffinity = ToInt32(ParseDoubleAttr(contact, "conaffinity", 1.0), "conaffinity");
+      const auto friction = ParseDoubles(Attr(contact, "friction"));
+      if (!friction.empty()) entry["friction"] = friction[0];
+      if (HasAttr(contact, "selfcollide")) entry["selfcollide"] = ToLower(Attr(contact, "selfcollide"));
+    }
+    entry["collides"] = contype != 0 || conaffinity != 0;
+    out->push_back(std::move(entry));
+  }
+  for (const auto& child : Children(body_node, "body"))
+    if (!CollectMujocoFlexcompsJson(child, body_world, ctx, false, out, err)) return false;
+  return true;
+}
+
+
 void AddJointFromNode(const pugi::xml_node& joint_node, const AttrMap& jcls,
                       const Context& ctx, const std::string& parent_name,
                       const std::string& child_name,
@@ -2244,7 +2524,7 @@ void AddMujocoActuatorsJson(const pugi::xml_node& root, Json* actuators,
 // MJCF <tendon><fixed> -> JSON tendon entries consumed by AddMjcTendonFromJson.
 // A fixed tendon constrains a linear combination of joint coordinates; we carry
 // the {joint, coef} list plus the spring/damper/range scalars. Spatial tendons
-// (sites/pulleys) aren't representable without sites yet -> warn and skip.
+// carry their ordered site/wrap-geom/pulley path.
 void AddMujocoTendonsJson(const pugi::xml_node& root, const Context& ctx,
                           Json* tendons, Stats* stats) {
   if (!tendons) return;
@@ -2271,24 +2551,19 @@ void AddMujocoTendonsJson(const pugi::xml_node& root, const Context& ctx,
       if (jlist.empty()) continue;
       tendon["joints"] = std::move(jlist);
     } else {
-      // Spatial tendon (muscle path): ordered <site>/<geom sidesite=...>
-      // waypoints.
+      // Spatial tendon (muscle path): ordered <site>, <geom sidesite=...> and
+      // <pulley divisor=...> elements; the writer encodes MjcTendon's
+      // path/segments/divisors/sideSites arrays from this order.
       Json waypoints = Json::array();
       for (const auto& w : t_node.children()) {
         const std::string wn = w.name();
         if (wn == "site" && HasAttr(w, "site")) {
           waypoints.push_back({{"site", Attr(w, "site")}});
-        } else if (wn == "geom") {
-          if (!UnsupportedXML(t_node,
-                  "Spatial tendon wrap surfaces are approximated by routing points",
-                  "mjcf.tendon_wrap_approximated", "mjcf.tendon_wrap", active_reader->root_source, true)) return;
+        } else if (wn == "geom" && HasAttr(w, "geom")) {
           Json wp = {{"geom", Attr(w, "geom")}};
           if (HasAttr(w, "sidesite")) wp["sidesite"] = Attr(w, "sidesite");
           waypoints.push_back(std::move(wp));
-        } else if (wn == "pulley" && HasAttr(w, "divisor")) {
-          if (!UnsupportedXML(t_node,
-                  "Spatial tendon pulley divisors are retained without wrap geometry",
-                  "mjcf.tendon_pulley_preserved", "mjcf.tendon_pulley", active_reader->root_source, true)) return;
+        } else if (wn == "pulley") {
           waypoints.push_back({{"pulley", ParseDoubleAttr(w, "divisor", 1.0)}});
         }
       }
@@ -2317,8 +2592,29 @@ void AddMujocoTendonsJson(const pugi::xml_node& root, const Context& ctx,
       if (range.size() >= 2 || token != "auto")
         tendon["limited"] = limited ? "true" : "false";
     }
-    const auto springlen = ParseDoubles(Attr(t_node, "springlength"));
+    auto springlen = ParseDoubles(Attr(t_node, "springlength"));
+    // One value means a fixed rest length; Newton reads a 2-vector.
+    if (springlen.size() == 1) springlen.push_back(springlen[0]);
     if (!springlen.empty()) tendon["springlength"] = Array(springlen);
+    if (HasAttr(t_node, "group"))
+      tendon["group"] = ToInt32(ParseDoubleAttr(t_node, "group", 0.0), "group");
+    if (HasAttr(t_node, "armature"))
+      tendon["armature"] = ParseDoubleAttr(t_node, "armature", 0.0);
+    for (const char* key : {"solreflimit", "solimplimit", "solreffriction", "solimpfriction"}) {
+      const auto values = ParseDoubles(Attr(t_node, key));
+      if (!values.empty()) tendon[key] = Array(values);
+    }
+    const auto frcrange = ParseDoubles(Attr(t_node, "actuatorfrcrange"));
+    if (frcrange.size() >= 2)
+      tendon["actuatorfrcrange"] = Json::array({frcrange[0], frcrange[1]});
+    if (HasAttr(t_node, "actuatorfrclimited")) {
+      const std::string token = ToLower(Attr(t_node, "actuatorfrclimited"));
+      const bool limited = token == "true" ||
+                           (token == "auto" && ctx.autolimits && frcrange.size() >= 2);
+      tendon["actuatorfrclimited"] = limited ? "true" : "false";
+    } else if (frcrange.size() >= 2 && ctx.autolimits) {
+      tendon["actuatorfrclimited"] = "true";
+    }
     tendons->push_back(std::move(tendon));
     if (stats) stats->tendons++;
   }
@@ -2565,7 +2861,12 @@ void AddMujocoContactExcludesJson(const pugi::xml_node& root,
     const std::string b1 = Attr(c_node, "body1");
     const std::string b2 = Attr(c_node, "body2");
     if (b1.empty() || b2.empty()) continue;
-    filtered_pairs->push_back({{"body1", b1}, {"body2", b2}});
+    // MJCF's "world" body is exported as the static link holding the
+    // <worldbody> geoms.
+    auto body = [](const std::string& name) {
+      return name == "world" ? active_world_name + "_geoms" : name;
+    };
+    filtered_pairs->push_back({{"body1", body(b1)}, {"body2", body(b2)}});
     if (stats) stats->contact_excludes++;
   }
 }
@@ -2667,7 +2968,7 @@ Json BuildMjcSceneJson(const pugi::xml_node& root) {
           "filterparent", "actuation", "refsafe",      "sensor",
           "midphase",     "nativeccd", "eulerdamp",    "autoreset",
           "island",       "override",  "energy",       "fwdinv",
-          "invdiscrete",  "multiccd"};
+          "invdiscrete",  "multiccd",     "spring",    "damper"};
       for (const char* k : kFlags)
         if (HasAttr(flag, k)) fl[k] = MjcBoolAttr(Attr(flag, k));
       if (!fl.empty()) ms["flag"] = std::move(fl);
@@ -3123,13 +3424,27 @@ bool AppendGeomToLink(const pugi::xml_node& geom_node, const std::string& cc,
       if (GeomMassProperties(geom_node, cls, ctx, assets, mesh ? &mesh_payload : nullptr, &mass))
         active_geom_masses->push_back(mass);
     }
+    const std::string geom_name = Attr(geom_node, "name");
+    const bool wrap = !geom_name.empty() && ctx.wrap_geoms.count(geom_name);
+    const std::string geom_type =
+        Eff(geom_node, cls, "type", HasEff(geom_node, cls, "mesh") ? "mesh" : "sphere");
+    // MuJoCo and Newton wrap tendons only around native spheres/cylinders. A
+    // colliding wrap geom is referenced through its native collider.
+    const bool native_wrap = wrap && !collides && (geom_type == "sphere" || geom_type == "cylinder");
+    if (wrap && geom_type != "sphere" && geom_type != "cylinder" &&
+        !UnsupportedXML(geom_node, "Tendon wrap geom `" + geom_name + "` must be a sphere or cylinder",
+                        "mjcf.tendon_wrap_type", "mjcf.tendon_wrap", active_reader->root_source, true)) {
+      if (err) *err = active_reader->failure;
+      return false;
+    }
     if (visible || !collides) {
       MeshPayload payload;
       bool ignored = true;
       if (!BuildGeomPayload(geom_node, cls, cls_name, assets, hfields, opts, ctx,
-                            body_world, &payload, &ignored, err))
+                            body_world, &payload, &ignored, err, native_wrap))
         return false;
       Json visual_json = MeshPayloadToJson(payload);
+      if (native_wrap) visual_json["mjcGeom"] = geom_name;
       AddGeomPhysicsAttrs(geom_node, cls, &visual_json);
       const std::string mat = Eff(geom_node, cls, "material");
       if (!mat.empty()) visual_json["material"] = mat;
@@ -3145,7 +3460,17 @@ bool AppendGeomToLink(const pugi::xml_node& geom_node, const std::string& cc,
         return false;
       Json col = MeshPayloadToJson(collider);
       AddGeomPhysicsAttrs(geom_node, cls, &col);
-      col["approximation"] = dual_collider ? "none" : "convexHull";
+      // MuJoCo collides every mesh through its convex hull; only a
+      // tessellated heightfield keeps exact triangles.
+      col["approximation"] = dual_collider && geom_type == "hfield" ? "none" : "convexHull";
+      if (wrap) col["mjcGeom"] = geom_name;
+      if (geom_type == "mesh") {
+        const auto mesh_it = assets.find(Eff(geom_node, cls, "mesh"));
+        if (mesh_it != assets.end() && mesh_it->second.maxhullvert > 0) {
+          col["newton"]["maxHullVertices"] = mesh_it->second.maxhullvert;
+          col["mjc"]["maxhullvert"] = mesh_it->second.maxhullvert;
+        }
+      }
       (*link)["collisions"].push_back(std::move(col));
       if (stats) stats->collisions++;
     }
@@ -3337,7 +3662,15 @@ bool VisitMujocoBody(const pugi::xml_node& body_node,
     const std::vector<pugi::xml_node> joint_nodes =
         Children(body_node, "joint");
 
-    if (joint_nodes.size() > 1 && active_reader->options.profile != "legacy") {
+    // Newton merges a stack into one D6 and accepts only hinges and slides
+    // there; a stack with a ball keeps the intermediate-link chain.
+    bool mergeable = true;
+    for (const auto& jn : joint_nodes) {
+      const std::string jtype = Eff(jn, ResolveJointClass(jn, ctx.defaults, cc), "type", "hinge");
+      mergeable &= jtype == "hinge" || jtype == "slide";
+    }
+    if (joint_nodes.size() > 1 && active_reader->options.profile != "legacy" &&
+        (mergeable || active_reader->options.profile != "newton")) {
       // Stacked joints: every DOF connects parent and body directly, each in
       // the body frame at its own pos, composed in authored order. This is
       // MuJoCo's own description (mujoco-usd-converter, MuJoCo's USD decoder)
@@ -3652,6 +3985,321 @@ void DecomposePosQuat(const std::vector<double>& m, std::array<double, 3>* pos,
   *q = QuatNormalize({{w, x, y, z}});
 }
 
+// MJCF <composite type="cable"> expanded into the body chain MuJoCo's
+// mjCComposite::MakeCable builds: count-1 bodies along the curve (or the
+// explicit vertices), each a capsule/cylinder/box segment on a ball joint (a
+// free or no joint for the first per `initial`) in a parallel-transported
+// frame, boundary sites S_first/S_last and contact excludes between
+// neighbours. Names follow MuJoCo (prefix + B_first, B_<i>, B_last, J_*, G<i>).
+bool ExpandCableComposites(pugi::xml_node root, const Context& ctx, std::string* err) {
+  auto norm = [](std::array<double, 3>& v) {
+    const double n = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    if (n >= 1e-14 && std::abs(n - 1) > 1e-14) for (double& x : v) x /= n;
+    return n;
+  };
+  auto cross = [](const std::array<double, 3>& a, const std::array<double, 3>& b) {
+    return std::array<double, 3>{{a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2],
+                                  a[0] * b[1] - a[1] * b[0]}};
+  };
+  auto rotate = [](const Quat& q, const std::array<double, 3>& v) {
+    const std::vector<double> m = MatrixFromPosQuat({{0, 0, 0}}, q);
+    return std::array<double, 3>{{m[0] * v[0] + m[4] * v[1] + m[8] * v[2],
+                                  m[1] * v[0] + m[5] * v[1] + m[9] * v[2],
+                                  m[2] * v[0] + m[6] * v[1] + m[10] * v[2]}};
+  };
+  auto fmt = [](std::initializer_list<double> values) {
+    std::string out;
+    char buf[40];
+    for (double v : values) {
+      std::snprintf(buf, sizeof(buf), "%.17g", v);
+      if (!out.empty()) out += ' ';
+      out += buf;
+    }
+    return out;
+  };
+  std::vector<pugi::xml_node> composites;
+  std::function<void(pugi::xml_node)> find = [&](pugi::xml_node n) {
+    for (pugi::xml_node c : n.children()) {
+      if (std::string(c.name()) == "composite") composites.push_back(c);
+      else find(c);
+    }
+  };
+  for (pugi::xml_node worldbody : root.children("worldbody")) find(worldbody);
+  for (pugi::xml_node comp : composites) {
+    const std::string type = ToLower(Attr(comp, "type"));
+    if (type != "cable") {
+      if (err) *err = "MJCF composite type `" + type + "` is not supported (MuJoCo only builds cables)";
+      return false;
+    }
+    const std::string prefix = Attr(comp, "prefix");
+    const pugi::xml_node geom = Child(comp, "geom");
+    const std::string geom_type = ToLower(Attr(geom, "type", "sphere"));
+    if (geom_type != "capsule" && geom_type != "cylinder" && geom_type != "box") {
+      if (err) *err = "MJCF cable composite geom must be a capsule, cylinder or box";
+      return false;
+    }
+    std::vector<double> vert = ParseDoubles(Attr(comp, "vertex"));
+    if (vert.empty()) {
+      const auto counts = ParseDoubles(Attr(comp, "count"));
+      const int count = counts.empty() ? 1 : ToInt32(counts[0], "count");
+      // size may list fewer than three values (e.g. size="1").
+      std::array<double, 3> size{{0, 0, 0}};
+      const auto sizes = ParseDoubles(Attr(comp, "size"));
+      for (size_t k = 0; k < 3 && k < sizes.size(); ++k) size[k] = sizes[k];
+      std::istringstream curves(Attr(comp, "curve"));
+      std::array<std::string, 3> curve{{"0", "0", "0"}};
+      for (size_t k = 0; k < 3 && (curves >> curve[k]); ++k) {
+        if (curve[k] != "s" && curve[k] != "cos(s)" && curve[k] != "sin(s)" && curve[k] != "0") {
+          if (err) *err = "MJCF cable composite curve `" + curve[k] + "` is invalid";
+          return false;
+        }
+      }
+      const std::vector<double> q = ParseDoubles(Attr(comp, "quat"));
+      const Quat cq = q.size() >= 4 ? QuatNormalize({{q[0], q[1], q[2], q[3]}}) : Quat{{1, 0, 0, 0}};
+      if (count < 2 || count > 100000) {
+        if (err) *err = "MJCF cable composite needs between 2 and 100000 vertices";
+        return false;
+      }
+      for (int ix = 0; ix < count; ++ix) {
+        std::array<double, 3> v{};
+        for (size_t k = 0; k < 3; ++k) {
+          const double t = kPi * ix * size[2] / (count - 1);
+          v[k] = curve[k] == "s"      ? ix * size[0] / (count - 1)
+                 : curve[k] == "cos(s)" ? size[1] * std::cos(t)
+                 : curve[k] == "sin(s)" ? size[1] * std::sin(t)
+                                        : 0.0;
+        }
+        v = rotate(cq, v);
+        vert.insert(vert.end(), v.begin(), v.end());
+      }
+    }
+    const int n = static_cast<int>(vert.size() / 3);
+    if (n < 2 || vert.size() % 3) {
+      if (err) *err = "MJCF cable composite needs at least two vertices";
+      return false;
+    }
+    if (Child(comp, "plugin") &&
+        !UnsupportedXML(comp, "Cable elasticity plugin is not carried; segments keep only joint stiffness",
+                        "mjcf.cable_plugin_ignored", "mjcf.composite", active_reader->root_source, true)) {
+      if (err) *err = active_reader->failure;
+      return false;
+    }
+    const auto offset = ParseDouble3(Attr(comp, "offset"), {{0, 0, 0}});
+    const std::string initial = Attr(comp, "initial", "ball");
+    pugi::xml_node joint_def;
+    for (pugi::xml_node j : comp.children("joint"))
+      if (Attr(j, "kind", "main") == "main") joint_def = j;
+    const pugi::xml_node site_def = Child(comp, "site");
+    pugi::xml_node contact = root.child("contact");
+    if (!contact) contact = root.append_child("contact");
+    auto at = [&](int i) { return std::array<double, 3>{{vert[3 * i], vert[3 * i + 1], vert[3 * i + 2]}}; };
+    std::array<double, 3> normal{{0, 1, 0}};
+    Quat prev{{1, 0, 0, 0}};
+    pugi::xml_node parent = comp.parent();
+    pugi::xml_node anchor = comp;
+    const int last = n - 2;
+    auto body_name = [&](int i) {
+      return prefix + (i == 0 ? "B_first" : i == last ? "B_last" : "B_" + std::to_string(i));
+    };
+    for (int ix = 0; ix <= last; ++ix) {
+      const bool first = ix == 0, is_last = ix == last;
+      std::array<double, 3> edge, tprev{}, tnext{};
+      for (size_t k = 0; k < 3; ++k) edge[k] = at(ix + 1)[k] - at(ix)[k];
+      double length_prev = 0;
+      if (!first) {
+        for (size_t k = 0; k < 3; ++k) tprev[k] = at(ix)[k] - at(ix - 1)[k];
+        length_prev = norm(tprev);
+      }
+      if (!is_last) {
+        for (size_t k = 0; k < 3; ++k) tnext[k] = at(ix + 2)[k] - at(ix + 1)[k];
+        norm(tnext);
+      }
+      std::array<double, 3> tangent = edge;
+      const double length = norm(tangent);
+      std::array<double, 3> binormal;
+      if (first) {
+        binormal = cross(tangent, tnext);
+        norm(binormal);
+        normal = cross(binormal, tangent);
+        norm(normal);
+      } else {
+        binormal = cross(tprev, tangent);
+        const double bn = norm(binormal);
+        const double angle = std::atan2(bn, tprev[0] * tangent[0] + tprev[1] * tangent[1] + tprev[2] * tangent[2]);
+        normal = rotate(QuatFromAxisAngle(binormal, angle), normal);
+        norm(normal);
+        binormal = cross(tangent, normal);
+        norm(binormal);
+      }
+      const Quat quat = QuatFromBasis(tangent, normal, binormal);
+      pugi::xml_node body =
+          anchor ? parent.insert_child_before("body", anchor) : parent.append_child("body");
+      body.append_attribute("name").set_value(body_name(ix).c_str());
+      if (first) {
+        body.append_attribute("pos").set_value(
+            fmt({offset[0] + vert[0], offset[1] + vert[1], offset[2] + vert[2]}).c_str());
+        body.append_attribute("quat").set_value(fmt({quat[0], quat[1], quat[2], quat[3]}).c_str());
+        if (comp.attribute("childclass")) body.append_attribute("childclass").set_value(Attr(comp, "childclass").c_str());
+      } else {
+        const Quat d = QuatMul({{prev[0], -prev[1], -prev[2], -prev[3]}}, quat);
+        body.append_attribute("pos").set_value(fmt({length_prev, 0, 0}).c_str());
+        body.append_attribute("quat").set_value(fmt({d[0], d[1], d[2], d[3]}).c_str());
+      }
+      if (!first || initial != "none") {
+        pugi::xml_node j = body.append_child("joint");
+        const bool free = first && initial == "free";
+        if (joint_def && !free)
+          for (pugi::xml_attribute a : joint_def.attributes())
+            if (std::string(a.name()) != "kind") j.append_attribute(a.name()).set_value(a.value());
+        j.append_attribute("name").set_value(
+            (prefix + (first ? "J_first" : is_last ? "J_last" : "J_" + std::to_string(ix))).c_str());
+        if (j.attribute("type")) j.remove_attribute("type");
+        j.append_attribute("type").set_value(free ? "free" : "ball");
+      }
+      pugi::xml_node g = body.append_copy(geom);
+      g.remove_attribute("name");
+      g.append_attribute("name").set_value((prefix + "G" + std::to_string(ix)).c_str());
+      if (geom_type == "box") {
+        const auto size = ParseDoubles(Attr(geom, "size"));
+        g.remove_attribute("size");
+        g.remove_attribute("pos");
+        g.append_attribute("pos").set_value(fmt({length / 2, 0, 0}).c_str());
+        g.append_attribute("size").set_value(
+            fmt({length / 2, size.size() > 1 ? size[1] : 0.0, size.size() > 2 ? size[2] : 0.0}).c_str());
+      } else {
+        g.remove_attribute("fromto");
+        g.append_attribute("fromto").set_value(fmt({0, 0, 0, length, 0, 0}).c_str());
+      }
+      if (first || is_last) {
+        pugi::xml_node site = site_def ? body.append_copy(site_def) : body.append_child("site");
+        site.remove_attribute("name");
+        site.remove_attribute("pos");
+        site.append_attribute("name").set_value((prefix + (is_last ? "S_last" : "S_first")).c_str());
+        site.append_attribute("pos").set_value(fmt({is_last ? length : 0.0, 0, 0}).c_str());
+      }
+      if (!is_last) {
+        pugi::xml_node ex = contact.append_child("exclude");
+        ex.append_attribute("body1").set_value(body_name(ix).c_str());
+        ex.append_attribute("body2").set_value(body_name(ix + 1).c_str());
+      }
+      prev = quat;
+      parent = body;
+      anchor = pugi::xml_node();
+    }
+    comp.parent().remove_child(comp);
+  }
+  (void)ctx;
+  return true;
+}
+
+// MJCF <replicate count offset euler sep> as MuJoCo's XML reader expands it:
+// copy i sits in a frame at the accumulated offset, rotated by i*euler, and
+// every named element gets the suffix sep + i (zero-padded to the digits of
+// count; inner replicates append first). Elements elsewhere that reference a
+// replicated name (tendons, actuators, sensors, equalities, contacts) are
+// replicated and renamed with each copy.
+bool ExpandReplicates(pugi::xml_node root, const Context& ctx, std::string* err) {
+  static const char* const kRefs[] = {
+      "site",   "joint",   "body",    "geom",     "tendon",   "body1",
+      "body2",  "joint1",  "joint2",  "site1",    "site2",    "geom1",
+      "geom2",  "objname", "refname", "target",   "sidesite", "actuator",
+      "jointinparent",     "slidersite",          "cranksite"};
+  size_t budget = 1000000;  // total replicated elements
+  std::function<bool(pugi::xml_node)> expand = [&](pugi::xml_node parent) -> bool {
+    for (pugi::xml_node c = parent.first_child(); c;) {
+      pugi::xml_node next = c.next_sibling();
+      if (!expand(c)) return false;
+      if (std::string(c.name()) != "replicate") {
+        c = next;
+        continue;
+      }
+      const int count = ToInt32(ParseDoubleAttr(c, "count", 0.0), "count");
+      if (count <= 0) {
+        if (err) *err = "MJCF <replicate> count must be positive";
+        return false;
+      }
+      const auto offset = ParseDouble3(Attr(c, "offset"), {{0, 0, 0}});
+      const auto euler = ParseDouble3(Attr(c, "euler"), {{0, 0, 0}});
+      const std::string sep = Attr(c, "sep");
+      std::set<std::string> names;
+      size_t nodes = 0;
+      std::function<void(pugi::xml_node)> collect = [&](pugi::xml_node n) {
+        for (pugi::xml_node d : n.children()) {
+          ++nodes;
+          if (d.attribute("name")) names.insert(d.attribute("name").as_string());
+          collect(d);
+        }
+      };
+      collect(c);
+      const size_t digits = std::to_string(count).size();
+      auto suffix = [&](int i) {
+        std::string s = std::to_string(i);
+        return sep + std::string(digits > s.size() ? digits - s.size() : 0, '0') + s;
+      };
+      std::function<void(pugi::xml_node, const std::string&, bool)> rename =
+          [&](pugi::xml_node n, const std::string& sfx, bool own_names) {
+            if (own_names)
+              if (auto a = n.attribute("name")) a.set_value((std::string(a.value()) + sfx).c_str());
+            for (const char* key : kRefs)
+              if (auto a = n.attribute(key))
+                if (names.count(a.value())) a.set_value((std::string(a.value()) + sfx).c_str());
+            for (pugi::xml_node d : n.children()) rename(d, sfx, own_names);
+          };
+      auto references = [&](pugi::xml_node n) {
+        bool found = false;
+        std::function<void(pugi::xml_node)> scan = [&](pugi::xml_node m) {
+          for (const char* key : kRefs)
+            if (auto a = m.attribute(key)) found |= names.count(a.value()) > 0;
+          for (pugi::xml_node d : m.children()) scan(d);
+        };
+        scan(n);
+        return found;
+      };
+      if (nodes * static_cast<size_t>(count) > budget) {
+        if (err) *err = "MJCF <replicate> expansion exceeds the element budget";
+        return false;
+      }
+      budget -= nodes * static_cast<size_t>(count);
+      std::array<double, 3> pos{{0, 0, 0}};
+      for (int i = 0; i < count; ++i) {
+        char buf[200];
+        std::snprintf(buf, sizeof(buf), "%.17g %.17g %.17g", i * euler[0], i * euler[1],
+                      i * euler[2]);
+        const Quat q = OrientationQuat("", "", buf, "", "", ctx);
+        pugi::xml_node frame = parent.insert_child_before("frame", c);
+        if (c.attribute("childclass"))
+          frame.append_attribute("childclass").set_value(c.attribute("childclass").value());
+        frame.append_attribute("euler").set_value(buf);
+        std::snprintf(buf, sizeof(buf), "%.17g %.17g %.17g", pos[0], pos[1], pos[2]);
+        frame.append_attribute("pos").set_value(buf);
+        for (pugi::xml_node d : c.children()) rename(frame.append_copy(d), suffix(i), true);
+        const std::vector<double> m = MatrixFromPosQuat({{0, 0, 0}}, q);
+        for (int k = 0; k < 3; ++k)
+          pos[size_t(k)] += m[size_t(k)] * offset[0] + m[size_t(4 + k)] * offset[1] +
+                            m[size_t(8 + k)] * offset[2];
+      }
+      parent.remove_child(c);
+      for (const char* section : {"tendon", "actuator", "sensor", "equality", "contact"}) {
+        for (pugi::xml_node sec : root.children(section)) {
+          for (pugi::xml_node e = sec.first_child(); e;) {
+            pugi::xml_node after = e.next_sibling();
+            if (e.type() == pugi::node_element && references(e)) {
+              for (int i = 0; i < count; ++i) rename(sec.insert_copy_before(e, e), suffix(i), true);
+              sec.remove_child(e);
+            }
+            e = after;
+          }
+        }
+      }
+      c = next;
+    }
+    return true;
+  };
+  for (pugi::xml_node worldbody : root.children("worldbody"))
+    if (!expand(worldbody)) return false;
+  return true;
+}
+
 void FlattenFramesIn(pugi::xml_node parent, const Context& ctx) {
   // Bottom-up: flatten frames nested inside children before dissolving the
   // frames directly under `parent`.
@@ -3925,6 +4573,13 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
     }
   }
   ctx.defaults = ParseDefaults(root);
+  if (!ExpandCableComposites(root, ctx, err)) return false;
+  if (!ExpandReplicates(root, ctx, err)) return false;
+  if (const auto tendon_root = Child(root, "tendon")) {
+    for (const auto& spatial : Children(tendon_root, "spatial"))
+      for (const auto& wrap : Children(spatial, "geom"))
+        if (HasAttr(wrap, "geom")) ctx.wrap_geoms.insert(Attr(wrap, "geom"));
+  }
 
   // Dissolve <frame> grouping transforms now that the angle/eulerseq context is
   // known, so body/geom/site traversal never has to look inside a <frame>.
@@ -3961,6 +4616,7 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
   Json equalities = Json::array();
   Json filtered_pairs = Json::array();
   Json sites = Json::array();
+  Json deformables = Json::array();
   Json mjc_actuators = Json::array();
   Json keyframes = Json::array();
   Json lights = Json::array();
@@ -3977,6 +4633,9 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
       }
     }
     CollectMujocoSitesJson(worldbody, IdentityMatrix(), ctx, &sites, stats);
+    if (opts.profile == "newton" &&
+        !CollectMujocoFlexcompsJson(worldbody, IdentityMatrix(), ctx, true, &deformables, err))
+      return false;
     CollectMujocoLightsCamerasJson(worldbody, IdentityMatrix(), ctx, &lights,
                                    &cameras);
   }
@@ -4031,6 +4690,7 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
   if (!filtered_pairs.empty())
     (*payload)["filteredPairs"] = std::move(filtered_pairs);
   if (!sites.empty()) (*payload)["sites"] = std::move(sites);
+  if (!deformables.empty()) (*payload)["deformables"] = std::move(deformables);
   if (!mjc_actuators.empty())
     (*payload)["mjcActuators"] = std::move(mjc_actuators);
   Json mjc_scene = BuildMjcSceneJson(root);
@@ -4564,7 +5224,8 @@ bool BuildPayload(const std::string& text, const std::string& source,
   result->warnings = reader.warnings;
   result->memory_estimate = reader.bytes;
   for (const char* key : {"links", "joints", "materials", "actuators", "tendons",
-                         "equalities", "sites", "sensors", "contactPairs", "filteredPairs", "keyframes"})
+                         "equalities", "sites", "sensors", "contactPairs", "filteredPairs", "keyframes",
+                         "deformables"})
     if (result->payload[key].is_array()) {
       effective.report->counts[key] = uint64_t(result->payload[key].size());
       if (!result->payload[key].empty()) effective.report->Feature(key, "imported", source);

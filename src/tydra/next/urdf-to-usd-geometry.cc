@@ -184,16 +184,24 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
     const double margin =
         JsonNumberFrom(src, "mjc", "margin", kMjcfDefaultMargin);
     Set(prim, "mjc:margin", tn::Value(margin), "double", true);
-    Set(prim, "newton:contactMargin",
-        tn::Value(static_cast<float>(
-            JsonNumberFrom(src, "newton", "contactMargin", margin))),
-        "float");
-    Set(prim, "newton:contactGap",
-        tn::Value(static_cast<float>(
-            JsonNumberFrom(src, "newton", "contactGap", kMjcfDefaultGap))),
-        "float");
+    // URDF has no contact margin/gap; an unauthored value keeps Newton's
+    // builder defaults (as its URDF importer does) instead of forcing 0.
+    double value = 0.0;
+    if (profile.legacy || ReadNumberFrom(src, "newton", "contactMargin", &value))
+      Set(prim, "newton:contactMargin",
+          tn::Value(static_cast<float>(
+              JsonNumberFrom(src, "newton", "contactMargin", margin))),
+          "float");
+    if (profile.legacy || ReadNumberFrom(src, "newton", "contactGap", &value))
+      Set(prim, "newton:contactGap",
+          tn::Value(static_cast<float>(
+              JsonNumberFrom(src, "newton", "contactGap", kMjcfDefaultGap))),
+          "float");
   }
   if (mesh_collision) {
+    int32_t hull = 0;
+    if (!profile.legacy && ReadIntFrom(src, "mjc", "maxhullvert", &hull))
+      Set(prim, "mjc:maxhullvert", tn::Value(hull), "int", true);
     Set(prim, "newton:maxHullVertices",
         tn::Value(JsonIntFrom(src, "newton", "maxHullVertices",
                               kDefaultNewtonMaxHullVertices)),
@@ -448,7 +456,8 @@ bool AddNativeCollisionShapeFromJson(tn::Layer *layer,
                                      const Json &shape_json,
                                      const std::string &fallback_name,
                                      bool mjcf_source, std::string *warn,
-                                     std::string *err) {
+                                     std::string *err, bool collision,
+                                     std::string *out_name) {
   const Json *shape_obj = JsonObject(shape_json, "shape");
   const Json &shape = shape_obj ? *shape_obj : shape_json;
   const std::string type = JsonString(shape, "type");
@@ -496,7 +505,20 @@ bool AddNativeCollisionShapeFromJson(tn::Layer *layer,
     SetToken(prim, "axis", AxisFromToken(JsonString(shape, "axis", "Z")), true);
   }
   SetTransformFromJson(prim, shape_json);
-  AddCollisionAPIs(prim, false, shape_json, mjcf_source);
+  if (collision) {
+    AddCollisionAPIs(prim, false, shape_json, mjcf_source);
+  } else {
+    // Native visual-only shape (a tendon wrap surface): no CollisionAPI, so
+    // MuJoCo decodes a contype=0 geom and Newton a visual shape.
+    const std::string purpose = JsonString(shape_json, "purpose");
+    if (!purpose.empty()) SetToken(prim, "purpose", purpose, true);
+    int32_t group = 0;
+    if (mjcf_source && ReadIntFrom(shape_json, "mjc", "group", &group)) {
+      AddAPIs(prim, {"MjcImageableAPI"});
+      Set(prim, "mjc:group", tn::Value(group), "int", true);
+    }
+  }
+  if (out_name) *out_name = name;
   return true;
 }
 

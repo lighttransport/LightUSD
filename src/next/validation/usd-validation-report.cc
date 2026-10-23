@@ -463,6 +463,8 @@ const ValidationRuleInfo* GetValidationRuleTable(size_t* count) {
        "MJC extension tokens must be valid"},
       {"physics.extension.newton.asset", "physics",
        "Newton extension asset paths must be non-empty"},
+      {"physics.extension.newton.inertia", "physics",
+       "NewtonMassAPI inertia tensors must be finite and positive semidefinite"},
       {"physics.extension.newton.lookup", "physics",
        "Newton extension lookups must reference existing entries"},
       {"physics.extension.newton.range", "physics",

@@ -56,6 +56,7 @@ set(TYDRA_NEXT_SOURCES
     urdf-to-usd-physics.cc
     urdf-to-usd-extensions.cc
     urdf-to-usd-scene.cc
+    urdf-to-usd-deformable.cc
     ../../external/mikktspace/mikktspace.c
 )
 

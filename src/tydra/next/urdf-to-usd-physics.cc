@@ -277,8 +277,18 @@ void AssignJointBase(tn::PrimSpec *prim, const Json &joint,
       // URDF <limit velocity> is rad/s (or m/s); NewtonJointAPI uses deg/s.
       if (ReadNumber(*limit, "velocity", &value) && value > 0.0)
         newton("newton:velocityLimit", angular ? value * 180.0 / kPi : value);
-      if (ReadNumber(*limit, "effort", &value))
+      if (ReadNumber(*limit, "effort", &value)) {
         Set(prim, "urdf:limit:effort", tn::Value(value), "double");
+        // The joint force limit Newton (Mjc resolver) and MuJoCo read; URDF
+        // effort 0 conventionally means "unspecified".
+        const Json *mjc = JsonObject(joint, "mjc");
+        if (value > 0.0 && !(mjc && mjc->contains("actuatorfrcrange"))) {
+          AddAPI(prim, "MjcJointAPI");
+          SetToken(prim, "mjc:actuatorfrclimited", "true", true);
+          Set(prim, "mjc:actuatorfrcrange:min", tn::Value(-value), "double", true);
+          Set(prim, "mjc:actuatorfrcrange:max", tn::Value(value), "double", true);
+        }
+      }
     }
     if (newton_joint && profile.newton) AddAPI(prim, "NewtonJointAPI");
     // URDF-only metadata without a schema home (urdf-usd-converter parity).
@@ -321,7 +331,12 @@ void AssignJointBase(tn::PrimSpec *prim, const Json &joint,
   // state:*:physics:position attribute (revolute in degrees, prismatic in
   // meters), which Newton reads through its PhysX resolver.
   double init_q = 0.0;
-  if (profile.engine && ReadNumber(joint, "initPosition", &init_q) && init_q != 0.0) {
+  // In the newton profile the MJCF ref is carried by mjc:ref alone: Newton
+  // measures joint coordinates from ref, so a mirrored state would apply it
+  // twice (MuJoCo qpos = 2 * ref) under the PhysX resolver.
+  const Json *joint_mjc = JsonObject(joint, "mjc");
+  const bool ref_only = profile.newton && joint_mjc && joint_mjc->contains("ref");
+  if (profile.engine && !ref_only && ReadNumber(joint, "initPosition", &init_q) && init_q != 0.0) {
     if (is_revolute && (profile.legacy ? subtype == "revolute" : true)) {
       if (!profile.legacy) AddAPI(prim, "PhysicsJointStateAPI:angular");
       Set(prim, "state:angular:physics:position",
@@ -342,8 +357,9 @@ void AssignJointBase(tn::PrimSpec *prim, const Json &joint,
       ReadNumber(*mimic, "offset", &offset);
       ReadNumber(*mimic, "multiplier", &multiplier);
       // NewtonMimicAPI documents coef0 in the follower's position units:
-      // degrees for angular joints (Newton >= 1.5, MuJoCo 3.16 decoder).
-      if (!profile.legacy && angular)
+      // degrees for revolute joints (Newton >= 1.5, MuJoCo 3.16 decoder);
+      // Newton converts no other follower type.
+      if (!profile.legacy && is_revolute)
         offset = static_cast<float>(offset * 180.0 / kPi);
       Set(prim, "newton:mimicEnabled", tn::Value(enabled), "bool", true);
       SetRel(prim, "newton:mimicJoint", {"/World/Joints/" + found->second});
@@ -412,7 +428,7 @@ void ApplyMjcSceneOptions(tn::PrimSpec *scene, const Json &root) {
           "gravity", "clampctrl", "warmstart", "filterparent", "actuation",
           "refsafe", "sensor", "midphase", "nativeccd", "eulerdamp",
           "autoreset", "island", "override", "energy", "fwdinv",
-          "invdiscrete", "multiccd"}) {
+          "invdiscrete", "multiccd", "spring", "damper"}) {
       set_bool(*f, key, std::string("mjc:flag:") + key);
     }
   }
@@ -465,6 +481,9 @@ void AddPhysicsScene(tn::Layer *layer, const Json &root) {
     max_solver_iterations =
         JsonInt(*newton, "maxSolverIterations", max_solver_iterations);
     ReadBool(*newton, "gravityEnabled", &gravity_enabled);
+  } else if (const Json *ms = JsonObject(root, "mjcScene")) {
+    // Newton's own gravity switch wins over mjc:flag:gravity.
+    if (const Json *flags = JsonObject(*ms, "flag")) ReadBool(*flags, "gravity", &gravity_enabled);
   }
   Set(scene, "newton:timeStepsPerSecond", tn::Value(steps_per_second), "int",
       true);

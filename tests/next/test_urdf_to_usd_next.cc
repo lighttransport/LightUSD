@@ -453,7 +453,9 @@ void TestActuatorsSitesTendons() {
   // Duplicate site source names resolve to the last site (legacy map).
   assert(Targets(cable, "mjc:path") ==
          Strings({"/World/Sites/s0", "/World/Sites/s1_1"}));
-  assert(Doubles(cable, "mjc:path:coef") == std::vector<double>({1, 1}));
+  // Spatial routes carry segments/divisors (MuJoCo decoder), not coef.
+  assert(!cable.property_value("mjc:path:coef"));
+  assert(Doubles(cable, "mjc:path:divisors") == std::vector<double>({1}));
   assert(Near(D(cable, "mjc:width"), 0.002));
 }
 

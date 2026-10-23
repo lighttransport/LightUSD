@@ -249,3 +249,35 @@ def test_schema_variability_mismatch_is_reported():
     assert {"physics:localPos0", "physics:localRot1", "physics:lowerLimit"} <= mismatched
     current = physics.validate(lightusd._import(data=xml, format="mjcf"))
     assert not any(i.rule_id == "core.schema.variability" for i in current.issues)
+
+
+NEWTON_BODY = '''#usda 1.0
+( defaultPrim = "Body" upAxis = "Z" metersPerUnit = 1 )
+def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "NewtonMassAPI"]) {
+    float physics:mass = 1
+    float3 physics:diagonalInertia = (%s)
+    double[] newton:inertia = [%s]
+}
+def PhysicsRevoluteJoint "J" (prepend apiSchemas = ["NewtonJointAPI"]) {
+    float newton:limitStiffness = %s
+    float newton:armature = %s
+}
+'''
+
+
+@pytest.mark.parametrize('diag,tensor,stiffness,armature,rule,severity', [
+    ('1, 2, 3', '1, 2, 3, 0, 0, 0', '-inf', '0', None, None),
+    ('1, 2, 3', '1, 2, 3, 0, 0', '1', '0', 'physics.extension.newton.inertia', 'error'),
+    ('1, 1, 1', '1, 1, 1, 2, 0, 0', '1', '0', 'physics.extension.newton.inertia', 'error'),
+    ('1, 1, 3', '1, 1, 3, 0, 0, 0', '1', '0', 'physics.extension.newton.inertia', 'warning'),
+    ('1, 2, 2', '1, 2, 3, 0, 0, 0', '1', '0', 'physics.extension.newton.inertia', 'warning'),
+    ('1, 2, 3', '1, 2, 3, 0, 0, 0', '-1', '0', 'physics.extension.newton.range', 'error'),
+    ('1, 2, 3', '1, 2, 3, 0, 0, 0', '1', '-1', 'physics.extension.newton.range', 'error'),
+])
+def test_newton_mass_and_joint_rules(diag, tensor, stiffness, armature, rule, severity):
+    report = physics.validate(lightusd.loads(NEWTON_BODY % (diag, tensor, stiffness, armature)))
+    newton = [i for i in report.issues if i.rule_id.startswith('physics.extension.newton')]
+    if rule is None:
+        assert not newton, newton
+    else:
+        assert any(i.rule_id == rule and i.severity == severity for i in newton), report.issues

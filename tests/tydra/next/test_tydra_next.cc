@@ -4084,7 +4084,7 @@ def Xform "World"
     }],
     "tendons": [{"name": "cable", "joints": [{"joint": "hinge"}],
                  "stiffness": 10}],
-    "mjcActuators": [{"name": "motor", "gear": [2]}],
+    "mjcActuators": [{"name": "motor", "targetTendon": "cable", "gear": [2]}],
     "keyframes": [{"name": "home", "qpos": [0]}],
     "sensors": [{"name": "position", "type": "jointpos"}]
   })JSON";

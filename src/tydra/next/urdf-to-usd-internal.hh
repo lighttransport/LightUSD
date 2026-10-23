@@ -144,7 +144,8 @@ bool AddNativeCollisionShapeFromJson(tn::Layer *layer,
                                      const Json &shape_json,
                                      const std::string &fallback_name,
                                      bool mjcf_source, std::string *warn,
-                                     std::string *err);
+                                     std::string *err, bool collision = true,
+                                     std::string *out_name = nullptr);
 void JacobiEigenSymmetric3(const double in[3][3], double eval[3],
                            double evec[3][3]);
 tn::Value RotationMatrixToQuatf(double r[3][3]);
@@ -167,10 +168,15 @@ void AddMjcSiteFromJson(Scope *scope, const Json &site,
 void AuthorMjcSite(tn::PrimSpec *prim, const Json &site, const Matrix4 *local);
 Matrix4 InverseRigid(const Matrix4 &m);
 Matrix4 MultiplyRowMajor(const Matrix4 &a, const Matrix4 &b);
+// MJCF flexcomp soft bodies (payload "deformables") as UsdPhysics
+// deformable prims under /World/Deformables.
+void AddDeformablesFromJson(tn::Layer *layer, const Json &items,
+                            const NameMap &link_names, std::string *warn);
 void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
                           const Json &t, const NameMap &joint_names,
-                          const NameMap &site_names, NameMap *tendon_names,
-                          size_t index, std::string *warn);
+                          const NameMap &site_names, const NameMap &geom_names,
+                          NameMap *tendon_names, size_t index,
+                          std::string *warn);
 // Non-legacy MJCF equalities: connect -> PhysicsSphericalJoint, weld ->
 // PhysicsFixedJoint (both excluded from articulation), joint -> NewtonMimicAPI
 // + MjcEqualityJointAPI on the follower joint.
@@ -188,7 +194,8 @@ void AddMjcActuatorFromJson(Scope *scope, std::set<std::string> *used,
                             const Json &a, const NameMap &joint_names,
                             const NameMap &tendon_names,
                             const NameMap &site_names,
-                            const NameMap &link_names, size_t index);
+                            const NameMap &link_names, size_t index,
+                            std::string *warn);
 void AddMjcKeyframeFromJson(Scope *scope, std::set<std::string> *used,
                             const Json &k, size_t index);
 void AddMjcSensorFromJson(Scope *scope, std::set<std::string> *used,

@@ -58,8 +58,57 @@ in one of three profiles, selected with `profile=` (Python), `"profile"` in the 
 | MJCF equalities | connect → `PhysicsSphericalJoint`, weld → `PhysicsFixedJoint` (excluded from articulation, `active` → `jointEnabled`, site forms supported); joint → `NewtonMimicAPI` + `MjcEqualityJointAPI` on the follower (`mimicCoef0` in degrees) | spherical/fixed joints only | `Xform` + `MjcEquality*API` |
 | MJCF collision | collides iff `contype|conaffinity != 0`; group 3+ non-colliders become guide visuals | same | group-based split |
 | Mocap / gravcomp | `physics:kinematicEnabled`, `mjc:gravcomp` | kinematic only | `mjc:mocap` |
-| URDF `planar` | D6 `PhysicsJoint`, `transX/rotY/rotZ` locked (`low > high`) | same | error |
+| URDF `planar` | D6 `PhysicsJoint`, `transX/rotY/rotZ` locked (`low > high`), `transY/transZ/rotX` unlimited (`-inf`/`inf`; Newton creates a D6 DOF only for an axis with a LimitAPI) | same | error |
+| URDF effort | `urdf:limit:effort` + `mjc:actuatorfrcrange` (±effort) with `mjc:actuatorfrclimited` | `urdf:limit:effort` | `urdf:limit:effort` |
+| MJCF `ref` | `mjc:ref` only (Newton measures joint coordinates from it) | omitted | also `state:*:physics:position` |
+| MJCF stacked joints with a ball | intermediate-link chain (Newton merges only hinges/slides into a D6) | stacked | massless intermediate links |
+| MJCF `<flexcomp>` | UsdPhysics deformables (below) | unsupported (reported) | unsupported (reported) |
+| MJCF `<flag>` | `newton:gravityEnabled` follows `gravity`; `filterparent="disable"` sets `physics:collisionEnabled` on joints; `spring`/`damper` flags authored | flags only | flags only |
 | OBJ stage | `metersPerUnit = 1`, root `kind = component` | same | no units |
+
+MJCF spatial tendons follow MuJoCo's USD decoder and mujoco-usd-converter:
+ordered sites, wrap geoms and pulleys become `mjc:path` + `mjc:path:indices`,
+`mjc:path:segments` (a pulley, including a leading one, starts a new segment)
+and `mjc:path:divisors` (segment 0 has divisor 1), with `mjc:sideSites` +
+`mjc:sideSites:indices` (-1 without a side site). Wrap geoms stay native
+`Sphere`/`Cylinder` prims under their body (visual-only wraps without
+`PhysicsCollisionAPI`); other wrap types are reported and the tendon skipped,
+as is any actuator whose target was not exported. A one-value `springlength`
+is written as two values. Through Newton's `add_usd` + `SolverMuJoCo`, tendon
+counts, wrap counts and `tendon_length0` match MuJoCo compiling the MJCF.
+
+`<replicate>` is expanded as MuJoCo's reader does (accumulated offset in the
+previous copy's frame, `i * euler`, suffix `sep` + zero-padded index, inner
+suffixes first) and elements referencing replicated names in `<tendon>`,
+`<actuator>`, `<sensor>`, `<equality>` and `<contact>` are replicated with
+them. `<composite type="cable">` becomes MuJoCo's body chain (capsule/
+cylinder/box segments on ball joints in a parallel-transported frame,
+`initial` free/ball/none, `B_first`/`B_<i>`/`B_last`, `S_first`/`S_last`,
+neighbour excludes); the cable elasticity plugin is reported and dropped.
+Both match MuJoCo's compiled body poses on MuJoCo's sample models.
+
+In the `newton` profile, MJCF `<flexcomp>` of type `grid`, `circle`,
+`square`, `disc` or `direct` (MuJoCo's point/element generation, pins,
+pose and unused-point removal) becomes one soft body under
+`/World/Deformables` in the AOUSD UsdPhysics deformable layout Newton reads:
+
+| flex dim | Prim | Simulation / material API | Notes |
+|---|---|---|---|
+| 1 | `BasisCurves` (`linear`, `periodic` for circles) | `PhysicsCurvesDeformableSimAPI` / `PhysicsCurvesDeformableMaterialAPI` | edge stiffness k and damping c → `curvesStretchStiffness = k L`, `newton:curvesStretchDamping = c L`; no bend/twist |
+| 2 | `Mesh` (triangles) | `PhysicsSurfaceDeformableSimAPI` / `PhysicsSurfaceDeformableMaterialAPI` | `surfaceStretchStiffness = E h / (1 - nu^2)` and `surfaceBendStiffness = E h^3 / (12 (1 - nu^2))` only for the `elastic2d` modes MuJoCo applies |
+| 3 | `TetMesh` (right-handed tets + boundary `surfaceFaceVertexIndices`) | `PhysicsVolumeDeformableSimAPI` / `PhysicsVolumeDeformableMaterialAPI` | Young's modulus and Poisson ratio |
+
+Masses are `physics:masses` per point (flexcomp `mass / npnt`), thickness is
+`physics:thicknesses` (2D elastic thickness, otherwise the contact diameter),
+the material is bound with `material:binding:physics`, and
+`contype|conaffinity != 0` applies `PhysicsCollisionAPI`. Pinned vertices
+become one `PhysicsAttachment` (`type0 = point`, `type1 = xform`, `coords1` in
+the owning body frame, no `src1` for the world); Newton imports attachments
+only for cables. Non-`full` `dof`, plugins, 2D/3D damping and edge equality
+are reported as approximated or dropped; other flexcomp types, raw `<flex>`
+and `<skin>` stay unsupported. On MuJoCo's flex sample models the vertices
+match MuJoCo's compiled `flexvert_xpos` and the element counts match;
+Newton imports them as particles, triangles, tetrahedra and cable rods.
 
 Profile-independent fixes also changed `legacy` output for affected inputs:
 MuJoCo mesh-fit primitives (`mesh=` on a primitive type) are sized from the
@@ -581,7 +630,7 @@ status line) instead of being dropped silently:
 | URDF `<mimic>` | exported as `NewtonMimicAPI` when the target joint is also exported |
 | MJCF joint-targeted `<actuator>` | exported as `NewtonActuator` best-effort (`kp`/`kv` or `gainprm`/`biasprm`, force/control range, delay); non-joint actuators are not converted |
 | MJCF `<tendon><fixed>` | `MjcTendon` (type=fixed) under `/World/Tendons` — `mjc:path`→coupled joints, `mjc:path:coef`, stiffness/damping/range |
-| MJCF `<tendon><spatial>` (muscles) | `MjcTendon` (type=spatial) routed through `<site>` markers (`/World/Sites`, `MjcSiteAPI`); wrap `<geom sidesite>` via the sidesite point; pulleys not modeled. Visualized as polylines in the web demo source view |
+| MJCF `<tendon><spatial>` (muscles) | `MjcTendon` (type=spatial) routed through `<site>` markers, native `Sphere`/`Cylinder` wrap geoms with side sites, and pulley segments/divisors (see Output profiles). Visualized as polylines in the web demo source view |
 | MJCF `<site>` | `GeomSphere` marker under `/World/Sites` + `MjcSiteAPI` (the routing points for spatial tendons) |
 | MJCF `<actuator><muscle>` / `<general class="muscle">` | `MjcActuator` (`mjc:target`→tendon, `gainPrm`/`biasPrm`/`lengthRange`/`ctrlRange`) |
 | MJCF `<equality>` (connect/weld/joint) | converted to an Xform host prim under `/World/Equalities` carrying the matching `MjcEquality{Connect,Weld,Joint}API` + `mjc:*` attributes |
