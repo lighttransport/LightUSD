@@ -671,6 +671,37 @@ static PyObject* Stage_save_usdz(PyObject* self, PyObject* args,
   Py_RETURN_NONE;
 }
 
+static PyObject* Stage_generated_assets(PyObject* self, PyObject* noargs) {
+  (void)noargs;
+  lightusd_stage* stage;
+  lightusd_state* st = stage_context(self, &stage);
+  if (!st) return NULL;
+  PyObject* out = PyDict_New();
+  if (!out) return NULL;
+  const size_t count = lightusd_stage_generated_asset_count(stage);
+  for (size_t i = 0; i < count; ++i) {
+    lightusd_sv path;
+    const uint8_t* data;
+    size_t size;
+    lightusd_status status = lightusd_stage_generated_asset(stage, i, &path, &data, &size);
+    if (status != LIGHTUSD_OK) {
+      Py_DECREF(out);
+      return lightusd_raise(st, status, "generated_assets");
+    }
+    PyObject* key = lightusd_sv_to_str(path);
+    PyObject* value = PyBytes_FromStringAndSize((const char*)data, (Py_ssize_t)size);
+    if (!key || !value || PyDict_SetItem(out, key, value) < 0) {
+      Py_XDECREF(key);
+      Py_XDECREF(value);
+      Py_DECREF(out);
+      return NULL;
+    }
+    Py_DECREF(key);
+    Py_DECREF(value);
+  }
+  return out;
+}
+
 static PyObject* Stage_export_usda(PyObject* self, PyObject* noargs) {
   (void)noargs;
   lightusd_stage* stage;
@@ -764,6 +795,8 @@ static PyMethodDef Stage_methods[] = {
     {"save_usdz", (PyCFunction)(void (*)(void))Stage_save_usdz,
      METH_VARARGS | METH_KEYWORDS,
      "save_usdz(path, assets=None)\nWrite a USDZ with package assets."},
+    {"generated_assets", Stage_generated_assets, METH_NOARGS,
+     "generated_assets() -> dict[str, bytes] of importer-generated files"},
     {"export_usda", Stage_export_usda, METH_NOARGS,
      "Serialize to a USDA string."},
     {"export_usdc", Stage_export_usdc, METH_NOARGS,

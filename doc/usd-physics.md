@@ -122,8 +122,19 @@ cylinders), cameras default to MuJoCo's 45 degree `fovy` and take
 `clippingRange` from `<visual><map znear zfar>` times an authored
 `<statistic extent>`, lights carry `intensity` and spot `exponent`
 (`inputs:shaping:focus`), and material `texrepeat` becomes a
-`UsdTransform2d` scale on the diffuse texture. Builtin textures are reported
-(`mjcf.texture_builtin_unsupported`).
+`UsdTransform2d` scale on the diffuse texture.
+
+Builtin `type="2d"` textures (`checker`, `gradient`, `flat`, with `edge`,
+`cross` or `random` marks) that a material uses are generated as PNG,
+pixel-identical to MuJoCo's `tex_data`, at most 4096x4096 and charged to the
+import budget. The stage authors `textures/builtin_<name>.png`;
+`Stage.save` (C `lightusd_stage_save`) and the `urdf-to-usd` CLI write the
+file beside a USDA/USDC layer, USDZ packages it, and
+`lightusd.asset.save_component` copies it into `Payload/Textures`.
+`Stage.generated_assets()` (C `lightusd_stage_generated_asset*`) returns the
+bytes. Cube and skybox textures, invalid sizes and the `legacy` profile are
+reported as `mjcf.texture_builtin_unsupported`; unused builtin textures are
+skipped.
 
 Profile-independent fixes also changed `legacy` output for affected inputs:
 MuJoCo mesh-fit primitives (`mesh=` on a primitive type) are sized from the

@@ -256,9 +256,11 @@ avoid implementing a second conversion or validation engine in Python.
   composing in OpenUSD to the flat output. Supporting API: `Prim.declare` /
   C `lightusd_attr_declare` (typed attribute without a value) and list-op
   qualified `apiSchemas` metadata (`"prepend apiSchemas"`).
+- MJCF builtin 2D textures (checker/gradient/flat + marks) generated as PNG,
+  pixel-identical to MuJoCo; written beside saved layers, packaged in USDZ.
 - Still pending: geometry/material library layers, native unit conversion API, raw
   `<flex>`, interpolated (trilinear/quadratic) dofs,
-  builtin texture generation, parallel per-mesh conversion and mapped input
+  cube/skybox builtin textures, parallel per-mesh conversion and mapped input
   for URDF/MJCF mesh assets. Import progress/cancellation callbacks (C
   `progress`, Python `progress=`) and memory-mapped root OBJ files are in. Composed-stage physics
   validation needs no separate mode: stages loaded with composition (the

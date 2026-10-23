@@ -1,0 +1,6 @@
+<mujoco><asset>
+ <texture name="grid" type="2d" builtin="checker" mark="edge" rgb1=".2 .3 .4" rgb2=".1 .2 .3" markrgb=".8 .8 .8" width="32" height="32"/>
+ <texture name="g" type="2d" builtin="gradient" mark="random" random=".1" width="17" height="9"/>
+ <texture name="f" type="2d" builtin="flat" mark="cross" width="5" height="3"/>
+ <material name="a" texture="grid" texrepeat="5 5"/><material name="b" texture="g"/><material name="c" texture="f"/></asset>
+<worldbody><geom type="plane" size="1 1 .1" material="a"/><geom size=".1" material="b"/><geom size=".1" material="c"/></worldbody></mujoco>

@@ -67,6 +67,9 @@ struct lightusd_stage {
   std::string import_report = "{}";  // Runtime telemetry; not USD metadata.
   std::map<std::string, std::shared_ptr<const std::vector<uint8_t>>> import_assets;
   std::map<std::string, std::string> import_asset_paths;
+  // Importer-generated files (MJCF builtin textures) keyed by the relative
+  // path the stage authors; USDA/USDC saves write them beside the layer.
+  std::map<std::string, std::shared_ptr<const std::vector<uint8_t>>> generated_assets;
   // Directory of the file this stage was loaded from (empty for in-memory /
   // created stages); used to resolve relative texture asset paths.
   std::string source_dir;

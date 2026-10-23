@@ -213,6 +213,24 @@ int main(int argc, char** argv) {
       return 1;
     }
     if (!warn.empty()) std::cerr << warn;
+    // Generated textures (MJCF builtins) have no source file: write them
+    // beside a USDA/USDC layer; USDZ already packages them.
+    if (std::string(kind) != "usdz")
+      for (const auto& mat : result.payload["materials"]) {
+        if (!mat.contains("texture_generated") || !mat.contains("texturePackage")) continue;
+        auto bytes = result.assets.find(mat["texturePackage"].get<std::string>());
+        if (bytes == result.assets.end() || !bytes->second) continue;
+        const fs::path target = path.parent_path() / mat["texture"].get<std::string>();
+        std::error_code ec;
+        fs::create_directories(target.parent_path(), ec);
+        std::ofstream out(target.string(), std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(bytes->second->data()),
+                  static_cast<std::streamsize>(bytes->second->size()));
+        if (!out) {
+          std::cerr << "urdf-to-usd: cannot write " << target.string() << "\n";
+          return 1;
+        }
+      }
     std::cout << "Wrote " << path.string() << "\n";
   }
   size_t visuals = 0, collisions = 0;

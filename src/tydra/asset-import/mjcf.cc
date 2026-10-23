@@ -3467,6 +3467,69 @@ Json BuildMjcSceneJson(const pugi::xml_node& root) {
 }
 
 // MJCF <asset><material> -> JSON material entries consumed by the converter's
+// Generate a type="2d" builtin texture as PNG into the reader's texture cache
+// under "textures/builtin_<name>.png". Cube and skybox textures have no planar
+// UsdPreviewSurface mapping and are reported instead; the legacy profile keeps
+// its historical output.
+bool GenerateBuiltinTexture(const pugi::xml_node& node, const std::string& name,
+                            std::string* key, std::string* why) {
+  constexpr int64_t kMaxBuiltinPixels = int64_t(4096) * 4096;
+  Reader& reader = *active_reader;
+  if (reader.options.profile == "legacy") {
+    *why = "legacy profile";
+    return false;
+  }
+  const std::string type = HasAttr(node, "type") ? Attr(node, "type") : "cube";
+  if (type != "2d") {
+    *why = "type=\"" + type + "\" is not supported";
+    return false;
+  }
+  BuiltinTexture t;
+  t.builtin = Attr(node, "builtin");
+  if (t.builtin != "checker" && t.builtin != "gradient" && t.builtin != "flat") {
+    *why = "unknown builtin \"" + t.builtin + "\"";
+    return false;
+  }
+  t.mark = HasAttr(node, "mark") ? Attr(node, "mark") : "none";
+  const auto color = [&](const char* attr, double* out) {
+    const auto v = ParseDoubles(Attr(node, attr));
+    if (v.size() >= 3) std::copy(v.begin(), v.begin() + 3, out);
+  };
+  color("rgb1", t.rgb1);
+  color("rgb2", t.rgb2);
+  color("markrgb", t.markrgb);
+  t.random = ParseDoubleAttr(node, "random", 0.01);
+  const double w = ParseDoubleAttr(node, "width", 0), h = ParseDoubleAttr(node, "height", 0);
+  if (!(w >= 1 && h >= 1) || w * h > double(kMaxBuiltinPixels) || w != std::floor(w) ||
+      h != std::floor(h)) {
+    *why = "width/height must be positive integers with at most 4096x4096 pixels";
+    return false;
+  }
+  t.width = static_cast<int>(w);
+  t.height = static_cast<int>(h);
+  std::string err;
+  const size_t pixels = size_t(t.width) * t.height * 3;
+  if (!reader.Charge(pixels, &err)) {
+    *why = err;
+    return false;
+  }
+  std::vector<uint8_t> rgb, png;
+  GenerateBuiltin2D(t, &rgb);
+  EncodePNG(rgb.data(), uint32_t(t.width), uint32_t(t.height), 3, &png);
+  if (!reader.Charge(png.size(), &err)) {
+    *why = err;
+    return false;
+  }
+  std::string file = name.empty() ? "builtin" : name;
+  for (char& c : file)
+    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-') c = '_';
+  *key = "textures/builtin_" + file + ".png";
+  for (int k = 1; reader.textures.count(*key); ++k)
+    *key = "textures/builtin_" + file + "_" + std::to_string(k) + ".png";
+  reader.textures[*key] = std::make_shared<const std::vector<uint8_t>>(std::move(png));
+  return true;
+}
+
 // AddMaterialFromJson -> UsdShade Material (UsdPreviewSurface).
 // Color/PBR-scalar only; texture maps are a documented follow-on.
 void AddMujocoMaterialsJson(const pugi::xml_node& root,
@@ -3486,14 +3549,30 @@ void AddMujocoMaterialsJson(const pugi::xml_node& root,
   const fs::path tex_dir = tdir.empty() ? base_dir : base_dir / tdir;
   const auto index = BuildMeshIndex(base_dir);
   std::map<std::string, std::string> tex_files;
+  std::set<std::string> generated, referenced;
+  for (const auto& m_node : Children(asset, "material"))
+    if (HasAttr(m_node, "texture")) referenced.insert(Attr(m_node, "texture"));
   for (const auto& t_node : Children(asset, "texture")) {
     const std::string tname = Attr(t_node, "name");
     const std::string tfile = Attr(t_node, "file");
     if (tfile.empty() && HasAttr(t_node, "builtin") && Attr(t_node, "builtin") != "none" &&
-        active_reader)
-      active_reader->Warn("MJCF builtin texture `" + tname +
-                              "` is not generated; materials using it keep their rgba",
-                          "mjcf.texture_builtin_unsupported");
+        active_reader) {
+      // Only material textures map onto USD; skyboxes and unused textures
+      // are reported (or skipped) without generating pixels.
+      if (!referenced.count(tname) && Attr(t_node, "type") != "skybox") continue;
+      std::string key, why;
+      if (GenerateBuiltinTexture(t_node, tname, &key, &why)) {
+        tex_files[tname] = key;
+        generated.insert(key);
+      } else {
+        active_reader->Warn("MJCF builtin texture" +
+                                (tname.empty() ? std::string() : " `" + tname + "`") +
+                                " is not generated (" + why +
+                                "); materials using it keep their rgba",
+                            "mjcf.texture_builtin_unsupported");
+      }
+      continue;
+    }
     if (tname.empty() || tfile.empty()) continue;
     tex_files[tname] =
         ResolveMeshPath(base_dir, tex_dir, tfile, index).string();
@@ -3521,7 +3600,13 @@ void AddMujocoMaterialsJson(const pugi::xml_node& root,
     const std::string tref = Attr(m_node, "texture");
     if (!tref.empty()) {
       const auto it = tex_files.find(tref);
-      if (it != tex_files.end()) {
+      if (it != tex_files.end() && generated.count(it->second)) {
+        // Retained in the reader's texture cache; written beside the output
+        // layer on save and packaged into USDZ.
+        mat["texture"] = it->second;
+        mat["texture_abs"] = it->second;
+        mat["texture_generated"] = true;
+      } else if (it != tex_files.end()) {
         if (active_reader && (active_reader->options.read || active_reader->options.open)) {
           // Resolver identifiers are not filesystem paths. Keep the authored
           // texture identifier anchored to the source instead of absolutizing

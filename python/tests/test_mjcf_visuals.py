@@ -63,4 +63,6 @@ def test_camera_light_and_texture_transform():
     assert light['inputs:shaping:focus'] == pytest.approx(10)
     transform = stage.prim_at('/World/Materials/m/stTransform')
     assert tuple(transform['inputs:scale']) == pytest.approx((3, 2))
-    assert 'builtin texture `c`' in stage.warnings()
+    # The unused builtin texture is neither generated nor reported.
+    assert stage.generated_assets() == {}
+    assert 'builtin texture' not in stage.warnings()

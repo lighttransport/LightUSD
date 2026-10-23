@@ -86,9 +86,19 @@ def save_component(stage, directory, *, name: Optional[str] = None,
     directory = os.fspath(directory)
     texture_dir = os.path.join(directory, "Payload", "Textures")
     copied_assets = {}
+    generated = stage.generated_assets()
 
     def relocate(path):
-        if textures != "copy" or not isinstance(path, str) or not path:
+        if not isinstance(path, str) or not path:
+            return path
+        if path in generated:
+            # Importer-generated (MJCF builtin texture): no source file exists.
+            os.makedirs(texture_dir, exist_ok=True)
+            out_name = os.path.basename(path)
+            with open(os.path.join(texture_dir, out_name), "wb") as f:
+                f.write(generated[path])
+            return "./Textures/" + out_name
+        if textures != "copy":
             return path
         source = path if os.path.isabs(path) or asset_root is None else \
             os.path.join(os.fspath(asset_root), path)

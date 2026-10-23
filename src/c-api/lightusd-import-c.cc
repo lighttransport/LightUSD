@@ -204,9 +204,16 @@ lightusd_status Finish(ia::Result& result, const std::string& source,
   handle->import_assets = std::move(result.assets);
   // Collect source -> archive names from the material import contract.
   for (const auto& mat : result.payload["materials"]) {
-    if (mat.contains("texturePackage"))
-      handle->import_asset_paths[mat["texture"].get<std::string>()] =
-          mat["texturePackage"].get<std::string>();
+    if (mat.contains("texturePackage")) {
+      const std::string texture = mat["texture"].get<std::string>();
+      const std::string package = mat["texturePackage"].get<std::string>();
+      handle->import_asset_paths[texture] = package;
+      if (mat.contains("texture_generated")) {
+        auto bytes = handle->import_assets.find(package);
+        if (bytes != handle->import_assets.end())
+          handle->generated_assets[texture] = bytes->second;
+      }
+    }
     for (const auto& map : mat["maps"])
       if (map.contains("package"))
         handle->import_asset_paths[map["file"].get<std::string>()] =

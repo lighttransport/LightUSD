@@ -161,6 +161,18 @@ struct Reader {
                    size_t line = 0, std::string data = {},
                    const char* encoding = "xml", bool approximated = false);
 };
+// MJCF <texture builtin=...> parameters (type="2d").
+struct BuiltinTexture {
+  std::string builtin, mark;
+  double rgb1[3] = {0.8, 0.8, 0.8}, rgb2[3] = {0.5, 0.5, 0.5}, markrgb[3] = {0, 0, 0};
+  double random = 0.01;
+  int width = 0, height = 0;
+};
+// RGB8 pixels as MuJoCo's Builtin2D produces them (row 0 first).
+void GenerateBuiltin2D(const BuiltinTexture& texture, std::vector<uint8_t>* rgb);
+// 8-bit gray/RGB/RGBA PNG; fixed-Huffman deflate, no external dependency.
+void EncodePNG(const uint8_t* pixels, uint32_t width, uint32_t height, uint32_t channels,
+               std::vector<uint8_t>* out);
 struct Mesh {
   std::string name;
   std::string type = "Mesh";

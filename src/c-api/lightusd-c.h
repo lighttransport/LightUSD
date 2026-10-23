@@ -386,6 +386,14 @@ LIGHTUSD_API void lightusd_save_options_init(lightusd_save_options* opts);
 LIGHTUSD_API lightusd_status lightusd_stage_save(const lightusd_stage* stage,
                                      const char* filename,
                                      const lightusd_save_options* opts /* nullable */);
+/* Files an importer generated for the stage (MJCF builtin textures), keyed
+ * by the relative path the stage authors. lightusd_stage_save writes them
+ * beside a USDA/USDC layer and packages them into USDZ. Borrowed; valid
+ * while the stage is alive. */
+LIGHTUSD_API size_t lightusd_stage_generated_asset_count(const lightusd_stage* stage);
+LIGHTUSD_API lightusd_status lightusd_stage_generated_asset(const lightusd_stage* stage,
+                                                            size_t index, lightusd_sv* path,
+                                                            const uint8_t** data, size_t* size);
 LIGHTUSD_API lightusd_status lightusd_stage_save_usdz_with_assets(
     const lightusd_stage* stage, const char* filename,
     const char* const* asset_names, const uint8_t* const* asset_data,

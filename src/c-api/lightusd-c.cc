@@ -12,6 +12,7 @@
 #include <limits>
 #include <map>
 
+#include "external/filesystem/include/ghc/filesystem.hpp"
 #include "next/prim/identifier.hh"
 #include "next/schema/usd-geom-camera.hh"
 #include "next/schema/usd-shade.hh"
@@ -30,6 +31,7 @@
 #include "next/resolver/asset-resolver.hh"
 
 namespace n = lightusd::next;
+namespace fs = ghc::filesystem;
 using lightusd_internal::Fail;
 using lightusd_internal::FromC;
 using lightusd_internal::SpecFromC;
@@ -912,6 +914,38 @@ lightusd_status lightusd_stage_save(const lightusd_stage* stage, const char* fil
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "unknown save format");
   }
   if (!ok) return Fail(LIGHTUSD_ERR_IO, err);
+  if (format != LIGHTUSD_FORMAT_USDZ && !stage->generated_assets.empty()) {
+    const fs::path dir = fs::path(filename).parent_path();
+    for (const auto& asset : stage->generated_assets) {
+      if (!asset.second) continue;
+      const fs::path target = dir / fs::path(asset.first);
+      std::error_code ec;
+      fs::create_directories(target.parent_path(), ec);
+      std::ofstream out(target.string(), std::ios::binary | std::ios::trunc);
+      out.write(reinterpret_cast<const char*>(asset.second->data()),
+                static_cast<std::streamsize>(asset.second->size()));
+      if (!out) return Fail(LIGHTUSD_ERR_IO, "Cannot write generated asset: " + target.string());
+    }
+  }
+  return LIGHTUSD_OK;
+}
+
+size_t lightusd_stage_generated_asset_count(const lightusd_stage* stage) {
+  return stage ? stage->generated_assets.size() : 0;
+}
+
+lightusd_status lightusd_stage_generated_asset(const lightusd_stage* stage, size_t index,
+                                               lightusd_sv* path, const uint8_t** data,
+                                               size_t* size) {
+  if (!stage || !path || !data || !size)
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid generated-asset arguments");
+  if (index >= stage->generated_assets.size())
+    return Fail(LIGHTUSD_ERR_NOT_FOUND, "generated asset index out of range");
+  auto it = stage->generated_assets.begin();
+  std::advance(it, static_cast<std::ptrdiff_t>(index));
+  *path = {it->first.c_str(), it->first.size()};
+  *data = it->second ? it->second->data() : nullptr;
+  *size = it->second ? it->second->size() : 0;
   return LIGHTUSD_OK;
 }
 
