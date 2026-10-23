@@ -1092,8 +1092,31 @@ bool LoadOBJ(const fs::path& filename, Mesh* mesh, std::string* err) {
   return true;
 }
 
+// Per-import cache of loaded mesh assets: a mesh geom is otherwise parsed
+// for its visual, its collider and mass inference, and an OBJ's MTL
+// materials would be registered once per parse.
+thread_local std::map<std::pair<std::string, bool>, Mesh>* active_mesh_cache = nullptr;
+
+bool LoadMeshFileUncached(const fs::path& filename, bool smoothnormal, Mesh* mesh,
+                          std::string* err);
+
 bool LoadMeshFile(const fs::path& filename, bool smoothnormal, Mesh* mesh,
                   std::string* err) {
+  if (!active_mesh_cache) return LoadMeshFileUncached(filename, smoothnormal, mesh, err);
+  const auto key = std::make_pair(filename.string(), smoothnormal);
+  auto found = active_mesh_cache->find(key);
+  if (found == active_mesh_cache->end()) {
+    Mesh loaded;
+    if (!LoadMeshFileUncached(filename, smoothnormal, &loaded, err)) return false;
+    found = active_mesh_cache->emplace(key, std::move(loaded)).first;
+  }
+  // The importer charged the first load; a copy is an ordinary allocation.
+  *mesh = found->second;
+  return true;
+}
+
+bool LoadMeshFileUncached(const fs::path& filename, bool smoothnormal, Mesh* mesh,
+                          std::string* err) {
   const std::string ext = ToLower(filename.extension().string());
   if (ext == ".stl") return LoadBinarySTL(filename, smoothnormal, mesh, err);
   if (ext == ".obj" || ext == ".dae") return LoadOBJ(filename, mesh, err);
@@ -5095,6 +5118,12 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
     }
   } fit_scope(&mesh_fits, Child(root, "compiler") &&
                               MjcBoolAttr(Attr(Child(root, "compiler"), "fitaabb", "false")));
+  std::map<std::pair<std::string, bool>, Mesh> mesh_cache;
+  struct MeshCacheScope {
+    std::map<std::pair<std::string, bool>, Mesh>* previous = active_mesh_cache;
+    explicit MeshCacheScope(std::map<std::pair<std::string, bool>, Mesh>* c) { active_mesh_cache = c; }
+    ~MeshCacheScope() { active_mesh_cache = previous; }
+  } mesh_cache_scope(&mesh_cache);
   std::set<std::string> stacked;
   struct StackedScope {
     std::set<std::string>* previous = stacked_joint_bodies;
@@ -5523,6 +5552,12 @@ size_t CollapseGhostLinks(Json* links, Json* joints, const std::map<std::string,
 
 bool BuildURDF(const pugi::xml_node& root, const std::string& source,
                const Options& opts, Json* payload, std::string* err) {
+  std::map<std::pair<std::string, bool>, Mesh> mesh_cache;
+  struct MeshCacheScope {
+    std::map<std::pair<std::string, bool>, Mesh>* previous = active_mesh_cache;
+    explicit MeshCacheScope(std::map<std::pair<std::string, bool>, Mesh>* c) { active_mesh_cache = c; }
+    ~MeshCacheScope() { active_mesh_cache = previous; }
+  } mesh_cache_scope(&mesh_cache);
   Json links = Json::array(), joints = Json::array(), materials = Json::array(),
        actuators = Json::array();
   std::map<std::string, pugi::xml_node> nodes;
