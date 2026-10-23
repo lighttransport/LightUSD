@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "obj-reader.hh"
+#include "../crate/crate-data-source.hh"
 
 #include <algorithm>
 #include <cctype>
@@ -509,6 +510,21 @@ std::shared_ptr<Layer> LoadOBJLayerFromFile(
   auto effective = options;
   tydra::import_asset::ImportSession session(&effective, source, "obj", err);
   tydra::import_asset::Reader reader(effective);
+  // A local file without resolver hooks is memory-mapped instead of copied,
+  // so a multi-gigabyte OBJ is not duplicated in anonymous memory.
+  if (!effective.open && !effective.read) {
+    tydra::import_asset::AssetSource asset;
+    std::string why;
+    if (reader.Open(source, "", &asset, &why)) {
+      if (auto mapping = CrateDataSource::MmapFile(asset.identifier)) {
+        if (!reader.Account(source, "", asset.identifier, mapping->size(), err)) return nullptr;
+        auto layer = LoadOBJLayerFromMemory(asset.identifier, mapping->base(), mapping->size(),
+                                            effective, warn, err);
+        if (layer) session.Succeed();
+        return layer;
+      }
+    }
+  }
   std::vector<uint8_t> bytes;
   std::string resolved;
   if (!reader.Read(source, "", &bytes, &resolved, err)) return nullptr;

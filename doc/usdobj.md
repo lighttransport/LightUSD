@@ -396,6 +396,11 @@ incomplete UVs, missing weights and unsupported features are reported through
 
 OBJ memory inputs are parsed as bounded byte views; they need no NUL terminator
 and the next-core/Python path does not copy the entire input into a string.
+File imports without a custom resolver memory-map the OBJ on POSIX systems
+(other platforms and resolver-backed reads fall back to reading it), so the
+source is not duplicated in anonymous memory; it still counts against
+`max_input` and the memory budget. The file must not shrink while it is being
+imported.
 Serial OBJ, MTL and callback parsing visit lines incrementally rather than
 allocating a line table proportional to the input. The next-core layer loader
 and C/Python OBJ import APIs pass compact numeric geometry to USD without a

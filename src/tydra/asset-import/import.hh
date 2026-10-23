@@ -146,6 +146,10 @@ struct Reader {
   bool Read(const std::string& name, const std::string& anchor,
             std::vector<uint8_t>* data, std::string* resolved,
             std::string* err);
+  // Record and budget a dependency whose bytes the caller obtained itself
+  // (for example a memory-mapped file), with the same checks as Read.
+  bool Account(const std::string& name, const std::string& anchor,
+               const std::string& identifier, size_t size, std::string* err);
   bool ReadTexture(const std::string& name, const std::string& anchor,
                    AssetBytes* data, std::string* resolved, std::string* err);
   bool Charge(size_t amount, std::string* err);

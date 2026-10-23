@@ -253,9 +253,9 @@ avoid implementing a second conversion or validation engine in Python.
   optional `vw`, verified by import round trips.
 - Still pending: Atomic Component layout, native unit conversion API, raw
   `<flex>`, interpolated (trilinear/quadratic) dofs,
-  builtin texture generation, parallel per-mesh conversion, and mapped
-  large-file input (Priority 3). Import progress/cancellation callbacks are
-  in (C `progress`, Python `progress=`; see import-report.md). Composed-stage physics
+  builtin texture generation, parallel per-mesh conversion and mapped input
+  for URDF/MJCF mesh assets. Import progress/cancellation callbacks (C
+  `progress`, Python `progress=`) and memory-mapped root OBJ files are in. Composed-stage physics
   validation needs no separate mode: stages loaded with composition (the
   default) validate their composed prims and targets (covered by a test).
 

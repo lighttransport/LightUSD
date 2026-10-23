@@ -362,6 +362,17 @@ bool Reader::Read(const std::string& name, const std::string& anchor,
   return trace.success;
 }
 
+bool Reader::Account(const std::string& name, const std::string& anchor,
+                     const std::string& identifier, size_t size, std::string* err) {
+  DependencyTrace trace{options, name, anchor};
+  trace.identifier = identifier;
+  trace.read = true;
+  trace.bytes = size;
+  trace.success = failure.empty() && CheckInput(*this, size, err) && Charge(size, err);
+  if (!failure.empty() && err && err->empty()) *err = failure;
+  return trace.success;
+}
+
 bool Reader::ReadTexture(const std::string& name, const std::string& anchor,
                          AssetBytes* data, std::string* resolved,
                          std::string* err) {
