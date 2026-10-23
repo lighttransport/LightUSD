@@ -239,9 +239,14 @@ avoid implementing a second conversion or validation engine in Python.
 - Compact OBJ topology (Priority 2.6): `obj_topology="indexed"` keeps source
   positions with indexed face-varying normals/UVs (OpenUSD flattens them to
   one value per corner; no validator issues).
-- Still pending: Atomic Component layout, nested body hierarchy, unit
-  conversion (Priority 2.5), supplied-skeleton
-  binding (2.7), raw `<flex>`, interpolated (trilinear/quadratic) dofs,
+- Supplied-skeleton binding (Priority 2.7): `lightusd.skel.bind_skin`
+  validates `vw` joint ids against a USD Skeleton, remaps them and authors
+  the UsdSkel binding; pruning/normalization are opt-in.
+- Physics-aware unit conversion (Priority 2.5): `lightusd.units.convert_units`
+  (lengths, masses, inertia, joint frames/limits/drives by DOF kind, gravity,
+  up axis); Python only - the native/C API does not expose it yet.
+- Still pending: Atomic Component layout, nested body hierarchy, native unit
+  conversion API, raw `<flex>`, interpolated (trilinear/quadratic) dofs,
   builtin texture generation, further Phase E (OBJ parser throughput,
   parallel per-mesh conversion), and Priority 3. Composed-stage physics
   validation needs no separate mode: stages loaded with composition (the

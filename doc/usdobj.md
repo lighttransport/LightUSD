@@ -290,6 +290,28 @@ OBJ coordinates must agree with the rig's bind space. The importer does not
 author `primvars:skel:geomBindTransform`, so USD's identity fallback applies
 unless the containing asset authors a suitable transform.
 
+`lightusd.skel.bind_skin` authors this binding on an imported mesh after
+checking every joint index against the supplied skeleton:
+
+```python
+import lightusd
+from lightusd import skel
+
+stage = lightusd.load("character.usda")
+mesh = next(p for p in stage if p.type_name == "Mesh")
+skel.bind_skin(stage, mesh.path, "/Rig/Skeleton",
+               joint_remap={0: "root", 1: "root/child"},   # OBJ joint id -> joint
+               geom_bind_transform=[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+```
+
+It applies SkelBindingAPI, `skel:skeleton`, an optional `skel:joints` subset
+(`joints=[...]`, which the indices then address) and
+`primvars:skel:geomBindTransform`. `joint_remap` maps source ids to indices or
+joint names; an id without a mapping or an index outside the joint order raises
+`ValueError` before anything is authored. Influences are kept exactly unless
+`max_influences` (keep the strongest per point) or `normalize` (unit weight sums)
+is requested. OpenUSD's UsdSkel resolves the result as a skinning target.
+
 Compose with LightUSD and export standard USD for downstream tools:
 
 ```python

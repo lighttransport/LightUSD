@@ -632,6 +632,26 @@ silently.
 - **Prismatic limits**: meters, unchanged.
 - MJCF `<compiler angle="degree|radian">` is honored when parsing source ranges.
 
+### Unit conversion
+
+Native imports author SI units (`metersPerUnit = 1`, `kilogramsPerUnit = 1`,
+which Newton requires). `lightusd.units.convert_units(stage,
+meters_per_unit=..., kilograms_per_unit=..., up_axis=...)` converts a stage in
+place, for example into a centimeter scene. Each attribute is scaled by its
+length/mass dimension: gprim sizes, points, widths, extents and translations
+(L); mass (M), density (M/L^3), diagonal and `newton:inertia` tensors (M L^2);
+joint frames, linear limits and linear drive/joint-state targets (L);
+linear drive stiffness/damping (M), linear force limits (M L); angular drive
+gains and torque limits, NewtonJointAPI armature/damping/friction for revolute
+joints (M L^2) with angles kept in degrees; gravity magnitude and Newton
+contact distances (L); deformable masses and thicknesses. Time samples are
+converted with defaults. An up-axis change prepends (or accumulates and
+removes) `xformOp:rotateX:upAxis` on root prims and rotates
+`physics:gravityDirection`. `mjc:*` attributes stay in MuJoCo model units;
+DOF quantities whose linear/angular kind is unknown are listed in
+`report.skipped`. Converting Menagerie models to cm/g and back reproduces
+every value to float precision.
+
 ### Best-effort and unsupported features
 
 These are converted on a best-effort basis and **emit a warning** (console /
