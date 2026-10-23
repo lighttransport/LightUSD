@@ -93,3 +93,36 @@ def test_exclude_with_world_filters_world_colliders():
     a = stage.prim_at('/World/Links/a')
     targets = a.relationship('physics:filteredPairs').targets
     assert targets and all(stage.prim_at(t).type_name == 'Plane' for t in targets)
+
+
+def test_nested_layout_follows_the_kinematic_tree():
+    import numpy as np
+    xml = _mjcf('<body name="a" pos="0 0 1" euler="0 0 30"><freejoint/><geom size=".1"/>'
+                '<body name="b" pos=".5 0 0" euler="10 0 0"><joint name="j1" axis="0 1 0"/><geom name="c" size=".05"/>'
+                '<site name="s" pos="0 0 .1"/>'
+                '<body name="c" pos="0 .5 0"><joint name="j2"/><geom size=".05"/></body></body></body>')
+    xml = xml.replace(b'</mujoco>', b'<tendon><spatial name="t"><site site="s"/><site site="s2"/></spatial></tendon></mujoco>')
+    xml = xml.replace(b'<site name="s" pos="0 0 .1"/>', b'<site name="s" pos="0 0 .1"/><site name="s2" pos=".1 0 0"/>')
+    flat = lightusd.load_bytes(xml, format='mjcf')
+    nested = lightusd._import(data=xml, format='mjcf', layout='nested')
+    for name, path in (('a', '/World/Links/a'), ('b', '/World/Links/a/b'), ('c', '/World/Links/a/b/c')):
+        assert np.asarray(nested.prim_at(path).world_transform()) == pytest.approx(
+            np.asarray(flat.prim_at(f'/World/Links/{name}').world_transform()), abs=1e-9)
+    # The geom named like a child link does not collide with it.
+    assert nested.prim_at('/World/Links/a/b').child('c').type_name == 'Xform'
+    assert nested.prim_at('/World/Joints/j2').relationship('physics:body1').targets == ('/World/Links/a/b/c',)
+    sites = nested.prim_at('/World/Tendons/t').relationship('mjc:path').targets
+    assert sites[0] == '/World/Links/a/b/s'
+    with pytest.raises(ValueError):
+        lightusd._import(data=xml, format='mjcf', layout='tree')
+
+
+def test_nested_layout_urdf_with_ghost_frame():
+    urdf = b'''<robot name="r"><link name="base"><inertial><mass value="1"/><inertia ixx="1" iyy="1" izz="1" ixy="0" ixz="0" iyz="0"/></inertial></link>
+      <link name="tool0"/><link name="tip"><inertial><mass value="1"/><inertia ixx="1" iyy="1" izz="1" ixy="0" ixz="0" iyz="0"/></inertial></link>
+      <joint name="f" type="fixed"><parent link="base"/><child link="tool0"/><origin xyz="1 0 0"/></joint>
+      <joint name="j" type="revolute"><parent link="tool0"/><child link="tip"/><origin xyz="0 1 0"/><axis xyz="0 0 1"/><limit lower="-1" upper="1"/></joint></robot>'''
+    stage = lightusd._import(data=urdf, format='urdf', layout='nested')
+    joint = stage.prim_at('/World/Joints/j')
+    tip = stage.prim_at(joint.relationship('physics:body1').targets[0])
+    assert tuple(round(v, 6) for v in tip.world_transform()[3][:3]) == (1, 1, 0)

@@ -267,6 +267,7 @@ def main():
     ap.add_argument("--menagerie", type=pathlib.Path,
                     help="test every <robot>/scene*.xml or top-level model XML")
     ap.add_argument("--profile", action="append", default=[])
+    ap.add_argument("--layout", default="flat", choices=("flat", "nested"))
     ap.add_argument("--format", default="usda", choices=("usda", "usdc"))
     ap.add_argument("--out", type=pathlib.Path)
     ap.add_argument("--limit", type=int, default=0)
@@ -311,7 +312,7 @@ def main():
                 started = time.perf_counter()
                 record = {}
                 try:
-                    stage = lightusd.import_mjcf(path, profile=profile)
+                    stage = lightusd.import_mjcf(path, profile=profile, layout=args.layout)
                     out = pathlib.Path(tmp) / f"{len(results)}-{path.stem}.{profile}.{args.format}"  # unique: USD caches layers by path
                     stage.save(str(out))
                     cand = _summary(_model_from_usd(newton, SolverMuJoCo, resolvers, out), np, True)

@@ -66,6 +66,9 @@ struct Options {
   // instead of one JSON value per scalar. Consumers must pass them to the
   // converter; JSON dumps then carry only `meshRef`.
   bool typed_meshes = false;
+  // URDF/MJCF link prims: "flat" (all under /World/Links) or "nested" (each
+  // dynamic link under its parent link, following the kinematic tree).
+  std::string layout = "flat";
   // OBJ import topology: "expanded" (split points per unique corner) or
   // "indexed" (source positions, face-varying indexed normals/UVs).
   std::string obj_topology = "expanded";

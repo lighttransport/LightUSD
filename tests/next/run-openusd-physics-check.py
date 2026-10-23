@@ -28,6 +28,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("inputs", nargs="+", type=pathlib.Path)
     ap.add_argument("--profile", action="append", default=[])
+    ap.add_argument("--layout", default="flat", choices=("flat", "nested"))
     args = ap.parse_args()
     profiles = args.profile or ["legacy", "newton", "openusd"]
 
@@ -42,7 +43,7 @@ def main():
             fmt = "urdf" if source.suffix.lower() == ".urdf" else "mjcf"
             for profile in profiles:
                 path = pathlib.Path(tmp) / f"{source.stem}.{profile}.usda"
-                lightusd._import(path=str(source), format=fmt, profile=profile).save(str(path))
+                lightusd._import(path=str(source), format=fmt, profile=profile, layout=args.layout).save(str(path))
                 stage = Usd.Stage.Open(str(path))
                 issues = UsdValidation.ValidationContext(validators).Validate(stage)
                 parsed = UsdPhysics.LoadUsdPhysicsFromRange(stage, ["/"])

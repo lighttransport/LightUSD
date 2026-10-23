@@ -245,10 +245,16 @@ avoid implementing a second conversion or validation engine in Python.
 - Physics-aware unit conversion (Priority 2.5): `lightusd.units.convert_units`
   (lengths, masses, inertia, joint frames/limits/drives by DOF kind, gravity,
   up axis); Python only - the native/C API does not expose it yet.
-- Still pending: Atomic Component layout, nested body hierarchy, native unit
-  conversion API, raw `<flex>`, interpolated (trilinear/quadratic) dofs,
-  builtin texture generation, further Phase E (OBJ parser throughput,
-  parallel per-mesh conversion), and Priority 3. Composed-stage physics
+- Nested body hierarchy: `layout="nested"` (opt-in).
+- OBJ parser throughput: tinyobjloader-c scanner speedups (31 MB OBJ 0.234 ->
+  0.165 s, byte-identical); fruitfly import 2.32 -> 1.75 s.
+- OBJ/MTL export (Priority 3): `lightusd.objexport.export_obj` with world or
+  local space, polygon/triangle topology, MTL from UsdPreviewSurface and
+  optional `vw`, verified by import round trips.
+- Still pending: Atomic Component layout, native unit conversion API, raw
+  `<flex>`, interpolated (trilinear/quadratic) dofs,
+  builtin texture generation, parallel per-mesh conversion, and the rest of
+  Priority 3 (mapped large-file input, cancellation and progress callbacks). Composed-stage physics
   validation needs no separate mode: stages loaded with composition (the
   default) validate their composed prims and targets (covered by a test).
 

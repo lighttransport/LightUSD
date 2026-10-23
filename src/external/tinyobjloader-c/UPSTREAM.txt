@@ -47,3 +47,12 @@ the generated zig-zag case in test_obj_large.
 Local MTL precedence: `d` (dissolve) is authoritative over `Tr` regardless of
 line order, matching the C++ loader; `dissolve_set` records it. Covered by the
 Python MTL material tests.
+
+Local scanner speedups (results unchanged): `tobj_memcpy`/`tobj_memset` use the
+GCC/Clang builtins, `tobj_scan_double` scans integer and fraction digits in
+separate loops with an 8-digit SWAR step once the mantissa has started
+(little-endian GCC/Clang), and vertex reals are scanned in place instead of
+after a separate tokenizing pass (a number must still end at whitespace or the
+end of the line). Parsed arrays and errors are byte-identical on 400 Menagerie
+OBJ files and generated edge-case numbers; a 31 MB OBJ parses in 0.165 s
+instead of 0.234 s.

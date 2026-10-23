@@ -52,6 +52,11 @@ lightusd_status Options(const lightusd_import_options* in, ia::Options* out) {
           return Fail(LIGHTUSD_ERR_INVALID_ARG,
                       "profile must be newton, openusd or legacy");
       }
+      else if (key == "layout" && v.is_string()) {
+        out->layout = v.get<std::string>();
+        if (out->layout != "flat" && out->layout != "nested")
+          return Fail(LIGHTUSD_ERR_INVALID_ARG, "layout must be flat or nested");
+      }
       else if (key == "obj_topology" && v.is_string()) {
         out->obj_topology = v.get<std::string>();
         if (out->obj_topology != "expanded" && out->obj_topology != "indexed")

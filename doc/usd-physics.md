@@ -632,6 +632,18 @@ silently.
 - **Prismatic limits**: meters, unchanged.
 - MJCF `<compiler angle="degree|radian">` is honored when parsing source ranges.
 
+### Link layout
+
+`layout="nested"` (Python `import_urdf/import_mjcf(..., layout="nested")`, C
+`settings_json` `"layout"`, CLI `--layout nested`) authors each dynamic link
+as a child prim of its parent link, following the kinematic tree as
+urdf-usd-converter and mujoco-usd-converter do, with parent-relative
+transforms. Links attached to the world or to a static link stay directly
+under `/World/Links`; joints, sites, tendons, equalities and filters target the
+nested paths. World transforms equal the default `flat` layout; OpenUSD's
+validators and UsdPhysics parser see the same bodies and shapes, and Newton's
+comparison passes on sampled Menagerie models in both layouts.
+
 ### Unit conversion
 
 Native imports author SI units (`metersPerUnit = 1`, `kilogramsPerUnit = 1`,

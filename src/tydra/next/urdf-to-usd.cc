@@ -155,11 +155,70 @@ static bool ConvertPayload(
   std::map<std::string, urdf_detail::Matrix4> link_worlds;                 // by source name
   std::map<std::string, std::set<std::string>> link_children;  // by USD name
   std::set<std::string> used_links;
-  for (size_t i = 0; i < links.size(); ++i) {
+  // layout="nested": each dynamic link is a child prim of its parent link
+  // (the kinematic tree, as the reference converters write it), with a
+  // parent-relative transform. Link names then hold paths relative to
+  // /World/Links. Links under the world or a static link stay top-level.
+  const bool nested = JsonString(root, "layout", "flat") == "nested";
+  std::vector<size_t> order(links.size());
+  for (size_t i = 0; i < links.size(); ++i) order[i] = i;
+  std::vector<std::string> nested_names(links.size());
+  std::map<std::string, std::string> nested_parent;  // source -> parent source
+  if (nested) {
+    std::map<std::string, size_t> index_of;
+    std::set<std::string> static_sources;
+    for (size_t i = 0; i < links.size(); ++i) {
+      const std::string source = JsonString(links[i], "name", "link_" + std::to_string(i));
+      index_of[source] = i;
+      bool is_static = false;
+      ReadBool(links[i], "static", &is_static);
+      if (is_static) static_sources.insert(source);
+    }
+    for (const Json &joint : joints) {
+      const std::string child = JsonString(joint, "child"), parent = JsonString(joint, "parent");
+      if (!child.empty() && index_of.count(parent) && !static_sources.count(parent) &&
+          !static_sources.count(child) && !nested_parent.count(child))
+        nested_parent[child] = parent;
+    }
+    // Parents first; a cycle (invalid input) falls back to source order.
+    order.clear();
+    std::vector<int> state(links.size(), 0);
+    for (size_t i = 0; i < links.size(); ++i) {
+      std::vector<size_t> chain;
+      for (size_t k = i; state[k] == 0;) {
+        state[k] = 1;
+        chain.push_back(k);
+        const std::string source = JsonString(links[k], "name", "link_" + std::to_string(k));
+        auto up = nested_parent.find(source);
+        if (up == nested_parent.end()) break;
+        k = index_of[up->second];
+      }
+      for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+        state[*it] = 2;
+        order.push_back(*it);
+      }
+    }
+    std::map<std::string, std::string> rel_of;
+    for (size_t i : order) {
+      const std::string source = JsonString(links[i], "name", "link_" + std::to_string(i));
+      const std::string name = Unique(source, "link", &used_links);
+      auto up = nested_parent.find(source);
+      std::string rel = name;
+      if (up != nested_parent.end() && rel_of.count(up->second)) {
+        rel = rel_of[up->second] + "/" + name;
+        link_children[rel_of[up->second]].insert(name);  // geometry must not take it
+      } else {
+        nested_parent.erase(source);
+      }
+      rel_of[source] = rel;
+      nested_names[i] = rel;
+    }
+  }
+  for (size_t i : order) {
     const Json &link = links[i];
     const std::string source =
         JsonString(link, "name", "link_" + std::to_string(i));
-    const std::string name = Unique(source, "link", &used_links);
+    const std::string name = nested ? nested_names[i] : Unique(source, "link", &used_links);
     link_names[source] = name;
     const std::string path = "/World/Links/" + name;
     tn::PrimSpec *prim = Define(&layer, path, "Xform");
@@ -171,8 +230,13 @@ static bool ConvertPayload(
     // floor/ground geoms) is a static collider, not a dynamic body.
     bool is_static = false;
     ReadBool(link, "static", &is_static);
-    SetTransformFromJson(prim, link);
     link_worlds[source] = MatrixFromArray(JsonDoubles(link, "matrix"));
+    auto nested_up = nested ? nested_parent.find(source) : nested_parent.end();
+    if (nested_up != nested_parent.end())
+      SetTransform(prim, MultiplyRowMajor(link_worlds[source],
+                                          InverseRigid(link_worlds[nested_up->second])));
+    else
+      SetTransformFromJson(prim, link);
     if (is_static) static_links.insert(source);
     // Non-legacy profiles: the synthetic world link is a plain static Xform
     // holding static colliders, not a disabled rigid body (Newton and the

@@ -209,15 +209,20 @@ static bool TOBJ_T(opt_push)(tobj_vec *v, size_t comps, size_t vidx,
 static bool TOBJ_T(read_vertex_reals)(TOBJ_T(tobj_builder) *b, tobj_cursor *c,
                                double *values, size_t cap, size_t minimum,
                                size_t *count) {
-  const char *p;
-  size_t n;
   *count = 0;
-  while (tobj_next_token(c, &p, &n)) {
-    const char *end = p + n, *first = p;
-    if (first < end && (*first == '+' || *first == '-')) ++first;
+  /* Scan numbers in place (no separate tokenizing pass); a number must end
+   * at whitespace or the end of the line, exactly as a whole token. */
+  for (;;) {
+    tobj_skip_space(&c->p, c->end);
+    if (c->p >= c->end || *c->p == '#') break;
+    const char *p = c->p, *first = p, *line_end = c->end;
+    if (first < line_end && (*first == '+' || *first == '-')) ++first;
     double value;
-    if (first == end || (!tobj_is_digit(*first) && *first != '.') ||
-        !tobj_scan_double(&p, end, &value) || p != end ||
+    const bool number = first < line_end && (tobj_is_digit(*first) || *first == '.') &&
+                        tobj_scan_double(&p, line_end, &value);
+    if (number) c->p = p;
+    else while (c->p < c->end && !tobj_is_space(*c->p)) c->p++;
+    if (!number || (p < line_end && !tobj_is_space(*p)) ||
         !(value <= DBL_MAX && value >= -DBL_MAX) ||
         (sizeof(TOBJ_REAL) == sizeof(float) &&
          !(value <= FLT_MAX && value >= -FLT_MAX)))

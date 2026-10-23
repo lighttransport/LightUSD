@@ -5173,7 +5173,7 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
 
   (*payload) = {{"name", Attr(root, "model", input_filename.stem().string())},
                 {"upAxis", opts.up_axis}, {"profile", opts.profile},
-                {"sourceFormat", "mjcf"},
+                {"layout", opts.layout}, {"sourceFormat", "mjcf"},
                 {"gravity", opts.up_axis == "Z" ? Json::array({0, 0, -1})
                                                 : Json::array({0, -1, 0})}};
   // Assign the large arrays by move (a braced list would copy them).
@@ -5776,7 +5776,7 @@ bool BuildURDF(const pugi::xml_node& root, const std::string& source,
   for (auto& m : *active_materials) materials.push_back(m);
   *payload = Json{{"name", Attr(root, "name", "robot")},
                   {"upAxis", opts.up_axis}, {"profile", opts.profile},
-                  {"sourceFormat", "urdf"},
+                  {"layout", opts.layout}, {"sourceFormat", "urdf"},
                   {"gravity", opts.up_axis == "Z" ? Json::array({0, 0, -1})
                                                   : Json::array({0, -1, 0})}};
   // Assign the large arrays by move (a braced list would copy them).

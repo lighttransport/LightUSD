@@ -37,6 +37,7 @@ void Help() {
          "BYTES\n"
          "         --max-input BYTES --max-depth 1..1024 "
          "--unsupported-policy warn|error|preserve\n"
+         "         --layout flat|nested\n"
          "         --profile newton|openusd|legacy (next-core writer; the "
          "legacy writer always emits legacy)\n";
 }
@@ -120,6 +121,11 @@ int main(int argc, char** argv) {
       if (opts.profile != "newton" && opts.profile != "openusd" &&
           opts.profile != "legacy")
         err = "--profile expects newton, openusd or legacy";
+    }
+    else if (arg == "--layout") {
+      opts.layout = value();
+      if (opts.layout != "flat" && opts.layout != "nested")
+        err = "--layout expects flat or nested";
     }
     else if (arg == "-o" || arg == "--output")
       output = value();

@@ -325,6 +325,26 @@ The exported USD contains geometry and skin primvars without requiring an OBJ
 reader in the consuming application. Loading skin data does not itself evaluate
 skeletal animation or run a deformable-body simulation.
 
+## Exporting USD meshes to OBJ/MTL
+
+`lightusd.objexport.export_obj(stage, "out.obj")` writes every Mesh (or the
+`prims` given) into one OBJ plus `out.mtl`:
+
+- points in world space (default) or each mesh's local space
+  (`world_space=False`); normals use the inverse-transpose;
+- normals and UVs honor USD interpolation (vertex, faceVarying, uniform,
+  constant) and `:indices`; identical values are shared;
+- polygons are kept unless `triangulate=True` (fan);
+- mesh and `materialBind` GeomSubset bindings become `usemtl` groups, and
+  UsdPreviewSurface inputs become `Kd`, `d`, `Ke`, `Ni`, `Pr`, `Pm` and
+  `map_Kd` (`materials=False` skips the MTL);
+- `primvars:skel:jointIndices/jointWeights` become zero-based `vw` rows
+  (`skin_weights=False` omits them).
+
+Importing the result reproduces per-corner positions, UVs and skin weights.
+The helper is pure Python (numpy speeds it up when installed; a 400k-vertex
+Menagerie robot exports in about 2 s).
+
 ## Composition and native APIs
 
 The next-core layer loader used by Python supports OBJ references, payloads and

@@ -40,17 +40,28 @@
 /* [2] libc-independent mem helpers                                        */
 /* ======================================================================= */
 
+/* GCC/Clang builtins lower to inline moves or the memcpy/memset symbols that
+ * freestanding toolchains are required to provide; the byte loops remain for
+ * other compilers. */
 static void *tobj_memcpy(void *dst, const void *src, size_t n) {
+#if defined(__GNUC__) || defined(__clang__)
+  return n ? __builtin_memcpy(dst, src, n) : dst;
+#else
   unsigned char *d = (unsigned char *)dst;
   const unsigned char *s = (const unsigned char *)src;
   for (size_t i = 0; i < n; i++) d[i] = s[i];
   return dst;
+#endif
 }
 
 static void *tobj_memset(void *dst, int c, size_t n) {
+#if defined(__GNUC__) || defined(__clang__)
+  return n ? __builtin_memset(dst, c, n) : dst;
+#else
   unsigned char *d = (unsigned char *)dst;
   for (size_t i = 0; i < n; i++) d[i] = (unsigned char)c;
   return dst;
+#endif
 }
 
 static inline int tobj_memcmp(const void *a, const void *b, size_t n) {
@@ -446,6 +457,32 @@ static bool tobj_match_ci(const char **pp, const char *end, const char *word) {
   return true;
 }
 
+/* Eight ASCII digits at p (little-endian SWAR, as in fast_float): true and
+ * their value when all eight are digits. */
+static bool tobj_digits8(const char *p, const char *end, uint32_t *value) {
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__BYTE_ORDER__) && \
+    __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+  if (end - p < 8) return false;
+  uint64_t v;
+  __builtin_memcpy(&v, p, 8);
+  if (((v & 0xF0F0F0F0F0F0F0F0ull) |
+       (((v + 0x0606060606060606ull) & 0xF0F0F0F0F0F0F0F0ull) >> 4)) !=
+      0x3333333333333333ull)
+    return false;
+  v -= 0x3030303030303030ull;
+  v = (v * 10) + (v >> 8);
+  v = (((v & 0x000000FF000000FFull) * 0x000F424000000064ull) +
+       (((v >> 16) & 0x000000FF000000FFull) * 0x0000271000000001ull)) >> 32;
+  *value = (uint32_t)v;
+  return true;
+#else
+  (void)p;
+  (void)end;
+  (void)value;
+  return false;
+#endif
+}
+
 /* Parse a (possibly signed) floating point token. Maps non-finite words to
  * finite OBJ-friendly values (nan->0, +/-inf->+/-DBL_MAX). */
 static bool tobj_scan_double(const char **pp, const char *end, double *out) {
@@ -484,28 +521,53 @@ static bool tobj_scan_double(const char **pp, const char *end, double *out) {
   bool any_digit = false;
   bool seen_dot = false;
 
-  for (; p < end; p++) {
-    char c = *p;
-    if (tobj_is_digit(c)) {
+  /* Integer part, then fraction: the same accumulation as one loop with a
+   * seen-dot flag, without testing it per digit. Leading zeros are not
+   * significant (they only count as fraction digits after the dot). */
+  for (; p < end && tobj_is_digit(*p); p++) {
+    any_digit = true;
+    uint32_t eight;
+    if (mant_digits > 0 && mant_digits <= 11 && tobj_digits8(p, end, &eight)) {
+      mant = mant * 100000000u + eight;
+      mant_digits += 8;
+      p += 7;
+      continue;
+    }
+    const unsigned digit = (unsigned)(*p - '0');
+    if (mant_digits == 0 && digit == 0) continue;
+    if (mant_digits < 19) {
+      mant = mant * 10u + digit;
+      mant_digits++;
+    } else {
+      extra_exp++; /* too many significant digits: keep magnitude */
+    }
+  }
+  if (p < end && *p == '.') {
+    seen_dot = true;
+    p++;
+    for (; p < end && tobj_is_digit(*p); p++) {
       any_digit = true;
-      if (mant_digits == 0 && c == '0') {
-        if (seen_dot) ++frac_digits;
+      uint32_t eight;
+      if (mant_digits > 0 && mant_digits <= 11 && tobj_digits8(p, end, &eight)) {
+        mant = mant * 100000000u + eight;
+        mant_digits += 8;
+        frac_digits += 8;
+        p += 7;
+        continue;
+      }
+      const unsigned digit = (unsigned)(*p - '0');
+      if (mant_digits == 0 && digit == 0) {
+        ++frac_digits;
         continue;
       }
       if (mant_digits < 19) {
-        mant = mant * 10u + (uint64_t)(c - '0');
+        mant = mant * 10u + digit;
         mant_digits++;
-        if (seen_dot) frac_digits++;
-      } else {
-        /* too many significant digits: keep magnitude via exponent */
-        if (!seen_dot) extra_exp++;
+        frac_digits++;
       }
-    } else if (c == '.' && !seen_dot) {
-      seen_dot = true;
-    } else {
-      break;
     }
   }
+  (void)seen_dot;
   if (!any_digit) return false;
 
   int64_t exp10 = 0;
