@@ -73,3 +73,24 @@ def Xform "Robot" { double3 xformOp:translate = (1, 2, 3)  uniform token[] xform
     robot = stage.prim_at('/Robot')
     assert list(robot['xformOpOrder']) == ['xformOp:translate']
     assert 'xformOp:rotateX:upAxis' not in robot.attributes
+
+
+def test_time_samples_scale_once_and_keep_declared_types():
+    stage = lightusd.loads('''#usda 1.0
+( upAxis = "Z" metersPerUnit = 1 )
+def Xform "R" {
+  def Sphere "s" { double radius.timeSamples = { 0: 1, 10: 2 } }
+  def Mesh "m" { half3[] points = [(1, 2, 3)] }
+  def PhysicsJoint "j" { float newton:armature = 1 }
+}
+''')
+    report = units.convert_units(stage, meters_per_unit=0.001)
+    sphere = stage.prim_at('/R/s')
+    assert dict(sphere.attribute('radius').timesamples) == pytest.approx({0: 1000, 10: 2000})
+    assert 'double radius =' not in stage.export_usda()  # no default is authored
+    mesh = stage.prim_at('/R/m')
+    assert mesh.attribute('points').type_name == 'half3[]'
+    assert np.asarray(mesh['points']).ravel() == pytest.approx([1000, 2000, 3000], rel=1e-3)
+    assert report.skipped == ['/R/j.newton:armature']
+    with pytest.raises(ValueError):
+        units.convert_units(stage, meters_per_unit=-1)

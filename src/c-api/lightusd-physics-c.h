@@ -51,6 +51,26 @@ LIGHTUSD_API lightusd_status lightusd_physics_snapshot_property(
 LIGHTUSD_API lightusd_status lightusd_physics_snapshot_relationship(
     const lightusd_physics_snapshot*, size_t record, size_t relationship,
     lightusd_sv* name, lightusd_strlist** targets);
+
+/* Physics-aware unit conversion, in place (the native lightusd.units).
+ * Attributes are scaled by L^a * M^b (L = old/new metersPerUnit, M = old/new
+ * kilogramsPerUnit) for their length/mass dimension: gprim sizes, points,
+ * extents, translations, mass properties, joint frames, linear limits, drives,
+ * joint state, gravity, density, NewtonJointAPI/NewtonMassAPI and deformable
+ * masses. Angles stay in degrees and mjc:* keeps MuJoCo units. Time samples
+ * convert with defaults. A different up_axis ("Y"/"Z") prepends
+ * xformOp:rotateX:upAxis to the root prims (a reverse conversion removes it)
+ * and rotates PhysicsScene gravity directions. meters_per_unit /
+ * kilograms_per_unit of 0 and a NULL/empty up_axis keep the stage's value
+ * (unauthored: 0.01 / 1 / "Y"). report and skipped may be NULL; skipped lists
+ * "<prim>.<attr>" DOF attributes whose linear/angular kind is unknown. */
+typedef struct lightusd_unit_conversion {
+  double length_scale, mass_scale;
+  size_t converted, rotated_roots;
+} lightusd_unit_conversion;
+LIGHTUSD_API lightusd_status lightusd_stage_convert_units(lightusd_stage*,
+    double meters_per_unit, double kilograms_per_unit, const char* up_axis,
+    lightusd_unit_conversion* report, lightusd_strlist** skipped);
 #ifdef __cplusplus
 }
 #endif

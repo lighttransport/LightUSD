@@ -115,8 +115,64 @@ void NativeQuery() {
   auto values = immutable.as_double_array();
   Check(values.size() == 200000 && values[199999] == 42, "native array ownership");
 }
+void CConvertUnits() {
+  const char* text = R"(#usda 1.0
+(
+  upAxis = "Z"
+  metersPerUnit = 1
+)
+def PhysicsScene "Scene" { vector3f physics:gravityDirection = (0, 0, -1) }
+def Xform "Robot" {
+  matrix4d xformOp:transform = ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (1, 2, 3, 1))
+  uniform token[] xformOpOrder = ["xformOp:transform"]
+  def Sphere "Ball" (prepend apiSchemas = ["PhysicsMassAPI"]) {
+    double radius.timeSamples = {0: 1, 10: 2}
+    float physics:mass = 2
+  }
+  def PhysicsPrismaticJoint "Slide" { float physics:upperLimit = 0.5  float drive:linear:physics:stiffness = 4 }
+  def PhysicsJoint "Generic" { float newton:armature = 1 }
+}
+)";
+  lightusd_stage* stage = nullptr;
+  Check(lightusd_stage_load_from_memory(reinterpret_cast<const uint8_t*>(text), std::strlen(text), nullptr, &stage) == LIGHTUSD_OK, "load unit stage");
+  lightusd_unit_conversion report{};
+  lightusd_strlist* skipped = nullptr;
+  Check(lightusd_stage_convert_units(stage, 0.01, 0.001, "Y", &report, &skipped) == LIGHTUSD_OK, "convert units");
+  Check(report.length_scale == 100 && report.mass_scale == 1000 && report.rotated_roots == 2, "conversion report");
+  Check(lightusd_strlist_size(skipped) == 1 && Same(lightusd_strlist_get(skipped, 0), "/Robot/Generic.newton:armature"),
+        "unknown DOF kind is reported");
+  lightusd_strlist_destroy(skipped);
+  auto number = [&](const char* path, const char* name, size_t i) {
+    lightusd_value_view view{};
+    Check(lightusd_attr_get(lightusd_stage_prim_at_path(stage, path), name, &view) == LIGHTUSD_OK, name);
+    return view.storage == LIGHTUSD_COMP_FLOAT32 ? double(static_cast<const float*>(view.data)[i])
+                                                 : static_cast<const double*>(view.data)[i];
+  };
+  Check(number("/Robot", "xformOp:transform", 12) == 100 && number("/Robot", "xformOp:transform", 14) == 300 &&
+        number("/Robot", "xformOp:transform", 0) == 1, "matrix translation scales, rotation does not");
+  Check(number("/Robot/Ball", "physics:mass", 0) == 2000, "mass scales with M");
+  Check(number("/Robot/Slide", "physics:upperLimit", 0) == 50 &&
+        number("/Robot/Slide", "drive:linear:physics:stiffness", 0) == 4000, "linear DOF dimensions");
+  Check(number("/Scene", "physics:gravityDirection", 1) == -1 && number("/Scene", "physics:gravityDirection", 2) == 0,
+        "gravity follows the new up axis");
+  const lightusd_prim ball = lightusd_stage_prim_at_path(stage, "/Robot/Ball");
+  lightusd_value_view view{};
+  double time = 0;
+  Check(lightusd_attr_get(ball, "radius", &view) == LIGHTUSD_ERR_NOT_FOUND, "no default authored for sampled radius");
+  Check(lightusd_attr_timesample_at(ball, "radius", 1, &time, &view) == LIGHTUSD_OK && time == 10 &&
+        static_cast<const double*>(view.data)[0] == 200, "time samples scale once");
+  Check(lightusd_stage_convert_units(stage, -1, 0, nullptr, nullptr, nullptr) == LIGHTUSD_ERR_INVALID_ARG &&
+        lightusd_stage_convert_units(stage, 0, 0, "X", nullptr, nullptr) == LIGHTUSD_ERR_INVALID_ARG,
+        "invalid targets rejected");
+  // Back to Z-up meters: the up-axis rotation op is removed again.
+  Check(lightusd_stage_convert_units(stage, 1, 1, "Z", &report, nullptr) == LIGHTUSD_OK, "convert back");
+  Check(!lightusd_prim_has_property(lightusd_stage_prim_at_path(stage, "/Robot"), "xformOp:rotateX:upAxis") &&
+        number("/Robot/Ball", "physics:mass", 0) == 2, "round trip restores the stage");
+  lightusd_stage_destroy(stage);
+}
 int main() {
   CQuery();
   NativeQuery();
-  std::cout << "Typed physics snapshots, arrays, groups, time and limits passed\n";
+  CConvertUnits();
+  std::cout << "Typed physics snapshots, arrays, groups, time, limits and unit conversion passed\n";
 }

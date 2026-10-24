@@ -244,7 +244,10 @@ avoid implementing a second conversion or validation engine in Python.
   the UsdSkel binding; pruning/normalization are opt-in.
 - Physics-aware unit conversion (Priority 2.5): `lightusd.units.convert_units`
   (lengths, masses, inertia, joint frames/limits/drives by DOF kind, gravity,
-  up axis); Python only - the native/C API does not expose it yet.
+  up axis); native in `lightusd_stage_convert_units` (C) since 2026-10-24,
+  ~50x faster than the former Python pass and byte-identical on 6 Menagerie
+  models x 3 targets. The port fixed a double-scaled default authored for
+  time-sample-only attributes and kept declared types (`half3[]`).
 - Nested body hierarchy: `layout="nested"` (opt-in).
 - OBJ parser throughput: tinyobjloader-c scanner speedups (31 MB OBJ 0.234 ->
   0.165 s, byte-identical); fruitfly import 2.32 -> 1.75 s.
@@ -258,7 +261,7 @@ avoid implementing a second conversion or validation engine in Python.
   qualified `apiSchemas` metadata (`"prepend apiSchemas"`).
 - MJCF builtin 2D textures (checker/gradient/flat + marks) generated as PNG,
   pixel-identical to MuJoCo; written beside saved layers, packaged in USDZ.
-- Still pending: geometry/material library layers, native unit conversion API, raw
+- Still pending: geometry/material library layers, raw
   `<flex>`, interpolated (trilinear/quadratic) dofs,
   cube/skybox builtin textures, parallel per-mesh conversion and mapped input
   for URDF/MJCF mesh assets. Import progress/cancellation callbacks (C

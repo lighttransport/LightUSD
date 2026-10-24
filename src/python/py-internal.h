@@ -75,6 +75,7 @@ PyObject* lightusd_wrap_stage(lightusd_state*, lightusd_stage*);
 PyObject* lightusd_import_scene(PyObject*, PyObject*, PyObject*);
 PyObject* lightusd_import_report_object(lightusd_string*);
 PyObject* lightusd_query_physics(PyObject*, PyObject*, PyObject*);
+PyObject* lightusd_convert_units(PyObject*, PyObject*, PyObject*);
 PyObject* lightusd_physics_schema_definitions(PyObject*, PyObject*);
 PyObject* lightusd_validate_physics(PyObject*, PyObject*, PyObject*);
 

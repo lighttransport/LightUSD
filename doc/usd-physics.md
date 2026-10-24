@@ -702,6 +702,14 @@ DOF quantities whose linear/angular kind is unknown are listed in
 `report.skipped`. Converting Menagerie models to cm/g and back reproduces
 every value to float precision.
 
+The conversion is native: the C API exposes it as
+`lightusd_stage_convert_units(stage, meters_per_unit, kilograms_per_unit,
+up_axis, &report, &skipped)` in `lightusd-physics-c.h` (0 / NULL keep the
+stage's value), and the Python function calls it. A time-sampled attribute is
+scaled sample by sample without authoring a default, and each attribute keeps
+its declared type (for example `half3[]`). Converting fruitfly to cm/g takes
+0.03 s (the earlier pure-Python pass took 1.4 s).
+
 ### Best-effort and unsupported features
 
 These are converted on a best-effort basis and **emit a warning** (console /

@@ -329,3 +329,43 @@ PyObject* lightusd_physics_annotations(lightusd_state* st,
   }
   return result;
 }
+
+PyObject* lightusd_convert_units(PyObject* module, PyObject* args, PyObject* kwargs) {
+  static char* names[] = {"stage", "meters_per_unit", "kilograms_per_unit", "up_axis", NULL};
+  PyObject* stage_obj;
+  double mpu = 0, kpu = 0;
+  const char* up_axis = NULL;
+  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|ddz:_convert_units", names,
+                                   &stage_obj, &mpu, &kpu, &up_axis)) return NULL;
+  lightusd_state* st = lightusd_state_from_module(module);
+  if (!st) return NULL;
+  if (!PyObject_TypeCheck(stage_obj, (PyTypeObject*)st->StageType)) {
+    PyErr_SetString(PyExc_TypeError, "expected a lightusd.Stage");
+    return NULL;
+  }
+  lightusd_stage* stage = lightusd_stage_handle(stage_obj);
+  if (!stage) { PyErr_SetString(st->UsdError, "Stage is closed"); return NULL; }
+  lightusd_unit_conversion report;
+  lightusd_strlist* skipped = NULL;
+  lightusd_status status;
+  Py_BEGIN_ALLOW_THREADS
+  status = lightusd_stage_convert_units(stage, mpu, kpu, up_axis, &report, &skipped);
+  Py_END_ALLOW_THREADS
+  if (status == LIGHTUSD_ERR_INVALID_ARG) {
+    PyErr_SetString(PyExc_ValueError, lightusd_last_error());
+    return NULL;
+  }
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "convert_units");
+  const size_t count = lightusd_strlist_size(skipped);
+  PyObject* names_out = PyList_New(0);
+  for (size_t i = 0; names_out && i < count; ++i) {
+    PyObject* name = lightusd_sv_to_str(lightusd_strlist_get(skipped, i));
+    if (!name || PyList_Append(names_out, name) < 0) Py_CLEAR(names_out);
+    Py_XDECREF(name);
+  }
+  lightusd_strlist_destroy(skipped);
+  if (!names_out) return NULL;
+  return Py_BuildValue("(ddnnN)", report.length_scale, report.mass_scale,
+                       (Py_ssize_t)report.converted, (Py_ssize_t)report.rotated_roots, names_out);
+}
+

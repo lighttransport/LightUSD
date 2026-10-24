@@ -373,6 +373,8 @@ static PyMethodDef module_methods[] = {
      "Return generated native UsdPhysics schema/property descriptors."},
     {"_query_physics", (PyCFunction)(void (*)(void))lightusd_query_physics,
      METH_VARARGS | METH_KEYWORDS, "Query owned authored physics values through the native snapshot API."},
+    {"_convert_units", (PyCFunction)(void (*)(void))lightusd_convert_units,
+     METH_VARARGS | METH_KEYWORDS, "Physics-aware native unit conversion (in place)."},
     {"_import_scene", (PyCFunction)(void (*)(void))lightusd_import_scene,
      METH_VARARGS | METH_KEYWORDS, "Import OBJ, URDF or MJCF as a USD Stage."},
     {"load", (PyCFunction)(void (*)(void))mod_load,
