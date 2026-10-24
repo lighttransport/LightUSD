@@ -2910,6 +2910,56 @@ Full-scale limits of the all-45-district crate (`caldera_fullLOD2.usdc`,
 default `--max-crate-elements` and even 100M are rejected with the
 "raise the crate table limit" hint; at 300M it then needs a larger memory budget
 than 16 GiB (`Compressed integer workspace exceeds cumulative allocation
+budget` after 64 s / 7 GB), and at `--max-memory-mib 49152` it loads with
+**81.3 GiB peak RSS** and zero swap (147–152 s per run on a quiet host; the
+same input measured 357 s while another job held the machine). It is a
+one-at-a-time job: nothing else should be resident while it runs.
+
+Full-scale paired run on that crate (176,656,972 fields, 61,833,354 specs;
+1 warmup + 2 alternating pairs, zero process swap, peak RSS 81.33 GiB for both
+binaries):
+
+| Metric | baseline | candidate | delta |
+|---|---:|---:|---:|
+| Process wall, median | 152.1 s | 147.9 s | −2.8% |
+| CPU (user+sys), median | 331.8 s | 318.1 s | −4.1% |
+| CPU user / system | 217.9 / 113.9 s | 213.0 / 105.1 s | −2.3% / −7.7% |
+| Peak RSS | 81.33 GiB | 81.33 GiB | +0.002% |
+| `BuildStage` | 70.0 s | 65.0 s | −7.2% |
+| `properties` | 14.84 s | 13.90 s | −6.4% |
+| `bodies` | 12.17 s | 11.40 s | −6.3% |
+| `prims` | 4.57 s | 4.09 s | −10.6% |
+| `sort` | 3.87 s | 3.28 s | −15.2% |
+| `property_index` | 1838 ms | 1081 ms | −41% |
+| `ReadFieldsets` | 2273 ms | 2191 ms | −3.6% |
+| `ReadSpecs` | 1572 ms | 1529 ms | −2.7% |
+| `ReadPaths` | 10.23 s | 9.66 s | −5.5% |
+| `ReadFields` | 5.65 s | 6.23 s | +10% (one 7.11 s outlier; other run 5.36 s) |
+
+This is the case the change was aimed at: at 176.7M fields the per-field string
+churn is large enough to show up beyond the district's 12.6M, and the gain
+lands where the fieldset is consumed (`properties`, `bodies`, `prims`,
+`property_index`). Phases that never touch field names (`ReadFields`,
+`ReadPaths.fill`) move the other way inside noise. No memory cost: peak RSS is
+identical to within 2 MiB.
+
+Reproduce (quiet host, ~85 GiB resident, one run at a time):
+
+```sh
+python3 tests/next/bench-large-scene.py \
+  --baseline <baseline-lusdcat> --candidate build_ninja/lusdcat \
+  --manifest full45-parse.json --output /tmp/r-full45 \
+  --repeat 2 --warmup 1 --max-load 20 --min-available-gib 10 \
+  --max-process-swap-mib 512 --max-rss-growth 0.05
+```
+
+with `full45-parse.json` = one case `{mode: "parse", input:
+caldera_fullLOD2.usdc, args: ["--max-crate-elements", "300000000",
+"--max-memory-mib", "49152"]}`.
+3,014,654,530 B, 61,833,354 specs): it declares **176,656,972 fields**, so the
+default `--max-crate-elements` and even 100M are rejected with the
+"raise the crate table limit" hint; at 300M it then needs a larger memory budget
+than 16 GiB (`Compressed integer workspace exceeds cumulative allocation
 budget` after 64 s / 7 GB), and at `--max-memory-mib 49152` it loads in 357 s
 with **84.8 GiB peak RSS** and zero swap. A paired full45 run is therefore a
 one-at-a-time, ~85 GB-resident, multi-hour job (the §8 record has the same
