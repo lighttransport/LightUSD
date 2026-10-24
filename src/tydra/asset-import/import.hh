@@ -240,6 +240,13 @@ struct Mesh {
   std::vector<float> joint_weights;
   int32_t influences = 0;
 };
+// MuJoCo's analytic SDF plugins (mujoco.sdf.torus, bowl, gear, nut, bolt),
+// meshed as MuJoCo's compiler meshes a plugin mesh asset. `config` holds the
+// plugin instance's <config key value>; the grid must fit in max_bytes.
+bool IsMjcfSdfPlugin(const std::string& plugin);
+bool GenerateMjcfSdfMesh(const std::string& plugin, const std::map<std::string, std::string>& config,
+                         size_t max_bytes, Mesh* mesh, std::string* err);
+
 struct OBJ {
   std::vector<Mesh> meshes;
   Json materials = Json::array();

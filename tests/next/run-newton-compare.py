@@ -65,6 +65,28 @@ def _model_from_urdf(newton, solver, path):
     return builder.finalize(device="cpu")
 
 
+def _cpu_sdf_fallback(path, notes):
+    """Newton builds NewtonSDFCollisionAPI SDFs on CUDA only; without a CUDA
+    device, compare those colliders as the meshes the SDF is built from."""
+    import warp as wp
+    if wp.get_cuda_device_count() > 0:
+        return path
+    from pxr import Usd
+    stage = Usd.Stage.Open(str(path))
+    swapped = 0
+    for prim in stage.Traverse():
+        if "NewtonSDFCollisionAPI" in prim.GetAppliedSchemas():
+            prim.RemoveAppliedSchema("NewtonSDFCollisionAPI")
+            prim.AddAppliedSchema("NewtonMeshCollisionAPI")
+            swapped += 1
+    if not swapped:
+        return path
+    out = path.with_name(path.stem + ".cpu-mesh" + path.suffix)
+    stage.GetRootLayer().Export(str(out))
+    notes.append(f"no CUDA device: {swapped} NewtonSDFCollisionAPI collider(s) compared as meshes")
+    return out
+
+
 def _model_from_usd(newton, solver, resolvers, path):
     builder = newton.ModelBuilder()
     solver.register_custom_attributes(builder)
@@ -570,8 +592,9 @@ def main():
                         stage = lightusd.import_mjcf(path, profile=profile, layout=args.layout)
                     out = pathlib.Path(tmp) / f"{len(results)}-{path.stem}.{profile}.{args.format}"  # unique: USD caches layers by path
                     stage.save(str(out))
-                    cand = _summary(_model_from_usd(newton, SolverMuJoCo, resolvers, out), np, True)
                     notes = []
+                    out = _cpu_sdf_fallback(out, notes)
+                    cand = _summary(_model_from_usd(newton, SolverMuJoCo, resolvers, out), np, True)
                     issues = compare(ref, cand, np, oracle, notes)
                     record["issues"] = issues
                     if notes:

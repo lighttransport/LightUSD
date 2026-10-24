@@ -553,3 +553,37 @@ def test_openusd_collision_groups_follow_mujoco_bitmasks():
                                             format='mjcf', profile='openusd')
                 if p.type_name == 'PhysicsCollisionGroup']
     assert not [p for p in lightusd.load_bytes(_mjcf(geoms), format='mjcf') if p.type_name == 'PhysicsCollisionGroup']
+
+
+_SDF_TORUS = ('<extension><plugin plugin="mujoco.sdf.torus"><instance name="torus">'
+              '<config key="radius1" value="0.35"/><config key="radius2" value="0.15"/>'
+              '</instance></plugin></extension>'
+              '<asset><mesh name="torus"><plugin instance="torus"/></mesh></asset>')
+
+
+def _sdf_collider(stage):
+    return next(p for p in stage if p.type_name == 'Mesh' and 'physics:collisionEnabled' in p.attributes)
+
+
+def test_mjcf_sdf_plugin_mesh_and_sdf_collider():
+    xml = _mjcf('<body name="a"><freejoint/><geom type="sdf" mesh="torus"><plugin instance="torus"/>'
+                '</geom></body>', _SDF_TORUS)
+    stage = lightusd.load_bytes(xml, format='mjcf')
+    col = _sdf_collider(stage)
+    # MuJoCo 3.16 meshes this torus to 49896 vertices / 99792 triangles.
+    assert (len(col['points']), len(col['faceVertexIndices']) // 3) == (49896, 99792)
+    apis = _apis(col)
+    assert 'NewtonSDFCollisionAPI' in apis and 'NewtonMeshCollisionAPI' not in apis
+    assert col['physics:approximation'] == 'none'
+    openusd = _sdf_collider(lightusd._import(data=xml, format='mjcf', profile='openusd'))
+    assert not [a for a in _apis(openusd) if a.startswith('Newton')]
+    assert openusd['physics:approximation'] == 'none'
+
+
+def test_mjcf_sdf_unknown_plugin_mesh_is_reported():
+    xml = _mjcf('<body name="a"><freejoint/><geom size=".1"/></body>',
+                '<extension><plugin plugin="vendor.sdf.blob"><instance name="b"/></plugin></extension>'
+                '<asset><mesh name="blob"><plugin instance="b"/></mesh></asset>')
+    with pytest.raises(Exception, match='cannot be generated'):
+        lightusd._import(data=xml, format='mjcf', unsupported_policy='error')
+    lightusd._import(data=xml, format='mjcf')  # warn policy: the unused asset is skipped

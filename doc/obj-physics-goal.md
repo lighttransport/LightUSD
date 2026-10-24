@@ -382,6 +382,18 @@ f121272e (2026-10-24; Menagerie Newton compare still 65/69). Fixed in the
   distinct pair, filtered pairs from MuJoCo's rule), parsed by OpenUSD's
   UsdPhysics (iit_softfoot 1 group, agility_cassie 3), validators clean.
 
+- MJCF SDF geoms (2026-10-24): `<geom type="sdf">` becomes a mesh collider
+  with NewtonSDFCollisionAPI (approximation none); MuJoCo's analytic SDF
+  plugin meshes are generated as MuJoCo's compiler does (port of
+  plugin/sdf distances + vendored MarchingCubeCpp `f03a1b3e`), identical
+  vertex/face counts. MuJoCo's model/plugin/sdf examples: decoder compare 6/6
+  (torus bowl gear nutbolt primitives cow), Newton compare 4/4 (no CUDA here:
+  the harness compares SDF colliders as meshes, since Newton builds SDFs on
+  CUDA only; Newton's add_mjcf drops these geoms, mass 0, while the USD
+  matches MuJoCo's masses). Open: mesh.xml's die.obj is a vertex-only point
+  cloud (MuJoCo meshes its convex hull; LightUSD rejects it), mug.xml needs
+  `asset_dirs` for its `../../mug` mesh.
+
 Reference specifications: [UsdPhysics](https://openusd.org/dev/api/usd_physics_page_front.html),
 [MJCF](https://mujoco.readthedocs.io/en/stable/XMLreference.html), and
 [Newton USD import](https://newton-physics.github.io/newton/latest/concepts/usd_parsing.html).

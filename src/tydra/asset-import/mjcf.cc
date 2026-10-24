@@ -1298,6 +1298,12 @@ bool LoadOBJ(const fs::path& filename, Mesh* mesh, std::string* err) {
 // for its visual, its collider and mass inference, and an OBJ's MTL
 // materials would be registered once per parse.
 thread_local std::map<std::pair<std::string, bool>, Mesh>* active_mesh_cache = nullptr;
+// Meshes MuJoCo generates from an SDF plugin (<mesh><plugin instance>), by
+// the synthetic path their MeshAsset carries.
+constexpr char kPluginMeshPrefix[] = "mjcf-plugin-mesh:";
+// Marks a <geom type="sdf"> after it is rewritten to a mesh geom.
+constexpr char kSdfGeomMarker[] = "lightusd-sdf";
+thread_local std::map<std::string, Mesh>* active_plugin_meshes = nullptr;
 
 bool LoadMeshFileUncached(const fs::path& filename, bool smoothnormal, Mesh* mesh,
                           std::string* err);
@@ -1489,6 +1495,13 @@ bool LoadMeshFile(const fs::path& filename, bool smoothnormal, Mesh* mesh,
 
 bool LoadMeshFileUncached(const fs::path& filename, bool smoothnormal, Mesh* mesh,
                           std::string* err) {
+  if (active_plugin_meshes && filename.string().rfind(kPluginMeshPrefix, 0) == 0) {
+    const auto found = active_plugin_meshes->find(filename.string());
+    if (found != active_plugin_meshes->end()) {
+      *mesh = found->second;
+      return true;
+    }
+  }
   const std::string ext = ToLower(filename.extension().string());
   if (ext == ".stl") return LoadBinarySTL(filename, smoothnormal, mesh, err);
   if (ext == ".obj" || ext == ".dae") return LoadOBJ(filename, mesh, err);
@@ -1691,10 +1704,66 @@ std::map<std::string, MeshAsset> CollectMujocoAssets(const pugi::xml_node& root,
   if (dir_attr.empty() && compiler) dir_attr = Attr(compiler, "assetdir");
   const fs::path mesh_dir = dir_attr.empty() ? base_dir : base_dir / dir_attr;
   const std::map<std::string, fs::path> index = BuildMeshIndex(base_dir);
+  // <extension><plugin plugin><instance name><config key value>.
+  std::map<std::string, std::pair<std::string, std::map<std::string, std::string>>> instances;
+  for (const auto& extension : Children(root, "extension"))
+    for (const auto& plugin : Children(extension, "plugin"))
+      for (const auto& instance : Children(plugin, "instance")) {
+        auto& entry = instances[Attr(instance, "name")];
+        entry.first = Attr(plugin, "plugin");
+        for (const auto& config : Children(instance, "config"))
+          entry.second[Attr(config, "key")] = Attr(config, "value");
+      }
 
   for (const auto& asset_node : Children(root, "asset")) {
     for (const auto& mesh_node : Children(asset_node, "mesh")) {
       const std::string file = Attr(mesh_node, "file");
+      const auto plugin_node = Child(mesh_node, "plugin");
+      if (file.empty() && plugin_node && active_plugin_meshes) {
+        // A mesh MuJoCo's compiler generates from an SDF plugin
+        // (mjCMesh::LoadSDF), by instance or by plugin with inline config.
+        const std::string name = Attr(mesh_node, "name");
+        std::string plugin = Attr(plugin_node, "plugin");
+        std::map<std::string, std::string> config;
+        const std::string instance = Attr(plugin_node, "instance");
+        if (!instance.empty()) {
+          const auto found = instances.find(instance);
+          if (found != instances.end()) {
+            plugin = found->second.first;
+            config = found->second.second;
+          }
+        }
+        for (const auto& c : Children(plugin_node, "config")) config[Attr(c, "key")] = Attr(c, "value");
+        Mesh mesh;
+        std::string why;
+        const size_t budget = active_reader->options.max_memory;
+        if (name.empty()) {
+          why = "a plugin mesh needs a name";
+        } else if (!IsMjcfSdfPlugin(plugin)) {
+          why = "plugin `" + plugin + "` is not one of MuJoCo's analytic SDF plugins";
+        } else if (GenerateMjcfSdfMesh(plugin, config, budget, &mesh, &why) &&
+                   active_reader->ChargeArray(mesh.positions.size() + mesh.normals.size() +
+                                                  mesh.indices.size(),
+                                              4, &why)) {
+          why.clear();
+          MeshAsset asset;
+          asset.path = kPluginMeshPrefix + name;
+          if (HasAttr(mesh_node, "inertia")) asset.inertia = ToLower(Attr(mesh_node, "inertia"));
+          (*active_plugin_meshes)[asset.path.string()] = std::move(mesh);
+          assets[name] = asset;
+          active_reader->Warn("MJCF mesh `" + name + "` generated from SDF plugin " + plugin,
+                              "mjcf.sdf_plugin_mesh");
+          continue;
+        }
+        if (!why.empty()) {
+          const std::string message = "MJCF mesh `" + name + "` cannot be generated: " + why;
+          if (active_reader->options.unsupported_policy == UnsupportedPolicy::Error)
+            active_reader->failure = message;
+          else
+            active_reader->Warn(message, "mjcf.sdf_plugin_unsupported");
+        }
+        continue;
+      }
       if (file.empty()) continue;
       std::string name = Attr(mesh_node, "name");
       if (name.empty()) name = fs::path(file).stem().string();
@@ -4852,6 +4921,11 @@ bool AppendGeomToLink(const pugi::xml_node& geom_node, const std::string& cc,
         if (!mat.empty()) col["material"] = mat;
         if (stats) stats->visuals++;
       }
+      if (geom_type == "mesh" && opts.profile != "legacy" && HasAttr(geom_node, kSdfGeomMarker)) {
+        // MuJoCo collides an sdf geom with the exact surface, not a hull.
+        col["approximation"] = "none";
+        col["newton"]["sdf"] = true;
+      }
       if (geom_type == "mesh") {
         const auto mesh_it = assets.find(Eff(geom_node, cls, "mesh"));
         if (mesh_it != assets.end() && mesh_it->second.maxhullvert > 0) {
@@ -5985,7 +6059,33 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
   }
 
   InlineMJCFDefaults(root);
+  // <geom type="sdf"> is a mesh geom whose collider MuJoCo evaluates as a
+  // signed distance field (NewtonSDFCollisionAPI in USD).
+  {
+    std::vector<pugi::xml_node> stack{root};
+    while (!stack.empty()) {
+      pugi::xml_node node = stack.back();
+      stack.pop_back();
+      for (auto child : node.children())
+        if (child.type() == pugi::node_element) stack.push_back(child);
+      if (std::string(node.name()) == "geom" && ToLower(Attr(node, "type")) == "sdf" &&
+          std::string(node.parent().name()) != "default") {
+        node.attribute("type").set_value("mesh");
+        node.append_attribute(kSdfGeomMarker).set_value("true");
+      }
+    }
+  }
+  std::map<std::string, Mesh> plugin_meshes;
+  struct PluginMeshScope {
+    std::map<std::string, Mesh>* previous = active_plugin_meshes;
+    explicit PluginMeshScope(std::map<std::string, Mesh>* m) { active_plugin_meshes = m; }
+    ~PluginMeshScope() { active_plugin_meshes = previous; }
+  } plugin_mesh_scope(&plugin_meshes);
   const auto assets = CollectMujocoAssets(root, input_filename.parent_path());
+  if (!active_reader->failure.empty()) {
+    if (err) *err = active_reader->failure;
+    return false;
+  }
   const auto hfields = CollectMujocoHFields(root, input_filename.parent_path());
   // MuJoCo merges every <worldbody> block (the local one plus any pulled in via
   // <include>) into a single world; visit them all, not just the first.

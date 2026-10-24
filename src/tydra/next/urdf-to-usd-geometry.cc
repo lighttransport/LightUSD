@@ -163,9 +163,15 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
   const Profile &profile = ActiveProfile();
   AddAPIs(prim, {"PhysicsCollisionAPI", "MjcCollisionAPI", "MjcImageableAPI",
                  "NewtonCollisionAPI"});
+  // MJCF sdf geoms: Newton builds an SDF from the mesh. NewtonSDFCollisionAPI
+  // and NewtonMeshCollisionAPI are alternative representations (Newton warns
+  // when both are applied).
+  bool sdf = false;
+  if (const Json *newton = JsonObject(src, "newton"))
+    if (mesh_collision && !profile.legacy) ReadBool(*newton, "sdf", &sdf);
   if (mesh_collision) {
-    AddAPIs(prim, {"PhysicsMeshCollisionAPI", "MjcMeshCollisionAPI",
-                   "NewtonMeshCollisionAPI"});
+    AddAPIs(prim, {"PhysicsMeshCollisionAPI", "MjcMeshCollisionAPI"});
+    AddAPI(prim, sdf ? "NewtonSDFCollisionAPI" : "NewtonMeshCollisionAPI");
   }
   Set(prim, "physics:collisionEnabled", tn::Value(true), "bool");
   if (mesh_collision) {
