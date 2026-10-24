@@ -1,0 +1,1 @@
+<robot name="r"><link name="a" x="1"><visual y="2"><geometry><capsule radius=".1" height=".2"/></geometry><z>t</z></visual></link><gazebo><a><b c="d">e</b></a></gazebo></robot>

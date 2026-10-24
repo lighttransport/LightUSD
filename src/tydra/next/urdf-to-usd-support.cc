@@ -224,6 +224,45 @@ void AppendWarn(std::string *warn, const std::string &message) {
 // PrimSpec authoring
 // ------------------------------------------------------------------
 
+void SetSourceDisplayName(tn::PrimSpec *prim, const std::string &source) {
+  if (!prim || source.empty() || ActiveProfile().legacy || source == prim->name()) return;
+  prim->meta().displayName() = source;
+  prim->meta().setDisplayNameAuthored(true);
+}
+
+// URDF elements/attributes without a USD mapping (urdfCustom payload
+// members) -> urdf:<attribute> strings, urdf:text and child Scopes, as
+// urdf-usd-converter stores "undefined" elements.
+void AddURDFCustom(tn::Layer *layer, const std::string &path, tn::PrimSpec *prim,
+                          const Json *custom, std::set<std::string> *siblings) {
+  if (!prim || !custom || !custom->is_object()) return;
+  auto attribute_name = [](const std::string &key) {
+    std::string out = "urdf:";
+    for (char c : key)
+      out.push_back(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == ':' ? c : '_');
+    return out;
+  };
+  if (const Json *attributes = JsonObject(*custom, "attributes"))
+    if (attributes->object_items())
+      for (const auto &member : *attributes->object_items())
+        if (member.value().is_string())
+          Set(prim, attribute_name(member.key), tn::Value(member.value().get<std::string>()), "string");
+  const std::string text = JsonString(*custom, "text");
+  if (!text.empty()) Set(prim, "urdf:text", tn::Value(text), "string");
+  if (const Json *elements = JsonArray(*custom, "elements")) {
+    for (const Json &element : *elements) {
+      const std::string tag = JsonString(element, "tag", "element");
+      const std::string name = ChildName(Sanitize(tag, "element"), siblings);
+      tn::PrimSpec *child = Define(layer, path + "/" + name, "Scope");
+      if (!child) continue;
+      SetSourceDisplayName(child, tag);
+      std::set<std::string> grandchildren;
+      AddURDFCustom(layer, path + "/" + name, child, &element, &grandchildren);
+    }
+  }
+}
+
+
 void AddAPI(tn::PrimSpec *prim, const std::string &schema) {
   if (!prim) return;
   if (!ActiveProfile().engine && IsEngineSchema(schema)) return;

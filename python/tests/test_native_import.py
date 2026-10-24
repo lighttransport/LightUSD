@@ -635,7 +635,9 @@ def test_typed_mesh_path_keeps_urdf_and_mjcf_geometry():
             b'<inertia ixx="1" iyy="1" izz="1" ixy="0" ixz="0" iyz="0"/></inertial>'
             b'<visual><geometry><box size="1 2 3"/></geometry></visual>'
             b'<visual><geometry><sphere radius=".5"/></geometry></visual></link></robot>')
-    meshes = [p for p in lightusd.load_bytes(urdf, format='urdf') if p.type_name == 'Mesh']
+    # (Tessellated primitive visuals are the legacy profile's form.)
+    legacy = lightusd._import(data=urdf, format='urdf', profile='legacy')
+    meshes = [p for p in legacy if p.type_name == 'Mesh']
     assert len(meshes) == 2 and all(len(m['points']) > 8 for m in meshes)
     mjcf = (b'<mujoco><worldbody><body name="b"><freejoint/>'
             b'<geom type="hfield" hfield="h"/></body></worldbody>'

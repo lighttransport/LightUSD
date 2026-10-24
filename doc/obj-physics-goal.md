@@ -296,14 +296,21 @@ f121272e (2026-10-24; Menagerie Newton compare still 65/69). Fixed in the
   only for `maxhullvert`; `<option iterations>` -> `newton:maxSolverIterations`;
   mesh `inertia`/`shellinertia` -> `newton:massModel`/`mjc:inertia`; material
   `newton:contactStiffness/contactDamping` from `solref`.
-- Open (not fixed): visible colliding geoms are two prims (MuJoCo's decoder
-  doubles ngeom); URDF root always welded (`add_usd(floating=True)` cannot
-  float it); URDF effort limit reaches Newton only through the MuJoCo
-  resolver; single-link URDF articulation root; `newton:contactGap` unauthored
-  (matches `add_mjcf`, not MuJoCo's 0); deprecated `mjc:*` aliases; sRGB/
-  shininess material conversion; `displayName`; frame `scale`/`massscale`
-  warning; `actuatorgroupdisable`; URDF `<gazebo>`/unknown elements,
-  `<capsule>` and primitive URDF visuals.
+- Second round: one prim per visible collider (1,953 fewer prims over 132
+  Menagerie/corpus models), no deprecated `mjc:*` aliases, linear MJCF
+  material colors and `roughness = 1 - shininess`, `displayName` for changed
+  names, `mjcf.frame_scale_unsupported`, `actuatorgroupdisable`, URDF
+  unknown elements as `urdf:*` scopes (the reference's `undefined.urdf`
+  layout), URDF `<capsule>` and native primitive visuals, no articulation root
+  on jointless URDFs. Legacy byte-identical; Newton compare 65/69; OpenUSD
+  validators 0 issues.
+- Kept as is (deliberate): the URDF root stays welded to the world (as
+  urdf-usd-converter and `add_urdf`'s default; dropping it makes `add_usd`
+  add a free joint); URDF effort reaches Newton only through the MuJoCo
+  resolver (`mjc:actuatorfrcrange`; Newton schemas have no joint effort
+  attribute and a zero-gain drive would change Newton's actuator mode);
+  `newton:contactGap` is unauthored without an MJCF `gap` (matches
+  `add_mjcf`).
 
 Reference specifications: [UsdPhysics](https://openusd.org/dev/api/usd_physics_page_front.html),
 [MJCF](https://mujoco.readthedocs.io/en/stable/XMLreference.html), and

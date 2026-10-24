@@ -176,7 +176,8 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
       Set(prim, "mjc:solmix", tn::Value(dvalue), "double", true);
     }
     if (ReadNumberFrom(src, "mjc", "margin", &dvalue)) {
-      Set(prim, "mjc:margin", tn::Value(dvalue), "double", true);
+      // mjc:margin/gap are deprecated aliases of newton:contactMargin/Gap.
+      if (profile.legacy) Set(prim, "mjc:margin", tn::Value(dvalue), "double", true);
       Set(prim, "newton:contactMargin",
           tn::Value(static_cast<float>(dvalue)), "float");
     } else if (ReadNumberFrom(src, "newton", "contactMargin", &dvalue)) {
@@ -184,7 +185,7 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
           tn::Value(static_cast<float>(dvalue)), "float");
     }
     if (ReadNumberFrom(src, "mjc", "gap", &dvalue)) {
-      Set(prim, "mjc:gap", tn::Value(dvalue), "double", true);
+      if (profile.legacy) Set(prim, "mjc:gap", tn::Value(dvalue), "double", true);
       Set(prim, "newton:contactGap", tn::Value(static_cast<float>(dvalue)),
           "float");
     } else if (ReadNumberFrom(src, "newton", "contactGap", &dvalue)) {
@@ -227,7 +228,7 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
         "double", true);
     const double margin =
         JsonNumberFrom(src, "mjc", "margin", kMjcfDefaultMargin);
-    Set(prim, "mjc:margin", tn::Value(margin), "double", true);
+    if (profile.legacy) Set(prim, "mjc:margin", tn::Value(margin), "double", true);
     // URDF has no contact margin/gap; an unauthored value keeps Newton's
     // builder defaults (as its URDF importer does) instead of forcing 0.
     double value = 0.0;
@@ -244,8 +245,6 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
   }
   if (mesh_collision) {
     int32_t hull = 0;
-    if (!profile.legacy && ReadIntFrom(src, "mjc", "maxhullvert", &hull))
-      Set(prim, "mjc:maxhullvert", tn::Value(hull), "int", true);
     // Non-legacy profiles leave an unlimited MJCF hull unauthored (MuJoCo's
     // decoder would otherwise cap it at the authored value).
     if (profile.legacy || ReadIntFrom(src, "newton", "maxHullVertices", &hull))
@@ -270,8 +269,18 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
       true);
   // `purpose=guide` hides the collider from default renders but keeps it
   // discoverable to schema-aware consumers (mujoco-usd-converter applies
-  // the same to non-visual MuJoCo geom groups).
-  SetToken(prim, "purpose", "guide", true);
+  // the same to non-visual MuJoCo geom groups). A collider that is also the
+  // geom's visual stays renderable and binds its look material.
+  bool visual = false;
+  if (!ReadBool(src, "visual", &visual) || !visual) {
+    SetToken(prim, "purpose", "guide", true);
+    return;
+  }
+  const std::string material = JsonString(src, "material");
+  if (!material.empty()) {
+    AddAPI(prim, "MaterialBindingAPI");
+    SetRel(prim, "material:binding", {"/World/Materials/" + Sanitize(material, "material")});
+  }
 }
 
 // MJCF geom rgba -> constant displayColor/displayOpacity (as
@@ -374,6 +383,11 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
   if (!prim) {
     if (err) *err = "Failed to add mesh `" + name + "`";
     return false;
+  }
+  SetSourceDisplayName(prim, JsonString(mesh_json, "name"));
+  {
+    std::set<std::string> children;
+    AddURDFCustom(layer, link_path + "/" + name, prim, JsonObject(mesh_json, "urdfCustom"), &children);
   }
   SetToken(prim, "subdivisionScheme", "none", true);
   Set(prim, "points",
@@ -548,6 +562,11 @@ bool AddNativeCollisionShapeFromJson(tn::Layer *layer,
     if (err) *err = "Failed to add collision shape `" + name + "`";
     return false;
   }
+  SetSourceDisplayName(prim, JsonString(shape_json, "name"));
+  {
+    std::set<std::string> children;
+    AddURDFCustom(layer, link_path + "/" + name, prim, JsonObject(shape_json, "urdfCustom"), &children);
+  }
   auto number = [&](const char *key, double fallback) {
     double value = fallback;
     ReadNumber(shape, key, &value);
@@ -569,6 +588,8 @@ bool AddNativeCollisionShapeFromJson(tn::Layer *layer,
   SetTransformFromJson(prim, shape_json);
   if (collision) {
     AddCollisionAPIs(prim, false, shape_json, mjcf_source);
+    bool visual = false;
+    if (ReadBool(shape_json, "visual", &visual) && visual) SetDisplayColorFromRGBA(prim, shape_json);
   } else {
     // Native visual-only shape: no CollisionAPI, so MuJoCo decodes a
     // contype=0 geom and Newton a visual shape.

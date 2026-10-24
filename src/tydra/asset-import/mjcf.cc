@@ -3823,6 +3823,13 @@ Json BuildMjcSceneJson(const pugi::xml_node& root) {
     vec("o_solref");
     vec("o_solimp");
     vec("o_friction");
+    if (HasAttr(option, "actuatorgroupdisable")) {
+      // Disabled actuator groups, MuJoCo's 0..30 bit range.
+      Json groups = Json::array();
+      for (double g : ParseDoubles(Attr(option, "actuatorgroupdisable")))
+        if (g >= 0 && g <= 30 && g == std::floor(g)) groups.push_back(static_cast<int>(g));
+      opt["actuatorgroupdisable"] = std::move(groups);
+    }
     if (!opt.empty()) ms["option"] = std::move(opt);
     if (const auto flag = Child(option, "flag")) {
       Json fl = Json::object();
@@ -4016,7 +4023,20 @@ void AddMujocoMaterialsJson(const pugi::xml_node& root,
     const std::string name = Attr(m_node, "name");
     if (name.empty()) continue;
     Json mat = {{"name", name}};
-    const auto rgba = ParseDoubles(Attr(m_node, "rgba"));
+    const bool legacy = !active_reader || active_reader->options.profile == "legacy";
+    auto rgba = ParseDoubles(Attr(m_node, "rgba"));
+    if (!legacy) {
+      // As mujoco-usd-converter: MuJoCo's material color (default white) is
+      // sRGB, UsdPreviewSurface's diffuseColor linear; roughness is
+      // 1 - shininess (default 0.5) unless set explicitly.
+      if (rgba.size() < 4) rgba = {1.0, 1.0, 1.0, 1.0};
+      for (size_t i = 0; i < 3; ++i) {
+        const double c = rgba[i];
+        rgba[i] = c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+      }
+      if (!HasAttr(m_node, "roughness"))
+        mat["roughness"] = 1.0 - ParseDoubleAttr(m_node, "shininess", 0.5);
+    }
     if (rgba.size() >= 4)
       mat["rgba"] = Json::array({rgba[0], rgba[1], rgba[2], rgba[3]});
     if (HasAttr(m_node, "metallic"))
@@ -4424,7 +4444,13 @@ bool AppendGeomToLink(const pugi::xml_node& geom_node, const std::string& cc,
       if (err) *err = active_reader->failure;
       return false;
     }
-    if (visible || !collides) {
+    // A visible collider is one prim carrying both roles (as
+    // mujoco-usd-converter writes it, and MuJoCo's decoder reads one geom),
+    // unless its collider and visual geometry differ (tessellated collision
+    // shapes keep a native visual).
+    const bool primitive_geom = geom_type != "mesh" && geom_type != "hfield";
+    const bool merged = visible && collides && !(primitive_geom && opts.tessellate_collision_shapes);
+    if (!merged && (visible || !collides)) {
       MeshPayload payload;
       bool ignored = true;
       // Primitive visuals stay native gprims (as mujoco-usd-converter writes
@@ -4458,6 +4484,14 @@ bool AppendGeomToLink(const pugi::xml_node& geom_node, const std::string& cc,
       // tessellated heightfield keeps exact triangles.
       col["approximation"] = dual_collider && geom_type == "hfield" ? "none" : "convexHull";
       if (wrap) col["mjcGeom"] = geom_name;
+      if (merged) {
+        col["visual"] = true;
+        const auto rgba = ParseDoubles(Eff(geom_node, cls, "rgba", "0.5 0.5 0.5 1"));
+        if (rgba.size() >= 4) col["rgba"] = Array(rgba);
+        const std::string mat = Eff(geom_node, cls, "material");
+        if (!mat.empty()) col["material"] = mat;
+        if (stats) stats->visuals++;
+      }
       if (geom_type == "mesh") {
         const auto mesh_it = assets.find(Eff(geom_node, cls, "mesh"));
         if (mesh_it != assets.end() && mesh_it->second.maxhullvert > 0) {
@@ -5627,6 +5661,30 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
 
   // Dissolve <frame> grouping transforms now that the angle/eulerseq context is
   // known, so body/geom/site traversal never has to look inside a <frame>.
+  // MuJoCo 3.16 frame scale/massscale scale the frame's contents; the
+  // flattening keeps only the pose (massscale 0 derives the mass factor
+  // from scale, so it matters only with a non-unit scale).
+  for (const auto& worldbody : Children(root, "worldbody")) {
+    std::vector<pugi::xml_node> stack{worldbody};
+    while (!stack.empty()) {
+      const pugi::xml_node node = stack.back();
+      stack.pop_back();
+      for (auto c = node.first_child(); c; c = c.next_sibling())
+        if (c.type() == pugi::node_element) stack.push_back(c);
+      if (std::string(node.name()) != "frame") continue;
+      const auto scale = ParseDouble3(Attr(node, "scale"), {{1.0, 1.0, 1.0}});
+      const double massscale = ParseDoubleAttr(node, "massscale", 0.0);
+      if (scale[0] == 1.0 && scale[1] == 1.0 && scale[2] == 1.0 &&
+          (massscale == 0.0 || massscale == 1.0))
+        continue;
+      if (!UnsupportedXML(node, "MJCF frame scale/massscale is not applied to the frame's contents",
+                          "mjcf.frame_scale_unsupported", "mjcf.frame_scale",
+                          active_reader->root_source, true)) {
+        if (err) *err = active_reader->failure;
+        return false;
+      }
+    }
+  }
   for (const auto& worldbody : Children(root, "worldbody")) {
     FlattenFramesIn(worldbody, ctx);
   }
@@ -5864,6 +5922,10 @@ bool URDFGeometry(const pugi::xml_node& node, const std::string& source,
   Json j{{"name", name}, {"matrix", Array(pose)}};
   const bool collision = std::string(node.name()) == "collision" &&
                          !active_reader->options.tessellate_collision_shapes;
+  // Non-legacy profiles keep primitive visuals native too (as
+  // urdf-usd-converter authors Cube/Sphere/Cylinder visuals).
+  const bool native = collision || (std::string(node.name()) == "visual" &&
+                                    active_reader->options.profile != "legacy");
   if (auto mesh = geometry.child("mesh")) {
     std::string file = Attr(mesh, "filename");
     std::string resolved;
@@ -5912,7 +5974,7 @@ bool URDFGeometry(const pugi::xml_node& node, const std::string& source,
         if (err) *err = "URDF box size must be positive";
         return false;
       }
-      if (collision) {
+      if (native) {
         shape["type"] = "box";
         j["matrix"] = Array(MultiplyMatrix(
             pose, ScaleMatrix({{size[0] / 2, size[1] / 2, size[2] / 2}})));
@@ -5924,7 +5986,7 @@ bool URDFGeometry(const pugi::xml_node& node, const std::string& source,
         if (err) *err = "URDF radius must be positive";
         return false;
       }
-      if (collision)
+      if (native)
         shape = Json{{"type", "sphere"}, {"radius", radius}};
       else
         generated = MakeSphereMesh(radius);
@@ -5935,13 +5997,27 @@ bool URDFGeometry(const pugi::xml_node& node, const std::string& source,
         if (err) *err = "URDF cylinder dimensions must be positive";
         return false;
       }
-      if (collision)
+      if (native)
         shape = Json{{"type", "cylinder"},
                      {"radius", radius},
                      {"height", length},
                      {"axis", "Z"}};
       else
         generated = MakeCylinderMesh(radius, length / 2);
+    } else if (auto capsule = geometry.child("capsule");
+               capsule && active_reader->options.profile != "legacy") {
+      // Non-standard but common (Gazebo, Newton's add_urdf): `length` or
+      // `height` is the cylindrical part, along Z.
+      const double radius = ParseDoubleAttr(capsule, "radius", 0),
+                   length = ParseDoubleAttr(capsule, HasAttr(capsule, "length") ? "length" : "height", 0);
+      if (radius <= 0 || length < 0) {
+        if (err) *err = "URDF capsule dimensions must be positive";
+        return false;
+      }
+      if (native)
+        shape = Json{{"type", "capsule"}, {"radius", radius}, {"height", length}, {"axis", "Z"}};
+      else
+        generated = MakeCapsuleMesh(radius, length / 2);
     } else {
       // Missing or unknown geometry: skip it under the warn/preserve policies
       // (urdf-usd-converter warns and continues).
@@ -5955,7 +6031,7 @@ bool URDFGeometry(const pugi::xml_node& node, const std::string& source,
       }
       return true;
     }
-    if (collision)
+    if (native)
       j["shape"] = std::move(shape);
     else {
       Json built = MeshRefJSON(generated, *active_reader);
@@ -6142,6 +6218,47 @@ size_t CollapseGhostLinks(Json* links, Json* joints, const std::map<std::string,
   for (auto& link : *links)
     if (new_roots.count(link["name"].get<std::string>())) link["articulationRoot"] = true;
   return ghosts.size();
+}
+
+// URDF elements and attributes without a USD mapping, kept as urdf:*
+// metadata the way urdf-usd-converter keeps "undefined" elements:
+// {tag, attributes, text, elements}. Non-legacy profiles only.
+Json URDFCustomElement(const pugi::xml_node& node, size_t depth) {
+  Json e{{"tag", std::string(node.name())}};
+  Json attributes = Json::object();
+  for (auto a : node.attributes()) attributes[a.name()] = std::string(a.value());
+  if (!attributes.empty()) e["attributes"] = std::move(attributes);
+  std::string text;
+  Json elements = Json::array();
+  for (auto c = node.first_child(); c; c = c.next_sibling()) {
+    if (c.type() == pugi::node_pcdata || c.type() == pugi::node_cdata) text += c.value();
+    else if (c.type() == pugi::node_element && depth < 64) elements.push_back(URDFCustomElement(c, depth + 1));
+  }
+  const size_t b = text.find_first_not_of(" \t\r\n");
+  if (b != std::string::npos) e["text"] = text.substr(b, text.find_last_not_of(" \t\r\n") - b + 1);
+  if (!elements.empty()) e["elements"] = std::move(elements);
+  return e;
+}
+
+// Unknown attributes and child elements of `node` (null when none).
+Json URDFCustomJson(const pugi::xml_node& node, std::initializer_list<const char*> known_children,
+                    std::initializer_list<const char*> known_attributes) {
+  auto known = [](std::initializer_list<const char*> names, const char* name) {
+    for (const char* n : names)
+      if (std::strcmp(n, name) == 0) return true;
+    return false;
+  };
+  Json out = Json::object();
+  Json attributes = Json::object();
+  for (auto a : node.attributes())
+    if (!known(known_attributes, a.name())) attributes[a.name()] = std::string(a.value());
+  if (!attributes.empty()) out["attributes"] = std::move(attributes);
+  Json elements = Json::array();
+  for (auto c : node.children())
+    if (c.type() == pugi::node_element && !known(known_children, c.name()))
+      elements.push_back(URDFCustomElement(c, 1));
+  if (!elements.empty()) out["elements"] = std::move(elements);
+  return out;
 }
 
 // Roots for `package://NAME/...` URDF references that Options::packages does
@@ -6332,6 +6449,12 @@ bool BuildURDF(const pugi::xml_node& root, const std::string& source,
       j["mimic"] = Json{{"joint", Attr(m, "joint")},
                         {"offset", ParseDoubleAttr(m, "offset", 0)},
                         {"multiplier", ParseDoubleAttr(m, "multiplier", 1)}};
+    if (opts.profile != "legacy") {
+      Json custom = URDFCustomJson(node, {"origin", "parent", "child", "axis", "limit", "dynamics",
+                                          "mimic", "safety_controller", "calibration"},
+                                   {"name", "type"});
+      if (!custom.empty()) j["urdfCustom"] = std::move(custom);
+    }
     joints.push_back(std::move(j));
   }
   // Resolve link world transforms iteratively: URDF chains (snakes, ropes,
@@ -6394,7 +6517,9 @@ bool BuildURDF(const pugi::xml_node& root, const std::string& source,
               {"visuals", Json::array()},
               {"collisions", Json::array()}};
     if (!parent.count(name)) {
-      link["articulationRoot"] = true;
+      // A URDF without joints is a lone rigid body, not a one-link
+      // articulation (urdf-usd-converter 0.3.1).
+      link["articulationRoot"] = opts.profile == "legacy" || root.child("joint");
       joints.push_back(Json{{"name", active_world_name + "_to_" + name},
                             {"type", "fixed"},
                             {"parent", active_world_name},
@@ -6438,12 +6563,20 @@ bool BuildURDF(const pugi::xml_node& root, const std::string& source,
         std::string mat;
         if (auto m = geom.child("material"))
           mat = material(m, name + "_material");
+        Json custom = opts.profile != "legacy"
+                          ? URDFCustomJson(geom, {"origin", "geometry", "material"}, {"name"})
+                          : Json::object();
         for (auto& item : items) {
           if (!mat.empty()) item["material"] = mat;
+          if (!custom.empty()) item["urdfCustom"] = custom;
           link[kind == std::string("visual") ? "visuals" : "collisions"]
               .push_back(std::move(item));
         }
       }
+    if (opts.profile != "legacy") {
+      Json custom = URDFCustomJson(node, {"inertial", "visual", "collision"}, {"name"});
+      if (!custom.empty()) link["urdfCustom"] = std::move(custom);
+    }
     links.push_back(std::move(link));
   }
   for (auto& j : joints)
@@ -6534,6 +6667,13 @@ bool BuildURDF(const pugi::xml_node& root, const std::string& source,
   (*payload)["joints"] = std::move(joints);
   (*payload)["materials"] = std::move(materials);
   (*payload)["actuators"] = std::move(actuators);
+  if (opts.profile != "legacy") {
+    // Robot-level extensions (<gazebo>, <ros2_control>, ...).
+    // (Root attributes are name/version and xmlns declarations.)
+    Json custom = URDFCustomJson(root, {"link", "joint", "material", "transmission"}, {});
+    if (custom.contains("elements"))
+      (*payload)["urdfCustom"] = Json{{"elements", std::move(custom["elements"])}};
+  }
   return true;
 }
 

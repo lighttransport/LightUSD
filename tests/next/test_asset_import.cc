@@ -54,8 +54,9 @@ int main() {
 <geom name="shape" class="child" type="sphere" size=".2" solimp=".6 .8"/>
 </body></worldbody></mujoco>)";
   stage = Import(solver, LIGHTUSD_IMPORT_MJCF);
-  // Visual and collider share a source name; the collider gets the next name.
-  const auto shape = lightusd_stage_prim_at_path(stage, "/World/Links/body/shape1");
+  // A visible collider is one prim (its visual and collider roles merged).
+  const auto shape = lightusd_stage_prim_at_path(stage, "/World/Links/body/shape");
+  assert(!lightusd_prim_is_valid(lightusd_stage_prim_at_path(stage, "/World/Links/body/shape1")));
   lightusd_value_view values{};
   assert(lightusd_attr_get(shape, "mjc:solimp", &values) == LIGHTUSD_OK);
   assert(values.is_array && values.storage == LIGHTUSD_COMP_FLOAT64 && values.count == 5);

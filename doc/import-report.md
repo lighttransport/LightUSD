@@ -75,8 +75,10 @@ token), `mjcf.equality_site_unsupported` (legacy profile only),
 `mjcf.inertia_convex_approximated`, `urdf.geometry_unsupported` (missing or
 unknown URDF geometry, skipped under `warn`), `dae.up_axis_ignored`,
 `dae.geometry_unsupported`, `dae.primitive_unsupported`,
-`urdf.package_discovered` (see below) and `urdf.transmission_duplicate` (a
-joint with several transmissions keeps the first).
+`urdf.package_discovered` (see below), `urdf.transmission_duplicate` (a
+joint with several transmissions keeps the first) and
+`mjcf.frame_scale_unsupported` (a MuJoCo 3.16 `<frame scale/massscale>`; the
+frame's pose is applied, its scale is not).
 `import.failed` records the final failure.
 
 `counts.inferred_inertia_bodies` counts MJCF bodies whose mass properties were

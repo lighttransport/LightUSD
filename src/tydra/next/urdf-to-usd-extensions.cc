@@ -309,6 +309,7 @@ void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
   const std::string usd_name = ChildName(name, siblings);
   tn::PrimSpec *prim = scope->Add(usd_name, "MjcTendon");
   if (!prim) return;
+  SetSourceDisplayName(prim, source);
   tendon_names->emplace(source, usd_name);
   SetToken(prim, "mjc:type", type, true);
   // USD relationship targets are unique, while a closed tendon route may
@@ -532,7 +533,8 @@ void AddEqualityConstraint(tn::Layer *layer, Scope *scope,
                              "no mimic form for it and skips it.\n");
       return;
     }
-    SetRel(prim, "mjc:target", {"/World/Joints/" + leader->second});
+    // mjc:target is the deprecated alias of newton:mimicJoint.
+    if (ActiveProfile().legacy) SetRel(prim, "mjc:target", {"/World/Joints/" + leader->second});
     AddAPI(prim, "NewtonMimicAPI");
     SetRel(prim, "newton:mimicJoint", {"/World/Joints/" + leader->second});
     // NewtonMimicAPI coef0 is in the follower's position unit (degrees).
@@ -731,6 +733,7 @@ void AddMjcActuatorFromJson(Scope *scope, std::set<std::string> *used,
   const std::string name = Unique(source_name, "actuator", used);
   tn::PrimSpec *prim = scope->Add(name, "MjcActuator");
   if (!prim) return;
+  SetSourceDisplayName(prim, source_name);
   SetRel(prim, "mjc:target", targets);
 
   for (const char *key : {"gainPrm", "biasPrm", "dynPrm", "gear"}) {

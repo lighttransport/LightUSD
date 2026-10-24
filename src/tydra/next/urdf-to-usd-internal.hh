@@ -108,6 +108,13 @@ std::string Sanitize(const std::string &source, const std::string &fallback);
 std::string Unique(const std::string &source, const std::string &fallback,
                    std::set<std::string> *used);
 std::string ChildName(const std::string &name, std::set<std::string> *siblings);
+// Non-legacy profiles keep a source name that sanitizing or uniquifying
+// changed as the prim's displayName (as mujoco-usd-converter does).
+void SetSourceDisplayName(tn::PrimSpec *prim, const std::string &source);
+// URDF elements/attributes without a USD mapping (`urdfCustom` payload
+// members) -> urdf:<attribute> strings, urdf:text and child Scopes.
+void AddURDFCustom(tn::Layer *layer, const std::string &path, tn::PrimSpec *prim,
+                   const Json *custom, std::set<std::string> *siblings);
 void AppendWarn(std::string *warn, const std::string &message);
 void AddAPI(tn::PrimSpec *prim, const std::string &schema);
 void AddAPIs(tn::PrimSpec *prim,

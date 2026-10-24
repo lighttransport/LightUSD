@@ -246,3 +246,98 @@ def test_physics_material_contact_stiffness_from_solref():
     gains = sorted((m['newton:contactStiffness'], m['newton:contactDamping']) for m in materials)
     assert gains == [pytest.approx((1000, 20)), pytest.approx((2500, 100)),
                      pytest.approx((40000, 200))]
+
+
+def _apis(prim):
+    return set(prim.metadata('apiSchemas') or ())
+
+
+def test_visible_collider_is_one_prim():
+    xml = _mjcf('<body name="a"><freejoint/><geom name="g" size=".1" rgba="1 0 0 1" material="m"/>'
+                '<geom name="hidden" size=".1" group="3"/></body>',
+                '<asset><material name="m" rgba="0 1 0 1"/></asset>')
+    stage = lightusd.load_bytes(xml, format='mjcf')
+    g = stage.prim_at('/World/Links/a/g')
+    assert 'PhysicsCollisionAPI' in _apis(g)
+    assert 'purpose' not in g.attributes
+    assert g.relationship('material:binding').targets == ('/World/Materials/m',)
+    assert g.relationship('material:binding:physics').targets
+    assert tuple(g['primvars:displayColor'][0]) == (1, 0, 0)
+    assert not stage.get_prim_at('/World/Links/a/g1')
+    assert stage.prim_at('/World/Links/a/hidden')['purpose'] == 'guide'
+
+
+def test_jointless_urdf_has_no_articulation_root():
+    urdf = f'<robot name="r"><link name="a">{_INERTIAL}</link></robot>'.encode()
+    stage = lightusd.load_bytes(urdf, format='urdf')
+    assert not [p for p in stage if 'PhysicsArticulationRootAPI' in _apis(p)]
+
+
+def test_deprecated_mjc_aliases_are_not_authored():
+    xml = _mjcf('<body name="a"><freejoint/><geom size=".1" margin=".01" gap=".002"/>'
+                '<body name="b"><joint name="j1" axis="0 0 1"/><geom size=".1"/></body>'
+                '<body name="c"><joint name="j2" axis="0 0 1"/><geom size=".1"/></body></body>',
+                '<option timestep="0.002" iterations="20"><flag gravity="disable"/></option>')
+    xml = xml.replace(b'</mujoco>', b'<equality><joint joint1="j2" joint2="j1"/></equality></mujoco>')
+    stage = lightusd.load_bytes(xml, format='mjcf')
+    scene = stage.prim_at('/World/PhysicsScene')
+    for name in ('mjc:option:timestep', 'mjc:option:iterations', 'mjc:flag:gravity', 'mjc:timestep'):
+        assert name not in scene.attributes
+    assert scene['newton:timeStepsPerSecond'] == 500
+    collider = next(p for p in stage if 'PhysicsCollisionAPI' in _apis(p))
+    assert 'mjc:margin' not in collider.attributes and 'mjc:gap' not in collider.attributes
+    assert collider['newton:contactMargin'] == pytest.approx(.01)
+    j2 = stage.prim_at('/World/Joints/j2')
+    assert j2.relationship('newton:mimicJoint').targets == ('/World/Joints/j1',)
+    assert 'mjc:target' not in j2.relationships
+    # A timestep newton:timeStepsPerSecond cannot hold keeps the MJC value.
+    odd = lightusd.load_bytes(_mjcf('<body name="a"><freejoint/><geom size=".1"/></body>',
+                                    '<option timestep="0.0015"/>'), format='mjcf')
+    assert odd.prim_at('/World/PhysicsScene')['mjc:option:timestep'] == pytest.approx(0.0015)
+
+
+def test_mjcf_material_color_is_linear_and_shininess_is_roughness():
+    xml = _mjcf('<body name="a"><geom size=".1" material="m"/></body>',
+                '<asset><material name="m" rgba=".5 .5 .5 1" shininess=".8"/></asset>')
+    surface = lightusd.load_bytes(xml, format='mjcf').prim_at('/World/Materials/m/PreviewSurface')
+    assert surface['inputs:diffuseColor'][0] == pytest.approx(((.5 + .055) / 1.055) ** 2.4, abs=1e-6)
+    assert surface['inputs:roughness'] == pytest.approx(.2)
+
+
+def test_sanitized_names_keep_display_names():
+    xml = _mjcf('<body name="arm-1"><joint name="elbow.j" axis="0 0 1"/><geom name="g-1" size=".1"/></body>')
+    stage = lightusd.load_bytes(xml, format='mjcf')
+    assert stage.prim_at('/World/Links/arm_1').metadata('displayName') == 'arm-1'
+    assert stage.prim_at('/World/Joints/elbow_j').metadata('displayName') == 'elbow.j'
+    assert stage.prim_at('/World/Links/arm_1/g_1').metadata('displayName') == 'g-1'
+
+
+def test_frame_scale_and_actuator_group_disable():
+    xml = _mjcf('<frame scale="2 2 2"><body name="a"><freejoint/><geom size=".1"/></body></frame>',
+                '<option actuatorgroupdisable="1 3"/>')
+    stage = lightusd.load_bytes(xml, format='mjcf')
+    codes = [d['code'] for d in stage.import_report()['diagnostics']]
+    assert 'mjcf.frame_scale_unsupported' in codes
+    assert list(stage.prim_at('/World/PhysicsScene')['mjc:option:actuatorgroupdisable']) == [1, 3]
+
+
+def test_urdf_unknown_elements_and_capsule():
+    urdf = f'''<robot name="r" xmlns:xacro="http://www.ros.org/wiki/xacro">
+      <link name="a" custom="1">{_INERTIAL}<visual><geometry><capsule radius=".1" length=".4"/></geometry></visual>
+      <collision><geometry><box size="1 1 1"/></geometry></collision><sensor_info rate="30">imu</sensor_info></link>
+      <link name="b">{_INERTIAL}<visual><geometry><box size="1 2 3"/></geometry></visual></link>
+      <joint name="j" type="revolute" vendor="x"><parent link="a"/><child link="b"/><axis xyz="0 0 1"/>
+      <limit lower="-1" upper="1"/></joint>
+      <gazebo reference="a"><material>Gazebo/Red</material></gazebo></robot>'''.encode()
+    stage = lightusd.load_bytes(urdf, format='urdf')
+    gazebo = stage.prim_at('/World/custom/gazebo')
+    assert gazebo['urdf:reference'] == 'a'
+    assert stage.prim_at('/World/custom/gazebo/material')['urdf:text'] == 'Gazebo/Red'
+    a = stage.prim_at('/World/Links/a')
+    assert a['urdf:custom'] == '1'
+    sensor = stage.prim_at('/World/Links/a/sensor_info')
+    assert (sensor['urdf:rate'], sensor['urdf:text']) == ('30', 'imu')
+    assert stage.prim_at('/World/Joints/j')['urdf:vendor'] == 'x'
+    capsule = next(p for p in stage if p.type_name == 'Capsule')
+    assert (capsule['radius'], capsule['height']) == (pytest.approx(.1), pytest.approx(.4))
+    assert [p for p in stage if p.type_name == 'Cube' and 'PhysicsCollisionAPI' not in _apis(p)]

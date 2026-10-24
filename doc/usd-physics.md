@@ -56,7 +56,7 @@ in one of three profiles, selected with `profile=` (Python), `"profile"` in the 
 | Multi-joint bodies | stacked joints between the body pair (`newton:jointsAddMobility`) | stacked | massless intermediate links |
 | MJCF actuators | `MjcActuator` with MuJoCo's compiled gain/bias/dynamics expansion (Newton maps position/velocity shapes to joint targets) | omitted | `NewtonActuator` PD for joint motors/position/velocity |
 | MJCF equalities | connect → `PhysicsSphericalJoint`, weld → `PhysicsFixedJoint` (excluded from articulation, `active` → `jointEnabled`, site forms supported); joint → `NewtonMimicAPI` + `MjcEqualityJointAPI` on the follower (`mimicCoef0` in degrees) | spherical/fixed joints only | `Xform` + `MjcEquality*API` |
-| MJCF collision | collides iff `contype|conaffinity != 0`; group 3+ non-colliders become guide visuals | same | group-based split |
+| MJCF collision | collides iff `contype|conaffinity != 0`; a visible collider is one prim (collision APIs, look material, `displayColor`; as mujoco-usd-converter, so MuJoCo's decoder reads one geom); colliders in groups 3+ are `purpose = guide`; group 3+ non-colliders become guide visuals | same | group-based split, separate visual and guide collider |
 | Mocap / gravcomp | `physics:kinematicEnabled`, `mjc:gravcomp` | kinematic only | `mjc:mocap` |
 | URDF `planar` | D6 `PhysicsJoint`, `transX/rotY/rotZ` locked (`low > high`), `transY/transZ/rotX` unlimited (`-inf`/`inf`; Newton creates a D6 DOF only for an axis with a LimitAPI) | same | error |
 | URDF effort | `urdf:limit:effort` + `mjc:actuatorfrcrange` (±effort) with `mjc:actuatorfrclimited` | `urdf:limit:effort` | `urdf:limit:effort` |
@@ -71,6 +71,12 @@ in one of three profiles, selected with `profile=` (Python), `"profile"` in the 
 | Articulation self-collision | `newton:selfCollisionEnabled` only when the source sets it (an authored value overrides `add_usd(enable_self_collisions=...)`) | omitted | always `true` |
 | URDF `<transmission>` | `urdf:transmission:name/type/actuator/hardwareInterface/mechanicalReduction` on the joint; no actuator (as urdf-usd-converter; Newton's `add_usd` rejects actuators on joints that are not single-DOF) | same | zero-gain `NewtonActuator` PD |
 | MJCF `<flag>` | `newton:gravityEnabled` follows `gravity`; `filterparent="disable"` sets `physics:collisionEnabled` on joints; `spring`/`damper` flags authored | flags only | flags only |
+| Deprecated `mjc:*` aliases | not written: `mjc:option:timestep` (only when `newton:timeStepsPerSecond` cannot hold the timestep), `mjc:option:iterations`, `mjc:flag:gravity`, `mjc:margin/gap`, `mjc:maxhullvert`, `mjc:target` on mimic followers, `mjc:timestep` (MuJoCo 3.16 reads the `newton:*` forms) | omitted | written |
+| MJCF materials | `diffuseColor` = linearized `rgba` (default white), `roughness = 1 - shininess` unless `roughness` is set | same | raw `rgba` |
+| Source names | `displayName` keeps a link/joint/geom/material/tendon/actuator name that sanitizing or uniquifying changed | same | none |
+| URDF visuals | native `Cube`/`Sphere`/`Cylinder`; non-standard `<capsule radius length|height>` → `Capsule` | same | tessellated meshes; capsule unsupported |
+| URDF extensions | unknown attributes and elements on the robot (`/World/custom`), links, joints, visuals and collisions → `urdf:<attribute>` strings, `urdf:text` and child `Scope`s (urdf-usd-converter's undefined-element layout) | same | dropped |
+| URDF without joints | no articulation root (a lone rigid body) | same | articulation root |
 | OBJ stage | `metersPerUnit = 1`, root `kind = component` | same | no units |
 
 MJCF spatial tendons follow MuJoCo's USD decoder and mujoco-usd-converter:

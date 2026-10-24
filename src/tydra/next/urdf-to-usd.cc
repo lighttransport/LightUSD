@@ -232,6 +232,7 @@ static bool ConvertPayload(
       if (err) *err = "Failed to define link `" + name + "`";
       return false;
     }
+    SetSourceDisplayName(prim, source);
     // A world-fixed link (e.g. the synthetic "world" link holding worldbody
     // floor/ground geoms) is a static collider, not a dynamic body.
     bool is_static = false;
@@ -370,6 +371,17 @@ static bool ConvertPayload(
           link_colliders[source].push_back(path + "/" + prim_name);
       }
     }
+    AddURDFCustom(&layer, path, layer.prim_at_path_mutable(path), JsonObject(link, "urdfCustom"),
+                  &siblings);
+  }
+
+  // Robot-level URDF extensions (<gazebo>, ...) under /World/custom, as
+  // urdf-usd-converter's Geometry/custom scope.
+  if (const Json *custom = JsonObject(root, "urdfCustom")) {
+    if (tn::PrimSpec *scope = Define(&layer, "/World/custom", "Scope")) {
+      std::set<std::string> children;
+      AddURDFCustom(&layer, "/World/custom", scope, custom, &children);
+    }
   }
 
   // MJCF <contact><exclude> -> physics:filteredPairs on the first body.
@@ -469,6 +481,12 @@ static bool ConvertPayload(
     if (!prim) {
       if (err) *err = "Failed to add joint `" + name + "`";
       return false;
+    }
+    SetSourceDisplayName(prim, JsonString(joint, "name"));
+    {
+      std::set<std::string> children;
+      AddURDFCustom(&layer, "/World/Joints/" + name, prim, JsonObject(joint, "urdfCustom"),
+                    &children);
     }
     // An empty body0 means the world frame in UsdPhysics.
     AssignJointBase(prim, joint,

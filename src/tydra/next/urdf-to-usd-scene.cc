@@ -138,6 +138,7 @@ void AddMaterialFromJson(Scope *scope, std::set<std::string> *used,
   const std::string mat_path = "/World/Materials/" + name;
   tn::PrimSpec *mat = scope->Add(name, "Material");
   if (!mat) return;
+  SetSourceDisplayName(mat, JsonString(m, "name"));
   Connect(mat, "outputs:surface", tn::TypeId::Token, "token",
           mat_path + "/PreviewSurface.outputs:surface");
 

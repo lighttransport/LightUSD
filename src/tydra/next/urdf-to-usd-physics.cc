@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <utility>
 
 namespace lightusd { namespace tydra { namespace next {
@@ -411,20 +412,33 @@ void ApplyMjcSceneOptions(tn::PrimSpec *scene, const Json &root) {
     if (!a.empty()) SetDoubles(scene, name, std::move(a), true);
   };
 
+  // MuJoCo 3.16's decoder deprecates mjc:option:timestep/iterations and
+  // mjc:flag:gravity for newton:timeStepsPerSecond/maxSolverIterations/
+  // gravityEnabled, which AddPhysicsScene writes; non-legacy profiles omit
+  // them (a timestep newton:timeStepsPerSecond cannot hold is kept there).
+  const bool legacy = ActiveProfile().legacy;
   if (const Json *o = JsonObject(*ms, "option")) {
     const std::string p = "mjc:option:";
     for (const char *key : {"timestep", "impratio", "density", "viscosity",
                             "o_margin", "tolerance", "ls_tolerance",
                             "noslip_tolerance", "ccd_tolerance"}) {
+      if (!legacy && std::strcmp(key, "timestep") == 0) continue;
       set_num(*o, key, p + key);
     }
     for (const char *key : {"iterations", "ls_iterations", "noslip_iterations",
                             "ccd_iterations", "sdf_iterations",
                             "sdf_initpoints"}) {
+      if (!legacy && std::strcmp(key, "iterations") == 0) continue;
       set_int(*o, key, p + key);
     }
     for (const char *key : {"integrator", "cone", "jacobian", "solver"}) {
       set_tok(*o, key, p + key);
+    }
+    if (const Json *groups = JsonArray(*o, "actuatorgroupdisable")) {
+      std::vector<int32_t> values;
+      for (const Json &g : *groups)
+        if (g.is_number()) values.push_back(static_cast<int32_t>(g.get<double>()));
+      Set(scene, p + "actuatorgroupdisable", tn::Value::MakeIntArray(std::move(values)), "int[]", true);
     }
     set_vec3(*o, "wind", p + "wind");
     set_vec3(*o, "magnetic", p + "magnetic");
@@ -439,6 +453,7 @@ void ApplyMjcSceneOptions(tn::PrimSpec *scene, const Json &root) {
           "refsafe", "sensor", "midphase", "nativeccd", "eulerdamp",
           "autoreset", "island", "override", "energy", "fwdinv",
           "invdiscrete", "multiccd", "spring", "damper"}) {
+      if (!legacy && std::strcmp(key, "gravity") == 0) continue;
       set_bool(*f, key, std::string("mjc:flag:") + key);
     }
   }
@@ -474,11 +489,14 @@ void AddPhysicsScene(tn::Layer *layer, const Json &root) {
   Set(scene, "physics:gravityMagnitude", tn::Value(gravity_magnitude), "float",
       true);
   double timestep = 0.002;
+  const bool legacy = ActiveProfile().legacy;
   if (ReadNumber(root, "timestep", &timestep)) {
-    Set(scene, "mjc:option:timestep", tn::Value(timestep), "double", true);
+    const double steps = timestep > 0.0 ? std::round(1.0 / timestep) : 0.0;
+    if (legacy || !(steps > 0.0) || std::fabs(1.0 / steps - timestep) > 1e-12 * timestep)
+      Set(scene, "mjc:option:timestep", tn::Value(timestep), "double", true);
   }
   // next-only: the solver timestep also under the flat mjc:timestep name.
-  Set(scene, "mjc:timestep", tn::Value(timestep), "double");
+  if (legacy) Set(scene, "mjc:timestep", tn::Value(timestep), "double");
   // Full <option>/<flag>/<compiler> set (overrides/augments timestep).
   ApplyMjcSceneOptions(scene, root);
 
