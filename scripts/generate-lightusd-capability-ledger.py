@@ -23,19 +23,19 @@ IN_SCOPE_DOMAINS = {
     "usdMedia",
     "usdMtlx",
     "usdPhysics",
+    "usdProc",
     "usdShade",
     "usdSkel",
+    "usdUI",
 }
 
 EXCLUDED_DOMAINS = {
     "usdHydra": "Hydra/imaging integration is outside LightUSD's renderer-neutral core",
     "usdLod": "not part of the currently supported schema surface",
-    "usdProc": "procedural execution is outside the supported schema surface",
     "usdProfiles": "not part of the currently supported schema surface",
     "usdRender": "render-product/pass execution is explicitly excluded",
     "usdRi": "RenderMan-specific",
     "usdSemantics": "not part of the currently supported schema surface",
-    "usdUI": "DCC UI metadata is outside the supported schema surface",
     "usdVol": "volume schema expansion is explicitly excluded",
 }
 

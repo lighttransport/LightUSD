@@ -650,7 +650,15 @@ def PhysicsSphericalJoint "S079_PhysicsSphericalJoint" (
     custom string parity:domain = "usdPhysics"
 }
 
-def Xform "S080_ConnectableAPI" (
+def GenerativeProcedural "S080_GenerativeProcedural" (
+)
+{
+    custom string parity:schema = "GenerativeProcedural"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdProc"
+}
+
+def Xform "S081_ConnectableAPI" (
 )
 {
     custom string parity:schema = "ConnectableAPI"
@@ -658,7 +666,7 @@ def Xform "S080_ConnectableAPI" (
     custom string parity:domain = "usdShade"
 }
 
-def Xform "S081_CoordSysAPI" (
+def Xform "S082_CoordSysAPI" (
     prepend apiSchemas = ["CoordSysAPI:fixture"]
 )
 {
@@ -667,7 +675,7 @@ def Xform "S081_CoordSysAPI" (
     custom string parity:domain = "usdShade"
 }
 
-def Material "S082_Material" (
+def Material "S083_Material" (
 )
 {
     custom string parity:schema = "Material"
@@ -675,7 +683,7 @@ def Material "S082_Material" (
     custom string parity:domain = "usdShade"
 }
 
-def Xform "S083_MaterialBindingAPI" (
+def Xform "S084_MaterialBindingAPI" (
 )
 {
     custom string parity:schema = "MaterialBindingAPI"
@@ -683,7 +691,7 @@ def Xform "S083_MaterialBindingAPI" (
     custom string parity:domain = "usdShade"
 }
 
-def Xform "S084_NodeDefAPI" (
+def Xform "S085_NodeDefAPI" (
     prepend apiSchemas = ["NodeDefAPI"]
 )
 {
@@ -692,7 +700,7 @@ def Xform "S084_NodeDefAPI" (
     custom string parity:domain = "usdShade"
 }
 
-def NodeGraph "S085_NodeGraph" (
+def NodeGraph "S086_NodeGraph" (
 )
 {
     custom string parity:schema = "NodeGraph"
@@ -700,7 +708,7 @@ def NodeGraph "S085_NodeGraph" (
     custom string parity:domain = "usdShade"
 }
 
-def Shader "S086_Shader" (
+def Shader "S087_Shader" (
 )
 {
     custom string parity:schema = "Shader"
@@ -708,7 +716,7 @@ def Shader "S086_Shader" (
     custom string parity:domain = "usdShade"
 }
 
-def BlendShape "S087_BlendShape" (
+def BlendShape "S088_BlendShape" (
 )
 {
     custom string parity:schema = "BlendShape"
@@ -716,7 +724,7 @@ def BlendShape "S087_BlendShape" (
     custom string parity:domain = "usdSkel"
 }
 
-def SkelAnimation "S088_SkelAnimation" (
+def SkelAnimation "S089_SkelAnimation" (
 )
 {
     custom string parity:schema = "SkelAnimation"
@@ -724,7 +732,7 @@ def SkelAnimation "S088_SkelAnimation" (
     custom string parity:domain = "usdSkel"
 }
 
-def Xform "S089_SkelBindingAPI" (
+def Xform "S090_SkelBindingAPI" (
 )
 {
     custom string parity:schema = "SkelBindingAPI"
@@ -732,7 +740,7 @@ def Xform "S089_SkelBindingAPI" (
     custom string parity:domain = "usdSkel"
 }
 
-def SkelRoot "S090_SkelRoot" (
+def SkelRoot "S091_SkelRoot" (
 )
 {
     custom string parity:schema = "SkelRoot"
@@ -740,10 +748,43 @@ def SkelRoot "S090_SkelRoot" (
     custom string parity:domain = "usdSkel"
 }
 
-def Skeleton "S091_Skeleton" (
+def Skeleton "S092_Skeleton" (
 )
 {
     custom string parity:schema = "Skeleton"
     custom token parity:kind = "concrete"
     custom string parity:domain = "usdSkel"
+}
+
+def Xform "S093_AccessibilityAPI" (
+    prepend apiSchemas = ["AccessibilityAPI:fixture"]
+)
+{
+    custom string parity:schema = "AccessibilityAPI"
+    custom token parity:kind = "multipleApply"
+    custom string parity:domain = "usdUI"
+}
+
+def Backdrop "S094_Backdrop" (
+)
+{
+    custom string parity:schema = "Backdrop"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdUI"
+}
+
+def Xform "S095_NodeGraphNodeAPI" (
+)
+{
+    custom string parity:schema = "NodeGraphNodeAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdUI"
+}
+
+def Xform "S096_SceneGraphPrimAPI" (
+)
+{
+    custom string parity:schema = "SceneGraphPrimAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdUI"
 }

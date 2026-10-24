@@ -1,5 +1,5 @@
 {
-  "excludedSchemaCount": 42,
+  "excludedSchemaCount": 37,
   "formatVersion": 1,
   "openusd": {
     "commit": "ee47c679abde5b467a7b6a41f3b2285564a4222e",
@@ -9,12 +9,10 @@
     "excludedDomains": {
       "usdHydra": "Hydra/imaging integration is outside LightUSD's renderer-neutral core",
       "usdLod": "not part of the currently supported schema surface",
-      "usdProc": "procedural execution is outside the supported schema surface",
       "usdProfiles": "not part of the currently supported schema surface",
       "usdRender": "render-product/pass execution is explicitly excluded",
       "usdRi": "RenderMan-specific",
       "usdSemantics": "not part of the currently supported schema surface",
-      "usdUI": "DCC UI metadata is outside the supported schema surface",
       "usdVol": "volume schema expansion is explicitly excluded"
     },
     "localExtensions": [
@@ -29,12 +27,14 @@
       "usdMedia",
       "usdMtlx",
       "usdPhysics",
+      "usdProc",
       "usdShade",
-      "usdSkel"
+      "usdSkel",
+      "usdUI"
     ],
     "runtimeOpenUSDDependency": false
   },
-  "requiredSchemaCount": 92,
+  "requiredSchemaCount": 97,
   "schemas": [
     {
       "domain": "usd",
@@ -1457,8 +1457,17 @@
       "kind": "concrete",
       "name": "GenerativeProcedural",
       "propertyCount": 1,
-      "reason": "procedural execution is outside the supported schema surface",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdProfiles",
@@ -1749,32 +1758,68 @@
       "kind": "multipleApply",
       "name": "AccessibilityAPI",
       "propertyCount": 3,
-      "reason": "DCC UI metadata is outside the supported schema surface",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdUI",
       "kind": "concrete",
       "name": "Backdrop",
       "propertyCount": 1,
-      "reason": "DCC UI metadata is outside the supported schema surface",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdUI",
       "kind": "abstract",
       "name": "NodeGraphNodeAPI",
       "propertyCount": 7,
-      "reason": "DCC UI metadata is outside the supported schema surface",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdUI",
       "kind": "abstract",
       "name": "SceneGraphPrimAPI",
       "propertyCount": 2,
-      "reason": "DCC UI metadata is outside the supported schema surface",
-      "scope": "excluded"
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
     },
     {
       "domain": "usdVol",

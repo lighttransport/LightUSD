@@ -121,7 +121,7 @@ static void test_generated_supported_schema_fixture() {
                  GetSchemaRegistry().IsKnownSchema(*marker->as_string());
     return true;
   });
-  if (prim_count != 92 || !markers_ok) {
+  if (prim_count != 97 || !markers_ok) {
     FAIL("fixture schema markers/count mismatch"); return;
   }
   std::vector<uint8_t> crate;
@@ -137,7 +137,7 @@ static void test_generated_supported_schema_fixture() {
     reread_markers = reread_markers && marker && marker->as_string();
     return true;
   });
-  if (reread_count != 92 || !reread_markers) {
+  if (reread_count != 97 || !reread_markers) {
     FAIL("USDC schema coverage roundtrip lost authored data"); return;
   }
   PASS();
