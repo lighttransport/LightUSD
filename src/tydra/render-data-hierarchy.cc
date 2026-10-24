@@ -55,7 +55,7 @@ static NodeCategory GetNodeCategoryFromType(NodeType nodeType) {
 // the prim is not a field-asset type.
 static bool GetFieldAssetInfo(const lightusd::Prim &prim,
                               value::AssetPath *filePath,
-                              std::string *fieldName) {
+                              std::string *fieldName, int *fieldIndex) {
   const FieldAsset *fa = nullptr;
   if (const auto *openvdb_asset = prim.as<OpenVDBAsset>()) {
     fa = openvdb_asset;
@@ -74,6 +74,10 @@ static bool GetFieldAssetInfo(const lightusd::Prim &prim,
     if (fnv.value().get_scalar(&tk)) {
       *fieldName = tk.str();
     }
+  }
+  if (auto fiv = fa->fieldIndex.get_value()) {
+    int index = 0;
+    if (fiv.value().get_scalar(&index)) *fieldIndex = index;
   }
   return true;
 }
@@ -278,7 +282,8 @@ bool RenderSceneConverter::ConvertVolume(
 
     value::AssetPath filePath;
     std::string vdb_field_name = field_name;  // default to the rel name
-    if (!GetFieldAssetInfo(*fieldPrim, &filePath, &vdb_field_name)) {
+    int vdb_field_index = 0;
+    if (!GetFieldAssetInfo(*fieldPrim, &filePath, &vdb_field_name, &vdb_field_index)) {
       DCOUT("target prim is not a field-asset: " << target_prim);
       continue;
     }
@@ -308,25 +313,25 @@ bool RenderSceneConverter::ConvertVolume(
       continue;
     }
 
-    // Decode the .vdb into dense float grids.
-    std::vector<usdVol::VDBGrid> grids;
+    // Decode only the grid the field names: the fieldIndex-th grid called
+    // fieldName (UsdVol). Legacy fallback: with no such grid and fieldIndex
+    // 0, the file's first decodable grid.
+    std::vector<usdVol::VDBGrid> grids(1);
     std::string vwarn, verr;
-    if (!usdVol::ReadVDBFromMemory(asset.data(), asset.size(), resolvedPath,
-                                   &grids, &vwarn, &verr)) {
-      DCOUT("Failed to decode vdb: " << resolvedPath << " : " << verr);
-      continue;
-    }
-    if (grids.empty()) continue;
-
-    // Pick the grid whose name matches the requested field, else the first.
-    const usdVol::VDBGrid *g = nullptr;
-    for (const auto &gg : grids) {
-      if (gg.name == vdb_field_name) {
-        g = &gg;
-        break;
+    if (!usdVol::ReadVDBGrid(asset.data(), asset.size(), resolvedPath, vdb_field_name,
+                             vdb_field_index, usdVol::VDBReadOptions(), &grids[0], &vwarn,
+                             &verr)) {
+      grids.clear();
+      if (vdb_field_index != 0 ||
+          !usdVol::ReadVDBFromMemory(asset.data(), asset.size(), resolvedPath, &grids,
+                                     &vwarn, &verr) ||
+          grids.empty()) {
+        DCOUT("Failed to decode vdb: " << resolvedPath << " : " << verr);
+        continue;
       }
+      grids.resize(1);
     }
-    if (!g) g = &grids[0];
+    const usdVol::VDBGrid *g = &grids[0];
     if (g->data.empty() || g->dim[0] <= 0 || g->dim[1] <= 0 || g->dim[2] <= 0) {
       continue;
     }
