@@ -26,6 +26,15 @@ bool Settings(const char* text, ia::Json* out, std::string* err) {
   }
   return true;
 }
+std::string Device(const ia::Json& j) {
+  return j.contains("device") && j["device"].is_string() ? j["device"].get<std::string>() : "cpu";
+}
+// Explicit devices that cannot run are unsupported rather than invalid.
+lightusd_status DeviceStatus(const std::string& device, std::string* err) {
+  std::string resolved;
+  if (ia::VolumetricDeviceAvailable(device, &resolved, err)) return LIGHTUSD_OK;
+  return device == "cuda" || device == "hip" ? LIGHTUSD_ERR_UNSUPPORTED : LIGHTUSD_ERR_INVALID_ARG;
+}
 double Number(const ia::Json& j, const char* key, double fallback) {
   return j.contains(key) && j[key].is_number() ? j[key].get<double>() : fallback;
 }
@@ -45,6 +54,21 @@ lightusd_status Read(const uint8_t* vdb, size_t size, ia::LevelSet* out) {
 }  // namespace
 
 extern "C" {
+
+lightusd_status lightusd_volumetric_device_available(const char* device,
+                                                     lightusd_string** resolved) {
+  if (resolved) *resolved = nullptr;
+  std::string name, err;
+  if (!ia::VolumetricDeviceAvailable(device ? device : "cpu", &name, &err))
+    return Fail(DeviceStatus(device ? device : "cpu", &err), err);
+  if (resolved) {
+    auto* s = new (std::nothrow) lightusd_string();
+    if (!s) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "out of memory");
+    s->s = name;
+    *resolved = s;
+  }
+  return LIGHTUSD_OK;
+}
 
 lightusd_status lightusd_mesh_to_level_set_vdb(const float* points, size_t point_count,
                                                const int32_t* indices, size_t index_count,
@@ -66,8 +90,11 @@ lightusd_status lightusd_mesh_to_level_set_vdb(const float* points, size_t point
                     settings["exact_winding"].get<bool>();
   if (settings.contains("name") && settings["name"].is_string())
     o.name = settings["name"].get<std::string>();
+  o.device = Device(settings);
   if (!(o.voxel_size > 0) || o.threads < 0 || o.threads > 256)
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "level set: voxel_size > 0 and threads in [0, 256]");
+  const lightusd_status ds = DeviceStatus(o.device, &err);
+  if (ds != LIGHTUSD_OK) return Fail(ds, err);
   ia::Mesh mesh;
   mesh.positions.assign(points, points + 3 * point_count);
   mesh.indices.assign(indices, indices + index_count);
@@ -145,8 +172,11 @@ lightusd_status lightusd_level_set_vdb_to_tet_mesh(const uint8_t* vdb, size_t si
   o.spacing = Number(settings, "spacing", 0);
   o.max_tets = size_t(std::max(0.0, Number(settings, "max_tets", 0)));
   o.threads = int(Number(settings, "threads", 0));
+  o.device = Device(settings);
   if (!(o.spacing > 0) || o.threads < 0 || o.threads > 256)
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh: spacing > 0 and threads in [0, 256]");
+  const lightusd_status ds = DeviceStatus(o.device, &err);
+  if (ds != LIGHTUSD_OK) return Fail(ds, err);
   ia::LevelSet level_set;
   const lightusd_status st = Read(vdb, size, &level_set);
   if (st != LIGHTUSD_OK) return st;

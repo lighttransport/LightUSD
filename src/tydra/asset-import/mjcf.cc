@@ -1484,6 +1484,18 @@ bool TakePreloadedMesh(const PreloadKey& key, Mesh* mesh, std::string* err) {
 // frame, as a generated .vdb (sdf/<mesh>.vdb), shared by every geom using the
 // mesh. Fills `out` with the asset path and the grid parameters; returns false
 // (with a reason) when no level set could be built.
+
+// The volumetric device for this import: an unavailable CUDA/HIP device
+// falls back to the CPU once, with a warning.
+static const std::string& VolumetricDevice() {
+  std::string& device = active_reader->volumetric_device;
+  if (!device.empty()) return device;
+  std::string why;
+  if (!VolumetricDeviceAvailable(active_reader->options.volumetric_device, &device, &why))
+    active_reader->Warn(why + "; using the CPU", "asset.volumetric_device_unavailable");
+  return device;
+}
+
 bool MjcfSdfLevelSet(const std::string& mesh_name, const Mesh& mesh, Json* out,
                      std::string* why) {
   auto& cache = active_reader->generated_cache;
@@ -1510,6 +1522,7 @@ bool MjcfSdfLevelSet(const std::string& mesh_name, const Mesh& mesh, Json* out,
   ls.exterior_width = ls.interior_width = opts.sdf_band * ls.voxel_size;
   ls.threads = opts.threads;
   ls.name = "sdf";
+  ls.device = VolumetricDevice();
   // ~128 bytes per candidate voxel while building.
   const size_t budget = opts.max_memory - std::min(opts.max_memory, active_reader->bytes);
   ls.max_voxels = std::max<size_t>(100000, std::min<size_t>(budget / 128, 50000000));
@@ -2771,6 +2784,7 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
     StuffingOptions so;
     so.spacing = opts.flex_tet_spacing > 0 ? opts.flex_tet_spacing : 4 * level_set.voxel_size();
     so.threads = opts.threads;
+    so.device = VolumetricDevice();
     so.max_tets = std::max<size_t>(1000, std::min<size_t>(budget / 256, 4000000));
     TetMeshData tm;
     if (!LevelSetToTetMesh(level_set, so, &tm, err)) return false;
@@ -2856,12 +2870,14 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
     LevelSetOptions ls;
     ls.voxel_size = spacing / 4;
     ls.threads = opts.threads;
+    ls.device = VolumetricDevice();
     const size_t budget = opts.max_memory - std::min(opts.max_memory, active_reader->bytes);
     ls.max_voxels = std::max<size_t>(100000, std::min<size_t>(budget / 128, 50000000));
     LevelSet level_set;
     StuffingOptions so;
     so.spacing = spacing;
     so.threads = opts.threads;
+    so.device = ls.device;
     so.max_tets = std::max<size_t>(1000, std::min<size_t>(budget / 256, 4000000));
     TetMeshData tm;
     std::string why;

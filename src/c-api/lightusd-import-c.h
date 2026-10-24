@@ -60,12 +60,20 @@ LIGHTUSD_API lightusd_status lightusd_import_last_report(lightusd_string** out);
  * Narrow-band level sets are OpenVDB bytes (one float grid, class "level
  * set", negative inside). Byte outputs are owned lightusd_string buffers
  * (lightusd_string_view / lightusd_string_destroy); packed arrays are native
- * float32 / int32. */
+ * float32 / int32. The "device" setting picks "cpu" (default), "cuda", "hip"
+ * or "auto" (CUDA, then HIP, then the CPU); CUDA/HIP need a
+ * LIGHTUSD_TINYVDB_GPU build, and an explicit device that is unavailable is
+ * LIGHTUSD_ERR_UNSUPPORTED. Results match the CPU's. */
+/* Whether `device` can run here: LIGHTUSD_OK with the device it maps to
+ * ("cpu", "cuda" or "hip") in *resolved, or LIGHTUSD_ERR_UNSUPPORTED with the
+ * reason as the last error. `resolved` may be NULL. */
+LIGHTUSD_API lightusd_status lightusd_volumetric_device_available(const char* device,
+                                                                  lightusd_string** resolved);
 /* Level set of a mesh: triangles in `indices`, or polygons when `counts` is
  * given (fan-triangulated). settings_json: {"voxel_size": h (> 0, required),
  * "exterior_width", "interior_width" (world, default 3 h), "exact_winding",
  * "max_voxels" (candidate budget, ~128 bytes each; default 8,000,000),
- * "threads", "name"}. Signs come from generalized winding
+ * "threads", "name", "device"}. Signs come from generalized winding
  * numbers, so open and inside-out meshes work. */
 LIGHTUSD_API lightusd_status lightusd_mesh_to_level_set_vdb(
     const float* points, size_t point_count, const int32_t* indices, size_t index_count,
@@ -89,7 +97,7 @@ LIGHTUSD_API lightusd_status lightusd_level_set_vdb_to_mesh(const uint8_t* vdb, 
                                                            lightusd_string** points,
                                                            lightusd_string** indices);
 /* Isosurface-stuffing tetrahedra: settings_json {"spacing" (> 0, required),
- * "max_tets", "threads"}. Outputs float32 xyz points, int32x4 tets (positive
+ * "max_tets", "threads", "device"}. Outputs float32 xyz points, int32x4 tets (positive
  * orientation) and int32x3 outward boundary triangles. */
 LIGHTUSD_API lightusd_status lightusd_level_set_vdb_to_tet_mesh(
     const uint8_t* vdb, size_t size, const char* settings_json, lightusd_string** points,

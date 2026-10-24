@@ -79,6 +79,7 @@ PyObject* lightusd_py_level_set_info(PyObject*, PyObject*);
 PyObject* lightusd_py_level_set_sample(PyObject*, PyObject*);
 PyObject* lightusd_py_level_set_to_mesh(PyObject*, PyObject*);
 PyObject* lightusd_py_level_set_to_tet_mesh(PyObject*, PyObject*);
+PyObject* lightusd_py_volumetric_device(PyObject*, PyObject*);
 PyObject* lightusd_import_report_object(lightusd_string*);
 PyObject* lightusd_query_physics(PyObject*, PyObject*, PyObject*);
 PyObject* lightusd_convert_units(PyObject*, PyObject*, PyObject*);

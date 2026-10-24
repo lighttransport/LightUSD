@@ -23,9 +23,16 @@ typedef struct {
      re-querying the tree for every cell. */
   float corners[8];
 } tool_voxel;
+/* Hash slots carry their coordinate, so a probe touches only the table;
+ * index is the voxel's position in v plus one (0 marks an empty slot). */
+typedef struct {
+  int32_t c[3];
+  uint32_t index;
+} tool_slot;
 typedef struct {
   tool_voxel* v;
-  size_t count, capacity, *slots, hash_capacity, limit, scans;
+  tool_slot* slots;
+  size_t count, capacity, hash_capacity, limit, scans;
   tvdb_error_t* err;
 } tool_map;
 static size_t tool_limit(size_t n) { return n ? n : 1000000; }
@@ -42,24 +49,34 @@ static void tool_map_free(tool_map* m) {
   free(m->slots);
   memset(m, 0, sizeof(*m));
 }
-static size_t tool_find(const tool_map* m, const int32_t c[3]) {
-  if (!m->hash_capacity) return SIZE_MAX;
+/* The voxel at c, or SIZE_MAX with *empty (if given) at the slot where it
+ * would go. */
+static size_t tool_probe(const tool_map* m, const int32_t c[3], size_t* empty) {
+  if (!m->hash_capacity) {
+    if (empty) *empty = SIZE_MAX;
+    return SIZE_MAX;
+  }
   size_t s = (size_t)tool_hash(c) & (m->hash_capacity - 1);
-  while (m->slots[s]) {
-    size_t i = m->slots[s] - 1;
-    if (!memcmp(c, m->v[i].c, sizeof(m->v[i].c))) return i;
+  while (m->slots[s].index) {
+    const tool_slot* t = m->slots + s;
+    if (t->c[0] == c[0] && t->c[1] == c[1] && t->c[2] == c[2]) return t->index - 1;
     s = (s + 1) & (m->hash_capacity - 1);
   }
+  if (empty) *empty = s;
   return SIZE_MAX;
+}
+static size_t tool_find(const tool_map* m, const int32_t c[3]) {
+  return tool_probe(m, c, NULL);
 }
 static tvdb_status_t tool_insert(tool_map* m, const int32_t c[3],
                                  size_t* index) {
-  size_t i = tool_find(m, c);
+  size_t empty;
+  size_t i = tool_probe(m, c, &empty);
   if (i != SIZE_MAX) {
     if (index) *index = i;
     return TVDB_OK;
   }
-  if (m->count >= m->limit)
+  if (m->count >= m->limit || m->count >= UINT32_MAX - 1)
     return tvdb_tree_error(m->err, TVDB_ERROR_INVALID_ARGUMENT,
                            "sparse coordinate budget exceeded");
   if (m->count == m->capacity) {
@@ -82,25 +99,26 @@ static tvdb_status_t tool_insert(tool_map* m, const int32_t c[3],
      * Sizing for 4/3 of the count put the half-load trigger right behind
      * the new size and rehashed on almost every insert. */
     if (!tvdb_hash_capacity_scaled(m->count + 1, 4, 1, &n) ||
-        !tvdb_size_mul(n, sizeof(size_t), &bytes))
+        !tvdb_size_mul(n, sizeof(tool_slot), &bytes))
       goto overflow;
-    size_t* slots = calloc(1, bytes);
+    tool_slot* slots = calloc(1, bytes);
     if (!slots) goto oom;
     for (size_t j = 0; j < m->count; ++j) {
       size_t s = (size_t)tool_hash(m->v[j].c) & (n - 1);
-      while (slots[s]) s = (s + 1) & (n - 1);
-      slots[s] = j + 1;
+      while (slots[s].index) s = (s + 1) & (n - 1);
+      memcpy(slots[s].c, m->v[j].c, sizeof(slots[s].c));
+      slots[s].index = (uint32_t)(j + 1);
     }
     free(m->slots);
     m->slots = slots;
     m->hash_capacity = n;
+    tool_probe(m, c, &empty);
   }
   i = m->count++;
   memset(m->v + i, 0, sizeof(*m->v));
   memcpy(m->v[i].c, c, 3 * sizeof(int32_t));
-  size_t s = (size_t)tool_hash(c) & (m->hash_capacity - 1);
-  while (m->slots[s]) s = (s + 1) & (m->hash_capacity - 1);
-  m->slots[s] = i + 1;
+  memcpy(m->slots[empty].c, c, sizeof(m->slots[empty].c));
+  m->slots[empty].index = (uint32_t)(i + 1);
   if (index) *index = i;
   return TVDB_OK;
 overflow:
@@ -1041,8 +1059,180 @@ done:
   return st;
 }
 /* ---- Mesh to narrow-band level set ------------------------------------ */
+/* Candidate voxels as 8^3 bricks: brick k covers voxels 8k .. 8k+7 on each
+ * axis, and mask[z] holds its slice z with bit x + 8y. Seeding sets bits and
+ * each dilation step is a few shifts per slice plus the faces pulled from the
+ * six neighbor bricks, instead of six hash probes per voxel. */
 typedef struct {
-  const tool_voxel* voxels;
+  int32_t (*key)[3];
+  uint64_t (*mask)[8];
+  size_t count, capacity;
+  uint32_t* slots; /* brick index + 1; 0 marks an empty slot */
+  size_t hash_capacity;
+} tool_bricks;
+#define TOOL_X0 UINT64_C(0x0101010101010101) /* bits with x == 0 */
+#define TOOL_X7 UINT64_C(0x8080808080808080) /* bits with x == 7 */
+static void tool_bricks_free(tool_bricks* b) {
+  free(b->key);
+  free(b->mask);
+  free(b->slots);
+  memset(b, 0, sizeof(*b));
+}
+static int32_t tool_brick_of(int32_t c) { return c >= 0 ? c / 8 : -1 - (-1 - c) / 8; }
+static size_t tool_brick_find(const tool_bricks* b, const int32_t k[3]) {
+  if (!b->hash_capacity) return SIZE_MAX;
+  size_t s = (size_t)tool_hash(k) & (b->hash_capacity - 1);
+  while (b->slots[s]) {
+    const size_t i = b->slots[s] - 1;
+    if (b->key[i][0] == k[0] && b->key[i][1] == k[1] && b->key[i][2] == k[2]) return i;
+    s = (s + 1) & (b->hash_capacity - 1);
+  }
+  return SIZE_MAX;
+}
+/* The brick at k, appended empty when missing; SIZE_MAX if out of memory. */
+static size_t tool_brick_get(tool_bricks* b, const int32_t k[3]) {
+  size_t i = tool_brick_find(b, k);
+  if (i != SIZE_MAX) return i;
+  if (b->count >= UINT32_MAX - 1) return SIZE_MAX;
+  if (b->count == b->capacity) {
+    const size_t n = b->capacity ? 2 * b->capacity : 64;
+    size_t kb, mb;
+    if (!tvdb_size_mul(n, sizeof(*b->key), &kb) || !tvdb_size_mul(n, sizeof(*b->mask), &mb))
+      return SIZE_MAX;
+    void* key = realloc(b->key, kb);
+    if (!key) return SIZE_MAX;
+    b->key = key;
+    void* mask = realloc(b->mask, mb);
+    if (!mask) return SIZE_MAX;
+    b->mask = mask;
+    b->capacity = n;
+  }
+  if (!b->hash_capacity || b->count >= b->hash_capacity / 2) {
+    size_t n, bytes;
+    if (!tvdb_hash_capacity_scaled(b->count + 1, 4, 1, &n) ||
+        !tvdb_size_mul(n, sizeof(uint32_t), &bytes))
+      return SIZE_MAX;
+    uint32_t* slots = calloc(1, bytes);
+    if (!slots) return SIZE_MAX;
+    for (size_t j = 0; j < b->count; ++j) {
+      size_t s = (size_t)tool_hash(b->key[j]) & (n - 1);
+      while (slots[s]) s = (s + 1) & (n - 1);
+      slots[s] = (uint32_t)(j + 1);
+    }
+    free(b->slots);
+    b->slots = slots;
+    b->hash_capacity = n;
+  }
+  i = b->count++;
+  memcpy(b->key[i], k, sizeof(b->key[i]));
+  memset(b->mask[i], 0, sizeof(b->mask[i]));
+  size_t s = (size_t)tool_hash(k) & (b->hash_capacity - 1);
+  while (b->slots[s]) s = (s + 1) & (b->hash_capacity - 1);
+  b->slots[s] = (uint32_t)(i + 1);
+  return i;
+}
+/* Brick keys in lexicographic order: with candidates emitted in leaf slot
+ * order (x, then y, then z) inside each brick, the band reaches the tree
+ * builder already sorted (bricks are exactly the 5/4/3 leaves). */
+typedef struct {
+  int32_t key[3];
+  uint32_t brick;
+} tool_brick_order; /* self-contained, so concurrent builds need no shared state */
+static int tool_brick_compare(const void* pa, const void* pb) {
+  const int32_t* a = ((const tool_brick_order*)pa)->key;
+  const int32_t* b = ((const tool_brick_order*)pb)->key;
+  for (int k = 0; k < 3; ++k)
+    if (a[k] != b[k]) return a[k] < b[k] ? -1 : 1;
+  return 0;
+}
+static size_t tool_popcount(uint64_t v) {
+  v -= (v >> 1) & UINT64_C(0x5555555555555555);
+  v = (v & UINT64_C(0x3333333333333333)) + ((v >> 2) & UINT64_C(0x3333333333333333));
+  v = (v + (v >> 4)) & UINT64_C(0x0f0f0f0f0f0f0f0f);
+  return (size_t)((v * UINT64_C(0x0101010101010101)) >> 56);
+}
+static size_t tool_bricks_voxels(const tool_bricks* b) {
+  size_t n = 0;
+  for (size_t i = 0; i < b->count; ++i)
+    for (int z = 0; z < 8; ++z) n += tool_popcount(b->mask[i][z]);
+  return n;
+}
+/* One 6-neighbor dilation step. */
+static tvdb_status_t tool_bricks_dilate(tool_bricks* b, uint64_t (**scratch)[8],
+                                        size_t* scratch_cap, tvdb_error_t* err) {
+  static const int dir[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
+                                {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+  /* Create the bricks the boundary bits spill into (their slices start
+   * empty, so they only receive). */
+  const size_t n0 = b->count;
+  for (size_t i = 0; i < n0; ++i) {
+    uint64_t any = 0, xp = 0, xm = 0, yp = 0, ym = 0;
+    for (int z = 0; z < 8; ++z) {
+      const uint64_t m = b->mask[i][z];
+      any |= m;
+      xp |= m & TOOL_X7;
+      xm |= m & TOOL_X0;
+      yp |= m >> 56;
+      ym |= m & 0xff;
+    }
+    if (!any) continue;
+    const int send[6] = {xp != 0, xm != 0, yp != 0, ym != 0, b->mask[i][7] != 0,
+                         b->mask[i][0] != 0};
+    for (int d = 0; d < 6; ++d) {
+      if (!send[d]) continue;
+      int32_t k[3];
+      for (int a = 0; a < 3; ++a) {
+        const int64_t q = (int64_t)b->key[i][a] + dir[d][a];
+        if (q < -(INT64_C(1) << 28) || q >= (INT64_C(1) << 28))
+          return tvdb_tree_error(err, TVDB_ERROR_INVALID_ARGUMENT,
+                                 "mesh level set coordinate outside int32");
+        k[a] = (int32_t)q;
+      }
+      if (tool_brick_get(b, k) == SIZE_MAX)
+        return tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY,
+                               "mesh level set allocation failed");
+    }
+  }
+  if (b->count > *scratch_cap) {
+    size_t bytes;
+    if (!tvdb_size_mul(b->capacity, sizeof(**scratch), &bytes))
+      return tvdb_tree_error(err, TVDB_ERROR_INVALID_ARGUMENT, "mesh level set size overflow");
+    void* p = realloc(*scratch, bytes);
+    if (!p)
+      return tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY, "mesh level set allocation failed");
+    *scratch = p;
+    *scratch_cap = b->capacity;
+  }
+  uint64_t(*next)[8] = *scratch;
+  for (size_t i = 0; i < b->count; ++i) {
+    const uint64_t* m = b->mask[i];
+    const uint64_t* nb[6];
+    for (int d = 0; d < 6; ++d) {
+      const int32_t k[3] = {b->key[i][0] + dir[d][0], b->key[i][1] + dir[d][1],
+                            b->key[i][2] + dir[d][2]};
+      const size_t j = tool_brick_find(b, k);
+      nb[d] = j == SIZE_MAX ? NULL : b->mask[j];
+    }
+    for (int z = 0; z < 8; ++z) {
+      uint64_t v = m[z] | ((m[z] << 1) & ~TOOL_X0) | ((m[z] >> 1) & ~TOOL_X7) |
+                   (m[z] << 8) | (m[z] >> 8);
+      if (z > 0) v |= m[z - 1];
+      if (z < 7) v |= m[z + 1];
+      if (nb[1]) v |= (nb[1][z] >> 7) & TOOL_X0;  /* -x neighbor's x = 7 */
+      if (nb[0]) v |= (nb[0][z] << 7) & TOOL_X7;  /* +x neighbor's x = 0 */
+      if (nb[3]) v |= nb[3][z] >> 56;             /* -y neighbor's y = 7 */
+      if (nb[2]) v |= (nb[2][z] & 0xff) << 56;    /* +y neighbor's y = 0 */
+      next[i][z] = v;
+    }
+    if (nb[5]) next[i][0] |= nb[5][7];
+    if (nb[4]) next[i][7] |= nb[4][0];
+  }
+  memcpy(b->mask, next, b->count * sizeof(*next));
+  return TVDB_OK;
+}
+
+typedef struct {
+  const int32_t* ijk;
   float* distance;
   double* winding;
   const tvdb_mesh_sdf_t* query;
@@ -1053,9 +1243,8 @@ typedef struct {
 static void tool_level_set_range(size_t begin, size_t end, void* user) {
   tool_level_set_job* job = (tool_level_set_job*)user;
   for (size_t i = begin; i < end; ++i) {
-    const double w[3] = {job->voxels[i].c[0] * job->h,
-                         job->voxels[i].c[1] * job->h,
-                         job->voxels[i].c[2] * job->h};
+    const double w[3] = {job->ijk[3 * i] * job->h, job->ijk[3 * i + 1] * job->h,
+                         job->ijk[3 * i + 2] * job->h};
     double d = 0;
     if (tvdb_mesh_sdf_distance(job->query, w, &d, NULL) != TVDB_OK ||
         !isfinite(d)) {
@@ -1107,17 +1296,22 @@ tvdb_status_t tvdb_mesh_to_level_set(const tvdb_triangle_mesh* mesh,
   const double h = options->voxel_size, inv_h = 1.0 / h;
   const float outside = options->exterior_width,
               inside = options->interior_width;
-  tool_map voxels = {0}, band = {0};
+  const size_t limit = tool_limit(options->max_voxels);
+  tool_bricks bricks = {0};
+  uint64_t(*scratch)[8] = NULL;
+  size_t scratch_cap = 0, total = 0;
+  tool_map band = {0};
   tvdb_mesh_sdf_t* query = NULL;
   tvdb_winding_t* wn = NULL;
   tvdb_thread_pool_t* owned = NULL;
+  int32_t* ijk = NULL;
   float* distance = NULL;
   double* winding = NULL;
   tvdb_grid_t stub = {0}, generated = {0}, filled = {0}, pruned = {0};
   tvdb_mesh_level_set_result_t report = {0};
   tvdb_status_t st = TVDB_OK;
-  voxels.limit = band.limit = tool_limit(options->max_voxels);
-  voxels.err = band.err = err;
+  band.limit = limit;
+  band.err = err;
 
   /* Seeds: samples at most h/2 apart cover every face, so every voxel whose
    * center lies within h * sqrt(3) / 2 of a face is at most one 6-neighbor
@@ -1136,7 +1330,7 @@ tvdb_status_t tvdb_mesh_to_level_set(const tvdb_triangle_mesh* mesh,
                                (e1[2] - e2[2]) * (e1[2] - e2[2])));
     const double steps = ceil(2.0 * l * inv_h);
     if (!isfinite(steps) || steps > 1e6 ||
-        (steps + 1) * (steps + 2) / 2 > 32.0 * (double)voxels.limit) {
+        (steps + 1) * (steps + 2) / 2 > 32.0 * (double)limit) {
       st = tvdb_tree_error(err, TVDB_ERROR_INVALID_ARGUMENT,
                            "mesh level set face exceeds the voxel budget");
       break;
@@ -1154,105 +1348,185 @@ tvdb_status_t tvdb_mesh_to_level_set(const tvdb_triangle_mesh* mesh,
                                "mesh level set coordinate outside int32");
           break;
         }
-        st = tool_insert(&voxels, c, NULL);
-        if (st != TVDB_OK) break;
+        const int32_t k[3] = {tool_brick_of(c[0]), tool_brick_of(c[1]), tool_brick_of(c[2])};
+        const size_t bi = tool_brick_get(&bricks, k);
+        if (bi == SIZE_MAX) {
+          st = tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY,
+                               "mesh level set allocation failed");
+          break;
+        }
+        const int x = (int)((int64_t)c[0] - 8 * (int64_t)k[0]),
+                  y = (int)((int64_t)c[1] - 8 * (int64_t)k[1]),
+                  z = (int)((int64_t)c[2] - 8 * (int64_t)k[2]);
+        const uint64_t bit = UINT64_C(1) << (x + 8 * y);
+        if (bricks.mask[bi][z] & bit) continue;
+        bricks.mask[bi][z] |= bit;
+        if (++total > limit) {
+          st = tvdb_tree_error(err, TVDB_ERROR_INVALID_ARGUMENT,
+                               "sparse coordinate budget exceeded");
+          break;
+        }
       }
   }
   if (st != TVDB_OK) goto done;
-  report.seed_voxels = voxels.count;
+  report.seed_voxels = total;
   {
     /* Dilate by enough 6-neighbor layers to reach every voxel within the
      * band (Euclidean distance <= L1 distance / sqrt(3)). */
     const double layers =
         ceil(sqrt(3.0) * fmax(outside, inside) * inv_h) + 2;
-    if (!isfinite(layers) || layers > (double)voxels.limit) {
+    if (!isfinite(layers) || layers > (double)limit) {
       st = tvdb_tree_error(err, TVDB_ERROR_INVALID_ARGUMENT,
                            "mesh level set band exceeds the voxel budget");
       goto done;
     }
-    size_t begin = 0;
     for (size_t layer = 0; layer < (size_t)layers; ++layer) {
-      const size_t end = voxels.count;
-      for (size_t i = begin; i < end; ++i) {
-        int32_t base[3];
-        memcpy(base, voxels.v[i].c, sizeof(base));
-        for (int a = 0; a < 3; ++a)
-          for (int dir = -1; dir <= 1; dir += 2) {
-            int32_t c[3];
-            memcpy(c, base, sizeof(c));
-            const int64_t q = (int64_t)c[a] + dir;
-            if (q < INT32_MIN || q > INT32_MAX) {
-              st = tvdb_tree_error(err, TVDB_ERROR_INVALID_ARGUMENT,
-                                   "mesh level set coordinate outside int32");
-              goto done;
-            }
-            c[a] = (int32_t)q;
-            st = tool_insert(&voxels, c, NULL);
-            if (st != TVDB_OK) goto done;
-          }
+      st = tool_bricks_dilate(&bricks, &scratch, &scratch_cap, err);
+      if (st != TVDB_OK) goto done;
+      total = tool_bricks_voxels(&bricks);
+      if (total > limit) {
+        st = tvdb_tree_error(err, TVDB_ERROR_INVALID_ARGUMENT,
+                             "sparse coordinate budget exceeded");
+        goto done;
       }
-      begin = end;
     }
   }
-  report.candidate_voxels = voxels.count;
+  free(scratch);
+  scratch = NULL;
+  report.candidate_voxels = total;
   {
-    size_t fbytes, dbytes;
-    if (!tvdb_size_mul(voxels.count, sizeof(float), &fbytes) ||
-        !tvdb_size_mul(voxels.count, sizeof(double), &dbytes)) {
+    size_t ibytes, fbytes, dbytes;
+    if (!tvdb_size_mul(total, 3 * sizeof(int32_t), &ibytes) ||
+        !tvdb_size_mul(total, sizeof(float), &fbytes) ||
+        !tvdb_size_mul(total, sizeof(double), &dbytes)) {
       st = tvdb_tree_error(err, TVDB_ERROR_INVALID_ARGUMENT,
                            "mesh level set size overflow");
       goto done;
     }
+    ijk = (int32_t*)malloc(ibytes ? ibytes : 1);
     distance = (float*)malloc(fbytes ? fbytes : 1);
     winding = (double*)malloc(dbytes ? dbytes : 1);
-    if (!distance || !winding) {
+    if (!ijk || !distance || !winding) {
       st = tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY,
                            "mesh level set allocation failed");
       goto done;
     }
-  }
-  st = tvdb_mesh_sdf_create(mesh, &query, err);
-  if (st != TVDB_OK) goto done;
-  st = tvdb_winding_create(mesh,
-                           options->sign == TVDB_LEVEL_SET_SIGN_WINDING_EXACT
-                               ? TVDB_WINDING_EXACT
-                               : TVDB_WINDING_FAST,
-                           &wn, err);
-  if (st != TVDB_OK) goto done;
-  if (!pool) {
-    size_t workers = voxels.count < 32768 ? 1 : tvdb_thread_default_count();
-    if (workers > 8) workers = 8;
-    st = tvdb_thread_pool_create(workers ? workers : 1, &owned, err);
-    if (st != TVDB_OK) goto done;
-    pool = owned;
+    tool_brick_order* order =
+        (tool_brick_order*)malloc((bricks.count ? bricks.count : 1) * sizeof(tool_brick_order));
+    if (!order) {
+      st = tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY,
+                           "mesh level set allocation failed");
+      goto done;
+    }
+    for (size_t i = 0; i < bricks.count; ++i) {
+      memcpy(order[i].key, bricks.key[i], sizeof(order[i].key));
+      order[i].brick = (uint32_t)i;
+    }
+    /* Keys are unique, so qsort's instability cannot reorder anything. */
+    qsort(order, bricks.count, sizeof(*order), tool_brick_compare);
+    size_t n = 0;
+    for (size_t o = 0; o < bricks.count; ++o) {
+      const size_t i = order[o].brick;
+      for (int x = 0; x < 8; ++x)
+        for (int y = 0; y < 8; ++y)
+          for (int z = 0; z < 8; ++z) {
+            if (!((bricks.mask[i][z] >> (x + 8 * y)) & 1)) continue;
+            ijk[3 * n] = 8 * bricks.key[i][0] + x;
+            ijk[3 * n + 1] = 8 * bricks.key[i][1] + y;
+            ijk[3 * n + 2] = 8 * bricks.key[i][2] + z;
+            ++n;
+          }
+    }
+    free(order);
+    tool_bricks_free(&bricks);
   }
   {
-    tool_level_set_job job = {.voxels = voxels.v, .distance = distance,
-                              .winding = winding, .query = query, .wn = wn,
-                              .h = h};
+    /* A batch evaluator (a GPU) takes the voxels in bounded chunks; voxels it
+     * returns as NaN, and every voxel without one, take the CPU path. */
+    size_t cpu_voxels = total;
+    if (options->evaluate) {
+      const size_t chunk = (size_t)1 << 22;
+      for (size_t begin = 0; begin < total && st == TVDB_OK; begin += chunk) {
+        const size_t count = total - begin < chunk ? total - begin : chunk;
+        st = options->evaluate(options->evaluate_user, ijk + 3 * begin, count, h,
+                               distance + begin, winding + begin, err);
+      }
+      if (st != TVDB_OK) goto done;
+      cpu_voxels = 0;
+      for (size_t i = 0; i < total; ++i) cpu_voxels += isnan(distance[i]) != 0;
+    }
+    if (cpu_voxels) {
+      st = tvdb_mesh_sdf_create(mesh, &query, err);
+      if (st != TVDB_OK) goto done;
+      st = tvdb_winding_create(mesh,
+                               options->sign == TVDB_LEVEL_SET_SIGN_WINDING_EXACT
+                                   ? TVDB_WINDING_EXACT
+                                   : TVDB_WINDING_FAST,
+                               &wn, err);
+      if (st != TVDB_OK) goto done;
+    }
+    tool_level_set_job job = {.ijk = ijk, .distance = distance, .winding = winding,
+                              .query = query, .wn = wn, .h = h};
     atomic_init(&job.bad, 0);
-    st = tvdb_thread_pool_for(pool, 0, voxels.count, 1024,
-                              tool_level_set_range, &job, err);
-    if (st == TVDB_OK && atomic_load_explicit(&job.bad, memory_order_relaxed))
+    if (cpu_voxels && options->evaluate) {
+      for (size_t i = 0; i < total; ++i)
+        if (isnan(distance[i])) tool_level_set_range(i, i + 1, &job);
+    } else if (cpu_voxels) {
+      if (!pool) {
+        size_t workers = total < 32768 ? 1 : tvdb_thread_default_count();
+        if (workers > 8) workers = 8;
+        st = tvdb_thread_pool_create(workers ? workers : 1, &owned, err);
+        if (st != TVDB_OK) goto done;
+        pool = owned;
+      }
+      st = tvdb_thread_pool_for(pool, 0, total, 1024, tool_level_set_range, &job, err);
+      if (st != TVDB_OK) goto done;
+    }
+    if (atomic_load_explicit(&job.bad, memory_order_relaxed)) {
       st = tvdb_tree_error(err, TVDB_ERROR_INVALID_DATA,
                            "mesh level set distance arithmetic failed");
-    if (st != TVDB_OK) goto done;
+      goto done;
+    }
   }
-  /* Serial, in candidate order: the band is independent of worker count. */
-  for (size_t i = 0; i < voxels.count; ++i) {
+  /* Candidates are unique, so the band is appended without hashing; the tree
+   * build sorts it, so the grid is independent of candidate order. */
+  for (size_t i = 0; i < total; ++i) {
+    if (!isfinite(distance[i]) || !isfinite(winding[i])) {
+      st = tvdb_tree_error(err, TVDB_ERROR_INVALID_DATA,
+                           "mesh level set distance arithmetic failed");
+      goto done;
+    }
     /* |w| > 1/2: inside-out closed meshes (winding -1) still read inside. */
     const int negative = fabs(winding[i]) > 0.5;
     const float d = distance[i];
     if (d >= (negative ? inside : outside)) continue;
-    size_t j;
-    st = tool_insert(&band, voxels.v[i].c, &j);
-    if (st != TVDB_OK) goto done;
+    if (band.count == band.capacity) {
+      const size_t n = band.capacity ? 2 * band.capacity : 1024;
+      size_t bytes;
+      void* p = tvdb_size_mul(n, sizeof(tool_voxel), &bytes) ? realloc(band.v, bytes) : NULL;
+      if (!p) {
+        st = tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY,
+                             "mesh level set allocation failed");
+        goto done;
+      }
+      band.v = p;
+      band.capacity = n;
+    }
+    tool_voxel* t = band.v + band.count++;
+    memset(t, 0, sizeof(*t));
+    memcpy(t->c, ijk + 3 * i, sizeof(t->c));
     /* No negative zero: voxels on the surface read +0 for either sign. */
-    band.v[j].value = negative && d > 0 ? -d : d;
-    band.v[j].active = 1;
+    t->value = negative && d > 0 ? -d : d;
+    t->active = 1;
     if (d > report.max_distance) report.max_distance = d;
   }
   report.active_voxels = band.count;
+  free(ijk);
+  free(distance);
+  free(winding);
+  ijk = NULL;
+  distance = NULL;
+  winding = NULL;
   {
     tvdb_transform_t transform;
     memset(&transform, 0, sizeof(transform));
@@ -1278,11 +1552,13 @@ tvdb_status_t tvdb_mesh_to_level_set(const tvdb_triangle_mesh* mesh,
     if (result) *result = report;
   }
 done:
-  tool_map_free(&voxels);
+  tool_bricks_free(&bricks);
+  free(scratch);
   tool_map_free(&band);
   tvdb_mesh_sdf_destroy(query);
   tvdb_winding_destroy(wn);
   tvdb_thread_pool_destroy(owned);
+  free(ijk);
   free(distance);
   free(winding);
   tvdb_grid_destroy_owned(&generated);

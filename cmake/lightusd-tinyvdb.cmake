@@ -3,6 +3,8 @@
 # root library (usdVol) and lightusd_asset_import (SDF/volumetric import), so
 # executables never link two copies of the tvdb_* symbols.
 get_filename_component(_lusd_tinyvdb_root "${CMAKE_CURRENT_LIST_DIR}/../src" ABSOLUTE)
+option(LIGHTUSD_TINYVDB_GPU
+  "Build tinyvdb's runtime-loaded CUDA/HIP level-set and stuffing kernels (opt-in device)" OFF)
 if(NOT TARGET lightusd_tinyvdb)
   set(_lusd_tinyvdb_dir "${_lusd_tinyvdb_root}/external/tinyvdb")
   add_library(lightusd_tinyvdb STATIC
@@ -45,5 +47,14 @@ if(NOT TARGET lightusd_tinyvdb)
   if(EMSCRIPTEN)
     # No C11 thread runtime in single-threaded WASM builds: serial tasks.
     target_compile_definitions(lightusd_tinyvdb PUBLIC TINYVDB_THREAD_NONE=1)
+  endif()
+  # Optional CUDA/HIP level sets and stuffing (tinyvdb_gpu_compute): the
+  # driver libraries are loaded at runtime, so this needs no GPU SDK and
+  # still runs, on the CPU, where no device exists. The CPU stays the default
+  # device either way (`volumetric_device`).
+  if(LIGHTUSD_TINYVDB_GPU AND NOT EMSCRIPTEN)
+    target_sources(lightusd_tinyvdb PRIVATE "${_lusd_tinyvdb_dir}/tinyvdb_gpu_compute.c")
+    target_compile_definitions(lightusd_tinyvdb PUBLIC LIGHTUSD_HAVE_TINYVDB_GPU=1)
+    target_link_libraries(lightusd_tinyvdb PRIVATE ${CMAKE_DL_LIBS})
   endif()
 endif()

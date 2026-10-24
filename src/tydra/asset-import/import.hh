@@ -89,6 +89,10 @@ struct Options {
   // mesh's level set, flex_tet_spacing apart; 0 picks extent / 12).
   std::string flex_tetrahedralize = "mujoco";
   double flex_tet_spacing = 0;
+  // Device for those level sets and tets: "cpu", "cuda", "hip" or "auto"
+  // (volumetric.hh). An unavailable CUDA/HIP device falls back to the CPU
+  // with asset.volumetric_device_unavailable; results are the same.
+  std::string volumetric_device = "cpu";
   bool allow_missing = false;
   bool tessellate_collision_shapes = false;
   UnsupportedPolicy unsupported_policy = UnsupportedPolicy::Warn;
@@ -177,6 +181,7 @@ struct Reader {
   // and their per-source cache.
   AssetMap generated;
   std::map<std::string, Json> generated_cache;
+  std::string volumetric_device;  // options.volumetric_device once resolved
   std::map<std::string, MeshBuffer> meshes;
   bool obj_indexed = false;  // set by the OBJ scene import (obj_topology)
   struct TextureRequest {

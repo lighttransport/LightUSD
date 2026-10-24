@@ -11,6 +11,11 @@
 #include "tinyvdb_tetmesh.h"
 #include "tinyvdb_tree.h"
 #include "tinyvdb_tree_internal.h"
+#if defined(LIGHTUSD_HAVE_TINYVDB_GPU)
+#include <mutex>
+
+#include "tinyvdb_gpu_compute.h"
+#endif
 
 namespace lightusd {
 namespace tydra {
@@ -106,6 +111,71 @@ bool Fail(std::string* err, const char* what, const tvdb_error_t& e) {
   return false;
 }
 
+// The device a call runs on: "cpu", or a CUDA/HIP device locked for the call.
+struct DeviceLease {
+  std::string name = "cpu";
+#if defined(LIGHTUSD_HAVE_TINYVDB_GPU)
+  tvdb_gpu_compute_t* device = nullptr;
+  std::unique_lock<std::mutex> lock;
+#endif
+};
+
+#if defined(LIGHTUSD_HAVE_TINYVDB_GPU)
+// One device per runtime, created on first use and kept for the process
+// (ROCm cannot be unloaded safely); its mutex serializes calls, as
+// tinyvdb_gpu_compute requires.
+struct GpuSlot {
+  std::mutex mutex;
+  tvdb_gpu_compute_t* device = nullptr;
+  bool tried = false;
+  std::string why;
+};
+GpuSlot& Slot(bool hip) {
+  static GpuSlot slots[2];
+  return slots[hip ? 1 : 0];
+}
+bool LeaseGpu(bool hip, DeviceLease* lease, std::string* why) {
+  GpuSlot& s = Slot(hip);
+  std::unique_lock<std::mutex> lock(s.mutex);
+  if (!s.tried) {
+    s.tried = true;
+    tvdb_error_t e;
+    std::memset(&e, 0, sizeof(e));
+    if (tvdb_gpu_compute_create(hip ? TVDB_GPU_BACKEND_HIP : TVDB_GPU_BACKEND_CUDA, 0, &s.device,
+                                &e) != TVDB_OK)
+      s.why = e.message[0] ? e.message : tvdb_status_string(e.status);
+  }
+  if (!s.device) {
+    if (why) *why = (hip ? "HIP: " : "CUDA: ") + s.why;
+    return false;
+  }
+  lease->name = hip ? "hip" : "cuda";
+  lease->device = s.device;
+  lease->lock = std::move(lock);
+  return true;
+}
+#endif
+
+bool LeaseDevice(const std::string& want, DeviceLease* lease, std::string* err) {
+  if (want.empty() || want == "cpu") return true;
+  if (want != "cuda" && want != "hip" && want != "auto") {
+    if (err) *err = "volumetric device must be cpu, cuda, hip or auto: " + want;
+    return false;
+  }
+#if defined(LIGHTUSD_HAVE_TINYVDB_GPU)
+  std::string why_cuda, why_hip;
+  if (want != "hip" && LeaseGpu(false, lease, &why_cuda)) return true;
+  if (want != "cuda" && LeaseGpu(true, lease, &why_hip)) return true;
+  if (want == "auto") return true;  // the CPU
+  if (err) *err = "volumetric device unavailable: " + (want == "cuda" ? why_cuda : why_hip);
+  return false;
+#else
+  if (want == "auto") return true;
+  if (err) *err = "volumetric device " + want + " needs a LIGHTUSD_TINYVDB_GPU build";
+  return false;
+#endif
+}
+
 const char* GridClass(const tvdb_grid* g) {
   for (size_t i = 0; i < g->metadata.count; ++i) {
     const tvdb_meta_entry_t& e = g->metadata.entries[i];
@@ -117,8 +187,16 @@ const char* GridClass(const tvdb_grid* g) {
 
 }  // namespace
 
+bool VolumetricDeviceAvailable(const std::string& device, std::string* resolved,
+                               std::string* why) {
+  DeviceLease lease;
+  const bool ok = LeaseDevice(device, &lease, why);
+  if (resolved) *resolved = ok ? lease.name : "cpu";
+  return ok;
+}
+
 bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options, LevelSet* out,
-                    std::string* err) {
+                    std::string* err, std::string* device_used) {
   if (!out || !(options.voxel_size > 0) || !std::isfinite(options.voxel_size)) {
     if (err) *err = "level set: voxel size must be positive";
     return false;
@@ -192,6 +270,8 @@ bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options, LevelSet* 
   o.grid_name = options.name.empty() ? "sdf" : options.name.c_str();
   Pool pool;
   if (!pool.Make(options.threads, err)) return false;
+  DeviceLease lease;
+  if (!LeaseDevice(options.device, &lease, err)) return false;
   auto* grid = static_cast<tvdb_grid*>(std::calloc(1, sizeof(tvdb_grid)));
   if (!grid) {
     if (err) *err = "level set: out of memory";
@@ -199,11 +279,19 @@ bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options, LevelSet* 
   }
   tvdb_error_t e;
   std::memset(&e, 0, sizeof(e));
-  if (tvdb_mesh_to_level_set(&tm, &o, pool.pool, grid, nullptr, &e) != TVDB_OK) {
+  tvdb_status_t st;
+#if defined(LIGHTUSD_HAVE_TINYVDB_GPU)
+  if (lease.device)
+    st = tvdb_gpu_compute_mesh_to_level_set(lease.device, &tm, &o, pool.pool, grid, nullptr, &e);
+  else
+#endif
+    st = tvdb_mesh_to_level_set(&tm, &o, pool.pool, grid, nullptr, &e);
+  if (st != TVDB_OK) {
     std::free(grid);
     return Fail(err, "level set", e);
   }
   LevelSetAccess::Adopt(out, grid);
+  if (device_used) *device_used = lease.name;
   return true;
 }
 
@@ -362,7 +450,7 @@ bool LevelSetToMesh(const LevelSet& level_set, size_t max_cells, Mesh* out, std:
 }
 
 bool LevelSetToTetMesh(const LevelSet& level_set, const StuffingOptions& options,
-                       TetMeshData* out, std::string* err) {
+                       TetMeshData* out, std::string* err, std::string* device_used) {
   if (level_set.empty() || !out || !(options.spacing > 0)) {
     if (err) *err = "tet mesh: empty level set or nonpositive spacing";
     return false;
@@ -373,12 +461,21 @@ bool LevelSetToTetMesh(const LevelSet& level_set, const StuffingOptions& options
   o.max_tets = options.max_tets;
   Pool pool;
   if (!pool.Make(options.threads, err)) return false;
+  DeviceLease lease;
+  if (!LeaseDevice(options.device, &lease, err)) return false;
   tvdb_tet_mesh tm;
   std::memset(&tm, 0, sizeof(tm));
   tvdb_error_t e;
   std::memset(&e, 0, sizeof(e));
-  if (tvdb_level_set_to_tet_mesh(level_set.grid(), &o, pool.pool, &tm, &e) != TVDB_OK)
-    return Fail(err, "tet mesh", e);
+  tvdb_status_t st;
+#if defined(LIGHTUSD_HAVE_TINYVDB_GPU)
+  if (lease.device)
+    st = tvdb_gpu_compute_level_set_to_tet_mesh(lease.device, level_set.grid(), &o, pool.pool, &tm, &e);
+  else
+#endif
+    st = tvdb_level_set_to_tet_mesh(level_set.grid(), &o, pool.pool, &tm, &e);
+  if (st != TVDB_OK) return Fail(err, "tet mesh", e);
+  if (device_used) *device_used = lease.name;
   out->points.assign(tm.positions, tm.positions + 3 * tm.vertex_count);
   out->tets.assign(tm.tets, tm.tets + 4 * tm.tet_count);
   out->surface.assign(tm.boundary, tm.boundary + 3 * tm.boundary_count);

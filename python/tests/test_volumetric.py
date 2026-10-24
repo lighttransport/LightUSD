@@ -221,3 +221,56 @@ def test_volumetric_cli(tmp_path, capsys):
     assert stage.prim_at('/World/box_sdf').type_name == 'Volume'
     assert stage.prim_at('/World/box_tets').type_name == 'TetMesh'
     assert 'tets at /World/box_tets' in capsys.readouterr().out
+
+
+_GPU = vol.device_available("auto")
+
+
+def test_device_names():
+    assert vol.device_available("cpu") == "cpu"
+    assert _GPU in ("cpu", "cuda", "hip")
+    assert vol.device_available("bogus") is None
+    points, tris = _sphere(8, 16)
+    with pytest.raises(ValueError):
+        vol.mesh_to_level_set(points, tris, resolution=16, device="bogus")
+    for name in ("cuda", "hip"):
+        if vol.device_available(name) is None:  # explicit and unavailable: an error
+            with pytest.raises(lightusd.UsdError):
+                vol.mesh_to_level_set(points, tris, resolution=16, device=name)
+    # "auto" always runs, on the CPU when there is no device.
+    assert vol.mesh_to_level_set(points, tris, resolution=16, device="auto").active_voxels > 0
+
+
+@pytest.mark.skipif(_GPU not in ("cuda", "hip"), reason="no CUDA/HIP device in this build")
+def test_gpu_level_set_and_tets_match_cpu():
+    points, tris = _sphere(32, 64)
+    cpu = vol.mesh_to_level_set(points, tris, resolution=48)
+    gpu = vol.mesh_to_level_set(points, tris, resolution=48, device=_GPU)
+    assert gpu.active_voxels == cpu.active_voxels
+    h = cpu.voxel_size
+    grid = np.stack(np.meshgrid(*[np.arange(-1.2, 1.2, h)] * 3, indexing="ij"), -1).reshape(-1, 3)
+    a, b = np.asarray(cpu.sample(grid)), np.asarray(gpu.sample(grid))
+    assert np.max(np.abs(np.abs(a) - np.abs(b))) <= 1e-6 * h
+    # Signs agree off the surface (on it, |d| is zero to rounding).
+    off = np.minimum(np.abs(a), np.abs(b)) > 1e-5 * h
+    assert np.all(np.sign(a[off]) == np.sign(b[off]))
+    tc, tg = cpu.to_tet_mesh(4 * h), cpu.to_tet_mesh(4 * h, device=_GPU)
+    assert np.array_equal(np.asarray(tc.points), np.asarray(tg.points))
+    assert np.array_equal(np.asarray(tc.tets), np.asarray(tg.tets))
+    assert np.array_equal(np.asarray(tc.surface), np.asarray(tg.surface))
+
+
+def test_mjcf_volumetric_device_option(tmp_path):
+    xml = _sdf_mjcf(tmp_path)
+    cpu = lightusd.import_mjcf(str(xml))
+    auto = lightusd.import_mjcf(str(xml), volumetric_device="auto")
+    assert sorted(auto.generated_assets()) == sorted(cpu.generated_assets())
+    assert "volumetric_device_unavailable" not in auto.warnings()
+    with pytest.raises(ValueError):
+        lightusd.import_mjcf(str(xml), volumetric_device="tpu")
+    for name in ("cuda", "hip"):
+        stage = lightusd.import_mjcf(str(xml), volumetric_device=name)
+        assert sorted(stage.generated_assets()) == sorted(cpu.generated_assets())
+        if vol.device_available(name) is None:  # importers fall back to the CPU
+            assert "using the CPU" in stage.warnings()
+            assert stage.generated_assets() == cpu.generated_assets()

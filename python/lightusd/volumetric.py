@@ -10,6 +10,12 @@
   a stage, as the MJCF importer does (a guide-purpose ``Volume`` with an
   ``OpenVDBAsset`` field next to the mesh and a ``lightusd:sdf`` relationship;
   a ``TetMesh`` with ``PhysicsVolumeDeformableSimAPI``).
+
+Every computation takes ``device``: ``"cpu"`` (default), ``"cuda"``, ``"hip"``
+or ``"auto"`` (CUDA, then HIP, then the CPU). CUDA/HIP need a build with
+``-DLIGHTUSD_TINYVDB_GPU=ON`` (``LIGHTUSD_CMAKE_ARGS`` for pip builds) and a
+device; an explicit one that is unavailable raises. Results match the CPU's.
+:func:`device_available` reports what a device name maps to.
 """
 from __future__ import annotations
 
@@ -22,7 +28,17 @@ from typing import Optional, Sequence
 from . import _core
 
 __all__ = ["LevelSet", "TetMesh", "mesh_to_level_set", "read_level_set",
-           "add_mesh_sdf", "make_volume_deformable"]
+           "add_mesh_sdf", "make_volume_deformable", "device_available"]
+
+
+def device_available(device: str = "auto") -> Optional[str]:
+    """The device `device` runs on here ("cpu", "cuda" or "hip"), or None
+    when it cannot run (an unavailable CUDA/HIP device, or a build without
+    GPU support)."""
+    try:
+        return _core._volumetric_device(str(device))
+    except (_core.UsdError, ValueError):
+        return None
 
 
 def _flat(values, typecode, width):
@@ -94,10 +110,11 @@ class LevelSet:
         return _unpack(pts, "f", 3), _unpack(idx, "i", 3)
 
     def to_tet_mesh(self, spacing: Optional[float] = None, *, max_tets: int = 0,
-                    threads: int = 0) -> TetMesh:
+                    threads: int = 0, device: str = "cpu") -> TetMesh:
         """Tetrahedra of the interior; `spacing` defaults to 4 voxels."""
         spacing = float(spacing) if spacing else 4.0 * self.voxel_size
-        settings = json.dumps({"spacing": spacing, "max_tets": int(max_tets), "threads": int(threads)})
+        settings = json.dumps({"spacing": spacing, "max_tets": int(max_tets), "threads": int(threads),
+                               "device": str(device)})
         pts, tets, surf = _core._level_set_to_tet_mesh(self.vdb, settings)
         return TetMesh(_unpack(pts, "f", 3), _unpack(tets, "i", 4), _unpack(surf, "i", 3))
 
@@ -124,7 +141,8 @@ def _extent(points) -> float:
 
 def mesh_to_level_set(points, indices, counts=None, *, voxel_size: Optional[float] = None,
                       resolution: int = 64, band: float = 3.0, exact_winding: bool = False,
-                      threads: int = 0, max_voxels: int = 0, name: str = "sdf") -> LevelSet:
+                      threads: int = 0, max_voxels: int = 0, name: str = "sdf",
+                      device: str = "cpu") -> LevelSet:
     """Narrow-band level set of a mesh. `voxel_size` defaults to the largest
     extent / `resolution`; the band is `band` voxels each side."""
     if voxel_size is None:
@@ -134,7 +152,8 @@ def mesh_to_level_set(points, indices, counts=None, *, voxel_size: Optional[floa
         voxel_size = extent / int(resolution)
     settings = json.dumps({"voxel_size": float(voxel_size), "exterior_width": band * voxel_size,
                            "interior_width": band * voxel_size, "exact_winding": bool(exact_winding),
-                           "threads": int(threads), "max_voxels": int(max_voxels), "name": name})
+                           "threads": int(threads), "max_voxels": int(max_voxels), "name": name,
+                           "device": str(device)})
     vdb = _core._mesh_to_level_set(_flat(points, "f", 3), _flat(indices, "i", 0),
                                    None if counts is None else _flat(counts, "i", 0), settings)
     return LevelSet(vdb)
@@ -164,7 +183,8 @@ def _sibling(stage, path: str, suffix: str) -> str:
 
 
 def add_mesh_sdf(stage, mesh_path: str, *, resolution: int = 64, band: float = 3.0,
-                 asset: Optional[str] = None, threads: int = 0, newton: bool = True):
+                 asset: Optional[str] = None, threads: int = 0, newton: bool = True,
+                 device: str = "cpu"):
     """Compute the level set of a Mesh prim (in its own frame) and author it:
     a guide-purpose ``Volume`` sibling with the mesh's transform and an
     ``OpenVDBAsset`` field reading `asset` (default ``sdf/<name>.vdb``, a
@@ -175,7 +195,7 @@ def add_mesh_sdf(stage, mesh_path: str, *, resolution: int = 64, band: float = 3
         raise ValueError(f"{mesh_path} is not a Mesh")
     points, indices, counts = _mesh_arrays(mesh)
     level_set = mesh_to_level_set(points, indices, counts, resolution=resolution, band=band,
-                                  threads=threads)
+                                  threads=threads, device=device)
     asset = asset or f"sdf/{mesh.name}.vdb"
     stage.add_generated_asset(asset, level_set.vdb)
     vpath = _sibling(stage, mesh_path, "_sdf")
@@ -205,7 +225,7 @@ def make_volume_deformable(stage, source_path: str, path: Optional[str] = None, 
                            spacing: Optional[float] = None, resolution: int = 64,
                            mass: Optional[float] = None, density: float = 1000.0,
                            youngs_modulus: float = 1.0e5, poissons_ratio: float = 0.3,
-                           threads: int = 0, max_tets: int = 0):
+                           threads: int = 0, max_tets: int = 0, device: str = "cpu"):
     """Tetrahedralize a Mesh prim (through its level set) or a Volume whose
     ``field:*`` OpenVDBAsset is a level set, and author a ``TetMesh`` with
     ``PhysicsVolumeDeformableSimAPI``, per-point masses (`mass`, or `density`
@@ -216,7 +236,7 @@ def make_volume_deformable(stage, source_path: str, path: Optional[str] = None, 
     if src.type_name == "Mesh":
         points, indices, counts = _mesh_arrays(src)
         level_set = mesh_to_level_set(points, indices, counts, resolution=resolution,
-                                      threads=threads)
+                                      threads=threads, device=device)
     elif src.type_name == "Volume":
         level_set = None
         generated = stage.generated_assets()
@@ -237,7 +257,7 @@ def make_volume_deformable(stage, source_path: str, path: Optional[str] = None, 
             raise ValueError(f"{source_path} has no OpenVDBAsset level-set field")
     else:
         raise ValueError(f"{source_path} must be a Mesh or a Volume")
-    tm = level_set.to_tet_mesh(spacing, max_tets=max_tets, threads=threads)
+    tm = level_set.to_tet_mesh(spacing, max_tets=max_tets, threads=threads, device=device)
     path = path or _sibling(stage, source_path, "_tets")
     prim = stage.define_prim(path, "TetMesh")
     _copy_transform(src, prim)
@@ -292,16 +312,18 @@ def main(argv=None) -> int:
     ap.add_argument("--youngs-modulus", type=float, default=1.0e5)
     ap.add_argument("--poissons-ratio", type=float, default=0.3)
     ap.add_argument("--threads", type=int, default=0)
+    ap.add_argument("--device", default="cpu", choices=("cpu", "cuda", "hip", "auto"))
     args = ap.parse_args(argv)
     stage = load(args.input)
     for path in args.sdf:
         volume = add_mesh_sdf(stage, path, resolution=args.resolution, band=args.band,
-                              threads=args.threads)
+                              threads=args.threads, device=args.device)
         print(f"{path}: level set {volume.path}")
     for path in args.deformable:
         prim = make_volume_deformable(stage, path, spacing=args.spacing, resolution=args.resolution,
                                       density=args.density, youngs_modulus=args.youngs_modulus,
-                                      poissons_ratio=args.poissons_ratio, threads=args.threads)
+                                      poissons_ratio=args.poissons_ratio, threads=args.threads,
+                                      device=args.device)
         print(f"{path}: {len(prim['tetVertexIndices'])} tets at {prim.path}")
     stage.save(args.output)
     print(f"Wrote {args.output}")

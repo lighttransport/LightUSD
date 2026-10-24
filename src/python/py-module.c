@@ -385,6 +385,8 @@ static PyMethodDef module_methods[] = {
      "_level_set_to_mesh(vdb, max_cells) -> (points_f32, indices_i32) bytes"},
     {"_level_set_to_tet_mesh", lightusd_py_level_set_to_tet_mesh, METH_VARARGS,
      "_level_set_to_tet_mesh(vdb, settings) -> (points_f32, tets_i32, surface_i32) bytes"},
+    {"_volumetric_device", lightusd_py_volumetric_device, METH_VARARGS,
+     "_volumetric_device(device) -> 'cpu' | 'cuda' | 'hip' (raises UsdError when unavailable)"},
     {"_import_scene", (PyCFunction)(void (*)(void))lightusd_import_scene,
      METH_VARARGS | METH_KEYWORDS, "Import OBJ, URDF or MJCF as a USD Stage."},
     {"load", (PyCFunction)(void (*)(void))mod_load,

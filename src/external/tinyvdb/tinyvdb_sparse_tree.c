@@ -601,7 +601,11 @@ bool tvdb_grid_from_sparse_typed_using_template(const tvdb_grid_t *tmpl,
         ce[ii].order = ii;
         memcpy(ce[ii].val_bytes, vbytes + ii * (size_t)vsize, (size_t)vsize);
     }
-    if (count > 1) qsort(ce, count, sizeof(tvdb__coord_entry), tvdb__cmp_coord_entry);
+    /* Producers that already emit leaf order (mesh level sets) skip the sort. */
+    size_t unsorted = 0;
+    for (size_t i = 1; i < count && !unsorted; ++i)
+        unsorted = tvdb__cmp_coord_entry(ce + i - 1, ce + i) > 0;
+    if (unsorted) qsort(ce, count, sizeof(tvdb__coord_entry), tvdb__cmp_coord_entry);
 
     // Step 2: walk sorted ce[], emit a leaf node per unique leaf origin.
     grouping_entry_t *leaves = NULL;

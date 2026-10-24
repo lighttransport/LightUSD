@@ -308,8 +308,27 @@ no VDB meshes):
   PRIM`, and `urdf-to-usd --sdf auto|off --sdf-resolution N --sdf-band V
   --flex-tetrahedralize mujoco|stuffing --flex-tet-spacing H`.
 
-GPU: tinyvdb has CUDA (NVRTC) and Vulkan kernels for dense SDF work. The
-level-set and stuffing paths above are CPU-only for now.
+**Devices.** Level sets and stuffing run on the CPU by default. A build with
+`-DLIGHTUSD_TINYVDB_GPU=ON` adds tinyvdb's `tinyvdb_gpu_compute`. It loads the
+CUDA driver + NVRTC or HIP + hiprtc at runtime, so building needs no GPU SDK.
+For pip builds, set `LIGHTUSD_CMAKE_ARGS=-DLIGHTUSD_TINYVDB_GPU=ON`.
+- **What runs on the device:** the per-voxel distances and winding numbers,
+  and the stuffing lattice samples. The host keeps the sparse bookkeeping.
+- **Results:** level sets have the same active voxels and distances as the
+  CPU's, with signs that can differ only on voxels on the surface itself
+  (|d| about 1e-8). Stuffing meshes are identical.
+- **Selecting a device:**
+  - `volumetric_device` (import option, Python keyword, `--volumetric-device`)
+    and `device` (C settings, `lightusd.volumetric` keywords) take `cpu`,
+    `cuda`, `hip` or `auto`. `auto` means CUDA, then HIP, then the CPU.
+  - An unavailable device falls back to the CPU in importers, with the
+    warning `asset.volumetric_device_unavailable`.
+  - In the APIs an unavailable device is an error: `LIGHTUSD_ERR_UNSUPPORTED`,
+    or `UsdError` in Python. `lightusd_volumetric_device_available` and
+    `lightusd.volumetric.device_available` report where a device name runs.
+- **Speed:** on an RX 9070 XT (HIP) against 8 CPU threads, level sets of 1M to
+  5M candidate voxels are 24 to 32 times faster (8.2 s to 0.34 s for a
+  24k-face mug at 160 voxels across). Stuffing is 3.5 times faster.
 
 ## Newton Physics Implementation
 

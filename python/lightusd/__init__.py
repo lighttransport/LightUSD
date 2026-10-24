@@ -190,7 +190,7 @@ def _import(*, path=None, data=None, source="", format="auto", max_memory=0,
             max_input=None, max_depth=None, unsupported_policy="warn",
             profile="newton", obj_topology="expanded", layout="flat", progress=None,
             threads=0, sdf="auto", sdf_resolution=64, sdf_band=3.0,
-            flex_tetrahedralize="mujoco", flex_tet_spacing=0.0):
+            flex_tetrahedralize="mujoco", flex_tet_spacing=0.0, volumetric_device="cpu"):
     import json
     if max_memory < 0:
         raise ValueError("max_memory must be non-negative")
@@ -220,6 +220,8 @@ def _import(*, path=None, data=None, source="", format="auto", max_memory=0,
         raise ValueError("flex_tetrahedralize must be mujoco or stuffing")
     if not flex_tet_spacing >= 0:
         raise ValueError("flex_tet_spacing must be non-negative")
+    if volumetric_device not in ("cpu", "cuda", "hip", "auto"):
+        raise ValueError("volumetric_device must be cpu, cuda, hip or auto")
     settings = json.dumps({
         "up_axis": up_axis, "profile": profile, "asset_dirs": [_os.fspath(p) for p in asset_dirs],
         "packages": {k: _os.fspath(v) for k, v in (packages or {}).items()},
@@ -228,7 +230,7 @@ def _import(*, path=None, data=None, source="", format="auto", max_memory=0,
         "unsupported_policy": unsupported_policy, "obj_topology": obj_topology, "layout": layout,
         "threads": threads, "sdf": sdf, "sdf_resolution": sdf_resolution,
         "sdf_band": float(sdf_band), "flex_tetrahedralize": flex_tetrahedralize,
-        "flex_tet_spacing": float(flex_tet_spacing),
+        "flex_tet_spacing": float(flex_tet_spacing), "volumetric_device": volumetric_device,
     })
     return _core._import_scene(path=path, data=data, source=source, format=format,
                                settings=settings, max_memory=max_memory, resolver=resolver,

@@ -34,6 +34,12 @@ typedef struct {
 } tvdb_tet_mesh;
 void tvdb_tet_mesh_free(tvdb_tet_mesh* mesh);
 
+/* Batch sampler for the lattice pass: values at `count` world points (3
+ * doubles each). The per-point sampler still serves the few extra samples
+ * stuffing needs. tvdb_gpu_level_set_to_tet_mesh installs a CUDA/HIP one. */
+typedef tvdb_status_t (*tvdb_sdf_batch_sample_fn)(void* user, const double* points,
+                                                  size_t count, float* values,
+                                                  tvdb_error_t* err);
 typedef struct {
   double spacing;      /* lattice spacing h, world units (> 0) */
   double alpha_long;   /* 0 selects 0.24999 */
@@ -41,6 +47,8 @@ typedef struct {
   float isovalue;
   size_t max_lattice_vertices; /* 0 selects 8,000,000 */
   size_t max_tets;             /* 0 selects 4,000,000 */
+  tvdb_sdf_batch_sample_fn batch_sample; /* NULL: the per-point sampler */
+  void* batch_user;
 } tvdb_stuffing_options_t;
 
 /* Field sampler for tvdb_sdf_to_tet_mesh; must be thread-safe and return a

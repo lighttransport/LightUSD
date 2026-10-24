@@ -59,6 +59,15 @@ typedef enum {
   TVDB_LEVEL_SET_SIGN_WINDING_FAST = 0, /* fast winding number (default) */
   TVDB_LEVEL_SET_SIGN_WINDING_EXACT = 1 /* exact winding number, O(faces) */
 } tvdb_level_set_sign_t;
+/* Batch replacement for tvdb_mesh_to_level_set's per-voxel pass: for `count`
+ * voxels (3 index coordinates each; world position index * voxel_size),
+ * write the closest-face distance and the generalized winding number. A NaN
+ * distance hands that voxel back to the CPU. The mesh is the one passed to
+ * tvdb_mesh_to_level_set. tvdb_gpu_mesh_to_level_set installs a CUDA/HIP one. */
+typedef tvdb_status_t (*tvdb_mesh_level_set_eval_fn)(void* user, const int32_t* ijk,
+                                                     size_t count, double voxel_size,
+                                                     float* distance, double* winding,
+                                                     tvdb_error_t* err);
 typedef struct {
   float voxel_size;      /* world units; index i has its center at i * size */
   float exterior_width;  /* positive world distance kept outside */
@@ -66,6 +75,8 @@ typedef struct {
   tvdb_level_set_sign_t sign;
   size_t max_voxels;     /* candidate budget; zero selects 1,000,000 */
   const char* grid_name; /* NULL selects "surface" */
+  tvdb_mesh_level_set_eval_fn evaluate; /* NULL: CPU distances and windings */
+  void* evaluate_user;
 } tvdb_mesh_level_set_options_t;
 typedef struct {
   size_t seed_voxels, candidate_voxels, active_voxels;

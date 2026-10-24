@@ -42,6 +42,8 @@ void Help() {
          "         --sdf auto|off --sdf-resolution N --sdf-band VOXELS (MJCF sdf\n"
          "           geoms: level-set .vdb sidecars, newton profile)\n"
          "         --flex-tetrahedralize mujoco|stuffing --flex-tet-spacing H\n"
+         "         --volumetric-device cpu|cuda|hip|auto (level sets and tets;\n"
+         "           CUDA/HIP need a LIGHTUSD_TINYVDB_GPU build)\n"
          "         --profile newton|openusd|legacy (next-core writer; the "
          "legacy writer always emits legacy)\n";
 }
@@ -134,6 +136,11 @@ int main(int argc, char** argv) {
     else if (arg == "--sdf") {
       opts.sdf = value();
       if (opts.sdf != "auto" && opts.sdf != "off") err = "--sdf expects auto or off";
+    } else if (arg == "--volumetric-device") {
+      opts.volumetric_device = value();
+      if (opts.volumetric_device != "cpu" && opts.volumetric_device != "cuda" &&
+          opts.volumetric_device != "hip" && opts.volumetric_device != "auto")
+        err = "--volumetric-device expects cpu, cuda, hip or auto";
     } else if (arg == "--flex-tetrahedralize") {
       opts.flex_tetrahedralize = value();
       if (opts.flex_tetrahedralize != "mujoco" && opts.flex_tetrahedralize != "stuffing")

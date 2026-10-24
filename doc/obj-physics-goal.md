@@ -414,8 +414,17 @@ f121272e (2026-10-24; Menagerie Newton compare still 65/69). Fixed in the
   guide Volume/OpenVDBAsset + lightusd:sdf; flexcomp opt-in stuffing;
   .vdb mesh/flexcomp inputs; C/Python/CLI APIs. Checks: OpenUSD validators
   clean, Newton resolves the SDF parameters and imports stuffed TetMeshes,
-  vdb_print reads the sidecars, legacy byte-identical. Open: GPU (CUDA/HIP)
-  level-set/stuffing paths, graded stuffing lattices.
+  vdb_print reads the sidecars, legacy byte-identical. Open: graded
+  stuffing lattices.
+- CUDA/HIP level sets and stuffing (2026-10-25): tinyvdb gained a HIP backend
+  (HIP driver API in the CUDA loader table; all CUDA tests pass on HIP) and
+  tinyvdb_gpu_compute (device distance + winding and lattice samples, host
+  bookkeeping; CPU-equal results). Brick-based candidate bands and a
+  bucketed stuffing boundary also made the CPU path faster with byte-identical
+  output. LightUSD: opt-in LIGHTUSD_TINYVDB_GPU build, `volumetric_device`
+  (cpu default, cuda, hip, auto) in importers, C, Python and CLI. RX 9070 XT:
+  level sets 24-32x faster than 8 CPU threads; sidecars of the plugin SDF
+  examples match the CPU's except for on-surface signs.
 
 Reference specifications: [UsdPhysics](https://openusd.org/dev/api/usd_physics_page_front.html),
 [MJCF](https://mujoco.readthedocs.io/en/stable/XMLreference.html), and

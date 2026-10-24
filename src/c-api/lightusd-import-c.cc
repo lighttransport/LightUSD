@@ -101,6 +101,12 @@ lightusd_status Options(const lightusd_import_options* in, ia::Options* out) {
         if (out->flex_tetrahedralize != "mujoco" && out->flex_tetrahedralize != "stuffing")
           return Fail(LIGHTUSD_ERR_INVALID_ARG, "flex_tetrahedralize must be mujoco or stuffing");
       }
+      else if (key == "volumetric_device" && v.is_string()) {
+        out->volumetric_device = v.get<std::string>();
+        if (out->volumetric_device != "cpu" && out->volumetric_device != "cuda" &&
+            out->volumetric_device != "hip" && out->volumetric_device != "auto")
+          return Fail(LIGHTUSD_ERR_INVALID_ARG, "volumetric_device must be cpu, cuda, hip or auto");
+      }
       else if (key == "flex_tet_spacing" && v.is_number()) {
         out->flex_tet_spacing = v.get<double>();
         if (!(out->flex_tet_spacing >= 0) || !std::isfinite(out->flex_tet_spacing))

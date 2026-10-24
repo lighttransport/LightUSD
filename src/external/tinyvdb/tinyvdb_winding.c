@@ -15,16 +15,12 @@
  * its faces. */
 
 /* A node is far when its box is at least TVDB_WN_FAR box diagonals away. */
-#define TVDB_WN_FAR 2.0
+#define TVDB_WN_FAR TVDB_WINDING_FAR_DIAGONALS
 #define TVDB_WN_LEAF 8
 #define TVDB_WN_STACK 128
 
-typedef struct {
-  double lo[3], hi[3];
-  double c[3]; /* area-weighted centroid */
-  double n[3]; /* sum of area-weighted normals */
-  int32_t first, count, left, right;
-} wn_node;
+/* c: area-weighted centroid; n: sum of area-weighted normals. */
+typedef tvdb_winding_node_t wn_node;
 
 struct tvdb_winding {
   double *v;      /* 9 per face */
@@ -237,6 +233,16 @@ tvdb_status_t tvdb_winding_create(const tvdb_triangle_mesh *mesh,
 oom:
   tvdb_winding_destroy(w);
   return wn_error(err, TVDB_ERROR_OUT_OF_MEMORY, "winding allocation failed");
+}
+
+const tvdb_winding_node_t *tvdb_winding_nodes(const tvdb_winding_t *w,
+                                              size_t *count) {
+  const int fast = w && w->kind == TVDB_WINDING_FAST;
+  if (count) *count = fast ? w->node_count : 0;
+  return fast ? w->nodes : NULL;
+}
+const int32_t *tvdb_winding_order(const tvdb_winding_t *w) {
+  return w && w->kind == TVDB_WINDING_FAST ? w->order : NULL;
 }
 
 static double wn_box_distance(const wn_node *n, const double p[3]) {

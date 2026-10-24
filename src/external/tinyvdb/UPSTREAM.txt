@@ -1,12 +1,14 @@
 Upstream: https://github.com/syoyo/tinyvdbio
-Commit:   9643394750ab13d0271f430951005df5e5ba9ff9 (branch volumetric-sdf)
+Commit:   3dd9a6d8ca2f1e0765b31668566cda9a1ba1ad3d (branch volumetric-sdf)
 Files:    the src/ subset needed by tvdb_mesh_to_level_set,
           tvdb_level_set_to_tet_mesh / tvdb_sdf_to_tet_mesh,
           tvdb_grid_volume_to_mesh and the I/O: tinyvdb_io.h (+ tinyvdb_io.c
           wrapper, lightusd's own), checked, mc_tri_table, mesh,
           mesh_conversion(.inl), ops.h, ray.h, sdf_tree, sparse,
           sparse_tools, sparse_tree, stats.h, tetmesh, thread, tree,
-          tree_internal, winding, tvdb_memory, lifecycle.
+          tree_internal, winding, tvdb_memory, lifecycle; and
+          gpu_compute(.h, .c, _internal.h), built only with
+          LIGHTUSD_TINYVDB_GPU.
 Local:    tinyvdb_io.h includes ../miniz.h, ../../lz4/lz4.h, ../zstd.h.
 Update:   copy the same files from upstream src/, reapply the three include
           lines, and rebuild cmake/lightusd-tinyvdb.cmake's source list if

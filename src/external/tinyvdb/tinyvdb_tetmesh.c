@@ -338,12 +338,6 @@ static void tet_stencil(tet_builder *B, const size_t id[4],
   tet_prism(B, prism);
 }
 
-typedef struct {
-  int32_t v[3]; /* sorted */
-  int32_t o[3]; /* oriented outward */
-  int32_t count;
-} tet_face_slot;
-
 void tvdb_tet_mesh_free(tvdb_tet_mesh *mesh) {
   if (!mesh) return;
   free(mesh->positions);
@@ -352,80 +346,111 @@ void tvdb_tet_mesh_free(tvdb_tet_mesh *mesh) {
   memset(mesh, 0, sizeof(*mesh));
 }
 
-/* Faces used by exactly one tetrahedron, oriented outward. */
-static tvdb_status_t tet_boundary(const int32_t *tets, size_t tet_count,
-                                  int32_t **out, size_t *out_count,
-                                  tvdb_error_t *err) {
-  size_t n = 1024, bytes;
-  while (n < 8 * tet_count) {
-    if (n > SIZE_MAX / 2) return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT, "tet face overflow");
-    n *= 2;
-  }
-  if (!tvdb_size_mul(n, sizeof(tet_face_slot), &bytes))
+/* Boundary faces: those used by exactly one tetrahedron, oriented as that
+ * tetrahedron sees them. Faces are bucketed by their smallest vertex (output
+ * vertices are numbered in first-use order, so buckets are local), each
+ * bucket is sorted by its other two vertices and singletons are kept. The
+ * result is in sorted-triple order. Linear memory: 16 bytes per face. */
+typedef struct {
+  int32_t s1, s2;   /* the other two vertices, ascending */
+  uint64_t face;    /* 4 * tet + local face */
+} tet_face_entry;
+static int tet_face_entry_less(const tet_face_entry *a, const tet_face_entry *b) {
+  return a->s1 < b->s1 || (a->s1 == b->s1 && a->s2 < b->s2);
+}
+static int tet_face_entry_compare(const void *pa, const void *pb) {
+  const tet_face_entry *a = (const tet_face_entry *)pa, *b = (const tet_face_entry *)pb;
+  return tet_face_entry_less(a, b) ? -1 : tet_face_entry_less(b, a);
+}
+static const int tet_faces[4][3] = {{1, 2, 3}, {0, 3, 2}, {0, 1, 3}, {0, 2, 1}};
+static void tet_sorted_face(const int32_t *tet, int f, int32_t s[3]) {
+  for (int k = 0; k < 3; ++k) s[k] = tet[tet_faces[f][k]];
+  for (int i = 0; i < 2; ++i)
+    for (int j = i + 1; j < 3; ++j)
+      if (s[j] < s[i]) {
+        const int32_t x = s[i];
+        s[i] = s[j];
+        s[j] = x;
+      }
+}
+static tvdb_status_t tet_boundary(const int32_t *tets, size_t tet_count, size_t vertex_count,
+                                  int32_t **out, size_t *out_count, tvdb_error_t *err) {
+  size_t faces, bytes, start_bytes;
+  if (!tvdb_size_mul(tet_count, 4, &faces) ||
+      !tvdb_size_mul(faces, sizeof(tet_face_entry), &bytes) ||
+      vertex_count == SIZE_MAX || !tvdb_size_mul(vertex_count + 1, sizeof(size_t), &start_bytes))
     return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT, "tet face overflow");
-  tet_face_slot *slots = (tet_face_slot *)calloc(1, bytes);
+  size_t *start = (size_t *)calloc(1, start_bytes);
+  tet_face_entry *entry = (tet_face_entry *)malloc(bytes ? bytes : 1);
   int32_t *list = NULL;
-  size_t *order = NULL;
-  if (!slots) return tet_error(err, TVDB_ERROR_OUT_OF_MEMORY, "tet face allocation failed");
-  static const int faces[4][3] = {{1, 2, 3}, {0, 3, 2}, {0, 1, 3}, {0, 2, 1}};
-  size_t used = 0;
+  if (!start || !entry) {
+    free(start);
+    free(entry);
+    return tet_error(err, TVDB_ERROR_OUT_OF_MEMORY, "tet face allocation failed");
+  }
   for (size_t t = 0; t < tet_count; ++t)
     for (int f = 0; f < 4; ++f) {
-      int32_t o[3], s[3];
-      for (int k = 0; k < 3; ++k) o[k] = s[k] = tets[4 * t + faces[f][k]];
-      for (int i = 0; i < 2; ++i)
-        for (int j = i + 1; j < 3; ++j)
-          if (s[j] < s[i]) {
-            const int32_t x = s[i];
-            s[i] = s[j];
-            s[j] = x;
-          }
-      size_t h = (size_t)tet_hash2(((uint64_t)(uint32_t)s[0] << 32) | (uint32_t)s[1],
-                                   (uint64_t)(uint32_t)s[2]) & (n - 1);
-      while (slots[h].count && memcmp(slots[h].v, s, sizeof(s))) h = (h + 1) & (n - 1);
-      if (!slots[h].count) {
-        memcpy(slots[h].v, s, sizeof(s));
-        memcpy(slots[h].o, o, sizeof(o));
-        ++used;
-      }
-      ++slots[h].count;
+      int32_t s[3];
+      tet_sorted_face(tets + 4 * t, f, s);
+      ++start[(size_t)s[0] + 1];
     }
-  size_t count = 0;
-  for (size_t i = 0; i < n; ++i) count += slots[i].count == 1;
-  if (count) {
-    if (!tvdb_size_mul(count, 3 * sizeof(int32_t), &bytes) ||
-        !(list = (int32_t *)malloc(bytes)) ||
-        !(order = (size_t *)malloc(count * sizeof(size_t)))) {
-      free(slots);
-      free(list);
-      return tet_error(err, TVDB_ERROR_OUT_OF_MEMORY, "tet boundary allocation failed");
+  for (size_t v = 0; v < vertex_count; ++v) start[v + 1] += start[v];
+  /* Scatter with start[v] as the cursor; afterwards start[v] is bucket v's
+   * end, i.e. bucket v spans [v ? start[v - 1] : 0, start[v]). */
+  for (size_t t = 0; t < tet_count; ++t)
+    for (int f = 0; f < 4; ++f) {
+      int32_t s[3];
+      tet_sorted_face(tets + 4 * t, f, s);
+      tet_face_entry *e = entry + start[s[0]]++;
+      e->s1 = s[1];
+      e->s2 = s[2];
+      e->face = 4 * (uint64_t)t + (uint64_t)f;
+    }
+  size_t count = 0, capacity = 0;
+  for (size_t v = 0, begin = 0; v < vertex_count; begin = start[v++]) {
+    tet_face_entry *b = entry + begin;
+    const size_t k = start[v] - begin;
+    if (k > 24) {
+      qsort(b, k, sizeof(*b), tet_face_entry_compare);
+    } else {
+      for (size_t i = 1; i < k; ++i)
+        for (size_t j = i; j > 0 && tet_face_entry_less(b + j, b + j - 1); --j) {
+          const tet_face_entry x = b[j];
+          b[j] = b[j - 1];
+          b[j - 1] = x;
+        }
+    }
+    for (size_t i = 0; i < k;) {
+      size_t j = i + 1;
+      while (j < k && b[j].s1 == b[i].s1 && b[j].s2 == b[i].s2) ++j;
+      if (j == i + 1) {
+        if (count == capacity) {
+          const size_t n = capacity ? 2 * capacity : 1024;
+          size_t lb;
+          int32_t *p = tvdb_size_mul(n, 3 * sizeof(int32_t), &lb) ? (int32_t *)realloc(list, lb) : NULL;
+          if (!p) {
+            free(start);
+            free(entry);
+            free(list);
+            return tet_error(err, TVDB_ERROR_OUT_OF_MEMORY, "tet boundary allocation failed");
+          }
+          list = p;
+          capacity = n;
+        }
+        const int32_t *tet = tets + 4 * (size_t)(b[i].face / 4);
+        const int f = (int)(b[i].face % 4);
+        for (int c = 0; c < 3; ++c) list[3 * count + c] = tet[tet_faces[f][c]];
+        ++count;
+      }
+      i = j;
     }
   }
-  /* Hash order depends only on the input; the caller sorts the triples. */
-  size_t c = 0;
-  for (size_t i = 0; i < n; ++i)
-    if (slots[i].count == 1) order[c++] = i;
-  for (size_t i = 0; i < count; ++i) memcpy(list + 3 * i, slots[order[i]].o, 3 * sizeof(int32_t));
-  free(order);
-  free(slots);
-  (void)used;
+  free(start);
+  free(entry);
   *out = list;
   *out_count = count;
   return TVDB_OK;
 }
-static int tet_face_compare(const void *pa, const void *pb) {
-  const int32_t *a = (const int32_t *)pa, *b = (const int32_t *)pb;
-  int32_t sa[3] = {a[0], a[1], a[2]}, sb[3] = {b[0], b[1], b[2]};
-  for (int i = 0; i < 2; ++i)
-    for (int j = i + 1; j < 3; ++j) {
-      if (sa[j] < sa[i]) { const int32_t x = sa[i]; sa[i] = sa[j]; sa[j] = x; }
-      if (sb[j] < sb[i]) { const int32_t x = sb[i]; sb[i] = sb[j]; sb[j] = x; }
-    }
-  for (int k = 0; k < 3; ++k)
-    if (sa[k] != sb[k]) return sa[k] < sb[k] ? -1 : 1;
-  return 0;
-}
-
 tvdb_status_t tvdb_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
                                    const double bbox_min[3],
                                    const double bbox_max[3],
@@ -485,7 +510,23 @@ tvdb_status_t tvdb_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
     if (st != TVDB_OK) goto done;
     pool = owned;
   }
-  {
+  for (size_t id = 0; id < n; ++id) {
+    tet_position(&L, id, pos + 3 * id);
+    vertex_out[id] = -1;
+  }
+  if (options->batch_sample) {
+    /* Bounded batches keep a device's staging buffers small. */
+    const size_t chunk = (size_t)1 << 22;
+    for (size_t begin = 0; begin < n && st == TVDB_OK; begin += chunk) {
+      const size_t count = n - begin < chunk ? n - begin : chunk;
+      st = options->batch_sample(options->batch_user, pos + 3 * begin, count,
+                                 value + begin, err);
+      for (size_t i = 0; i < count && st == TVDB_OK; ++i)
+        if (!isfinite(value[begin + i]))
+          st = tet_error(err, TVDB_ERROR_INVALID_DATA, "stuffing sample failed");
+    }
+    if (st != TVDB_OK) goto done;
+  } else {
     tet_sample_job job = {.L = &L, .sample = sample, .user = user, .value = value};
     atomic_init(&job.bad, 0);
     st = tvdb_thread_pool_for(pool, 0, n, 4096, tet_sample_range, &job, err);
@@ -493,57 +534,74 @@ tvdb_status_t tvdb_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
       st = tet_error(err, TVDB_ERROR_INVALID_DATA, "stuffing sample failed");
     if (st != TVDB_OK) goto done;
   }
-  for (size_t id = 0; id < n; ++id) {
-    tet_position(&L, id, pos + 3 * id);
-    vertex_out[id] = -1;
-  }
   /* Warp: snap each vertex to its nearest violating cut point. A cut point
    * can violate only one endpoint (alphas < 1/2), and a warped endpoint takes
-   * the isovalue, so later vertices see no cut point on its edges. */
+   * the isovalue, so later vertices see no cut point on its edges. Vertices
+   * go in id order (corners, then centers, x fastest); neighbors come from
+   * index arithmetic, in the order of the 6 axis then 8 diagonal edges. */
   {
-    static const int dirs_long[6][3] = {{2, 0, 0}, {-2, 0, 0}, {0, 2, 0},
-                                        {0, -2, 0}, {0, 0, 2}, {0, 0, -2}};
     const float iso = options->isovalue;
-    for (size_t v = 0; v < n; ++v) {
-      const double fv = (double)value[v] - iso;
-      if (fv == 0) continue;
-      int64_t c[3];
-      tet_coords(&L, v, c);
-      double best = INFINITY, best_t = 0;
-      size_t best_w = SIZE_MAX;
-      for (int e = 0; e < 14; ++e) {
-        int64_t d[3];
-        double alpha, len;
-        if (e < 6) {
-          d[0] = dirs_long[e][0];
-          d[1] = dirs_long[e][1];
-          d[2] = dirs_long[e][2];
-          alpha = alpha_long;
-          len = L.h;
-        } else {
-          const int s = e - 6;
-          d[0] = (s & 1) ? 1 : -1;
-          d[1] = (s & 2) ? 1 : -1;
-          d[2] = (s & 4) ? 1 : -1;
-          alpha = alpha_short;
-          len = L.h * 0.86602540378443864676;
-        }
-        const size_t w = tet_id(&L, c[0] + d[0], c[1] + d[1], c[2] + d[2]);
-        if (w == SIZE_MAX) continue;
-        const double fw = (double)value[w] - iso;
-        if (!((fv < 0 && fw > 0) || (fv > 0 && fw < 0))) continue;
-        const double t = fv / (fv - fw);
-        if (t < alpha && t * len < best) {
-          best = t * len;
-          best_t = t;
-          best_w = w;
-        }
-      }
-      if (best_w == SIZE_MAX) continue;
-      double pw[3];
-      tet_position(&L, best_w, pw);
-      for (int k = 0; k < 3; ++k) pos[3 * v + k] += best_t * (pw[k] - pos[3 * v + k]);
-      value[v] = iso;
+    const double len_long = L.h, len_short = L.h * 0.86602540378443864676;
+    const size_t sx = (size_t)L.nx + 1, sxy = sx * ((size_t)L.ny + 1);
+    const size_t cx = (size_t)L.nx, cxy = cx * (size_t)L.ny;
+    const int dims[3] = {L.nx, L.ny, L.nz};
+    for (int center = 0; center < 2; ++center) {
+      const int ext[3] = {center ? L.nx : L.nx + 1, center ? L.ny : L.ny + 1,
+                          center ? L.nz : L.nz + 1};
+      for (int k = 0; k < ext[2]; ++k)
+        for (int j = 0; j < ext[1]; ++j)
+          for (int i = 0; i < ext[0]; ++i) {
+            const int at[3] = {i, j, k};
+            const size_t v = center ? L.corners + (size_t)i + cx * (size_t)j + cxy * (size_t)k
+                                    : (size_t)i + sx * (size_t)j + sxy * (size_t)k;
+            const double fv = (double)value[v] - iso;
+            if (fv == 0) continue;
+            double best = INFINITY, best_t = 0;
+            size_t best_w = SIZE_MAX;
+            for (int e = 0; e < 14; ++e) {
+              size_t w;
+              double alpha, len;
+              if (e < 6) {
+                /* Same-kind neighbor one cell along axis e / 2. */
+                const int axis = e / 2, step = (e & 1) ? -1 : 1, q = at[axis] + step;
+                if (q < 0 || q >= ext[axis]) continue;
+                int c[3] = {i, j, k};
+                c[axis] = q;
+                w = center ? L.corners + (size_t)c[0] + cx * (size_t)c[1] + cxy * (size_t)c[2]
+                           : (size_t)c[0] + sx * (size_t)c[1] + sxy * (size_t)c[2];
+                alpha = alpha_long;
+                len = len_long;
+              } else {
+                /* Other-kind neighbor half a cell along every axis. */
+                const int sd = e - 6;
+                int c[3], ok = 1;
+                for (int a2 = 0; a2 < 3; ++a2) {
+                  const int plus = (sd >> a2) & 1;
+                  /* corner i -> centers i-1 / i; center i -> corners i / i+1 */
+                  c[a2] = center ? at[a2] + plus : at[a2] - 1 + plus;
+                  if (!center && (c[a2] < 0 || c[a2] >= dims[a2])) ok = 0;
+                }
+                if (!ok) continue;
+                w = center ? (size_t)c[0] + sx * (size_t)c[1] + sxy * (size_t)c[2]
+                           : L.corners + (size_t)c[0] + cx * (size_t)c[1] + cxy * (size_t)c[2];
+                alpha = alpha_short;
+                len = len_short;
+              }
+              const double fw = (double)value[w] - iso;
+              if (!((fv < 0 && fw > 0) || (fv > 0 && fw < 0))) continue;
+              const double t = fv / (fv - fw);
+              if (t < alpha && t * len < best) {
+                best = t * len;
+                best_t = t;
+                best_w = w;
+              }
+            }
+            if (best_w == SIZE_MAX) continue;
+            double pw[3];
+            tet_position(&L, best_w, pw);
+            for (int c2 = 0; c2 < 3; ++c2) pos[3 * v + c2] += best_t * (pw[c2] - pos[3 * v + c2]);
+            value[v] = iso;
+          }
     }
   }
   B.L = &L;
@@ -575,6 +633,14 @@ tvdb_status_t tvdb_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
             p[cc] += ring[q][1];
             r[q] = tet_id(&L, p[0], p[1], p[2]);
           }
+          /* Most of the lattice is outside: when all six vertices are, none
+           * of the four tetrahedra emits anything (tet_stencil's nm == 0,
+           * nz == 0 case), so skip them. */
+          if (B.value[center] - B.iso > 0 && B.value[other] - B.iso > 0 &&
+              r[0] != SIZE_MAX && r[1] != SIZE_MAX && r[2] != SIZE_MAX && r[3] != SIZE_MAX &&
+              B.value[r[0]] - B.iso > 0 && B.value[r[1]] - B.iso > 0 &&
+              B.value[r[2]] - B.iso > 0 && B.value[r[3]] - B.iso > 0)
+            continue;
           for (int q = 0; q < 4 && B.st == TVDB_OK; ++q) {
             const size_t ids[4] = {center, other, r[q], r[(q + 1) % 4]};
             if (ids[2] == SIZE_MAX || ids[3] == SIZE_MAX) continue;
@@ -597,13 +663,12 @@ tvdb_status_t tvdb_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
     for (size_t i = 0; i < 3 * B.vertex_count; ++i) result.positions[i] = (float)B.positions[i];
     result.tets = B.tets;
     B.tets = NULL;
-    st = tet_boundary(result.tets, result.tet_count, &result.boundary,
+    st = tet_boundary(result.tets, result.tet_count, result.vertex_count, &result.boundary,
                       &result.boundary_count, err);
     if (st != TVDB_OK) {
       tvdb_tet_mesh_free(&result);
       goto done;
     }
-    qsort(result.boundary, result.boundary_count, 3 * sizeof(int32_t), tet_face_compare);
     tvdb_tet_mesh_free(out);
     *out = result;
   }

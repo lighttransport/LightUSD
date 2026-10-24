@@ -3,6 +3,12 @@
 // narrow-band level sets of triangle meshes, OpenVDB (.vdb) level-set I/O,
 // level set -> surface mesh, and level set -> tetrahedral mesh (isosurface
 // stuffing) for volume deformables.
+//
+// Devices: "cpu" (the default), "cuda", "hip", or "auto" (CUDA, then HIP,
+// then the CPU). CUDA and HIP need a LIGHTUSD_TINYVDB_GPU build and a device
+// at runtime (drivers are loaded on first use); an explicit request that
+// cannot be met fails. GPU results follow the CPU's rules (tinyvdb
+// tinyvdb_gpu_compute.h): same band, distances to rounding, same stuffing.
 #pragma once
 
 #include <cstddef>
@@ -42,6 +48,11 @@ class LevelSet {
   size_t file_grid_ = 0;
 };
 
+// Whether `device` can run here; *resolved receives the device it maps to
+// ("cpu", "cuda" or "hip") and *why the reason when it cannot.
+bool VolumetricDeviceAvailable(const std::string& device, std::string* resolved,
+                               std::string* why);
+
 struct LevelSetOptions {
   double voxel_size = 0;      // > 0, mesh units
   double exterior_width = 0;  // > 0; 0 selects 3 voxels
@@ -50,10 +61,12 @@ struct LevelSetOptions {
   int threads = 0;            // 0 automatic (up to 8), 1 serial
   bool exact_winding = false; // exact (O(faces)) instead of fast signs
   std::string name;           // grid name; empty selects "sdf"
+  std::string device = "cpu"; // cpu | cuda | hip | auto
 };
-// Triangulated mesh (positions + indices, or polygon counts).
+// Triangulated mesh (positions + indices, or polygon counts). *device_used
+// (if given) receives the device that ran.
 bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options,
-                    LevelSet* out, std::string* err);
+                    LevelSet* out, std::string* err, std::string* device_used = nullptr);
 
 // VDB bytes of one level set (ZIP + active-mask compression).
 bool WriteLevelSetVDB(const LevelSet& level_set, std::vector<uint8_t>* bytes,
@@ -81,9 +94,10 @@ struct StuffingOptions {
   double spacing = 0;   // lattice spacing (> 0)
   size_t max_tets = 0;  // 0 selects 4,000,000
   int threads = 0;
+  std::string device = "cpu"; // cpu | cuda | hip | auto (lattice samples)
 };
 bool LevelSetToTetMesh(const LevelSet& level_set, const StuffingOptions& options,
-                       TetMeshData* out, std::string* err);
+                       TetMeshData* out, std::string* err, std::string* device_used = nullptr);
 
 }  // namespace import_asset
 }  // namespace tydra

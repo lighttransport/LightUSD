@@ -139,3 +139,18 @@ PyObject* lightusd_py_level_set_to_tet_mesh(PyObject* module, PyObject* args) {
   }
   return Py_BuildValue("(NNN)", a, b, c);
 }
+
+PyObject* lightusd_py_volumetric_device(PyObject* module, PyObject* args) {
+  const char* device;
+  if (!PyArg_ParseTuple(args, "s:_volumetric_device", &device)) return NULL;
+  lightusd_state* st = lightusd_state_from_module(module);
+  lightusd_string* resolved = NULL;
+  lightusd_status status;
+  /* The first call on a device loads its runtime. */
+  Py_BEGIN_ALLOW_THREADS status = lightusd_volumetric_device_available(device, &resolved);
+  Py_END_ALLOW_THREADS if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "volumetric device");
+  lightusd_sv v = lightusd_string_view(resolved);
+  PyObject* out = PyUnicode_FromStringAndSize(v.data, (Py_ssize_t)v.len);
+  lightusd_string_destroy(resolved);
+  return out;
+}
