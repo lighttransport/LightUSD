@@ -2604,8 +2604,10 @@ streaming within a 3.55 s USDA write. No additional parallel compressed-int
 scheduler is included; this remains a measured follow-up hotspot rather than
 an unverified bounded-buffer implementation.
 
-ALab uses a per-file symlink union of the base package and techvar fragment,
-with all payloads loaded. Its empty baked placeholder stays in the merged
+ALab uses a per-file symlink union of the base package and techvar fragment
+(techvar overwrites the base files), with all payloads loaded; the root is the
+packaged `ALab/entry.usda`, so no custom entry is involved. §9.3 records the
+reproduction. Its empty baked placeholder stays in the merged
 scene; frame 1004 is tested independently as an authored layer, and the other
 baked frames remain deferred. The merged scene contains 24,466 prims and emits
 732,541,268 USDC bytes or 4,566,009,415 USDA bytes. Repeated process medians are
@@ -2891,11 +2893,22 @@ The district re-run agrees with §9.2 (−2.9% wall / −4.0% CPU then, −1.7% 
 frame are neutral: they are dominated by composition and by the USDA text
 writer, not by crate field decoding. No case comes near the 1.05× RSS ceiling.
 
-Merged ALab was not re-measured: the §9 run used an ad-hoc merged entry (a
-per-file symlink union of `ALab-2.3.0/ALab` and `techvar_assets`, with a
-hand-built entry listing the sets) that is not part of the downloaded package,
-so rebuilding the union reproduces the entity tree but not the 24,466-prim
-merged stage. The baked frame above covers the ALab crate path.
+Merged ALab needs **no ad-hoc entry**: it is the packaged `ALab/entry.usda`
+composed over the official merged package (`doc/benchmarks.md`: `cp -al
+ALab-2.3.0/ALab _merged_ALab`, then `cp -alf techvar_assets/fragment/.
+_merged_ALab/fragment/`). The merged stage reproduces exactly on this machine:
+**24,466 prims**, USDC `2f7176c8…` = 732,541,268 B, USDA `f764d58c…` =
+4,566,009,415 B, and both the baseline and the candidate binary emit those
+bytes (the empty `baked_procedurals/main.usda` placeholder stays, as §9 says;
+the baked frame above is measured separately).
+
+The one trap, worth recording because it silently produces the wrong scene: the
+techvar fragment must *overwrite* the base package's files, not fill gaps. 2,111
+paths exist in both trees and the base copies are ~213-byte placeholder layers
+(the techvar versions of those same paths are 0.99 GB of real content); a "link
+the base, add only techvar files that are missing" union keeps the placeholders
+and composes `entry.usda` to a 397 KB / 0.2 s stage instead of 732 MB /
+24,466 prims.
 
 WASM32: both web products build cleanly (`-DLIGHTUSD_WASM_PRODUCT=next`,
 342 targets; `=legacy`, 411 targets, `MinSizeRel`). The next module was also
