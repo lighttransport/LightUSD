@@ -3,6 +3,13 @@
 #include <cctype>
 #include <fstream>
 #include <limits>
+#if (defined(__unix__) || defined(__APPLE__)) && !defined(__EMSCRIPTEN__) && !defined(__wasi__)
+#define LIGHTUSD_IMPORT_MMAP 1
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 #include "external/filesystem/include/ghc/filesystem.hpp"
 #include "import.hh"
@@ -371,6 +378,39 @@ bool Reader::Account(const std::string& name, const std::string& anchor,
   trace.success = failure.empty() && CheckInput(*this, size, err) && Charge(size, err);
   if (!failure.empty() && err && err->empty()) *err = failure;
   return trace.success;
+}
+
+MappedAsset::~MappedAsset() {
+#ifdef LIGHTUSD_IMPORT_MMAP
+  if (map_) munmap(map_, map_size_);
+#endif
+}
+
+bool Reader::Map(const std::string& name, const std::string& anchor, MappedAsset* out,
+                 std::string* resolved, std::string* err) {
+#ifdef LIGHTUSD_IMPORT_MMAP
+  if (!options.open && !options.read && failure.empty()) {
+    AssetSource source;
+    std::string why;
+    if (Open(name, anchor, &source, &why)) {
+      const int fd = ::open(source.identifier.c_str(), O_RDONLY | O_CLOEXEC);
+      struct stat st;
+      if (fd >= 0 && ::fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0) {
+        void* map = ::mmap(nullptr, size_t(st.st_size), PROT_READ, MAP_PRIVATE, fd, 0);
+        ::close(fd);
+        if (map != MAP_FAILED) {
+          out->map_ = map;
+          out->map_size_ = size_t(st.st_size);
+          *resolved = source.identifier;
+          return Account(name, anchor, source.identifier, out->map_size_, err);
+        }
+      } else if (fd >= 0) {
+        ::close(fd);
+      }
+    }
+  }
+#endif
+  return Read(name, anchor, &out->bytes_, resolved, err);
 }
 
 bool Reader::ReadTexture(const std::string& name, const std::string& anchor,

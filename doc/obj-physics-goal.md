@@ -265,9 +265,12 @@ avoid implementing a second conversion or validation engine in Python.
   to MuJoCo, resampled with OpenGL cube-map addressing, pole on stage +Z).
 - Still pending: geometry/material library layers, raw
   `<flex>`, interpolated (trilinear/quadratic) dofs,
-  cube-projected material textures, parallel per-mesh conversion and mapped input
-  for URDF/MJCF mesh assets. Import progress/cancellation callbacks (C
-  `progress`, Python `progress=`) and memory-mapped root OBJ files are in. Composed-stage physics
+  cube-projected material textures and parallel per-mesh conversion. Import
+  progress/cancellation callbacks (C `progress`, Python `progress=`) and
+  memory-mapped OBJ files and URDF/MJCF mesh assets (`Reader::Map`) are in;
+  binary STL vertex welding uses an open-addressed table (500k-triangle STL
+  import 1.82 -> 0.39 s, op3 0.52 -> 0.24 s, g1 0.22 -> 0.14 s, USDC
+  byte-identical on 8 models). Composed-stage physics
   validation needs no separate mode: stages loaded with composition (the
   default) validate their composed prims and targets (covered by a test).
 

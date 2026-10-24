@@ -124,6 +124,26 @@ struct Result {
   std::string warnings;
   std::shared_ptr<ImportReport> report;
 };
+// Read-only bytes of one asset: a private mapping of a local file, or a
+// buffer when the bytes came through Read. The file must not shrink while
+// mapped.
+class MappedAsset {
+ public:
+  MappedAsset() = default;
+  ~MappedAsset();
+  MappedAsset(const MappedAsset&) = delete;
+  MappedAsset& operator=(const MappedAsset&) = delete;
+  const uint8_t* data() const { return map_ ? static_cast<const uint8_t*>(map_) : bytes_.data(); }
+  size_t size() const { return map_ ? map_size_ : bytes_.size(); }
+  bool mapped() const { return map_ != nullptr; }
+  std::string_view text() const { return {reinterpret_cast<const char*>(data()), size()}; }
+
+ private:
+  friend struct Reader;
+  void* map_ = nullptr;
+  size_t map_size_ = 0;
+  std::vector<uint8_t> bytes_;
+};
 struct Reader {
   explicit Reader(const Options& o) : options(o) {}
   const Options& options;
@@ -150,6 +170,10 @@ struct Reader {
   // (for example a memory-mapped file), with the same checks as Read.
   bool Account(const std::string& name, const std::string& anchor,
                const std::string& identifier, size_t size, std::string* err);
+  // Read through a memory mapping when no open/read hooks are set (POSIX),
+  // otherwise through Read; budgets and traces either way.
+  bool Map(const std::string& name, const std::string& anchor, MappedAsset* out,
+           std::string* resolved, std::string* err);
   bool ReadTexture(const std::string& name, const std::string& anchor,
                    AssetBytes* data, std::string* resolved, std::string* err);
   bool Charge(size_t amount, std::string* err);

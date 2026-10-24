@@ -866,9 +866,9 @@ Mesh MakeCylinderMesh(double radius, double half_length, int slices = 20) {
   return mesh;
 }
 
-float ReadFloatLE(const std::vector<uint8_t>& bytes, size_t offset) {
+float ReadFloatLE(const uint8_t* bytes, size_t offset) {
   float v = 0.0f;
-  std::memcpy(&v, bytes.data() + offset, sizeof(float));
+  std::memcpy(&v, bytes + offset, sizeof(float));
   return v;
 }
 
@@ -992,21 +992,22 @@ bool LoadASCIISTL(std::string_view text, const fs::path& filename, bool smoothno
 
 bool LoadBinarySTL(const fs::path& filename, bool smoothnormal, Mesh* mesh,
                    std::string* err) {
-  std::vector<uint8_t> bytes;
+  MappedAsset asset;
   std::string resolved;
-  if (!active_reader->Read(filename.string(), active_reader->root_source,
-                           &bytes, &resolved, err))
+  if (!active_reader->Map(filename.string(), active_reader->root_source, &asset, &resolved,
+                          err))
     return false;
-  if (bytes.size() < 84) {
+  const uint8_t* bytes = asset.data();
+  if (asset.size() < 84) {
     if (err) *err = "STL is too small: " + filename.string();
     return false;
   }
   uint32_t tri_count = 0;
-  std::memcpy(&tri_count, bytes.data() + 80, sizeof(uint32_t));
+  std::memcpy(&tri_count, bytes + 80, sizeof(uint32_t));
   const uint64_t expected = 84ull + uint64_t(tri_count) * 50ull;
-  if (expected != bytes.size()) {
+  if (expected != asset.size()) {
     // ASCII STL ("solid ... facet ... vertex x y z ... endsolid").
-    std::string_view text(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    std::string_view text = asset.text();
     const size_t first = text.find_first_not_of(" \t\r\n");
     if (first != std::string_view::npos && text.compare(first, 5, "solid") == 0)
       return LoadASCIISTL(text, filename, smoothnormal, mesh, err);
@@ -1017,14 +1018,16 @@ bool LoadBinarySTL(const fs::path& filename, bool smoothnormal, Mesh* mesh,
   }
 
   if (!active_reader->Charge(size_t(tri_count) * 3 * 96, err)) return false;
-  // Weld bit-identical positions (MuJoCo's repeated-vertex removal).
-  struct Key {
+  // Weld bit-identical positions (MuJoCo's repeated-vertex removal) through
+  // an open-addressed table; indices follow first occurrence.
+  struct Slot {
     uint32_t x, y, z;
-    bool operator<(const Key& o) const {
-      return x != o.x ? x < o.x : (y != o.y ? y < o.y : z < o.z);
-    }
+    int32_t index;  // -1: empty
   };
-  std::map<Key, int32_t> welded;
+  size_t capacity = 16;
+  while (capacity < size_t(tri_count) * 6) capacity <<= 1;
+  std::vector<Slot> table(capacity, Slot{0, 0, 0, -1});
+  const size_t mask = capacity - 1;
   mesh->positions.clear();
   mesh->indices.clear();
   mesh->indices.reserve(size_t(tri_count) * 3);
@@ -1032,19 +1035,23 @@ bool LoadBinarySTL(const fs::path& filename, bool smoothnormal, Mesh* mesh,
     const size_t base = 84ull + size_t(i) * 50ull;
     for (size_t v = 0; v < 3; v++) {
       const size_t vo = base + 12 + v * 12;
-      Key key;
-      std::memcpy(&key.x, bytes.data() + vo + 0, 4);
-      std::memcpy(&key.y, bytes.data() + vo + 4, 4);
-      std::memcpy(&key.z, bytes.data() + vo + 8, 4);
-      auto found = welded.find(key);
-      if (found == welded.end()) {
-        const int32_t index = static_cast<int32_t>(mesh->positions.size() / 3);
-        found = welded.emplace(key, index).first;
+      uint32_t x, y, z;
+      std::memcpy(&x, bytes + vo + 0, 4);
+      std::memcpy(&y, bytes + vo + 4, 4);
+      std::memcpy(&z, bytes + vo + 8, 4);
+      uint64_t h = (uint64_t(x) * 0x9E3779B97F4A7C15ull) ^ (uint64_t(y) * 0xC2B2AE3D27D4EB4Full) ^
+                   (uint64_t(z) * 0x165667B19E3779F9ull);
+      h ^= h >> 29;
+      size_t at = size_t(h) & mask;
+      while (table[at].index >= 0 && !(table[at].x == x && table[at].y == y && table[at].z == z))
+        at = (at + 1) & mask;
+      if (table[at].index < 0) {
+        table[at] = Slot{x, y, z, static_cast<int32_t>(mesh->positions.size() / 3)};
         mesh->positions.push_back(ReadFloatLE(bytes, vo + 0));
         mesh->positions.push_back(ReadFloatLE(bytes, vo + 4));
         mesh->positions.push_back(ReadFloatLE(bytes, vo + 8));
       }
-      mesh->indices.push_back(found->second);
+      mesh->indices.push_back(table[at].index);
     }
   }
   ComputeMujocoVertexNormals(mesh, smoothnormal);
@@ -1052,8 +1059,12 @@ bool LoadBinarySTL(const fs::path& filename, bool smoothnormal, Mesh* mesh,
 }
 
 bool LoadOBJ(const fs::path& filename, Mesh* mesh, std::string* err) {
-  std::string text;
-  if (!ReadFile(filename, &text, err)) return false;
+  MappedAsset asset;
+  std::string resolved;
+  if (!active_reader->Map(filename.string(), active_reader->root_source, &asset, &resolved,
+                          err))
+    return false;
+  const std::string_view text = asset.text();
   OBJ obj;
   const bool dae = ToLower(filename.extension().string()) == ".dae";
   if (!(dae ? ReadDAE(text, filename.string(), *active_reader, &obj, err)

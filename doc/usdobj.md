@@ -400,7 +400,7 @@ File imports without a custom resolver memory-map the OBJ on POSIX systems
 (other platforms and resolver-backed reads fall back to reading it), so the
 source is not duplicated in anonymous memory; it still counts against
 `max_input` and the memory budget. The file must not shrink while it is being
-imported.
+imported. URDF/MJCF mesh assets (OBJ, STL, DAE) are read the same way.
 Serial OBJ, MTL and callback parsing visit lines incrementally rather than
 allocating a line table proportional to the input. The next-core layer loader
 and C/Python OBJ import APIs pass compact numeric geometry to USD without a

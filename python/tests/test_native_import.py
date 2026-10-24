@@ -524,6 +524,19 @@ def test_ascii_stl(tmp_path):
     assert len(m["points"]) == 4 and len(m["faceVertexIndices"]) == 6
 
 
+
+def test_binary_stl_welds_shared_vertices_in_first_use_order(tmp_path):
+    import struct
+    tris = [((0, 0, 0), (1, 0, 0), (0, 1, 0)), ((1, 0, 0), (1, 1, 0), (0, 1, 0)),
+            ((0, 0, 0), (0, 1, 0), (-0.0, 0, 1))]  # -0.0 is a distinct bit pattern
+    body = b"".join(struct.pack("<12fH", 0, 0, 1, *(c for v in t for c in v), 0) for t in tris)
+    (tmp_path / "quad.stl").write_bytes(b"\0" * 80 + struct.pack("<I", len(tris)) + body)
+    (tmp_path / "r.urdf").write_text('<robot name="r"><link name="l"><visual><geometry>'
+        '<mesh filename="quad.stl"/></geometry></visual></link></robot>')
+    m = mesh(lightusd.import_urdf(tmp_path / "r.urdf"))
+    assert len(m["points"]) == 5
+    assert list(m["faceVertexIndices"]) == [0, 1, 2, 1, 3, 2, 0, 2, 4]
+
 DAE = '''<?xml version="1.0"?>
 <COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
 <asset><unit meter="0.01"/><up_axis>Y_UP</up_axis></asset>
