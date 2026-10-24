@@ -24,6 +24,7 @@
 #include "next/crate/crate-data-source.hh"
 #include "next/crate/crate-allocation-budget.hh"
 #include "next/crate/crate-format.hh"
+#include "next/c/lightusd-core-c.h"
 #include "next/crate/crate-writer.hh"
 #include "next/crate/lazy-array.hh"
 #include "next/layer/layer.hh"
@@ -110,6 +111,49 @@ int main() {
     std::vector<float> copied(view.begin(), view.end());
     assert(copied.empty());
     assert(view.size_bytes() == 0);
+  }
+
+  // EncodeDeltaU32 switches to a chunked parallel encoder for large columns
+  // (threaded builds). Its bytes must equal the serial C encoder exactly:
+  // mixed delta widths, a most-common-delta tie (ties pick the smallest),
+  // deltas outside the flat histogram range, and a count that is not a
+  // multiple of 4 (chunk boundaries share no 2-bit code byte).
+  {
+    auto serial = [](const std::vector<uint32_t>& v) {
+      size_t bound = 0;
+      assert(lu_crate_encode_delta_u32_bound(v.size(), &bound));
+      std::vector<uint8_t> out(bound);
+      size_t n = 0;
+      const char* err = nullptr;
+      assert(lu_crate_encode_delta_u32(v.data(), v.size(), out.data(), bound,
+                                       &n, &err));
+      out.resize(n);
+      return out;
+    };
+    const size_t sizes[] = {(size_t(1) << 22) + 3, (size_t(1) << 22) + 4097};
+    for (size_t count : sizes) {
+      std::vector<uint32_t> v(count);
+      uint64_t x = 0x243F6A8885A308D3ull;
+      uint32_t acc = 0;
+      for (size_t i = 0; i < count; ++i) {
+        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+        const unsigned kind = static_cast<unsigned>(x % 16);
+        int64_t d;
+        if (kind < 6) d = 1;                                    // common
+        else if (kind < 12) d = -1;                             // tie candidate
+        else if (kind < 14) d = static_cast<int8_t>(x >> 8);    // 1 byte
+        else if (kind < 15) d = static_cast<int16_t>(x >> 16);  // 2 bytes
+        else d = static_cast<int32_t>(x >> 32) | 0x10000;       // 4 bytes
+        acc = static_cast<uint32_t>(static_cast<int64_t>(acc) + d);
+        v[i] = acc;
+      }
+      assert(EncodeDeltaU32(v.data(), v.size()) == serial(v));
+      // Exact tie between +1 and -1 counts: alternate them.
+      for (size_t i = 0; i < count; ++i) v[i] = static_cast<uint32_t>(i & 1);
+      assert(EncodeDeltaU32(v.data(), v.size()) == serial(v));
+    }
+    std::cout << "  parallel delta encoder matches the serial encoder"
+              << std::endl;
   }
 
   // Capacity-hinted crate blob decompression should grow from an undersized

@@ -70,6 +70,19 @@
     const size_t sz = lr->source->size();
     if (lr->block_offset > sz || lr->block_len > sz - lr->block_offset) return false;
 
+    // Streaming write: a range already emitted (instance copies of one source
+    // array) resolves to its output offset without building a DataBlock (a
+    // shared_ptr copy) -- the same answer StreamInternBlock's cache gives.
+    if (stream_values_) {
+      if (const uint64_t* cached = stream_source_ranges_.find(
+              lr->source->identity(), lr->block_offset, lr->block_len)) {
+        ++blocks_deduped_;
+        *out_rep = ValueRep::Make(lr->crate_type, *cached, /*array=*/true,
+                                  /*inlined=*/false, lr->rep.is_compressed());
+        return true;
+      }
+    }
+
     // Reference the source block in place; bytes are copied to the output buffer
     // only at WriteValueSection time (no intermediate staging copy).
     DataBlock block;

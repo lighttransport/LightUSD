@@ -291,27 +291,68 @@ private:
   // range has been emitted, its output offset is known without hashing the
   // bytes again.  Different source ranges still use the content-addressed
   // table below, preserving cross-source deduplication.
-  struct StreamSourceRangeKey {
-    uint64_t source_id;
-    uint64_t offset;
-    uint64_t length;
-    bool operator==(const StreamSourceRangeKey& other) const {
-      return source_id == other.source_id && offset == other.offset &&
-             length == other.length;
+  // Open-addressed (source identity, offset, length) -> output offset table.
+  // Most lazy-array values reaching the writer are copies of the same source
+  // ranges (instance subtrees), so this lookup runs once per array value and
+  // must stay cheap: flat slots, no node allocation, probed before any
+  // DataBlock is built (see TryPassThrough).
+  struct StreamSourceRangeTable {
+    struct Entry {
+      uint64_t source_id;
+      uint64_t offset;
+      uint64_t length;  // 0 = empty slot (zero-length ranges are never keyed)
+      uint64_t out;
+    };
+    std::vector<Entry> slots;
+    size_t used = 0;
+    static size_t Hash(uint64_t id, uint64_t off, uint64_t len) {
+      uint64_t h = id * 0x9E3779B97F4A7C15ull;
+      h ^= (off + 0xC2B2AE3D27D4EB4Full + (h << 6) + (h >> 2));
+      h *= 0xFF51AFD7ED558CCDull;
+      h ^= (len + (h << 6) + (h >> 2));
+      h ^= h >> 31;
+      return static_cast<size_t>(h);
     }
-  };
-  struct StreamSourceRangeHash {
-    size_t operator()(const StreamSourceRangeKey& key) const {
-      size_t h = std::hash<uint64_t>{}(key.source_id);
-      h ^= std::hash<uint64_t>{}(key.offset) +
-           static_cast<size_t>(0x9E3779B97F4A7C15ull) + (h << 6) + (h >> 2);
-      h ^= std::hash<uint64_t>{}(key.length) +
-           static_cast<size_t>(0xC2B2AE3D27D4EB4Full) + (h << 6) + (h >> 2);
-      return h;
+    void clear() {
+      std::vector<Entry>().swap(slots);
+      used = 0;
     }
-  };
-  std::unordered_map<StreamSourceRangeKey, uint64_t, StreamSourceRangeHash>
-      stream_source_ranges_;
+    const uint64_t* find(uint64_t id, uint64_t off, uint64_t len) const {
+      if (slots.empty() || len == 0) return nullptr;
+      const size_t mask = slots.size() - 1;
+      for (size_t i = Hash(id, off, len) & mask;; i = (i + 1) & mask) {
+        const Entry& e = slots[i];
+        if (e.length == 0) return nullptr;
+        if (e.source_id == id && e.offset == off && e.length == len)
+          return &e.out;
+      }
+    }
+    // Insert if absent (an existing key keeps its first offset, like
+    // unordered_map::emplace).
+    void emplace(uint64_t id, uint64_t off, uint64_t len, uint64_t out) {
+      if (len == 0) return;
+      if (slots.empty() || (used + 1) * 2 > slots.size()) {
+        std::vector<Entry> old;
+        old.swap(slots);
+        slots.assign(old.empty() ? 1024 : old.size() * 2, Entry{0, 0, 0, 0});
+        const size_t m = slots.size() - 1;
+        for (const Entry& e : old) {
+          if (e.length == 0) continue;
+          size_t i = Hash(e.source_id, e.offset, e.length) & m;
+          while (slots[i].length != 0) i = (i + 1) & m;
+          slots[i] = e;
+        }
+      }
+      const size_t mask = slots.size() - 1;
+      size_t i = Hash(id, off, len) & mask;
+      for (; slots[i].length != 0; i = (i + 1) & mask) {
+        const Entry& e = slots[i];
+        if (e.source_id == id && e.offset == off && e.length == len) return;
+      }
+      slots[i] = Entry{id, off, len, out};
+      ++used;
+    }
+  } stream_source_ranges_;
 
   // Write `n` bytes at the next 8-byte-aligned sink position; returns that
   // absolute offset.
@@ -334,16 +375,13 @@ private:
 
   uint64_t StreamInternBlock(const DataBlock& block) {
     const size_t n = block.size();
-    StreamSourceRangeKey source_key{};
-    bool has_source_key = false;
-    if (block.is_ref()) {
-      source_key = StreamSourceRangeKey{block.src->identity(), block.src_offset,
-                                        block.src_len};
-      has_source_key = true;
-      const auto cached = stream_source_ranges_.find(source_key);
-      if (cached != stream_source_ranges_.end()) {
+    const bool has_source_key = block.is_ref();
+    const uint64_t key_id = has_source_key ? block.src->identity() : 0;
+    if (has_source_key) {
+      if (const uint64_t* cached = stream_source_ranges_.find(
+              key_id, block.src_offset, block.src_len)) {
         ++blocks_deduped_;
-        return cached->second;
+        return *cached;
       }
     }
     const uint8_t* p = block.bytes();
@@ -356,7 +394,8 @@ private:
     }
     if (const uint64_t* off = stream_dedup_.find(h, h2, n)) {
       ++blocks_deduped_;
-      if (has_source_key) stream_source_ranges_.emplace(source_key, *off);
+      if (has_source_key)
+        stream_source_ranges_.emplace(key_id, block.src_offset, block.src_len, *off);
       return *off;
     }
     const uint64_t off = StreamRawBlock(p, n);
@@ -364,7 +403,8 @@ private:
     // Empty blocks are never shared (a staged empty block is never deduped).
     if (n) {
       stream_dedup_.insert(h, h2, n, off);
-      if (has_source_key) stream_source_ranges_.emplace(source_key, off);
+      if (has_source_key)
+        stream_source_ranges_.emplace(key_id, block.src_offset, block.src_len, off);
     }
     return off;
   }
