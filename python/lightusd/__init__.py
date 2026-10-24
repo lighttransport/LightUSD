@@ -188,7 +188,8 @@ def _import(*, path=None, data=None, source="", format="auto", max_memory=0,
             resolver=None, up_axis="Z", asset_dirs=(), packages=None,
             allow_missing=False, tessellate_collision_shapes=False,
             max_input=None, max_depth=None, unsupported_policy="warn",
-            profile="newton", obj_topology="expanded", layout="flat", progress=None):
+            profile="newton", obj_topology="expanded", layout="flat", progress=None,
+            threads=0):
     import json
     if max_memory < 0:
         raise ValueError("max_memory must be non-negative")
@@ -206,12 +207,15 @@ def _import(*, path=None, data=None, source="", format="auto", max_memory=0,
         raise ValueError("obj_topology must be expanded or indexed")
     if layout not in ("flat", "nested"):
         raise ValueError("layout must be flat or nested")
+    if not isinstance(threads, int) or not 0 <= threads <= 256:
+        raise ValueError("threads must be an integer in [0, 256]")
     settings = json.dumps({
         "up_axis": up_axis, "profile": profile, "asset_dirs": [_os.fspath(p) for p in asset_dirs],
         "packages": {k: _os.fspath(v) for k, v in (packages or {}).items()},
         "allow_missing": allow_missing,
         "tessellate_collision_shapes": tessellate_collision_shapes,
         "unsupported_policy": unsupported_policy, "obj_topology": obj_topology, "layout": layout,
+        "threads": threads,
     })
     return _core._import_scene(path=path, data=data, source=source, format=format,
                                settings=settings, max_memory=max_memory, resolver=resolver,

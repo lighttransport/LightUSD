@@ -642,3 +642,38 @@ def test_typed_mesh_path_keeps_urdf_and_mjcf_geometry():
             b'<asset><hfield name="h" nrow="3" ncol="3" size="1 1 .1 .1" elevation="0 1 0 1 0 1 0 1 0"/></asset></mujoco>')
     hfield = [p for p in lightusd.load_bytes(mjcf, format='mjcf') if p.type_name == 'Mesh']
     assert hfield and len(hfield[0]['points']) >= 9
+
+
+def test_parallel_mesh_preload_matches_serial_import(tmp_path):
+    import json
+    import struct
+    tri = struct.pack("<12fH", 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0)
+    for i in range(4):
+        (tmp_path / f"s{i}.stl").write_bytes(b"\0" * 80 + struct.pack("<I", 1) + tri)
+    (tmp_path / "red.mtl").write_text("newmtl red\nKd 1 0 0\n")
+    obj = "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n"
+    (tmp_path / "colored.obj").write_text("mtllib red.mtl\nusemtl red\n" + obj)
+    (tmp_path / "missing.obj").write_text("mtllib nowhere.mtl\n" + obj)
+    (tmp_path / "unused.obj").write_text(obj)
+    assets = "".join(f'<mesh name="s{i}" file="s{i}.stl"/>' for i in range(4))
+    assets += '<mesh file="colored.obj"/><mesh file="missing.obj"/><mesh file="unused.obj"/>'
+    geoms = "".join(f'<geom type="mesh" mesh="{n}"/>' for n in ("s3", "colored", "s1", "missing", "s0", "s2"))
+    (tmp_path / "m.xml").write_text(f'<mujoco><asset>{assets}</asset><worldbody><body>'
+                                    f'<freejoint/>{geoms}</body></worldbody></mujoco>')
+
+    def run(threads, **kw):
+        try:
+            stage = lightusd.import_mjcf(tmp_path / "m.xml", threads=threads, **kw)
+        except Exception as e:  # noqa: BLE001 - compare failures too
+            return type(e).__name__, str(e)
+        report = stage.import_report()
+        report.pop("elapsed_seconds", None)
+        return stage.export_usda(), stage.warnings(), json.dumps(report, sort_keys=True)
+
+    serial = run(1)
+    assert "nowhere.mtl" in serial[1]
+    assert run(0) == serial and run(4) == serial
+    for budget in (1 << 16, 1 << 18):
+        assert run(0, max_memory=budget) == run(1, max_memory=budget)
+    with pytest.raises(ValueError):
+        lightusd.import_mjcf(tmp_path / "m.xml", threads=-1)

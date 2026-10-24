@@ -116,6 +116,23 @@ failure. An exception raised by the Python callback cancels too and is
 re-raised from the import call. The callback runs on the importing thread
 (Python re-acquires the GIL for it).
 
+## Parallel mesh parsing
+
+MJCF imports parse their mesh assets (OBJ, STL, DAE) on worker threads before
+the model is built: `threads=0` (the default; C `settings_json` `"threads"`)
+uses up to 8, `1` parses serially, larger values set the count. Workers use
+private readers. A parsed mesh is kept only when its side effects were
+dependency reads, budget charges, warnings and OBJ/MTL materials, and those
+are replayed into the import at the mesh's first use: the stage, warnings,
+report (dependencies, diagnostics, peak memory) and budget failures are the
+same as a serial import. A mesh that read textures or failed, or whose
+transient peak no longer fits the remaining budget, is parsed again serially
+at that point. Workers run only without resolver callbacks, and they never
+call `progress`. Across Menagerie (220 MJCF files, unlimited and 24 MiB
+budgets) serial and parallel imports agree exactly; fruitfly takes 0.29 s
+instead of 0.86 s, panda 0.09 s instead of 0.34 s, stretch 0.30 s instead
+of 0.70 s.
+
 ## Unsupported-feature policy
 
 The default `unsupported_policy="warn"` retains previous behavior. `"error"`

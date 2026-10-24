@@ -265,7 +265,9 @@ avoid implementing a second conversion or validation engine in Python.
   to MuJoCo, resampled with OpenGL cube-map addressing, pole on stage +Z).
 - Still pending: geometry/material library layers, raw
   `<flex>`, interpolated (trilinear/quadratic) dofs,
-  cube-projected material textures and parallel per-mesh conversion. Import
+  cube-projected material textures and parallel URDF mesh parsing (MJCF mesh
+  assets parse on worker threads, `threads=`, replayed so output, warnings
+  and reports equal a serial import; Menagerie 53.0 -> 32.5 s). Import
   progress/cancellation callbacks (C `progress`, Python `progress=`) and
   memory-mapped OBJ files and URDF/MJCF mesh assets (`Reader::Map`) are in;
   binary STL vertex welding uses an open-addressed table (500k-triangle STL

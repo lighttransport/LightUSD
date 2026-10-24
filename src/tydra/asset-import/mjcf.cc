@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Native XML frontends shared by the CLI and language bindings.
 #include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <array>
 #include <cctype>
@@ -14,6 +15,7 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <thread>
 #include <utility>
 
 #include "external/filesystem/include/ghc/filesystem.hpp"
@@ -1111,6 +1113,139 @@ thread_local std::map<std::pair<std::string, bool>, Mesh>* active_mesh_cache = n
 bool LoadMeshFileUncached(const fs::path& filename, bool smoothnormal, Mesh* mesh,
                           std::string* err);
 
+// Mesh assets parsed ahead of use by worker threads with private readers.
+// Only a load whose side effects were reads, budget charges, warnings and
+// OBJ materials is kept; they are replayed into the import's reader at first
+// use (materials renumbered after the import's own), together with its
+// warnings, so traces, diagnostics, budgets and outputs match a serial
+// import. Anything else (textures, failures) is parsed again serially there.
+struct PreloadedMesh {
+  Mesh mesh;
+  Json materials = Json::array();  // OBJ/MTL materials, numbered from 0
+  std::vector<Reader::Access> accesses;
+  std::vector<Reader::Warning> warnings;
+  size_t bytes = 0, peak = 0;
+};
+thread_local std::map<std::pair<std::string, bool>, PreloadedMesh>* active_mesh_preload = nullptr;
+
+void PreloadMeshFiles(const std::vector<std::pair<std::string, bool>>& keys) {
+#if (defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)) || defined(__wasi__)
+  (void)keys;
+#else
+  Reader& parent = *active_reader;
+  if (!active_mesh_preload || parent.options.open || parent.options.read ||
+      !parent.failure.empty() || parent.options.threads == 1 || keys.size() < 2)
+    return;
+  const unsigned hardware = std::max(1u, std::thread::hardware_concurrency());
+  const size_t workers = std::min<size_t>(
+      keys.size(), parent.options.threads > 1 ? size_t(parent.options.threads)
+                                              : std::min(hardware, 8u));
+  if (workers < 2) return;
+  Options child_options = parent.options;
+  child_options.report = nullptr;
+  child_options.progress = nullptr;
+  child_options.threads = 1;
+  const size_t remaining = parent.options.max_memory -
+                           std::min(parent.bytes, parent.options.max_memory);
+  std::vector<PreloadedMesh> results(keys.size());
+  std::vector<char> kept(keys.size(), 0);
+  std::atomic<size_t> next{0}, committed{0};
+  auto work = [&]() {
+    for (size_t i = next++; i < keys.size(); i = next++) {
+      if (committed.load() >= remaining) return;
+      Reader child(child_options);
+      child.root_source = parent.root_source;
+      child.allow_unanchored = parent.allow_unanchored;
+      child.record_accesses = true;
+      Json materials = Json::array();
+      active_reader = &child;
+      active_materials = &materials;
+      std::string err;
+      PreloadedMesh& out = results[i];
+      if (!LoadMeshFileUncached(fs::path(keys[i].first), keys[i].second, &out.mesh, &err) ||
+          !child.failure.empty() || !child.textures.empty() || !child.texture_requests.empty() || !child.meshes.empty() ||
+          child.preserved.size() || committed.fetch_add(child.bytes) + child.bytes > remaining) {
+        out = PreloadedMesh();
+        continue;
+      }
+      out.materials = std::move(materials);
+      out.accesses = std::move(child.accesses);
+      out.warnings = std::move(child.recorded_warnings);
+      out.bytes = child.bytes;
+      out.peak = child.peak_bytes;
+      kept[i] = 1;
+    }
+  };
+  std::vector<std::thread> pool;
+  for (size_t t = 1; t < workers; ++t) pool.emplace_back(work);
+  {
+    // The calling thread works too; restore its import state afterwards.
+    Reader* reader = active_reader;
+    Json* materials = active_materials;
+    work();
+    active_reader = reader;
+    active_materials = materials;
+  }
+  for (auto& thread : pool) thread.join();
+  for (size_t i = 0; i < keys.size(); ++i)
+    if (kept[i]) active_mesh_preload->emplace(keys[i], std::move(results[i]));
+#endif
+}
+
+// Replay a preloaded mesh's reads and charges; false leaves it to a serial
+// load (for example when the budget has since been used up).
+bool TakePreloadedMesh(const std::pair<std::string, bool>& key, Mesh* mesh, std::string* err) {
+  if (!active_mesh_preload) return false;
+  auto found = active_mesh_preload->find(key);
+  if (found == active_mesh_preload->end()) return false;
+  PreloadedMesh preloaded = std::move(found->second);
+  active_mesh_preload->erase(found);
+  Reader& reader = *active_reader;
+  // A serial parse fails once its transient peak exceeds the budget left.
+  if (!reader.failure.empty() ||
+      std::max(preloaded.bytes, preloaded.peak) >
+          reader.options.max_memory - std::min(reader.bytes, reader.options.max_memory))
+    return false;
+  for (size_t k = 0; k < preloaded.materials.size(); ++k) {
+    const Json& name = preloaded.materials[k]["name"];
+    if (!name.is_string() || name.get<std::string>().rfind("obj_" + std::to_string(k) + "_", 0) != 0)
+      return false;
+  }
+  const size_t base = reader.bytes;
+  size_t read = 0;
+  for (const auto& access : preloaded.accesses) {
+    if (access.read && access.success && !access.cached && !access.texture) {
+      if (!reader.Account(access.name, access.anchor, access.identifier, access.bytes, err))
+        return false;
+      read += access.bytes;
+    } else if (reader.options.report) {
+      // A failed read (for example a missing MTL) charges nothing.
+      reader.options.report->Dependency(access.name, access.anchor, access.identifier,
+                                        access.bytes, access.read, access.cached,
+                                        access.success, access.texture);
+    }
+  }
+  for (const auto& warning : preloaded.warnings)
+    reader.Warn(warning.message, warning.code.c_str(), warning.source, warning.line);
+  if (reader.options.report) reader.options.report->ObserveMemory(base + preloaded.peak);
+  reader.peak_bytes = std::max(reader.peak_bytes, base + preloaded.peak);
+  if (preloaded.bytes > read && !reader.Charge(preloaded.bytes - read, err)) return false;
+  // LoadOBJ names materials obj_<import index>_<name>; renumber from the
+  // import's current count as a serial load would have.
+  const int32_t offset = static_cast<int32_t>(active_materials->size());
+  for (size_t k = 0; k < preloaded.materials.size(); ++k) {
+    Json mat = std::move(preloaded.materials[k]);
+    const std::string name = mat["name"].get<std::string>();
+    const std::string prefix = "obj_" + std::to_string(k) + "_";
+    mat["name"] = "obj_" + std::to_string(offset + int32_t(k)) + "_" + name.substr(prefix.size());
+    active_materials->push_back(std::move(mat));
+  }
+  for (int32_t& index : preloaded.mesh.materials)
+    if (index >= 0) index += offset;
+  *mesh = std::move(preloaded.mesh);
+  return true;
+}
+
 bool LoadMeshFile(const fs::path& filename, bool smoothnormal, Mesh* mesh,
                   std::string* err) {
   if (!active_mesh_cache) return LoadMeshFileUncached(filename, smoothnormal, mesh, err);
@@ -1118,7 +1253,10 @@ bool LoadMeshFile(const fs::path& filename, bool smoothnormal, Mesh* mesh,
   auto found = active_mesh_cache->find(key);
   if (found == active_mesh_cache->end()) {
     Mesh loaded;
-    if (!LoadMeshFileUncached(filename, smoothnormal, &loaded, err)) return false;
+    if (!TakePreloadedMesh(key, &loaded, err)) {
+      if (!active_reader->failure.empty()) return false;
+      if (!LoadMeshFileUncached(filename, smoothnormal, &loaded, err)) return false;
+    }
     found = active_mesh_cache->emplace(key, std::move(loaded)).first;
   }
   // The importer charged the first load; a copy is an ordinary allocation.
@@ -5250,6 +5388,23 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
     explicit MeshCacheScope(std::map<std::pair<std::string, bool>, Mesh>* c) { active_mesh_cache = c; }
     ~MeshCacheScope() { active_mesh_cache = previous; }
   } mesh_cache_scope(&mesh_cache);
+  std::map<std::pair<std::string, bool>, PreloadedMesh> mesh_preload;
+  struct MeshPreloadScope {
+    std::map<std::pair<std::string, bool>, PreloadedMesh>* previous = active_mesh_preload;
+    explicit MeshPreloadScope(std::map<std::pair<std::string, bool>, PreloadedMesh>* p) {
+      active_mesh_preload = p;
+    }
+    ~MeshPreloadScope() { active_mesh_preload = previous; }
+  } mesh_preload_scope(&mesh_preload);
+  {
+    std::set<std::pair<std::string, bool>> unique;
+    for (const auto& entry : assets) {
+      const std::string ext = ToLower(entry.second.path.extension().string());
+      if (ext == ".stl" || ext == ".obj" || ext == ".dae")
+        unique.emplace(entry.second.path.string(), entry.second.smoothnormal);
+    }
+    PreloadMeshFiles({unique.begin(), unique.end()});
+  }
   std::set<std::string> stacked;
   struct StackedScope {
     std::set<std::string>* previous = stacked_joint_bodies;

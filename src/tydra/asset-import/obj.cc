@@ -36,6 +36,7 @@ struct Budget {
     if (p) {
       b.used += size;
       b.reader.bytes += size;
+      b.reader.peak_bytes = std::max(b.reader.peak_bytes, b.reader.bytes);
       if (b.reader.options.report) b.reader.options.report->ObserveMemory(b.reader.bytes);
     }
     return p;

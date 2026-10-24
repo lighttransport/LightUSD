@@ -82,6 +82,9 @@ struct Options {
   size_t max_memory = size_t(1024) * 1024 * 1024;
   size_t max_input = size_t(512) * 1024 * 1024;
   size_t max_depth = 64;
+  // Mesh-asset parse workers: 0 picks up to 8, 1 parses serially. Output is
+  // identical either way.
+  int threads = 0;
   std::vector<std::string> asset_dirs;
   std::map<std::string, std::string> packages;
   std::shared_ptr<ImportReport> report;
@@ -161,6 +164,22 @@ struct Reader {
   std::map<std::pair<std::string, std::string>, TextureRequest>
       texture_requests;
   Json preserved = Json::array();
+  // Highest `bytes`, and (when record_accesses is set) every dependency
+  // trace and warning in order, so a speculative child reader's work can be
+  // replayed into its parent.
+  size_t peak_bytes = 0;
+  bool record_accesses = false;
+  struct Access {
+    std::string name, anchor, identifier;
+    size_t bytes = 0;
+    bool read = false, cached = false, success = false, texture = false;
+  };
+  std::vector<Access> accesses;
+  struct Warning {
+    std::string message, code, source;
+    size_t line = 0;
+  };
+  std::vector<Warning> recorded_warnings;
   bool Open(const std::string& name, const std::string& anchor,
             AssetSource* source, std::string* err);
   bool Read(const std::string& name, const std::string& anchor,

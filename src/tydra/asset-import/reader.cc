@@ -127,6 +127,7 @@ bool Reader::Charge(size_t amount, std::string* err) {
     return false;
   }
   bytes += amount;
+  peak_bytes = std::max(peak_bytes, bytes);
   if (options.report) options.report->ObserveMemory(bytes);
   if (options.progress && bytes - reported_bytes >= (size_t(1) << 20)) {
     reported_bytes = bytes;
@@ -150,6 +151,7 @@ void Reader::Warn(const std::string& message, const char* code,
                    const std::string& source, size_t line) {
   if (options.report) options.report->Diagnostic("warning", code, message,
       source.empty() ? root_source : source, line);
+  if (record_accesses) recorded_warnings.push_back({message, code ? code : "", source, line});
   const size_t cap = 1024 * 1024;
   if (warnings.size() >= cap) return;
   warnings.append(message.data(), std::min(message.size(), cap - warnings.size()));
@@ -320,15 +322,17 @@ bool Reader::Open(const std::string& name, const std::string& anchor,
 
 namespace {
 struct DependencyTrace {
-  const Options& options;
+  Reader& reader;
   const std::string& name;
   const std::string& anchor;
   std::string identifier;
   size_t bytes = 0;
   bool read = false, cached = false, success = false, texture = false;
   ~DependencyTrace() {
-    if (options.report) options.report->Dependency(name, anchor, identifier, bytes,
-        read, cached, success, texture);
+    if (reader.options.report) reader.options.report->Dependency(name, anchor, identifier,
+        bytes, read, cached, success, texture);
+    if (reader.record_accesses)
+      reader.accesses.push_back({name, anchor, identifier, bytes, read, cached, success, texture});
   }
 };
 bool CheckInput(Reader& reader, size_t size, std::string* err) {
@@ -344,7 +348,7 @@ bool CheckInput(Reader& reader, size_t size, std::string* err) {
 bool Reader::Read(const std::string& name, const std::string& anchor,
                   std::vector<uint8_t>* data, std::string* resolved,
                   std::string* err) {
-  DependencyTrace trace{options, name, anchor};
+  DependencyTrace trace{*this, name, anchor};
   if (!failure.empty()) {
     if (err) *err = failure;
     return false;
@@ -371,7 +375,7 @@ bool Reader::Read(const std::string& name, const std::string& anchor,
 
 bool Reader::Account(const std::string& name, const std::string& anchor,
                      const std::string& identifier, size_t size, std::string* err) {
-  DependencyTrace trace{options, name, anchor};
+  DependencyTrace trace{*this, name, anchor};
   trace.identifier = identifier;
   trace.read = true;
   trace.bytes = size;
@@ -416,7 +420,7 @@ bool Reader::Map(const std::string& name, const std::string& anchor, MappedAsset
 bool Reader::ReadTexture(const std::string& name, const std::string& anchor,
                          AssetBytes* data, std::string* resolved,
                          std::string* err) {
-  DependencyTrace trace{options, name, anchor};
+  DependencyTrace trace{*this, name, anchor};
   trace.texture = true;
   if (!failure.empty()) {
     if (err) *err = failure;

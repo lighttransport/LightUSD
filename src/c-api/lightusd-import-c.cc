@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#include <cmath>
 #include <cstddef>
 #include "lightusd-import-c.h"
 
@@ -78,6 +79,12 @@ lightusd_status Options(const lightusd_import_options* in, ia::Options* out) {
         out->obj_topology = v.get<std::string>();
         if (out->obj_topology != "expanded" && out->obj_topology != "indexed")
           return Fail(LIGHTUSD_ERR_INVALID_ARG, "obj_topology must be expanded or indexed");
+      }
+      else if (key == "threads" && v.is_number()) {
+        const double threads = v.get<double>();
+        if (!(threads >= 0 && threads <= 256) || threads != std::floor(threads))
+          return Fail(LIGHTUSD_ERR_INVALID_ARG, "threads must be an integer in [0, 256]");
+        out->threads = static_cast<int>(threads);
       }
       else if (key == "allow_missing" && v.is_boolean())
         out->allow_missing = v.get<bool>();
