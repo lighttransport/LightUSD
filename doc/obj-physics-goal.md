@@ -334,6 +334,13 @@ f121272e (2026-10-24; Menagerie Newton compare still 65/69). Fixed in the
   fast-math, FMA, earcut) yields 23,776; our triangulation matches the
   source.
 
+- Residual Newton-compare mismatches (stretch, rby1 `NECK_0`, lite6
+  `link_base`) are handled upstream (decided 2026-10-24): issue drafts with
+  self-contained repros were prepared for Newton (`add_usd` replaces an
+  authored zero `newton:inertia`; no way to keep an explicit zero body mass)
+  and MuJoCo (the 3.16.0 wheel's OBJ decoder drops 201 triangles that
+  tinyobjloader 2945a967 produces). Nothing else from the review is open.
+
 Reference specifications: [UsdPhysics](https://openusd.org/dev/api/usd_physics_page_front.html),
 [MJCF](https://mujoco.readthedocs.io/en/stable/XMLreference.html), and
 [Newton USD import](https://newton-physics.github.io/newton/latest/concepts/usd_parsing.html).
