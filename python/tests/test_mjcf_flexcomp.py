@@ -185,3 +185,63 @@ def test_cable_plugin_bending_becomes_joint_stiffness():
     expected = sorted(1e6 * np.pi * .01 ** 4 / 4 / s for s in seg)
     assert stiff == pytest.approx(expected, rel=1e-5)
     assert 'isotropic ball-joint stiffness' in stage.warnings()
+
+
+_TET_POINTS = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)]
+
+
+def _gmsh41_binary():
+    import struct
+    head = b'$MeshFormat\n4.1 1 8\n' + struct.pack('i', 1) + b'\n$EndMeshFormat\n'
+    nodes = struct.pack('<QQQQiiiQ', 1, 4, 1, 4, 3, 1, 0, 4) + struct.pack('<4Q', 1, 2, 3, 4)
+    nodes += b''.join(struct.pack('<3d', *p) for p in _TET_POINTS)
+    elems = struct.pack('<QQQQiiiQ', 1, 1, 1, 1, 3, 1, 4, 1) + struct.pack('<5Q', 1, 1, 2, 3, 4)
+    return head + b'$Nodes\n' + nodes + b'\n$EndNodes\n$Elements\n' + elems + b'\n$EndElements\n'
+
+
+def _gmsh22_binary(tags):
+    import struct
+    head = b'$MeshFormat\n2.2 1 8\n' + struct.pack('i', 1) + b'\n$EndMeshFormat\n'
+    nodes = b'4\n' + b''.join(struct.pack('<i3d', i + 1, *p) for i, p in enumerate(_TET_POINTS))
+    if tags:  # gmsh: one block per element, with 2 tags
+        elems = struct.pack('<3i', 4, 1, 2) + struct.pack('<7i', 1, 0, 0, 1, 2, 3, 4)
+    else:     # fTetWild: one block, no tags
+        elems = struct.pack('<3i', 4, 1, 0) + struct.pack('<5i', 1, 1, 2, 3, 4)
+    return head + b'$Nodes\n' + nodes + b'\n$EndNodes\n$Elements\n1\n' + elems + b'\n$EndElements\n'
+
+
+@pytest.mark.parametrize('data', [_gmsh41_binary(), _gmsh22_binary(True), _gmsh22_binary(False)],
+                         ids=['4.1', '2.2-gmsh', '2.2-ftetwild'])
+def test_binary_gmsh_flexcomp_matches_ascii(tmp_path, data):
+    (tmp_path / 'ascii.msh').write_text(TET_GMSH)
+    (tmp_path / 'binary.msh').write_bytes(data)
+    def load(file):
+        xml = (f'<mujoco><worldbody><body name="b" pos="0 0 1"><flexcomp name="f" type="gmsh" '
+               f'file="{file}" radius=".001"/></body></worldbody></mujoco>')
+        path = tmp_path / f'{file}.xml'
+        path.write_text(xml)
+        prim = lightusd.import_mjcf(path).prim_at('/World/Deformables/f')
+        return prim.type_name, _points(prim).tolist(), [tuple(t) for t in prim['tetVertexIndices']]
+    assert load('binary.msh') == load('ascii.msh')
+
+
+def test_gmsh_and_legacy_msh_mesh_assets(tmp_path):
+    import struct
+    # .gmsh: MuJoCo 3.16's GMSH decoder, a tet mesh as its boundary surface.
+    (tmp_path / 'tet.gmsh').write_bytes(_gmsh41_binary())
+    # .msh: MuJoCo's legacy binary mesh (counts, vertices, faces).
+    faces = [(0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)]
+    (tmp_path / 'tet.msh').write_bytes(struct.pack('4i', 4, 0, 0, 4) +
+                                       b''.join(struct.pack('3f', *p) for p in _TET_POINTS) +
+                                       b''.join(struct.pack('3i', *f) for f in faces))
+    for file in ('tet.gmsh', 'tet.msh'):
+        xml = (f'<mujoco><asset><mesh name="m" file="{file}"/></asset><worldbody><body name="b">'
+               '<freejoint/><geom type="mesh" mesh="m"/></body></worldbody></mujoco>')
+        path = tmp_path / f'{file}.xml'
+        path.write_text(xml)
+        mesh = next(p for p in lightusd.import_mjcf(path)
+                    if p.type_name == 'Mesh' and 'physics:collisionEnabled' in p.attributes)
+        assert (len(mesh['points']), len(mesh['faceVertexIndices'])) == (4, 12), file
+        mujoco = pytest.importorskip('mujoco')
+        model = mujoco.MjModel.from_xml_path(str(path))
+        assert (model.mesh_vertnum[0], model.mesh_facenum[0]) == (4, 4)

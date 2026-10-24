@@ -200,6 +200,16 @@ Matrix4 MultiplyRowMajor(const Matrix4 &a, const Matrix4 &b);
 // deformable prims under /World/Deformables.
 void AddDeformablesFromJson(tn::Layer *layer, const Json &items,
                             const NameMap &link_names, std::string *warn);
+// MJCF <skin> (payload "skins") as UsdSkel: /World/Skins/<name> SkelRoot with
+// a Skeleton (one root joint per bone body; bindTransforms from bindpos/
+// bindquat, restTransforms the bodies' initial world poses, so MuJoCo's
+// linear blend skinning at qpos0 is UsdSkel's) and the skinned Mesh. LightUSD
+// extension: lightusd:mjcSkin:bodies targets the bone bodies' prims (to drive
+// the joints from the simulation), plus group and inflate (already baked into
+// the bind-pose points).
+bool AddSkinsFromJson(tn::Layer *layer, const Json &items, const NameMap &link_names,
+                      const std::map<std::string, Matrix4> &link_worlds, std::string *warn,
+                      std::string *err);
 void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
                           const Json &t, const NameMap &joint_names,
                           const NameMap &site_names, const NameMap &geom_names,

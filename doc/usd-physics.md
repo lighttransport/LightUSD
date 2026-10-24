@@ -113,7 +113,8 @@ Both match MuJoCo's compiled body poses on MuJoCo's sample models.
 
 In the `newton` profile, MJCF `<flexcomp>` of every type (`grid`, `circle`,
 `square`, `disc`, `direct`, `box`, `cylinder`, `ellipsoid`, `mesh` from OBJ
-or STL, ASCII `gmsh` 4.1/2.2; MuJoCo's point/element generation including
+or STL, `gmsh` 4.1/2.2 ASCII or binary (MuJoCo 3.16's GMSH decoder layouts,
+including fTetWild's binary 2.2); MuJoCo's point/element generation including
 its vertex order, pins, pose, scaling and unused-point removal) becomes one
 soft body under
 `/World/Deformables` in the AOUSD UsdPhysics deformable layout Newton reads:
@@ -131,11 +132,32 @@ the material is bound with `material:binding:physics`, and
 become one `PhysicsAttachment` (`type0 = point`, `type1 = xform`, `coords1` in
 the owning body frame, no `src1` for the world); Newton imports attachments
 only for cables. Non-`full` `dof`, plugins, 2D/3D damping and edge equality
-are reported as approximated or dropped; binary GMSH and `<skin>` stay
-unsupported. Shells carry `physics:restBendAnglesDefault =
+are reported as approximated or dropped. Shells carry `physics:restBendAnglesDefault =
 restShape` (MuJoCo bends relative to the initial shape). On MuJoCo's flex sample models the vertices
 match MuJoCo's compiled `flexvert_xpos` and the element counts match;
 Newton imports them as particles, triangles, tetrahedra and cable rods.
+
+MJCF `<skin>` (in `<asset>` or `<deformable>`, inline `vertex`/`face`/
+`texcoord` + `<bone>`s or a binary `.skn` file) becomes UsdSkel in the
+`newton` and `openusd` profiles: a `SkelRoot` `/World/Skins/<name>` with a
+`Skeleton` (one root joint per bone body; `bindTransforms` from
+`bindpos`/`bindquat`, `restTransforms` the bodies' initial world poses, a
+`world` bone at the identity) and the skinned `Mesh` (`SkelBindingAPI`,
+`skel:skeleton`, per-vertex `jointIndices`/`jointWeights` normalized as
+MuJoCo's compiler does, `displayColor` from `rgba`, its material bound).
+MuJoCo's linear blend skinning is UsdSkel's, so the rest pose equals
+MuJoCo's skinned vertices at qpos0 (`mjv_updateScene`, to float precision on
+MuJoCo's flag and cube_skin models). `inflate` (an offset along the skinned
+normals UsdSkel cannot express) is baked into the bind points so the rest
+pose stays exact. LightUSD extension (`newton` only; `openusd` omits it):
+`rel lightusd:mjcSkin:bodies` on the Skeleton targets the bone bodies' prims
+in joint order, for consumers that drive the joints from the simulation,
+plus `lightusd:mjcSkin:group` and `lightusd:mjcSkin:inflate` (already baked).
+`legacy` keeps reporting `<skin>`.
+
+Mesh assets also read MuJoCo's legacy binary `.msh` meshes and GMSH `.gmsh`
+files (a 2D file's triangles, a 3D file's tetrahedral boundary, as MuJoCo
+3.16's GMSH decoder extracts it).
 
 Raw `<deformable><flex body=... vertex=... element=...>` (what `mj_saveXML`
 writes for a flexcomp) converts the same way. A vertex body that is only a
@@ -819,7 +841,8 @@ default `newton` profile; [Output profiles](#output-profiles) lists the
 | MJCF `<site>` | a gprim under its body with `MjcSiteAPI` + `NewtonSiteAPI` |
 | MJCF `<equality>` connect/weld | `PhysicsSphericalJoint` / `PhysicsFixedJoint` excluded from the articulation (`active` → `physics:jointEnabled`); unsupported equality types are reported (`mjcf.equality_unsupported`) |
 | MJCF `<contact><exclude>` / `<pair>` | `PhysicsFilteredPairsAPI` on the first body / an `Xform` under `/World/Contacts` with `mjc:geom1`/`mjc:geom2` tokens and the pair's `condim`/`margin`/`gap`/`friction`/`sol*` (no MjcPhysics schema covers pairs; `openusd` omits it) |
-| MJCF `<flexcomp>`, raw `<flex>` | UsdPhysics deformables; interpolated (`node`/`dof`) flexes are approximated as full-dof, binary GMSH and `<skin>` are reported |
+| MJCF `<flexcomp>`, raw `<flex>` | UsdPhysics deformables; interpolated (`node`/`dof`) flexes are approximated as full-dof |
+| MJCF `<skin>` | UsdSkel `SkelRoot`/`Skeleton`/skinned `Mesh` under `/World/Skins` + `lightusd:mjcSkin:*` extension data (see above) |
 | MJCF `<frame scale/massscale>` | the frame's pose is applied, its scale is reported (`mjcf.frame_scale_unsupported`) |
 | MJCF cube textures on materials | reported (`mjcf.texture_builtin_unsupported`); builtin skyboxes become a latlong `DomeLight` |
 

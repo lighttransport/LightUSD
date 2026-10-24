@@ -621,6 +621,9 @@ static bool ConvertPayload(
   }
 
   if (!profile.legacy) AddDeformablesFromJson(&layer, payload.Array("deformables"), link_names, warn);
+  if (!profile.legacy &&
+      !AddSkinsFromJson(&layer, payload.Array("skins"), link_names, link_worlds, warn, err))
+    return false;
 
   NameMap tendon_names;
   Scope tendons_scope(&layer, "Tendons");

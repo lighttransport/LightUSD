@@ -394,6 +394,17 @@ f121272e (2026-10-24; Menagerie Newton compare still 65/69). Fixed in the
   cloud (MuJoCo meshes its convex hull; LightUSD rejects it), mug.xml needs
   `asset_dirs` for its `../../mug` mesh.
 
+- MJCF `<skin>` and binary GMSH (2026-10-24): skins become UsdSkel
+  (SkelRoot/Skeleton/skinned Mesh, weights normalized, inflate baked so the
+  rest pose is exact) with a LightUSD extension relationship
+  `lightusd:mjcSkin:bodies` to the bone bodies; rest pose equals MuJoCo's
+  `mjv_updateScene` skin vertices to float precision (flag 7462 verts,
+  cube_skin .skn with a world bone, a rotated two-bone blend). Binary GMSH
+  4.1/2.2 (gmsh and fTetWild layouts) for flexcomp matches the ASCII files and
+  MuJoCo's flex sizes on its 8 cube test models; `.gmsh` and legacy `.msh`
+  mesh assets pass the MuJoCo-decoder compare. Newton's add_mjcf cannot load
+  the binary volume GMSH or `.msh` references (its own limits).
+
 Reference specifications: [UsdPhysics](https://openusd.org/dev/api/usd_physics_page_front.html),
 [MJCF](https://mujoco.readthedocs.io/en/stable/XMLreference.html), and
 [Newton USD import](https://newton-physics.github.io/newton/latest/concepts/usd_parsing.html).

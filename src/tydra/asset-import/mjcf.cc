@@ -391,8 +391,12 @@ bool ExpandIncludes(const std::string& xml, const fs::path& base_dir,
       // (CollectMujocoRawFlexesJson); <skin> and other children stay reported.
       const bool raw_flex = tag == "flex" && newton && std::string(parent.name()) == "deformable" &&
                             node.attribute("body") && node.attribute("element");
-      const bool flex_container = tag == "deformable" && newton;
-      if (!soft_body && !raw_flex && !flex_container &&
+      // Non-legacy profiles import <skin> as UsdSkel (AddMujocoSkinsJson).
+      const bool legacy = active_reader->options.profile == "legacy";
+      const bool flex_container =
+          tag == "deformable" && (newton || (!legacy && node.child("skin")));
+      const bool skin = tag == "skin" && !legacy;
+      if (!soft_body && !raw_flex && !flex_container && !skin &&
           (tag == "flex" || tag == "flexcomp" || tag == "deformable" ||
                          tag == "skin")) {
         if (!UnsupportedXML(node, "Unsupported MJCF element: " + tag,
@@ -1493,6 +1497,127 @@ bool LoadMeshFile(const fs::path& filename, bool smoothnormal, Mesh* mesh,
   return true;
 }
 
+bool ParseGMSH(const std::string& text, int* dim, std::vector<double>* point,
+               std::vector<int>* element, std::string* err);
+
+// A GMSH file as a <mesh> asset (MuJoCo 3.16's GMSH decoder): a 2D file's
+// triangles, or the boundary of a 3D file's tetrahedra (each tet oriented
+// positively; faces that occur once; boundary vertices in node order).
+bool LoadGMSHMesh(const fs::path& filename, Mesh* mesh, std::string* err) {
+  std::string text;
+  if (!ReadFile(filename, &text, err)) return false;
+  int dim = 0;
+  std::vector<double> point;
+  std::vector<int> element;
+  if (!ParseGMSH(text, &dim, &point, &element, err)) {
+    if (err) *err = filename.string() + ": " + *err;
+    return false;
+  }
+  if (dim == 1) {
+    if (err) *err = filename.string() + ": 1D GMSH meshes are not supported";
+    return false;
+  }
+  const size_t nnode = point.size() / 3;
+  for (int e : element)
+    if (e < 0 || size_t(e) >= nnode) {
+      if (err) *err = filename.string() + ": GMSH element index out of range";
+      return false;
+    }
+  mesh->positions.clear();
+  mesh->normals.clear();
+  mesh->indices.clear();
+  if (dim == 2) {
+    for (double v : point) mesh->positions.push_back(float(v));
+    mesh->indices.assign(element.begin(), element.end());
+    return true;
+  }
+  struct Candidate {
+    int tri[3];
+    bool boundary;
+  };
+  std::vector<Candidate> candidates;
+  std::map<std::array<int, 3>, size_t> faces;
+  for (size_t t = 0; t + 3 < element.size(); t += 4) {
+    int v0 = element[t], v1 = element[t + 1];
+    const int v2 = element[t + 2], v3 = element[t + 3];
+    const double* p0 = &point[3 * size_t(v0)];
+    const double* p1 = &point[3 * size_t(v1)];
+    const double* p2 = &point[3 * size_t(v2)];
+    const double* p3 = &point[3 * size_t(v3)];
+    const double d1[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]};
+    const double d2[3] = {p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]};
+    const double d3[3] = {p3[0] - p0[0], p3[1] - p0[1], p3[2] - p0[2]};
+    const double cross[3] = {d1[1] * d2[2] - d1[2] * d2[1], d1[2] * d2[0] - d1[0] * d2[2],
+                             d1[0] * d2[1] - d1[1] * d2[0]};
+    if (cross[0] * d3[0] + cross[1] * d3[1] + cross[2] * d3[2] < 0) std::swap(v0, v1);
+    const int tet_faces[4][3] = {{v1, v2, v3}, {v0, v3, v2}, {v0, v1, v3}, {v0, v2, v1}};
+    for (const auto& f : tet_faces) {
+      std::array<int, 3> key{{f[0], f[1], f[2]}};
+      std::sort(key.begin(), key.end());
+      const auto found = faces.find(key);
+      if (found == faces.end()) {
+        faces.emplace(key, candidates.size());
+        candidates.push_back({{f[0], f[1], f[2]}, true});
+      } else {
+        candidates[found->second].boundary = false;
+      }
+    }
+  }
+  std::vector<int> remap(nnode, -1);
+  for (const auto& c : candidates)
+    if (c.boundary)
+      for (int v : c.tri) remap[size_t(v)] = 0;
+  int next = 0;
+  for (size_t i = 0; i < nnode; ++i) {
+    if (remap[i] < 0) continue;
+    remap[i] = next++;
+    for (size_t k = 0; k < 3; ++k) mesh->positions.push_back(float(point[3 * i + k]));
+  }
+  for (const auto& c : candidates)
+    if (c.boundary)
+      for (int v : c.tri) mesh->indices.push_back(remap[size_t(v)]);
+  return true;
+}
+
+// MuJoCo's legacy binary MSH mesh (mjCMesh::LoadMSH): int nvertex, nnormal,
+// ntexcoord, nface; float vertex[3n], normal[3n], texcoord[2n]; int face[3n].
+bool LoadLegacyMSH(const fs::path& filename, Mesh* mesh, std::string* err) {
+  std::vector<uint8_t> bytes;
+  std::string resolved;
+  if (!active_reader->Read(filename.string(), active_reader->root_source, &bytes, &resolved, err))
+    return false;
+  int32_t n[4] = {0, 0, 0, 0};
+  if (bytes.size() >= 16) std::memcpy(n, bytes.data(), 16);
+  if (bytes.size() < 16 || n[0] < 4 || n[1] < 0 || n[2] < 0 || n[3] < 0 ||
+      (n[1] > 0 && n[1] != n[0]) || (n[2] > 0 && n[2] != n[0])) {
+    if (err) *err = "invalid sizes in MSH file " + filename.string();
+    return false;
+  }
+  const uint64_t words = 3ull * uint64_t(n[0]) + 3ull * uint64_t(n[1]) + 2ull * uint64_t(n[2]) +
+                         3ull * uint64_t(n[3]);
+  if (bytes.size() != 16 + 4 * words) {
+    if (err) *err = "unexpected file size in MSH file " + filename.string();
+    return false;
+  }
+  if (!active_reader->ChargeArray(size_t(words), 4, err)) return false;
+  size_t at = 16;
+  auto take = [&](auto* out, size_t count) {
+    out->resize(count);
+    if (count) std::memcpy(out->data(), bytes.data() + at, 4 * count);
+    at += 4 * count;
+  };
+  take(&mesh->positions, 3 * size_t(n[0]));
+  take(&mesh->normals, 3 * size_t(n[1]));
+  take(&mesh->uvs, 2 * size_t(n[2]));
+  take(&mesh->indices, 3 * size_t(n[3]));
+  for (int32_t index : mesh->indices)
+    if (index < 0 || index >= n[0]) {
+      if (err) *err = "face index out of range in MSH file " + filename.string();
+      return false;
+    }
+  return true;
+}
+
 bool LoadMeshFileUncached(const fs::path& filename, bool smoothnormal, Mesh* mesh,
                           std::string* err) {
   if (active_plugin_meshes && filename.string().rfind(kPluginMeshPrefix, 0) == 0) {
@@ -1504,6 +1629,9 @@ bool LoadMeshFileUncached(const fs::path& filename, bool smoothnormal, Mesh* mes
   }
   const std::string ext = ToLower(filename.extension().string());
   if (ext == ".stl") return LoadBinarySTL(filename, smoothnormal, mesh, err);
+  // MuJoCo reads .msh as its legacy binary mesh, .gmsh through its GMSH decoder.
+  if (ext == ".msh") return LoadLegacyMSH(filename, mesh, err);
+  if (ext == ".gmsh") return LoadGMSHMesh(filename, mesh, err);
   if (ext == ".obj" || ext == ".dae") return LoadOBJ(filename, mesh, err);
   if (err) *err = "Unsupported native mesh extension: " + ext;
   return false;
@@ -2615,8 +2743,158 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
   return true;
 }
 
+// Binary GMSH 4.1 and 2.2, as MuJoCo 3.16's GMSH decoder (plugin/
+// gmsh_decoder) reads them. 4.1: size_t numEntityBlocks, numNodes,
+// minNodeTag, maxNodeTag; int entityDim, entityTag, parametric; size_t
+// numNodesInBlock; size_t tags[n]; double xyz[3n]; elements alike with
+// size_t (tag, nodes...) records. 2.2: an ASCII count line, then int tag +
+// double xyz[3] per node; elements in blocks of int (type, count, ntags)
+// followed by int (number, tags[ntags], nodes...) records, which covers both
+// gmsh's one-block-per-element files and fTetWild's single tagless block.
+bool ParseGMSHBinary(const std::string& text, long version, int* dim, std::vector<double>* point,
+                     std::vector<int>* element, std::string* err) {
+  const size_t nb = text.find("$Nodes"), ne = text.find("$EndNodes");
+  const size_t eb = text.find("$Elements"), ee = text.find("$EndElements");
+  if (nb == std::string::npos || ne == std::string::npos || eb == std::string::npos ||
+      ee == std::string::npos || ne < nb + 7 || ee < eb + 10) {
+    *err = "GMSH file is missing its $Nodes or $Elements section";
+    return false;
+  }
+  const char* bytes = text.data();
+  const size_t node_begin = nb + 7, node_end = ne, elem_begin = eb + 10, elem_end = ee;
+  auto read = [&](size_t at, size_t end, size_t n, void* out) {
+    if (at > end || n > end - at) return false;
+    std::memcpy(out, bytes + at, n);
+    return true;
+  };
+  const size_t kMax = 50000000;
+  if (version == 410) {
+    uint64_t blocks = 0, num = 0, min_tag = 0, max_tag = 0, in_block = 0;
+    int32_t edim = 0, etag = 0, param = 0;
+    size_t at = node_begin;
+    if (!read(at, node_end, 8, &blocks) || !read(at + 8, node_end, 8, &num) ||
+        !read(at + 16, node_end, 8, &min_tag) || !read(at + 24, node_end, 8, &max_tag) ||
+        !read(at + 32, node_end, 4, &edim) || !read(at + 36, node_end, 4, &etag) ||
+        !read(at + 40, node_end, 4, &param) || !read(at + 44, node_end, 8, &in_block)) {
+      *err = "invalid GMSH nodes header";
+      return false;
+    }
+    if (blocks != 1 || num != in_block || num > kMax || edim < 1 || edim > 3) {
+      *err = "GMSH nodes must be one block of 1D, 2D or 3D entities";
+      return false;
+    }
+    at += 52;
+    if (node_end - std::min(node_end, at) < 32 * num) {
+      *err = "insufficient byte size of GMSH nodes";
+      return false;
+    }
+    *dim = edim;
+    for (uint64_t i = 0; i < num; ++i) {
+      uint64_t tag = 0;
+      read(at + 8 * i, node_end, 8, &tag);
+      if (tag != i + min_tag) {
+        *err = "GMSH node tags must be sequential";
+        return false;
+      }
+    }
+    at += 8 * num;
+    point->resize(3 * num);
+    if (num) std::memcpy(point->data(), bytes + at, 24 * num);
+    uint64_t enumb = 0, emin = 0, emax = 0, ein = 0;
+    int32_t type = 0;
+    at = elem_begin;
+    if (!read(at, elem_end, 8, &blocks) || !read(at + 8, elem_end, 8, &enumb) ||
+        !read(at + 16, elem_end, 8, &emin) || !read(at + 24, elem_end, 8, &emax) ||
+        !read(at + 32, elem_end, 4, &edim) || !read(at + 36, elem_end, 4, &etag) ||
+        !read(at + 40, elem_end, 4, &type) || !read(at + 44, elem_end, 8, &ein)) {
+      *err = "invalid GMSH elements header";
+      return false;
+    }
+    if (blocks != 1 || enumb != ein || edim != *dim || enumb > kMax ||
+        type != (edim == 1 ? 1 : edim == 2 ? 2 : 4)) {
+      *err = "GMSH elements must be one block matching the node dimension";
+      return false;
+    }
+    at += 52;
+    const size_t record = 8 * size_t(edim + 2);
+    if (elem_end - std::min(elem_end, at) < record * enumb) {
+      *err = "insufficient byte size of GMSH elements";
+      return false;
+    }
+    element->reserve(size_t(edim + 1) * enumb);
+    for (uint64_t i = 0; i < enumb; ++i)
+      for (int k = 0; k <= edim; ++k) {
+        uint64_t node = 0;
+        read(at + record * i + 8 * size_t(k + 1), elem_end, 8, &node);
+        if (node < min_tag || node - min_tag >= num) {
+          *err = "invalid node index in GMSH element";
+          return false;
+        }
+        element->push_back(static_cast<int>(node - min_tag));
+      }
+    return true;
+  }
+  // 2.2: "<count>\n" then binary records.
+  auto count_line = [&](size_t begin, size_t end, size_t* count, size_t* data) {
+    size_t at = begin, value = 0;
+    while (at < end && bytes[at] >= '0' && bytes[at] <= '9' && value <= kMax)
+      value = value * 10 + size_t(bytes[at++] - '0');
+    if (at == begin || at >= end || bytes[at] != '\n' || value > kMax) return false;
+    *count = value;
+    *data = at + 1;
+    return true;
+  };
+  size_t num = 0, at = 0;
+  if (!count_line(node_begin, node_end, &num, &at)) {
+    *err = "invalid GMSH node count";
+    return false;
+  }
+  if (node_end - std::min(node_end, at) < 28 * num) {
+    *err = "insufficient byte size of GMSH nodes";
+    return false;
+  }
+  point->resize(3 * num);
+  for (size_t i = 0; i < num; ++i) std::memcpy(&(*point)[3 * i], bytes + at + 28 * i + 4, 24);
+  size_t count = 0;
+  if (!count_line(elem_begin, elem_end, &count, &at)) {
+    *err = "invalid GMSH element count";
+    return false;
+  }
+  int nodes_per = 0;
+  for (size_t done = 0; done < count;) {
+    int32_t header[3];
+    if (!read(at, elem_end, 12, header) || header[1] < 1 || header[2] < 0 || header[2] > 64 ||
+        size_t(header[1]) > count - done) {
+      *err = "invalid GMSH element block";
+      return false;
+    }
+    const int per = header[0] == 2 ? 3 : header[0] == 4 ? 4 : 0;
+    if (!per || (nodes_per && per != nodes_per)) {
+      *err = "GMSH 2.2 elements must all be triangles or tetrahedra";
+      return false;
+    }
+    nodes_per = per;
+    at += 12;
+    const size_t record = 4 * (1 + size_t(header[2]) + size_t(per));
+    for (int32_t e = 0; e < header[1]; ++e, at += record) {
+      for (int k = 0; k < per; ++k) {
+        int32_t node = 0;
+        if (!read(at + 4 * (1 + size_t(header[2]) + size_t(k)), elem_end, 4, &node) || node < 1 ||
+            size_t(node) > num) {
+          *err = "invalid GMSH node tag";
+          return false;
+        }
+        element->push_back(node - 1);
+      }
+    }
+    done += size_t(header[1]);
+  }
+  *dim = nodes_per == 3 ? 2 : 3;
+  return true;
+}
+
 // ASCII GMSH 4.1 (single node and element block) and 2.2, as
-// mjCFlexcomp::LoadGMSH reads them; binary files are rejected.
+// mjCFlexcomp::LoadGMSH reads them; binary files by ParseGMSHBinary.
 bool ParseGMSH(const std::string& text, int* dim, std::vector<double>* point,
                std::vector<int>* element, std::string* err) {
   if (text.compare(0, 11, "$MeshFormat") != 0) {
@@ -2635,10 +2913,7 @@ bool ParseGMSH(const std::string& text, int* dim, std::vector<double>* point,
     *err = "only GMSH file format versions 4.1 and 2.2 are supported";
     return false;
   }
-  if (binary) {
-    *err = "binary GMSH files are not supported";
-    return false;
-  }
+  if (binary) return ParseGMSHBinary(text, v, dim, point, element, err);
   const size_t nb = text.find("$Nodes"), ne = text.find("$EndNodes");
   const size_t eb = text.find("$Elements"), ee = text.find("$EndElements");
   if (nb == std::string::npos || ne == std::string::npos || eb == std::string::npos ||
@@ -4513,6 +4788,219 @@ void AddMujocoMaterialsJson(const pugi::xml_node& root,
 
 // MJCF <keyframe><key qpos/qvel/act/ctrl/mpos/mquat> -> JSON keyframe entries
 // consumed by the converter's AddMjcKeyframeFromJson -> MjcKeyframe prim.
+// MuJoCo's binary SKN skin file (mjCSkin::LoadSKN): int nvert, ntexcoord,
+// nface, nbone; float vert[3n], texcoord[2n]; int face[3n]; then per bone a
+// 40-byte body name, float bindpos[3], bindquat[4], int count, int
+// vertid[count], float vertweight[count].
+struct MjcfSkinData {
+  std::vector<float> vert, texcoord;
+  std::vector<int32_t> face;
+  std::vector<std::string> body;
+  std::vector<float> bindpos, bindquat;
+  std::vector<std::vector<int32_t>> vertid;
+  std::vector<std::vector<float>> vertweight;
+};
+
+bool ParseSKN(const std::vector<uint8_t>& bytes, MjcfSkinData* skin, std::string* err) {
+  auto word = [&](size_t index, void* out) { std::memcpy(out, bytes.data() + 4 * index, 4); };
+  if (bytes.size() < 16 || bytes.size() % 4) {
+    *err = "SKN file is too small or not a whole number of 4-byte words";
+    return false;
+  }
+  const size_t words = bytes.size() / 4;
+  int32_t n[4];
+  for (int i = 0; i < 4; ++i) word(size_t(i), &n[i]);
+  if (n[0] < 0 || n[1] < 0 || n[2] < 0 || n[3] < 0) {
+    *err = "negative size in SKN header";
+    return false;
+  }
+  size_t at = 4;
+  const size_t need = 3 * size_t(n[0]) + 2 * size_t(n[1]) + 3 * size_t(n[2]) + 18 * size_t(n[3]);
+  if (need > words - at) {
+    *err = "insufficient data in SKN file";
+    return false;
+  }
+  auto floats = [&](std::vector<float>* out, size_t count) {
+    out->resize(count);
+    if (count) std::memcpy(out->data(), bytes.data() + 4 * at, 4 * count);
+    at += count;
+  };
+  floats(&skin->vert, 3 * size_t(n[0]));
+  floats(&skin->texcoord, 2 * size_t(n[1]));
+  skin->face.resize(3 * size_t(n[2]));
+  if (!skin->face.empty()) std::memcpy(skin->face.data(), bytes.data() + 4 * at, 4 * skin->face.size());
+  at += skin->face.size();
+  for (int32_t b = 0; b < n[3]; ++b) {
+    if (words - at < 18) {
+      *err = "insufficient data in SKN file, bone " + std::to_string(b);
+      return false;
+    }
+    char name[40];
+    std::memcpy(name, bytes.data() + 4 * at, 39);
+    name[39] = '\0';
+    skin->body.emplace_back(name);
+    at += 10;
+    std::vector<float> pose;
+    floats(&pose, 7);
+    skin->bindpos.insert(skin->bindpos.end(), pose.begin(), pose.begin() + 3);
+    skin->bindquat.insert(skin->bindquat.end(), pose.begin() + 3, pose.end());
+    int32_t count = 0;
+    word(at++, &count);
+    if (count < 1 || size_t(count) > (words - at) / 2) {
+      *err = "invalid vertex count in SKN file, bone " + std::to_string(b);
+      return false;
+    }
+    skin->vertid.emplace_back(size_t(count));
+    std::memcpy(skin->vertid.back().data(), bytes.data() + 4 * at, 4 * size_t(count));
+    at += size_t(count);
+    skin->vertweight.emplace_back();
+    floats(&skin->vertweight.back(), size_t(count));
+  }
+  if (at != words) {
+    *err = "unexpected buffer size in SKN file";
+    return false;
+  }
+  return true;
+}
+
+// MJCF <skin> (in <asset> or <deformable>) as MuJoCo's compiler checks and
+// normalizes it (mjCSkin::Compile): per-vertex weights normalized over all
+// bones, bind quaternions normalized. The payload holds the bind-pose mesh,
+// each bone's body and bind transform, and per-vertex joint influences (bone
+// indices, zero-weight padded to the largest bone count of a vertex).
+bool AddMujocoSkinsJson(const pugi::xml_node& root, const fs::path& base_dir, Json* skins,
+                        std::string* err) {
+  const auto compiler = Child(root, "compiler");
+  std::string dir_attr = compiler ? Attr(compiler, "meshdir") : std::string();
+  if (dir_attr.empty() && compiler) dir_attr = Attr(compiler, "assetdir");
+  const fs::path mesh_dir = dir_attr.empty() ? base_dir : base_dir / dir_attr;
+  std::vector<pugi::xml_node> nodes;
+  for (const char* parent : {"asset", "deformable"})
+    for (const auto& p : Children(root, parent))
+      for (const auto& s : Children(p, "skin")) nodes.push_back(s);
+  std::map<std::string, fs::path> index;
+  bool indexed = false;
+  for (const auto& node : nodes) {
+    const std::string file = Attr(node, "file");
+    std::string name = Attr(node, "name");
+    if (name.empty() && !file.empty()) name = fs::path(file).stem().string();
+    auto fail = [&](const std::string& why) {
+      if (err) *err = "MJCF skin `" + name + "`: " + why;
+      return false;
+    };
+    MjcfSkinData skin;
+    std::vector<pugi::xml_node> bones;
+    for (const auto& bone : Children(node, "bone")) bones.push_back(bone);
+    if (!file.empty()) {
+      if (HasAttr(node, "vertex") || HasAttr(node, "texcoord") || HasAttr(node, "face") ||
+          !bones.empty())
+        return fail("both skin data and a file are specified");
+      if (ToLower(fs::path(file).extension().string()) != ".skn")
+        return fail("unknown skin file type " + file);
+      if (!indexed) {
+        index = BuildMeshIndex(base_dir);
+        indexed = true;
+      }
+      std::vector<uint8_t> bytes;
+      std::string resolved, why;
+      if (!active_reader->Read(ResolveMeshPath(base_dir, mesh_dir, file, index).string(),
+                               active_reader->root_source, &bytes, &resolved, &why))
+        return fail(why);
+      if (!ParseSKN(bytes, &skin, &why)) return fail(why);
+    } else {
+      for (double v : ParseDoubles(Attr(node, "vertex"))) skin.vert.push_back(float(v));
+      for (double v : ParseDoubles(Attr(node, "texcoord"))) skin.texcoord.push_back(float(v));
+      for (double v : ParseDoubles(Attr(node, "face"))) {
+        if (!(v >= 0 && v <= double(INT32_MAX)) || v != std::floor(v)) return fail("invalid face index");
+        skin.face.push_back(int32_t(v));
+      }
+      for (const auto& bone : bones) {
+        const auto pos = ParseDoubles(Attr(bone, "bindpos"));
+        const auto quat = ParseDoubles(Attr(bone, "bindquat"));
+        if (Attr(bone, "body").empty() || pos.size() != 3 || quat.size() != 4)
+          return fail("a bone needs body, bindpos and bindquat");
+        skin.body.push_back(Attr(bone, "body"));
+        for (double v : pos) skin.bindpos.push_back(float(v));
+        for (double v : quat) skin.bindquat.push_back(float(v));
+        skin.vertid.emplace_back();
+        for (double v : ParseDoubles(Attr(bone, "vertid"))) {
+          if (!(v >= double(INT32_MIN) && v <= double(INT32_MAX)) || v != std::floor(v))
+            return fail("invalid vertid");
+          skin.vertid.back().push_back(int32_t(v));
+        }
+        skin.vertweight.emplace_back();
+        for (double v : ParseDoubles(Attr(bone, "vertweight"))) skin.vertweight.back().push_back(float(v));
+      }
+    }
+    if (skin.vert.empty() || skin.face.empty() || skin.body.empty()) return fail("missing data in skin");
+    if (skin.vert.size() % 3) return fail("vertex data must be a multiple of 3");
+    const size_t nvert = skin.vert.size() / 3;
+    if (!skin.texcoord.empty() && skin.texcoord.size() != 2 * nvert)
+      return fail("vertex and texcoord data have incompatible sizes");
+    if (skin.face.size() % 3) return fail("face data must be a multiple of 3");
+    for (int32_t f : skin.face)
+      if (f < 0 || size_t(f) >= nvert) return fail("face index out of range");
+    if (!active_reader->ChargeArray(skin.vert.size() + skin.face.size() + skin.texcoord.size(), 12, err))
+      return false;
+    // Normalized weights, accumulated per vertex across bones.
+    std::vector<float> total(nvert, 0.0f);
+    std::vector<uint32_t> count(nvert, 0);
+    for (size_t b = 0; b < skin.body.size(); ++b) {
+      if (skin.vertweight[b].size() != skin.vertid[b].size() || skin.vertid[b].empty())
+        return fail("vertid and vertweight must have the same non-zero size");
+      for (size_t j = 0; j < skin.vertid[b].size(); ++j) {
+        const int32_t v = skin.vertid[b][j];
+        if (v < 0 || size_t(v) >= nvert) return fail("vertid " + std::to_string(v) + " out of range");
+        total[size_t(v)] += skin.vertweight[b][j];
+        ++count[size_t(v)];
+      }
+    }
+    uint32_t influences = 0;
+    for (size_t v = 0; v < nvert; ++v) {
+      if (!(total[v] > 1e-15f)) return fail("vertex " + std::to_string(v) + " must have positive total weight");
+      influences = std::max(influences, count[v]);
+    }
+    if (nvert > SIZE_MAX / influences || !active_reader->ChargeArray(nvert * influences, 8, err))
+      return false;
+    std::vector<int32_t> joint_indices(nvert * influences, 0);
+    std::vector<float> joint_weights(nvert * influences, 0.0f);
+    std::vector<uint32_t> filled(nvert, 0);
+    Json bone_json = Json::array();
+    for (size_t b = 0; b < skin.body.size(); ++b) {
+      for (size_t j = 0; j < skin.vertid[b].size(); ++j) {
+        const size_t v = size_t(skin.vertid[b][j]);
+        const size_t slot = v * influences + filled[v]++;
+        joint_indices[slot] = int32_t(b);
+        joint_weights[slot] = skin.vertweight[b][j] / total[v];
+      }
+      double q[4] = {skin.bindquat[4 * b], skin.bindquat[4 * b + 1], skin.bindquat[4 * b + 2],
+                     skin.bindquat[4 * b + 3]};
+      const double norm = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+      if (!(norm > 0)) return fail("bone " + skin.body[b] + " has a zero bindquat");
+      Quat quat;
+      for (int k = 0; k < 4; ++k) quat[size_t(k)] = double(float(q[k] / norm));
+      const std::array<double, 3> pos{{skin.bindpos[3 * b], skin.bindpos[3 * b + 1],
+                                       skin.bindpos[3 * b + 2]}};
+      bone_json.push_back({{"body", skin.body[b]}, {"bindTransform", Array(MatrixFromPosQuat(pos, quat))}});
+    }
+    const double inflate = ParseDoubleAttr(node, "inflate", 0.0);
+    Json geometry = {{"positions", Array(skin.vert)}, {"indices", Array(skin.face)},
+                     {"jointIndices", Array(joint_indices)}, {"jointWeights", Array(joint_weights)},
+                     {"influences", influences}};
+    if (!skin.texcoord.empty()) geometry["uvs"] = Array(skin.texcoord);
+    Json entry = {{"name", name.empty() ? std::string("skin") : name},
+                  {"geometry", std::move(geometry)},
+                  {"bones", std::move(bone_json)}};
+    const auto rgba = ParseDoubles(Attr(node, "rgba", "0.5 0.5 0.5 1"));
+    if (rgba.size() >= 4) entry["rgba"] = Array(rgba);
+    if (!Attr(node, "material").empty()) entry["material"] = Attr(node, "material");
+    entry["inflate"] = inflate;
+    entry["group"] = ToInt32(ParseDoubleAttr(node, "group", 0.0), "group");
+    skins->push_back(std::move(entry));
+  }
+  return true;
+}
+
 void AddMujocoKeyframesJson(const pugi::xml_node& root, Json* keyframes,
                             Stats* stats) {
   if (!keyframes) return;
@@ -6280,6 +6768,9 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
   AddMujocoCustomJson(root, &custom);
   Json plugins = Json::array();
   AddMujocoPluginsJson(root, &plugins);
+  Json skins = Json::array();
+  if (opts.profile != "legacy" && !AddMujocoSkinsJson(root, input_filename.parent_path(), &skins, err))
+    return false;
 
   (*payload) = {{"name", Attr(root, "model", input_filename.stem().string())},
                 {"upAxis", opts.up_axis}, {"profile", opts.profile},
@@ -6296,6 +6787,7 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
     (*payload)["filteredPairs"] = std::move(filtered_pairs);
   if (!sites.empty()) (*payload)["sites"] = std::move(sites);
   if (!deformables.empty()) (*payload)["deformables"] = std::move(deformables);
+  if (!skins.empty()) (*payload)["skins"] = std::move(skins);
   if (!mjc_actuators.empty())
     (*payload)["mjcActuators"] = std::move(mjc_actuators);
   Json mjc_scene = BuildMjcSceneJson(root);
@@ -7334,7 +7826,7 @@ bool BuildPayload(const std::string& text, const std::string& source,
   result->meshes = std::move(reader.meshes);
   for (const char* key : {"links", "joints", "materials", "actuators", "tendons",
                          "equalities", "sites", "sensors", "contactPairs", "filteredPairs", "keyframes",
-                         "deformables"})
+                         "deformables", "skins"})
     if (result->payload[key].is_array()) {
       effective.report->counts[key] = uint64_t(result->payload[key].size());
       if (!result->payload[key].empty()) effective.report->Feature(key, "imported", source);
