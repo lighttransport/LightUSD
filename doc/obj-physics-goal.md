@@ -263,8 +263,11 @@ avoid implementing a second conversion or validation engine in Python.
   pixel-identical to MuJoCo; written beside saved layers, packaged in USDZ.
 - MJCF builtin skybox -> latlong DomeLight (BuiltinCube faces pixel-identical
   to MuJoCo, resampled with OpenGL cube-map addressing, pole on stage +Z).
-- Still pending: geometry/material library layers, raw
-  `<flex>`, interpolated (trilinear/quadratic) dofs,
+- Raw MJCF `<flex>` -> the flexcomp deformable layout (point-mass vertex
+  bodies absorbed, other vertex bodies pinned); verified against MuJoCo-saved
+  flexcomps and Newton.
+- Still pending: geometry/material library layers, interpolated
+  (trilinear/quadratic) dofs,
   cube-projected material textures and parallel URDF mesh parsing (MJCF mesh
   assets parse on worker threads, `threads=`, replayed so output, warnings
   and reports equal a serial import; Menagerie 53.0 -> 32.5 s). Import

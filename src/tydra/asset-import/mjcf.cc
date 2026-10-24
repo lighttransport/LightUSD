@@ -376,9 +376,15 @@ bool ExpandIncludes(const std::string& xml, const fs::path& base_dir,
       const std::string tag = node.name();
       // The newton profile converts <flexcomp> into a soft body later.
       const std::string flex_type = ToLower(node.attribute("type").as_string("grid"));
-      const bool soft_body = tag == "flexcomp" && active_reader->options.profile == "newton" &&
-                             IsSupportedFlexcompType(flex_type);
-      if (!soft_body && (tag == "flex" || tag == "flexcomp" || tag == "deformable" ||
+      const bool newton = active_reader->options.profile == "newton";
+      const bool soft_body = tag == "flexcomp" && newton && IsSupportedFlexcompType(flex_type);
+      // Raw <deformable><flex body=... element=...> becomes a soft body too
+      // (CollectMujocoRawFlexesJson); <skin> and other children stay reported.
+      const bool raw_flex = tag == "flex" && newton && std::string(parent.name()) == "deformable" &&
+                            node.attribute("body") && node.attribute("element");
+      const bool flex_container = tag == "deformable" && newton;
+      if (!soft_body && !raw_flex && !flex_container &&
+          (tag == "flex" || tag == "flexcomp" || tag == "deformable" ||
                          tag == "skin")) {
         if (!UnsupportedXML(node, "Unsupported MJCF element: " + tag,
                             "mjcf.element_unsupported", "mjcf.deformable", source)) {
@@ -2411,6 +2417,32 @@ bool ParseGMSH(const std::string& text, int* dim, std::vector<double>* point,
   return true;
 }
 
+// Shared <flex>/<flexcomp> appearance, elasticity, edge and contact values.
+void ReadFlexProperties(const pugi::xml_node& f, Json* out) {
+  Json& entry = *out;
+  const auto rgba = ParseDoubles(Attr(f, "rgba"));
+  if (rgba.size() >= 4) entry["rgba"] = Array(rgba);
+  if (const auto el = Child(f, "elasticity")) {
+    for (const char* key : {"young", "poisson", "damping", "thickness"})
+      if (HasAttr(el, key)) entry[key] = ParseDoubleAttr(el, key, 0.0);
+    if (HasAttr(el, "elastic2d")) entry["elastic2d"] = ToLower(Attr(el, "elastic2d"));
+  }
+  if (const auto edge = Child(f, "edge")) {
+    if (HasAttr(edge, "stiffness")) entry["edgeStiffness"] = ParseDoubleAttr(edge, "stiffness", 0.0);
+    if (HasAttr(edge, "damping")) entry["edgeDamping"] = ParseDoubleAttr(edge, "damping", 0.0);
+    if (HasAttr(edge, "equality")) entry["edgeEquality"] = ToLower(Attr(edge, "equality"));
+  }
+  int contype = 1, conaffinity = 1;
+  if (const auto contact = Child(f, "contact")) {
+    contype = ToInt32(ParseDoubleAttr(contact, "contype", 1.0), "contype");
+    conaffinity = ToInt32(ParseDoubleAttr(contact, "conaffinity", 1.0), "conaffinity");
+    const auto friction = ParseDoubles(Attr(contact, "friction"));
+    if (!friction.empty()) entry["friction"] = friction[0];
+    if (HasAttr(contact, "selfcollide")) entry["selfcollide"] = ToLower(Attr(contact, "selfcollide"));
+  }
+  entry["collides"] = contype != 0 || conaffinity != 0;
+}
+
 // MJCF <flexcomp> (grid, circle, square, disc, direct) expanded the way
 // MuJoCo's mjCFlexcomp::Make does, but kept as one soft body instead of a
 // point-mass body per vertex: world-space points, elements, the pinned
@@ -2677,27 +2709,7 @@ bool CollectBodyFlexcompsJson(const pugi::xml_node& body_node,
       auto owner = active_body_names.find(body_node.internal_object());
       if (!is_world && owner != active_body_names.end()) entry["pinBody"] = owner->second;
     }
-    const auto rgba = ParseDoubles(Attr(f, "rgba"));
-    if (rgba.size() >= 4) entry["rgba"] = Array(rgba);
-    if (const auto el = Child(f, "elasticity")) {
-      for (const char* key : {"young", "poisson", "damping", "thickness"})
-        if (HasAttr(el, key)) entry[key] = ParseDoubleAttr(el, key, 0.0);
-      if (HasAttr(el, "elastic2d")) entry["elastic2d"] = ToLower(Attr(el, "elastic2d"));
-    }
-    if (const auto edge = Child(f, "edge")) {
-      if (HasAttr(edge, "stiffness")) entry["edgeStiffness"] = ParseDoubleAttr(edge, "stiffness", 0.0);
-      if (HasAttr(edge, "damping")) entry["edgeDamping"] = ParseDoubleAttr(edge, "damping", 0.0);
-      if (HasAttr(edge, "equality")) entry["edgeEquality"] = ToLower(Attr(edge, "equality"));
-    }
-    int contype = 1, conaffinity = 1;
-    if (const auto contact = Child(f, "contact")) {
-      contype = ToInt32(ParseDoubleAttr(contact, "contype", 1.0), "contype");
-      conaffinity = ToInt32(ParseDoubleAttr(contact, "conaffinity", 1.0), "conaffinity");
-      const auto friction = ParseDoubles(Attr(contact, "friction"));
-      if (!friction.empty()) entry["friction"] = friction[0];
-      if (HasAttr(contact, "selfcollide")) entry["selfcollide"] = ToLower(Attr(contact, "selfcollide"));
-    }
-    entry["collides"] = contype != 0 || conaffinity != 0;
+    ReadFlexProperties(f, &entry);
     out->push_back(std::move(entry));
   }
   return true;
@@ -2726,6 +2738,217 @@ bool CollectMujocoFlexcompsJson(const pugi::xml_node& worldbody, const Context& 
   return true;
 }
 
+
+// MJCF vertex bodies absorbed into raw <flex> soft bodies (skipped by
+// VisitMujocoBody).
+thread_local std::set<const void*>* active_flex_bodies = nullptr;
+
+// Raw <deformable><flex> (newton profile): each vertex follows a body. A
+// vertex body that is only a point mass (three independent slide joints, or
+// a free joint, an inertial and nothing else, referenced by no other
+// element) is absorbed into the soft body and dropped; `world` and static
+// world children pin their vertex to the world; any other body keeps its rigid body and pins
+// the vertex to it. Writes `consumed` for VisitMujocoBody.
+bool CollectMujocoRawFlexesJson(const pugi::xml_node& root,
+                                const std::vector<pugi::xml_node>& worldbodies,
+                                const Context& ctx, Json* out, std::set<const void*>* consumed,
+                                std::string* err) {
+  std::vector<pugi::xml_node> flexes;
+  for (const auto& deformable : Children(root, "deformable"))
+    for (const auto& f : Children(deformable, "flex"))
+      if (HasAttr(f, "body") && HasAttr(f, "element")) flexes.push_back(f);
+  if (flexes.empty()) return true;
+  // Named bodies with their world frames and parents.
+  struct BodyInfo {
+    pugi::xml_node node;
+    std::vector<double> world;
+    bool world_child;
+  };
+  std::map<std::string, BodyInfo> bodies;
+  bodies.emplace("world", BodyInfo{pugi::xml_node(), IdentityMatrix(), true});
+  {
+    struct Item {
+      pugi::xml_node node;
+      std::vector<double> world;
+      bool world_child;
+    };
+    std::vector<Item> stack;
+    for (const auto& wb : worldbodies)
+      for (const auto& b : Children(wb, "body"))
+        stack.push_back({b, PoseMatrix(b, ctx), true});
+    while (!stack.empty()) {
+      Item item = std::move(stack.back());
+      stack.pop_back();
+      if (HasAttr(item.node, "name"))
+        bodies.emplace(Attr(item.node, "name"), BodyInfo{item.node, item.world, item.world_child});
+      for (const auto& c : Children(item.node, "body"))
+        stack.push_back({c, MultiplyMatrix(item.world, PoseMatrix(c, ctx)), false});
+    }
+  }
+  // Names other elements refer to: such bodies and joints must stay.
+  std::set<std::string> referenced;
+  {
+    static const char* const kKeys[] = {"body", "body1", "body2", "objname", "refname", "target",
+                                        "joint", "joint1", "joint2", "jointinparent"};
+    std::vector<pugi::xml_node> stack{root};
+    while (!stack.empty()) {
+      const pugi::xml_node node = stack.back();
+      stack.pop_back();
+      const bool flex = std::string(node.name()) == "flex";
+      for (const char* key : kKeys)
+        if (!(flex && std::strcmp(key, "body") == 0) && node.attribute(key))
+          referenced.insert(node.attribute(key).as_string());
+      for (auto c = node.first_child(); c; c = c.next_sibling())
+        if (c.type() == pugi::node_element) stack.push_back(c);
+    }
+  }
+  bool keyframes = false;
+  for (const auto& kf : Children(root, "keyframe"))
+    for (const auto& key : Children(kf, "key")) keyframes = keyframes || HasAttr(key, "qpos");
+  // 1 free point, 0 static (pinned to the world), -1 keep the rigid body.
+  auto classify = [&](const BodyInfo& b, double* mass) {
+    const auto& n = b.node;
+    if (!n) return 0;  // "world": a fixed vertex
+    if (referenced.count(Attr(n, "name")) || Child(n, "body") || Child(n, "geom") ||
+        Child(n, "site") || Child(n, "camera") || Child(n, "light") || Child(n, "frame") ||
+        Child(n, "flexcomp") || Child(n, "composite") || Child(n, "replicate") ||
+        MjcBoolAttr(Attr(n, "mocap", "false")))
+      return -1;
+    const auto inertial = Child(n, "inertial");
+    *mass = inertial ? ParseDoubleAttr(inertial, "mass", 0.0) : 0.0;
+    std::vector<std::array<double, 3>> axes;
+    bool free = static_cast<bool>(Child(n, "freejoint"));
+    for (const auto& j : Children(n, "joint")) {
+      if (HasAttr(j, "name") && referenced.count(Attr(j, "name"))) return -1;
+      const std::string type = ToLower(Attr(j, "type", "hinge"));
+      if (type == "free") free = true;
+      else if (type == "slide") axes.push_back(ParseDouble3(Attr(j, "axis"), {{0, 0, 1}}));
+      else return -1;
+    }
+    // A free joint only exists on world children; three slide joints free a
+    // point below any body too (MuJoCo's flexcomp output nests them there).
+    if (free && axes.empty()) return *mass > 0 ? 1 : -1;
+    if (free) return -1;
+    if (axes.empty()) return b.world_child ? 0 : -1;
+    if (axes.size() != 3 || !(*mass > 0)) return -1;
+    const auto& a = axes[0];
+    const auto& b2 = axes[1];
+    const auto& c = axes[2];
+    const double det = a[0] * (b2[1] * c[2] - b2[2] * c[1]) - a[1] * (b2[0] * c[2] - b2[2] * c[0]) +
+                       a[2] * (b2[0] * c[1] - b2[1] * c[0]);
+    return std::fabs(det) > 1e-9 ? 1 : -1;
+  };
+  for (const auto& f : flexes) {
+    const std::string name = Attr(f, "name");
+    auto skip = [&](const std::string& message, const char* code) {
+      if (UnsupportedXML(f, "flex `" + name + "`: " + message, code, "mjcf.deformable",
+                         active_reader->root_source, false))
+        return true;
+      if (err) *err = active_reader->failure;
+      return false;
+    };
+    if (keyframes) {
+      // Dropping the vertex bodies' joints would shift keyframe qpos.
+      if (!skip("keyframes address the vertex bodies' joints", "mjcf.flex_keyframes")) return false;
+      continue;
+    }
+    if (HasAttr(f, "node") || HasAttr(f, "dof")) {
+      if (!skip("interpolated (node/dof) flexes are not supported", "mjcf.flex_interpolated"))
+        return false;
+      continue;
+    }
+    const int dim = ToInt32(ParseDoubleAttr(f, "dim", 2.0), "dim");
+    std::vector<std::string> names;
+    {
+      std::istringstream in(Attr(f, "body"));
+      for (std::string b; in >> b;) names.push_back(b);
+    }
+    const std::vector<double> vertex = ParseDoubles(Attr(f, "vertex"));
+    std::vector<int> element;
+    for (double e : ParseDoubles(Attr(f, "element"))) element.push_back(ToInt32(e, "element"));
+    const size_t npnt = vertex.empty() ? names.size() : vertex.size() / 3;
+    if (dim < 1 || dim > 3 || names.empty() || vertex.size() % 3 ||
+        (names.size() != 1 && names.size() != npnt) || element.empty() ||
+        element.size() % size_t(dim + 1)) {
+      if (!skip("body, vertex and element sizes are invalid", "mjcf.flex_invalid")) return false;
+      continue;
+    }
+    bool valid = true;
+    for (int e : element) valid = valid && e >= 0 && size_t(e) < npnt;
+    for (const auto& b : names) valid = valid && bodies.count(b);
+    if (!valid) {
+      if (!skip("element or body reference is missing", "mjcf.flex_invalid")) return false;
+      continue;
+    }
+    Json points = Json::array(), pins = Json::array(), pin_coords = Json::array(),
+         pin_bodies = Json::array(), masses = Json::array();
+    std::vector<const void*> absorbed;
+    double damping = 0.0;
+    size_t free_points = 0;
+    for (size_t i = 0; i < npnt; ++i) {
+      const std::string& bname = names.size() == 1 ? names[0] : names[i];
+      const BodyInfo& b = bodies.at(bname);
+      const double local[3] = {vertex.empty() ? 0.0 : vertex[3 * i],
+                               vertex.empty() ? 0.0 : vertex[3 * i + 1],
+                               vertex.empty() ? 0.0 : vertex[3 * i + 2]};
+      const auto& m = b.world;
+      points.push_back(Json::array({m[0] * local[0] + m[4] * local[1] + m[8] * local[2] + m[12],
+                                    m[1] * local[0] + m[5] * local[1] + m[9] * local[2] + m[13],
+                                    m[2] * local[0] + m[6] * local[1] + m[10] * local[2] + m[14]}));
+      double mass = 0.0;
+      // A single body carries every vertex rigidly: pin them all to it.
+      const int kind = names.size() == 1 ? -1 : classify(b, &mass);
+      masses.push_back(kind == 1 ? mass : 0.0);
+      if (kind == 1) {
+        ++free_points;
+        absorbed.push_back(b.node.internal_object());
+        for (const auto& j : Children(b.node, "joint"))
+          damping = std::max(damping, ParseDoubleAttr(j, "damping", 0.0));
+        continue;
+      }
+      if (kind == 0 && b.node) absorbed.push_back(b.node.internal_object());
+      pins.push_back(static_cast<int>(i));
+      pin_coords.push_back(Json::array({local[0], local[1], local[2]}));
+      pin_bodies.push_back(kind == 0 || !b.node ? std::string() : bname);
+    }
+    if (!free_points) {
+      if (!skip("no vertex body is a free point mass", "mjcf.flex_rigid")) return false;
+      continue;
+    }
+    // Pinned vertices have no mass of their own in MuJoCo; give them the
+    // mean free mass so engines deriving a density see a uniform body (as
+    // the flexcomp path's equal shares).
+    double free_mass = 0.0;
+    for (size_t i = 0; i < masses.size(); ++i) free_mass += masses[i].get<double>();
+    const double mean = free_mass / double(free_points);
+    std::set<int> pinned_ids;
+    for (size_t i = 0; i < pins.size(); ++i) pinned_ids.insert(pins[i].get<int>());
+    for (int id : pinned_ids) masses[size_t(id)] = mean;
+    for (const void* b : absorbed) consumed->insert(b);
+    bool periodic = false;
+    if (dim == 1 && element.size() == 2 * npnt) periodic = element.back() == 0;
+    Json entry = {{"name", name.empty() ? "flex_" + std::to_string(out->size()) : name},
+                  {"type", "flex"},
+                  {"dim", dim},
+                  {"points", std::move(points)},
+                  {"elements", Array(std::vector<double>(element.begin(), element.end()))},
+                  {"masses", std::move(masses)},
+                  {"radius", ParseDoubleAttr(f, "radius", 0.005)},
+                  {"periodic", periodic}};
+    if (!pins.empty()) {
+      entry["pins"] = std::move(pins);
+      entry["pinCoords"] = std::move(pin_coords);
+      entry["pinBodies"] = std::move(pin_bodies);
+    }
+    ReadFlexProperties(f, &entry);
+    if (damping > 0)
+      active_reader->Warn("flex `" + name + "`: vertex joint damping is dropped with the "
+                              "absorbed point bodies",
+                          "mjcf.flex_vertex_damping");
+    out->push_back(std::move(entry));
+  }
+  return true;
+}
 
 void AddJointFromNode(const pugi::xml_node& joint_node, const AttrMap& jcls,
                       const Context& ctx, const std::string& parent_name,
@@ -4323,6 +4546,7 @@ bool VisitMujocoBody(const pugi::xml_node& body_node,
                              : childclass;
   // Accumulate the body-chain world transform: this body's frame relative to
   // its parent, composed onto the parent's world frame.
+  if (active_flex_bodies && active_flex_bodies->count(body_node.internal_object())) return true;
   const std::vector<double> body_world =
       MultiplyMatrix(parent_world, PoseMatrix(body_node, ctx));
   const std::string body_name =
@@ -5427,6 +5651,16 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
   Json materials = Json::array();
   Json sensors = Json::array();
   Json contact_pairs = Json::array();
+  Json raw_flexes = Json::array();
+  std::set<const void*> flex_bodies;
+  if (opts.profile == "newton" &&
+      !CollectMujocoRawFlexesJson(root, worldbodies, ctx, &raw_flexes, &flex_bodies, err))
+    return false;
+  struct FlexBodyScope {
+    std::set<const void*>* previous = active_flex_bodies;
+    explicit FlexBodyScope(std::set<const void*>* b) { active_flex_bodies = b; }
+    ~FlexBodyScope() { active_flex_bodies = previous; }
+  } flex_body_scope(&flex_bodies);
   for (const auto& worldbody : worldbodies) {
     for (const auto& body : Children(worldbody, "body")) {
       if (!VisitMujocoBody(body, active_world_name, "", IdentityMatrix(),
@@ -5443,6 +5677,7 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
     CollectMujocoLightsCamerasJson(worldbody, IdentityMatrix(), ctx, &lights,
                                    &cameras);
   }
+  for (auto& flex : raw_flexes) deformables.push_back(std::move(flex));
   // World-fixed geoms living directly under <worldbody> (floor/ground/hfield).
   if (!AddWorldbodyGeomsLink(worldbodies, assets, hfields, opts, ctx, &links,
                              stats, err)) {

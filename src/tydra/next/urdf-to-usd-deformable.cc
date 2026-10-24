@@ -150,10 +150,13 @@ void AddDeformablesFromJson(tn::Layer *layer, const Json &items,
       AddAPI(prim, "PhysicsCollisionAPI");
       Set(prim, "physics:collisionEnabled", tn::Value(true), "bool");
     }
-    // flexcomp mass is shared equally by its points.
-    SetTyped(prim, "physics:masses",
-             std::vector<float>(npnt, static_cast<float>(mass / std::max<size_t>(npnt, 1))),
-             "point");
+    // A raw flex carries its vertex bodies' masses; flexcomp mass is shared
+    // equally by its points.
+    std::vector<float> masses;
+    for (double m : JsonDoubles(d, "masses")) masses.push_back(static_cast<float>(m));
+    if (masses.size() != npnt)
+      masses.assign(npnt, static_cast<float>(mass / std::max<size_t>(npnt, 1)));
+    SetTyped(prim, "physics:masses", std::move(masses), "point");
     // 1D/2D thickness: the elastic shell thickness, else the contact diameter.
     double thickness = Number(d, "thickness", -1.0);
     if (dim != 2 || thickness <= 0.0) thickness = 2.0 * radius;
@@ -204,26 +207,47 @@ void AddDeformablesFromJson(tn::Layer *layer, const Json &items,
     }
     SetRel(prim, "material:binding:physics", {path + "_material"});
 
-    // Pinned vertices: one hard attachment to the owning body or the world.
+    // Pinned vertices: one hard attachment per owning body (or the world),
+    // in first-pin order. `pinBodies` (raw flex) names each pin's body;
+    // otherwise `pinBody` owns them all.
     const std::vector<int32_t> pins = JsonInts(d, "pins");
     if (!pins.empty()) {
-      tn::PrimSpec *attachment = Define(layer, path + "_pins", "PhysicsAttachment");
-      SetRel(attachment, "physics:src0", {path});
-      const std::string body = JsonString(d, "pinBody");
-      auto link = link_names.find(body);
-      if (!body.empty() && link != link_names.end())
-        SetRel(attachment, "physics:src1", {"/World/Links/" + link->second});
-      SetToken(attachment, "physics:type0", "point");
-      SetToken(attachment, "physics:type1", "xform");
-      Set(attachment, "physics:indices0", tn::Value::MakeIntArray(pins), "int[]");
-      std::vector<float> coords;
+      std::vector<float> all_coords;
       if (const Json *c = JsonArray(d, "pinCoords"))
         for (const Json &p : *c)
           for (size_t k = 0; k < 3 && p.is_array() && k < p.size(); ++k)
-            coords.push_back(static_cast<float>(p[k].get<double>()));
-      Set(attachment, "physics:coords1",
-          tn::Value::MakeFloatCompArray(coords, tn::TypeId::Vector3f, 3), "vector3f[]");
-      Set(attachment, "physics:attachmentEnabled", tn::Value(true), "bool");
+            all_coords.push_back(static_cast<float>(p[k].get<double>()));
+      std::vector<std::string> pin_bodies(pins.size(), JsonString(d, "pinBody"));
+      if (const Json *b = JsonArray(d, "pinBodies"))
+        for (size_t i = 0; i < pins.size() && i < b->size(); ++i)
+          pin_bodies[i] = (*b)[i].is_string() ? (*b)[i].get<std::string>() : std::string();
+      std::vector<std::string> order;
+      for (const auto &b : pin_bodies)
+        if (std::find(order.begin(), order.end(), b) == order.end()) order.push_back(b);
+      for (size_t g = 0; g < order.size(); ++g) {
+        const std::string &body = order[g];
+        std::vector<int32_t> indices;
+        std::vector<float> coords;
+        for (size_t i = 0; i < pins.size(); ++i) {
+          if (pin_bodies[i] != body) continue;
+          indices.push_back(pins[i]);
+          for (size_t k = 0; k < 3; ++k)
+            coords.push_back(3 * i + k < all_coords.size() ? all_coords[3 * i + k] : 0.0f);
+        }
+        tn::PrimSpec *attachment = Define(
+            layer, path + (g ? "_pins_" + std::to_string(g) : std::string("_pins")),
+            "PhysicsAttachment");
+        SetRel(attachment, "physics:src0", {path});
+        auto link = link_names.find(body);
+        if (!body.empty() && link != link_names.end())
+          SetRel(attachment, "physics:src1", {"/World/Links/" + link->second});
+        SetToken(attachment, "physics:type0", "point");
+        SetToken(attachment, "physics:type1", "xform");
+        Set(attachment, "physics:indices0", tn::Value::MakeIntArray(indices), "int[]");
+        Set(attachment, "physics:coords1",
+            tn::Value::MakeFloatCompArray(coords, tn::TypeId::Vector3f, 3), "vector3f[]");
+        Set(attachment, "physics:attachmentEnabled", tn::Value(true), "bool");
+      }
       if (dim > 1)
         AppendWarn(warn, "Flex `" + name + "` pins are authored as a PhysicsAttachment, which "
                          "Newton imports only for cables.\n");

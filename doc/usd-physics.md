@@ -62,7 +62,7 @@ in one of three profiles, selected with `profile=` (Python), `"profile"` in the 
 | URDF effort | `urdf:limit:effort` + `mjc:actuatorfrcrange` (±effort) with `mjc:actuatorfrclimited` | `urdf:limit:effort` | `urdf:limit:effort` |
 | MJCF `ref` | `mjc:ref` only (Newton measures joint coordinates from it) | omitted | also `state:*:physics:position` |
 | MJCF stacked joints with a ball | intermediate-link chain (Newton merges only hinges/slides into a D6) | stacked | massless intermediate links |
-| MJCF `<flexcomp>` | UsdPhysics deformables (below) | unsupported (reported) | unsupported (reported) |
+| MJCF `<flexcomp>`, raw `<flex>` | UsdPhysics deformables (below) | unsupported (reported) | unsupported (reported) |
 | MJCF primitive visuals | native `Sphere`/`Cube`/`Cylinder`/`Capsule`/`Plane` (as mujoco-usd-converter), material bound, `displayColor`/`displayOpacity` from geom `rgba` | same | tessellated meshes |
 | MJCF ellipsoids (non-uniform) | mesh with the radii baked in (convex hull as a collider): a scaled `Sphere` is read as a unit sphere by Newton and rejected by OpenUSD | same | scaled `Sphere` (reported) |
 | URDF ghost / dummy-inertia links | urdf-usd-converter rules: inertia-, visual- and collision-less links on fixed joints (or the root) lose `RigidBodyAPI`, their fixed joint is dropped and child joints re-anchor on the nearest rigid ancestor (or the world); an inertial-only childless child on a fixed joint under a geometry-only parent is merged into it | same | as authored |
@@ -111,11 +111,29 @@ the material is bound with `material:binding:physics`, and
 become one `PhysicsAttachment` (`type0 = point`, `type1 = xform`, `coords1` in
 the owning body frame, no `src1` for the world); Newton imports attachments
 only for cables. Non-`full` `dof`, plugins, 2D/3D damping and edge equality
-are reported as approximated or dropped; binary GMSH, raw `<flex>` and
-`<skin>` stay unsupported. Shells carry `physics:restBendAnglesDefault =
+are reported as approximated or dropped; binary GMSH and `<skin>` stay
+unsupported. Shells carry `physics:restBendAnglesDefault =
 restShape` (MuJoCo bends relative to the initial shape). On MuJoCo's flex sample models the vertices
 match MuJoCo's compiled `flexvert_xpos` and the element counts match;
 Newton imports them as particles, triangles, tetrahedra and cable rods.
+
+Raw `<deformable><flex body=... vertex=... element=...>` (what `mj_saveXML`
+writes for a flexcomp) converts the same way. A vertex body that is only a
+point mass (three independent slide joints or a free joint, an inertial,
+nothing else, and not named by any other element) is absorbed: its mass
+becomes the vertex's `physics:masses` entry and its link and joints are not
+written. `world` and joint-less world children pin their vertex to the
+world; any other body (for example one carrying a tendon site) stays a rigid
+body and pins the vertex to it, with one `PhysicsAttachment` per body
+(`<flex>_pins`, `<flex>_pins_1`, ...). Pinned vertices get the mean free
+vertex mass, so engines that derive a density see the uniform body flexcomp
+would give. Vertex joint damping is dropped with a warning. Flexes with
+`node`/`dof` interpolation, models with `qpos` keyframes (absorbing joints
+would shift them), invalid references and flexes without a free vertex are
+reported as unsupported. MuJoCo-saved grid flexes (2D cloth on a holder body,
+3D jelly, 1D rope pinned to the world) match `flexvert_xpos`, and convert to
+the same points, elements, masses, pins and links as the original flexcomp;
+Newton imports both alike.
 
 MJCF visuals: capsule meshes have hemispherical caps (previously plain
 cylinders), cameras default to MuJoCo's 45 degree `fovy` and take
