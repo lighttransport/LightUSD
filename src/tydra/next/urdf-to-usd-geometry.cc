@@ -118,6 +118,46 @@ std::string PhysicsMaterials::Bind(tn::PrimSpec *collider,
 
 PhysicsMaterials *ActivePhysicsMaterials() { return active_physics_materials; }
 
+namespace {
+thread_local CollisionFilterGroups *active_collision_groups = nullptr;
+}  // namespace
+
+CollisionFilterGroups::CollisionFilterGroups() : previous_(active_collision_groups) {
+  active_collision_groups = this;
+}
+CollisionFilterGroups::~CollisionFilterGroups() { active_collision_groups = previous_; }
+CollisionFilterGroups *ActiveCollisionFilterGroups() { return active_collision_groups; }
+
+void CollisionFilterGroups::Record(const std::string &collider, int32_t contype,
+                                   int32_t conaffinity) {
+  members_[{contype, conaffinity}].push_back(collider);
+}
+
+size_t CollisionFilterGroups::Write(tn::Layer *layer) const {
+  auto collides = [](const std::pair<int32_t, int32_t> &a, const std::pair<int32_t, int32_t> &b) {
+    return (a.first & b.second) != 0 || (b.first & a.second) != 0;
+  };
+  bool filtered = false;
+  for (const auto &a : members_)
+    for (const auto &b : members_) filtered = filtered || !collides(a.first, b.first);
+  if (!filtered) return 0;
+  Define(layer, "/World/CollisionGroups", "Scope");
+  std::map<std::pair<int32_t, int32_t>, std::string> paths;
+  for (const auto &entry : members_)
+    paths[entry.first] = "/World/CollisionGroups/contype_" + std::to_string(entry.first.first) +
+                         "_conaffinity_" + std::to_string(entry.first.second);
+  for (const auto &entry : members_) {
+    tn::PrimSpec *group = Define(layer, paths[entry.first], "PhysicsCollisionGroup");
+    if (!group) continue;
+    SetRel(group, "collection:colliders:includes", entry.second);
+    std::vector<std::string> filters;
+    for (const auto &other : members_)
+      if (!collides(entry.first, other.first)) filters.push_back(paths[other.first]);
+    if (!filters.empty()) SetRel(group, "physics:filteredGroups", filters);
+  }
+  return members_.size();
+}
+
 void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
                       const Json &src, bool mjcf_source) {
   const Profile &profile = ActiveProfile();
@@ -276,6 +316,9 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
   Set(prim, "mjc:contype", tn::Value(contact_bits("contype")), "int", true);
   Set(prim, "mjc:conaffinity", tn::Value(contact_bits("conaffinity")), "int",
       true);
+  if (CollisionFilterGroups *groups = mjcf_source ? ActiveCollisionFilterGroups() : nullptr)
+    groups->Record(prim->path().str(), contact_bits("contype"),
+                   contact_bits("conaffinity"));
   // `purpose=guide` hides the collider from default renders but keeps it
   // discoverable to schema-aware consumers (mujoco-usd-converter applies
   // the same to non-visual MuJoCo geom groups). A collider that is also the

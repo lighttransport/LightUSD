@@ -68,6 +68,25 @@ class PhysicsMaterials {
   bool defined_ = false;
 };
 PhysicsMaterials *ActivePhysicsMaterials();
+
+// MuJoCo contype/conaffinity bitmasks as UsdPhysics collision groups (the
+// openusd profile, which has no mjc:* attributes): one group per distinct
+// (contype, conaffinity) pair, each filtering the groups it cannot touch
+// under MuJoCo's rule (ct_a & ca_b) || (ct_b & ca_a).
+class CollisionFilterGroups {
+ public:
+  CollisionFilterGroups();
+  ~CollisionFilterGroups();
+  CollisionFilterGroups(const CollisionFilterGroups &) = delete;
+  CollisionFilterGroups &operator=(const CollisionFilterGroups &) = delete;
+  void Record(const std::string &collider, int32_t contype, int32_t conaffinity);
+  // Writes /World/CollisionGroups; nothing when every pair collides.
+  size_t Write(tn::Layer *layer) const;
+ private:
+  CollisionFilterGroups *previous_;
+  std::map<std::pair<int32_t, int32_t>, std::vector<std::string>> members_;
+};
+CollisionFilterGroups *ActiveCollisionFilterGroups();
 bool IsEngineSchema(const std::string &schema);
 
 // Omit empty scopes and define each populated scope at its first child.

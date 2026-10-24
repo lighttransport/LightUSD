@@ -528,3 +528,28 @@ def test_mjcf_shell_mesh_visual_keeps_shell_mass_model(tmp_path):
     visual = next(p for p in lightusd.import_mjcf(path) if p.type_name == 'Mesh')
     assert 'PhysicsCollisionAPI' not in _apis(visual)
     assert visual['newton:massModel'] == 'shell'
+
+
+def test_openusd_collision_groups_follow_mujoco_bitmasks():
+    geoms = ''.join(f'<body name="b{i}" pos="{i} 0 0"><freejoint/><geom name="g{i}" size=".1" '
+                    f'contype="{ct}" conaffinity="{ca}"/></body>'
+                    for i, (ct, ca) in enumerate(((1, 1), (2, 2), (1, 2))))
+    stage = lightusd._import(data=_mjcf(geoms), format='mjcf', profile='openusd')
+    groups = {p.name: p for p in stage if p.type_name == 'PhysicsCollisionGroup'}
+    assert set(groups) == {'contype_1_conaffinity_1', 'contype_2_conaffinity_2', 'contype_1_conaffinity_2'}
+    def filtered(name):
+        p = groups[name]
+        if 'physics:filteredGroups' not in p.relationships:
+            return set()
+        return {t.split('/')[-1] for t in p.relationship('physics:filteredGroups').targets}
+    # MuJoCo collides a pair iff (ct_a & ca_b) or (ct_b & ca_a).
+    assert filtered('contype_1_conaffinity_1') == {'contype_2_conaffinity_2'}
+    assert filtered('contype_2_conaffinity_2') == {'contype_1_conaffinity_1'}
+    assert filtered('contype_1_conaffinity_2') == {'contype_1_conaffinity_2'}
+    assert groups['contype_1_conaffinity_1'].relationship('collection:colliders:includes').targets == (
+        '/World/Links/b0/g0',)
+    # Default bitmasks need no groups; the newton profile keeps mjc:contype.
+    assert not [p for p in lightusd._import(data=_mjcf('<body><freejoint/><geom size=".1"/></body>'),
+                                            format='mjcf', profile='openusd')
+                if p.type_name == 'PhysicsCollisionGroup']
+    assert not [p for p in lightusd.load_bytes(_mjcf(geoms), format='mjcf') if p.type_name == 'PhysicsCollisionGroup']

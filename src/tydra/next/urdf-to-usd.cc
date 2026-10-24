@@ -132,6 +132,10 @@ static bool ConvertPayload(
   std::unique_ptr<PhysicsMaterials> physics_materials;
   if (!no_physics && !profile.legacy && mjcf_source)
     physics_materials.reset(new PhysicsMaterials(&layer));
+  // openusd has no mjc:contype/conaffinity: express them as collision groups.
+  std::unique_ptr<CollisionFilterGroups> collision_groups;
+  if (!no_physics && !profile.legacy && !profile.engine && mjcf_source)
+    collision_groups.reset(new CollisionFilterGroups());
   Define(&layer, "/World/Links", "Xform");
   Define(&layer, "/World/Joints", "Xform");
 
@@ -397,6 +401,8 @@ static bool ConvertPayload(
       AddURDFCustom(&layer, "/World/custom", scope, custom, &children);
     }
   }
+
+  if (collision_groups) collision_groups->Write(&layer);
 
   // MJCF <contact><exclude> -> physics:filteredPairs on the first body.
   if (const Json *pairs = JsonArray(root, "filteredPairs")) {

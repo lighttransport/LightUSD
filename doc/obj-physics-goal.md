@@ -377,6 +377,11 @@ f121272e (2026-10-24; Menagerie Newton compare still 65/69). Fixed in the
   bindings ignored, sites also decoded as geoms, unauthored limits decode as
   limited, no tree ball joints, no collision bitmasks, no body gravcomp.
 
+- openusd collision filtering (2026-10-24): MJCF contype/conaffinity bitmasks
+  become UsdPhysics collision groups (exact for any masks: one group per
+  distinct pair, filtered pairs from MuJoCo's rule), parsed by OpenUSD's
+  UsdPhysics (iit_softfoot 1 group, agility_cassie 3), validators clean.
+
 Reference specifications: [UsdPhysics](https://openusd.org/dev/api/usd_physics_page_front.html),
 [MJCF](https://mujoco.readthedocs.io/en/stable/XMLreference.html), and
 [Newton USD import](https://newton-physics.github.io/newton/latest/concepts/usd_parsing.html).
