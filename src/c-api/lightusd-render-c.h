@@ -1155,6 +1155,92 @@ LIGHTUSD_API lightusd_status lightusd_render_unsupported_get_info(
     const lightusd_render_scene* scene, int32_t id,
     lightusd_render_unsupported_info* out);
 
+/* ============================================================
+ * UsdVol: Volumes, their fields, and ParticleFields
+ *
+ * Volumes list their `field:*` bindings resolved against the referenced
+ * .vdb (fieldName, then fieldIndex among equal names). Matrices are USD
+ * row-vector 4x4 (translation in elements 12..14). A field's index_to_world
+ * already includes the field prim's transform (UsdVol placement). Voxels are
+ * decoded on demand; the returned buffers live as long as the scene.
+ * ============================================================ */
+LIGHTUSD_API size_t lightusd_render_volume_count(const lightusd_render_scene* scene);
+
+typedef struct lightusd_render_volume_info {
+  lightusd_sv prim_path;
+  uint32_t field_count;
+  int32_t material_id;            /* -1 when unbound */
+  uint8_t has_extent;
+  uint8_t extent_is_world;        /* extent from field bounds (world space) */
+  uint8_t _pad[2];
+  float density_scale;
+  float albedo[3];
+  float emission[3];
+  float emission_intensity;
+  double extent_min[3];
+  double extent_max[3];
+  double world_matrix[16];
+} lightusd_render_volume_info;
+LIGHTUSD_API lightusd_status lightusd_render_volume_get_info(
+    const lightusd_render_scene* scene, int32_t id, lightusd_render_volume_info* out);
+
+typedef struct lightusd_render_volume_field_info {
+  lightusd_sv binding;            /* relationship name without "field:" */
+  lightusd_sv field_prim;
+  lightusd_sv file_path;          /* resolved */
+  lightusd_sv grid_name;
+  lightusd_sv grid_class;         /* levelSet, fogVolume, staggered, unknown */
+  lightusd_sv value_type;         /* float, double, int32, int64, bool, mask, vec3f, vec3d, vec3i */
+  uint32_t components;
+  uint32_t source_index;          /* grid position in the file */
+  uint8_t has_bounds;
+  uint8_t _pad[7];
+  double index_to_world[16];
+  double world_min[3];
+  double world_max[3];
+} lightusd_render_volume_field_info;
+LIGHTUSD_API lightusd_status lightusd_render_volume_field_get_info(
+    const lightusd_render_scene* scene, int32_t volume, int32_t field,
+    lightusd_render_volume_field_info* out);
+
+typedef struct lightusd_render_volume_dense {
+  const float* data;              /* dims[0]*dims[1]*dims[2]*components, x fastest */
+  int32_t dims[3];
+  int32_t index_origin[3];        /* index of cell (0,0,0)'s first voxel */
+  int32_t stride;                 /* index voxels per cell per axis */
+  uint32_t components;
+  float background;
+  float _pad;
+  /* Cell (x,y,z) center -> world (row vector): (x,y,z,1) * cell_to_world. */
+  double cell_to_world[16];
+} lightusd_render_volume_dense;
+/* Dense float voxels of a field: max_voxels caps the cells (0 = 640^3);
+ * downsample (nonzero) box-filters to fit instead of failing;
+ * vector_components (nonzero) keeps vec3 channels (else magnitude). */
+LIGHTUSD_API lightusd_status lightusd_render_volume_field_dense(
+    const lightusd_render_scene* scene, int32_t volume, int32_t field, uint64_t max_voxels,
+    int downsample, int vector_components, lightusd_render_volume_dense* out);
+
+LIGHTUSD_API size_t lightusd_render_particle_data_count(const lightusd_render_scene* scene);
+typedef struct lightusd_render_particle_data {
+  lightusd_sv prim_path;
+  lightusd_sv type_name;
+  lightusd_sv kernel;             /* gaussianEllipsoid, gaussianSurflet, constantSurflet, none */
+  lightusd_sv projection_mode_hint;
+  lightusd_sv sorting_mode_hint;
+  uint64_t count;
+  int32_t sh_degree;
+  int32_t _pad;
+  const float* positions;         /* 3 * count */
+  const float* orientations;      /* 4 * count, quaternion (real, i, j, k) */
+  const float* scales;            /* 3 * count */
+  const float* opacities;         /* count */
+  const float* sh_coefficients;   /* (sh_degree + 1)^2 * 3 * count */
+  double world_matrix[16];
+} lightusd_render_particle_data;
+LIGHTUSD_API lightusd_status lightusd_render_particle_data_get(
+    const lightusd_render_scene* scene, int32_t id, lightusd_render_particle_data* out);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

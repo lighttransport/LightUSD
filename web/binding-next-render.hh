@@ -288,6 +288,11 @@ class RenderStream {
                        uint32_t cap) const;
   int cameraField(int camera_id, uint8_t field) const;
   int cameraInfo(int camera_id, lightusd_next_camera_info* out) const;
+  // UsdVol (binding-next-render-query-volume.cc).
+  int volumesJsonCopy(uint8_t* out, uint32_t cap) const;
+  uintptr_t volumeDense(int volume, int field, uint32_t max_voxels, uint32_t flags,
+                        lightusd_next_volume_dense_info* info) const;
+  uintptr_t particleArray(int id, uint8_t which, uint32_t* float_count) const;
   int cameraTransformCopy(int camera_id, uint8_t* out, uint32_t cap) const;
   int cameraOpticsCopy(int camera_id, uint8_t* out, uint32_t cap) const;
   // Skeleton fields: 0=joint count, 1=root joint, 2=animation id.

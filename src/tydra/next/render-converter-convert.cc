@@ -241,9 +241,30 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
     result.scene.material_by_path.reserve(extracted.materials.size());
 
     const bool has_time_samples = emit_animations;
+    // UsdVol Volumes (field resolution only; voxels decode on demand).
+    result.scene.volumes.reserve(extracted.volumes.size());
+    for (const RenderPrimRecord& vrec : extracted.volumes) {
+      RenderVolume volume;
+      if (ConvertVolume(stage, vrec.prim, &result.scene, &volume)) {
+        for (const std::string& w : volume.warnings) AddWarning(w);
+        result.scene.volume_by_path[volume.prim_path] =
+            static_cast<int32_t>(result.scene.volumes.size());
+        result.scene.volumes.push_back(std::move(volume));
+      }
+    }
+    for (const RenderPrimRecord& rec : extracted.records) {
+      if (rec.type_name.compare(0, 13, "ParticleField") == 0) {
+        RenderParticleField pf;
+        if (ConvertParticleField(stage, rec.prim, config_.time_code, &pf)) {
+          for (const std::string& w : pf.warnings) AddWarning(w);
+          result.scene.particle_fields.push_back(std::move(pf));
+        }
+      }
+    }
     for (const RenderPrimRecord& rec : extracted.records) {
       if (rec.type_name != "Points" &&
           rec.type_name != "ParticleField3DGaussianSplat" &&
+          rec.type_name != "Volume" &&
           IsUnsupportedRenderableTypeName(rec.type_name)) {
         UnsupportedRenderable unsupported;
         unsupported.prim_path = rec.path;
@@ -677,6 +698,7 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
       }
     }
     AssignPointInstanceDrawMaterials(&result.scene);
+    ResolveVolumeMaterials(&result.scene);
     if (config_.point_instancer.duplicate_meshes) {
       DuplicatePointInstanceMeshes(&result.scene);
     }

@@ -892,7 +892,180 @@ static PyObject* RScene_repr(PyObject* self) {
       lightusd_render_count(s->scene, LIGHTUSD_RENDER_IMAGE));
 }
 
+/* ---- UsdVol: volumes, dense voxels, particle fields ---- */
+
+static PyObject* float_buffer(lightusd_state* st, PyObject* scene_obj, const float* data,
+                              size_t count, uint8_t components) {
+  lightusd_buffer_view v;
+  memset(&v, 0, sizeof(v));
+  v.component_type = LIGHTUSD_COMP_FLOAT32;
+  v.components = components;
+  v.count = count;
+  v.data = data;
+  v.nbytes = count * components * sizeof(float);
+  return wrap_buffer(st, scene_obj, &v);
+}
+
+static PyObject* matrix16d_to_python(const double m[16]) {
+  return Py_BuildValue("((dddd)(dddd)(dddd)(dddd))", m[0], m[1], m[2], m[3], m[4], m[5], m[6],
+                       m[7], m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15]);
+}
+
+/* Set d[key] = val, stealing val. Returns -1 on error. */
+static int dict_steal(PyObject* d, const char* key, PyObject* val) {
+  if (!val) return -1;
+  int r = PyDict_SetItemString(d, key, val);
+  Py_DECREF(val);
+  return r;
+}
+
+static PyObject* RScene_volumes(PyObject* self, PyObject* noargs) {
+  (void)noargs;
+  lightusd_state* st = lightusd_state_from_obj(self);
+  if (!st) return NULL;
+  lightusd_render_scene* scene = ((LightUSDRenderScene*)self)->scene;
+  size_t n = lightusd_render_volume_count(scene);
+  PyObject* out = PyList_New(0);
+  if (!out) return NULL;
+  for (size_t i = 0; i < n; ++i) {
+    lightusd_render_volume_info vi;
+    lightusd_status s = lightusd_render_volume_get_info(scene, (int32_t)i, &vi);
+    if (s != LIGHTUSD_OK) { Py_DECREF(out); return lightusd_raise(st, s, "render volume"); }
+    PyObject* d = PyDict_New();
+    PyObject* fields = PyList_New(0);
+    if (!d || !fields || PyList_Append(out, d) < 0) goto fail_vol;
+    Py_DECREF(d);
+    if (dict_steal(d, "prim_path", lightusd_sv_to_str(vi.prim_path)) < 0 ||
+        dict_steal(d, "world_matrix", matrix16d_to_python(vi.world_matrix)) < 0 ||
+        dict_steal(d, "material_id", PyLong_FromLong(vi.material_id)) < 0 ||
+        dict_steal(d, "extent", vi.has_extent
+                                    ? Py_BuildValue("((ddd)(ddd))", vi.extent_min[0], vi.extent_min[1],
+                                                    vi.extent_min[2], vi.extent_max[0],
+                                                    vi.extent_max[1], vi.extent_max[2])
+                                    : (Py_INCREF(Py_None), Py_None)) < 0 ||
+        dict_steal(d, "extent_is_world", PyBool_FromLong(vi.extent_is_world)) < 0 ||
+        dict_steal(d, "density_scale", PyFloat_FromDouble(vi.density_scale)) < 0 ||
+        dict_steal(d, "albedo", Py_BuildValue("(fff)", vi.albedo[0], vi.albedo[1], vi.albedo[2])) < 0 ||
+        dict_steal(d, "emission",
+                   Py_BuildValue("(fff)", vi.emission[0], vi.emission[1], vi.emission[2])) < 0 ||
+        dict_steal(d, "emission_intensity", PyFloat_FromDouble(vi.emission_intensity)) < 0) {
+      Py_DECREF(fields);
+      Py_DECREF(out);
+      return NULL;
+    }
+    for (uint32_t f = 0; f < vi.field_count; ++f) {
+      lightusd_render_volume_field_info fi;
+      s = lightusd_render_volume_field_get_info(scene, (int32_t)i, (int32_t)f, &fi);
+      if (s != LIGHTUSD_OK) { Py_DECREF(fields); Py_DECREF(out); return lightusd_raise(st, s, "volume field"); }
+      PyObject* fd = PyDict_New();
+      if (!fd || PyList_Append(fields, fd) < 0) { Py_XDECREF(fd); Py_DECREF(fields); Py_DECREF(out); return NULL; }
+      Py_DECREF(fd);
+      if (dict_steal(fd, "binding", lightusd_sv_to_str(fi.binding)) < 0 ||
+          dict_steal(fd, "field_prim", lightusd_sv_to_str(fi.field_prim)) < 0 ||
+          dict_steal(fd, "file_path", lightusd_sv_to_str(fi.file_path)) < 0 ||
+          dict_steal(fd, "grid_name", lightusd_sv_to_str(fi.grid_name)) < 0 ||
+          dict_steal(fd, "grid_class", lightusd_sv_to_str(fi.grid_class)) < 0 ||
+          dict_steal(fd, "value_type", lightusd_sv_to_str(fi.value_type)) < 0 ||
+          dict_steal(fd, "components", PyLong_FromUnsignedLong(fi.components)) < 0 ||
+          dict_steal(fd, "source_index", PyLong_FromUnsignedLong(fi.source_index)) < 0 ||
+          dict_steal(fd, "index_to_world", matrix16d_to_python(fi.index_to_world)) < 0 ||
+          dict_steal(fd, "world_bounds",
+                     fi.has_bounds ? Py_BuildValue("((ddd)(ddd))", fi.world_min[0], fi.world_min[1],
+                                                   fi.world_min[2], fi.world_max[0], fi.world_max[1],
+                                                   fi.world_max[2])
+                                   : (Py_INCREF(Py_None), Py_None)) < 0) {
+        Py_DECREF(fields);
+        Py_DECREF(out);
+        return NULL;
+      }
+    }
+    if (dict_steal(d, "fields", fields) < 0) { Py_DECREF(out); return NULL; }
+    continue;
+  fail_vol:
+    Py_XDECREF(d);
+    Py_XDECREF(fields);
+    Py_DECREF(out);
+    return NULL;
+  }
+  return out;
+}
+
+static PyObject* RScene_volume_dense(PyObject* self, PyObject* args, PyObject* kw) {
+  static char* kwlist[] = {"volume", "field", "max_voxels", "downsample", "vector", NULL};
+  int volume = 0, field = 0, downsample = 0, vector = 0;
+  unsigned long long max_voxels = 0;
+  if (!PyArg_ParseTupleAndKeywords(args, kw, "ii|Kpp", kwlist, &volume, &field, &max_voxels,
+                                   &downsample, &vector))
+    return NULL;
+  lightusd_state* st = lightusd_state_from_obj(self);
+  if (!st) return NULL;
+  lightusd_render_volume_dense dv;
+  lightusd_status s = lightusd_render_volume_field_dense(((LightUSDRenderScene*)self)->scene, volume,
+                                                         field, max_voxels, downsample, vector, &dv);
+  if (s != LIGHTUSD_OK) return lightusd_raise(st, s, "volume dense");
+  const size_t cells = (size_t)dv.dims[0] * (size_t)dv.dims[1] * (size_t)dv.dims[2];
+  PyObject* d = PyDict_New();
+  if (!d) return NULL;
+  if (dict_steal(d, "data", float_buffer(st, self, dv.data, cells, (uint8_t)dv.components)) < 0 ||
+      dict_steal(d, "dims", Py_BuildValue("(iii)", dv.dims[0], dv.dims[1], dv.dims[2])) < 0 ||
+      dict_steal(d, "index_origin", Py_BuildValue("(iii)", dv.index_origin[0], dv.index_origin[1],
+                                                  dv.index_origin[2])) < 0 ||
+      dict_steal(d, "stride", PyLong_FromLong(dv.stride)) < 0 ||
+      dict_steal(d, "components", PyLong_FromUnsignedLong(dv.components)) < 0 ||
+      dict_steal(d, "background", PyFloat_FromDouble(dv.background)) < 0 ||
+      dict_steal(d, "cell_to_world", matrix16d_to_python(dv.cell_to_world)) < 0) {
+    Py_DECREF(d);
+    return NULL;
+  }
+  return d;
+}
+
+static PyObject* RScene_particle_fields(PyObject* self, PyObject* noargs) {
+  (void)noargs;
+  lightusd_state* st = lightusd_state_from_obj(self);
+  if (!st) return NULL;
+  lightusd_render_scene* scene = ((LightUSDRenderScene*)self)->scene;
+  size_t n = lightusd_render_particle_data_count(scene);
+  PyObject* out = PyList_New(0);
+  if (!out) return NULL;
+  for (size_t i = 0; i < n; ++i) {
+    lightusd_render_particle_data p;
+    lightusd_status s = lightusd_render_particle_data_get(scene, (int32_t)i, &p);
+    if (s != LIGHTUSD_OK) { Py_DECREF(out); return lightusd_raise(st, s, "particle field"); }
+    const size_t c = (size_t)p.count;
+    const uint8_t sh = (uint8_t)((p.sh_degree + 1) * (p.sh_degree + 1) * 3);
+    PyObject* d = PyDict_New();
+    if (!d || PyList_Append(out, d) < 0) { Py_XDECREF(d); Py_DECREF(out); return NULL; }
+    Py_DECREF(d);
+    if (dict_steal(d, "prim_path", lightusd_sv_to_str(p.prim_path)) < 0 ||
+        dict_steal(d, "type_name", lightusd_sv_to_str(p.type_name)) < 0 ||
+        dict_steal(d, "kernel", lightusd_sv_to_str(p.kernel)) < 0 ||
+        dict_steal(d, "projection_mode_hint", lightusd_sv_to_str(p.projection_mode_hint)) < 0 ||
+        dict_steal(d, "sorting_mode_hint", lightusd_sv_to_str(p.sorting_mode_hint)) < 0 ||
+        dict_steal(d, "count", PyLong_FromUnsignedLongLong(p.count)) < 0 ||
+        dict_steal(d, "sh_degree", PyLong_FromLong(p.sh_degree)) < 0 ||
+        dict_steal(d, "world_matrix", matrix16d_to_python(p.world_matrix)) < 0 ||
+        dict_steal(d, "positions", float_buffer(st, self, p.positions, c, 3)) < 0 ||
+        dict_steal(d, "orientations", float_buffer(st, self, p.orientations, c, 4)) < 0 ||
+        dict_steal(d, "scales", float_buffer(st, self, p.scales, c, 3)) < 0 ||
+        dict_steal(d, "opacities", float_buffer(st, self, p.opacities, c, 1)) < 0 ||
+        dict_steal(d, "sh_coefficients", float_buffer(st, self, p.sh_coefficients, c, sh)) < 0) {
+      Py_DECREF(out);
+      return NULL;
+    }
+  }
+  return out;
+}
+
 static PyMethodDef RScene_methods[] = {
+    {"volumes", RScene_volumes, METH_NOARGS,
+     "UsdVol Volumes: list of dicts (prim_path, world_matrix, extent, material, fields)."},
+    {"volume_dense", (PyCFunction)(void (*)(void))RScene_volume_dense,
+     METH_VARARGS | METH_KEYWORDS,
+     "volume_dense(volume, field, max_voxels=0, downsample=False, vector=False) -> dict "
+     "with float voxels (x fastest), dims, cell_to_world."},
+    {"particle_fields", RScene_particle_fields, METH_NOARGS,
+     "UsdVol ParticleFields (3DGS): list of dicts with per-particle arrays."},
     {"mesh_by_path", RScene_mesh_by_path, METH_VARARGS,
      "mesh_by_path(prim_path) -> RenderMesh | None"},
     {"material_by_path", RScene_material_by_path, METH_VARARGS,

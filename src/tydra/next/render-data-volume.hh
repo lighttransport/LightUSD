@@ -25,7 +25,8 @@ struct RenderVolume {
   bool extent_is_world = false;
   double extent_min[3] = {0, 0, 0}, extent_max[3] = {0, 0, 0};
   std::vector<RenderVolumeField> fields;
-  int material_id = -1;                // bound volume material
+  std::string material_path;           // bound Material ("" when unbound)
+  int material_id = -1;                // index into RenderScene::materials
   // Constants of a ND_standard_volume / UsdPreviewSurface-style volume
   // shader (legacy ApplyVolumeShaderConstants semantics).
   float density_scale = 1.0f;

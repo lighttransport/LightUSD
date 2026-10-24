@@ -1186,6 +1186,32 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_next_render_camera_info_get(
       ->cameraInfo(camera_id, out);
 }
 
+EMSCRIPTEN_KEEPALIVE int32_t lightusd_next_render_volumes_json(uint32_t handle, uint8_t* out,
+                                                               uint32_t cap) {
+  const Slot* slot = Lookup(handle);
+  if (!slot || slot->kind != 4) return -1;
+  return static_cast<const lightusd::web_next::RenderStream*>(slot->object)
+      ->volumesJsonCopy(out, cap);
+}
+
+EMSCRIPTEN_KEEPALIVE uintptr_t lightusd_next_render_volume_dense(
+    uint32_t handle, int32_t volume, int32_t field, uint32_t max_voxels, uint32_t flags,
+    lightusd_next_volume_dense_info* info) {
+  const Slot* slot = Lookup(handle);
+  if (!slot || slot->kind != 4) return 0;
+  return static_cast<const lightusd::web_next::RenderStream*>(slot->object)
+      ->volumeDense(volume, field, max_voxels, flags, info);
+}
+
+EMSCRIPTEN_KEEPALIVE uintptr_t lightusd_next_render_particle_array(uint32_t handle, int32_t id,
+                                                                   uint8_t which,
+                                                                   uint32_t* float_count) {
+  const Slot* slot = Lookup(handle);
+  if (!slot || slot->kind != 4) return 0;
+  return static_cast<const lightusd::web_next::RenderStream*>(slot->object)
+      ->particleArray(id, which, float_count);
+}
+
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_next_render_camera_transform(
     uint32_t handle, int32_t camera_id, uint8_t* out, uint32_t cap) {
   const Slot* slot = Lookup(handle);

@@ -27,6 +27,10 @@ if(NOT LIGHTUSD_ASSET_IMPORT_OBJ_ONLY AND NOT TARGET lightusd_asset_import)
     "${_lusd_import_root}/tydra/asset-import/builtin-texture.cc"
     "${_lusd_import_root}/tydra/asset-import/mjcf-sdf.cc"
     "${_lusd_import_root}/tydra/asset-import/volumetric.cc"
+    # UsdVol .vdb decoding and field resolution, shared by the legacy and
+    # next tydras (one copy for executables that link both).
+    "${_lusd_import_root}/usdVol.cc"
+    "${_lusd_import_root}/tydra/vol/volume-field.cc"
     "${_lusd_import_root}/external/pugixml.cpp")
   include("${CMAKE_CURRENT_LIST_DIR}/lightusd-tinyvdb.cmake")
   target_link_libraries(lightusd_asset_import PUBLIC lightusd_obj_import lightusd_tinyvdb)

@@ -19,6 +19,8 @@ set(TYDRA_NEXT_SOURCES
     render-converter-geometry.cc
     render-converter-convert.cc
     render-converter-points.cc
+    render-converter-volume.cc
+    render-converter-particles.cc
     render-converter-curves.cc
     render-converter-clip.cc
     render-converter-tangents.cc

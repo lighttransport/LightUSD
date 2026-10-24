@@ -25,6 +25,13 @@ struct ConverterStateLock {
 };
 #endif
 
+// Volumes convert before materials; map their material paths to ids.
+void ResolveVolumeMaterials(RenderScene* scene);
+
+bool ConvertParticleField(const ::lightusd::next::Stage& stage,
+                          const ::lightusd::next::UsdPrim& prim, double time,
+                          RenderParticleField* out);
+
 class RenderSceneConverter::Impl {
  public:
   explicit Impl(const ConverterConfig& config = {});
@@ -134,6 +141,11 @@ class RenderSceneConverter::Impl {
   /// scene whose look layers reach their textures with `../..`.
   std::string ResolveAssetPath(const std::string& file,
                                uint32_t asset_anchor_id = 0) const;
+  /// UsdVol Volume: field:* relationships resolved through scene->volume_cache
+  /// (created on first use), world transform, extent and volume material.
+  bool ConvertVolume(const ::lightusd::next::Stage& stage,
+                     const ::lightusd::next::UsdPrim& prim, RenderScene* scene,
+                     RenderVolume* out);
   /// The anchor stamped on `prim`'s spec (0 when it has none).
   static uint32_t AssetAnchorOf(const ::lightusd::next::UsdPrim& prim);
   /// Find-or-create an image record for `file`; returns its id (-1 on empty).

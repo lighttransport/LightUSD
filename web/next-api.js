@@ -6155,6 +6155,100 @@ def Xform "root"
     preflightRenderAggregate(state, aggregateBytes, 'getAllLights');
     return Array.from({length: count}, (_, index) => this.getLight(index));
   }});
+  // UsdVol: volumes (resolved fields), dense voxels, particle fields.
+  // Pointer arguments are retried as BigInt on wasm64, as elsewhere.
+  const volumeCall = (name, args, ptrArgs) => {
+    try { return Module[name](...args); }
+    catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      return Module[name](...args.map((a, i) => ptrArgs.includes(i) ? BigInt(a) : a));
+    }
+  };
+  const volumeDecoder = new TextDecoder();
+  Object.defineProperty(Module.RenderStream.prototype, 'getVolumes', {value: function() {
+    const state = live.get(this);
+    if (!state?.handle || state.kind !== 4) throw new TypeError('Invalid LightUSD receiver');
+    ++state.busy;
+    let ptr = 0;
+    try {
+      const name = '_lightusd_next_render_volumes_json';
+      const bytes = volumeCall(name, [state.handle, 0, 0], [1]);
+      if (bytes < 0) throw new RangeError('getVolumes: no render scene');
+      ptr = Module['_lightusd_next_alloc'](bytes + 1);
+      if (!ptr) throw new RangeError('getVolumes: allocation failed');
+      if (volumeCall(name, [state.handle, Number(ptr), bytes + 1], [1]) !== bytes) {
+        throw new RangeError('getVolumes: text changed');
+      }
+      return JSON.parse(volumeDecoder.decode(new Uint8Array(Module.HEAPU8.buffer, Number(ptr), bytes)));
+    } finally {
+      if (ptr) Module['_lightusd_next_free'](ptr);
+      --state.busy;
+    }
+  }});
+  // Dense float voxels (copied out of the heap; x fastest) of one field.
+  // options: {maxVoxels = 0 (default cap), downsample = false, vector = false}.
+  Object.defineProperty(Module.RenderStream.prototype, 'getVolumeDense', {value: function(
+      volume, field, options = {}) {
+    const state = live.get(this);
+    if (!state?.handle || state.kind !== 4) throw new TypeError('Invalid LightUSD receiver');
+    if (!Number.isInteger(volume) || !Number.isInteger(field)) {
+      throw new TypeError('getVolumeDense: expected integer volume and field indices');
+    }
+    const size = 168;
+    const flags = (options.downsample ? 1 : 0) | (options.vector ? 2 : 0);
+    ++state.busy;
+    let info = 0;
+    try {
+      info = Module['_lightusd_next_alloc'](size);
+      if (!info) throw new RangeError('getVolumeDense: allocation failed');
+      const data = Number(volumeCall('_lightusd_next_render_volume_dense',
+          [state.handle, volume, field, (options.maxVoxels || 0) >>> 0, flags, Number(info)], [5]));
+      if (!data) return null;
+      const view = new DataView(Module.HEAPU8.buffer, Number(info), size);
+      const dims = [0, 1, 2].map(i => view.getInt32(i * 4, true));
+      const components = view.getInt32(28, true);
+      const count = dims[0] * dims[1] * dims[2] * components;
+      return {
+        dims,
+        indexOrigin: [3, 4, 5].map(i => view.getInt32(i * 4, true)),
+        stride: view.getInt32(24, true),
+        components,
+        background: view.getFloat32(32, true),
+        cellToWorld: Array.from({length: 16}, (_, i) => view.getFloat64(40 + i * 8, true)),
+        data: new Float32Array(Module.HEAPU8.buffer, data, count).slice()
+      };
+    } finally {
+      if (info) Module['_lightusd_next_free'](info);
+      --state.busy;
+    }
+  }});
+  // One ParticleField with its arrays copied out: positions, orientations
+  // (real, i, j, k), scales, opacities, shCoefficients.
+  Object.defineProperty(Module.RenderStream.prototype, 'getParticleField', {value: function(id) {
+    const state = live.get(this);
+    if (!state?.handle || state.kind !== 4) throw new TypeError('Invalid LightUSD receiver');
+    const meta = this.getVolumes().particleFields[id];
+    if (!meta) return null;
+    ++state.busy;
+    let countPtr = 0;
+    try {
+      countPtr = Module['_lightusd_next_alloc'](4);
+      if (!countPtr) throw new RangeError('getParticleField: allocation failed');
+      const array = which => {
+        const data = Number(volumeCall('_lightusd_next_render_particle_array',
+            [state.handle, id, which, Number(countPtr)], [3]));
+        const n = new DataView(Module.HEAPU8.buffer, Number(countPtr), 4).getUint32(0, true);
+        return data && n ? new Float32Array(Module.HEAPU8.buffer, data, n).slice() : new Float32Array(0);
+      };
+      return Object.assign(meta, {
+        positions: array(0), orientations: array(1), scales: array(2), opacities: array(3),
+        shCoefficients: array(4)
+      });
+    } finally {
+      if (countPtr) Module['_lightusd_next_free'](countPtr);
+      --state.busy;
+    }
+  }});
   const cameraDecoder = new TextDecoder();
   Object.defineProperty(Module.RenderStream.prototype, 'getCamera', {value: function(cameraId) {
     const state = live.get(this);

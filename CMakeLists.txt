@@ -1046,9 +1046,8 @@ if(LIGHTUSD_WITH_USDVOX)
 endif()
 
 if(LIGHTUSD_WITH_USDVOL)
-  # tinyvdb itself comes from lightusd_tinyvdb, via lightusd_asset_import.
-  list(APPEND LIGHTUSD_SOURCES ${PROJECT_SOURCE_DIR}/src/usdVol.cc
-       ${PROJECT_SOURCE_DIR}/src/tydra/vol/volume-field.cc)
+  # usdVol.cc and tydra/vol build in lightusd_asset_import (shared with the
+  # next tydra), with tinyvdb from lightusd_tinyvdb.
 endif()
 
 if(LIGHTUSD_WITH_TIFF)
