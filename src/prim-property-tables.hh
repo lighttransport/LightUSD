@@ -150,7 +150,8 @@
   X("filePath", filePath) \
   X("fieldName", fieldName) \
   X("fieldDataType", fieldDataType) \
-  X("fieldIndex", fieldIndex)
+  X("fieldIndex", fieldIndex) \
+  X("vectorDataRoleHint", vectorDataRoleHint)
 
 #define OPENVDB_ASSET_TYPED_ATTRS(X) \
   FIELD_ASSET_TYPED_ATTRS(X) \

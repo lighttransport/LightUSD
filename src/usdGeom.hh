@@ -1176,6 +1176,8 @@ struct FieldAsset : GPrim {
   TypedAttribute<Animatable<value::token>> fieldName;      // token fieldName
   TypedAttribute<Animatable<value::token>> fieldDataType;  // token fieldDataType
   TypedAttribute<Animatable<int>> fieldIndex;              // int fieldIndex
+  // token vectorDataRoleHint ("None", "Point", "Normal", "Vector", "Color")
+  TypedAttribute<Animatable<value::token>> vectorDataRoleHint;
 };
 
 // OpenVDB field asset (UsdVolOpenVDBAsset).

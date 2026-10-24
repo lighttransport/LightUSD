@@ -440,6 +440,7 @@ static void print_field_asset_attrs(std::stringstream &ss,
   ss << print_typed_attr(field.fieldName, "fieldName", indent);
   ss << print_typed_attr(field.fieldDataType, "fieldDataType", indent);
   ss << print_typed_attr(field.fieldIndex, "fieldIndex", indent);
+  ss << print_typed_attr(field.vectorDataRoleHint, "vectorDataRoleHint", indent);
 }
 
 std::string to_string(const FieldAsset &field, const uint32_t indent,

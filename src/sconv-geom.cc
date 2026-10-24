@@ -643,7 +643,8 @@ bool CrateWriter::ExtractSphereProperties(
   EXTRACT_FIELD_TYPED_ATTR((field).filePath, "filePath")  \
   EXTRACT_FIELD_TYPED_ATTR((field).fieldName, "fieldName") \
   EXTRACT_FIELD_TYPED_ATTR((field).fieldDataType, "fieldDataType") \
-  EXTRACT_FIELD_TYPED_ATTR((field).fieldIndex, "fieldIndex")
+  EXTRACT_FIELD_TYPED_ATTR((field).fieldIndex, "fieldIndex") \
+  EXTRACT_FIELD_TYPED_ATTR((field).vectorDataRoleHint, "vectorDataRoleHint")
 
 bool CrateWriter::ExtractFieldAssetProperties(
   const Prim& prim, const Path& prim_path,
