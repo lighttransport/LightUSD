@@ -522,7 +522,7 @@ auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
       // Avoid SourcesKey's path-string copy on the overwhelmingly common hit;
       // retain the full resolver for an unwarmed/mutated miss.
       const std::vector<Src>* cached_srcs =
-          FindCachedSources(w.src_path.str());
+          FindCachedSources(w.out_path.str());
       if (prof) {
         if (cached_srcs) {
           ++prof_source_hits_;
@@ -533,7 +533,7 @@ auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
       }
       const std::vector<Src> &srcs = cached_srcs
                                          ? *cached_srcs
-                                         : SourcesForPath(w.src_path, warn, err);
+                                         : SourcesForPath(w.out_path, warn, err);
       auto ps1 = prof ? ProfClock::now() : ProfClock::time_point{};
 
       // STRUCTURE PASS: fix this prim's slot, parent, child order and instancing
@@ -542,7 +542,7 @@ auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
       // `srcs`, never on the prim's own composed opinions, so deferring opinions
       // does not change the tree the walk produces.
       PrimSpec spec(w.out_path.name());
-      spec.set_path(w.out_path);
+      // The path is moved into the spec just before add_prim (below).
       std::vector<std::string> children;
       bool children_filtered = false;
       // pxr instancing rule: descendants of an instanceable prim compose ONLY
@@ -554,7 +554,8 @@ auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
       // filtered (recursively, via the pre-seeded source cache below).
       std::vector<Src> shared_srcs;
       bool subtree_filtered = false;
-      if (IsInstanceableSources(srcs)) {
+      const bool instanceable = IsInstanceableSources(srcs);
+      if (instanceable) {
         shared_srcs.reserve(srcs.size());
         for (const Src &s : srcs) {
           if (!s.variant && Mapping(s.map_idx).MapsFrom(s.site)) {
@@ -593,8 +594,9 @@ auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
       // registering it would extract an orphan Flattened_Prototype for
       // content the flatten output prunes.
       const bool composed_active = ComposedActive(srcs);
-      const bool registered =
-          composed_active && RegisterInstance(w.out_path.str(), srcs);
+      const bool registered = composed_active && instanceable &&
+                              RegisterInstanceKnownInstanceable(
+                                  w.out_path.str(), srcs);
       if (prof) prof_reg_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(ProfClock::now() - pr0).count();
       auto pm0 = prof ? ProfClock::now() : ProfClock::time_point{};
       bool is_instance = false;
@@ -614,8 +616,12 @@ auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
         prof_protomap_ns_ +=
             std::chrono::duration_cast<std::chrono::nanoseconds>(pm1 - pm0).count();
       }
+      spec.set_path(std::move(w.out_path));
       uint32_t idx = out->add_prim(std::move(spec));
-      if (registered) instance_prim_index_[w.out_path.str()] = idx;
+      // From here the path lives in the stored prim. No prim is added to `out`
+      // until the next iteration, so the reference stays valid.
+      const Path &here = out->prim(idx)->path();
+      if (registered) instance_prim_index_[here.str()] = idx;
       auto ap1 = prof ? ProfClock::now() : ProfClock::time_point{};
       if (prof) {
         prof_addprim_ns_ +=
@@ -647,7 +653,7 @@ auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
         // filtered derivation so the entire prototype subtree (recursively)
         // composes shared content only.
         for (const std::string &cn : children) {
-          const Path child = w.out_path.append_child_unchecked(cn);
+          const Path child = here.append_child_unchecked(cn);
           const std::string ck = SourcesKey(0, child.str());
           if (!sources_cache.contains(ck)) {
             std::vector<Src> base =
@@ -659,8 +665,10 @@ auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
       // Child names come from spec names / relocation arrivals, which the
       // parsers already validated: skip the per-character identifier check.
       for (auto it = children.rbegin(); it != children.rend(); ++it) {
-        const Path child = w.out_path.append_child_unchecked(*it);
-        stack.push_back({child, child, idx, /*is_root=*/false, w.depth + 1});
+        // The walk composes each child at its own path, so only out_path is
+        // carried (src_path stays empty; one path string per prim, not two).
+        stack.push_back({Path(), here.append_child_unchecked(*it), idx,
+                         /*is_root=*/false, w.depth + 1});
       }
       if (prof) {
         prof_push_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -822,21 +830,67 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
         // first: some keys borrowed the first Src's site, which can move here.
         const auto compact_start = std::chrono::steady_clock::now();
         size_t discarded = 0, vector_bytes_released = 0;
+        // Records may share one source vector; compact each distinct vector
+        // once (a second pass over a compacted vector removes nothing, so the
+        // result and the counts are unchanged). Distinct vectors are
+        // independent, so the drop -- ~90M Src destructors on a full-LOD
+        // stage, each a string free and shared_ptr releases -- runs in
+        // parallel.
+        std::vector<std::vector<Src> *> compact_targets;
+        compact_targets.reserve(fill_.size());
         for (const auto &record : fill_) {
-          if (!record.second) continue;
-          auto &sources = *const_cast<std::vector<Src> *>(record.second);
-          const size_t before_capacity = sources.capacity();
-          const size_t removed = CompactOpinionSources(sources);
-          if (options.enable_timing && removed) {
-            discarded = safe::saturating_add(discarded, removed);
-            if (before_capacity > sources.capacity()) {
-              vector_bytes_released = safe::saturating_add(
-                  vector_bytes_released,
-                  safe::saturating_mul(before_capacity - sources.capacity(),
-                                       sizeof(Src)));
+          if (record.second)
+            compact_targets.push_back(const_cast<std::vector<Src> *>(record.second));
+        }
+        std::sort(compact_targets.begin(), compact_targets.end());
+        compact_targets.erase(
+            std::unique(compact_targets.begin(), compact_targets.end()),
+            compact_targets.end());
+        auto compact_range = [&](size_t lo, size_t hi, size_t *removed_out,
+                                 size_t *bytes_out) {
+          size_t removed_sum = 0, bytes_sum = 0;
+          for (size_t i = lo; i < hi; ++i) {
+            std::vector<Src> &sources = *compact_targets[i];
+            const size_t before_capacity = sources.capacity();
+            const size_t removed = CompactOpinionSources(sources);
+            if (removed) {
+              removed_sum += removed;
+              if (before_capacity > sources.capacity())
+                bytes_sum += (before_capacity - sources.capacity()) * sizeof(Src);
             }
           }
+          *removed_out = removed_sum;
+          *bytes_out = bytes_sum;
+        };
+        int compact_threads = options.num_threads;
+        if (compact_threads < 0)
+          compact_threads = static_cast<int>(std::thread::hardware_concurrency());
+        compact_threads = std::max(1, std::min(compact_threads, kMaxExecutionThreads));
+#if defined(LIGHTUSD_ENABLE_THREAD)
+        if (compact_threads > 1 && compact_targets.size() >= 65536) {
+          const size_t nt = static_cast<size_t>(compact_threads);
+          std::vector<size_t> rem(nt, 0), bytes(nt, 0);
+          std::vector<std::thread> pool;
+          pool.reserve(nt);
+          const size_t n = compact_targets.size();
+          for (size_t t = 0; t < nt; ++t) {
+            pool.emplace_back([&, t] {
+              compact_range(n * t / nt, n * (t + 1) / nt, &rem[t], &bytes[t]);
+            });
+          }
+          for (std::thread &th : pool) th.join();
+          for (size_t t = 0; t < nt; ++t) {
+            discarded = safe::saturating_add(discarded, rem[t]);
+            vector_bytes_released =
+                safe::saturating_add(vector_bytes_released, bytes[t]);
+          }
+        } else
+#endif
+        {
+          compact_range(0, compact_targets.size(), &discarded,
+                        &vector_bytes_released);
         }
+        std::vector<std::vector<Src> *>().swap(compact_targets);
         if (options.enable_timing) {
           const double compact_ms =
               std::chrono::duration<double, std::milli>(

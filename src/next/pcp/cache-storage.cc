@@ -386,6 +386,20 @@ auto Cache::Impl::AssignPrototype(const std::string &prim_path, const std::strin
     instances_by_prototype[prim_path] = std::move(members);
   }
 
+auto Cache::Impl::RegisterInstanceKnownInstanceable(
+    const std::string &prim_path, const std::vector<Src> &srcs) -> bool {
+    if (!options.detect_instances) return false;
+    const std::string ik = ComputeInstanceKeyImpl(srcs);
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    if (defer_instances_) {
+      pending_instance_[prim_path] = {true, ik};
+      return true;
+    }
+#endif
+    AssignPrototype(prim_path, ik, false);
+    return true;
+  }
+
 auto Cache::Impl::RegisterInstance(const std::string &prim_path,
                         const std::vector<Src> &srcs, bool prefer_min) -> bool {
     if (!options.detect_instances || !IsInstanceableSources(srcs)) return false;
@@ -614,8 +628,13 @@ auto Cache::Impl::MergeSources(Impl &w, size_t seed_stack_count, size_t seed_poo
     // One pre-size for the whole merge: growing this table by ~10M entries
     // through rehash() was a measurable part of the merge wall.
     sources_cache.reserve(sources_cache.size() + w.sources_cache.size());
-    w.sources_cache.for_each([&](const std::string &key,
-                                 std::vector<Src> &val) {
+    // Worker keys arrive with the hash their table already stored and are
+    // moved in (the worker is discarded after this merge); the next entry's
+    // main-table slot is prefetched while this one is remapped.
+    w.sources_cache.drain_with_hash([&](std::string &&key, uint64_t key_hash,
+                                        std::vector<Src> &val,
+                                        uint64_t next_hash) {
+      if (next_hash) sources_cache.prefetch(next_hash);
       // Only the composed (root-namespace) entries are adopted. Stack-qualified
       // intermediate keys ("@N:/path" / "!N:/path", built by SourcesForSite /
       // SourcesForRelocateSource) embed the WORKER's layer-stack index N, which
@@ -630,7 +649,8 @@ auto Cache::Impl::MergeSources(Impl &w, size_t seed_stack_count, size_t seed_poo
       // ancestor re-derived by another worker that took a donated subtree --
       // identical sources) are not copied back.
       bool created = false;
-      std::vector<Src> &slot = sources_cache.get_or_create(key, &created);
+      std::vector<Src> &slot =
+          sources_cache.get_or_create_hashed(std::move(key), key_hash, &created);
       if (!created) return;
       // The worker Impl is discarded right after this merge, so steal its Src
       // vector instead of copying it. NOTE: a vector move is a buffer steal —
@@ -847,6 +867,35 @@ auto cache_detail::SrcCache::get_or_create(const std::string &k,
     }
   }
 
+auto cache_detail::SrcCache::get_or_create_hashed(std::string &&k, uint64_t h,
+                                                 bool *created)
+    -> std::vector<Src> & {
+    if (slots_.empty() || (occupied_ + 1) * 2 > slots_.size()) rehash();
+    const size_t mask = slots_.size() - 1;
+    size_t i = static_cast<size_t>(h) & mask;
+    size_t first_tomb = SIZE_MAX;
+    for (;;) {
+      Slot &s = slots_[i];
+      if (s.state == 0) {
+        const size_t at = (first_tomb == SIZE_MAX) ? i : first_tomb;
+        if (created) *created = true;
+        return emplace_at(at, h, std::move(k), /*was_tomb=*/slots_[at].state == 2);
+      }
+      if (s.state == 2) {
+        if (first_tomb == SIZE_MAX) first_tomb = i;
+      } else if (s.hash == h) {
+        const std::string &key = key_at(s.idx);
+        if (key.size() == k.size() &&
+            std::memcmp(key.data(), k.data(), k.size()) == 0) {
+          own_key(s.idx);
+          if (created) *created = false;
+          return vals_[s.idx];
+        }
+      }
+      i = (i + 1) & mask;
+    }
+  }
+
 auto cache_detail::SrcCache::reserve(size_t expected) -> void {
     if (expected < 16) expected = 16;
     size_t want = 16;
@@ -898,7 +947,7 @@ auto cache_detail::SrcCache::erase(const std::string &k) -> void {
     }
   }
 
-auto cache_detail::SrcCache::emplace_at(size_t slot, uint64_t h, const std::string &k,
+auto cache_detail::SrcCache::emplace_at(size_t slot, uint64_t h, std::string k,
                                bool was_tomb) -> std::vector<Src> & {
     uint32_t vi;
     if (was_tomb) {
@@ -907,17 +956,17 @@ auto cache_detail::SrcCache::emplace_at(size_t slot, uint64_t h, const std::stri
         if (!live_[di]) { vi = di; break; }
       }
       if (vi < live_.size()) {
-        keys_[vi] = k;
+        keys_[vi] = std::move(k);
         vals_[vi].clear();
         live_[vi] = 1;
       } else {
-        keys_.emplace_back(k);
+        keys_.emplace_back(std::move(k));
         vals_.emplace_back();
         live_.push_back(1);
       }
     } else {
       vi = static_cast<uint32_t>(vals_.size());
-      keys_.emplace_back(k);
+      keys_.emplace_back(std::move(k));
       vals_.emplace_back();
       live_.push_back(1);
     }

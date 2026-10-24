@@ -372,6 +372,40 @@ struct SrcCache {
   // `created`, when given, reports whether this call inserted the entry (one
   // probe instead of a contains() + get_or_create() pair per merged key).
   std::vector<Src> &get_or_create(const std::string &k, bool *created = nullptr) ;
+  // Same with a precomputed Hash(k) and a key the caller gives up (the warm
+  // merge moves worker keys in instead of hashing and copying them again).
+  std::vector<Src> &get_or_create_hashed(std::string &&k, uint64_t h,
+                                         bool *created) ;
+  // Start loading the first probe slot for hash `h`.
+  void prefetch(uint64_t h) const {
+#if defined(__GNUC__) || defined(__clang__)
+    if (!slots_.empty())
+      __builtin_prefetch(&slots_[static_cast<size_t>(h) & (slots_.size() - 1)]);
+#else
+    (void)h;
+#endif
+  }
+  // Visit every live entry in index order as fn(key&&, hash, value&, next_hash)
+  // using the hashes already stored in the slots (no rehash of the key);
+  // `next_hash` is the following live entry's hash (0 at the end), for
+  // prefetching. Keys are left moved-from: only for a cache about to be
+  // discarded.
+  template <typename Fn>
+  void drain_with_hash(Fn fn) {
+    std::vector<uint64_t> hv(live_.size(), 0);
+    for (const Slot &s : slots_)
+      if (s.state == 1 && s.idx < hv.size()) hv[s.idx] = s.hash;
+    uint32_t vi = 0;
+    while (vi < live_.size() && !live_[vi]) ++vi;
+    while (vi < live_.size()) {
+      uint32_t nx = vi + 1;
+      while (nx < live_.size() && !live_[nx]) ++nx;
+      own_key(vi);
+      fn(std::move(keys_[vi]), hv[vi], vals_[vi],
+         nx < live_.size() ? hv[nx] : uint64_t(0));
+      vi = nx;
+    }
+  }
   // Pre-size the index for `expected` live entries so a bulk merge does not
   // rehash its way up from the seed size.
   void reserve(size_t expected) ;
@@ -408,7 +442,7 @@ struct SrcCache {
  private:
   const std::string &key_at(size_t index) const;
   void own_key(size_t index);
-  std::vector<Src> &emplace_at(size_t slot, uint64_t h, const std::string &k,
+  std::vector<Src> &emplace_at(size_t slot, uint64_t h, std::string k,
                                bool was_tomb) ;
   void rehash() ;
 };

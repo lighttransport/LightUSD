@@ -141,6 +141,10 @@
   // stashed); a prim that returns false cannot be in prototype_of.
   bool RegisterInstance(const std::string &prim_path,
                         const std::vector<Src> &srcs, bool prefer_min = false) ;
+  // RegisterInstance for a caller that already evaluated
+  // IsInstanceableSources(srcs) == true.
+  bool RegisterInstanceKnownInstanceable(const std::string &prim_path,
+                                         const std::vector<Src> &srcs) ;
 
   // Composed-layer index of each prim the structure walk registered as
   // instanceable (see BuildStage). Lets FlattenInstances* find prototypes

@@ -6,8 +6,9 @@
 
   // --- BuildStage ---------------------------------------------------------
 
-  // `src_path` is where composition opinions are gathered; `out_path` is where
-  // the composed prim is placed (differs when a relocate renames it).
+  // `out_path` is where the composed prim is placed and where its sources are
+  // looked up (the walk keys sources by composed path). `src_path` is unused
+  // by the walk and left empty for children.
   struct BuildStageWork {
     Path src_path;
     Path out_path;

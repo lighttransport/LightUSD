@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
+#include <unordered_set>
+#include <string_view>
 #include "cache-internal.hh"
 namespace lightusd {
 namespace next {
@@ -481,7 +483,32 @@ auto Cache::Impl::ComposeChildNames(const std::vector<Src> &srcs) -> std::vector
     // physically lives.
     const ChildRelocations edits = RelocationsAt(srcs);
     std::vector<std::string> child_names;
-    std::set<std::string> seen_child;
+    // Dedup without a node allocation per child: a linear scan while the list
+    // is short (the common case), a hash set of views once it grows. Views
+    // point into child_names' strings; the set is rebuilt if those move.
+    std::unordered_set<std::string_view> seen_big;
+    auto first_seen = [&](const std::string &name) -> bool {
+      if (child_names.size() < 32) {
+        for (const std::string &c : child_names)
+          if (c == name) return false;
+        child_names.push_back(name);
+        if (child_names.size() == 32) {
+          seen_big.reserve(128);
+          for (const std::string &c : child_names) seen_big.insert(c);
+        }
+        return true;
+      }
+      if (seen_big.count(name)) return false;
+      const std::string *old_data = child_names.data();
+      child_names.push_back(name);
+      if (child_names.data() != old_data) {
+        seen_big.clear();
+        for (const std::string &c : child_names) seen_big.insert(c);
+      } else {
+        seen_big.insert(child_names.back());
+      }
+      return true;
+    };
     for (auto sit = srcs.rbegin(); sit != srcs.rend(); ++sit) {
       const Src &s = *sit;
       if (s.variant) continue;  // variant child prims not modeled yet
@@ -505,9 +532,7 @@ auto Cache::Impl::ComposeChildNames(const std::vector<Src> &srcs) -> std::vector
           // so they never leak into the composed child list.
           if (!cs->name().empty() && cs->name().front() == '{') continue;
           if (edits.departed.count(cs->name())) continue;
-          if (seen_child.insert(cs->name()).second) {
-            child_names.push_back(cs->name());
-          }
+          first_seen(cs->name());
         }
       }
     }
@@ -517,7 +542,7 @@ auto Cache::Impl::ComposeChildNames(const std::vector<Src> &srcs) -> std::vector
       // content flows to the final destination, so the intermediate name must
       // NOT materialize (pxr collapses the chain). TrickyMultipleRelocations5.
       if (edits.departed.count(name)) continue;
-      if (seen_child.insert(name).second) child_names.push_back(name);
+      first_seen(name);
     }
     return child_names;
   }

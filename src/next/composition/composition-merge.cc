@@ -320,9 +320,23 @@ void Compositor::CopyLocalOpinions(
   };
   PropNameTable& name_table = GetPropNameTable();
   const bool target_has_rels = target.has_relationship_data();
-  for (const auto& slot : source.properties().slots()) {
+  // First contributing spec of a composed prim (the common case): the target
+  // has no slots yet, so a name-sorted source (unique names, duplicates
+  // adjacent) needs no target lookup per property -- the unsorted target
+  // index would be scanned linearly for every add. A repeated id still takes
+  // the lookup, exactly as before.
+  const auto& source_slots = source.properties().slots();
+  const bool target_starts_empty =
+      target.properties().slots().empty() && source.properties().is_sorted();
+  if (target_starts_empty) target.reserve_properties(source_slots.size());
+  uint32_t prev_source_id = UINT32_MAX;
+  for (const auto& slot : source_slots) {
     const PropNameId pname = slot.name_id;
-    const PropSlot* tgt_slot = target.property(slot.name_id);
+    const PropSlot* tgt_slot =
+        (target_starts_empty && slot.name_id.id != prev_source_id)
+            ? nullptr
+            : target.property(slot.name_id);
+    prev_source_id = slot.name_id.id;
     if (tgt_slot) {
       const Value* target_value = target.property_value(slot.name_id);
       const Value* source_value = source.property_value(slot.name_id);
