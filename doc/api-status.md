@@ -236,6 +236,39 @@ TinyVDB C API:
   `usdvol-vdb-corpus` ctest. Set `LIGHTUSD_TINYVDBIO_DATA_DIR` or
   `$TINYVDBIO_DATA_DIR` to run it; it is skipped otherwise.
 
+**Rendering (tydra/next).** `RenderScene::volumes` holds one `RenderVolume`
+per Volume.
+- **Fields:** each `field:<name>` relationship with exactly one (forwarded)
+  target, resolved by `src/tydra/vol` at the scene time. Placement is the
+  field prim's transform times the grid transform.
+- **Extent:** authored, or else the union of the fields' world boxes.
+- **Material:** volume shader constants.
+- **Voxels:** decoded on demand through `RenderScene::volume_cache`.
+- **ParticleFields:** `RenderScene::particle_fields` applies the schema's
+  array rules.
+- **Access:** C API `lightusd_render_volume_*` and
+  `lightusd_render_particle_data_*`, Python `RenderScene.volumes()` /
+  `volume_dense()` / `particle_fields()`, and next wasm `getVolumes` /
+  `getVolumeDense` / `getParticleField`.
+
+**Authoring.** `lightusd.volume` provides:
+- `inspect_vdb`;
+- `create_volume_from_vdb`, which authors an OpenVDBAsset per grid with
+  `fieldIndex` for repeated names, `fieldDataType`, `fieldClass` and
+  `extent`;
+- `compute_extent`;
+- `field_paths` / `set_field` / `block_field`;
+- `python -m lightusd.volume inspect|create`.
+
+The C entry point is `lightusd_vdb_inspect`.
+
+**Validation.** On top of the existing checks:
+- `vol.volume.fieldTargetCount`: exactly one target;
+- `vol.volume.fieldTargetType`: same-layer targets must be VolumeFieldBase;
+- `vol.particleField.shCount` / `shDegree`.
+
+The capability ledger lists usdVol as a required domain.
+
 ---
 
 ## UsdRender -- Render Settings

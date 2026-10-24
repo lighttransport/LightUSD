@@ -112,6 +112,13 @@ class FieldCache {
 bool FieldDataTypeMatches(const std::string &field_data_type, const std::string &value_type,
                           bool saved_as_half);
 
+// The UsdVol fieldDataType token for a grid value type ("half"/"half3" for
+// half-stored float grids, "int" for int32, ...); "" when unknown.
+std::string FieldDataTypeFor(const std::string &value_type, bool saved_as_half);
+
+// Grid index -> world (column-vector usdVol layout) as a USD row-vector matrix.
+void IndexToWorldRowVector(const usdVol::VDBGridInfo &grid, double out[4][4]);
+
 // Union of the fields' world boxes (the Volume extent when not authored), in
 // world space. False when no field has bounds.
 bool FieldsWorldBounds(const std::vector<ResolvedField> &fields, double world_min[3],

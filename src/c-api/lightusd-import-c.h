@@ -87,6 +87,14 @@ typedef struct lightusd_level_set_info {
 } lightusd_level_set_info;
 LIGHTUSD_API lightusd_status lightusd_level_set_vdb_info(const uint8_t* vdb, size_t size,
                                                         lightusd_level_set_info* out);
+/* UsdVol: describe every grid of a .vdb without decoding voxels, as JSON
+ * {"grids": [{"name", "index" (file position), "nameIndex" (among equal
+ * names: the UsdVol fieldIndex), "valueType", "fieldDataType", "gridClass",
+ * "components", "savedAsHalf", "pointGrid", "activeVoxels",
+ * "indexToWorld" (16, USD row-vector), "indexMin"/"indexMax" (inclusive),
+ * "worldMin"/"worldMax"}]}. Bounds are omitted when the file lacks them. */
+LIGHTUSD_API lightusd_status lightusd_vdb_inspect(const uint8_t* vdb, size_t size,
+                                                  lightusd_string** json);
 /* Trilinear world-space samples (3 doubles per point). */
 LIGHTUSD_API lightusd_status lightusd_level_set_vdb_sample(const uint8_t* vdb, size_t size,
                                                           const double* points, size_t count,

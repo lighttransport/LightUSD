@@ -66,6 +66,17 @@ PyObject* lightusd_py_level_set_info(PyObject* module, PyObject* args) {
                        (unsigned long long)info.active_voxels);
 }
 
+PyObject* lightusd_py_vdb_inspect(PyObject* module, PyObject* args) {
+  Py_buffer v = {0};
+  if (!PyArg_ParseTuple(args, "y*:_vdb_inspect", &v)) return NULL;
+  lightusd_state* st = lightusd_state_from_module(module);
+  lightusd_string* json = NULL;
+  lightusd_status status = lightusd_vdb_inspect((const uint8_t*)v.buf, (size_t)v.len, &json);
+  PyBuffer_Release(&v);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "vdb inspect");
+  return take_string(json);
+}
+
 PyObject* lightusd_py_level_set_sample(PyObject* module, PyObject* args) {
   Py_buffer v = {0};
   PyObject* points_obj;

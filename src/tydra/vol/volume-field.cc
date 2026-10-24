@@ -83,6 +83,23 @@ bool FieldDataTypeMatches(const std::string &t, const std::string &vt, bool save
   return false;
 }
 
+std::string FieldDataTypeFor(const std::string &vt, bool saved_as_half) {
+  if (vt == "float") return saved_as_half ? "half" : "float";
+  if (vt == "double") return "double";
+  if (vt == "int32") return "int";
+  if (vt == "int64") return "int64";
+  if (vt == "bool") return "bool";
+  if (vt == "mask") return "mask";
+  if (vt == "vec3f") return saved_as_half ? "half3" : "float3";
+  if (vt == "vec3d") return "double3";
+  if (vt == "vec3i") return "int3";
+  return std::string();
+}
+
+void IndexToWorldRowVector(const usdVol::VDBGridInfo &grid, double out[4][4]) {
+  ToRowVector(grid.index_to_world, out);
+}
+
 FieldCache::FieldCache(AssetReader reader, size_t max_bytes)
     : reader_(reader ? std::move(reader) : AssetReader(ReadFileAsset)), max_bytes_(max_bytes) {}
 

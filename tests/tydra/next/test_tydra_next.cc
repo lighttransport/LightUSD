@@ -973,7 +973,7 @@ class RetainedStreamSink : public SceneSink {
 };
 
 void TestStrictConversionDiagnostics() {
-  const std::string unsupported = "#usda 1.0\ndef Volume \"V\" {}\n";
+  const std::string unsupported = "#usda 1.0\ndef NurbsPatch \"V\" {}\n";
   auto loaded = LoadUSDAFromString(unsupported.data(), unsupported.size());
   assert(loaded.success);
   RenderSceneConverter permissive;
@@ -4461,10 +4461,11 @@ def Xform "Root"
   assert(scene.nodes[static_cast<size_t>(pts_node->second)].type == NodeType::Points);
   assert(scene.nodes[static_cast<size_t>(pts_node->second)].data_id == 0);
 
-  // BasisCurves are converted now (the empty def fails conversion with a
-  // warning), so only Volume remains unsupported.
-  assert(scene.unsupported_renderables.size() == 1);
-  assert(scene.unsupported_renderables[0].type_name == "Volume");
+  // BasisCurves and Volumes are converted now (the empty curves def fails
+  // conversion with a warning; the field-less Volume converts empty).
+  assert(scene.unsupported_renderables.empty());
+  assert(scene.volumes.size() == 1);
+  assert(scene.volumes[0].fields.empty());
   assert(scene.curves.empty());  // "/Root/Curve" has no points/counts
   bool saw_curve_warning = false;
   for (const std::string& w : res.warnings) {

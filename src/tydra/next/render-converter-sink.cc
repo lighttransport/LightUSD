@@ -209,7 +209,6 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
   for (const RenderPrimRecord& rec : extracted.records) {
     if (rec.type_name != "Points" &&
         rec.type_name != "ParticleField3DGaussianSplat" &&
-        rec.type_name != "Volume" &&
         IsUnsupportedRenderableTypeName(rec.type_name)) {
       UnsupportedRenderable unsupported;
       unsupported.prim_path = rec.path;

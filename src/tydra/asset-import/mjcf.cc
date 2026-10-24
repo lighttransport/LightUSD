@@ -1546,7 +1546,11 @@ bool MjcfSdfLevelSet(const std::string& mesh_name, const Mesh& mesh, Json* out,
           {"exteriorWidth", ls.exterior_width},
           {"interiorWidth", ls.interior_width},
           {"maxResolution", resolution},
-          {"activeVoxels", uint64_t(level_set.active_voxels())}};
+          {"activeVoxels", uint64_t(level_set.active_voxels())},
+          // The narrow band's reach in mesh space: the Volume's extent.
+          {"extent", Json::array({lo[0] - ls.exterior_width, lo[1] - ls.exterior_width,
+                                  lo[2] - ls.exterior_width, hi[0] + ls.exterior_width,
+                                  hi[1] + ls.exterior_width, hi[2] + ls.exterior_width})}};
   cache[key] = *out;
   if (opts.report)
     opts.report->Diagnostic("info", "mjcf.sdf_level_set",

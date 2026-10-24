@@ -77,6 +77,7 @@ PyObject* lightusd_import_scene(PyObject*, PyObject*, PyObject*);
 PyObject* lightusd_py_mesh_to_level_set(PyObject*, PyObject*);
 PyObject* lightusd_py_level_set_info(PyObject*, PyObject*);
 PyObject* lightusd_py_level_set_sample(PyObject*, PyObject*);
+PyObject* lightusd_py_vdb_inspect(PyObject*, PyObject*);
 PyObject* lightusd_py_level_set_to_mesh(PyObject*, PyObject*);
 PyObject* lightusd_py_level_set_to_tet_mesh(PyObject*, PyObject*);
 PyObject* lightusd_py_volumetric_device(PyObject*, PyObject*);

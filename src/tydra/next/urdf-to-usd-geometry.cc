@@ -584,6 +584,15 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
       SetTransformFromJson(volume, mesh_json);
       SetToken(volume, "purpose", "guide", true);
       SetRel(volume, "field:sdf", {vpath + "/sdf"});
+      if (const Json *box = JsonArray(*grid, "extent")) {
+        if (box->size() == 6) {
+          float e[6];
+          for (size_t i = 0; i < 6; ++i)
+            e[i] = (*box)[i].is_number() ? float((*box)[i].get<double>()) : 0.0f;
+          Set(volume, "extent",
+              tn::Value::MakeFloat3Array(tn::ValueArrayView<const float>(e, 6)), "float3[]");
+        }
+      }
       Set(field, "filePath", tn::Value::MakeAssetPath(JsonString(*grid, "asset")), "asset");
       SetToken(field, "fieldName", "sdf");
       SetToken(field, "fieldClass", "levelSet");

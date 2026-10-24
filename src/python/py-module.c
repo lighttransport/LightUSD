@@ -377,6 +377,8 @@ static PyMethodDef module_methods[] = {
      METH_VARARGS | METH_KEYWORDS, "Physics-aware native unit conversion (in place)."},
     {"_mesh_to_level_set", lightusd_py_mesh_to_level_set, METH_VARARGS,
      "_mesh_to_level_set(points_f32, indices_i32, counts_i32_or_None, settings) -> VDB bytes"},
+    {"_vdb_inspect", lightusd_py_vdb_inspect, METH_VARARGS,
+     "_vdb_inspect(vdb) -> JSON bytes describing the grids"},
     {"_level_set_info", lightusd_py_level_set_info, METH_VARARGS,
      "_level_set_info(vdb) -> (voxel_size, background, active_voxels)"},
     {"_level_set_sample", lightusd_py_level_set_sample, METH_VARARGS,

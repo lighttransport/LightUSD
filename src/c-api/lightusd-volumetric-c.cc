@@ -10,6 +10,9 @@
 #include "lightusd-import-c.h"
 #include "tydra/asset-import/import.hh"
 #include "tydra/asset-import/volumetric.hh"
+#include "tydra/vol/volume-field.hh"
+
+#include <sstream>
 
 namespace ia = lightusd::tydra::import_asset;
 using lightusd_internal::Fail;
@@ -120,6 +123,63 @@ lightusd_status lightusd_level_set_vdb_info(const uint8_t* vdb, size_t size,
   out->voxel_size = level_set.voxel_size();
   out->background = level_set.background();
   out->active_voxels = level_set.active_voxels();
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_vdb_inspect(const uint8_t* vdb, size_t size, lightusd_string** json) {
+  if (!vdb || !json) return Fail(LIGHTUSD_ERR_INVALID_ARG, "vdb inspect: data and output are required");
+  *json = nullptr;
+  std::vector<lightusd::usdVol::VDBGridInfo> grids;
+  std::string err;
+  if (!lightusd::usdVol::ReadVDBGridInfo(vdb, size, "<memory>", &grids, &err))
+    return Fail(LIGHTUSD_ERR_PARSE, err.empty() ? "not a VDB file" : err);
+  auto str = [](std::ostringstream& o, const std::string& s) {
+    o << '"';
+    for (unsigned char c : s) {
+      if (c == '"' || c == '\\') o << '\\' << c;
+      else if (c < 0x20) {
+        char buf[8];
+        std::snprintf(buf, sizeof(buf), "\\u%04x", c);
+        o << buf;
+      } else o << c;
+    }
+    o << '"';
+  };
+  std::ostringstream o;
+  o.precision(17);
+  o << "{\"grids\":[";
+  for (size_t i = 0; i < grids.size(); ++i) {
+    const lightusd::usdVol::VDBGridInfo& g = grids[i];
+    o << (i ? "," : "") << "{\"name\":";
+    str(o, g.name);
+    o << ",\"index\":" << g.source_index << ",\"nameIndex\":" << g.name_index << ",\"valueType\":";
+    str(o, g.value_type);
+    o << ",\"fieldDataType\":";
+    str(o, lightusd::tydra::vol::FieldDataTypeFor(g.value_type, g.saved_as_half));
+    o << ",\"gridClass\":";
+    str(o, g.grid_class);
+    o << ",\"components\":" << g.components << ",\"savedAsHalf\":" << (g.saved_as_half ? "true" : "false")
+      << ",\"pointGrid\":" << (g.point_grid ? "true" : "false") << ",\"activeVoxels\":" << g.active_voxels;
+    if (g.has_transform) {
+      double m[4][4];
+      lightusd::tydra::vol::IndexToWorldRowVector(g, m);
+      o << ",\"indexToWorld\":[";
+      for (int k = 0; k < 16; ++k) o << (k ? "," : "") << m[k / 4][k % 4];
+      o << ']';
+    }
+    if (g.has_bounds) {
+      o << ",\"indexMin\":[" << g.index_min[0] << ',' << g.index_min[1] << ',' << g.index_min[2]
+        << "],\"indexMax\":[" << g.index_max[0] << ',' << g.index_max[1] << ',' << g.index_max[2]
+        << "],\"worldMin\":[" << g.world_min[0] << ',' << g.world_min[1] << ',' << g.world_min[2]
+        << "],\"worldMax\":[" << g.world_max[0] << ',' << g.world_max[1] << ',' << g.world_max[2] << ']';
+    }
+    o << '}';
+  }
+  o << "]}";
+  auto* s = new (std::nothrow) lightusd_string();
+  if (!s) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "vdb inspect: allocation failed");
+  s->s = o.str();
+  *json = s;
   return LIGHTUSD_OK;
 }
 
