@@ -44,6 +44,17 @@ static void emit_lines(const std::string &msgs, const char *prefix) {
   }
 }
 
+static void emit_crate_limit_hint(const std::string &err,
+                                  size_t max_crate_elements) {
+  if (max_crate_elements == 0 &&
+      (err.find("crate table limit") != std::string::npos ||
+       err.find("Too many ") != std::string::npos)) {
+    std::fprintf(stderr,
+                 "ERR : hint: raise --max-crate-elements for large trusted "
+                 "USDC files\n");
+  }
+}
+
 // One-shot flattening can spend seconds destroying the composed Stage after
 // its output is already closed. Keep this opt-in: _Exit skips all remaining
 // destructors and atexit handlers, so it is suitable only after a successful
@@ -330,6 +341,7 @@ int main(int argc, char **argv) {
     emit_lines(warn, "WARN : ");
     if (!layer) {
       emit_lines(err.empty() ? std::string("load failed") : err, "ERR : ");
+      emit_crate_limit_hint(err, max_crate_elements);
       return 1;
     }
     if (!err.empty()) emit_lines(err, "WARN : ");
@@ -483,6 +495,7 @@ int main(int argc, char **argv) {
   emit_lines(warn, "WARN : ");
   if (!ok) {
     emit_lines(err.empty() ? std::string("load failed") : err, "ERR : ");
+    emit_crate_limit_hint(err, max_crate_elements);
     return 1;
   }
   for (const std::string& path : required_prims) {

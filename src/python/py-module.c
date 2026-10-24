@@ -178,18 +178,19 @@ static int parse_format(const char* format, uint32_t* out) {
 static PyObject* mod_load(PyObject* module, PyObject* args, PyObject* kwargs) {
   static char* kwlist[] = {"path",     "format",       "composed",
                            "variants", "load_payloads", "max_memory",
-                           "resolver", NULL};
+                           "max_crate_elements", "resolver", NULL};
   const char* path;
   const char* format = NULL;
   int composed = 1;
   PyObject* variants = Py_None;
   int load_payloads = 1;
   unsigned long long max_memory = 0;
+  unsigned long long max_crate_elements = 0;
   PyObject* resolver_obj = Py_None;
-  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|zpOpKO:load", kwlist,
+  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|zpOpKKO:load", kwlist,
                                    &path, &format, &composed, &variants,
                                    &load_payloads, &max_memory,
-                                   &resolver_obj)) {
+                                   &max_crate_elements, &resolver_obj)) {
     return NULL;
   }
   lightusd_state* st = lightusd_state_from_module(module);
@@ -209,6 +210,7 @@ static PyObject* mod_load(PyObject* module, PyObject* args, PyObject* kwargs) {
     opts.max_asset_bytes = max_memory;
     opts.max_resident_bytes = max_memory;
   }
+  opts.max_crate_elements = max_crate_elements;
 
   variant_overrides vo;
   if (variants_from_dict(variants, &vo) != 0) return NULL;
@@ -233,7 +235,8 @@ static PyObject* mod_load(PyObject* module, PyObject* args, PyObject* kwargs) {
 
 static PyObject* load_from_buffer(lightusd_state* st, const uint8_t* data,
                                   size_t size, const char* format,
-                                  unsigned long long max_memory) {
+                                  unsigned long long max_memory,
+                                  unsigned long long max_crate_elements) {
   lightusd_load_options opts;
   lightusd_load_options_init(&opts);
   if (parse_format(format, &opts.format) != 0) return NULL;
@@ -242,6 +245,7 @@ static PyObject* load_from_buffer(lightusd_state* st, const uint8_t* data,
     opts.max_asset_bytes = max_memory;
     opts.max_resident_bytes = max_memory;
   }
+  opts.max_crate_elements = max_crate_elements;
 
   lightusd_stage* stage = NULL;
   lightusd_status status;
@@ -262,19 +266,22 @@ static PyObject* mod_loads(PyObject* module, PyObject* args) {
   if (!data) return NULL;
   Py_ssize_t size = PyBytes_Size(tmp);
   PyObject* res = load_from_buffer(st, (const uint8_t*)data, (size_t)size,
-                                   "usda", 0);
+                                   "usda", 0, 0);
   Py_XDECREF(tmp);
   return res;
 }
 
 static PyObject* mod_load_bytes(PyObject* module, PyObject* args,
                                 PyObject* kwargs) {
-  static char* kwlist[] = {"data", "format", "max_memory", NULL};
+  static char* kwlist[] = {"data", "format", "max_memory",
+                           "max_crate_elements", NULL};
   PyObject* data_obj;
   const char* format = NULL;
   unsigned long long max_memory = 0;
-  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|zK:load_bytes", kwlist,
-                                   &data_obj, &format, &max_memory)) {
+  unsigned long long max_crate_elements = 0;
+  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|zKK:load_bytes", kwlist,
+                                   &data_obj, &format, &max_memory,
+                                   &max_crate_elements)) {
     return NULL;
   }
   lightusd_state* st = lightusd_state_from_module(module);
@@ -291,19 +298,22 @@ static PyObject* mod_load_bytes(PyObject* module, PyObject* args,
     return NULL;
   }
   PyObject* res = load_from_buffer(st, (const uint8_t*)buf, (size_t)size,
-                                   format, max_memory);
+                                   format, max_memory, max_crate_elements);
   Py_DECREF(bytes);
   return res;
 }
 
 static PyObject* mod_flatten_file(PyObject* module, PyObject* args,
                                   PyObject* kwargs) {
-  static char* kwlist[] = {"src", "dst", "max_memory", NULL};
+  static char* kwlist[] = {"src", "dst", "max_memory",
+                           "max_crate_elements", NULL};
   const char* src;
   const char* dst;
   unsigned long long max_memory = 0;
-  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "ss|K:flatten_file", kwlist,
-                                   &src, &dst, &max_memory)) {
+  unsigned long long max_crate_elements = 0;
+  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "ss|KK:flatten_file", kwlist,
+                                   &src, &dst, &max_memory,
+                                   &max_crate_elements)) {
     return NULL;
   }
   lightusd_state* st = lightusd_state_from_module(module);
@@ -315,6 +325,7 @@ static PyObject* mod_flatten_file(PyObject* module, PyObject* args,
     opts.max_asset_bytes = max_memory;
     opts.max_resident_bytes = max_memory;
   }
+  opts.max_crate_elements = max_crate_elements;
   lightusd_status status;
   Py_BEGIN_ALLOW_THREADS
   status = lightusd_flatten_file_to_usdc(src, dst, &opts);

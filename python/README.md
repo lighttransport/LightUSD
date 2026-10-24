@@ -34,6 +34,18 @@ if attr.has_timesamples:
 print(mesh.relationship("material:binding").targets)
 ```
 
+Large USDC crates (district/full-LOD scenes) can exceed the secure default
+structural-table caps before the memory budget is reached. Raise them
+explicitly for trusted data with `max_crate_elements`:
+
+```python
+stage = lightusd.load("district.usdc", max_memory=4 << 30,
+                      max_crate_elements=100_000_000)
+```
+
+Zero (the default) keeps the secure library limits; the memory budget still
+bounds actual allocations.
+
 ## Authoring
 
 ```python

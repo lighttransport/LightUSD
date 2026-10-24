@@ -347,6 +347,11 @@ typedef struct lightusd_load_options {
    * composition workers inherit the context. Requires struct_size to cover
    * this field. */
   struct lightusd_asset_resolver* resolver;
+  /* Optional override for USDC crate structural-table caps (tokens, strings,
+   * fields, fieldset indices, specs, paths). Zero keeps the secure defaults;
+   * set a larger value for large trusted datasets. Requires struct_size to
+   * cover this field. */
+  uint64_t max_crate_elements;
 } lightusd_load_options;
 
 LIGHTUSD_API void lightusd_load_options_init(lightusd_load_options* opts);

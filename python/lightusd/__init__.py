@@ -93,6 +93,7 @@ def load(
     variants: Optional[dict] = None,
     load_payloads: bool = True,
     max_memory: int = 0,
+    max_crate_elements: int = 0,
     resolver: Optional[AssetResolver] = None,
     up_axis: str = "Z",
     asset_dirs: Sequence[_PathLike] = (),
@@ -110,6 +111,9 @@ def load(
     ``variants`` maps variant-set names to selections, overriding authored
     selections. A positive ``max_memory`` caps input, asset, and aggregate
     resident estimates in bytes. Zero keeps the library's finite safe defaults.
+    ``max_crate_elements`` raises the USDC structural-table caps (tokens,
+    strings, fields, fieldsets, specs, paths) for large trusted crates; zero
+    keeps the secure defaults.
     ``resolver`` supplies asset resolution for composition arcs; its active
     context is snapshotted for composition workers.
 
@@ -128,6 +132,8 @@ def load(
     if format in ("obj", "urdf", "mjcf") or (format in (None, "auto") and extension in (".obj", ".urdf", ".xml", ".mjcf")):
         if variants:
             raise ValueError("variant selections apply to USD input only")
+        if max_crate_elements:
+            raise ValueError("max_crate_elements applies to USDC input only")
         return _import(path=path, format=format or "auto", max_memory=max_memory,
                        resolver=resolver, up_axis=up_axis, asset_dirs=asset_dirs,
                        packages=packages, allow_missing=allow_missing,
@@ -143,6 +149,7 @@ def load(
         variants=variants,
         load_payloads=load_payloads,
         max_memory=max_memory,
+        max_crate_elements=max_crate_elements,
         resolver=resolver,
     )
 
@@ -157,6 +164,7 @@ def load_bytes(
     *,
     format: Optional[str] = None,
     max_memory: int = 0,
+    max_crate_elements: int = 0,
     source: _PathLike = "",
     resolver: Optional[AssetResolver] = None,
     **import_options,
@@ -167,11 +175,14 @@ def load_bytes(
     without filesystem access. Other import options match :func:`load`.
     """
     if format in ("obj", "urdf", "mjcf"):
+        if max_crate_elements:
+            raise ValueError("max_crate_elements applies to USDC input only")
         return _import(data=data, source=_os.fspath(source), format=format,
                        max_memory=max_memory, resolver=resolver, **import_options)
     if import_options or source or resolver is not None:
         raise ValueError("source, resolver and import options require obj, urdf or mjcf format")
-    return _core.load_bytes(data, format=format, max_memory=max_memory)
+    return _core.load_bytes(data, format=format, max_memory=max_memory,
+                            max_crate_elements=max_crate_elements)
 
 
 def is_usd(path: _PathLike) -> bool:

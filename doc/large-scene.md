@@ -2715,3 +2715,39 @@ difference in the variant-overload suite. The profile initially skips generic
 native/WASM validation because its default CLI path is absent; running that
 gate separately against the existing native Release CLI passes all six inputs.
 Browser and physics profiles were not repeated in this follow-up.
+
+### 9.1 Large-crate readback limits (2026-10)
+
+The USDC reader's structural-table caps are count bounds independent of the
+byte budget. The composed Caldera district crate (580,261,850 B,
+4,458,013 specs) contains **12,642,785 FIELDS entries**, above the secure
+default `max_fields = 10,485,760`, so a default read-back fails even with a
+generous memory budget:
+
+```
+Offset 530826639: Too many fields: 12642785 > 10485760
+```
+
+Raise the table caps for trusted datasets. `lusdcat` exposes
+`--max-crate-elements N` (sets tokens/strings/fields/fieldset indices/specs/
+paths) and `--max-memory-mib` for the byte budget:
+
+```sh
+./build_ninja/lusdcat --rewrite-layer --max-crate-elements 100000000 \
+  --max-memory-mib 16384 --output-format usdc -o out.usdc district.usdc
+```
+
+The Python binding exposes the same opt-in; zero keeps the secure defaults:
+
+```python
+stage = lightusd.load("district.usdc", max_memory=4 << 30,
+                      max_crate_elements=100_000_000)
+```
+
+Functional evidence (timing under a loaded host, not a throughput claim): the
+district rewrite is 578,776,001 B with SHA-256
+`e049a40ff95d5074984d9c556e6101b6172a6f1864778e68562bf44c31f9fc09`, and the
+Python load reports 745,246 prims / 4.07 GiB of stage accounting. The
+all-45-district crate has 61,833,354 specs/paths (§8), so use a correspondingly
+larger cap and memory budget. The reader now includes the actual count, limit
+and a "raise the crate table limit" hint; `lusdcat` adds the flag hint.

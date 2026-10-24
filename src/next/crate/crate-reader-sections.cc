@@ -239,7 +239,9 @@ bool CrateReader::Impl::ReadTokens() {
   }
 
   if (num_tokens > options_.max_tokens) {
-    AddError("Too many tokens");
+    AddError("Too many tokens: " + std::to_string(num_tokens) + " > " +
+             std::to_string(options_.max_tokens) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
 
@@ -334,7 +336,9 @@ bool CrateReader::Impl::ReadStrings() {
   }
 
   if (num_strings > options_.max_strings) {
-    AddError("Too many strings");
+    AddError("Too many strings: " + std::to_string(num_strings) + " > " +
+             std::to_string(options_.max_strings) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
   if (!CheckElementAllocation(num_strings, sizeof(uint32_t), "String table")) {
@@ -377,7 +381,9 @@ bool CrateReader::Impl::ReadFields() {
   }
 
   if (num_fields > options_.max_fields) {
-    AddError("Too many fields");
+    AddError("Too many fields: " + std::to_string(num_fields) + " > " +
+             std::to_string(options_.max_fields) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
   if (!CheckElementAllocation(num_fields, sizeof(CrateField), "Field table") ||
@@ -808,7 +814,9 @@ bool CrateReader::Impl::ReadFieldsets() {
   // fieldset_indices_ entries index into fields_; bound the count to avoid a
   // huge allocation from a malformed value.
   if (num_fieldsets > options_.max_fieldset_indices) {
-    AddError("Too many fieldset indices");
+    AddError("Too many fieldset indices: " + std::to_string(num_fieldsets) +
+             " > " + std::to_string(options_.max_fieldset_indices) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
   if (!CheckElementAllocation(num_fieldsets, sizeof(uint32_t),
@@ -883,7 +891,9 @@ bool CrateReader::Impl::ReadSpecs() {
   }
 
   if (num_specs > options_.max_specs) {
-    AddError("Too many specs");
+    AddError("Too many specs: " + std::to_string(num_specs) + " > " +
+             std::to_string(options_.max_specs) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
   if (!CheckElementAllocation(num_specs, sizeof(CrateSpec), "Spec table") ||
@@ -1070,7 +1080,9 @@ bool CrateReader::Impl::ReadPaths() {
   }
 
   if (num_paths > options_.max_paths) {
-    AddError("Too many paths");
+    AddError("Too many paths: " + std::to_string(num_paths) + " > " +
+             std::to_string(options_.max_paths) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
 
@@ -1082,7 +1094,9 @@ bool CrateReader::Impl::ReadPaths() {
   }
 
   if (num_encoded > options_.max_paths) {
-    AddError("Too many encoded path nodes");
+    AddError("Too many encoded path nodes: " + std::to_string(num_encoded) +
+             " > " + std::to_string(options_.max_paths) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
 

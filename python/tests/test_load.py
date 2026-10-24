@@ -49,6 +49,23 @@ def test_save_load_roundtrip(tmp_path, simple_stage):
         st.close()
 
 
+def test_load_crate_element_limit(tmp_path, simple_stage):
+    # Large trusted crates can raise the structural-table caps explicitly;
+    # zero keeps the secure defaults.
+    fn = tmp_path / "scene.usdc"
+    simple_stage.save(str(fn))
+    with lightusd.load(fn, max_crate_elements=100_000_000) as st:
+        assert st.prim_at("/World/Quad")["radius"] == 2.5
+    with pytest.raises(lightusd.UsdParseError, match="Too many"):
+        lightusd.load(fn, max_crate_elements=1)
+
+    usdc = simple_stage.export_usdc()
+    with lightusd.load_bytes(usdc, max_crate_elements=100_000_000) as st:
+        assert st.prim_at("/World/Quad")["radius"] == 2.5
+    with pytest.raises(lightusd.UsdParseError, match="Too many"):
+        lightusd.load_bytes(usdc, max_crate_elements=1)
+
+
 def test_load_errors():
     with pytest.raises(lightusd.UsdError):
         lightusd.load("/nonexistent/path/to/file.usda")

@@ -495,6 +495,20 @@ bool ApplyLoadOptions(const lightusd_load_options* opts, n::LoadUSDOptions* lo,
   lo->usdc_options.crate_options.max_memory = lo->limits.max_input_bytes;
   lo->usdc_options.crate_options.max_array_elements =
       lo->limits.max_array_elements;
+  constexpr uint32_t kCrateLimitOptionsSize = static_cast<uint32_t>(
+      offsetof(lightusd_load_options, max_crate_elements) +
+      sizeof(((lightusd_load_options*)nullptr)->max_crate_elements));
+  if (opts->struct_size >= kCrateLimitOptionsSize &&
+      opts->max_crate_elements != 0) {
+    size_t limit = 0;
+    if (!ToSizeLimit(opts->max_crate_elements, &limit)) return false;
+    lo->usdc_options.crate_options.max_tokens = limit;
+    lo->usdc_options.crate_options.max_strings = limit;
+    lo->usdc_options.crate_options.max_fields = limit;
+    lo->usdc_options.crate_options.max_fieldset_indices = limit;
+    lo->usdc_options.crate_options.max_specs = limit;
+    lo->usdc_options.crate_options.max_paths = limit;
+  }
   lo->usdc_options.crate_options.strict_aousd_conformance = untrusted;
   lo->usdc_options.crate_options.use_mmap = !untrusted;
   lo->usdz_options.max_archive_size = lo->limits.max_input_bytes;
@@ -726,6 +740,7 @@ void lightusd_load_options_init(lightusd_load_options* opts) {
   opts->composed = 1;
   opts->load_payloads = 1;
   opts->enable_usda_lazy_arrays = 0;
+  opts->max_crate_elements = 0;
 }
 
 void lightusd_save_options_init(lightusd_save_options* opts) {

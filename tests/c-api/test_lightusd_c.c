@@ -6,6 +6,7 @@
 
 #include <assert.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -286,6 +287,38 @@ static int test_authoring_roundtrip(void) {
   CHECK(memcmp(usdc_sv.data, "PXR-USDC", 8) == 0);
   CHECK_OK(lightusd_stage_load_from_memory((const uint8_t*)usdc_sv.data,
                                        usdc_sv.len, NULL, &re));
+  {
+    /* Large trusted crates can raise the structural-table caps explicitly. */
+    lightusd_load_options limited;
+    lightusd_load_options_init(&limited);
+    limited.max_crate_elements = 1;
+    lightusd_stage* re_limited = NULL;
+    CHECK(lightusd_stage_load_from_memory((const uint8_t*)usdc_sv.data,
+                                          usdc_sv.len, &limited,
+                                          &re_limited) != LIGHTUSD_OK);
+    CHECK(strstr(lightusd_last_error(), "Too many") != NULL);
+    if (re_limited) lightusd_stage_destroy(re_limited);
+
+    /* A struct that predates the field must ignore it (struct_size guard). */
+    lightusd_load_options legacy;
+    lightusd_load_options_init(&legacy);
+    legacy.struct_size =
+        (uint32_t)offsetof(lightusd_load_options, max_crate_elements);
+    legacy.max_crate_elements = 1;
+    lightusd_stage* re_test = NULL;
+    CHECK_OK(lightusd_stage_load_from_memory((const uint8_t*)usdc_sv.data,
+                                             usdc_sv.len, &legacy, &re_test));
+    lightusd_stage_destroy(re_test);
+    re_test = NULL;
+
+    lightusd_load_options generous;
+    lightusd_load_options_init(&generous);
+    generous.max_crate_elements = 100000000;
+    CHECK_OK(lightusd_stage_load_from_memory((const uint8_t*)usdc_sv.data,
+                                             usdc_sv.len, &generous,
+                                             &re_test));
+    lightusd_stage_destroy(re_test);
+  }
   lightusd_string_destroy(usdc);
   regrid = lightusd_stage_prim_at_path(re, "/World/Geo/Grid");
   CHECK(lightusd_prim_is_valid(regrid));
