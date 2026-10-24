@@ -293,13 +293,20 @@ static bool ConvertPayload(
           // would read as unspecified and be derived from the colliders.
           Set(prim, "physics:mass", tn::Value(1e-12f), "float");
         }
+        const bool zero_mass_standin = zero_mass && colliders && !colliders->empty() &&
+                                       profile.newton && !(mass > 0.0f);
         const std::vector<float> com = JsonFloats(*inertial, "centerOfMass");
         if (com.size() >= 3)
           SetPoint3(prim, "physics:centerOfMass", com, false);
         // A full inertia tensor is diagonalized into principal moments +
         // principal-axes rotation (the lossless USD representation).
         const std::vector<double> full = JsonDoubles(*inertial, "fullInertia");
-        if (!profile.legacy) {
+        if (zero_mass_standin) {
+          // A massless body has no rotational inertia either (MuJoCo, and
+          // Newton's finalize() zeroes it); use the same stand-in.
+          AuthorInertia(prim, Json{{"diagonalInertia", Json::array({0.0, 0.0, 0.0})},
+                                   {"mass", 1.0}, {"zeroInertia", true}});
+        } else if (!profile.legacy) {
           AuthorInertia(prim, *inertial);
         } else if (full.size() >= 6) {
           // [Ixx, Iyy, Izz, Ixy, Ixz, Iyz] -> symmetric 3x3.

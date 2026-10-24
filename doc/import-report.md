@@ -75,7 +75,11 @@ token), `mjcf.equality_site_unsupported` (legacy profile only),
 `mjcf.inertia_convex_approximated`, `urdf.geometry_unsupported` (missing or
 unknown URDF geometry, skipped under `warn`), `dae.up_axis_ignored`,
 `dae.geometry_unsupported`, `dae.primitive_unsupported`,
-`urdf.package_discovered` (see below), `urdf.transmission_duplicate` (a
+`urdf.package_discovered` (see below), `urdf.package_root` (a URDF in a ROS
+package's `urdf/` or `robots/` directory: the package directory, holding
+`package.xml` or `meshes/`, is an allowed asset root, so `../meshes/...`
+resolves), `urdf.mimic_chain_resolved` (a mimic joint following another mimic
+joint is written against the chain's leading joint), `urdf.transmission_duplicate` (a
 joint with several transmissions keeps the first) and
 `mjcf.frame_scale_unsupported` (a MuJoCo 3.16 `<frame scale/massscale>`; the
 frame's pose is applied, its scale is not) and `mjcf.obj_polygon_fan` (OBJ

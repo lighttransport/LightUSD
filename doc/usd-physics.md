@@ -80,6 +80,7 @@ in one of three profiles, selected with `profile=` (Python), `"profile"` in the 
 | URDF visuals | native `Cube`/`Sphere`/`Cylinder`; non-standard `<capsule radius length|height>` → `Capsule` | same | tessellated meshes; capsule unsupported |
 | URDF extensions | unknown attributes and elements on the robot (`/World/custom`), links, joints, visuals and collisions → `urdf:<attribute>` strings, `urdf:text` and child `Scope`s (urdf-usd-converter's undefined-element layout) | same | dropped |
 | URDF without joints | no articulation root (a lone rigid body) | same | articulation root |
+| URDF inputs Newton's `add_urdf` accepts | zero-size primitives and unsupported mesh formats are skipped (`urdf.geometry_unsupported`); negative MTL `Ns` is clamped to 0; mimic chains resolve to the leading joint; explicit zero `<mass>`/`<inertia>` use the 1e-12 stand-ins; ghost links are judged by their `<visual>`/`<collision>` elements (urdf-usd-converter) | same | errors / as authored |
 | OBJ stage | `metersPerUnit = 1`, root `kind = component` | same | no units |
 
 MJCF spatial tendons follow MuJoCo's USD decoder and mujoco-usd-converter:

@@ -152,6 +152,9 @@ struct Reader {
   const Options& options;
   // URDF package roots: Options::packages plus roots BuildURDF discovers.
   std::map<std::string, std::string> packages;
+  // Further allowed asset roots found by the importer (a ROS package that
+  // holds the URDF in urdf/ next to meshes/).
+  std::vector<std::string> extra_roots;
   size_t bytes = 0;
   std::string warnings, failure, root_source;
   bool allow_unanchored = true;

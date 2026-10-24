@@ -352,6 +352,17 @@ f121272e (2026-10-24; Menagerie Newton compare still 65/69). Fixed in the
   weld and effort limit (verified, unchanged) and the two not-planned items
   (interpolated flex dofs, cube-projected material textures).
 
+- URDF Newton compare (2026-10-24): `run-newton-compare.py --urdf DIR`
+  compares `add_urdf` with `add_usd` of LightUSD's output over Newton's own
+  assets (g1, h1, anymal, fr3, allegro), Newton examples, urdf-usd-converter's
+  corpus, chrono and tiny-differentiable-simulator: 135 pass, the 3 invalid
+  `error_*` fixtures are rejected. Fixed on the way: negative MTL `Ns`
+  (Blender) rejected the OBJ, zero-size URDF primitives and unsupported mesh
+  formats failed the import, `../meshes` in a ROS package was outside the
+  allowed roots, mimic-of-mimic chains made `add_usd` fail, explicit URDF zero
+  mass/inertia were derived from colliders, and ghost links were judged by
+  converted rather than authored geometry.
+
 Reference specifications: [UsdPhysics](https://openusd.org/dev/api/usd_physics_page_front.html),
 [MJCF](https://mujoco.readthedocs.io/en/stable/XMLreference.html), and
 [Newton USD import](https://newton-physics.github.io/newton/latest/concepts/usd_parsing.html).

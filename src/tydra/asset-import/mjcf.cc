@@ -1341,6 +1341,7 @@ void PreloadJobs(const std::vector<std::pair<PreloadKey, PreloadJob>>& jobs) {
       if (committed.load() >= remaining) return;
       Reader child(child_options);
       child.packages = parent.packages;
+      child.extra_roots = parent.extra_roots;
       child.root_source = parent.root_source;
       child.allow_unanchored = parent.allow_unanchored;
       child.record_accesses = true;
@@ -6109,8 +6110,27 @@ bool URDFGeometry(const pugi::xml_node& node, const std::string& source,
   // urdf-usd-converter authors Cube/Sphere/Cylinder visuals).
   const bool native = collision || (std::string(node.name()) == "visual" &&
                                     active_reader->options.profile != "legacy");
+  // Geometry the importer cannot convert (zero-size primitives, unknown mesh
+  // formats) is skipped under the warn/preserve policies, as Newton's
+  // add_urdf and urdf-usd-converter skip it.
+  auto skip = [&](const std::string& why) {
+    std::string what = "URDF ";
+    what += std::string(node.name()) == "collision" ? "collision" : "visual";
+    what += " `" + name + "` " + why;
+    if (!active_reader->Unsupported(what, "urdf.geometry_unsupported", "urdf.geometry", source, 0,
+                                    Json{{"element", name}}.dump(), "json")) {
+      if (err) *err = active_reader->failure.empty() ? what : active_reader->failure;
+      return false;
+    }
+    return true;
+  };
   if (auto mesh = geometry.child("mesh")) {
     std::string file = Attr(mesh, "filename");
+    {
+      const std::string ext = ToLower(fs::path(file).extension().string());
+      if (ext != ".obj" && ext != ".dae" && ext != ".stl")
+        return skip("has an unsupported mesh format `" + (ext.empty() ? file : ext) + "`");
+    }
     std::string resolved;
     auto scale = ParseDouble3(Attr(mesh, "scale"), {{1, 1, 1}});
     const auto matrix = MultiplyMatrix(pose, ScaleMatrix(scale));
@@ -6153,10 +6173,7 @@ bool URDFGeometry(const pugi::xml_node& node, const std::string& source,
     Mesh generated;
     if (auto box = geometry.child("box")) {
       auto size = ParseDouble3(Attr(box, "size"), {{1, 1, 1}});
-      if (size[0] <= 0 || size[1] <= 0 || size[2] <= 0) {
-        if (err) *err = "URDF box size must be positive";
-        return false;
-      }
+      if (!(size[0] > 0 && size[1] > 0 && size[2] > 0)) return skip("has a non-positive box size");
       if (native) {
         shape["type"] = "box";
         j["matrix"] = Array(MultiplyMatrix(
@@ -6165,10 +6182,7 @@ bool URDFGeometry(const pugi::xml_node& node, const std::string& source,
         generated = MakeBoxMesh({{size[0] / 2, size[1] / 2, size[2] / 2}});
     } else if (auto sphere = geometry.child("sphere")) {
       double radius = ParseDoubleAttr(sphere, "radius", 0);
-      if (radius <= 0) {
-        if (err) *err = "URDF radius must be positive";
-        return false;
-      }
+      if (!(radius > 0)) return skip("has a non-positive sphere radius");
       if (native)
         shape = Json{{"type", "sphere"}, {"radius", radius}};
       else
@@ -6176,10 +6190,7 @@ bool URDFGeometry(const pugi::xml_node& node, const std::string& source,
     } else if (auto cylinder = geometry.child("cylinder")) {
       double radius = ParseDoubleAttr(cylinder, "radius", 0),
              length = ParseDoubleAttr(cylinder, "length", 0);
-      if (radius <= 0 || length <= 0) {
-        if (err) *err = "URDF cylinder dimensions must be positive";
-        return false;
-      }
+      if (!(radius > 0 && length > 0)) return skip("has non-positive cylinder dimensions");
       if (native)
         shape = Json{{"type", "cylinder"},
                      {"radius", radius},
@@ -6193,26 +6204,14 @@ bool URDFGeometry(const pugi::xml_node& node, const std::string& source,
       // `height` is the cylindrical part, along Z.
       const double radius = ParseDoubleAttr(capsule, "radius", 0),
                    length = ParseDoubleAttr(capsule, HasAttr(capsule, "length") ? "length" : "height", 0);
-      if (radius <= 0 || length < 0) {
-        if (err) *err = "URDF capsule dimensions must be positive";
-        return false;
-      }
+      if (!(radius > 0 && length >= 0)) return skip("has non-positive capsule dimensions");
       if (native)
         shape = Json{{"type", "capsule"}, {"radius", radius}, {"height", length}, {"axis", "Z"}};
       else
         generated = MakeCapsuleMesh(radius, length / 2);
     } else {
-      // Missing or unknown geometry: skip it under the warn/preserve policies
-      // (urdf-usd-converter warns and continues).
-      std::string what = "URDF ";
-      what += collision ? "collision" : "visual";
-      what += " `" + name + "` has no supported geometry";
-      if (!active_reader->Unsupported(what, "urdf.geometry_unsupported", "urdf.geometry",
-                                      source, 0, Json{{"element", name}}.dump(), "json")) {
-        if (err) *err = active_reader->failure.empty() ? what : active_reader->failure;
-        return false;
-      }
-      return true;
+      // Missing or unknown geometry (urdf-usd-converter warns and continues).
+      return skip("has no supported geometry");
     }
     if (native)
       j["shape"] = std::move(shape);
@@ -6260,7 +6259,7 @@ size_t MergeDummyInertiaLinks(Json* links, Json* joints,
     return true;
   };
   auto has_geometry = [](const Json& link) {
-    return !link["visuals"].empty() || !link["collisions"].empty();
+    return !link["visuals"].empty() || !link["collisions"].empty() || link.contains("shapeElements");
   };
   std::set<std::string> has_children, mimic_children, merged_into;
   std::map<std::string, std::string> joint_child;
@@ -6346,7 +6345,10 @@ size_t CollapseGhostLinks(Json* links, Json* joints, const std::map<std::string,
       if (massless && in.contains("fullInertia"))
         for (const auto& v : in["fullInertia"]) massless &= v.get<double>() == 0.0;
     }
-    const bool shapes = !link["visuals"].empty() || !link["collisions"].empty();
+    // urdf-usd-converter judges ghosts by the <visual>/<collision> elements,
+    // so a link whose geometry could not be converted is not a ghost.
+    const bool shapes = !link["visuals"].empty() || !link["collisions"].empty() ||
+                        link.contains("shapeElements");
     const auto type = parent_joint_type.find(name);
     const bool root = !parent.count(name);
     if (!massless || shapes || mimic_children.count(name) ||
@@ -6456,6 +6458,19 @@ void DiscoverURDFPackages(const pugi::xml_node& root, const std::string& source)
   if (!start.is_absolute()) start = fs::current_path(ec) / start;
   start = fs::weakly_canonical(start, ec).parent_path();
   if (start.empty()) return;
+  // ROS package layout: <package>/urdf/robot.urdf referencing ../meshes/...
+  // The package directory (with package.xml or meshes/) is an asset root too.
+  {
+    const std::string dir = ToLower(start.filename().string());
+    const fs::path package = start.parent_path();
+    if ((dir == "urdf" || dir == "robots") && !package.empty() && package != package.root_path() &&
+        (fs::is_regular_file(package / "package.xml", ec) || fs::is_directory(package / "meshes", ec))) {
+      active_reader->extra_roots.push_back(package.string());
+      active_reader->Warn("URDF in a ROS package layout; " + package.generic_string() +
+                              " is an allowed asset root",
+                          "urdf.package_root");
+    }
+  }
   std::vector<pugi::xml_node> stack{root};
   while (!stack.empty()) {
     const pugi::xml_node node = stack.back();
@@ -6730,6 +6745,14 @@ bool BuildURDF(const pugi::xml_node& root, const std::string& source,
           {"fullInertia",
            Json::array({rotated[0][0], rotated[1][1], rotated[2][2],
                         rotated[0][1], rotated[0][2], rotated[1][2]})}};
+      // An explicit all-zero <inertia> with a positive mass stays (near)
+      // zero rather than being derived from the colliders (as add_urdf).
+      bool zero = static_cast<bool>(tensor);
+      for (int a = 0; a < 3; a++)
+        for (int b = 0; b < 3; b++) zero = zero && t[a][b] == 0.0;
+      if (zero && link["inertial"]["mass"].get<double>() > 0.0) link["inertial"]["zeroInertia"] = true;
+      // Likewise an explicit <mass value="0"> on a link with colliders.
+      if (link["inertial"]["mass"].get<double>() == 0.0) link["inertial"]["zeroMass"] = true;
     }
     for (const char* kind : {"visual", "collision"})
       for (auto geom : node.children(kind)) {
@@ -6757,6 +6780,7 @@ bool BuildURDF(const pugi::xml_node& root, const std::string& source,
         }
       }
     if (opts.profile != "legacy") {
+      if (node.child("visual") || node.child("collision")) link["shapeElements"] = true;
       Json custom = URDFCustomJson(node, {"inertial", "visual", "collision"}, {"name"});
       if (!custom.empty()) link["urdfCustom"] = std::move(custom);
     }
@@ -6785,6 +6809,36 @@ bool BuildURDF(const pugi::xml_node& root, const std::string& source,
       auto& count = opts.report->counts["ghost_links"];
       count = (count.is_number() ? count.get<uint64_t>() : uint64_t(0)) + ghosts;
     }
+    // A mimic whose leader is itself a mimic follower (hand linkages):
+    // Newton's add_usd rejects such chains, so follow them to the leader that
+    // is not a follower, composing q = m1 * (m2 * q_root + o2) + o1.
+    std::map<std::string, Json*> by_name;
+    for (auto& j : joints) by_name[j["name"].get<std::string>()] = &j;
+    size_t resolved = 0;
+    for (auto& j : joints) {
+      if (!j.contains("mimic")) continue;
+      Json& mimic = j["mimic"];
+      double multiplier = mimic["multiplier"].get<double>(), offset = mimic["offset"].get<double>();
+      std::string leader = mimic["joint"].get<std::string>();
+      std::set<std::string> seen{j["name"].get<std::string>()};
+      bool chained = false;
+      for (auto it = by_name.find(leader); it != by_name.end() && it->second->contains("mimic");
+           it = by_name.find(leader)) {
+        if (!seen.insert(leader).second) break;  // a cycle: keep the direct leader
+        const Json& next = (*it->second)["mimic"];
+        offset += multiplier * next["offset"].get<double>();
+        multiplier *= next["multiplier"].get<double>();
+        leader = next["joint"].get<std::string>();
+        chained = true;
+      }
+      if (!chained || seen.count(leader)) continue;
+      mimic = Json{{"joint", leader}, {"offset", offset}, {"multiplier", multiplier}};
+      ++resolved;
+    }
+    if (resolved)
+      active_reader->Warn(std::to_string(resolved) + " URDF mimic joint(s) follow another mimic joint; "
+                              "written against the chain's leading joint",
+                          "urdf.mimic_chain_resolved");
   }
   for (auto transmission : root.children("transmission")) {
     auto joint = transmission.child("joint"),

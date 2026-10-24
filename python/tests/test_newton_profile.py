@@ -415,3 +415,60 @@ def test_mjcf_obj_polygons_over_100_vertices_are_dropped_like_mujoco(tmp_path):
     mesh = next(p for p in stage if p.type_name == 'Mesh')
     assert len(mesh['faceVertexCounts']) == 2
     assert 'mjcf.obj_polygon_dropped' in [d['code'] for d in stage.import_report()['diagnostics']]
+
+
+def test_obj_negative_shininess_is_accepted(tmp_path):
+    _write(tmp_path / 'm.mtl', 'newmtl m\nNs -1.960784\nKd 1 0 0\n')
+    obj = _write(tmp_path / 'm.obj', 'mtllib m.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl m\nf 1 2 3\n')
+    assert [p for p in lightusd.import_obj(obj) if p.type_name == 'Mesh']
+
+
+def test_urdf_unconvertible_geometry_is_skipped(tmp_path):
+    urdf = _write(tmp_path / 'r.urdf', f'''<robot name="r"><link name="a">{_INERTIAL}
+      <collision><geometry><sphere radius="0.0"/></geometry></collision>
+      <collision><geometry><mesh filename="part.dxf"/></geometry></collision>
+      <collision><geometry><box size=".1 .1 .1"/></geometry></collision></link></robot>''')
+    stage = lightusd.import_urdf(urdf)
+    assert len([p for p in stage if 'PhysicsCollisionAPI' in _apis(p)]) == 1
+    assert [d['code'] for d in stage.import_report()['diagnostics']].count('urdf.geometry_unsupported') == 2
+    with pytest.raises(lightusd.UsdError):
+        lightusd.import_urdf(urdf, unsupported_policy='error')
+
+
+def test_urdf_ros_package_layout_allows_sibling_meshes(tmp_path):
+    _write(tmp_path / 'robot_pkg' / 'meshes' / 'm.obj', _TRI_OBJ)
+    urdf = _write(tmp_path / 'robot_pkg' / 'urdf' / 'r.urdf', _package_urdf('../meshes/m.obj'))
+    stage = lightusd.import_urdf(urdf)
+    assert [p for p in stage if p.type_name == 'Mesh']
+    assert 'urdf.package_root' in [d['code'] for d in stage.import_report()['diagnostics']]
+    # Outside that layout `..` stays outside the allowed roots.
+    loose = _write(tmp_path / 'loose' / 'r.urdf', _package_urdf('../robot_pkg/meshes/m.obj'))
+    with pytest.raises(lightusd.UsdError):
+        lightusd.import_urdf(loose)
+
+
+def test_urdf_explicit_zero_mass_properties():
+    zero = '<inertia ixx="0" iyy="0" izz="0" ixy="0" ixz="0" iyz="0"/>'
+    urdf = f'''<robot name="r"><link name="a"><inertial><mass value="2"/>{zero}</inertial>
+      <collision><geometry><box size=".2 .2 .2"/></geometry></collision></link>
+      <link name="b"><inertial><mass value="0"/>{zero}</inertial>
+      <collision><geometry><sphere radius=".1"/></geometry></collision></link>
+      <joint name="j" type="revolute"><parent link="a"/><child link="b"/><axis xyz="0 0 1"/>
+      <limit lower="-1" upper="1"/></joint></robot>'''.encode()
+    stage = lightusd.load_bytes(urdf, format='urdf')
+    assert list(stage.prim_at('/World/Links/a')['newton:inertia'])[:3] == [1e-12] * 3
+    assert stage.prim_at('/World/Links/b')['physics:mass'] == pytest.approx(1e-12)
+
+
+def test_urdf_mimic_chain_targets_the_leading_joint():
+    joints = ''.join(f'<link name="l{i}">{_INERTIAL}</link>' for i in range(4))
+    joints += ''.join(f'''<joint name="j{i}" type="revolute"><parent link="l{i - 1}"/><child link="l{i}"/>
+      <axis xyz="0 0 1"/><limit lower="-1" upper="1"/>{mimic}</joint>''' for i, mimic in (
+        (1, ''), (2, '<mimic joint="j1" multiplier="2" offset="0.1"/>'),
+        (3, '<mimic joint="j2" multiplier="3" offset="0.2"/>')))
+    stage = lightusd.load_bytes(f'<robot name="r">{joints}</robot>'.encode(), format='urdf')
+    j3 = stage.prim_at('/World/Joints/j3')
+    assert j3.relationship('newton:mimicJoint').targets == ('/World/Joints/j1',)
+    assert j3['newton:mimicCoef1'] == pytest.approx(6)
+    assert j3['newton:mimicCoef0'] == pytest.approx(math.degrees(3 * 0.1 + 0.2), rel=1e-5)
+    assert 'urdf.mimic_chain_resolved' in [d['code'] for d in stage.import_report()['diagnostics']]

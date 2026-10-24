@@ -18,7 +18,7 @@ def material_stage(properties, **options):
 
 
 @pytest.mark.parametrize("properties", [b"Kd nan 0 0", b"Kd 1e100 0 0", b"Ks 0 .1junk 0",
-    b"Ni infinity", b"Ns -2", b"Ns -3", b"Pr", b"illum 2147483648", b"illum 2junk",
+    b"Ni infinity", b"Pr", b"illum 2147483648", b"illum 2junk",
     b"map_Kd -s 1e999 123.png", b"map_Kd -s 1 nan 123.png",
     b"map_Kd -mm 1 inf 123.png", b"map_Kd -texres 1junk 123.png",
     b"map_Kd -clamp maybe 123.png", b"map_Kd -s 1"])

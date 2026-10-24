@@ -99,7 +99,7 @@ void ResolverFailures() {
 }
 void Numeric() {
   for (const char* record : {"Kd nan 0 0", "Ks 1e999 0 0", "Ke .1junk 0 0", "Ka 0 0 -infinity",
-      "Ni .", "Ni 1e", "Ns -2", "Ns -0.5", "Pr", "Pm .5 extra", "illum 2147483648", "illum 1junk",
+      "Ni .", "Ni 1e", "Pr", "Pm .5 extra", "illum 2147483648", "illum 1junk",
       "map_Kd -s nan texture.png", "map_Kd -s 1e999 texture.png", "map_Kd -s 1 1e999 texture.png",
       "map_Kd -o 0 -inf texture.png", "map_Kd -mm 1 nan texture.png", "map_Kd -bm 2junk texture.png",
       "map_Kd -texres 2147483648 texture.png", "map_Kd -texres 1junk texture.png",
