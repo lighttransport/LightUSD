@@ -405,6 +405,18 @@ f121272e (2026-10-24; Menagerie Newton compare still 65/69). Fixed in the
   mesh assets pass the MuJoCo-decoder compare. Newton's add_mjcf cannot load
   the binary volume GMSH or `.msh` references (its own limits).
 
+- SDF and volumetric processing through tinyvdb (2026-10-25): tinyvdbio
+  branch volumetric-sdf (mesh -> sparse level set with winding-number signs,
+  winding numbers, isosurface stuffing, file init for writing; a quadratic
+  sparse-map rehash fixed, OpenVDB oracle build fixed) vendored as one
+  lightusd_tinyvdb target that also owns miniz/zstd. MJCF sdf geoms get
+  level-set .vdb sidecars (generated assets) + Newton SDF parameters +
+  guide Volume/OpenVDBAsset + lightusd:sdf; flexcomp opt-in stuffing;
+  .vdb mesh/flexcomp inputs; C/Python/CLI APIs. Checks: OpenUSD validators
+  clean, Newton resolves the SDF parameters and imports stuffed TetMeshes,
+  vdb_print reads the sidecars, legacy byte-identical. Open: GPU (CUDA/HIP)
+  level-set/stuffing paths, graded stuffing lattices.
+
 Reference specifications: [UsdPhysics](https://openusd.org/dev/api/usd_physics_page_front.html),
 [MJCF](https://mujoco.readthedocs.io/en/stable/XMLreference.html), and
 [Newton USD import](https://newton-physics.github.io/newton/latest/concepts/usd_parsing.html).

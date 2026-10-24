@@ -173,6 +173,21 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
     AddAPIs(prim, {"PhysicsMeshCollisionAPI", "MjcMeshCollisionAPI"});
     AddAPI(prim, sdf ? "NewtonSDFCollisionAPI" : "NewtonMeshCollisionAPI");
   }
+  if (const Json *grid = sdf ? JsonObject(src, "sdf") : nullptr) {
+    // The level set's resolution, so Newton's own SDF build matches the
+    // .vdb sidecar (lightusd:sdf); its narrow band only in unscaled frames.
+    Set(prim, "newton:sdfMaxResolution",
+        tn::Value(JsonInt(*grid, "maxResolution", 64)), "int", true);
+    bool unit = false;
+    ReadBool(*grid, "unitScale", &unit);
+    double inner = 0.1, outer = 0.1;
+    ReadNumber(*grid, "interiorWidth", &inner);
+    ReadNumber(*grid, "exteriorWidth", &outer);
+    if (unit) {
+      Set(prim, "newton:sdfNarrowBandInner", tn::Value(-static_cast<float>(inner)), "float", true);
+      Set(prim, "newton:sdfNarrowBandOuter", tn::Value(static_cast<float>(outer)), "float", true);
+    }
+  }
   Set(prim, "physics:collisionEnabled", tn::Value(true), "bool");
   if (mesh_collision) {
     // Default approximation is `convexHull`, matching mujoco-usd-converter.
@@ -553,6 +568,28 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
 
   if (collision) {
     AddCollisionAPIs(prim, true, mesh_json, mjcf_source);
+    // A precomputed level set of this collider (LightUSD extension): a
+    // UsdVol Volume beside it with the same transform, guide purpose so
+    // renderers skip it, and an OpenVDBAsset field reading the sidecar.
+    const Json *grid = JsonObject(mesh_json, "sdf");
+    if (grid && ActiveProfile().engine && !JsonString(*grid, "asset").empty()) {
+      const std::string vname = ChildName(name + "_sdf", siblings);
+      const std::string vpath = link_path + "/" + vname;
+      tn::PrimSpec *volume = Define(layer, vpath, "Volume");
+      tn::PrimSpec *field = volume ? Define(layer, vpath + "/sdf", "OpenVDBAsset") : nullptr;
+      if (!field) {
+        if (err) *err = "Failed to add the level-set volume of `" + name + "`";
+        return false;
+      }
+      SetTransformFromJson(volume, mesh_json);
+      SetToken(volume, "purpose", "guide", true);
+      SetRel(volume, "field:sdf", {vpath + "/sdf"});
+      Set(field, "filePath", tn::Value::MakeAssetPath(JsonString(*grid, "asset")), "asset");
+      SetToken(field, "fieldName", "sdf");
+      SetToken(field, "fieldClass", "levelSet");
+      SetToken(field, "fieldDataType", "float");
+      SetRel(prim, "lightusd:sdf", {vpath});
+    }
     return true;
   }
   bool render_only = false;

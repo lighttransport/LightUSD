@@ -21,6 +21,7 @@
 #include "external/filesystem/include/ghc/filesystem.hpp"
 #include "external/pugixml.hpp"
 #include "import.hh"
+#include "volumetric.hh"
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
@@ -1479,6 +1480,69 @@ bool TakePreloadedMesh(const PreloadKey& key, Mesh* mesh, std::string* err) {
   return true;
 }
 
+// MJCF sdf colliders: a narrow-band level set of the collider mesh in its own
+// frame, as a generated .vdb (sdf/<mesh>.vdb), shared by every geom using the
+// mesh. Fills `out` with the asset path and the grid parameters; returns false
+// (with a reason) when no level set could be built.
+bool MjcfSdfLevelSet(const std::string& mesh_name, const Mesh& mesh, Json* out,
+                     std::string* why) {
+  auto& cache = active_reader->generated_cache;
+  const std::string key = "sdf:" + mesh_name;
+  const auto hit = cache.find(key);
+  if (hit != cache.end()) {
+    *out = hit->second;
+    return true;
+  }
+  const auto& opts = active_reader->options;
+  double lo[3] = {1e300, 1e300, 1e300}, hi[3] = {-1e300, -1e300, -1e300};
+  for (size_t i = 0; i + 2 < mesh.positions.size(); i += 3)
+    for (int a = 0; a < 3; ++a) {
+      lo[a] = std::min(lo[a], double(mesh.positions[i + a]));
+      hi[a] = std::max(hi[a], double(mesh.positions[i + a]));
+    }
+  const double extent = std::max({hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]});
+  if (!(extent > 0)) {
+    *why = "the mesh has no extent";
+    return false;
+  }
+  LevelSetOptions ls;
+  ls.voxel_size = extent / double(opts.sdf_resolution);
+  ls.exterior_width = ls.interior_width = opts.sdf_band * ls.voxel_size;
+  ls.threads = opts.threads;
+  ls.name = "sdf";
+  // ~128 bytes per candidate voxel while building.
+  const size_t budget = opts.max_memory - std::min(opts.max_memory, active_reader->bytes);
+  ls.max_voxels = std::max<size_t>(100000, std::min<size_t>(budget / 128, 50000000));
+  LevelSet level_set;
+  std::vector<uint8_t> bytes;
+  if (!MeshToLevelSet(mesh, ls, &level_set, why) || !WriteLevelSetVDB(level_set, &bytes, why))
+    return false;
+  if (!active_reader->Charge(bytes.size(), why)) return false;
+  std::string file;
+  for (char c : mesh_name)
+    file += (std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_') ? c : '_';
+  std::string path = "sdf/" + (file.empty() ? std::string("mesh") : file) + ".vdb";
+  for (int n = 2; active_reader->generated.count(path); ++n)
+    path = "sdf/" + file + "_" + std::to_string(n) + ".vdb";
+  const size_t size = bytes.size();
+  active_reader->generated[path] = std::make_shared<const std::vector<uint8_t>>(std::move(bytes));
+  // Newton's sdfMaxResolution: voxels across the largest extent, a multiple of 8.
+  const int resolution = (opts.sdf_resolution + 7) / 8 * 8;
+  *out = {{"asset", path},
+          {"voxelSize", ls.voxel_size},
+          {"exteriorWidth", ls.exterior_width},
+          {"interiorWidth", ls.interior_width},
+          {"maxResolution", resolution},
+          {"activeVoxels", uint64_t(level_set.active_voxels())}};
+  cache[key] = *out;
+  if (opts.report)
+    opts.report->Diagnostic("info", "mjcf.sdf_level_set",
+                            "MJCF mesh `" + mesh_name + "`: level set " + path + " (" +
+                                std::to_string(size) + " bytes)",
+                            active_reader->root_source);
+  return true;
+}
+
 bool LoadMeshFile(const fs::path& filename, bool smoothnormal, Mesh* mesh,
                   std::string* err) {
   if (!active_mesh_cache) return LoadMeshFileUncached(filename, smoothnormal, mesh, err);
@@ -1618,6 +1682,34 @@ bool LoadLegacyMSH(const fs::path& filename, Mesh* mesh, std::string* err) {
   return true;
 }
 
+// A level-set .vdb as a mesh asset (LightUSD extension; MuJoCo has no VDB
+// meshes): the first float level-set grid, read through the reader's
+// budget and meshed at its zero isovalue by sparse marching cubes.
+bool LoadLevelSetVDB(const fs::path& filename, LevelSet* out, std::string* err) {
+  std::vector<uint8_t> bytes;
+  std::string resolved;
+  if (!active_reader->Read(filename.string(), active_reader->root_source, &bytes, &resolved, err))
+    return false;
+  if (!ReadLevelSetVDB(bytes.data(), bytes.size(), out, err)) {
+    if (err) *err = filename.string() + ": " + *err;
+    return false;
+  }
+  return true;
+}
+bool LoadVDBMesh(const fs::path& filename, Mesh* mesh, std::string* err) {
+  LevelSet level_set;
+  if (!LoadLevelSetVDB(filename, &level_set, err)) return false;
+  const auto& opts = active_reader->options;
+  const size_t budget = opts.max_memory - std::min(opts.max_memory, active_reader->bytes);
+  if (!LevelSetToMesh(level_set, std::max<size_t>(100000, budget / 256), mesh, err)) return false;
+  if (!active_reader->ChargeArray(mesh->positions.size() + mesh->indices.size(), 4, err))
+    return false;
+  active_reader->Warn("level-set VDB " + filename.filename().string() +
+                          " meshed at its zero isovalue (LightUSD extension; MuJoCo reads no VDB meshes)",
+                      "mjcf.vdb_mesh_extension");
+  return true;
+}
+
 bool LoadMeshFileUncached(const fs::path& filename, bool smoothnormal, Mesh* mesh,
                           std::string* err) {
   if (active_plugin_meshes && filename.string().rfind(kPluginMeshPrefix, 0) == 0) {
@@ -1631,6 +1723,7 @@ bool LoadMeshFileUncached(const fs::path& filename, bool smoothnormal, Mesh* mes
   if (ext == ".stl") return LoadBinarySTL(filename, smoothnormal, mesh, err);
   // MuJoCo reads .msh as its legacy binary mesh, .gmsh through its GMSH decoder.
   if (ext == ".msh") return LoadLegacyMSH(filename, mesh, err);
+  if (ext == ".vdb") return LoadVDBMesh(filename, mesh, err);
   if (ext == ".gmsh") return LoadGMSHMesh(filename, mesh, err);
   if (ext == ".obj" || ext == ".dae") return LoadOBJ(filename, mesh, err);
   if (err) *err = "Unsupported native mesh extension: " + ext;
@@ -2665,17 +2758,41 @@ void MakeFlexBox(const std::string& type, int dim, const std::array<int, 3>& cou
 // origin to every face that sees it with positive volume.
 bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
                   const std::array<double, 3>& origin, bool has_origin,
-                  std::vector<double>* point, std::vector<int>* element, std::string* err) {
+                  std::vector<double>* point, std::vector<int>* element, std::string* err,
+                  bool* stuffed = nullptr) {
   Mesh mesh;
   const std::string ext = ToLower(path.extension().string());
-  if (ext == ".obj") {
+  if (ext == ".vdb" && dim == 3) {
+    // A level set is already volumetric: stuff it directly.
+    LevelSet level_set;
+    if (!LoadLevelSetVDB(path, &level_set, err)) return false;
+    const auto& opts = active_reader->options;
+    const size_t budget = opts.max_memory - std::min(opts.max_memory, active_reader->bytes);
+    StuffingOptions so;
+    so.spacing = opts.flex_tet_spacing > 0 ? opts.flex_tet_spacing : 4 * level_set.voxel_size();
+    so.threads = opts.threads;
+    so.max_tets = std::max<size_t>(1000, std::min<size_t>(budget / 256, 4000000));
+    TetMeshData tm;
+    if (!LevelSetToTetMesh(level_set, so, &tm, err)) return false;
+    if (!active_reader->ChargeArray(tm.points.size() + tm.tets.size(), 8, err)) return false;
+    point->assign(tm.points.begin(), tm.points.end());
+    element->assign(tm.tets.begin(), tm.tets.end());
+    if (stuffed) *stuffed = true;
+    active_reader->Warn("flexcomp level-set VDB tetrahedralized by isosurface stuffing (" +
+                            std::to_string(tm.tets.size() / 4) + " tets; LightUSD extension)",
+                        "mjcf.flex_tetrahedralized");
+    return true;
+  }
+  if (ext == ".vdb") {
+    if (!LoadVDBMesh(path, &mesh, err)) return false;
+  } else if (ext == ".obj") {
     OBJ obj;
     if (!ReadOBJ(text, path.string(), *active_reader, true, &obj, err)) return false;
     if (!obj.meshes.empty()) mesh = std::move(obj.meshes[0]);
   } else if (ext == ".stl") {
     if (!LoadBinarySTL(path, false, &mesh, err)) return false;
   } else {
-    if (err) *err = "mesh flexcomp supports OBJ and STL files";
+    if (err) *err = "mesh flexcomp supports OBJ, STL and level-set VDB files";
     return false;
   }
   std::vector<int32_t> tri;
@@ -2721,6 +2838,46 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
   } else if (dim == 1) {
     for (size_t i = 0; i + 2 < tri.size(); i += 3)
       element->insert(element->end(), {remap[size_t(tri[i])], remap[size_t(tri[i + 1])]});
+  } else if (active_reader->options.flex_tetrahedralize == "stuffing") {
+    // Opt-in volumetric mesh: isosurface stuffing of the surface's level
+    // set instead of MuJoCo's fan of every triangle to `origin`.
+    Mesh surface;
+    surface.positions.assign(point->begin(), point->end());
+    for (int32_t c : tri) surface.indices.push_back(remap[size_t(c)]);
+    double lo[3] = {1e300, 1e300, 1e300}, hi[3] = {-1e300, -1e300, -1e300};
+    for (size_t i = 0; i + 2 < point->size(); i += 3)
+      for (int a = 0; a < 3; ++a) {
+        lo[a] = std::min(lo[a], (*point)[i + size_t(a)]);
+        hi[a] = std::max(hi[a], (*point)[i + size_t(a)]);
+      }
+    const double extent = std::max({hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]});
+    const auto& opts = active_reader->options;
+    const double spacing = opts.flex_tet_spacing > 0 ? opts.flex_tet_spacing : extent / 12;
+    LevelSetOptions ls;
+    ls.voxel_size = spacing / 4;
+    ls.threads = opts.threads;
+    const size_t budget = opts.max_memory - std::min(opts.max_memory, active_reader->bytes);
+    ls.max_voxels = std::max<size_t>(100000, std::min<size_t>(budget / 128, 50000000));
+    LevelSet level_set;
+    StuffingOptions so;
+    so.spacing = spacing;
+    so.threads = opts.threads;
+    so.max_tets = std::max<size_t>(1000, std::min<size_t>(budget / 256, 4000000));
+    TetMeshData tm;
+    std::string why;
+    if (!(extent > 0) || !MeshToLevelSet(surface, ls, &level_set, &why) ||
+        !LevelSetToTetMesh(level_set, so, &tm, &why)) {
+      if (err) *err = "flexcomp tetrahedralization failed: " + (why.empty() ? std::string("no extent") : why);
+      return false;
+    }
+    if (!active_reader->ChargeArray(tm.points.size() + tm.tets.size(), 8, err)) return false;
+    point->assign(tm.points.begin(), tm.points.end());
+    element->assign(tm.tets.begin(), tm.tets.end());
+    if (stuffed) *stuffed = true;
+    active_reader->Warn("flexcomp mesh tetrahedralized by isosurface stuffing (" +
+                            std::to_string(tm.tets.size() / 4) + " tets, spacing " +
+                            std::to_string(spacing) + ") instead of MuJoCo's fan to origin",
+                        "mjcf.flex_tetrahedralized");
   } else {
     if (!has_origin) {
       if (err) *err = "origin must be specified for mesh flexcomps if dim=3";
@@ -3103,6 +3260,7 @@ bool CollectBodyFlexcompsJson(const pugi::xml_node& body_node,
     }
     std::vector<double> point;
     std::vector<int> element;
+    bool stuffed = false;  // tetrahedralized here: source vertex ids are gone
     const bool direct = type == "direct" || type == "mesh" || type == "gmsh";
     if (type == "direct") {
       point = ParseDoubles(Attr(f, "point"));
@@ -3122,7 +3280,7 @@ bool CollectBodyFlexcompsJson(const pugi::xml_node& body_node,
           return false;
         }
       } else if (!LoadFlexMesh(path, text, dim, ParseDouble3(Attr(f, "origin"), {{0, 0, 0}}),
-                               HasAttr(f, "origin"), &point, &element, err)) {
+                               HasAttr(f, "origin"), &point, &element, err, &stuffed)) {
         if (err) *err = "flexcomp `" + name + "`: " + *err;
         return false;
       }
@@ -3212,6 +3370,12 @@ bool CollectBodyFlexcompsJson(const pugi::xml_node& body_node,
     // Pins (ids before compaction, as MuJoCo applies them).
     std::vector<bool> pinned(static_cast<size_t>(npnt), MjcBoolAttr(Attr(f, "rigid", "false")));
     for (const auto& pin : Children(f, "pin")) {
+      if (stuffed) {
+        active_reader->Warn("flexcomp `" + name + "`: <pin> vertex ids do not survive "
+                                "tetrahedralization; the pin is ignored",
+                            "mjcf.flex_pin_unmapped");
+        continue;
+      }
       auto ints = [&](const char* key) {
         std::vector<int> v;
         for (double d : ParseDoubles(Attr(pin, key))) v.push_back(ToInt32(d, key));
@@ -5413,6 +5577,27 @@ bool AppendGeomToLink(const pugi::xml_node& geom_node, const std::string& cc,
         // MuJoCo collides an sdf geom with the exact surface, not a hull.
         col["approximation"] = "none";
         col["newton"]["sdf"] = true;
+        if (opts.sdf == "auto" && opts.profile == "newton") {
+          Json sdf;
+          std::string why;
+          const std::string mesh_name = Eff(geom_node, cls, "mesh");
+          if (MjcfSdfLevelSet(mesh_name, collider.mesh, &sdf, &why)) {
+            // Newton's narrow band is in the shape's units: author it only
+            // when the collider transform has no scale.
+            bool unit = collider.matrix.size() == 16;
+            for (int c = 0; unit && c < 3; ++c) {
+              const double len = std::sqrt(collider.matrix[4 * c] * collider.matrix[4 * c] +
+                                           collider.matrix[4 * c + 1] * collider.matrix[4 * c + 1] +
+                                           collider.matrix[4 * c + 2] * collider.matrix[4 * c + 2]);
+              unit = std::fabs(len - 1) < 1e-6;
+            }
+            sdf["unitScale"] = unit;
+            col["sdf"] = std::move(sdf);
+          } else {
+            active_reader->Warn("MJCF sdf geom `" + geom_name + "`: no level set (" + why + ")",
+                                "mjcf.sdf_level_set_failed");
+          }
+        }
       }
       if (geom_type == "mesh") {
         const auto mesh_it = assets.find(Eff(geom_node, cls, "mesh"));
@@ -7820,6 +8005,15 @@ bool BuildPayload(const std::string& text, const std::string& source,
     }
   }
   if (!GatherTextures(reader, result, err)) return false;
+  if (!reader.generated.empty()) {
+    Json generated = Json::array();
+    for (auto& entry : reader.generated) {
+      generated.push_back(entry.first);
+      result->assets[entry.first] = std::move(entry.second);
+    }
+    result->payload["generatedAssets"] = std::move(generated);
+    reader.generated.clear();
+  }
   if (!reader.preserved.empty()) result->payload["unsupported"] = std::move(reader.preserved);
   result->warnings = reader.warnings;
   result->memory_estimate = reader.bytes;

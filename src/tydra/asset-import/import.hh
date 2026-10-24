@@ -76,6 +76,19 @@ struct Options {
   // OBJ import topology: "expanded" (split points per unique corner) or
   // "indexed" (source positions, face-varying indexed normals/UVs).
   std::string obj_topology = "expanded";
+  // MJCF type="sdf" colliders (newton profile): "auto" computes a narrow-band
+  // level set of the collider mesh as a .vdb sidecar (generated asset) with
+  // sdf_resolution voxels across the mesh's largest extent and sdf_band
+  // voxels each side; "off" only marks the collider with
+  // NewtonSDFCollisionAPI.
+  std::string sdf = "auto";
+  int sdf_resolution = 64;
+  double sdf_band = 3;
+  // MJCF flexcomp dim=3 type=mesh tets: "mujoco" (MuJoCo's fan of every
+  // surface triangle to `origin`) or "stuffing" (isosurface stuffing of the
+  // mesh's level set, flex_tet_spacing apart; 0 picks extent / 12).
+  std::string flex_tetrahedralize = "mujoco";
+  double flex_tet_spacing = 0;
   bool allow_missing = false;
   bool tessellate_collision_shapes = false;
   UnsupportedPolicy unsupported_policy = UnsupportedPolicy::Warn;
@@ -160,6 +173,10 @@ struct Reader {
   bool allow_unanchored = true;
   size_t reported_bytes = 0;  // last progress callback
   AssetMap textures;
+  // Files the importer generates (relative output paths, e.g. sdf/<mesh>.vdb)
+  // and their per-source cache.
+  AssetMap generated;
+  std::map<std::string, Json> generated_cache;
   std::map<std::string, MeshBuffer> meshes;
   bool obj_indexed = false;  // set by the OBJ scene import (obj_topology)
   struct TextureRequest {

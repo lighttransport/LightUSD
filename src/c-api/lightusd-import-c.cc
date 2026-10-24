@@ -80,6 +80,32 @@ lightusd_status Options(const lightusd_import_options* in, ia::Options* out) {
         if (out->obj_topology != "expanded" && out->obj_topology != "indexed")
           return Fail(LIGHTUSD_ERR_INVALID_ARG, "obj_topology must be expanded or indexed");
       }
+      else if (key == "sdf" && v.is_string()) {
+        out->sdf = v.get<std::string>();
+        if (out->sdf != "auto" && out->sdf != "off")
+          return Fail(LIGHTUSD_ERR_INVALID_ARG, "sdf must be auto or off");
+      }
+      else if (key == "sdf_resolution" && v.is_number()) {
+        const double r = v.get<double>();
+        if (!(r >= 8 && r <= 4096) || r != std::floor(r))
+          return Fail(LIGHTUSD_ERR_INVALID_ARG, "sdf_resolution must be an integer in [8, 4096]");
+        out->sdf_resolution = static_cast<int>(r);
+      }
+      else if (key == "sdf_band" && v.is_number()) {
+        out->sdf_band = v.get<double>();
+        if (!(out->sdf_band >= 1 && out->sdf_band <= 64))
+          return Fail(LIGHTUSD_ERR_INVALID_ARG, "sdf_band must be in [1, 64] voxels");
+      }
+      else if (key == "flex_tetrahedralize" && v.is_string()) {
+        out->flex_tetrahedralize = v.get<std::string>();
+        if (out->flex_tetrahedralize != "mujoco" && out->flex_tetrahedralize != "stuffing")
+          return Fail(LIGHTUSD_ERR_INVALID_ARG, "flex_tetrahedralize must be mujoco or stuffing");
+      }
+      else if (key == "flex_tet_spacing" && v.is_number()) {
+        out->flex_tet_spacing = v.get<double>();
+        if (!(out->flex_tet_spacing >= 0) || !std::isfinite(out->flex_tet_spacing))
+          return Fail(LIGHTUSD_ERR_INVALID_ARG, "flex_tet_spacing must be a nonnegative number");
+      }
       else if (key == "threads" && v.is_number()) {
         const double threads = v.get<double>();
         if (!(threads >= 0 && threads <= 256) || threads != std::floor(threads))
@@ -209,6 +235,16 @@ lightusd_status Finish(ia::Result& result, const std::string& source,
   // source_filename is intentionally empty: a USD provenance query must not
   // try to reload a robot or OBJ file through the USD-only core loader.
   handle->import_assets = std::move(result.assets);
+  // Importer-generated files (level-set .vdb sidecars): written next to a
+  // saved layer and packaged under the same relative path in a USDZ.
+  for (const auto& path : result.payload["generatedAssets"]) {
+    if (!path.is_string()) continue;
+    const std::string name = path.get<std::string>();
+    const auto bytes = handle->import_assets.find(name);
+    if (bytes == handle->import_assets.end()) continue;
+    handle->generated_assets[name] = bytes->second;
+    handle->import_asset_paths[name] = name;
+  }
   // Collect source -> archive names from the material import contract.
   std::vector<const ia::Json*> entries;
   for (const auto& mat : result.payload["materials"]) entries.push_back(&mat);

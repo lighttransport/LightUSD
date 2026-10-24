@@ -67,7 +67,7 @@ in one of three profiles, selected with `profile=` (Python), `"profile"` in the 
 | MJCF ellipsoids (non-uniform) | mesh with the radii baked in (convex hull as a collider): a scaled `Sphere` is read as a unit sphere by Newton and rejected by OpenUSD | same | scaled `Sphere` (reported) |
 | URDF ghost / dummy-inertia links | urdf-usd-converter rules: inertia-, visual- and collision-less links on fixed joints (or the root) lose `RigidBodyAPI`, their fixed joint is dropped and child joints re-anchor on the nearest rigid ancestor (or the world); an inertial-only childless child on a fixed joint under a geometry-only parent is merged into it | same | as authored |
 | MJCF mesh colliders | `newton:maxHullVertices` only for `<mesh maxhullvert>` (unlimited otherwise); `<mesh inertia="shell">` and `shellinertia` geoms → `NewtonMassAPI` `newton:massModel = "shell"`, `legacy`/`exact` → `mjc:inertia`, `convex` implied (mujoco-usd-converter 0.8.0) | approximation only | `newton:maxHullVertices = 64`, `mjc:inertia = "legacy"` |
-| MJCF `type="sdf"` geoms | mesh collider with `NewtonSDFCollisionAPI` (Newton builds the SDF from the mesh; not `NewtonMeshCollisionAPI`) and `physics:approximation = "none"` | same collider without Newton APIs | mesh collider (convex hull) |
+| MJCF `type="sdf"` geoms | mesh collider with `NewtonSDFCollisionAPI` (Newton builds the SDF from the mesh; not `NewtonMeshCollisionAPI`) and `physics:approximation = "none"`, `newton:sdfMaxResolution`/`sdfNarrowBand*` matching a precomputed level-set sidecar (see [SDF sidecars and volumetric meshes](#sdf-sidecars-and-volumetric-meshes)) | same collider without Newton APIs or sidecar | mesh collider (convex hull) |
 | MJCF SDF plugin meshes (`<mesh><plugin instance>` of `mujoco.sdf.torus/bowl/gear/nut/bolt`) | generated as MuJoCo's compiler does (`mjCMesh::LoadSDF`: the plugin's distance on a ~300-cell grid over its AABB, MarchingCubeCpp), vertex/face counts and masses identical to MuJoCo 3.16; other plugins (`sdflib` on a file mesh needs none) are `mjcf.sdf_plugin_unsupported` | same | same |
 | MJCF collision bitmasks | `mjc:contype`/`mjc:conaffinity` (Newton) | `PhysicsCollisionGroup`s under `/World/CollisionGroups`, one per distinct (contype, conaffinity) pair, each filtering the groups MuJoCo's `(ct_a & ca_b) \|\| (ct_b & ca_a)` rule keeps apart; none when every pair collides | `mjc:geomContype/geomConaffinity` |
 | MJCF contact margin/gap | `newton:contactMargin`/`newton:contactGap` on every collider, MuJoCo's 0 when unauthored (mujoco-usd-converter) | omitted | only when authored |
@@ -236,6 +236,80 @@ Downstream checks (optional, see [testing](testing-cpp.md)):
 `add_usd` of the converted file (MuJoCo arbitrates mass/COM/inertia/collider
 differences); `tests/next/run-openusd-physics-check.py` runs every OpenUSD
 `UsdValidation` validator and the UsdPhysics parser on each profile.
+
+## SDF sidecars and volumetric meshes
+
+LightUSD computes signed distance fields and tetrahedral meshes with the
+vendored tinyvdb (`src/external/tinyvdb`, see its `UPSTREAM.txt`), on the CPU.
+
+**Level sets.** `tvdb_mesh_to_level_set` builds a sparse narrow-band level
+set (float 5/4/3 tree, class `level set`, negative inside):
+- Distances are exact closest-face distances.
+- Signs come from generalized winding numbers (|w| > 1/2), so open,
+  inside-out and inconsistently oriented meshes still get a consistent
+  inside.
+- The interior is flood-filled; output is identical for any thread count.
+- It matches brute-force distances to 1e-7. OpenVDB's `meshToLevelSet` agrees
+  in sign and to within 0.3 voxel (OpenVDB propagates and renormalizes
+  distances away from the polygons), and libopenvdb reads the files back.
+
+**MJCF `type="sdf"` geoms** (newton profile, `sdf="auto"`; `openusd` and
+`legacy` author none). Each collider mesh gets a level set in its own frame:
+- **Size:** `sdf_resolution` voxels (default 64) across the mesh's largest
+  extent and `sdf_band` voxels (default 3) on each side. Geoms sharing a mesh
+  asset share one file.
+- **Sidecar:** written as the generated asset `sdf/<mesh>.vdb`. USDA/USDC saves
+  write it beside the layer, and USDZ saves package it.
+- **Collider:** `newton:sdfMaxResolution` and, in an unscaled frame,
+  `newton:sdfNarrowBandInner/Outer`, so Newton's own (CUDA) SDF build matches
+  the sidecar.
+- **Volume:** a `Volume` `<collider>_sdf` beside the collider, with the same
+  transform and `purpose = "guide"`. Its `OpenVDBAsset` field `sdf` has
+  `fieldName = "sdf"`, `fieldClass = "levelSet"` and `filePath` the sidecar.
+- **LightUSD extension:** `rel lightusd:sdf` from the collider to that Volume.
+
+Newton reads the parameters (it cannot load a precomputed SDF from USD); the
+Volume is for consumers that can.
+
+**Volumetric soft bodies.** Isosurface stuffing (Labelle and Shewchuk 2007)
+tetrahedralizes a level set's interior:
+- It uses a BCC lattice, warps lattice vertices near the surface, and applies
+  sign stencils with minimum-key diagonals.
+- Tets are positively oriented and the boundary is watertight and outward.
+- A unit sphere at spacing 0.1 gives dihedral angles of 23 to 133 degrees.
+- **Flexcomp opt-in:** `flex_tetrahedralize="stuffing"` (spacing
+  `flex_tet_spacing`, default extent / 12) replaces MuJoCo's fan of every
+  surface triangle to `origin` for `dim=3 type=mesh` flexcomps
+  (`mjcf.flex_tetrahedralized`). Pins given by vertex id are dropped
+  (`mjcf.flex_pin_unmapped`).
+- **Bunny example:** the fan overlaps on non-star-shaped meshes. On MuJoCo's
+  bunny its tets sum to 125% of the mesh volume, while stuffing converges from
+  below: 94% at spacing extent/12, 97% at extent/24.
+- **Newton:** imports the result as particles and tets.
+
+**`.vdb` inputs** (LightUSD extension, `mjcf.vdb_mesh_extension`; MuJoCo has
+no VDB meshes):
+- MJCF `<mesh file="x.vdb">` takes the first level-set grid, meshed at its zero
+  isovalue.
+- A flexcomp `type="mesh" file="x.vdb" dim="3"` is stuffed directly (spacing
+  default 4 voxels).
+
+**APIs.**
+- **C** (`lightusd-import-c.h`): `lightusd_mesh_to_level_set_vdb`,
+  `lightusd_level_set_vdb_info` / `_sample` / `_to_mesh` / `_to_tet_mesh`, and
+  `lightusd_stage_add_generated_asset`.
+- **Python** (`lightusd.volumetric`): `mesh_to_level_set`,
+  `LevelSet.sample/to_mesh/to_tet_mesh/save`, `read_level_set`,
+  `add_mesh_sdf(stage, mesh_path)` (the importer's layout on any Mesh prim)
+  and `make_volume_deformable(stage, mesh_or_volume)` (a `TetMesh` with
+  `PhysicsVolumeDeformableSimAPI`, per-point masses and a bound
+  `PhysicsVolumeDeformableMaterialAPI` material).
+- **CLI:** `python -m lightusd.volumetric IN -o OUT --sdf MESH --deformable
+  PRIM`, and `urdf-to-usd --sdf auto|off --sdf-resolution N --sdf-band V
+  --flex-tetrahedralize mujoco|stuffing --flex-tet-spacing H`.
+
+GPU: tinyvdb has CUDA (NVRTC) and Vulkan kernels for dense SDF work. The
+level-set and stuffing paths above are CPU-only for now.
 
 ## Newton Physics Implementation
 

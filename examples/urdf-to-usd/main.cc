@@ -17,6 +17,7 @@ using OutputStage = lightusd::next::Stage;
 using OutputStage = lightusd::Stage;
 #endif
 #include <cerrno>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -38,6 +39,9 @@ void Help() {
          "         --max-input BYTES --max-depth 1..1024 "
          "--unsupported-policy warn|error|preserve\n"
          "         --layout flat|nested\n"
+         "         --sdf auto|off --sdf-resolution N --sdf-band VOXELS (MJCF sdf\n"
+         "           geoms: level-set .vdb sidecars, newton profile)\n"
+         "         --flex-tetrahedralize mujoco|stuffing --flex-tet-spacing H\n"
          "         --profile newton|openusd|legacy (next-core writer; the "
          "legacy writer always emits legacy)\n";
 }
@@ -126,6 +130,30 @@ int main(int argc, char** argv) {
       opts.layout = value();
       if (opts.layout != "flat" && opts.layout != "nested")
         err = "--layout expects flat or nested";
+    }
+    else if (arg == "--sdf") {
+      opts.sdf = value();
+      if (opts.sdf != "auto" && opts.sdf != "off") err = "--sdf expects auto or off";
+    } else if (arg == "--flex-tetrahedralize") {
+      opts.flex_tetrahedralize = value();
+      if (opts.flex_tetrahedralize != "mujoco" && opts.flex_tetrahedralize != "stuffing")
+        err = "--flex-tetrahedralize expects mujoco or stuffing";
+    } else if (arg == "--sdf-resolution" || arg == "--sdf-band" || arg == "--flex-tet-spacing") {
+      const std::string str = value();
+      char* end = nullptr;
+      const double v = std::strtod(str.c_str(), &end);
+      if (str.empty() || !end || *end || !std::isfinite(v))
+        err = "Invalid number for " + arg;
+      else if (arg == "--sdf-resolution") {
+        if (v < 8 || v > 4096 || v != std::floor(v)) err = "--sdf-resolution expects 8..4096";
+        else opts.sdf_resolution = int(v);
+      } else if (arg == "--sdf-band") {
+        if (v < 1 || v > 64) err = "--sdf-band expects 1..64 voxels";
+        else opts.sdf_band = v;
+      } else {
+        if (v < 0) err = "--flex-tet-spacing expects a nonnegative length";
+        else opts.flex_tet_spacing = v;
+      }
     }
     else if (arg == "-o" || arg == "--output")
       output = value();
@@ -221,6 +249,23 @@ int main(int argc, char** argv) {
         auto bytes = result.assets.find(mat["texturePackage"].get<std::string>());
         if (bytes == result.assets.end() || !bytes->second) continue;
         const fs::path target = path.parent_path() / mat["texture"].get<std::string>();
+        std::error_code ec;
+        fs::create_directories(target.parent_path(), ec);
+        std::ofstream out(target.string(), std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(bytes->second->data()),
+                  static_cast<std::streamsize>(bytes->second->size()));
+        if (!out) {
+          std::cerr << "urdf-to-usd: cannot write " << target.string() << "\n";
+          return 1;
+        }
+      }
+    // Generated level sets (MJCF sdf geoms) are referenced by relative path.
+    if (std::string(kind) != "usdz")
+      for (const auto& name : result.payload["generatedAssets"]) {
+        if (!name.is_string()) continue;
+        auto bytes = result.assets.find(name.get<std::string>());
+        if (bytes == result.assets.end() || !bytes->second) continue;
+        const fs::path target = path.parent_path() / name.get<std::string>();
         std::error_code ec;
         fs::create_directories(target.parent_path(), ec);
         std::ofstream out(target.string(), std::ios::binary | std::ios::trunc);

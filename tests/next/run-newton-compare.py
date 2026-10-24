@@ -78,6 +78,10 @@ def _cpu_sdf_fallback(path, notes):
         if "NewtonSDFCollisionAPI" in prim.GetAppliedSchemas():
             prim.RemoveAppliedSchema("NewtonSDFCollisionAPI")
             prim.AddAppliedSchema("NewtonMeshCollisionAPI")
+            # Authored SDF parameters alone also make Newton build an SDF.
+            for attr in prim.GetAttributes():
+                if attr.GetName().startswith("newton:sdf"):
+                    prim.RemoveProperty(attr.GetName())
             swapped += 1
     if not swapped:
         return path
