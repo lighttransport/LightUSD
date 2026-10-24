@@ -321,7 +321,7 @@ f121272e (2026-10-24; Menagerie Newton compare still 65/69). Fixed in the
 - MJCF colliders now always carry `newton:contactMargin`/`contactGap`
   (MuJoCo's 0 when unauthored), as mujoco-usd-converter writes them; Newton
   would otherwise apply `rigid_gap = 0.1` m (its own `add_mjcf` does).
-- Resolved by verification, no change: the URDF root weld (as
+- Resolved by verification, no change (accepted by the user): the URDF root weld (as
   urdf-usd-converter and `add_urdf`; `add_usd(floating=True)` still floats it
   because the weld has no `physics:body0`); URDF effort limits (Newton
   schemas 0.6.0 have no joint effort attribute; Newton reads effort only from
@@ -346,6 +346,11 @@ f121272e (2026-10-24; Menagerie Newton compare still 65/69). Fixed in the
   69/69. Upstream issue drafts (Newton zero-inertia/zero-mass handling,
   MuJoCo wheel polygon limit) are in the session scratchpad for filing; the
   repo no longer depends on them.
+
+- Review closed (2026-10-24, accepted by the user): the 22 gap-review fixes,
+  the stretch/rby1/lite6 residual fixes (Newton compare 69/69), the URDF root
+  weld and effort limit (verified, unchanged) and the two not-planned items
+  (interpolated flex dofs, cube-projected material textures).
 
 Reference specifications: [UsdPhysics](https://openusd.org/dev/api/usd_physics_page_front.html),
 [MJCF](https://mujoco.readthedocs.io/en/stable/XMLreference.html), and
