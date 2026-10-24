@@ -305,6 +305,21 @@ def NewtonActuator "FingerDrive" (
 
 ---
 
+> **MuJoCo 3.16 deprecations.** MuJoCo's USD decoder (3.16) warns on these
+> MjcPhysics attributes and prefers the Newton forms; the native importers
+> write the Newton form in the `newton` profile and keep the MjcPhysics alias
+> only in `legacy`: `mjc:option:timestep` → `newton:timeStepsPerSecond`
+> (kept when the integer cannot hold the timestep), `mjc:option:iterations` →
+> `newton:maxSolverIterations`, `mjc:flag:gravity` → `newton:gravityEnabled`,
+> `mjc:margin`/`mjc:gap` → `newton:contactMargin`/`newton:contactGap`,
+> `mjc:maxhullvert` → `newton:maxHullVertices`, `mjc:shellinertia` and shell
+> `mjc:inertia` → `newton:massModel`, `mjc:armature`/`damping`/`frictionloss`
+> → `NewtonJointAPI`, `mjc:torsionalfriction`/`rollingfriction` →
+> `newton:torsionalFriction`/`rollingFriction`, equality `mjc:target`/`coef0`/
+> `coef1` → `newton:mimicJoint`/`mimicCoef0`/`mimicCoef1`. `mjc:inertia` is
+> still written for `legacy`/`exact` meshes (MuJoCo would otherwise infer
+> `convex`).
+
 ## 1. MjcSceneAPI — Global Simulation Options
 
 Applied to `UsdPhysicsScene` prims. Maps to MJCF `<option>`, `<option/flag>`, and `<compiler>`.
@@ -619,11 +634,19 @@ MjcImageableAPI marks entities as strictly visual (contype = conaffinity = 0).
 ## URDF / MJCF → USD Physics Conversion
 
 LightUSD converts URDF and MuJoCo MJCF robots into a UsdPhysics + mjcPhysics
-stage. The C++ converter is `lightusd::tydra::ConvertURDFJsonToUSDStage`
-(`src/tydra/urdf-to-usd.cc`); it consumes a JSON payload produced by the web
-demo (`web/js/urdf.js`) or the node CLI (`web/js/cli/urdf-to-usd.js`), both of
-which parse the source robot and emit per-joint frames (`localPos0/1`,
-`localRot0/1`) and per-link inertials. The WASM entry point is
+(+ Newton) stage along two paths:
+
+- **Native importers** (C++, C ABI, Python `lightusd.import_urdf/import_mjcf`,
+  CLI `examples/urdf-to-usd`): `src/tydra/asset-import/` parses the source and
+  `src/tydra/next/urdf-to-usd*.cc` writes the stage in the selected
+  [output profile](#output-profiles). This is the path described by the rest
+  of this document.
+- **JSON bridge** (web demo / node CLI): `lightusd::tydra::ConvertURDFJsonToUSDStage`
+  (`src/tydra/urdf-to-usd.cc`) consumes a JSON payload produced by the web
+  demo (`web/js/urdf.js`) or the node CLI (`web/js/cli/urdf-to-usd.js`), both of
+  which parse the source robot and emit per-joint frames (`localPos0/1`,
+  `localRot0/1`) and per-link inertials. A payload without a `profile` member
+  keeps the `legacy` output. The WASM entry point is
 `createURDFPhysicsScene` in `web/binding.cc`; re-importing the stage for the
 preview goes back through `extractPhysicsSceneJSON`.
 
@@ -772,22 +795,26 @@ its declared type (for example `half3[]`). Converting fruitfly to cm/g takes
 
 ### Best-effort and unsupported features
 
-These are converted on a best-effort basis and **emit a warning** (console /
-status line) instead of being dropped silently:
+These are converted on a best-effort basis and are reported (import report
+diagnostics and the warning string) rather than dropped silently. Rows give the
+default `newton` profile; [Output profiles](#output-profiles) lists the
+`openusd` and `legacy` differences.
 
 | Feature | Behavior |
 |---|---|
-| MJCF body with multiple `<joint>` | converted to a chain of single-DOF joints through `(N-1)` massless intermediate link Xforms (`<body>__mjcdof_k`), preserving every DOF; only the first joint carries the body offset |
-| MJCF `ball` joint | mapped to `PhysicsSphericalJoint`; the single-slider preview leaves it at rest (3 DOF can't be driven by one scalar) |
-| MJCF non-diagonal `fullinertia` | diagonalized into `physics:diagonalInertia` (principal moments) + `physics:principalAxes` (eigenvector quaternion), the lossless USD representation |
-| URDF `<mimic>` | exported as `NewtonMimicAPI` when the target joint is also exported |
-| MJCF joint-targeted `<actuator>` | exported as `NewtonActuator` best-effort (`kp`/`kv` or `gainprm`/`biasprm`, force/control range, delay); non-joint actuators are not converted |
-| MJCF `<tendon><fixed>` | `MjcTendon` (type=fixed) under `/World/Tendons` — `mjc:path`→coupled joints, `mjc:path:coef`, stiffness/damping/range |
-| MJCF `<tendon><spatial>` (muscles) | `MjcTendon` (type=spatial) routed through `<site>` markers, native `Sphere`/`Cylinder` wrap geoms with side sites, and pulley segments/divisors (see Output profiles). Visualized as polylines in the web demo source view |
-| MJCF `<site>` | `GeomSphere` marker under `/World/Sites` + `MjcSiteAPI` (the routing points for spatial tendons) |
-| MJCF `<actuator><muscle>` / `<general class="muscle">` | `MjcActuator` (`mjc:target`→tendon, `gainPrm`/`biasPrm`/`lengthRange`/`ctrlRange`) |
-| MJCF `<equality>` (connect/weld/joint) | converted to an Xform host prim under `/World/Equalities` carrying the matching `MjcEquality{Connect,Weld,Joint}API` + `mjc:*` attributes |
-| MJCF `<contact><exclude>` | converted to `PhysicsFilteredPairsAPI` (`physics:filteredPairs`) on the first body |
+| MJCF body with multiple `<joint>` | hinges/slides stack between the same body pair (`newton:jointsAddMobility`, merged by Newton into a D6); a stack with a ball joint becomes a chain through massless intermediate links (`<body>__mjcdof_k`) |
+| MJCF `ball` joint | `PhysicsSphericalJoint`; a swing `range` becomes equal `physics:coneAngle0Limit`/`coneAngle1Limit` half-angles (`legacy` reports it) |
+| MJCF non-diagonal `fullinertia` | `physics:diagonalInertia` + `physics:principalAxes` (eigen-decomposition) and the full tensor as `NewtonMassAPI` `newton:inertia` |
+| URDF `<mimic>` / MJCF joint equality | `NewtonMimicAPI` on the follower (`newton:mimicCoef0` in degrees for angular joints); a single-joint equality keeps `mjc:coef0` and is reported |
+| MJCF `<actuator>` | `MjcActuator` with MuJoCo's compiled gain/bias/dynamics expansion; pid/dcmotor/so3 types without an MjcPhysics token are reported and skipped, as is any actuator whose target was not exported |
+| URDF `<transmission>` | `urdf:transmission:*` metadata on the joint (no actuator) |
+| MJCF `<tendon>` (fixed, spatial) | `MjcTendon` under `/World/Tendons`; spatial routing through sites, native `Sphere`/`Cylinder` wrap geoms and pulleys (see [Output profiles](#output-profiles)); other wrap geom types skip the tendon (`mjcf.tendon_wrap_type`) |
+| MJCF `<site>` | a gprim under its body with `MjcSiteAPI` + `NewtonSiteAPI` |
+| MJCF `<equality>` connect/weld | `PhysicsSphericalJoint` / `PhysicsFixedJoint` excluded from the articulation (`active` → `physics:jointEnabled`); unsupported equality types are reported (`mjcf.equality_unsupported`) |
+| MJCF `<contact><exclude>` / `<pair>` | `PhysicsFilteredPairsAPI` on the first body / an `Xform` under `/World/Contacts` with `mjc:geom1`/`mjc:geom2` tokens and the pair's `condim`/`margin`/`gap`/`friction`/`sol*` (no MjcPhysics schema covers pairs; `openusd` omits it) |
+| MJCF `<flexcomp>`, raw `<flex>` | UsdPhysics deformables; interpolated (`node`/`dof`) flexes are approximated as full-dof, binary GMSH and `<skin>` are reported |
+| MJCF `<frame scale/massscale>` | the frame's pose is applied, its scale is reported (`mjcf.frame_scale_unsupported`) |
+| MJCF cube textures on materials | reported (`mjcf.texture_builtin_unsupported`); builtin skyboxes become a latlong `DomeLight` |
 
 ---
 
@@ -804,6 +831,10 @@ status line) instead of being dropped silently:
 | USDC parsing | Done | `src/usdc-reader-prim.cc` |
 | Pretty-printing (USDA output) | Done | `src/pprint-physics.cc` |
 | Tydra JSON export | Done | `src/tydra/physics-to-json.cc` |
+| Native URDF/MJCF/OBJ import (payload) | Done | `src/tydra/asset-import/` (`mjcf.cc`, `obj.cc`, `dae.cc`, `reader.cc`, `builtin-texture.cc`) |
+| Profile-aware USD writer (next core) | Done | `src/tydra/next/urdf-to-usd*.cc` |
+| C ABI / Python | Done | `src/c-api/lightusd-import-c.cc`, `lightusd-physics-c.cc`; `python/lightusd/` |
+| Physics query / validation | Done | `lightusd_stage_query_physics`, `src/next/validation/usd-validation-physics.cc` |
 
 ### API schemas supported
 
@@ -826,6 +857,13 @@ Registered in the `APISchemas::APIName` enum (`src/core/composition-types.hh`):
 - ~30 unit tests in `tests/unit/unit-physics.cc` covering the concrete prim types, UsdPhysics/mjcPhysics/Newton API schemas, pprint roundtrip, and Tydra JSON export
 - `tests/usda/physics-*.usda` synthetic test files for USDA/USDC roundtrip
 - Blender export roundtrip test asset: `models/blender-physics.usda`
+- Native importers: `python/tests/` (import, profiles, soft bodies, tendons,
+  textures, components), `tests/next/` CTest, the `fuzz_next_import`
+  libFuzzer harness
+- Downstream checks (optional): `tests/next/run-newton-compare.py` (Newton
+  `add_mjcf` vs `add_usd` over Menagerie, 69/69) and
+  `tests/next/run-openusd-physics-check.py` (OpenUSD 26.08 UsdPhysics
+  validators and parser)
 
 ---
 
@@ -856,6 +894,10 @@ When the mode includes MuJoCo, collision/world/constraint prims also get
 `mjc:option:iterations`, `mjc:flag:gravity`, `mjc:damping`, `mjc:stiffness`,
 `mjc:group`. Import reverses the joint/body/material mapping and matches USD prim
 names to Blender objects (exact, then `.`→`_` fallback).
+
+The addon writes the MjcPhysics names above as they are; MuJoCo 3.16's decoder
+reads several of them as deprecated aliases (see the deprecation note before
+section 1).
 
 **Limitations:** soft body and cloth are not exported; collision groups are not
 mapped; per-axis springs export only the X-axis spring/damping; MuJoCo actuators
