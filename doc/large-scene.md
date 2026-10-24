@@ -392,9 +392,9 @@ the GPU path — negligible for Caldera: ~29 K of 12.70 M tris.)
 blank on Caldera~~ — **fixed**: the RT TLAS included *every* USD purpose, so
 Caldera's ~26 M-tri `guide` breadcrumb planes (hidden in raster) engulfed the
 camera; the TLAS now skips purposes hidden in the UI and the mine district
-ray-traces correctly (see §2.8 for the measured recipe). The VK-raster flat
-shading still wants the smooth-normal + headlight treatment the lusdrender
-preview already uses. For full LOD, see §2.6.2.
+ray-traces correctly (the July 2026 recipe is in the §2.8 historical note
+and in git history). The VK-raster flat shading still wants the smooth-normal +
+headlight treatment the lusdrender preview already uses. For full LOD, see §2.6.2.
 
 ### 2.6.1-a Island element composition and lusdview timings
 
@@ -1127,206 +1127,25 @@ duplication, mesh compatibility, and hierarchy depth.
 
 ---
 
-### 2.8 Validated VRAM-fit configs: Island + Caldera on 6 GiB / 15 GiB (2026-07)
+### 2.8 GPU/VRAM round (2026-07) — historical
 
-GPU-backend review outcome (NVIDIA RTX 5060 Ti 16 GiB, driver-reported
-15.57 GiB device-local budget). Every row below was measured with
-`benchmark/lusdrender/bench_vram.sh` (true VRAM: `nvidia-smi` 100 ms peak polling minus
-idle baseline — earlier "VRAM" numbers in this doc that came from RSS are
-host RAM, not VRAM). The **6 GiB rows additionally completed unchanged under
-a 10 GiB VRAM ballast** (`benchmark/lusdrender/vram_ballast.py 10`), i.e. with only
-~5.5 GiB of the card actually available. Cameras: island `shotCam`, caldera
-`phospate_mine_overview`. lusdview headless default 1469×1284; lusdrender
-1280×720.
+The July 2026 lusdview/lusdrender VRAM work (validated 6 GiB / 15 GiB fit
+configs, host-memory weld/texture matrix, raster LOD for non-instanced
+geometry, `-vk` compute tiling, TLAS `PREFER_FAST_BUILD`) is superseded by the
+later sections; the tables and recipes are in git history
+(`git log -- doc/large-scene.md`). Durable outcomes, so they are not re-derived:
 
-Perf/VRAM changes this round (all image-neutral — byte-identical or
-pass the cross-backend tolerance test):
-
-- **LightRT VK BLAS compaction** (default ON, `LRT_VK_BLAS_COMPACT=0` opts
+- LightRT VK BLAS compaction stays ON by default (`LRT_VK_BLAS_COMPACT=0` opts
   out): caldera `-vkInstanced` 1051→525 MiB; island full instance set
-  7153→5408 MiB **and** 49.6→31.7 s (the compaction rebuild batches BLAS
-  builds in ≤512-proto waves — two submits per wave instead of one per
-  prototype).
-- **lusdview Caldera `--rt` fixed** (purpose-filtered TLAS, see §2.6.1):
-  BLAS build 1907→901 ms, RT VRAM 2.73→1.23 GiB, mine district now traces.
-- **lusdview device-local MDI instance mirror** (auto when
-  VK_EXT_memory_budget shows ≥20 % headroom; `LUSDVIEW_MDI_DEVLOCAL=0/1`
-  forces): island no-LOD 843→766 ms/frame. No effect with `--raster-lod`
-  (that frame is primitive-bound: 55 M drawn tris of non-instanced unique
-  geometry, 63 visible instances). Costs 1.37 GB VRAM on island — the auto
-  headroom check keeps it off in tight-VRAM situations.
-- **lusdrender flat GPU paths**: `-vkr` skips the unused CPU BVH (15.4→6.6 s
-  on caldera), `-vk` builds it threaded (15.2→8.5 s); shade/write is
-  row-parallel; `-stats` prints per-stage `[gpu-stats]` timings.
-- **CUDA/HIP `--rt-samples`**: device-side accumulation, one readback at the
-  end (was one `cuMemcpyDtoH` + host byte-loop per sample).
-- Live VRAM: lusdview logs `vram=used/budget GiB` in `[present]`/`[vk_rt]`
-  lines (VK_EXT_memory_budget).
-
-**lusdview** (`T=./build/lusdview`, `ISL=<asset-root>/island/usd/island.usda`,
-`CAL=<asset-root>/caldera/caldera.usda`):
-
-| Config | Recipe | VRAM peak | Steady frame | Fits |
-|---|---|---|---|---|
-| Island raster, 15 GiB | `--next --camera shotCam` (mirror auto-on) | 1.55 GiB | 766 ms | 15 GiB |
-| Island raster, 6 GiB | `--next --camera shotCam --max-gpu-mem 4 --raster-lod --raster-lod-full-px 32 --raster-lod-cull-px 3` + `LUSDVIEW_MDI_DEVLOCAL=0` | 0.25 GiB | ~362 ms | both |
-| Island RT, 15 GiB | `--next --rt --rt-lod --rt-lod-full-px 96 --rt-lod-cull-px 1 --camera shotCam` | 4.29 GiB | — | both |
-| Island RT, 6 GiB | `--next --rt --rt-lod --rt-lod-full-px 48 --rt-lod-cull-px 3 --camera shotCam` | 4.19 GiB | — | both (ballast-verified) |
-| Caldera raster | `--next --camera phospate_mine_overview --max-tris 40000000` | 0.18 GiB | — | both |
-| Caldera RT | raster recipe + `--rt` | 1.40 GiB | — | both (ballast-verified) |
-| Caldera CUDA, 15 GiB | raster recipe + `--cuda` | 7.48 GiB | — | 15 GiB only |
-| Caldera CUDA, 6 GiB | `--cuda --max-tris 8000000` | 1.98 GiB | — | both (ballast-verified) |
-| Island CUDA | `--next --cuda --camera shotCam` | 2.39 GiB | — | both (ballast-verified) |
-
-Notes: the island RT rt-lod px knobs barely move VRAM (4.19 vs 4.29 GiB —
-the grid + LOD-bound BLAS set is the resident cost); both fit 6 GiB but with
-little margin — the P2 lusdview BLAS-compaction port is the next lever. The
-caldera CUDA cliff between `--max-tris 13000000` (5.53 GiB, marginal) and
-`8000000` (1.98 GiB) is one huge district mesh crossing the cap; the 8 M cap
-renders the same visible content at this camera (identical image stats).
-
-**lusdrender** (`B=./build/tools/lusdrender/lusdrender`):
-
-| Config | Recipe | VRAM peak | Wall | Fits |
-|---|---|---|---|---|
-| Island full set, 15 GiB | `LUSDR_INST_BUDGET=45000000 $B $ISL out.png -vkInstanced -camera shotCam -w 1280 -height 720 -maxMem 24` | 5.41 GiB | 31.7 s | 15 GiB (6 GiB too marginal) |
-| Island, 6 GiB | `LUSDR_INST_BUDGET=16777216 LRT_VK_TLAS_SLICE=8388608 $B $ISL out.png -vkInstanced -rtLod -rtLodFullPx 48 -rtLodCullPx 3 -camera shotCam -w 1280 -height 720 -maxMem 14` | 0.40 GiB | 19.3 s | both (ballast-verified) |
-| Caldera | `$B $CAL out.png -vkInstanced -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14` | 0.52 GiB | 5.8 s | both (ballast-verified) |
-
-Avoid flat `-vkr` on caldera when `-vkInstanced` works (0.95 vs 0.52 GiB);
-its win this round is speed (6.6 s total after the CPU-BVH skip). The island
-full-set row is the compaction headline: 42.8 M instances now render in
-5.41 GiB VRAM (uncompacted: 7.15 GiB) — it even *passes* the nominal
-5.5 GiB bar, but leaves no margin for a real desktop, so it is listed as the
-15 GiB config.
-
-**Remaining follow-ons (P2, unimplemented):** device-local node/block buffers for
-the `-vk` compute path; tiled ray/hit dispatch; TLAS `PREFER_FAST_BUILD` for
-settle rebuilds; a `--vram-budget <GiB>` umbrella flag for **lusdrender**
-(lusdview has it: `examples/lusdview/main.cc` — the one number the whole budget
-tree descends from); raster LOD for *non-instanced* meshes (the island
-`--raster-lod` frame is bound by 55 M non-instanced drawn tris — the instanced
-side is already solved). The two headline follow-ons from the 2026-07 round are
-now done: the **lusdview BLAS-compaction port** (`LUSDVIEW_BLAS_COMPACT`,
-`examples/lusdview/vk/vk_renderer.cc`), and the island RT 4.2 → est. ~2.7 GiB
-saving it was expected to deliver.
-
-### 2.9 Host-memory matrix: weld ratio + texture cap (`--next`, 2026-07-11)
-
-Companion to §2.8, measuring a different thing: these are **host peak RSS**
-(`/usr/bin/time -v`, so process startup is included), not device VRAM. They
-exist to catch two `--next` regressions no unit test can see — a weld key that
-over-splits (the memory win silently evaporates) and a texture cap that stops
-bounding decode. Xvfb + NVIDIA RTX 5060 Ti.
-
-Deferred-payload profiles (`examples/lusdview/tests/run-large-scene-profiles.sh`,
-all three PASS). Each resolves `backend=vk --next=on --raster-lod=on --rt-lod=on
---max-gpu-mem=8.0` — the 8 GiB is `ComputeResourceBudget`'s half-of-16-GiB, not
-a hardcode:
-
-| Scene | Peak RSS | Prior baseline | Wall |
-|---|---|---|---|
-| Island | 0.45 GB | 0.49 GB | 2.9 s |
-| Caldera | 2.06 GB | 2.18 GB | 6.5 s |
-| ALab | 0.52 GB | 0.55 GB | 3.0 s |
-
-**These profiles defer payloads and therefore decode 0 textures** — they do not
-exercise the texture cap, and their weld ratios cover only the proxy geometry.
-Add `--load-payloads` for the runs that do:
-
-| Scene | Weld ratio | Textures | Wall | Peak RSS |
-|---|---|---|---|---|
-| Island | **1.04x** (21 159 184 verts / 20 437 898 points) | 0 | 72 s | 18.7 GB |
-| Caldera | **1.48x** (31 905 889 / 21 547 797) | 0 | 32 s | 10.8 GB |
-| ALab | **1.29x** (6 726 046 / 5 193 895) | 343, 1372 MB decoded (budget 1920 MB, **0 downscaled**) | 17 s | 5.3 GB |
-
-The weld ratio is the number to watch: a ratio drifting toward the
-corners-per-point count (~4-6x) means the weld key is too strict and the
-deduplication is gone. Island composes 40.9 M instances / 11.7 G effective tris
-in this configuration and still fits the 30 GiB host headroom.
-
-```bash
-CALDERA=<asset-root>/caldera/caldera.usda \
-ISLAND=<asset-root>/island/usd/island.usda \
-ALAB=<asset-root>/alab/_merged_ALab/entry.usda \
-  bash examples/lusdview/tests/run-large-scene-profiles.sh
-
-# The full-payload run (weld + texture cap), per scene:
-/usr/bin/time -v ./build/lusdview --headless --large-scene-profile procedural-heavy \
-  --load-payloads --frames 1 --screenshot alab.ppm \
-  <asset-root>/alab/_merged_ALab/entry.usda
-# watch: 'next: weld N vertices from M points (Kx)'
-#        'next: textures N, decoded X MB (cap ..., budget ..., K downscaled)'
-```
-
----
-
-### 2.10 Raster LOD reaches non-instanced geometry (2026-07-11)
-
-`--raster-lod` classified only instanced prototypes, so Island's unique geometry
-was drawn in full no matter how small it was on screen. It now runs the same
-Cull / Proxy / Full classification over non-instanced meshes.
-
-The prerequisite was a loader bug: the `--next` static-batch path copied the
-running **scene**-bounds accumulator into every batch as its AABB, so no unique
-mesh could ever be outside the frustum or small on screen — the per-mesh frustum
-cull was a no-op too. Each batch now carries its own world bounds (skinned
-batches keep the conservative scene box, since their vertices are a single pose).
-
-| Island, `--next`, 1456×1264 headless | drawn tris | meshes drawn |
-|---|---|---|
-| `--raster-lod` off | 21 646 M (43.2 M instances) | 100 801 / 100 801 |
-| `--raster-lod` on, before | 40.3 M | 100 801 / 100 801 |
-| `--raster-lod` on, after | **15.2 M** | 84 400 / 100 801 |
-
-Regression test: `lusdview-noninstanced-lod`.
-
-### 2.11 lusdrender `-vk` compute trace: ray tiling, and the device-local BVH
-that did not pay (2026-07-11)
-
-`lrt_vk_trace_scene` allocated the whole frame's rays and hits up front —
-48 B × w × h × spp, i.e. **6.3 GB of VRAM for 1920×1080 at 64 spp**, on top of
-the BVH — and dispatched them as one job. It now traces in fixed tiles
-(`LRT_VK_RAY_TILE`, default 4 M rays = a 192 MiB working set). Rays are
-independent, so this is exactly image-neutral, and it is also *faster*:
-
-| Suzanne, 1024×1024 × 32 spp (33.5 M rays), RTX 5060 Ti | trace | ray+hit VRAM |
-|---|---|---|
-| one whole-frame dispatch | 3.61 s | ~1.6 GiB |
-| tiled, 4 M rays | **2.83 s** | **192 MiB** |
-
-Device-local node/block buffers (`LRT_VK_DEVICE_LOCAL=1`) were the other half of
-the §2.8 plan, and they do **not** pay off — left implemented but off by default.
-Measured on ALab (29.2 M tris; 297 MiB nodes + 1.6 GiB blocks, verified resident
-in VRAM):
-
-| | per-ray trace | 16.7 M-ray trace |
-|---|---|---|
-| host-visible BVH | 0.144 µs | 4.65 s |
-| device-local BVH | 0.144 µs | 4.92 s (the staging copy) |
-
-Traversal is simply not bound by where the BVH lives on this GPU, and moving it
-into VRAM spends ~1.9 GiB of the budget this work exists to reclaim. The
-reasoning still holds for a GPU whose traversal *is* bandwidth-bound, hence the
-flag — but measure before enabling it.
-
-Regression test: `tool-lusdrender-vk-ray-tiling` (4 tiles must be byte-identical
-to one whole-frame dispatch).
-
-### 2.12 TLAS `PREFER_FAST_BUILD`: measured, rejected (2026-07-12)
-
-The last item of the §2.8 list, and it does not pay. On Island (`--rt --rt-lod`,
-36 k TLAS instances) the TLAS acceleration-structure build is **0.7–4.6 ms of a
-600–8400 ms rebuild** — the rebuild is dominated by the BLAS builds and the
-instance array, not the TLAS. `PREFER_FAST_BUILD` would save ~1 ms of a rebuild
-that only happens when the camera settles, and charge for it on every
-accumulation frame afterwards.
-
-Left as a lever (`LUSDVIEW_TLAS_FAST_BUILD=1`) for a GPU or scene where the
-balance differs. `LUSDVIEW_RT_TIMING=1` now prints the AS-build time on its own
-line, so the trade can be re-measured rather than re-argued.
-
----
+  7153→5408 MiB and 49.6→31.7 s.
+- Device-local MDI instance mirror is auto-enabled at ≥20 % VRAM headroom
+  (`LUSDVIEW_MDI_DEVLOCAL=0/1` forces it); it costs ~1.37 GB on island and does
+  nothing under `--raster-lod`, whose frame is primitive-bound.
+- TLAS `PREFER_FAST_BUILD` was measured and rejected, and the `-vk` tiled
+  ray/hit dispatch did not pay off (implemented, off by default).
+- The `--raster-lod` knobs remain the budget lever for tight-VRAM raster runs;
+  island RT cost is dominated by the grid + LOD-bound BLAS set, not the rt-lod
+  pixel thresholds.
 
 ### 2.6.8 Next-core load/compose profile on a 32-core, 125 GiB host (2026-10)
 
@@ -1923,104 +1742,28 @@ decode at parse/clone, no giant-string copy. The §2 bounded loader is still the
 path to use when geometry must stay on disk entirely; the difference here is that
 a *full* flatten no longer carries gratuitous peak overhead.
 
-### 6.1 Native `next_usdcat` vs current `lusdcat` (2026-06-29)
+### 6.1 Historical: `next_usdcat` vs the then-current `lusdcat` (2026-06-29)
 
-The table below is a LightUSD-vs-LightUSD snapshot of the native full-compose
-path on the public large scenes. `next_usdcat` uses the `src/next` PCP engine and
-streams the flattened USDA directly to a `FILE*`; `lusdcat` is the current
-library pipeline. Both write USDA to `/dev/null` so the output text is generated
-but not stored on disk. The `next_usdcat` numbers use a Release next build with
-chunked value streaming in the ASCII writer.
+A June 2026 snapshot compared `next_usdcat` (the `src/next` PCP engine,
+streaming flattened USDA to a `FILE*`) against the then-current `lusdcat`
+library pipeline: Caldera 9.71 s / 2.93 GiB versus 1:46.7 / 10.37 GiB; Island
+43.42 s / 9.67 GiB versus a hard failure on `xgGroundCover.usd` against the
+512 MiB per-asset cap. That snapshot is pre-optimization and is superseded by
+§6.2 (USDA writer), §8 and §9 (reader/writer work); the tables stay in git
+history (`git log -- doc/large-scene.md`).
 
-Commands:
+Still current from that section: a trusted scene whose referenced layers exceed
+the 512 MiB composition safety cap needs `--relax-asset-cap` (raises the
+per-layer cap to 8 GiB) or `--max-composition-asset-mb=N`. The default stays
+512 MiB for untrusted input.
 
-```sh
-/usr/bin/time -v env LIGHTUSD_NEXT_TIMING=1 \
-  build-next-release/next_usdcat -f -o /dev/null <root.usda>
-
-/usr/bin/time -v \
-  build_ninja/lusdcat -f --memstat --output-format=usda -o /dev/null <root.usda>
-```
-
-For trusted scenes with individual referenced USD layers larger than the current
-512 MiB composition safety cap, current `lusdcat` has an explicit opt-in cap
-relaxation:
-
-```sh
-/usr/bin/time -v \
-  build_ninja/lusdcat -f --relax-asset-cap --memstat \
-  --output-format=usda -o /dev/null <root.usda>
-```
-
-`--relax-asset-cap` raises the per-composition-layer cap to 8 GiB. Use
-`--max-composition-asset-mb=N` when a tighter scene-specific cap is preferred.
-The default remains the 512 MiB security-policy cap for untrusted inputs.
-
-| Scene | `next_usdcat` load+compose | `next_usdcat` total | `next_usdcat` max RSS | current `lusdcat` result |
-|---|---:|---:|---:|---|
-| Caldera `caldera.usda` | 3.53 s | 9.71 s | 2.93 GiB | 1:46.7 total, 10.37 GiB max RSS |
-| Moana Island `island.usda` | 15.38 s | 43.42 s | 9.67 GiB | failed after 11.6 s: `xgGroundCover.usd` exceeds the 512 MiB per-asset cap |
-| ALab `ALab/entry.usda` | 0.33 s | 0.36 s | 62 MiB | not comparable: resolver missed a referenced ALab asset and built only a 43 KiB stage |
-
-With `--relax-asset-cap`, current `lusdcat` passes the Moana Island cap failure:
-the run completed composition in 8 iterations, wrote USDA to `/dev/null`, and
-reported Stage in-use memory of 7.23 GiB. The measured full current pipeline was
-9:09.98 elapsed with 30,416,912 KiB max RSS on a RelWithDebInfo build. The run is
-still much slower and higher-memory than `next_usdcat`, but it no longer fails at
-`xgGroundCover.usd` solely because that layer is 683,530,559 bytes.
-
-The table above is the pre-optimization snapshot; the ASCII writer was then
-optimized substantially (§6.2). Current full-composition validation uses
-`next_usdcat -f -o /dev/null` so the scene is actually composed and flattened
-while keeping the output off disk:
-
-```sh
-env LIGHTUSD_NEXT_TIMING=1 build-next/lusdcat -f -o /dev/null \
-  <asset-root>/caldera/caldera.usda
-env LIGHTUSD_NEXT_TIMING=1 build-next/lusdcat -f -o /dev/null \
-  <asset-root>/island/usd/island.usda
-env LIGHTUSD_NEXT_TIMING=1 build-next/lusdcat -f -o /dev/null \
-  <asset-root>/alab/_merged_ALab/entry.usda
-env LIGHTUSD_NEXT_TIMING=1 build-next/lusdcat -f -o /dev/null \
-  <asset-root>/alab/_merged_ALab/entity/alab_set01/alab_set01.usda
-```
-
-Recent measurements on the local workstation:
-
-| Scene | load+compose | total incl. USDA write | max RSS | flattened bytes |
-|---|---:|---:|---:|---:|
-| Caldera `caldera.usda` | 12.43 s | 1:36.17 | 2.11 GiB | 4.26 GB |
-| Moana Island `island.usda` | 213.74 s | 7:44.93 | 7.40 GiB | 10.80 GB |
-| ALab `_merged_ALab/entry.usda` | 8.25 s | 1:50.80 | 1.31 GiB | 4.75 GB |
-| ALab set asset | 5.85 s | 38.67 s | 677 MiB | 1.62 GB |
-
-Island's large XGen arrays are kept lazy/mmap-backed during compose/write. The
-USDC reader decodes older packed array-count headers (low 32 bits = element
-count, high 32 bits = auxiliary metadata) before applying guards. It still
-rejects malformed over-cap arrays through file-size/addressability checks, but
-does not reject valid lazy POD arrays purely because their packed header exceeds
-the default eager-decode element guard.
-
-For a pure USDC reader comparison, the pre-flattened Caldera crate isolates parse
-memory from composition:
-
-```sh
-/usr/bin/time -v env LIGHTUSD_NEXT_TIMING=1 \
-  build-next-release/next_usdcat -l <caldera-build>/caldera.flattened.usdc
-
-/usr/bin/time -v \
-  build_ninja/lusdcat -l --memstat <caldera-build>/caldera.flattened.usdc
-```
-
-| Input | Parser | Load/elapsed | Max RSS | Notes |
-|---|---|---:|---:|---|
-| `caldera.flattened.usdc` | `next_usdcat -l` | 2.57 s load / 3.26 s elapsed | 1.77 GiB | 53,972 prims; warns for unsupported string arrays |
-| `caldera.flattened.usdc` | `lusdcat -l --memstat` | 7.38 s elapsed | 3.34 GiB | Stage in-use memory 2.53 GiB; USDC parser peak 189.8 MiB |
-
-The current `next` reader is therefore faster and lower-memory on this crate
-parse (~2.3x faster elapsed, ~47 % lower max RSS). On the full Caldera
-compose+stream path, `next` is both faster (~11x wall-clock) and lower-memory
-(~3.5x RSS).
+Island's large XGen arrays are also still kept lazy/mmap-backed during
+compose/write. The USDC reader decodes older packed array-count headers (low
+32 bits = element count, high 32 bits = auxiliary metadata) before applying
+guards. It still rejects malformed over-cap arrays through
+file-size/addressability checks, but does not reject valid lazy POD arrays
+purely because their packed header exceeds the default eager-decode element
+guard.
 
 ### 6.2 ASCII (USDA) writer optimizations
 
