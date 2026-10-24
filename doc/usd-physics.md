@@ -698,6 +698,8 @@ mujoco-usd-converter produce:
 <directory>/Payload/Physics.usda    physics/newton/mjc/urdf API schemas and
                                     attributes as overs; joints, tendons,
                                     actuators, equalities, the PhysicsScene
+<directory>/Payload/GeometryLibrary.usda  one Mesh per distinct shape under
+                                    /Geometry, referenced by Geometry.usda
 <directory>/Payload/Textures/       copied textures (textures="copy")
 ```
 
@@ -706,9 +708,19 @@ relationship target and connection follows it. API schemas are split per
 layer as `prepend` list ops, so the composed prims carry the original list.
 Opened in OpenUSD, the interface file composes to the same prims, schemas,
 values, connections and targets as the flat output (checked on Menagerie
-panda, spot and g1). It is a Python helper; `format="usdc"` writes binary
-layers. Mesh/material library layers (`GeometryLibrary.usdc` with
-references) are not split out.
+panda, spot, g1, go2 and the shadow hand). It is a Python helper;
+`format="usdc"` writes binary layers.
+
+With `geometry_library=True` (the default) a mesh's shape attributes
+(points, topology, normals, UVs, extent, subdivision data) go to one
+`GeometryLibrary` prim per distinct shape, which the mesh references; its
+transform, colors, purpose, bindings and physics stay in the Geometry and
+Physics layers. Meshes shared by visuals and colliders or repeated links are
+stored once: go2's 33 meshes need 16 library prims and its USDA component
+shrinks from 72.6 to 36.1 MB (g1 94.7 to 60.8 MB). USDC output is about the
+same size either way, since the crate format already shares identical arrays.
+Materials are not duplicated by the importers, so there is no separate
+material library.
 
 ### Unit conversion
 

@@ -11,6 +11,8 @@ urdf-usd-converter and mujoco-usd-converter produce::
     <directory>/Payload/Materials.usda Material networks + material:binding
     <directory>/Payload/Physics.usda   physics schemas/attributes (overs),
                                         joints, tendons, actuators, scene...
+    <directory>/Payload/GeometryLibrary.usda  one prim per distinct mesh,
+                                        referenced by the Geometry layer
     <directory>/Payload/Textures/      copied texture files
 
 The stage's root prim (``/World`` for native imports) becomes ``/<name>``;
@@ -31,6 +33,14 @@ _PHYSICS_SCHEMA_PREFIXES = ("Physics", "Newton", "Mjc", "Physx")
 _PHYSICS_SCOPES = ("Joints", "Tendons", "Equalities", "Actuators", "MjcActuators", "Sensors",
                    "Keyframes", "PhysicsScene", "PhysicsMaterials", "ContactPairs", "Deformables")
 _ATTRIBUTE_METADATA = ("interpolation", "elementSize")
+# Mesh attributes describing the shape itself; identical sets share one
+# GeometryLibrary prim, while transforms, colors and bindings stay per use.
+_MESH_INTRINSIC = frozenset((
+    "points", "faceVertexIndices", "faceVertexCounts", "normals", "extent",
+    "primvars:st", "primvars:st:indices", "primvars:normals", "primvars:normals:indices",
+    "holeIndices", "cornerIndices", "cornerSharpnesses", "creaseIndices", "creaseLengths",
+    "creaseSharpnesses", "subdivisionScheme", "orientation", "interpolateBoundary",
+    "faceVaryingLinearInterpolation", "triangleSubdivisionRule"))
 
 
 @dataclass(frozen=True)
@@ -42,6 +52,7 @@ class ComponentLayers:
     geometry: str
     materials: str
     physics: str
+    geometry_library: Optional[str] = None
 
 
 def _category(rel_path: str, root: str) -> Optional[str]:
@@ -69,15 +80,43 @@ def _schema_layer(schema: str) -> str:
     return "physics" if schema.startswith(_PHYSICS_SCHEMA_PREFIXES) else "geometry"
 
 
+def _intrinsic_value(attribute):
+    """Comparable value of a mesh-intrinsic attribute (None to keep it local)."""
+    if attribute.is_connection or attribute.has_timesamples:
+        return None
+    try:
+        value = attribute.get()
+    except KeyError:
+        return None
+    if value is None:
+        return None
+    try:
+        import numpy as np
+        array = np.asarray(value)
+        if array.dtype != object:
+            value = (array.dtype.str, array.shape, array.tobytes())
+    except ImportError:
+        pass
+    if not isinstance(value, tuple):
+        value = repr(value)
+    meta = tuple(repr(attribute.metadata(key)) for key in _ATTRIBUTE_METADATA)
+    return (attribute.type_name, attribute.is_uniform, value, meta)
+
+
 def save_component(stage, directory, *, name: Optional[str] = None,
                    format: str = "usda", textures: str = "copy",
-                   asset_root=None) -> ComponentLayers:
+                   asset_root=None, geometry_library: bool = True) -> ComponentLayers:
     """Write ``stage`` under ``directory`` as an atomic component.
 
     ``textures="copy"`` copies every asset-valued file that exists (absolute,
     or relative to ``asset_root``) into ``Payload/Textures/`` and rewrites the
     path to ``./Textures/<file>``; ``"keep"`` leaves asset paths unchanged.
     Paths that cannot be resolved are kept as authored.
+
+    With ``geometry_library`` (the default) each distinct mesh shape is
+    written once to ``Payload/GeometryLibrary`` and referenced from the
+    Geometry layer, so meshes shared by visuals, colliders or repeated links
+    are stored once.
     """
     import lightusd
 
@@ -148,6 +187,50 @@ def save_component(stage, directory, *, name: Optional[str] = None,
             return layer.define_prim(path, prim.type_name or None)
         return layer.override_prim(path)
 
+    # Mesh path -> library prim path, and the attributes the library holds.
+    library_of = {}
+    library_attrs = {}
+    library = None
+    if geometry_library:
+        library = lightusd.Stage.create()
+        library.up_axis = stage.up_axis
+        library.meters_per_unit = stage.meters_per_unit
+        library.define_prim("/Geometry", "Scope")
+        library.set_default_prim("Geometry")
+        shapes, used = {}, set()
+        for prim in stage:
+            if prim.type_name != "Mesh" or not prim.path.startswith(old_root + "/") or \
+                    _category(prim.path, old_root) is not None:
+                continue
+            values = {}
+            for prop in prim.attributes:
+                if prop in _MESH_INTRINSIC:
+                    value = _intrinsic_value(prim.attribute(prop))
+                    if value is not None:
+                        values[prop] = value
+            if "points" not in values:
+                continue
+            key = tuple(sorted(values.items()))
+            if key not in shapes:
+                base = prim.name
+                lib_name, k = base, 1
+                while lib_name in used:
+                    lib_name, k = f"{base}_{k}", k + 1
+                used.add(lib_name)
+                target = library.define_prim(f"/Geometry/{lib_name}", "Mesh")
+                for prop in values:
+                    attribute = prim.attribute(prop)
+                    target.set(prop, attribute.get(), type=attribute.type_name,
+                               uniform=attribute.is_uniform)
+                    fresh = library.prim_at(f"/Geometry/{lib_name}").attribute(prop)
+                    for meta_key in _ATTRIBUTE_METADATA:
+                        meta = attribute.metadata(meta_key)
+                        if meta is not None:
+                            fresh.set_metadata(meta_key, meta)
+                shapes[key] = f"/Geometry/{lib_name}"
+            library_of[prim.path] = shapes[key]
+            library_attrs[prim.path] = set(values)
+
     for prim in stage:
         if not prim.path.startswith(old_root):
             continue
@@ -155,6 +238,9 @@ def save_component(stage, directory, *, name: Optional[str] = None,
         home = owner or "geometry"
         # The prim's definition (type, metadata) lives in its home layer.
         defined = target_prim(home, prim, True)
+        if prim.path in library_of:
+            defined.add_reference(f"./GeometryLibrary.{format}", library_of[prim.path])
+            defined = layers[home].prim_at(remap(prim.path))
         for key in ("kind", "displayName", "instanceable", "active"):
             value = prim.metadata(key)
             if value is not None:
@@ -166,7 +252,10 @@ def save_component(stage, directory, *, name: Optional[str] = None,
         for layer_key, items in by_layer.items():
             target_prim(layer_key, prim, layer_key == home).set_metadata("prepend apiSchemas",
                                                                          tuple(items))
+        shared = library_attrs.get(prim.path, ())
         for prop in prim.attributes:
+            if prop in shared:
+                continue  # authored on the referenced GeometryLibrary prim
             attribute = prim.attribute(prop)
             layer_key = owner or _property_layer(prop)
             target = target_prim(layer_key, prim, layer_key == home)
@@ -202,6 +291,10 @@ def save_component(stage, directory, *, name: Optional[str] = None,
             target.add_relationship(rel, [remap(t) for t in prim.relationship(rel).targets])
 
     os.makedirs(os.path.join(directory, "Payload"), exist_ok=True)
+    library_path = None
+    if library is not None and library_of:
+        library_path = os.path.join(directory, "Payload", f"GeometryLibrary.{format}")
+        library.save(library_path)
     paths = {}
     for key, title in (("geometry", "Geometry"), ("materials", "Materials"), ("physics", "Physics")):
         paths[key] = os.path.join(directory, "Payload", f"{title}.{format}")
@@ -239,7 +332,7 @@ def save_component(stage, directory, *, name: Optional[str] = None,
         lightusd.loads(text).save(interface_path)
     return ComponentLayers(interface=interface_path, contents=contents_path,
                            geometry=paths["geometry"], materials=paths["materials"],
-                           physics=paths["physics"])
+                           physics=paths["physics"], geometry_library=library_path)
 
 
 

@@ -97,3 +97,28 @@ def test_declare_and_list_op_api_schemas():
         stage.prim_at('/M').set_metadata('reorder apiSchemas', ('X',))
     with pytest.raises(ValueError):
         stage.prim_at('/M').declare('x', 'notatype')
+
+
+def test_shared_meshes_are_written_once_to_the_geometry_library(tmp_path):
+    import struct
+    tri = struct.pack("<12fH", 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0)
+    (tmp_path / "wheel.stl").write_bytes(b"\0" * 80 + struct.pack("<I", 1) + tri)
+    wheels = "".join(f'<body name="w{i}" pos="{i} 0 0"><geom type="mesh" mesh="wheel" rgba="{i % 2} 0 0 1"/></body>'
+                     for i in range(4))
+    (tmp_path / "car.xml").write_text(f'<mujoco><asset><mesh file="wheel.stl"/></asset><worldbody>'
+                                      f'<body name="base"><freejoint/>{wheels}</body></worldbody></mujoco>')
+    source = lightusd.import_mjcf(tmp_path / "car.xml")
+    meshes = [p for p in source if p.type_name == "Mesh"]
+    assert len(meshes) >= 4
+    layers = asset.save_component(source, tmp_path / "car", name="Car")
+    library = lightusd.load(layers.geometry_library, composed=False)
+    assert [p.name for p in library if p.type_name == "Mesh"] == [meshes[0].name]
+    geometry = lightusd.load(layers.geometry, composed=False)
+    for mesh in meshes:
+        local = geometry.prim_at(mesh.path.replace("/World", "/Car", 1))
+        assert "points" not in local.attributes
+        assert ("primvars:displayColor" in local.attributes) == ("primvars:displayColor" in mesh.attributes)
+    composed = lightusd.load(layers.interface)
+    assert _snapshot(source, "/World") == _snapshot(composed, "/Car")
+    flat = asset.save_component(source, tmp_path / "flat", name="Car", geometry_library=False)
+    assert flat.geometry_library is None

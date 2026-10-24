@@ -266,9 +266,13 @@ avoid implementing a second conversion or validation engine in Python.
 - Raw MJCF `<flex>` -> the flexcomp deformable layout (point-mass vertex
   bodies absorbed, other vertex bodies pinned); verified against MuJoCo-saved
   flexcomps and Newton.
-- Still pending: geometry/material library layers, interpolated
-  (trilinear/quadratic) dofs,
-  cube-projected material textures and parallel URDF mesh parsing (MJCF mesh
+- Component `GeometryLibrary` layer (`save_component(geometry_library=True)`):
+  one referenced prim per distinct mesh shape; OpenUSD compose-back exact.
+- Not planned: interpolated (trilinear/quadratic) flex dofs (no UsdPhysics or
+  Newton representation; converted as full-dof and reported as approximated)
+  and cube-projected material textures (UsdPreviewSurface has no cube
+  projection; reported).
+- Still pending: parallel URDF mesh parsing (MJCF mesh
   assets parse on worker threads, `threads=`, replayed so output, warnings
   and reports equal a serial import; Menagerie 53.0 -> 32.5 s). Import
   progress/cancellation callbacks (C `progress`, Python `progress=`) and
