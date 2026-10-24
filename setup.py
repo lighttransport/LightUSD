@@ -121,7 +121,7 @@ class CMakeBuildExt(build_ext):
         # filename search can pick stale archives left by a reconfiguration.
         manifest = CMAKE_BUILD_DIR / "lightusd-python-libraries-MinSizeRel.txt"
         archives = manifest.read_text().splitlines()
-        if len(archives) != 9 or not all(pathlib.Path(p).is_file() for p in archives):
+        if len(archives) != 10 or not all(pathlib.Path(p).is_file() for p in archives):
             raise RuntimeError(f"Invalid CMake archive manifest: {manifest}")
         stamp = pathlib.Path(self.build_temp) / "lightusd-build-config.txt"
         stamp.parent.mkdir(parents=True, exist_ok=True)

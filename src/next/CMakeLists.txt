@@ -1138,7 +1138,7 @@ if(LIGHTUSD_WITH_TYDRA)
   # Packaging must use actual target artifacts, including nested build dirs.
   # Searching by basename can select an obsolete archive after reconfiguration.
   file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/lightusd-python-libraries-$<CONFIG>.txt"
-    CONTENT "$<TARGET_FILE:lightusd_validation_c>\n$<TARGET_FILE:lightusd_render_c>\n$<TARGET_FILE:lightusd_c>\n$<TARGET_FILE:tydra_next>\n$<TARGET_FILE:lightusd_asset_import>\n$<TARGET_FILE:lightusd_validation>\n$<TARGET_FILE:lightusd_next>\n$<TARGET_FILE:lightusd_obj_import>\n$<TARGET_FILE:lightusd_core_c>\n")
+    CONTENT "$<TARGET_FILE:lightusd_validation_c>\n$<TARGET_FILE:lightusd_render_c>\n$<TARGET_FILE:lightusd_c>\n$<TARGET_FILE:tydra_next>\n$<TARGET_FILE:lightusd_asset_import>\n$<TARGET_FILE:lightusd_validation>\n$<TARGET_FILE:lightusd_next>\n$<TARGET_FILE:lightusd_obj_import>\n$<TARGET_FILE:lightusd_tinyvdb>\n$<TARGET_FILE:lightusd_core_c>\n")
 endif()
 include(GNUInstallDirs)
 set_target_properties(lightusd_c PROPERTIES EXPORT_NAME c)
@@ -1178,6 +1178,9 @@ if(TARGET lightusd_asset_import)
 endif()
 if(TARGET lightusd_obj_import)
   install(TARGETS lightusd_obj_import EXPORT LightUSDTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+endif()
+if(TARGET lightusd_tinyvdb)
+  install(TARGETS lightusd_tinyvdb EXPORT LightUSDTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 endif()
 install(EXPORT LightUSDTargets NAMESPACE lightusd::
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/LightUSD")
