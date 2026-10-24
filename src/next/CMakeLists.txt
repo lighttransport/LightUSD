@@ -1016,7 +1016,8 @@ if(LIGHTUSD_WITH_TYDRA)
     add_library(lightusd_render_c STATIC
         ../c-api/lightusd-render-c.cc
         ../c-api/lightusd-render-glb-c.cc
-        ../c-api/lightusd-import-c.cc)
+        ../c-api/lightusd-import-c.cc
+        ../c-api/lightusd-volumetric-c.cc)
     target_link_libraries(lightusd_render_c PUBLIC lightusd_c tydra_next)
     lightusd_next_harden(lightusd_render_c)
     list(APPEND LIGHTUSD_C_TARGETS lightusd_render_c)
@@ -1123,7 +1124,8 @@ if(LIGHTUSD_NEXT_BUILD_SHARED_C_API)
         target_sources(lightusd_c_shared PRIVATE
             ../c-api/lightusd-render-c.cc
             ../c-api/lightusd-render-glb-c.cc
-            ../c-api/lightusd-import-c.cc)
+            ../c-api/lightusd-import-c.cc
+            ../c-api/lightusd-volumetric-c.cc)
         target_link_libraries(lightusd_c_shared PRIVATE tydra_next)
     endif()
     target_compile_definitions(lightusd_c_shared

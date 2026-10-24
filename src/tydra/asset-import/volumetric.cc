@@ -1,0 +1,395 @@
+// SPDX-License-Identifier: Apache-2.0
+#include "volumetric.hh"
+
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
+
+#include "tinyvdb_io.h"
+#include "tinyvdb_sparse_tools.h"
+#include "tinyvdb_sparse_tree.h"
+#include "tinyvdb_tetmesh.h"
+#include "tinyvdb_tree.h"
+#include "tinyvdb_tree_internal.h"
+
+namespace lightusd {
+namespace tydra {
+namespace import_asset {
+
+struct LevelSetAccess {
+  static void Reset(LevelSet* s) {
+    if (s->owned_) {
+      tvdb_grid_destroy_owned(s->owned_);
+      std::free(s->owned_);
+      s->owned_ = nullptr;
+    }
+    if (s->file_) {
+      tvdb_file_close(s->file_);
+      std::free(s->file_);
+      s->file_ = nullptr;
+    }
+    s->file_grid_ = 0;
+  }
+  static void Adopt(LevelSet* s, tvdb_grid* grid) {
+    Reset(s);
+    s->owned_ = grid;
+  }
+  static void AdoptFile(LevelSet* s, tvdb_file* file, size_t index) {
+    Reset(s);
+    s->file_ = file;
+    s->file_grid_ = index;
+  }
+};
+
+LevelSet::LevelSet() = default;
+LevelSet::~LevelSet() { LevelSetAccess::Reset(this); }
+LevelSet::LevelSet(LevelSet&& o) noexcept
+    : owned_(o.owned_), file_(o.file_), file_grid_(o.file_grid_) {
+  o.owned_ = nullptr;
+  o.file_ = nullptr;
+  o.file_grid_ = 0;
+}
+LevelSet& LevelSet::operator=(LevelSet&& o) noexcept {
+  if (this != &o) {
+    LevelSetAccess::Reset(this);
+    owned_ = o.owned_;
+    file_ = o.file_;
+    file_grid_ = o.file_grid_;
+    o.owned_ = nullptr;
+    o.file_ = nullptr;
+    o.file_grid_ = 0;
+  }
+  return *this;
+}
+const tvdb_grid* LevelSet::grid() const {
+  if (owned_) return owned_;
+  if (file_ && file_grid_ < file_->num_grids) return file_->grids + file_grid_;
+  return nullptr;
+}
+double LevelSet::voxel_size() const {
+  const tvdb_grid* g = grid();
+  return g ? g->transform.voxel_size[0] : 0.0;
+}
+float LevelSet::background() const {
+  const tvdb_grid* g = grid();
+  return g && g->tree.num_nodes ? g->tree.nodes[0].u.root.background.u.f : 0.0f;
+}
+size_t LevelSet::active_voxels() const {
+  const tvdb_grid* g = grid();
+  if (!g) return 0;
+  tvdb_tree_diagnostics_t d;
+  tvdb_error_t err;
+  std::memset(&d, 0, sizeof(d));
+  if (tvdb_grid_diagnose(g, TVDB_TREE_DIAG_GENERIC, 0, 0, &d, &err) != TVDB_OK) return 0;
+  return size_t(d.active_voxels);
+}
+
+namespace {
+
+// Thread pool for a call: NULL selects tinyvdb's automatic sizing.
+struct Pool {
+  tvdb_thread_pool_t* pool = nullptr;
+  ~Pool() { tvdb_thread_pool_destroy(pool); }
+  bool Make(int threads, std::string* err) {
+    if (threads <= 0) return true;
+    tvdb_error_t e;
+    if (tvdb_thread_pool_create(size_t(threads), &pool, &e) != TVDB_OK) {
+      if (err) *err = std::string("thread pool: ") + e.message;
+      return false;
+    }
+    return true;
+  }
+};
+
+bool Fail(std::string* err, const char* what, const tvdb_error_t& e) {
+  if (err) *err = std::string(what) + ": " + (e.message[0] ? e.message : tvdb_status_string(e.status));
+  return false;
+}
+
+const char* GridClass(const tvdb_grid* g) {
+  for (size_t i = 0; i < g->metadata.count; ++i) {
+    const tvdb_meta_entry_t& e = g->metadata.entries[i];
+    if (e.name && !std::strcmp(e.name, "class") && e.value.type == TVDB_VALUE_STRING)
+      return e.value.u.s.str;
+  }
+  return "";
+}
+
+}  // namespace
+
+bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options, LevelSet* out,
+                    std::string* err) {
+  if (!out || !(options.voxel_size > 0) || !std::isfinite(options.voxel_size)) {
+    if (err) *err = "level set: voxel size must be positive";
+    return false;
+  }
+  const size_t nv = mesh.positions.size() / 3;
+  if (nv == 0 || mesh.positions.size() % 3) {
+    if (err) *err = "level set: mesh has no vertices";
+    return false;
+  }
+  std::vector<tvdb_vec3f> vertices(nv);
+  for (size_t i = 0; i < nv; ++i)
+    vertices[i] = {mesh.positions[3 * i], mesh.positions[3 * i + 1], mesh.positions[3 * i + 2]};
+  std::vector<tvdb_triangle> faces;
+  auto index = [&](size_t i, uint32_t* v) {
+    const int32_t x = mesh.indices[i];
+    if (x < 0 || size_t(x) >= nv) return false;
+    *v = uint32_t(x);
+    return true;
+  };
+  if (!mesh.counts.empty()) {
+    size_t at = 0;
+    for (int32_t c : mesh.counts) {
+      if (c < 3 || at + size_t(c) > mesh.indices.size()) {
+        if (err) *err = "level set: invalid polygon counts";
+        return false;
+      }
+      uint32_t a = 0, b = 0, d = 0;
+      for (int32_t k = 1; k + 1 < c; ++k) {  // fan
+        if (!index(at, &a) || !index(at + size_t(k), &b) || !index(at + size_t(k) + 1, &d)) {
+          if (err) *err = "level set: face index out of range";
+          return false;
+        }
+        faces.push_back({a, b, d});
+      }
+      at += size_t(c);
+    }
+  } else {
+    if (mesh.indices.size() % 3) {
+      if (err) *err = "level set: indices are not triangles";
+      return false;
+    }
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+      uint32_t a = 0, b = 0, d = 0;
+      if (!index(i, &a) || !index(i + 1, &b) || !index(i + 2, &d)) {
+        if (err) *err = "level set: face index out of range";
+        return false;
+      }
+      faces.push_back({a, b, d});
+    }
+  }
+  if (faces.empty()) {
+    if (err) *err = "level set: mesh has no faces";
+    return false;
+  }
+  tvdb_triangle_mesh tm;
+  std::memset(&tm, 0, sizeof(tm));
+  tm.vertices = vertices.data();
+  tm.vertex_count = tm.vertex_capacity = vertices.size();
+  tm.faces = faces.data();
+  tm.face_count = tm.face_capacity = faces.size();
+  tvdb_mesh_level_set_options_t o;
+  std::memset(&o, 0, sizeof(o));
+  o.voxel_size = float(options.voxel_size);
+  o.exterior_width = float(options.exterior_width > 0 ? options.exterior_width
+                                                      : 3 * options.voxel_size);
+  o.interior_width = float(options.interior_width > 0 ? options.interior_width
+                                                      : 3 * options.voxel_size);
+  o.sign = options.exact_winding ? TVDB_LEVEL_SET_SIGN_WINDING_EXACT
+                                 : TVDB_LEVEL_SET_SIGN_WINDING_FAST;
+  o.max_voxels = options.max_voxels ? options.max_voxels : 8000000;
+  o.grid_name = options.name.empty() ? "sdf" : options.name.c_str();
+  Pool pool;
+  if (!pool.Make(options.threads, err)) return false;
+  auto* grid = static_cast<tvdb_grid*>(std::calloc(1, sizeof(tvdb_grid)));
+  if (!grid) {
+    if (err) *err = "level set: out of memory";
+    return false;
+  }
+  tvdb_error_t e;
+  std::memset(&e, 0, sizeof(e));
+  if (tvdb_mesh_to_level_set(&tm, &o, pool.pool, grid, nullptr, &e) != TVDB_OK) {
+    std::free(grid);
+    return Fail(err, "level set", e);
+  }
+  LevelSetAccess::Adopt(out, grid);
+  return true;
+}
+
+bool WriteLevelSetVDB(const LevelSet& level_set, std::vector<uint8_t>* bytes, std::string* err) {
+  if (level_set.empty() || !bytes) {
+    if (err) *err = "VDB write: empty level set";
+    return false;
+  }
+  tvdb_file_t file;
+  tvdb_file_init_for_write(&file, nullptr);
+  file.grids = const_cast<tvdb_grid*>(level_set.grid());
+  file.num_grids = 1;
+  uint8_t* data = nullptr;
+  size_t size = 0;
+  tvdb_error_t e;
+  std::memset(&e, 0, sizeof(e));
+  if (tvdb_write_to_memory(&file, TVDB_COMPRESS_ZIP | TVDB_COMPRESS_ACTIVE_MASK, 0, &data, &size,
+                           &e) != TVDB_OK)
+    return Fail(err, "VDB write", e);
+  bytes->assign(data, data + size);
+  std::free(data);
+  return true;
+}
+
+bool ReadLevelSetVDB(const uint8_t* data, size_t size, LevelSet* out, std::string* err) {
+  if (!data || !size || !out) {
+    if (err) *err = "VDB read: no data";
+    return false;
+  }
+  auto* file = static_cast<tvdb_file*>(std::calloc(1, sizeof(tvdb_file)));
+  if (!file) {
+    if (err) *err = "VDB read: out of memory";
+    return false;
+  }
+  tvdb_error_t e;
+  std::memset(&e, 0, sizeof(e));
+  // The file keeps referencing `data` only until tvdb_read_all_grids
+  // materializes every grid into its own storage.
+  if (tvdb_file_open_memory(file, data, size, nullptr, &e) != TVDB_OK) {
+    std::free(file);
+    return Fail(err, "VDB read", e);
+  }
+  if (tvdb_read_all_grids(file, &e) != TVDB_OK) {
+    tvdb_file_close(file);
+    std::free(file);
+    return Fail(err, "VDB read", e);
+  }
+  size_t pick = SIZE_MAX, fallback = SIZE_MAX;
+  for (size_t i = 0; i < file->num_grids; ++i) {
+    const tvdb_grid* g = file->grids + i;
+    if (!g->tree.num_nodes || g->tree.layout.num_levels < 1 ||
+        g->tree.layout.levels[g->tree.layout.num_levels - 1].value_type != TVDB_VALUE_FLOAT)
+      continue;
+    if (!std::strcmp(GridClass(g), "level set")) {
+      pick = i;
+      break;
+    }
+    if (fallback == SIZE_MAX && g->tree.nodes[0].u.root.background.u.f > 0) fallback = i;
+  }
+  if (pick == SIZE_MAX) pick = fallback;
+  if (pick == SIZE_MAX) {
+    tvdb_file_close(file);
+    std::free(file);
+    if (err) *err = "VDB read: no float level-set grid";
+    return false;
+  }
+  LevelSetAccess::AdoptFile(out, file, pick);
+  return true;
+}
+
+bool SampleLevelSet(const LevelSet& level_set, const double* points, size_t count,
+                    float* values, std::string* err) {
+  if (level_set.empty() || (count && (!points || !values))) {
+    if (err) *err = "level set sample: empty level set";
+    return false;
+  }
+  double m[4][4];
+  if (!tvdb_tree_matrix(&level_set.grid()->transform, m)) {
+    if (err) *err = "level set sample: unsupported transform";
+    return false;
+  }
+  const double det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
+                     m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
+                     m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+  const double inv[3][3] = {
+      {(m[1][1] * m[2][2] - m[1][2] * m[2][1]) / det, (m[0][2] * m[2][1] - m[0][1] * m[2][2]) / det,
+       (m[0][1] * m[1][2] - m[0][2] * m[1][1]) / det},
+      {(m[1][2] * m[2][0] - m[1][0] * m[2][2]) / det, (m[0][0] * m[2][2] - m[0][2] * m[2][0]) / det,
+       (m[0][2] * m[1][0] - m[0][0] * m[1][2]) / det},
+      {(m[1][0] * m[2][1] - m[1][1] * m[2][0]) / det, (m[0][1] * m[2][0] - m[0][0] * m[2][1]) / det,
+       (m[0][0] * m[1][1] - m[0][1] * m[1][0]) / det}};
+  tvdb_tree_index index;
+  std::memset(&index, 0, sizeof(index));
+  tvdb_error_t e;
+  std::memset(&e, 0, sizeof(e));
+  if (tvdb_tree_index_create(level_set.grid(), 1, &index, &e) != TVDB_OK)
+    return Fail(err, "level set sample", e);
+  for (size_t i = 0; i < count; ++i) {
+    const double* p = points + 3 * i;
+    const double d[3] = {p[0] - m[0][3], p[1] - m[1][3], p[2] - m[2][3]};
+    double q[3];
+    int32_t base[3];
+    bool ok = true;
+    for (int a = 0; a < 3; ++a) {
+      q[a] = inv[a][0] * d[0] + inv[a][1] * d[1] + inv[a][2] * d[2];
+      const double fl = std::floor(q[a]);
+      ok = ok && fl >= double(INT32_MIN) && fl < double(INT32_MAX);
+      base[a] = ok ? int32_t(fl) : 0;
+      q[a] -= fl;
+    }
+    if (!ok) {
+      values[i] = level_set.background();
+      continue;
+    }
+    double sum = 0;
+    for (int c = 0; c < 8; ++c) {
+      const int32_t at[3] = {base[0] + (c & 1), base[1] + ((c >> 1) & 1), base[2] + ((c >> 2) & 1)};
+      const double w = ((c & 1) ? q[0] : 1 - q[0]) * (((c >> 1) & 1) ? q[1] : 1 - q[1]) *
+                       (((c >> 2) & 1) ? q[2] : 1 - q[2]);
+      sum += w * double(tvdb_tree_get(&index, at, nullptr));
+    }
+    values[i] = float(sum);
+  }
+  tvdb_tree_index_destroy(&index);
+  return true;
+}
+
+bool LevelSetToMesh(const LevelSet& level_set, size_t max_cells, Mesh* out, std::string* err) {
+  if (level_set.empty() || !out) {
+    if (err) *err = "level set mesh: empty level set";
+    return false;
+  }
+  tvdb_triangle_mesh tm;
+  std::memset(&tm, 0, sizeof(tm));
+  tvdb_error_t e;
+  std::memset(&e, 0, sizeof(e));
+  if (tvdb_grid_volume_to_mesh(level_set.grid(), 0.0f, 0.0, max_cells, &tm, &e) != TVDB_OK)
+    return Fail(err, "level set mesh", e);
+  out->positions.resize(3 * tm.vertex_count);
+  for (size_t i = 0; i < tm.vertex_count; ++i) {
+    out->positions[3 * i] = tm.vertices[i].x;
+    out->positions[3 * i + 1] = tm.vertices[i].y;
+    out->positions[3 * i + 2] = tm.vertices[i].z;
+  }
+  out->indices.resize(3 * tm.face_count);
+  for (size_t i = 0; i < tm.face_count; ++i) {
+    out->indices[3 * i] = int32_t(tm.faces[i].v0);
+    out->indices[3 * i + 1] = int32_t(tm.faces[i].v1);
+    out->indices[3 * i + 2] = int32_t(tm.faces[i].v2);
+  }
+  out->counts.clear();
+  out->normals.clear();
+  out->uvs.clear();
+  tvdb_triangle_mesh_free(&tm);
+  return true;
+}
+
+bool LevelSetToTetMesh(const LevelSet& level_set, const StuffingOptions& options,
+                       TetMeshData* out, std::string* err) {
+  if (level_set.empty() || !out || !(options.spacing > 0)) {
+    if (err) *err = "tet mesh: empty level set or nonpositive spacing";
+    return false;
+  }
+  tvdb_stuffing_options_t o;
+  std::memset(&o, 0, sizeof(o));
+  o.spacing = options.spacing;
+  o.max_tets = options.max_tets;
+  Pool pool;
+  if (!pool.Make(options.threads, err)) return false;
+  tvdb_tet_mesh tm;
+  std::memset(&tm, 0, sizeof(tm));
+  tvdb_error_t e;
+  std::memset(&e, 0, sizeof(e));
+  if (tvdb_level_set_to_tet_mesh(level_set.grid(), &o, pool.pool, &tm, &e) != TVDB_OK)
+    return Fail(err, "tet mesh", e);
+  out->points.assign(tm.positions, tm.positions + 3 * tm.vertex_count);
+  out->tets.assign(tm.tets, tm.tets + 4 * tm.tet_count);
+  out->surface.assign(tm.boundary, tm.boundary + 3 * tm.boundary_count);
+  tvdb_tet_mesh_free(&tm);
+  if (out->tets.empty()) {
+    if (err) *err = "tet mesh: the level set has no interior at this spacing";
+    return false;
+  }
+  return true;
+}
+
+}  // namespace import_asset
+}  // namespace tydra
+}  // namespace lightusd

@@ -171,6 +171,7 @@ ext = Extension(
         "src/python/py-render.c",
         "src/python/py-resolver.c",
         "src/python/py-stage.c",
+        "src/python/py-volumetric.c",
     ],
     include_dirs=[
         "src",

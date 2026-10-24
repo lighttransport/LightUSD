@@ -857,22 +857,24 @@ done:
   tvdb_triangle_mesh_free(&mesh);
   return st;
 }
-static tvdb_status_t tool_set_class(tvdb_grid_t* g, const char* text,
-                                    tvdb_error_t* err) {
+/* Set (or add) string metadata `key`. */
+static tvdb_status_t tool_set_string(tvdb_grid_t* g, const char* key,
+                                     const char* text, tvdb_error_t* err) {
   size_t i = 0;
   for (; i < g->metadata.count; ++i)
     if (g->metadata.entries[i].name &&
-        !strcmp(g->metadata.entries[i].name, "class"))
+        !strcmp(g->metadata.entries[i].name, key))
       break;
-  char *name = malloc(6), *type = malloc(7), *value = malloc(strlen(text) + 1);
+  char *name = malloc(strlen(key) + 1), *type = malloc(7),
+       *value = malloc(strlen(text) + 1);
   if (!name || !type || !value) {
     free(name);
     free(type);
     free(value);
     return tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY,
-                           "class metadata allocation failed");
+                           "metadata allocation failed");
   }
-  memcpy(name, "class", 6);
+  memcpy(name, key, strlen(key) + 1);
   memcpy(type, "string", 7);
   memcpy(value, text, strlen(text) + 1);
   if (i == g->metadata.count) {
@@ -891,7 +893,7 @@ static tvdb_status_t tool_set_class(tvdb_grid_t* g, const char* text,
       free(type);
       free(value);
       return tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY,
-                             "class metadata allocation failed");
+                             "metadata allocation failed");
     }
     g->metadata.entries = p;
     g->metadata.count = g->metadata.capacity = i + 1;
@@ -1015,7 +1017,7 @@ tvdb_status_t tvdb_grid_level_set_rebuild(
   }
   report.active_voxels = band.count;
   st = tool_build(source, &band, outside, &source->transform, &generated, err);
-  if (st == TVDB_OK) st = tool_set_class(&generated, "level set", err);
+  if (st == TVDB_OK) st = tool_set_string(&generated, "class", "level set", err);
   if (st == TVDB_OK)
     st =
         tvdb_grid_signed_flood_fill(&generated, outside, -inside, &filled, err);
@@ -1262,7 +1264,10 @@ tvdb_status_t tvdb_mesh_to_level_set(const tvdb_triangle_mesh* mesh,
     stub.transform = transform;
     st = tool_build(&stub, &band, outside, &transform, &generated, err);
   }
-  if (st == TVDB_OK) st = tool_set_class(&generated, "level set", err);
+  if (st == TVDB_OK) st = tool_set_string(&generated, "class", "level set", err);
+  /* OpenVDB keeps the grid name as metadata too; its tools display that. */
+  if (st == TVDB_OK)
+    st = tool_set_string(&generated, "name", stub.descriptor.grid_name, err);
   if (st == TVDB_OK)
     st = tvdb_grid_signed_flood_fill(&generated, outside, -inside, &filled, err);
   if (st == TVDB_OK) st = tvdb_grid_prune(&filled, &pruned, err);
@@ -1579,7 +1584,7 @@ tvdb_status_t tvdb_grid_solve_poisson(const tvdb_grid_t* source,
   if (!isfinite(report.final_residual_norm)) goto breakdown;
   report.converged = report.final_residual_norm <= threshold;
   st = tool_build(source, &m, 0, &source->transform, &generated, err);
-  if (st == TVDB_OK) st = tool_set_class(&generated, "unknown", err);
+  if (st == TVDB_OK) st = tool_set_string(&generated, "class", "unknown", err);
   if (st == TVDB_OK) {
     tvdb_grid_destroy_owned(out);
     *out = generated;

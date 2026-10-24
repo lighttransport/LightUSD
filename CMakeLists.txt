@@ -1670,6 +1670,16 @@ endif()
 #add_library(${LIGHTUSD_TARGET_STATIC} STATIC $<TARGET_OBJECTS:lightusd_object>)
 #add_sanitizers(${LIGHTUSD_TARGET_STATIC})
 
+# miniz (and the bundled zstd) build inside lightusd_tinyvdb, which links
+# after the root objects: one copy serves the root library and tinyvdb, and
+# single-pass static links resolve both (an archive linked before tinyvdb
+# could not provide its codec symbols).
+list(REMOVE_ITEM LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/miniz.c)
+set(LIGHTUSD_TINYVDB_ZSTD OFF)
+if(LIGHTUSD_WITH_ZSTD_COMPRESSION AND NOT LIGHTUSD_USE_SYSTEM_ZSTD)
+  list(REMOVE_ITEM LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/zstd.c)
+  set(LIGHTUSD_TINYVDB_ZSTD ON)
+endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/lightusd-asset-import.cmake")
 add_library(${LIGHTUSD_TARGET_STATIC} STATIC ${LIGHTUSD_SOURCES} ${LIGHTUSD_DEP_SOURCES} ${LIGHTUSD_EXT_SOURCES})
 target_link_libraries(${LIGHTUSD_TARGET_STATIC} lightusd_asset_import)

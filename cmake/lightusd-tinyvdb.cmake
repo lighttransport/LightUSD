@@ -18,6 +18,20 @@ if(NOT TARGET lightusd_tinyvdb)
     "${_lusd_tinyvdb_dir}/tinyvdb_tree.c"
     "${_lusd_tinyvdb_dir}/tinyvdb_winding.c"
     "${_lusd_tinyvdb_dir}/tvdb_memory.c")
+  # This target owns miniz (and, when LIGHTUSD_TINYVDB_ZSTD is set, the
+  # bundled zstd) for every build: the legacy root drops them from its own
+  # sources and gets them through lightusd_asset_import. Without zstd,
+  # BLOSC-zstd .vdb files are rejected. LZ4 comes from lightusd_next / the
+  # root sources.
+  target_sources(lightusd_tinyvdb PRIVATE "${_lusd_tinyvdb_root}/external/miniz.c")
+  set_source_files_properties("${_lusd_tinyvdb_root}/external/miniz.c"
+    PROPERTIES COMPILE_DEFINITIONS "_LARGEFILE64_SOURCE=1")
+  if(LIGHTUSD_TINYVDB_ZSTD)
+    target_sources(lightusd_tinyvdb PRIVATE "${_lusd_tinyvdb_root}/external/zstd.c")
+    set_source_files_properties("${_lusd_tinyvdb_root}/external/zstd.c"
+      PROPERTIES COMPILE_DEFINITIONS "ZSTD_DISABLE_ASM=1" COMPILE_FLAGS "-w")
+    target_compile_definitions(lightusd_tinyvdb PRIVATE LIGHTUSD_TINYVDB_ZSTD=1)
+  endif()
   set_target_properties(lightusd_tinyvdb PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON POSITION_INDEPENDENT_CODE ON)
   target_include_directories(lightusd_tinyvdb PUBLIC "$<BUILD_INTERFACE:${_lusd_tinyvdb_dir}>")

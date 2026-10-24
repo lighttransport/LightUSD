@@ -56,6 +56,51 @@ LIGHTUSD_API lightusd_status lightusd_stage_import_report(
  * Overwritten by each import_file/import_memory call; invalid arguments/options
  * leave {}. Copy the owned result before another import on the same thread. */
 LIGHTUSD_API lightusd_status lightusd_import_last_report(lightusd_string** out);
+/* ---- Signed distance fields and volumetric meshes (tinyvdb) -------------
+ * Narrow-band level sets are OpenVDB bytes (one float grid, class "level
+ * set", negative inside). Byte outputs are owned lightusd_string buffers
+ * (lightusd_string_view / lightusd_string_destroy); packed arrays are native
+ * float32 / int32. */
+/* Level set of a mesh: triangles in `indices`, or polygons when `counts` is
+ * given (fan-triangulated). settings_json: {"voxel_size": h (> 0, required),
+ * "exterior_width", "interior_width" (world, default 3 h), "exact_winding",
+ * "max_voxels" (candidate budget, ~128 bytes each; default 8,000,000),
+ * "threads", "name"}. Signs come from generalized winding
+ * numbers, so open and inside-out meshes work. */
+LIGHTUSD_API lightusd_status lightusd_mesh_to_level_set_vdb(
+    const float* points, size_t point_count, const int32_t* indices, size_t index_count,
+    const int32_t* counts, size_t count_count, const char* settings_json,
+    lightusd_string** vdb);
+typedef struct lightusd_level_set_info {
+  double voxel_size;
+  float background;
+  uint32_t _reserved;
+  uint64_t active_voxels;
+} lightusd_level_set_info;
+LIGHTUSD_API lightusd_status lightusd_level_set_vdb_info(const uint8_t* vdb, size_t size,
+                                                        lightusd_level_set_info* out);
+/* Trilinear world-space samples (3 doubles per point). */
+LIGHTUSD_API lightusd_status lightusd_level_set_vdb_sample(const uint8_t* vdb, size_t size,
+                                                          const double* points, size_t count,
+                                                          float* values);
+/* Zero isosurface: float32 xyz points and int32 triangle indices. */
+LIGHTUSD_API lightusd_status lightusd_level_set_vdb_to_mesh(const uint8_t* vdb, size_t size,
+                                                           uint64_t max_cells,
+                                                           lightusd_string** points,
+                                                           lightusd_string** indices);
+/* Isosurface-stuffing tetrahedra: settings_json {"spacing" (> 0, required),
+ * "max_tets", "threads"}. Outputs float32 xyz points, int32x4 tets (positive
+ * orientation) and int32x3 outward boundary triangles. */
+LIGHTUSD_API lightusd_status lightusd_level_set_vdb_to_tet_mesh(
+    const uint8_t* vdb, size_t size, const char* settings_json, lightusd_string** points,
+    lightusd_string** tets, lightusd_string** surface);
+/* Attach a generated file (for example a level-set .vdb a stage references
+ * by the relative path): written beside the layer by USDA/USDC saves and
+ * packaged under that path in USDZ saves. Replaces an existing entry. */
+LIGHTUSD_API lightusd_status lightusd_stage_add_generated_asset(lightusd_stage* stage,
+                                                               const char* path,
+                                                               const uint8_t* data,
+                                                               size_t size);
 #ifdef __cplusplus
 }
 #endif

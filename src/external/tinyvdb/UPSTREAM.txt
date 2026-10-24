@@ -1,5 +1,5 @@
 Upstream: https://github.com/syoyo/tinyvdbio
-Commit:   9356038b75adab2efe24cbe35b213bfff3163c4d (branch volumetric-sdf)
+Commit:   9643394750ab13d0271f430951005df5e5ba9ff9 (branch volumetric-sdf)
 Files:    the src/ subset needed by tvdb_mesh_to_level_set,
           tvdb_level_set_to_tet_mesh / tvdb_sdf_to_tet_mesh,
           tvdb_grid_volume_to_mesh and the I/O: tinyvdb_io.h (+ tinyvdb_io.c

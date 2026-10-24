@@ -73,6 +73,12 @@ typedef struct {
 
 PyObject* lightusd_wrap_stage(lightusd_state*, lightusd_stage*);
 PyObject* lightusd_import_scene(PyObject*, PyObject*, PyObject*);
+/* py-volumetric.c */
+PyObject* lightusd_py_mesh_to_level_set(PyObject*, PyObject*);
+PyObject* lightusd_py_level_set_info(PyObject*, PyObject*);
+PyObject* lightusd_py_level_set_sample(PyObject*, PyObject*);
+PyObject* lightusd_py_level_set_to_mesh(PyObject*, PyObject*);
+PyObject* lightusd_py_level_set_to_tet_mesh(PyObject*, PyObject*);
 PyObject* lightusd_import_report_object(lightusd_string*);
 PyObject* lightusd_query_physics(PyObject*, PyObject*, PyObject*);
 PyObject* lightusd_convert_units(PyObject*, PyObject*, PyObject*);
