@@ -509,6 +509,10 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
   bool render_only = false;
   ReadBool(mesh_json, "renderOnly", &render_only);
   if (!render_only) AddAPI(prim, "MjcImageableAPI");
+  if (!ActiveProfile().legacy && StringFrom(mesh_json, "newton", "massModel", "") == "shell") {
+    AddAPI(prim, "NewtonMassAPI");
+    SetToken(prim, "newton:massModel", "shell", true);
+  }
   if (JsonString(mesh_json, "purpose") == "guide") SetToken(prim, "purpose", "guide", true);
   // Bind a UsdShade material (MJCF <geom material=..> ->
   // /World/Materials/<m>); MJCF material names are unique, so the sanitized
@@ -604,6 +608,10 @@ bool AddNativeCollisionShapeFromJson(tn::Layer *layer,
     // contype=0 geom and Newton a visual shape.
     const std::string purpose = JsonString(shape_json, "purpose");
     if (!purpose.empty()) SetToken(prim, "purpose", purpose, true);
+    if (!ActiveProfile().legacy && StringFrom(shape_json, "newton", "massModel", "") == "shell") {
+      AddAPI(prim, "NewtonMassAPI");
+      SetToken(prim, "newton:massModel", "shell", true);
+    }
     if (mjcf_source) {
       AddAPI(prim, "MjcImageableAPI");
       int32_t group = 0;

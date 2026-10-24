@@ -114,6 +114,15 @@ struct Defaults {
   std::map<std::string, AttrMap> joint;  // class name -> merged joint attrs
   AttrMap root_geom;                     // unnamed (top-level) default
   AttrMap root_joint;
+  // MuJoCo keeps one actuator default per class: every actuator element in
+  // a <default> merges into it, and a shortcut (<muscle>, <position>, ...)
+  // also sets its kind, recorded as "__type".
+  std::map<std::string, AttrMap> actuator;
+  AttrMap root_actuator;
+  // The slot's type is the last actuator element written into it (or an
+  // ancestor class); its parent class for MuJoCo's shortcut source search.
+  std::map<std::string, std::string> actuator_type, actuator_parent;
+  std::string root_actuator_type;
 };
 
 struct Context {
@@ -1525,10 +1534,32 @@ double EffDouble(const pugi::xml_node& node, const AttrMap& cls,
   return v;
 }
 
+bool IsMjcfActuatorTag(const std::string& tag) {
+  static const std::set<std::string> kTags = {"general", "motor", "position", "velocity",
+                                              "intvelocity", "damper", "cylinder", "muscle",
+                                              "adhesion"};
+  return kTags.count(tag) > 0;
+}
+
+bool IsMjcfShortcutParam(const std::string& key) {
+  static const std::set<std::string> kParams = {
+      "kp", "kv", "dampratio", "inheritrange", "timeconst", "bias", "area", "diameter",
+      "tausmooth", "range", "force", "scale", "lmin", "lmax", "vmax", "fpmax", "fvmax", "gain"};
+  return kParams.count(key) > 0;
+}
+
 void WalkDefault(const pugi::xml_node& node, const AttrMap& parent_geom,
-                 const AttrMap& parent_joint, Defaults* d) {
+                 const AttrMap& parent_joint, const AttrMap& parent_actuator,
+                 const std::string& parent_type, const std::string& parent_class, Defaults* d) {
   AttrMap g = parent_geom;
   AttrMap j = parent_joint;
+  AttrMap act = parent_actuator;
+  std::string type = parent_type;
+  for (auto c = node.first_child(); c; c = c.next_sibling()) {
+    if (c.type() != pugi::node_element || !IsMjcfActuatorTag(c.name())) continue;
+    for (const auto& a : c.attributes()) act[a.name()] = a.value();
+    type = c.name();
+  }
   if (const auto gn = Child(node, "geom")) {
     for (const auto& a : gn.attributes()) g[a.name()] = a.value();
   }
@@ -1539,20 +1570,26 @@ void WalkDefault(const pugi::xml_node& node, const AttrMap& parent_geom,
   if (cls.empty() || cls == "main") {
     d->root_geom = g;
     d->root_joint = j;
+    d->root_actuator = act;
+    d->root_actuator_type = type;
   }
+  const std::string name = cls.empty() ? std::string("main") : cls;
   if (!cls.empty()) {
     d->geom[cls] = g;
     d->joint[cls] = j;
+    d->actuator[cls] = act;
+    d->actuator_type[cls] = type;
+    d->actuator_parent[cls] = parent_class;
   }
   for (const auto& child : Children(node, "default")) {
-    WalkDefault(child, g, j, d);
+    WalkDefault(child, g, j, act, type, name, d);
   }
 }
 
 Defaults ParseDefaults(const pugi::xml_node& root) {
   Defaults d;
   for (const auto& def : Children(root, "default")) {
-    WalkDefault(def, AttrMap{}, AttrMap{}, &d);
+    WalkDefault(def, AttrMap{}, AttrMap{}, AttrMap{}, std::string(), std::string(), &d);
   }
   return d;
 }
@@ -3420,15 +3457,132 @@ bool ExpandMjcfActuator(const pugi::xml_node& node, const std::string& type,
   return true;
 }
 
+// MuJoCo 3.16's shortcut parameter source (xml_base.cc mjXShortcutSource /
+// mjXShortcutFromActuator): the class's actuator slot or its nearest ancestor
+// that was written with the same shortcut, or with <general> and the
+// shortcut's gain type; a general slot's gain/bias/dynamics convert back to
+// the shortcut's parameters. Writes them as shortcut attributes (empty when
+// the documented defaults apply).
+AttrMap MjcfShortcutSource(const Defaults& d, std::string cls, const std::string& kind) {
+  for (int guard = 0; guard < 256; ++guard) {
+    const bool root = cls.empty() || cls == "main" || !d.actuator.count(cls);
+    const AttrMap& slot = root ? d.root_actuator : d.actuator.at(cls);
+    const std::string& type = root ? d.root_actuator_type : d.actuator_type.at(cls);
+    auto get = [&](const char* key) {
+      const auto it = slot.find(key);
+      return it == slot.end() ? std::string() : it->second;
+    };
+    const std::string gaintype = ToLower(get("gaintype").empty() ? "fixed" : get("gaintype"));
+    const bool general_match =
+        type == "general" &&
+        gaintype == (kind == "damper" ? "affine" : kind == "muscle" ? "muscle" : "fixed");
+    if (type == kind) {
+      AttrMap out;
+      for (const auto& entry : slot)
+        if (IsMjcfShortcutParam(entry.first)) out[entry.first] = entry.second;
+      return out;
+    }
+    if (general_match) {
+      auto prm = [&](const char* key, size_t n) {
+        auto v = ParseDoubles(get(key));
+        v.resize(std::max(v.size(), n), 0.0);
+        return v;
+      };
+      const auto gp = prm("gainprm", 10), bp = prm("biasprm", 10), dp = prm("dynprm", 10);
+      auto num = [](double v) {
+        char buffer[40];
+        std::snprintf(buffer, sizeof(buffer), "%.17g", v);
+        return std::string(buffer);
+      };
+      AttrMap out;
+      const double g0 = get("gainprm").empty() ? 1.0 : gp[0];
+      if (kind == "position" || kind == "intvelocity") {
+        out["kp"] = num(g0);
+        if (bp[2] < 0) out["kv"] = num(-bp[2]);
+        if (bp[2] > 0) out["dampratio"] = num(bp[2]);
+        if (ToLower(get("dyntype")) == "filterexact") out["timeconst"] = num(dp[0]);
+      } else if (kind == "velocity") {
+        out["kv"] = num(g0);
+      } else if (kind == "damper") {
+        out["kv"] = num(-gp[2]);
+      } else if (kind == "cylinder") {
+        out["timeconst"] = num(dp[0]);
+        out["area"] = num(g0);
+        out["bias"] = num(bp[0]) + " " + num(bp[1]) + " " + num(bp[2]);
+      } else if (kind == "muscle") {
+        out["timeconst"] = num(dp[0]) + " " + num(dp[1]);
+        out["tausmooth"] = num(dp[2]);
+        out["range"] = num(gp[0]) + " " + num(gp[1]);
+        out["force"] = num(gp[2]);
+        out["scale"] = num(gp[3]);
+        out["lmin"] = num(gp[4]);
+        out["lmax"] = num(gp[5]);
+        out["vmax"] = num(gp[6]);
+        out["fpmax"] = num(gp[7]);
+        out["fvmax"] = num(gp[8]);
+      } else if (kind == "adhesion") {
+        out["gain"] = num(g0);
+      }
+      return out;
+    }
+    if (root) return {};
+    const auto parent = d.actuator_parent.find(cls);
+    cls = parent == d.actuator_parent.end() ? std::string() : parent->second;
+  }
+  return {};
+}
+
 void AddMujocoActuatorsJson(const pugi::xml_node& root, Json* actuators,
                             Json* mjc_actuators, Stats* stats) {
   if (!actuators) return;
   const auto actuator_root = Child(root, "actuator");
   if (!actuator_root) return;
   const bool legacy = active_reader->options.profile == "legacy";
+  const Defaults defaults = legacy ? Defaults{} : ParseDefaults(root);
 
-  for (const auto& act_node : actuator_root.children()) {
-    const std::string type = act_node.name();
+  for (const auto& source_node : actuator_root.children()) {
+    // Non-legacy profiles apply the class's actuator default: its attributes
+    // fill in what the element leaves unset, and a <general> inherits the
+    // default's shortcut kind (a `class="muscle"` general is a muscle).
+    std::string type = source_node.name();
+    pugi::xml_document resolved;
+    pugi::xml_node act_node = source_node;
+    bool inherited_kind = false;
+    if (!legacy && IsMjcfActuatorTag(type)) {
+      const std::string cls = Attr(source_node, "class");
+      const bool named = !cls.empty() && defaults.actuator.count(cls);
+      const AttrMap& base = named ? defaults.actuator.at(cls) : defaults.root_actuator;
+      const std::string& slot_type = named ? defaults.actuator_type.at(cls)
+                                           : defaults.root_actuator_type;
+      // A <general> starts from the slot as written: a slot last written by
+      // a shortcut makes it that shortcut (a `class="muscle"` general).
+      if (type == "general" && !slot_type.empty() && slot_type != "general" &&
+          !HasAttr(source_node, "gaintype") && !HasAttr(source_node, "biastype") &&
+          !HasAttr(source_node, "dyntype")) {
+        type = slot_type;
+        inherited_kind = true;
+      }
+      // Generic attributes (ranges, gear, limits, ...) from the slot; a
+      // shortcut's own parameters from MuJoCo's shortcut source.
+      AttrMap merged;
+      const bool shortcut = type != "general";
+      for (const auto& entry : base) {
+        static const std::set<std::string> kExpanded = {"gaintype", "biastype", "dyntype",
+                                                        "gainprm", "biasprm", "dynprm"};
+        if (shortcut && (IsMjcfShortcutParam(entry.first) || kExpanded.count(entry.first)))
+          continue;
+        merged[entry.first] = entry.second;
+      }
+      if (shortcut)
+        for (const auto& entry : MjcfShortcutSource(defaults, named ? cls : std::string(), type))
+          merged[entry.first] = entry.second;
+      if (!merged.empty()) {
+        act_node = resolved.append_copy(source_node);
+        for (const auto& entry : merged)
+          if (!act_node.attribute(entry.first.c_str()))
+            act_node.append_attribute(entry.first.c_str()).set_value(entry.second.c_str());
+      }
+    }
     const std::string joint = Attr(act_node, "joint");
     const std::string tendon = Attr(act_node, "tendon");
     const std::string site = Attr(act_node, "site");
@@ -3451,6 +3605,18 @@ void AddMujocoActuatorsJson(const pugi::xml_node& root, Json* actuators,
                 active_reader->root_source))
           return;
         continue;
+      }
+      if (inherited_kind) {
+        // A general's own gainprm/biasprm/dynprm set only the leading
+        // entries of the default kind's parameters (MuJoCo array parsing).
+        for (const auto& entry : {std::make_pair("gainprm", "gainPrm"),
+                                  std::make_pair("biasprm", "biasPrm"),
+                                  std::make_pair("dynprm", "dynPrm")}) {
+          const auto own = ParseDoubles(Attr(source_node, entry.first));
+          if (own.empty()) continue;
+          Json& values = a[entry.second];
+          for (size_t i = 0; i < own.size() && i < values.size(); ++i) values[i] = own[i];
+        }
       }
       mjc_actuators->push_back(std::move(a));
       if (stats) stats->actuators++;
@@ -4650,6 +4816,16 @@ bool AppendGeomToLink(const pugi::xml_node& geom_node, const std::string& cc,
       if (rgba.size() >= 4) visual_json["rgba"] = Array(rgba);
       if (native_wrap) visual_json["mjcGeom"] = geom_name;
       AddGeomPhysicsAttrs(geom_node, cls, &visual_json);
+      // MuJoCo computes the mass of visual geoms too: keep a shell mass model
+      // (a thin shell mesh has no usable volume).
+      if (opts.profile != "legacy") {
+        bool shell = MjcBoolAttr(Eff(geom_node, cls, "shellinertia", "false"));
+        if (geom_type == "mesh") {
+          const auto mesh_it = assets.find(Eff(geom_node, cls, "mesh"));
+          shell = mesh_it != assets.end() && mesh_it->second.inertia == "shell";
+        }
+        if (shell) visual_json["newton"]["massModel"] = "shell";
+      }
       const std::string mat = Eff(geom_node, cls, "material");
       if (!mat.empty()) visual_json["material"] = mat;
       if (!visible) visual_json["purpose"] = "guide";
@@ -5750,6 +5926,12 @@ void InlineMJCFDefaults(pugi::xml_node root) {
                   .set_value(attr.second.c_str());
           }
         };
+        // Non-legacy profiles resolve actuator classes in
+        // AddMujocoActuatorsJson (MuJoCo's per-class actuator slot and
+        // shortcut source rules); inlining by tag would mix shortcuts.
+        if (std::string(node.parent().name()) == "actuator" && IsMjcfActuatorTag(kind) &&
+            active_reader && active_reader->options.profile != "legacy")
+          return;
         // General actuator parameters are the baseline for actuator shortcuts.
         if (std::string(node.parent().name()) == "actuator" &&
             kind != "general")
@@ -6048,6 +6230,8 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
       for (double& v : g) v /= magnitude;
     if (opts.up_axis == "Y") g = {{g[0], g[2], -g[1]}};
     (*payload)["gravity"] = Json::array({g[0], g[1], g[2]});
+  } else if (opts.profile != "legacy") {
+    (*payload)["gravityMagnitude"] = 9.81;  // MuJoCo's default <option gravity="0 0 -9.81">
   }
   if (option && HasAttr(option, "timestep")) {
     (*payload)["timestep"] = ParseDoubleAttr(option, "timestep", 0.0);

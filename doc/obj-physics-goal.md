@@ -363,6 +363,20 @@ f121272e (2026-10-24; Menagerie Newton compare still 65/69). Fixed in the
   mass/inertia were derived from colliders, and ghost links were judged by
   converted rather than authored geometry.
 
+- MuJoCo USD-decoder check (2026-10-24): `run-mujoco-usd-compare.py`
+  compiles each Menagerie MJCF with MuJoCo 3.16 and compiles LightUSD's stage
+  through MuJoCo's own USD decoder (OpenUSD 26.05 build): 68/69 pass (stretch:
+  the wheel-only OBJ polygon limit). Fixed in LightUSD: default gravity was
+  9.80665 (MuJoCo 9.81); actuator default classes were inlined by tag
+  (ms_human's `<general class="muscle">` lost its muscle model, stretch's
+  `<position class>` its `<general>` gains, rby1's velocity took a
+  position's kv); shell meshes used as visual geoms lacked the shell mass
+  model (stretch, adam_lite failed to compile); `newton:inertia` was written
+  for diagonal tensors too. Decoder bugs/limits found (issues/, untracked):
+  newton:inertia + diagonalInertia rejected, physics-purpose material
+  bindings ignored, sites also decoded as geoms, unauthored limits decode as
+  limited, no tree ball joints, no collision bitmasks, no body gravcomp.
+
 Reference specifications: [UsdPhysics](https://openusd.org/dev/api/usd_physics_page_front.html),
 [MJCF](https://mujoco.readthedocs.io/en/stable/XMLreference.html), and
 [Newton USD import](https://newton-physics.github.io/newton/latest/concepts/usd_parsing.html).

@@ -69,6 +69,9 @@ in one of three profiles, selected with `profile=` (Python), `"profile"` in the 
 | MJCF mesh colliders | `newton:maxHullVertices` only for `<mesh maxhullvert>` (unlimited otherwise); `<mesh inertia="shell">` and `shellinertia` geoms → `NewtonMassAPI` `newton:massModel = "shell"`, `legacy`/`exact` → `mjc:inertia`, `convex` implied (mujoco-usd-converter 0.8.0) | approximation only | `newton:maxHullVertices = 64`, `mjc:inertia = "legacy"` |
 | MJCF contact margin/gap | `newton:contactMargin`/`newton:contactGap` on every collider, MuJoCo's 0 when unauthored (mujoco-usd-converter) | omitted | only when authored |
 | MJCF OBJ meshes | polygons triangulated as MuJoCo 3.16's OBJ decoder (tinyobjloader 2945a96: quads on the shorter diagonal, larger polygons ear-clipped in float; a work limit falls back to fans, `mjcf.obj_polygon_fan`; polygons of more than 100 vertices are dropped as the MuJoCo 3.16 PyPI decoder drops them, `mjcf.obj_polygon_dropped`), so colliders and inferred inertia follow the compiled model | same | tinyobjloader-c triangulation |
+| MJCF actuator defaults | MuJoCo 3.16's class slot rules: one actuator slot per class (type = last element written), shortcut parameters from the nearest slot written with the same shortcut or a matching `<general>` (converted back to kp/kv/...), a `<general>` taking a shortcut slot's kind | same | inlined by element tag |
+| MJCF default gravity | MuJoCo's `0 0 -9.81` when `<option gravity>` is absent | same | 9.80665 |
+| Shell visual meshes | a visual geom of a `<mesh inertia="shell">` / `shellinertia` carries `NewtonMassAPI` `newton:massModel = "shell"` (MuJoCo weighs visual geoms too) | omitted | none |
 | Explicit zero mass/inertia | UsdPhysics reads 0 as unspecified (consumers derive it from colliders; Newton's `add_usd` replaces a zero inertia), so an MJCF `<inertial>` zero tensor with a positive mass is authored as `1e-12` principal moments (`diagonalInertia` and `newton:inertia`), and `mass="0"` on a body with colliders as `physics:mass = 1e-12` (above MuJoCo's 1e-15 minimum) | unauthored | unauthored |
 | Solver iterations | MJCF `<option iterations>` → `newton:maxSolverIterations` | omitted | `-1` |
 | Articulation self-collision | `newton:selfCollisionEnabled` only when the source sets it (an authored value overrides `add_usd(enable_self_collisions=...)`) | omitted | always `true` |
@@ -862,7 +865,10 @@ Registered in the `APISchemas::APIName` enum (`src/core/composition-types.hh`):
   textures, components), `tests/next/` CTest, the `fuzz_next_import`
   libFuzzer harness
 - Downstream checks (optional): `tests/next/run-newton-compare.py` (Newton
-  `add_mjcf` vs `add_usd` over Menagerie, 69/69) and
+  `add_mjcf`/`add_urdf` vs `add_usd`: Menagerie 69/69, 135 URDFs),
+  `tests/next/run-mujoco-usd-compare.py` (MuJoCo's compile of the MJCF vs its
+  USD decoder's compile of LightUSD's stage, Menagerie 68/69, needs a
+  `MUJOCO_WITH_USD` build and `tests/next/mujoco-model-dump.cc`) and
   `tests/next/run-openusd-physics-check.py` (OpenUSD 26.08 UsdPhysics
   validators and parser)
 

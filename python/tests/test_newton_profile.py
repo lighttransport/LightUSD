@@ -378,8 +378,8 @@ def test_explicit_zero_inertia_is_kept():
                 '<geom size=".1" mass="0"/></body>')
     a = lightusd.load_bytes(xml, format='mjcf').prim_at('/World/Links/a')
     # UsdPhysics reads zero as unspecified: the smallest positive value stands in.
-    assert list(a['newton:inertia']) == [1e-12, 1e-12, 1e-12, 0, 0, 0]
-    assert a['physics:diagonalInertia'][0] == pytest.approx(1e-12)
+    assert tuple(a['physics:diagonalInertia']) == pytest.approx((1e-12, 1e-12, 1e-12))
+    assert 'newton:inertia' not in a.attributes
     assert a['physics:mass'] == 2
 
 
@@ -456,7 +456,7 @@ def test_urdf_explicit_zero_mass_properties():
       <joint name="j" type="revolute"><parent link="a"/><child link="b"/><axis xyz="0 0 1"/>
       <limit lower="-1" upper="1"/></joint></robot>'''.encode()
     stage = lightusd.load_bytes(urdf, format='urdf')
-    assert list(stage.prim_at('/World/Links/a')['newton:inertia'])[:3] == [1e-12] * 3
+    assert tuple(stage.prim_at('/World/Links/a')['physics:diagonalInertia']) == pytest.approx((1e-12,) * 3)
     assert stage.prim_at('/World/Links/b')['physics:mass'] == pytest.approx(1e-12)
 
 
@@ -472,3 +472,59 @@ def test_urdf_mimic_chain_targets_the_leading_joint():
     assert j3['newton:mimicCoef1'] == pytest.approx(6)
     assert j3['newton:mimicCoef0'] == pytest.approx(math.degrees(3 * 0.1 + 0.2), rel=1e-5)
     assert 'urdf.mimic_chain_resolved' in [d['code'] for d in stage.import_report()['diagnostics']]
+
+
+def _actuator(stage, name):
+    return stage.prim_at(f'/World/MjcActuators/{name}')
+
+
+def test_mjcf_actuator_default_classes_follow_mujoco():
+    xml = _mjcf('<body name="a"><joint name="j" axis="0 0 1"/><geom size=".1"/>'
+                '<site name="s"/></body>',
+                '<default><motor ctrllimited="true" ctrlrange="-1 1"/><velocity ctrllimited="true"/>'
+                '<position kp="4000" kv="400"/>'
+                '<default class="musc"><muscle ctrllimited="true" ctrlrange="0 1"/></default>'
+                '<default class="pd"><general gainprm="400" biasprm="0 -200 -100" forcerange="-70 70"/></default>'
+                '</default><tendon><fixed name="t"><joint joint="j" coef="1"/></fixed></tendon>')
+    xml = xml.replace(b'</mujoco>', b'''<actuator>
+      <velocity name="vel" joint="j"/>
+      <position name="pos" joint="j"/>
+      <general name="mus" class="musc" tendon="t" gainprm="0.75 1.05 625" lengthrange="0.1 0.2"/>
+      <position name="pd" joint="j" class="pd"/></actuator></mujoco>''')
+    stage = lightusd.load_bytes(xml, format='mjcf')
+    vel = _actuator(stage, 'vel')
+    # A <velocity> does not take the class's <position kv> (MuJoCo 3.16: the
+    # nearest default written with the same shortcut).
+    assert list(vel['mjc:gainPrm'])[:1] == [1]
+    assert list(_actuator(stage, 'pos')['mjc:gainPrm'])[:1] == [4000]
+    mus = _actuator(stage, 'mus')
+    assert (mus['mjc:gainType'], mus['mjc:biasType'], mus['mjc:dynType']) == ('muscle', 'muscle', 'muscle')
+    assert list(mus['mjc:gainPrm'])[:4] == pytest.approx([0.75, 1.05, 625, 200])
+    assert (mus['mjc:ctrlRange:min'], mus['mjc:ctrlRange:max']) == (0, 1)
+    pd = _actuator(stage, 'pd')
+    # A shortcut converts a <general> default's gain/bias back to kp/kv.
+    assert list(pd['mjc:gainPrm'])[:1] == [400]
+    assert list(pd['mjc:biasPrm'])[:3] == pytest.approx([0, -400, -100])
+
+
+def test_mjcf_default_gravity_and_full_inertia_only():
+    xml = _mjcf('<body name="a"><freejoint/><inertial pos="0 0 0" mass="1" diaginertia="1 2 3"/><geom size=".1"/>'
+                '<body name="b"><freejoint/><inertial pos="0 0 0" mass="1" fullinertia="1 2 3 0.1 0 0"/>'
+                '<geom size=".1"/></body></body>')
+    stage = lightusd.load_bytes(xml, format='mjcf')
+    assert stage.prim_at('/World/PhysicsScene')['physics:gravityMagnitude'] == pytest.approx(9.81)
+    # newton:inertia only for a full source tensor (MuJoCo's decoder rejects
+    # it next to diagonalInertia, as mujoco-usd-converter writes it).
+    assert 'newton:inertia' not in stage.prim_at('/World/Links/a').attributes
+    assert len(stage.prim_at('/World/Links/b')['newton:inertia']) == 6
+
+
+def test_mjcf_shell_mesh_visual_keeps_shell_mass_model(tmp_path):
+    _write(tmp_path / 'tri.obj', 'v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n')
+    xml = _mjcf('<body name="a"><freejoint/><geom type="mesh" mesh="m" contype="0" conaffinity="0" group="1"/>'
+                '<geom size=".1"/></body>', '<asset><mesh name="m" file="tri.obj" inertia="shell"/></asset>')
+    path = tmp_path / 'm.xml'
+    path.write_bytes(xml)
+    visual = next(p for p in lightusd.import_mjcf(path) if p.type_name == 'Mesh')
+    assert 'PhysicsCollisionAPI' not in _apis(visual)
+    assert visual['newton:massModel'] == 'shell'

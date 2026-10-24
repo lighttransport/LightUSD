@@ -45,7 +45,7 @@ def test_meters_to_centimeters_and_grams():
     half = box['size'] / 2 * np.abs(np.asarray(box.local_transform())[:3, :3]).sum(axis=0)
     assert half == pytest.approx([10, 20, 30])
     scene = stage.prim_at('/World/PhysicsScene')
-    assert scene['physics:gravityMagnitude'] == pytest.approx(9.80665 * 100, rel=1e-5)
+    assert scene['physics:gravityMagnitude'] == pytest.approx(9.81 * 100, rel=1e-5)  # MuJoCo's default gravity
     assert not report.skipped
 
 
