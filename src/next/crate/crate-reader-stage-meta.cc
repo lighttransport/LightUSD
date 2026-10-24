@@ -59,7 +59,7 @@ void CrateReader::Impl::DecodeStageMetadata(
     if (spec.spec_type != SpecType::PseudoRoot) continue;
     if (spec.path_index.value >= paths_.size()) continue;
 
-    std::vector<std::pair<std::string, Value>> fields;
+    std::vector<std::pair<std::string_view, Value>> fields;
     if (!ResolveFieldset(spec.fieldset_index.value, fields)) {
       AddWarning("Failed to resolve pseudo-root fieldset");
     }
@@ -261,7 +261,7 @@ void CrateReader::Impl::DecodeStageMetadata(
         // has already unpacked this ValueRep, so retaining it is lossless for
         // every type the writer can encode.
         layer.meta().unknownFields.push_back(
-            MakeTypedExtensionField(field.first, field.second));
+            MakeTypedExtensionField(std::string(field.first), field.second));
       }
     }
     break; // Only process first PseudoRoot

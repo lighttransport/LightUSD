@@ -23,7 +23,7 @@ namespace lightusd {
 namespace next {
 
 bool CrateReader::Impl::ResolveFieldset(uint32_t fieldset_index,
-                                         std::vector<std::pair<std::string, Value>>& out) {
+                                         std::vector<std::pair<std::string_view, Value>>& out) {
   out.clear();
 
   if (fieldset_index >= fieldset_indices_.size()) {
@@ -38,8 +38,11 @@ bool CrateReader::Impl::ResolveFieldset(uint32_t fieldset_index,
     if (field_idx < fields_.size()) {
       const CrateField& field = fields_[field_idx];
 
-      std::string name;
-      if (GetToken(field.token_index.value, name)) {
+      if (field.token_index.value < tokens_.size()) {
+        // The name views the token blob (stable for the whole build): the
+        // fieldset is decoded millions of times, and an owning string per
+        // field was pure allocation churn.
+        const std::string_view name = tokens_.view(field.token_index.value);
         // variantSelection has a dedicated raw decoder in BuildStage because
         // it is not representable by Value. Do not report the expected
         // generic-decoder miss as an unsupported field in strict mode.
@@ -50,12 +53,13 @@ bool CrateReader::Impl::ResolveFieldset(uint32_t fieldset_index,
         }
         Value value;
         if (UnpackValue(field.value_rep, value)) {
-          out.emplace_back(std::move(name), std::move(value));
+          out.emplace_back(name, std::move(value));
         } else {
           // Preserve field identity in diagnostics even when the value codec is
           // unsupported (notably OpenUSD UnregisteredValue extension fields).
           // Strict AOUSD mode promotes this warning and rejects the load.
-          AddWarning("Failed to decode field '" + name + "'; field ignored");
+          AddWarning("Failed to decode field '" + std::string(name) +
+                     "'; field ignored");
         }
       }
     }
@@ -67,7 +71,7 @@ bool CrateReader::Impl::ResolveFieldset(uint32_t fieldset_index,
 
 bool CrateReader::Impl::ResolveFieldsetRaw(
     uint32_t fieldset_index,
-    std::vector<std::pair<std::string, ValueRep>>& out) {
+    std::vector<std::pair<std::string_view, ValueRep>>& out) {
   out.clear();
   if (fieldset_index >= fieldset_indices_.size()) return false;
 
@@ -77,9 +81,9 @@ bool CrateReader::Impl::ResolveFieldsetRaw(
     if (field_idx == 0xFFFFFFFF) break;
     if (field_idx < fields_.size()) {
       const CrateField& field = fields_[field_idx];
-      std::string name;
-      if (GetToken(field.token_index.value, name)) {
-        out.emplace_back(std::move(name), field.value_rep);
+      if (field.token_index.value < tokens_.size()) {
+        out.emplace_back(tokens_.view(field.token_index.value),
+                         field.value_rep);
       }
     }
     start++;

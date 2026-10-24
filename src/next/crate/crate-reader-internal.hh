@@ -343,7 +343,7 @@ class CrateReader::Impl {
   bool ReadFieldsets();
   bool ReadSpecs();
   bool ReadPaths();
-  bool DecodePropMetaField(const std::string& name, ValueRep rep,
+  bool DecodePropMetaField(std::string_view name, ValueRep rep,
                            PropMeta& pm);
   bool BuildStage();
   void ReorderPrimsByPath(std::vector<PrimEntry>& entries, int threads);
@@ -362,10 +362,10 @@ class CrateReader::Impl {
       const std::vector<uint32_t>& slot_to_entry, const ReportFn& report_stage,
       size_t spec_begin, size_t spec_end, AttrRecords& attr_out,
       RelRecords& rel_out,
-      std::vector<std::pair<std::string, ValueRep>>& raw_field_scratch,
+      std::vector<std::pair<std::string_view, ValueRep>>& raw_field_scratch,
       bool report);
   void EmitPrimBody(PrimBuildState& state, size_t entry_index,
-                    std::vector<std::pair<std::string, Value>>& scratch,
+                    std::vector<std::pair<std::string_view, Value>>& scratch,
                     const ReportFn& report);
 
   // `depth` is the nesting depth of the value being unpacked. It MUST be
@@ -432,10 +432,13 @@ class CrateReader::Impl {
                                   bool use_string_indices);
   bool GetToken(uint32_t index, std::string& out);
   bool GetString(uint32_t index, std::string& out);
+  // Field-name views point into the token blob, which outlives the stage build
+  // (no per-field string allocation while decoding millions of fieldsets).
   bool ResolveFieldset(uint32_t fieldset_index,
-                       std::vector<std::pair<std::string, Value>>& out);
-  bool ResolveFieldsetRaw(uint32_t fieldset_index,
-                          std::vector<std::pair<std::string, ValueRep>>& out);
+                       std::vector<std::pair<std::string_view, Value>>& out);
+  bool ResolveFieldsetRaw(
+      uint32_t fieldset_index,
+      std::vector<std::pair<std::string_view, ValueRep>>& out);
   bool DecodePathTargets(ValueRep rep, std::vector<std::string>& out);
   bool DecodePathTargets(ValueRep rep, std::vector<std::string>& out,
                          bool with_markers);

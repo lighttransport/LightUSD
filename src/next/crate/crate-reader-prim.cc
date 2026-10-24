@@ -17,7 +17,7 @@ using namespace crate_stage_detail;
 
 void CrateReader::Impl::EmitPrimBody(
     PrimBuildState& state, size_t entry_index,
-    std::vector<std::pair<std::string, Value>>& prim_value_field_scratch,
+    std::vector<std::pair<std::string_view, Value>>& prim_value_field_scratch,
     [[maybe_unused]] const ReportFn& report) {
   auto& layer = state.layer;
   auto& prim_entries = state.prim_entries;
@@ -565,7 +565,8 @@ void CrateReader::Impl::EmitPrimBody(
       // Preserve the decoded typed value and re-emit it as the same field.
       if (ps) {
         ps->meta().unknownFields().push_back(
-            MakeTypedExtensionField(field.first, std::move(field.second)));
+            MakeTypedExtensionField(std::string(field.first),
+                                    std::move(field.second)));
       }
     }
 

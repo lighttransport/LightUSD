@@ -2751,3 +2751,167 @@ Python load reports 745,246 prims / 4.07 GiB of stage accounting. The
 all-45-district crate has 61,833,354 specs/paths (§8), so use a correspondingly
 larger cap and memory budget. The reader now includes the actual count, limit
 and a "raise the crate table limit" hint; `lusdcat` adds the flag hint.
+
+### 9.2 Reader fieldset decode without per-field strings; writer dedup-table note (2026-10)
+
+Two findings from the district rewrite case (§9.1 command: parse a 580 MB
+composed crate, write it back unchanged, `/dev/null` output, automatic thread
+counts on a 32-core host).
+
+**Rejected: the staged-path block-dedup table is never used by a file write.**
+`doc/crate-writer.md` calls out that `InternBlock` (`crate-writer-impl.inc`)
+pre-sizes its open-addressed `block_slots_` table at most 1M slots and rehashes
+while a large scene interns millions of blocks. Raising that cap is a no-op for
+every seekable-sink crate write (which is what `lusdcat -o file.usdc` and
+`WriteLayerToFile` do): such a write streams VALUE blocks straight to the sink
+(`stream_values_ = true`), `Impl::Write` skips the `GrowBlockSlots` setup, and
+`InternBlock` returns through `StreamInternBlock` before touching
+`block_slots_`. Instrumenting the end of `Write` on the district rewrite prints:
+
+```
+[probe] stream_values=1 block_slots=0 block_slots_used=0 stream_dedup=1086623
+```
+
+The streaming path already dedups with a segmented, grow-without-rehash table
+(`StreamDedup`, 1,086,623 unique blocks for 2.89 M passed-through arrays), so
+there is no 1M-slot ceiling to lift and no measurement to make. The pre-sized
+table only matters for `WriteLayerToMemory`/`WriteToMemory`.
+
+**Landed: fieldset decode returns field-name views instead of owning strings.**
+`ResolveFieldset`/`ResolveFieldsetRaw` used to copy each field's name out of the
+token table into a fresh `std::string`; the district crate has 12,642,785
+FIELDS, and every field is decoded at least once (prim fieldsets are decoded by
+the prim collect, twice, and again by the body pass), so a rewrite built and
+destroyed well over ten million short-lived strings purely to compare their
+names against literals. The scratch records now hold `std::string_view`s into
+the token blob (stable for the whole stage build; the one path that needs to
+own a name — unknown-extension metadata — copies explicitly), and
+`DecodePropMetaField` takes a view. Semantics, ordering, diagnostics and the
+warnings' text are unchanged.
+
+Paired district-rewrite measurement (one warmup, three alternating measured
+pairs, warm `/dev/shm` input, `/dev/null` output, 1-minute load ≤ 6):
+
+| Metric | baseline | candidate | delta |
+|---|---:|---:|---:|
+| Process wall, median | 19.78 s | 19.21 s | −2.9% |
+| CPU (user+sys), median | 34.11 s | 32.75 s | −4.0% |
+| Retired instructions (`perf stat`, 2 runs) | 134.6 G | 130.5 G | −3.1% |
+| Peak RSS, median | 6.98 M KiB | 6.98 M KiB | −0.01% |
+| `BuildStage`, median | 4496 ms | 4333 ms | −3.6% |
+| `bodies`, median | 881 ms | 843 ms | −4.3% |
+| Minor faults, median | 3,424,448 | 3,348,138 | −2.2% |
+
+Phase-level medians move both ways inside the run-to-run spread (`fields_specs`
+6.82 s → 6.33 s and `property_index` 66 ms → 126 ms are not attributable to a
+reader-only change); the aggregate wall/CPU/instruction agreement and the
+fault count are the evidence, not any single phase. Reading the district and
+the full island, and composing the district, still produce the §8/§9.1 hashes
+exactly.
+
+Fresh writer attribution on the same rewrite (instrumented bins carry ~1.7 s of
+timer overhead, so read the shares, not the absolutes): `prim_loop` is 93% of
+`fields_specs`; inside the prim loop `EmitPrimProperties` is 64%, of which
+`EncodeValue` 48% (half of that `InternBlock`/passthrough staging), token
+interning 28%, property-path interning 17%, `EmitPropertySpec` 6% and authored
+property-metadata fields 4%. This matches the earlier profile in §8 and
+`doc/crate-writer.md`; the cost is spread over per-spec field construction and
+global interning, with no single dominant routine left to remove.
+
+Verification for this section: native suite 67/67 (`ctest` in `build_ninja`) and
+standalone `next` Debug 71/71, 227 `tests/usdc/*.usdc` fixtures rewritten to
+USDA byte-identically by the baseline and candidate binaries, and these
+unchanged outputs — district rewrite `e049a40f…` (578,776,001 B), composed
+district `98619c40…` (580,261,850 B), island `a8f50922…` (2,512,205,846 B)
+(snapshot note in §9.3).
+
+### 9.3 Qualification of the fieldset-name change (2026-10)
+
+Sanitizers and thread checking (all in build trees outside the repository):
+
+| Check | Build | Result |
+|---|---|---|
+| ASan + UBSan (value-name lifetime is the risk here) | `Debug`, `-fsanitize=address,undefined -fno-sanitize=vptr`, standalone `next` | 70/71 pass, **zero sanitizer reports** |
+| ASan district crate parse | same tree, `lusdcat -l` on the 580 MB composed district | 735,484 prims, no reports (156 s, ASan-slow) |
+| TSan with `LIGHTUSD_NEXT_FINE_LOCKS=ON` | `Debug`, `LIGHTUSD_NEXT_BUILD_TSAN_TESTS=ON` | 5/5 pass (`tsan_propname`, `pcp_parallel`, `usdc_reader`, `crate_dict`, `instance_group`) |
+
+The one ASan failure is `next_test_instance_group`'s wall-clock gate
+(`BuildStage=16.0 s` against a 6 s bound). That check already exempts itself
+under `LIGHTUSD_TEST_TSAN` because "timing gates are meaningless under
+instrumentation"; it has no equivalent ASan exemption, so a `Debug`+ASan
+`BuildStage` that is ~4x slower trips it. Every semantic check in that test
+passed.
+
+Baked-frame identity (ALab `baked_procedurals/payload/stoat_body_main.1004.usd`,
+ten prims, `--rewrite-layer --max-crate-elements 100000000`): baseline and
+candidate both reproduce the §9 hashes exactly — USDC
+`a8d08517…`/3,537,903,797 B and USDA `5ca18bda…`/10,039,453,727 B.
+
+Island composition (`island.usda`, `--parse-threads 8 --compose-threads 8`,
+USDC to `/dev/null`), one warmup plus three alternating pairs:
+
+| Metric | baseline | candidate | delta |
+|---|---:|---:|---:|
+| Process wall, median | 15.23 s | 15.01 s | −1.4% |
+| CPU (user+sys), median | 30.94 s | 30.87 s | −0.2% |
+| Peak RSS, median | 4.71 GiB | 4.73 GiB | +0.4% |
+| `build_stage` | 3689 ms | 3707 ms | +0.5% |
+
+That is the expected result for this scene: only ~3.7 s of a 15 s run is
+`BuildStage`, and the crate reader is a fraction of that, so a reader-side cut
+does not move island. The district rewrite in §9.2 is the case that isolates it.
+Both binaries emit the same island crate (1,815,093,161 B, SHA-256
+`267d237a…`), but that is **not** the §9 size/hash (2,512,205,846 B,
+`a8f50922…`): the island copy on this machine resolves 20 elements
+(`elements/` has exactly the 20 referenced dirs, all present) and composes to a
+1.82 GB crate, so the §9 number came from a larger island snapshot. Treat the
+`a8f50922…` value as tied to that snapshot, not as a property of the current
+local asset; the matched-binary equality above is the meaningful check.
+
+Two further paired sets on a quieter host (one warmup, three or four
+alternating pairs, no swap):
+
+| Case | Metric | baseline | candidate | delta |
+|---|---|---:|---:|---:|
+| Island `island.usda` → USDA | process wall | 8.48 s | 8.57 s | +1.1% |
+| | CPU | 42.95 s | 42.81 s | −0.3% |
+| | peak RSS | 4.37 GiB | 4.37 GiB | −0.1% |
+| | `build_stage` | 3762 ms | 3895 ms | +3.5% (spread 3606–3971 both) |
+| Baked 1004 → USDC | process wall | 0.91 s | 0.91 s | 0.0% |
+| | peak RSS | 312.4 MiB | 312.5 MiB | +0.05% |
+| Baked 1004 → USDA | process wall | 1.44 s | 1.43 s | −0.7% |
+| | CPU | 34.20 s | 34.36 s | +0.5% |
+| | peak RSS | 1017.0 MiB | 1019.8 MiB | +0.3% |
+| District rewrite (re-run) | process wall | 19.38 s | 19.05 s | −1.7% |
+| | CPU | 33.90 s | 32.75 s | −3.4% |
+| | peak RSS | 6.655 GiB | 6.653 GiB | −0.04% |
+
+The district re-run agrees with §9.2 (−2.9% wall / −4.0% CPU then, −1.7% /
+−3.4% now; the candidate CPU median is 32.75 s in both). Island and the baked
+frame are neutral: they are dominated by composition and by the USDA text
+writer, not by crate field decoding. No case comes near the 1.05× RSS ceiling.
+
+Merged ALab was not re-measured: the §9 run used an ad-hoc merged entry (a
+per-file symlink union of `ALab-2.3.0/ALab` and `techvar_assets`, with a
+hand-built entry listing the sets) that is not part of the downloaded package,
+so rebuilding the union reproduces the entity tree but not the 24,466-prim
+merged stage. The baked frame above covers the ALab crate path.
+
+WASM32: both web products build cleanly (`-DLIGHTUSD_WASM_PRODUCT=next`,
+342 targets; `=legacy`, 411 targets, `MinSizeRel`). The next module was also
+exercised functionally in Node: `lightusd_next_converter_rewrite` on five
+`tests/usdc` crates (suzanne, curves, usdskel-001, shader,
+skeleton-purpose-001) returns bytes identical to the native `lusdcat
+--rewrite-layer --output-format usdc` rewrite of the same fixture — e.g.
+suzanne 50,018 B `2269a062…` from both, with matching token/path/spec counts.
+
+Full-scale limits of the all-45-district crate (`caldera_fullLOD2.usdc`,
+3,014,654,530 B, 61,833,354 specs): it declares **176,656,972 fields**, so the
+default `--max-crate-elements` and even 100M are rejected with the
+"raise the crate table limit" hint; at 300M it then needs a larger memory budget
+than 16 GiB (`Compressed integer workspace exceeds cumulative allocation
+budget` after 64 s / 7 GB), and at `--max-memory-mib 49152` it loads in 357 s
+with **84.8 GiB peak RSS** and zero swap. A paired full45 run is therefore a
+one-at-a-time, ~85 GB-resident, multi-hour job (the §8 record has the same
+scene's compose+write at 79–114 min); it is not something to run alongside any
+other load on this workstation.
