@@ -21,9 +21,9 @@ path's leaf, which is the (sanitized) MJCF name.
 What MuJoCo 3.16's decoder cannot read back is recorded under
 ``decoder_limits`` instead of failing a model (see ``_decoder_limit``). Three
 decoder bugs make otherwise valid stages fail or misread outright and need the
-local patch in ``issues/mujoco-usd-decoder/local-patch.diff`` (newton:inertia
+fix in lighttransport/mujoco@77183565 (branch ``tinyusdz``; newton:inertia
 next to diagonalInertia, physics-purpose material bindings, site gprims
-decoded as geoms). Expected residual: hello_robot_stretch_3's gripper, whose
+decoded as geoms), not yet upstream. Expected residual: hello_robot_stretch_3's gripper, whose
 OBJ has a 215-vertex polygon that MuJoCo's PyPI wheel drops (LightUSD follows
 the wheel) while a CMake build of the same tag keeps it.
 
