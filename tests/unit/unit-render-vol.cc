@@ -274,6 +274,79 @@ void usdvol_vdb_corpus_test(void) {
     }
   }
 
+  // Header-only listing and single-field reads (fieldName, fieldIndex).
+  {
+    const std::string path = std::string(root) + "/fire.vdb";
+    std::vector<usdVol::VDBGridInfo> infos;
+    std::string err;
+    TEST_CHECK_(usdVol::ReadVDBGridInfoFromFile(path, &infos, &err), "%s", err.c_str());
+    TEST_CHECK(infos.size() >= 2);
+    for (const auto &info : infos) {
+      TEST_CHECK(info.has_transform && info.name_index == 0 && !info.point_grid);
+      if (info.name == "density") TEST_CHECK(info.value_type == "float");
+    }
+    usdVol::VDBReadOptions opt;
+    usdVol::VDBGrid temperature;
+    std::string warn;
+    TEST_CHECK_(usdVol::ReadVDBGridFromFile(path, "temperature", 0, opt, &temperature, &warn, &err),
+                "%s", err.c_str());
+    TEST_CHECK(temperature.name == "temperature" && !temperature.data.empty());
+    TEST_CHECK(temperature.grid_class == "fogVolume");
+    usdVol::VDBGrid missing;
+    err.clear();
+    TEST_CHECK(!usdVol::ReadVDBGridFromFile(path, "temperature", 1, opt, &missing, &warn, &err));
+    TEST_CHECK(err.find("no grid 'temperature' #1") != std::string::npos);
+    // Budget-driven downsampling keeps the extent and fits the cap.
+    opt.max_voxels = 100000;
+    opt.downsample = true;
+    usdVol::VDBGrid small;
+    TEST_CHECK(usdVol::ReadVDBGridFromFile(path, "temperature", 0, opt, &small, &warn, &err));
+    TEST_CHECK(small.stride > 1 &&
+               size_t(small.dim[0]) * size_t(small.dim[1]) * size_t(small.dim[2]) <= 100000);
+    TEST_CHECK(small.dim[0] == (temperature.dim[0] + small.stride - 1) / small.stride);
+    // Without downsampling the same cap rejects the grid.
+    opt.downsample = false;
+    err.clear();
+    TEST_CHECK(!usdVol::ReadVDBGridFromFile(path, "temperature", 0, opt, &small, &warn, &err));
+  }
+  // Vector grids as three components.
+  {
+    const std::string path = std::string(root) + "/reference/ref_vec3s.vdb";
+    usdVol::VDBReadOptions opt;
+    opt.vector_components = true;
+    usdVol::VDBGrid v;
+    std::string warn, err;
+    TEST_CHECK_(usdVol::ReadVDBGridFromFile(path, "", 0, opt, &v, &warn, &err), "%s", err.c_str());
+    TEST_CHECK(v.components == 3 && v.value_type == "vec3f" && v.data.size() == 3 * 64);
+  }
+  // Active tiles (suzanne's interior) carry their values, not the background.
+  {
+    usdVol::VDBGrid g;
+    std::string warn, err;
+    usdVol::VDBReadOptions opt;
+    opt.max_voxels = size_t(16) * 1024 * 1024;
+    TEST_CHECK(usdVol::ReadVDBGridFromFile(std::string(root) + "/suzanne.vdb", "density", 0, opt,
+                                           &g, &warn, &err));
+    TEST_CHECK(g.grid_class == "unknown");  // no class metadata in this file
+    // The center of the head lies inside the tiles.
+    const size_t c = size_t(g.dim[0] / 2) +
+                     size_t(g.dim[0]) * (size_t(g.dim[1] / 2) + size_t(g.dim[1]) * size_t(g.dim[2] / 2));
+    TEST_CHECK_(c < g.data.size() && g.data[c] > 0.0f, "suzanne center density %g",
+                c < g.data.size() ? double(g.data[c]) : -1.0);
+  }
+  // Half-saved densities keep their subnormal values (smoke.vdb).
+  {
+    usdVol::VDBGrid g;
+    std::string warn, err;
+    usdVol::VDBReadOptions opt;
+    opt.max_voxels = size_t(16) * 1024 * 1024;
+    TEST_CHECK(usdVol::ReadVDBGridFromFile(std::string(root) + "/smoke.vdb", "density", 0, opt, &g,
+                                           &warn, &err));
+    size_t tiny = 0;
+    for (float v : g.data) tiny += v > 0.0f && v < 6.1e-5f;
+    TEST_CHECK_(tiny > 0, "smoke.vdb: %zu subnormal-range densities", tiny);
+  }
+
   // PointDataGrid is valid VDB but is not a voxel-valued UsdVol field. It must
   // be rejected cleanly instead of treating its auxiliary point payload as a
   // scalar leaf buffer.

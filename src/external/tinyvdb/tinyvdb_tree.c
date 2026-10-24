@@ -325,6 +325,65 @@ float tvdb_tree_get(const tvdb_tree_index* p, const int32_t coord[3],
   }
   return NAN;
 }
+void tvdb_tree_lookup(const tvdb_tree_index* p, const int32_t coord[3],
+                      const uint8_t** bytes, const tvdb_value_t** value,
+                      int* active) {
+  const tvdb_root_node_t* r = &p->grid->tree.nodes[0].u.root;
+  const tvdb_value_type_t vt =
+      p->grid->tree.layout.levels[p->levels - 1].value_type;
+  const size_t vsize = tvdb_value_type_size(vt);
+  int32_t origin[3];
+  *bytes = NULL;
+  *value = NULL;
+  if (active) *active = 0;
+  for (int a = 0; a < 3; ++a) {
+    int64_t v = coord[a], span = p->span[1], sh = p->span_shift[1];
+    origin[a] = (int32_t)((v >= 0 ? v >> sh : -1 - ((-1 - v) >> sh)) * span);
+  }
+  size_t h = (size_t)root_hash(origin) & (p->root_capacity - 1),
+         item = SIZE_MAX;
+  while (p->root_map[h]) {
+    size_t i = p->root_map[h] - 1;
+    if (!memcmp(origin, root_coord(r, i), sizeof(origin))) {
+      item = i;
+      break;
+    }
+    h = (h + 1) & (p->root_capacity - 1);
+  }
+  if (item == SIZE_MAX) {
+    *value = &r->background;
+    return;
+  }
+  if (item >= r->num_children) {
+    item -= r->num_children;
+    if (active) *active = r->tile_active[item] != 0;
+    *value = &r->tile_values[item];
+    return;
+  }
+  size_t node = r->child_indices[item];
+  for (int l = 1; l < p->levels; ++l) {
+    const tvdb_tree_node_t* n = &p->grid->tree.nodes[node];
+    int L = p->grid->tree.layout.levels[l].log2dim;
+    size_t slot = 0;
+    const int sh = l + 1 == p->levels ? 0 : p->span_shift[l + 1];
+    for (int a = 0; a < 3; ++a)
+      slot = (slot << L) |
+             (size_t)(((int64_t)coord[a] - p->origins[node][a]) >> sh);
+    if (n->type == TVDB_NODE_LEAF) {
+      *bytes = n->u.leaf.data + slot * vsize;
+      if (active) *active = mask_on(&n->u.leaf.value_mask, slot);
+      return;
+    }
+    const tvdb_internal_node_t* in = &n->u.internal;
+    if (!mask_on(&in->child_mask, slot)) {
+      *bytes = in->values + slot * vsize;
+      if (active) *active = mask_on(&in->value_mask, slot);
+      return;
+    }
+    node = in->child_indices[tvdb_tree_mask_rank(&in->child_mask, slot)];
+  }
+  *value = &r->background;
+}
 int tvdb_tree_matrix(const tvdb_transform_t* t, double m[4][4]) {
   memset(m, 0, 16 * sizeof(double));
   for (int a = 0; a < 4; ++a) m[a][a] = 1;

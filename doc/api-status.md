@@ -214,11 +214,27 @@ remain; VolumeFieldBase / VolumeFieldAsset are abstract bases)
 > (Volume, FieldAsset, OpenVDBAsset, Field3DAsset) are GPrim-derived and defined
 > in `usdGeom.hh`, not placeholder structs.
 
-The runtime OpenVDB adapter is backed by the current vendored TinyVDB C API and
-loads scalar bool/int/half/float/double grids from OpenVDB 1.x--13.x files.
-Vector grids are exposed to the existing scalar volume renderer as magnitude;
-PointDataGrid is diagnosed and skipped. The external corpus regression is
-`tests/run-tinyvdbio-corpus.sh`.
+The runtime OpenVDB adapter (`src/usdVol.hh`) is backed by the vendored
+TinyVDB C API:
+- **Value types:** bool, mask, int32, int64, half, float and double grids from
+  OpenVDB 1.x--13.x files.
+- **Vector grids:** vec3i/f/d, as magnitude or, with
+  `VDBReadOptions::vector_components`, as three channels.
+- **Transforms:** any linear map, reported as an index-to-world matrix.
+- **Field reads:** `ReadVDBGrid` decodes only the grid a field selects
+  (`fieldName`, then `fieldIndex` among equal names), optionally downsampled to
+  a voxel budget. `ReadVDBGridInfo` lists grids, class and bounds from headers
+  alone.
+- **Point grids:** PointDataGrid is diagnosed and skipped.
+- **Agreement with OpenVDB:** dense values equal OpenVDB's on all 20 float
+  grids of the tinyvdbio corpus.
+  - Active tiles now carry their values; they used to read the background, as
+    in `suzanne.vdb`'s interior.
+  - Half-stored subnormals decode exactly; `smoke.vdb`'s faint densities used
+    to come out at half their value.
+- **Corpus regression:** `tests/run-tinyvdbio-corpus.sh`, also the
+  `usdvol-vdb-corpus` ctest. Set `LIGHTUSD_TINYVDBIO_DATA_DIR` or
+  `$TINYVDBIO_DATA_DIR` to run it; it is skipped otherwise.
 
 ---
 

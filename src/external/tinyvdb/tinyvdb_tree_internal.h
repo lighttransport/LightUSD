@@ -24,6 +24,12 @@ tvdb_status_t tvdb_tree_index_create(const tvdb_grid_t*, int float_only,
 void tvdb_tree_index_destroy(tvdb_tree_index*);
 float tvdb_tree_get(const tvdb_tree_index*, const int32_t coord[3],
                     int* active);
+/* Any value type: the stored value at coord as raw bytes (leaf voxel or
+ * internal tile, tvdb_value_type_size bytes) or as a tvdb_value_t (root tile
+ * or background); exactly one of *bytes / *value is set. */
+void tvdb_tree_lookup(const tvdb_tree_index*, const int32_t coord[3],
+                      const uint8_t** bytes, const tvdb_value_t** value,
+                      int* active);
 size_t tvdb_tree_mask_rank(const tvdb_nodemask_t*, size_t bit);
 tvdb_status_t tvdb_tree_error(tvdb_error_t*, tvdb_status_t, const char*);
 int tvdb_tree_matrix(const tvdb_transform_t*, double matrix[4][4]);

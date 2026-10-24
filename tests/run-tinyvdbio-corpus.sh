@@ -2,8 +2,14 @@
 set -euo pipefail
 
 UNIT="${1:?unit-test-lightusd path required}"
-DATA="${2:?tinyvdbio data directory required}"
+DATA="${2:-}"
 RENDERER="${3:-}"
+
+# No corpus: skip (ctest SKIP_RETURN_CODE).
+if [ -z "$DATA" ] || [ ! -f "$DATA/reference/ref_float.vdb" ]; then
+  echo "SKIP: tinyvdbio data directory not given or incomplete" >&2
+  exit 77
+fi
 
 test -f "$DATA/reference/ref_float.vdb"
 test -f "$DATA/smoke.vdb"

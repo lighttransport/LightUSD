@@ -129,6 +129,17 @@ else ()
            WORKING_DIRECTORY $<TARGET_FILE_DIR:${TEST_TARGET_NAME}>  )
 endif ()
 
+# OpenVDB corpus (tinyvdbio's data directory, kept out of Git): skipped
+# unless LIGHTUSD_TINYVDBIO_DATA_DIR or $TINYVDBIO_DATA_DIR names it.
+set(LIGHTUSD_TINYVDBIO_DATA_DIR "$ENV{TINYVDBIO_DATA_DIR}" CACHE PATH
+    "tinyvdbio data directory for the usdvol-vdb-corpus test (empty skips)")
+if (NOT WIN32)
+  add_test(NAME usdvol-vdb-corpus
+           COMMAND bash ${PROJECT_SOURCE_DIR}/tests/run-tinyvdbio-corpus.sh
+                   $<TARGET_FILE:${TEST_TARGET_NAME}> "${LIGHTUSD_TINYVDBIO_DATA_DIR}")
+  set_tests_properties(usdvol-vdb-corpus PROPERTIES SKIP_RETURN_CODE 77)
+endif ()
+
 # Unit tests run from the build tree, while their fixtures live in the source
 # tree. Pass the source root explicitly so out-of-tree ctest runs work too.
 set_tests_properties(${TEST_TARGET_NAME} PROPERTIES

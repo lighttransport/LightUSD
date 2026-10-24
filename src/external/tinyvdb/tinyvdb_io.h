@@ -227,7 +227,10 @@ typedef struct tvdb_transform {
     double scale_values[3];
     double voxel_size[3];
     double translation[3];
-    double matrix[4][4]; /* for AffineMap: row-major 4x4 */
+    /* AffineMap, column-vector convention: world = matrix * (i, j, k, 1),
+     * translation in matrix[0..2][3]. Files hold OpenVDB's row-vector
+     * Mat4d (translation in its last row), the transpose; I/O converts. */
+    double matrix[4][4];
 } tvdb_transform_t;
 
 /* ========================================================================== */
@@ -309,6 +312,9 @@ typedef struct tvdb_tree {
     tvdb_grid_layout_t layout;
     int               is_point_data_grid;
     int               is_point_index_grid;
+    /* OpenVDB MaskGrid (Tree_mask_*): a bool tree whose leaf values are the
+     * active state (leaf buffers hold only the value mask). */
+    int               is_mask_grid;
     tvdb_allocator_t  *alloc;
     tvdb_pool_chunk_t *pool;  /* from-sparse builder payload arena */
 } tvdb_tree_t;
@@ -438,6 +444,27 @@ void tvdb_grid_destroy(tvdb_grid_t *grid, const tvdb_allocator_t *alloc);
  * A failed read preserves that grid, including its descriptor, and other grids
  * are still attempted. Reload requires valid offsets into the original file. */
 tvdb_status_t tvdb_read_all_grids(tvdb_file_t *file, tvdb_error_t *err);
+
+/* One grid only (same replace/preserve rules as tvdb_read_all_grids): decode
+ * just the fields a consumer needs instead of every grid in the file. */
+tvdb_status_t tvdb_read_grid(tvdb_file_t *file, size_t index, tvdb_error_t *err);
+/* Header of one grid without its tree: compression flags, metadata (grid
+ * class, file bbox, voxel count, ...), transform and layout. The tree stays
+ * empty (tree.nodes == NULL) until tvdb_read_grid. Cheap: no voxel data is
+ * read or decompressed. */
+tvdb_status_t tvdb_read_grid_header(tvdb_file_t *file, size_t index, tvdb_error_t *err);
+
+/* Grid metadata by name (OpenVDB keys such as "class", "name",
+ * "file_bbox_min", "file_voxel_count"); NULL when absent. */
+const tvdb_meta_entry_t *tvdb_grid_find_metadata(const tvdb_grid_t *grid,
+                                                 const char *name);
+/* Add or replace metadata `name` (type from value->type: bool, int32,
+ * int64, float, double, vec3i, vec3s, vec3d or string). Uses the grid's
+ * metadata allocator, or malloc/free for a grid without one. */
+tvdb_status_t tvdb_grid_set_metadata(tvdb_grid_t *grid, const char *name,
+                                     const tvdb_value_t *value, tvdb_error_t *err);
+tvdb_status_t tvdb_grid_set_metadata_string(tvdb_grid_t *grid, const char *name,
+                                            const char *text, tvdb_error_t *err);
 
 size_t        tvdb_grid_count(const tvdb_file_t *file);
 const char   *tvdb_grid_name(const tvdb_file_t *file, size_t idx);
@@ -804,8 +831,10 @@ static float tvdb__half_to_float(uint16_t h) {
         if (mant == 0) {
             f = sign << 31;
         } else {
-            /* denormalized */
-            exp = 1;
+            /* Subnormal: mant * 2^-24. Normalize with `exp` shifts to
+               1.m * 2^(-14 - exp); the counter starts at 0 (starting at 1
+               halved every subnormal). */
+            exp = 0;
             while (!(mant & 0x400u)) { mant <<= 1; exp++; }
             mant &= 0x3ffu;
             f = (sign << 31) | ((127 - 15 + 1 - exp) << 23) | (mant << 13);
@@ -1450,6 +1479,7 @@ static tvdb_status_t tvdb__read_meta(tvdb__sr_t *sr, tvdb_metadata_t *meta,
             else if (!strcmp(entry.type_name,"int64")) type = TVDB_VALUE_INT64;
             else if (!strcmp(entry.type_name,"vec3i")) type = TVDB_VALUE_VEC3I;
             else if (!strcmp(entry.type_name,"vec3d")) type = TVDB_VALUE_VEC3D;
+            else if (!strcmp(entry.type_name,"vec3s")) type = TVDB_VALUE_VEC3F;
             if (type != TVDB_VALUE_NULL) {
                 if ((size_t)size != tvdb_value_type_size(type) ||
                     !tvdb__sr_read_value(sr, type, &entry.value)) goto fail;
@@ -1599,6 +1629,9 @@ static tvdb_status_t tvdb__parse_grid_type(const char *grid_type,
         vtype = TVDB_VALUE_INT64; p += 6;
     } else if (strncmp(p, "bool_", 5) == 0) {
         vtype = TVDB_VALUE_BOOL; p += 5;
+    } else if (strncmp(p, "mask_", 5) == 0) {
+        /* ValueMask: bool values equal to the active state. */
+        vtype = TVDB_VALUE_BOOL; p += 5;
     } else if (strncmp(p, "vec3s_", 6) == 0) {
         vtype = TVDB_VALUE_VEC3F; p += 6;
     } else if (strncmp(p, "vec3d_", 6) == 0) {
@@ -1724,10 +1757,11 @@ static tvdb_status_t tvdb__read_transform(tvdb__sr_t *sr,
             xform->voxel_size[2] = 1.0;
     } else if (strcmp(type, "AffineMap") == 0) {
         xform->type = TVDB_TRANSFORM_AFFINE;
-        /* AffineMap::read: 4x4 matrix (16 doubles, row-major) */
+        /* AffineMap::read: OpenVDB's Mat4d, 16 doubles of a row-vector
+         * matrix (p' = p * M); store its transpose. */
         for (int r = 0; r < 4; r++)
             for (int c = 0; c < 4; c++)
-                ok = ok && tvdb__sr_read_f64(sr, &xform->matrix[r][c]);
+                ok = ok && tvdb__sr_read_f64(sr, &xform->matrix[c][r]);
         /* Extract scale and translation from matrix */
         xform->translation[0] = xform->matrix[0][3];
         xform->translation[1] = xform->matrix[1][3];
@@ -2862,6 +2896,12 @@ static tvdb_status_t tvdb__read_leaf_buffer(
                             "Truncated bool leaf");
             return TVDB_ERROR_INVALID_DATA;
         }
+        if (tree->is_mask_grid) {
+            /* LeafNode<ValueMask>::readBuffers: the mask is the buffer. */
+            for (size_t s = 0; s < num_values; ++s)
+                leaf->data[s] = (uint8_t)tvdb__nodemask_is_on(&leaf->value_mask, s);
+            return TVDB_OK;
+        }
         size_t packed_bytes = (num_values + 7) / 8;
         uint8_t *packed = (uint8_t *)tvdb__alloc(a, packed_bytes);
         if (!packed) {
@@ -3070,6 +3110,7 @@ static tvdb_status_t tvdb__read_grid_inner(tvdb__sr_t *sr, tvdb_grid_t *grid,
                                           const tvdb_header_t *header,
                                           tvdb__scratch_t *scratch,
                                           tvdb_allocator_t *alloc,
+                                          int header_only,
                                           tvdb_error_t *err);
 
 /* The node-value staging buffer is shared across a whole grid load; release it
@@ -3077,9 +3118,11 @@ static tvdb_status_t tvdb__read_grid_inner(tvdb__sr_t *sr, tvdb_grid_t *grid,
 static tvdb_status_t tvdb__read_grid(tvdb__sr_t *sr, tvdb_grid_t *grid,
                                      const tvdb_header_t *header,
                                      tvdb_allocator_t *alloc,
+                                     int header_only,
                                      tvdb_error_t *err) {
     tvdb__scratch_t scratch = { NULL, 0 };
-    tvdb_status_t st = tvdb__read_grid_inner(sr, grid, header, &scratch, alloc, err);
+    tvdb_status_t st = tvdb__read_grid_inner(sr, grid, header, &scratch, alloc,
+                                             header_only, err);
     if (scratch.data) tvdb__free(alloc, scratch.data, scratch.size);
     return st;
 }
@@ -3088,6 +3131,7 @@ static tvdb_status_t tvdb__read_grid_inner(tvdb__sr_t *sr, tvdb_grid_t *grid,
                                           const tvdb_header_t *header,
                                           tvdb__scratch_t *scratch,
                                           tvdb_allocator_t *alloc,
+                                          int header_only,
                                           tvdb_error_t *err) {
     uint32_t file_version = header->file_version;
     uint64_t point_blob_start = 0;
@@ -3119,6 +3163,8 @@ static tvdb_status_t tvdb__read_grid_inner(tvdb__sr_t *sr, tvdb_grid_t *grid,
                                &grid->tree.layout, err);
     if (st != TVDB_OK) return st;
 
+    if (header_only) return TVDB_OK;
+
     /* Check for grid instances */
     if (grid->descriptor.instance_parent_name &&
         grid->descriptor.instance_parent_name[0] != '\0') {
@@ -3138,6 +3184,9 @@ static tvdb_status_t tvdb__read_grid_inner(tvdb__sr_t *sr, tvdb_grid_t *grid,
         (grid->descriptor.grid_type &&
          strstr(grid->descriptor.grid_type, "ptidx") != NULL &&
          strstr(grid->descriptor.grid_type, "ptdataidx") == NULL) ? 1 : 0;
+    grid->tree.is_mask_grid =
+        (grid->descriptor.grid_type &&
+         strncmp(grid->descriptor.grid_type, "Tree_mask_", 10) == 0) ? 1 : 0;
 
     /* Determine value type (half-float promotion) */
     tvdb_value_type_t vtype = grid->tree.layout.levels[0].value_type;
@@ -3456,16 +3505,45 @@ void tvdb_file_close(tvdb_file_t *file) {
     memset(file, 0, sizeof(*file));
 }
 
+/* Read grid `i` (header only or whole) into independent storage, replacing
+ * the grid on success and preserving it on failure. */
+static tvdb_status_t tvdb__load_grid(tvdb_file_t *file, size_t i, int header_only,
+                                     tvdb_error_t *err) {
+    tvdb__sr_t sr;
+    tvdb__sr_init(&sr, file->file_data.data, file->file_data.data_len,
+                  tvdb_is_big_endian());
+    tvdb_grid_t *current = &file->grids[i];
+    tvdb_grid_t loaded;
+    memset(&loaded, 0, sizeof(loaded));
+    /* Borrow the descriptor while reading into independent storage. Repeated
+       reads must not overwrite owning metadata/tree pointers and leak them. */
+    loaded.descriptor = current->descriptor;
+    tvdb_status_t st;
+    if (!file->file_data.data || !loaded.descriptor.grid_byte_offset ||
+        loaded.descriptor.grid_byte_offset > loaded.descriptor.end_byte_offset ||
+        loaded.descriptor.end_byte_offset > file->file_data.data_len) {
+        tvdb__set_error(err, TVDB_ERROR_INVALID_DATA, "Grid has no valid serialized offsets");
+        st = TVDB_ERROR_INVALID_DATA;
+    } else {
+        tvdb__sr_seek_set(&sr, loaded.descriptor.grid_byte_offset);
+        st = tvdb__read_grid(&sr, &loaded, &file->header, &file->alloc, header_only, err);
+    }
+    if (st != TVDB_OK) {
+        memset(&loaded.descriptor, 0, sizeof(loaded.descriptor));
+        tvdb__grid_destroy(&loaded, &file->alloc);
+    } else {
+        memset(&current->descriptor, 0, sizeof(current->descriptor));
+        tvdb__grid_destroy(current, &file->alloc);
+        *current = loaded;
+    }
+    return st;
+}
+
 tvdb_status_t tvdb_read_all_grids(tvdb_file_t *file, tvdb_error_t *err) {
     if (!file) {
         tvdb__set_error(err, TVDB_ERROR_INVALID_ARGUMENT, "NULL file");
         return TVDB_ERROR_INVALID_ARGUMENT;
     }
-
-    int swap_endian = tvdb_is_big_endian();
-    tvdb__sr_t sr;
-    tvdb__sr_init(&sr, file->file_data.data, file->file_data.data_len,
-                  swap_endian);
 
     /* A single undecodable grid (e.g. an unsupported value type, or a corrupt
        payload) should not discard the other grids in a multi-grid file -- so
@@ -3478,38 +3556,14 @@ tvdb_status_t tvdb_read_all_grids(tvdb_file_t *file, tvdb_error_t *err) {
 
     for (size_t i = 0; i < file->num_grids; i++) {
         if (err) err->grid_index = (int32_t)i;
-
-        tvdb_grid_t *current = &file->grids[i];
-        tvdb_grid_t loaded;
-        memset(&loaded, 0, sizeof(loaded));
-        /* Borrow the descriptor while reading into independent storage. Repeated
-           reads must not overwrite owning metadata/tree pointers and leak them. */
-        loaded.descriptor = current->descriptor;
-        tvdb_status_t st;
-        if (!file->file_data.data || !loaded.descriptor.grid_byte_offset ||
-            loaded.descriptor.grid_byte_offset > loaded.descriptor.end_byte_offset ||
-            loaded.descriptor.end_byte_offset > file->file_data.data_len) {
-            tvdb__set_error(err, TVDB_ERROR_INVALID_DATA, "Grid has no valid serialized offsets");
-            st = TVDB_ERROR_INVALID_DATA;
-        } else {
-            tvdb__sr_seek_set(&sr, loaded.descriptor.grid_byte_offset);
-            st = tvdb__read_grid(&sr, &loaded, &file->header, &file->alloc, err);
-        }
-        if (st != TVDB_OK) {
-            if (first_err == TVDB_OK) {
-                first_err = st;
-                first_err_grid = (int32_t)i;
-                if (err) {
-                    memcpy(first_err_msg, err->message, sizeof(first_err_msg));
-                    first_err_msg[sizeof(first_err_msg) - 1] = '\0';
-                }
+        tvdb_status_t st = tvdb__load_grid(file, i, 0, err);
+        if (st != TVDB_OK && first_err == TVDB_OK) {
+            first_err = st;
+            first_err_grid = (int32_t)i;
+            if (err) {
+                memcpy(first_err_msg, err->message, sizeof(first_err_msg));
+                first_err_msg[sizeof(first_err_msg) - 1] = '\0';
             }
-            memset(&loaded.descriptor, 0, sizeof(loaded.descriptor));
-            tvdb__grid_destroy(&loaded, &file->alloc);
-        } else {
-            memset(&current->descriptor, 0, sizeof(current->descriptor));
-            tvdb__grid_destroy(current, &file->alloc);
-            *current = loaded;
         }
     }
 
@@ -3523,6 +3577,124 @@ tvdb_status_t tvdb_read_all_grids(tvdb_file_t *file, tvdb_error_t *err) {
 
     if (err) err->grid_index = -1;
     return TVDB_OK;
+}
+
+static tvdb_status_t tvdb__load_one(tvdb_file_t *file, size_t index, int header_only,
+                                    tvdb_error_t *err) {
+    if (!file || index >= file->num_grids) {
+        tvdb__set_error(err, TVDB_ERROR_INVALID_ARGUMENT,
+                        file ? "grid index out of range" : "NULL file");
+        return TVDB_ERROR_INVALID_ARGUMENT;
+    }
+    if (err) err->grid_index = (int32_t)index;
+    tvdb_status_t st = tvdb__load_grid(file, index, header_only, err);
+    if (st == TVDB_OK && err) err->grid_index = -1;
+    return st;
+}
+tvdb_status_t tvdb_read_grid(tvdb_file_t *file, size_t index, tvdb_error_t *err) {
+    return tvdb__load_one(file, index, 0, err);
+}
+tvdb_status_t tvdb_read_grid_header(tvdb_file_t *file, size_t index, tvdb_error_t *err) {
+    return tvdb__load_one(file, index, 1, err);
+}
+
+/* ========================================================================== */
+/*  Metadata access                                                           */
+/* ========================================================================== */
+
+const tvdb_meta_entry_t *tvdb_grid_find_metadata(const tvdb_grid_t *grid,
+                                                 const char *name) {
+    if (!grid || !name || (grid->metadata.count && !grid->metadata.entries))
+        return NULL;
+    for (size_t i = 0; i < grid->metadata.count; ++i)
+        if (grid->metadata.entries[i].name &&
+            strcmp(grid->metadata.entries[i].name, name) == 0)
+            return &grid->metadata.entries[i];
+    return NULL;
+}
+
+static const char *tvdb__meta_type_name(tvdb_value_type_t t) {
+    switch (t) {
+        case TVDB_VALUE_BOOL:   return "bool";
+        case TVDB_VALUE_INT32:  return "int32";
+        case TVDB_VALUE_INT64:  return "int64";
+        case TVDB_VALUE_FLOAT:  return "float";
+        case TVDB_VALUE_DOUBLE: return "double";
+        case TVDB_VALUE_VEC3I:  return "vec3i";
+        case TVDB_VALUE_VEC3F:  return "vec3s";
+        case TVDB_VALUE_VEC3D:  return "vec3d";
+        case TVDB_VALUE_STRING: return "string";
+        default:                return NULL;
+    }
+}
+
+static char *tvdb__meta_strdup(tvdb_allocator_t *a, const char *s, size_t len) {
+    char *d = (char *)tvdb__alloc(a, len + 1);
+    if (d) { memcpy(d, s, len); d[len] = '\0'; }
+    return d;
+}
+
+static void *tvdb__meta_malloc(size_t n, void *u) { (void)u; return malloc(n); }
+static void *tvdb__meta_realloc(void *p, size_t o, size_t n, void *u) {
+    (void)o; (void)u; return realloc(p, n);
+}
+static void tvdb__meta_free_fn(void *p, size_t n, void *u) { (void)n; (void)u; free(p); }
+static tvdb_allocator_t tvdb__meta_default_alloc = {
+    tvdb__meta_malloc, tvdb__meta_realloc, tvdb__meta_free_fn, NULL};
+
+tvdb_status_t tvdb_grid_set_metadata(tvdb_grid_t *grid, const char *name,
+                                     const tvdb_value_t *value, tvdb_error_t *err) {
+    const char *type = value ? tvdb__meta_type_name(value->type) : NULL;
+    if (!grid || !name || !name[0] || !type ||
+        (value->type == TVDB_VALUE_STRING && !value->u.s.str) ||
+        (grid->metadata.count && !grid->metadata.entries)) {
+        tvdb__set_error(err, TVDB_ERROR_INVALID_ARGUMENT, "invalid metadata arguments");
+        return TVDB_ERROR_INVALID_ARGUMENT;
+    }
+    tvdb_metadata_t *m = &grid->metadata;
+    if (!m->alloc) {
+        if (m->count) {
+            tvdb__set_error(err, TVDB_ERROR_INVALID_DATA, "metadata entries without an allocator");
+            return TVDB_ERROR_INVALID_DATA;
+        }
+        m->alloc = &tvdb__meta_default_alloc;
+    }
+    tvdb_meta_entry_t e;
+    memset(&e, 0, sizeof(e));
+    e.name = tvdb__meta_strdup(m->alloc, name, strlen(name));
+    e.type_name = tvdb__meta_strdup(m->alloc, type, strlen(type));
+    e.value = *value;
+    if (value->type == TVDB_VALUE_STRING) {
+        const size_t len = strlen(value->u.s.str);
+        e.value.u.s.str = tvdb__meta_strdup(m->alloc, value->u.s.str, len);
+        e.value.u.s.len = len;
+    }
+    if (!e.name || !e.type_name || (value->type == TVDB_VALUE_STRING && !e.value.u.s.str)) {
+        tvdb__meta_entry_destroy(&e, m->alloc);
+        tvdb__set_error(err, TVDB_ERROR_OUT_OF_MEMORY, "metadata allocation failed");
+        return TVDB_ERROR_OUT_OF_MEMORY;
+    }
+    for (size_t i = 0; i < m->count; ++i)
+        if (m->entries[i].name && strcmp(m->entries[i].name, name) == 0) {
+            tvdb__meta_entry_destroy(&m->entries[i], m->alloc);
+            m->entries[i] = e;
+            return TVDB_OK;
+        }
+    if (!tvdb__metadata_push(m, &e)) {
+        tvdb__meta_entry_destroy(&e, m->alloc);
+        tvdb__set_error(err, TVDB_ERROR_OUT_OF_MEMORY, "metadata allocation failed");
+        return TVDB_ERROR_OUT_OF_MEMORY;
+    }
+    return TVDB_OK;
+}
+
+tvdb_status_t tvdb_grid_set_metadata_string(tvdb_grid_t *grid, const char *name,
+                                            const char *text, tvdb_error_t *err) {
+    tvdb_value_t v;
+    memset(&v, 0, sizeof(v));
+    v.type = TVDB_VALUE_STRING;
+    v.u.s.str = (char *)text;
+    return tvdb_grid_set_metadata(grid, name, &v, err);
 }
 
 size_t tvdb_grid_count(const tvdb_file_t *file) {
@@ -4233,6 +4405,7 @@ static tvdb_status_t tvdb__write_leaf_buffer(
         tvdb__sw_write_i32(sw, origin[0]);
         tvdb__sw_write_i32(sw, origin[1]);
         tvdb__sw_write_i32(sw, origin[2]);
+        if (tree->is_mask_grid) return TVDB_OK; /* the mask is the buffer */
         size_t packed_bytes = (num_values + 7) / 8;
         uint8_t *packed = (uint8_t *)tvdb__alloc(sw->alloc, packed_bytes);
         if (!packed) {
@@ -4403,6 +4576,11 @@ static void tvdb__write_meta(tvdb__sw_t *sw, const tvdb_metadata_t *meta,
             tvdb__sw_write_i32(sw, e->value.u.vec3i[0]);
             tvdb__sw_write_i32(sw, e->value.u.vec3i[1]);
             tvdb__sw_write_i32(sw, e->value.u.vec3i[2]);
+        } else if (strcmp(e->type_name, "vec3s") == 0) {
+            tvdb__sw_write_u32(sw, 3 * sizeof(float));
+            tvdb__sw_write_f32(sw, e->value.u.vec3f[0]);
+            tvdb__sw_write_f32(sw, e->value.u.vec3f[1]);
+            tvdb__sw_write_f32(sw, e->value.u.vec3f[2]);
         } else if (strcmp(e->type_name, "vec3d") == 0) {
             tvdb__sw_write_u32(sw, 3 * sizeof(double));
             tvdb__sw_write_f64(sw, e->value.u.vec3d[0]);
@@ -4468,9 +4646,10 @@ static void tvdb__write_transform(tvdb__sw_t *sw, const tvdb_transform_t *x) {
         case TVDB_TRANSFORM_AFFINE:
         default:
             tvdb__sw_write_string(sw, "AffineMap");
+            /* Back to OpenVDB's row-vector Mat4d (see tvdb__read_transform). */
             for (int r = 0; r < 4; r++)
                 for (int c = 0; c < 4; c++)
-                    tvdb__sw_write_f64(sw, x->matrix[r][c]);
+                    tvdb__sw_write_f64(sw, x->matrix[c][r]);
             break;
     }
 }

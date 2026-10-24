@@ -1,5 +1,6 @@
-# Vendored tinyvdb (src/external/tinyvdb): OpenVDB I/O plus the sparse
-# level-set, meshing and isosurface-stuffing tools. One target, shared by the
+# Vendored tinyvdb (src/external/tinyvdb): OpenVDB I/O, volume access
+# (grid info, typed dense extraction, sampling, NanoVDB conversion) and the
+# sparse level-set, meshing and isosurface-stuffing tools. One target, shared by the
 # root library (usdVol) and lightusd_asset_import (SDF/volumetric import), so
 # executables never link two copies of the tvdb_* symbols.
 get_filename_component(_lusd_tinyvdb_root "${CMAKE_CURRENT_LIST_DIR}/../src" ABSOLUTE)
@@ -17,7 +18,9 @@ if(NOT TARGET lightusd_tinyvdb)
     "${_lusd_tinyvdb_dir}/tinyvdb_sparse_tree.c"
     "${_lusd_tinyvdb_dir}/tinyvdb_tetmesh.c"
     "${_lusd_tinyvdb_dir}/tinyvdb_thread.c"
+    "${_lusd_tinyvdb_dir}/tinyvdb_to_nanovdb.c"
     "${_lusd_tinyvdb_dir}/tinyvdb_tree.c"
+    "${_lusd_tinyvdb_dir}/tinyvdb_volume.c"
     "${_lusd_tinyvdb_dir}/tinyvdb_winding.c"
     "${_lusd_tinyvdb_dir}/tvdb_memory.c")
   # This target owns miniz (and, when LIGHTUSD_TINYVDB_ZSTD is set, the
