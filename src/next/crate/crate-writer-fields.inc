@@ -14,6 +14,12 @@
       const std::unordered_map<std::string, std::vector<std::string>>&
           parent_children) {
       const PrimSpec& prim = layer.prims()[i];
+      // The next prim's path probe (InternPathStable below) is a random load
+      // into the path table; start it now.
+      if (i + 1 < layer.prims().size()) {
+        const PathRec nk = SplitPath(layer.prims()[i + 1].path().str());
+        PrefetchPathSlot(HashPathKey(HashStem(nk.stem), nk.name));
+      }
       // Variant-namespace prims ("/Prim/{vset=sel}/..."): emit them ONLY for an
       // unflattened layer (round-trip), detected by their owning prim still
       // carrying variant sets. After flattening, the compositor bakes + clears
@@ -89,7 +95,7 @@
       // active (authored true also round-trips via active_authored)
       if (!prim.meta().active || prim.meta().active_authored) {
         CrateField f;
-        f.token_index.value = InternToken("active");
+        f.token_index.value = FieldToken(kTokActive);
         f.value_rep = ValueRep::Make(CrateTypeId::Bool,
                                      prim.meta().active ? 1 : 0, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
@@ -99,7 +105,7 @@
       // hidden (authored false also round-trips via hidden_authored)
       if (prim.meta().hidden || prim.meta().hidden_authored) {
         CrateField f;
-        f.token_index.value = InternToken("hidden");
+        f.token_index.value = FieldToken(kTokHidden);
         f.value_rep = ValueRep::Make(CrateTypeId::Bool,
                                      prim.meta().hidden ? 1 : 0, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
@@ -109,7 +115,7 @@
       // doc
       if (prim.meta().doc_authored() || !prim.meta().doc().empty()) {
         CrateField f;
-        f.token_index.value = InternToken("documentation");
+        f.token_index.value = FieldToken(kTokDocumentation);
         uint32_t str_idx = InternString(prim.meta().doc());
         f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
@@ -156,7 +162,7 @@
         uint64_t data_idx = InternBlock({TypeId::Token, std::move(api_data)});
 
         CrateField f;
-        f.token_index.value = InternToken("apiSchemas");
+        f.token_index.value = FieldToken(kTokApiSchemas);
         f.value_rep = ValueRep::Make(CrateTypeId::TokenListOp, data_idx, false, false);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
@@ -208,7 +214,26 @@
             "displayGroupOrder", prim.meta().displayGroupOrder()));
       }
 
-      {
+      if (children_from_links_) {
+        // Verified fully linked layer: the children are exactly the linked
+        // prims, in link order (the order the map path substitutes anyway).
+        const std::vector<uint32_t>& ci = prim.child_indices();
+        if (!ci.empty()) {
+          std::vector<uint32_t> toks;
+          toks.reserve(ci.size());
+          for (uint32_t c : ci) {
+            const std::string& cn = layer.prims()[c].name();
+            if (cn.size() >= 2 && cn.back() == '}' &&
+                cn.find('{') != std::string::npos) continue;
+            toks.push_back(prim_name_tokens_[c]);
+          }
+          if (!toks.empty()) {
+            fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+            fields_.push_back(MakeTokenVectorFieldFromTokens(
+                FieldToken(kTokPrimChildren), toks));
+          }
+        }
+      } else {
         auto cit = parent_children.find(prim.path().str());
         if (cit != parent_children.end() && !cit->second.empty()) {
           fieldset.push_back(static_cast<uint32_t>(fields_.size()));
@@ -219,25 +244,29 @@
       // Properties, relationships, connections and time samples are emitted as
       // separate pxrUSD-style Attribute/Relationship specs (below). Collect the
       // child property names here for the prim's "properties" field.
-      std::vector<std::string_view> prop_names = EmitPrimProperties(prim);
+      EmittedProps emitted = EmitPrimProperties(prim);
+      std::vector<std::string_view>& prop_names = emitted.names;
       if (!prim.meta().propertyOrder().empty()) {
         // Views of the emitted names (not of propertyOrder) keep the list
         // pointing at PropNameTable storage.
-        std::vector<std::string_view> ordered;
-        ordered.reserve(prop_names.size());
+        EmittedProps ordered;
+        ordered.names.reserve(prop_names.size());
+        ordered.tokens.reserve(prop_names.size());
+        auto take = [&](size_t idx) {
+          if (std::find(ordered.names.begin(), ordered.names.end(),
+                        prop_names[idx]) == ordered.names.end()) {
+            ordered.push(prop_names[idx], emitted.tokens[idx]);
+          }
+        };
         for (const std::string& wanted : prim.meta().propertyOrder()) {
           auto it = std::find(prop_names.begin(), prop_names.end(),
                               std::string_view(wanted));
-          if (it != prop_names.end() &&
-              std::find(ordered.begin(), ordered.end(), *it) == ordered.end()) {
-            ordered.push_back(*it);
+          if (it != prop_names.end()) {
+            take(static_cast<size_t>(it - prop_names.begin()));
           }
         }
-        for (const std::string_view name : prop_names) {
-          if (std::find(ordered.begin(), ordered.end(), name) == ordered.end())
-            ordered.push_back(name);
-        }
-        prop_names = std::move(ordered);
+        for (size_t idx = 0; idx < prop_names.size(); ++idx) take(idx);
+        emitted = std::move(ordered);
       }
 
       // Composition arcs in pxr-native encodings (pxr rejects the whole layer
@@ -287,7 +316,7 @@
       // string and silently drops a Token-typed field on read.
       if (prim.meta().comment_authored() || !prim.meta().comment().empty()) {
         CrateField f;
-        f.token_index.value = InternToken("comment");
+        f.token_index.value = FieldToken(kTokComment);
         uint32_t str_idx = InternString(prim.meta().comment());
         f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
@@ -297,7 +326,7 @@
       // kind (token), displayName (string), instanceable (bool).
       if (prim.meta().kindAuthored() || !prim.meta().kind().empty()) {
         CrateField f;
-        f.token_index.value = InternToken("kind");
+        f.token_index.value = FieldToken(kTokKind);
         f.value_rep = ValueRep::Make(CrateTypeId::Token,
                                      InternToken(prim.meta().kind()), false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
@@ -305,7 +334,7 @@
       }
       if (!prim.meta().permission().empty()) {
         CrateField f;
-        f.token_index.value = InternToken("permission");
+        f.token_index.value = FieldToken(kTokPermission);
         f.value_rep = ValueRep::Make(
             CrateTypeId::Token, InternToken(prim.meta().permission()), false,
             true);
@@ -316,7 +345,7 @@
       if (prim.meta().displayNameAuthored() ||
           !prim.meta().displayName().empty()) {
         CrateField f;
-        f.token_index.value = InternToken("displayName");
+        f.token_index.value = FieldToken(kTokDisplayName);
         uint32_t str_idx = InternString(prim.meta().displayName());
         f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
@@ -325,7 +354,7 @@
       // instanceable=false is a real (blocking) opinion when authored.
       if (prim.meta().instanceable || prim.meta().instanceable_authored) {
         CrateField f;
-        f.token_index.value = InternToken("instanceable");
+        f.token_index.value = FieldToken(kTokInstanceable);
         f.value_rep = ValueRep::Make(CrateTypeId::Bool,
                                      prim.meta().instanceable ? 1 : 0, false,
                                      true);
@@ -432,7 +461,7 @@
         if (!sels.empty() || prim.meta().variantSelectionsAuthored()) {
           uint64_t blk = StoreVariantSelectionMap(sels);
           CrateField vf;
-          vf.token_index.value = InternToken("variantSelection");
+          vf.token_index.value = FieldToken(kTokVariantSelection);
           vf.value_rep =
               ValueRep::Make(CrateTypeId::VariantSelectionMap, blk, false, false);
           fieldset.push_back(static_cast<uint32_t>(fields_.size()));
@@ -511,22 +540,16 @@
       // "properties" field: TokenVector listing this prim's child property and
       // relationship names (pxrUSD enumerates properties from it). The next
       // reader rebuilds properties from the separate specs, so it ignores this.
-      if (!prop_names.empty()) {
-        size_t n = prop_names.size();
-        std::vector<uint8_t> raw(8 + n * 4);
-        uint64_t cnt = n;
-        std::memcpy(raw.data(), &cnt, 8);
-        for (size_t i = 0; i < n; ++i) {
-          uint32_t tok = InternToken(prop_names[i]);
-          std::memcpy(raw.data() + 8 + i * 4, &tok, 4);
+      if (!emitted.names.empty()) {
+        // Same interning point (and order) as the per-name loop this
+        // replaced: only names BuildTables did not record are looked up.
+        for (size_t k = 0; k < emitted.tokens.size(); ++k) {
+          if (emitted.tokens[k] == UINT32_MAX)
+            emitted.tokens[k] = InternToken(emitted.names[k]);
         }
-        uint64_t data_idx = InternBlock({TypeId::Invalid, std::move(raw)});
-        CrateField pf;
-        pf.token_index.value = InternToken("properties");
-        pf.value_rep =
-            ValueRep::Make(CrateTypeId::TokenVector, data_idx, false, false);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
-        fields_.push_back(pf);
+        fields_.push_back(MakeTokenVectorFieldFromTokens(
+            FieldToken(kTokProperties), emitted.tokens));
       }
 
       // Record fieldset
@@ -559,6 +582,50 @@
         }
       }
       specs_.push_back(spec);
+  }
+
+  static bool IsVariantHolderName(const std::string& nm) {
+    return nm.size() >= 2 && nm.back() == '}' &&
+           nm.find('{') != std::string::npos;
+  }
+
+  // True when child_indices reproduce the path-derived parent->children
+  // relation exactly: every child link points at a prim whose path is
+  // "<parent path>/<name>", and every non-root, non-holder prim with a
+  // regular path is linked exactly once.
+  static bool ChildrenFullyLinked(const Layer& layer) {
+    const auto& prims = layer.prims();
+    const size_t n = prims.size();
+    if (n == 0) return false;
+    std::vector<uint8_t> linked(n, 0);
+    for (size_t i = 0; i < n; ++i) {
+      const std::string& p = prims[i].path().str();
+      for (uint32_t c : prims[i].child_indices()) {
+        if (c >= n) return false;
+        const std::string& cp = prims[c].path().str();
+        // Direct child of this prim: "<p>/<name>" with no further '/'.
+        if (p.empty() || p == "/") return false;
+        if (cp.size() <= p.size() + 1 || cp.compare(0, p.size(), p) != 0 ||
+            cp[p.size()] != '/' ||
+            cp.find('/', p.size() + 1) != std::string::npos) {
+          return false;
+        }
+        if (linked[c]++) return false;  // linked twice
+      }
+    }
+    for (size_t i = 0; i < n; ++i) {
+      const std::string& p = prims[i].path().str();
+      if (p.empty() || p == "/") continue;
+      if (IsVariantHolderName(prims[i].name())) continue;
+      const size_t slash = p.rfind('/');
+      if (slash == std::string::npos) continue;
+      if (slash == 0) {
+        if (linked[i]) return false;  // a root prim linked under a prim
+        continue;
+      }
+      if (linked[i] != 1) return false;
+    }
+    return true;
   }
 
   void BuildFieldsAndSpecs(const Layer& layer) {
@@ -910,8 +977,15 @@
       variant_names[path.substr(0, lb)][nm.substr(brace + 1, eq - brace - 1)].push_back(var);
     }
 
+    // primChildren source. When every non-root, non-variant-holder prim is
+    // linked exactly once from the prim whose path is its parent, the links
+    // ARE the parent->children relation in the order the map path below would
+    // substitute, so skip building 10M-entry string maps and emit from them
+    // (children_from_links_). Any irregularity falls back to the map.
+    children_from_links_ = ChildrenFullyLinked(layer);
     std::unordered_map<std::string, std::vector<std::string>> parent_children;
     for (const auto& prim : layer.prims()) {
+      if (children_from_links_) break;
       const std::string& p = prim.path().str();
       if (p.empty() || p == "/") continue;
       const std::string& nm = prim.name();
@@ -923,6 +997,7 @@
       parent_children[parent].push_back(prim.name());
     }
     for (const auto& prim : layer.prims()) {
+      if (children_from_links_) break;
       if (prim.child_indices().empty()) continue;
       auto pit = parent_children.find(prim.path().str());
       if (pit == parent_children.end()) continue;

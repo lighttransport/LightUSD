@@ -234,6 +234,35 @@ struct SpecsMemo {
   }
 };
 
+// Whether Specs(stack_idx, site) is known to be empty or non-empty for a Src.
+// Unlike SpecsMemo this is a value, not a pointer into an Impl's cache, so it
+// is valid across Impls (a worker's layer stacks are adopted by content into
+// the main Impl) and survives a MOVE: vector compaction, the warm-cache steal
+// in MergeSources, ExpandList's reorders. It resets on COPY, because a copy
+// may be re-sited by whoever makes it; such a Src simply re-resolves. The
+// serial structure walk asks for the specs of ~100M sources per large stage
+// and ~90% of them have none, so answering "none" from this byte instead of
+// hashing the site string is the point.
+// BuildStage records the Layer index of every prim RegisterInstance accepted
+// (prototypes and instances), so the flatten passes can address group members
+// without building a path->index map over the whole composed layer.
+// (declared on Impl via cache-specs-instances.inc)
+struct SpecState {
+  enum : uint8_t { kUnknown = 0, kNone = 1, kSome = 2 };
+  mutable uint8_t v = kUnknown;
+  SpecState() = default;
+  SpecState(const SpecState &) {}
+  SpecState &operator=(const SpecState &) {
+    v = kUnknown;
+    return *this;
+  }
+  SpecState(SpecState &&o) noexcept : v(o.v) {}
+  SpecState &operator=(SpecState &&o) noexcept {
+    v = o.v;
+    return *this;
+  }
+};
+
 // A single composition source (one node's worth of provenance).
 struct Src {
   uint32_t stack_idx = 0;
@@ -280,6 +309,8 @@ struct Src {
   // in the list because child derivation descends through it (chained
   // relocations address content via this raw site).
   bool suppress_site_specs = false;
+  // Known emptiness of Specs(stack_idx, site); see SpecState.
+  SpecState spec_state;
   // Memoized Specs(stack_idx, site) result for this exact (stack_idx, site), so
   // the 2-3 read-side lookups per composed prim (ComposeChildNames,
   // IsInstanceable, instance-key, ComposeOpinions) skip re-hashing `site`.
@@ -338,7 +369,12 @@ struct SrcCache {
   bool contains(const std::string &k) const { return find(k) != nullptr; }
 
   // find-or-insert; returns a reference that stays valid across later inserts.
-  std::vector<Src> &get_or_create(const std::string &k) ;
+  // `created`, when given, reports whether this call inserted the entry (one
+  // probe instead of a contains() + get_or_create() pair per merged key).
+  std::vector<Src> &get_or_create(const std::string &k, bool *created = nullptr) ;
+  // Pre-size the index for `expected` live entries so a bulk merge does not
+  // rehash its way up from the seed size.
+  void reserve(size_t expected) ;
 
   // Insert only if absent (merge path). Consumes v when it inserts.
   void emplace_if_absent(const std::string &k, std::vector<Src> &&v) ;

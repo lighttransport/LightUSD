@@ -8,6 +8,7 @@
 
 #include "prim-spec.hh"
 #include <algorithm>
+#include <atomic>
 #include <string>
 #include <vector>
 #include <memory>
@@ -151,6 +152,13 @@ public:
   /// before the layer is finalized, and after prims are added/renamed).
   void build_path_index();
 
+  /// Defer the path index: finalize() then leaves it unbuilt and the first
+  /// path lookup (prim_at_path / index_at_path / the mutators) builds it,
+  /// thread-safely. For a composed stage that is only written out, the
+  /// 10M-entry string map is never built. Default off: ordinary layers keep
+  /// the eager index (their lookups run inside parallel compose workers).
+  void set_lazy_path_index(bool lazy) { lazy_path_index_ = lazy; }
+
   /// Sort prims so every ancestor precedes its descendants and subtrees are
   /// contiguous (lexicographic full-path order). The crate writer's
   /// compressed-paths encoding requires this; composition appends grafted
@@ -282,11 +290,17 @@ public:
   Stats stats() const;
 
 private:
+  // Build the deferred path index on first use (see set_lazy_path_index).
+  void ensure_path_index() const;
+
   std::vector<PrimSpec> prims_;
   std::vector<uint32_t> root_indices_;
   std::unordered_map<std::string, uint32_t> path_to_index_;
   LayerMeta meta_;
   bool finalized_ = false;
+  bool lazy_path_index_ = false;
+  // Set by finalize() when the index was deferred; cleared by the build.
+  mutable std::atomic<bool> path_index_dirty_{false};
 };
 
 /// Layer builder - helper for constructing layers from parsed data

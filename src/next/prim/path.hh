@@ -87,6 +87,9 @@ public:
 
   /// Append a child path element
   Path append_child(const std::string& child_name) const;
+  /// append_child for a name already known to be a valid identifier (a spec
+  /// name read from a layer): skips the per-character validation.
+  Path append_child_unchecked(const std::string& child_name) const;
 
   /// Append a property
   Path append_property(const std::string& property_name) const;

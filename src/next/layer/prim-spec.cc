@@ -32,6 +32,10 @@ struct PrimSpec::ColdData {
     std::unordered_map<uint32_t, ArrayEditData> array_edits;
   std::unordered_map<std::string, std::vector<Path>> relationships;
   std::unordered_map<uint32_t, std::vector<Path>> connections;
+  // Fallback for declared property type names. The common case lives on
+  // PropSlot::type_name_id; this map only holds names recorded before the
+  // property's slot existed (adopted onto the slot when it is added) or past
+  // the TypeNameTable capacity.
   std::unordered_map<uint32_t, std::string> prop_type_names;
   std::unordered_map<uint32_t, std::unique_ptr<PropMeta>> prop_metas;
   ColdData() = default;
@@ -159,6 +163,7 @@ void PrimSpec::add_property(PropNameId name_id, Value value, uint16_t flags) {
     slot.flags |= PropSlot::kFlagArray;
   }
 
+  adopt_pending_type_name(slot);
   props_.add(slot);
 }
 
@@ -168,7 +173,18 @@ void PrimSpec::add_property_slot(PropNameId name_id, TypeId type_id, uint16_t fl
   slot.value_offset = UINT32_MAX;  // No default value
   slot.value_type = static_cast<uint16_t>(type_id);
   slot.flags = flags;
+  adopt_pending_type_name(slot);
   props_.add(slot);
+}
+
+void PrimSpec::adopt_pending_type_name(PropSlot& slot) {
+  if (!cold_data_ || cold_data_->prop_type_names.empty()) return;
+  auto it = cold_data_->prop_type_names.find(slot.name_id.id);
+  if (it == cold_data_->prop_type_names.end()) return;
+  const TypeNameId tid = GetTypeNameTable().intern(it->second);
+  if (!tid.is_valid()) return;  // table full: keep the string fallback
+  slot.type_name_id = tid.id;
+  cold_data_->prop_type_names.erase(it);
 }
 
 bool PrimSpec::fill_property_value_if_absent(PropNameId name_id, Value value) {
@@ -398,8 +414,11 @@ SampleResult PrimSpec::interpolate_time_sample(const std::string& name, double t
 
 void PrimSpec::set_spline_source(const std::string& prop_name,
                                  std::string source) {
-  ensure_cold_data().spline_sources[GetPropNameTable().intern(prop_name).id] =
-      std::move(source);
+  set_spline_source(GetPropNameTable().intern(prop_name), std::move(source));
+}
+
+void PrimSpec::set_spline_source(PropNameId name_id, std::string source) {
+  ensure_cold_data().spline_sources[name_id.id] = std::move(source);
 }
 
 const std::string* PrimSpec::spline_source(PropNameId name_id) const {
@@ -415,9 +434,12 @@ const std::string* PrimSpec::spline_source(
 
 void PrimSpec::set_raw_default_source(const std::string& prop_name,
                                       std::string source) {
-  ensure_cold_data().raw_default_sources[
-      GetPropNameTable().intern(prop_name).id] =
-      std::move(source);
+  set_raw_default_source(GetPropNameTable().intern(prop_name),
+                         std::move(source));
+}
+
+void PrimSpec::set_raw_default_source(PropNameId name_id, std::string source) {
+  ensure_cold_data().raw_default_sources[name_id.id] = std::move(source);
 }
 
 void PrimSpec::clear_raw_default_source(PropNameId name_id) {
@@ -426,8 +448,11 @@ void PrimSpec::clear_raw_default_source(PropNameId name_id) {
 
 void PrimSpec::set_array_edit(const std::string& prop_name,
                               ArrayEditData edit) {
-  ensure_cold_data().array_edits[GetPropNameTable().intern(prop_name).id] =
-      std::move(edit);
+  set_array_edit(GetPropNameTable().intern(prop_name), std::move(edit));
+}
+
+void PrimSpec::set_array_edit(PropNameId name_id, ArrayEditData edit) {
+  ensure_cold_data().array_edits[name_id.id] = std::move(edit);
 }
 
 const ArrayEditData* PrimSpec::array_edit(PropNameId name_id) const {
@@ -567,6 +592,12 @@ const std::vector<Path>* PrimSpec::relationship(const std::string& name) const {
   return &it->second;
 }
 
+bool PrimSpec::has_relationship_data() const {
+  return cold_data_ && (!cold_data_->relationships.empty() ||
+                        !cold_data_->rel_edits.empty() ||
+                        !cold_data_->rel_opinion_stacks.empty());
+}
+
 std::vector<std::string> PrimSpec::relationship_names() const {
   std::vector<std::string> names;
   names.reserve(cold().relationships.size() + relationship_edits().size());
@@ -603,20 +634,31 @@ void PrimSpec::set_connection_block(const std::string& prop_name) {
 
 const ArcListOp* PrimSpec::connection_edit(const std::string& prop_name) const {
   if (!cold_data_) return nullptr;
-  const PropNameId id = GetPropNameTable().find(prop_name);
-  if (!id.is_valid()) return nullptr;
+  return connection_edit(GetPropNameTable().find(prop_name));
+}
+
+const ArcListOp* PrimSpec::connection_edit(PropNameId id) const {
+  if (!id.is_valid() || !cold_data_) return nullptr;
   auto it = cold_data_->connection_edits.find(id.id);
   return it == cold_data_->connection_edits.end() ? nullptr : &it->second;
 }
 
 ArcListOp& PrimSpec::ensure_connection_edit(const std::string& prop_name) {
-  return ensure_cold_data()
-      .connection_edits[GetPropNameTable().intern(prop_name).id];
+  return ensure_connection_edit(GetPropNameTable().intern(prop_name));
+}
+
+ArcListOp& PrimSpec::ensure_connection_edit(PropNameId name_id) {
+  return ensure_cold_data().connection_edits[name_id.id];
 }
 
 const std::vector<PrimSpec::RelationshipOpinion>*
 PrimSpec::connection_opinion_stack(const std::string& prop_name) const {
-  const PropNameId id = GetPropNameTable().find(prop_name);
+  if (!cold_data_) return nullptr;
+  return connection_opinion_stack(GetPropNameTable().find(prop_name));
+}
+
+const std::vector<PrimSpec::RelationshipOpinion>*
+PrimSpec::connection_opinion_stack(PropNameId id) const {
   if (!id.is_valid() || !cold_data_) return nullptr;
   auto it = cold_data_->connection_opinion_stacks.find(id.id);
   return it == cold_data_->connection_opinion_stacks.end() ? nullptr
@@ -625,13 +667,24 @@ PrimSpec::connection_opinion_stack(const std::string& prop_name) const {
 
 void PrimSpec::set_connection_opinion_stack(
     const std::string& prop_name, std::vector<RelationshipOpinion> opinions) {
-  ensure_cold_data().connection_opinion_stacks[
-      GetPropNameTable().intern(prop_name).id] = std::move(opinions);
+  set_connection_opinion_stack(GetPropNameTable().intern(prop_name),
+                               std::move(opinions));
+}
+
+void PrimSpec::set_connection_opinion_stack(
+    PropNameId name_id, std::vector<RelationshipOpinion> opinions) {
+  ensure_cold_data().connection_opinion_stacks[name_id.id] =
+      std::move(opinions);
 }
 
 void PrimSpec::set_connection_targets(const std::string& prop_name,
                                       std::vector<Path> targets) {
-  const PropNameId id = GetPropNameTable().intern(prop_name);
+  set_connection_targets(GetPropNameTable().intern(prop_name),
+                         std::move(targets));
+}
+
+void PrimSpec::set_connection_targets(PropNameId id,
+                                      std::vector<Path> targets) {
   cold().connections[id.id] = std::move(targets);
   if (PropSlot* slot = property_mutable(id)) {
     slot->flags |= PropSlot::kFlagConnection;
@@ -682,10 +735,14 @@ void PrimSpec::apply_connection_list_op(const std::string& prop_name,
 }
 
 const std::vector<Path>* PrimSpec::connection(const std::string& prop_name) const {
-  PropNameId id = GetPropNameTable().find(prop_name);
-  if (!id.is_valid()) return nullptr;
-  auto it = cold().connections.find(id.id);
-  if (it == cold().connections.end()) return nullptr;
+  if (!cold_data_) return nullptr;  // nothing authored: skip the name hash
+  return connection(GetPropNameTable().find(prop_name));
+}
+
+const std::vector<Path>* PrimSpec::connection(PropNameId id) const {
+  if (!id.is_valid() || !cold_data_) return nullptr;
+  auto it = cold_data_->connections.find(id.id);
+  if (it == cold_data_->connections.end()) return nullptr;
   return &it->second;
 }
 
@@ -756,14 +813,61 @@ const PrimSpec::ColdData& PrimSpec::cold() const {
 
 void PrimSpec::set_property_type_name(const std::string& prop_name,
                                       const std::string& type_name) {
-  // Intern both name and typeName; typeNames are few and highly shared.
-  cold().prop_type_names[GetPropNameTable().intern(prop_name).id] = type_name;
+  // Type names are few and highly shared: intern once, keep the id on the
+  // slot. A name recorded before the slot exists (the USDA parser declares
+  // the type ahead of the value) waits in the cold map until add_property /
+  // add_property_slot adopts it.
+  const PropNameId nid = GetPropNameTable().intern(prop_name);
+  if (PropSlot* slot = props_.find_mutable(nid)) {
+    const TypeNameId tid = GetTypeNameTable().intern(type_name);
+    if (tid.is_valid()) {
+      slot->type_name_id = tid.id;
+      if (cold_data_) cold_data_->prop_type_names.erase(nid.id);
+      return;
+    }
+    slot->type_name_id = PropSlot::kNoTypeName;
+  }
+  cold().prop_type_names[nid.id] = type_name;
+}
+
+void PrimSpec::set_property_type_name(PropNameId name_id,
+                                      const std::string& type_name) {
+  if (!name_id.is_valid()) return;
+  const TypeNameId tid = GetTypeNameTable().intern(type_name);
+  if (tid.is_valid()) {
+    set_property_type_name(name_id, tid);
+    return;
+  }
+  if (PropSlot* slot = props_.find_mutable(name_id)) {
+    slot->type_name_id = PropSlot::kNoTypeName;
+  }
+  cold().prop_type_names[name_id.id] = type_name;
+}
+
+void PrimSpec::set_property_type_name(PropNameId name_id, TypeNameId type_id) {
+  if (!name_id.is_valid()) return;
+  if (PropSlot* slot = props_.find_mutable(name_id)) {
+    slot->type_name_id = type_id.is_valid() ? type_id.id : PropSlot::kNoTypeName;
+    if (cold_data_) cold_data_->prop_type_names.erase(name_id.id);
+    return;
+  }
+  if (!type_id.is_valid()) {
+    if (cold_data_) cold_data_->prop_type_names.erase(name_id.id);
+    return;
+  }
+  cold().prop_type_names[name_id.id] = GetTypeNameTable().get(type_id);
 }
 
 const std::string* PrimSpec::property_type_name(PropNameId name_id) const {
   if (!name_id.is_valid()) return nullptr;
-  auto it = cold().prop_type_names.find(name_id.id);
-  if (it == cold().prop_type_names.end()) return nullptr;
+  if (const PropSlot* slot = props_.find(name_id)) {
+    if (slot->type_name_id != PropSlot::kNoTypeName) {
+      return &GetTypeNameTable().get(TypeNameId{slot->type_name_id});
+    }
+  }
+  if (!cold_data_) return nullptr;
+  auto it = cold_data_->prop_type_names.find(name_id.id);
+  if (it == cold_data_->prop_type_names.end()) return nullptr;
   return &it->second;
 }
 

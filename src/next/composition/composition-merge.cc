@@ -201,7 +201,10 @@ void Compositor::CopyLocalOpinions(
     if (!remap_path) return true;
     return p.str().empty() || !remap_path(p.str()).empty();
   };
-  auto compose_connections = [&](const std::string& prop_name) {
+  // Id-keyed throughout: the string form of a property name is never built
+  // on this path (a std::string per property per source was a measurable
+  // allocation on 60M-property stages).
+  auto compose_connections = [&](PropNameId prop_name) {
     if (!source.connection(prop_name)) return;
     std::vector<PrimSpec::RelationshipOpinion> opinions;
     if (const auto* stack = target.connection_opinion_stack(prop_name)) {
@@ -316,8 +319,9 @@ void Compositor::CopyLocalOpinions(
     }
   };
   PropNameTable& name_table = GetPropNameTable();
+  const bool target_has_rels = target.has_relationship_data();
   for (const auto& slot : source.properties().slots()) {
-    const std::string pname(name_table.get(slot.name_id));
+    const PropNameId pname = slot.name_id;
     const PropSlot* tgt_slot = target.property(slot.name_id);
     if (tgt_slot) {
       const Value* target_value = target.property_value(slot.name_id);
@@ -433,10 +437,12 @@ void Compositor::CopyLocalOpinions(
     // Mirror of the rel-vs-attr form conflict below: a weaker ATTRIBUTE under
     // an existing stronger relationship of the same name is ignored (pxr
     // keeps the defining spec's form and drops the conflicting spec).
-    if (!slot.is_relationship() &&
-        (target.relationship(pname) ||
-         target.relationship_opinion_stack(pname))) {
-      continue;
+    if (!slot.is_relationship() && target_has_rels) {
+      const std::string pname_str(name_table.get(slot.name_id));
+      if (target.relationship(pname_str) ||
+          target.relationship_opinion_stack(pname_str)) {
+        continue;
+      }
     }
     const Value* src_val = source.property_value(slot.name_id);
     if (src_val) {
@@ -448,8 +454,11 @@ void Compositor::CopyLocalOpinions(
       target.add_property_slot(slot.name_id,
                                static_cast<TypeId>(slot.value_type), slot.flags);
     }
-    if (const std::string* tn = source.property_type_name(pname)) {
-      target.set_property_type_name(pname, *tn);
+    if (slot.type_name_id != PropSlot::kNoTypeName) {
+      target.set_property_type_name(slot.name_id,
+                                    TypeNameId{slot.type_name_id});
+    } else if (const std::string* tn = source.property_type_name(slot.name_id)) {
+      target.set_property_type_name(slot.name_id, *tn);
     }
     compose_connections(pname);
     if (const PropMeta* pm = source.property_meta(slot.name_id)) {
@@ -470,7 +479,11 @@ void Compositor::CopyLocalOpinions(
   // stronger explicit list blocks weaker targets; a stronger qualified edit
   // is applied to the weaker effective list (the old skip-on-existing path
   // lost `</A>` from weak A + strong prepend B).
-  for (const auto& rel_name : source.relationship_names()) {
+  // (relationship_names() allocates and sorts; most prims author none.)
+  const std::vector<std::string> source_rel_names =
+      source.has_relationship_data() ? source.relationship_names()
+                                     : std::vector<std::string>();
+  for (const auto& rel_name : source_rel_names) {
     // pxr: property specs whose FORM conflicts with the defining (strongest)
     // spec are ignored. A weaker RELATIONSHIP under an existing attribute
     // slot of the same name contributes no targets — but a relationship

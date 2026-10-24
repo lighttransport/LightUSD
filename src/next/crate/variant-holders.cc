@@ -50,7 +50,9 @@ void MergeContentRootInto(const PrimSpec& src, PrimSpec* dst) {
       dst->add_property_slot(slot.name_id,
                              static_cast<TypeId>(slot.value_type), slot.flags);
     }
-    if (const std::string* tn = src.property_type_name(pname)) {
+    if (slot.type_name_id != PropSlot::kNoTypeName) {
+      dst->set_property_type_name(slot.name_id, TypeNameId{slot.type_name_id});
+    } else if (const std::string* tn = src.property_type_name(slot.name_id)) {
       dst->set_property_type_name(pname, *tn);
     }
     if (const PropMeta* pm = src.property_meta(slot.name_id)) {

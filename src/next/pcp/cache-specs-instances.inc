@@ -137,8 +137,16 @@
   void AssignPrototype(const std::string &prim_path, const std::string &ik,
                        bool prefer_min = false) ;
 
-  void RegisterInstance(const std::string &prim_path,
+  // Returns true when the prim is instanceable (and so was registered or
+  // stashed); a prim that returns false cannot be in prototype_of.
+  bool RegisterInstance(const std::string &prim_path,
                         const std::vector<Src> &srcs, bool prefer_min = false) ;
+
+  // Composed-layer index of each prim the structure walk registered as
+  // instanceable (see BuildStage). Lets FlattenInstances* find prototypes
+  // and members without a path->index map over all prims; a miss falls back
+  // to building that map once.
+  std::unordered_map<std::string, uint32_t> instance_prim_index_;
 
   // Retire one group: drop `prim_path` from it and, if that empties it or the
   // prim WAS the prototype, orphan the siblings and erase the group.

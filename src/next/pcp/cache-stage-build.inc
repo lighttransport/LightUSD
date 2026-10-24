@@ -21,6 +21,13 @@
   mutable uint64_t prof_sources_ns_ = 0;
   mutable uint64_t prof_compose_ns_ = 0;
   mutable uint64_t prof_reg_ns_ = 0;
+  // Walk-only attribution (temporary, LIGHTUSD_NEXT_TIMING): child-name
+  // composition, instance registration + prototype lookup, prim publication and
+  // child-work push.
+  mutable uint64_t prof_childnames_ns_ = 0;
+  mutable uint64_t prof_protomap_ns_ = 0;
+  mutable uint64_t prof_addprim_ns_ = 0;
+  mutable uint64_t prof_push_ns_ = 0;
   mutable uint64_t prof_source_hits_ = 0;
   mutable uint64_t prof_source_misses_ = 0;
   mutable uint64_t prof_structure_nodes_ = 0;

@@ -63,6 +63,11 @@
     tokens_.clear();
     token_to_index_.clear();
     type_name_token_cache_.clear();
+    declared_type_token_cache_.clear();
+    ResetFieldTokens();
+    prim_name_tokens_.clear();
+    prop_name_tokens_.clear();
+    children_from_links_ = false;
     string_indices_.clear();
     string_to_index_.clear();
     paths_.clear();

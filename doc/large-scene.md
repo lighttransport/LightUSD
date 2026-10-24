@@ -2721,3 +2721,270 @@ with **84.8 GiB peak RSS** and zero swap. A paired full45 run is therefore a
 one-at-a-time, ~85 GB-resident, multi-hour job (the §8 record has the same
 scene's compose+write at 79–114 min); it is not something to run alongside any
 other load on this workstation.
+
+## 10. Compose/write round 2: faults, writer per-field costs, walk spec probes (2026-10-25)
+
+Starting point: the §8/§9 branch state (`e3ac6e4a6` plus the fault-counter
+instrumentation), full45 at load+compose 152–166 s, crate write 212–230 s,
+process 370–396 s, peak RSS 75–79 GiB. Everything below is byte-neutral and was
+checked against the district rewrite (`e049a40f…`), the composed district
+(`98619c40…`) and full45 (`a0175bc1…`) hashes.
+
+### 10.1 What the profile said
+
+`perf record --call-graph dwarf` on the current binary (district rewrite and
+district compose, `/dev/null` sink), before any change:
+
+- **25–30% of all CPU was kernel time**: page faults plus `madvise`. The full45
+  compose took 68 M minor faults and 260 s of system time out of ~1030 s CPU;
+  `fields_specs` alone took 10.9 M minor faults. The host runs THP in
+  `madvise` mode and jemalloc with default decay, so every freed-then-reused
+  range re-faults 4 KiB pages.
+- `fields_specs` is many small per-property costs, not one: inside
+  `EmitPrimProperties` (57% of `BuildFieldsAndSpecs`), value encoding 21%
+  (half of it hashing passthrough blocks for dedup), property-path interning
+  19% (`FindPathKey` + `AddPathRec`: random probes into three large arrays),
+  time-sample fields 12%, the `property_type_name` cold-map lookup 7.7% plus
+  the string hash of the type name it returns, the per-prim `emitted` hash set
+  4.7%. Per prim: literal field-name hashing, `primChildren` rebuilt from a
+  10 M-entry `parent -> children` string map, and in the composed case
+  `release_value_payloads` 14% (90% of it kernel purge time).
+- The unattributed ~30 s of the serial structure walk is
+  `IsInstanceableSources` -> `SpecsFor` -> `Specs`: the walk hashes and probes
+  the site of every `Src` of every prim, and ~90 M of the ~100 M Srcs on full45
+  have no specs (they are dropped later by `CompactOpinionSources`).
+  `ComposedActive` ran twice per prim, `prototype_of` was looked up by string
+  for every prim, and `Path::append_child` re-validated every child name
+  (`unicode_xid_is_continue`, 1.5% of the process).
+- `FlattenInstancesExtracted` and `Layer::finalize` each build a 10.2 M-entry
+  `unordered_map<string,uint32_t>` over all prims.
+- The compose fill could not be attributed by `perf` (worker stacks unwind to
+  `[unknown]`); by reading, `CopyLocalOpinions` built a `std::string` per
+  property per source, re-interned it in `set_property_type_name` /
+  `ensure_property_meta` / `compose_connections`, and allocated a `ColdData`
+  (13 `unordered_map`s) for nearly every composed prim just to hold property
+  type names.
+
+The previously planned "field-block passthrough with token remap" (W1 in the
+older plan) was dropped: the writer emits fields in its own canonical order
+with its own reps, the Pixar-written district crates use another order, and
+`PrimSpec` keeps no handle to the source spec, so a passthrough could not
+reproduce today's bytes.
+
+### 10.2 Changes
+
+**A. Optional jemalloc configuration compiled into the CLI tools**
+(`src/next/tools/jemalloc-conf.cc`, CMake `LIGHTUSD_NEXT_JEMALLOC_CONF`,
+**default empty**). jemalloc reads the `malloc_conf` symbol before
+`/etc/malloc.conf` and `MALLOC_CONF`, so both still override it; the TU is only
+compiled into `lusdcat` when the allocator found is jemalloc and the variable
+is non-empty.
+
+Transparent huge pages (`thp:always`) were measured as the candidate default
+and **rejected as a default**. Alternating `MALLOC_CONF` runs of the district
+compose (two repeats each, `/dev/null` sink, pre-B binary):
+
+| conf | process | sys | minor faults | peak RSS |
+|---|---:|---:|---:|---:|
+| default | 28.9–30.2 s | 33–36 s | 7.8–8.4 M | 21.6–22.5 GB |
+| `thp:always` | 22.5–23.7 s | 13–14 s | 0.5–0.7 M | 18.5–18.6 GB |
+| `thp:always,dirty_decay_ms:-1,muzzy_decay_ms:-1` | 22.2–24.5 s | 12.7–12.9 s | 0.28–0.38 M | 19.3–20.1 GB |
+| `thp:always,background_thread:true,dirty_decay_ms:30000` | 23.3–25.9 s | 14.9–15.6 s | 0.66–1.0 M | 18.6–20.3 GB |
+
+Without THP, longer decay or a background purge thread did not help (A–E
+binary, district: 24.6–28.3 s vs 19.4–19.9 s with `thp:always`). But at full45
+scale THP lost, back to back on the same A–E binary (both runs touched swap,
+so these are directional, not a timed claim):
+
+| full45 → USDC `/dev/null` | `thp:always` | THP off |
+|---|---:|---:|
+| process wall | 401.6 s | 327.0 s |
+| load+compose / write | 192.6 / 182.8 s | 134.6 / 166.0 s |
+| serial `structure` | 90.1 s | 47.4 s |
+| system time | 304 s | 211 s |
+| peak child swap | 2.1 GB | 1.3 GB |
+
+With the host's THP `defrag=madvise`, a huge-page fault on a `MADV_HUGEPAGE`
+range compacts synchronously; at a 75 GiB resident set on a fragmented host
+those stalls land on the serial walk. Since full45 is the target, THP stays
+opt-in (`-DLIGHTUSD_NEXT_JEMALLOC_CONF=thp:always` or `MALLOC_CONF=thp:always`
+at run time) for working sets well below free memory. The measurements in
+§10.3 labelled "A + B" and "A–D" include `thp:always`; the final B–E pair does
+not.
+
+**B. Writer `fields_specs`** (`crate-writer-fields.inc`, `-properties.inc`,
+`-tables.inc`, `-impl.inc`):
+
+- B1. The declared property type name is an interned `TypeNameTable` id on
+  `PropSlot` (`type_name_id`, 12 -> 16 bytes per slot) instead of a
+  `ColdData::prop_type_names` string map entry. `set_property_type_name(PropNameId,
+  TypeNameId)` is the hot setter; the string overloads remain and a name set
+  before the slot exists (the USDA parser declares the type ahead of the value)
+  waits in the cold map and is adopted by `add_property` /
+  `add_property_slot`; a full type table (u16) also falls back to the map.
+  The writer maps `TypeNameId -> token` through a vector, so the per-property
+  cold-map lookup and type-name string hash are gone; the crate reader interns
+  each attribute name once per record.
+- B2. The next property's / next prim's path-table slot is prefetched one
+  iteration ahead (`PrefetchPathSlot`).
+- B3. The per-prim `emitted` hash set is replaced by the adjacent-duplicate
+  check a name-sorted slot index allows (the set is kept for unsorted indices).
+- B4. `primChildren` comes straight from `child_indices` when a one-pass integer
+  check proves the layer fully linked (every non-root, non-holder prim linked
+  exactly once from its path parent), using prim-name tokens recorded by
+  `BuildTables`; the 10 M-entry string map is only built when the check fails.
+- B5. Field-name literals (`active`, `properties`, `primChildren`, `custom`,
+  `connectionPaths`, `targetPaths`, `timeSamples`, ...) are interned at first
+  use and cached; property-name tokens are recorded once in `BuildTables`
+  (which also stops building a `std::string` per slot) and reused for the
+  `properties` field.
+
+**C. Serial structure walk** (`pcp/cache.cc`, `cache-storage.cc`,
+`cache-arcs.cc`, `cache-internal.hh`, `prim/path.cc`):
+
+- C1. `Src::spec_state` (unknown / none / some) is stamped by `ExpandArcs` when
+  a source is expanded (it already probes `Specs()` there) and by `SpecsFor`
+  on resolution; it resets on copy and survives a move, so it crosses
+  `MergeSources`' vector steal and `CompactOpinionSources`. `SpecsFor` answers
+  "none" without hashing the site, and `CompactOpinionSources` drops such
+  sources without a memo. Same `discarded_sources` count before and after.
+- C2. `ComposedActive` is computed once per prim; `RegisterInstance` reports
+  whether the prim was instanceable so the `prototype_of` string lookup only
+  runs for those; work items are moved off the stack; child paths use
+  `Path::append_child_unchecked` (names come from parsed spec names).
+
+**D. Compose fill** (`composition/composition-merge.cc`, `layer/prim-spec.*`):
+`CopyLocalOpinions` is id-keyed: no `std::string` per property per source,
+`PropNameId` overloads for `connection*`, `set_spline_source`,
+`set_raw_default_source`, `set_array_edit`, `set_property_type_name`; the
+string-keyed relationship-form check and `relationship_names()` only run when
+the prim records relationship data (`has_relationship_data()`). With B1 most
+composed geometry prims no longer allocate a `ColdData` at all.
+
+### 10.3 Measurements
+
+All runs: `tests/next/bench-large-scene.py`, `/dev/null` sink, warm inputs,
+one warmup plus three alternating pairs, `--max-load 24 --min-available-gib 8
+--max-process-swap-mib 512 --max-rss-growth 0.05`, baseline
+`lusdcat-base-7bc83b3b5` (medians; RSS gate = largest peak ratio ≤ 1.05).
+`MALLOC_CONF` is not set in the harness: the compiled-in default is part of
+the candidate.
+
+**A + B (allocator conf + writer), district** — compose
+`/tmp/lightusd-scene-p0/caldera_mine_full.usda` → USDC and rewrite of the
+composed district crate:
+
+| district compose → USDC | baseline | candidate | ratio |
+|---|---:|---:|---:|
+| process wall | 36.95 s | 21.46 s | 0.58 |
+| system time | 34.1 s | 12.6 s | 0.37 |
+| minor faults | 8.21 M | 0.42 M | 0.05 |
+| peak RSS (median) | 20.3 GiB | 16.9 GiB | 0.83 (max ratio 0.83, pass) |
+| `warm` / `structure` / `compose` | 3.56 / 5.88 / 5.47 s | 2.69 / 3.68 / 3.07 s | 0.76 / 0.63 / 0.56 |
+| `build_stage` / `reclaim` | 13.59 / 2.68 s | 8.72 / 1.62 s | 0.64 / 0.60 |
+| `tables` / `fields_specs` | 0.63 / 10.79 s | 0.36 / 5.88 s | 0.58 / 0.55 |
+| `structural_payloads` / `PATHS` | 2.00 / 1.29 s | 1.17 / 1.04 s | 0.58 / 0.81 |
+
+| district rewrite → USDC | baseline | candidate | ratio |
+|---|---:|---:|---:|
+| process wall | 19.28 s | 12.91 s | 0.67 |
+| system time | 8.2 s | 2.2 s | 0.26 |
+| minor faults | 3.22 M | 0.23 M | 0.07 |
+| peak RSS | 6.65 GiB | 6.21 GiB | 0.93 (pass) |
+| crate `BuildStage` (read) | 4.51 s | 3.19 s | 0.71 |
+| `tables` / `fields_specs` | 0.43 / 6.37 s | 0.23 / 4.17 s | 0.53 / 0.65 |
+| `structural_payloads` / `PATHS` | 1.82 / 1.17 s | 1.15 / 0.90 s | 0.63 / 0.77 |
+
+This pair ran with `thp:always` compiled in. The compose-side phases move in
+this pair only through the allocator;
+their own changes (C, D) are measured separately below. The baseline's
+compose runs were 30.2 / 38.7 / 37.0 s (its spread is the host's THP
+compaction and purge behaviour under the 8 M faults), the candidate's
+21.9 / 21.5 / 21.4 s.
+
+**E. Flatten / finalize** (`pcp/cache.cc`, `layer/layer.{hh,cc}`): the walk
+records the composed-layer index of every prim `RegisterInstance` accepts, so
+`FlattenInstances*` find prototypes and members without a path->index map over
+all prims (a miss still falls back to building it once); the
+`/Flattened_Prototype_N` clash check only scans root prims (the name is a root
+path). The composed output layer opts into a deferred path index
+(`Layer::set_lazy_path_index`): `finalize()` skips the 10 M-entry map and the
+first `prim_at_path` / `index_at_path` / mutator builds it under a lock. Source
+layers keep the eager index. District compose: `flatten` 0.47 -> 0.08 s,
+`finalize` 0.27 -> 0.07 s.
+
+**A–D, district compose and Island** (with `thp:always` compiled in; same protocol; the district baseline was
+faster in this pair than in the A+B pair, 26.8 vs 37.0 s median, so compare
+ratios within a pair only):
+
+| case | baseline | candidate | ratio | max RSS ratio |
+|---|---:|---:|---:|---:|
+| district compose → USDC, process | 26.8 s | 19.9 s | 0.74 | 0.75 |
+| ↳ `warm` / `structure` / `compose` | 3.09 / 3.88 / 3.61 s | 2.38 / 2.41 / 2.27 s | 0.77 / 0.62 / 0.63 | |
+| ↳ `reclaim` / `fields_specs` | 1.78 / 8.21 s | 1.24 / 6.64 s | 0.70 / 0.81 | |
+| Island compose → USDC (8 threads), process | 14.8 s | 9.3 s | 0.63 | 0.99 |
+| ↳ `build_stage` / `fields_specs` | 3.70 / 5.52 s | 2.76 / 3.46 s | 0.75 / 0.63 | |
+| Island compose → USDA (8 threads), process | 15.4 s | 8.5 s | 0.55 | 0.98 |
+
+Byte identity of the A–E candidate: district rewrite `e049a40f…`, composed
+district `98619c40…`, Island USDC `267d237a…` (1,815,093,161 B, same as the
+baseline binary on this snapshot), merged ALab USDC `2f7176c8…`
+(732,541,268 B) and USDA `f764d58c…` (4,566,009,415 B). Native `ctest` 67/67
+and standalone `next` Debug 71/71 pass after each phase.
+
+**B–E, full45** (no compiled allocator conf; `--repeat 2 --warmup 1`, all runs
+zero swap). The pair's last baseline run was refused by the load gate (an
+unrelated job started), so the baseline column is one measured run; its warmup
+took 409.8 s.
+
+| full45 compose → USDC | baseline | candidate (median of 2) | ratio |
+|---|---:|---:|---:|
+| process wall | 387.8 s | 320.9 s (333.6 / 308.2) | 0.83 |
+| user / system CPU | 766.9 / 244.6 s | 652.2 / 215.9 s | 0.85 / 0.88 |
+| peak RSS | 75.4 GiB | 73.0 GiB | 0.97 |
+| `build_stage` (load+compose) | 145.8 s | 125.5 s | 0.86 |
+| `warm` / `structure` / `compose` | 47.9 / 52.5 / 48.7 s | 48.5 / 50.9 / 48.9 s | 1.01 / 0.97 / 1.00 |
+| `flatten` / `finalize` | 12.2 / 7.4 s | 1.6 / 1.0 s | 0.13 / 0.14 |
+| `tables` / `fields_specs` | 8.0 / 120.1 s | 6.1 / 84.2 s | 0.75 / 0.70 |
+| `path_tokens` / `structural_payloads` / `PATHS` | 18.3 / 29.9 / 19.4 s | 18.9 / 27.7 / 19.7 s | 1.03 / 0.92 / 1.02 |
+
+What did **not** move at full scale: `structure`, `warm` and the `compose`
+fill. The spec-state byte (C1) removes the per-Src site hash, but on full45 the
+walk's cost is elsewhere (the per-prim `PrimSpec`/path/child-name work and
+`RegisterInstance`); the id-keyed merge (D) did not shorten the fill. Both are
+kept (they do strictly less work and are byte-neutral), but their benefit is
+only visible on the district. The full45 win is the writer (B: −36 s) and the
+index-free flatten/finalize (E: −17 s).
+
+**F. `path_tokens`** (`crate-writer-tables.inc`). `RegisterPathElementTokens`
+split every one of the 62 M paths and hashed each component as a fresh
+`std::string`. It now skips components provably interned already: the stem
+components before the longest `/`-bounded prefix shared with the previous
+record's stem, and property names whose `(pointer, length)` view into the
+`PropNameTable` was split before; components are interned from the view
+without a copy. `SynthesizeAncestorPaths` answers parent probes that fall
+inside the ancestor range the previous walk proved present without hashing the
+stem. Both are exact: interning a present token and probing a present path
+were no-ops. District rewrite lap 1.38 -> 0.56 s; full45 lap 18.9 -> 9.6 s (single runs,
+host load ~22 from an unrelated job, so indicative only). That full45 run
+(B–F) took 304.9 s at 72.8 GiB peak and reproduced `a0175bc1…`
+(3,014,654,530 B).
+
+**Token-order bug found by the fixture sweep (fixed).** B5 initially interned
+relationship names and time-sample-only property names (not slots, so not
+recorded by `BuildTables`) while emitting their specs, earlier than the
+`properties` field that used to intern them. That moved their TOKENS
+position: 2 of the 227 `tests/usdc` fixtures
+(`aousd-unknown-property-metadata`, `rel-inherits-none-001`) differed in
+USDC, while every scene hash still matched. `PropNameToken` now never interns;
+unrecorded names are interned at the `properties` field as before. After the
+fix: 227/227 fixtures byte-identical in USDA and USDC, district rewrite
+`e049a40f…`, composed district `98619c40…`, Island `267d237a…`, merged ALab
+`2f7176c8…` / `f764d58c…`, baked 1004 USDC `a8d08517…`.
+
+Verification for this round: native `ctest` 67/67 and standalone `next` Debug
+71/71 after every phase and after F; the fixture sweep above; full45
+`a0175bc1…` with both the A–E and the final B–F binaries. Not yet run: TSan
+and ASan/UBSan trees for the `Src::spec_state` stamping (C1) and the lazily
+built `Layer` path index (E), and a complete full45 pair for B–F on a quiet
+host.

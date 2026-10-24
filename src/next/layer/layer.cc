@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <unordered_set>
 #if defined(LIGHTUSD_ENABLE_THREAD)
+#include <mutex>
 #include <thread>
 #include <vector>
 #include "../execution.hh"
@@ -95,8 +96,31 @@ void LayerMeta::FillAbsentStageMetaFrom(const LayerMeta& weaker) {
 Layer::Layer() = default;
 Layer::~Layer() = default;
 
-Layer::Layer(Layer&&) noexcept = default;
-Layer& Layer::operator=(Layer&&) noexcept = default;
+// Hand-written moves: the deferred-index flag is an atomic (not movable by
+// default); everything else moves member-wise.
+Layer::Layer(Layer&& other) noexcept
+    : prims_(std::move(other.prims_)),
+      root_indices_(std::move(other.root_indices_)),
+      path_to_index_(std::move(other.path_to_index_)),
+      meta_(std::move(other.meta_)),
+      finalized_(other.finalized_),
+      lazy_path_index_(other.lazy_path_index_),
+      path_index_dirty_(other.path_index_dirty_.load()) {
+  other.path_index_dirty_.store(false);
+}
+Layer& Layer::operator=(Layer&& other) noexcept {
+  if (this != &other) {
+    prims_ = std::move(other.prims_);
+    root_indices_ = std::move(other.root_indices_);
+    path_to_index_ = std::move(other.path_to_index_);
+    meta_ = std::move(other.meta_);
+    finalized_ = other.finalized_;
+    lazy_path_index_ = other.lazy_path_index_;
+    path_index_dirty_.store(other.path_index_dirty_.load());
+    other.path_index_dirty_.store(false);
+  }
+  return *this;
+}
 
 void Layer::reserve(size_t count) {
   prims_.reserve(count);
@@ -235,6 +259,19 @@ void Layer::build_path_index() {
       path_to_index_[path_str] = static_cast<uint32_t>(i);
     }
   }
+  path_index_dirty_.store(false, std::memory_order_release);
+}
+
+void Layer::ensure_path_index() const {
+  if (!path_index_dirty_.load(std::memory_order_acquire)) return;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  // One process-wide lock: a deferred index is built once per layer, so the
+  // serialization is irrelevant and the Layer stays trivially movable.
+  static std::mutex mu;
+  std::lock_guard<std::mutex> lk(mu);
+  if (!path_index_dirty_.load(std::memory_order_acquire)) return;
+#endif
+  const_cast<Layer*>(this)->build_path_index();
 }
 
 void Layer::sort_prims_by_path() {
@@ -352,6 +389,7 @@ uint32_t Layer::define_prim_at_path(const std::string& path,
   }
 
   // The incremental updates below rely on the path index being current.
+  ensure_path_index();
   if (path_to_index_.empty() && !prims_.empty()) {
     build_path_index();
   }
@@ -400,6 +438,7 @@ uint32_t Layer::define_prim_at_path(const std::string& path,
 }
 
 bool Layer::remove_prim_at_path(const std::string& path) {
+  ensure_path_index();
   if (path_to_index_.empty() && !prims_.empty()) {
     build_path_index();
   }
@@ -441,6 +480,7 @@ bool Layer::remove_prim_at_path(const std::string& path) {
 bool Layer::rename_prim_at_path(const std::string& path,
                                 const std::string& new_name) {
   if (!IsValidIdentifier(new_name)) return false;
+  ensure_path_index();
   if (path_to_index_.empty() && !prims_.empty()) {
     build_path_index();
   }
@@ -476,8 +516,12 @@ bool Layer::rename_prim_at_path(const std::string& path,
 void Layer::finalize() {
   if (finalized_) return;
 
-  // Build path-to-index map
-  build_path_index();
+  // Build path-to-index map (or defer it to the first lookup).
+  if (lazy_path_index_) {
+    path_index_dirty_.store(true, std::memory_order_release);
+  } else {
+    build_path_index();
+  }
 
   // Finalize each prim's properties (sort for binary search). Each prim's
   // sort orders only its own slots, so large layers (a composed stage) sort in
@@ -528,18 +572,21 @@ const PrimSpec* Layer::prim_at_path(const Path& path) const {
 }
 
 const PrimSpec* Layer::prim_at_path(const std::string& path) const {
+  ensure_path_index();
   auto it = path_to_index_.find(path);
   if (it == path_to_index_.end()) return nullptr;
   return prim(it->second);
 }
 
 PrimSpec* Layer::prim_at_path_mutable(const std::string& path) {
+  ensure_path_index();
   auto it = path_to_index_.find(path);
   if (it == path_to_index_.end()) return nullptr;
   return prim(it->second);
 }
 
 uint32_t Layer::index_at_path(const std::string& path) const {
+  ensure_path_index();
   auto it = path_to_index_.find(path);
   return it == path_to_index_.end() ? UINT32_MAX : it->second;
 }

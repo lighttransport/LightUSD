@@ -272,6 +272,7 @@ public:
   /// from silently deleting spline data. Strict AOUSD parsing rejects the
   /// unsupported field instead of returning a partially interpreted stage.
   void set_spline_source(const std::string& prop_name, std::string source);
+  void set_spline_source(PropNameId name_id, std::string source);
   const std::string* spline_source(PropNameId name_id) const;
   const std::string* spline_source(const std::string& prop_name) const;
 
@@ -279,6 +280,7 @@ public:
   /// not-yet-supported foundational type has no Value decoder.
   void set_raw_default_source(const std::string& prop_name,
                               std::string source);
+  void set_raw_default_source(PropNameId name_id, std::string source);
   const std::string* raw_default_source(PropNameId name_id) const;
   void clear_raw_default_source(PropNameId name_id);
 
@@ -287,6 +289,7 @@ public:
   /// writer re-emits it); this is the structured op list composition uses to
   /// stack and resolve edits (see layer/array-edit.hh).
   void set_array_edit(const std::string& prop_name, ArrayEditData edit);
+  void set_array_edit(PropNameId name_id, ArrayEditData edit);
   const ArrayEditData* array_edit(PropNameId name_id) const;
   void clear_array_edit(PropNameId name_id);
   const std::unordered_map<uint32_t, ArrayEditData>& array_edits() const;
@@ -347,6 +350,11 @@ public:
 
   /// Get all relationship names
   std::vector<std::string> relationship_names() const;
+  /// False when this prim records no relationship targets, edits or opinion
+  /// stacks at all (then relationship_names() is empty and every
+  /// relationship(...) lookup misses) -- lets the compose merge skip the
+  /// string-keyed relationship checks for the ordinary attribute-only prim.
+  bool has_relationship_data() const;
 
   // ============================================================
   // Attribute connections / declared type names (USDC fidelity)
@@ -362,21 +370,29 @@ public:
 
   /// Exact authored connectionPaths list-op for this attribute.
   const ArcListOp* connection_edit(const std::string& prop_name) const;
+  const ArcListOp* connection_edit(PropNameId name_id) const;
   ArcListOp& ensure_connection_edit(const std::string& prop_name);
+  ArcListOp& ensure_connection_edit(PropNameId name_id);
 
   const std::vector<RelationshipOpinion>* connection_opinion_stack(
       const std::string& prop_name) const;
+  const std::vector<RelationshipOpinion>* connection_opinion_stack(
+      PropNameId name_id) const;
   void set_connection_opinion_stack(
       const std::string& prop_name, std::vector<RelationshipOpinion> opinions);
+  void set_connection_opinion_stack(PropNameId name_id,
+                                    std::vector<RelationshipOpinion> opinions);
 
   void set_connection_targets(const std::string& prop_name,
                               std::vector<Path> targets);
+  void set_connection_targets(PropNameId name_id, std::vector<Path> targets);
   void apply_connection_list_op(const std::string& prop_name,
                                 const std::vector<Path>& targets,
                                 RelationshipListOp op);
 
   /// Get connection targets for an attribute (nullptr if none)
   const std::vector<Path>* connection(const std::string& prop_name) const;
+  const std::vector<Path>* connection(PropNameId name_id) const;
 
   /// Rewrite relationship + connection target paths that lie WITHIN `old_prefix`
   /// (== it, or a descendant `old_prefix/...`) to the corresponding path under
@@ -392,6 +408,10 @@ public:
   /// round-trip the exact role type for valued attributes.
   void set_property_type_name(const std::string& prop_name,
                               const std::string& type_name);
+  /// Same, by interned ids (no string hashing; the hot compose/reader path).
+  /// An invalid `type_id` clears the recorded name.
+  void set_property_type_name(PropNameId name_id, TypeNameId type_id);
+  void set_property_type_name(PropNameId name_id, const std::string& type_name);
 
   /// Get the declared type name of a property (nullptr if not recorded)
   const std::string* property_type_name(const std::string& prop_name) const;
@@ -473,6 +493,8 @@ private:
   // Connections, relationship opinions and authored property metadata are
   // sparse. Their STL containers are private to the compiled implementation.
   struct ColdData;
+  // Move a type name recorded before `slot` existed onto the slot.
+  void adopt_pending_type_name(PropSlot& slot);
   ColdData& ensure_cold_data();
   ColdData& cold();
   const ColdData& cold() const;

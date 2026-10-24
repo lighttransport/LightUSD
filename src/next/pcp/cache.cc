@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "cache-internal.hh"
+
+#include "../phase-faults.hh"
 namespace lightusd {
 namespace next {
 namespace pcp {
@@ -503,7 +505,7 @@ auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
     stack.push_back(root_work);
 
     while (!stack.empty()) {
-      BuildStageWork w = stack.back();
+      BuildStageWork w = std::move(stack.back());
       stack.pop_back();
 
       // Namespace-depth backstop: an arc-induced namespace that keeps growing
@@ -557,6 +559,8 @@ auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
         for (const Src &s : srcs) {
           if (!s.variant && Mapping(s.map_idx).MapsFrom(s.site)) {
             shared_srcs.push_back(s);
+            // Same (stack, site): carry the known spec state across the copy.
+            shared_srcs.back().spec_state.v = s.spec_state.v;
           }
         }
         if (!shared_srcs.empty()) {
@@ -568,8 +572,13 @@ auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
       // Preserve the unfiltered child set when the instanceable source list has
       // no shareable mapped sources.  In the common non-instanceable case this
       // also avoids constructing and then potentially replacing the vector.
+      auto cn0 = prof ? ProfClock::now() : ProfClock::time_point{};
       if (!children_filtered) children = ComposeChildNames(srcs);
       auto ps2 = prof ? ProfClock::now() : ProfClock::time_point{};
+      if (prof) {
+        prof_childnames_ns_ +=
+            std::chrono::duration_cast<std::chrono::nanoseconds>(ps2 - cn0).count();
+      }
       if (prof) {
         prof_sources_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(ps1 - ps0).count();
         prof_compose_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(ps2 - ps1).count();
@@ -583,10 +592,16 @@ auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
       // A deactivated prim composes no subtree and forms NO instance in pxr —
       // registering it would extract an orphan Flattened_Prototype for
       // content the flatten output prunes.
-      if (ComposedActive(srcs)) RegisterInstance(w.out_path.str(), srcs);
+      const bool composed_active = ComposedActive(srcs);
+      const bool registered =
+          composed_active && RegisterInstance(w.out_path.str(), srcs);
       if (prof) prof_reg_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(ProfClock::now() - pr0).count();
+      auto pm0 = prof ? ProfClock::now() : ProfClock::time_point{};
       bool is_instance = false;
-      {
+      // Only an instanceable prim (registered now, or by the warm pass with
+      // the same sources) can be in prototype_of: skip the string lookup for
+      // the rest.
+      if (registered) {
         auto pit = prototype_of.find(w.out_path.str());
         if (pit != prototype_of.end() && pit->second != w.out_path.str()) {
           spec.meta().instance_prototype() = pit->second;
@@ -594,7 +609,18 @@ auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
         }
       }
 
+      auto pm1 = prof ? ProfClock::now() : ProfClock::time_point{};
+      if (prof) {
+        prof_protomap_ns_ +=
+            std::chrono::duration_cast<std::chrono::nanoseconds>(pm1 - pm0).count();
+      }
       uint32_t idx = out->add_prim(std::move(spec));
+      if (registered) instance_prim_index_[w.out_path.str()] = idx;
+      auto ap1 = prof ? ProfClock::now() : ProfClock::time_point{};
+      if (prof) {
+        prof_addprim_ns_ +=
+            std::chrono::duration_cast<std::chrono::nanoseconds>(ap1 - pm1).count();
+      }
       if (w.is_root) {
         out->add_root(idx);
       } else {
@@ -609,7 +635,7 @@ auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
       // inactive prim; usdcat --flatten drops the prim itself too — the prim
       // is kept here, with its authored active=false, so stage consumers can
       // still query IsActive on it).
-      if (!ComposedActive(srcs)) continue;
+      if (!composed_active) continue;
 
       // Push children in reverse order so the first child processes first
       // (preserving the original visitation order). `children` is already the
@@ -621,7 +647,7 @@ auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
         // filtered derivation so the entire prototype subtree (recursively)
         // composes shared content only.
         for (const std::string &cn : children) {
-          const Path child = w.out_path.append_child(cn);
+          const Path child = w.out_path.append_child_unchecked(cn);
           const std::string ck = SourcesKey(0, child.str());
           if (!sources_cache.contains(ck)) {
             std::vector<Src> base =
@@ -630,9 +656,15 @@ auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
           }
         }
       }
+      // Child names come from spec names / relocation arrivals, which the
+      // parsers already validated: skip the per-character identifier check.
       for (auto it = children.rbegin(); it != children.rend(); ++it) {
-        const Path child = w.out_path.append_child(*it);
+        const Path child = w.out_path.append_child_unchecked(*it);
         stack.push_back({child, child, idx, /*is_root=*/false, w.depth + 1});
+      }
+      if (prof) {
+        prof_push_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(
+            ProfClock::now() - ap1).count();
       }
     }
   }
@@ -651,6 +683,7 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
     prototype_of.clear();
     instances_by_prototype.clear();
     instance_key_order.clear();
+    instance_prim_index_.clear();
 
     const Layer *root = layer_stacks[0].layers[0].get();
     // Root (pseudo-root child) names compose WEAK->STRONG too, like nested
@@ -678,8 +711,12 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
       }
     }
     prof_sources_ns_ = prof_compose_ns_ = prof_reg_ns_ = 0;
+    prof_childnames_ns_ = prof_protomap_ns_ = prof_addprim_ns_ = prof_push_ns_ = 0;
     prof_source_hits_ = prof_source_misses_ = prof_structure_nodes_ = 0;
     const auto warm_t0 = std::chrono::steady_clock::now();
+    // Residency attribution: the composed layer reaches ~75 GiB on the
+    // all-district crate, so each phase reports its share of the page faults.
+    const FaultCounters fault_t0 = ReadFaultCounters();
 #if defined(LIGHTUSD_ENABLE_THREAD)
     // Resolve independent namespace subtrees concurrently before the serial
     // structure walk. ParallelWarmSources was previously implemented but never
@@ -705,6 +742,7 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
     if (warm_threads > 1)
       ParallelWarmSources(root_names, warm_threads, warn, err);
 #endif
+    const FaultCounters fault_warm1 = ReadFaultCounters();
     const auto structure_t0 = std::chrono::steady_clock::now();
     if (options.release_build_sources && sources_cache.size() >= 65536) {
       // A source's root-space site commonly equals the cache key. Reuse that
@@ -733,6 +771,7 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
     // prefetch still has queued was not reached (e.g. arcs on inactive prims).
     StopArcLayerPrefetch(&prefetch, warn);
 #endif
+    const FaultCounters fault_structure1 = ReadFaultCounters();
     const auto structure_t1 = std::chrono::steady_clock::now();
     if (preview_callback) {
       // The callback receives an independent immutable-in-practice Stage. The
@@ -814,6 +853,7 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
       // (including shared ones that FillOpinions could not drain) die here.
       if (options.release_build_sources) sources_cache.clear();
     }
+    const FaultCounters fault_fill1 = ReadFaultCounters();
     const auto fill_t1 = std::chrono::steady_clock::now();
     if (options.enable_timing) {
       prof_compose_ns_ +=
@@ -830,9 +870,15 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
       case InstanceFlattenMode::Native:
         break;
     }
+    const FaultCounters fault_flatten1 = ReadFaultCounters();
     const auto flatten_t1 = std::chrono::steady_clock::now();
 
+    // The composed layer is read by index (writers, Stage traversal); defer
+    // its path->index map to the first path lookup instead of hashing every
+    // prim path here.
+    out->set_lazy_path_index(true);
     out->finalize();
+    const FaultCounters fault_finalize1 = ReadFaultCounters();
     const auto finalize_t1 = std::chrono::steady_clock::now();
     if (options.enable_timing) {
       auto elapsed_ms = [](std::chrono::steady_clock::duration duration) {
@@ -846,6 +892,11 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
                   FormatMilliseconds(elapsed_ms(structure_t1 - structure_t0)) +
                   "ms compose=" + FormatMilliseconds(prof_compose_ns_ / 1e6) +
                   "ms register=" + FormatMilliseconds(prof_reg_ns_ / 1e6) +
+                  "ms childnames=" +
+                  FormatMilliseconds(prof_childnames_ns_ / 1e6) +
+                  "ms protomap=" + FormatMilliseconds(prof_protomap_ns_ / 1e6) +
+                  "ms addprim=" + FormatMilliseconds(prof_addprim_ns_ / 1e6) +
+                  "ms push=" + FormatMilliseconds(prof_push_ns_ / 1e6) +
                   "ms source_hits=" + UIntToStr(prof_source_hits_) +
                   " source_misses=" + UIntToStr(prof_source_misses_) +
                   " nodes=" + UIntToStr(prof_structure_nodes_) +
@@ -860,7 +911,20 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
                   FormatMilliseconds(elapsed_ms(flatten_t1 - fill_t1)) +
                   "ms finalize=" +
                   FormatMilliseconds(elapsed_ms(finalize_t1 - flatten_t1)) +
-                  "ms");
+                  "ms"
+                  " faults=maj[" +
+                  UIntToStr(fault_warm1.major - fault_t0.major) + "," +
+                  UIntToStr(fault_structure1.major - fault_warm1.major) + "," +
+                  UIntToStr(fault_fill1.major - fault_structure1.major) + "," +
+                  UIntToStr(fault_flatten1.major - fault_fill1.major) + "," +
+                  UIntToStr(fault_finalize1.major - fault_flatten1.major) +
+                  "] min[" +
+                  UIntToStr(fault_warm1.minor - fault_t0.minor) + "," +
+                  UIntToStr(fault_structure1.minor - fault_warm1.minor) + "," +
+                  UIntToStr(fault_fill1.minor - fault_structure1.minor) + "," +
+                  UIntToStr(fault_flatten1.minor - fault_fill1.minor) + "," +
+                  UIntToStr(fault_finalize1.minor - fault_flatten1.minor) +
+                  "]");
     }
     out->meta() = root->meta();
     // Stage metadata comes from the ROOT layer only. pxr does NOT fall back
@@ -883,12 +947,36 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
     return true;
   }
 
+// Prim index lookup for the flatten passes: the walk-recorded instance
+// indices first, a full path->index map built once on the first miss.
+namespace {
+struct InstanceIndexLookup {
+  const Layer *out;
+  const std::unordered_map<std::string, uint32_t> &recorded;
+  std::unordered_map<std::string, uint32_t> full;
+  bool full_built = false;
+  InstanceIndexLookup(const Layer *o,
+                      const std::unordered_map<std::string, uint32_t> &r)
+      : out(o), recorded(r) {}
+  // Returns UINT32_MAX when the path has no prim.
+  uint32_t find(const std::string &path) {
+    auto it = recorded.find(path);
+    if (it != recorded.end()) return it->second;
+    if (!full_built) {
+      for (uint32_t i = 0; i < out->prim_count(); ++i)
+        if (const PrimSpec *p = out->prim(i)) full[p->path().str()] = i;
+      full_built = true;
+    }
+    auto fit = full.find(path);
+    return fit == full.end() ? UINT32_MAX : fit->second;
+  }
+};
+}  // namespace
+
 auto Cache::Impl::FlattenInstances(Layer *out) -> void {
     if (instances_by_prototype.empty()) return;
 
-    std::unordered_map<std::string, uint32_t> idx_by_path;
-    for (uint32_t i = 0; i < out->prim_count(); ++i)
-      if (const PrimSpec *p = out->prim(i)) idx_by_path[p->path().str()] = i;
+    InstanceIndexLookup idx_by_path(out, instance_prim_index_);
 
     for (const auto &grp : instances_by_prototype) {
       const std::string &proto_path = grp.first;
@@ -900,11 +988,11 @@ auto Cache::Impl::FlattenInstances(Layer *out) -> void {
         if (m != proto_path) { has_instance = true; break; }
       if (!has_instance) continue;
 
-      auto pit = idx_by_path.find(proto_path);
-      if (pit == idx_by_path.end()) continue;
+      const uint32_t proto_idx = idx_by_path.find(proto_path);
+      if (proto_idx == UINT32_MAX) continue;
       // Holder: keep the composed subtree, drop the instanceable flag so it is a
       // plain reference target (an instanceable holder would hide its content).
-      if (PrimSpec *proto = out->prim(pit->second)) {
+      if (PrimSpec *proto = out->prim(proto_idx)) {
         proto->meta().instanceable = false;
         proto->meta().instance_prototype().clear();
       }
@@ -912,9 +1000,9 @@ auto Cache::Impl::FlattenInstances(Layer *out) -> void {
       const std::string ref = "<" + proto_path + ">";
       for (const std::string &m : members) {
         if (m == proto_path) continue;
-        auto mit = idx_by_path.find(m);
-        if (mit == idx_by_path.end()) continue;
-        PrimSpec *mp = out->prim(mit->second);
+        const uint32_t m_idx = idx_by_path.find(m);
+        if (m_idx == UINT32_MAX) continue;
+        PrimSpec *mp = out->prim(m_idx);
         if (!mp) continue;
         mp->meta().instanceable = true;
         mp->meta().instance_prototype().clear();
@@ -931,9 +1019,7 @@ auto Cache::Impl::FlattenInstancesExtracted(Layer *out, PrototypeNumbering numbe
 
     // path -> prim index (for member rewrites in Pass 2). Member indices stay
     // valid: Pass 1 only ADDS prims (FP roots + clones), never reindexes.
-    std::unordered_map<std::string, uint32_t> idx_by_path;
-    for (uint32_t i = 0; i < out->prim_count(); ++i)
-      if (const PrimSpec *p = out->prim(i)) idx_by_path[p->path().str()] = i;
+    InstanceIndexLookup idx_by_path(out, instance_prim_index_);
 
     // --- order groups, assign /Flattened_Prototype_N ------------------------
     // members[0] == prototype path == namespace-pre-order-first instance.
@@ -977,12 +1063,12 @@ auto Cache::Impl::FlattenInstancesExtracted(Layer *out, PrototypeNumbering numbe
       }
     }
 
-    out->build_path_index();
     std::unordered_map<std::string, std::string> fpath;  // proto -> "/Flattened_Prototype_j"
     {
+      // "/Flattened_Prototype_N" is a root path: only a ROOT prim can clash.
       std::unordered_set<std::string> used;
-      for (uint32_t i = 0; i < out->prim_count(); ++i) {
-        if (const PrimSpec *p = out->prim(i)) used.insert(p->path().str());
+      for (uint32_t ri : out->root_indices()) {
+        if (const PrimSpec *p = out->prim(ri)) used.insert(p->path().str());
       }
       size_t n = 1;
       for (const std::string &proto : ordered) {
@@ -1014,8 +1100,8 @@ auto Cache::Impl::FlattenInstancesExtracted(Layer *out, PrototypeNumbering numbe
       std::string dst_parent_path;
     };
     for (const std::string &proto : ordered) {
-      auto pit = idx_by_path.find(proto);
-      if (pit == idx_by_path.end()) continue;
+      const uint32_t proto_idx = idx_by_path.find(proto);
+      if (proto_idx == UINT32_MAX) continue;
       const std::string &fp = fpath[proto];
 
       PrimSpec root(fp.substr(1));  // "Flattened_Prototype_j"
@@ -1028,7 +1114,7 @@ auto Cache::Impl::FlattenInstancesExtracted(Layer *out, PrototypeNumbering numbe
       // preserving source namespace order in the cloned subtree.
       std::vector<CloneWork> work;
       {
-        const auto &cc = out->prim(pit->second)->child_indices();
+        const auto &cc = out->prim(proto_idx)->child_indices();
         for (auto it = cc.rbegin(); it != cc.rend(); ++it)
           work.push_back({*it, fp_idx, fp});
       }
@@ -1085,9 +1171,9 @@ auto Cache::Impl::FlattenInstancesExtracted(Layer *out, PrototypeNumbering numbe
       auto mit = instances_by_prototype.find(proto);
       if (mit == instances_by_prototype.end()) continue;
       for (const std::string &m : mit->second) {
-        auto it = idx_by_path.find(m);
-        if (it == idx_by_path.end()) continue;
-        PrimSpec *mp = out->prim(it->second);
+        const uint32_t m_idx = idx_by_path.find(m);
+        if (m_idx == UINT32_MAX) continue;
+        PrimSpec *mp = out->prim(m_idx);
         if (!mp) continue;
         mp->meta().instanceable = true;
         mp->meta().instance_prototype().clear();
@@ -1328,7 +1414,7 @@ auto Cache::Impl::MakeChildWarmTask(
       const WarmTask &parent, const std::string &name, uint32_t index,
       const std::shared_ptr<const std::vector<Path>> &protos) -> WarmTask {
     WarmTask child;
-    child.p = parent.p.append_child(name);
+    child.p = parent.p.append_child_unchecked(name);
     child.depth = parent.depth + 1;
     child.order.reserve(parent.order.size() + 1);
     child.order = parent.order;
@@ -1501,15 +1587,27 @@ auto Cache::Impl::ParallelWarmSources(const std::vector<std::string> &root_names
     auto t_workers = prof ? PWClock::now() : PWClock::time_point{};
 
     size_t worker_delta_entries = 0;
+    uint64_t merge_ns = 0, destroy_ns = 0;
     for (int t = 0; t < W; ++t) {
       worker_delta_entries += workers[static_cast<size_t>(t)]->sources_cache.size();
+      const auto m0 = PWClock::now();
       MergeSources(*workers[static_cast<size_t>(t)], seed_stack_count,
                    seed_pool_count);
+      const auto m1 = PWClock::now();
+      if (prof) {
+        merge_ns += static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(m1 - m0).count());
+      }
       if (warn) *warn += wwarn[static_cast<size_t>(t)];
       if (err) *err += werr[static_cast<size_t>(t)];
       // All source/mapping references have been adopted or remapped above.
       // Drop this worker before merging the next, reducing overlapping state.
       workers[static_cast<size_t>(t)].reset();
+      if (prof) {
+        destroy_ns += static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                PWClock::now() - m1).count());
+      }
     }
     if (prof) {
       auto ms = [](PWClock::time_point a, PWClock::time_point b) {
@@ -1522,6 +1620,8 @@ auto Cache::Impl::ParallelWarmSources(const std::vector<std::string> &root_names
                   " discover=" + FormatMilliseconds(ms(t_start, t_discover)) +
                   "ms workers=" + FormatMilliseconds(ms(t_discover, t_workers)) +
                   "ms merge=" + FormatMilliseconds(ms(t_workers, t_merge)) +
+                  "ms merge_loop=" + FormatMilliseconds(merge_ns / 1e6) +
+                  "ms destroy=" + FormatMilliseconds(destroy_ns / 1e6) +
                   "ms cache=" + UIntToStr(sources_cache.size()) +
                   " delta=" + UIntToStr(worker_delta_entries));
     }

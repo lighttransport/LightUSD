@@ -135,13 +135,19 @@ auto Cache::Impl::BuildPathHashFilter(uint32_t stack_idx) const -> void {
 
 auto Cache::Impl::SpecsFor(const Src &s) const -> const std::vector<SpecRef> & {
     if (s.specs_.p) return *s.specs_.p;
+    // Known-empty (stamped by ExpandArcs when the source was expanded, or by a
+    // previous resolution here): no site hash, no probe.
+    if (s.spec_state.v == SpecState::kNone) return empty_specs_;
     const std::vector<SpecRef> &r = Specs(s.stack_idx, s.site);
     // A parallel-warm worker (an Impl seeded with source_seed_cache) also
     // reads Srcs that live in the MAIN Impl's cache. A memo written there
     // would point into this worker's spec cache, which is discarded after the
     // merge, and would race with the other workers -- so only an Impl that
-    // owns every Src it can see memoizes.
-    if (!source_seed_cache) s.specs_.p = &r;
+    // owns every Src it can see memoizes (the state byte too: same race).
+    if (!source_seed_cache) {
+      s.specs_.p = &r;
+      s.spec_state.v = r.empty() ? SpecState::kNone : SpecState::kSome;
+    }
     return r;
   }
 
@@ -381,17 +387,18 @@ auto Cache::Impl::AssignPrototype(const std::string &prim_path, const std::strin
   }
 
 auto Cache::Impl::RegisterInstance(const std::string &prim_path,
-                        const std::vector<Src> &srcs, bool prefer_min) -> void {
-    if (!options.detect_instances || !IsInstanceableSources(srcs)) return;
+                        const std::vector<Src> &srcs, bool prefer_min) -> bool {
+    if (!options.detect_instances || !IsInstanceableSources(srcs)) return false;
     const std::string ik = ComputeInstanceKeyImpl(srcs);
 #if defined(LIGHTUSD_ENABLE_THREAD)
     if (defer_instances_) {
       // Worker mode: stash for the deterministic input-order merge.
       pending_instance_[prim_path] = {true, ik};
-      return;
+      return true;
     }
 #endif
     AssignPrototype(prim_path, ik, prefer_min);
+    return true;
   }
 
 auto Cache::Impl::DropInstancingFromGroup(
@@ -604,6 +611,9 @@ auto Cache::Impl::MergeSources(Impl &w, size_t seed_stack_count, size_t seed_poo
       }
       *sites = it->second;
     };
+    // One pre-size for the whole merge: growing this table by ~10M entries
+    // through rehash() was a measurable part of the merge wall.
+    sources_cache.reserve(sources_cache.size() + w.sources_cache.size());
     w.sources_cache.for_each([&](const std::string &key,
                                  std::vector<Src> &val) {
       // Only the composed (root-namespace) entries are adopted. Stack-qualified
@@ -619,13 +629,15 @@ auto Cache::Impl::MergeSources(Impl &w, size_t seed_stack_count, size_t seed_poo
       // entries already present in the main cache (the seed, or the same
       // ancestor re-derived by another worker that took a donated subtree --
       // identical sources) are not copied back.
-      if (sources_cache.contains(key)) return;
+      bool created = false;
+      std::vector<Src> &slot = sources_cache.get_or_create(key, &created);
+      if (!created) return;
       // The worker Impl is discarded right after this merge, so steal its Src
       // vector instead of copying it. NOTE: a vector move is a buffer steal —
       // the elements' SpecsMemo self-reset never runs — so any worker-set
       // specs_ (pointing into the discarded worker's spec cache) must be
       // dropped explicitly below.
-      std::vector<Src> &srcs = sources_cache.get_or_create(key);
+      std::vector<Src> &srcs = slot;
       srcs = std::move(val);
       for (Src &s : srcs) {
         s.stack_idx = remap(s.stack_idx);
@@ -686,6 +698,7 @@ size_t CompactOpinionSources(std::vector<Src> &sources) {
       // non-variant, non-suppressed sources before retiring the lookup index.
       return source.variant ||
              (!source.suppress_site_specs &&
+              source.spec_state.v != SpecState::kNone &&
               (!source.specs_.p || !source.specs_.p->empty()));
     };
     size_t keep = 0;
@@ -805,7 +818,8 @@ auto cache_detail::SrcCache::find(const std::string &k) const -> const std::vect
     }
   }
 
-auto cache_detail::SrcCache::get_or_create(const std::string &k) -> std::vector<Src> & {
+auto cache_detail::SrcCache::get_or_create(const std::string &k,
+                                          bool *created) -> std::vector<Src> & {
     const uint64_t h = Hash(k);
     if (slots_.empty() || (occupied_ + 1) * 2 > slots_.size()) rehash();
     const size_t mask = slots_.size() - 1;
@@ -815,6 +829,7 @@ auto cache_detail::SrcCache::get_or_create(const std::string &k) -> std::vector<
       Slot &s = slots_[i];
       if (s.state == 0) {
         const size_t at = (first_tomb == SIZE_MAX) ? i : first_tomb;
+        if (created) *created = true;
         return emplace_at(at, h, k, /*was_tomb=*/slots_[at].state == 2);
       }
       if (s.state == 2) {
@@ -824,10 +839,33 @@ auto cache_detail::SrcCache::get_or_create(const std::string &k) -> std::vector<
         if (key.size() == k.size() &&
             std::memcmp(key.data(), k.data(), k.size()) == 0) {
           own_key(s.idx);
+          if (created) *created = false;
           return vals_[s.idx];
         }
       }
       i = (i + 1) & mask;
+    }
+  }
+
+auto cache_detail::SrcCache::reserve(size_t expected) -> void {
+    if (expected < 16) expected = 16;
+    size_t want = 16;
+    while (want < expected * 2) want <<= 1;
+    if (want <= slots_.size()) return;
+    // Grow to the requested size directly; rehash() would double step by step.
+    std::vector<Slot> old = std::move(slots_);
+    slots_.assign(want, Slot{});
+    occupied_ = 0;
+    const size_t mask = want - 1;
+    for (uint32_t vi = 0; vi < live_.size(); ++vi) {
+      if (!live_[vi]) continue;
+      const uint64_t h = Hash(key_at(vi));
+      size_t i = static_cast<size_t>(h) & mask;
+      while (slots_[i].state != 0) i = (i + 1) & mask;
+      slots_[i].hash = h;
+      slots_[i].idx = vi;
+      slots_[i].state = 1;
+      ++occupied_;
     }
   }
 

@@ -576,7 +576,8 @@ void CrateReader::Impl::EmitPrimBody(
       for (uint32_t k = attr_off[entry_index]; k < attr_off[entry_index + 1];
            ++k) {
         AttrInfo& ai = *attr_refs[k];
-        if (ps->property(ai.name)) continue;  // inline opinion wins
+        const PropNameId nid = GetPropNameTable().intern(ai.name);
+        if (ps->property(nid)) continue;  // inline opinion wins
         uint16_t flags = 0;
         if (ai.uniform) flags |= PropSlot::kFlagUniform;
         if (ai.custom) flags |= PropSlot::kFlagCustom;
@@ -588,7 +589,7 @@ void CrateReader::Impl::EmitPrimBody(
             ai.type_name.size() >= 2 &&
             ai.type_name.compare(ai.type_name.size() - 2, 2, "[]") == 0;
         if (ai.has_default) {
-          ps->add_property(ai.name, std::move(ai.default_value), flags);
+          ps->add_property(nid, std::move(ai.default_value), flags);
         } else if (ai.has_array_edit) {
           // Sparse array-edit default: a typed slot with the structured edit
           // and its canonical `edit [...]` text (usda writer re-emits it;
@@ -598,7 +599,7 @@ void CrateReader::Impl::EmitPrimBody(
           std::string base_tn = is_array
               ? ai.type_name.substr(0, ai.type_name.size() - 2)
               : ai.type_name;
-          ps->add_property_slot(GetPropNameTable().intern(ai.name),
+          ps->add_property_slot(nid,
                                 GetTypeIdFromName(base_tn.c_str()),
                                 edit_flags);
           ps->set_raw_default_source(ai.name,
@@ -612,18 +613,17 @@ void CrateReader::Impl::EmitPrimBody(
               ? ai.type_name.substr(0, ai.type_name.size() - 2)
               : ai.type_name;
           TypeId tid = GetTypeIdFromName(base.c_str());
-          ps->add_property_slot(GetPropNameTable().intern(ai.name), tid, flags);
+          ps->add_property_slot(nid, tid, flags);
         }
         // Time samples (an attribute may have timeSamples with or without a
         // default).
         if (!ai.time_samples.empty()) {
-          PropNameId nid = GetPropNameTable().intern(ai.name);
           for (auto& ts : ai.time_samples) {
             ps->add_time_sample(nid, ts.first, std::move(ts.second));
           }
         }
         if (!ai.type_name.empty()) {
-          ps->set_property_type_name(ai.name, ai.type_name);
+          ps->set_property_type_name(nid, GetTypeNameTable().intern(ai.type_name));
         }
         if (ai.is_connection && ai.cold->connection_targets.empty()) {
           ps->set_connection_block(ai.name);  // authored `.connect = None`

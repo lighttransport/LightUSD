@@ -472,6 +472,16 @@ endif()
 # ------------------------------------------------------------------
 option(LIGHTUSD_NEXT_WITH_ALLOCATOR
     "Link an installed jemalloc/tcmalloc/mimalloc into the next CLI tools when found (optional)" ON)
+# Optional jemalloc options compiled into the CLI tools
+# (src/next/tools/jemalloc-conf.cc); MALLOC_CONF still overrides them. Default
+# empty. `thp:always` (transparent huge pages) cuts the district Caldera
+# compose ~1.3x (8 M -> 0.4 M minor faults) but made the 75 GiB all-district
+# flatten ~1.2x SLOWER on a THP=madvise host: huge-page faults compact
+# synchronously and stall the serial walk once memory is fragmented
+# (doc/large-scene.md §10). Opt in per build or per run when the working set
+# is well below the host's free memory.
+set(LIGHTUSD_NEXT_JEMALLOC_CONF "" CACHE STRING
+    "jemalloc malloc_conf compiled into the next CLI tools (empty = none)")
 set(LIGHTUSD_NEXT_ALLOCATOR_LIB "")
 set(_next_alloc_skip "")
 if(EMSCRIPTEN OR WASI OR CMAKE_SYSTEM_NAME STREQUAL "WASI" OR
@@ -513,6 +523,9 @@ elseif(LIGHTUSD_NEXT_WITH_ALLOCATOR)
     endif()
     if(LIGHTUSD_NEXT_ALLOCATOR_LIB)
         message(STATUS "next: linking allocator ${LIGHTUSD_NEXT_ALLOCATOR_LIB} into CLI tools")
+        if(LIGHTUSD_NEXT_ALLOC_JEMALLOC AND LIGHTUSD_NEXT_JEMALLOC_CONF)
+            message(STATUS "next: jemalloc malloc_conf baked into CLI tools: ${LIGHTUSD_NEXT_JEMALLOC_CONF}")
+        endif()
     else()
         message(STATUS "next: no jemalloc/tcmalloc/mimalloc found (install libjemalloc-dev for faster compose); using system malloc")
     endif()
@@ -818,6 +831,16 @@ if((LIGHTUSD_NEXT_BUILD_TOOLS OR LIGHTUSD_NEXT_BUILD_TESTS) AND NOT TARGET lusdc
     # symbol resolution.
     target_link_libraries(lusdcat PRIVATE
         ${LIGHTUSD_NEXT_ALLOCATOR_LIB} lightusd_next)
+    if(LIGHTUSD_NEXT_ALLOCATOR_LIB AND LIGHTUSD_NEXT_ALLOC_JEMALLOC AND
+       LIGHTUSD_NEXT_JEMALLOC_CONF)
+        # Compiled-in jemalloc options (see LIGHTUSD_NEXT_JEMALLOC_CONF).
+        target_sources(lusdcat PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/jemalloc-conf.cc)
+        set_source_files_properties(
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/jemalloc-conf.cc PROPERTIES
+            COMPILE_DEFINITIONS
+            "LIGHTUSD_NEXT_JEMALLOC_CONF=\"${LIGHTUSD_NEXT_JEMALLOC_CONF}\"")
+    endif()
     lightusd_next_harden(lusdcat)
     # Keep the CLI at the build root (`build_ninja/lusdcat`), matching the
     # legacy tool layout so scripts and AGENTS.md commands work unchanged.

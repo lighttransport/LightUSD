@@ -174,6 +174,13 @@ struct PropSlot {
   uint32_t value_offset;      // Offset into value storage
   uint16_t value_type;        // TypeId of the value
   uint16_t flags;             // Property flags
+  // Declared USD type name ("color3f", "float[]") as a TypeNameTable id;
+  // kNoTypeName when none was recorded (PrimSpec then falls back to its cold
+  // string map, used only for names set before the slot existed or past the
+  // table's capacity). Slot-resident so the crate writer and the compose
+  // merge read it without a per-property map lookup or string hash.
+  uint16_t type_name_id = kNoTypeName;
+  static constexpr uint16_t kNoTypeName = UINT16_MAX;
 
   // Flag bits
   static constexpr uint16_t kFlagCustom = 0x0001;

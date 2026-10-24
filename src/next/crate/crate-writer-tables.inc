@@ -85,6 +85,20 @@
 
   static constexpr size_t kNoPathSlot = static_cast<size_t>(-1);
 
+  // Touch the slot a coming probe will read. The path table is far larger
+  // than any cache on a big scene, so each intern otherwise starts with a
+  // stalled random load; the emit loops know the next path one step ahead.
+  void PrefetchPathSlot(uint64_t h) const {
+#if defined(__GNUC__) || defined(__clang__)
+    if (!path_slots_.empty()) {
+      __builtin_prefetch(&path_slots_[static_cast<size_t>(h) &
+                                      (path_slots_.size() - 1)]);
+    }
+#else
+    (void)h;
+#endif
+  }
+
   uint32_t FindPathKey(std::string_view stem, std::string_view name,
                        uint64_t h, size_t* empty_slot = nullptr) const {
     if (path_slots_.empty()) return UINT32_MAX;
@@ -189,6 +203,13 @@
   // not-yet-composed referenced file), so synthesize the missing ancestor
   // chain (tree-only nodes; no spec refers to them), appended in scan order.
   // Ancestors are prefixes of existing stems, so they are stored as views.
+  // `a` is `b` or a namespace ancestor of it ("/A/B" vs "/A/B/C").
+  static bool IsSlashPrefix(std::string_view a, std::string_view b) {
+    if (a.size() > b.size()) return false;
+    if (b.compare(0, a.size(), a) != 0) return false;
+    return a.size() == b.size() || b[a.size()] == '/';
+  }
+
   void SynthesizeAncestorPaths() {
     auto add = [&](std::string_view v) -> bool {
       const PathRec key = SplitPath(v);
@@ -201,23 +222,44 @@
     const size_t orig = paths_.size();
     // Paths of one prim arrive together; a stem already walked needs no
     // second walk (the walk would only re-probe existing ancestors).
+    //
+    // Known-present range: after a walk, every path from `walked_stem` up to
+    // `walked_floor` (inclusive, along its ancestor chain) is in the table --
+    // either it was found there or the walk just added it. A later probe of
+    // a path inside that range returns "present" and ends the walk, so it is
+    // answered here without hashing the (long) stem. Presence only grows, so
+    // the range stays valid; the result is identical to probing.
     std::string_view walked_stem;
+    std::string_view walked_floor;
     bool have_walked = false;
+    auto known_present = [&](std::string_view p) {
+      return have_walked && p.size() >= walked_floor.size() &&
+             IsSlashPrefix(p, walked_stem);
+    };
     for (size_t i = 0; i < orig; i++) {
       const PathRec rec = paths_[i];
       if (have_walked && rec.stem == walked_stem) continue;
       std::string_view cur = rec.stem;
       if (!rec.name.empty()) {
         // property path: start from its prim part
-        if (!cur.empty() && cur != "/") add(cur);
+        if (!cur.empty() && cur != "/" && !known_present(cur)) add(cur);
       }
+      // `floor`: the highest ancestor this walk proves present.
+      std::string_view floor = cur;
       while (cur.size() > 1) {
         const size_t sl = cur.rfind('/');
         if (sl == std::string_view::npos || sl == 0) break;
         cur = cur.substr(0, sl);
+        if (known_present(cur)) {
+          // The previous walk's range continues from here up to its floor.
+          floor = walked_floor;
+          break;
+        }
+        floor = cur;
         if (!add(cur)) break;  // rest of the chain already exists
       }
       walked_stem = rec.stem;
+      walked_floor = floor;
       have_walked = true;
     }
   }
@@ -225,10 +267,14 @@
   // Register every path-element token before the TOKENS section is written
   // (WritePathsSection only looks them up). Components are interned in the
   // same order as splitting each full path text on '/' and '.' (skipping its
-  // first character); a stem equal to the previous record's needs no second
-  // split, as its components are already interned.
+  // first character). Interning an already-present token is a no-op, so only
+  // components that may be NEW need a lookup; two cheap proofs skip the rest
+  // without changing which tokens are added or their order:
+  //  - the stem components before the longest '/'-bounded prefix shared with
+  //    the previous record's stem were interned when that stem was split;
+  //  - property names are views into the PropNameTable, so a repeated
+  //    (pointer, length) is a name already split once.
   void RegisterPathElementTokens() {
-    std::string comp;
     auto intern_components = [&](std::string_view s, size_t start) {
       while (start < s.size()) {
         size_t end = s.size();
@@ -236,12 +282,49 @@
         const size_t dot = s.find('.', start);
         if (slash != std::string_view::npos) end = std::min(end, slash);
         if (dot != std::string_view::npos) end = std::min(end, dot);
-        if (end > start) {
-          comp.assign(s.data() + start, end - start);
-          InternToken(comp);
-        }
+        if (end > start) InternToken(s.substr(start, end - start));
         start = end + 1;
       }
+    };
+    // Open-addressed (pointer, length) set of names already split. Bounded:
+    // when full it stops recording and names are split as before.
+    struct NameSeen {
+      const char* p;
+      size_t n;
+    };
+    std::vector<NameSeen> seen(size_t(1) << 16, NameSeen{nullptr, 0});
+    size_t seen_used = 0;
+    constexpr size_t kSeenMax = size_t(1) << 22;
+    auto seen_insert = [&](std::string_view v) -> bool {  // true if new
+      if (!v.data()) return true;
+      auto place = [](std::vector<NameSeen>& t, const char* p, size_t n,
+                      bool* found) -> NameSeen* {
+        const size_t mask = t.size() - 1;
+        size_t i = static_cast<size_t>(
+                       (reinterpret_cast<uintptr_t>(p) >> 3) *
+                       0x9E3779B97F4A7C15ull >> 20) & mask;
+        for (;; i = (i + 1) & mask) {
+          if (!t[i].p) { *found = false; return &t[i]; }
+          if (t[i].p == p && t[i].n == n) { *found = true; return &t[i]; }
+        }
+      };
+      bool found = false;
+      NameSeen* slot = place(seen, v.data(), v.size(), &found);
+      if (found) return false;
+      if ((seen_used + 1) * 2 > seen.size()) {
+        if (seen.size() >= kSeenMax) return true;  // stop recording
+        std::vector<NameSeen> grown(seen.size() * 2, NameSeen{nullptr, 0});
+        for (const NameSeen& e : seen) {
+          if (!e.p) continue;
+          bool f = false;
+          *place(grown, e.p, e.n, &f) = e;
+        }
+        seen.swap(grown);
+        slot = place(seen, v.data(), v.size(), &found);
+      }
+      *slot = NameSeen{v.data(), v.size()};
+      ++seen_used;
+      return true;
     };
     std::string_view prev_stem;
     bool have_prev = false;
@@ -251,11 +334,29 @@
         continue;
       }
       if (!(have_prev && rec.stem == prev_stem)) {
-        intern_components(rec.stem, 1);
+        size_t start = 1;
+        if (have_prev) {
+          // Longest common prefix, then back off to a '/' that is a
+          // component boundary in BOTH stems.
+          const size_t lim = std::min(rec.stem.size(), prev_stem.size());
+          size_t k = 0;
+          while (k < lim && rec.stem[k] == prev_stem[k]) ++k;
+          size_t p = std::string_view::npos;
+          if (k == prev_stem.size() && k < rec.stem.size() &&
+              rec.stem[k] == '/') {
+            p = k;  // rec.stem is under prev_stem
+          } else if (k > 0) {
+            p = rec.stem.rfind('/', k - 1);  // same char in both below k
+          }
+          if (p != std::string_view::npos && p >= 1) start = p + 1;
+        }
+        intern_components(rec.stem, start);
       }
       // A property's name follows its stem's '.'; with an empty stem the
       // skipped first character is that '.' itself.
-      if (!rec.name.empty()) intern_components(rec.name, 0);
+      if (!rec.name.empty() && seen_insert(rec.name)) {
+        intern_components(rec.name, 0);
+      }
       prev_stem = rec.stem;
       have_prev = true;
     }
@@ -327,14 +428,26 @@
       InternString(layer.meta().doc);
     }
 
-    // Prim names, type names, property names
+    // Prim names, type names, property names. Record the prim-name and
+    // property-name tokens: BuildOnePrim re-emits them in `primChildren` and
+    // `properties`, and a property name shared by millions of prims is hashed
+    // once here instead of once per slot.
+    prim_name_tokens_.reserve(layer.prims().size());
+    PropNameTable& name_table = GetPropNameTable();
     for (const auto& prim : layer.prims()) {
-      InternToken(prim.name());
+      prim_name_tokens_.push_back(InternToken(prim.name()));
       InternToken(prim.type_name());
 
-      PropNameTable& name_table = GetPropNameTable();
       for (const auto& slot : prim.properties().slots()) {
-        InternToken(std::string(name_table.get(slot.name_id)));
+        const uint32_t id = slot.name_id.id;
+        if (id == UINT32_MAX) continue;
+        if (id >= prop_name_tokens_.size()) {
+          prop_name_tokens_.resize(
+              std::max<size_t>(id + 1, prop_name_tokens_.size() * 2),
+              UINT32_MAX);
+        }
+        uint32_t& tok = prop_name_tokens_[id];
+        if (tok == UINT32_MAX) tok = InternToken(name_table.get(slot.name_id));
       }
 
       // Metadata strings

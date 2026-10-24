@@ -36,6 +36,53 @@ private:
   uint32_t variability_token_ = 0;
   // Inferred type tokens are interned lazily to preserve first-use ordering.
   std::vector<uint32_t> type_name_token_cache_;
+  // Declared type names arrive as TypeNameTable ids on the slot; this maps an
+  // id to its crate token (interned at first use, so token order is unchanged).
+  std::vector<uint32_t> declared_type_token_cache_;
+  // Field-name tokens the per-prim / per-property emit paths need. Each is
+  // interned at its first use -- the same call that interned the literal
+  // before -- so the TOKENS order is unchanged; the cache only removes the
+  // literal's hash + table probe from every later prim/property.
+  enum FieldTok : uint8_t {
+    kTokActive, kTokHidden, kTokDocumentation, kTokApiSchemas, kTokKind,
+    kTokPermission, kTokDisplayName, kTokInstanceable, kTokComment,
+    kTokProperties, kTokPrimChildren, kTokCustom, kTokConnectionPaths,
+    kTokTargetPaths, kTokTimeSamples, kTokVariantSelection, kTokCount
+  };
+  static const char* FieldTokName(FieldTok t) {
+    static const char* const kNames[kTokCount] = {
+        "active", "hidden", "documentation", "apiSchemas", "kind",
+        "permission", "displayName", "instanceable", "comment",
+        "properties", "primChildren", "custom", "connectionPaths",
+        "targetPaths", "timeSamples", "variantSelection"};
+    return kNames[t];
+  }
+  uint32_t field_tok_[kTokCount];
+  void ResetFieldTokens() {
+    for (uint32_t& t : field_tok_) t = UINT32_MAX;
+  }
+  uint32_t FieldToken(FieldTok t) {
+    uint32_t& tok = field_tok_[t];
+    if (tok == UINT32_MAX) tok = InternToken(FieldTokName(t));
+    return tok;
+  }
+  // Per-prim name token and per-property-name token, recorded while
+  // BuildTables interns them, so the `primChildren` / `properties` fields are
+  // assembled from indices instead of re-hashing every name.
+  std::vector<uint32_t> prim_name_tokens_;
+  std::vector<uint32_t> prop_name_tokens_;  // indexed by PropNameId
+  // Token recorded by BuildTables, or UINT32_MAX for a name it did not see
+  // (relationships, time-sample-only properties). Never interns: a missing
+  // name must be interned where the `properties` field is built, as before,
+  // or its first-use position in TOKENS would move.
+  uint32_t PropNameToken(PropNameId id) const {
+    return id.id < prop_name_tokens_.size() ? prop_name_tokens_[id.id]
+                                            : UINT32_MAX;
+  }
+  // True when every non-root prim is linked exactly once from its path
+  // parent's child_indices (see BuildFieldsAndSpecs): primChildren then comes
+  // straight from those links.
+  bool children_from_links_ = false;
 
   // STRINGS: each entry is a token index
   std::vector<uint32_t> string_indices_;

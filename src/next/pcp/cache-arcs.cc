@@ -317,6 +317,10 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
     if (src.suppress_site_specs) return;
 
     const std::vector<SpecRef> &specs = Specs(src.stack_idx, src.site);
+    // Stamp the copy just pushed (local vector, no sharing): the structure
+    // walk and the fill then answer "has specs?" without re-probing.
+    out->back().spec_state.v =
+        specs.empty() ? SpecState::kNone : SpecState::kSome;
     if (specs.empty()) return;
     // Record this source's variant selections (strong-first wins) so a selection
     // authored on a stronger source applies to a variantSet defined on a weaker

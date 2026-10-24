@@ -390,6 +390,21 @@
     return f;
   }
 
+  // TokenVector field from already-interned name tokens.
+  CrateField MakeTokenVectorFieldFromTokens(uint32_t field_token,
+                                            const std::vector<uint32_t>& toks) {
+    const size_t n = toks.size();
+    std::vector<uint8_t> raw(8 + n * 4);
+    const uint64_t cnt = n;
+    std::memcpy(raw.data(), &cnt, 8);
+    if (n) std::memcpy(raw.data() + 8, toks.data(), n * 4);
+    const uint64_t data_idx = InternBlock({TypeId::Invalid, std::move(raw)});
+    CrateField f;
+    f.token_index.value = field_token;
+    f.value_rep = ValueRep::Make(CrateTypeId::TokenVector, data_idx, false, false);
+    return f;
+  }
+
   // Build a TokenVector field ([u64 count][u32 token_idx]*count) -- used for
   // primChildren / variantSetChildren / variantChildren.
   CrateField MakeTokenVectorField(const std::string& field_name,
@@ -421,6 +436,26 @@
                           (val && val->is_array());
     if (is_array) name += "[]";
     return name;
+  }
+
+  // Slot-resident declared type name: one vector index instead of a cold-map
+  // lookup plus a string hash per property.
+  uint32_t TypeNameToken(const PrimSpec& prim, const PropSlot& slot,
+                         const Value* val) {
+    if (slot.type_name_id != PropSlot::kNoTypeName) {
+      const size_t id = slot.type_name_id;
+      if (id >= declared_type_token_cache_.size())
+        declared_type_token_cache_.resize(id + 1, UINT32_MAX);
+      uint32_t& token = declared_type_token_cache_[id];
+      if (token != UINT32_MAX) return token;
+      const std::string& tn =
+          GetTypeNameTable().get(TypeNameId{slot.type_name_id});
+      if (!tn.empty()) {
+        token = InternToken(tn);
+        return token;
+      }
+    }
+    return TypeNameToken(prim, slot.name_id, val, slot.flags);
   }
 
   uint32_t TypeNameToken(const PrimSpec& prim, PropNameId prop_id,
@@ -614,7 +649,7 @@
     uint64_t header_idx = PushValueBlock({TypeId::Invalid, std::move(header_data)});
 
     CrateField ts_field;
-    ts_field.token_index.value = InternToken("timeSamples");
+    ts_field.token_index.value = FieldToken(kTokTimeSamples);
     ts_field.value_rep =
         ValueRep::Make(CrateTypeId::TimeSamples, header_idx, false, false);
     return ts_field;
@@ -750,13 +785,30 @@
   }
 
   // Returns the emitted property names (views into the PropNameTable, which
-  // outlives the write), in spec order.
-  std::vector<std::string_view> EmitPrimProperties(const PrimSpec& prim) {
-    std::vector<std::string_view> prop_names;
+  // outlives the write) and their tokens, in spec order.
+  struct EmittedProps {
+    std::vector<std::string_view> names;
+    std::vector<uint32_t> tokens;
+    void push(std::string_view n, uint32_t t) {
+      names.push_back(n);
+      tokens.push_back(t);
+    }
+  };
+  EmittedProps EmitPrimProperties(const PrimSpec& prim) {
+    EmittedProps out;
     PropNameTable& name_table = GetPropNameTable();
     const std::string& base = prim.path().str();
-    // Emitted attribute names, by interned id (one id per name).
+    // Emitted attribute names, by interned id (one id per name). A finalized
+    // index is sorted by name, so a duplicate id is adjacent to its first
+    // occurrence and the set is only needed for an unsorted index.
+    const auto& slots = prim.properties().slots();
+    const bool slots_sorted = prim.properties().is_sorted();
     std::unordered_set<uint32_t> emitted;
+    uint32_t prev_emitted_id = UINT32_MAX;
+    auto was_emitted = [&](PropNameId id) -> bool {
+      if (slots_sorted) return prim.properties().find(id) != nullptr;
+      return emitted.count(id.id) != 0;
+    };
     // Property spec paths: (prim path, property name) views interned
     // directly; the concatenated text is only built for irregular prim paths.
     const bool clean_prop_paths = PropPathSplitsCleanly(base);
@@ -772,12 +824,20 @@
     // reuse this scratch vector instead of allocating one for every property.
     std::vector<CrateField> flds;
 
-    for (const auto& slot : prim.properties().slots()) {
+    for (size_t si = 0; si < slots.size(); ++si) {
+      const PropSlot& slot = slots[si];
       const std::string_view prop_name = name_table.get(slot.name_id);
       // Defense against duplicate slots for one property (the parser now
       // upserts, but crate-read or API-built layers could still carry them):
       // two Attribute specs with the same path make pxr reject the layer.
-      if (emitted.count(slot.name_id.id)) continue;
+      if (slots_sorted ? slot.name_id.id == prev_emitted_id
+                       : emitted.count(slot.name_id.id) != 0) {
+        continue;
+      }
+      if (clean_prop_paths && si + 1 < slots.size()) {
+        PrefetchPathSlot(HashPathKey(
+            base_hash, name_table.get(slots[si + 1].name_id)));
+      }
       const Value* val = prim.property_value(slot.name_id);
       const bool has_ts = prim.has_time_samples(slot.name_id);
       flds.clear();
@@ -786,7 +846,7 @@
       tf.token_index.value = type_name_token_;
       tf.value_rep =
           ValueRep::Make(CrateTypeId::Token,
-                        TypeNameToken(prim, slot.name_id, val, slot.flags), false, true);
+                        TypeNameToken(prim, slot, val), false, true);
       flds.push_back(tf);
 
       if (slot.flags & PropSlot::kFlagUniform) {
@@ -798,7 +858,7 @@
 
       if (slot.flags & PropSlot::kFlagCustom) {
         CrateField cf;
-        cf.token_index.value = InternToken("custom");
+        cf.token_index.value = FieldToken(kTokCustom);
         cf.value_rep = ValueRep::Make(CrateTypeId::Bool, 1, false, true);
         flds.push_back(cf);
       }
@@ -838,7 +898,7 @@
                              ? StorePathArcListOp(targets, edit)
                              : StorePathListOp(targets);
           CrateField cf;
-          cf.token_index.value = InternToken("connectionPaths");
+          cf.token_index.value = FieldToken(kTokConnectionPaths);
           cf.value_rep =
               ValueRep::Make(CrateTypeId::PathListOp, blk, false, false);
           flds.push_back(cf);
@@ -854,7 +914,7 @@
                              *spline_text, &sf)) {
           flds.push_back(sf);
         } else if (!result_.error.empty()) {
-          return prop_names;  // strict mode: abort on unencodable spline
+          return out;  // strict mode: abort on unencodable spline
         }
       }
 
@@ -863,13 +923,14 @@
       }
 
       EmitPropertySpec(prop_path_index(prop_name), SpecType::Attribute, flds);
-      prop_names.push_back(prop_name);
-      emitted.insert(slot.name_id.id);
+      out.push(prop_name, PropNameToken(slot.name_id));
+      if (slots_sorted) prev_emitted_id = slot.name_id.id;
+      else emitted.insert(slot.name_id.id);
     }
 
     for (auto prop_id : prim.time_sampled_properties()) {
       const std::string_view prop_name = name_table.get(prop_id);
-      if (emitted.count(prop_id.id)) continue;
+      if (was_emitted(prop_id)) continue;
       flds.clear();
       const Value* sv = nullptr;
       if (auto* s = prim.time_samples(prop_id))
@@ -885,8 +946,8 @@
         EmitPropMetaFields(*pm, flds);
       }
       EmitPropertySpec(prop_path_index(prop_name), SpecType::Attribute, flds);
-      prop_names.push_back(prop_name);
-      emitted.insert(prop_id.id);
+      out.push(prop_name, PropNameToken(prop_id));
+      if (!slots_sorted) emitted.insert(prop_id.id);
     }
 
     for (const auto& rel_name : prim.relationship_names()) {
@@ -900,7 +961,7 @@
       flds.push_back(vf);
       if (prim.relationship_flags(rel_name) & PropSlot::kFlagCustom) {
         CrateField cf;
-        cf.token_index.value = InternToken("custom");
+        cf.token_index.value = FieldToken(kTokCustom);
         cf.value_rep = ValueRep::Make(CrateTypeId::Bool, 1, false, true);
         flds.push_back(cf);
       }
@@ -920,7 +981,7 @@
       if (rel_edit) {
         uint64_t blk = StorePathArcListOp({}, rel_edit);
         CrateField rf;
-        rf.token_index.value = InternToken("targetPaths");
+        rf.token_index.value = FieldToken(kTokTargetPaths);
         rf.value_rep =
             ValueRep::Make(CrateTypeId::PathListOp, blk, false, false);
         flds.push_back(rf);
@@ -931,7 +992,7 @@
         if (!targets.empty()) {
           uint64_t blk = StorePathListOp(targets);
           CrateField rf;
-          rf.token_index.value = InternToken("targetPaths");
+          rf.token_index.value = FieldToken(kTokTargetPaths);
           rf.value_rep =
               ValueRep::Make(CrateTypeId::PathListOp, blk, false, false);
           flds.push_back(rf);
@@ -942,12 +1003,12 @@
               prim.property_meta(GetPropNameTable().intern(rel_name))) {
         EmitPropMetaFields(*pm, flds);
       }
-      const std::string_view stable_rel_name =
-          name_table.get(name_table.intern(rel_name));
+      const PropNameId rel_id = name_table.intern(rel_name);
+      const std::string_view stable_rel_name = name_table.get(rel_id);
       EmitPropertySpec(prop_path_index(stable_rel_name),
                        SpecType::Relationship, flds);
-      prop_names.push_back(stable_rel_name);
+      out.push(stable_rel_name, PropNameToken(rel_id));
     }
 
-    return prop_names;
+    return out;
   }

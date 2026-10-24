@@ -110,6 +110,16 @@ Path Path::append_child(const std::string& child_name) const {
   return Path(path_ + "/" + child_name);
 }
 
+Path Path::append_child_unchecked(const std::string& child_name) const {
+  if (path_.empty()) {
+    return Path("/" + child_name);
+  }
+  if (path_.back() == '/') {
+    return Path(path_ + child_name);
+  }
+  return Path(path_ + "/" + child_name);
+}
+
 Path Path::append_property(const std::string& prop_name) const {
   // Authoring boundary: property names must be valid (possibly namespaced)
   // identifiers. Invalid input yields an empty Path.
