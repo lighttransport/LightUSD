@@ -1167,19 +1167,27 @@ bool ClipPolygon(const std::vector<float>& pos, const int32_t* poly, size_t n,
 
 // Polygon faces -> triangles as MuJoCo's OBJ decoder makes them
 // (ClipPolygon), keeping per-corner normals/UVs and per-face materials.
+// MuJoCo 3.16's decoder (the PyPI build) also drops every polygon of more
+// than 100 vertices, keeping the other faces; so do we, with a warning.
+constexpr int32_t kMuJoCoMaxObjPolygon = 100;
 bool TriangulateLikeMuJoCo(Mesh* mesh) {
   if (mesh->counts.empty()) return true;
   const bool corner_normals = mesh->normal_indices.size() == mesh->indices.size();
   const bool corner_uvs = mesh->uv_indices.size() == mesh->indices.size();
   const bool face_materials = mesh->materials.size() == mesh->counts.size();
   std::vector<int32_t> indices, normal_indices, uv_indices, materials, corners;
-  size_t work = size_t(1) << 28;
+  size_t work = size_t(1) << 28, dropped = 0;
   bool exhausted = false;
   size_t offset = 0;
   for (size_t face = 0; face < mesh->counts.size(); ++face) {
     const int32_t count = mesh->counts[face];
     if (count < 3 || offset + size_t(count) > mesh->indices.size()) return false;
     corners.clear();
+    if (count > kMuJoCoMaxObjPolygon) {
+      ++dropped;
+      offset += size_t(count);
+      continue;
+    }
     if (count == 3) corners = {0, 1, 2};
     else if (!ClipPolygon(mesh->positions, mesh->indices.data() + offset, size_t(count), &corners,
                           &work, &exhausted))
@@ -1196,6 +1204,11 @@ bool TriangulateLikeMuJoCo(Mesh* mesh) {
   if (exhausted)
     active_reader->Warn("OBJ polygons exceed the triangulation work limit; the rest are fans",
                         "mjcf.obj_polygon_fan");
+  if (dropped)
+    active_reader->Warn(std::to_string(dropped) + " OBJ polygon(s) of more than " +
+                            std::to_string(kMuJoCoMaxObjPolygon) +
+                            " vertices dropped, as MuJoCo's OBJ decoder drops them",
+                        "mjcf.obj_polygon_dropped");
   mesh->counts.assign(indices.size() / 3, 3);
   mesh->indices = std::move(indices);
   if (corner_normals) mesh->normal_indices = std::move(normal_indices);
@@ -2268,6 +2281,7 @@ Json InertialToJson(const pugi::xml_node& body_node, const Context& ictx) {
   for (double v : full.size() >= 3 ? full : ParseDoubles(Attr(inertial_node, "diaginertia")))
     zero = zero && v == 0.0;
   if (zero && inertial["mass"].get<double>() > 0.0) inertial["zeroInertia"] = true;
+  if (inertial["mass"].get<double>() == 0.0) inertial["zeroMass"] = true;
   return inertial;
 }
 

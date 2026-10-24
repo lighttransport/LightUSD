@@ -196,6 +196,14 @@ def compare(ref, cand, np, oracle=None, notes=None):
             if truth is not None and _close(truth, moments, rtol=2e-3, atol=1e-8):
                 if notes is not None:
                     notes.append(f"inertia[{name}] matches mujoco, not newton-mjcf")
+            elif ((oracle or {}).get(body) == 0.0 and 0.0 < cand["mass"][j] <= 1e-9 and
+                  max(moments) <= 1.1e-6 and not np.asarray(truth or [0.0]).any()):
+                # An explicit MJCF mass 0 is authored as the smallest positive
+                # mass (UsdPhysics reads 0 as unspecified); Newton's finalize
+                # then raises its inertia to a 1e-6 floor that only an exact
+                # zero mass escapes.
+                if notes is not None:
+                    notes.append(f"inertia[{name}]: explicit zero mass, Newton finalize inertia floor")
             else:
                 issues.append(f"inertia[{name}]")
     # Free joints are implicit in USD (an unjointed body) and fixed joints of

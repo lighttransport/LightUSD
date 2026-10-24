@@ -334,12 +334,18 @@ f121272e (2026-10-24; Menagerie Newton compare still 65/69). Fixed in the
   fast-math, FMA, earcut) yields 23,776; our triangulation matches the
   source.
 
-- Residual Newton-compare mismatches (stretch, rby1 `NECK_0`, lite6
-  `link_base`) are handled upstream (decided 2026-10-24): issue drafts with
-  self-contained repros were prepared for Newton (`add_usd` replaces an
-  authored zero `newton:inertia`; no way to keep an explicit zero body mass)
-  and MuJoCo (the 3.16.0 wheel's OBJ decoder drops 201 triangles that
-  tinyobjloader 2945a967 produces). Nothing else from the review is open.
+- Residual Newton-compare mismatches fixed (2026-10-24, user asked to keep
+  working on them): the MuJoCo 3.16 PyPI OBJ decoder drops every polygon of
+  more than 100 vertices (found by black-box tests against the wheel's
+  decoder; 100 kept, 101 dropped), which we now match, so stretch's gripper
+  equals MuJoCo's compiled mass; explicit MJCF zero inertia/mass are authored
+  as 1e-12 (UsdPhysics cannot hold an exact 0), so lite6 `link_base` keeps
+  ~zero inertia and rby1 `NECK_0` ~zero mass in Newton's `add_usd` (Newton's
+  finalize then floors that body's inertia at 1e-6, which only an exact zero
+  mass escapes; the compare records it as a note). Menagerie Newton compare
+  69/69. Upstream issue drafts (Newton zero-inertia/zero-mass handling,
+  MuJoCo wheel polygon limit) are in the session scratchpad for filing; the
+  repo no longer depends on them.
 
 Reference specifications: [UsdPhysics](https://openusd.org/dev/api/usd_physics_page_front.html),
 [MJCF](https://mujoco.readthedocs.io/en/stable/XMLreference.html), and

@@ -79,7 +79,9 @@ unknown URDF geometry, skipped under `warn`), `dae.up_axis_ignored`,
 joint with several transmissions keeps the first) and
 `mjcf.frame_scale_unsupported` (a MuJoCo 3.16 `<frame scale/massscale>`; the
 frame's pose is applied, its scale is not) and `mjcf.obj_polygon_fan` (OBJ
-polygons beyond the MuJoCo-style triangulation work limit became fans).
+polygons beyond the MuJoCo-style triangulation work limit became fans) and
+`mjcf.obj_polygon_dropped` (OBJ polygons of more than 100 vertices, dropped as
+MuJoCo's decoder drops them).
 `import.failed` records the final failure.
 
 `counts.inferred_inertia_bodies` counts MJCF bodies whose mass properties were

@@ -377,8 +377,19 @@ def test_explicit_zero_inertia_is_kept():
     xml = _mjcf('<body name="a"><freejoint/><inertial pos="0 0 0" mass="2" diaginertia="0 0 0"/>'
                 '<geom size=".1" mass="0"/></body>')
     a = lightusd.load_bytes(xml, format='mjcf').prim_at('/World/Links/a')
-    assert list(a['newton:inertia']) == [0] * 6
+    # UsdPhysics reads zero as unspecified: the smallest positive value stands in.
+    assert list(a['newton:inertia']) == [1e-12, 1e-12, 1e-12, 0, 0, 0]
+    assert a['physics:diagonalInertia'][0] == pytest.approx(1e-12)
     assert a['physics:mass'] == 2
+
+
+def test_explicit_zero_mass_with_colliders():
+    xml = _mjcf('<body name="a"><freejoint/><geom size=".1"/>'
+                '<body name="b"><inertial pos="0 0 0" mass="0"/><geom size=".1"/></body>'
+                '<body name="c"><inertial pos="0 0 0" mass="0"/><geom size=".1" contype="0" conaffinity="0"/></body></body>')
+    stage = lightusd.load_bytes(xml, format='mjcf')
+    assert stage.prim_at('/World/Links/b')['physics:mass'] == pytest.approx(1e-12)
+    assert 'physics:mass' not in stage.prim_at('/World/Links/c').attributes
 
 
 
@@ -388,3 +399,19 @@ def test_mjcf_colliders_carry_mujoco_default_margin_and_gap():
     g, h = stage.prim_at('/World/Links/a/g'), stage.prim_at('/World/Links/a/h')
     assert (g['newton:contactMargin'], g['newton:contactGap']) == (0, 0)
     assert h['newton:contactGap'] == pytest.approx(.01)
+
+
+def test_mjcf_obj_polygons_over_100_vertices_are_dropped_like_mujoco(tmp_path):
+    import math
+    n = 120
+    obj = ''.join(f'v {math.cos(2 * math.pi * i / n)} {math.sin(2 * math.pi * i / n)} 0\n' for i in range(n))
+    obj += 'v 0 0 1\nf ' + ' '.join(str(i + 1) for i in range(n)) + f'\nf 1 2 {n + 1}\nf 2 3 {n + 1}\n'
+    _write(tmp_path / 'cap.obj', obj)
+    xml = _mjcf('<body name="a"><freejoint/><geom type="mesh" mesh="cap" mass="1"/></body>',
+                '<asset><mesh name="cap" file="cap.obj"/></asset>')
+    path = tmp_path / 'm.xml'
+    path.write_bytes(xml)
+    stage = lightusd.import_mjcf(path)
+    mesh = next(p for p in stage if p.type_name == 'Mesh')
+    assert len(mesh['faceVertexCounts']) == 2
+    assert 'mjcf.obj_polygon_dropped' in [d['code'] for d in stage.import_report()['diagnostics']]

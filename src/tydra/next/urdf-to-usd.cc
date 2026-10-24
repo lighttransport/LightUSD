@@ -283,8 +283,15 @@ static bool ConvertPayload(
       }
       if (const Json* inertial = JsonObject(link, "inertial")) {
         float mass = 0.0f;
+        bool zero_mass = false;
+        const Json *colliders = JsonArray(link, "collisions");
         if (ReadNumber(*inertial, "mass", &mass) && mass > 0.0f) {
           Set(prim, "physics:mass", tn::Value(mass), "float");
+        } else if (profile.newton && ReadBool(*inertial, "zeroMass", &zero_mass) && zero_mass &&
+                   colliders && !colliders->empty()) {
+          // An explicit MJCF mass 0 overrides the geoms; physics:mass = 0
+          // would read as unspecified and be derived from the colliders.
+          Set(prim, "physics:mass", tn::Value(1e-12f), "float");
         }
         const std::vector<float> com = JsonFloats(*inertial, "centerOfMass");
         if (com.size() >= 3)
