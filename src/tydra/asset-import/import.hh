@@ -148,8 +148,10 @@ class MappedAsset {
   std::vector<uint8_t> bytes_;
 };
 struct Reader {
-  explicit Reader(const Options& o) : options(o) {}
+  explicit Reader(const Options& o) : options(o), packages(o.packages) {}
   const Options& options;
+  // URDF package roots: Options::packages plus roots BuildURDF discovers.
+  std::map<std::string, std::string> packages;
   size_t bytes = 0;
   std::string warnings, failure, root_source;
   bool allow_unanchored = true;

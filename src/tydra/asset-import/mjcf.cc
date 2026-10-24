@@ -1166,6 +1166,7 @@ void PreloadJobs(const std::vector<std::pair<PreloadKey, PreloadJob>>& jobs) {
     for (size_t i = next++; i < keys.size(); i = next++) {
       if (committed.load() >= remaining) return;
       Reader child(child_options);
+      child.packages = parent.packages;
       child.root_source = parent.root_source;
       child.allow_unanchored = parent.allow_unanchored;
       child.record_accesses = true;
@@ -4463,6 +4464,13 @@ bool AppendGeomToLink(const pugi::xml_node& geom_node, const std::string& cc,
           col["newton"]["maxHullVertices"] = mesh_it->second.maxhullvert;
           col["mjc"]["maxhullvert"] = mesh_it->second.maxhullvert;
         }
+        // <mesh inertia>: shell is newton:massModel, legacy/exact mjc:inertia,
+        // convex the implied default (mujoco-usd-converter 0.8.0).
+        if (opts.profile != "legacy")
+          col["mjc"]["inertia"] = mesh_it != assets.end() ? mesh_it->second.inertia : "legacy";
+      } else if (opts.profile != "legacy" &&
+                 MjcBoolAttr(Eff(geom_node, cls, "shellinertia", "false"))) {
+        col["newton"]["massModel"] = "shell";
       }
       (*link)["collisions"].push_back(std::move(col));
       if (stats) stats->collisions++;
@@ -6136,6 +6144,55 @@ size_t CollapseGhostLinks(Json* links, Json* joints, const std::map<std::string,
   return ghosts.size();
 }
 
+// Roots for `package://NAME/...` URDF references that Options::packages does
+// not map, found the way Newton's and urdf-usd-converter's URDF importers do:
+// the nearest ancestor of the URDF's directory named NAME, otherwise the
+// nearest ancestor ADIR for which ADIR/<relative path> exists (relative paths
+// with `..` are not searched). Explicit mappings always win.
+void DiscoverURDFPackages(const pugi::xml_node& root, const std::string& source) {
+  if (source.empty() || active_reader->options.open || active_reader->options.read) return;
+  std::error_code ec;
+  fs::path start = fs::path(source);
+  if (!start.is_absolute()) start = fs::current_path(ec) / start;
+  start = fs::weakly_canonical(start, ec).parent_path();
+  if (start.empty()) return;
+  std::vector<pugi::xml_node> stack{root};
+  while (!stack.empty()) {
+    const pugi::xml_node node = stack.back();
+    stack.pop_back();
+    for (auto c = node.first_child(); c; c = c.next_sibling())
+      if (c.type() == pugi::node_element) stack.push_back(c);
+    const std::string tag = node.name();
+    if (tag != "mesh" && tag != "texture") continue;
+    const std::string file = Attr(node, "filename");
+    if (file.rfind("package://", 0) != 0) continue;
+    const size_t end = file.find('/', 10);
+    if (end == std::string::npos || end == 10 || end + 1 >= file.size()) continue;
+    const std::string package = file.substr(10, end - 10);
+    if (active_reader->packages.count(package)) continue;
+    const fs::path relative = fs::path(file.substr(end + 1)).lexically_normal();
+    bool escapes = relative.is_absolute();
+    for (const auto& part : relative) escapes = escapes || part == "..";
+    fs::path found;
+    for (fs::path dir = start; !dir.empty(); dir = dir.parent_path()) {
+      if (dir.filename() == package) {
+        found = dir;
+        break;
+      }
+      if (dir == dir.root_path()) break;
+    }
+    for (fs::path dir = start; found.empty() && !escapes && !dir.empty(); dir = dir.parent_path()) {
+      if (fs::is_regular_file(dir / relative, ec)) found = dir;
+      if (dir == dir.root_path()) break;
+    }
+    if (found.empty()) continue;
+    active_reader->packages[package] = found.string();
+    active_reader->Warn("URDF package `" + package + "` resolved to " + found.generic_string() +
+                            " (pass packages to map it explicitly)",
+                        "urdf.package_discovered");
+  }
+}
+
 bool BuildURDF(const pugi::xml_node& root, const std::string& source,
                const Options& opts, Json* payload, std::string* err) {
   std::map<std::pair<std::string, bool>, Mesh> mesh_cache;
@@ -6150,6 +6207,7 @@ bool BuildURDF(const pugi::xml_node& root, const std::string& source,
     explicit MeshPreloadScope(std::map<PreloadKey, PreloadedMesh>* p) { active_mesh_preload = p; }
     ~MeshPreloadScope() { active_mesh_preload = previous; }
   } mesh_preload_scope(&mesh_preload);
+  DiscoverURDFPackages(root, source);
   if (!opts.open && !opts.read) {
     // Parse every distinct mesh ahead on worker threads (see PreloadJobs).
     std::vector<std::pair<PreloadKey, PreloadJob>> jobs;
@@ -6418,6 +6476,41 @@ bool BuildURDF(const pugi::xml_node& root, const std::string& source,
     std::string target = Attr(joint, "name");
     if (!joint_names.count(target)) {
       active_reader->Warn("URDF transmission has unknown joint " + target);
+      continue;
+    }
+    if (opts.profile != "legacy") {
+      // Neither URDF importer of Newton nor urdf-usd-converter infers a
+      // controller from a transmission (and Newton's add_usd rejects
+      // actuators on joints that are not single-DOF): keep it as urdf:*
+      // metadata on the joint.
+      Json* owner = nullptr;
+      for (auto& j : joints)
+        if (j.contains("name") && j["name"].is_string() && j["name"].get<std::string>() == target)
+          owner = &j;
+      if (!owner) continue;
+      if (owner->contains("transmission")) {
+        active_reader->Warn("URDF joint " + target + " has several transmissions; keeping the first",
+                            "urdf.transmission_duplicate");
+        continue;
+      }
+      Json t = Json::object();
+      auto text = [](const pugi::xml_node& n, const char* tag) {
+        std::string v = n.child(tag).text().as_string();
+        const size_t b = v.find_first_not_of(" \t\r\n");
+        if (b == std::string::npos) return std::string();
+        return v.substr(b, v.find_last_not_of(" \t\r\n") - b + 1);
+      };
+      if (HasAttr(transmission, "name")) t["name"] = Attr(transmission, "name");
+      std::string type = text(transmission, "type");
+      if (type.empty()) type = Attr(transmission, "type");
+      if (!type.empty()) t["type"] = type;
+      if (act && HasAttr(act, "name")) t["actuator"] = Attr(act, "name");
+      std::string hardware = text(joint, "hardwareInterface");
+      if (hardware.empty()) hardware = text(act, "hardwareInterface");
+      if (!hardware.empty()) t["hardwareInterface"] = hardware;
+      if (act && act.child("mechanicalReduction"))
+        t["mechanicalReduction"] = act.child("mechanicalReduction").text().as_double(1.0);
+      (*owner)["transmission"] = std::move(t);
       continue;
     }
     Json a{{"name", Attr(act, "name", target + "_actuator")},

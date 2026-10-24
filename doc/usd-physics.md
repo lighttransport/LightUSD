@@ -50,7 +50,7 @@ in one of three profiles, selected with `profile=` (Python), `"profile"` in the 
 | Revolute/prismatic limits | `physics:lower/upperLimit` | same | also non-standard `physics:limit:<dof>:low/high` |
 | World link | static Xform; joints to the world omit `physics:body0` | same | disabled rigid body |
 | Sites | Gprims under their body, `MjcSiteAPI` + `NewtonSiteAPI` | under their body | `/World/Sites` |
-| Friction | deduplicated `Material` + `PhysicsMaterialAPI` (static = dynamic = mu0), `newton:torsional/rollingFriction`, `material:binding:physics` | `PhysicsMaterialAPI` only | `mjc:geomFriction` |
+| Friction | `Material` + `PhysicsMaterialAPI` (static = dynamic = mu0), `newton:torsional/rollingFriction`, `newton:contactStiffness/contactDamping` from geom `solref` (Newton's `solref_to_stiffness_damping`), deduplicated by friction and solref, `material:binding:physics` | `PhysicsMaterialAPI` only | `mjc:geomFriction` |
 | Joint dynamics | `NewtonJointAPI` (`newton:armature`, `newton:friction`, `newton:damping` per degree for angular joints, `newton:velocityLimit`); `MjcJointAPI` `ref/springref/margin/stiffness/sol*` | omitted | `mjc:*` + `physxJoint/physxLimit` aliases |
 | Inertia | `diagonalInertia` + `principalAxes` + `NewtonMassAPI` `newton:inertia`; MJCF bodies without `<inertial>` get MuJoCo's `inertiafromgeom` result | diagonal + axes | as authored only |
 | Multi-joint bodies | stacked joints between the body pair (`newton:jointsAddMobility`) | stacked | massless intermediate links |
@@ -66,6 +66,10 @@ in one of three profiles, selected with `profile=` (Python), `"profile"` in the 
 | MJCF primitive visuals | native `Sphere`/`Cube`/`Cylinder`/`Capsule`/`Plane` (as mujoco-usd-converter), material bound, `displayColor`/`displayOpacity` from geom `rgba` | same | tessellated meshes |
 | MJCF ellipsoids (non-uniform) | mesh with the radii baked in (convex hull as a collider): a scaled `Sphere` is read as a unit sphere by Newton and rejected by OpenUSD | same | scaled `Sphere` (reported) |
 | URDF ghost / dummy-inertia links | urdf-usd-converter rules: inertia-, visual- and collision-less links on fixed joints (or the root) lose `RigidBodyAPI`, their fixed joint is dropped and child joints re-anchor on the nearest rigid ancestor (or the world); an inertial-only childless child on a fixed joint under a geometry-only parent is merged into it | same | as authored |
+| MJCF mesh colliders | `newton:maxHullVertices` only for `<mesh maxhullvert>` (unlimited otherwise); `<mesh inertia="shell">` and `shellinertia` geoms → `NewtonMassAPI` `newton:massModel = "shell"`, `legacy`/`exact` → `mjc:inertia`, `convex` implied (mujoco-usd-converter 0.8.0) | approximation only | `newton:maxHullVertices = 64`, `mjc:inertia = "legacy"` |
+| Solver iterations | MJCF `<option iterations>` → `newton:maxSolverIterations` | omitted | `-1` |
+| Articulation self-collision | `newton:selfCollisionEnabled` only when the source sets it (an authored value overrides `add_usd(enable_self_collisions=...)`) | omitted | always `true` |
+| URDF `<transmission>` | `urdf:transmission:name/type/actuator/hardwareInterface/mechanicalReduction` on the joint; no actuator (as urdf-usd-converter; Newton's `add_usd` rejects actuators on joints that are not single-DOF) | same | zero-gain `NewtonActuator` PD |
 | MJCF `<flag>` | `newton:gravityEnabled` follows `gravity`; `filterparent="disable"` sets `physics:collisionEnabled` on joints; `spring`/`damper` flags authored | flags only | flags only |
 | OBJ stage | `metersPerUnit = 1`, root `kind = component` | same | no units |
 

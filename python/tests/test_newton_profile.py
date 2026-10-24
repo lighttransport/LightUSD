@@ -126,3 +126,123 @@ def test_nested_layout_urdf_with_ghost_frame():
     joint = stage.prim_at('/World/Joints/j')
     tip = stage.prim_at(joint.relationship('physics:body1').targets[0])
     assert tuple(round(v, 6) for v in tip.world_transform()[3][:3]) == (1, 1, 0)
+
+
+_INERTIAL = '<inertial><mass value="1"/><inertia ixx=".1" iyy=".1" izz=".1" ixy="0" ixz="0" iyz="0"/></inertial>'
+
+
+def test_urdf_transmission_is_joint_metadata_not_an_actuator():
+    urdf = f'''<robot name="r"><link name="a"/><link name="b">{_INERTIAL}</link>
+      <joint name="j" type="revolute"><parent link="a"/><child link="b"/><axis xyz="0 0 1"/>
+      <limit lower="-1" upper="1"/></joint>
+      <transmission name="t"><type>transmission_interface/SimpleTransmission</type>
+      <joint name="j"><hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface></joint>
+      <actuator name="m"><mechanicalReduction>50</mechanicalReduction></actuator></transmission></robot>'''.encode()
+    stage = lightusd.load_bytes(urdf, format='urdf')
+    assert not [p for p in stage if p.type_name == 'NewtonActuator']
+    j = stage.prim_at('/World/Joints/j')
+    assert j['urdf:transmission:name'] == 't'
+    assert j['urdf:transmission:type'] == 'transmission_interface/SimpleTransmission'
+    assert j['urdf:transmission:actuator'] == 'm'
+    assert j['urdf:transmission:hardwareInterface'] == 'hardware_interface/EffortJointInterface'
+    assert j['urdf:transmission:mechanicalReduction'] == 50
+    legacy = lightusd._import(data=urdf, format='urdf', profile='legacy')
+    assert [p for p in legacy if p.type_name == 'NewtonActuator']
+
+
+def _write(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    return path
+
+
+_TRI_OBJ = 'v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n'
+
+
+def _package_urdf(mesh):
+    return f'''<robot name="r"><link name="a"><visual><geometry><mesh filename="{mesh}"/></geometry></visual>
+      {_INERTIAL}</link></robot>'''
+
+
+def test_urdf_package_found_by_directory_name(tmp_path):
+    _write(tmp_path / 'my_pkg' / 'meshes' / 'm.obj', _TRI_OBJ)
+    urdf = _write(tmp_path / 'my_pkg' / 'urdf' / 'r.urdf', _package_urdf('package://my_pkg/meshes/m.obj'))
+    stage = lightusd.import_urdf(urdf)
+    assert [p for p in stage if p.type_name == 'Mesh']
+    codes = [d['code'] for d in stage.import_report()['diagnostics']]
+    assert 'urdf.package_discovered' in codes
+
+
+def test_urdf_package_found_by_relative_path(tmp_path):
+    # The checkout directory is not named like the package.
+    _write(tmp_path / 'checkout' / 'meshes' / 'm.obj', _TRI_OBJ)
+    urdf = _write(tmp_path / 'checkout' / 'urdf' / 'r.urdf', _package_urdf('package://other/meshes/m.obj'))
+    assert [p for p in lightusd.import_urdf(urdf) if p.type_name == 'Mesh']
+    # An explicit mapping wins; `..` paths are never searched.
+    _write(tmp_path / 'outside.obj', _TRI_OBJ)
+    escape = _write(tmp_path / 'checkout' / 'urdf' / 'e.urdf', _package_urdf('package://other/../outside.obj'))
+    with pytest.raises(lightusd.UsdError):
+        lightusd.import_urdf(escape)
+
+
+def test_self_collision_is_only_authored_when_the_source_sets_it():
+    xml = _mjcf('<body name="a"><freejoint/><geom size=".1"/><body name="b"><joint axis="0 0 1"/>'
+                '<geom size=".1"/></body></body>')
+    roots = lambda s: [p for p in s if 'PhysicsArticulationRootAPI' in (p.metadata('apiSchemas') or ())]
+    newton = roots(lightusd.load_bytes(xml, format='mjcf'))
+    assert newton and all('newton:selfCollisionEnabled' not in p.attributes for p in newton)
+    legacy = roots(lightusd._import(data=xml, format='mjcf', profile='legacy'))
+    assert legacy and all(p['newton:selfCollisionEnabled'] is True for p in legacy)
+
+
+def test_option_iterations_is_newton_solver_iterations():
+    xml = _mjcf('<body name="a"><freejoint/><geom size=".1"/></body>', '<option iterations="17"/>')
+    assert lightusd.load_bytes(xml, format='mjcf').prim_at('/World/PhysicsScene')[
+        'newton:maxSolverIterations'] == 17
+
+
+def _mesh_colliders(stage):
+    return {p.name: p for p in stage
+            if 'PhysicsMeshCollisionAPI' in (p.metadata('apiSchemas') or ())}
+
+
+def test_mesh_inertia_modes_and_hull_limit(tmp_path):
+    tet = 'v 0 0 0\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\n'
+    _write(tmp_path / 'tet.obj', tet)
+    assets = ''.join(f'<mesh name="{m}" file="tet.obj" inertia="{m}"/>'
+                     for m in ('shell', 'exact', 'convex', 'legacy'))
+    assets += '<mesh name="capped" file="tet.obj" maxhullvert="8"/>'
+    geoms = ''.join(f'<geom name="{m}" type="mesh" mesh="{m}"/>'
+                    for m in ('shell', 'exact', 'convex', 'legacy', 'capped'))
+    xml = _mjcf(f'<body name="a"><freejoint/>{geoms}<geom name="ball" size=".1" shellinertia="true"/></body>',
+                f'<asset>{assets}</asset>')
+    path = tmp_path / 'm.xml'
+    path.write_bytes(xml)
+    stage = lightusd.import_mjcf(path)
+    colliders = _mesh_colliders(stage)
+    by_geom = {name: next(p for n, p in colliders.items() if n.startswith(name)) for name in
+               ('shell', 'exact', 'convex', 'legacy', 'capped')}
+    assert by_geom['shell']['newton:massModel'] == 'shell'
+    assert 'mjc:inertia' not in by_geom['shell'].attributes
+    assert by_geom['exact']['mjc:inertia'] == 'exact'
+    assert by_geom['legacy']['mjc:inertia'] == 'legacy'
+    assert 'mjc:inertia' not in by_geom['convex'].attributes
+    assert by_geom['capped']['newton:maxHullVertices'] == 8
+    assert all('newton:maxHullVertices' not in by_geom[n].attributes
+               for n in ('shell', 'exact', 'convex', 'legacy'))
+    ball = next(p for p in stage if p.type_name == 'Sphere' and
+                'PhysicsCollisionAPI' in (p.metadata('apiSchemas') or ()))
+    assert ball['newton:massModel'] == 'shell'
+    legacy = _mesh_colliders(lightusd.import_mjcf(path, profile='legacy'))
+    assert all(p['newton:maxHullVertices'] in (8, 64) for p in legacy.values())
+
+
+def test_physics_material_contact_stiffness_from_solref():
+    xml = _mjcf('<body name="a"><freejoint/><geom name="g1" size=".1"/>'
+                '<geom name="g2" size=".1" pos=".3 0 0" solref=".01 .5"/>'
+                '<geom name="g3" size=".1" pos=".6 0 0" solref="-1000 -20"/></body>')
+    stage = lightusd.load_bytes(xml, format='mjcf')
+    materials = [p for p in stage if 'PhysicsMaterialAPI' in (p.metadata('apiSchemas') or ())]
+    gains = sorted((m['newton:contactStiffness'], m['newton:contactDamping']) for m in materials)
+    assert gains == [pytest.approx((1000, 20)), pytest.approx((2500, 100)),
+                     pytest.approx((40000, 200))]

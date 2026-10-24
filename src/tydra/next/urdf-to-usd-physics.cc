@@ -301,6 +301,16 @@ void AssignJointBase(tn::PrimSpec *prim, const Json &joint,
             tn::Value(member.value().get<double>()), "double");
       }
     }
+    // A URDF <transmission> (not a controller; see BuildURDF).
+    if (const Json *transmission = JsonObject(joint, "transmission")) {
+      for (const char *key : {"name", "type", "actuator", "hardwareInterface"}) {
+        const std::string text = JsonString(*transmission, key);
+        if (!text.empty())
+          Set(prim, std::string("urdf:transmission:") + key, tn::Value(text), "string", true);
+      }
+      if (ReadNumber(*transmission, "mechanicalReduction", &value))
+        Set(prim, "urdf:transmission:mechanicalReduction", tn::Value(value), "double", true);
+    }
     if (const Json *mjc = JsonObject(joint, "mjc")) {
       for (const char *key : {"ref", "springref", "margin", "stiffness"})
         if (ReadNumber(*mjc, key, &value))
@@ -484,6 +494,11 @@ void AddPhysicsScene(tn::Layer *layer, const Json &root) {
   } else if (const Json *ms = JsonObject(root, "mjcScene")) {
     // Newton's own gravity switch wins over mjc:flag:gravity.
     if (const Json *flags = JsonObject(*ms, "flag")) ReadBool(*flags, "gravity", &gravity_enabled);
+    // MJCF <option iterations> is the solver iteration count Newton's
+    // default resolver reads (mujoco-usd-converter writes it the same way).
+    if (!ActiveProfile().legacy)
+      if (const Json *option = JsonObject(*ms, "option"))
+        max_solver_iterations = JsonInt(*option, "iterations", max_solver_iterations);
   }
   Set(scene, "newton:timeStepsPerSecond", tn::Value(steps_per_second), "int",
       true);

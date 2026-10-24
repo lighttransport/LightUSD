@@ -25,6 +25,12 @@ constexpr int32_t kDefaultNewtonMaxHullVertices = 64;
 namespace {
 thread_local PhysicsMaterials *active_physics_materials = nullptr;
 
+std::string StringFrom(const Json &src, const char *object_key, const char *key,
+                       const char *fallback) {
+  const Json *object = JsonObject(src, object_key);
+  return object ? JsonString(*object, key, fallback) : std::string(fallback);
+}
+
 std::string FrictionKey(const std::vector<double> &mu) {
   std::string key;
   char buffer[32];
@@ -43,7 +49,8 @@ PhysicsMaterials::PhysicsMaterials(tn::Layer *layer)
 PhysicsMaterials::~PhysicsMaterials() { active_physics_materials = previous_; }
 
 std::string PhysicsMaterials::Bind(tn::PrimSpec *collider,
-                                   std::vector<double> friction) {
+                                   std::vector<double> friction,
+                                   const std::vector<double> &solref) {
   // MuJoCo geom friction defaults to (1, 0.005, 0.0001); a partial triplet
   // keeps the remaining defaults.
   static const double kDefault[3] = {1.0, 0.005, 0.0001};
@@ -51,7 +58,29 @@ std::string PhysicsMaterials::Bind(tn::PrimSpec *collider,
   friction.resize(3);
   for (size_t i = 0; i < 3; ++i)
     if (i >= authored || !std::isfinite(friction[i])) friction[i] = kDefault[i];
-  const std::string key = FrictionKey(friction);
+  // Contact stiffness/damping from solref (default 0.02 1), as Newton's
+  // solref_to_stiffness_damping: (timeconst, dampratio) -> (1/(t^2 d^2), 2/t),
+  // both negative -> direct (-k, -b). Other values have no ke/kd.
+  const double timeconst = solref.size() > 0 ? solref[0] : 0.02;
+  const double dampratio = solref.size() > 1 ? solref[1] : 1.0;
+  bool stiffness = true;
+  double ke = 0.0, kd = 0.0;
+  if (timeconst < 0.0 && dampratio < 0.0) {
+    ke = -timeconst;
+    kd = -dampratio;
+  } else if (timeconst > 0.0 && dampratio > 0.0) {
+    ke = 1.0 / (timeconst * timeconst * dampratio * dampratio);
+    kd = 2.0 / timeconst;
+  } else {
+    stiffness = false;
+  }
+  if (!std::isfinite(ke) || !std::isfinite(kd)) stiffness = false;
+  std::vector<double> key_values = friction;
+  if (stiffness) {
+    key_values.push_back(ke);
+    key_values.push_back(kd);
+  }
+  const std::string key = FrictionKey(key_values);
   auto found = by_key_.find(key);
   std::string path;
   if (found != by_key_.end()) {
@@ -76,6 +105,10 @@ std::string PhysicsMaterials::Bind(tn::PrimSpec *collider,
         tn::Value(static_cast<float>(friction[1])), "float");
     Set(material, "newton:rollingFriction",
         tn::Value(static_cast<float>(friction[2])), "float");
+    if (stiffness) {
+      Set(material, "newton:contactStiffness", tn::Value(static_cast<float>(ke)), "float");
+      Set(material, "newton:contactDamping", tn::Value(static_cast<float>(kd)), "float");
+    }
     by_key_.emplace(key, path);
   }
   AddAPI(collider, "MaterialBindingAPI");
@@ -99,7 +132,18 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
     // Default approximation is `convexHull`, matching mujoco-usd-converter.
     SetToken(prim, "physics:approximation",
              JsonString(src, "approximation", "convexHull"), true);
-    SetToken(prim, "mjc:inertia", "legacy", true);
+    const std::string inertia =
+        profile.legacy ? "legacy" : StringFrom(src, "mjc", "inertia", "legacy");
+    if (inertia == "shell") {
+      AddAPI(prim, "NewtonMassAPI");
+      SetToken(prim, "newton:massModel", "shell", true);
+    } else if (inertia == "legacy" || inertia == "exact") {
+      // MuJoCo's decoder infers convex without it.
+      SetToken(prim, "mjc:inertia", inertia, true);
+    }
+  } else if (!profile.legacy && StringFrom(src, "newton", "massModel", "") == "shell") {
+    AddAPI(prim, "NewtonMassAPI");
+    SetToken(prim, "newton:massModel", "shell", true);
   }
   if (mjcf_source) {
     int32_t ivalue = 0;
@@ -154,7 +198,7 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
     } else if (PhysicsMaterials *materials = ActivePhysicsMaterials()) {
       // Friction is a bound physics material: the only place UsdPhysics,
       // Newton and MuJoCo's USD decoder read it.
-      materials->Bind(prim, values);
+      materials->Bind(prim, values, JsonDoublesFrom(src, "mjc", "solref"));
     }
     values = JsonDoublesFrom(src, "mjc", "solref");
     if (!values.empty()) SetDoubles(prim, "mjc:solref", values, true);
@@ -202,10 +246,13 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
     int32_t hull = 0;
     if (!profile.legacy && ReadIntFrom(src, "mjc", "maxhullvert", &hull))
       Set(prim, "mjc:maxhullvert", tn::Value(hull), "int", true);
-    Set(prim, "newton:maxHullVertices",
-        tn::Value(JsonIntFrom(src, "newton", "maxHullVertices",
-                              kDefaultNewtonMaxHullVertices)),
-        "int", true);
+    // Non-legacy profiles leave an unlimited MJCF hull unauthored (MuJoCo's
+    // decoder would otherwise cap it at the authored value).
+    if (profile.legacy || ReadIntFrom(src, "newton", "maxHullVertices", &hull))
+      Set(prim, "newton:maxHullVertices",
+          tn::Value(JsonIntFrom(src, "newton", "maxHullVertices",
+                                kDefaultNewtonMaxHullVertices)),
+          "int", true);
   }
   // next-only: MuJoCo contact filter bits under their MJCF attribute names
   // (the legacy converter only authors mjc:geomContype/geomConaffinity).

@@ -58,7 +58,9 @@ class PhysicsMaterials {
   ~PhysicsMaterials();
   PhysicsMaterials(const PhysicsMaterials &) = delete;
   PhysicsMaterials &operator=(const PhysicsMaterials &) = delete;
-  std::string Bind(tn::PrimSpec *collider, std::vector<double> friction);
+  // Friction triplet plus geom solref (contact stiffness/damping).
+  std::string Bind(tn::PrimSpec *collider, std::vector<double> friction,
+                   const std::vector<double> &solref = {});
  private:
   tn::Layer *layer_;
   PhysicsMaterials *previous_;

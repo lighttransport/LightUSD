@@ -74,7 +74,9 @@ clamped), `mjcf.hfield_size`, `mjcf.unknown_class`, `mjcf.obj_first_object`
 token), `mjcf.equality_site_unsupported` (legacy profile only),
 `mjcf.inertia_convex_approximated`, `urdf.geometry_unsupported` (missing or
 unknown URDF geometry, skipped under `warn`), `dae.up_axis_ignored`,
-`dae.geometry_unsupported` and `dae.primitive_unsupported`.
+`dae.geometry_unsupported`, `dae.primitive_unsupported`,
+`urdf.package_discovered` (see below) and `urdf.transmission_duplicate` (a
+joint with several transmissions keeps the first).
 `import.failed` records the final failure.
 
 `counts.inferred_inertia_bodies` counts MJCF bodies whose mass properties were
@@ -101,6 +103,17 @@ and include expansion, including skipped subtrees and the expanded document.
 Filesystem assets are size-checked before allocation; custom resolvers supply
 bytes before their size can be checked. Neither limit replaces the resolver's
 own I/O or security policy.
+
+## URDF packages
+
+`package://NAME/path` resolves through `packages` (Python), `"packages"` in
+the C `settings_json` or `--package NAME=DIR`. An unmapped package is
+discovered as Newton's and urdf-usd-converter's URDF importers do: the nearest
+ancestor of the URDF's directory named `NAME`, otherwise the nearest ancestor
+`DIR` for which `DIR/path` exists. Paths containing `..` are not searched, and
+discovery needs a filesystem source (no resolver callbacks). Each discovered
+root is reported as `urdf.package_discovered` and becomes an allowed asset root
+for that package's files.
 
 ## Progress and cancellation
 

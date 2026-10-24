@@ -213,8 +213,8 @@ bool Reader::Open(const std::string& name, const std::string& anchor,
     size_t end = path.find('/', 10);
     std::string package =
         path.substr(10, end == std::string::npos ? end : end - 10);
-    auto found = options.packages.find(package);
-    if (found == options.packages.end()) {
+    auto found = packages.find(package);
+    if (found == packages.end()) {
       if (err) *err = "Unmapped URDF package: " + package;
       return false;
     }
@@ -268,7 +268,7 @@ bool Reader::Open(const std::string& name, const std::string& anchor,
       roots.push_back(root);
     };
     for (const std::string& r : options.asset_dirs) add_root(r);
-    for (const auto& p : options.packages) add_root(p.second);
+    for (const auto& p : packages) add_root(p.second);
     add_root(base.string());
     if (!root_source.empty())
       add_root(absolute(fs::path(root_source)).parent_path().string());

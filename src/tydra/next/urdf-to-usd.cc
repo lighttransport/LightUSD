@@ -145,8 +145,14 @@ static bool ConvertPayload(
   if (const Json *ms = JsonObject(root, "mjcScene"))
     if (const Json *flags = JsonObject(*ms, "flag")) ReadBool(*flags, "filterparent", &filter_parent);
   bool self_collision_enabled = true;
+  // Non-legacy profiles author newton:selfCollisionEnabled only when the
+  // source sets it: an authored value overrides add_usd's
+  // enable_self_collisions argument.
+  bool self_collision_authored = profile.legacy;
   if (const Json *newton = JsonObject(root, "newton")) {
-    ReadBool(*newton, "selfCollisionEnabled", &self_collision_enabled);
+    self_collision_authored =
+        ReadBool(*newton, "selfCollisionEnabled", &self_collision_enabled) ||
+        self_collision_authored;
   }
   NameMap link_names;
   NameMap geom_names;  // MJCF tendon wrap geom -> native prim under /World
@@ -266,8 +272,9 @@ static bool ConvertPayload(
       if (!is_static && (!child_links.count(source) || articulation_root)) {
         AddAPIs(prim,
                 {"PhysicsArticulationRootAPI", "NewtonArticulationRootAPI"});
-        Set(prim, "newton:selfCollisionEnabled",
-            tn::Value(self_collision_enabled), "bool");
+        if (self_collision_authored)
+          Set(prim, "newton:selfCollisionEnabled",
+              tn::Value(self_collision_enabled), "bool");
         bool adds_mobility = false;
         if (profile.newton && ReadBool(link, "jointsAddMobility", &adds_mobility) &&
             adds_mobility)

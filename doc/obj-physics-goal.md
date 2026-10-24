@@ -284,6 +284,27 @@ avoid implementing a second conversion or validation engine in Python.
   validation needs no separate mode: stages loaded with composition (the
   default) validate their composed prims and targets (covered by a test).
 
+Gap review against mujoco-usd-converter 0.8.0, urdf-usd-converter and Newton
+f121272e (2026-10-24; Menagerie Newton compare still 65/69). Fixed in the
+`newton` profile, `legacy` byte-identical on 347 Menagerie/corpus inputs:
+
+- URDF `<transmission>` -> `urdf:transmission:*` joint metadata, not a
+  zero-gain actuator (`add_usd` failed on fixed/planar targets).
+- Unmapped `package://` roots discovered like Newton/urdf-usd-converter
+  (`urdf.package_discovered`); the corpus `ros_packages.urdf` now converts.
+- `newton:selfCollisionEnabled` only when authored; `newton:maxHullVertices`
+  only for `maxhullvert`; `<option iterations>` -> `newton:maxSolverIterations`;
+  mesh `inertia`/`shellinertia` -> `newton:massModel`/`mjc:inertia`; material
+  `newton:contactStiffness/contactDamping` from `solref`.
+- Open (not fixed): visible colliding geoms are two prims (MuJoCo's decoder
+  doubles ngeom); URDF root always welded (`add_usd(floating=True)` cannot
+  float it); URDF effort limit reaches Newton only through the MuJoCo
+  resolver; single-link URDF articulation root; `newton:contactGap` unauthored
+  (matches `add_mjcf`, not MuJoCo's 0); deprecated `mjc:*` aliases; sRGB/
+  shininess material conversion; `displayName`; frame `scale`/`massscale`
+  warning; `actuatorgroupdisable`; URDF `<gazebo>`/unknown elements,
+  `<capsule>` and primitive URDF visuals.
+
 Reference specifications: [UsdPhysics](https://openusd.org/dev/api/usd_physics_page_front.html),
 [MJCF](https://mujoco.readthedocs.io/en/stable/XMLreference.html), and
 [Newton USD import](https://newton-physics.github.io/newton/latest/concepts/usd_parsing.html).
