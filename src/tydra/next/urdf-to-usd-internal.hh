@@ -206,6 +206,10 @@ Matrix4 LightTransformMatrix(const Matrix4 &world,
                              const std::array<double, 3> &local_dir);
 void AddLightFromJson(Scope *scope, std::set<std::string> *used,
                       const Json &l, size_t index);
+// MJCF skybox -> DomeLight with a latitude-longitude texture (+Y pole,
+// rotated onto +Z for Z-up stages).
+void AddSkyboxFromJson(Scope *scope, std::set<std::string> *used, const Json &skybox,
+                       bool z_up);
 void AddCameraFromJson(Scope *scope, std::set<std::string> *used,
                        const Json &c, size_t index);
 void AddMaterialFromJson(Scope *scope, std::set<std::string> *used,

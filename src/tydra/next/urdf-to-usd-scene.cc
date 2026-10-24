@@ -83,6 +83,27 @@ void AddLightFromJson(Scope *scope, std::set<std::string> *used,
   SetTransform(prim, xform);
 }
 
+void AddSkyboxFromJson(Scope *scope, std::set<std::string> *used, const Json &skybox,
+                       bool z_up) {
+  const std::string file = JsonString(skybox, "texture");
+  if (file.empty()) return;
+  const std::string name = Unique(JsonString(skybox, "name", "skybox"), "skybox", used);
+  tn::PrimSpec *prim = scope->Add(name, "DomeLight");
+  if (!prim) return;
+  Set(prim, "inputs:texture:file", tn::Value::MakeAssetPath(file), "asset");
+  SetToken(prim, "inputs:texture:format", "latlong");
+  if (z_up) {
+    // A DomeLight's pole is +Y; MuJoCo's skybox cube is +Y up too, mapped
+    // onto world +Z (render_gl3.c), so rotate +Y onto +Z.
+    Matrix4 m = IdentityMatrix();
+    m[1 * 4 + 1] = 0;
+    m[1 * 4 + 2] = 1;
+    m[2 * 4 + 1] = -1;
+    m[2 * 4 + 2] = 0;
+    SetTransform(prim, m);
+  }
+}
+
 void AddCameraFromJson(Scope *scope, std::set<std::string> *used,
                        const Json &c, size_t index) {
   const std::string name = Unique(

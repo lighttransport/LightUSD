@@ -132,7 +132,17 @@ import budget. The stage authors `textures/builtin_<name>.png`;
 file beside a USDA/USDC layer, USDZ packages it, and
 `lightusd.asset.save_component` copies it into `Payload/Textures`.
 `Stage.generated_assets()` (C `lightusd_stage_generated_asset*`) returns the
-bytes. Cube and skybox textures, invalid sizes and the `legacy` profile are
+bytes. The first builtin `type="skybox"` texture (the one MuJoCo renders)
+becomes a `DomeLight` under `/World/Lights` with a latitude-longitude
+`inputs:texture:file` (`inputs:texture:format = "latlong"`): the six faces
+of MuJoCo's `BuiltinCube` (pixel-identical to `tex_data`) are resampled at
+4w x 2w (at most 4096 x 2048) with nearest-texel cube-map addressing; row 0
+is the pole and u = 0.5 faces +Z, as Storm reads a dome texture. The light
+is rotated so its +Y pole is the stage's +Z, which is where MuJoCo puts the
+cube's +Y. A 512-pixel Menagerie gradient sky gives a 348 KB PNG in about
+70 ms. Note that a DomeLight also lights the scene; MuJoCo's skybox is only
+a background. Cube textures on materials (there is no UsdPreviewSurface cube
+projection), file-based skyboxes, invalid sizes and the `legacy` profile are
 reported as `mjcf.texture_builtin_unsupported`; unused builtin textures are
 skipped.
 

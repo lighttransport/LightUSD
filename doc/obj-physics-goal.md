@@ -261,9 +261,11 @@ avoid implementing a second conversion or validation engine in Python.
   qualified `apiSchemas` metadata (`"prepend apiSchemas"`).
 - MJCF builtin 2D textures (checker/gradient/flat + marks) generated as PNG,
   pixel-identical to MuJoCo; written beside saved layers, packaged in USDZ.
+- MJCF builtin skybox -> latlong DomeLight (BuiltinCube faces pixel-identical
+  to MuJoCo, resampled with OpenGL cube-map addressing, pole on stage +Z).
 - Still pending: geometry/material library layers, raw
   `<flex>`, interpolated (trilinear/quadratic) dofs,
-  cube/skybox builtin textures, parallel per-mesh conversion and mapped input
+  cube-projected material textures, parallel per-mesh conversion and mapped input
   for URDF/MJCF mesh assets. Import progress/cancellation callbacks (C
   `progress`, Python `progress=`) and memory-mapped root OBJ files are in. Composed-stage physics
   validation needs no separate mode: stages loaded with composition (the

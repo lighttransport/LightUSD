@@ -453,12 +453,18 @@ bool Reader::ReadTexture(const std::string& name, const std::string& anchor,
 }
 
 bool GatherTextures(Reader& reader, Result* result, std::string* err) {
-  Json* mats = result->payload.find("materials");
-  if (!mats) return true;
+  // Material entries plus the MJCF skybox, which carries the same
+  // texture / texture_abs / texturePackage contract.
+  std::vector<Json*> entries;
+  if (Json* mats = result->payload.find("materials"))
+    for (Json& mat : *mats) entries.push_back(&mat);
+  if (Json* skybox = result->payload.find("skybox")) entries.push_back(skybox);
+  if (entries.empty()) return true;
   // Deduplicate by retained payload, not by authored identifier: aliases that
   // resolve to one canonical texture must package one entry.
   std::map<const std::vector<uint8_t>*, std::string> packages;
-  for (Json& mat : *mats) {
+  for (Json* entry : entries) {
+    Json& mat = *entry;
     auto retain = [&](const std::string& file) -> std::string {
       if (file.empty()) return {};
       AssetBytes data;

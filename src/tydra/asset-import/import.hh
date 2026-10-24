@@ -170,6 +170,14 @@ struct BuiltinTexture {
 };
 // RGB8 pixels as MuJoCo's Builtin2D produces them (row 0 first).
 void GenerateBuiltin2D(const BuiltinTexture& texture, std::vector<uint8_t>* rgb);
+// The six width x width RGB8 faces of MuJoCo's BuiltinCube, in cube-map
+// order +X, -X, +Y, -Y, +Z, -Z (height is ignored, as in MuJoCo).
+void GenerateBuiltinCube(const BuiltinTexture& texture, std::vector<uint8_t>* faces);
+// Resample cube faces (nearest texel, OpenGL cube-map addressing) into a
+// latitude-longitude RGB8 image: row 0 is the +Y pole and u = 0.5 faces +Z,
+// as a USD DomeLight reads it.
+void CubeToLatLong(const std::vector<uint8_t>& faces, int face_width, int width, int height,
+                   std::vector<uint8_t>* rgb);
 // 8-bit gray/RGB/RGBA PNG; fixed-Huffman deflate, no external dependency.
 void EncodePNG(const uint8_t* pixels, uint32_t width, uint32_t height, uint32_t channels,
                std::vector<uint8_t>* out);

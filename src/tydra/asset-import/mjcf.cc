@@ -3466,12 +3466,12 @@ Json BuildMjcSceneJson(const pugi::xml_node& root) {
   return ms;
 }
 
-// MJCF <asset><material> -> JSON material entries consumed by the converter's
-// Generate a type="2d" builtin texture as PNG into the reader's texture cache
-// under "textures/builtin_<name>.png". Cube and skybox textures have no planar
-// UsdPreviewSurface mapping and are reported instead; the legacy profile keeps
-// its historical output.
-bool GenerateBuiltinTexture(const pugi::xml_node& node, const std::string& name,
+// Generate a builtin texture as PNG into the reader's texture cache under
+// "textures/builtin_<name>.png": type="2d" as MuJoCo's Builtin2D, and (with
+// `skybox`) a type="skybox" cube resampled to a latitude-longitude image for
+// a DomeLight. Cube textures on materials have no UsdPreviewSurface mapping
+// and are reported instead; the legacy profile keeps its historical output.
+bool GenerateBuiltinTexture(const pugi::xml_node& node, const std::string& name, bool skybox,
                             std::string* key, std::string* why) {
   constexpr int64_t kMaxBuiltinPixels = int64_t(4096) * 4096;
   Reader& reader = *active_reader;
@@ -3480,7 +3480,7 @@ bool GenerateBuiltinTexture(const pugi::xml_node& node, const std::string& name,
     return false;
   }
   const std::string type = HasAttr(node, "type") ? Attr(node, "type") : "cube";
-  if (type != "2d") {
+  if (type != "2d" && !(skybox && type == "skybox")) {
     *why = "type=\"" + type + "\" is not supported";
     return false;
   }
@@ -3499,7 +3499,10 @@ bool GenerateBuiltinTexture(const pugi::xml_node& node, const std::string& name,
   color("rgb2", t.rgb2);
   color("markrgb", t.markrgb);
   t.random = ParseDoubleAttr(node, "random", 0.01);
-  const double w = ParseDoubleAttr(node, "width", 0), h = ParseDoubleAttr(node, "height", 0);
+  const bool cube = type != "2d";
+  const double w = ParseDoubleAttr(node, "width", 0);
+  // A cube texture is width x 6*width; MuJoCo ignores its height.
+  const double h = cube ? 6 * w : ParseDoubleAttr(node, "height", 0);
   if (!(w >= 1 && h >= 1) || w * h > double(kMaxBuiltinPixels) || w != std::floor(w) ||
       h != std::floor(h)) {
     *why = "width/height must be positive integers with at most 4096x4096 pixels";
@@ -3507,20 +3510,29 @@ bool GenerateBuiltinTexture(const pugi::xml_node& node, const std::string& name,
   }
   t.width = static_cast<int>(w);
   t.height = static_cast<int>(h);
+  // Latitude-longitude output: 4w x 2w, at most 4096 x 2048.
+  const int lat_w = cube ? std::min(4 * t.width, 4096) : t.width;
+  const int lat_h = cube ? std::max(1, lat_w / 2) : t.height;
   std::string err;
-  const size_t pixels = size_t(t.width) * t.height * 3;
+  const size_t pixels = size_t(t.width) * t.height * 3 + (cube ? size_t(lat_w) * lat_h * 3 : 0);
   if (!reader.Charge(pixels, &err)) {
     *why = err;
     return false;
   }
   std::vector<uint8_t> rgb, png;
-  GenerateBuiltin2D(t, &rgb);
-  EncodePNG(rgb.data(), uint32_t(t.width), uint32_t(t.height), 3, &png);
+  if (cube) {
+    std::vector<uint8_t> faces;
+    GenerateBuiltinCube(t, &faces);
+    CubeToLatLong(faces, t.width, lat_w, lat_h, &rgb);
+  } else {
+    GenerateBuiltin2D(t, &rgb);
+  }
+  EncodePNG(rgb.data(), uint32_t(lat_w), uint32_t(lat_h), 3, &png);
   if (!reader.Charge(png.size(), &err)) {
     *why = err;
     return false;
   }
-  std::string file = name.empty() ? "builtin" : name;
+  std::string file = name.empty() ? (cube ? "skybox" : "builtin") : name;
   for (char& c : file)
     if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-') c = '_';
   *key = "textures/builtin_" + file + ".png";
@@ -3532,9 +3544,12 @@ bool GenerateBuiltinTexture(const pugi::xml_node& node, const std::string& name,
 
 // AddMaterialFromJson -> UsdShade Material (UsdPreviewSurface).
 // Color/PBR-scalar only; texture maps are a documented follow-on.
+// MJCF <asset><material> -> JSON material entries consumed by the converter's
+// AddMaterialFromJson -> UsdShade Material (UsdPreviewSurface). The first
+// builtin skybox texture becomes `skybox` (a DomeLight in the converter).
 void AddMujocoMaterialsJson(const pugi::xml_node& root,
                             const fs::path& base_dir, Json* materials,
-                            Stats* stats) {
+                            Json* skybox, Stats* stats) {
   if (!materials) return;
   const auto asset = Child(root, "asset");
   if (!asset) return;
@@ -3557,20 +3572,35 @@ void AddMujocoMaterialsJson(const pugi::xml_node& root,
     const std::string tfile = Attr(t_node, "file");
     if (tfile.empty() && HasAttr(t_node, "builtin") && Attr(t_node, "builtin") != "none" &&
         active_reader) {
-      // Only material textures map onto USD; skyboxes and unused textures
-      // are reported (or skipped) without generating pixels.
-      if (!referenced.count(tname) && Attr(t_node, "type") != "skybox") continue;
+      // Material textures and the first skybox (MuJoCo renders only that
+      // one) map onto USD; unused textures are skipped without pixels.
+      const bool is_skybox = Attr(t_node, "type") == "skybox";
+      if (!referenced.count(tname) && !is_skybox) continue;
+      if (is_skybox && skybox && !skybox->empty()) continue;
       std::string key, why;
-      if (GenerateBuiltinTexture(t_node, tname, &key, &why)) {
-        tex_files[tname] = key;
-        generated.insert(key);
+      if (GenerateBuiltinTexture(t_node, tname, is_skybox && skybox, &key, &why)) {
+        if (is_skybox && skybox) {
+          *skybox = {{"name", tname.empty() ? std::string("skybox") : tname},
+                     {"texture", key}, {"texture_abs", key}, {"texture_generated", true}};
+        } else {
+          tex_files[tname] = key;
+          generated.insert(key);
+        }
       } else {
         active_reader->Warn("MJCF builtin texture" +
                                 (tname.empty() ? std::string() : " `" + tname + "`") +
                                 " is not generated (" + why +
-                                "); materials using it keep their rgba",
+                                (is_skybox ? ")" : "); materials using it keep their rgba"),
                             "mjcf.texture_builtin_unsupported");
       }
+      continue;
+    }
+    if (!tfile.empty() && Attr(t_node, "type") == "skybox" && skybox && skybox->empty() &&
+        active_reader && active_reader->options.profile != "legacy") {
+      active_reader->Warn("MJCF skybox texture" +
+                              (tname.empty() ? std::string() : " `" + tname + "`") +
+                              " is not converted (file-based skyboxes need a cube layout)",
+                          "mjcf.texture_builtin_unsupported");
       continue;
     }
     if (tname.empty() || tfile.empty()) continue;
@@ -5276,7 +5306,8 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
   AddMujocoEqualityJson(root, &equalities, stats);
   AddMujocoContactExcludesJson(root, &filtered_pairs, stats);
   AddMujocoKeyframesJson(root, &keyframes, stats);
-  AddMujocoMaterialsJson(root, input_filename.parent_path(), &materials, stats);
+  Json skybox = Json::object();
+  AddMujocoMaterialsJson(root, input_filename.parent_path(), &materials, &skybox, stats);
   for (auto& mat : *active_materials) materials.push_back(mat);
   AddMujocoSensorsJson(root, &sensors, stats);
   AddMujocoContactPairsJson(root, &contact_pairs, stats);
@@ -5306,6 +5337,7 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
   if (!mjc_scene.empty()) (*payload)["mjcScene"] = std::move(mjc_scene);
   if (!keyframes.empty()) (*payload)["keyframes"] = std::move(keyframes);
   if (!lights.empty()) (*payload)["lights"] = std::move(lights);
+  if (!skybox.empty()) (*payload)["skybox"] = std::move(skybox);
   // Clipping planes are <visual><map znear/zfar> scaled by the model extent;
   // only an authored <statistic extent> makes them known before compiling.
   if (const auto statistic = Child(root, "statistic")) {

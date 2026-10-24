@@ -65,7 +65,7 @@ Some conversion warnings still use the general `import.warning` or
 `mjcf.flexcomp_rigid` and `mjcf.cable_plugin_approximated` (cable bending as ball-joint stiffness E·I/L); the `deformables`
 count lists converted flexcomps. URDF imports count `ghost_links` and
 `merged_dummy_inertia_links`; `mjcf.texture_builtin_unsupported` reports a
-material's builtin texture that is not generated (cube/skybox type, invalid
+builtin texture that is not generated (a cube texture on a material, invalid
 size, or the `legacy` profile).
 Further codes: `mjcf.integer_range` (an integer attribute outside int32 was
 clamped), `mjcf.hfield_size`, `mjcf.unknown_class`, `mjcf.obj_first_object`

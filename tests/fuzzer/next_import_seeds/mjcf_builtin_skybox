@@ -1,0 +1,1 @@
+<mujoco><asset><texture type="skybox" builtin="checker" mark="random" random=".2" rgb1=".3 .5 .7" rgb2="0 0 0" width="9"/><texture name="g" type="skybox" builtin="gradient" width="2"/></asset><worldbody/></mujoco>

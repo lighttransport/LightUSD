@@ -203,7 +203,11 @@ lightusd_status Finish(ia::Result& result, const std::string& source,
   // try to reload a robot or OBJ file through the USD-only core loader.
   handle->import_assets = std::move(result.assets);
   // Collect source -> archive names from the material import contract.
-  for (const auto& mat : result.payload["materials"]) {
+  std::vector<const ia::Json*> entries;
+  for (const auto& mat : result.payload["materials"]) entries.push_back(&mat);
+  if (result.payload.contains("skybox")) entries.push_back(&result.payload["skybox"]);
+  for (const ia::Json* entry : entries) {
+    const ia::Json& mat = *entry;
     if (mat.contains("texturePackage")) {
       const std::string texture = mat["texture"].get<std::string>();
       const std::string package = mat["texturePackage"].get<std::string>();

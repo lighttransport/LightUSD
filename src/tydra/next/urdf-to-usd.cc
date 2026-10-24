@@ -637,6 +637,8 @@ static bool ConvertPayload(
     for (size_t i = 0; i < items.size(); ++i) {
       AddLightFromJson(&lights_scope, &used, items[i], i);
     }
+    if (payload.Root().contains("skybox") && payload.Root().at("skybox").is_object())
+      AddSkyboxFromJson(&lights_scope, &used, payload.Root().at("skybox"), !y_up);
   }
 
   Scope cameras_scope(&layer, "Cameras");
