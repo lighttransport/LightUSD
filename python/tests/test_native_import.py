@@ -677,3 +677,39 @@ def test_parallel_mesh_preload_matches_serial_import(tmp_path):
         assert run(0, max_memory=budget) == run(1, max_memory=budget)
     with pytest.raises(ValueError):
         lightusd.import_mjcf(tmp_path / "m.xml", threads=-1)
+
+
+def test_urdf_mesh_preload_matches_serial_and_reads_stl_once(tmp_path):
+    import json
+    import struct
+    tri = struct.pack("<12fH", 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0)
+    for i in range(3):
+        (tmp_path / f"s{i}.stl").write_bytes(b"\0" * 80 + struct.pack("<I", 1) + tri)
+    (tmp_path / "red.mtl").write_text("newmtl red\nKd 1 0 0\n")
+    obj = "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n"
+    (tmp_path / "a.obj").write_text("mtllib red.mtl\nusemtl red\n" + obj)
+    (tmp_path / "b.obj").write_text("mtllib nowhere.mtl\n" + obj)
+    (tmp_path / "q.dae").write_text(DAE)
+    files = ["s0.stl", "a.obj", "s1.stl", "b.obj", "q.dae", "s2.stl", "a.obj"]
+    links = "".join(f'<link name="l{i}"><visual><geometry><mesh filename="{f}"/></geometry></visual>'
+                    f'<collision><geometry><mesh filename="{f}"/></geometry></collision></link>'
+                    for i, f in enumerate(files))
+    joints = "".join(f'<joint name="j{i}" type="fixed"><parent link="l{i - 1}"/><child link="l{i}"/></joint>'
+                     for i in range(1, len(files)))
+    (tmp_path / "r.urdf").write_text(f'<robot name="r">{links}{joints}</robot>')
+
+    def run(threads, **kw):
+        try:
+            stage = lightusd.import_urdf(tmp_path / "r.urdf", threads=threads, **kw)
+        except Exception as e:  # noqa: BLE001 - compare failures too
+            return type(e).__name__, str(e)
+        report = stage.import_report()
+        report.pop("elapsed_seconds", None)
+        return stage.export_usda(), stage.warnings(), json.dumps(report, sort_keys=True)
+
+    serial = run(1)
+    assert run(0) == serial
+    for budget in (1 << 15, 1 << 17):
+        assert run(0, max_memory=budget) == run(1, max_memory=budget)
+    deps = [d for d in json.loads(serial[2])["dependencies"] if d["identifier"].endswith(".stl")]
+    assert len(deps) == 3  # each STL is read once, though visual and collision use it

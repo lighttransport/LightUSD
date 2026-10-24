@@ -1127,6 +1127,8 @@ bool LoadMeshFileUncached(const fs::path& filename, bool smoothnormal, Mesh* mes
 // import. Anything else (textures, failures) is parsed again serially there.
 struct PreloadedMesh {
   Mesh mesh;
+  OBJ obj;               // URDF OBJ/DAE parse (all parts, own materials)
+  std::string resolved;  // URDF: the mesh's resolved identifier
   Json materials = Json::array();  // OBJ/MTL materials, numbered from 0
   std::vector<Reader::Access> accesses;
   std::vector<Reader::Warning> warnings;
@@ -1134,10 +1136,14 @@ struct PreloadedMesh {
 };
 thread_local std::map<std::pair<std::string, bool>, PreloadedMesh>* active_mesh_preload = nullptr;
 
-void PreloadMeshFiles(const std::vector<std::pair<std::string, bool>>& keys) {
+using PreloadKey = std::pair<std::string, bool>;
+using PreloadJob = std::function<bool(PreloadedMesh*, std::string*)>;
+
+void PreloadJobs(const std::vector<std::pair<PreloadKey, PreloadJob>>& jobs) {
 #if (defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)) || defined(__wasi__)
-  (void)keys;
+  (void)jobs;
 #else
+  const auto& keys = jobs;
   Reader& parent = *active_reader;
   if (!active_mesh_preload || parent.options.open || parent.options.read ||
       !parent.failure.empty() || parent.options.threads == 1 || keys.size() < 2)
@@ -1168,7 +1174,7 @@ void PreloadMeshFiles(const std::vector<std::pair<std::string, bool>>& keys) {
       active_materials = &materials;
       std::string err;
       PreloadedMesh& out = results[i];
-      if (!LoadMeshFileUncached(fs::path(keys[i].first), keys[i].second, &out.mesh, &err) ||
+      if (!jobs[i].second(&out, &err) ||
           !child.failure.empty() || !child.textures.empty() || !child.texture_requests.empty() || !child.meshes.empty() ||
           child.preserved.size() || committed.fetch_add(child.bytes) + child.bytes > remaining) {
         out = PreloadedMesh();
@@ -1194,18 +1200,36 @@ void PreloadMeshFiles(const std::vector<std::pair<std::string, bool>>& keys) {
   }
   for (auto& thread : pool) thread.join();
   for (size_t i = 0; i < keys.size(); ++i)
-    if (kept[i]) active_mesh_preload->emplace(keys[i], std::move(results[i]));
+    if (kept[i]) active_mesh_preload->emplace(keys[i].first, std::move(results[i]));
 #endif
 }
 
-// Replay a preloaded mesh's reads and charges; false leaves it to a serial
-// load (for example when the budget has since been used up).
-bool TakePreloadedMesh(const std::pair<std::string, bool>& key, Mesh* mesh, std::string* err) {
+void PreloadMeshFiles(const std::vector<PreloadKey>& keys) {
+  std::vector<std::pair<PreloadKey, PreloadJob>> jobs;
+  for (const auto& key : keys)
+    jobs.emplace_back(key, [key](PreloadedMesh* out, std::string* err) {
+      return LoadMeshFileUncached(fs::path(key.first), key.second, &out->mesh, err);
+    });
+  PreloadJobs(jobs);
+}
+
+// Replay a preloaded load's reads, warnings, charges and materials into the
+// import; false leaves it to a serial load (for example when the budget has
+// since been used up).
+// `keep` leaves the entry for later uses that a serial import would also
+// read and parse again (URDF meshes are not cached).
+bool TakePreloaded(const PreloadKey& key, PreloadedMesh* out, std::string* err,
+                   bool keep = false) {
   if (!active_mesh_preload) return false;
   auto found = active_mesh_preload->find(key);
   if (found == active_mesh_preload->end()) return false;
-  PreloadedMesh preloaded = std::move(found->second);
-  active_mesh_preload->erase(found);
+  PreloadedMesh preloaded;
+  if (keep) {
+    preloaded = found->second;
+  } else {
+    preloaded = std::move(found->second);
+    active_mesh_preload->erase(found);
+  }
   Reader& reader = *active_reader;
   // A serial parse fails once its transient peak exceeds the budget left.
   if (!reader.failure.empty() ||
@@ -1246,8 +1270,16 @@ bool TakePreloadedMesh(const std::pair<std::string, bool>& key, Mesh* mesh, std:
     mat["name"] = "obj_" + std::to_string(offset + int32_t(k)) + "_" + name.substr(prefix.size());
     active_materials->push_back(std::move(mat));
   }
-  for (int32_t& index : preloaded.mesh.materials)
-    if (index >= 0) index += offset;
+  if (!preloaded.materials.empty())
+    for (int32_t& index : preloaded.mesh.materials)
+      if (index >= 0) index += offset;
+  *out = std::move(preloaded);
+  return true;
+}
+
+bool TakePreloadedMesh(const PreloadKey& key, Mesh* mesh, std::string* err) {
+  PreloadedMesh preloaded;
+  if (!TakePreloaded(key, &preloaded, err)) return false;
   *mesh = std::move(preloaded.mesh);
   return true;
 }
@@ -5783,6 +5815,39 @@ std::vector<double> URDFPose(const pugi::xml_node& origin) {
   return MatrixFromPosQuat(xyz, q);
 }
 
+// URDF OBJ/DAE meshes keep every part and their own materials.
+bool LoadURDFObj(const std::string& file, const std::string& source, OBJ* obj,
+                 std::string* resolved, std::string* err) {
+  std::vector<uint8_t> data;
+  if (!active_reader->Read(file, source, &data, resolved, err)) return false;
+  const std::string_view text(reinterpret_cast<const char*>(data.data()), data.size());
+  return ToLower(fs::path(file).extension().string()) == ".dae"
+             ? ReadDAE(text, *resolved, *active_reader, obj, err)
+             : ReadOBJ(text, *resolved, *active_reader, true, obj, err);
+}
+
+PreloadKey URDFObjKey(const std::string& file, const std::string& source) {
+  return {"urdf-obj\n" + source + "\n" + file, true};
+}
+
+// Resolve a URDF mesh without reading it; the mesh loader reads it once. A
+// read-only resolver hook cannot resolve separately, and a failed
+// resolution reads to report the failure as before.
+bool ResolveURDFMesh(const std::string& file, const std::string& source, std::string* resolved,
+                     std::string* err) {
+  Reader& reader = *active_reader;
+  if (!reader.options.read || reader.options.open) {
+    AssetSource asset;
+    std::string why;
+    if (reader.Open(file, source, &asset, &why)) {
+      *resolved = asset.identifier;
+      return true;
+    }
+  }
+  std::vector<uint8_t> data;
+  return reader.Read(file, source, &data, resolved, err);
+}
+
 bool URDFGeometry(const pugi::xml_node& node, const std::string& source,
                   Json* geometries, std::string* err) {
   const auto geometry = node.child("geometry");
@@ -5793,19 +5858,21 @@ bool URDFGeometry(const pugi::xml_node& node, const std::string& source,
                          !active_reader->options.tessellate_collision_shapes;
   if (auto mesh = geometry.child("mesh")) {
     std::string file = Attr(mesh, "filename");
-    std::vector<uint8_t> data;
     std::string resolved;
-    if (!active_reader->Read(file, source, &data, &resolved, err)) return false;
     auto scale = ParseDouble3(Attr(mesh, "scale"), {{1, 1, 1}});
     const auto matrix = MultiplyMatrix(pose, ScaleMatrix(scale));
     const std::string ext = ToLower(fs::path(file).extension().string());
     if (ext == ".obj" || ext == ".dae") {
       // Embedded OBJ/DAE materials take priority over URDF <material>.
       OBJ obj;
-      std::string text(reinterpret_cast<const char*>(data.data()), data.size());
-      if (!(ext == ".dae" ? ReadDAE(text, resolved, *active_reader, &obj, err)
-                          : ReadOBJ(text, resolved, *active_reader, true, &obj, err)))
+      PreloadedMesh preloaded;
+      if (TakePreloaded(URDFObjKey(file, source), &preloaded, err, true)) {
+        obj = std::move(preloaded.obj);
+        resolved = std::move(preloaded.resolved);
+      } else if (!active_reader->failure.empty() ||
+                 !LoadURDFObj(file, source, &obj, &resolved, err)) {
         return false;
+      }
       int32_t offset = static_cast<int32_t>(active_materials->size());
       for (auto& m : obj.materials) {
         m["name"] = "obj_" + std::to_string(active_materials->size()) + "_" +
@@ -5822,6 +5889,7 @@ bool URDFGeometry(const pugi::xml_node& node, const std::string& source,
       }
       return true;
     }
+    if (!ResolveURDFMesh(file, source, &resolved, err)) return false;
     Mesh m;
     if (!LoadMeshFile(fs::path(resolved), false, &m, err)) return false;
     j = MeshRefJSON(m, *active_reader);
@@ -6076,6 +6144,42 @@ bool BuildURDF(const pugi::xml_node& root, const std::string& source,
     explicit MeshCacheScope(std::map<std::pair<std::string, bool>, Mesh>* c) { active_mesh_cache = c; }
     ~MeshCacheScope() { active_mesh_cache = previous; }
   } mesh_cache_scope(&mesh_cache);
+  std::map<PreloadKey, PreloadedMesh> mesh_preload;
+  struct MeshPreloadScope {
+    std::map<PreloadKey, PreloadedMesh>* previous = active_mesh_preload;
+    explicit MeshPreloadScope(std::map<PreloadKey, PreloadedMesh>* p) { active_mesh_preload = p; }
+    ~MeshPreloadScope() { active_mesh_preload = previous; }
+  } mesh_preload_scope(&mesh_preload);
+  if (!opts.open && !opts.read) {
+    // Parse every distinct mesh ahead on worker threads (see PreloadJobs).
+    std::vector<std::pair<PreloadKey, PreloadJob>> jobs;
+    std::set<PreloadKey> seen;
+    for (auto link : root.children("link"))
+      for (const char* kind : {"visual", "collision"})
+        for (auto geom : link.children(kind)) {
+          const auto mesh = geom.child("geometry").child("mesh");
+          if (!mesh) continue;
+          const std::string file = Attr(mesh, "filename");
+          const std::string ext = ToLower(fs::path(file).extension().string());
+          if (ext == ".obj" || ext == ".dae") {
+            const PreloadKey key = URDFObjKey(file, source);
+            if (seen.insert(key).second)
+              jobs.emplace_back(key, [file, source](PreloadedMesh* out, std::string* why) {
+                return LoadURDFObj(file, source, &out->obj, &out->resolved, why);
+              });
+          } else if (ext == ".stl") {
+            AssetSource asset;
+            std::string why;
+            if (!active_reader->Open(file, source, &asset, &why)) continue;
+            const PreloadKey key{asset.identifier, false};
+            if (seen.insert(key).second)
+              jobs.emplace_back(key, [key](PreloadedMesh* out, std::string* e) {
+                return LoadMeshFileUncached(fs::path(key.first), false, &out->mesh, e);
+              });
+          }
+        }
+    PreloadJobs(jobs);
+  }
   Json links = Json::array(), joints = Json::array(), materials = Json::array(),
        actuators = Json::array();
   std::map<std::string, pugi::xml_node> nodes;

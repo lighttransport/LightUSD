@@ -272,9 +272,10 @@ avoid implementing a second conversion or validation engine in Python.
   Newton representation; converted as full-dof and reported as approximated)
   and cube-projected material textures (UsdPreviewSurface has no cube
   projection; reported).
-- Still pending: parallel URDF mesh parsing (MJCF mesh
-  assets parse on worker threads, `threads=`, replayed so output, warnings
-  and reports equal a serial import; Menagerie 53.0 -> 32.5 s). Import
+- MJCF and URDF mesh assets parse on worker threads (`threads=`), replayed
+  so output, warnings and reports equal a serial import (Menagerie 53.0 ->
+  32.5 s; 63-mesh URDF 0.60 -> 0.15 s).
+- Nothing from the original list is pending; see "Not planned" above. Import
   progress/cancellation callbacks (C `progress`, Python `progress=`) and
   memory-mapped OBJ files and URDF/MJCF mesh assets (`Reader::Map`) are in;
   binary STL vertex welding uses an open-addressed table (500k-triangle STL

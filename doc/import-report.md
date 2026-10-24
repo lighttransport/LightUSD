@@ -118,8 +118,8 @@ re-raised from the import call. The callback runs on the importing thread
 
 ## Parallel mesh parsing
 
-MJCF imports parse their mesh assets (OBJ, STL, DAE) on worker threads before
-the model is built: `threads=0` (the default; C `settings_json` `"threads"`)
+MJCF and URDF imports parse their mesh assets (OBJ, STL, DAE) on worker
+threads before the model is built: `threads=0` (the default; C `settings_json` `"threads"`)
 uses up to 8, `1` parses serially, larger values set the count. Workers use
 private readers. A parsed mesh is kept only when its side effects were
 dependency reads, budget charges, warnings and OBJ/MTL materials, and those
@@ -131,7 +131,12 @@ at that point. Workers run only without resolver callbacks, and they never
 call `progress`. Across Menagerie (220 MJCF files, unlimited and 24 MiB
 budgets) serial and parallel imports agree exactly; fruitfly takes 0.29 s
 instead of 0.86 s, panda 0.09 s instead of 0.34 s, stretch 0.30 s instead
-of 0.70 s.
+of 0.70 s. URDF OBJ/DAE meshes, which are parsed per use, replay once per
+use. A 63-mesh URDF (OBJ, STL and DAE, each used as visual and collision)
+imports in 0.15 s instead of 0.60 s, identical at every budget around its
+peak, as is the urdf-usd-converter test corpus. URDF STL meshes are now read
+once, so each appears once in `dependencies` and is charged once (they were
+previously read for resolution and again by the mesh loader).
 
 ## Unsupported-feature policy
 
