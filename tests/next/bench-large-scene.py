@@ -6,6 +6,8 @@ compose_threads, parse_threads, write_threads, args}. mode defaults to flatten;
 parse, compose and rewrite are also supported. Paths are supplied locally,
 never embedded in the repository. Reports retain commands and binary hashes.
 Use --legacy-baseline for the CLI preceding explicit output-format support.
+Use --max-load N to refuse to start when the 1-minute load average is above N
+(concurrent builds/benchmarks invalidate paired timings).
 """
 import argparse
 import hashlib
@@ -34,12 +36,18 @@ def available_memory():
     raise RuntimeError("MemAvailable is unavailable")
 
 
-def check_headroom(min_available):
+def check_headroom(min_available, max_load=0.0):
     if available_memory() < min_available:
         raise RuntimeError("host available memory fell below the benchmark reserve")
     fs = os.statvfs("/dev/shm")
     if (fs.f_blocks - fs.f_bfree) * fs.f_frsize > 48_000_000_000:
         raise RuntimeError("/dev/shm usage exceeds the 48 GB cap")
+    if max_load > 0:
+        load1 = float(Path("/proc/loadavg").read_text().split()[0])
+        if load1 > max_load:
+            raise RuntimeError(
+                f"host load {load1:.2f} exceeds --max-load {max_load:.2f}; "
+                "wait for concurrent builds/benchmarks to finish")
 
 
 def sample_child_memory(pid):
@@ -117,7 +125,7 @@ def parse_log(log):
 
 
 def run_one(binary, case, legacy, args, label, sequence):
-    check_headroom(args.min_available_gib * 1024**3)
+    check_headroom(args.min_available_gib * 1024**3, args.max_load)
     case_name = case["name"]
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", case_name):
         raise ValueError("case name must be a simple filename")
@@ -134,7 +142,7 @@ def run_one(binary, case, legacy, args, label, sequence):
         try:
             next_sample = started
             while process.poll() is None:
-                check_headroom(args.min_available_gib * 1024**3)
+                check_headroom(args.min_available_gib * 1024**3, args.max_load)
                 now = time.monotonic()
                 if now >= next_sample:
                     sample = sample_child_memory(process.pid)
@@ -192,6 +200,9 @@ def main():
     parser.add_argument("--max-process-swap-mib", type=float, default=0,
                         help="stop when sampled child swap exceeds this limit "
                              "(0 disables the limit)")
+    parser.add_argument("--max-load", type=float, default=0,
+                        help="refuse to start when the 1-minute load average "
+                             "exceeds this value (0 disables)")
     parser.add_argument("--max-rss-growth", type=float, default=0.05,
                         help="maximum allowed growth of the largest measured peak RSS")
     args = parser.parse_args()
@@ -199,6 +210,8 @@ def main():
         parser.error("repeat must be positive and warmup nonnegative")
     if args.max_process_swap_mib < 0:
         parser.error("max-process-swap-mib must be nonnegative")
+    if args.max_load < 0:
+        parser.error("max-load must be nonnegative")
     args.output.mkdir(parents=True, exist_ok=False)
     (args.output / "null.usdc").symlink_to("/dev/null")
     cases = json.loads(args.manifest.read_text())
