@@ -1066,6 +1066,144 @@ bool LoadBinarySTL(const fs::path& filename, bool smoothnormal, Mesh* mesh,
   return true;
 }
 
+// One polygon as MuJoCo's OBJ decoder sees it: tinyobjloader 2945a96 (the
+// version MuJoCo 3.16 pins), float as its real_t. Quads split along the
+// shorter diagonal; larger polygons are ear-clipped in the plane picked from
+// the first non-degenerate corner. A fan differs for concave polygons, and legacy
+// inertia sums |volume| per triangle, so the masses would too. Like
+// tinyobjloader, a polygon the clipper cannot finish drops its remainder.
+// Appends triangles as corner numbers 0..n-1 of the polygon. `work` bounds
+// the clipper's O(n^3) worst case: when it runs out the polygon is a fan and
+// false is returned through *exhausted.
+bool ClipPolygon(const std::vector<float>& pos, const int32_t* poly, size_t n,
+                 std::vector<int32_t>* tri, size_t* work = nullptr, bool* exhausted = nullptr) {
+  for (size_t k = 0; k < n; ++k)
+    if (poly[k] < 0 || size_t(poly[k]) * 3 + 2 >= pos.size()) return false;
+  auto at = [&](int32_t vi, size_t axis) { return pos[size_t(vi) * 3 + axis]; };
+  if (n == 4) {
+    float d02 = 0, d13 = 0;
+    for (size_t a = 0; a < 3; ++a) {
+      const float e02 = at(poly[2], a) - at(poly[0], a), e13 = at(poly[3], a) - at(poly[1], a);
+      d02 += e02 * e02;
+      d13 += e13 * e13;
+    }
+    if (d02 < d13) tri->insert(tri->end(), {0, 1, 2, 0, 2, 3});
+    else tri->insert(tri->end(), {0, 1, 3, 1, 2, 3});
+    return true;
+  }
+  size_t axes[2] = {1, 2};
+  for (size_t k = 0; k < n; ++k) {
+    const int32_t i0 = poly[k % n], i1 = poly[(k + 1) % n], i2 = poly[(k + 2) % n];
+    const float e0x = at(i1, 0) - at(i0, 0), e0y = at(i1, 1) - at(i0, 1), e0z = at(i1, 2) - at(i0, 2);
+    const float e1x = at(i2, 0) - at(i1, 0), e1y = at(i2, 1) - at(i1, 1), e1z = at(i2, 2) - at(i1, 2);
+    const float cx = std::fabs(e0y * e1z - e0z * e1y), cy = std::fabs(e0z * e1x - e0x * e1z),
+                cz = std::fabs(e0x * e1y - e0y * e1x);
+    const float epsilon = std::numeric_limits<float>::epsilon();
+    if (cx > epsilon || cy > epsilon || cz > epsilon) {
+      if (!(cx > cy && cx > cz)) {
+        axes[0] = 0;
+        if (cz > cx && cz > cy) axes[1] = 1;
+      }
+      break;
+    }
+  }
+  std::vector<int32_t> rest(n);  // remaining corners
+  for (size_t k = 0; k < n; ++k) rest[k] = int32_t(k);
+  size_t guess = 0, iterations = n, previous = n;
+  const size_t first = tri->size();
+  while (rest.size() > 3 && iterations > 0) {
+    const size_t m = rest.size();
+    if (work) {
+      if (*work < m) {
+        tri->resize(first);
+        for (size_t k = 1; k + 1 < n; ++k) tri->insert(tri->end(), {0, int32_t(k), int32_t(k + 1)});
+        if (exhausted) *exhausted = true;
+        return true;
+      }
+      *work -= m;
+    }
+    if (guess >= m) guess -= m;
+    if (previous != m) {
+      previous = m;
+      iterations = m;
+    } else {
+      --iterations;
+    }
+    int32_t ind[3];
+    float vx[3], vy[3];
+    for (size_t k = 0; k < 3; ++k) {
+      ind[k] = rest[(guess + k) % m];
+      vx[k] = at(poly[ind[k]], axes[0]);
+      vy[k] = at(poly[ind[k]], axes[1]);
+    }
+    const float cross = (vx[1] - vx[0]) * (vy[2] - vy[1]) - (vy[1] - vy[0]) * (vx[2] - vx[1]);
+    // (tinyobjloader's per-candidate "area" term, not the polygon's.)
+    const float area = (vx[0] * vy[1] - vy[0] * vx[1]) * 0.5f;
+    if (cross * area < 0.0f) {
+      ++guess;
+      continue;
+    }
+    bool overlap = false;
+    for (size_t other = 3; other < m && !overlap; ++other) {
+      const int32_t o = poly[rest[(guess + other) % m]];
+      const float tx = at(o, axes[0]), ty = at(o, axes[1]);
+      bool inside = false;
+      for (size_t i = 0, j = 2; i < 3; j = i++)
+        if (((vy[i] > ty) != (vy[j] > ty)) &&
+            (tx < (vx[j] - vx[i]) * (ty - vy[i]) / (vy[j] - vy[i]) + vx[i]))
+          inside = !inside;
+      overlap = inside;
+    }
+    if (overlap) {
+      ++guess;
+      continue;
+    }
+    tri->insert(tri->end(), ind, ind + 3);
+    rest.erase(rest.begin() + std::ptrdiff_t((guess + 1) % m));
+  }
+  if (rest.size() == 3) tri->insert(tri->end(), rest.begin(), rest.end());
+  return true;
+}
+
+// Polygon faces -> triangles as MuJoCo's OBJ decoder makes them
+// (ClipPolygon), keeping per-corner normals/UVs and per-face materials.
+bool TriangulateLikeMuJoCo(Mesh* mesh) {
+  if (mesh->counts.empty()) return true;
+  const bool corner_normals = mesh->normal_indices.size() == mesh->indices.size();
+  const bool corner_uvs = mesh->uv_indices.size() == mesh->indices.size();
+  const bool face_materials = mesh->materials.size() == mesh->counts.size();
+  std::vector<int32_t> indices, normal_indices, uv_indices, materials, corners;
+  size_t work = size_t(1) << 28;
+  bool exhausted = false;
+  size_t offset = 0;
+  for (size_t face = 0; face < mesh->counts.size(); ++face) {
+    const int32_t count = mesh->counts[face];
+    if (count < 3 || offset + size_t(count) > mesh->indices.size()) return false;
+    corners.clear();
+    if (count == 3) corners = {0, 1, 2};
+    else if (!ClipPolygon(mesh->positions, mesh->indices.data() + offset, size_t(count), &corners,
+                          &work, &exhausted))
+      return false;
+    for (int32_t c : corners) {
+      indices.push_back(mesh->indices[offset + size_t(c)]);
+      if (corner_normals) normal_indices.push_back(mesh->normal_indices[offset + size_t(c)]);
+      if (corner_uvs) uv_indices.push_back(mesh->uv_indices[offset + size_t(c)]);
+    }
+    if (face_materials) materials.insert(materials.end(), corners.size() / 3, mesh->materials[face]);
+    offset += size_t(count);
+  }
+  if (offset != mesh->indices.size()) return false;
+  if (exhausted)
+    active_reader->Warn("OBJ polygons exceed the triangulation work limit; the rest are fans",
+                        "mjcf.obj_polygon_fan");
+  mesh->counts.assign(indices.size() / 3, 3);
+  mesh->indices = std::move(indices);
+  if (corner_normals) mesh->normal_indices = std::move(normal_indices);
+  if (corner_uvs) mesh->uv_indices = std::move(uv_indices);
+  if (face_materials) mesh->materials = std::move(materials);
+  return true;
+}
+
 bool LoadOBJ(const fs::path& filename, Mesh* mesh, std::string* err) {
   MappedAsset asset;
   std::string resolved;
@@ -1075,9 +1213,32 @@ bool LoadOBJ(const fs::path& filename, Mesh* mesh, std::string* err) {
   const std::string_view text = asset.text();
   OBJ obj;
   const bool dae = ToLower(filename.extension().string()) == ".dae";
+  // Non-legacy profiles triangulate OBJ polygons as MuJoCo does, so the
+  // collider and the inferred mass properties match the compiled model.
+  const bool mujoco_faces = !dae && active_reader->options.profile != "legacy";
   if (!(dae ? ReadDAE(text, filename.string(), *active_reader, &obj, err)
-            : ReadOBJ(text, filename.string(), *active_reader, true, &obj, err)))
+            : ReadOBJ(text, filename.string(), *active_reader, !mujoco_faces, &obj, err)))
     return false;
+  if (mujoco_faces) {
+    // Untriangulated reads also return line/point primitives.
+    const size_t before = obj.meshes.size();
+    obj.meshes.erase(std::remove_if(obj.meshes.begin(), obj.meshes.end(),
+                                    [](const Mesh& m) { return m.type != "Mesh"; }),
+                     obj.meshes.end());
+    if (obj.meshes.size() != before)
+      active_reader->Warn(
+          "OBJ line, point or free-form primitives are not converted to "
+          "polygon meshes");
+    if (obj.meshes.empty()) {
+      if (err) *err = "OBJ contains no polygon faces";
+      return false;
+    }
+    for (auto& part : obj.meshes)
+      if (!TriangulateLikeMuJoCo(&part)) {
+        if (err) *err = "Invalid OBJ polygon in " + filename.string();
+        return false;
+      }
+  }
   const int32_t material_base = static_cast<int32_t>(active_materials->size());
   for (auto& mat : obj.materials) {
     mat["name"] = "obj_" + std::to_string(active_materials->size()) + "_" +
@@ -1729,7 +1890,7 @@ bool MeshMassProperties(const std::vector<std::array<double, 3>>& v,
                         const std::vector<int32_t>& tri, const std::string& mode,
                         double* volume, std::array<double, 3>* com, double inert[3][3]);
 
-// Triangle list of a loaded mesh (fan-triangulating polygon counts).
+// Triangle list of a loaded mesh (polygons triangulated as ClipPolygon).
 bool MeshTriangles(const Mesh& mesh, std::vector<int32_t>* tri) {
   tri->clear();
   if (mesh.counts.empty()) {
@@ -1740,11 +1901,13 @@ bool MeshTriangles(const Mesh& mesh, std::vector<int32_t>* tri) {
   size_t offset = 0;
   for (int32_t count : mesh.counts) {
     if (count < 3 || offset + size_t(count) > mesh.indices.size()) return false;
-    for (int32_t k = 1; k + 1 < count; ++k) {
-      tri->push_back(mesh.indices[offset]);
-      tri->push_back(mesh.indices[offset + k]);
-      tri->push_back(mesh.indices[offset + k + 1]);
+    std::vector<int32_t> corners;
+    if (count == 3) {
+      corners = {0, 1, 2};
+    } else if (!ClipPolygon(mesh.positions, mesh.indices.data() + offset, size_t(count), &corners)) {
+      return false;
     }
+    for (int32_t c : corners) tri->push_back(mesh.indices[offset + size_t(c)]);
     offset += size_t(count);
   }
   return offset == mesh.indices.size();
@@ -2099,6 +2262,12 @@ Json InertialToJson(const pugi::xml_node& body_node, const Context& ictx) {
       Attr(inertial_node, "euler"), Attr(inertial_node, "xyaxes"),
       Attr(inertial_node, "zaxis"), ictx);
   inertial["principalAxes"] = Json::array({iq[0], iq[1], iq[2], iq[3]});
+  // An explicit zero tensor with a positive mass (MuJoCo accepts it) stays
+  // zero instead of being re-derived from colliders.
+  bool zero = HasAttr(inertial_node, "fullinertia") || HasAttr(inertial_node, "diaginertia");
+  for (double v : full.size() >= 3 ? full : ParseDoubles(Attr(inertial_node, "diaginertia")))
+    zero = zero && v == 0.0;
+  if (zero && inertial["mass"].get<double>() > 0.0) inertial["zeroInertia"] = true;
   return inertial;
 }
 

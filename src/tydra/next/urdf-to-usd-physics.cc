@@ -99,7 +99,9 @@ tn::Value RotationMatrixToQuatf(double r[3][3]) {
 // moments + principal-axes rotation; NewtonMassAPI additionally carries the
 // full [Ixx, Iyy, Izz, Ixy, Ixz, Iyz] tensor that Newton and MuJoCo's USD
 // decoder prefer (mujoco-usd-converter / urdf-usd-converter parity). An
-// all-zero tensor is left unauthored so consumers infer it from colliders.
+// all-zero tensor is left unauthored so consumers infer it from colliders,
+// except an explicit MJCF zero (`zeroInertia`), kept as a zero
+// newton:inertia (UsdPhysics reads zero diagonalInertia as unspecified).
 void AuthorInertia(tn::PrimSpec *prim, const Json &inertial) {
   double tensor[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
   const std::vector<double> full = JsonDoubles(inertial, "fullInertia");
@@ -136,7 +138,14 @@ void AuthorInertia(tn::PrimSpec *prim, const Json &inertial) {
       if (!std::isfinite(tensor[i][j])) return;
       magnitude = std::max(magnitude, std::fabs(tensor[i][j]));
     }
-  if (magnitude == 0.0) return;
+  if (magnitude == 0.0) {
+    bool zero = false;
+    if (ActiveProfile().newton && ReadBool(inertial, "zeroInertia", &zero) && zero) {
+      AddAPI(prim, "NewtonMassAPI");
+      SetDoubles(prim, "newton:inertia", {0, 0, 0, 0, 0, 0});
+    }
+    return;
+  }
   if (full.size() >= 6) {
     double eval[3];
     double evec[3][3];

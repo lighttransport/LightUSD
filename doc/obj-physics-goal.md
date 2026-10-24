@@ -304,9 +304,23 @@ f121272e (2026-10-24; Menagerie Newton compare still 65/69). Fixed in the
   layout), URDF `<capsule>` and native primitive visuals, no articulation root
   on jointless URDFs. Legacy byte-identical; Newton compare 65/69; OpenUSD
   validators 0 issues.
+- Third round: MJCF OBJ polygons follow MuJoCo's triangulation (ms_human's
+  ribs now match MuJoCo's masses exactly), explicit zero MJCF inertia is
+  written as zero `newton:inertia`, and the Newton compare arbitrates
+  `limited="false"` joints with MuJoCo (Newton's add_mjcf keeps the range).
+  Newton compare 66/69; the three left are not fixable in USD output:
+  stretch's gripper (0.3%: MuJoCo 3.16's wheel drops most of one degenerate
+  215-gon that tinyobjloader 2945a96 itself triangulates under every
+  compiler/flag tried), rby1 `NECK_0` (explicit `<inertial mass="0">` with
+  colliders: UsdPhysics reads mass 0 as unspecified, so add_usd derives it
+  from colliders) and lite6 `link_base` (explicit zero inertia, authored as
+  zero `newton:inertia`, but add_usd replaces zero inertia of a body with
+  mass by a sphere default while add_mjcf keeps it). Also fixed: the
+  supported-schema ledger (usdProc/usdUI in scope, 9bd1cc133) and the
+  roundtrip fuzzer build.
 - Kept as is (deliberate): the URDF root stays welded to the world (as
-  urdf-usd-converter and `add_urdf`'s default; dropping it makes `add_usd`
-  add a free joint); URDF effort reaches Newton only through the MuJoCo
+  urdf-usd-converter and `add_urdf`'s default; `add_usd(floating=True)`
+  still floats it, verified); URDF effort reaches Newton only through the MuJoCo
   resolver (`mjc:actuatorfrcrange`; Newton schemas have no joint effort
   attribute and a zero-gain drive would change Newton's actuator mode);
   `newton:contactGap` is unauthored without an MJCF `gap` (matches

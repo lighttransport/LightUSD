@@ -341,3 +341,42 @@ def test_urdf_unknown_elements_and_capsule():
     capsule = next(p for p in stage if p.type_name == 'Capsule')
     assert (capsule['radius'], capsule['height']) == (pytest.approx(.1), pytest.approx(.4))
     assert [p for p in stage if p.type_name == 'Cube' and 'PhysicsCollisionAPI' not in _apis(p)]
+
+
+def test_mjcf_obj_polygons_follow_mujoco_triangulation(tmp_path):
+    # A quad splits along its shorter diagonal (MuJoCo's tinyobjloader), and
+    # a concave polygon is ear-clipped, not fanned.
+    _write(tmp_path / 'quad.obj', 'v 0 0 0\nv 3 0 0\nv 3 1 0\nv 0 1 0\nv 0 0 1\nf 1 2 3 4\nf 1 2 5\n')
+    concave = 'v 0 0 0\nv 2 0 0\nv 2 2 0\nv 1 0.5 0\nv 0 2 0\n'
+    _write(tmp_path / 'concave.obj', concave + 'f 4 5 1 2 3\n')
+    xml = _mjcf('<body name="a"><freejoint/><geom type="mesh" mesh="quad"/><geom type="mesh" mesh="concave"/></body>',
+                '<asset><mesh name="quad" file="quad.obj"/><mesh name="concave" file="concave.obj"/></asset>')
+    path = tmp_path / 'm.xml'
+    path.write_bytes(xml)
+    stage = lightusd.import_mjcf(path)
+    meshes = {p.name: p for p in stage if p.type_name == 'Mesh'}
+    def triangles(prim):
+        pts = [tuple(round(c, 6) for c in p) for p in prim['points']]
+        idx = list(prim['faceVertexIndices'])
+        return {tuple(sorted(pts[i] for i in idx[k:k + 3])) for k in range(0, len(idx), 3)}
+    quad = triangles(meshes['quad'])
+    # Diagonal 0-2 has length sqrt(10) and 1-3 sqrt(10): ties split as [0,1,3],[1,2,3].
+    assert ((0, 0, 0), (0, 1, 0), (3, 0, 0)) in quad
+    concave_tris = triangles(meshes['concave'])
+    assert len(concave_tris) == 3
+    # The fan from the reflex vertex would cover the notch; clipping does not.
+    import itertools
+    area = 0.0
+    for tri in concave_tris:
+        (ax, ay, _), (bx, by, _), (cx, cy, _) = tri
+        area += abs((bx - ax) * (cy - ay) - (cx - ax) * (by - ay)) / 2
+    assert area == pytest.approx(4 - 0.5 * 2 * 1.5)
+
+
+def test_explicit_zero_inertia_is_kept():
+    xml = _mjcf('<body name="a"><freejoint/><inertial pos="0 0 0" mass="2" diaginertia="0 0 0"/>'
+                '<geom size=".1" mass="0"/></body>')
+    a = lightusd.load_bytes(xml, format='mjcf').prim_at('/World/Links/a')
+    assert list(a['newton:inertia']) == [0] * 6
+    assert a['physics:mass'] == 2
+

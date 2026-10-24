@@ -67,6 +67,8 @@ in one of three profiles, selected with `profile=` (Python), `"profile"` in the 
 | MJCF ellipsoids (non-uniform) | mesh with the radii baked in (convex hull as a collider): a scaled `Sphere` is read as a unit sphere by Newton and rejected by OpenUSD | same | scaled `Sphere` (reported) |
 | URDF ghost / dummy-inertia links | urdf-usd-converter rules: inertia-, visual- and collision-less links on fixed joints (or the root) lose `RigidBodyAPI`, their fixed joint is dropped and child joints re-anchor on the nearest rigid ancestor (or the world); an inertial-only childless child on a fixed joint under a geometry-only parent is merged into it | same | as authored |
 | MJCF mesh colliders | `newton:maxHullVertices` only for `<mesh maxhullvert>` (unlimited otherwise); `<mesh inertia="shell">` and `shellinertia` geoms → `NewtonMassAPI` `newton:massModel = "shell"`, `legacy`/`exact` → `mjc:inertia`, `convex` implied (mujoco-usd-converter 0.8.0) | approximation only | `newton:maxHullVertices = 64`, `mjc:inertia = "legacy"` |
+| MJCF OBJ meshes | polygons triangulated as MuJoCo 3.16's OBJ decoder (tinyobjloader 2945a96: quads on the shorter diagonal, larger polygons ear-clipped in float; a work limit falls back to fans, `mjcf.obj_polygon_fan`), so colliders and inferred inertia follow the compiled model | same | tinyobjloader-c triangulation |
+| Explicit zero inertia | MJCF `<inertial>` with a positive mass and a zero tensor → zero `newton:inertia` (UsdPhysics reads a zero `diagonalInertia` as unspecified) | unauthored | unauthored |
 | Solver iterations | MJCF `<option iterations>` → `newton:maxSolverIterations` | omitted | `-1` |
 | Articulation self-collision | `newton:selfCollisionEnabled` only when the source sets it (an authored value overrides `add_usd(enable_self_collisions=...)`) | omitted | always `true` |
 | URDF `<transmission>` | `urdf:transmission:name/type/actuator/hardwareInterface/mechanicalReduction` on the joint; no actuator (as urdf-usd-converter; Newton's `add_usd` rejects actuators on joints that are not single-DOF) | same | zero-gain `NewtonActuator` PD |
@@ -692,6 +694,13 @@ under `/World/Links`; joints, sites, tendons, equalities and filters target the
 nested paths. World transforms equal the default `flat` layout; OpenUSD's
 validators and UsdPhysics parser see the same bodies and shapes, and Newton's
 comparison passes on sampled Menagerie models in both layouts.
+
+### URDF root joint
+
+URDF root links are welded to the world (`__world_to_<link>` fixed joint), as
+urdf-usd-converter does and as Newton's `add_urdf` defaults. The weld has no
+`physics:body0`, so Newton's `add_usd(floating=True)` (or `base_joint=`) still
+replaces it with a free (or the chosen) base joint.
 
 ### Atomic component layout
 

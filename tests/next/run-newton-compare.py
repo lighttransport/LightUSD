@@ -142,6 +142,12 @@ def _mujoco_masses(path):
         masses["__inertia__" + _usd_name(name)] = sorted(float(x) for x in model.body_inertia[b])
         # body_ipos is the COM in the body frame, as in Newton's body_com.
         masses["__com__" + _usd_name(name)] = [float(x) for x in model.body_ipos[b]]
+    # Hinge/slide joints MuJoCo compiles as unlimited (limited="false" wins
+    # over a range; Newton's add_mjcf keeps the range).
+    masses["__unlimited__"] = {
+        _usd_name(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j) or "")
+        for j in range(model.njnt)
+        if model.jnt_type[j] in (2, 3) and not model.jnt_limited[j]}
     # MuJoCo collides a geom iff contype|conaffinity is nonzero.
     masses["__colliding_geoms__"] = int(sum(1 for g in range(model.ngeom)
                                             if model.geom_contype[g] or model.geom_conaffinity[g]))
@@ -238,6 +244,7 @@ def compare(ref, cand, np, oracle=None, notes=None):
             issues.append(f"joint[{name}] type/dofs {jtype}/{ndof} vs {other[0]}/{other[2]}")
             continue
         diffs, permuted = [], True
+        unlimited_in_mujoco = name in (oracle or {}).get("__unlimited__", ())
         for key in per_dof:
             if ref[key] is None or cand[key] is None:
                 continue
@@ -245,6 +252,11 @@ def compare(ref, cand, np, oracle=None, notes=None):
             b = cand[key][other[1]:other[1] + ndof]
             finite = np.isfinite(a) & np.isfinite(b)
             if (np.isfinite(a) != np.isfinite(b)).any() or not _close(a[finite], b[finite], atol=1e-5):
+                if (key in ("lower", "upper") and unlimited_in_mujoco and
+                        bool((~np.isfinite(b) | (np.abs(b) >= 1e9)).all())):
+                    if notes is not None:
+                        notes.append(f"{key}[{name}] unlimited in mujoco, not newton-mjcf")
+                    continue
                 diffs.append(f"{key}[{name}]: {a.tolist()} vs {b.tolist()}")
                 sa, sb = np.sort(a), np.sort(b)
                 permuted &= bool((np.isfinite(sa) == np.isfinite(sb)).all() and
