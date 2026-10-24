@@ -318,13 +318,21 @@ f121272e (2026-10-24; Menagerie Newton compare still 65/69). Fixed in the
   mass by a sphere default while add_mjcf keeps it). Also fixed: the
   supported-schema ledger (usdProc/usdUI in scope, 9bd1cc133) and the
   roundtrip fuzzer build.
-- Kept as is (deliberate): the URDF root stays welded to the world (as
-  urdf-usd-converter and `add_urdf`'s default; `add_usd(floating=True)`
-  still floats it, verified); URDF effort reaches Newton only through the MuJoCo
-  resolver (`mjc:actuatorfrcrange`; Newton schemas have no joint effort
-  attribute and a zero-gain drive would change Newton's actuator mode);
-  `newton:contactGap` is unauthored without an MJCF `gap` (matches
-  `add_mjcf`).
+- MJCF colliders now always carry `newton:contactMargin`/`contactGap`
+  (MuJoCo's 0 when unauthored), as mujoco-usd-converter writes them; Newton
+  would otherwise apply `rigid_gap = 0.1` m (its own `add_mjcf` does).
+- Resolved by verification, no change: the URDF root weld (as
+  urdf-usd-converter and `add_urdf`; `add_usd(floating=True)` still floats it
+  because the weld has no `physics:body0`); URDF effort limits (Newton
+  schemas 0.6.0 have no joint effort attribute; Newton reads effort only from
+  `mjc:actuatorfrcrange` via its MuJoCo resolver, which we author, or a
+  drive's force limit, and a zero-gain drive would switch Newton to effort
+  control). The stretch residual was traced to the MuJoCo 3.16 wheel's own
+  decoder: called directly it returns 23,575 faces for
+  `link_SG3_gripper_body.obj` with bit-identical vertices, while
+  tinyobjloader 2945a96 (and every release, gcc/clang, float/double,
+  fast-math, FMA, earcut) yields 23,776; our triangulation matches the
+  source.
 
 Reference specifications: [UsdPhysics](https://openusd.org/dev/api/usd_physics_page_front.html),
 [MJCF](https://mujoco.readthedocs.io/en/stable/XMLreference.html), and

@@ -380,3 +380,11 @@ def test_explicit_zero_inertia_is_kept():
     assert list(a['newton:inertia']) == [0] * 6
     assert a['physics:mass'] == 2
 
+
+
+def test_mjcf_colliders_carry_mujoco_default_margin_and_gap():
+    xml = _mjcf('<body name="a"><freejoint/><geom name="g" size=".1"/><geom name="h" size=".1" gap=".01"/></body>')
+    stage = lightusd.load_bytes(xml, format='mjcf')
+    g, h = stage.prim_at('/World/Links/a/g'), stage.prim_at('/World/Links/a/h')
+    assert (g['newton:contactMargin'], g['newton:contactGap']) == (0, 0)
+    assert h['newton:contactGap'] == pytest.approx(.01)

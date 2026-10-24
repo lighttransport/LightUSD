@@ -192,6 +192,15 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
       Set(prim, "newton:contactGap", tn::Value(static_cast<float>(dvalue)),
           "float");
     }
+    // An unauthored MJCF margin/gap is MuJoCo's 0, which mujoco-usd-converter
+    // writes too; left unauthored, Newton would apply its builder default
+    // (rigid_gap = 0.1 m).
+    if (!profile.legacy) {
+      if (!prim->property("newton:contactMargin"))
+        Set(prim, "newton:contactMargin", tn::Value(0.0f), "float");
+      if (!prim->property("newton:contactGap"))
+        Set(prim, "newton:contactGap", tn::Value(0.0f), "float");
+    }
     std::vector<double> values = JsonDoublesFrom(src, "mjc", "geomFriction");
     if (values.empty()) values = JsonDoublesFrom(src, "mjc", "friction");
     if (profile.legacy) {
