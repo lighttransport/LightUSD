@@ -675,6 +675,7 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_schemas_ext.cc
     )
     target_link_libraries(test_schemas_ext PRIVATE lightusd_next)
+
     target_compile_definitions(test_schemas_ext PRIVATE
         LIGHTUSD_TEST_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../..")
 
@@ -1449,6 +1450,19 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     if(LIGHTUSD_WITH_TYDRA)
         add_test(NAME next_test_tydra COMMAND test_tydra_next
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+        # Convex hull for face-less MJCF mesh assets; lives in asset-import.
+        if(TARGET lightusd_asset_import)
+            add_executable(test_convex_hull
+                ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_convex_hull.cc
+            )
+            target_link_libraries(test_convex_hull PRIVATE lightusd_asset_import
+                                                  lightusd_next)
+            target_include_directories(test_convex_hull PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/..)
+            target_compile_features(test_convex_hull PRIVATE cxx_std_17)
+            add_test(NAME next_test_convex_hull COMMAND test_convex_hull
+                WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+        endif()
         add_test(NAME next_test_urdf_to_usd COMMAND test_urdf_to_usd_next
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     endif()

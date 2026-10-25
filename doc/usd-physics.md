@@ -62,6 +62,7 @@ in one of three profiles, selected with `profile=` (Python), `"profile"` in the 
 | URDF effort | `urdf:limit:effort` + `mjc:actuatorfrcrange` (±effort) with `mjc:actuatorfrclimited` | `urdf:limit:effort` | `urdf:limit:effort` |
 | MJCF `ref` | `mjc:ref` only (Newton measures joint coordinates from it) | omitted | also `state:*:physics:position` |
 | MJCF stacked joints with a ball | intermediate-link chain (Newton merges only hinges/slides into a D6) | stacked | massless intermediate links |
+| MJCF `<mesh>` assets with vertices but no faces (MuJoCo's `plugin/sdf/asset/die.obj`) | the convex hull of the OBJ's vertices, as MuJoCo's `mjCMesh::Process` does (faces, volume and inertia from the hull; reported as `mjcf.mesh_convex_hull`); degenerate point sets (colocated / collinear / coplanar) are rejected | same | same |
 | MJCF `<flexcomp>`, raw `<flex>` | UsdPhysics deformables (below) | unsupported (reported) | unsupported (reported) |
 | MJCF primitive visuals | native `Sphere`/`Cube`/`Cylinder`/`Capsule`/`Plane` (as mujoco-usd-converter), material bound, `displayColor`/`displayOpacity` from geom `rgba` | same | tessellated meshes |
 | MJCF ellipsoids (non-uniform) | mesh with the radii baked in (convex hull as a collider): a scaled `Sphere` is read as a unit sphere by Newton and rejected by OpenUSD | same | scaled `Sphere` (reported) |
@@ -937,6 +938,7 @@ default `newton` profile; [Output profiles](#output-profiles) lists the
 | MJCF `<flexcomp>`, raw `<flex>` | UsdPhysics deformables; interpolated (`node`/`dof`) flexes are approximated as full-dof |
 | MJCF `<skin>` | UsdSkel `SkelRoot`/`Skeleton`/skinned `Mesh` under `/World/Skins` + `lightusd:mjcSkin:*` extension data (see above) |
 | MJCF `<frame scale/massscale>` | the frame's pose is applied, its scale is reported (`mjcf.frame_scale_unsupported`) |
+| MJCF mesh paths that leave the model directory (MuJoCo's own `plugin/sdf/mug.xml` uses `../../mug/mug.obj`) | resolve relative to the model file, but only under an allowed asset root: pass `asset_dirs` (Python/C/CLI `--asset-dir`); otherwise reported as `Asset outside allowed roots` | same | same |
 | MJCF cube textures on materials | reported (`mjcf.texture_builtin_unsupported`); builtin skyboxes become a latlong `DomeLight` |
 
 ---

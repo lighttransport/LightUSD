@@ -14,6 +14,7 @@ function(lightusd_configure_import_target target root)
 endfunction()
 if(NOT TARGET lightusd_obj_import)
   add_library(lightusd_obj_import STATIC
+    "${_lusd_import_root}/tydra/asset-import/convex-hull.cc"
     "${_lusd_import_root}/tydra/asset-import/reader.cc"
     "${_lusd_import_root}/tydra/asset-import/obj.cc"
     "${_lusd_import_root}/external/tinyobjloader-c/tiny_obj_c.c"

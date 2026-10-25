@@ -186,7 +186,7 @@ Json MeshJSON(const Mesh& m) {
 }
 
 bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
-             bool triangulate, OBJ* obj, std::string* err) {
+             bool triangulate, OBJ* obj, std::string* err, bool collect_vertices) {
   if (!obj || text.size() > reader.options.max_input) {
     if (err) *err = "OBJ input limit exceeded or null output";
     return false;
@@ -706,10 +706,20 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
       }
     }
   if (obj->meshes.empty()) {
-    if (err)
-      *err = triangulate ? "OBJ contains no polygon faces"
-                         : "OBJ contains no supported primitives";
-    return false;
+    if (!collect_vertices) {
+      if (err)
+        *err = triangulate ? "OBJ contains no polygon faces"
+                           : "OBJ contains no supported primitives";
+      return false;
+    }
+    if (!a.vertices.count) {
+      if (err) *err = "OBJ contains no vertices";
+      return false;
+    }
+    // Only a face-less file needs its positions: MJCF hulls them the way
+    // MuJoCo does. Files with faces do not pay for this copy.
+    if (!reader.ChargeArray(a.vertices.count, sizeof(float), err)) return false;
+    obj->vertices.assign(a.vertices.ptr, a.vertices.ptr + a.vertices.count);
   }
   return true;
 }

@@ -271,6 +271,9 @@ bool GenerateMjcfSdfMesh(const std::string& plugin, const std::map<std::string, 
 
 struct OBJ {
   std::vector<Mesh> meshes;
+  // File-order vertex positions (xyz) when ReadOBJ was asked to collect them
+  // and the file has no polygon primitives. MuJoCo hulls such mesh assets.
+  std::vector<float> vertices;
   Json materials = Json::array();
 };
 template <class T>
@@ -281,7 +284,8 @@ Json Array(const std::vector<T>& values) {
   return result;
 }
 bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
-             bool triangulate, OBJ* obj, std::string* err);
+             bool triangulate, OBJ* obj, std::string* err,
+             bool collect_vertices = false);
 // COLLADA triangle meshes for URDF/MJCF assets (same layout as ReadOBJ).
 bool ReadDAE(std::string_view text, const std::string& source, Reader& reader,
              OBJ* obj, std::string* err);

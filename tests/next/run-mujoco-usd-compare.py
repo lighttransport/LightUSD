@@ -206,6 +206,10 @@ def main():
                     help="MuJoCo install prefix (cmake --install of a MUJOCO_WITH_USD=ON build)")
     ap.add_argument("--dump", type=pathlib.Path, required=True, help="mujoco-model-dump binary")
     ap.add_argument("--profile", default="newton")
+    ap.add_argument("--asset-dir", action="append", default=[], type=pathlib.Path,
+                    help="extra allowed asset root for MJCF mesh references that "
+                         "escape the model directory (MuJoCo's own examples use "
+                         "../../, e.g. plugin/sdf/mug.xml)")
     ap.add_argument("--out", type=pathlib.Path)
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
@@ -236,7 +240,17 @@ def main():
                 continue
             try:
                 out = pathlib.Path(tmp) / f"{n}-{path.stem}.usda"
-                lightusd.import_mjcf(path, profile=args.profile).save(str(out))
+                # MuJoCo resolves mesh paths relative to the model file, so
+                # `../../x.obj` (its plugin/sdf examples) stays inside the
+                # source tree; LightUSD requires parent-relative assets to be
+                # under an explicitly allowed root.
+                asset_dirs = list(args.asset_dir)
+                if b"../" in path.read_bytes():
+                    root = path.parents[2] if len(path.parents) > 2 else None
+                    if root is not None and root.is_dir() and root not in asset_dirs:
+                        asset_dirs.append(root)
+                lightusd.import_mjcf(path, profile=args.profile,
+                                     asset_dirs=asset_dirs).save(str(out))
                 cand = _dump(args, out, True)
                 notes = []
                 issues = compare(ref, cand, notes, b"<key" in path.read_bytes())

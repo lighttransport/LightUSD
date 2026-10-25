@@ -390,9 +390,13 @@ f121272e (2026-10-24; Menagerie Newton compare still 65/69). Fixed in the
   (torus bowl gear nutbolt primitives cow), Newton compare 4/4 (no CUDA here:
   the harness compares SDF colliders as meshes, since Newton builds SDFs on
   CUDA only; Newton's add_mjcf drops these geoms, mass 0, while the USD
-  matches MuJoCo's masses). Open: mesh.xml's die.obj is a vertex-only point
-  cloud (MuJoCo meshes its convex hull; LightUSD rejects it), mug.xml needs
-  `asset_dirs` for its `../../mug` mesh.
+  matches MuJoCo's masses). The remaining open items are resolved:
+  `mesh.xml`'s die.obj (a vertex-only point cloud) is now the convex hull of its
+  vertices, as MuJoCo's `mjCMesh::Process` does (`mjcf.mesh_convex_hull`;
+  degenerate point sets are reported and rejected), and `mug.xml`'s
+  `../../mug/mug.obj` resolves when the model root is an allowed asset root --
+  `run-mujoco-usd-compare.py` now derives that root for MJCF inputs whose text
+  references `../`.
 
 - MJCF `<skin>` and binary GMSH (2026-10-24): skins become UsdSkel
   (SkelRoot/Skeleton/skinned Mesh, weights normalized, inflate baked so the

@@ -20,6 +20,7 @@
 
 #include "external/filesystem/include/ghc/filesystem.hpp"
 #include "external/pugixml.hpp"
+#include "convex-hull.hh"
 #include "import.hh"
 #include "volumetric.hh"
 #define STB_IMAGE_STATIC
@@ -1231,7 +1232,7 @@ bool TriangulateLikeMuJoCo(Mesh* mesh) {
   return true;
 }
 
-bool LoadOBJ(const fs::path& filename, Mesh* mesh, std::string* err) {
+bool LoadOBJ(const fs::path& filename, bool smoothnormal, Mesh* mesh, std::string* err) {
   MappedAsset asset;
   std::string resolved;
   if (!active_reader->Map(filename.string(), active_reader->root_source, &asset, &resolved,
@@ -1244,7 +1245,8 @@ bool LoadOBJ(const fs::path& filename, Mesh* mesh, std::string* err) {
   // collider and the inferred mass properties match the compiled model.
   const bool mujoco_faces = !dae && active_reader->options.profile != "legacy";
   if (!(dae ? ReadDAE(text, filename.string(), *active_reader, &obj, err)
-            : ReadOBJ(text, filename.string(), *active_reader, !mujoco_faces, &obj, err)))
+            : ReadOBJ(text, filename.string(), *active_reader, !mujoco_faces, &obj, err,
+                      /* collect_vertices = */ mujoco_faces)))
     return false;
   if (mujoco_faces) {
     // Untriangulated reads also return line/point primitives.
@@ -1256,6 +1258,46 @@ bool LoadOBJ(const fs::path& filename, Mesh* mesh, std::string* err) {
       active_reader->Warn(
           "OBJ line, point or free-form primitives are not converted to "
           "polygon meshes");
+    if (obj.meshes.empty() && !obj.vertices.empty()) {
+      // MuJoCo hulls a face-less mesh asset: mjCMesh::Process builds the
+      // convex hull when face_ is empty and copies its faces, so a point-cloud
+      // OBJ is a valid mesh with the hull's volume and inertia. Match it (and
+      // its diagnostics for degenerate point sets).
+      std::vector<int32_t> hull;
+      std::string why;
+      const HullStatus status = BuildConvexHull(
+          obj.vertices.data(), obj.vertices.size() / 3, &hull, &why);
+      if (status != HullStatus::Ok) {
+        if (err) *err = "OBJ has no faces and its vertices are " + why;
+        return false;
+      }
+      Mesh mesh;
+      mesh.name = filename.stem().string();
+      mesh.type = "Mesh";
+      std::vector<uint8_t> used(obj.vertices.size() / 3, 0);
+      for (int32_t index : hull)
+        if (index >= 0 && size_t(index) < used.size()) used[size_t(index)] = 1;
+      std::vector<int32_t> remap(used.size(), -1);
+      for (size_t v = 0; v < used.size(); ++v) {
+        if (!used[v]) continue;
+        remap[v] = static_cast<int32_t>(mesh.positions.size() / 3);
+        mesh.positions.insert(mesh.positions.end(), &obj.vertices[3 * v],
+                              &obj.vertices[3 * v] + 3);
+      }
+      mesh.indices.reserve(hull.size());
+      for (int32_t index : hull) mesh.indices.push_back(remap[size_t(index)]);
+      mesh.counts.assign(hull.size() / 3, 3);
+      mesh.materials.assign(hull.size() / 3, -1);
+      // No authored normals: MuJoCo computes them from the hull faces
+      // (MakeNormal), honouring <mesh smoothnormal>.
+      ComputeMujocoVertexNormals(&mesh, smoothnormal);
+      active_reader->Warn("MJCF mesh " + filename.filename().string() +
+                              " has no faces; converted to the convex hull of its " +
+                              std::to_string(mesh.positions.size() / 3) +
+                              " vertices, as MuJoCo does",
+                          "mjcf.mesh_convex_hull", filename.string());
+      obj.meshes.push_back(std::move(mesh));
+    }
     if (obj.meshes.empty()) {
       if (err) *err = "OBJ contains no polygon faces";
       return false;
@@ -1742,7 +1784,7 @@ bool LoadMeshFileUncached(const fs::path& filename, bool smoothnormal, Mesh* mes
   if (ext == ".msh") return LoadLegacyMSH(filename, mesh, err);
   if (ext == ".vdb") return LoadVDBMesh(filename, mesh, err);
   if (ext == ".gmsh") return LoadGMSHMesh(filename, mesh, err);
-  if (ext == ".obj" || ext == ".dae") return LoadOBJ(filename, mesh, err);
+  if (ext == ".obj" || ext == ".dae") return LoadOBJ(filename, smoothnormal, mesh, err);
   if (err) *err = "Unsupported native mesh extension: " + ext;
   return false;
 }
