@@ -29,6 +29,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -80,7 +81,14 @@ struct ResolvedField {
 using AssetReader =
     std::function<bool(const std::string &path, std::vector<uint8_t> *bytes, std::string *err)>;
 
-// Reads plain files; the default AssetReader.
+// Largest file ReadFileAsset reads (OpenVDB files above this are rejected).
+#if defined(__EMSCRIPTEN__) || UINTPTR_MAX == 0xffffffffu
+constexpr uint64_t kMaxVolumeFileBytes = uint64_t(1) << 30;
+#else
+constexpr uint64_t kMaxVolumeFileBytes = uint64_t(16) << 30;
+#endif
+
+// Reads plain (regular) files; the default AssetReader.
 bool ReadFileAsset(const std::string &path, std::vector<uint8_t> *bytes, std::string *err);
 
 class FieldCache {
@@ -131,7 +139,10 @@ class FieldCache {
                     std::vector<float> *positions, std::vector<int32_t> *indices,
                     std::string *err);
 
-  size_t bytes_used() const { return bytes_used_; }
+  size_t bytes_used() const {
+    std::lock_guard<std::recursive_mutex> lock(mu_);
+    return bytes_used_;
+  }
 
  private:
   struct File {
@@ -145,6 +156,10 @@ class FieldCache {
   const File *Load(const std::string &path, std::string *err);
   SparseGrid *LoadSparse(const std::string &path, size_t source_index, std::string *err);
 
+  // One cache may be shared by several scene handles used from different
+  // threads: every public member locks. Sampling and meshing run unlocked on
+  // the sparse grid (read-only once built; entries are never erased).
+  mutable std::recursive_mutex mu_;
   AssetReader reader_;
   size_t max_bytes_ = 0;
   size_t bytes_used_ = 0;

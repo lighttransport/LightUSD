@@ -7,7 +7,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
-#include <iterator>
+
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include "external/tinyvdb/tinyvdb_io.h"
 #include "external/tinyvdb/tinyvdb_sparse_tools.h"
@@ -80,12 +82,40 @@ struct FieldCache::SparseGrid {
 FieldCache::~FieldCache() = default;
 
 bool ReadFileAsset(const std::string &path, std::vector<uint8_t> *bytes, std::string *err) {
-  std::ifstream in(path, std::ios::binary);
-  if (!in) {
+  // Asset paths come from the stage: read only regular files (opening a FIFO
+  // blocks; devices such as /dev/zero never end) up to kMaxVolumeFileBytes,
+  // checked before opening.
+#if defined(_WIN32)
+  struct _stat64 st;
+  const bool regular = _stat64(path.c_str(), &st) == 0 && (st.st_mode & _S_IFREG);
+#else
+  struct stat st;
+  const bool regular = ::stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+#endif
+  if (!regular) {
+    if (err) *err = "cannot open " + path + " (not a regular file)";
+    return false;
+  }
+  if (st.st_size < 0 || uint64_t(st.st_size) > kMaxVolumeFileBytes) {
+    if (err) *err = path + " exceeds the volume file size limit";
+    return false;
+  }
+  std::ifstream in(path, std::ios::binary | std::ios::ate);
+  const std::streamoff size = in ? std::streamoff(in.tellg()) : std::streamoff(-1);
+  if (size < 0) {
     if (err) *err = "cannot open " + path;
     return false;
   }
-  bytes->assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  if (uint64_t(size) > kMaxVolumeFileBytes) {
+    if (err) *err = path + " exceeds the volume file size limit";
+    return false;
+  }
+  bytes->resize(size_t(size));
+  in.seekg(0);
+  if (size && !in.read(reinterpret_cast<char *>(bytes->data()), size)) {
+    if (err) *err = "cannot read " + path;
+    return false;
+  }
   return true;
 }
 
@@ -131,8 +161,9 @@ const FieldCache::File *FieldCache::Load(const std::string &path, std::string *e
     if (!reader_(path, &f.bytes, &why)) {
       f.error = "cannot read volume file " + path + (why.empty() ? "" : ": " + why);
     } else if (max_bytes_ && bytes_used_ + f.bytes.size() > max_bytes_) {
-      f.error = "volume file " + path + " exceeds the memory budget";
-      f.bytes.clear();
+      // Not cached: TakeDense may release budget before the next request.
+      if (err) *err = "volume file " + path + " exceeds the memory budget";
+      return nullptr;
     } else {
       bytes_used_ += f.bytes.size();
       if (!usdVol::ReadVDBGridInfo(f.bytes.data(), f.bytes.size(), path, &f.grids, &why))
@@ -148,6 +179,7 @@ const FieldCache::File *FieldCache::Load(const std::string &path, std::string *e
 }
 
 bool FieldCache::Resolve(const FieldRequest &request, ResolvedField *out, std::string *err) {
+  std::lock_guard<std::recursive_mutex> lock(mu_);
   if (!out) return false;
   if (request.prim_type == "Field3DAsset") {
     if (err) *err = request.field_prim + ": Field3D files are not supported (no reader)";
@@ -220,12 +252,14 @@ bool FieldCache::Resolve(const FieldRequest &request, ResolvedField *out, std::s
 }
 
 size_t FieldCache::GridCount(const std::string &path) {
+  std::lock_guard<std::recursive_mutex> lock(mu_);
   const File *file = Load(path, nullptr);
   return file ? file->grids.size() : 0;
 }
 
 bool FieldCache::TakeDense(const ResolvedField &field, const usdVol::VDBReadOptions &options,
                            usdVol::VDBGrid *out, std::string *warn, std::string *err) {
+  std::lock_guard<std::recursive_mutex> lock(mu_);
   if (!out) return false;
   const std::string key = DenseKey(field, options);
   if (!Dense(field, options, warn, err)) return false;
@@ -240,7 +274,9 @@ bool FieldCache::TakeDense(const ResolvedField &field, const usdVol::VDBReadOpti
 
 const usdVol::VDBGrid *FieldCache::Dense(const ResolvedField &field,
                                          const usdVol::VDBReadOptions &options, std::string *warn,
-                                         std::string *err) {  const std::string key = DenseKey(field, options);
+                                         std::string *err) {
+  std::lock_guard<std::recursive_mutex> lock(mu_);
+  const std::string key = DenseKey(field, options);
   auto it = dense_.find(key);
   if (it != dense_.end()) return it->second.get();
   const File *file = Load(field.request.file_path, err);
@@ -266,17 +302,21 @@ bool FieldCache::SampleWorld(const ResolvedField &field, const double *points, s
     if (err) *err = "volume sampling: null points or values";
     return false;
   }
-  SparseGrid *sparse = LoadSparse(field.request.file_path, field.grid.source_index, err);
-  if (!sparse) return false;
-  if (!sparse->sampler) {
-    tvdb_error_t e{};
-    const tvdb_status_t st =
-        tvdb_volume_sampler_create(&sparse->file.grids[field.grid.source_index], &sparse->sampler, &e);
-    if (st != TVDB_OK || !sparse->sampler) {
-      if (err)
-        *err = field.request.field_prim + ": cannot sample the grid: " +
-               (e.message[0] ? e.message : tvdb_status_string(st));
-      return false;
+  SparseGrid *sparse = nullptr;
+  {
+    std::lock_guard<std::recursive_mutex> lock(mu_);
+    sparse = LoadSparse(field.request.file_path, field.grid.source_index, err);
+    if (!sparse) return false;
+    if (!sparse->sampler) {
+      tvdb_error_t e{};
+      const tvdb_status_t st =
+          tvdb_volume_sampler_create(&sparse->file.grids[field.grid.source_index], &sparse->sampler, &e);
+      if (st != TVDB_OK || !sparse->sampler) {
+        if (err)
+          *err = field.request.field_prim + ": cannot sample the grid: " +
+                 (e.message[0] ? e.message : tvdb_status_string(st));
+        return false;
+      }
     }
   }
   const int comps = tvdb_volume_sampler_components(sparse->sampler);
@@ -316,7 +356,11 @@ bool FieldCache::MeshLevelSet(const ResolvedField &field, size_t max_cells,
     if (err) *err = field.request.field_prim + ": not a level-set field";
     return false;
   }
-  SparseGrid *sparse = LoadSparse(field.request.file_path, field.grid.source_index, err);
+  SparseGrid *sparse = nullptr;
+  {
+    std::lock_guard<std::recursive_mutex> lock(mu_);
+    sparse = LoadSparse(field.request.file_path, field.grid.source_index, err);
+  }
   if (!sparse) return false;
   tvdb_triangle_mesh mesh{};
   tvdb_error_t e{};
@@ -394,6 +438,7 @@ void FieldMapColumnVector(const ResolvedField &field, double out[4][4]) {
 
 const std::vector<uint8_t> *FieldCache::NanoVDB(const ResolvedField &field,
                                                 usdVol::VDBNanoVDBInfo *info, std::string *err) {
+  std::lock_guard<std::recursive_mutex> lock(mu_);
   const std::string key = field.request.file_path + "|" + std::to_string(field.grid.source_index);
   auto it = nanovdb_.find(key);
   if (it != nanovdb_.end()) {

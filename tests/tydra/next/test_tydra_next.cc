@@ -9,6 +9,9 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#if defined(__linux__) || defined(__APPLE__)
+#include <sys/stat.h>
+#endif
 #include <cstdio>
 #include <cmath>
 #include <cstring>
@@ -8291,6 +8294,18 @@ static void TestFieldFallbackAndDenseBox() {
     assert(std::fabs(0.5 * (bmin[a] + bmax[a])) < 1e-6);
   }
   fs::remove(path);
+#if defined(__linux__) || defined(__APPLE__)
+  // Field files come from the stage: a FIFO (or device) is not read.
+  const fs::path fifo = fs::temp_directory_path() /
+                        ("lightusd_fifo_" + std::to_string(reinterpret_cast<uintptr_t>(&cache)));
+  if (::mkfifo(fifo.c_str(), 0600) == 0) {
+    std::vector<uint8_t> bytes;
+    std::string why;
+    const bool read = lightusd::tydra::vol::ReadFileAsset(fifo.string(), &bytes, &why);
+    fs::remove(fifo);
+    assert(!read && bytes.empty());
+  }
+#endif
 }
 
 int main() {
