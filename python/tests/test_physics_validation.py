@@ -310,3 +310,22 @@ over "World" {
     assert not any(i.rule_id == 'physics.joint.bodyTarget' for i in composed.issues)
     layer_only = physics.validate(lightusd.load(tmp_path / 'robot.usda', composed=False), include_core=False)
     assert any(i.rule_id == 'physics.joint.bodyTarget' for i in layer_only.issues)
+
+
+def test_nan_mass_and_newton_sdf_parameters_are_checked():
+    stage = lightusd.loads(VALID.replace('physics:mass = 1', 'physics:mass = nan') + '''
+def Xform "NotAVolume" {}
+def Mesh "Collider" (prepend apiSchemas = ["PhysicsCollisionAPI", "NewtonSDFCollisionAPI"]) {
+    uniform int newton:sdfMaxResolution = 0
+    uniform float newton:sdfNarrowBandInner = 0.1
+    uniform float newton:sdfNarrowBandOuter = -0.1
+    rel lightusd:sdf = </NotAVolume>
+}
+''')
+    report = physics.validate(stage)
+    rules = [(i.rule_id, i.location) for i in report.issues]
+    assert ("physics.mass", "/Body") in rules
+    messages = " ".join(i.message for i in report.issues)
+    for name in ("sdfMaxResolution", "sdfNarrowBandInner", "sdfNarrowBandOuter"):
+        assert name in messages
+    assert any(r == "physics.extension.newton.relationship" for r, _ in rules)
