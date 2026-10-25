@@ -152,6 +152,10 @@ void SetRel(tn::PrimSpec *prim, const std::string &name,
             const std::vector<std::string> &targets);
 void SetInterpolation(tn::PrimSpec *prim, const std::string &name,
                       const char *interpolation);
+// Define fails (nullptr) instead of reallocating the layer's prim storage;
+// DefineCapacityExceeded() reports that since the last ResetDefineCapacity().
+void ResetDefineCapacity();
+bool DefineCapacityExceeded();
 tn::PrimSpec *Define(tn::Layer *layer, const std::string &path,
                      const std::string &type);
 Matrix4 IdentityMatrix();

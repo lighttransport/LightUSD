@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Native XML frontends shared by the CLI and language bindings.
 #include <algorithm>
+#include <deque>
 #include <atomic>
 #include <charconv>
 #include <array>
@@ -328,6 +329,9 @@ bool UnsupportedXML(pugi::xml_node node, const std::string& message,
       std::move(data), "xml", approximated);
 }
 
+// Nested <include> files expand one call per file (each its own document).
+constexpr size_t kMaxIncludeNesting = 64;
+
 bool ExpandIncludes(const std::string& xml, const fs::path& base_dir,
                     std::set<fs::path>* seen, std::string* expanded,
                     std::string* err, const std::string& source) {
@@ -342,7 +346,7 @@ bool ExpandIncludes(const std::string& xml, const fs::path& base_dir,
     if (err) *err = "XML DTD and entity declarations are unsupported";
     return false;
   }
-  if (!active_reader->Charge(xml.size() * 8, err)) return false;
+  if (!active_reader->ChargeArray(xml.size(), 8, err)) return false;
   pugi::xml_document doc;
   auto parsed = doc.load_buffer(xml.data(), xml.size());
   if (!parsed) {
@@ -373,79 +377,94 @@ bool ExpandIncludes(const std::string& xml, const fs::path& base_dir,
       if (!dir.empty())
         item.append_attribute("_lightusd_asset_dir").set_value(dir.c_str());
     }
-  std::function<bool(pugi::xml_node, size_t)> visit = [&](pugi::xml_node parent,
-                                                          size_t depth) {
-    if (depth > active_reader->options.max_depth) {
-      if (err) *err = "XML depth limit exceeded";
-      if (active_reader->options.report)
-        active_reader->options.report->Diagnostic("error", "import.depth_limit", "XML depth limit exceeded", source);
-      return false;
-    }
-    auto node = parent.first_child();
-    while (node) {
-      auto next = node.next_sibling();
-      const std::string tag = node.name();
-      // The newton profile converts <flexcomp> into a soft body later.
-      const std::string flex_type = ToLower(node.attribute("type").as_string("grid"));
-      const bool newton = active_reader->options.profile == "newton";
-      const bool soft_body = tag == "flexcomp" && newton && IsSupportedFlexcompType(flex_type);
-      // Raw <deformable><flex body=... element=...> becomes a soft body too
-      // (CollectMujocoRawFlexesJson); <skin> and other children stay reported.
-      const bool raw_flex = tag == "flex" && newton && std::string(parent.name()) == "deformable" &&
-                            node.attribute("body") && node.attribute("element");
-      // Non-legacy profiles import <skin> as UsdSkel (AddMujocoSkinsJson).
-      const bool legacy = active_reader->options.profile == "legacy";
-      const bool flex_container =
-          tag == "deformable" && (newton || (!legacy && node.child("skin")));
-      const bool skin = tag == "skin" && !legacy;
-      if (!soft_body && !raw_flex && !flex_container && !skin &&
-          (tag == "flex" || tag == "flexcomp" || tag == "deformable" ||
-                         tag == "skin")) {
-        if (!UnsupportedXML(node, "Unsupported MJCF element: " + tag,
-                            "mjcf.element_unsupported", "mjcf.deformable", source)) {
-          if (err) *err = active_reader->failure;
-          return false;
-        }
-      } else if (tag == "include") {
-        std::string file = node.attribute("file").as_string();
-        if (file.empty()) {
-          if (err) *err = "MJCF include has no file";
-          return false;
-        }
-        std::vector<uint8_t> bytes;
-        std::string resolved;
-        if (!active_reader->Read(file,
-                                 (base_dir / "__include_anchor.xml").string(),
-                                 &bytes, &resolved, err))
-          return false;
-        fs::path key(resolved);
-        if (!seen->insert(key).second) {
-          if (err) *err = "Recursive MJCF include: " + resolved;
-          return false;
-        }
-        std::string child_xml(reinterpret_cast<const char*>(bytes.data()),
-                              bytes.size()),
-            child_expanded;
-        if (!ExpandIncludes(child_xml, key.parent_path(), seen, &child_expanded,
-                            err, resolved))
-          return false;
-        seen->erase(key);
-        pugi::xml_document child_doc;
-        if (!child_doc.load_buffer(child_expanded.data(),
-                                   child_expanded.size())) {
-          if (err) *err = "Invalid expanded include";
-          return false;
-        }
-        for (auto c : child_doc.document_element().children())
-          parent.insert_copy_before(c, node);
-        parent.remove_child(node);
-      } else if (!visit(node, depth + 1))
-        return false;
-      node = next;
-    }
-    return true;
+  // Depth-first over the tree with an explicit stack (no recursion: depth is
+  // attacker-controlled). Each frame holds the next child to visit, taken
+  // before an <include> is replaced, so spliced copies are not revisited.
+  const auto depth_exceeded = [&]() {
+    if (err) *err = "XML depth limit exceeded";
+    if (active_reader->options.report)
+      active_reader->options.report->Diagnostic("error", "import.depth_limit", "XML depth limit exceeded", source);
+    return false;
   };
-  if (!visit(root, 0)) return false;
+  struct Frame {
+    pugi::xml_node parent, node;
+    size_t depth;
+  };
+  std::vector<Frame> stack{{root, root.first_child(), 0}};
+  while (!stack.empty()) {
+    if (!stack.back().node) {
+      stack.pop_back();
+      continue;
+    }
+    pugi::xml_node parent = stack.back().parent;
+    const pugi::xml_node node = stack.back().node;
+    const size_t depth = stack.back().depth;
+    stack.back().node = node.next_sibling();
+    const std::string tag = node.name();
+    // The newton profile converts <flexcomp> into a soft body later.
+    const std::string flex_type = ToLower(node.attribute("type").as_string("grid"));
+    const bool newton = active_reader->options.profile == "newton";
+    const bool soft_body = tag == "flexcomp" && newton && IsSupportedFlexcompType(flex_type);
+    // Raw <deformable><flex body=... element=...> becomes a soft body too
+    // (CollectMujocoRawFlexesJson); <skin> and other children stay reported.
+    const bool raw_flex = tag == "flex" && newton && std::string(parent.name()) == "deformable" &&
+                          node.attribute("body") && node.attribute("element");
+    // Non-legacy profiles import <skin> as UsdSkel (AddMujocoSkinsJson).
+    const bool legacy = active_reader->options.profile == "legacy";
+    const bool flex_container =
+        tag == "deformable" && (newton || (!legacy && node.child("skin")));
+    const bool skin = tag == "skin" && !legacy;
+    if (!soft_body && !raw_flex && !flex_container && !skin &&
+        (tag == "flex" || tag == "flexcomp" || tag == "deformable" ||
+                       tag == "skin")) {
+      if (!UnsupportedXML(node, "Unsupported MJCF element: " + tag,
+                          "mjcf.element_unsupported", "mjcf.deformable", source)) {
+        if (err) *err = active_reader->failure;
+        return false;
+      }
+    } else if (tag == "include") {
+      std::string file = node.attribute("file").as_string();
+      if (file.empty()) {
+        if (err) *err = "MJCF include has no file";
+        return false;
+      }
+      std::vector<uint8_t> bytes;
+      std::string resolved;
+      if (!active_reader->Read(file,
+                               (base_dir / "__include_anchor.xml").string(),
+                               &bytes, &resolved, err))
+        return false;
+      fs::path key(resolved);
+      if (!seen->insert(key).second) {
+        if (err) *err = "Recursive MJCF include: " + resolved;
+        return false;
+      }
+      // Each nested include file is one ExpandIncludes call: bound the chain.
+      if (seen->size() > kMaxIncludeNesting) {
+        if (err) *err = "MJCF includes are nested too deeply: " + resolved;
+        return false;
+      }
+      std::string child_xml(reinterpret_cast<const char*>(bytes.data()),
+                            bytes.size()),
+          child_expanded;
+      if (!ExpandIncludes(child_xml, key.parent_path(), seen, &child_expanded,
+                          err, resolved))
+        return false;
+      seen->erase(key);
+      pugi::xml_document child_doc;
+      if (!child_doc.load_buffer(child_expanded.data(),
+                                 child_expanded.size())) {
+        if (err) *err = "Invalid expanded include";
+        return false;
+      }
+      for (auto c : child_doc.document_element().children())
+        parent.insert_copy_before(c, node);
+      parent.remove_child(node);
+    } else {
+      if (depth + 1 > active_reader->options.max_depth) return depth_exceeded();
+      stack.push_back({node, node.first_child(), depth + 1});
+    }
+  }
   if (!ValidateXMLDepth(doc, active_reader->options.max_depth, source, err)) return false;
   if (seen->empty()) {
     // MJCF permits repeated singleton sections after textual inclusion. Merge
@@ -1040,7 +1059,7 @@ bool LoadBinarySTL(const fs::path& filename, bool smoothnormal, Mesh* mesh,
     return false;
   }
 
-  if (!active_reader->Charge(size_t(tri_count) * 3 * 96, err)) return false;
+  if (!active_reader->ChargeArray(size_t(tri_count), 3 * 96, err)) return false;
   // Weld bit-identical positions (MuJoCo's repeated-vertex removal) through
   // an open-addressed table; indices follow first occurrence.
   struct Slot {
@@ -1070,9 +1089,14 @@ bool LoadBinarySTL(const fs::path& filename, bool smoothnormal, Mesh* mesh,
         at = (at + 1) & mask;
       if (table[at].index < 0) {
         table[at] = Slot{x, y, z, static_cast<int32_t>(mesh->positions.size() / 3)};
-        mesh->positions.push_back(ReadFloatLE(bytes, vo + 0));
-        mesh->positions.push_back(ReadFloatLE(bytes, vo + 4));
-        mesh->positions.push_back(ReadFloatLE(bytes, vo + 8));
+        for (size_t k = 0; k < 3; ++k) {
+          const float c = ReadFloatLE(bytes, vo + 4 * k);
+          if (!std::isfinite(c)) {
+            if (err) *err = "STL vertex is not finite";
+            return false;
+          }
+          mesh->positions.push_back(c);
+        }
       }
       mesh->indices.push_back(table[at].index);
     }
@@ -1389,18 +1413,30 @@ void PreloadJobs(const std::vector<std::pair<PreloadKey, PreloadJob>>& jobs) {
       keys.size(), parent.options.threads > 1 ? size_t(parent.options.threads)
                                               : std::min(hardware, 8u));
   if (workers < 2) return;
+  const size_t remaining = parent.options.max_memory -
+                           std::min(parent.bytes, parent.options.max_memory);
   Options child_options = parent.options;
   child_options.report = nullptr;
   child_options.progress = nullptr;
   child_options.threads = 1;
-  const size_t remaining = parent.options.max_memory -
-                           std::min(parent.bytes, parent.options.max_memory);
+  // Workers parse concurrently, so each gets a share of what is left: the
+  // transient peaks together stay within the import budget. A mesh that does
+  // not fit its share is parsed again serially at first use.
+  child_options.max_memory = remaining / workers;
   std::vector<PreloadedMesh> results(keys.size());
   std::vector<char> kept(keys.size(), 0);
   std::atomic<size_t> next{0}, committed{0};
+  std::atomic<bool> stop{false};
+  const std::thread::id caller = std::this_thread::get_id();
   auto work = [&]() {
     for (size_t i = next++; i < keys.size(); i = next++) {
-      if (committed.load() >= remaining) return;
+      if (stop.load() || committed.load() >= remaining) return;
+      // Cancellation: only the calling thread may run the progress callback.
+      if (parent.options.progress && std::this_thread::get_id() == caller &&
+          !parent.options.progress("import", parent.bytes, parent.options.max_memory)) {
+        stop = true;
+        return;
+      }
       Reader child(child_options);
       child.packages = parent.packages;
       child.extra_roots = parent.extra_roots;
@@ -1437,6 +1473,10 @@ void PreloadJobs(const std::vector<std::pair<PreloadKey, PreloadJob>>& jobs) {
     active_materials = materials;
   }
   for (auto& thread : pool) thread.join();
+  if (stop.load()) {
+    parent.failure = "Import cancelled";
+    return;
+  }
   for (size_t i = 0; i < keys.size(); ++i)
     if (kept[i]) active_mesh_preload->emplace(keys[i].first, std::move(results[i]));
 #endif
@@ -1626,6 +1666,15 @@ bool ParseGMSH(const std::string& text, int* dim, std::vector<double>* point,
 // A GMSH file as a <mesh> asset (MuJoCo 3.16's GMSH decoder): a 2D file's
 // triangles, or the boundary of a 3D file's tetrahedra (each tet oriented
 // positively; faces that occur once; boundary vertices in node order).
+// Binary mesh formats copy floats verbatim; reject NaN/Inf before they reach
+// normals, mass properties or ordered vertex maps.
+template <typename T>
+bool AllFinite(const std::vector<T>& values) {
+  for (const T v : values)
+    if (!std::isfinite(v)) return false;
+  return true;
+}
+
 bool LoadGMSHMesh(const fs::path& filename, Mesh* mesh, std::string* err) {
   std::string text;
   if (!ReadFile(filename, &text, err)) return false;
@@ -1634,6 +1683,10 @@ bool LoadGMSHMesh(const fs::path& filename, Mesh* mesh, std::string* err) {
   std::vector<int> element;
   if (!ParseGMSH(text, &dim, &point, &element, err)) {
     if (err) *err = filename.string() + ": " + *err;
+    return false;
+  }
+  if (!AllFinite(point)) {
+    if (err) *err = filename.string() + ": GMSH node is not finite";
     return false;
   }
   if (dim == 1) {
@@ -1738,6 +1791,10 @@ bool LoadLegacyMSH(const fs::path& filename, Mesh* mesh, std::string* err) {
       if (err) *err = "face index out of range in MSH file " + filename.string();
       return false;
     }
+  if (!AllFinite(mesh->positions) || !AllFinite(mesh->normals) || !AllFinite(mesh->uvs)) {
+    if (err) *err = "MSH file holds non-finite values: " + filename.string();
+    return false;
+  }
   return true;
 }
 
@@ -1841,48 +1898,58 @@ bool IsMjcfShortcutParam(const std::string& key) {
   return kParams.count(key) > 0;
 }
 
-void WalkDefault(const pugi::xml_node& node, const AttrMap& parent_geom,
-                 const AttrMap& parent_joint, const AttrMap& parent_actuator,
-                 const std::string& parent_type, const std::string& parent_class, Defaults* d) {
-  AttrMap g = parent_geom;
-  AttrMap j = parent_joint;
-  AttrMap act = parent_actuator;
-  std::string type = parent_type;
-  for (auto c = node.first_child(); c; c = c.next_sibling()) {
-    if (c.type() != pugi::node_element || !IsMjcfActuatorTag(c.name())) continue;
-    for (const auto& a : c.attributes()) act[a.name()] = a.value();
-    type = c.name();
-  }
-  if (const auto gn = Child(node, "geom")) {
-    for (const auto& a : gn.attributes()) g[a.name()] = a.value();
-  }
-  if (const auto jn = Child(node, "joint")) {
-    for (const auto& a : jn.attributes()) j[a.name()] = a.value();
-  }
-  const std::string cls = Attr(node, "class");
-  if (cls.empty() || cls == "main") {
-    d->root_geom = g;
-    d->root_joint = j;
-    d->root_actuator = act;
-    d->root_actuator_type = type;
-  }
-  const std::string name = cls.empty() ? std::string("main") : cls;
-  if (!cls.empty()) {
-    d->geom[cls] = g;
-    d->joint[cls] = j;
-    d->actuator[cls] = act;
-    d->actuator_type[cls] = type;
-    d->actuator_parent[cls] = parent_class;
-  }
-  for (const auto& child : Children(node, "default")) {
-    WalkDefault(child, g, j, act, type, name, d);
+// One <default> tree, preorder (a later class definition wins), with an
+// explicit stack: nesting depth comes from the input.
+void WalkDefault(const pugi::xml_node& top, Defaults* d) {
+  struct State {
+    AttrMap geom, joint, actuator;
+    std::string type, name;
+  };
+  std::deque<State> states;  // stable addresses: children read their parent's
+  const State none;
+  std::vector<std::pair<pugi::xml_node, const State*>> stack{{top, &none}};
+  while (!stack.empty()) {
+    const pugi::xml_node node = stack.back().first;
+    const State& parent = *stack.back().second;
+    stack.pop_back();
+    states.push_back(parent);
+    State& st = states.back();
+    st.type = parent.type;
+    for (auto c = node.first_child(); c; c = c.next_sibling()) {
+      if (c.type() != pugi::node_element || !IsMjcfActuatorTag(c.name())) continue;
+      for (const auto& a : c.attributes()) st.actuator[a.name()] = a.value();
+      st.type = c.name();
+    }
+    if (const auto gn = Child(node, "geom")) {
+      for (const auto& a : gn.attributes()) st.geom[a.name()] = a.value();
+    }
+    if (const auto jn = Child(node, "joint")) {
+      for (const auto& a : jn.attributes()) st.joint[a.name()] = a.value();
+    }
+    const std::string cls = Attr(node, "class");
+    if (cls.empty() || cls == "main") {
+      d->root_geom = st.geom;
+      d->root_joint = st.joint;
+      d->root_actuator = st.actuator;
+      d->root_actuator_type = st.type;
+    }
+    st.name = cls.empty() ? std::string("main") : cls;
+    if (!cls.empty()) {
+      d->geom[cls] = st.geom;
+      d->joint[cls] = st.joint;
+      d->actuator[cls] = st.actuator;
+      d->actuator_type[cls] = st.type;
+      d->actuator_parent[cls] = parent.name;
+    }
+    const auto children = Children(node, "default");
+    for (auto it = children.rbegin(); it != children.rend(); ++it) stack.push_back({*it, &st});
   }
 }
 
 Defaults ParseDefaults(const pugi::xml_node& root) {
   Defaults d;
   for (const auto& def : Children(root, "default")) {
-    WalkDefault(def, AttrMap{}, AttrMap{}, AttrMap{}, std::string(), std::string(), &d);
+    WalkDefault(def, &d);
   }
   return d;
 }
@@ -2016,7 +2083,8 @@ std::map<std::string, MeshAsset> CollectMujocoAssets(const pugi::xml_node& root,
         for (const auto& c : Children(plugin_node, "config")) config[Attr(c, "key")] = Attr(c, "value");
         Mesh mesh;
         std::string why;
-        const size_t budget = active_reader->options.max_memory;
+        const size_t budget = active_reader->options.max_memory -
+                              std::min(active_reader->options.max_memory, active_reader->bytes);
         if (name.empty()) {
           why = "a plugin mesh needs a name";
         } else if (!IsMjcfSdfPlugin(plugin)) {
@@ -2124,7 +2192,7 @@ std::map<std::string, HFieldAsset> CollectMujocoHFields(
                                    &h, &comp) ||
             w <= 0 || h <= 0 ||
             size_t(w) > active_reader->options.max_memory / size_t(h) / 64 ||
-            !active_reader->Charge(size_t(w) * size_t(h) * 64, &why)) {
+            !active_reader->ChargeArray(size_t(w) * size_t(h), 64, &why)) {
           active_reader->failure =
               "Heightfield dimensions exceed memory budget";
           return {};
@@ -2179,6 +2247,12 @@ Mesh TessellateHField(const HFieldAsset& hf) {
                           "mjcf.hfield_size");
     return mesh;
   }
+  // Positions and normals (6 floats) per vertex, two triangles per cell;
+  // every geom using the heightfield tessellates it again.
+  std::string why;
+  if (active_reader &&
+      !active_reader->ChargeArray(size_t(nr) * size_t(nc), 6 * sizeof(float) + 6 * sizeof(int32_t), &why))
+    return mesh;
   const double rx = hf.size[0], ry = hf.size[1], ez = hf.size[2];
   const double dx = (2.0 * rx) / (nc - 1);
   const double dy = (2.0 * ry) / (nr - 1);
@@ -2526,7 +2600,9 @@ bool BuildGeomPayload(const pugi::xml_node& geom_node, const AttrMap& cls,
     }
     payload->mesh = TessellateHField(it->second);
     if (payload->mesh.positions.empty()) {
-      if (err) *err = "Empty/invalid hfield asset: " + hf_name;
+      if (err)
+        *err = active_reader->failure.empty() ? "Empty/invalid hfield asset: " + hf_name
+                                              : active_reader->failure;
       return false;
     }
   } else if (type == "box") {
@@ -2832,6 +2908,8 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
     so.threads = opts.threads;
     so.device = VolumetricDevice();
     so.max_tets = std::max<size_t>(1000, std::min<size_t>(budget / 256, 4000000));
+    // The stuffing lattice is dense (~32 B per vertex before any tet exists).
+    so.max_lattice_vertices = std::max<size_t>(100000, std::min<size_t>(budget / 64, 8000000));
     TetMeshData tm;
     if (!LevelSetToTetMesh(level_set, so, &tm, err)) return false;
     if (!active_reader->ChargeArray(tm.points.size() + tm.tets.size(), 8, err)) return false;
@@ -2925,6 +3003,8 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
     so.threads = opts.threads;
     so.device = ls.device;
     so.max_tets = std::max<size_t>(1000, std::min<size_t>(budget / 256, 4000000));
+    // The stuffing lattice is dense (~32 B per vertex before any tet exists).
+    so.max_lattice_vertices = std::max<size_t>(100000, std::min<size_t>(budget / 64, 8000000));
     TetMeshData tm;
     std::string why;
     if (!(extent > 0) || !MeshToLevelSet(surface, ls, &level_set, &why) ||
@@ -3324,6 +3404,12 @@ bool CollectBodyFlexcompsJson(const pugi::xml_node& body_node,
     std::vector<int> element;
     bool stuffed = false;  // tetrahedralized here: source vertex ids are gone
     const bool direct = type == "direct" || type == "mesh" || type == "gmsh";
+    // Generated lattices: charge the point and element vectors before
+    // building them (three coordinates, up to 6 tets of 4 ids per cell).
+    if (!direct &&
+        !active_reader->ChargeArray(size_t(count[0]) * size_t(count[1]) * size_t(count[2]),
+                                    3 * sizeof(double) + 24 * sizeof(int), err))
+      return false;
     if (type == "direct") {
       point = ParseDoubles(Attr(f, "point"));
       for (double v : ParseDoubles(Attr(f, "element"))) element.push_back(ToInt32(v, "element"));
@@ -3339,6 +3425,10 @@ bool CollectBodyFlexcompsJson(const pugi::xml_node& body_node,
       if (type == "gmsh") {
         if (!ParseGMSH(text, &dim, &point, &element, err)) {
           if (err) *err = "flexcomp `" + name + "`: " + *err;
+          return false;
+        }
+        if (!AllFinite(point)) {
+          if (err) *err = "flexcomp `" + name + "`: GMSH node is not finite";
           return false;
         }
       } else if (!LoadFlexMesh(path, text, dim, ParseDouble3(Attr(f, "origin"), {{0, 0, 0}}),
@@ -3455,14 +3545,31 @@ bool CollectBodyFlexcompsJson(const pugi::xml_node& body_node,
       bool ok = true;
       for (int id : ints("id")) ok &= set(id);
       const auto range = ints("range");
-      for (size_t i = 0; i + 1 < range.size(); i += 2)
+      for (size_t i = 0; ok && i + 1 < range.size(); i += 2) {
+        if (range[i] > range[i + 1]) continue;  // empty
+        ok = range[i] >= 0 && range[i + 1] < npnt;
         for (int k = range[i]; ok && k <= range[i + 1]; ++k) ok &= set(k);
+      }
       const size_t d = static_cast<size_t>(dim);
       const auto grid = ints("grid");
       const auto gridrange = ints("gridrange");
       if ((!grid.empty() || !gridrange.empty()) && (type != "grid" || dim == 1)) ok = false;
-      for (size_t i = 0; ok && i + d <= grid.size(); i += d) ok &= set(grid_id(grid, i));
+      // Grid coordinates must lie in the lattice before they are combined
+      // (and before a range is iterated), so ids cannot overflow and a huge
+      // range cannot spin.
+      const auto in_lattice = [&](const std::vector<int>& g, size_t i) {
+        for (size_t a = 0; a < d; ++a)
+          if (g[i + a] < 0 || g[i + a] >= count[a]) return false;
+        return true;
+      };
+      for (size_t i = 0; ok && i + d <= grid.size(); i += d)
+        ok = in_lattice(grid, i) && set(grid_id(grid, i));
       for (size_t i = 0; ok && i + 2 * d <= gridrange.size(); i += 2 * d) {
+        bool empty = false;
+        for (size_t a = 0; a < d; ++a) empty |= gridrange[i + a] > gridrange[i + d + a];
+        if (empty) continue;
+        ok = in_lattice(gridrange, i) && in_lattice(gridrange, i + d);
+        if (!ok) break;
         std::vector<int> g(3, 0);
         if (dim == 2) {
           for (g[0] = gridrange[i]; g[0] <= gridrange[i + 2]; ++g[0])
@@ -3505,6 +3612,9 @@ bool CollectBodyFlexcompsJson(const pugi::xml_node& body_node,
                                     m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13],
                                     m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14]}};
     };
+    // The JSON payload holds one value per coordinate and element id.
+    if (!active_reader->ChargeArray(point.size() + element.size(), sizeof(Json) + 16, err))
+      return false;
     Json points = Json::array(), pins = Json::array(), pin_coords = Json::array();
     for (size_t i = 0; i < point.size() / 3; ++i) {
       const auto w = apply(world, &point[3 * i]);
@@ -4404,32 +4514,40 @@ void AddMujocoTendonsJson(const pugi::xml_node& root, const Context& ctx,
 // MJCF <site> (in bodies) -> JSON site entries with a baked world transform,
 // consumed by the converter to emit MjcSite marker prims. Sites are the routing
 // points for spatial (muscle) tendons. Recurses the body tree.
-void CollectMujocoSitesJson(const pugi::xml_node& body_node,
-                            const std::vector<double>& parent_world,
+// Sites of a body subtree in preorder (a body's own sites, then its child
+// bodies in order), with an explicit stack: chains can be long.
+void CollectMujocoSitesJson(const pugi::xml_node& top,
+                            const std::vector<double>& top_parent_world,
                             const Context& ctx, Json* sites, Stats* stats) {
-  const std::vector<double> body_world =
-      MultiplyMatrix(parent_world, PoseMatrix(body_node, ctx));
-  for (const auto& s_node : Children(body_node, "site")) {
-    const std::string name =
-        Attr(s_node, "name", "site_" + std::to_string(sites->size()));
-    const std::vector<double> site_world =
-        MultiplyMatrix(body_world, PoseMatrix(s_node, ctx));
-    Json site = {{"name", name}, {"matrix", Array(site_world)},
-                 {"bodyMatrix", Array(body_world)}};
-    auto owner = active_body_names.find(body_node.internal_object());
-    site["body"] = owner != active_body_names.end() ? owner->second : active_world_name;
-    if (HasAttr(s_node, "group"))
-      site["group"] = ToInt32(ParseDoubleAttr(s_node, "group", 0.0), "group");
-    const auto size = ParseDoubles(Attr(s_node, "size"));
-    if (!size.empty()) site["size"] = size[0];
-    if (size.size() > 1) site["sizes"] = Array(size);
-    const std::string type = ToLower(Attr(s_node, "type"));
-    if (!type.empty()) site["type"] = type;
-    sites->push_back(std::move(site));
-    if (stats) stats->sites++;
-  }
-  for (const auto& child : Children(body_node, "body")) {
-    CollectMujocoSitesJson(child, body_world, ctx, sites, stats);
+  std::vector<std::pair<pugi::xml_node, std::vector<double>>> stack;
+  stack.emplace_back(top, top_parent_world);
+  while (!stack.empty()) {
+    const pugi::xml_node body_node = stack.back().first;
+    const std::vector<double> parent_world = std::move(stack.back().second);
+    stack.pop_back();
+    const std::vector<double> body_world =
+        MultiplyMatrix(parent_world, PoseMatrix(body_node, ctx));
+    for (const auto& s_node : Children(body_node, "site")) {
+      const std::string name =
+          Attr(s_node, "name", "site_" + std::to_string(sites->size()));
+      const std::vector<double> site_world =
+          MultiplyMatrix(body_world, PoseMatrix(s_node, ctx));
+      Json site = {{"name", name}, {"matrix", Array(site_world)},
+                   {"bodyMatrix", Array(body_world)}};
+      auto owner = active_body_names.find(body_node.internal_object());
+      site["body"] = owner != active_body_names.end() ? owner->second : active_world_name;
+      if (HasAttr(s_node, "group"))
+        site["group"] = ToInt32(ParseDoubleAttr(s_node, "group", 0.0), "group");
+      const auto size = ParseDoubles(Attr(s_node, "size"));
+      if (!size.empty()) site["size"] = size[0];
+      if (size.size() > 1) site["sizes"] = Array(size);
+      const std::string type = ToLower(Attr(s_node, "type"));
+      if (!type.empty()) site["type"] = type;
+      sites->push_back(std::move(site));
+      if (stats) stats->sites++;
+    }
+    const auto children = Children(body_node, "body");
+    for (auto it = children.rbegin(); it != children.rend(); ++it) stack.emplace_back(*it, body_world);
   }
 }
 
@@ -4532,47 +4650,53 @@ void AddMujocoPluginsJson(const pugi::xml_node& root, Json* plugins) {
 // MJCF <light>/<camera> (in worldbody or nested bodies) -> JSON with a baked
 // world matrix, consumed by the converter's AddLightFromJson/AddCameraFromJson.
 // `frame_world` is the world transform of `frame_node`'s frame.
-void CollectMujocoLightsCamerasJson(const pugi::xml_node& frame_node,
-                                    const std::vector<double>& frame_world,
+// Lights and cameras of a body subtree in preorder, with an explicit stack.
+void CollectMujocoLightsCamerasJson(const pugi::xml_node& top,
+                                    const std::vector<double>& top_world,
                                     const Context& ctx, Json* lights,
                                     Json* cameras) {
-  for (const auto& l : Children(frame_node, "light")) {
-    Json light = Json::object();
-    light["name"] = Attr(l, "name", "light");
-    std::string type = Attr(l, "type");
-    if (type.empty())
-      type =
-          MjcBoolAttr(Attr(l, "directional", "false")) ? "directional" : "spot";
-    light["type"] = type;
-    light["matrix"] = Array(MultiplyMatrix(frame_world, PoseMatrix(l, ctx)));
-    const auto dir = ParseDouble3(Attr(l, "dir"), {{0.0, 0.0, -1.0}});
-    light["dir"] = Json::array({dir[0], dir[1], dir[2]});
-    const auto diffuse = ParseDoubles(Attr(l, "diffuse"));
-    if (diffuse.size() >= 3)
-      light["color"] = Json::array({diffuse[0], diffuse[1], diffuse[2]});
-    if (HasAttr(l, "castshadow"))
-      light["castshadow"] = MjcBoolAttr(Attr(l, "castshadow"));
-    if (HasAttr(l, "cutoff"))
-      light["cutoff"] = ParseDoubleAttr(l, "cutoff", 45.0);
-    for (const char* key : {"intensity", "exponent"})
-      if (HasAttr(l, key)) light[key] = ParseDoubleAttr(l, key, 0.0);
-    lights->push_back(std::move(light));
-  }
-  for (const auto& c : Children(frame_node, "camera")) {
-    Json cam = Json::object();
-    cam["name"] = Attr(c, "name", "camera");
-    cam["matrix"] = Array(MultiplyMatrix(frame_world, PoseMatrix(c, ctx)));
-    // MuJoCo's default vertical field of view is 45 degrees.
-    cam["fovy"] = ParseDoubleAttr(c, "fovy", 45.0);
-    const std::string proj = Attr(c, "projection");
-    if (proj == "orthographic" || MjcBoolAttr(Attr(c, "orthographic", "false")))
-      cam["orthographic"] = true;
-    cameras->push_back(std::move(cam));
-  }
-  for (const auto& child : Children(frame_node, "body")) {
-    const std::vector<double> body_world =
-        MultiplyMatrix(frame_world, PoseMatrix(child, ctx));
-    CollectMujocoLightsCamerasJson(child, body_world, ctx, lights, cameras);
+  std::vector<std::pair<pugi::xml_node, std::vector<double>>> stack;
+  stack.emplace_back(top, top_world);
+  while (!stack.empty()) {
+    const pugi::xml_node frame_node = stack.back().first;
+    const std::vector<double> frame_world = std::move(stack.back().second);
+    stack.pop_back();
+    for (const auto& l : Children(frame_node, "light")) {
+      Json light = Json::object();
+      light["name"] = Attr(l, "name", "light");
+      std::string type = Attr(l, "type");
+      if (type.empty())
+        type =
+            MjcBoolAttr(Attr(l, "directional", "false")) ? "directional" : "spot";
+      light["type"] = type;
+      light["matrix"] = Array(MultiplyMatrix(frame_world, PoseMatrix(l, ctx)));
+      const auto dir = ParseDouble3(Attr(l, "dir"), {{0.0, 0.0, -1.0}});
+      light["dir"] = Json::array({dir[0], dir[1], dir[2]});
+      const auto diffuse = ParseDoubles(Attr(l, "diffuse"));
+      if (diffuse.size() >= 3)
+        light["color"] = Json::array({diffuse[0], diffuse[1], diffuse[2]});
+      if (HasAttr(l, "castshadow"))
+        light["castshadow"] = MjcBoolAttr(Attr(l, "castshadow"));
+      if (HasAttr(l, "cutoff"))
+        light["cutoff"] = ParseDoubleAttr(l, "cutoff", 45.0);
+      for (const char* key : {"intensity", "exponent"})
+        if (HasAttr(l, key)) light[key] = ParseDoubleAttr(l, key, 0.0);
+      lights->push_back(std::move(light));
+    }
+    for (const auto& c : Children(frame_node, "camera")) {
+      Json cam = Json::object();
+      cam["name"] = Attr(c, "name", "camera");
+      cam["matrix"] = Array(MultiplyMatrix(frame_world, PoseMatrix(c, ctx)));
+      // MuJoCo's default vertical field of view is 45 degrees.
+      cam["fovy"] = ParseDoubleAttr(c, "fovy", 45.0);
+      const std::string proj = Attr(c, "projection");
+      if (proj == "orthographic" || MjcBoolAttr(Attr(c, "orthographic", "false")))
+        cam["orthographic"] = true;
+      cameras->push_back(std::move(cam));
+    }
+    const auto children = Children(frame_node, "body");
+    for (auto it = children.rbegin(); it != children.rend(); ++it)
+      stack.emplace_back(*it, MultiplyMatrix(frame_world, PoseMatrix(*it, ctx)));
   }
 }
 
@@ -5133,6 +5257,10 @@ bool AddMujocoSkinsJson(const pugi::xml_node& root, const fs::path& base_dir, Js
                                active_reader->root_source, &bytes, &resolved, &why))
         return fail(why);
       if (!ParseSKN(bytes, &skin, &why)) return fail(why);
+      bool finite = AllFinite(skin.vert) && AllFinite(skin.texcoord) &&
+                    AllFinite(skin.bindpos) && AllFinite(skin.bindquat);
+      for (const auto& weights : skin.vertweight) finite = finite && AllFinite(weights);
+      if (!finite) return fail("SKN file holds non-finite values");
     } else {
       for (double v : ParseDoubles(Attr(node, "vertex"))) skin.vert.push_back(float(v));
       for (double v : ParseDoubles(Attr(node, "texcoord"))) skin.texcoord.push_back(float(v));
@@ -5774,14 +5902,24 @@ bool AddWorldbodyGeomsLink(const std::vector<pugi::xml_node>& worldbodies,
   return true;
 }
 
-bool VisitMujocoBody(const pugi::xml_node& body_node,
-                     const std::string& parent_name,
-                     const std::string& childclass,
-                     const std::vector<double>& parent_world,
-                     const std::map<std::string, MeshAsset>& assets,
-                     const std::map<std::string, HFieldAsset>& hfields,
-                     const Options& opts, const Context& ctx, Json* links,
-                     Json* joints, Stats* stats, std::string* err) {
+// A body still to visit, with what its parent hands down.
+struct MujocoBodyJob {
+  pugi::xml_node node;
+  std::string parent_name, childclass;
+  std::vector<double> parent_world;
+};
+
+// One body: its link, geoms and joints. Appends its child bodies (in order)
+// to *children instead of recursing.
+bool VisitMujocoBodyOne(const pugi::xml_node& body_node,
+                        const std::string& parent_name,
+                        const std::string& childclass,
+                        const std::vector<double>& parent_world,
+                        const std::map<std::string, MeshAsset>& assets,
+                        const std::map<std::string, HFieldAsset>& hfields,
+                        const Options& opts, const Context& ctx, Json* links,
+                        Json* joints, Stats* stats, std::vector<MujocoBodyJob>* children,
+                        std::string* err) {
   // A body's own `childclass` becomes the default class for its descendant
   // geoms/joints/bodies, unless overridden deeper.
   const std::string cc = HasAttr(body_node, "childclass")
@@ -5931,11 +6069,31 @@ bool VisitMujocoBody(const pugi::xml_node& body_node,
     }
   }
 
-  for (const auto& child_body : Children(body_node, "body")) {
-    if (!VisitMujocoBody(child_body, body_name, cc, body_world, assets, hfields,
-                         opts, ctx, links, joints, stats, err)) {
+  for (const auto& child_body : Children(body_node, "body"))
+    children->push_back({child_body, body_name, cc, body_world});
+  return true;
+}
+
+// A body subtree in preorder (links and joints in document order), with an
+// explicit stack: body chains can be as deep as the input allows.
+bool VisitMujocoBody(const pugi::xml_node& body_node,
+                     const std::string& parent_name,
+                     const std::string& childclass,
+                     const std::vector<double>& parent_world,
+                     const std::map<std::string, MeshAsset>& assets,
+                     const std::map<std::string, HFieldAsset>& hfields,
+                     const Options& opts, const Context& ctx, Json* links,
+                     Json* joints, Stats* stats, std::string* err) {
+  std::vector<MujocoBodyJob> stack{{body_node, parent_name, childclass, parent_world}};
+  std::vector<MujocoBodyJob> children;
+  while (!stack.empty()) {
+    const MujocoBodyJob job = std::move(stack.back());
+    stack.pop_back();
+    children.clear();
+    if (!VisitMujocoBodyOne(job.node, job.parent_name, job.childclass, job.parent_world, assets,
+                            hfields, opts, ctx, links, joints, stats, &children, err))
       return false;
-    }
+    for (auto it = children.rbegin(); it != children.rend(); ++it) stack.push_back(std::move(*it));
   }
   return true;
 }
@@ -5958,8 +6116,8 @@ const std::set<std::string>& AttachRefAttrs() {
   return s;
 }
 
-void PrefixAttachSubtree(pugi::xml_node node, const std::string& prefix,
-                         double angle_scale) {
+void PrefixAttachNode(pugi::xml_node node, const std::string& prefix,
+                      double angle_scale) {
   for (pugi::xml_attribute a : node.attributes()) {
     if (AttachRefAttrs().count(a.name())) {
       const std::string v = a.value();
@@ -6005,27 +6163,77 @@ void PrefixAttachSubtree(pugi::xml_node node, const std::string& prefix,
       }
     }
   }
-  for (pugi::xml_node c : node.children()) {
-    PrefixAttachSubtree(c, prefix, angle_scale);
+}
+
+// Every node of the subtree is rewritten independently (explicit stack).
+void PrefixAttachSubtree(pugi::xml_node node, const std::string& prefix,
+                         double angle_scale) {
+  std::vector<pugi::xml_node> stack{node};
+  while (!stack.empty()) {
+    const pugi::xml_node n = stack.back();
+    stack.pop_back();
+    PrefixAttachNode(n, prefix, angle_scale);
+    for (pugi::xml_node c = n.first_child(); c; c = c.next_sibling()) stack.push_back(c);
   }
 }
 
+// <attach> elements below `n`, in document (pre)order (explicit stack).
 void CollectAttachNodes(pugi::xml_node n, std::vector<pugi::xml_node>* out) {
-  for (pugi::xml_node c : n.children()) {
+  std::vector<pugi::xml_node> stack;
+  for (pugi::xml_node c = n.last_child(); c; c = c.previous_sibling()) stack.push_back(c);
+  while (!stack.empty()) {
+    const pugi::xml_node c = stack.back();
+    stack.pop_back();
     if (std::string(c.name()) == "attach") out->push_back(c);
-    CollectAttachNodes(c, out);
+    for (pugi::xml_node d = c.last_child(); d; d = d.previous_sibling()) stack.push_back(d);
   }
 }
 
+// First <body> named `name` below `n`, in preorder (explicit stack).
 pugi::xml_node FindBodyByName(pugi::xml_node n, const std::string& name) {
-  for (pugi::xml_node b : n.children("body")) {
+  std::vector<pugi::xml_node> stack;
+  const auto push_bodies = [&](pugi::xml_node parent) {
+    for (pugi::xml_node b = parent.last_child(); b; b = b.previous_sibling())
+      if (std::string(b.name()) == "body") stack.push_back(b);
+  };
+  push_bodies(n);
+  while (!stack.empty()) {
+    const pugi::xml_node b = stack.back();
+    stack.pop_back();
     if (std::string(b.attribute("name").as_string()) == name) return b;
-    if (pugi::xml_node r = FindBodyByName(b, name)) return r;
+    push_bodies(b);
   }
   return pugi::xml_node();
 }
 
 void InlineMJCFDefaults(pugi::xml_node root);
+
+// MJCF macro expansion (<attach>, cable composites, <replicate>) shares one
+// element budget per import, and every added element is charged as memory
+// (a pugixml node plus a few attributes), so a small file cannot expand
+// without bound.
+constexpr size_t kExpandedElementBytes = 160;
+
+bool ChargeExpansion(size_t elements, const char* what, std::string* err) {
+  if (elements > active_reader->expansion_elements_left) {
+    if (err) *err = std::string("MJCF ") + what + " expansion exceeds the element budget";
+    return false;
+  }
+  active_reader->expansion_elements_left -= elements;
+  return active_reader->ChargeArray(elements, kExpandedElementBytes, err);
+}
+
+size_t CountElements(pugi::xml_node node) {
+  size_t count = 0;
+  std::vector<pugi::xml_node> stack{node};
+  while (!stack.empty()) {
+    const pugi::xml_node n = stack.back();
+    stack.pop_back();
+    ++count;
+    for (pugi::xml_node c = n.first_child(); c; c = c.next_sibling()) stack.push_back(c);
+  }
+  return count;
+}
 
 bool ExpandAttachments(pugi::xml_node root, const fs::path& base_dir,
                        std::string* err) {
@@ -6074,6 +6282,7 @@ bool ExpandAttachments(pugi::xml_node root, const fs::path& base_dir,
     }
     pugi::xml_node child_root = child_doc.child("mujoco");
     if (!child_root) continue;
+    if (!ChargeExpansion(CountElements(child_root), "<attach>", err)) return false;
 
     const fs::path child_dir = it->second.parent_path();
     std::string child_meshdir;
@@ -6227,13 +6436,21 @@ bool ExpandCableComposites(pugi::xml_node root, const Context& ctx, std::string*
     return out;
   };
   std::vector<pugi::xml_node> composites;
-  std::function<void(pugi::xml_node)> find = [&](pugi::xml_node n) {
-    for (pugi::xml_node c : n.children()) {
-      if (std::string(c.name()) == "composite") composites.push_back(c);
-      else find(c);
+  // <composite> elements in document order, not descending into them
+  // (explicit stack).
+  for (pugi::xml_node worldbody : root.children("worldbody")) {
+    std::vector<pugi::xml_node> stack;
+    for (pugi::xml_node c = worldbody.last_child(); c; c = c.previous_sibling()) stack.push_back(c);
+    while (!stack.empty()) {
+      const pugi::xml_node c = stack.back();
+      stack.pop_back();
+      if (std::string(c.name()) == "composite") {
+        composites.push_back(c);
+        continue;
+      }
+      for (pugi::xml_node d = c.last_child(); d; d = d.previous_sibling()) stack.push_back(d);
     }
-  };
-  for (pugi::xml_node worldbody : root.children("worldbody")) find(worldbody);
+  }
   for (pugi::xml_node comp : composites) {
     const std::string type = ToLower(Attr(comp, "type"));
     if (type != "cable") {
@@ -6287,6 +6504,8 @@ bool ExpandCableComposites(pugi::xml_node root, const Context& ctx, std::string*
       if (err) *err = "MJCF cable composite needs at least two vertices";
       return false;
     }
+    // Per vertex: a body, its joint, geom, site and contact exclude (bound).
+    if (!ChargeExpansion(size_t(n) * 8, "cable composite", err)) return false;
     // mujoco.elasticity.cable: bend torque E*I*(w - w0)/L between segments,
     // twist G*J*(w - w0)/L. A ball-joint spring toward the initial pose with
     // k = E*I/L reproduces bending; twist uses the same isotropic stiffness.
@@ -6447,107 +6666,122 @@ bool ExpandReplicates(pugi::xml_node root, const Context& ctx, std::string* err)
       "body2",  "joint1",  "joint2",  "site1",    "site2",    "geom1",
       "geom2",  "objname", "refname", "target",   "sidesite", "actuator",
       "jointinparent",     "slidersite",          "cranksite"};
-  size_t budget = 1000000;  // total replicated elements
-  std::function<bool(pugi::xml_node)> expand = [&](pugi::xml_node parent) -> bool {
-    for (pugi::xml_node c = parent.first_child(); c;) {
-      pugi::xml_node next = c.next_sibling();
-      if (!expand(c)) return false;
-      if (std::string(c.name()) != "replicate") {
-        c = next;
-        continue;
-      }
-      const int count = ToInt32(ParseDoubleAttr(c, "count", 0.0), "count");
-      if (count <= 0) {
-        if (err) *err = "MJCF <replicate> count must be positive";
-        return false;
-      }
-      const auto offset = ParseDouble3(Attr(c, "offset"), {{0, 0, 0}});
-      const auto euler = ParseDouble3(Attr(c, "euler"), {{0, 0, 0}});
-      const std::string sep = Attr(c, "sep");
-      std::set<std::string> names;
-      size_t nodes = 0;
-      std::function<void(pugi::xml_node)> collect = [&](pugi::xml_node n) {
-        for (pugi::xml_node d : n.children()) {
-          ++nodes;
-          if (d.attribute("name")) names.insert(d.attribute("name").as_string());
-          collect(d);
-        }
-      };
-      collect(c);
-      const size_t digits = std::to_string(count).size();
-      auto suffix = [&](int i) {
-        std::string s = std::to_string(i);
-        return sep + std::string(digits > s.size() ? digits - s.size() : 0, '0') + s;
-      };
-      std::function<void(pugi::xml_node, const std::string&, bool)> rename =
-          [&](pugi::xml_node n, const std::string& sfx, bool own_names) {
-            if (own_names)
-              if (auto a = n.attribute("name")) a.set_value((std::string(a.value()) + sfx).c_str());
-            for (const char* key : kRefs)
-              if (auto a = n.attribute(key))
-                if (names.count(a.value())) a.set_value((std::string(a.value()) + sfx).c_str());
-            for (pugi::xml_node d : n.children()) rename(d, sfx, own_names);
-          };
-      auto references = [&](pugi::xml_node n) {
-        bool found = false;
-        std::function<void(pugi::xml_node)> scan = [&](pugi::xml_node m) {
-          for (const char* key : kRefs)
-            if (auto a = m.attribute(key)) found |= names.count(a.value()) > 0;
-          for (pugi::xml_node d : m.children()) scan(d);
-        };
-        scan(n);
-        return found;
-      };
-      if (nodes * static_cast<size_t>(count) > budget) {
-        if (err) *err = "MJCF <replicate> expansion exceeds the element budget";
-        return false;
-      }
-      budget -= nodes * static_cast<size_t>(count);
-      std::array<double, 3> pos{{0, 0, 0}};
-      for (int i = 0; i < count; ++i) {
-        char buf[200];
-        std::snprintf(buf, sizeof(buf), "%.17g %.17g %.17g", i * euler[0], i * euler[1],
-                      i * euler[2]);
-        const Quat q = OrientationQuat("", "", buf, "", "", ctx);
-        pugi::xml_node frame = parent.insert_child_before("frame", c);
-        if (c.attribute("childclass"))
-          frame.append_attribute("childclass").set_value(c.attribute("childclass").value());
-        frame.append_attribute("euler").set_value(buf);
-        std::snprintf(buf, sizeof(buf), "%.17g %.17g %.17g", pos[0], pos[1], pos[2]);
-        frame.append_attribute("pos").set_value(buf);
-        for (pugi::xml_node d : c.children()) rename(frame.append_copy(d), suffix(i), true);
-        const std::vector<double> m = MatrixFromPosQuat({{0, 0, 0}}, q);
-        for (int k = 0; k < 3; ++k)
-          pos[size_t(k)] += m[size_t(k)] * offset[0] + m[size_t(4 + k)] * offset[1] +
-                            m[size_t(8 + k)] * offset[2];
-      }
-      parent.remove_child(c);
-      for (const char* section : {"tendon", "actuator", "sensor", "equality", "contact"}) {
-        for (pugi::xml_node sec : root.children(section)) {
-          for (pugi::xml_node e = sec.first_child(); e;) {
-            pugi::xml_node after = e.next_sibling();
-            if (e.type() == pugi::node_element && references(e)) {
-              for (int i = 0; i < count; ++i) rename(sec.insert_copy_before(e, e), suffix(i), true);
-              sec.remove_child(e);
-            }
-            e = after;
-          }
-        }
-      }
-      c = next;
+  // Every node of a subtree (including its root), explicit stack.
+  const auto for_subtree = [](pugi::xml_node top, const std::function<void(pugi::xml_node)>& fn) {
+    std::vector<pugi::xml_node> stack{top};
+    while (!stack.empty()) {
+      const pugi::xml_node n = stack.back();
+      stack.pop_back();
+      fn(n);
+      for (pugi::xml_node d = n.first_child(); d; d = d.next_sibling()) stack.push_back(d);
     }
-    return true;
   };
-  for (pugi::xml_node worldbody : root.children("worldbody"))
-    if (!expand(worldbody)) return false;
+  // Replicates expand innermost first (post-order), so a copied subtree is
+  // already expanded. Expanding one only rewrites its own parent's children
+  // and the reference sections, so the order is taken up front.
+  std::vector<pugi::xml_node> replicates;
+  for (pugi::xml_node worldbody : root.children("worldbody")) {
+    std::vector<pugi::xml_node> order, stack{worldbody};
+    while (!stack.empty()) {
+      const pugi::xml_node n = stack.back();
+      stack.pop_back();
+      order.push_back(n);
+      for (pugi::xml_node d = n.first_child(); d; d = d.next_sibling()) stack.push_back(d);
+    }
+    for (auto it = order.rbegin(); it != order.rend(); ++it)
+      if (*it != worldbody && std::string(it->name()) == "replicate") replicates.push_back(*it);
+  }
+  for (const pugi::xml_node c : replicates) {
+    pugi::xml_node parent = c.parent();
+    const int count = ToInt32(ParseDoubleAttr(c, "count", 0.0), "count");
+    if (count <= 0) {
+      if (err) *err = "MJCF <replicate> count must be positive";
+      return false;
+    }
+    const auto offset = ParseDouble3(Attr(c, "offset"), {{0, 0, 0}});
+    const auto euler = ParseDouble3(Attr(c, "euler"), {{0, 0, 0}});
+    const std::string sep = Attr(c, "sep");
+    std::set<std::string> names;
+    size_t nodes = 0;
+    for_subtree(c, [&](pugi::xml_node d) {
+      if (d == c) return;
+      ++nodes;
+      if (d.attribute("name")) names.insert(d.attribute("name").as_string());
+    });
+    const size_t digits = std::to_string(count).size();
+    auto suffix = [&](int i) {
+      std::string s = std::to_string(i);
+      return sep + std::string(digits > s.size() ? digits - s.size() : 0, '0') + s;
+    };
+    const auto rename = [&](pugi::xml_node top, const std::string& sfx, bool own_names) {
+      for_subtree(top, [&](pugi::xml_node n) {
+        if (own_names)
+          if (auto a = n.attribute("name")) a.set_value((std::string(a.value()) + sfx).c_str());
+        for (const char* key : kRefs)
+          if (auto a = n.attribute(key))
+            if (names.count(a.value())) a.set_value((std::string(a.value()) + sfx).c_str());
+      });
+    };
+    auto references = [&](pugi::xml_node n) {
+      bool found = false;
+      for_subtree(n, [&](pugi::xml_node m) {
+        for (const char* key : kRefs)
+          if (auto a = m.attribute(key)) found |= names.count(a.value()) > 0;
+      });
+      return found;
+    };
+    // Each copy adds a <frame> plus the subtree (charged even when empty).
+    if (nodes + 1 > active_reader->expansion_elements_left / static_cast<size_t>(count)) {
+      if (err) *err = "MJCF <replicate> expansion exceeds the element budget";
+      return false;
+    }
+    if (!ChargeExpansion((nodes + 1) * static_cast<size_t>(count), "<replicate>", err))
+      return false;
+    std::array<double, 3> pos{{0, 0, 0}};
+    for (int i = 0; i < count; ++i) {
+      char buf[200];
+      std::snprintf(buf, sizeof(buf), "%.17g %.17g %.17g", i * euler[0], i * euler[1],
+                    i * euler[2]);
+      const Quat q = OrientationQuat("", "", buf, "", "", ctx);
+      pugi::xml_node frame = parent.insert_child_before("frame", c);
+      if (c.attribute("childclass"))
+        frame.append_attribute("childclass").set_value(c.attribute("childclass").value());
+      frame.append_attribute("euler").set_value(buf);
+      std::snprintf(buf, sizeof(buf), "%.17g %.17g %.17g", pos[0], pos[1], pos[2]);
+      frame.append_attribute("pos").set_value(buf);
+      for (pugi::xml_node d : c.children()) rename(frame.append_copy(d), suffix(i), true);
+      const std::vector<double> m = MatrixFromPosQuat({{0, 0, 0}}, q);
+      for (int k = 0; k < 3; ++k)
+        pos[size_t(k)] += m[size_t(k)] * offset[0] + m[size_t(4 + k)] * offset[1] +
+                          m[size_t(8 + k)] * offset[2];
+    }
+    parent.remove_child(c);
+    for (const char* section : {"tendon", "actuator", "sensor", "equality", "contact"}) {
+      for (pugi::xml_node sec : root.children(section)) {
+        for (pugi::xml_node e = sec.first_child(); e;) {
+          pugi::xml_node after = e.next_sibling();
+          if (e.type() == pugi::node_element && references(e)) {
+            const size_t copy = CountElements(e);
+            if (copy > active_reader->expansion_elements_left / static_cast<size_t>(count) ||
+                !ChargeExpansion(copy * static_cast<size_t>(count), "<replicate>", err)) {
+              if (err && err->empty())
+                *err = "MJCF <replicate> expansion exceeds the element budget";
+              return false;
+            }
+            for (int i = 0; i < count; ++i) rename(sec.insert_copy_before(e, e), suffix(i), true);
+            sec.remove_child(e);
+          }
+          e = after;
+        }
+      }
+    }
+  }
   return true;
 }
 
-void FlattenFramesIn(pugi::xml_node parent, const Context& ctx) {
-  // Bottom-up: flatten frames nested inside children before dissolving the
-  // frames directly under `parent`.
-  for (pugi::xml_node c : parent.children()) FlattenFramesIn(c, ctx);
-
+// Dissolve the <frame> children of `parent` (whose own frames are already
+// flattened) into it.
+void DissolveFramesUnder(pugi::xml_node parent, const Context& ctx) {
   pugi::xml_node child = parent.first_child();
   while (child) {
     pugi::xml_node next = child.next_sibling();
@@ -6626,6 +6860,20 @@ void FlattenFramesIn(pugi::xml_node parent, const Context& ctx) {
   }
 }
 
+// Bottom-up: frames nested inside a child are flattened before the frames
+// directly under its parent. Dissolving only rewrites a node's own children,
+// so a post-order list taken up front (explicit stack) is the recursive order.
+void FlattenFramesIn(pugi::xml_node parent, const Context& ctx) {
+  std::vector<pugi::xml_node> order, stack{parent};
+  while (!stack.empty()) {
+    const pugi::xml_node n = stack.back();
+    stack.pop_back();
+    order.push_back(n);
+    for (pugi::xml_node c = n.first_child(); c; c = c.next_sibling()) stack.push_back(c);
+  }
+  for (auto it = order.rbegin(); it != order.rend(); ++it) DissolveFramesUnder(*it, ctx);
+}
+
 bool IsSolverArray(std::string_view name) {
   for (const char* key : {"solimp", "solimplimit", "solimpfriction", "o_solimp",
                           "solref", "solreflimit", "solreffriction", "o_solref"})
@@ -6672,8 +6920,10 @@ std::string CompleteSolverArray(const std::string& name, const std::string& valu
 void InlineMJCFDefaults(pugi::xml_node root) {
   using Elements = std::map<std::string, AttrMap>;
   std::map<std::string, Elements> classes;
-  std::function<void(pugi::xml_node, Elements)> collect =
-      [&](pugi::xml_node node, Elements inherited) {
+  // Class tables in preorder (a later definition of a name wins), with an
+  // explicit stack of (default node, attributes inherited from its parent).
+  std::vector<std::pair<pugi::xml_node, Elements>> pending;
+  const auto collect = [&](pugi::xml_node node, Elements inherited) {
         for (auto child : node.children()) {
           if (std::string(child.name()) == "default") continue;
           for (auto attr : child.attributes()) {
@@ -6689,13 +6939,24 @@ void InlineMJCFDefaults(pugi::xml_node root) {
           classes[""] = inherited;
           classes["main"] = inherited;
         }
-        for (auto child : node.children("default")) collect(child, inherited);
+        std::vector<pugi::xml_node> children;
+        for (auto child : node.children("default")) children.push_back(child);
+        for (auto it = children.rbegin(); it != children.rend(); ++it)
+          pending.emplace_back(*it, inherited);
       };
-  for (auto node : root.children("default")) collect(node, {});
-  std::function<void(pugi::xml_node, std::string)> apply =
-      [&](pugi::xml_node node, std::string inherited_class) {
+  for (auto node : root.children("default")) {
+    pending.emplace_back(node, Elements{});
+    while (!pending.empty()) {
+      auto item = std::move(pending.back());
+      pending.pop_back();
+      collect(item.first, std::move(item.second));
+    }
+  }
+  // One element: inline its class attributes. Returns whether to descend, and
+  // updates `inherited_class` with the element's childclass for its subtree.
+  const auto apply = [&](pugi::xml_node node, std::string& inherited_class) -> bool {
         const std::string kind = node.name();
-        if (kind == "default") return;
+        if (kind == "default") return false;
         std::string selected = Attr(node, "class", inherited_class);
         auto found = classes.find(selected);
         if (found == classes.end()) {
@@ -6740,7 +7001,7 @@ void InlineMJCFDefaults(pugi::xml_node root) {
         // shortcut source rules); inlining by tag would mix shortcuts.
         if (std::string(node.parent().name()) == "actuator" && IsMjcfActuatorTag(kind) &&
             active_reader && active_reader->options.profile != "legacy")
-          return;
+          return false;
         // General actuator parameters are the baseline for actuator shortcuts.
         if (std::string(node.parent().name()) == "actuator" &&
             kind != "general")
@@ -6755,9 +7016,19 @@ void InlineMJCFDefaults(pugi::xml_node root) {
         }
         if (node.attribute("childclass"))
           inherited_class = Attr(node, "childclass");
-        for (auto child : node.children()) apply(child, inherited_class);
+        return true;
       };
-  apply(root, "");
+  // Preorder over the document (explicit stack): unknown-class diagnostics
+  // keep document order.
+  std::vector<std::pair<pugi::xml_node, std::string>> stack{{root, std::string()}};
+  while (!stack.empty()) {
+    const pugi::xml_node node = stack.back().first;
+    std::string inherited_class = std::move(stack.back().second);
+    stack.pop_back();
+    if (!apply(node, inherited_class)) continue;
+    for (pugi::xml_node c = node.last_child(); c; c = c.previous_sibling())
+      stack.emplace_back(c, inherited_class);
+  }
 }
 
 bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
@@ -6778,9 +7049,22 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
           std::string("MJCF XML parse failed: ") + parse_result.description();
     return false;
   }
+  // The shortest "__world" + "_"*k that the text does not contain: one more
+  // underscore than the longest run after any "__world" (one pass, not a
+  // search per appended underscore).
   active_world_name = "__world";
-  while (expanded.find(active_world_name) != std::string::npos)
-    active_world_name += "_";
+  {
+    size_t longest = 0;
+    bool seen = false;
+    for (size_t at = expanded.find("__world"); at != std::string::npos;
+         at = expanded.find("__world", at + 1)) {
+      size_t run = 0;
+      for (size_t i = at + 7; i < expanded.size() && expanded[i] == '_'; ++i) ++run;
+      longest = std::max(longest, run);
+      seen = true;
+    }
+    if (seen) active_world_name.append(longest + 1, '_');
+  }
   const auto root = doc.child("mujoco");
   if (!root) {
     if (err) *err = "Expected <mujoco> root.";
@@ -7432,20 +7716,45 @@ size_t CollapseGhostLinks(Json* links, Json* joints, const std::map<std::string,
 // metadata the way urdf-usd-converter keeps "undefined" elements:
 // {tag, attributes, text, elements}. Non-legacy profiles only.
 Json URDFCustomElement(const pugi::xml_node& node, size_t depth) {
-  Json e{{"tag", std::string(node.name())}};
-  Json attributes = Json::object();
-  for (auto a : node.attributes()) attributes[a.name()] = std::string(a.value());
-  if (!attributes.empty()) e["attributes"] = std::move(attributes);
-  std::string text;
-  Json elements = Json::array();
-  for (auto c = node.first_child(); c; c = c.next_sibling()) {
-    if (c.type() == pugi::node_pcdata || c.type() == pugi::node_cdata) text += c.value();
-    else if (c.type() == pugi::node_element && depth < 64) elements.push_back(URDFCustomElement(c, depth + 1));
+  // Built bottom-up with an explicit stack: each frame finishes its element
+  // and appends it to the parent's `elements` (children below depth 64 are
+  // dropped, as before).
+  struct Frame {
+    pugi::xml_node node, next;
+    size_t depth;
+    Json e;
+    std::string text;
+    Json elements = Json::array();
+  };
+  const auto open = [](const pugi::xml_node& n, size_t d) {
+    Frame f{n, n.first_child(), d, Json{{"tag", std::string(n.name())}}};
+    Json attributes = Json::object();
+    for (auto a : n.attributes()) attributes[a.name()] = std::string(a.value());
+    if (!attributes.empty()) f.e["attributes"] = std::move(attributes);
+    return f;
+  };
+  std::vector<Frame> stack;
+  stack.push_back(open(node, depth));
+  Json result;
+  while (!stack.empty()) {
+    Frame& f = stack.back();
+    if (f.next) {
+      const pugi::xml_node c = f.next;
+      f.next = c.next_sibling();
+      if (c.type() == pugi::node_pcdata || c.type() == pugi::node_cdata) f.text += c.value();
+      else if (c.type() == pugi::node_element && f.depth < 64) stack.push_back(open(c, f.depth + 1));
+      continue;
+    }
+    const size_t b = f.text.find_first_not_of(" \t\r\n");
+    if (b != std::string::npos)
+      f.e["text"] = f.text.substr(b, f.text.find_last_not_of(" \t\r\n") - b + 1);
+    if (!f.elements.empty()) f.e["elements"] = std::move(f.elements);
+    Json done = std::move(f.e);
+    stack.pop_back();
+    if (stack.empty()) result = std::move(done);
+    else stack.back().elements.push_back(std::move(done));
   }
-  const size_t b = text.find_first_not_of(" \t\r\n");
-  if (b != std::string::npos) e["text"] = text.substr(b, text.find_last_not_of(" \t\r\n") - b + 1);
-  if (!elements.empty()) e["elements"] = std::move(elements);
-  return e;
+  return result;
 }
 
 // Unknown attributes and child elements of `node` (null when none).
@@ -7483,10 +7792,11 @@ void DiscoverURDFPackages(const pugi::xml_node& root, const std::string& source)
   if (start.empty()) return;
   // ROS package layout: <package>/urdf/robot.urdf referencing ../meshes/...
   // The package directory (with package.xml or meshes/) is an asset root too.
+  const std::string start_name = ToLower(start.filename().string());
+  const bool ros_layout = start_name == "urdf" || start_name == "robots";
   {
-    const std::string dir = ToLower(start.filename().string());
     const fs::path package = start.parent_path();
-    if ((dir == "urdf" || dir == "robots") && !package.empty() && package != package.root_path() &&
+    if (ros_layout && !package.empty() && package != package.root_path() &&
         (fs::is_regular_file(package / "package.xml", ec) || fs::is_directory(package / "meshes", ec))) {
       active_reader->extra_roots.push_back(package.string());
       active_reader->Warn("URDF in a ROS package layout; " + package.generic_string() +
@@ -7511,17 +7821,30 @@ void DiscoverURDFPackages(const pugi::xml_node& root, const std::string& source)
     const fs::path relative = fs::path(file.substr(end + 1)).lexically_normal();
     bool escapes = relative.is_absolute();
     for (const auto& part : relative) escapes = escapes || part == "..";
+    // A discovered package becomes an asset root, so it must not widen the
+    // readable tree past a real package: never the filesystem root, at most
+    // kMaxLevels above the URDF, and above the URDF's own directory only a
+    // directory with package.xml or the <package>/urdf parent (as above).
+    const int kMaxLevels = 3;
+    const auto acceptable = [&](const fs::path& dir, int level) {
+      if (dir == dir.root_path()) return false;
+      if (level == 0) return true;
+      return fs::is_regular_file(dir / "package.xml", ec) || (level == 1 && ros_layout);
+    };
     fs::path found;
-    for (fs::path dir = start; !dir.empty(); dir = dir.parent_path()) {
+    int level = 0;
+    for (fs::path dir = start; !dir.empty() && level <= kMaxLevels; dir = dir.parent_path(), ++level) {
+      if (dir == dir.root_path()) break;
       if (dir.filename() == package) {
-        found = dir;
+        if (acceptable(dir, level)) found = dir;
         break;
       }
-      if (dir == dir.root_path()) break;
     }
-    for (fs::path dir = start; found.empty() && !escapes && !dir.empty(); dir = dir.parent_path()) {
-      if (fs::is_regular_file(dir / relative, ec)) found = dir;
+    level = 0;
+    for (fs::path dir = start; found.empty() && !escapes && !dir.empty() && level <= kMaxLevels;
+         dir = dir.parent_path(), ++level) {
       if (dir == dir.root_path()) break;
+      if (fs::is_regular_file(dir / relative, ec) && acceptable(dir, level)) found = dir;
     }
     if (found.empty()) continue;
     active_reader->packages[package] = found.string();
@@ -8003,7 +8326,7 @@ bool BuildPayload(const std::string& text, const std::string& source,
     format = "obj";
   bool ok = false;
   {
-    if (!reader.Charge(text.size() * 8, err)) return false;
+    if (!reader.ChargeArray(text.size(), 8, err)) return false;
     pugi::xml_document doc;
     auto parsed = doc.load_buffer(text.data(), text.size());
     if (!parsed) {

@@ -195,6 +195,9 @@ struct Reader {
   // trace and warning in order, so a speculative child reader's work can be
   // replayed into its parent.
   size_t peak_bytes = 0;
+  // MJCF elements that <attach>, cable composites and <replicate> may still
+  // add (one budget per import; see ChargeExpansion in mjcf.cc).
+  size_t expansion_elements_left = 1000000;
   bool record_accesses = false;
   struct Access {
     std::string name, anchor, identifier;

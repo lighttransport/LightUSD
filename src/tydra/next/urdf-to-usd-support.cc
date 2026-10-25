@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <deque>
+#include <set>
 #include <utility>
 
 namespace lightusd { namespace tydra { namespace next {
@@ -242,23 +244,50 @@ void AddURDFCustom(tn::Layer *layer, const std::string &path, tn::PrimSpec *prim
       out.push_back(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == ':' ? c : '_');
     return out;
   };
-  if (const Json *attributes = JsonObject(*custom, "attributes"))
-    if (attributes->object_items())
-      for (const auto &member : *attributes->object_items())
-        if (member.value().is_string())
-          Set(prim, attribute_name(member.key), tn::Value(member.value().get<std::string>()), "string");
-  const std::string text = JsonString(*custom, "text");
-  if (!text.empty()) Set(prim, "urdf:text", tn::Value(text), "string");
-  if (const Json *elements = JsonArray(*custom, "elements")) {
-    for (const Json &element : *elements) {
-      const std::string tag = JsonString(element, "tag", "element");
-      const std::string name = ChildName(Sanitize(tag, "element"), siblings);
-      tn::PrimSpec *child = Define(layer, path + "/" + name, "Scope");
-      if (!child) continue;
-      SetSourceDisplayName(child, tag);
-      std::set<std::string> grandchildren;
-      AddURDFCustom(layer, path + "/" + name, child, &element, &grandchildren);
+  // Depth-first with an explicit stack (the JSON bridge takes caller nesting
+  // as is): a child Scope is defined and filled before its next sibling, so
+  // prims are defined in the recursive order. A deque keeps frames in place
+  // while children are pushed.
+  struct Frame {
+    std::string path;
+    tn::PrimSpec *prim;
+    const Json *custom;
+    std::set<std::string> own_names;
+    std::set<std::string> *names;  // child names in use
+    size_t next = 0;
+  };
+  std::deque<Frame> stack;
+  stack.push_back({path, prim, custom, {}, siblings});
+  bool fresh = true;
+  while (!stack.empty()) {
+    Frame &f = stack.back();
+    if (fresh) {
+      fresh = false;
+      if (const Json *attributes = JsonObject(*f.custom, "attributes"))
+        if (attributes->object_items())
+          for (const auto &member : *attributes->object_items())
+            if (member.value().is_string())
+              Set(f.prim, attribute_name(member.key), tn::Value(member.value().get<std::string>()),
+                  "string");
+      const std::string text = JsonString(*f.custom, "text");
+      if (!text.empty()) Set(f.prim, "urdf:text", tn::Value(text), "string");
     }
+    const Json *elements = JsonArray(*f.custom, "elements");
+    if (!elements || f.next >= elements->size()) {
+      stack.pop_back();
+      continue;
+    }
+    const Json &element = (*elements)[f.next++];
+    const std::string tag = JsonString(element, "tag", "element");
+    const std::string name = ChildName(Sanitize(tag, "element"), f.names);
+    const std::string child_path = f.path + "/" + name;
+    tn::PrimSpec *child = Define(layer, child_path, "Scope");
+    if (!child) continue;
+    SetSourceDisplayName(child, tag);
+    if (!element.is_object()) continue;
+    stack.push_back({child_path, child, &element, {}, nullptr});
+    stack.back().names = &stack.back().own_names;
+    fresh = true;
   }
 }
 
@@ -342,13 +371,36 @@ void SetRel(tn::PrimSpec *prim, const std::string &name,
 
 void SetInterpolation(tn::PrimSpec *prim, const std::string &name,
                       const char *interpolation) {
+  if (!prim) return;
   tn::PropMeta &meta = prim->ensure_property_meta(name);
   meta.interpolation = interpolation;
   meta.authored |= tn::PropMeta::kInterpolation;
 }
 
+namespace {
+thread_local bool define_capacity_exceeded = false;
+}  // namespace
+
+void ResetDefineCapacity() { define_capacity_exceeded = false; }
+bool DefineCapacityExceeded() { return define_capacity_exceeded; }
+
 tn::PrimSpec *Define(tn::Layer *layer, const std::string &path,
                      const std::string &type) {
+  // Builders hold PrimSpec pointers across Define calls, so the prim vector
+  // must never reallocate: ConvertPayload reserves capacity up front, and a
+  // define that would outgrow it fails (the conversion reports it) instead of
+  // invalidating those pointers.
+  size_t missing = 0;
+  for (std::string p = path; p.size() > 1 && layer->index_at_path(p) == UINT32_MAX;) {
+    ++missing;
+    const size_t slash = p.rfind('/');
+    if (slash == std::string::npos) break;
+    p.resize(slash);
+  }
+  if (missing > layer->prims().capacity() - layer->prim_count()) {
+    define_capacity_exceeded = true;
+    return nullptr;
+  }
   const uint32_t index = layer->define_prim_at_path(path, type);
   return index == UINT32_MAX ? nullptr : layer->prim_mutable(index);
 }

@@ -185,6 +185,18 @@ def test_urdf_package_found_by_relative_path(tmp_path):
         lightusd.import_urdf(escape)
 
 
+def test_urdf_package_discovery_does_not_widen_roots(tmp_path):
+    # Two levels above a non-ROS directory, without package.xml: a package://
+    # URI must not turn that directory (here the whole tmp tree) into a root.
+    _write(tmp_path / 'secret' / 'm.obj', _TRI_OBJ)
+    urdf = _write(tmp_path / 'a' / 'b' / 'r.urdf', _package_urdf('package://x/secret/m.obj'))
+    with pytest.raises(lightusd.UsdError):
+        lightusd.import_urdf(urdf)
+    # A real package (package.xml) at that level is found.
+    _write(tmp_path / 'package.xml', '<package/>')
+    assert [p for p in lightusd.import_urdf(urdf) if p.type_name == 'Mesh']
+
+
 def test_self_collision_is_only_authored_when_the_source_sets_it():
     xml = _mjcf('<body name="a"><freejoint/><geom size=".1"/><body name="b"><joint axis="0 0 1"/>'
                 '<geom size=".1"/></body></body>')

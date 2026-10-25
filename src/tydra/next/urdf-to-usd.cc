@@ -15,7 +15,7 @@
 namespace lightusd { namespace tydra { namespace next {
 using namespace urdf_detail;
 
-static bool ConvertPayload(
+static bool ConvertPayloadLayer(
     const ::lightusd::tydra::detail::URDFPayload &payload,
     const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
     ::lightusd::next::Stage *out_stage, std::string *warn, std::string *err) {
@@ -83,6 +83,14 @@ static bool ConvertPayload(
           return false;
         }
         prim_capacity += names->size();
+      }
+      // One PhysicsAttachment per distinct pin body (a string array).
+      if (const auto* pins = JsonArray(*object, "pinBodies")) {
+        if (pins->size() > size_t(UINT32_MAX) - prim_capacity) {
+          if (err) *err = "Robot pin count limit exceeded";
+          return false;
+        }
+        prim_capacity += pins->size();
       }
       for (const auto& item : *object->object_items())
         if (item.value().is_object() || item.value().is_array())
@@ -782,11 +790,29 @@ static bool ConvertPayload(
     }
   }
 
+  if (DefineCapacityExceeded()) return false;  // reported by ConvertPayload
   layer.finalize();
   tn::Stage stage;
   stage.SetRootLayer(std::move(layer));
   *out_stage = std::move(stage);
   return true;
+}
+
+static bool ConvertPayload(
+    const ::lightusd::tydra::detail::URDFPayload &payload,
+    const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
+    ::lightusd::next::Stage *out_stage, std::string *warn, std::string *err) {
+  ResetDefineCapacity();
+  const bool ok = ConvertPayloadLayer(payload, mesh_buffers, out_stage, warn, err);
+  if (DefineCapacityExceeded()) {
+    // A builder's prim did not fit the reserved capacity: failing keeps the
+    // PrimSpec pointers builders hold valid. The estimate is a bug to fix.
+    if (err)
+      *err = "Robot conversion needs more prims than were reserved (an internal "
+             "estimate; please report the input)";
+    return false;
+  }
+  return ok;
 }
 
 bool ConvertURDFJsonToUSDStage(const std::string& robot_json,

@@ -5,6 +5,7 @@
 // then MarchingCubeCpp. The distance functions are ports of MuJoCo 3.16's
 // (Copyright 2023 DeepMind Technologies Limited, Apache-2.0), kept
 // expression for expression so the generated mesh matches MuJoCo's.
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 
@@ -202,7 +203,8 @@ bool GenerateMjcfSdfMesh(const std::string& plugin_name,
     if (it == config.end() || it->second.empty()) continue;
     char* end = nullptr;
     attributes[i] = std::strtod(it->second.c_str(), &end);
-    if (end == it->second.c_str()) {
+    while (end && std::isspace(static_cast<unsigned char>(*end))) ++end;
+    if (end == it->second.c_str() || (end && *end) || !std::isfinite(attributes[i])) {
       if (err) *err = "invalid attribute value for '" + std::string(plugin->keys[i]) + "'";
       return false;
     }
@@ -234,8 +236,14 @@ bool GenerateMjcfSdfMesh(const std::string& plugin_name,
         const double point[] = {0 - half[0] + 2 * half[0] * i / (nx - 1),
                                 0 - half[1] + 2 * half[1] * j / (ny - 1),
                                 0 - half[2] + 2 * half[2] * k / (nz - 1)};
-        field[(size_t(k) * ny + j) * nx + i] =
-            static_cast<MC::MC_FLOAT>(plugin->distance(point, attributes.data()));
+        const double d = plugin->distance(point, attributes.data());
+        // Attributes outside a plugin's domain (a bowl taller than its
+        // radius, a gear without teeth) give NaN distances.
+        if (!std::isfinite(d)) {
+          if (err) *err = plugin_name + " SDF is not finite for these attributes";
+          return false;
+        }
+        field[(size_t(k) * ny + j) * nx + i] = static_cast<MC::MC_FLOAT>(d);
       }
     }
   }
