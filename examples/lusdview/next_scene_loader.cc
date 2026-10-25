@@ -6448,6 +6448,108 @@ bool BuildNextVolumes(
                volumePath.c_str(), request.file_path.c_str(), reason.c_str());
           continue;
         }
+        // lusdview's volume pass marches a density field; a level set is an
+        // isosurface, so mesh it and draw the surface as geometry instead
+        // (the same thing lusdrender's CPU integrator shades directly).
+        if (resolved.level_set) {
+          std::vector<float> positions;
+          std::vector<int32_t> indices;
+          std::string meshErr;
+          if (!fieldCache.MeshLevelSet(resolved, /*max_cells=*/0, &positions,
+                                       &indices, &meshErr) ||
+              positions.empty() || indices.empty()) {
+            const std::string reason =
+                meshErr.empty() ? "empty level-set surface" : meshErr;
+            if (draw) {
+              draw->skipped.push_back("Volume '" + volumePath + "': " + reason);
+            }
+            LOGW("next: Volume '%s' level set '%s': %s", volumePath.c_str(),
+                 fieldPath.c_str(), reason.c_str());
+            continue;
+          }
+          // The mesh replaces the volume for framing/picking: positions are
+          // already in world space, so extend the scene bounds directly.
+          if (bounds) {
+            for (size_t v = 0; v + 2 < positions.size(); v += 3)
+              bounds->add(&positions[v]);
+          }
+          DrawVolumeCPU shading;
+          ResolveNextVolumeMaterial(stageHandle, volumePath, &shading);
+          int materialId = -1;
+          AppendGeneratedMaterial(draw, shading.albedo,
+                                  "__lusdview_volume_level_set", &materialId);
+          DrawMeshCPU dm;
+          dm.name = PublicString(lightusd_prim_name(publicVolume)) + "_sdf";
+          dm.absPath = fieldPath;
+          dm.purpose = ResolveNextPurpose(stageHandle, volumePath);
+          const float kIdentity[16] = {1, 0, 0, 0, 0, 1, 0, 0,
+                                       0, 0, 1, 0, 0, 0, 0, 1};
+          std::memcpy(dm.world, kIdentity, sizeof(kIdentity));
+          dm.vertices.resize(positions.size() / 3);
+          for (size_t v = 0; v < dm.vertices.size(); ++v) {
+            DrawVertex& dvtx = dm.vertices[v];
+            dvtx.px = positions[3 * v + 0];
+            dvtx.py = positions[3 * v + 1];
+            dvtx.pz = positions[3 * v + 2];
+            dvtx.nx = 0.0f;
+            dvtx.ny = 1.0f;
+            dvtx.nz = 0.0f;
+            dvtx.u = 0.0f;
+            dvtx.v = 0.0f;
+          }
+          // Area-weighted per-vertex normals from the isosurface triangles.
+          for (size_t f = 0; f + 2 < indices.size(); f += 3) {
+            const uint32_t a = static_cast<uint32_t>(indices[f + 0]);
+            const uint32_t b = static_cast<uint32_t>(indices[f + 1]);
+            const uint32_t c = static_cast<uint32_t>(indices[f + 2]);
+            if (a >= dm.vertices.size() || b >= dm.vertices.size() ||
+                c >= dm.vertices.size())
+              continue;
+            const DrawVertex& va = dm.vertices[a];
+            const DrawVertex& vb = dm.vertices[b];
+            const DrawVertex& vc = dm.vertices[c];
+            const float e1[3] = {vb.px - va.px, vb.py - va.py, vb.pz - va.pz};
+            const float e2[3] = {vc.px - va.px, vc.py - va.py, vc.pz - va.pz};
+            const float n[3] = {e1[1] * e2[2] - e1[2] * e2[1],
+                                e1[2] * e2[0] - e1[0] * e2[2],
+                                e1[0] * e2[1] - e1[1] * e2[0]};
+            for (uint32_t v : {a, b, c}) {
+              DrawVertex& dvtx = dm.vertices[v];
+              dvtx.nx += n[0];
+              dvtx.ny += n[1];
+              dvtx.nz += n[2];
+            }
+          }
+          for (DrawVertex& dvtx : dm.vertices) {
+            const float len = std::sqrt(dvtx.nx * dvtx.nx + dvtx.ny * dvtx.ny +
+                                        dvtx.nz * dvtx.nz);
+            if (len > 0.0f) {
+              dvtx.nx /= len;
+              dvtx.ny /= len;
+              dvtx.nz /= len;
+            } else {
+              dvtx.nx = 0.0f;
+              dvtx.ny = 1.0f;
+              dvtx.nz = 0.0f;
+            }
+          }
+          dm.indices.resize(indices.size());
+          for (size_t i = 0; i < indices.size(); ++i) {
+            dm.indices[i] = indices[i] < 0 ? 0u : static_cast<uint32_t>(indices[i]);
+          }
+          DrawSubmesh submesh;
+          submesh.indexOffset = 0;
+          submesh.indexCount = static_cast<uint32_t>(dm.indices.size());
+          submesh.materialId = materialId;
+          dm.submeshes.push_back(submesh);
+          FinalizeGeneratedMesh(&dm);
+          if (draw) {
+            draw->triangleCount += dm.indices.size() / 3;
+            draw->meshes.push_back(std::move(dm));
+          }
+          continue;
+        }
+
         lightusd::usdVol::VDBGrid grid;
         std::string decodeWarn, decodeErr;
         if (!fieldCache.TakeDense(resolved, vdbOptions, &grid, &decodeWarn,

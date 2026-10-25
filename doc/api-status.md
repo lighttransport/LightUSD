@@ -252,7 +252,10 @@ per Volume.
   (sphere traced, gradient normal, matte shading) by lusdrender's CPU
   integrator, in front of scene geometry only; `-volumeLevelSet fog` marches
   them as `density = clamp(-sdf)` instead. Fog-class fields keep the
-  emission/absorption march.
+  emission/absorption march. lusdview's raster volume pass consumes density,
+  so its next loader meshes a level-set field through
+  `FieldCache::MeshLevelSet` and draws the surface as geometry (with the
+  volume's albedo as a generated material); the legacy loader path does not.
 - **ParticleFields:** `RenderScene::particle_fields` applies the schema's
   array rules.
 - **Access:** C API `lightusd_render_volume_*` (including
