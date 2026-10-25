@@ -80,6 +80,9 @@ struct lightusd_render_scene {
       animation_times_cache;
   std::unordered_map<BufferCacheKey, std::vector<float>, BufferCacheKeyHash>
       animation_values_cache;
+  // Scratch for lightusd_render_volume_field_sample: returned to the caller as
+  // a borrowed pointer, overwritten by the next sample call.
+  mutable std::vector<float> volume_sample_scratch;
   mutable std::mutex mu;
 };
 
@@ -3179,8 +3182,65 @@ lightusd_status lightusd_render_volume_field_dense(const lightusd_render_scene* 
   return LIGHTUSD_OK;
 }
 
-size_t lightusd_render_particle_data_count(const lightusd_render_scene* scene) {
-  return scene ? scene->data().particle_fields.size() : 0;
+lightusd_status lightusd_render_volume_field_nanovdb(const lightusd_render_scene* scene,
+                                                    int32_t volume, int32_t field,
+                                                    lightusd_render_volume_nanovdb* out) {
+  if (!scene || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "scene/out is null");
+  const td::RenderVolumeField* f = VolumeField(scene, volume, field);
+  if (!f) return Fail(LIGHTUSD_ERR_NOT_FOUND, "volume/field id out of range");
+  const std::shared_ptr<lightusd::tydra::vol::FieldCache>& cache = scene->data().volume_cache;
+  if (!cache) return Fail(LIGHTUSD_ERR_NOT_FOUND, "scene has no volume cache");
+  lightusd::usdVol::VDBNanoVDBInfo info;
+  std::string err;
+  const std::vector<uint8_t>* buffer = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(scene->mu);
+    buffer = cache->NanoVDB(f->field, &info, &err);
+  }
+  if (!buffer)
+    return Fail(err.find("budget") != std::string::npos ? LIGHTUSD_ERR_RESOURCE_LIMIT
+                                                         : LIGHTUSD_ERR_UNSUPPORTED,
+                err.empty() ? "NanoVDB conversion failed" : err);
+  std::memset(out, 0, sizeof(*out));
+  out->data = buffer->data();
+  out->size = buffer->size();
+  out->grid_type = info.grid_type;
+  out->components = uint32_t(info.components);
+  out->value_type = SV(info.value_type);
+  out->grid_class = SV(info.grid_class);
+  std::memcpy(out->index_to_world, info.index_to_world, sizeof(out->index_to_world));
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_render_volume_field_sample(const lightusd_render_scene* scene,
+                                                   int32_t volume, int32_t field,
+                                                   const double* world_points, uint64_t count,
+                                                   int trilinear,
+                                                   lightusd_render_volume_samples* out) {
+  if (!scene || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "scene/out is null");
+  if (count > 0 && !world_points)
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "world_points is null");
+  const td::RenderVolumeField* f = VolumeField(scene, volume, field);
+  if (!f) return Fail(LIGHTUSD_ERR_NOT_FOUND, "volume/field id out of range");
+  const std::shared_ptr<lightusd::tydra::vol::FieldCache>& cache = scene->data().volume_cache;
+  if (!cache) return Fail(LIGHTUSD_ERR_NOT_FOUND, "scene has no volume cache");
+  std::string err;
+  int components = 1;
+  {
+    std::lock_guard<std::mutex> lock(scene->mu);
+    if (!cache->SampleWorld(f->field, world_points, size_t(count), trilinear != 0,
+                            &scene->volume_sample_scratch, &components, &err)) {
+      return Fail(LIGHTUSD_ERR_UNSUPPORTED, err.empty() ? "volume sampling failed" : err);
+    }
+    std::memset(out, 0, sizeof(*out));
+    out->values = scene->volume_sample_scratch.data();
+    out->count = count;
+    out->components = uint32_t(components);
+  }
+  return LIGHTUSD_OK;
+}
+
+size_t lightusd_render_particle_data_count(const lightusd_render_scene* scene) {  return scene ? scene->data().particle_fields.size() : 0;
 }
 
 lightusd_status lightusd_render_particle_data_get(const lightusd_render_scene* scene,

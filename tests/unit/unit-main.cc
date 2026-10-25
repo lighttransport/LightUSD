@@ -202,6 +202,7 @@ TEST_LIST = {
   { "render_vol_crate_roundtrip_test", render_vol_crate_roundtrip_test },
   { "usdvol_vdb_corpus_test", usdvol_vdb_corpus_test },
   { "usdvol_material_binding_test", usdvol_material_binding_test },
+  { "usdvol_nanovdb_sample_test", usdvol_nanovdb_sample_test },
   { "namespace_edit_rename_test", namespace_edit_rename_test },
   { "namespace_edit_remove_test", namespace_edit_remove_test },
   { "namespace_edit_reparent_test", namespace_edit_reparent_test },

@@ -7,6 +7,9 @@
 #include <fstream>
 #include <iterator>
 
+#include "external/tinyvdb/tinyvdb_io.h"
+#include "external/tinyvdb/tinyvdb_volume.h"
+
 namespace lightusd {
 namespace tydra {
 namespace vol {
@@ -58,6 +61,20 @@ std::string DenseKey(const ResolvedField &f, const usdVol::VDBReadOptions &o) {
 }
 
 }  // namespace
+
+// One decoded sparse grid plus its world sampler. Declared in the header as
+// an incomplete type so tinyvdb stays out of the public includes.
+struct FieldCache::SparseGrid {
+  tvdb_file_t file{};
+  bool open = false;
+  tvdb_volume_sampler_t *sampler = nullptr;
+  ~SparseGrid() {
+    if (sampler) tvdb_volume_sampler_destroy(sampler);
+    if (open) tvdb_file_close(&file);
+  }
+};
+
+FieldCache::~FieldCache() = default;
 
 bool ReadFileAsset(const std::string &path, std::vector<uint8_t> *bytes, std::string *err) {
   std::ifstream in(path, std::ios::binary);
@@ -194,10 +211,14 @@ bool FieldCache::Resolve(const FieldRequest &request, ResolvedField *out, std::s
   return true;
 }
 
+size_t FieldCache::GridCount(const std::string &path) {
+  const File *file = Load(path, nullptr);
+  return file ? file->grids.size() : 0;
+}
+
 const usdVol::VDBGrid *FieldCache::Dense(const ResolvedField &field,
                                          const usdVol::VDBReadOptions &options, std::string *warn,
-                                         std::string *err) {
-  const std::string key = DenseKey(field, options);
+                                         std::string *err) {  const std::string key = DenseKey(field, options);
   auto it = dense_.find(key);
   if (it != dense_.end()) return it->second.get();
   const File *file = Load(field.request.file_path, err);
@@ -216,9 +237,125 @@ const usdVol::VDBGrid *FieldCache::Dense(const ResolvedField &field,
   return (dense_[key] = std::move(grid)).get();
 }
 
+bool FieldCache::SampleWorld(const ResolvedField &field, const double *points, size_t count,
+                             bool trilinear, std::vector<float> *values, int *components,
+                             std::string *err) {
+  if (!values || (count && !points)) {
+    if (err) *err = "volume sampling: null points or values";
+    return false;
+  }
+  SparseGrid *sparse = LoadSparse(field.request.file_path, field.grid.source_index, err);
+  if (!sparse) return false;
+  if (!sparse->sampler) {
+    tvdb_error_t e{};
+    const tvdb_status_t st =
+        tvdb_volume_sampler_create(&sparse->file.grids[field.grid.source_index], &sparse->sampler, &e);
+    if (st != TVDB_OK || !sparse->sampler) {
+      if (err)
+        *err = field.request.field_prim + ": cannot sample the grid: " +
+               (e.message[0] ? e.message : tvdb_status_string(st));
+      return false;
+    }
+  }
+  const int comps = tvdb_volume_sampler_components(sparse->sampler);
+  values->resize(count * size_t(comps > 0 ? comps : 1));
+  if (components) *components = comps > 0 ? comps : 1;
+  if (count == 0) return true;
+  tvdb_error_t e{};
+  const tvdb_status_t st =
+      tvdb_volume_sample_world(sparse->sampler, points, count,
+                               trilinear ? TVDB_VOLUME_FILTER_TRILINEAR : TVDB_VOLUME_FILTER_NEAREST,
+                               values->data(), &e);
+  if (st != TVDB_OK) {
+    if (err)
+      *err = field.request.field_prim + ": volume sampling failed: " +
+             (e.message[0] ? e.message : tvdb_status_string(st));
+    values->clear();
+    return false;
+  }
+  return true;
+}
+
+// NanoVDB grid type id (PNANOVDB_GRID_TYPE_*) for a usdVol value type.
+uint32_t NanoVDBTypeFor(const std::string &value_type) {
+  if (value_type == "float") return 1;
+  if (value_type == "double") return 2;
+  if (value_type == "int32") return 4;
+  if (value_type == "int64") return 5;
+  if (value_type == "vec3f") return 6;
+  if (value_type == "vec3d") return 7;
+  if (value_type == "mask") return 8;
+  if (value_type == "half") return 9;
+  return 0;
+}
+
+const std::vector<uint8_t> *FieldCache::NanoVDB(const ResolvedField &field,
+                                                usdVol::VDBNanoVDBInfo *info, std::string *err) {
+  const std::string key = field.request.file_path + "|" + std::to_string(field.grid.source_index);
+  auto it = nanovdb_.find(key);
+  if (it != nanovdb_.end()) {
+    if (info) {
+      // Header facts only: the converted buffer is already cached.
+      info->grid_type = NanoVDBTypeFor(field.grid.value_type);
+      info->components = field.grid.components > 0 ? field.grid.components : 1;
+      info->value_type = field.grid.value_type;
+      info->grid_class = field.grid_class;
+      std::memcpy(info->index_to_world, field.grid.index_to_world, sizeof(info->index_to_world));
+    }
+    return it->second.get();
+  }
+  const File *file = Load(field.request.file_path, err);
+  if (!file) return nullptr;
+  std::unique_ptr<std::vector<uint8_t>> buffer(new std::vector<uint8_t>);
+  usdVol::VDBNanoVDBInfo converted;
+  if (!usdVol::ReadVDBGridNanoVDB(file->bytes.data(), file->bytes.size(),
+                                  field.request.file_path, "", int(field.grid.source_index),
+                                  buffer.get(), &converted, err))
+    return nullptr;
+  // The field's authored fieldClass wins over the file's, as in Resolve().
+  converted.grid_class = field.grid_class;
+  const size_t bytes = buffer->size();
+  if (max_bytes_ && bytes_used_ + bytes > max_bytes_) {
+    if (err) *err = field.request.field_prim + ": NanoVDB grid exceeds the memory budget";
+    return nullptr;
+  }
+  bytes_used_ += bytes;
+  if (info) *info = converted;
+  return (nanovdb_[key] = std::move(buffer)).get();
+}
+
+FieldCache::SparseGrid *FieldCache::LoadSparse(const std::string &path, size_t source_index,
+                                               std::string *err) {
+  const std::string key = path + "|" + std::to_string(source_index);
+  auto it = sparse_.find(key);
+  if (it != sparse_.end()) return it->second.get();
+  const File *file = Load(path, err);
+  if (!file) return nullptr;
+  if (source_index >= file->grids.size()) {
+    if (err) *err = path + ": grid index out of range";
+    return nullptr;
+  }
+  std::unique_ptr<SparseGrid> sparse(new SparseGrid);
+  tvdb_error_t e{};
+  tvdb_status_t st = tvdb_file_open_memory(&sparse->file, file->bytes.data(), file->bytes.size(),
+                                           nullptr, &e);
+  if (st != TVDB_OK) {
+    if (err) *err = "cannot open " + path + ": " + (e.message[0] ? e.message : tvdb_status_string(st));
+    return nullptr;
+  }
+  sparse->open = true;
+  st = tvdb_read_grid(&sparse->file, source_index, &e);
+  if (st != TVDB_OK) {
+    if (err)
+      *err = "cannot decode " + path + " grid #" + std::to_string(source_index) + ": " +
+             (e.message[0] ? e.message : tvdb_status_string(st));
+    return nullptr;
+  }
+  return (sparse_[key] = std::move(sparse)).get();
+}
+
 bool FieldsWorldBounds(const std::vector<ResolvedField> &fields, double world_min[3],
-                       double world_max[3]) {
-  bool any = false;
+                       double world_max[3]) {  bool any = false;
   for (const ResolvedField &f : fields) {
     if (!f.has_bounds) continue;
     for (int a = 0; a < 3; ++a) {

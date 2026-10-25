@@ -2,12 +2,21 @@
 #include "usdVol.hh"
 
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 // TinyVDB's C implementation is compiled separately (lightusd_tinyvdb). Keep
 // this C++ translation unit limited to the public C declarations.
 #include "external/tinyvdb/tinyvdb_io.h"
 #include "external/tinyvdb/tinyvdb_volume.h"
+
+extern "C" {
+// Defined by external/tinyvdb/tinyvdb_to_nanovdb.c (upstream declares it in
+// tinyvdb_nanovdb.h, which the vendored subset does not carry). The buffer is
+// malloc'd and must be released with free().
+tvdb_status_t tvdb_grid_to_nanovdb(const tvdb_grid_t *grid, uint8_t **out_data,
+                                   size_t *out_size, tvdb_error_t *err);
+}
 
 namespace lightusd {
 namespace usdVol {
@@ -309,6 +318,103 @@ bool ReadVDBGridFromFile(const std::string &filepath, const std::string &field_n
                          std::string *warn, std::string *err) {
   return ReadOne(nullptr, 0, &filepath, filepath, field_name, field_index, options, grid, warn,
                  err);
+}
+
+namespace {
+
+// NanoVDB conversion lives in tinyvdb_to_nanovdb.c (the vendored subset does
+// not ship upstream's tinyvdb_nanovdb.h; the C file declares the same
+// prototype itself).
+uint32_t NanoVDBGridType(const std::string &value_type) {
+  // PNANOVDB_GRID_TYPE_* ids.
+  if (value_type == "float") return 1;
+  if (value_type == "double") return 2;
+  if (value_type == "int32") return 4;
+  if (value_type == "int64") return 5;
+  if (value_type == "vec3f") return 6;
+  if (value_type == "vec3d") return 7;
+  if (value_type == "mask") return 8;
+  if (value_type == "half") return 9;
+  return 0;
+}
+
+}  // namespace
+
+bool ReadVDBGridNanoVDB(const uint8_t *data, size_t len, const std::string &uri,
+                        const std::string &field_name, int field_index,
+                        std::vector<uint8_t> *nano, VDBNanoVDBInfo *info, std::string *err) {
+  if (!nano) {
+    if (err) *err += "usdVol::ReadVDBGridNanoVDB: `nano` output is null.\n";
+    return false;
+  }
+  if (!data || !len) {
+    if (err) *err += "usdVol::ReadVDBGridNanoVDB: empty buffer (" + uri + ").\n";
+    return false;
+  }
+  if (field_index < 0) {
+    if (err) *err += "VDB field index must be nonnegative (" + uri + ").\n";
+    return false;
+  }
+  OpenFile f;
+  if (!Open(&f, data, len, nullptr, uri, err)) return false;
+  size_t pick = f.file.num_grids;
+  int seen = 0;
+  for (size_t i = 0; i < f.file.num_grids && pick == f.file.num_grids; ++i) {
+    const char *n = tvdb_grid_name(&f.file, i);
+    if (!field_name.empty() && field_name != (n ? n : "")) continue;
+    if (seen++ == field_index) pick = i;
+  }
+  if (pick == f.file.num_grids) {
+    if (err)
+      *err += "VDB (" + uri + ") has no grid " +
+              (field_name.empty() ? std::string("#") + std::to_string(field_index)
+                                  : "'" + field_name + "'" +
+                                        (field_index ? " #" + std::to_string(field_index) : "")) +
+              ".\n";
+    return false;
+  }
+  tvdb_error_t e{};
+  tvdb_status_t st = tvdb_read_grid(&f.file, pick, &e);
+  if (st != TVDB_OK) {
+    if (err) *err += "Failed to decode VDB grid (" + uri + "): " + Message(e, st) + "\n";
+    return false;
+  }
+  tvdb_grid_info_t gi{};
+  st = tvdb_grid_get_info(&f.file.grids[pick], &gi, &e);
+  if (st != TVDB_OK) {
+    if (err) *err += "Failed to inspect VDB grid (" + uri + "): " + Message(e, st) + "\n";
+    return false;
+  }
+  const std::string value_type = TypeName(gi);
+  const uint32_t grid_type = NanoVDBGridType(value_type);
+  if (grid_type == 0) {
+    if (err)
+      *err += "VDB grid '" + GridName(f.file.grids[pick]) + "' of type '" +
+              (f.file.grids[pick].descriptor.grid_type
+                   ? f.file.grids[pick].descriptor.grid_type
+                   : "") +
+              "' has no NanoVDB representation (" + uri + ").\n";
+    return false;
+  }
+  uint8_t *raw = nullptr;
+  size_t raw_size = 0;
+  st = tvdb_grid_to_nanovdb(&f.file.grids[pick], &raw, &raw_size, &e);
+  if (st != TVDB_OK || !raw || raw_size == 0) {
+    if (raw) std::free(raw);
+    if (err)
+      *err += "Failed to convert VDB grid to NanoVDB (" + uri + "): " + Message(e, st) + "\n";
+    return false;
+  }
+  nano->assign(raw, raw + raw_size);
+  std::free(raw);
+  if (info) {
+    info->grid_type = grid_type;
+    info->components = gi.components > 0 ? gi.components : 1;
+    info->value_type = value_type;
+    info->grid_class = ClassToken(gi.grid_class);
+    std::memcpy(info->index_to_world, gi.index_to_world, sizeof(info->index_to_world));
+  }
+  return true;
 }
 
 }  // namespace usdVol

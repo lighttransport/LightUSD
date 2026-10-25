@@ -137,5 +137,29 @@ bool ReadVDBGridFromFile(const std::string &filepath, const std::string &field_n
                          int field_index, const VDBReadOptions &options, VDBGrid *grid,
                          std::string *warn = nullptr, std::string *err = nullptr);
 
+///
+/// Facts about a grid converted to NanoVDB (the GPU-ready sparse form).
+///
+struct VDBNanoVDBInfo {
+  // NanoVDB grid type id (PNANOVDB_GRID_TYPE_*: 1 float, 2 double, 4 int32,
+  // 5 int64, 6 vec3f, 7 vec3d, 8 mask, 9 half, 11 bool).
+  uint32_t grid_type = 0;
+  int components = 1;
+  std::string value_type;         // as VDBGrid::value_type
+  std::string grid_class = "unknown";
+  double index_to_world[4][4] = {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}};
+};
+
+///
+/// Convert the grid a field selects into an in-memory NanoVDB grid: the raw
+/// GridData-first byte stream (no NanoVDB file header), with the grid's full
+/// affine index-to-world map and class metadata. Lower-case bool and vec3i
+/// grids have no NanoVDB type and fail with an error.
+///
+bool ReadVDBGridNanoVDB(const uint8_t *data, size_t len, const std::string &uri,
+                        const std::string &field_name, int field_index,
+                        std::vector<uint8_t> *nano, VDBNanoVDBInfo *info = nullptr,
+                        std::string *err = nullptr);
+
 }  // namespace usdVol
 }  // namespace lightusd

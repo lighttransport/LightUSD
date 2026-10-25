@@ -1221,6 +1221,55 @@ LIGHTUSD_API lightusd_status lightusd_render_volume_field_dense(
     const lightusd_render_scene* scene, int32_t volume, int32_t field, uint64_t max_voxels,
     int downsample, int vector_components, lightusd_render_volume_dense* out);
 
+/* NanoVDB grid types (PNANOVDB_GRID_TYPE_* ids). */
+typedef enum lightusd_nanovdb_grid_type {
+  LIGHTUSD_NANOVDB_GRID_TYPE_UNKNOWN = 0,
+  LIGHTUSD_NANOVDB_GRID_TYPE_FLOAT = 1,
+  LIGHTUSD_NANOVDB_GRID_TYPE_DOUBLE = 2,
+  LIGHTUSD_NANOVDB_GRID_TYPE_INT32 = 4,
+  LIGHTUSD_NANOVDB_GRID_TYPE_INT64 = 5,
+  LIGHTUSD_NANOVDB_GRID_TYPE_VEC3F = 6,
+  LIGHTUSD_NANOVDB_GRID_TYPE_VEC3D = 7,
+  LIGHTUSD_NANOVDB_GRID_TYPE_MASK = 8,
+  LIGHTUSD_NANOVDB_GRID_TYPE_HALF = 9
+} lightusd_nanovdb_grid_type;
+
+typedef struct lightusd_render_volume_nanovdb {
+  /* Raw NanoVDB grid bytes (GridData first, no file header, CPU or GPU
+   * pointer-free layout), kept alive by the scene. */
+  const uint8_t* data;
+  size_t size;
+  uint32_t grid_type;             /* lightusd_nanovdb_grid_type */
+  uint32_t components;
+  lightusd_sv value_type;
+  lightusd_sv grid_class;
+  /* Grid index -> world, column-vector layout as in
+   * lightusd_render_volume_field_info (transposed for PNanoVDB's map). */
+  double index_to_world[16];
+} lightusd_render_volume_nanovdb;
+/* The field's sparse grid as one NanoVDB grid buffer, converted on first use
+ * and cached with the scene. Bool and vec3i grids have no NanoVDB type
+ * (LIGHTUSD_ERR_UNSUPPORTED). */
+LIGHTUSD_API lightusd_status lightusd_render_volume_field_nanovdb(
+    const lightusd_render_scene* scene, int32_t volume, int32_t field,
+    lightusd_render_volume_nanovdb* out);
+
+typedef struct lightusd_render_volume_samples {
+  /* count * components floats, component-interleaved. Owned by the scene and
+   * valid until the next lightusd_render_volume_field_sample call on it. */
+  const float* values;
+  uint64_t count;
+  uint32_t components;
+  uint32_t _pad;
+} lightusd_render_volume_samples;
+/* Sample a field at world-space `points` (3 doubles each): the sparse grid's
+ * own voxel values, nearest (`trilinear` 0) or trilinear. World space needs
+ * an invertible field transform. */
+LIGHTUSD_API lightusd_status lightusd_render_volume_field_sample(
+    const lightusd_render_scene* scene, int32_t volume, int32_t field,
+    const double* world_points, uint64_t count, int trilinear,
+    lightusd_render_volume_samples* out);
+
 LIGHTUSD_API size_t lightusd_render_particle_data_count(const lightusd_render_scene* scene);
 typedef struct lightusd_render_particle_data {
   lightusd_sv prim_path;

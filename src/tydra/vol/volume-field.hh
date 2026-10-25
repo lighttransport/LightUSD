@@ -78,6 +78,7 @@ bool ReadFileAsset(const std::string &path, std::vector<uint8_t> *bytes, std::st
 class FieldCache {
  public:
   explicit FieldCache(AssetReader reader = ReadFileAsset, size_t max_bytes = 0);
+  ~FieldCache();
 
   // Select and describe the grid a field names. False with *err (and no
   // output change) when the file cannot be read, the grid is missing, or the
@@ -90,6 +91,22 @@ class FieldCache {
   const usdVol::VDBGrid *Dense(const ResolvedField &field, const usdVol::VDBReadOptions &options,
                                std::string *warn, std::string *err);
 
+  // Number of grids in a (cached) file, 0 when it cannot be read.
+  size_t GridCount(const std::string &path);
+
+  // The resolved grid as a NanoVDB grid buffer (raw GridData-first bytes,
+  // no file header). Cached per grid, so the pointer lives as long as the
+  // cache; nullptr on failure.
+  const std::vector<uint8_t> *NanoVDB(const ResolvedField &field, usdVol::VDBNanoVDBInfo *info,
+                                      std::string *err);
+
+  // World-space samples of a resolved field. `points` holds `count` world
+  // positions (3 doubles each); `values` receives `count * components`
+  // floats (component-interleaved). Nearest unless `trilinear`.
+  bool SampleWorld(const ResolvedField &field, const double *points, size_t count,
+                   bool trilinear, std::vector<float> *values, int *components,
+                   std::string *err);
+
   size_t bytes_used() const { return bytes_used_; }
 
  private:
@@ -98,13 +115,19 @@ class FieldCache {
     std::vector<usdVol::VDBGridInfo> grids;
     std::string error;            // non-empty when reading failed (cached)
   };
+  // One decoded sparse grid plus its world sampler (sampler is built on first
+  // use and holds the grid, so both live here together).
+  struct SparseGrid;
   const File *Load(const std::string &path, std::string *err);
+  SparseGrid *LoadSparse(const std::string &path, size_t source_index, std::string *err);
 
   AssetReader reader_;
   size_t max_bytes_ = 0;
   size_t bytes_used_ = 0;
   std::map<std::string, File> files_;
   std::map<std::string, std::unique_ptr<usdVol::VDBGrid>> dense_;
+  std::map<std::string, std::unique_ptr<std::vector<uint8_t>>> nanovdb_;
+  std::map<std::string, std::unique_ptr<SparseGrid>> sparse_;
 };
 
 // UsdVol fieldDataType tokens a grid value type satisfies (e.g. "float" for

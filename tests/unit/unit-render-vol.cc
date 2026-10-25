@@ -14,6 +14,7 @@
 #include "usdShade.hh"
 #include "core/model-scope.hh"
 #include "usdGeom.hh"
+#include "tydra/vol/volume-field.hh"
 
 #include <cstdlib>
 #include <fstream>
@@ -358,5 +359,122 @@ void usdvol_vdb_corpus_test(void) {
     TEST_CHECK(!ok);
     TEST_CHECK(grids.empty());
     TEST_CHECK(warn.find("point grid") != std::string::npos);
+  }
+}
+
+// NanoVDB export and world-space sampling through the shared field resolver.
+// Uses tinyvdbio's reference corpus, so it skips without TINYVDBIO_DATA_DIR.
+void usdvol_nanovdb_sample_test(void) {
+  const char *root = std::getenv("TINYVDBIO_DATA_DIR");
+  if (!root || !root[0]) {
+    TEST_MSG("SKIP: set TINYVDBIO_DATA_DIR to the tinyvdbio data directory");
+    return;
+  }
+  const std::string float_vdb = std::string(root) + "/reference/ref_float.vdb";
+  std::vector<uint8_t> bytes;
+  {
+    std::ifstream in(float_vdb.c_str(), std::ios::binary);
+    bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  }
+  TEST_ASSERT(!bytes.empty());
+
+  // Float grid -> NanoVDB float grid with the "NanoVDB0" grid magic.
+  {
+    std::vector<uint8_t> nano;
+    usdVol::VDBNanoVDBInfo info;
+    std::string err;
+    TEST_CHECK_(usdVol::ReadVDBGridNanoVDB(bytes.data(), bytes.size(), float_vdb, "", 0, &nano,
+                                           &info, &err),
+                "%s", err.c_str());
+    TEST_CHECK(nano.size() >= 736);
+    uint64_t magic = 0;
+    if (nano.size() >= 8) std::memcpy(&magic, nano.data(), 8);
+    TEST_CHECK(magic == 0x304244566f6e614eULL);
+    TEST_CHECK(info.grid_type == 1 && info.components == 1);
+    TEST_CHECK(info.value_type == "float");
+    uint32_t header_type = 0;
+    if (nano.size() >= 640) std::memcpy(&header_type, nano.data() + 636, 4);
+    TEST_CHECK(header_type == info.grid_type);
+  }
+
+  // Vec3 grids keep three components.
+  {
+    const std::string vec_path = std::string(root) + "/reference/ref_vec3s.vdb";
+    std::vector<uint8_t> vec_bytes;
+    {
+      std::ifstream in(vec_path.c_str(), std::ios::binary);
+      vec_bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    std::vector<uint8_t> nano;
+    usdVol::VDBNanoVDBInfo info;
+    std::string err;
+    TEST_CHECK_(usdVol::ReadVDBGridNanoVDB(vec_bytes.data(), vec_bytes.size(), vec_path, "", 0,
+                                           &nano, &info, &err),
+                "%s", err.c_str());
+    TEST_CHECK(info.grid_type == 6 && info.components == 3);
+  }
+
+  // Bool grids have no NanoVDB type and are rejected.
+  {
+    const std::string bool_path = std::string(root) + "/reference/ref_bool.vdb";
+    std::vector<uint8_t> bool_bytes;
+    {
+      std::ifstream in(bool_path.c_str(), std::ios::binary);
+      bool_bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    std::vector<uint8_t> nano;
+    std::string err;
+    TEST_CHECK(!usdVol::ReadVDBGridNanoVDB(bool_bytes.data(), bool_bytes.size(), bool_path, "", 0,
+                                          &nano, nullptr, &err));
+    TEST_CHECK(err.find("no NanoVDB representation") != std::string::npos);
+  }
+
+  // FieldCache: NanoVDB conversion is cached per grid, and world-space
+  // sampling reads the sparse grid's own values (nearest == the voxel value
+  // at its center, trilinear is a convex combination of neighbours).
+  {
+    lightusd::tydra::vol::FieldCache cache;
+    lightusd::tydra::vol::FieldRequest request;
+    request.binding = "density";
+    request.field_prim = "/vol/density";
+    request.prim_type = "OpenVDBAsset";
+    request.file_path = float_vdb;
+    request.field_name = "float_test";
+    lightusd::tydra::vol::ResolvedField field;
+    std::string err;
+    TEST_CHECK_(cache.Resolve(request, &field, &err), "%s", err.c_str());
+    const std::vector<uint8_t> *nano = cache.NanoVDB(field, nullptr, &err);
+    TEST_CHECK_(nano != nullptr, "%s", err.c_str());
+    const std::vector<uint8_t> *again = cache.NanoVDB(field, nullptr, &err);
+    TEST_CHECK(nano == again);  // cached, same buffer
+
+    // The reference grid is a 4x4x4 unit-voxel grid centred on the origin:
+    // sample the center of voxel (0,0,0) in world space twice.
+    const double point[3] = {0.5, 0.5, 0.5};
+    std::vector<float> values;
+    int components = 0;
+    TEST_CHECK_(cache.SampleWorld(field, point, 1, /*trilinear=*/false, &values, &components,
+                                  &err),
+                "%s", err.c_str());
+    TEST_CHECK(components == 1 && values.size() == 1);
+
+    // Nearest at the center equals one of the stored voxel values; the
+    // trilinear result stays within the grid's value range.
+    usdVol::VDBGrid dense;
+    usdVol::VDBReadOptions options;
+    const usdVol::VDBGrid *decoded = cache.Dense(field, options, nullptr, &err);
+    TEST_CHECK_(decoded != nullptr, "%s", err.c_str());
+    if (decoded) {
+      float lo = decoded->data[0], hi = decoded->data[0];
+      for (float v : decoded->data) {
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+      TEST_CHECK(values[0] >= lo - 1e-6f && values[0] <= hi + 1e-6f);
+      std::vector<float> tri;
+      TEST_CHECK_(cache.SampleWorld(field, point, 1, /*trilinear=*/true, &tri, &components, &err),
+                  "%s", err.c_str());
+      TEST_CHECK(tri.size() == 1 && tri[0] >= lo - 1e-6f && tri[0] <= hi + 1e-6f);
+    }
   }
 }
