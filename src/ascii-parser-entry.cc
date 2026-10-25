@@ -597,6 +597,10 @@ static void RegisterPrimTypes(std::unordered_set<std::string> &d) {
   d.insert("Scope");
   // UsdVol / UsdRender placeholder prim types.
   d.insert("Volume");
+  d.insert("VolumeFieldBase");
+  d.insert("FieldBase");
+  d.insert("VolumeFieldAsset");
+  d.insert("FieldAsset");
   d.insert("OpenVDBAsset");
   d.insert("Field3DAsset");
   d.insert("RenderSettings");
@@ -622,6 +626,9 @@ static void RegisterPrimTypes(std::unordered_set<std::string> &d) {
 
   // UsdVol
   d.insert("Volume");
+  d.insert("VolumeFieldBase");
+  d.insert("FieldBase");
+  d.insert("VolumeFieldAsset");
   d.insert("FieldAsset");
   d.insert("OpenVDBAsset");
   d.insert("Field3DAsset");

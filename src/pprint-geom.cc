@@ -432,15 +432,75 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent,
 
 // --- UsdVol ---
 
-// Shared printer for FieldAsset-derived field-asset attributes.
+// Shared printer for field-asset attributes (VolumeFieldAsset and the types
+// derived from it, including the deprecated FieldAsset spelling).
 static void print_field_asset_attrs(std::stringstream &ss,
-                                    const FieldAsset &field,
+                                    const VolumeFieldAsset &field,
                                     const uint32_t indent) {
   ss << print_typed_attr(field.filePath, "filePath", indent);
   ss << print_typed_attr(field.fieldName, "fieldName", indent);
   ss << print_typed_attr(field.fieldDataType, "fieldDataType", indent);
   ss << print_typed_attr(field.fieldIndex, "fieldIndex", indent);
   ss << print_typed_attr(field.vectorDataRoleHint, "vectorDataRoleHint", indent);
+}
+
+// Base field prims carry inherited Xformable attributes only.
+std::string to_string(const VolumeFieldBase &field, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+  ss << pprint::Indent(indent) << to_string(field.spec) << " VolumeFieldBase \""
+     << field.name << "\"\n";
+  if (field.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(field.meta, indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+  ss << print_gprim_predefined(field, indent + 1);
+  ss << print_props(field.props, indent + 1);
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+  return ss.str();
+}
+
+std::string to_string(const FieldBase &field, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+  ss << pprint::Indent(indent) << to_string(field.spec) << " FieldBase \""
+     << field.name << "\"\n";
+  if (field.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(field.meta, indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+  ss << print_gprim_predefined(field, indent + 1);
+  ss << print_props(field.props, indent + 1);
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+  return ss.str();
+}
+
+std::string to_string(const VolumeFieldAsset &field, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+  ss << pprint::Indent(indent) << to_string(field.spec) << " VolumeFieldAsset \""
+     << field.name << "\"\n";
+  if (field.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(field.meta, indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+  print_field_asset_attrs(ss, field, indent + 1);
+  ss << print_gprim_predefined(field, indent + 1);
+  ss << print_props(field.props, indent + 1);
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+  return ss.str();
 }
 
 std::string to_string(const FieldAsset &field, const uint32_t indent,

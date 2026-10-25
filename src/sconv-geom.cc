@@ -646,6 +646,36 @@ bool CrateWriter::ExtractSphereProperties(
   EXTRACT_FIELD_TYPED_ATTR((field).fieldIndex, "fieldIndex") \
   EXTRACT_FIELD_TYPED_ATTR((field).vectorDataRoleHint, "vectorDataRoleHint")
 
+bool CrateWriter::ExtractVolumeFieldBaseProperties(
+  const Prim& prim, const Path& prim_path,
+  crate::FieldValuePairVector& fields, std::string* err
+) {
+  const VolumeFieldBase* field = prim.data().as<VolumeFieldBase>();
+  if (!field) { if (err) *err = "Failed to cast prim to VolumeFieldBase"; return false; }
+  (void)field;  // no attributes of its own; Xformable properties come from GPrim
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
+}
+
+bool CrateWriter::ExtractFieldBaseProperties(
+  const Prim& prim, const Path& prim_path,
+  crate::FieldValuePairVector& fields, std::string* err
+) {
+  const FieldBase* field = prim.data().as<FieldBase>();
+  if (!field) { if (err) *err = "Failed to cast prim to FieldBase"; return false; }
+  (void)field;
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
+}
+
+bool CrateWriter::ExtractVolumeFieldAssetProperties(
+  const Prim& prim, const Path& prim_path,
+  crate::FieldValuePairVector& fields, std::string* err
+) {
+  const VolumeFieldAsset* field = prim.data().as<VolumeFieldAsset>();
+  if (!field) { if (err) *err = "Failed to cast prim to VolumeFieldAsset"; return false; }
+  EXTRACT_FIELD_ASSET_ATTRS(*field)
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
+}
+
 bool CrateWriter::ExtractFieldAssetProperties(
   const Prim& prim, const Path& prim_path,
   crate::FieldValuePairVector& fields, std::string* err
@@ -1834,6 +1864,18 @@ bool CrateWriter::ExtractXformOpsFromXformable(
     xformable = xform;
   } else if (auto* volume = prim.data().as<Volume>()) {
     xformable = static_cast<const Xformable*>(volume);
+  } else if (auto* field_base = prim.data().as<VolumeFieldBase>()) {
+    xformable = static_cast<const Xformable*>(field_base);
+  } else if (auto* legacy_field_base = prim.data().as<FieldBase>()) {
+    xformable = static_cast<const Xformable*>(legacy_field_base);
+  } else if (auto* field_asset = prim.data().as<VolumeFieldAsset>()) {
+    xformable = static_cast<const Xformable*>(field_asset);
+  } else if (auto* legacy_field_asset = prim.data().as<FieldAsset>()) {
+    xformable = static_cast<const Xformable*>(legacy_field_asset);
+  } else if (auto* openvdb_asset = prim.data().as<OpenVDBAsset>()) {
+    xformable = static_cast<const Xformable*>(openvdb_asset);
+  } else if (auto* field3d_asset = prim.data().as<Field3DAsset>()) {
+    xformable = static_cast<const Xformable*>(field3d_asset);
   } else if (auto* skelroot = prim.data().as<SkelRoot>()) {
     xformable = static_cast<const Xformable*>(skelroot);
   } else if (auto* skel = prim.data().as<Skeleton>()) {

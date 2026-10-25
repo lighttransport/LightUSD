@@ -101,6 +101,9 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
   GET_PRIM_PROPS(Model)
   GET_PRIM_PROPS(Scope)
   GET_PRIM_PROPS(Volume)
+  GET_PRIM_PROPS(VolumeFieldBase)
+  GET_PRIM_PROPS(FieldBase)
+  GET_PRIM_PROPS(VolumeFieldAsset)
   GET_PRIM_PROPS(OpenVDBAsset)
   GET_PRIM_PROPS(Field3DAsset)
   GET_PRIM_PROPS(RenderSettings)
@@ -111,6 +114,9 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
   GET_PRIM_PROPS(GPrim)
   GET_PRIM_PROPS(GeomMesh)
   GET_PRIM_PROPS(Volume)
+  GET_PRIM_PROPS(VolumeFieldBase)
+  GET_PRIM_PROPS(FieldBase)
+  GET_PRIM_PROPS(VolumeFieldAsset)
   GET_PRIM_PROPS(FieldAsset)
   GET_PRIM_PROPS(OpenVDBAsset)
   GET_PRIM_PROPS(Field3DAsset)
@@ -280,6 +286,9 @@ const Collection *GetPrimCollection(const value::Value &v) {
   GET_PRIM_COLLECTION(GPrim)
   GET_PRIM_COLLECTION(GeomMesh)
   GET_PRIM_COLLECTION(Volume)
+  GET_PRIM_COLLECTION(VolumeFieldBase)
+  GET_PRIM_COLLECTION(FieldBase)
+  GET_PRIM_COLLECTION(VolumeFieldAsset)
   GET_PRIM_COLLECTION(FieldAsset)
   GET_PRIM_COLLECTION(OpenVDBAsset)
   GET_PRIM_COLLECTION(Field3DAsset)
@@ -1990,6 +1999,9 @@ bool CrateWriter::ExtractPrimProperties(
     GET_SPEC(Xform)
     GET_SPEC(GeomMesh)
     GET_SPEC(Volume)
+    GET_SPEC(VolumeFieldBase)
+    GET_SPEC(FieldBase)
+    GET_SPEC(VolumeFieldAsset)
     GET_SPEC(FieldAsset)
     GET_SPEC(OpenVDBAsset)
     GET_SPEC(Field3DAsset)
@@ -2092,6 +2104,12 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractMeshProperties(prim, prim_path, fields, err);
   } else if (type_name == "Volume") {
     return ExtractVolumeProperties(prim, prim_path, fields, err);
+  } else if (type_name == "VolumeFieldBase") {
+    return ExtractVolumeFieldBaseProperties(prim, prim_path, fields, err);
+  } else if (type_name == "FieldBase") {
+    return ExtractFieldBaseProperties(prim, prim_path, fields, err);
+  } else if (type_name == "VolumeFieldAsset") {
+    return ExtractVolumeFieldAssetProperties(prim, prim_path, fields, err);
   } else if (type_name == "FieldAsset") {
     return ExtractFieldAssetProperties(prim, prim_path, fields, err);
   } else if (type_name == "OpenVDBAsset") {

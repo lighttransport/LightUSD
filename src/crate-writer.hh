@@ -465,6 +465,12 @@ private:
 
   /// UsdVol: extract Volume `field:*` relationships
   bool ExtractVolumeProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  /// UsdVol: extract VolumeFieldBase inherited attributes only (none of its own)
+  bool ExtractVolumeFieldBaseProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  /// UsdVol: extract FieldBase (deprecated) inherited attributes only
+  bool ExtractFieldBaseProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  /// UsdVol: extract VolumeFieldAsset attributes (filePath, fieldName, ...)
+  bool ExtractVolumeFieldAssetProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
   /// UsdVol: extract FieldAsset attributes (filePath, fieldName, ...)
   bool ExtractFieldAssetProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
   /// UsdVol: extract OpenVDBAsset attributes

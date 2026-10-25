@@ -1331,6 +1331,9 @@ bool IsXformablePrim(const Prim &prim) {
     }
     // UsdVol (GPrim / Xformable-derived)
     case value::TYPE_ID_VOLUME:
+    case value::TYPE_ID_VOLUME_FIELD_BASE:
+    case value::TYPE_ID_FIELD_BASE:
+    case value::TYPE_ID_VOLUME_FIELD_ASSET:
     case value::TYPE_ID_FIELD_ASSET:
     case value::TYPE_ID_OPENVDB_ASSET:
     case value::TYPE_ID_FIELD3D_ASSET: {
