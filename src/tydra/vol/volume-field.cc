@@ -2,7 +2,9 @@
 #include "volume-field.hh"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -272,8 +274,13 @@ bool FieldCache::SampleWorld(const ResolvedField &field, const double *points, s
     }
   }
   const int comps = tvdb_volume_sampler_components(sparse->sampler);
-  values->resize(count * size_t(comps > 0 ? comps : 1));
-  if (components) *components = comps > 0 ? comps : 1;
+  const size_t output_components = size_t(comps > 0 ? comps : 1);
+  if (count && output_components > SIZE_MAX / count) {
+    if (err) *err = field.request.field_prim + ": sample count overflow";
+    return false;
+  }
+  values->resize(count * output_components);
+  if (components) *components = int(output_components);
   if (count == 0) return true;
   tvdb_error_t e{};
   const tvdb_status_t st =
