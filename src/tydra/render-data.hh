@@ -1767,6 +1767,9 @@ struct RenderVolumeField {
   // The authored OpenVDBAsset.fieldClass when present, else the grid's class
   // metadata.
   std::string field_class = "unknown";
+  // True when the field is a signed distance function (fieldClass "levelSet"
+  // and the grid does not contradict it). Renderers shade it as an isosurface.
+  bool level_set = false;
   int32_t components = 1;        // 1 scalar, or 3 interleaved vec3 components
   int32_t dim[3] = {0, 0, 0};    // voxel dimensions (x, y, z)
   int32_t origin[3] = {0, 0, 0}; // index-space origin (min voxel coord)

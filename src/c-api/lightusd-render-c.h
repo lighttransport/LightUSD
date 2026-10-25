@@ -1194,7 +1194,10 @@ typedef struct lightusd_render_volume_field_info {
   uint32_t components;
   uint32_t source_index;          /* grid position in the file */
   uint8_t has_bounds;
-  uint8_t _pad[7];
+  /* 1 when the field is a signed distance function to shade as an isosurface
+   * (fieldClass levelSet and the grid does not contradict it). */
+  uint8_t level_set;
+  uint8_t _pad[6];
   double index_to_world[16];
   double world_min[3];
   double world_max[3];

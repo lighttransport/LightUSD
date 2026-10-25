@@ -115,6 +115,7 @@ int main(int argc, char** argv) {
            memcmp(field.value_type.data, "float", 5) == 0);
     assert(field.components == 1);
     assert(field.has_bounds);
+    assert(field.level_set == 0);  // a float fog/unknown grid is not an SDF
 
     lightusd_render_volume_dense dense;
     memset(&dense, 0, sizeof(dense));

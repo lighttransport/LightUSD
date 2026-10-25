@@ -3129,6 +3129,7 @@ lightusd_status lightusd_render_volume_field_get_info(const lightusd_render_scen
   out->components = uint32_t(f->field.components);
   out->source_index = uint32_t(f->field.grid.source_index);
   out->has_bounds = f->field.has_bounds;
+  out->level_set = f->field.level_set;
   std::memcpy(out->index_to_world, f->field.index_to_world, sizeof(out->index_to_world));
   for (int a = 0; a < 3; ++a) {
     out->world_min[a] = f->field.world_min[a];

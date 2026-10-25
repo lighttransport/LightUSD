@@ -49,7 +49,8 @@ int RenderStream::volumesJsonCopy(uint8_t* out, uint32_t cap) const {
       ss << (f ? "," : "") << "{\"binding\":\"" << JsonEscape(v.fields[f].binding)
          << "\",\"fieldPrim\":\"" << JsonEscape(r.request.field_prim) << "\",\"filePath\":\""
          << JsonEscape(r.request.file_path) << "\",\"gridName\":\"" << JsonEscape(r.grid.name)
-         << "\",\"gridClass\":\"" << JsonEscape(r.grid_class) << "\",\"valueType\":\""
+         << "\",\"gridClass\":\"" << JsonEscape(r.grid_class) << "\",\"levelSet\":"
+         << (r.level_set ? "true" : "false") << ",\"valueType\":\""
          << JsonEscape(r.value_type) << "\",\"components\":" << r.components
          << ",\"sourceIndex\":" << r.grid.source_index << ",\"indexToWorld\":";
       JsonMatrix(ss, r.index_to_world);

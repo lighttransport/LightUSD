@@ -58,6 +58,11 @@ struct ResolvedField {
   FieldRequest request;
   usdVol::VDBGridInfo grid;       // the selected grid's header facts
   std::string grid_class;         // UsdVol fieldClass token (authored, else the file's)
+  // True when the field is a signed distance function: the effective class is
+  // "levelSet" and the file does not contradict it (a grid whose own metadata
+  // says fogVolume stays fog, like the fieldDataType rule, with a warning).
+  // Renderers shade these as isosurfaces instead of as density fog.
+  bool level_set = false;
   std::string value_type;         // the file's value type (usdVol names)
   int components = 1;
   // Grid index -> world in the USD row-vector convention:

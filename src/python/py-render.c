@@ -968,6 +968,7 @@ static PyObject* RScene_volumes(PyObject* self, PyObject* noargs) {
           dict_steal(fd, "file_path", lightusd_sv_to_str(fi.file_path)) < 0 ||
           dict_steal(fd, "grid_name", lightusd_sv_to_str(fi.grid_name)) < 0 ||
           dict_steal(fd, "grid_class", lightusd_sv_to_str(fi.grid_class)) < 0 ||
+          dict_steal(fd, "level_set", PyBool_FromLong(fi.level_set)) < 0 ||
           dict_steal(fd, "value_type", lightusd_sv_to_str(fi.value_type)) < 0 ||
           dict_steal(fd, "components", PyLong_FromUnsignedLong(fi.components)) < 0 ||
           dict_steal(fd, "source_index", PyLong_FromUnsignedLong(fi.source_index)) < 0 ||

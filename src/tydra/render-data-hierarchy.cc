@@ -401,6 +401,7 @@ bool RenderSceneConverter::ConvertVolume(
     f.field_name = field_name;
     f.field_data_type = grid->value_type;
     f.field_class = resolved.grid_class;
+    f.level_set = resolved.level_set;
     f.components = grid->components > 0 ? grid->components : 1;
     f.background = grid->background;
     for (int a = 0; a < 3; a++) {

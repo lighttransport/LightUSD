@@ -302,6 +302,7 @@ def Volume "V"
     assert [f["binding"] for f in volumes[0]["fields"]] == ["sdf"]
     field = volumes[0]["fields"][0]
     assert field["value_type"] == "float" and field["components"] == 1
+    assert field["level_set"] is True
 
     nanovdb = scene.volume_nanovdb(0, 0)
     assert nanovdb is not None
