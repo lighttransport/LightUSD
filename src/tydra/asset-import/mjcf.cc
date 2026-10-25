@@ -946,7 +946,11 @@ void ComputeMujocoVertexNormals(Mesh* mesh, bool smoothnormal) {
     for (int k = 0; k < 3; ++k) out[k] = len > 0.0 ? v[k] / len : 0.0;
     return len > 0.0;
   };
-  std::vector<double> sum = acc;
+  // Smooth normals use the accumulated sums as they are; only the sharp-edge
+  // pass needs its own copy to subtract excluded faces from.
+  std::vector<double> sharp;
+  if (!smoothnormal) sharp = acc;
+  std::vector<double>& sum = smoothnormal ? acc : sharp;
   if (!smoothnormal) {
     for (size_t f = 0; f < nf; ++f) {
       double uf[3];
@@ -1066,13 +1070,37 @@ bool LoadBinarySTL(const fs::path& filename, bool smoothnormal, Mesh* mesh,
     uint32_t x, y, z;
     int32_t index;  // -1: empty
   };
+  // Sized for the typical ~tri_count/2 unique vertices and doubled when half
+  // full (a soup has 3 per triangle): far less to clear and to cache than a
+  // worst-case table. Indices do not depend on the table size.
   size_t capacity = 16;
-  while (capacity < size_t(tri_count) * 6) capacity <<= 1;
+  while (capacity < size_t(tri_count)) capacity <<= 1;
   std::vector<Slot> table(capacity, Slot{0, 0, 0, -1});
-  const size_t mask = capacity - 1;
+  size_t mask = capacity - 1;
+  size_t unique = 0;
+  const auto hash = [](uint32_t x, uint32_t y, uint32_t z) {
+    uint64_t h = (uint64_t(x) * 0x9E3779B97F4A7C15ull) ^ (uint64_t(y) * 0xC2B2AE3D27D4EB4Full) ^
+                 (uint64_t(z) * 0x165667B19E3779F9ull);
+    h ^= h >> 29;
+    return size_t(h);
+  };
+  const auto grow = [&]() {
+    std::vector<Slot> old;
+    old.swap(table);
+    capacity <<= 1;
+    mask = capacity - 1;
+    table.assign(capacity, Slot{0, 0, 0, -1});
+    for (const Slot& slot : old) {
+      if (slot.index < 0) continue;
+      size_t at = hash(slot.x, slot.y, slot.z) & mask;
+      while (table[at].index >= 0) at = (at + 1) & mask;
+      table[at] = slot;
+    }
+  };
   mesh->positions.clear();
   mesh->indices.clear();
   mesh->indices.reserve(size_t(tri_count) * 3);
+  mesh->positions.reserve(size_t(tri_count) * 3 / 2 + 3);
   for (uint32_t i = 0; i < tri_count; i++) {
     const size_t base = 84ull + size_t(i) * 50ull;
     for (size_t v = 0; v < 3; v++) {
@@ -1081,10 +1109,7 @@ bool LoadBinarySTL(const fs::path& filename, bool smoothnormal, Mesh* mesh,
       std::memcpy(&x, bytes + vo + 0, 4);
       std::memcpy(&y, bytes + vo + 4, 4);
       std::memcpy(&z, bytes + vo + 8, 4);
-      uint64_t h = (uint64_t(x) * 0x9E3779B97F4A7C15ull) ^ (uint64_t(y) * 0xC2B2AE3D27D4EB4Full) ^
-                   (uint64_t(z) * 0x165667B19E3779F9ull);
-      h ^= h >> 29;
-      size_t at = size_t(h) & mask;
+      size_t at = hash(x, y, z) & mask;
       while (table[at].index >= 0 && !(table[at].x == x && table[at].y == y && table[at].z == z))
         at = (at + 1) & mask;
       if (table[at].index < 0) {
@@ -1097,6 +1122,9 @@ bool LoadBinarySTL(const fs::path& filename, bool smoothnormal, Mesh* mesh,
           }
           mesh->positions.push_back(c);
         }
+        mesh->indices.push_back(table[at].index);
+        if (++unique * 2 > capacity) grow();
+        continue;
       }
       mesh->indices.push_back(table[at].index);
     }
