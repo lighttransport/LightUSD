@@ -34,6 +34,7 @@
 #include "tydra/next/texture-cache.hh"
 #include "tydra/next/urdf-to-usd.hh"
 #include "next/pcp/cache.hh"
+#include "next/load-usd.hh"
 #include "next/reader/usda-reader.hh"
 #include "next/schema/geom-mesh.hh"
 #include "next/schema/geom-point-instancer.hh"
@@ -7980,6 +7981,106 @@ def Mesh "M"
   assert(heat.indices[0] == 2 && heat.indices[1] == 1 && heat.indices[2] == 0);
 }
 
+// OpenUSD's UsdImagingGL VDB test fixtures (vdbVolume*.usda in
+// pxr/usdImaging/usdImagingGL/testenv/testUsdImagingGLVdbVolume). They are
+// outside this repo, so the test skips unless LIGHTUSD_OPENUSD_VDB_FIXTURES (or
+// OPENUSD_ROOT) points at them. Covers pxr-authored files rather than our own
+// writer: two fields sharing one file, a time-sampled filePath, flipped /
+// large scale placement, and the fallback material.
+static void TestOpenUsdVdbVolumeFixtures() {
+  std::cout << "OpenUSD VDB volume fixtures\n";
+  namespace fs = std::filesystem;
+  fs::path dir;
+  if (const char* env = std::getenv("LIGHTUSD_OPENUSD_VDB_FIXTURES")) {
+    if (env[0]) dir = env;
+  } else if (const char* root = std::getenv("OPENUSD_ROOT")) {
+    if (root[0]) {
+      dir = fs::path(root) / "pxr/usdImaging/usdImagingGL/testenv/"
+                             "testUsdImagingGLVdbVolume";
+    }
+  }
+  if (dir.empty() || !fs::exists(dir / "vdbVolume.usda")) {
+    std::cout << "  SKIP: set LIGHTUSD_OPENUSD_VDB_FIXTURES to OpenUSD's "
+                 "testUsdImagingGLVdbVolume directory\n";
+    return;
+  }
+
+  auto convert_fixture = [&](const char* name, double time) {
+    const std::string path = (dir / name).string();
+    ::lightusd::next::Stage stage;
+    std::string warn, err;
+    assert(::lightusd::next::LoadUSD(path, &stage, &warn, &err));
+    ConverterConfig config;
+    config.time_code = time;
+    config.asset_base_dir = dir.string();
+    RenderSceneConverter conv(config);
+    return conv.Convert(stage);
+  };
+
+  // Two fields in one file (densityAndHeat.vdb): both bindings resolve to
+  // their own grid, and both are placed by the same field transform.
+  {
+    ConvertResult res = convert_fixture("vdbVolumeTwoFields.usda", 1.0);
+    assert(res.success);
+    assert(res.scene.volumes.size() == 1);
+    const RenderVolume& volume = res.scene.volumes[0];
+    assert(volume.fields.size() == 2);
+    std::map<std::string, bool> seen;
+    for (const RenderVolumeField& field : volume.fields) {
+      seen[field.binding] = true;
+      assert(field.field.grid.name == field.binding);
+      assert(field.field.value_type == "float");
+      assert(field.field.has_bounds);
+    }
+    assert(seen["density"] && seen["heat"]);
+    // The Volume authors an extent, so it must not be replaced by the fields'
+    // union box.
+    assert(volume.has_extent);
+  }
+
+  // The fallback-material fixture samples filePath over time (smoke_000001/2/3).
+  // A different time must resolve a different file, and one whose grid decodes.
+  {
+    ConvertResult first = convert_fixture("vdbVolumeFallbackMaterial.usda", 1.0);
+    assert(first.success);
+    assert(first.scene.volumes.size() == 1);
+    assert(first.scene.volumes[0].fields.size() == 1);
+    const std::string file_t1 = first.scene.volumes[0].fields[0].field.request.file_path;
+    assert(!file_t1.empty());
+
+    ConvertResult last = convert_fixture("vdbVolumeFallbackMaterial.usda", 250.0);
+    assert(last.success);
+    assert(last.scene.volumes.size() == 1);
+    assert(last.scene.volumes[0].fields.size() == 1);
+    const std::string file_t250 = last.scene.volumes[0].fields[0].field.request.file_path;
+    assert(!file_t250.empty());
+    assert(file_t1 != file_t250);
+  }
+
+  // Flipped and large-scale placements keep resolving; the flipped fixture
+  // negates an axis, so its index-to-world must have a negative 3x3
+  // determinant while the unflipped one stays positive.
+  for (const char* name : {"vdbVolumeFlipped.usda", "vdbVolumeLarge.usda",
+                           "vdbVolumeInside.usda", "vdbVolume.usda"}) {
+    ConvertResult res = convert_fixture(name, 1.0);
+    assert(res.success);
+    assert(res.scene.volumes.size() == 1);
+    assert(!res.scene.volumes[0].fields.empty());
+    const RenderVolumeField& field = res.scene.volumes[0].fields[0];
+    const double (*m)[4] = field.field.index_to_world;  // row vectors
+    const double det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
+                       m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
+                       m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    assert(std::fabs(det) > 0.0);
+    if (std::strcmp(name, "vdbVolumeFlipped.usda") == 0) {
+      assert(det < 0.0);
+    } else {
+      assert(det > 0.0);
+    }
+  }
+  std::cout << "  OpenUSD VDB volume fixtures: PASSED\n";
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -8071,6 +8172,7 @@ int main() {
   TestParallelMaterialTextureRemapAndCallbackPolicy();
   TestStrictConversionDiagnostics();
   TestSparseUDIMTextureRetention();
+  TestOpenUsdVdbVolumeFixtures();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
   return 0;
