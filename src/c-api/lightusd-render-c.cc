@@ -3224,6 +3224,19 @@ lightusd_status lightusd_render_volume_field_sample(const lightusd_render_scene*
   if (!f) return Fail(LIGHTUSD_ERR_NOT_FOUND, "volume/field id out of range");
   const std::shared_ptr<lightusd::tydra::vol::FieldCache>& cache = scene->data().volume_cache;
   if (!cache) return Fail(LIGHTUSD_ERR_NOT_FOUND, "scene has no volume cache");
+  // Bound the buffers before allocating them: 3 doubles per point in and
+  // `components` floats per point out.
+  const size_t expect_components =
+      f->field.components > 0 ? size_t(f->field.components) : 1;
+  size_t out_bytes = 0;
+  size_t in_bytes = 0;
+  if (uint64_t(size_t(count)) != count ||
+      !safe::mul(size_t(count), expect_components, &out_bytes) ||
+      !safe::mul(out_bytes, sizeof(float), &out_bytes) ||
+      !safe::mul(size_t(count), size_t(3) * sizeof(double), &in_bytes))
+    return Fail(LIGHTUSD_ERR_OVERFLOW, "sample count overflow");
+  if (out_bytes > (size_t(8) << 30) || in_bytes > (size_t(8) << 30))
+    return Fail(LIGHTUSD_ERR_RESOURCE_LIMIT, "sample request exceeds 8 GiB");
   std::string err;
   int components = 1;
   {
@@ -3240,7 +3253,8 @@ lightusd_status lightusd_render_volume_field_sample(const lightusd_render_scene*
   return LIGHTUSD_OK;
 }
 
-size_t lightusd_render_particle_data_count(const lightusd_render_scene* scene) {  return scene ? scene->data().particle_fields.size() : 0;
+size_t lightusd_render_particle_data_count(const lightusd_render_scene* scene) {
+  return scene ? scene->data().particle_fields.size() : 0;
 }
 
 lightusd_status lightusd_render_particle_data_get(const lightusd_render_scene* scene,
