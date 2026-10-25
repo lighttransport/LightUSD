@@ -128,6 +128,12 @@ def read_level_set(source) -> LevelSet:
 
 
 def _extent(points) -> float:
+    try:
+        import numpy as np
+        pts = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+        return float((pts.max(axis=0) - pts.min(axis=0)).max()) if len(pts) else 0.0
+    except ImportError:
+        pass
     lo = [float("inf")] * 3
     hi = [float("-inf")] * 3
     raw = _flat(points, "f", 3).cast("f")
@@ -182,21 +188,45 @@ def _sibling(stage, path: str, suffix: str) -> str:
         candidate, n = f"{base}_{n}", n + 1
 
 
+def _unit_scale(prim) -> bool:
+    """True when the prim's world transform has no scale: Newton's narrow
+    band is in the shape's units, so it is authored only then (as the
+    MJCF/URDF importers do)."""
+    m = prim.world_transform()
+    for r in range(3):
+        if abs(sum(float(m[r][c]) ** 2 for c in range(3)) ** 0.5 - 1.0) > 1e-6:
+            return False
+    return True
+
+
+def _unique_asset(stage, name: str) -> str:
+    """``sdf/<name>.vdb``, suffixed while another generated asset has it
+    (same-named meshes under different parents)."""
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in name) or "mesh"
+    taken = stage.generated_assets()
+    asset, n = f"sdf/{safe}.vdb", 2
+    while asset in taken:
+        asset, n = f"sdf/{safe}_{n}.vdb", n + 1
+    return asset
+
+
 def add_mesh_sdf(stage, mesh_path: str, *, resolution: int = 64, band: float = 3.0,
                  asset: Optional[str] = None, threads: int = 0, newton: bool = True,
                  device: str = "cpu"):
     """Compute the level set of a Mesh prim (in its own frame) and author it:
     a guide-purpose ``Volume`` sibling with the mesh's transform and an
-    ``OpenVDBAsset`` field reading `asset` (default ``sdf/<name>.vdb``, a
-    generated asset written on save), ``rel lightusd:sdf`` on the mesh and,
-    with `newton`, ``NewtonSDFCollisionAPI`` parameters. Returns the Volume."""
+    ``OpenVDBAsset`` field reading `asset` (default ``sdf/<name>.vdb``, made
+    unique among the stage's generated assets, written on save),
+    ``rel lightusd:sdf`` on the mesh and, with `newton`,
+    ``NewtonSDFCollisionAPI`` parameters (the narrow band only when the mesh
+    has no scale). Returns the Volume."""
     mesh = stage.prim_at(mesh_path)
     if mesh.type_name != "Mesh":
         raise ValueError(f"{mesh_path} is not a Mesh")
     points, indices, counts = _mesh_arrays(mesh)
     level_set = mesh_to_level_set(points, indices, counts, resolution=resolution, band=band,
                                   threads=threads, device=device)
-    asset = asset or f"sdf/{mesh.name}.vdb"
+    asset = asset or _unique_asset(stage, mesh.name)
     stage.add_generated_asset(asset, level_set.vdb)
     vpath = _sibling(stage, mesh_path, "_sdf")
     volume = stage.define_prim(vpath, "Volume")
@@ -215,9 +245,10 @@ def add_mesh_sdf(stage, mesh_path: str, *, resolution: int = 64, band: float = 3
             schemas = [s for s in schemas if s != "NewtonMeshCollisionAPI"] + ["NewtonSDFCollisionAPI"]
             mesh.set_metadata("apiSchemas", schemas)
         mesh.set("newton:sdfMaxResolution", (int(resolution) + 7) // 8 * 8, type="int", uniform=True)
-        width = band * level_set.voxel_size
-        mesh.set("newton:sdfNarrowBandInner", -width, type="float", uniform=True)
-        mesh.set("newton:sdfNarrowBandOuter", width, type="float", uniform=True)
+        if _unit_scale(mesh):
+            width = band * level_set.voxel_size
+            mesh.set("newton:sdfNarrowBandInner", -width, type="float", uniform=True)
+            mesh.set("newton:sdfNarrowBandOuter", width, type="float", uniform=True)
     return volume
 
 
@@ -225,34 +256,36 @@ def make_volume_deformable(stage, source_path: str, path: Optional[str] = None, 
                            spacing: Optional[float] = None, resolution: int = 64,
                            mass: Optional[float] = None, density: float = 1000.0,
                            youngs_modulus: float = 1.0e5, poissons_ratio: float = 0.3,
-                           threads: int = 0, max_tets: int = 0, device: str = "cpu"):
+                           threads: int = 0, max_tets: int = 0, device: str = "cpu",
+                           base_dir: Optional[str] = None):
     """Tetrahedralize a Mesh prim (through its level set) or a Volume whose
     ``field:*`` OpenVDBAsset is a level set, and author a ``TetMesh`` with
     ``PhysicsVolumeDeformableSimAPI``, per-point masses (`mass`, or `density`
     times the tet volume, shared equally) and a bound
     ``PhysicsVolumeDeformableMaterialAPI`` material. `spacing` defaults to
-    four voxels. The TetMesh takes the source's transform. Returns it."""
+    four voxels. The TetMesh takes the source's transform. A Mesh with a
+    ``lightusd:sdf`` sidecar (:func:`add_mesh_sdf`) reuses its level set.
+    A relative ``filePath`` that is not a generated asset resolves against
+    `base_dir` (the layer's directory); without it, it is an error. Returns
+    the TetMesh."""
     src = stage.prim_at(source_path)
-    if src.type_name == "Mesh":
+    if src.type_name == "Mesh" and "lightusd:sdf" in src.relationships:
+        targets = src.relationship("lightusd:sdf").targets
+        sidecar = stage.get_prim_at(targets[0]) if targets else None
+        if sidecar is not None and sidecar.type_name == "Volume":
+            src_level_set = _volume_level_set(stage, sidecar, base_dir)
+        else:
+            src_level_set = None
+    else:
+        src_level_set = None
+    if src_level_set is not None:
+        level_set = src_level_set
+    elif src.type_name == "Mesh":
         points, indices, counts = _mesh_arrays(src)
         level_set = mesh_to_level_set(points, indices, counts, resolution=resolution,
                                       threads=threads, device=device)
     elif src.type_name == "Volume":
-        level_set = None
-        generated = stage.generated_assets()
-        for rel in src.relationships:
-            if not rel.startswith("field:"):
-                continue
-            for target in src.relationship(rel).targets:
-                field = stage.prim_at(target)
-                if field.type_name != "OpenVDBAsset" or "filePath" not in field.attributes:
-                    continue
-                asset = str(field["filePath"])
-                level_set = (LevelSet(generated[asset]) if asset in generated
-                             else read_level_set(asset))
-                break
-            if level_set is not None:
-                break
+        level_set = _volume_level_set(stage, src, base_dir)
         if level_set is None:
             raise ValueError(f"{source_path} has no OpenVDBAsset level-set field")
     else:
@@ -270,7 +303,13 @@ def make_volume_deformable(stage, source_path: str, path: Optional[str] = None, 
     npts = len(tm.points)
     if mass is None:
         mass = density * _tet_volume(tm)
-    prim.set("physics:masses", [float(mass) / max(npts, 1)] * npts, type="float[]")
+    share = float(mass) / max(npts, 1)
+    try:
+        import numpy as np
+        masses = np.full(npts, share, dtype=np.float32)
+    except ImportError:
+        masses = [share] * npts
+    prim.set("physics:masses", masses, type="float[]")
     prim.set("physics:masses:elementType", "point", type="token", uniform=True)
     material = stage.define_prim(path + "_material", "Material")
     material.set_metadata("apiSchemas", ["PhysicsMaterialAPI", "PhysicsVolumeDeformableMaterialAPI"])
@@ -280,7 +319,37 @@ def make_volume_deformable(stage, source_path: str, path: Optional[str] = None, 
     return prim
 
 
+def _volume_level_set(stage, volume, base_dir: Optional[str]):
+    """The level set of a Volume's first ``field:*`` OpenVDBAsset, from the
+    stage's generated assets or the file (relative to `base_dir`)."""
+    generated = stage.generated_assets()
+    for rel in volume.relationships:
+        if not rel.startswith("field:"):
+            continue
+        for target in volume.relationship(rel).targets:
+            field = stage.prim_at(target)
+            if field.type_name != "OpenVDBAsset" or "filePath" not in field.attributes:
+                continue
+            asset = str(field["filePath"])
+            if asset in generated:
+                return LevelSet(generated[asset])
+            if not os.path.isabs(asset):
+                if base_dir is None:
+                    raise ValueError(f"{target}: relative filePath {asset!r} needs base_dir")
+                asset = os.path.join(base_dir, asset)
+            return read_level_set(asset)
+    return None
+
+
 def _tet_volume(tm: TetMesh) -> float:
+    try:
+        import numpy as np
+        pts = np.asarray(tm.points, dtype=np.float64).reshape(-1, 3)
+        tets = np.asarray(tm.tets, dtype=np.int64).reshape(-1, 4)
+        a, b, c, d = (pts[tets[:, k]] for k in range(4))
+        return float(np.einsum("ij,ij->i", np.cross(b - a, c - a), d - a).sum() / 6.0)
+    except ImportError:
+        pass
     total = 0.0
     pts = tm.points
     for t in tm.tets:
@@ -315,6 +384,7 @@ def main(argv=None) -> int:
     ap.add_argument("--device", default="cpu", choices=("cpu", "cuda", "hip", "auto"))
     args = ap.parse_args(argv)
     stage = load(args.input)
+    base_dir = os.path.dirname(os.path.abspath(args.input))
     for path in args.sdf:
         volume = add_mesh_sdf(stage, path, resolution=args.resolution, band=args.band,
                               threads=args.threads, device=args.device)
@@ -323,7 +393,7 @@ def main(argv=None) -> int:
         prim = make_volume_deformable(stage, path, spacing=args.spacing, resolution=args.resolution,
                                       density=args.density, youngs_modulus=args.youngs_modulus,
                                       poissons_ratio=args.poissons_ratio, threads=args.threads,
-                                      device=args.device)
+                                      device=args.device, base_dir=base_dir)
         print(f"{path}: {len(prim['tetVertexIndices'])} tets at {prim.path}")
     stage.save(args.output)
     print(f"Wrote {args.output}")

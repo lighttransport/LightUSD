@@ -174,6 +174,58 @@ def test_stage_add_mesh_sdf_and_volume_deformable(tmp_path):
     assert (tmp_path / 'sdf' / 'box.vdb').exists()
 
 
+_USDA_TWIN_MESHES = '''#usda 1.0
+def Xform "A" {
+  def Mesh "geom" {
+    point3f[] points = [(-.5,-.5,-.5),(.5,-.5,-.5),(.5,.5,-.5),(-.5,.5,-.5),(-.5,-.5,.5),(.5,-.5,.5),(.5,.5,.5),(-.5,.5,.5)]
+    int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+    int[] faceVertexIndices = [0,3,2,1, 4,5,6,7, 0,1,5,4, 1,2,6,5, 2,3,7,6, 3,0,4,7]
+  }
+}
+def Xform "B" {
+  float3 xformOp:scale = (2, 2, 2)
+  uniform token[] xformOpOrder = ["xformOp:scale"]
+  def Mesh "geom" {
+    point3f[] points = [(-.5,-.5,-.5),(.5,-.5,-.5),(.5,.5,-.5),(-.5,.5,-.5),(-.5,-.5,.5),(.5,-.5,.5),(.5,.5,.5),(-.5,.5,.5)]
+    int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+    int[] faceVertexIndices = [0,3,2,1, 4,5,6,7, 0,1,5,4, 1,2,6,5, 2,3,7,6, 3,0,4,7]
+  }
+}
+'''
+
+
+def test_add_mesh_sdf_unique_assets_and_scaled_band():
+    stage = lightusd.loads(_USDA_TWIN_MESHES)
+    a = vol.add_mesh_sdf(stage, '/A/geom', resolution=16)
+    b = vol.add_mesh_sdf(stage, '/B/geom', resolution=16)
+    assets = {str(stage.prim_at(v.path + '/sdf')['filePath']) for v in (a, b)}
+    assert assets == {'sdf/geom.vdb', 'sdf/geom_2.vdb'}
+    assert set(stage.generated_assets()) >= assets
+    # Newton's narrow band is in shape units: only the unscaled mesh has it.
+    assert 'newton:sdfNarrowBandInner' in stage.prim_at('/A/geom').attributes
+    assert 'newton:sdfNarrowBandInner' not in stage.prim_at('/B/geom').attributes
+    assert 'newton:sdfMaxResolution' in stage.prim_at('/B/geom').attributes
+
+
+def test_volume_deformable_relative_path_needs_base_dir(tmp_path):
+    pts, tris = _sphere(12, 24)
+    vol.mesh_to_level_set(pts, tris, voxel_size=0.1).save(tmp_path / 'ball.vdb')
+    usda = '''#usda 1.0
+def Volume "V" {
+  rel field:sdf = </V/sdf>
+  def OpenVDBAsset "sdf" {
+    asset filePath = @ball.vdb@
+    token fieldClass = "levelSet"
+  }
+}
+'''
+    stage = lightusd.loads(usda)
+    with pytest.raises(ValueError, match='base_dir'):
+        vol.make_volume_deformable(stage, '/V', spacing=0.2)
+    tets = vol.make_volume_deformable(stage, '/V', spacing=0.2, base_dir=str(tmp_path))
+    assert len(tets['tetVertexIndices']) > 0
+
+
 def test_flexcomp_stuffing_opt_in(tmp_path):
     (tmp_path / 'cube.obj').write_text(_CUBE_OBJ)
     xml = ('<mujoco><worldbody><flexcomp name="soft" type="mesh" file="cube.obj" dim="3" '
