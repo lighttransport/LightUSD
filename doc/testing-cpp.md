@@ -1656,6 +1656,15 @@ with animation enabled/disabled and a mesh triangulation/tangent configuration;
 it checks both exit status and scene counts. The command's legacy conversion
 path remains separate.
 
+`next_test_volume_c` covers the UsdVol render C surface: volume/field info
+(binding, grid name, value type, components, bounds), dense voxels,
+`lightusd_render_volume_field_nanovdb` (grid magic, header grid type, cached
+buffer identity), `lightusd_render_volume_field_sample` in world space
+(nearest and trilinear, scalar and vec3) and the unsupported bool grid. It
+needs the out-of-tree tinyvdbio reference corpus (`TINYVDBIO_DATA_DIR` or
+argv[1], expected under `reference/`) and prints SKIP without it, like the
+`usdvol-vdb-corpus` C++ test.
+
 `lusdview_incremental_scene_update_test` now builds without linking next core
 and exercises the public C change-record planner interface. It retains the
 slot/remap/deformation/material/texture cases and checks short records, null
