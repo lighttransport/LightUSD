@@ -247,7 +247,21 @@ per Volume.
 - **NanoVDB and sampling:** the same cache converts a sparse grid to one
   NanoVDB buffer (`ReadVDBGridNanoVDB`) and samples world-space points through
   tinyvdb's sparse sampler (nearest or trilinear, scalar or vec3), per scene
-  time.
+  time. The NanoVDB info's `index_to_world` is the field's full map (field
+  prim transform included, as in the field info), stored transposed
+  (column vectors); the buffer's embedded map is the file's grid map only. A
+  grid the cache already decoded for sampling or meshing is converted
+  without decoding the file again.
+- **Grid selection:** `fieldName`, then `fieldIndex` among equal names. The
+  render consumers fall back to the file's first usable grid only when
+  `fieldName` is not authored and no grid is named after the relationship;
+  a named grid that fails to decode is an error, never replaced.
+- **Limits:** field files are read only when they are regular files
+  (16 GiB cap, 1 GiB on 32-bit/WASM). Dense decodes are capped before they
+  allocate (cells; 640^3 by default, 384^3 on 32-bit/WASM); under a budget
+  (`FieldCache` byte budget, `RenderSceneConverterConfig::volume_max_voxels`,
+  lusdrender/lusdview's volume budget) an oversized grid is box-filtered by
+  the smallest stride that fits while it is decoded.
 - **Level sets:** `fieldClass = "levelSet"` fields are shaded as an isosurface
   (sphere traced, gradient normal, matte shading) by lusdrender's CPU
   integrator, in front of scene geometry only; `-volumeLevelSet fog` marches

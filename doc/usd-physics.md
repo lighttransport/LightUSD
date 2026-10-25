@@ -888,6 +888,11 @@ same size either way, since the crate format already shares identical arrays.
 Materials are not duplicated by the importers, so there is no separate
 material library.
 
+Mesh normals and UVs are one value per (welded) point, so the newton and
+openusd profiles author them with `vertex` interpolation, which is also what
+Newton's `Mesh` stores. The legacy profile keeps its historical expansion to
+`faceVarying` for indexed meshes (about six times the data for welded STL).
+
 ### Unit conversion
 
 Native imports author SI units (`metersPerUnit = 1`, `kilogramsPerUnit = 1`,
@@ -899,8 +904,11 @@ length/mass dimension: gprim sizes, points, widths, extents and translations
 joint frames, linear limits and linear drive/joint-state targets (L);
 linear drive stiffness/damping (M), linear force limits (M L); angular drive
 gains and torque limits, NewtonJointAPI armature/damping/friction for revolute
-joints (M L^2) with angles kept in degrees; gravity magnitude and Newton
-contact distances (L); deformable masses and thicknesses. Time samples are
+joints (M L^2) with angles kept in degrees; gravity magnitude, Newton
+contact distances and SDF narrow bands, and distance-joint limits (L); joint
+break force (M L) and torque (M L^2); deformable masses and thicknesses.
+OpenVDBAsset fields get an innermost `xformOp:scale:units`, since their
+`.vdb` voxels stay in the file's units. Time samples are
 converted with defaults. An up-axis change prepends (or accumulates and
 removes) `xformOp:rotateX:upAxis` on root prims and rotates
 `physics:gravityDirection`. `mjc:*` attributes stay in MuJoCo model units;
@@ -914,7 +922,9 @@ up_axis, &report, &skipped)` in `lightusd-physics-c.h` (0 / NULL keep the
 stage's value), and the Python function calls it. A time-sampled attribute is
 scaled sample by sample without authoring a default, and each attribute keeps
 its declared type (for example `half3[]`). Converting fruitfly to cm/g takes
-0.03 s (the earlier pure-Python pass took 1.4 s).
+0.03 s (the earlier pure-Python pass took 1.4 s). Attributes are rewritten
+one at a time (no stage-sized copy), so an error leaves the stage partially
+converted; discard it.
 
 ### Best-effort and unsupported features
 
