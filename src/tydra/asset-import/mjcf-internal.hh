@@ -358,10 +358,9 @@ const AttrMap& ResolveJointClass(const pugi::xml_node& joint_node,
                                  const std::string& childclass);
 void AddGeomPhysicsAttrs(const pugi::xml_node& geom_node, const AttrMap& cls,
                          Json* geom_json);
-std::map<std::string, fs::path> BuildMeshIndex(const fs::path&);
+fs::path CompilerAssetDir(const pugi::xml_node& root, const fs::path& base_dir, const char* kind);
 fs::path ResolveMeshPath(const fs::path& base_dir, const fs::path& mesh_dir,
-                         const std::string& file,
-                         const std::map<std::string, fs::path>& index);
+                         const std::string& file);
 std::map<std::string, MeshAsset> CollectMujocoAssets(const pugi::xml_node& root,
                                                      const fs::path& base_dir);
 void NormalizeHField(std::vector<float>* data);

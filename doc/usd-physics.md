@@ -956,7 +956,7 @@ default `newton` profile; [Output profiles](#output-profiles) lists the
 | USDC parsing | Done | `src/usdc-reader-prim.cc` |
 | Pretty-printing (USDA output) | Done | `src/pprint-physics.cc` |
 | Tydra JSON export | Done | `src/tydra/physics-to-json.cc` |
-| Native URDF/MJCF/OBJ import (payload) | Done | `src/tydra/asset-import/` (`mjcf.cc`, `obj.cc`, `dae.cc`, `reader.cc`, `builtin-texture.cc`) |
+| Native URDF/MJCF/OBJ import (payload) | Done | `src/tydra/asset-import/` (`mjcf*.cc` with `mjcf-internal.hh`, `urdf.cc`, `obj.cc`, `dae.cc`, `reader.cc`, `builtin-texture.cc`) |
 | Profile-aware USD writer (next core) | Done | `src/tydra/next/urdf-to-usd*.cc` |
 | C ABI / Python | Done | `src/c-api/lightusd-import-c.cc`, `lightusd-physics-c.cc`; `python/lightusd/` |
 | Physics query / validation | Done | `lightusd_stage_query_physics`, `src/next/validation/usd-validation-physics.cc` |

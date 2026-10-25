@@ -170,7 +170,11 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
     FlattenFramesIn(worldbody, ctx);
   }
 
+  // Body names are keyed by this document's nodes: drop them when it goes.
   active_body_names.clear();
+  struct BodyNamesScope {
+    ~BodyNamesScope() { active_body_names.clear(); }
+  } body_names_scope;
   std::map<std::string, MeshFit> mesh_fits;
   struct FitScope {
     std::map<std::string, MeshFit>* previous = active_mesh_fits;

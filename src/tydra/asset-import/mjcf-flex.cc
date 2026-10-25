@@ -16,10 +16,7 @@ bool IsSupportedFlexcompType(const std::string& type) {
 // Directory flexcomp `file` attributes resolve against (MuJoCo meshdir, or
 // assetdir, relative to the model file).
 fs::path FlexMeshDir(const pugi::xml_node& root, const fs::path& base_dir) {
-  const auto compiler = Child(root, "compiler");
-  std::string dir = compiler ? Attr(compiler, "meshdir") : std::string();
-  if (dir.empty() && compiler) dir = Attr(compiler, "assetdir");
-  return dir.empty() ? base_dir : base_dir / dir;
+  return CompilerAssetDir(root, base_dir, "meshdir");
 }
 
 // mjCFlexcomp::MakeBox with MuJoCo's default open=true: points on the box
@@ -668,7 +665,7 @@ bool CollectBodyFlexcompsJson(const pugi::xml_node& body_node,
         if (err) *err = "flexcomp `" + name + "`: file is required";
         return false;
       }
-      const fs::path path = ResolveMeshPath(mesh_dir, mesh_dir, file, {});
+      const fs::path path = ResolveMeshPath(mesh_dir, mesh_dir, file);
       std::string text;
       if (!ReadFile(path, &text, err)) return false;
       if (type == "gmsh") {

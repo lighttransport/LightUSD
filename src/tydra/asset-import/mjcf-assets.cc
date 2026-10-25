@@ -15,12 +15,7 @@ std::map<std::string, MeshAsset> CollectMujocoAssets(const pugi::xml_node& root,
                                                      const fs::path& base_dir) {
   std::map<std::string, MeshAsset> assets;
   const auto compiler = Child(root, "compiler");
-  // MuJoCo <compiler meshdir> takes precedence; assetdir is the shared
-  // default for meshdir/texturedir when meshdir is absent.
-  std::string dir_attr = compiler ? Attr(compiler, "meshdir") : std::string();
-  if (dir_attr.empty() && compiler) dir_attr = Attr(compiler, "assetdir");
-  const fs::path mesh_dir = dir_attr.empty() ? base_dir : base_dir / dir_attr;
-  const std::map<std::string, fs::path> index = BuildMeshIndex(base_dir);
+  const fs::path mesh_dir = CompilerAssetDir(root, base_dir, "meshdir");
   // <extension><plugin plugin><instance name><config key value>.
   std::map<std::string, std::pair<std::string, std::map<std::string, std::string>>> instances;
   for (const auto& extension : Children(root, "extension"))
@@ -86,7 +81,7 @@ std::map<std::string, MeshAsset> CollectMujocoAssets(const pugi::xml_node& root,
       std::string name = Attr(mesh_node, "name");
       if (name.empty()) name = fs::path(file).stem().string();
       MeshAsset asset;
-      asset.path = ResolveMeshPath(base_dir, mesh_dir, file, index);
+      asset.path = ResolveMeshPath(base_dir, mesh_dir, file);
       asset.scale = ParseDouble3(Attr(mesh_node, "scale"), {{1.0, 1.0, 1.0}});
       if (HasAttr(mesh_node, "refpos")) {
         asset.refpos = ParseDouble3(Attr(mesh_node, "refpos"), {{0, 0, 0}});
@@ -129,11 +124,7 @@ void NormalizeHField(std::vector<float>* data) {
 std::map<std::string, HFieldAsset> CollectMujocoHFields(
     const pugi::xml_node& root, const fs::path& base_dir) {
   std::map<std::string, HFieldAsset> hfields;
-  const auto compiler = Child(root, "compiler");
-  std::string dir_attr = compiler ? Attr(compiler, "meshdir") : std::string();
-  if (dir_attr.empty() && compiler) dir_attr = Attr(compiler, "assetdir");
-  const fs::path mesh_dir = dir_attr.empty() ? base_dir : base_dir / dir_attr;
-  const std::map<std::string, fs::path> index = BuildMeshIndex(base_dir);
+  const fs::path mesh_dir = CompilerAssetDir(root, base_dir, "meshdir");
 
   for (const auto& asset_node : Children(root, "asset")) {
     for (const auto& hf_node : Children(asset_node, "hfield")) {
@@ -148,7 +139,7 @@ std::map<std::string, HFieldAsset> CollectMujocoHFields(
       for (size_t i = 0; i < 4 && i < sz.size(); ++i) hf.size[i] = sz[i];
 
       if (!file.empty()) {
-        const fs::path path = ResolveMeshPath(base_dir, mesh_dir, file, index);
+        const fs::path path = ResolveMeshPath(base_dir, mesh_dir, file);
         int w = 0, h = 0, comp = 0;
         std::vector<uint8_t> png;
         std::string resolved, why;

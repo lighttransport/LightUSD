@@ -196,7 +196,7 @@ struct Reader {
   // replayed into its parent.
   size_t peak_bytes = 0;
   // MJCF elements that <attach>, cable composites and <replicate> may still
-  // add (one budget per import; see ChargeExpansion in mjcf.cc).
+  // add (one budget per import; see ChargeExpansion in mjcf-expand.cc).
   size_t expansion_elements_left = 1000000;
   bool record_accesses = false;
   struct Access {

@@ -96,13 +96,7 @@ void AddMujocoMaterialsJson(const pugi::xml_node& root,
   // Resolve <texture name file=...> to an absolute path so a material's
   // `texture` becomes a UsdUVTexture in the converter. Builtin (file-less)
   // textures are skipped (no image to reference).
-  std::string tdir;
-  if (const auto compiler = Child(root, "compiler")) {
-    tdir = Attr(compiler, "texturedir");
-    if (tdir.empty()) tdir = Attr(compiler, "assetdir");
-  }
-  const fs::path tex_dir = tdir.empty() ? base_dir : base_dir / tdir;
-  const auto index = BuildMeshIndex(base_dir);
+  const fs::path tex_dir = CompilerAssetDir(root, base_dir, "texturedir");
   std::map<std::string, std::string> tex_files;
   std::set<std::string> generated, referenced;
   for (const auto& m_node : Children(asset, "material"))
@@ -145,7 +139,7 @@ void AddMujocoMaterialsJson(const pugi::xml_node& root,
     }
     if (tname.empty() || tfile.empty()) continue;
     tex_files[tname] =
-        ResolveMeshPath(base_dir, tex_dir, tfile, index).string();
+        ResolveMeshPath(base_dir, tex_dir, tfile).string();
   }
   for (const auto& m_node : Children(asset, "material")) {
     const std::string name = Attr(m_node, "name");
@@ -289,16 +283,11 @@ bool ParseSKN(const std::vector<uint8_t>& bytes, MjcfSkinData* skin, std::string
 // indices, zero-weight padded to the largest bone count of a vertex).
 bool AddMujocoSkinsJson(const pugi::xml_node& root, const fs::path& base_dir, Json* skins,
                         std::string* err) {
-  const auto compiler = Child(root, "compiler");
-  std::string dir_attr = compiler ? Attr(compiler, "meshdir") : std::string();
-  if (dir_attr.empty() && compiler) dir_attr = Attr(compiler, "assetdir");
-  const fs::path mesh_dir = dir_attr.empty() ? base_dir : base_dir / dir_attr;
+  const fs::path mesh_dir = CompilerAssetDir(root, base_dir, "meshdir");
   std::vector<pugi::xml_node> nodes;
   for (const char* parent : {"asset", "deformable"})
     for (const auto& p : Children(root, parent))
       for (const auto& s : Children(p, "skin")) nodes.push_back(s);
-  std::map<std::string, fs::path> index;
-  bool indexed = false;
   for (const auto& node : nodes) {
     const std::string file = Attr(node, "file");
     std::string name = Attr(node, "name");
@@ -316,13 +305,9 @@ bool AddMujocoSkinsJson(const pugi::xml_node& root, const fs::path& base_dir, Js
         return fail("both skin data and a file are specified");
       if (ToLower(fs::path(file).extension().string()) != ".skn")
         return fail("unknown skin file type " + file);
-      if (!indexed) {
-        index = BuildMeshIndex(base_dir);
-        indexed = true;
-      }
       std::vector<uint8_t> bytes;
       std::string resolved, why;
-      if (!active_reader->Read(ResolveMeshPath(base_dir, mesh_dir, file, index).string(),
+      if (!active_reader->Read(ResolveMeshPath(base_dir, mesh_dir, file).string(),
                                active_reader->root_source, &bytes, &resolved, &why))
         return fail(why);
       if (!ParseSKN(bytes, &skin, &why)) return fail(why);

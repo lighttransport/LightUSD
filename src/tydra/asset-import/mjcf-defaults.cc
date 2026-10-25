@@ -172,16 +172,8 @@ void AddGeomPhysicsAttrs(const pugi::xml_node& geom_node, const AttrMap& cls,
       (*geom_json)["mjc"][key] = EffDouble(geom_node, cls, key, 0.0);
 }
 
-// Basename -> path index of mesh files under `root_dir`. Used as a last-resort
-// fallback when a <mesh file="..."> path does not resolve against meshdir --
-// e.g. MuJoCo scenes whose assets are referenced relative to an included
-// file's directory (the include flattening here drops that provenance).
-// Names that occur in more than one location are dropped to avoid ambiguity.
-std::map<std::string, fs::path> BuildMeshIndex(const fs::path&) { return {}; }
-
 fs::path ResolveMeshPath(const fs::path& base_dir, const fs::path& mesh_dir,
-                         const std::string& file,
-                         const std::map<std::string, fs::path>& index) {
+                         const std::string& file) {
   if (fs::path(file).is_absolute()) return fs::path(file);
   if (active_reader->options.read || active_reader->options.open) {
     const auto colon = file.find(':');
@@ -196,8 +188,6 @@ fs::path ResolveMeshPath(const fs::path& base_dir, const fs::path& mesh_dir,
   for (const auto& c : candidates) {
     if (fs::exists(c, ec)) return c;
   }
-  const auto it = index.find(ToLower(fs::path(file).filename().string()));
-  if (it != index.end()) return it->second;
   return mesh_dir / file;  // primary candidate; errors later with a clear msg
 }
 }  // namespace mjcf_detail

@@ -417,6 +417,15 @@ bool ExpandIncludes(const std::string& xml, const fs::path& base_dir,
   *expanded = std::move(writer.text);
   return true;
 }
+// <compiler meshdir/texturedir> (`kind`), else the shared assetdir, relative
+// to the model's directory; the directory itself when neither is set.
+fs::path CompilerAssetDir(const pugi::xml_node& root, const fs::path& base_dir, const char* kind) {
+  const auto compiler = Child(root, "compiler");
+  std::string dir = compiler ? Attr(compiler, kind) : std::string();
+  if (dir.empty() && compiler) dir = Attr(compiler, "assetdir");
+  return dir.empty() ? base_dir : base_dir / dir;
+}
+
 }  // namespace mjcf_detail
 }  // namespace import_asset
 }  // namespace tydra
