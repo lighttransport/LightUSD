@@ -815,6 +815,15 @@ static bool ConvertPayload(
   return ok;
 }
 
+bool ConvertURDFPayloadToUSDStageConsuming(const ::lightusd::minijson::Value& value,
+    std::map<std::string, URDFMeshBuffer>* mesh_buffers,
+    ::lightusd::next::Stage* out_stage, std::string* warn, std::string* err) {
+  ::lightusd::tydra::detail::URDFPayload payload;
+  if (!::lightusd::tydra::detail::URDFPayload::Borrow(value, &payload, err)) return false;
+  urdf_detail::MeshBufferConsumption consume(true);
+  return ConvertPayload(payload, mesh_buffers, out_stage, warn, err);
+}
+
 bool ConvertURDFJsonToUSDStage(const std::string& robot_json,
     const std::map<std::string, URDFMeshBuffer>* mesh_buffers,
     ::lightusd::next::Stage* out_stage, std::string* warn, std::string* err) {

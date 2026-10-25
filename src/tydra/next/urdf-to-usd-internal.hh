@@ -33,6 +33,19 @@ struct Profile {
 };
 bool ParseProfile(const std::string &name, Profile *out);
 const Profile &ActiveProfile();
+// While alive, AddMeshFromJson moves meshRef buffers out of the caller's map
+// (ConvertURDFPayloadToUSDStageConsuming): each is authored once.
+class MeshBufferConsumption {
+ public:
+  explicit MeshBufferConsumption(bool consume);
+  ~MeshBufferConsumption();
+  MeshBufferConsumption(const MeshBufferConsumption &) = delete;
+  MeshBufferConsumption &operator=(const MeshBufferConsumption &) = delete;
+  static bool Active();
+
+ private:
+  bool previous_;
+};
 class ProfileScope {
  public:
   explicit ProfileScope(const Profile &profile);

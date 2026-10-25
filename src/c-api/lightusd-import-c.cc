@@ -229,7 +229,8 @@ lightusd_status Finish(ia::Result& result, const std::string& source,
     buffer.indices = std::move(entry.second.indices);
   }
   result.meshes.clear();
-  if (!lightusd::tydra::next::ConvertURDFPayloadToUSDStage(
+  // Converted once: the buffers are moved into the stage as it is built.
+  if (!lightusd::tydra::next::ConvertURDFPayloadToUSDStageConsuming(
           result.payload, &meshes, &handle->stage, &warn, &err)) {
     delete handle;
     return Failure(err);

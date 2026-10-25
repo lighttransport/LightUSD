@@ -369,6 +369,16 @@ void SetDisplayColorFromRGBA(tn::PrimSpec *prim, const Json &source) {
   SetInterpolation(prim, "primvars:displayOpacity", "constant");
 }
 
+namespace {
+thread_local bool consume_mesh_buffers = false;
+}  // namespace
+
+MeshBufferConsumption::MeshBufferConsumption(bool consume) : previous_(consume_mesh_buffers) {
+  consume_mesh_buffers = consume;
+}
+MeshBufferConsumption::~MeshBufferConsumption() { consume_mesh_buffers = previous_; }
+bool MeshBufferConsumption::Active() { return consume_mesh_buffers; }
+
 bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
                      std::set<std::string> *siblings, const Json &mesh_json,
                      const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
@@ -393,10 +403,20 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
                            mesh_ref + "` was not registered.\n");
       return true;
     }
-    positions = &found->second.positions;
-    normals = &found->second.normals;
-    uvs = &found->second.uvs;
-    source_indices = &found->second.indices;
+    if (MeshBufferConsumption::Active()) {
+      // The caller handed the buffers over (the map itself is the caller's
+      // non-const object): take them, so each is freed as the stage is built.
+      auto &buffer = const_cast<URDFMeshBuffer &>(found->second);
+      json_positions = std::move(buffer.positions);
+      json_normals = std::move(buffer.normals);
+      json_uvs = std::move(buffer.uvs);
+      json_indices = std::move(buffer.indices);
+    } else {
+      positions = &found->second.positions;
+      normals = &found->second.normals;
+      uvs = &found->second.uvs;
+      source_indices = &found->second.indices;
+    }
   } else {
     json_positions = JsonFloats(*geom, "positions");
     json_normals = JsonFloats(*geom, "normals");
@@ -409,9 +429,12 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
     return true;
   }
   const size_t point_count = positions->size() / 3;
+  // Arrays this function owns (parsed JSON or consumed buffers) are moved
+  // into the stage; borrowed buffers are copied.
+  const bool owned = positions == &json_positions;
   std::vector<int32_t> indices;
   if (!source_indices->empty()) {
-    indices = *source_indices;
+    indices = owned ? std::move(json_indices) : *source_indices;
   } else {
     indices.resize(point_count);
     for (size_t i = 0; i < point_count; ++i) indices[i] = static_cast<int32_t>(i);
@@ -464,7 +487,8 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
   }
   SetToken(prim, "subdivisionScheme", "none", true);
   Set(prim, "points",
-      tn::Value::MakeFloatCompArray(std::vector<float>(*positions),
+      tn::Value::MakeFloatCompArray(owned ? std::move(json_positions)
+                                          : std::vector<float>(*positions),
                                     tn::TypeId::Point3f, 3),
       "point3f[]");
   Set(prim, "faceVertexCounts", tn::Value::MakeIntArray(face_counts), "int[]");
@@ -473,10 +497,10 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
   // profile keeps its historical faceVarying expansion for non-identity
   // indexing, which multiplies the data by ~6 for welded meshes.
   const bool per_point = identity_indices || !ActiveProfile().legacy;
-  if (normals->size() == positions->size()) {
+  if (normals->size() == point_count * 3) {
     std::vector<float> ns;
     if (per_point) {
-      ns = *normals;
+      ns = owned ? std::move(json_normals) : *normals;
     } else {
       ns.reserve(indices.size() * 3);
       for (int32_t index : indices) {
@@ -492,7 +516,7 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
   if (uvs->size() == point_count * 2) {
     std::vector<float> st;
     if (per_point) {
-      st = *uvs;
+      st = owned ? std::move(json_uvs) : *uvs;
     } else {
       st.reserve(indices.size() * 2);
       for (int32_t index : indices) {

@@ -54,13 +54,19 @@ using MeshBuffers = std::map<std::string, lightusd::tydra::next::URDFMeshBuffer>
 using MeshBuffers = std::map<std::string, int>;  // the legacy converter takes JSON meshes
 #endif
 
-bool Convert(const ia::Json& payload, const MeshBuffers& meshes, OutputStage* stage,
+// `consume`: the payload is converted only once, so its mesh buffers may be
+// moved into the stage.
+bool Convert(const ia::Json& payload, MeshBuffers& meshes, bool consume, OutputStage* stage,
              std::string* warn, std::string* err) {
 #if defined(LIGHTUSD_URDF_TO_USD_NEXT)
+  if (consume)
+    return lightusd::tydra::next::ConvertURDFPayloadToUSDStageConsuming(payload, &meshes, stage,
+                                                                        warn, err);
   return lightusd::tydra::next::ConvertURDFPayloadToUSDStage(payload, &meshes, stage,
                                                           warn, err);
 #else
   (void)meshes;
+  (void)consume;
   return lightusd::tydra::ConvertURDFPayloadToUSDStage(payload, stage, warn,
                                                     err);
 #endif
@@ -271,7 +277,7 @@ int main(int argc, char** argv) {
     }
     OutputStage stage;
     std::string warn;
-    if (!Convert(*payload, meshes, &stage, &warn, &err) ||
+    if (!Convert(*payload, meshes, format != "all", &stage, &warn, &err) ||
         !Save(stage, path.string(), kind, result.assets, &err)) {
       std::cerr << "urdf-to-usd: " << err << "\n";
       return 1;

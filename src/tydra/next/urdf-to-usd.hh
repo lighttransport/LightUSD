@@ -53,6 +53,13 @@ bool ConvertURDFPayloadToUSDStage(const ::lightusd::minijson::Value& payload,
     const std::map<std::string, URDFMeshBuffer>* mesh_buffers,
     ::lightusd::next::Stage* stage, std::string* warn = nullptr, std::string* err = nullptr);
 
+/// Same, but the buffers are moved into the stage as each mesh is authored
+/// (lower peak memory); `mesh_buffers` is left with emptied buffers. Use when
+/// the payload is converted once.
+bool ConvertURDFPayloadToUSDStageConsuming(const ::lightusd::minijson::Value& payload,
+    std::map<std::string, URDFMeshBuffer>* mesh_buffers,
+    ::lightusd::next::Stage* out_stage, std::string* warn, std::string* err);
+
 bool ConvertURDFJsonToUSDStage(
     const std::string &robot_json,
     ::lightusd::next::Stage *stage,
