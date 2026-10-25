@@ -91,6 +91,11 @@ class FieldCache {
   const usdVol::VDBGrid *Dense(const ResolvedField &field, const usdVol::VDBReadOptions &options,
                                std::string *warn, std::string *err);
 
+  // Dense voxels moved out of the cache into *out (the cached entry is
+  // dropped and the budget released). Use when the caller keeps the data.
+  bool TakeDense(const ResolvedField &field, const usdVol::VDBReadOptions &options,
+                 usdVol::VDBGrid *out, std::string *warn, std::string *err);
+
   // Number of grids in a (cached) file, 0 when it cannot be read.
   size_t GridCount(const std::string &path);
 
@@ -146,6 +151,23 @@ void IndexToWorldRowVector(const usdVol::VDBGridInfo &grid, double out[4][4]);
 // world space. False when no field has bounds.
 bool FieldsWorldBounds(const std::vector<ResolvedField> &fields, double world_min[3],
                        double world_max[3]);
+
+// Resolve a field, falling back to the file's first grid when the requested
+// name has no match and `field_index` is 0 (the pre-fieldName authoring
+// behaviour the render consumers kept). A non-zero fieldIndex never falls
+// back. `*err` describes the primary failure when both attempts fail.
+//
+// `filter` (optional) is tried on each resolved candidate; when it returns
+// false the candidate is skipped (e.g. its dense decode failed), which keeps
+// the "first grid that can actually be used" behaviour of the old fallback.
+using FieldFilter = std::function<bool(const ResolvedField &)>;
+bool ResolveWithFirstGridFallback(FieldCache &cache, const FieldRequest &request,
+                                  const FieldFilter &filter, ResolvedField *out,
+                                  std::string *err);
+inline bool ResolveWithFirstGridFallback(FieldCache &cache, const FieldRequest &request,
+                                         ResolvedField *out, std::string *err) {
+  return ResolveWithFirstGridFallback(cache, request, FieldFilter(), out, err);
+}
 
 }  // namespace vol
 }  // namespace tydra

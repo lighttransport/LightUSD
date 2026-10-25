@@ -216,6 +216,20 @@ size_t FieldCache::GridCount(const std::string &path) {
   return file ? file->grids.size() : 0;
 }
 
+bool FieldCache::TakeDense(const ResolvedField &field, const usdVol::VDBReadOptions &options,
+                           usdVol::VDBGrid *out, std::string *warn, std::string *err) {
+  if (!out) return false;
+  const std::string key = DenseKey(field, options);
+  if (!Dense(field, options, warn, err)) return false;
+  auto it = dense_.find(key);
+  if (it == dense_.end() || !it->second) return false;
+  *out = std::move(*it->second);
+  const size_t bytes = out->data.size() * sizeof(float);
+  bytes_used_ = bytes_used_ > bytes ? bytes_used_ - bytes : 0;
+  dense_.erase(it);
+  return true;
+}
+
 const usdVol::VDBGrid *FieldCache::Dense(const ResolvedField &field,
                                          const usdVol::VDBReadOptions &options, std::string *warn,
                                          std::string *err) {  const std::string key = DenseKey(field, options);
@@ -355,7 +369,8 @@ FieldCache::SparseGrid *FieldCache::LoadSparse(const std::string &path, size_t s
 }
 
 bool FieldsWorldBounds(const std::vector<ResolvedField> &fields, double world_min[3],
-                       double world_max[3]) {  bool any = false;
+                       double world_max[3]) {
+  bool any = false;
   for (const ResolvedField &f : fields) {
     if (!f.has_bounds) continue;
     for (int a = 0; a < 3; ++a) {
@@ -365,6 +380,38 @@ bool FieldsWorldBounds(const std::vector<ResolvedField> &fields, double world_mi
     any = true;
   }
   return any;
+}
+
+bool ResolveWithFirstGridFallback(FieldCache &cache, const FieldRequest &request,
+                                  const FieldFilter &filter, ResolvedField *out,
+                                  std::string *err) {
+  if (!out) return false;
+  std::string primary_err;
+  {
+    ResolvedField primary;
+    if (cache.Resolve(request, &primary, &primary_err) &&
+        (!filter || filter(primary))) {
+      *out = std::move(primary);
+      return true;
+    }
+  }
+  if (request.field_index != 0 || request.prim_type == "Field3DAsset") {
+    if (err) *err = primary_err;
+    return false;
+  }
+  FieldRequest fallback = request;
+  fallback.field_name.clear();
+  const size_t count = cache.GridCount(request.file_path);
+  for (size_t i = 0; i < count; ++i) {
+    fallback.field_index = int(i);
+    ResolvedField candidate;
+    if (!cache.Resolve(fallback, &candidate, nullptr)) continue;
+    if (filter && !filter(candidate)) continue;
+    *out = std::move(candidate);
+    return true;
+  }
+  if (err) *err = primary_err;
+  return false;
 }
 
 }  // namespace vol

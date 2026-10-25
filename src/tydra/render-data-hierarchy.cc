@@ -373,37 +373,25 @@ bool RenderSceneConverter::ConvertVolume(
 
     vol::ResolvedField resolved;
     std::string resolve_err;
-    const bool resolved_ok = cache.Resolve(request, &resolved, &resolve_err);
     const usdVol::VDBGrid *grid = nullptr;
     std::string decode_warn, decode_err;
+    // "First decodable grid" fallback for pre-fieldName authoring: try the
+    // named grid, else (fieldIndex 0 only) the file's grids in order, keeping
+    // the first whose dense decode succeeds.
+    const auto decode = [&](const vol::ResolvedField &candidate) {
+      const usdVol::VDBGrid *decoded =
+          cache.Dense(candidate, options, &decode_warn, &decode_err);
+      if (!decoded) return false;
+      grid = decoded;
+      return true;
+    };
+    const bool resolved_ok =
+        vol::ResolveWithFirstGridFallback(cache, request, decode, &resolved, &resolve_err);
     if (resolved_ok) {
       for (const std::string &warning : resolved.warnings) PushWarn(warning);
-      grid = cache.Dense(resolved, options, &decode_warn, &decode_err);
     }
-    if (!grid && info.field_index == 0 && info.prim_type != "Field3DAsset") {
-      // Legacy fallback: with no matching grid and fieldIndex 0, use the
-      // file's first decodable grid (kept for pre-fieldName authoring).
-      if (!resolve_err.empty() || !decode_err.empty()) {
-        DCOUT("field:" << field_name << " : " << resolve_err << decode_err);
-      }
-      vol::FieldRequest fallback = request;
-      fallback.field_name.clear();
-      const size_t grid_count = cache.GridCount(resolvedPath);
-      for (size_t i = 0; i < grid_count; ++i) {
-        fallback.field_index = int(i);
-        vol::ResolvedField candidate;
-        if (!cache.Resolve(fallback, &candidate, &resolve_err)) continue;
-        const usdVol::VDBGrid *decoded =
-            cache.Dense(candidate, options, &decode_warn, &decode_err);
-        if (decoded) {
-          grid = decoded;
-          resolved = candidate;
-          break;
-        }
-      }
-    }
-    if (!grid || grid->data.empty() || grid->dim[0] <= 0 || grid->dim[1] <= 0 ||
-        grid->dim[2] <= 0) {
+    if (!resolved_ok || !grid || grid->data.empty() || grid->dim[0] <= 0 ||
+        grid->dim[1] <= 0 || grid->dim[2] <= 0) {
       DCOUT("Failed to decode vdb field '" << field_name << "': " << resolvedPath << " : "
                                            << resolve_err << decode_err);
       continue;

@@ -32,6 +32,7 @@
 #include "tydra/next/render-extract.hh"
 #include "tydra/openpbr-params.hh"
 #include "tydra/texture-util.hh"
+#include "tydra/vol/volume-field.hh"
 #include "usdVol.hh"
 #include "lusdr_context.hh"
 #include "lusdr_rt_lod.hh"
@@ -2824,6 +2825,12 @@ void CollectVolumesNext(const lightusd::next::Stage &stage,
     for (const std::string &name : prim.GetRelationshipNames()) {
       if (name == "field:density") has_density_relationship = true;
     }
+    // UsdVol: resolve and decode each `field:<name>` target through the shared
+    // resolver (fieldName / fieldIndex / fieldDataType / fieldClass, plus a
+    // time-sampled filePath), instead of walking the prims and decoding every
+    // grid of the file here.
+    lightusd::tydra::vol::FieldCache cache;
+    const lightusd::usdVol::VDBReadOptions options;
     for (const std::string &relName : prim.GetRelationshipNames()) {
       if (relName.rfind("field:", 0) != 0) continue;
       // One UsdVol prim is one participating medium, not one medium per field.
@@ -2837,78 +2844,106 @@ void CollectVolumesNext(const lightusd::next::Stage &stage,
       lightusd::next::UsdPrim field = stage.GetPrimAtPath((*targets)[0]);
       if (!field) continue;
 
-      const lightusd::next::Value *fp = field.GetPropertyValue("filePath");
-      auto ap = fp ? fp->as_asset_path() : nullptr;
-      if (!ap || ap->empty()) continue;
-      std::string fieldName = relName.substr(std::strlen("field:"));
-      if (const lightusd::next::Value *fn = field.GetPropertyValue("fieldName")) {
-        if (auto tk = fn->as_token()) fieldName = *tk;
-      }
-      std::string vpath = *ap;
+      lightusd::tydra::vol::FieldRequest request;
+      request.binding = relName.substr(std::strlen("field:"));
+      request.field_prim = field.GetPath().str();
+      request.prim_type = field.GetTypeName();
+      const lightusd::next::Value *fp = field.GetValueAtTime("filePath", time);
+      lightusd::next::StringView asset = fp ? fp->as_asset_path() : lightusd::next::StringView();
+      if (!asset) continue;
+      std::string vpath = std::string(asset);
       if (!vpath.empty() &&
           !lightusd::next::AssetResolver::IsAbsolutePath(vpath) &&
           !baseDir.empty()) {
         vpath = baseDir + "/" + vpath;
       }
-      std::vector<lightusd::usdVol::VDBGrid> grids;
-      std::string vw, ve;
-      if (!lightusd::usdVol::ReadVDBFromFile(vpath, &grids, &vw, &ve) ||
-          grids.empty()) {
+      request.file_path = vpath;
+      if (const lightusd::next::Value *fn = field.GetValueAtTime("fieldName", time)) {
+        if (lightusd::next::StringView tk = fn->as_token()) request.field_name = std::string(tk);
+      }
+      if (request.field_name.empty()) request.field_name = request.binding;
+      if (const lightusd::next::Value *fi = field.GetValueAtTime("fieldIndex", time)) {
+        if (const int32_t *index = fi->as_int()) request.field_index = *index;
+      }
+      if (const lightusd::next::Value *dt = field.GetValueAtTime("fieldDataType", time)) {
+        if (lightusd::next::StringView tk = dt->as_token())
+          request.field_data_type = std::string(tk);
+      }
+      if (const lightusd::next::Value *cl = field.GetValueAtTime("fieldClass", time)) {
+        if (lightusd::next::StringView tk = cl->as_token())
+          request.field_class = std::string(tk);
+      }
+      if (const lightusd::next::Value *rh = field.GetValueAtTime("vectorDataRoleHint", time)) {
+        if (lightusd::next::StringView tk = rh->as_token())
+          request.vector_role_hint = std::string(tk);
+      }
+
+      lightusd::tydra::vol::ResolvedField resolved;
+      std::string resolve_err;
+      if (!lightusd::tydra::vol::ResolveWithFirstGridFallback(cache, request, &resolved,
+                                                              &resolve_err)) {
         continue;
       }
-      lightusd::usdVol::VDBGrid *g = nullptr;
-      for (auto &gg : grids)
-        if (gg.name == fieldName) { g = &gg; break; }
-      if (!g) g = &grids[0];
-      if (g->data.empty() || g->dim[0] <= 0 || g->dim[1] <= 0 || g->dim[2] <= 0)
+      lightusd::usdVol::VDBGrid grid;
+      std::string decode_warn, decode_err;
+      if (!cache.TakeDense(resolved, options, &grid, &decode_warn, &decode_err) ||
+          grid.data.empty() || grid.dim[0] <= 0 || grid.dim[1] <= 0 || grid.dim[2] <= 0) {
         continue;
+      }
 
       VolumeData vd;
-      vd.dim[0] = g->dim[0];
-      vd.dim[1] = g->dim[1];
-      vd.dim[2] = g->dim[2];
-      for (const auto &aux : grids) {
+      vd.dim[0] = grid.dim[0];
+      vd.dim[1] = grid.dim[1];
+      vd.dim[2] = grid.dim[2];
+      // Auxiliary scalar grids of the same file (temperature / emission).
+      for (const char *aux_name : {"temperature", "emission", "flame", "heat"}) {
         VolumeScalarField *dst = nullptr;
-        if (aux.name == "temperature") {
+        if (std::strcmp(aux_name, "temperature") == 0) {
           dst = &vd.temperature_field;
-        } else if (aux.name == "emission" || aux.name == "flame" ||
-                   aux.name == "heat") {
+        } else {
           dst = &vd.emission_field;
         }
-        if (dst) {
-          dst->data = aux.data;
-          for (int a = 0; a < 3; ++a) dst->dim[a] = aux.dim[a];
-          dst->bmin = Vec3{
-              float(aux.origin[0]) * float(aux.voxel_size[0]) +
-                  float(aux.world_translation[0]),
-              float(aux.origin[1]) * float(aux.voxel_size[1]) +
-                  float(aux.world_translation[1]),
-              float(aux.origin[2]) * float(aux.voxel_size[2]) +
-                  float(aux.world_translation[2])};
-          dst->bmax = Vec3{
-              float(aux.origin[0] + aux.dim[0]) * float(aux.voxel_size[0]) +
-                  float(aux.world_translation[0]),
-              float(aux.origin[1] + aux.dim[1]) * float(aux.voxel_size[1]) +
-                  float(aux.world_translation[1]),
-              float(aux.origin[2] + aux.dim[2]) * float(aux.voxel_size[2]) +
-                  float(aux.world_translation[2])};
-          dst->background = aux.background;
-        }
+        if (dst->data.size()) continue;  // first matching alias wins
+        lightusd::tydra::vol::FieldRequest aux = request;
+        aux.binding = aux_name;
+        aux.field_name = aux_name;
+        aux.field_index = 0;
+        lightusd::tydra::vol::ResolvedField aux_resolved;
+        if (!cache.Resolve(aux, &aux_resolved, nullptr)) continue;
+        lightusd::usdVol::VDBGrid aux_grid;
+        if (!cache.TakeDense(aux_resolved, options, &aux_grid, nullptr, nullptr)) continue;
+        dst->data = std::move(aux_grid.data);
+        for (int a = 0; a < 3; ++a) dst->dim[a] = aux_grid.dim[a];
+        dst->bmin = Vec3{
+            float(aux_grid.origin[0]) * float(aux_grid.voxel_size[0]) +
+                float(aux_grid.world_translation[0]),
+            float(aux_grid.origin[1]) * float(aux_grid.voxel_size[1]) +
+                float(aux_grid.world_translation[1]),
+            float(aux_grid.origin[2]) * float(aux_grid.voxel_size[2]) +
+                float(aux_grid.world_translation[2])};
+        dst->bmax = Vec3{
+            float(aux_grid.origin[0] + aux_grid.dim[0]) * float(aux_grid.voxel_size[0]) +
+                float(aux_grid.world_translation[0]),
+            float(aux_grid.origin[1] + aux_grid.dim[1]) * float(aux_grid.voxel_size[1]) +
+                float(aux_grid.world_translation[1]),
+            float(aux_grid.origin[2] + aux_grid.dim[2]) * float(aux_grid.voxel_size[2]) +
+                float(aux_grid.world_translation[2])};
+        dst->background = aux_grid.background;
       }
-      vd.density = std::move(g->data);
+      vd.density = std::move(grid.data);
       float lo[3], hi[3];
       for (int a = 0; a < 3; a++) {
-        lo[a] = float(g->origin[a]) * float(g->voxel_size[a]) +
-                float(g->world_translation[a]);
-        hi[a] = float(g->origin[a] + g->dim[a]) * float(g->voxel_size[a]) +
-                float(g->world_translation[a]);
+        lo[a] = float(grid.origin[a]) * float(grid.voxel_size[a]) +
+                float(grid.world_translation[a]);
+        hi[a] = float(grid.origin[a] + grid.dim[a]) * float(grid.voxel_size[a]) +
+                float(grid.world_translation[a]);
       }
       vd.bmin = Vec3{lo[0], lo[1], lo[2]};
       vd.bmax = Vec3{hi[0], hi[1], hi[2]};
       matrix4d invw;
       if (!lightusd::inverse(world, invw, 1.0e-12)) invw = matrix4d::identity();
       vd.inv_world = invw;
-      vd.background = g->background;
+      vd.background = grid.background;
       ResolveVolumeMaterialNext(stage, prim, &vd);
       if (max_density_bytes > 0 && density_bytes_used) {
         const size_t used = *density_bytes_used;
