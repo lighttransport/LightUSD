@@ -60,6 +60,9 @@ inline uint64_t EdgeKey(int32_t a, int32_t b) {
 
 }  // namespace
 
+// Point-face distance tests a hull may spend (about a minute of work).
+constexpr uint64_t kMaxHullWork = uint64_t(20) * 1000 * 1000 * 1000;
+
 HullStatus BuildConvexHull(const float* points, size_t count,
                            std::vector<int32_t>* triangles, std::string* detail) {
   if (triangles) triangles->clear();
@@ -165,9 +168,20 @@ HullStatus BuildConvexHull(const float* points, size_t count,
 
   std::unordered_map<uint64_t, int32_t> horizon;
   std::vector<int32_t> visible;
+  // Dead faces are dropped once they outnumber the live ones (live faces keep
+  // their order, so visibility and output are unchanged), and the total
+  // point-face work is bounded: a hostile point cloud fails instead of
+  // running for hours.
+  size_t dead = 0;
+  uint64_t work = 0;
   for (size_t i = 0; i < count; ++i) {
     if (i == i0 || i == i1 || i == i2 || i == i3) continue;
     const V3& q = p[i];
+    work += faces.size();
+    if (work > kMaxHullWork) {
+      if (detail) *detail = "convex hull exceeds its work limit";
+      return HullStatus::Invalid;
+    }
     bool outside = false;
     for (const Face& f : faces)
       if (f.alive && f.Distance(q) > eps) { outside = true; break; }
@@ -192,6 +206,7 @@ HullStatus BuildConvexHull(const float* points, size_t count,
     }
     if (visible.empty()) continue;
     for (int32_t fi : visible) faces[size_t(fi)].alive = false;
+    dead += visible.size();
     // Cap the hole. The horizon map keeps the visible face's winding per
     // boundary edge, which already orients the fan consistently; add_face
     // re-checks it against the interior point.
@@ -208,6 +223,12 @@ HullStatus BuildConvexHull(const float* points, size_t count,
     if (!ok) {
       if (detail) *detail = "degenerate hull face";
       return HullStatus::Invalid;
+    }
+    if (dead * 2 > faces.size()) {
+      faces.erase(std::remove_if(faces.begin(), faces.end(),
+                                 [](const Face& f) { return !f.alive; }),
+                  faces.end());
+      dead = 0;
     }
   }
 
