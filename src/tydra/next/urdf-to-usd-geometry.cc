@@ -468,11 +468,14 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
                                     tn::TypeId::Point3f, 3),
       "point3f[]");
   Set(prim, "faceVertexCounts", tn::Value::MakeIntArray(face_counts), "int[]");
-  // Non-identity indexing: per-vertex normals/UVs are expanded to
-  // faceVarying so the authored data stays consistent with the topology.
+  // Per-point normals/UVs index like the points, so `vertex` interpolation
+  // describes them exactly (and is what Newton's Mesh stores). The legacy
+  // profile keeps its historical faceVarying expansion for non-identity
+  // indexing, which multiplies the data by ~6 for welded meshes.
+  const bool per_point = identity_indices || !ActiveProfile().legacy;
   if (normals->size() == positions->size()) {
     std::vector<float> ns;
-    if (identity_indices) {
+    if (per_point) {
       ns = *normals;
     } else {
       ns.reserve(indices.size() * 3);
@@ -484,11 +487,11 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
     Set(prim, "normals",
         tn::Value::MakeFloatCompArray(std::move(ns), tn::TypeId::Normal3f, 3),
         "normal3f[]");
-    SetInterpolation(prim, "normals", identity_indices ? "vertex" : "faceVarying");
+    SetInterpolation(prim, "normals", per_point ? "vertex" : "faceVarying");
   }
   if (uvs->size() == point_count * 2) {
     std::vector<float> st;
-    if (identity_indices) {
+    if (per_point) {
       st = *uvs;
     } else {
       st.reserve(indices.size() * 2);
@@ -500,8 +503,7 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
     Set(prim, "primvars:st",
         tn::Value::MakeFloatCompArray(std::move(st), tn::TypeId::Texcoord2f, 2),
         "texCoord2f[]");
-    SetInterpolation(prim, "primvars:st",
-                     identity_indices ? "vertex" : "faceVarying");
+    SetInterpolation(prim, "primvars:st", per_point ? "vertex" : "faceVarying");
   }
   const auto colors = JsonFloats(*geom, "colors");
   if (colors.size() == point_count * 3) {
