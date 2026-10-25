@@ -58,10 +58,15 @@ void WorldBox(const double m[4][4], const int lo[3], const int hi[3], double wlo
   }
 }
 
+// Equivalent requests share one entry (the C API keeps entries for the
+// scene's lifetime): vector_components means nothing for a scalar grid, and
+// without downsampling the cap only decides whether the grid decodes at all,
+// so it is checked against the cached grid instead of keyed.
 std::string DenseKey(const ResolvedField &f, const usdVol::VDBReadOptions &o) {
+  const bool vector = f.grid.components == 3 && o.vector_components;
   char buf[96];
-  std::snprintf(buf, sizeof(buf), "|%zu|%zu|%d|%d", f.grid.source_index, o.max_voxels,
-                int(o.vector_components), int(o.downsample));
+  std::snprintf(buf, sizeof(buf), "|%zu|%zu|%d|%d", f.grid.source_index,
+                o.downsample ? o.max_voxels : size_t(0), int(vector), int(o.downsample));
   return f.request.file_path + buf;
 }
 
@@ -278,13 +283,34 @@ const usdVol::VDBGrid *FieldCache::Dense(const ResolvedField &field,
   std::lock_guard<std::recursive_mutex> lock(mu_);
   const std::string key = DenseKey(field, options);
   auto it = dense_.find(key);
-  if (it != dense_.end()) return it->second.get();
+  if (it != dense_.end()) {
+    const usdVol::VDBGrid &g = *it->second;
+    const size_t cells = size_t(g.dim[0]) * size_t(g.dim[1]) * size_t(g.dim[2]);
+    if (!options.downsample && options.max_voxels && cells > options.max_voxels) {
+      if (err) *err = field.request.field_prim + ": dense extent exceeds the voxel limit";
+      return nullptr;
+    }
+    return it->second.get();
+  }
   const File *file = Load(field.request.file_path, err);
   if (!file) return nullptr;
+  // Under a budget, cap the decode itself (cells x stored floats) rather than
+  // decoding and then refusing to keep the result.
+  usdVol::VDBReadOptions capped = options;
+  if (max_bytes_) {
+    const size_t floats = (field.grid.components == 3 && options.vector_components) ? 3 : 1;
+    const size_t left = max_bytes_ > bytes_used_ ? max_bytes_ - bytes_used_ : 0;
+    const size_t cells = left / (floats * sizeof(float));
+    if (cells == 0) {
+      if (err) *err = field.request.field_prim + ": dense voxels exceed the memory budget";
+      return nullptr;
+    }
+    if (!capped.max_voxels || capped.max_voxels > cells) capped.max_voxels = cells;
+  }
   std::unique_ptr<usdVol::VDBGrid> grid(new usdVol::VDBGrid);
   // Select by position (the resolved grid), not by name again.
   if (!usdVol::ReadVDBGrid(file->bytes.data(), file->bytes.size(), field.request.file_path, "",
-                           int(field.grid.source_index), options, grid.get(), warn, err))
+                           int(field.grid.source_index), capped, grid.get(), warn, err))
     return nullptr;
   const size_t bytes = grid->data.size() * sizeof(float);
   if (max_bytes_ && bytes_used_ + bytes > max_bytes_) {

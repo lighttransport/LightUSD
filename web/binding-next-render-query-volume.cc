@@ -152,6 +152,9 @@ uintptr_t RenderStream::volumeSample(int volume, int field, const double* points
   const tr::RenderVolume& v = render_scene_.volumes[static_cast<size_t>(volume)];
   if (field < 0 || static_cast<size_t>(field) >= v.fields.size()) return 0;
   const ::lightusd::tydra::vol::ResolvedField& r = v.fields[static_cast<size_t>(field)].field;
+  // The wasm heap cannot hold an arbitrary request (a failed allocation
+  // aborts): at most 256 MiB of samples (vec3 values) per call.
+  if (uint64_t(count) * 3u * sizeof(float) > (uint64_t(256) << 20)) return 0;
   int components = 0;
   std::string err;
   if (!render_scene_.volume_cache->SampleWorld(r, points, size_t(count), (flags & 1u) != 0,

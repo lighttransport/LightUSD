@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -25,7 +26,13 @@ namespace usdVol {
 
 namespace {
 
+// Dense cell cap when the caller gives none: 640^3 (1 GiB of floats), 384^3
+// (216 MiB) where the address space is 32-bit (WASM).
+#if defined(__EMSCRIPTEN__) || UINTPTR_MAX == 0xffffffffu
+const size_t kDefaultMaxVoxels = size_t(384) * 384 * 384;
+#else
 const size_t kDefaultMaxVoxels = size_t(640) * 640 * 640;
+#endif
 
 // An open .vdb (file or borrowed memory) closed on scope exit.
 struct OpenFile {

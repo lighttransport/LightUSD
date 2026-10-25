@@ -101,7 +101,7 @@ struct VDBGridInfo {
 };
 
 struct VDBReadOptions {
-  size_t max_voxels = 0;          // dense cell cap (0 = built-in default, 640^3)
+  size_t max_voxels = 0;          // dense cell cap (0 = default: 640^3, 384^3 on 32-bit/WASM)
   bool vector_components = false; // vec3 grids as three channels (else magnitude)
   bool downsample = false;        // over the cap: box-filter by the smallest stride that fits
 };

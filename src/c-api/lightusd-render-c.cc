@@ -3149,7 +3149,8 @@ lightusd_status lightusd_render_volume_field_dense(const lightusd_render_scene* 
   const std::shared_ptr<lightusd::tydra::vol::FieldCache>& cache = scene->data().volume_cache;
   if (!cache) return Fail(LIGHTUSD_ERR_NOT_FOUND, "scene has no volume cache");
   lightusd::usdVol::VDBReadOptions o;
-  o.max_voxels = size_t(max_voxels);
+  // A cap beyond the address space is no cap (and must not truncate).
+  o.max_voxels = max_voxels > uint64_t(SIZE_MAX) ? SIZE_MAX : size_t(max_voxels);
   o.downsample = downsample != 0;
   o.vector_components = vector_components != 0;
   std::string warn, err;
