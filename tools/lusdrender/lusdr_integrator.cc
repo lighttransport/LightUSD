@@ -1707,14 +1707,15 @@ std::vector<VolumeData> BuildVolumes(const RenderScene &scene) {
     if (f.buffer_id < 0 || size_t(f.buffer_id) >= scene.buffers.size()) continue;
     const auto &buf = scene.buffers[size_t(f.buffer_id)];
     const size_t n = size_t(f.dim[0]) * size_t(f.dim[1]) * size_t(f.dim[2]);
-    if (n == 0 || buf.data.size() < n * sizeof(float)) continue;
+    if (n == 0) continue;
 
     VolumeData vd;
     vd.dim[0] = f.dim[0];
     vd.dim[1] = f.dim[1];
     vd.dim[2] = f.dim[2];
-    vd.density.resize(n);
-    std::memcpy(vd.density.data(), buf.data.data(), n * sizeof(float));
+    // Vector fields are shaded through their magnitude (the integrator reads
+    // one scalar per cell).
+    if (!lightusd::tydra::ReadVolumeFieldScalars(buf, f, &vd.density)) continue;
     vd.bmin = Vec3{f.bounds_min[0], f.bounds_min[1], f.bounds_min[2]};
     vd.bmax = Vec3{f.bounds_max[0], f.bounds_max[1], f.bounds_max[2]};
     matrix4d invw;
@@ -1735,7 +1736,7 @@ std::vector<VolumeData> BuildVolumes(const RenderScene &scene) {
       const auto &abuf = scene.buffers[size_t(aux.buffer_id)];
       const size_t an = size_t(aux.dim[0]) * size_t(aux.dim[1]) *
                         size_t(aux.dim[2]);
-      if (an == 0 || abuf.data.size() < an * sizeof(float)) continue;
+      if (an == 0) continue;
       VolumeScalarField *dst_field = nullptr;
       if (aux.field_name == "temperature") {
         dst_field = &vd.temperature_field;
@@ -1744,8 +1745,7 @@ std::vector<VolumeData> BuildVolumes(const RenderScene &scene) {
         dst_field = &vd.emission_field;
       }
       if (dst_field) {
-        dst_field->data.resize(an);
-        std::memcpy(dst_field->data.data(), abuf.data.data(), an * sizeof(float));
+        if (!lightusd::tydra::ReadVolumeFieldScalars(abuf, aux, &dst_field->data)) continue;
         for (int a = 0; a < 3; ++a) {
           dst_field->dim[a] = aux.dim[a];
         }

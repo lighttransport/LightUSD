@@ -15,6 +15,7 @@
 #include "tydra/render-data-internal.hh"
 #include "tydra/render-data-material-internal.hh"
 #include "tydra/scene-access.hh"
+#include "tydra/vol/volume-field.hh"
 #include "tydra/materialx-to-json.hh"
 #include "usdGeom.hh"
 #include "usdLux.hh"
@@ -50,34 +51,67 @@ static NodeCategory GetNodeCategoryFromType(NodeType nodeType) {
   return NodeCategory::Group;  // Default
 }
 
-// Extract the common FieldAsset attributes (filePath / fieldName) from a
-// field-asset prim (OpenVDBAsset / Field3DAsset / FieldAsset). Returns false if
-// the prim is not a field-asset type.
+// Extract the common field-asset attributes (filePath / fieldName /
+// fieldIndex / fieldDataType / fieldClass / vectorDataRoleHint) from a field
+// prim (OpenVDBAsset / Field3DAsset / VolumeFieldAsset / FieldAsset) at the
+// converter's time code. Returns false if the prim is not a field-asset type.
+struct FieldAssetInfo {
+  value::AssetPath file_path;
+  std::string field_name;
+  int field_index = 0;
+  std::string field_data_type;
+  std::string field_class;        // OpenVDBAsset.fieldClass, "" when unauthored
+  std::string vector_role_hint;   // "" when unauthored
+  std::string prim_type;          // "OpenVDBAsset", "Field3DAsset", ...
+};
+
+template <typename T>
+static bool ValueAt(const TypedAttribute<Animatable<T>> &attr,
+                    const RenderSceneConverterEnv &env, T *out) {
+  auto value = attr.get_value();
+  if (!value) return false;
+  if (value.value().get(env.timecode, out, env.tinterp)) return true;
+  // Time code outside the samples, or a non-interpolatable type.
+  return value.value().get_scalar(out);
+}
+
 static bool GetFieldAssetInfo(const lightusd::Prim &prim,
-                              value::AssetPath *filePath,
-                              std::string *fieldName, int *fieldIndex) {
-  const FieldAsset *fa = nullptr;
+                              const RenderSceneConverterEnv &env,
+                              FieldAssetInfo *out) {
+  if (!out) return false;
+  const VolumeFieldAsset *fa = nullptr;
   if (const auto *openvdb_asset = prim.as<OpenVDBAsset>()) {
     fa = openvdb_asset;
+    out->prim_type = "OpenVDBAsset";
+    value::token field_class;
+    if (ValueAt(openvdb_asset->fieldClass, env, &field_class)) {
+      out->field_class = field_class.str();
+    }
   } else if (const auto *field3d_asset = prim.as<Field3DAsset>()) {
     fa = field3d_asset;
+    out->prim_type = "Field3DAsset";
+  } else if (const auto *volume_field_asset = prim.as<VolumeFieldAsset>()) {
+    fa = volume_field_asset;
+    out->prim_type = "VolumeFieldAsset";
   } else if (const auto *field_asset = prim.as<FieldAsset>()) {
     fa = field_asset;
+    out->prim_type = "FieldAsset";
   }
   if (!fa) return false;
 
-  if (auto fpv = fa->filePath.get_value()) {
-    fpv.value().get_scalar(filePath);
+  ValueAt(fa->filePath, env, &out->file_path);
+  value::token field_name;
+  if (ValueAt(fa->fieldName, env, &field_name)) {
+    out->field_name = field_name.str();
   }
-  if (auto fnv = fa->fieldName.get_value()) {
-    value::token tk;
-    if (fnv.value().get_scalar(&tk)) {
-      *fieldName = tk.str();
-    }
+  ValueAt(fa->fieldIndex, env, &out->field_index);
+  value::token field_data_type;
+  if (ValueAt(fa->fieldDataType, env, &field_data_type)) {
+    out->field_data_type = field_data_type.str();
   }
-  if (auto fiv = fa->fieldIndex.get_value()) {
-    int index = 0;
-    if (fiv.value().get_scalar(&index)) *fieldIndex = index;
+  value::token role_hint;
+  if (ValueAt(fa->vectorDataRoleHint, env, &role_hint)) {
+    out->vector_role_hint = role_hint.str();
   }
   return true;
 }
@@ -251,6 +285,26 @@ bool RenderSceneConverter::ConvertVolume(
 
   const AssetResolutionResolver &assetResolver = env.asset_resolver;
 
+  // Resolve fields through the shared UsdVol resolver so fieldIndex,
+  // fieldDataType, fieldClass and time-sampled filePath behave as in the
+  // schema. Decode supply goes through the asset resolver (USDZ members
+  // included). One cache per Volume: files are read once per volume prim.
+  vol::FieldCache cache([&assetResolver](const std::string &path, std::vector<uint8_t> *bytes,
+                                         std::string *err) {
+    Asset asset;
+    std::string warn;
+    if (!assetResolver.open_asset(path, path, &asset, &warn, err)) {
+      if (err && err->empty()) *err = "cannot open " + path;
+      return false;
+    }
+    bytes->assign(asset.data(), asset.data() + asset.size());
+    return true;
+  });
+  // Vector grids decode as three channels; ReadVolumeFieldScalars() reduces
+  // them for consumers that only shade a scalar.
+  usdVol::VDBReadOptions options;
+  options.vector_components = true;
+
   for (const auto &item : volume.fieldRelationships) {
     const std::string &field_name = item.first;
     const Relationship &rel = item.second;
@@ -280,75 +334,96 @@ bool RenderSceneConverter::ConvertVolume(
       continue;
     }
 
-    value::AssetPath filePath;
-    std::string vdb_field_name = field_name;  // default to the rel name
-    int vdb_field_index = 0;
-    if (!GetFieldAssetInfo(*fieldPrim, &filePath, &vdb_field_name, &vdb_field_index)) {
+    FieldAssetInfo info;
+    if (!GetFieldAssetInfo(*fieldPrim, env, &info)) {
       DCOUT("target prim is not a field-asset: " << target_prim);
       continue;
     }
-    if (filePath.GetAssetPath().empty()) {
+    if (info.file_path.GetAssetPath().empty()) {
       DCOUT("field-asset has empty filePath: " << target_prim);
       continue;
     }
 
-    // Resolve + open the .vdb asset.
+    // Resolve the .vdb asset (sanitize, then the stage resolver).
     std::string sanitized = utils::SanitizeAssetPath(
-        filePath.GetAssetPath(), assetResolver.get_allow_parent_relative_paths());
+        info.file_path.GetAssetPath(), assetResolver.get_allow_parent_relative_paths());
     if (sanitized.empty()) {
-      DCOUT("Unsafe vdb asset path: " << filePath.GetAssetPath());
+      DCOUT("Unsafe vdb asset path: " << info.file_path.GetAssetPath());
       continue;
     }
     std::string resolvedPath = assetResolver.resolve(sanitized);
     if (resolvedPath.empty()) {
-      DCOUT("Failed to resolve vdb asset path: " << filePath.GetAssetPath());
+      DCOUT("Failed to resolve vdb asset path: " << info.file_path.GetAssetPath());
       continue;
     }
 
-    Asset asset;
-    std::string aerr, awarn;
-    if (!assetResolver.open_asset(resolvedPath, sanitized, &asset, &awarn,
-                                  &aerr)) {
-      DCOUT("Failed to open vdb asset: " << resolvedPath << " : " << aerr);
-      continue;
-    }
+    vol::FieldRequest request;
+    request.binding = field_name;
+    request.field_prim = target_prim;
+    request.prim_type = info.prim_type;
+    request.file_path = resolvedPath;
+    // Legacy default: the relationship name doubles as the grid name.
+    request.field_name = info.field_name.empty() ? field_name : info.field_name;
+    request.field_index = info.field_index;
+    request.field_data_type = info.field_data_type;
+    request.field_class = info.field_class;
+    if (!info.vector_role_hint.empty()) request.vector_role_hint = info.vector_role_hint;
+    // The legacy render model indexes every field in Volume space, so the
+    // field prim's own transform is not applied (Storm does the same).
 
-    // Decode only the grid the field names: the fieldIndex-th grid called
-    // fieldName (UsdVol). Legacy fallback: with no such grid and fieldIndex
-    // 0, the file's first decodable grid.
-    std::vector<usdVol::VDBGrid> grids(1);
-    std::string vwarn, verr;
-    if (!usdVol::ReadVDBGrid(asset.data(), asset.size(), resolvedPath, vdb_field_name,
-                             vdb_field_index, usdVol::VDBReadOptions(), &grids[0], &vwarn,
-                             &verr)) {
-      grids.clear();
-      if (vdb_field_index != 0 ||
-          !usdVol::ReadVDBFromMemory(asset.data(), asset.size(), resolvedPath, &grids,
-                                     &vwarn, &verr) ||
-          grids.empty()) {
-        DCOUT("Failed to decode vdb: " << resolvedPath << " : " << verr);
-        continue;
+    vol::ResolvedField resolved;
+    std::string resolve_err;
+    const bool resolved_ok = cache.Resolve(request, &resolved, &resolve_err);
+    const usdVol::VDBGrid *grid = nullptr;
+    std::string decode_warn, decode_err;
+    if (resolved_ok) {
+      for (const std::string &warning : resolved.warnings) PushWarn(warning);
+      grid = cache.Dense(resolved, options, &decode_warn, &decode_err);
+    }
+    if (!grid && info.field_index == 0 && info.prim_type != "Field3DAsset") {
+      // Legacy fallback: with no matching grid and fieldIndex 0, use the
+      // file's first decodable grid (kept for pre-fieldName authoring).
+      if (!resolve_err.empty() || !decode_err.empty()) {
+        DCOUT("field:" << field_name << " : " << resolve_err << decode_err);
       }
-      grids.resize(1);
+      vol::FieldRequest fallback = request;
+      fallback.field_name.clear();
+      const size_t grid_count = cache.GridCount(resolvedPath);
+      for (size_t i = 0; i < grid_count; ++i) {
+        fallback.field_index = int(i);
+        vol::ResolvedField candidate;
+        if (!cache.Resolve(fallback, &candidate, &resolve_err)) continue;
+        const usdVol::VDBGrid *decoded =
+            cache.Dense(candidate, options, &decode_warn, &decode_err);
+        if (decoded) {
+          grid = decoded;
+          resolved = candidate;
+          break;
+        }
+      }
     }
-    const usdVol::VDBGrid *g = &grids[0];
-    if (g->data.empty() || g->dim[0] <= 0 || g->dim[1] <= 0 || g->dim[2] <= 0) {
+    if (!grid || grid->data.empty() || grid->dim[0] <= 0 || grid->dim[1] <= 0 ||
+        grid->dim[2] <= 0) {
+      DCOUT("Failed to decode vdb field '" << field_name << "': " << resolvedPath << " : "
+                                           << resolve_err << decode_err);
       continue;
     }
 
     RenderVolumeField f;
     f.field_name = field_name;
-    f.field_data_type = g->value_type;
-    f.background = g->background;
+    f.field_data_type = grid->value_type;
+    f.field_class = resolved.grid_class;
+    f.components = grid->components > 0 ? grid->components : 1;
+    f.background = grid->background;
     for (int a = 0; a < 3; a++) {
-      f.dim[a] = g->dim[a];
-      f.origin[a] = g->origin[a];
-      f.voxel_size[a] = float(g->voxel_size[a]);
-      f.world_translation[a] = float(g->world_translation[a]);
+      f.dim[a] = grid->dim[a];
+      f.origin[a] = grid->origin[a];
+      f.voxel_size[a] = float(grid->voxel_size[a]);
+      f.world_translation[a] = float(grid->world_translation[a]);
       // Object-space AABB of the grid.
       f.bounds_min[a] =
-          float(g->origin[a]) * f.voxel_size[a] + f.world_translation[a];
-      f.bounds_max[a] = float(g->origin[a] + g->dim[a]) * f.voxel_size[a] +
+          float(grid->origin[a]) * f.voxel_size[a] + f.world_translation[a];
+      f.bounds_max[a] = float(grid->origin[a] + grid->dim[a]) * f.voxel_size[a] +
                         f.world_translation[a];
     }
 
@@ -356,12 +431,12 @@ bool RenderSceneConverter::ConvertVolume(
     BufferData buf;
     buf.componentType = ComponentType::Float;
     size_t byte_size;
-    if (!safe::mul(g->data.size(), sizeof(float), &byte_size)) {
+    if (!safe::mul(grid->data.size(), sizeof(float), &byte_size)) {
       DCOUT("VDB grid data size overflow.");
       continue;
     }
     std::vector<uint8_t> bytes(byte_size);
-    std::memcpy(bytes.data(), g->data.data(), bytes.size());
+    std::memcpy(bytes.data(), grid->data.data(), bytes.size());
     SetBufferDataBytes(buf, std::move(bytes));
     f.buffer_id = int64_t(buffers.size());
     buffers.push_back(std::move(buf));

@@ -3557,29 +3557,26 @@ void BuildDrawVolumes(const tydra::RenderScene& rs, DrawScene* out) {
     const auto& buf = rs.buffers[static_cast<size_t>(f.buffer_id)];
     const size_t n =
         size_t(f.dim[0]) * size_t(f.dim[1]) * size_t(f.dim[2]);
-    if (n == 0 || buf.data.size() < n * sizeof(float)) continue;
+    if (n == 0) continue;
 
     DrawVolumeCPU dv;
     dv.name = v.prim_name;
     dv.dim[0] = f.dim[0];
     dv.dim[1] = f.dim[1];
     dv.dim[2] = f.dim[2];
-    dv.density.resize(n);
-    std::memcpy(dv.density.data(), buf.data.data(), n * sizeof(float));
+    // Vector fields are shaded through their magnitude (the viewer's volume
+    // pass consumes one scalar per cell).
+    if (!tydra::ReadVolumeFieldScalars(buf, f, &dv.density)) continue;
     for (const auto& aux : v.fields) {
       if (aux.dim[0] != f.dim[0] || aux.dim[1] != f.dim[1] ||
           aux.dim[2] != f.dim[2] || aux.buffer_id < 0 ||
           static_cast<size_t>(aux.buffer_id) >= rs.buffers.size()) continue;
       const auto& auxBuf = rs.buffers[static_cast<size_t>(aux.buffer_id)];
-      if (auxBuf.data.size() < n * sizeof(float)) continue;
       std::vector<float>* dst = nullptr;
       if (aux.field_name == "temperature") dst = &dv.temperatureField;
       if (aux.field_name == "emission" || aux.field_name == "flame" ||
           aux.field_name == "heat") dst = &dv.emissionField;
-      if (dst) {
-        dst->resize(n);
-        std::memcpy(dst->data(), auxBuf.data.data(), n * sizeof(float));
-      }
+      if (dst) tydra::ReadVolumeFieldScalars(auxBuf, aux, dst);
     }
     MatToColMajor(v.world_matrix, dv.world);
     for (int a = 0; a < 3; a++) {
