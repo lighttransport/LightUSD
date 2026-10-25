@@ -59,7 +59,7 @@ struct LevelSetOptions {
   double interior_width = 0;  // > 0; 0 selects 3 voxels
   size_t max_voxels = 0;      // candidate budget (~128 B each); 0 selects 8,000,000
   int threads = 0;            // 0 automatic (up to 8), 1 serial
-  bool exact_winding = false; // exact (O(faces)) instead of fast signs
+  bool exact_winding = false; // exact (O(faces) per voxel; refused past 1e11 face-voxels)
   std::string name;           // grid name; empty selects "sdf"
   std::string device = "cpu"; // cpu | cuda | hip | auto
 };
@@ -93,11 +93,16 @@ struct TetMeshData {
 struct StuffingOptions {
   double spacing = 0;   // lattice spacing (> 0)
   size_t max_tets = 0;  // 0 selects 4,000,000
+  size_t max_lattice_vertices = 0;  // dense stuffing lattice (~32 B each); 0 selects 8,000,000
   int threads = 0;
   std::string device = "cpu"; // cpu | cuda | hip | auto (lattice samples)
 };
 bool LevelSetToTetMesh(const LevelSet& level_set, const StuffingOptions& options,
                        TetMeshData* out, std::string* err, std::string* device_used = nullptr);
+
+// True when an error from these functions is a resource limit (voxel, tet,
+// lattice or work budget, out of memory) rather than invalid input.
+bool IsResourceLimitError(const std::string& err);
 
 }  // namespace import_asset
 }  // namespace tydra

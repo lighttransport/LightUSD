@@ -106,6 +106,10 @@ struct Pool {
   }
 };
 
+// Exact winding evaluates every face for every candidate voxel; past this
+// many face-voxel evaluations the call is refused (use the fast signs).
+constexpr double kMaxExactWindingWork = 1e11;
+
 bool Fail(std::string* err, const char* what, const tvdb_error_t& e) {
   if (err) *err = std::string(what) + ": " + (e.message[0] ? e.message : tvdb_status_string(e.status));
   return false;
@@ -251,6 +255,13 @@ bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options, LevelSet* 
     if (err) *err = "level set: mesh has no faces";
     return false;
   }
+  const size_t max_voxels = options.max_voxels ? options.max_voxels : 8000000;
+  if (options.exact_winding && double(faces.size()) * double(max_voxels) > kMaxExactWindingWork) {
+    if (err)
+      *err = "level set: exact winding work exceeds the limit (" + std::to_string(faces.size()) +
+             " faces); use the fast signs or fewer voxels";
+    return false;
+  }
   tvdb_triangle_mesh tm;
   std::memset(&tm, 0, sizeof(tm));
   tm.vertices = vertices.data();
@@ -266,7 +277,7 @@ bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options, LevelSet* 
                                                       : 3 * options.voxel_size);
   o.sign = options.exact_winding ? TVDB_LEVEL_SET_SIGN_WINDING_EXACT
                                  : TVDB_LEVEL_SET_SIGN_WINDING_FAST;
-  o.max_voxels = options.max_voxels ? options.max_voxels : 8000000;
+  o.max_voxels = max_voxels;
   o.grid_name = options.name.empty() ? "sdf" : options.name.c_str();
   Pool pool;
   if (!pool.Make(options.threads, err)) return false;
@@ -281,9 +292,19 @@ bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options, LevelSet* 
   std::memset(&e, 0, sizeof(e));
   tvdb_status_t st;
 #if defined(LIGHTUSD_HAVE_TINYVDB_GPU)
-  if (lease.device)
+  if (lease.device) {
     st = tvdb_gpu_compute_mesh_to_level_set(lease.device, &tm, &o, pool.pool, grid, nullptr, &e);
-  else
+    // "auto" falls back to the CPU when the device fails at run time (for
+    // example out of device memory), not only when none can be opened.
+    // Invalid input and budgets (TVDB_ERROR_INVALID_ARGUMENT) fail the same way
+    // on the CPU, so only device errors are retried.
+    if (st != TVDB_OK && st != TVDB_ERROR_INVALID_ARGUMENT && options.device == "auto") {
+      std::memset(grid, 0, sizeof(tvdb_grid));
+      std::memset(&e, 0, sizeof(e));
+      st = tvdb_mesh_to_level_set(&tm, &o, pool.pool, grid, nullptr, &e);
+      lease.name = "cpu";
+    }
+  } else
 #endif
     st = tvdb_mesh_to_level_set(&tm, &o, pool.pool, grid, nullptr, &e);
   if (st != TVDB_OK) {
@@ -459,6 +480,7 @@ bool LevelSetToTetMesh(const LevelSet& level_set, const StuffingOptions& options
   std::memset(&o, 0, sizeof(o));
   o.spacing = options.spacing;
   o.max_tets = options.max_tets;
+  o.max_lattice_vertices = options.max_lattice_vertices;
   Pool pool;
   if (!pool.Make(options.threads, err)) return false;
   DeviceLease lease;
@@ -469,9 +491,17 @@ bool LevelSetToTetMesh(const LevelSet& level_set, const StuffingOptions& options
   std::memset(&e, 0, sizeof(e));
   tvdb_status_t st;
 #if defined(LIGHTUSD_HAVE_TINYVDB_GPU)
-  if (lease.device)
+  if (lease.device) {
     st = tvdb_gpu_compute_level_set_to_tet_mesh(lease.device, level_set.grid(), &o, pool.pool, &tm, &e);
-  else
+    if (st != TVDB_OK && st != TVDB_ERROR_INVALID_ARGUMENT &&
+        options.device == "auto") {  // as in MeshToLevelSet
+      tvdb_tet_mesh_free(&tm);
+      std::memset(&tm, 0, sizeof(tm));
+      std::memset(&e, 0, sizeof(e));
+      st = tvdb_level_set_to_tet_mesh(level_set.grid(), &o, pool.pool, &tm, &e);
+      lease.name = "cpu";
+    }
+  } else
 #endif
     st = tvdb_level_set_to_tet_mesh(level_set.grid(), &o, pool.pool, &tm, &e);
   if (st != TVDB_OK) return Fail(err, "tet mesh", e);
@@ -485,6 +515,12 @@ bool LevelSetToTetMesh(const LevelSet& level_set, const StuffingOptions& options
     return false;
   }
   return true;
+}
+
+bool IsResourceLimitError(const std::string& err) {
+  for (const char* key : {"budget", "limit", "too large", "out of memory"})
+    if (err.find(key) != std::string::npos) return true;
+  return false;
 }
 
 }  // namespace import_asset

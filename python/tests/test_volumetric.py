@@ -90,6 +90,20 @@ def test_level_set_errors():
         vol.mesh_to_level_set(pts, tris, voxel_size=0.001, max_voxels=1000)
     with pytest.raises(Exception):
         vol.read_level_set(b'not a vdb')
+    # Settings are range-checked before use (no wraparound or float casts).
+    for bad in (-1, 1 << 40):
+        with pytest.raises(Exception, match='max_voxels'):
+            vol.mesh_to_level_set(pts, tris, voxel_size=0.1, max_voxels=bad)
+    with pytest.raises(Exception, match='threads'):
+        vol.mesh_to_level_set(pts, tris, voxel_size=0.1, threads=1000)
+    ls = vol.mesh_to_level_set(pts, tris, voxel_size=0.1)
+    with pytest.raises(Exception, match='max_tets'):
+        ls.to_tet_mesh(0.2, max_tets=-5)
+    # Exact winding costs faces x voxels: refused up front past the limit.
+    big, big_tris = _sphere(24, 48)
+    with pytest.raises(Exception, match='exact winding'):
+        vol.mesh_to_level_set(big, big_tris, voxel_size=0.01, exact_winding=True,
+                              max_voxels=100_000_000)
 
 
 def _sdf_mjcf(tmp_path):

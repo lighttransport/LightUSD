@@ -41,6 +41,23 @@ lightusd_status DeviceStatus(const std::string& device, std::string* err) {
 double Number(const ia::Json& j, const char* key, double fallback) {
   return j.contains(key) && j[key].is_number() ? j[key].get<double>() : fallback;
 }
+// A whole-number setting in [0, max] (absent selects 0, the default). Large,
+// negative or non-finite JSON numbers are rejected before any cast.
+constexpr double kMaxCountSetting = double(size_t(1) << 28);
+bool Count(const ia::Json& j, const char* key, double max, size_t* out, std::string* err) {
+  *out = 0;
+  if (!j.contains(key)) return true;
+  const double v = j[key].is_number() ? j[key].get<double>() : -1.0;
+  if (!(v >= 0 && v <= max) || v != std::floor(v)) {
+    if (err) *err = std::string(key) + " must be a whole number in [0, " + std::to_string(size_t(max)) + "]";
+    return false;
+  }
+  *out = size_t(v);
+  return true;
+}
+lightusd_status Failure(const std::string& err) {
+  return Fail(ia::IsResourceLimitError(err) ? LIGHTUSD_ERR_RESOURCE_LIMIT : LIGHTUSD_ERR_INVALID_ARG, err);
+}
 template <class T>
 lightusd_string* Pack(const std::vector<T>& v) {
   auto* s = new (std::nothrow) lightusd_string();
@@ -87,8 +104,14 @@ lightusd_status lightusd_mesh_to_level_set_vdb(const float* points, size_t point
   o.voxel_size = Number(settings, "voxel_size", 0);
   o.exterior_width = Number(settings, "exterior_width", 0);
   o.interior_width = Number(settings, "interior_width", 0);
-  o.max_voxels = size_t(std::max(0.0, Number(settings, "max_voxels", 0)));
-  o.threads = int(Number(settings, "threads", 0));
+  size_t threads = 0;
+  if (!Count(settings, "max_voxels", kMaxCountSetting, &o.max_voxels, &err) ||
+      !Count(settings, "threads", 256, &threads, &err))
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "level set: " + err);
+  o.threads = int(threads);
+  if (!std::isfinite(o.voxel_size) || !(o.exterior_width >= 0) || !(o.interior_width >= 0) ||
+      !std::isfinite(o.exterior_width) || !std::isfinite(o.interior_width))
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "level set: voxel size and widths must be finite");
   o.exact_winding = settings.contains("exact_winding") && settings["exact_winding"].is_boolean() &&
                     settings["exact_winding"].get<bool>();
   if (settings.contains("name") && settings["name"].is_string())
@@ -106,9 +129,7 @@ lightusd_status lightusd_mesh_to_level_set_vdb(const float* points, size_t point
   std::vector<uint8_t> bytes;
   if (!ia::MeshToLevelSet(mesh, o, &level_set, &err) ||
       !ia::WriteLevelSetVDB(level_set, &bytes, &err))
-    return Fail(err.find("budget") != std::string::npos ? LIGHTUSD_ERR_RESOURCE_LIMIT
-                                                         : LIGHTUSD_ERR_INVALID_ARG,
-                err);
+    return Failure(err);
   *vdb = Pack(bytes);
   return *vdb ? LIGHTUSD_OK : Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "level set: out of memory");
 }
@@ -204,8 +225,9 @@ lightusd_status lightusd_level_set_vdb_to_mesh(const uint8_t* vdb, size_t size,
   if (st != LIGHTUSD_OK) return st;
   ia::Mesh mesh;
   std::string err;
-  if (!ia::LevelSetToMesh(level_set, size_t(max_cells), &mesh, &err))
-    return Fail(LIGHTUSD_ERR_RESOURCE_LIMIT, err);
+  if (!ia::LevelSetToMesh(level_set, max_cells > uint64_t(SIZE_MAX) ? SIZE_MAX : size_t(max_cells),
+                          &mesh, &err))
+    return Failure(err);
   *points = Pack(mesh.positions);
   *indices = Pack(mesh.indices);
   if (!*points || !*indices) {
@@ -230,8 +252,14 @@ lightusd_status lightusd_level_set_vdb_to_tet_mesh(const uint8_t* vdb, size_t si
   if (!Settings(settings_json, &settings, &err)) return Fail(LIGHTUSD_ERR_INVALID_ARG, err);
   ia::StuffingOptions o;
   o.spacing = Number(settings, "spacing", 0);
-  o.max_tets = size_t(std::max(0.0, Number(settings, "max_tets", 0)));
-  o.threads = int(Number(settings, "threads", 0));
+  size_t threads = 0;
+  if (!Count(settings, "max_tets", kMaxCountSetting, &o.max_tets, &err) ||
+      !Count(settings, "max_lattice_vertices", kMaxCountSetting, &o.max_lattice_vertices, &err) ||
+      !Count(settings, "threads", 256, &threads, &err))
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh: " + err);
+  o.threads = int(threads);
+  if (!std::isfinite(o.spacing))
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh: spacing must be finite");
   o.device = Device(settings);
   if (!(o.spacing > 0) || o.threads < 0 || o.threads > 256)
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh: spacing > 0 and threads in [0, 256]");
@@ -242,9 +270,7 @@ lightusd_status lightusd_level_set_vdb_to_tet_mesh(const uint8_t* vdb, size_t si
   if (st != LIGHTUSD_OK) return st;
   ia::TetMeshData mesh;
   if (!ia::LevelSetToTetMesh(level_set, o, &mesh, &err))
-    return Fail(err.find("budget") != std::string::npos ? LIGHTUSD_ERR_RESOURCE_LIMIT
-                                                         : LIGHTUSD_ERR_INVALID_ARG,
-                err);
+    return Failure(err);
   *points = Pack(mesh.points);
   *tets = Pack(mesh.tets);
   *surface = Pack(mesh.surface);
