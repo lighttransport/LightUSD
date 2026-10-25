@@ -70,6 +70,10 @@ std::string DenseKey(const ResolvedField &f, const usdVol::VDBReadOptions &o) {
   return f.request.file_path + buf;
 }
 
+std::string SparseKey(const std::string &path, size_t source_index) {
+  return path + "|" + std::to_string(source_index);
+}
+
 }  // namespace
 
 // One decoded sparse grid plus its world sampler. Declared in the header as
@@ -308,10 +312,21 @@ const usdVol::VDBGrid *FieldCache::Dense(const ResolvedField &field,
     if (!capped.max_voxels || capped.max_voxels > cells) capped.max_voxels = cells;
   }
   std::unique_ptr<usdVol::VDBGrid> grid(new usdVol::VDBGrid);
-  // Select by position (the resolved grid), not by name again.
-  if (!usdVol::ReadVDBGrid(file->bytes.data(), file->bytes.size(), field.request.file_path, "",
-                           int(field.grid.source_index), capped, grid.get(), warn, err))
+  // A sparse tree already decoded for sampling or meshing is converted
+  // directly; otherwise the grid is decoded for this call only (dense-only
+  // users do not keep the sparse tree resident). Select by position (the
+  // resolved grid), not by name again.
+  const auto cached = sparse_.find(SparseKey(field.request.file_path, field.grid.source_index));
+  if (cached != sparse_.end()) {
+    if (!usdVol::DenseFromGrid(&cached->second->file.grids[field.grid.source_index],
+                               field.grid.source_index, field.request.file_path, capped,
+                               grid.get(), warn, err))
+      return nullptr;
+  } else if (!usdVol::ReadVDBGrid(file->bytes.data(), file->bytes.size(), field.request.file_path,
+                                  "", int(field.grid.source_index), capped, grid.get(), warn,
+                                  err)) {
     return nullptr;
+  }
   const size_t bytes = grid->data.size() * sizeof(float);
   if (max_bytes_ && bytes_used_ + bytes > max_bytes_) {
     if (err) *err = field.request.field_prim + ": dense voxels exceed the memory budget";
@@ -482,10 +497,17 @@ const std::vector<uint8_t> *FieldCache::NanoVDB(const ResolvedField &field,
   if (!file) return nullptr;
   std::unique_ptr<std::vector<uint8_t>> buffer(new std::vector<uint8_t>);
   usdVol::VDBNanoVDBInfo converted;
-  if (!usdVol::ReadVDBGridNanoVDB(file->bytes.data(), file->bytes.size(),
-                                  field.request.file_path, "", int(field.grid.source_index),
-                                  buffer.get(), &converted, err))
+  const auto cached = sparse_.find(SparseKey(field.request.file_path, field.grid.source_index));
+  if (cached != sparse_.end()) {  // as in Dense()
+    if (!usdVol::NanoVDBFromGrid(&cached->second->file.grids[field.grid.source_index],
+                                 field.request.file_path, buffer.get(), &converted, err))
+      return nullptr;
+  } else if (!usdVol::ReadVDBGridNanoVDB(file->bytes.data(), file->bytes.size(),
+                                         field.request.file_path, "",
+                                         int(field.grid.source_index), buffer.get(), &converted,
+                                         err)) {
     return nullptr;
+  }
   // The field's authored fieldClass wins over the file's, as in Resolve(),
   // and the map includes the field prim's transform: the buffer's own map is
   // only the file's index -> grid-world.
@@ -503,7 +525,7 @@ const std::vector<uint8_t> *FieldCache::NanoVDB(const ResolvedField &field,
 
 FieldCache::SparseGrid *FieldCache::LoadSparse(const std::string &path, size_t source_index,
                                                std::string *err) {
-  const std::string key = path + "|" + std::to_string(source_index);
+  const std::string key = SparseKey(path, source_index);
   auto it = sparse_.find(key);
   if (it != sparse_.end()) return it->second.get();
   const File *file = Load(path, err);

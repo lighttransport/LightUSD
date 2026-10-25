@@ -304,6 +304,10 @@ bool RenderSceneConverter::ConvertVolume(
   // them for consumers that only shade a scalar.
   usdVol::VDBReadOptions options;
   options.vector_components = true;
+  if (env.scene_config.volume_max_voxels) {
+    options.max_voxels = env.scene_config.volume_max_voxels;
+    options.downsample = true;
+  }
 
   for (const auto &item : volume.fieldRelationships) {
     const std::string &field_name = item.first;
@@ -432,6 +436,13 @@ bool RenderSceneConverter::ConvertVolume(
     }
     std::vector<uint8_t> bytes(byte_size);
     std::memcpy(bytes.data(), grid->data.data(), bytes.size());
+    // The buffer owns the voxels now: drop the cache's copy right away so
+    // only one field is ever held twice, not every field of the Volume.
+    {
+      usdVol::VDBGrid taken;
+      cache.TakeDense(resolved, options, &taken, nullptr, nullptr);
+      grid = nullptr;
+    }
     SetBufferDataBytes(buf, std::move(bytes));
     f.buffer_id = int64_t(buffers.size());
     buffers.push_back(std::move(buf));

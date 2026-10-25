@@ -2104,6 +2104,12 @@ int main(int argc, char **argv) {
   env.mesh_config.build_vertex_indices = !opt.direct_prims;
   env.mesh_config.compute_tangents_and_binormals = false;
   env.scene_config.load_texture_assets = true;
+  // The next path's volume density budget, applied while decoding: an
+  // oversized grid is box-filtered instead of decoded in full first.
+  env.scene_config.volume_max_voxels =
+      std::max<size_t>(size_t(64) << 20,
+                       std::min<size_t>(size_t(512) << 20, MemBudget::Get().Cap() / 16)) /
+      sizeof(float);
   env.set_search_paths({lightusd::io::GetBaseDir(opt.input)});
   if (opt.no_assetresolver) {
     SetupNullAssetResolution(&env.asset_resolver);

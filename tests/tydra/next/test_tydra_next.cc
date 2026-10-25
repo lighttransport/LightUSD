@@ -8293,6 +8293,21 @@ static void TestFieldFallbackAndDenseBox() {
     assert(std::fabs(bmax[a] - bmin[a] - grid->dim[a] * voxel) < 1e-9);
     assert(std::fabs(0.5 * (bmin[a] + bmax[a])) < 1e-6);
   }
+  // Dense and NanoVDB built from a sparse tree already decoded for sampling
+  // equal the ones decoded from the file.
+  {
+    FieldCache sampled;
+    ResolvedField f2;
+    assert(sampled.Resolve(request, &f2, &err));
+    const double origin[3] = {0, 0, 0};
+    std::vector<float> values;
+    assert(sampled.SampleWorld(f2, origin, 1, true, &values, nullptr, &err));
+    const lightusd::usdVol::VDBGrid* reused = sampled.Dense(f2, options, nullptr, &err);
+    assert(reused && reused->data == grid->data && reused->origin[0] == grid->origin[0]);
+    const std::vector<uint8_t>* nano_reused = sampled.NanoVDB(f2, nullptr, &err);
+    const std::vector<uint8_t>* nano_file = cache.NanoVDB(field, nullptr, &err);
+    assert(nano_reused && nano_file && *nano_reused == *nano_file);
+  }
   fs::remove(path);
 #if defined(__linux__) || defined(__APPLE__)
   // Field files come from the stage: a FIFO (or device) is not read.

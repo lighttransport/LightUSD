@@ -31,6 +31,8 @@
 #include <string>
 #include <vector>
 
+struct tvdb_grid;
+
 namespace lightusd {
 namespace usdVol {
 
@@ -170,6 +172,18 @@ bool ReadVDBGridNanoVDB(const uint8_t *data, size_t len, const std::string &uri,
                         const std::string &field_name, int field_index,
                         std::vector<uint8_t> *nano, VDBNanoVDBInfo *info = nullptr,
                         std::string *err = nullptr);
+
+///
+/// Dense voxels / NanoVDB bytes of a grid that is already decoded (a tinyvdb
+/// tvdb_grid; `source_index` is its position in the file). A caller keeping
+/// the sparse tree (for sampling or meshing) converts it without decoding the
+/// file again. `uri` is used for messages only.
+///
+bool DenseFromGrid(const tvdb_grid *grid, size_t source_index, const std::string &uri,
+                   const VDBReadOptions &options, VDBGrid *out, std::string *warn = nullptr,
+                   std::string *err = nullptr);
+bool NanoVDBFromGrid(const tvdb_grid *grid, const std::string &uri, std::vector<uint8_t> *nano,
+                     VDBNanoVDBInfo *info = nullptr, std::string *err = nullptr);
 
 }  // namespace usdVol
 }  // namespace lightusd

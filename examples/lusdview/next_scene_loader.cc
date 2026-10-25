@@ -6225,11 +6225,18 @@ std::vector<float> ResampleNextVolumeField(
         const int dc[3] = {x, y, z};
         int sc[3];
         for (int a = 0; a < 3; ++a) {
+          // Cell centres in index space: origin + stride * cell + (stride-1)/2
+          // (grids may be box-filtered by different strides).
+          const double ds = double(std::max(1, density.stride));
+          const double ss = double(std::max(1, src.stride));
           const double world =
-              double(density.origin[a] + dc[a]) * density.voxel_size[a] +
+              (double(density.origin[a]) + ds * dc[a] + 0.5 * (ds - 1.0)) *
+                  density.voxel_size[a] +
               density.world_translation[a];
-          sc[a] = int(std::floor((world - src.world_translation[a]) /
-                                 src.voxel_size[a] + 0.5)) - src.origin[a];
+          const double index =
+              (world - src.world_translation[a]) / src.voxel_size[a];
+          sc[a] = int(std::floor((index - double(src.origin[a]) -
+                                  0.5 * (ss - 1.0)) / ss + 0.5));
           sc[a] = std::max(0, std::min(src.dim[a] - 1, sc[a]));
         }
         out[size_t(x) + size_t(density.dim[0]) *
@@ -6562,9 +6569,28 @@ bool BuildNextVolumes(
           continue;
         }
 
+        // Under a density budget the decode itself is capped (tinyvdb
+        // box-filters by the smallest stride that fits) instead of decoding
+        // the full grid and decimating it afterwards.
+        lightusd::usdVol::VDBReadOptions decode = vdbOptions;
+        if (densityBudgetBytes > 0 && densityBytesUsed) {
+          const size_t used = *densityBytesUsed;
+          const size_t remaining =
+              used < densityBudgetBytes ? densityBudgetBytes - used : 0;
+          if (remaining < sizeof(float)) {
+            if (draw) {
+              draw->skipped.push_back(
+                  "Volume '" + volumePath +
+                  "': density budget exhausted; grid skipped");
+            }
+            continue;
+          }
+          decode.max_voxels = remaining / sizeof(float);
+          decode.downsample = true;
+        }
         lightusd::usdVol::VDBGrid grid;
         std::string decodeWarn, decodeErr;
-        if (!fieldCache.TakeDense(resolved, vdbOptions, &grid, &decodeWarn,
+        if (!fieldCache.TakeDense(resolved, decode, &grid, &decodeWarn,
                                   &decodeErr) ||
             grid.data.empty() || grid.dim[0] <= 0 || grid.dim[1] <= 0 ||
             grid.dim[2] <= 0) {
@@ -6594,8 +6620,13 @@ bool BuildNextVolumes(
           aux.field_index = 0;
           lightusd::tydra::vol::ResolvedField auxResolved;
           if (!fieldCache.Resolve(aux, &auxResolved, nullptr)) continue;
+          // Resampled onto the density lattice: never decoded finer than it.
+          lightusd::usdVol::VDBReadOptions auxDecode = vdbOptions;
+          auxDecode.max_voxels =
+              size_t(grid.dim[0]) * size_t(grid.dim[1]) * size_t(grid.dim[2]);
+          auxDecode.downsample = true;
           lightusd::usdVol::VDBGrid auxGrid;
-          if (!fieldCache.TakeDense(auxResolved, vdbOptions, &auxGrid, nullptr,
+          if (!fieldCache.TakeDense(auxResolved, auxDecode, &auxGrid, nullptr,
                                     nullptr))
             continue;
           *dst = ResampleNextVolumeField(auxGrid, grid);

@@ -2888,9 +2888,24 @@ void CollectVolumesNext(const lightusd::next::Stage &stage,
         continue;
       }
       for (const std::string &w : resolved.warnings) std::cerr << "WARN: " << w << "\n";
+      // Under a density budget the decode itself is capped (tinyvdb box-filters
+      // by the smallest stride that fits) instead of decoding the full grid
+      // and decimating it afterwards.
+      lightusd::usdVol::VDBReadOptions decode = options;
+      if (max_density_bytes > 0 && density_bytes_used) {
+        const size_t used = *density_bytes_used;
+        const size_t remaining = used < max_density_bytes ? max_density_bytes - used : 0;
+        if (remaining < sizeof(float)) {
+          std::cerr << "WARN: skipping volume '" << prim.GetPath().str()
+                    << "': density budget exhausted\n";
+          continue;
+        }
+        decode.max_voxels = remaining / sizeof(float);
+        decode.downsample = true;
+      }
       lightusd::usdVol::VDBGrid grid;
       std::string decode_warn, decode_err;
-      if (!cache.TakeDense(resolved, options, &grid, &decode_warn, &decode_err) ||
+      if (!cache.TakeDense(resolved, decode, &grid, &decode_warn, &decode_err) ||
           grid.data.empty() || grid.dim[0] <= 0 || grid.dim[1] <= 0 || grid.dim[2] <= 0) {
         std::cerr << "WARN: volume '" << prim.GetPath().str() << "': grid '"
                   << resolved.grid.name << "' not loaded: "
@@ -2917,8 +2932,13 @@ void CollectVolumesNext(const lightusd::next::Stage &stage,
         aux.field_index = 0;
         lightusd::tydra::vol::ResolvedField aux_resolved;
         if (!cache.Resolve(aux, &aux_resolved, nullptr)) continue;
+        // Shaded together with the density: never decoded finer than it.
+        lightusd::usdVol::VDBReadOptions aux_decode = options;
+        aux_decode.max_voxels =
+            size_t(grid.dim[0]) * size_t(grid.dim[1]) * size_t(grid.dim[2]);
+        aux_decode.downsample = true;
         lightusd::usdVol::VDBGrid aux_grid;
-        if (!cache.TakeDense(aux_resolved, options, &aux_grid, nullptr, nullptr)) continue;
+        if (!cache.TakeDense(aux_resolved, aux_decode, &aux_grid, nullptr, nullptr)) continue;
         dst->data = std::move(aux_grid.data);
         for (int a = 0; a < 3; ++a) dst->dim[a] = aux_grid.dim[a];
         double aux_lo[3], aux_hi[3];

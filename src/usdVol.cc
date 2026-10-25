@@ -264,15 +264,7 @@ bool ReadOne(const uint8_t *data, size_t len, const std::string *path, const std
     if (err) *err += "Failed to decode VDB grid (" + uri + "): " + Message(e, st) + "\n";
     return false;
   }
-  VDBGrid out;
-  std::string why;
-  if (!Convert(f.file.grids[pick], pick, options, &out, &why)) {
-    if (err) *err += why.empty() ? "VDB grid (" + uri + ") has no active voxels.\n" : why;
-    return false;
-  }
-  if (warn && !why.empty()) *warn += why;
-  *grid = std::move(out);
-  return true;
+  return DenseFromGrid(&f.file.grids[pick], pick, uri, options, grid, warn, err);
 }
 
 }  // namespace
@@ -334,6 +326,24 @@ bool ReadVDBGridInfo(const uint8_t *data, size_t len, const std::string &uri,
 bool ReadVDBGridInfoFromFile(const std::string &filepath, std::vector<VDBGridInfo> *grids,
                              std::string *err) {
   return ReadInfo(nullptr, 0, &filepath, filepath, grids, err);
+}
+
+bool DenseFromGrid(const tvdb_grid *grid, size_t source_index, const std::string &uri,
+                   const VDBReadOptions &options, VDBGrid *out, std::string *warn,
+                   std::string *err) {
+  if (!grid || !out) {
+    if (err) *err += "usdVol::DenseFromGrid: null grid or output.\n";
+    return false;
+  }
+  VDBGrid dense;
+  std::string why;
+  if (!Convert(*grid, source_index, options, &dense, &why)) {
+    if (err) *err += why.empty() ? "VDB grid (" + uri + ") has no active voxels.\n" : why;
+    return false;
+  }
+  if (warn && !why.empty()) *warn += why;
+  *out = std::move(dense);
+  return true;
 }
 
 bool ReadVDBGrid(const uint8_t *data, size_t len, const std::string &uri,
@@ -408,13 +418,23 @@ bool ReadVDBGridNanoVDB(const uint8_t *data, size_t len, const std::string &uri,
     return false;
   }
   tvdb_error_t e{};
-  tvdb_status_t st = tvdb_read_grid(&f.file, pick, &e);
+  const tvdb_status_t st = tvdb_read_grid(&f.file, pick, &e);
   if (st != TVDB_OK) {
     if (err) *err += "Failed to decode VDB grid (" + uri + "): " + Message(e, st) + "\n";
     return false;
   }
+  return NanoVDBFromGrid(&f.file.grids[pick], uri, nano, info, err);
+}
+
+bool NanoVDBFromGrid(const tvdb_grid *grid, const std::string &uri, std::vector<uint8_t> *nano,
+                     VDBNanoVDBInfo *info, std::string *err) {
+  if (!grid || !nano) {
+    if (err) *err += "usdVol::NanoVDBFromGrid: null grid or output.\n";
+    return false;
+  }
+  tvdb_error_t e{};
   tvdb_grid_info_t gi{};
-  st = tvdb_grid_get_info(&f.file.grids[pick], &gi, &e);
+  tvdb_status_t st = tvdb_grid_get_info(grid, &gi, &e);
   if (st != TVDB_OK) {
     if (err) *err += "Failed to inspect VDB grid (" + uri + "): " + Message(e, st) + "\n";
     return false;
@@ -423,16 +443,14 @@ bool ReadVDBGridNanoVDB(const uint8_t *data, size_t len, const std::string &uri,
   const uint32_t grid_type = NanoVDBGridType(value_type);
   if (grid_type == 0) {
     if (err)
-      *err += "VDB grid '" + GridName(f.file.grids[pick]) + "' of type '" +
-              (f.file.grids[pick].descriptor.grid_type
-                   ? f.file.grids[pick].descriptor.grid_type
-                   : "") +
+      *err += "VDB grid '" + GridName(*grid) + "' of type '" +
+              (grid->descriptor.grid_type ? grid->descriptor.grid_type : "") +
               "' has no NanoVDB representation (" + uri + ").\n";
     return false;
   }
   uint8_t *raw = nullptr;
   size_t raw_size = 0;
-  st = tvdb_grid_to_nanovdb(&f.file.grids[pick], &raw, &raw_size, &e);
+  st = tvdb_grid_to_nanovdb(grid, &raw, &raw_size, &e);
   if (st != TVDB_OK || !raw || raw_size == 0) {
     if (raw) std::free(raw);
     if (err)
