@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "usdVol.hh"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 // TinyVDB's C implementation is compiled separately (lightusd_tinyvdb). Keep
 // this C++ translation unit limited to the public C declarations.
@@ -286,6 +288,31 @@ bool ReadVDBFromFile(const std::string &filepath, std::vector<VDBGrid> *grids,
                      std::string *warn, std::string *err, size_t max_voxels) {
   if (!grids) return false;
   return ReadAll(nullptr, 0, &filepath, filepath, grids, warn, err, max_voxels);
+}
+
+bool DenseGridBox(const VDBGrid &grid, double bmin[3], double bmax[3]) {
+  const double s = double(grid.stride > 0 ? grid.stride : 1);
+  double lo[3], hi[3];
+  for (int a = 0; a < 3; ++a) {
+    lo[a] = double(grid.origin[a]) - 0.5;
+    hi[a] = double(grid.origin[a]) + s * double(grid.dim[a]) - 0.5;
+    bmin[a] = std::numeric_limits<double>::infinity();
+    bmax[a] = -std::numeric_limits<double>::infinity();
+  }
+  const double (*m)[4] = grid.index_to_world;  // column vectors
+  for (int corner = 0; corner < 8; ++corner) {
+    const double p[3] = {(corner & 1) ? hi[0] : lo[0], (corner & 2) ? hi[1] : lo[1],
+                         (corner & 4) ? hi[2] : lo[2]};
+    for (int a = 0; a < 3; ++a) {
+      const double w = m[a][0] * p[0] + m[a][1] * p[1] + m[a][2] * p[2] + m[a][3];
+      bmin[a] = std::min(bmin[a], w);
+      bmax[a] = std::max(bmax[a], w);
+    }
+  }
+  for (int r = 0; r < 3; ++r)
+    for (int c = 0; c < 3; ++c)
+      if (r == c ? !(m[r][c] > 0.0) : m[r][c] != 0.0) return false;
+  return true;
 }
 
 bool ReadVDBGridInfo(const uint8_t *data, size_t len, const std::string &uri,

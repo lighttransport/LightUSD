@@ -8082,20 +8082,16 @@ static void TestOpenUsdVdbVolumeFixtures() {
   std::cout << "  OpenUSD VDB volume fixtures: PASSED\n";
 }
 
-// FieldCache::MeshLevelSet: a level-set field meshes to its zero isosurface,
-// placed by the field transform. Builds the fixture in a temp file so it needs
-// no external corpus.
-static void TestLevelSetFieldMesh() {
-  std::cout << "Level-set field mesh\n";
+// A radius-1 sphere's narrow-band level set (grid "sdf") written to a temp
+// .vdb, so the volume tests need no external corpus. Returns its path.
+static const double kSphereLevelSetVoxel = 2.0 / 24.0;
+static std::filesystem::path WriteSphereLevelSet(const char* tag) {
   namespace fs = std::filesystem;
   using lightusd::tydra::import_asset::LevelSet;
   using lightusd::tydra::import_asset::LevelSetOptions;
   using lightusd::tydra::import_asset::Mesh;
   using lightusd::tydra::import_asset::MeshToLevelSet;
   using lightusd::tydra::import_asset::WriteLevelSetVDB;
-  using lightusd::tydra::vol::FieldCache;
-  using lightusd::tydra::vol::FieldRequest;
-  using lightusd::tydra::vol::ResolvedField;
 
   // Unit sphere (radius 1), enough rings for a clean narrow-band level set.
   const int kLat = 24, kLon = 48;
@@ -8127,7 +8123,7 @@ static void TestLevelSetFieldMesh() {
   }
 
   LevelSetOptions options;
-  options.voxel_size = 2.0 / 24.0;
+  options.voxel_size = kSphereLevelSetVoxel;
   options.exterior_width = 3.0 * options.voxel_size;
   options.interior_width = 3.0 * options.voxel_size;
   LevelSet level_set;
@@ -8139,13 +8135,29 @@ static void TestLevelSetFieldMesh() {
 
   const fs::path path =
       fs::temp_directory_path() /
-      ("lightusd_level_set_mesh_" + std::to_string(reinterpret_cast<uintptr_t>(&err)) + ".vdb");
+      (std::string("lightusd_") + tag + "_" +
+       std::to_string(reinterpret_cast<uintptr_t>(&err)) + ".vdb");
   {
     std::ofstream out(path, std::ios::binary);
     out.write(reinterpret_cast<const char*>(bytes.data()),
               static_cast<std::streamsize>(bytes.size()));
   }
 
+  return path;
+}
+
+// FieldCache::MeshLevelSet: a level-set field meshes to its zero isosurface,
+// placed by the field transform. Builds the fixture in a temp file so it needs
+// no external corpus.
+static void TestLevelSetFieldMesh() {
+  std::cout << "Level-set field mesh\n";
+  namespace fs = std::filesystem;
+  using lightusd::tydra::vol::FieldCache;
+  using lightusd::tydra::vol::FieldRequest;
+  using lightusd::tydra::vol::ResolvedField;
+
+  const fs::path path = WriteSphereLevelSet("level_set_mesh");
+  std::string err;
   FieldCache cache;
   FieldRequest request;
   request.binding = "sdf";
@@ -8205,7 +8217,7 @@ static void TestLevelSetFieldMesh() {
   const double expected = 4.0 * M_PI / 3.0;
   assert(volume > 0.0);
   assert(std::fabs(volume - expected) / expected < 0.05);
-  const double tolerance = 4.0 * options.voxel_size;
+  const double tolerance = 4.0 * kSphereLevelSetVoxel;
   assert(min_radius > 1.0 - tolerance && max_radius < 1.0 + tolerance);
   const size_t triangles = tri.size() / 3;
 
@@ -8219,6 +8231,66 @@ static void TestLevelSetFieldMesh() {
   }
   std::cout << "  level set -> " << triangles << " triangles, volume " << volume
             << ", radius [" << min_radius << ", " << max_radius << "]\n";
+}
+
+// ResolveWithFirstGridFallback only falls back when fieldName was defaulted,
+// never for an authored name or a named grid the filter rejects; and the
+// dense box of a grid is cell-centred (a sphere at the origin stays there).
+static void TestFieldFallbackAndDenseBox() {
+  std::cout << "Field fallback rules and dense box\n";
+  namespace fs = std::filesystem;
+  using lightusd::tydra::vol::FieldCache;
+  using lightusd::tydra::vol::FieldRequest;
+  using lightusd::tydra::vol::ResolvedField;
+  using lightusd::tydra::vol::ResolveWithFirstGridFallback;
+
+  const fs::path path = WriteSphereLevelSet("field_fallback");
+  FieldCache cache;
+  FieldRequest request;
+  request.binding = "density";
+  request.field_prim = "/V/density";
+  request.prim_type = "OpenVDBAsset";
+  request.file_path = path.string();
+  request.field_name = "density";  // the file only has "sdf"
+
+  ResolvedField field;
+  std::string err;
+  // Authored fieldName: a missing grid is an error.
+  assert(!ResolveWithFirstGridFallback(cache, request, &field, &err));
+  assert(err.find("no grid 'density'") != std::string::npos);
+  // Defaulted fieldName: the first grid, with a warning.
+  request.field_name_defaulted = true;
+  err.clear();
+  assert(ResolveWithFirstGridFallback(cache, request, &field, &err));
+  assert(field.grid.name == "sdf");
+  assert(!field.warnings.empty() &&
+         field.warnings.back().find("fieldName not authored") != std::string::npos);
+  // A grid that resolves but is unusable is an error, not a fallback.
+  request.field_name = "sdf";
+  int filtered = 0;
+  const auto reject = [&](const ResolvedField&) {
+    ++filtered;
+    return false;
+  };
+  err.clear();
+  assert(!ResolveWithFirstGridFallback(cache, request, reject, &field, &err));
+  assert(filtered == 1);
+  assert(err.find("could not be loaded") != std::string::npos);
+
+  // Dense box: cell-centred, so the symmetric sphere grid is centred at 0.
+  request.field_name_defaulted = false;
+  assert(cache.Resolve(request, &field, &err));
+  lightusd::usdVol::VDBReadOptions options;
+  const lightusd::usdVol::VDBGrid* grid = cache.Dense(field, options, nullptr, &err);
+  assert(grid && grid->stride == 1);
+  double bmin[3], bmax[3];
+  assert(lightusd::usdVol::DenseGridBox(*grid, bmin, bmax));
+  for (int a = 0; a < 3; ++a) {
+    const double voxel = grid->voxel_size[a];
+    assert(std::fabs(bmax[a] - bmin[a] - grid->dim[a] * voxel) < 1e-9);
+    assert(std::fabs(0.5 * (bmin[a] + bmax[a])) < 1e-6);
+  }
+  fs::remove(path);
 }
 
 int main() {
@@ -8314,6 +8386,7 @@ int main() {
   TestSparseUDIMTextureRetention();
   TestOpenUsdVdbVolumeFixtures();
   TestLevelSetFieldMesh();
+  TestFieldFallbackAndDenseBox();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
   return 0;

@@ -1246,8 +1246,10 @@ typedef struct lightusd_render_volume_nanovdb {
   uint32_t components;
   lightusd_sv value_type;
   lightusd_sv grid_class;
-  /* Grid index -> world, column-vector layout as in
-   * lightusd_render_volume_field_info (transposed for PNanoVDB's map). */
+  /* Grid index -> world including the field prim's transform: the map of
+   * lightusd_render_volume_field_info, stored transposed (column vectors,
+   * translation in elements 3, 7, 11) as PNanoVDB's map expects. The
+   * buffer's embedded map is the file's index -> grid-world only. */
   double index_to_world[16];
 } lightusd_render_volume_nanovdb;
 /* The field's sparse grid as one NanoVDB grid buffer, converted on first use

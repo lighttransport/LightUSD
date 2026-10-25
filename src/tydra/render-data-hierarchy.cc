@@ -364,6 +364,7 @@ bool RenderSceneConverter::ConvertVolume(
     request.file_path = resolvedPath;
     // Legacy default: the relationship name doubles as the grid name.
     request.field_name = info.field_name.empty() ? field_name : info.field_name;
+    request.field_name_defaulted = info.field_name.empty();
     request.field_index = info.field_index;
     request.field_data_type = info.field_data_type;
     request.field_class = info.field_class;
@@ -375,9 +376,9 @@ bool RenderSceneConverter::ConvertVolume(
     std::string resolve_err;
     const usdVol::VDBGrid *grid = nullptr;
     std::string decode_warn, decode_err;
-    // "First decodable grid" fallback for pre-fieldName authoring: try the
-    // named grid, else (fieldIndex 0 only) the file's grids in order, keeping
-    // the first whose dense decode succeeds.
+    // Pre-fieldName authoring: when fieldName is unauthored and the file has
+    // no grid named after the relationship, the first decodable grid is used.
+    // A named grid that fails to decode is an error, not a fallback.
     const auto decode = [&](const vol::ResolvedField &candidate) {
       const usdVol::VDBGrid *decoded =
           cache.Dense(candidate, options, &decode_warn, &decode_err);
@@ -394,6 +395,8 @@ bool RenderSceneConverter::ConvertVolume(
         grid->dim[1] <= 0 || grid->dim[2] <= 0) {
       DCOUT("Failed to decode vdb field '" << field_name << "': " << resolvedPath << " : "
                                            << resolve_err << decode_err);
+      PushWarn("Volume field '" + field_name + "' (" + resolvedPath +
+               "): " + (resolve_err.empty() ? decode_err : resolve_err));
       continue;
     }
 
@@ -404,16 +407,19 @@ bool RenderSceneConverter::ConvertVolume(
     f.level_set = resolved.level_set;
     f.components = grid->components > 0 ? grid->components : 1;
     f.background = grid->background;
+    // Object-space AABB of the grid (cell-centre convention).
+    double box_min[3], box_max[3];
+    if (!usdVol::DenseGridBox(*grid, box_min, box_max)) {
+      DCOUT("VDB grid '" << field_name
+                         << "' has a rotated index map; rendering its axis-aligned bound.");
+    }
     for (int a = 0; a < 3; a++) {
       f.dim[a] = grid->dim[a];
       f.origin[a] = grid->origin[a];
       f.voxel_size[a] = float(grid->voxel_size[a]);
       f.world_translation[a] = float(grid->world_translation[a]);
-      // Object-space AABB of the grid.
-      f.bounds_min[a] =
-          float(grid->origin[a]) * f.voxel_size[a] + f.world_translation[a];
-      f.bounds_max[a] = float(grid->origin[a] + grid->dim[a]) * f.voxel_size[a] +
-                        f.world_translation[a];
+      f.bounds_min[a] = float(box_min[a]);
+      f.bounds_max[a] = float(box_max[a]);
     }
 
     // Store the dense float voxels in a BufferData.

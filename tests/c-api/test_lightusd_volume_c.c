@@ -76,6 +76,8 @@ int main(int argc, char** argv) {
       "        token fieldName = \"vec3s_test\"\n"
       "        token fieldDataType = \"float3\"\n"
       "        token vectorDataRoleHint = \"Vector\"\n"
+      "        double3 xformOp:translate = (5, 0, 0)\n"
+      "        uniform token[] xformOpOrder = [\"xformOp:translate\"]\n"
       "    }\n"
       "    def OpenVDBAsset \"broken\"\n"
       "    {\n"
@@ -192,6 +194,18 @@ int main(int argc, char** argv) {
            LIGHTUSD_OK);
     assert(nano.grid_type == LIGHTUSD_NANOVDB_GRID_TYPE_VEC3F);
     assert(nano.components == 3);
+    /* The NanoVDB map is field_info's map (field prim transform included)
+     * stored transposed; the field prim is translated by +5 in x. */
+    for (int r = 0; r < 4; ++r)
+      for (int c = 0; c < 4; ++c)
+        assert(nano.index_to_world[4 * r + c] == field.index_to_world[4 * c + r]);
+    {
+      lightusd_render_volume_field_info plain;
+      memset(&plain, 0, sizeof(plain));
+      assert(lightusd_render_volume_field_get_info(scene, 0, density, &plain) ==
+             LIGHTUSD_OK);
+      assert(field.index_to_world[12] - plain.index_to_world[12] > 4.0);
+    }
 
     const double points[6] = {0.5, 0.5, 0.5, 1.5, 1.5, 1.5};
     lightusd_render_volume_samples samples;

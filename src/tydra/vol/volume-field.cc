@@ -383,6 +383,15 @@ uint32_t NanoVDBTypeFor(const std::string &value_type) {
   return 0;
 }
 
+namespace {
+// The resolved field's index -> world (row vectors, field prim included) in
+// the column-vector layout NanoVDB / VDBNanoVDBInfo use.
+void FieldMapColumnVector(const ResolvedField &field, double out[4][4]) {
+  for (int r = 0; r < 4; ++r)
+    for (int c = 0; c < 4; ++c) out[r][c] = field.index_to_world[c][r];
+}
+}  // namespace
+
 const std::vector<uint8_t> *FieldCache::NanoVDB(const ResolvedField &field,
                                                 usdVol::VDBNanoVDBInfo *info, std::string *err) {
   const std::string key = field.request.file_path + "|" + std::to_string(field.grid.source_index);
@@ -394,7 +403,7 @@ const std::vector<uint8_t> *FieldCache::NanoVDB(const ResolvedField &field,
       info->components = field.grid.components > 0 ? field.grid.components : 1;
       info->value_type = field.grid.value_type;
       info->grid_class = field.grid_class;
-      std::memcpy(info->index_to_world, field.grid.index_to_world, sizeof(info->index_to_world));
+      FieldMapColumnVector(field, info->index_to_world);
     }
     return it->second.get();
   }
@@ -406,8 +415,11 @@ const std::vector<uint8_t> *FieldCache::NanoVDB(const ResolvedField &field,
                                   field.request.file_path, "", int(field.grid.source_index),
                                   buffer.get(), &converted, err))
     return nullptr;
-  // The field's authored fieldClass wins over the file's, as in Resolve().
+  // The field's authored fieldClass wins over the file's, as in Resolve(),
+  // and the map includes the field prim's transform: the buffer's own map is
+  // only the file's index -> grid-world.
   converted.grid_class = field.grid_class;
+  FieldMapColumnVector(field, converted.index_to_world);
   const size_t bytes = buffer->size();
   if (max_bytes_ && bytes_used_ + bytes > max_bytes_) {
     if (err) *err = field.request.field_prim + ": NanoVDB grid exceeds the memory budget";
@@ -469,13 +481,21 @@ bool ResolveWithFirstGridFallback(FieldCache &cache, const FieldRequest &request
   std::string primary_err;
   {
     ResolvedField primary;
-    if (cache.Resolve(request, &primary, &primary_err) &&
-        (!filter || filter(primary))) {
-      *out = std::move(primary);
-      return true;
+    if (cache.Resolve(request, &primary, &primary_err)) {
+      if (!filter || filter(primary)) {
+        *out = std::move(primary);
+        return true;
+      }
+      // The selected grid exists but cannot be used (e.g. it exceeds the
+      // dense cap): report it rather than render another grid in its place.
+      if (err)
+        *err = request.field_prim + ": grid '" + primary.grid.name + "' of " +
+               request.file_path + " could not be loaded";
+      return false;
     }
   }
-  if (request.field_index != 0 || request.prim_type == "Field3DAsset") {
+  if (!request.field_name_defaulted || request.field_index != 0 ||
+      request.prim_type == "Field3DAsset") {
     if (err) *err = primary_err;
     return false;
   }
@@ -487,6 +507,9 @@ bool ResolveWithFirstGridFallback(FieldCache &cache, const FieldRequest &request
     ResolvedField candidate;
     if (!cache.Resolve(fallback, &candidate, nullptr)) continue;
     if (filter && !filter(candidate)) continue;
+    candidate.warnings.push_back(request.field_prim + ": no grid '" + request.field_name +
+                                 "' (fieldName not authored); using grid '" +
+                                 candidate.grid.name + "'");
     *out = std::move(candidate);
     return true;
   }

@@ -70,6 +70,16 @@ struct VDBGrid {
 };
 
 ///
+/// Object-space box of a dense grid under the cell-centre sampling convention
+/// renderers use (cell x is centred at bmin + (x + 0.5) * (bmax - bmin) / dim):
+/// index box [origin - 0.5, origin + stride * dim - 0.5] through
+/// index_to_world. Returns false when the map is not a positive axis-aligned
+/// scale + translation, in which case the box is the axis-aligned bound of the
+/// transformed index box and an axis-aligned sampler is only approximate.
+///
+bool DenseGridBox(const VDBGrid &grid, double bmin[3], double bmax[3]);
+
+///
 /// Header-only facts about a grid (no voxel data decoded).
 ///
 struct VDBGridInfo {

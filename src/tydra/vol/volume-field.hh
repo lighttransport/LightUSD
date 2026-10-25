@@ -45,6 +45,9 @@ struct FieldRequest {
   std::string prim_type;          // "OpenVDBAsset", "Field3DAsset", ...
   std::string file_path;          // resolved (or loader-resolvable) asset path
   std::string field_name;
+  // fieldName was not authored and field_name holds a default (the binding
+  // name). Only then may ResolveWithFirstGridFallback pick another grid.
+  bool field_name_defaulted = false;
   int field_index = 0;
   std::string field_data_type;    // authored fieldDataType token ("" when absent)
   std::string field_class;        // authored OpenVDBAsset fieldClass ("" when absent)
@@ -106,7 +109,8 @@ class FieldCache {
 
   // The resolved grid as a NanoVDB grid buffer (raw GridData-first bytes,
   // no file header). Cached per grid, so the pointer lives as long as the
-  // cache; nullptr on failure.
+  // cache; nullptr on failure. info->index_to_world is the field's full map
+  // (field prim included), column-vector layout.
   const std::vector<uint8_t> *NanoVDB(const ResolvedField &field, usdVol::VDBNanoVDBInfo *info,
                                       std::string *err);
 
@@ -167,14 +171,16 @@ void IndexToWorldRowVector(const usdVol::VDBGridInfo &grid, double out[4][4]);
 bool FieldsWorldBounds(const std::vector<ResolvedField> &fields, double world_min[3],
                        double world_max[3]);
 
-// Resolve a field, falling back to the file's first grid when the requested
-// name has no match and `field_index` is 0 (the pre-fieldName authoring
-// behaviour the render consumers kept). A non-zero fieldIndex never falls
-// back. `*err` describes the primary failure when both attempts fail.
+// Resolve a field, falling back to the file's first usable grid when the
+// requested grid cannot be resolved, `field_name_defaulted` is set (fieldName
+// was not authored) and `field_index` is 0: the pre-fieldName authoring
+// behaviour the render consumers kept. An authored fieldName or a non-zero
+// fieldIndex never falls back. The fallback adds a warning to `out`.
 //
-// `filter` (optional) is tried on each resolved candidate; when it returns
-// false the candidate is skipped (e.g. its dense decode failed), which keeps
-// the "first grid that can actually be used" behaviour of the old fallback.
+// `filter` (optional) decides whether a resolved grid is usable (e.g. its
+// dense decode succeeded). A grid that resolves but fails the filter is an
+// error, never a reason to render a different grid; on fallback, candidates
+// failing the filter are skipped. `*err` describes the primary failure.
 using FieldFilter = std::function<bool(const ResolvedField &)>;
 bool ResolveWithFirstGridFallback(FieldCache &cache, const FieldRequest &request,
                                   const FieldFilter &filter, ResolvedField *out,

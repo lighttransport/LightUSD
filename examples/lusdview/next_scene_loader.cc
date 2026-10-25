@@ -6426,7 +6426,10 @@ bool BuildNextVolumes(
           request.file_path = baseDir + "/" + request.file_path;
         }
         request.field_name = evalString(publicField, "fieldName");
-        if (request.field_name.empty()) request.field_name = request.binding;
+        if (request.field_name.empty()) {
+          request.field_name = request.binding;
+          request.field_name_defaulted = true;
+        }
         request.field_index = evalInt(publicField, "fieldIndex", 0);
         request.field_data_type =
             evalString(publicField, "fieldDataType");
@@ -6448,6 +6451,8 @@ bool BuildNextVolumes(
                volumePath.c_str(), request.file_path.c_str(), reason.c_str());
           continue;
         }
+        for (const std::string& w : resolved.warnings)
+          LOGW("next: Volume '%s': %s", volumePath.c_str(), w.c_str());
         // lusdview's volume pass marches a density field; a level set is an
         // isosurface, so mesh it and draw the surface as geometry instead
         // (the same thing lusdrender's CPU integrator shades directly).
@@ -6467,11 +6472,16 @@ bool BuildNextVolumes(
                  fieldPath.c_str(), reason.c_str());
             continue;
           }
-          // The mesh replaces the volume for framing/picking: positions are
-          // already in world space, so extend the scene bounds directly.
-          if (bounds) {
-            for (size_t v = 0; v + 2 < positions.size(); v += 3)
-              bounds->add(&positions[v]);
+          // Positions are in the grid's index-to-world space (field_to_world
+          // is identity here). Bake the Volume prim's transform into them, as
+          // static next meshes are baked, then extend the scene bounds.
+          for (size_t v = 0; v + 2 < positions.size(); v += 3) {
+            const float p[3] = {positions[v], positions[v + 1], positions[v + 2]};
+            for (int c = 0; c < 3; ++c)
+              positions[v + size_t(c)] =
+                  p[0] * float(w16[0 * 4 + c]) + p[1] * float(w16[1 * 4 + c]) +
+                  p[2] * float(w16[2 * 4 + c]) + float(w16[3 * 4 + c]);
+            if (bounds) bounds->add(&positions[v]);
           }
           DrawVolumeCPU shading;
           ResolveNextVolumeMaterial(stageHandle, volumePath, &shading);
@@ -6547,6 +6557,8 @@ bool BuildNextVolumes(
             draw->triangleCount += dm.indices.size() / 3;
             draw->meshes.push_back(std::move(dm));
           }
+          // Without field:density the first usable field is the medium.
+          if (!hasDensityRelationship) break;
           continue;
         }
 
@@ -6555,8 +6567,15 @@ bool BuildNextVolumes(
         if (!fieldCache.TakeDense(resolved, vdbOptions, &grid, &decodeWarn,
                                   &decodeErr) ||
             grid.data.empty() || grid.dim[0] <= 0 || grid.dim[1] <= 0 ||
-            grid.dim[2] <= 0)
+            grid.dim[2] <= 0) {
+          const std::string reason =
+              "grid '" + resolved.grid.name + "' not loaded: " +
+              (decodeErr.empty() ? decodeWarn : decodeErr);
+          if (draw)
+            draw->skipped.push_back("Volume '" + volumePath + "': " + reason);
+          LOGW("next: Volume '%s': %s", volumePath.c_str(), reason.c_str());
           continue;
+        }
 
         DrawVolumeCPU dv;
         dv.name = PublicString(lightusd_prim_name(publicVolume));
@@ -6582,12 +6601,15 @@ bool BuildNextVolumes(
           *dst = ResampleNextVolumeField(auxGrid, grid);
         }
         dv.density = std::move(grid.data);
+        double boxMin[3], boxMax[3];
+        if (!lightusd::usdVol::DenseGridBox(grid, boxMin, boxMax)) {
+          LOGW("next: Volume '%s': rotated VDB index map; drawing its "
+               "axis-aligned bound", volumePath.c_str());
+        }
         for (int a = 0; a < 3; ++a) {
           dv.dim[a] = grid.dim[a];
-          dv.aabbMin[a] = float(grid.origin[a]) * float(grid.voxel_size[a]) +
-                          float(grid.world_translation[a]);
-          dv.aabbMax[a] = float(grid.origin[a] + grid.dim[a]) * float(grid.voxel_size[a]) +
-                          float(grid.world_translation[a]);
+          dv.aabbMin[a] = float(boxMin[a]);
+          dv.aabbMax[a] = float(boxMax[a]);
         }
         dv.background = grid.background;
         ResolveNextVolumeMaterial(stageHandle, volumePath, &dv);
@@ -6642,6 +6664,9 @@ bool BuildNextVolumes(
         } else {
           draw->volumes.push_back(std::move(dv));
         }
+        // Without field:density the first usable field is the medium; the
+        // rest (velocity, temperature, ...) are not densities.
+        if (!hasDensityRelationship) break;
       }
     }
     const size_t childCount = lightusd_prim_child_count(publicVolume);

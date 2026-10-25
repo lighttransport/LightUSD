@@ -2835,8 +2835,7 @@ void CollectVolumesNext(const lightusd::next::Stage &stage,
       if (relName.rfind("field:", 0) != 0) continue;
       // One UsdVol prim is one participating medium, not one medium per field.
       // Decode its density relationship once; auxiliary grids in the same VDB
-      // are attached below. Preserve the old first-field fallback when density
-      // was not authored.
+      // are attached below. Without density, the first usable field is used.
       if (has_density_relationship && relName != "field:density") continue;
       const std::vector<lightusd::next::Path> *targets =
           prim.GetRelationship(relName);
@@ -2861,7 +2860,10 @@ void CollectVolumesNext(const lightusd::next::Stage &stage,
       if (const lightusd::next::Value *fn = field.GetValueAtTime("fieldName", time)) {
         if (lightusd::next::StringView tk = fn->as_token()) request.field_name = std::string(tk);
       }
-      if (request.field_name.empty()) request.field_name = request.binding;
+      if (request.field_name.empty()) {
+        request.field_name = request.binding;
+        request.field_name_defaulted = true;
+      }
       if (const lightusd::next::Value *fi = field.GetValueAtTime("fieldIndex", time)) {
         if (const int32_t *index = fi->as_int()) request.field_index = *index;
       }
@@ -2882,12 +2884,17 @@ void CollectVolumesNext(const lightusd::next::Stage &stage,
       std::string resolve_err;
       if (!lightusd::tydra::vol::ResolveWithFirstGridFallback(cache, request, &resolved,
                                                               &resolve_err)) {
+        std::cerr << "WARN: volume '" << prim.GetPath().str() << "': " << resolve_err << "\n";
         continue;
       }
+      for (const std::string &w : resolved.warnings) std::cerr << "WARN: " << w << "\n";
       lightusd::usdVol::VDBGrid grid;
       std::string decode_warn, decode_err;
       if (!cache.TakeDense(resolved, options, &grid, &decode_warn, &decode_err) ||
           grid.data.empty() || grid.dim[0] <= 0 || grid.dim[1] <= 0 || grid.dim[2] <= 0) {
+        std::cerr << "WARN: volume '" << prim.GetPath().str() << "': grid '"
+                  << resolved.grid.name << "' not loaded: "
+                  << (decode_err.empty() ? decode_warn : decode_err) << "\n";
         continue;
       }
 
@@ -2914,40 +2921,21 @@ void CollectVolumesNext(const lightusd::next::Stage &stage,
         if (!cache.TakeDense(aux_resolved, options, &aux_grid, nullptr, nullptr)) continue;
         dst->data = std::move(aux_grid.data);
         for (int a = 0; a < 3; ++a) dst->dim[a] = aux_grid.dim[a];
-        dst->bmin = Vec3{
-            float(aux_grid.origin[0]) * float(aux_grid.voxel_size[0]) +
-                float(aux_grid.world_translation[0]),
-            float(aux_grid.origin[1]) * float(aux_grid.voxel_size[1]) +
-                float(aux_grid.world_translation[1]),
-            float(aux_grid.origin[2]) * float(aux_grid.voxel_size[2]) +
-                float(aux_grid.world_translation[2])};
-        dst->bmax = Vec3{
-            float(aux_grid.origin[0] + aux_grid.dim[0]) * float(aux_grid.voxel_size[0]) +
-                float(aux_grid.world_translation[0]),
-            float(aux_grid.origin[1] + aux_grid.dim[1]) * float(aux_grid.voxel_size[1]) +
-                float(aux_grid.world_translation[1]),
-            float(aux_grid.origin[2] + aux_grid.dim[2]) * float(aux_grid.voxel_size[2]) +
-                float(aux_grid.world_translation[2])};
+        double aux_lo[3], aux_hi[3];
+        lightusd::usdVol::DenseGridBox(aux_grid, aux_lo, aux_hi);
+        dst->bmin = Vec3{float(aux_lo[0]), float(aux_lo[1]), float(aux_lo[2])};
+        dst->bmax = Vec3{float(aux_hi[0]), float(aux_hi[1]), float(aux_hi[2])};
         dst->background = aux_grid.background;
       }
       vd.density = std::move(grid.data);
-      float lo[3], hi[3];
-      for (int a = 0; a < 3; a++) {
-        lo[a] = float(grid.origin[a]) * float(grid.voxel_size[a]) +
-                float(grid.world_translation[a]);
-        hi[a] = float(grid.origin[a] + grid.dim[a]) * float(grid.voxel_size[a]) +
-                float(grid.world_translation[a]);
+      double lo[3], hi[3];
+      if (!lightusd::usdVol::DenseGridBox(grid, lo, hi)) {
+        std::cerr << "WARN: volume '" << prim.GetPath().str()
+                  << "': rotated VDB index map; rendering its axis-aligned bound\n";
       }
-      vd.bmin = Vec3{lo[0], lo[1], lo[2]};
-      vd.bmax = Vec3{hi[0], hi[1], hi[2]};
+      vd.bmin = Vec3{float(lo[0]), float(lo[1]), float(lo[2])};
+      vd.bmax = Vec3{float(hi[0]), float(hi[1]), float(hi[2])};
       vd.world = world;
-      {
-        const Vec3 ext = Sub(vd.bmax, vd.bmin);
-        const float ex = vd.dim[0] > 0 ? ext.x / float(vd.dim[0]) : 0.0f;
-        const float ey = vd.dim[1] > 0 ? ext.y / float(vd.dim[1]) : 0.0f;
-        const float ez = vd.dim[2] > 0 ? ext.z / float(vd.dim[2]) : 0.0f;
-        vd.voxel_size = std::min(ex, std::min(ey, ez));
-      }
       // UsdVol fieldClass decides the shading: a level set is an isosurface
       // (sphere traced by the integrator), anything else is fog.
       vd.level_set = resolved.level_set;
@@ -2978,7 +2966,19 @@ void CollectVolumesNext(const lightusd::next::Stage &stage,
         }
         *density_bytes_used += vd.density.size() * sizeof(float);
       }
+      // After the budget fit: a downsampled grid has coarser voxels, and the
+      // level-set tracer steps by this size.
+      {
+        const Vec3 ext = Sub(vd.bmax, vd.bmin);
+        const float ex = vd.dim[0] > 0 ? ext.x / float(vd.dim[0]) : 0.0f;
+        const float ey = vd.dim[1] > 0 ? ext.y / float(vd.dim[1]) : 0.0f;
+        const float ez = vd.dim[2] > 0 ? ext.z / float(vd.dim[2]) : 0.0f;
+        vd.voxel_size = std::min(ex, std::min(ey, ez));
+      }
       out->push_back(std::move(vd));
+      // Without field:density the first usable field is the medium; the
+      // rest (velocity, temperature, ...) are not densities.
+      if (!has_density_relationship) break;
     }
   }
   for (const lightusd::next::UsdPrim &child : prim.GetChildren()) {
