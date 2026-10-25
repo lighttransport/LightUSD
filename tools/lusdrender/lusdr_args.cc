@@ -118,6 +118,9 @@ void PrintUsage(const char *prog) {
       << "  -ambient <value>       Ambient diffuse term (default 0.05).\n"
       << "  -noShadows             Disable hard shadow rays.\n"
       << "  -smooth                Interpolate authored normals (smooth shading)\n"
+      << "  -volumeLevelSet <surface|fog>\n"
+      << "                         Shade UsdVol levelSet fields as an isosurface\n"
+      << "                         (default) or as fog with density = clamp(-sdf).\n"
       << "                         instead of per-face geometric normals.\n"
       << "  -ibl <default|envmap>  DomeLight IBL precompute backend: the built-in\n"
       << "                         reference, or the vendored envmap library.\n"
@@ -416,6 +419,18 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     }
     OPT_MATCH(a == "-smooth" || a == "--smooth") {
       opt->smooth = true;
+    }
+    OPT_MATCH(a == "-volumeLevelSet" || a == "--volume-level-set") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      if (std::string(v) == "surface") {
+        opt->volume_level_set = Options::VolumeLevelSet::Surface;
+      } else if (std::string(v) == "fog") {
+        opt->volume_level_set = Options::VolumeLevelSet::Fog;
+      } else {
+        std::cerr << "-volumeLevelSet must be surface or fog.\n";
+        return false;
+      }
     }
     OPT_MATCH(a == "-ibl" || a == "--ibl") {
       const char *v = need_value(a.c_str());

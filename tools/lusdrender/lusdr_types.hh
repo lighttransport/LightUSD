@@ -591,6 +591,11 @@ struct Options {
   MaterialResolver material_resolver{MaterialResolver::TydraNext};
   enum class MaterialShading { Legacy, LightRtBsdf };
   MaterialShading material_shading{MaterialShading::Legacy};
+  // Level-set volumes (UsdVol fieldClass "levelSet"): shade the isosurface as
+  // a matte surface, or treat the SDF as a density (clamp(-sdf)) and march it
+  // as fog like any other field.
+  enum class VolumeLevelSet { Surface, Fog };
+  VolumeLevelSet volume_level_set{VolumeLevelSet::Surface};
   lrt_tri_quality quality{LRT_TRI_BUILD_FAST};
   int threads{0};
   int subdivision_level{0};
@@ -925,13 +930,57 @@ struct VolumeData {
   int dim[3] = {0, 0, 0};
   Vec3 bmin{0.0f, 0.0f, 0.0f};  // object-space AABB
   Vec3 bmax{0.0f, 0.0f, 0.0f};
+  matrix4d world{matrix4d::identity()};      // object -> world
   matrix4d inv_world{matrix4d::identity()};  // world -> object
+  float voxel_size = 0.0f;  // smallest object-space cell edge
+  // UsdVol fieldClass == "levelSet": `density` holds signed distances (world
+  // units; negative inside per OpenVDB) rather than a density. Such a field is
+  // shaded as an isosurface (sphere tracing) instead of as fog. Narrow-band
+  // level sets store the positive band value inside the solid's core, so the
+  // tracer keys on the first sign change along the ray rather than on an
+  // "inside" hemisphere; the normal is oriented against the view ray, which
+  // also makes a positive-inside file shade correctly.
+  bool level_set = false;
   float density_scale = 1.0f;
   Vec3 albedo{0.6f, 0.6f, 0.65f};
   Vec3 emission{0.0f, 0.0f, 0.0f};
   float emission_scale = 1.0f;
   float background = 0.0f;
 };
+
+// Trilinear scalar sample of a dense lattice at an object-space point
+// (voxel-center convention, clamped at the lattice edges).
+inline float SampleVolumeField(const std::vector<float> &field, const int dim[3],
+                               const Vec3 &bmin, const Vec3 &bmax, const Vec3 &p) {
+  const float ex = bmax.x - bmin.x;
+  const float ey = bmax.y - bmin.y;
+  const float ez = bmax.z - bmin.z;
+  if (ex <= 0.0f || ey <= 0.0f || ez <= 0.0f) return 0.0f;
+  if (dim[0] <= 0 || dim[1] <= 0 || dim[2] <= 0) return 0.0f;
+  float gx = (p.x - bmin.x) / ex * float(dim[0]) - 0.5f;
+  float gy = (p.y - bmin.y) / ey * float(dim[1]) - 0.5f;
+  float gz = (p.z - bmin.z) / ez * float(dim[2]) - 0.5f;
+  int x0 = int(std::floor(gx)), y0 = int(std::floor(gy)), z0 = int(std::floor(gz));
+  float fx = gx - float(x0), fy = gy - float(y0), fz = gz - float(z0);
+  auto fetch = [&](int x, int y, int z) -> float {
+    if (x < 0) x = 0; else if (x >= dim[0]) x = dim[0] - 1;
+    if (y < 0) y = 0; else if (y >= dim[1]) y = dim[1] - 1;
+    if (z < 0) z = 0; else if (z >= dim[2]) z = dim[2] - 1;
+    return field[size_t(x) + size_t(dim[0]) *
+                                  (size_t(y) + size_t(dim[1]) * size_t(z))];
+  };
+  float c00 = fetch(x0, y0, z0) * (1 - fx) + fetch(x0 + 1, y0, z0) * fx;
+  float c10 = fetch(x0, y0 + 1, z0) * (1 - fx) + fetch(x0 + 1, y0 + 1, z0) * fx;
+  float c01 = fetch(x0, y0, z0 + 1) * (1 - fx) + fetch(x0 + 1, y0, z0 + 1) * fx;
+  float c11 = fetch(x0, y0 + 1, z0 + 1) * (1 - fx) + fetch(x0 + 1, y0 + 1, z0 + 1) * fx;
+  float c0 = c00 * (1 - fy) + c10 * fy;
+  float c1 = c01 * (1 - fy) + c11 * fy;
+  return c0 * (1 - fz) + c1 * fz;
+}
+
+inline float SampleVolumeDensity(const VolumeData &vd, const Vec3 &p) {
+  return SampleVolumeField(vd.density, vd.dim, vd.bmin, vd.bmax, p);
+}
 
 struct ResolvedMat;
 

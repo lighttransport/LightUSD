@@ -248,6 +248,11 @@ per Volume.
   NanoVDB buffer (`ReadVDBGridNanoVDB`) and samples world-space points through
   tinyvdb's sparse sampler (nearest or trilinear, scalar or vec3), per scene
   time.
+- **Level sets:** `fieldClass = "levelSet"` fields are shaded as an isosurface
+  (sphere traced, gradient normal, matte shading) by lusdrender's CPU
+  integrator, in front of scene geometry only; `-volumeLevelSet fog` marches
+  them as `density = clamp(-sdf)` instead. Fog-class fields keep the
+  emission/absorption march.
 - **ParticleFields:** `RenderScene::particle_fields` applies the schema's
   array rules.
 - **Access:** C API `lightusd_render_volume_*` (including

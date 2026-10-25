@@ -2940,6 +2940,17 @@ void CollectVolumesNext(const lightusd::next::Stage &stage,
       }
       vd.bmin = Vec3{lo[0], lo[1], lo[2]};
       vd.bmax = Vec3{hi[0], hi[1], hi[2]};
+      vd.world = world;
+      {
+        const Vec3 ext = Sub(vd.bmax, vd.bmin);
+        const float ex = vd.dim[0] > 0 ? ext.x / float(vd.dim[0]) : 0.0f;
+        const float ey = vd.dim[1] > 0 ? ext.y / float(vd.dim[1]) : 0.0f;
+        const float ez = vd.dim[2] > 0 ? ext.z / float(vd.dim[2]) : 0.0f;
+        vd.voxel_size = std::min(ex, std::min(ey, ez));
+      }
+      // UsdVol fieldClass decides the shading: a level set is an isosurface
+      // (sphere traced by the integrator), anything else is fog.
+      vd.level_set = resolved.level_set;
       matrix4d invw;
       if (!lightusd::inverse(world, invw, 1.0e-12)) invw = matrix4d::identity();
       vd.inv_world = invw;
