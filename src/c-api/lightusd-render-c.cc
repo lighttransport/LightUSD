@@ -3206,8 +3206,10 @@ lightusd_status lightusd_render_volume_field_nanovdb(const lightusd_render_scene
   out->size = buffer->size();
   out->grid_type = info.grid_type;
   out->components = uint32_t(info.components);
-  out->value_type = SV(info.value_type);
-  out->grid_class = SV(info.grid_class);
+  // The string views must outlive the call: take them from the scene's
+  // resolved field, not from the local conversion descriptor.
+  out->value_type = SV(f->field.value_type);
+  out->grid_class = SV(f->field.grid_class);
   std::memcpy(out->index_to_world, info.index_to_world, sizeof(out->index_to_world));
   return LIGHTUSD_OK;
 }
