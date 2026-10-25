@@ -117,6 +117,16 @@ class FieldCache {
                    bool trilinear, std::vector<float> *values, int *components,
                    std::string *err);
 
+  // Zero isosurface of a resolved level-set field as world-space triangles
+  // (the grid's sparse marching cubes, placed by the field's transform and
+  // wound outward). `max_cells` bounds the marching-cubes work (0 selects a
+  // default cap). Returns false with *err when the field is empty, too large,
+  // or not a level set. Callers that render dense voxels instead of a surface
+  // (e.g. lusdview's raster path) use this to mesh the SDF.
+  bool MeshLevelSet(const ResolvedField &field, size_t max_cells,
+                    std::vector<float> *positions, std::vector<int32_t> *indices,
+                    std::string *err);
+
   size_t bytes_used() const { return bytes_used_; }
 
  private:

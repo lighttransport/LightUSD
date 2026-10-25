@@ -28,6 +28,7 @@
 #include "tydra/next/render-extract.hh"
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/render-converter-assembly.hh"
+#include "tydra/asset-import/volumetric.hh"
 #include "tydra/next/usdz-entry-match.hh"
 #include "tydra/next/render-session.hh"
 #include "tydra/next/resource-budget.hh"
@@ -8081,6 +8082,145 @@ static void TestOpenUsdVdbVolumeFixtures() {
   std::cout << "  OpenUSD VDB volume fixtures: PASSED\n";
 }
 
+// FieldCache::MeshLevelSet: a level-set field meshes to its zero isosurface,
+// placed by the field transform. Builds the fixture in a temp file so it needs
+// no external corpus.
+static void TestLevelSetFieldMesh() {
+  std::cout << "Level-set field mesh\n";
+  namespace fs = std::filesystem;
+  using lightusd::tydra::import_asset::LevelSet;
+  using lightusd::tydra::import_asset::LevelSetOptions;
+  using lightusd::tydra::import_asset::Mesh;
+  using lightusd::tydra::import_asset::MeshToLevelSet;
+  using lightusd::tydra::import_asset::WriteLevelSetVDB;
+  using lightusd::tydra::vol::FieldCache;
+  using lightusd::tydra::vol::FieldRequest;
+  using lightusd::tydra::vol::ResolvedField;
+
+  // Unit sphere (radius 1), enough rings for a clean narrow-band level set.
+  const int kLat = 24, kLon = 48;
+  Mesh sphere;
+  sphere.positions = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, -1.0f};
+  for (int i = 1; i < kLat; ++i) {
+    const double th = M_PI * double(i) / double(kLat);
+    for (int j = 0; j < kLon; ++j) {
+      const double ph = 2.0 * M_PI * double(j) / double(kLon);
+      sphere.positions.push_back(float(std::sin(th) * std::cos(ph)));
+      sphere.positions.push_back(float(std::sin(th) * std::sin(ph)));
+      sphere.positions.push_back(float(std::cos(th)));
+    }
+  }
+  const auto ring = [&](int i, int j) {
+    return int32_t(2 + (i - 1) * kLon + (j % kLon));
+  };
+  for (int j = 0; j < kLon; ++j) {
+    sphere.indices.insert(sphere.indices.end(),
+                          {0, ring(1, j), ring(1, j + 1), 1, ring(kLat - 1, j + 1),
+                           ring(kLat - 1, j)});
+  }
+  for (int i = 1; i < kLat - 1; ++i) {
+    for (int j = 0; j < kLon; ++j) {
+      sphere.indices.insert(sphere.indices.end(),
+                            {ring(i, j), ring(i + 1, j), ring(i + 1, j + 1),
+                             ring(i, j), ring(i + 1, j + 1), ring(i, j + 1)});
+    }
+  }
+
+  LevelSetOptions options;
+  options.voxel_size = 2.0 / 24.0;
+  options.exterior_width = 3.0 * options.voxel_size;
+  options.interior_width = 3.0 * options.voxel_size;
+  LevelSet level_set;
+  std::string err;
+  assert(MeshToLevelSet(sphere, options, &level_set, &err));
+  std::vector<uint8_t> bytes;
+  assert(WriteLevelSetVDB(level_set, &bytes, &err));
+  assert(!bytes.empty());
+
+  const fs::path path =
+      fs::temp_directory_path() /
+      ("lightusd_level_set_mesh_" + std::to_string(reinterpret_cast<uintptr_t>(&err)) + ".vdb");
+  {
+    std::ofstream out(path, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
+  }
+
+  FieldCache cache;
+  FieldRequest request;
+  request.binding = "sdf";
+  request.field_prim = "/ls/sdf";
+  request.prim_type = "OpenVDBAsset";
+  request.file_path = path.string();
+  request.field_name = "sdf";
+  request.field_class = "levelSet";
+  ResolvedField field;
+  const bool resolved = cache.Resolve(request, &field, &err);
+  if (!resolved) std::cerr << err << "\n";
+  assert(resolved);
+  assert(field.level_set);
+
+  std::vector<float> positions;
+  std::vector<int32_t> tri;
+  const bool meshed = cache.MeshLevelSet(field, 0, &positions, &tri, &err);
+  if (!meshed) std::cerr << err << "\n";
+  assert(meshed);
+  fs::remove(path);
+  assert(!positions.empty() && positions.size() % 3 == 0);
+  assert(!tri.empty() && tri.size() % 3 == 0);
+  const size_t nv = positions.size() / 3;
+
+  // Closed two-manifold and outward winding.
+  std::map<std::pair<int32_t, int32_t>, int> edges;
+  double volume6 = 0.0;
+  double min_radius = 1.0e30, max_radius = 0.0;
+  for (size_t f = 0; f + 2 < tri.size(); f += 3) {
+    const int32_t a = tri[f], b = tri[f + 1], c = tri[f + 2];
+    assert(a >= 0 && size_t(a) < nv && b >= 0 && size_t(b) < nv && c >= 0 &&
+           size_t(c) < nv);
+    for (int k = 0; k < 3; ++k) {
+      const int32_t u = tri[f + size_t(k)];
+      const int32_t v = tri[f + size_t((k + 1) % 3)];
+      ++edges[{u, v}];
+    }
+    const float* p0 = &positions[size_t(a) * 3];
+    const float* p1 = &positions[size_t(b) * 3];
+    const float* p2 = &positions[size_t(c) * 3];
+    volume6 += double(p0[0]) * (double(p1[1]) * double(p2[2]) - double(p1[2]) * double(p2[1])) -
+               double(p0[1]) * (double(p1[0]) * double(p2[2]) - double(p1[2]) * double(p2[0])) +
+               double(p0[2]) * (double(p1[0]) * double(p2[1]) - double(p1[1]) * double(p2[0]));
+  }
+  for (const auto& e : edges) {
+    auto opposite = edges.find({e.first.second, e.first.first});
+    assert(e.second == 1 && opposite != edges.end() && opposite->second == 1);
+  }
+  for (size_t i = 0; i < nv; ++i) {
+    const double r = std::sqrt(double(positions[3 * i]) * positions[3 * i] +
+                               double(positions[3 * i + 1]) * positions[3 * i + 1] +
+                               double(positions[3 * i + 2]) * positions[3 * i + 2]);
+    min_radius = std::min(min_radius, r);
+    max_radius = std::max(max_radius, r);
+  }
+  const double volume = volume6 / 6.0;
+  const double expected = 4.0 * M_PI / 3.0;
+  assert(volume > 0.0);
+  assert(std::fabs(volume - expected) / expected < 0.05);
+  const double tolerance = 4.0 * options.voxel_size;
+  assert(min_radius > 1.0 - tolerance && max_radius < 1.0 + tolerance);
+  const size_t triangles = tri.size() / 3;
+
+  // A fog field must not claim a surface.
+  request.field_class = "fogVolume";
+  ResolvedField fog;
+  std::string fog_err;
+  if (cache.Resolve(request, &fog, &fog_err)) {
+    assert(!fog.level_set);
+    assert(!cache.MeshLevelSet(fog, 0, &positions, &tri, &fog_err));
+  }
+  std::cout << "  level set -> " << triangles << " triangles, volume " << volume
+            << ", radius [" << min_radius << ", " << max_radius << "]\n";
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -8173,6 +8313,7 @@ int main() {
   TestStrictConversionDiagnostics();
   TestSparseUDIMTextureRetention();
   TestOpenUsdVdbVolumeFixtures();
+  TestLevelSetFieldMesh();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
   return 0;

@@ -10,6 +10,7 @@
 #include <iterator>
 
 #include "external/tinyvdb/tinyvdb_io.h"
+#include "external/tinyvdb/tinyvdb_sparse_tools.h"
 #include "external/tinyvdb/tinyvdb_volume.h"
 
 namespace lightusd {
@@ -298,6 +299,73 @@ bool FieldCache::SampleWorld(const ResolvedField &field, const double *points, s
              (e.message[0] ? e.message : tvdb_status_string(st));
     values->clear();
     return false;
+  }
+  return true;
+}
+
+bool FieldCache::MeshLevelSet(const ResolvedField &field, size_t max_cells,
+                              std::vector<float> *positions, std::vector<int32_t> *indices,
+                              std::string *err) {
+  if (!positions || !indices) {
+    if (err) *err = "level-set mesh: outputs are required";
+    return false;
+  }
+  positions->clear();
+  indices->clear();
+  if (!field.level_set) {
+    if (err) *err = field.request.field_prim + ": not a level-set field";
+    return false;
+  }
+  SparseGrid *sparse = LoadSparse(field.request.file_path, field.grid.source_index, err);
+  if (!sparse) return false;
+  tvdb_triangle_mesh mesh{};
+  tvdb_error_t e{};
+  const size_t budget = max_cells ? max_cells : size_t(4) * 1024 * 1024;
+  const tvdb_status_t st =
+      tvdb_grid_volume_to_mesh(&sparse->file.grids[field.grid.source_index], 0.0f, 0.0, budget,
+                               &mesh, &e);
+  if (st != TVDB_OK) {
+    if (err)
+      *err = field.request.field_prim + ": cannot mesh the level set: " +
+             (e.message[0] ? e.message : tvdb_status_string(st));
+    return false;
+  }
+  if (!mesh.vertex_count || !mesh.face_count) {
+    tvdb_triangle_mesh_free(&mesh);
+    if (err) *err = field.request.field_prim + ": level set has no surface";
+    return false;
+  }
+  positions->resize(size_t(mesh.vertex_count) * 3);
+  indices->resize(size_t(mesh.face_count) * 3);
+  const double(*m)[4] = field.request.field_to_world;  // USD row-vector
+  double volume6 = 0.0;  // signed volume, to detect inward winding
+  for (size_t i = 0; i < size_t(mesh.vertex_count); ++i) {
+    const tvdb_vec3f &v = mesh.vertices[i];
+    for (int a = 0; a < 3; ++a) {
+      const double p[3] = {double(v.x), double(v.y), double(v.z)};
+      (*positions)[3 * i + size_t(a)] = float(p[0] * m[0][a] + p[1] * m[1][a] +
+                                             p[2] * m[2][a] + m[3][a]);
+    }
+  }
+  for (size_t f = 0; f < size_t(mesh.face_count); ++f) {
+    int32_t v0 = int32_t(mesh.faces[f].v0);
+    int32_t v1 = int32_t(mesh.faces[f].v1);
+    int32_t v2 = int32_t(mesh.faces[f].v2);
+    (*indices)[3 * f + 0] = v0;
+    (*indices)[3 * f + 1] = v1;
+    (*indices)[3 * f + 2] = v2;
+    const float *p0 = &(*positions)[size_t(v0) * 3];
+    const float *p1 = &(*positions)[size_t(v1) * 3];
+    const float *p2 = &(*positions)[size_t(v2) * 3];
+    volume6 += double(p0[0]) * (double(p1[1]) * double(p2[2]) - double(p1[2]) * double(p2[1])) -
+               double(p0[1]) * (double(p1[0]) * double(p2[2]) - double(p1[2]) * double(p2[0])) +
+               double(p0[2]) * (double(p1[0]) * double(p2[1]) - double(p1[1]) * double(p2[0]));
+  }
+  tvdb_triangle_mesh_free(&mesh);
+  // OpenVDB levels sets are negative inside, so the mesher already winds
+  // outward; a positive-inside file would come out inverted.
+  if (volume6 < 0.0) {
+    for (size_t f = 0; f + 2 < indices->size(); f += 3) std::swap((*indices)[f + 1], (*indices)[f + 2]);
   }
   return true;
 }
