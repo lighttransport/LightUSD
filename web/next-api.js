@@ -6249,6 +6249,103 @@ def Xform "root"
       --state.busy;
     }
   }});
+  // The field's sparse grid as one NanoVDB grid buffer (GridData first, no
+  // file header), copied out of the heap. gridType is a PNANOVDB_GRID_TYPE_*
+  // id (1 float, 2 double, 4 int32, 5 int64, 6 vec3f, 7 vec3d, 8 mask,
+  // 9 half); bool and vec3i grids have none and return null.
+  Object.defineProperty(Module.RenderStream.prototype, 'getVolumeNanovdb', {value: function(
+      volume, field) {
+    const state = live.get(this);
+    if (!state?.handle || state.kind !== 4) throw new TypeError('Invalid LightUSD receiver');
+    if (!Number.isInteger(volume) || !Number.isInteger(field)) {
+      throw new TypeError('getVolumeNanovdb: expected integer volume and field indices');
+    }
+    const size = 152;  // uint64 size, grid type, components, background, 4x4 doubles
+    ++state.busy;
+    let info = 0;
+    try {
+      info = Module['_lightusd_next_alloc'](size);
+      if (!info) throw new RangeError('getVolumeNanovdb: allocation failed');
+      const data = Number(volumeCall('_lightusd_next_render_volume_nanovdb',
+          [state.handle, volume, field, Number(info)], [3]));
+      if (!data) return null;
+      const view = new DataView(Module.HEAPU8.buffer, Number(info), size);
+      const bytes = Number(view.getBigUint64(0, true));
+      if (!bytes) return null;
+      return {
+        gridType: view.getInt32(8, true),
+        components: view.getInt32(12, true),
+        indexToWorld: Array.from({length: 16}, (_, i) => view.getFloat64(24 + i * 8, true)),
+        data: new Uint8Array(Module.HEAPU8.buffer, data, bytes).slice()
+      };
+    } finally {
+      if (info) Module['_lightusd_next_free'](info);
+      --state.busy;
+    }
+  }});
+  // World-space samples of one field. `points` is a flat array-like of 3*N
+  // numbers or N [x,y,z] triplets. options: {trilinear = false}. Returns
+  // {count, components, data} with count*components floats copied out.
+  Object.defineProperty(Module.RenderStream.prototype, 'getVolumeSample', {value: function(
+      volume, field, points, options = {}) {
+    const state = live.get(this);
+    if (!state?.handle || state.kind !== 4) throw new TypeError('Invalid LightUSD receiver');
+    if (!Number.isInteger(volume) || !Number.isInteger(field)) {
+      throw new TypeError('getVolumeSample: expected integer volume and field indices');
+    }
+    const source = points ? Array.from(points) : [];
+    const triplets = source.length > 0 &&
+        (Array.isArray(source[0]) || ArrayBuffer.isView(source[0]));
+    const flat = new Float64Array(triplets ? source.length * 3 : source.length);
+    let at = 0;
+    if (triplets) {
+      for (const p of source) {
+        if (!p || p.length !== 3) throw new TypeError('getVolumeSample: points must be [x,y,z]');
+        flat[at++] = Number(p[0]);
+        flat[at++] = Number(p[1]);
+        flat[at++] = Number(p[2]);
+      }
+    } else {
+      for (const value of source) flat[at++] = Number(value);
+    }
+    if (flat.length % 3) throw new TypeError('getVolumeSample: points must be a multiple of 3');
+    const count = flat.length / 3;
+    if (count * 3 * 8 > 256 * 1024 * 1024) {
+      throw new RangeError('getVolumeSample: points exceed 256 MiB');
+    }
+    const flags = options.trilinear ? 1 : 0;
+    const infoSize = 8;  // uint32 count, uint32 components
+    ++state.busy;
+    let info = 0;
+    let pts = 0;
+    try {
+      info = Module['_lightusd_next_alloc'](infoSize);
+      if (!info) throw new RangeError('getVolumeSample: allocation failed');
+      if (count) {
+        pts = Module['_lightusd_next_alloc'](count * 3 * 8);
+        if (!pts) throw new RangeError('getVolumeSample: allocation failed');
+        new Float64Array(Module.HEAPU8.buffer, Number(pts), count * 3).set(flat);
+      }
+      const data = Number(volumeCall('_lightusd_next_render_volume_sample',
+          [state.handle, volume, field, count ? Number(pts) : 0, count >>> 0, flags,
+           Number(info)], [3, 4, 6]));
+      const view = new DataView(Module.HEAPU8.buffer, Number(info), infoSize);
+      const outCount = view.getUint32(0, true);
+      const components = view.getUint32(4, true);
+      if (!data) return null;
+      const values = outCount * components;
+      return {
+        count: outCount,
+        components,
+        data: values ? new Float32Array(Module.HEAPU8.buffer, data, values).slice()
+                     : new Float32Array(0)
+      };
+    } finally {
+      if (pts) Module['_lightusd_next_free'](pts);
+      if (info) Module['_lightusd_next_free'](info);
+      --state.busy;
+    }
+  }});
   const cameraDecoder = new TextDecoder();
   Object.defineProperty(Module.RenderStream.prototype, 'getCamera', {value: function(cameraId) {
     const state = live.get(this);

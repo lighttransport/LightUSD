@@ -292,6 +292,13 @@ class RenderStream {
   int volumesJsonCopy(uint8_t* out, uint32_t cap) const;
   uintptr_t volumeDense(int volume, int field, uint32_t max_voxels, uint32_t flags,
                         lightusd_next_volume_dense_info* info) const;
+  // The field's sparse grid as one NanoVDB grid buffer (cached with the scene).
+  uintptr_t volumeNanovdb(int volume, int field,
+                          lightusd_next_volume_nanovdb_info* info) const;
+  // World-space samples of a field (nearest unless flags bit0 = trilinear).
+  // Returns the scratch buffer's float address, valid until the next call.
+  uintptr_t volumeSample(int volume, int field, const double* points, uint32_t count,
+                         uint32_t flags, lightusd_next_volume_samples_info* info) const;
   uintptr_t particleArray(int id, uint8_t which, uint32_t* float_count) const;
   int cameraTransformCopy(int camera_id, uint8_t* out, uint32_t cap) const;
   int cameraOpticsCopy(int camera_id, uint8_t* out, uint32_t cap) const;
@@ -903,6 +910,9 @@ class RenderStream {
   tr::RenderScene render_scene_;
   bool render_scene_valid_ = false;
   std::vector<std::string> render_scene_warnings_;
+  // UsdVol world-space samples: returned to the caller as a borrowed pointer,
+  // overwritten by the next volumeSample call.
+  mutable std::vector<float> volume_sample_scratch_;
   std::vector<lightusd::next::UsdGeomMesh> meshes_;
   std::vector<OutputMesh> outputs_;
   std::vector<OutputMesh> analytic_outputs_;

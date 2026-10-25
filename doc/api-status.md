@@ -244,12 +244,18 @@ per Volume.
 - **Extent:** authored, or else the union of the fields' world boxes.
 - **Material:** volume shader constants.
 - **Voxels:** decoded on demand through `RenderScene::volume_cache`.
+- **NanoVDB and sampling:** the same cache converts a sparse grid to one
+  NanoVDB buffer (`ReadVDBGridNanoVDB`) and samples world-space points through
+  tinyvdb's sparse sampler (nearest or trilinear, scalar or vec3), per scene
+  time.
 - **ParticleFields:** `RenderScene::particle_fields` applies the schema's
   array rules.
-- **Access:** C API `lightusd_render_volume_*` and
+- **Access:** C API `lightusd_render_volume_*` (including
+  `..._field_nanovdb` and `..._field_sample`) and
   `lightusd_render_particle_data_*`, Python `RenderScene.volumes()` /
-  `volume_dense()` / `particle_fields()`, and next wasm `getVolumes` /
-  `getVolumeDense` / `getParticleField`.
+  `volume_dense()` / `volume_nanovdb()` / `volume_sample()` /
+  `particle_fields()`, and next wasm `getVolumes` / `getVolumeDense` /
+  `getVolumeNanovdb` / `getVolumeSample` / `getParticleField`.
 
 **Authoring.** `lightusd.volume` provides:
 - `inspect_vdb`;

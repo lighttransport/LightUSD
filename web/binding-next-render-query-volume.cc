@@ -119,6 +119,48 @@ uintptr_t RenderStream::volumeDense(int volume, int field, uint32_t max_voxels, 
   return reinterpret_cast<uintptr_t>(g->data.data());
 }
 
+uintptr_t RenderStream::volumeNanovdb(int volume, int field,
+                                      lightusd_next_volume_nanovdb_info* info) const {
+  if (!render_scene_valid_ || !info || !render_scene_.volume_cache || volume < 0 ||
+      static_cast<size_t>(volume) >= render_scene_.volumes.size())
+    return 0;
+  const tr::RenderVolume& v = render_scene_.volumes[static_cast<size_t>(volume)];
+  if (field < 0 || static_cast<size_t>(field) >= v.fields.size()) return 0;
+  const ::lightusd::tydra::vol::ResolvedField& r = v.fields[static_cast<size_t>(field)].field;
+  ::lightusd::usdVol::VDBNanoVDBInfo converted;
+  std::string err;
+  const std::vector<uint8_t>* buffer =
+      render_scene_.volume_cache->NanoVDB(r, &converted, &err);
+  if (!buffer) return 0;
+  std::memset(info, 0, sizeof(*info));
+  info->size = static_cast<uint64_t>(buffer->size());
+  info->grid_type = static_cast<int32_t>(converted.grid_type);
+  info->components = static_cast<int32_t>(converted.components);
+  std::memcpy(info->index_to_world, converted.index_to_world,
+              sizeof(info->index_to_world));
+  return reinterpret_cast<uintptr_t>(buffer->data());
+}
+
+uintptr_t RenderStream::volumeSample(int volume, int field, const double* points, uint32_t count,
+                                     uint32_t flags,
+                                     lightusd_next_volume_samples_info* info) const {
+  if (!render_scene_valid_ || !info || !render_scene_.volume_cache || volume < 0 ||
+      static_cast<size_t>(volume) >= render_scene_.volumes.size() ||
+      (count && !points))
+    return 0;
+  const tr::RenderVolume& v = render_scene_.volumes[static_cast<size_t>(volume)];
+  if (field < 0 || static_cast<size_t>(field) >= v.fields.size()) return 0;
+  const ::lightusd::tydra::vol::ResolvedField& r = v.fields[static_cast<size_t>(field)].field;
+  int components = 0;
+  std::string err;
+  if (!render_scene_.volume_cache->SampleWorld(r, points, size_t(count), (flags & 1u) != 0,
+                                               &volume_sample_scratch_, &components, &err))
+    return 0;
+  info->count = count;
+  info->components = static_cast<uint32_t>(components > 0 ? components : 1);
+  return reinterpret_cast<uintptr_t>(volume_sample_scratch_.data());
+}
+
 uintptr_t RenderStream::particleArray(int id, uint8_t which, uint32_t* float_count) const {
   if (!render_scene_valid_ || !float_count || id < 0 ||
       static_cast<size_t>(id) >= render_scene_.particle_fields.size())

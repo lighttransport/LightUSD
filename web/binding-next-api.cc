@@ -1203,6 +1203,24 @@ EMSCRIPTEN_KEEPALIVE uintptr_t lightusd_next_render_volume_dense(
       ->volumeDense(volume, field, max_voxels, flags, info);
 }
 
+EMSCRIPTEN_KEEPALIVE uintptr_t lightusd_next_render_volume_nanovdb(
+    uint32_t handle, int32_t volume, int32_t field,
+    lightusd_next_volume_nanovdb_info* info) {
+  const Slot* slot = Lookup(handle);
+  if (!slot || slot->kind != 4) return 0;
+  return static_cast<const lightusd::web_next::RenderStream*>(slot->object)
+      ->volumeNanovdb(volume, field, info);
+}
+
+EMSCRIPTEN_KEEPALIVE uintptr_t lightusd_next_render_volume_sample(
+    uint32_t handle, int32_t volume, int32_t field, const double* points, uint32_t count,
+    uint32_t flags, lightusd_next_volume_samples_info* info) {
+  const Slot* slot = Lookup(handle);
+  if (!slot || slot->kind != 4) return 0;
+  return static_cast<const lightusd::web_next::RenderStream*>(slot->object)
+      ->volumeSample(volume, field, points, count, flags, info);
+}
+
 EMSCRIPTEN_KEEPALIVE uintptr_t lightusd_next_render_particle_array(uint32_t handle, int32_t id,
                                                                    uint8_t which,
                                                                    uint32_t* float_count) {

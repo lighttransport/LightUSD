@@ -566,10 +566,36 @@ typedef struct lightusd_next_volume_dense_info {
   int32_t reserved;
   double cell_to_world[16]; /* row vector: (x,y,z,1) * M */
 } lightusd_next_volume_dense_info;
+/* NanoVDB: grid_type is a PNANOVDB_GRID_TYPE_* id (1 float, 2 double,
+ * 4 int32, 5 int64, 6 vec3f, 7 vec3d, 8 mask, 9 half); index_to_world is the
+ * field's column-vector grid-to-world map. */
+typedef struct lightusd_next_volume_nanovdb_info {
+  uint64_t size; /* raw GridData-first NanoVDB bytes */
+  int32_t grid_type;
+  int32_t components;
+  float background;
+  int32_t reserved;
+  double index_to_world[16];
+} lightusd_next_volume_nanovdb_info;
+/* World-space samples of one field: count * components floats,
+ * component-interleaved. */
+typedef struct lightusd_next_volume_samples_info {
+  uint32_t count;
+  uint32_t components;
+} lightusd_next_volume_samples_info;
 int32_t lightusd_next_render_volumes_json(uint32_t handle, uint8_t* out, uint32_t cap);
 uintptr_t lightusd_next_render_volume_dense(uint32_t handle, int32_t volume, int32_t field,
                                             uint32_t max_voxels, uint32_t flags,
                                             lightusd_next_volume_dense_info* info);
+/* Sparse grid as one NanoVDB buffer (address valid while the handle lives). */
+uintptr_t lightusd_next_render_volume_nanovdb(uint32_t handle, int32_t volume, int32_t field,
+                                              lightusd_next_volume_nanovdb_info* info);
+/* Sample at `count` world points (3 doubles each; flags bit0 = trilinear).
+ * The float address stays valid until the next sample call on this handle. */
+uintptr_t lightusd_next_render_volume_sample(uint32_t handle, int32_t volume, int32_t field,
+                                             const double* points, uint32_t count,
+                                             uint32_t flags,
+                                             lightusd_next_volume_samples_info* info);
 uintptr_t lightusd_next_render_particle_array(uint32_t handle, int32_t id, uint8_t which,
                                               uint32_t* float_count);
 int32_t lightusd_next_render_camera_transform(uint32_t handle, int32_t camera_id,

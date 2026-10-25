@@ -274,3 +274,61 @@ def test_mjcf_volumetric_device_option(tmp_path):
         if vol.device_available(name) is None:  # importers fall back to the CPU
             assert "using the CPU" in stage.warnings()
             assert stage.generated_assets() == cpu.generated_assets()
+
+
+def test_render_scene_volume_nanovdb_and_sample(tmp_path):
+    """RenderScene exposes the sparse grid as NanoVDB and samples world points."""
+    from lightusd import tydra
+    pts, tris = _sphere(12, 24)
+    level_set = vol.mesh_to_level_set(pts, tris, resolution=24)
+    vdb = tmp_path / "sdf.vdb"
+    level_set.save(vdb)
+
+    stage = lightusd.loads(f'''#usda 1.0
+def Volume "V"
+{{
+    rel field:sdf = </V/sdf>
+    def OpenVDBAsset "sdf"
+    {{
+        asset filePath = @{vdb.as_posix()}@
+        token fieldName = "sdf"
+        token fieldClass = "levelSet"
+    }}
+}}
+''')
+    scene = tydra.to_render_scene(stage)
+    volumes = scene.volumes()
+    assert len(volumes) == 1 and volumes[0]["prim_path"] == "/V"
+    assert [f["binding"] for f in volumes[0]["fields"]] == ["sdf"]
+    field = volumes[0]["fields"][0]
+    assert field["value_type"] == "float" and field["components"] == 1
+
+    nanovdb = scene.volume_nanovdb(0, 0)
+    assert nanovdb is not None
+    assert nanovdb["grid_type"] == 1 and nanovdb["components"] == 1
+    assert nanovdb["value_type"] == "float" and nanovdb["grid_class"] == "levelSet"
+    assert nanovdb["data"][:8] == b"NanoVDB0" and len(nanovdb["data"]) > 736
+    # Cached: a second call returns the same bytes.
+    assert scene.volume_nanovdb(0, 0)["data"] == nanovdb["data"]
+
+    # Sample inside the band: trilinear agrees with the level-set reader (the
+    # same tinyvdb sampler the file API uses); nearest picks stored values.
+    rng = np.random.default_rng(7)
+    direction = rng.normal(size=(64, 3))
+    direction /= np.linalg.norm(direction, axis=1, keepdims=True)
+    radius = rng.uniform(0.2, 1.1, size=(64, 1))
+    points = direction * radius  # the sphere was meshed with radius 1
+    nearest = scene.volume_sample(0, 0, points)
+    trilinear = scene.volume_sample(0, 0, points, trilinear=True)
+    assert tuple(nearest.shape) == (64,) and tuple(trilinear.shape) == (64,)
+    reference = np.asarray(level_set.sample(points))
+    assert np.allclose(np.asarray(trilinear).reshape(-1), reference, atol=1e-6)
+
+    # Acceptance: flat coordinates and empty input.
+    flat = scene.volume_sample(0, 0, np.asarray(points, np.float64).reshape(-1))
+    assert np.array_equal(np.asarray(flat), np.asarray(nearest))
+    assert scene.volume_sample(0, 0, []) is None
+    with pytest.raises(ValueError):
+        scene.volume_sample(0, 0, [1.0, 2.0])
+    with pytest.raises(ValueError):
+        scene.volume_sample(0, 0, [(1.0, 2.0)])

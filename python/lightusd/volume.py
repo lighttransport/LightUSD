@@ -18,8 +18,11 @@ Command line::
     python -m lightusd.volume inspect smoke.vdb
     python -m lightusd.volume create out.usda smoke.vdb [--prim /Smoke] [--grid density]
 
-Voxel data for rendering comes from :meth:`lightusd.RenderScene.volumes` /
-``volume_dense``.
+Voxel data for rendering comes from ``lightusd.tydra.to_render_scene()``:
+``RenderScene.volumes()`` describes the prims and resolved fields,
+``volume_dense()`` decodes one field to float voxels, ``volume_nanovdb()``
+returns the sparse grid as NanoVDB bytes (GPU-ready), and ``volume_sample()``
+samples world-space points (nearest or trilinear).
 """
 from __future__ import annotations
 
