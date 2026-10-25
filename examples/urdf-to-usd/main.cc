@@ -21,6 +21,7 @@ using OutputStage = lightusd::Stage;
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <string>
 
 #include "external/filesystem/include/ghc/filesystem.hpp"
@@ -47,12 +48,19 @@ void Help() {
          "         --profile newton|openusd|legacy (next-core writer; the "
          "legacy writer always emits legacy)\n";
 }
-bool Convert(const ia::Json& payload, OutputStage* stage, std::string* warn,
-             std::string* err) {
 #if defined(LIGHTUSD_URDF_TO_USD_NEXT)
-  return lightusd::tydra::next::ConvertURDFPayloadToUSDStage(payload, stage,
+using MeshBuffers = std::map<std::string, lightusd::tydra::next::URDFMeshBuffer>;
+#else
+using MeshBuffers = std::map<std::string, int>;  // the legacy converter takes JSON meshes
+#endif
+
+bool Convert(const ia::Json& payload, const MeshBuffers& meshes, OutputStage* stage,
+             std::string* warn, std::string* err) {
+#if defined(LIGHTUSD_URDF_TO_USD_NEXT)
+  return lightusd::tydra::next::ConvertURDFPayloadToUSDStage(payload, &meshes, stage,
                                                           warn, err);
 #else
+  (void)meshes;
   return lightusd::tydra::ConvertURDFPayloadToUSDStage(payload, stage, warn,
                                                     err);
 #endif
@@ -213,6 +221,11 @@ int main(int argc, char** argv) {
     std::cerr << "urdf-to-usd: " << err << "\n";
     return 1;
   }
+#if defined(LIGHTUSD_URDF_TO_USD_NEXT)
+  // Large mesh arrays travel as typed buffers (as through the C API) unless
+  // the JSON dump needs them inline: one value per scalar costs far more.
+  opts.typed_meshes = dump.empty();
+#endif
   ia::Result result;
   if (!ia::BuildPayloadFile(input, opts, &result, &err)) {
     std::cerr << "urdf-to-usd: " << err << "\n";
@@ -227,22 +240,38 @@ int main(int argc, char** argv) {
     }
   }
   if (!result.warnings.empty()) std::cerr << result.warnings;
+  MeshBuffers meshes;
+#if defined(LIGHTUSD_URDF_TO_USD_NEXT)
+  for (auto& entry : result.meshes) {
+    auto& buffer = meshes[entry.first];
+    buffer.positions = std::move(entry.second.positions);
+    buffer.normals = std::move(entry.second.normals);
+    buffer.uvs = std::move(entry.second.uvs);
+    buffer.indices = std::move(entry.second.indices);
+  }
+  result.meshes.clear();
+#endif
   for (const char* kind : {"usda", "usdc", "usdz"}) {
     if (format != "all" && format != kind) continue;
     fs::path path = output.empty() ? fs::path(input) : fs::path(output);
     if (output.empty() || format == "all" || path.extension().empty())
       path.replace_extension(std::string(".") + kind);
-    ia::Json payload = result.payload;
-    if (std::string(kind) == "usdz")
-      for (auto& mat : payload["materials"]) {
+    // Only a USDZ rewrites texture paths, so only it needs its own payload.
+    const ia::Json* payload = &result.payload;
+    ia::Json usdz_payload;
+    if (std::string(kind) == "usdz") {
+      usdz_payload = result.payload;
+      for (auto& mat : usdz_payload["materials"]) {
         if (mat.contains("texturePackage"))
           mat["texture"] = mat["texturePackage"];
         for (auto& map : mat["maps"])
           if (map.contains("package")) map["file"] = map["package"];
       }
+      payload = &usdz_payload;
+    }
     OutputStage stage;
     std::string warn;
-    if (!Convert(payload, &stage, &warn, &err) ||
+    if (!Convert(*payload, meshes, &stage, &warn, &err) ||
         !Save(stage, path.string(), kind, result.assets, &err)) {
       std::cerr << "urdf-to-usd: " << err << "\n";
       return 1;
