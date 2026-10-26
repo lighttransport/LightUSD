@@ -32,12 +32,21 @@ tvdb_status_t tvdb_grid_resample(const tvdb_grid_t* source,
  * clusters remove faces with repeated indices. Classic ambiguities/clustering
  * do not guarantee manifoldness or preserve topology. max_cells also bounds
  * boundary scan work (32 times this budget), so huge tile faces can fail
- * explicitly. */
+ * explicitly. Regions are collected in tree order and their cells classified
+ * on the task pool, so the mesh is identical for any worker count. */
 tvdb_status_t tvdb_grid_volume_to_mesh(const tvdb_grid_t* source,
                                        float isovalue, double adaptivity,
                                        size_t max_cells,
                                        tvdb_triangle_mesh* out,
                                        tvdb_error_t* err);
+/* As tvdb_grid_volume_to_mesh, classifying surface cells on `pool` (NULL
+ * creates a short-lived one). The mesh is identical for any worker count. */
+tvdb_status_t tvdb_grid_volume_to_mesh_pooled(const tvdb_grid_t* source,
+                                              float isovalue, double adaptivity,
+                                              size_t max_cells,
+                                              tvdb_thread_pool_t* pool,
+                                              tvdb_triangle_mesh* out,
+                                              tvdb_error_t* err);
 
 typedef struct {
   size_t surface_cells, candidate_voxels, active_voxels;

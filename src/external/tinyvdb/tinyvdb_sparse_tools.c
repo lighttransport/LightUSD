@@ -33,6 +33,13 @@ typedef struct {
   tool_voxel* v;
   tool_slot* slots;
   size_t count, capacity, hash_capacity, limit, scans;
+  /* Parallel classification gives every slice its own map; these keep the
+   * budgets global instead of multiplying them by the slice count. NULL in
+   * serial maps, which keeps the single-threaded path atomic-free. */
+  atomic_size_t* shared_cells;
+  atomic_size_t* shared_scans;
+  size_t shared_scan_guard; /* scan cap for the shared counter, incl. slack */
+  size_t scan_reserved;     /* scans claimed from the shared counter */
   tvdb_error_t* err;
 } tool_map;
 static size_t tool_limit(size_t n) { return n ? n : 1000000; }
@@ -75,6 +82,15 @@ static tvdb_status_t tool_insert(tool_map* m, const int32_t c[3],
   if (i != SIZE_MAX) {
     if (index) *index = i;
     return TVDB_OK;
+  }
+  if (m->shared_cells) {
+    const size_t total =
+        atomic_fetch_add_explicit(m->shared_cells, 1, memory_order_relaxed) + 1;
+    if (total > m->limit) {
+      atomic_fetch_sub_explicit(m->shared_cells, 1, memory_order_relaxed);
+      return tvdb_tree_error(m->err, TVDB_ERROR_INVALID_ARGUMENT,
+                             "sparse coordinate budget exceeded");
+    }
   }
   if (m->count >= m->limit || m->count >= UINT32_MAX - 1)
     return tvdb_tree_error(m->err, TVDB_ERROR_INVALID_ARGUMENT,
@@ -128,10 +144,25 @@ oom:
   return tvdb_tree_error(m->err, TVDB_ERROR_OUT_OF_MEMORY,
                          "sparse workspace allocation failed");
 }
+#define TOOL_BUDGET_BATCH 1024
 static tvdb_status_t tool_scan(tool_map* m) {
-  if (m->scans / 32 >= m->limit || m->scans == SIZE_MAX)
+  if (m->shared_scans) {
+    /* Slices reserve scan budget in batches: one atomic per 1024 scans, with
+     * unused reservations bounded by the guard's slack. The merge checks the
+     * exact total afterwards, so the effective budget is the serial one. */
+    if (!m->scan_reserved) {
+      if (atomic_fetch_add_explicit(m->shared_scans, TOOL_BUDGET_BATCH,
+                                    memory_order_relaxed) >
+          m->shared_scan_guard)
+        return tvdb_tree_error(m->err, TVDB_ERROR_INVALID_ARGUMENT,
+                               "sparse scan budget exceeded");
+      m->scan_reserved = TOOL_BUDGET_BATCH;
+    }
+    --m->scan_reserved;
+  } else if (m->scans / 32 >= m->limit || m->scans == SIZE_MAX) {
     return tvdb_tree_error(m->err, TVDB_ERROR_INVALID_ARGUMENT,
                            "sparse scan budget exceeded");
+  }
   ++m->scans;
   return TVDB_OK;
 }
@@ -239,6 +270,85 @@ static tvdb_status_t tool_regions_leaf(const tvdb_tree_index* p,
 static tvdb_status_t tool_regions(const tvdb_tree_index* p, tool_region_fn fn,
                                   void* user) {
   return tool_regions_leaf(p, fn, NULL, user);
+}
+
+/* Surface classification is the expensive pass, so its work is collected as
+ * disjoint regions first and then classified on a pool. A region is either a
+ * constant tile/leaf sample (origin, span, value) or a whole leaf taken over
+ * by the boxed leaf hook (span 0, node set). Regions on the background side
+ * of the isovalue are dropped during collection, exactly as the serial
+ * classification would drop them on entry. */
+typedef struct {
+  int32_t c[3];
+  int64_t span;
+  float value;
+  size_t node;
+} tool_region_item;
+typedef struct {
+  tool_region_item* v;
+  size_t count, capacity;
+} tool_region_list;
+typedef struct {
+  tool_region_list* out;
+  const tvdb_tree_index* p;
+  tvdb_error_t* err;
+  float iso;
+  int bg_below;
+} tool_collect_ctx;
+static tvdb_status_t tool_collect_append(tool_region_list* l,
+                                         const tool_region_item* item) {
+  if (l->count == l->capacity) {
+    size_t n = l->capacity ? 2 * l->capacity : 256, bytes;
+    if (n > SIZE_MAX / 2) return TVDB_ERROR_INVALID_ARGUMENT;
+    void* p = tvdb_size_mul(n, sizeof(*l->v), &bytes) ? realloc(l->v, bytes) : NULL;
+    if (!p) return TVDB_ERROR_OUT_OF_MEMORY;
+    l->v = (tool_region_item*)p;
+    l->capacity = n;
+  }
+  l->v[l->count++] = *item;
+  return TVDB_OK;
+}
+static tvdb_status_t tool_collect_region(const int32_t c[3], int64_t span,
+                                         float value, int active, void* user) {
+  (void)active;
+  tool_collect_ctx* ctx = (tool_collect_ctx*)user;
+  if ((value < ctx->iso) == ctx->bg_below) return TVDB_OK;
+  tool_region_item item;
+  memcpy(item.c, c, sizeof(item.c));
+  item.span = span;
+  item.value = value;
+  item.node = 0;
+  const tvdb_status_t st = tool_collect_append(ctx->out, &item);
+  return st == TVDB_OK ? st
+                       : tvdb_tree_error(ctx->err, st, "surface region list allocation failed");
+}
+static int tool_collect_leaf(size_t node, void* user, tvdb_status_t* st) {
+  tool_collect_ctx* ctx = (tool_collect_ctx*)user;
+  const tvdb_tree_index* p = ctx->p;
+  const tvdb_tree_node_t* nd = p->grid->tree.nodes + node;
+  const int L = p->grid->tree.layout.levels[nd->level].log2dim;
+  if (L > 3) return 0; /* the leaf hook declines these: per-voxel regions */
+  const size_t slots = (size_t)1 << (3 * L);
+  const float* values = (const float*)nd->u.leaf.data;
+  for (size_t v = 0; v < slots; ++v)
+    if ((values[v] < ctx->iso) != ctx->bg_below) {
+      tool_region_item item;
+      memset(&item, 0, sizeof(item));
+      item.node = node; /* span stays 0: the whole-leaf hook handles it */
+      *st = tool_collect_append(ctx->out, &item);
+      if (*st != TVDB_OK)
+        *st = tvdb_tree_error(ctx->err, *st,
+                              "surface region list allocation failed");
+      return 1;
+    }
+  *st = TVDB_OK;
+  return 1;
+}
+static tvdb_status_t tool_regions_collect(const tvdb_tree_index* p, float iso,
+                                          int bg_below, tool_region_list* out,
+                                          tvdb_error_t* err) {
+  tool_collect_ctx ctx = {out, p, err, iso, bg_below};
+  return tool_regions_leaf(p, tool_collect_region, tool_collect_leaf, &ctx);
 }
 static tvdb_status_t tool_build(const tvdb_grid_t* source, const tool_map* m,
                                 float bg, const tvdb_transform_t* transform,
@@ -727,17 +837,198 @@ static int tool_compare_voxel(const void* a, const void* b) {
     if (x->c[i] != y->c[i]) return x->c[i] < y->c[i] ? -1 : 1;
   return 0;
 }
+/* One cell map (and tree accessor) per classified slice. Slices are disjoint
+ * ranges of the collected regions, claimed by whichever worker reaches them
+ * first, so a map is never shared and needs no locking. */
+typedef struct {
+  tool_surface surface;
+  tool_map cells;
+  tvdb_error_t err;
+  tvdb_status_t st;
+  size_t fail_item;
+} tool_classify_slice;
+typedef struct {
+  const tvdb_tree_index* p;
+  const tool_region_item* items;
+  float iso;
+  int bg_below;
+  size_t limit, slices_count;
+  tool_classify_slice* slices;
+  atomic_size_t next;
+  /* Set when more than one slice runs: the cell and scan budgets then count
+   * across slices, exactly as the serial pass would. */
+  int shared;
+  atomic_size_t cells_used, scans_used;
+} tool_classify_job;
+static void tool_classify_range(size_t begin, size_t end, void* user) {
+  tool_classify_job* job = (tool_classify_job*)user;
+  const size_t slot =
+      atomic_fetch_add_explicit(&job->next, 1, memory_order_relaxed);
+  tool_classify_slice* sl = &job->slices[slot];
+  sl->cells.limit = job->limit;
+  sl->cells.err = &sl->err;
+  if (job->shared) {
+    sl->cells.shared_cells = &job->cells_used;
+    sl->cells.shared_scans = &job->scans_used;
+    sl->cells.shared_scan_guard =
+        32 * job->limit + 2 * TOOL_BUDGET_BATCH * job->slices_count;
+  }
+  sl->surface.cells = &sl->cells;
+  sl->surface.iso = job->iso;
+  sl->surface.bg_below = job->bg_below;
+  tvdb_tree_accessor_init(&sl->surface.acc, job->p);
+  sl->st = TVDB_OK;
+  for (size_t i = begin; i < end; ++i) {
+    const tool_region_item* it = &job->items[i];
+    tvdb_status_t st;
+    if (!it->span) {
+      /* Collected leaves have log2dim <= 3, so the hook always takes them. */
+      if (!tool_surface_leaf(it->node, &sl->surface, &st)) st = TVDB_OK;
+    } else {
+      st = tool_surface_region(it->c, it->span, it->value, 0, &sl->surface);
+    }
+    if (st != TVDB_OK) {
+      sl->st = st;
+      sl->fail_item = i;
+      return;
+    }
+  }
+}
+/* Concatenate the slice maps, sort by coordinate and drop the cells that more
+ * than one voxel or tile classified. Every copy of a cell carries the same
+ * cube mask and corner values (both are read from the grid), so which copy
+ * survives does not matter. */
+static tvdb_status_t tool_cells_merge(tool_classify_slice* slices, size_t n,
+                                      tool_map* cells, size_t scans) {
+  /* The serial classification counts every cell it looks at; the merged total
+   * must fit the same budget (32 scans per cell of max_cells). */
+  if (scans / 32 >= cells->limit)
+    return tvdb_tree_error(cells->err, TVDB_ERROR_INVALID_ARGUMENT,
+                           "sparse scan budget exceeded");
+  size_t total = 0;
+  for (size_t i = 0; i < n; ++i) {
+    total += slices[i].cells.count;
+    /* The probe tables only deduplicated within a slice; the sort below does
+     * that globally, so release them before the merged copy is allocated. */
+    free(slices[i].cells.slots);
+    slices[i].cells.slots = NULL;
+    slices[i].cells.hash_capacity = 0;
+  }
+  if (total > cells->limit)
+    return tvdb_tree_error(cells->err, TVDB_ERROR_INVALID_ARGUMENT,
+                           "sparse coordinate budget exceeded");
+  tool_voxel* v = NULL;
+  if (total) {
+    size_t bytes;
+    if (!tvdb_size_mul(total, sizeof(tool_voxel), &bytes))
+      return tvdb_tree_error(cells->err, TVDB_ERROR_INVALID_ARGUMENT,
+                             "mesh size overflow");
+    v = (tool_voxel*)malloc(bytes);
+    if (!v)
+      return tvdb_tree_error(cells->err, TVDB_ERROR_OUT_OF_MEMORY,
+                             "sparse workspace allocation failed");
+  }
+  size_t at = 0;
+  for (size_t i = 0; i < n; ++i) {
+    tool_map* m = &slices[i].cells;
+    if (m->count) memcpy(v + at, m->v, m->count * sizeof(*v));
+    at += m->count;
+    tool_map_free(m);
+  }
+  free(cells->v);
+  cells->v = v;
+  cells->count = at;
+  cells->capacity = total;
+  cells->scans = scans;
+  if (at > 1) qsort(cells->v, at, sizeof(*v), tool_compare_voxel);
+  size_t kept = 0;
+  for (size_t i = 0; i < at; ++i) {
+    if (kept && !memcmp(cells->v[kept - 1].c, cells->v[i].c, sizeof(cells->v[i].c)))
+      continue;
+    cells->v[kept++] = cells->v[i];
+  }
+  cells->count = kept;
+  return TVDB_OK;
+}
 static tvdb_status_t tool_surface_cells(const tvdb_tree_index* p, float iso,
-                                        tool_map* cells) {
-  tool_surface s;
-  tvdb_tree_accessor_init(&s.acc, p);
-  s.cells = cells;
-  s.iso = iso;
-  s.bg_below = p->grid->tree.nodes[0].u.root.background.u.f < iso;
-  tvdb_status_t st =
-      tool_regions_leaf(p, tool_surface_region, tool_surface_leaf, &s);
-  if (st == TVDB_OK && cells->count > 1)
-    qsort(cells->v, cells->count, sizeof(tool_voxel), tool_compare_voxel);
+                                        tool_map* cells,
+                                        tvdb_thread_pool_t* pool) {
+  const int bg_below = p->grid->tree.nodes[0].u.root.background.u.f < iso;
+  tool_region_list regions = {0};
+  tvdb_status_t st = tool_regions_collect(p, iso, bg_below, &regions, cells->err);
+  if (st != TVDB_OK) {
+    free(regions.v);
+    return st;
+  }
+  /* Tile faces cost O(span^2) cells each, so count them as work too. */
+  const size_t work = p->active_voxels + 4096 * p->active_tiles;
+  tvdb_thread_pool_t* owned = NULL;
+  size_t threads = 1;
+  if (pool) {
+    threads = tvdb_thread_pool_size(pool);
+  } else if (work >= 32768 && regions.count > 1) {
+    threads = tvdb_thread_default_count();
+    if (threads > 8) threads = 8;
+    if (threads > 1 &&
+        tvdb_thread_pool_create(threads, &owned, cells->err) != TVDB_OK) {
+      threads = 1;
+      owned = NULL;
+    }
+    pool = owned;
+  }
+  if (threads < 1) threads = 1;
+  /* Two slices per worker: enough for load balance, few enough that the
+   * per-slice cell maps stay within a small multiple of the serial memory. */
+  size_t slices = threads > 1 ? 2 * threads : 1;
+  if (slices > regions.count) slices = regions.count;
+  if (!slices) slices = 1;
+  size_t grain = (regions.count + slices - 1) / slices;
+  if (!grain) grain = 1;
+  const size_t used = regions.count ? (regions.count + grain - 1) / grain : 1;
+  tool_classify_slice* sl =
+      (tool_classify_slice*)calloc(used, sizeof(*sl));
+  if (!sl) {
+    free(regions.v);
+    tvdb_thread_pool_destroy(owned);
+    return tvdb_tree_error(cells->err, TVDB_ERROR_OUT_OF_MEMORY,
+                           "surface classification allocation failed");
+  }
+  tool_classify_job job = {.p = p,
+                           .items = regions.v,
+                           .iso = iso,
+                           .bg_below = bg_below,
+                           .limit = cells->limit,
+                           .slices = sl,
+                           .slices_count = used};
+  atomic_init(&job.next, 0);
+  atomic_init(&job.cells_used, 0);
+  atomic_init(&job.scans_used, 0);
+  job.shared = used > 1;
+  if (used == 1) {
+    tool_classify_range(0, regions.count, &job);
+    st = TVDB_OK;
+  } else {
+    st = tvdb_thread_pool_for(pool, 0, regions.count, grain,
+                              tool_classify_range, &job, cells->err);
+  }
+  size_t scans = 0, bad_item = SIZE_MAX, bad_slice = SIZE_MAX;
+  for (size_t i = 0; i < used; ++i) {
+    scans += sl[i].cells.scans;
+    if (sl[i].st != TVDB_OK && sl[i].fail_item < bad_item) {
+      bad_item = sl[i].fail_item;
+      bad_slice = i;
+    }
+  }
+  if (st == TVDB_OK && bad_slice != SIZE_MAX) {
+    st = sl[bad_slice].st;
+    if (cells->err) *cells->err = sl[bad_slice].err;
+  }
+  if (st == TVDB_OK) st = tool_cells_merge(sl, used, cells, scans);
+  /* Idempotent: the merge already releases each slice as it copies it. */
+  for (size_t i = 0; i < used; ++i) tool_map_free(&sl[i].cells);
+  free(sl);
+  free(regions.v);
+  tvdb_thread_pool_destroy(owned);
   return st;
 }
 static tvdb_status_t tool_grow(void** ptr, size_t* capacity, size_t count,
@@ -966,10 +1257,11 @@ done:
   for (int a = 0; a < 3; ++a) tool_map_free(edges + a);
   return st;
 }
-tvdb_status_t tvdb_grid_volume_to_mesh(const tvdb_grid_t* source, float iso,
-                                       double adapt, size_t budget,
-                                       tvdb_triangle_mesh* out,
-                                       tvdb_error_t* err) {
+static tvdb_status_t volume_to_mesh(const tvdb_grid_t* source, float iso,
+                                    double adapt, size_t budget,
+                                    tvdb_thread_pool_t* pool,
+                                    tvdb_triangle_mesh* out,
+                                    tvdb_error_t* err) {
   if (!source || !out || !isfinite(iso) || !isfinite(adapt) || adapt < 0 ||
       out->vertex_count > out->vertex_capacity ||
       out->face_count > out->face_capacity ||
@@ -1003,7 +1295,7 @@ tvdb_status_t tvdb_grid_volume_to_mesh(const tvdb_grid_t* source, float iso,
       goto done;
     }
   }
-  st = tool_surface_cells(&p, iso, &cells);
+  st = tool_surface_cells(&p, iso, &cells, pool);
   if (st == TVDB_OK) st = tool_mesh(&p, &cells, iso, adapt, &mesh, err);
   if (st == TVDB_OK) {
     tvdb_triangle_mesh_free(out);
@@ -1015,6 +1307,20 @@ done:
   tvdb_tree_index_destroy(&p);
   tvdb_triangle_mesh_free(&mesh);
   return st;
+}
+tvdb_status_t tvdb_grid_volume_to_mesh(const tvdb_grid_t* source, float iso,
+                                       double adapt, size_t budget,
+                                       tvdb_triangle_mesh* out,
+                                       tvdb_error_t* err) {
+  return volume_to_mesh(source, iso, adapt, budget, NULL, out, err);
+}
+tvdb_status_t tvdb_grid_volume_to_mesh_pooled(const tvdb_grid_t* source,
+                                              float iso, double adapt,
+                                              size_t budget,
+                                              tvdb_thread_pool_t* pool,
+                                              tvdb_triangle_mesh* out,
+                                              tvdb_error_t* err) {
+  return volume_to_mesh(source, iso, adapt, budget, pool, out, err);
 }
 /* Set (or add) string metadata `key`. */
 static tvdb_status_t tool_set_string(tvdb_grid_t* g, const char* key,
@@ -1102,7 +1408,7 @@ tvdb_status_t tvdb_grid_level_set_rebuild(
         "rebuild requires positive exterior relative to isovalue");
     goto done;
   }
-  st = tool_surface_cells(&p, iso, &cells);
+  st = tool_surface_cells(&p, iso, &cells, NULL);
   if (st != TVDB_OK) goto done;
   report.surface_cells = cells.count;
   if (cells.count) {
