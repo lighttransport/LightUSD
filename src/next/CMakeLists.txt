@@ -468,9 +468,12 @@ endif()
 # changes it). Only the tool executables link it -- the library never forces
 # an allocator on applications.
 #
-# Auto-detected SYSTEM library, never required: jemalloc (preferred), then
-# tcmalloc_minimal, then mimalloc. Missing -> plain system malloc with a status
-# message. Opt out with -DLIGHTUSD_NEXT_WITH_ALLOCATOR=OFF. Never used for
+# Default: the vendored mimalloc (src/external/mimalloc), built into the tool
+# with purge_delay=0, so it needs nothing installed. Measured on zen5
+# (doc/large-scene.md §10.26): same full45 wall time as jemalloc at ~5% lower
+# peak RSS, 1.39x faster than glibc. `auto` instead picks an installed SYSTEM
+# library: jemalloc, then tcmalloc_minimal, then mimalloc; missing -> plain
+# system malloc. Opt out with -DLIGHTUSD_NEXT_WITH_ALLOCATOR=OFF. Never used for
 # Emscripten/WASI, Windows/macOS (untested there), or sanitizer/fuzzer builds
 # (the sanitizer runtimes provide their own allocator).
 # Equivalent at runtime to LD_PRELOAD=libjemalloc.so.2.
@@ -493,6 +496,14 @@ option(LIGHTUSD_NEXT_WITH_ALLOCATOR
 # is well below the host's free memory.
 set(LIGHTUSD_NEXT_JEMALLOC_CONF "" CACHE STRING
     "jemalloc malloc_conf compiled into the next CLI tools (empty = none)")
+# Which allocator: `mimalloc` (default; the vendored src/external/mimalloc,
+# built into the tool and overriding malloc/new), `auto` (an installed
+# jemalloc, then tcmalloc, then mimalloc), `jemalloc` / `tcmalloc` (installed
+# only), or `system` (the C library's).
+set(LIGHTUSD_NEXT_ALLOCATOR "mimalloc" CACHE STRING
+    "Allocator for the next CLI tools: auto, jemalloc, tcmalloc, mimalloc (vendored), system")
+set_property(CACHE LIGHTUSD_NEXT_ALLOCATOR PROPERTY STRINGS
+    auto jemalloc tcmalloc mimalloc system)
 set(LIGHTUSD_NEXT_ALLOCATOR_LIB "")
 set(_next_alloc_skip "")
 if(EMSCRIPTEN OR WASI OR CMAKE_SYSTEM_NAME STREQUAL "WASI" OR
@@ -506,13 +517,31 @@ elseif(LIGHTUSD_NEXT_BUILD_FUZZERS OR LIGHTUSD_NEXT_BUILD_TSAN_TESTS OR
 endif()
 if(LIGHTUSD_NEXT_WITH_ALLOCATOR AND _next_alloc_skip)
     message(STATUS "next: drop-in allocator disabled (${_next_alloc_skip}); using system malloc")
+elseif(LIGHTUSD_NEXT_WITH_ALLOCATOR AND LIGHTUSD_NEXT_ALLOCATOR STREQUAL "system")
+    message(STATUS "next: LIGHTUSD_NEXT_ALLOCATOR=system; using the C library allocator")
+elseif(LIGHTUSD_NEXT_WITH_ALLOCATOR AND LIGHTUSD_NEXT_ALLOCATOR STREQUAL "mimalloc")
+    # Vendored mimalloc as one translation unit. An OBJECT library, so the
+    # object (and with MI_MALLOC_OVERRIDE its malloc/free/new/delete) is always
+    # linked into the tool, taking precedence over the C library's.
+    add_library(lightusd_mimalloc OBJECT
+        ${CMAKE_CURRENT_SOURCE_DIR}/../external/mimalloc/src/static.c)
+    target_include_directories(lightusd_mimalloc PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../external/mimalloc/include)
+    # MI_DEFAULT_PURGE_DELAY=0 (local hook, README.lightusd.md): return freed
+    # pages immediately. Upstream's 1 s delay was ~5% faster on full45 but
+    # +18% peak RSS. MIMALLOC_PURGE_DELAY still overrides it at run time.
+    target_compile_definitions(lightusd_mimalloc PRIVATE
+        MI_MALLOC_OVERRIDE=1 MI_STATIC_LIB=1 MI_DEFAULT_PURGE_DELAY=0)
+    set_target_properties(lightusd_mimalloc PROPERTIES C_STANDARD 11)
+    set(LIGHTUSD_NEXT_ALLOCATOR_LIB "$<TARGET_OBJECTS:lightusd_mimalloc>")
+    message(STATUS "next: linking vendored mimalloc (src/external/mimalloc) into CLI tools")
 elseif(LIGHTUSD_NEXT_WITH_ALLOCATOR)
-    # Ranking (next-refactor measurements, doc/large-scene.md): jemalloc is
-    # the fastest at the lowest RSS; tcmalloc_minimal is the zero-config
-    # runner-up (often shipped only as the versioned runtime without a -dev
-    # symlink, so also look for that); mimalloc is fast only with
-    # MIMALLOC_PURGE_DELAY=-1 and costs more RSS.
-    find_library(LIGHTUSD_NEXT_ALLOC_JEMALLOC NAMES jemalloc)
+    # Installed libraries, in next-refactor's ranking: jemalloc, then
+    # tcmalloc_minimal (often shipped only as the versioned runtime without a
+    # -dev symlink, so also look for that), then a system mimalloc.
+    if(NOT LIGHTUSD_NEXT_ALLOCATOR STREQUAL "tcmalloc")
+        find_library(LIGHTUSD_NEXT_ALLOC_JEMALLOC NAMES jemalloc)
+    endif()
     if(LIGHTUSD_NEXT_ALLOC_JEMALLOC)
         set(LIGHTUSD_NEXT_ALLOCATOR_LIB "${LIGHTUSD_NEXT_ALLOC_JEMALLOC}")
     else()

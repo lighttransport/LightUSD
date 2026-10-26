@@ -10,6 +10,13 @@ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../cmake)
 option(LIGHTUSD_WASM64 "Use wasm64(memory64). Available only for Chrome and Firefox as of 2025 Jul" OFF)
 option(LIGHTUSD_WASM_DEBUG "Enable WASM debug mode with source maps and assertions" OFF)
 option(LIGHTUSD_WASM_SIMD "Enable WebAssembly SIMD (128-bit, widely supported since 2021)" ON)
+# Overrides the allocator of the next module (-sMALLOC=...): dlmalloc,
+# emmalloc or mimalloc. Empty keeps the default, dlmalloc (wasm32 and wasm64):
+# measured ~2% faster than emmalloc at ~1% less heap for +5.6 KB of code.
+# mimalloc is ~9-12% faster but commits 21-45% more heap (up to 2x on small
+# scenes), so it is opt-in for speed-first or multithreaded builds.
+# See doc/large-scene.md §10.26.
+set(LIGHTUSD_WASM_MALLOC "" CACHE STRING "Override -sMALLOC for the next module (dlmalloc, emmalloc, mimalloc)")
 option(LIGHTUSD_WASM_RELAXED_SIMD "Enable WebAssembly Relaxed SIMD (requires recent browsers)" OFF)
 option(LIGHTUSD_WASM_WITH_EXR "Include bounded EXR decoding and encoding in next-only WASM" ON)
 option(LIGHTUSD_WASM_COROUTINE "Enable legacy C++20 coroutine async loading (combined uses typed C tasks)" ON)
@@ -514,7 +521,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
 
   if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(LIGHTUSD_NEXT_EMCC_LINK_FLAGS "-g4 -sENVIRONMENT='web,worker,node' \
-     -sMALLOC=emmalloc \
+     -sMALLOC=dlmalloc \
      -sSTACK_SIZE=512000 \
      -sALLOW_MEMORY_GROWTH=1 \
      -sMEMORY_GROWTH_GEOMETRIC_STEP=0.1 \
@@ -529,7 +536,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
       set(LIGHTUSD_NEXT_EMCC_LINK_OPT_FLAGS "")
     endif()
     set(LIGHTUSD_NEXT_EMCC_LINK_FLAGS "${LIGHTUSD_NEXT_EMCC_LINK_OPT_FLAGS}-sENVIRONMENT='web,worker,node' \
-     -sMALLOC=emmalloc \
+     -sMALLOC=dlmalloc \
      -sSTACK_SIZE=512000 \
      -sALLOW_MEMORY_GROWTH=1 \
      -sMEMORY_GROWTH_GEOMETRIC_STEP=0.1 \
@@ -543,9 +550,13 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " ${LIGHTUSD_SIMD_FLAGS}")
   endif()
   if (LIGHTUSD_WASM64)
-    string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sASSERTIONS=2 -sMEMORY64 -sMAXIMUM_MEMORY=16GB -sMALLOC=dlmalloc")
+    string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sASSERTIONS=2 -sMEMORY64 -sMAXIMUM_MEMORY=16GB")
   else()
     string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sASSERTIONS=1")
+  endif()
+  if (LIGHTUSD_WASM_MALLOC)
+    # Last -sMALLOC wins.
+    string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sMALLOC=${LIGHTUSD_WASM_MALLOC}")
   endif()
   string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8']")
   string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS

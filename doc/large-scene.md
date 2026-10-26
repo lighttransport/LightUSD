@@ -4296,3 +4296,129 @@ further runs, 12 warm-cache and 4 cold-cache (page cache evicted with
 `posix_fadvise`) plus 5 other thread mixes, all gave `267d237a…`. This
 looks like a rare scheduling-dependent race; next step is a loop under TSan
 on zen5. The differing output was not kept.
+
+### 10.26 Allocator evaluation on zen5 (2026-10-27)
+
+Host: zen5, Ryzen 9 3950X 16C/32T, 60 GiB RAM, quiet (xmrig stopped).
+Same source tree (R22), byte-identical outputs from every allocator (all
+hashes match per workload). All timings are medians; peak RSS is the
+maximum over runs.
+
+**Candidates.**
+- Native:
+  - glibc 2.43 (`-DLIGHTUSD_NEXT_ALLOCATOR=system`);
+  - system jemalloc 5.3 (the current `auto` pick);
+  - **mimalloc v3.6.0, vendored in `src/external/mimalloc`**
+    (`-DLIGHTUSD_NEXT_ALLOCATOR=mimalloc`: `src/static.c` as an OBJECT
+    library with `MI_MALLOC_OVERRIDE`, so it replaces malloc / new in
+    `lusdcat`).
+- WASM, through the new `LIGHTUSD_WASM_MALLOC` option (web/CMakeLists.txt;
+  the last `-sMALLOC` wins), Emscripten 6.0.13, node 24.19:
+  - emscripten's dlmalloc, emmalloc and mimalloc;
+  - each built for wasm32 and wasm64 (memory64).
+- Not measured: snmalloc 0.7.6, rpmalloc 2.0.1 and tcmalloc (gperftools
+  2.19.1). Fetching and building them on zen5 was denied by the session's
+  permission policy.
+- Google's MiniMalloc (github.com/google/minimalloc) is an offline
+  static buffer-placement solver for ML accelerators (known lifetimes →
+  offsets), not a general-purpose heap. It is not applicable here and was
+  not benchmarked.
+
+**Native** (`lusdcat -f` → USDC; district, Island 8/8/8 and merged ALab
+×3, full45 ×2, interleaved):
+
+| workload | glibc wall / RSS | jemalloc wall / RSS | mimalloc wall / RSS |
+|---|---:|---:|---:|
+| district | 11.00 s / 7.36 GiB | 6.88 s / 4.97 GiB | 6.22 s / 5.34 GiB |
+| Island | 6.53 s / 3.63 GiB | 4.86 s / 3.34 GiB | 4.19 s / 3.72 GiB |
+| merged ALab | 1.37 s / 0.79 GiB | 1.17 s / 0.78 GiB | 1.10 s / 1.11 GiB |
+| full45 | 104.7 s / 35.4 GiB | 70.6 s / 29.3 GiB | 67.3 s / 33.8 GiB |
+| geomean vs jemalloc | 1.390 / 1.186 | 1 / 1 | **0.914 / 1.185** |
+
+Other observations:
+- glibc spends 2–5× jemalloc's system time.
+- mimalloc takes 10–24× fewer minor faults (4.9 M vs 13.5 M on full45):
+  it reserves 1 GiB arenas up front.
+
+mimalloc tuning (environment variables, same binary):
+
+| setting | full45 wall / RSS | merged ALab wall / RSS |
+|---|---:|---:|
+| default | 66.1 s / 33.7 GiB | 1.11 s / 1.11 GiB |
+| `MIMALLOC_PURGE_DELAY=0` | 70.9 s / **27.9 GiB** | 1.21 s / 0.92 GiB |
+| `MIMALLOC_ARENA_EAGER_COMMIT=0` | 73.6 s / 33.2 GiB | 1.24 s / 0.84 GiB |
+| both | 76.3 s / 26.9 GiB | 1.30 s / 0.74 GiB |
+
+With `PURGE_DELAY=0`, mimalloc matches jemalloc on full45 (70.9 vs 70.6 s)
+at a 4–5% lower peak.
+
+**WASM** (one fresh node process per run, ×3 interleaved). Workloads:
+- `render`: `RenderStream.begin` plus `getMeshCopy` of every mesh, the
+  path a web viewer takes;
+- `flatten`: `NextFlattenSession`.
+
+Inputs are self-contained Island elements flattened natively
+(`~/work/lightusd/bench/wasm-inputs`). "heap" is the final wasm linear
+memory, which never shrinks: what a browser tab commits.
+
+`isBayCedarA1` flatten is excluded from the wasm32 numbers: mimalloc
+reached the 2 GiB wasm32 limit there (dl/emmalloc peaked at 1.9 GiB).
+Nothing approached the 16 GiB wasm64 limit.
+
+| target | allocator | time | heap | process RSS | `.wasm` size |
+|---|---|---:|---:|---:|---:|
+| wasm32 | emmalloc (current default) | 1 | 1 | 1 | 4,042,023 B |
+| wasm32 | dlmalloc | 0.980 | 0.988 | 0.999 | +5.6 KB |
+| wasm32 | mimalloc | **0.875** (0.75–1.03) | 1.214 (0.70–1.98) | 0.966 | +60 KB |
+| wasm64 | dlmalloc (current default) | 1 | 1 | 1 | 4,374,187 B |
+| wasm64 | emmalloc | 1.027 | 1.005 | 1.016 | −6 KB |
+| wasm64 | mimalloc | **0.921** (0.78–1.03) | 1.453 (0.84–2.63) | 1.001 | +63 KB |
+
+mimalloc's heap overhead is largest on small scenes, where its fixed
+arenas / pages dominate (isLavaRocks 16.8 → 33.3 MiB, isDunesA +51%). On
+the large flattens it is smaller than dlmalloc (isIronwoodA1 −30%,
+isMountainA −16%).
+
+The wasm64 build carries `-sASSERTIONS=2`, so compare wasm64 against
+wasm64 only.
+
+**Adopted (2026-10-27).**
+- Native CLI tools default to the vendored mimalloc
+  (`LIGHTUSD_NEXT_ALLOCATOR=mimalloc`), compiled with
+  `MI_DEFAULT_PURGE_DELAY=0` (a local hook in `src/util/options.c`; the
+  `MIMALLOC_PURGE_DELAY` env var still overrides it). `auto` keeps the old
+  installed-library search (jemalloc, tcmalloc, mimalloc). Fresh default
+  build on zen5: district / Island / ALab / full45 hashes unchanged
+  (98619c40 / 267d237a / 2f7176c8 / a0175bc1); full45 71.6 s / 27.6 GiB
+  peak; ctest 61/61.
+- The WASM next module defaults to dlmalloc for both wasm32 and wasm64
+  (the legacy module keeps emmalloc; it was not measured). mimalloc stays
+  opt-in via `LIGHTUSD_WASM_MALLOC=mimalloc`.
+
+**Verdict (the reasoning).**
+- **Native:** mimalloc is the best single choice when tuned. With
+  `purge_delay=0` it equals jemalloc's speed at a slightly lower peak on
+  full45. Untuned, it is ~9% faster at ~18% more RSS. Vendored, it also
+  works where no system jemalloc exists (Windows / macOS / static builds).
+  jemalloc remains a sound `auto` default where it is installed. glibc is
+  clearly worst (1.39× slower).
+- **WASM:**
+  - mimalloc is the fastest (−12.5% wasm32, −8% wasm64) but commits
+    21–45% more heap and grows small scenes the most. That is a poor
+    default for memory-capped browser tabs.
+  - dlmalloc is marginally better than the current wasm32 default
+    emmalloc (−2% time, −1% heap) for +5.6 KB of code.
+  - Suggested: dlmalloc as the default for both wasm32 and wasm64, and
+    mimalloc opt-in (`LIGHTUSD_WASM_MALLOC=mimalloc`) for speed-first or
+    multithreaded builds, where dlmalloc's global lock serializes threads.
+
+Raw data: `zen5:~/work/lightusd/bench/{native-small.csv, native-full45.csv,
+wasm.jsonl, wasm64.jsonl, mimalloc-tuning.csv}`.
+Scripts: `allocbench.sh`, `wasmsuite.sh`, `wasmbench.mjs`,
+`wasm64-followup.sh`.
+
+Side findings (not allocator related; follow up separately):
+- `RenderStream` aborts on `isMountainA` (render only; flatten is fine).
+- `isHibiscus`, `isBayCedarA1` and `isDunesA` render do not finish within
+  60 s on any allocator.
+- `getMeshCopy` costs ~30 ms per mesh (isKava: 1,080 meshes in 36 s).
