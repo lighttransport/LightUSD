@@ -94,7 +94,9 @@ void main() {
         hit = 0.5 * (lo + hi);
         break;
       }
-      if (f == 0.0) { hit = tn; break; }
+      /* An exact zero is not a hit: narrow-band VDB leaves store 0 in
+       * inactive voxels outside the band, so only a sign change marks the
+       * surface. */
       prev = f;
       t = tn;
     }

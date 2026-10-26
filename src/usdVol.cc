@@ -132,7 +132,12 @@ bool Convert(const tvdb_grid_t &source, size_t index, const VDBReadOptions &opti
   tvdb_dense_volume_options_t o{};
   o.max_voxels = options.max_voxels ? options.max_voxels : kDefaultMaxVoxels;
   o.stride = options.downsample ? 0 : 1;
-  o.inactive_as_background = 1;
+  /* Density/fog volumes treat inactive space as empty (the background counts
+   * as outside). A level set's interior is stored as inactive tiles holding
+   * -band, so reading those as the (positive) background would turn the
+   * interior into "outside" and leave only a thin shell: keep the stored
+   * values there. */
+  o.inactive_as_background = info.grid_class == TVDB_GRID_CLASS_LEVEL_SET ? 0 : 1;
   o.vector_magnitude = vector && !keep_vector;
   // Layout first, then decode straight into out->data (no second copy).
   tvdb_dense_volume_t d{};
