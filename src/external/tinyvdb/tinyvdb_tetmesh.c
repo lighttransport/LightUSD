@@ -70,23 +70,43 @@ static void tet_position(const tet_lattice *L, size_t id, double p[3]) {
   for (int a = 0; a < 3; ++a) p[a] = L->origin[a] + 0.5 * L->h * (double)c[a];
 }
 
+/* Per-range sampler state. The pool hands a slice of indices to whichever
+ * worker gets there first, so a sampler that caches lookups (the level-set
+ * tree accessor) cannot keep that cache in the shared `user` pointer: each
+ * slice opens its own state and closes it when the slice is done. */
+typedef struct {
+  void *(*begin)(void *user);
+  void (*end)(void *user, void *state);
+} tet_sample_scope;
 typedef struct {
   const tet_lattice *L;
   tvdb_sdf_sample_fn sample;
   void *user;
+  const tet_sample_scope *scope;
   float *value;
   atomic_int bad;
+  atomic_int oom;
 } tet_sample_job;
 static void tet_sample_range(size_t begin, size_t end, void *user) {
   tet_sample_job *job = (tet_sample_job *)user;
+  void *state = job->user;
+  int scoped = 0;
+  if (job->scope) {
+    if (!(state = job->scope->begin(job->user))) {
+      atomic_store_explicit(&job->oom, 1, memory_order_relaxed);
+      return;
+    }
+    scoped = 1;
+  }
   for (size_t id = begin; id < end; ++id) {
     double p[3];
     float v = 0;
     tet_position(job->L, id, p);
-    if (!job->sample(p, &v, job->user) || !isfinite(v))
+    if (!job->sample(p, &v, state) || !isfinite(v))
       atomic_store_explicit(&job->bad, 1, memory_order_relaxed);
     job->value[id] = v;
   }
+  if (scoped) job->scope->end(job->user, state);
 }
 
 /* Output assembly: lattice vertices and cut points get output indices on
@@ -451,12 +471,13 @@ static tvdb_status_t tet_boundary(const int32_t *tets, size_t tet_count, size_t 
   *out_count = count;
   return TVDB_OK;
 }
-tvdb_status_t tvdb_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
-                                   const double bbox_min[3],
-                                   const double bbox_max[3],
-                                   const tvdb_stuffing_options_t *options,
-                                   tvdb_thread_pool_t *pool, tvdb_tet_mesh *out,
-                                   tvdb_error_t *err) {
+static tvdb_status_t tet_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
+                                         const tet_sample_scope *scope,
+                                         const double bbox_min[3],
+                                         const double bbox_max[3],
+                                         const tvdb_stuffing_options_t *options,
+                                         tvdb_thread_pool_t *pool, tvdb_tet_mesh *out,
+                                         tvdb_error_t *err) {
   if (!sample || !bbox_min || !bbox_max || !options || !out ||
       !isfinite(options->spacing) || options->spacing <= 0 ||
       !isfinite(options->isovalue) || !isfinite(options->alpha_long) ||
@@ -527,9 +548,16 @@ tvdb_status_t tvdb_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
     }
     if (st != TVDB_OK) goto done;
   } else {
-    tet_sample_job job = {.L = &L, .sample = sample, .user = user, .value = value};
+    tet_sample_job job = {.L = &L,
+                          .sample = sample,
+                          .user = user,
+                          .scope = scope,
+                          .value = value};
     atomic_init(&job.bad, 0);
+    atomic_init(&job.oom, 0);
     st = tvdb_thread_pool_for(pool, 0, n, 4096, tet_sample_range, &job, err);
+    if (st == TVDB_OK && atomic_load_explicit(&job.oom, memory_order_relaxed))
+      st = tet_error(err, TVDB_ERROR_OUT_OF_MEMORY, "stuffing sampler allocation failed");
     if (st == TVDB_OK && atomic_load_explicit(&job.bad, memory_order_relaxed))
       st = tet_error(err, TVDB_ERROR_INVALID_DATA, "stuffing sample failed");
     if (st != TVDB_OK) goto done;
@@ -613,6 +641,18 @@ tvdb_status_t tvdb_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
   B.min_volume = 6.0 * 1e-12 * L.h * L.h * L.h;
   B.err = err;
   B.st = TVDB_OK;
+  /* The stuffing loop is serial, so one scope state covers its rare interior
+   * probes (all-surface tetrahedra). */
+  void *stencil_user = user;
+  int stencil_scoped = 0;
+  if (scope) {
+    if (!(stencil_user = scope->begin(user))) {
+      st = tet_error(err, TVDB_ERROR_OUT_OF_MEMORY,
+                     "stuffing sampler allocation failed");
+      goto done;
+    }
+    stencil_scoped = 1;
+  }
   for (int k = 0; k < L.nz && B.st == TVDB_OK; ++k)
     for (int j = 0; j < L.ny && B.st == TVDB_OK; ++j)
       for (int i = 0; i < L.nx && B.st == TVDB_OK; ++i) {
@@ -644,10 +684,11 @@ tvdb_status_t tvdb_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
           for (int q = 0; q < 4 && B.st == TVDB_OK; ++q) {
             const size_t ids[4] = {center, other, r[q], r[(q + 1) % 4]};
             if (ids[2] == SIZE_MAX || ids[3] == SIZE_MAX) continue;
-            tet_stencil(&B, ids, sample, user);
+            tet_stencil(&B, ids, sample, stencil_user);
           }
         }
       }
+  if (stencil_scoped) scope->end(user, stencil_user);
   st = B.st;
   if (st != TVDB_OK) goto done;
   {
@@ -682,18 +723,48 @@ done:
   free(B.tets);
   return st;
 }
+tvdb_status_t tvdb_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
+                                   const double bbox_min[3],
+                                   const double bbox_max[3],
+                                   const tvdb_stuffing_options_t *options,
+                                   tvdb_thread_pool_t *pool, tvdb_tet_mesh *out,
+                                   tvdb_error_t *err) {
+  return tet_sdf_to_tet_mesh(sample, user, NULL, bbox_min, bbox_max, options, pool,
+                             out, err);
+}
 
 /* ---- Level-set grids ---------------------------------------------------- */
+/* One lookup cache per sample range: the pool hands each 4096-vertex slice to
+ * whichever worker gets there first, so the slice's state is allocated on
+ * entry and released on exit. Slices run for ~0.1 ms, making the allocation
+ * noise next to the sampling it caches. */
+typedef struct {
+  const double (*inverse)[4]; /* world -> index */
+  tvdb_tree_accessor acc;
+} tet_sample_state;
 typedef struct {
   tvdb_tree_index index;
   double inverse[3][4]; /* world -> index */
 } tet_grid_sampler;
+static void *tet_sampler_begin(void *user) {
+  tet_grid_sampler *s = (tet_grid_sampler *)user;
+  tet_sample_state *st = (tet_sample_state *)malloc(sizeof(*st));
+  if (!st) return NULL;
+  st->inverse = s->inverse;
+  tvdb_tree_accessor_init(&st->acc, &s->index);
+  return st;
+}
+static void tet_sampler_end(void *user, void *state) {
+  (void)user;
+  free(state);
+}
 static int tet_grid_sample(const double p[3], float *value, void *user) {
-  const tet_grid_sampler *s = (const tet_grid_sampler *)user;
+  tet_sample_state *st = (tet_sample_state *)user;
+  const double(*inverse)[4] = st->inverse;
   double q[3];
   for (int a = 0; a < 3; ++a)
-    q[a] = s->inverse[a][3] + s->inverse[a][0] * p[0] + s->inverse[a][1] * p[1] +
-           s->inverse[a][2] * p[2];
+    q[a] = inverse[a][3] + inverse[a][0] * p[0] + inverse[a][1] * p[1] +
+           inverse[a][2] * p[2];
   int32_t base[3];
   double f[3];
   for (int a = 0; a < 3; ++a) {
@@ -708,7 +779,7 @@ static int tet_grid_sample(const double p[3], float *value, void *user) {
                            base[2] + ((c >> 2) & 1)};
     const double w = ((c & 1) ? f[0] : 1 - f[0]) * (((c >> 1) & 1) ? f[1] : 1 - f[1]) *
                      (((c >> 2) & 1) ? f[2] : 1 - f[2]);
-    sum += w * (double)tvdb_tree_get(&s->index, at, NULL);
+    sum += w * (double)tvdb_tree_accessor_get(&st->acc, at, NULL);
   }
   *value = (float)sum;
   return 1;
@@ -763,7 +834,9 @@ tvdb_status_t tvdb_level_set_to_tet_mesh(const tvdb_grid_t *grid,
       if (w > hi[a]) hi[a] = w;
     }
   }
-  st = tvdb_sdf_to_tet_mesh(tet_grid_sample, &s, lo, hi, options, pool, out, err);
+  /* The sampler keeps its tree accessor per range (see tet_sample_scope). */
+  const tet_sample_scope scope = {tet_sampler_begin, tet_sampler_end};
+  st = tet_sdf_to_tet_mesh(tet_grid_sample, &s, &scope, lo, hi, options, pool, out, err);
   tvdb_tree_index_destroy(&s.index);
   return st;
 }
