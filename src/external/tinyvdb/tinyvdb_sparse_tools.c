@@ -194,9 +194,13 @@ static int tool_spacing(const double m[4][4], double h[3], int isotropic) {
 }
 typedef tvdb_status_t (*tool_region_fn)(const int32_t c[3], int64_t span,
                                         float value, int active, void* user);
+/* Optional whole-leaf hook: takes over a leaf's voxels (in slot order) when
+ * it returns nonzero; with 0 the leaf falls back to per-voxel fn calls. */
+typedef int (*tool_leaf_fn)(size_t node, void* user, tvdb_status_t* st);
 /* Disjoint constant regions, including every stored inactive leaf sample. */
-static tvdb_status_t tool_regions(const tvdb_tree_index* p, tool_region_fn fn,
-                                  void* user) {
+static tvdb_status_t tool_regions_leaf(const tvdb_tree_index* p,
+                                       tool_region_fn fn, tool_leaf_fn leaf_fn,
+                                       void* user) {
   const tvdb_tree_t* t = &p->grid->tree;
   const tvdb_root_node_t* r = &t->nodes[0].u.root;
   tvdb_status_t st;
@@ -210,6 +214,10 @@ static tvdb_status_t tool_regions(const tvdb_tree_index* p, tool_region_fn fn,
     int L = t->layout.levels[n->level].log2dim;
     size_t slots = (size_t)1 << (3 * L);
     int leaf = n->type == TVDB_NODE_LEAF;
+    if (leaf && leaf_fn && leaf_fn(i, user, &st)) {
+      if (st != TVDB_OK) return st;
+      continue;
+    }
     int64_t span = leaf ? 1 : p->span[n->level + 1];
     const tvdb_nodemask_t* mask =
         leaf ? &n->u.leaf.value_mask : &n->u.internal.value_mask;
@@ -227,6 +235,10 @@ static tvdb_status_t tool_regions(const tvdb_tree_index* p, tool_region_fn fn,
     }
   }
   return TVDB_OK;
+}
+static tvdb_status_t tool_regions(const tvdb_tree_index* p, tool_region_fn fn,
+                                  void* user) {
+  return tool_regions_leaf(p, fn, NULL, user);
 }
 static tvdb_status_t tool_build(const tvdb_grid_t* source, const tool_map* m,
                                 float bg, const tvdb_transform_t* transform,
@@ -353,20 +365,20 @@ done:
   tvdb_grid_destroy_owned(&attrs);
   return st;
 }
-static float tool_get64(const tvdb_tree_index* p, const int64_t c[3],
+static float tool_get64(tvdb_tree_accessor* acc, const int64_t c[3],
                         int* active) {
   int32_t q[3];
   for (int a = 0; a < 3; ++a)
     if (c[a] < INT32_MIN || c[a] > INT32_MAX) {
       if (active) *active = 0;
-      return p->grid->tree.nodes[0].u.root.background.u.f;
+      return acc->p->grid->tree.nodes[0].u.root.background.u.f;
     } else
       q[a] = (int32_t)c[a];
-  return tvdb_tree_get(p, q, active);
+  return tvdb_tree_accessor_get(acc, q, active);
 }
-static double tool_sample(const tvdb_tree_index* p, const double c[3],
+static double tool_sample(tvdb_tree_accessor* acc, const double c[3],
                           int linear, int* active) {
-  double bg = p->grid->tree.nodes[0].u.root.background.u.f;
+  double bg = acc->p->grid->tree.nodes[0].u.root.background.u.f;
   *active = 0;
   for (int a = 0; a < 3; ++a)
     if (!isfinite(c[a]) || c[a] < (double)INT32_MIN - 1 ||
@@ -378,7 +390,7 @@ static double tool_sample(const tvdb_tree_index* p, const double c[3],
     base[a] = (int64_t)floor(c[a] + (linear ? 0 : 0.5));
     f[a] = c[a] - base[a];
   }
-  if (!linear) return tool_get64(p, base, active);
+  if (!linear) return tool_get64(acc, base, active);
   double value = 0;
   for (int i = 0; i < 8; ++i) {
     int64_t q[3];
@@ -390,7 +402,7 @@ static double tool_sample(const tvdb_tree_index* p, const double c[3],
     }
     if (w == 0) continue;
     int on;
-    value += w * tool_get64(p, q, &on);
+    value += w * tool_get64(acc, q, &on);
     *active |= on;
   }
   return value;
@@ -474,6 +486,8 @@ tvdb_status_t tvdb_grid_resample(const tvdb_grid_t* source,
       for (int k = 0; k < 4; ++k) r.forward[a][b] += ti[a][k] * sm[k][b];
   st = tool_regions(&p, tool_resample_region, &r);
   if (st != TVDB_OK) goto done;
+  tvdb_tree_accessor acc;
+  tvdb_tree_accessor_init(&acc, &p);
   for (size_t i = 0; i < m.count; ++i) {
     double c[3] = {m.v[i].c[0], m.v[i].c[1], m.v[i].c[2]}, w[3], q[3];
     int active;
@@ -485,7 +499,7 @@ tvdb_status_t tvdb_grid_resample(const tvdb_grid_t* source,
                              "resample coordinate overflow");
         goto done;
       }
-    double value = tool_sample(&p, q, r.linear, &active);
+    double value = tool_sample(&acc, q, r.linear, &active);
     if (!isfinite(value) || fabs(value) > FLT_MAX) {
       st = tvdb_tree_error(err, TVDB_ERROR_INVALID_DATA,
                            "resample value overflow");
@@ -516,28 +530,17 @@ static const int tool_edges[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0},
                                       {4, 5}, {5, 6}, {6, 7}, {7, 4},
                                       {0, 4}, {1, 5}, {2, 6}, {3, 7}};
 typedef struct {
-  const tvdb_tree_index* p;
+  tvdb_tree_accessor acc;
   tool_map* cells;
   float iso;
   int bg_below;
 } tool_surface;
-static int tool_cube(const tvdb_tree_index* p, const int64_t c[3], float iso,
-                     float values[8]) {
+/* Classify a cell whose 8 corner values (tool_corners order) are known. */
+static tvdb_status_t tool_cell_values(tool_surface* s, const int64_t c[3],
+                                      const float corners[8]) {
   int cube = 0;
-  for (int i = 0; i < 8; ++i) {
-    int64_t q[3];
-    for (int a = 0; a < 3; ++a) q[a] = c[a] + tool_corners[i][a];
-    float v = tool_get64(p, q, NULL);
-    if (values) values[i] = v;
-    if (v < iso) cube |= 1 << i;
-  }
-  return cube;
-}
-static tvdb_status_t tool_cell(tool_surface* s, const int64_t c[3]) {
-  tvdb_status_t st = tool_scan(s->cells);
-  if (st != TVDB_OK) return st;
-  float corners[8];
-  int cube = tool_cube(s->p, c, s->iso, corners);
+  for (int i = 0; i < 8; ++i)
+    if (corners[i] < s->iso) cube |= 1 << i;
   if (cube == 0 || cube == 255) return TVDB_OK;
   int32_t q[3];
   for (int a = 0; a < 3; ++a) {
@@ -547,25 +550,122 @@ static tvdb_status_t tool_cell(tool_surface* s, const int64_t c[3]) {
     q[a] = (int32_t)c[a];
   }
   size_t i;
-  st = tool_insert(s->cells, q, &i);
+  tvdb_status_t st = tool_insert(s->cells, q, &i);
   if (st == TVDB_OK) {
     s->cells->v[i].active = (unsigned char)cube;
-    memcpy(s->cells->v[i].corners, corners, sizeof corners);
+    memcpy(s->cells->v[i].corners, corners, 8 * sizeof(float));
   }
   return st;
 }
+static tvdb_status_t tool_cell(tool_surface* s, const int64_t c[3]) {
+  tvdb_status_t st = tool_scan(s->cells);
+  if (st != TVDB_OK) return st;
+  float corners[8];
+  for (int i = 0; i < 8; ++i) {
+    int64_t q[3];
+    for (int a = 0; a < 3; ++a) q[a] = c[a] + tool_corners[i][a];
+    corners[i] = tool_get64(&s->acc, q, NULL);
+  }
+  return tool_cell_values(s, c, corners);
+}
+/* Look up the one-voxel shell of an n^3 box (x fastest) whose index 0
+ * sits at o - 1: x faces, then y faces without x edges, then z faces
+ * without both, so consecutive lookups stay in one neighbouring node. */
+static void tool_box_shell(tool_surface* s, const int32_t o[3], int n,
+                           float* box) {
+  for (int a = 0; a < 3; ++a)
+    for (int side = 0; side < 2; ++side) {
+      const int b = (a + 1) % 3, d = (a + 2) % 3;
+      for (int u = 0; u < n; ++u)
+        for (int w = 0; w < n; ++w) {
+          int k[3];
+          k[a] = side ? n - 1 : 0;
+          k[b] = u;
+          k[d] = w;
+          int done = 0;
+          for (int e = 0; e < a; ++e) done |= k[e] == 0 || k[e] == n - 1;
+          if (done) continue;
+          int64_t q[3];
+          for (int e = 0; e < 3; ++e) q[e] = (int64_t)o[e] - 1 + k[e];
+          box[((size_t)k[2] * n + k[1]) * n + k[0]] =
+              tool_get64(&s->acc, q, NULL);
+        }
+    }
+}
+/* The 8 cells around voxel c, in the per-voxel order, with corner values
+ * from an n^3 box (x fastest) where the voxel sits at box index at[]. */
+static tvdb_status_t tool_voxel_cells(tool_surface* s, const int32_t c[3],
+                                      const float* box, int n,
+                                      const int at[3]) {
+  for (int i = 0; i < 8; ++i) {
+    int64_t q[3];
+    int lo[3];
+    for (int a = 0; a < 3; ++a) {
+      lo[a] = at[a] - ((i >> a) & 1);
+      q[a] = (int64_t)c[a] - ((i >> a) & 1);
+    }
+    tvdb_status_t st = tool_scan(s->cells);
+    if (st != TVDB_OK) return st;
+    float corners[8];
+    for (int k = 0; k < 8; ++k)
+      corners[k] = box[((size_t)(lo[2] + tool_corners[k][2]) * n +
+                        (size_t)(lo[1] + tool_corners[k][1])) * n +
+                       (size_t)(lo[0] + tool_corners[k][0])];
+    st = tool_cell_values(s, q, corners);
+    if (st != TVDB_OK) return st;
+  }
+  return TVDB_OK;
+}
+/* Tiles up to this span (leaf-sized in 5-4-3 trees) classify their
+   boundary from a stack box: 4 KB at 8. */
+#define TOOL_TILE_BOX 8
 static tvdb_status_t tool_surface_region(const int32_t c[3], int64_t span,
                                          float value, int active, void* user) {
   (void)active;
   tool_surface* s = user;
   if ((value < s->iso) == s->bg_below) return TVDB_OK;
   if (span == 1) {
-    for (int i = 0; i < 8; ++i) {
-      int64_t q[3];
-      for (int a = 0; a < 3; ++a) q[a] = (int64_t)c[a] - ((i >> a) & 1);
-      tvdb_status_t st = tool_cell(s, q);
-      if (st != TVDB_OK) return st;
-    }
+    /* The 8 cells around a voxel share a 3x3x3 neighbourhood: look it up
+       once, then classify each cell from it. */
+    float hood[27];
+    for (int z = 0; z < 3; ++z)
+      for (int y = 0; y < 3; ++y)
+        for (int x = 0; x < 3; ++x) {
+          int64_t q[3] = {(int64_t)c[0] + x - 1, (int64_t)c[1] + y - 1,
+                          (int64_t)c[2] + z - 1};
+          hood[(z * 3 + y) * 3 + x] = tool_get64(&s->acc, q, NULL);
+        }
+    const int at[3] = {1, 1, 1};
+    return tool_voxel_cells(s, c, hood, 3, at);
+  } else if (span <= TOOL_TILE_BOX) {
+    /* Small tile: read the one-voxel shell around it once; the inside is
+       the tile value. Then classify the boundary slabs from that box. */
+    const int n = (int)span + 2;
+    float box[(TOOL_TILE_BOX + 2) * (TOOL_TILE_BOX + 2) * (TOOL_TILE_BOX + 2)];
+    for (size_t i = 0; i < (size_t)n * n * n; ++i) box[i] = value;
+    tool_box_shell(s, c, n, box);
+    for (int a = 0; a < 3; ++a)
+      for (int side = 0; side < 2; ++side) {
+        int b = (a + 1) % 3, d = (a + 2) % 3;
+        for (int64_t u = -1; u < span; ++u)
+          for (int64_t v = -1; v < span; ++v) {
+            int64_t q[3], k[3];
+            k[a] = side ? span : 0;
+            k[b] = u + 1;
+            k[d] = v + 1;
+            for (int e = 0; e < 3; ++e) q[e] = (int64_t)c[e] - 1 + k[e];
+            tvdb_status_t st = tool_scan(s->cells);
+            if (st != TVDB_OK) return st;
+            float corners[8];
+            for (int i = 0; i < 8; ++i)
+              corners[i] =
+                  box[((size_t)(k[2] + tool_corners[i][2]) * n +
+                       (size_t)(k[1] + tool_corners[i][1])) * n +
+                      (size_t)(k[0] + tool_corners[i][0])];
+            st = tool_cell_values(s, q, corners);
+            if (st != TVDB_OK) return st;
+          }
+      }
   } else {
     /* Constant-region interiors cannot cross; visit only six boundary slabs. */
     for (int a = 0; a < 3; ++a)
@@ -584,6 +684,43 @@ static tvdb_status_t tool_surface_region(const int32_t c[3], int64_t span,
   }
   return TVDB_OK;
 }
+/* A whole leaf (log2dim <= 3): one (dim+2)^3 box, the inside read from the
+ * leaf and the one-voxel shell looked up face by face, then each voxel on
+ * the far side of the background gets its 8 cells classified in slot order,
+ * exactly as the per-voxel path would. */
+static int tool_surface_leaf(size_t node, void* user, tvdb_status_t* st) {
+  tool_surface* s = user;
+  const tvdb_tree_index* p = s->acc.p;
+  const tvdb_tree_node_t* nd = p->grid->tree.nodes + node;
+  const int L = p->grid->tree.layout.levels[nd->level].log2dim;
+  if (L > 3) return 0;
+  const int dim = 1 << L, n = dim + 2;
+  const size_t slots = (size_t)1 << (3 * L);
+  const float* values = (const float*)nd->u.leaf.data;
+  const int32_t* o = p->origins[node];
+  *st = TVDB_OK;
+  size_t first = 0;
+  while (first < slots && (values[first] < s->iso) == s->bg_below) ++first;
+  if (first == slots) return 1;
+  float box[10 * 10 * 10];
+  for (size_t v = 0; v < slots; ++v) {
+    const int x = (int)(v >> (2 * L)), y = (int)((v >> L) & (dim - 1)),
+              z = (int)(v & (dim - 1));
+    box[((size_t)(z + 1) * n + (y + 1)) * n + (x + 1)] = values[v];
+  }
+  tool_box_shell(s, o, n, box);
+  for (size_t v = first; v < slots; ++v) {
+    if ((values[v] < s->iso) == s->bg_below) continue;
+    const int at[3] = {(int)(v >> (2 * L)) + 1, (int)((v >> L) & (dim - 1)) + 1,
+                       (int)(v & (dim - 1)) + 1};
+    const int32_t c[3] = {(int32_t)((int64_t)o[0] + at[0] - 1),
+                          (int32_t)((int64_t)o[1] + at[1] - 1),
+                          (int32_t)((int64_t)o[2] + at[2] - 1)};
+    *st = tool_voxel_cells(s, c, box, n, at);
+    if (*st != TVDB_OK) return 1;
+  }
+  return 1;
+}
 static int tool_compare_voxel(const void* a, const void* b) {
   const tool_voxel *x = a, *y = b;
   for (int i = 0; i < 3; ++i)
@@ -592,9 +729,13 @@ static int tool_compare_voxel(const void* a, const void* b) {
 }
 static tvdb_status_t tool_surface_cells(const tvdb_tree_index* p, float iso,
                                         tool_map* cells) {
-  tool_surface s = {p, cells, iso,
-                    p->grid->tree.nodes[0].u.root.background.u.f < iso};
-  tvdb_status_t st = tool_regions(p, tool_surface_region, &s);
+  tool_surface s;
+  tvdb_tree_accessor_init(&s.acc, p);
+  s.cells = cells;
+  s.iso = iso;
+  s.bg_below = p->grid->tree.nodes[0].u.root.background.u.f < iso;
+  tvdb_status_t st =
+      tool_regions_leaf(p, tool_surface_region, tool_surface_leaf, &s);
   if (st == TVDB_OK && cells->count > 1)
     qsort(cells->v, cells->count, sizeof(tool_voxel), tool_compare_voxel);
   return st;

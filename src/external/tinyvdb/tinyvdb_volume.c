@@ -609,15 +609,20 @@ void tvdb_volume_sampler_destroy(tvdb_volume_sampler_t *s) {
 
 int tvdb_volume_sampler_components(const tvdb_volume_sampler_t *s) { return s ? s->comps : 0; }
 
-void tvdb_volume_sampler_get(const tvdb_volume_sampler_t *s, const int32_t ijk[3], float *value,
-                             int *active) {
+static void vol_get(const tvdb_volume_sampler_t *s, tvdb_tree_accessor *acc, const int32_t ijk[3],
+                    float *value, int *active) {
   const uint8_t *bytes;
   const tvdb_value_t *v;
   float tmp[3];
-  tvdb_tree_lookup(&s->ix, ijk, &bytes, &v, active);
+  if (acc) tvdb_tree_accessor_lookup(acc, ijk, &bytes, &v, active);
+  else tvdb_tree_lookup(&s->ix, ijk, &bytes, &v, active);
   if (bytes) vol_from_bytes(s->vt, bytes, tmp);
   else vol_from_value(v, tmp);
   for (int k = 0; k < s->comps; ++k) value[k] = tmp[k];
+}
+void tvdb_volume_sampler_get(const tvdb_volume_sampler_t *s, const int32_t ijk[3], float *value,
+                             int *active) {
+  vol_get(s, NULL, ijk, value, active);
 }
 
 static int vol_index_ok(double q) { return q >= -2147483648.0 && q < 2147483647.0; }
@@ -631,6 +636,8 @@ static tvdb_status_t vol_sample(const tvdb_volume_sampler_t *s, const double *po
   if (world && !s->has_inverse)
     return vol_error(err, TVDB_ERROR_UNSUPPORTED_TRANSFORM, "grid transform is not invertible");
   const int C = s->comps;
+  tvdb_tree_accessor acc;
+  tvdb_tree_accessor_init(&acc, &s->ix);
   for (size_t i = 0; i < count; ++i) {
     const double *p = points + 3 * i;
     float *o = values + (size_t)C * i;
@@ -648,7 +655,7 @@ static tvdb_status_t vol_sample(const tvdb_volume_sampler_t *s, const double *po
     if (filter == TVDB_VOLUME_FILTER_NEAREST) {
       const int32_t c[3] = {(int32_t)floor(q[0] + 0.5), (int32_t)floor(q[1] + 0.5),
                             (int32_t)floor(q[2] + 0.5)};
-      tvdb_volume_sampler_get(s, c, o, NULL);
+      vol_get(s, &acc, c, o, NULL);
       continue;
     }
     int32_t base[3];
@@ -664,7 +671,7 @@ static tvdb_status_t vol_sample(const tvdb_volume_sampler_t *s, const double *po
       const double w = ((c & 1) ? f[0] : 1 - f[0]) * (((c >> 1) & 1) ? f[1] : 1 - f[1]) *
                        (((c >> 2) & 1) ? f[2] : 1 - f[2]);
       float v[3];
-      tvdb_volume_sampler_get(s, at, v, NULL);
+      vol_get(s, &acc, at, v, NULL);
       for (int k = 0; k < C; ++k) sum[k] += w * (double)v[k];
     }
     for (int k = 0; k < C; ++k) o[k] = (float)sum[k];

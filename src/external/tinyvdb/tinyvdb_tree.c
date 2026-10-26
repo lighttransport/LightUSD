@@ -257,7 +257,8 @@ tvdb_status_t tvdb_tree_index_create(const tvdb_grid_t* g, int float_only,
     return tvdb_tree_error(err, TVDB_ERROR_INVALID_DATA,
                            "invalid tree root/layout");
   tvdb_value_type_t vt = t->layout.levels[p->levels - 1].value_type;
-  if ((float_only && vt != TVDB_VALUE_FLOAT) || !tvdb_value_type_size(vt) ||
+  p->value_size = tvdb_value_type_size(vt);
+  if ((float_only && vt != TVDB_VALUE_FLOAT) || !p->value_size ||
       (float_only && (t->is_point_data_grid || t->is_point_index_grid)))
     return tvdb_tree_error(err, TVDB_ERROR_UNSUPPORTED_GRID_TYPE,
                            "expected a float tree");
@@ -350,102 +351,79 @@ overflow:
   return tvdb_tree_error(err, TVDB_ERROR_INVALID_DATA,
                          "tree index size overflow");
 }
-float tvdb_tree_get(const tvdb_tree_index* p, const int32_t coord[3],
-                    int* active) {
-  const tvdb_root_node_t* r = &p->grid->tree.nodes[0].u.root;
-  int32_t origin[3];
-  if (active) *active = 0;
-  for (int a = 0; a < 3; ++a) {
-    int64_t v = coord[a], span = p->span[1], sh = p->span_shift[1];
-    origin[a] = (int32_t)((v >= 0 ? v >> sh : -1 - ((-1 - v) >> sh)) * span);
-  }
-  size_t h = (size_t)root_hash(origin) & (p->root_capacity - 1),
-         item = SIZE_MAX;
-  while (p->root_map[h]) {
-    size_t i = p->root_map[h] - 1;
-    if (!memcmp(origin, root_coord(r, i), sizeof(origin))) {
-      item = i;
-      break;
-    }
-    h = (h + 1) & (p->root_capacity - 1);
-  }
-  if (item == SIZE_MAX) return r->background.u.f;
-  if (item >= r->num_children) {
-    item -= r->num_children;
-    if (active) *active = r->tile_active[item] != 0;
-    return r->tile_values[item].u.f;
-  }
-  size_t node = r->child_indices[item];
-  for (int l = 1; l < p->levels; ++l) {
-    const tvdb_tree_node_t* n = &p->grid->tree.nodes[node];
-    int L = p->grid->tree.layout.levels[l].log2dim;
-    size_t slot = 0;
-    const int sh = l + 1 == p->levels ? 0 : p->span_shift[l + 1];
-    for (int a = 0; a < 3; ++a)
-      slot = (slot << L) |
-             (size_t)(((int64_t)coord[a] - p->origins[node][a]) >> sh);
-    if (n->type == TVDB_NODE_LEAF) {
-      float v;
-      v = *(const float*)(n->u.leaf.data + slot * 4);
-      if (active) *active = mask_on(&n->u.leaf.value_mask, slot);
-      return v;
-    }
-    const tvdb_internal_node_t* in = &n->u.internal;
-    if (!mask_on(&in->child_mask, slot)) {
-      float v;
-      v = *(const float*)(in->values + slot * 4);
-      if (active) *active = mask_on(&in->value_mask, slot);
-      return v;
-    }
-    node = in->child_indices[tree_child_rank(p, node, &in->child_mask, slot)];
-  }
-  return NAN;
-}
-void tvdb_tree_lookup(const tvdb_tree_index* p, const int32_t coord[3],
-                      const uint8_t** bytes, const tvdb_value_t** value,
-                      int* active) {
-  const tvdb_root_node_t* r = &p->grid->tree.nodes[0].u.root;
-  const tvdb_value_type_t vt =
-      p->grid->tree.layout.levels[p->levels - 1].value_type;
-  const size_t vsize = tvdb_value_type_size(vt);
-  int32_t origin[3];
+/* The descent shared by the plain and cached lookups. Sets *bytes to the
+ * leaf voxel or internal tile, or *value to the root tile or background;
+ * both stay NULL only for a malformed tree with no leaf level. */
+static void tree_find(const tvdb_tree_index* p, tvdb_tree_accessor* acc,
+                      const int32_t coord[3], const uint8_t** bytes,
+                      const tvdb_value_t** value, int* active) {
+  const tvdb_tree_node_t* nodes = p->grid->tree.nodes;
+  const tvdb_root_node_t* r = &nodes[0].u.root;
+  const size_t vsize = p->value_size;
+  size_t node = SIZE_MAX;
+  int l = 1;
   *bytes = NULL;
   *value = NULL;
   if (active) *active = 0;
-  for (int a = 0; a < 3; ++a) {
-    int64_t v = coord[a], span = p->span[1], sh = p->span_shift[1];
-    origin[a] = (int32_t)((v >= 0 ? v >> sh : -1 - ((-1 - v) >> sh)) * span);
-  }
-  size_t h = (size_t)root_hash(origin) & (p->root_capacity - 1),
-         item = SIZE_MAX;
-  while (p->root_map[h]) {
-    size_t i = p->root_map[h] - 1;
-    if (!memcmp(origin, root_coord(r, i), sizeof(origin))) {
-      item = i;
-      break;
+  if (acc)
+    for (int k = p->levels - 1; k >= 1; --k) {
+      if (acc->node[k] == SIZE_MAX) continue;
+      const uint64_t span = (uint64_t)p->span[k];
+      if ((uint64_t)((int64_t)coord[0] - acc->origin[k][0]) < span &&
+          (uint64_t)((int64_t)coord[1] - acc->origin[k][1]) < span &&
+          (uint64_t)((int64_t)coord[2] - acc->origin[k][2]) < span) {
+        node = acc->node[k];
+        l = k;
+        break;
+      }
     }
-    h = (h + 1) & (p->root_capacity - 1);
+  if (node == SIZE_MAX) {
+    int32_t origin[3];
+    for (int a = 0; a < 3; ++a) {
+      int64_t v = coord[a], span = p->span[1], sh = p->span_shift[1];
+      origin[a] =
+          (int32_t)((v >= 0 ? v >> sh : -1 - ((-1 - v) >> sh)) * span);
+    }
+    size_t h = (size_t)root_hash(origin) & (p->root_capacity - 1),
+           item = SIZE_MAX;
+    while (p->root_map[h]) {
+      size_t i = p->root_map[h] - 1;
+      if (!memcmp(origin, root_coord(r, i), sizeof(origin))) {
+        item = i;
+        break;
+      }
+      h = (h + 1) & (p->root_capacity - 1);
+    }
+    if (item == SIZE_MAX) {
+      *value = &r->background;
+      return;
+    }
+    if (item >= r->num_children) {
+      item -= r->num_children;
+      if (active) *active = r->tile_active[item] != 0;
+      *value = &r->tile_values[item];
+      return;
+    }
+    node = r->child_indices[item];
   }
-  if (item == SIZE_MAX) {
-    *value = &r->background;
-    return;
-  }
-  if (item >= r->num_children) {
-    item -= r->num_children;
-    if (active) *active = r->tile_active[item] != 0;
-    *value = &r->tile_values[item];
-    return;
-  }
-  size_t node = r->child_indices[item];
-  for (int l = 1; l < p->levels; ++l) {
-    const tvdb_tree_node_t* n = &p->grid->tree.nodes[node];
+  for (; l < p->levels; ++l) {
+    const tvdb_tree_node_t* n = &nodes[node];
+    const int32_t* o = p->origins[node];
     int L = p->grid->tree.layout.levels[l].log2dim;
     size_t slot = 0;
     const int sh = l + 1 == p->levels ? 0 : p->span_shift[l + 1];
+    if (acc && acc->node[l] != node) {
+      acc->node[l] = node;
+      for (int a = 0; a < 3; ++a) acc->origin[l][a] = o[a];
+    }
     for (int a = 0; a < 3; ++a)
-      slot = (slot << L) |
-             (size_t)(((int64_t)coord[a] - p->origins[node][a]) >> sh);
+      slot = (slot << L) | (size_t)(((int64_t)coord[a] - o[a]) >> sh);
     if (n->type == TVDB_NODE_LEAF) {
+      if (acc) {
+        acc->leaf_data = n->u.leaf.data;
+        acc->leaf_mask = n->u.leaf.value_mask.bits.data;
+        acc->leaf_log2dim = L;
+      }
       *bytes = n->u.leaf.data + slot * vsize;
       if (active) *active = mask_on(&n->u.leaf.value_mask, slot);
       return;
@@ -458,7 +436,73 @@ void tvdb_tree_lookup(const tvdb_tree_index* p, const int32_t coord[3],
     }
     node = in->child_indices[tree_child_rank(p, node, &in->child_mask, slot)];
   }
-  *value = &r->background;
+}
+/* Accessor fast path: the slot in the cached leaf, or SIZE_MAX on a miss. */
+static size_t tree_leaf_slot(const tvdb_tree_accessor* acc,
+                             const int32_t coord[3]) {
+  const int leaf = acc->p->levels - 1, L = acc->leaf_log2dim;
+  if (acc->node[leaf] == SIZE_MAX) return SIZE_MAX;
+  const uint64_t span = (uint64_t)1 << L;
+  const uint64_t x = (uint64_t)((int64_t)coord[0] - acc->origin[leaf][0]),
+                 y = (uint64_t)((int64_t)coord[1] - acc->origin[leaf][1]),
+                 z = (uint64_t)((int64_t)coord[2] - acc->origin[leaf][2]);
+  if (x >= span || y >= span || z >= span) return SIZE_MAX;
+  return (size_t)((x << (2 * L)) | (y << L) | z);
+}
+static float tree_float(const uint8_t* bytes, const tvdb_value_t* value) {
+  float v;
+  if (bytes) {
+    memcpy(&v, bytes, sizeof(v));
+    return v;
+  }
+  return value ? value->u.f : NAN;
+}
+float tvdb_tree_get(const tvdb_tree_index* p, const int32_t coord[3],
+                    int* active) {
+  const uint8_t* bytes;
+  const tvdb_value_t* value;
+  tree_find(p, NULL, coord, &bytes, &value, active);
+  return tree_float(bytes, value);
+}
+void tvdb_tree_lookup(const tvdb_tree_index* p, const int32_t coord[3],
+                      const uint8_t** bytes, const tvdb_value_t** value,
+                      int* active) {
+  tree_find(p, NULL, coord, bytes, value, active);
+  if (!*bytes && !*value) *value = &p->grid->tree.nodes[0].u.root.background;
+}
+void tvdb_tree_accessor_init(tvdb_tree_accessor* acc,
+                             const tvdb_tree_index* p) {
+  memset(acc, 0, sizeof(*acc));
+  acc->p = p;
+  for (int l = 0; l < TVDB_MAX_TREE_DEPTH; ++l) acc->node[l] = SIZE_MAX;
+}
+float tvdb_tree_accessor_get(tvdb_tree_accessor* acc, const int32_t coord[3],
+                             int* active) {
+  const uint8_t* bytes;
+  const tvdb_value_t* value;
+  const size_t slot = tree_leaf_slot(acc, coord);
+  if (slot != SIZE_MAX) {
+    float v;
+    memcpy(&v, acc->leaf_data + slot * 4, sizeof(v));
+    if (active) *active = (acc->leaf_mask[slot / 8] >> (slot % 8)) & 1;
+    return v;
+  }
+  tree_find(acc->p, acc, coord, &bytes, &value, active);
+  return tree_float(bytes, value);
+}
+void tvdb_tree_accessor_lookup(tvdb_tree_accessor* acc,
+                               const int32_t coord[3], const uint8_t** bytes,
+                               const tvdb_value_t** value, int* active) {
+  const size_t slot = tree_leaf_slot(acc, coord);
+  if (slot != SIZE_MAX) {
+    *bytes = acc->leaf_data + slot * acc->p->value_size;
+    *value = NULL;
+    if (active) *active = (acc->leaf_mask[slot / 8] >> (slot % 8)) & 1;
+    return;
+  }
+  tree_find(acc->p, acc, coord, bytes, value, active);
+  if (!*bytes && !*value)
+    *value = &acc->p->grid->tree.nodes[0].u.root.background;
 }
 int tvdb_tree_matrix(const tvdb_transform_t* t, double m[4][4]) {
   memset(m, 0, 16 * sizeof(double));

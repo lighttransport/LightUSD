@@ -20,6 +20,7 @@ typedef struct {
    * with one table read and one popcount. */
   uint32_t* rank;
   size_t* rank_at;
+  size_t value_size;  // tvdb_value_type_size of the tree's value type
   size_t active_voxels, active_tiles;
   int has_bbox;
   int64_t bbox_min[3], bbox_max[3];
@@ -35,6 +36,26 @@ float tvdb_tree_get(const tvdb_tree_index*, const int32_t coord[3],
 void tvdb_tree_lookup(const tvdb_tree_index*, const int32_t coord[3],
                       const uint8_t** bytes, const tvdb_value_t** value,
                       int* active);
+/* Lookup cache for coherent queries (OpenVDB ValueAccessor style): remembers
+ * the last node visited per level and starts the next descent at the deepest
+ * cached node containing the coordinate. Nodes are fixed regions of a
+ * read-only tree, so a cached node is never stale. One accessor per thread;
+ * results are bit-identical to tvdb_tree_get / tvdb_tree_lookup. */
+typedef struct {
+  const tvdb_tree_index* p;
+  size_t node[TVDB_MAX_TREE_DEPTH];        // SIZE_MAX: nothing cached
+  int64_t origin[TVDB_MAX_TREE_DEPTH][3];  // origin of node[l]
+  // The cached leaf's buffers (node[levels - 1]), for the hit fast path.
+  const uint8_t* leaf_data;
+  const uint8_t* leaf_mask;
+  int leaf_log2dim;
+} tvdb_tree_accessor;
+void tvdb_tree_accessor_init(tvdb_tree_accessor*, const tvdb_tree_index*);
+float tvdb_tree_accessor_get(tvdb_tree_accessor*, const int32_t coord[3],
+                             int* active);
+void tvdb_tree_accessor_lookup(tvdb_tree_accessor*, const int32_t coord[3],
+                               const uint8_t** bytes,
+                               const tvdb_value_t** value, int* active);
 size_t tvdb_tree_mask_rank(const tvdb_nodemask_t*, size_t bit);
 tvdb_status_t tvdb_tree_error(tvdb_error_t*, tvdb_status_t, const char*);
 int tvdb_tree_matrix(const tvdb_transform_t*, double matrix[4][4]);
