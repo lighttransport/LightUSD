@@ -917,11 +917,37 @@ static void tool_classify_range(size_t begin, size_t end, void* user) {
       return;
     }
   }
+  /* Sort here so the merge below can run k sorted runs instead of one global
+   * qsort. Cells are compared by coordinate only; equal keys carry identical
+   * cube masks and corners, so their relative order cannot matter. */
+  if (sl->cells.count > 1)
+    qsort(sl->cells.v, sl->cells.count, sizeof(tool_voxel), tool_compare_voxel);
 }
-/* Concatenate the slice maps, sort by coordinate and drop the cells that more
- * than one voxel or tile classified. Every copy of a cell carries the same
- * cube mask and corner values (both are read from the grid), so which copy
- * survives does not matter. */
+/* Sorted run cursor for the k-way cell merge below. */
+typedef struct {
+  const tool_voxel* v;
+  size_t index, count;
+} tool_merge_run;
+static int tool_merge_before(const tool_merge_run* a, const tool_merge_run* b) {
+  return tool_compare_voxel(a->v + a->index, b->v + b->index) < 0;
+}
+static void tool_merge_sift(tool_merge_run* runs, size_t n, size_t i) {
+  for (;;) {
+    const size_t l = 2 * i + 1, r = l + 1;
+    size_t m = i;
+    if (l < n && tool_merge_before(runs + l, runs + m)) m = l;
+    if (r < n && tool_merge_before(runs + r, runs + m)) m = r;
+    if (m == i) return;
+    const tool_merge_run tmp = runs[i];
+    runs[i] = runs[m];
+    runs[m] = tmp;
+    i = m;
+  }
+}
+/* Merge the already sorted slice maps into one coordinate-sorted list and drop
+ * the cells that more than one voxel or tile classified. Every copy of a cell
+ * carries the same cube mask and corner values (both are read from the grid),
+ * so which copy survives does not matter. */
 static tvdb_status_t tool_cells_merge(tool_classify_slice* slices, size_t n,
                                       tool_map* cells, size_t scans) {
   /* The serial classification counts every cell it looks at; the merged total
@@ -932,8 +958,8 @@ static tvdb_status_t tool_cells_merge(tool_classify_slice* slices, size_t n,
   size_t total = 0;
   for (size_t i = 0; i < n; ++i) {
     total += slices[i].cells.count;
-    /* The probe tables only deduplicated within a slice; the sort below does
-     * that globally, so release them before the merged copy is allocated. */
+    /* The probe tables only deduplicated within a slice; the merge does that
+     * globally, so release them before the merged copy is allocated. */
     free(slices[i].cells.slots);
     slices[i].cells.slots = NULL;
     slices[i].cells.hash_capacity = 0;
@@ -942,36 +968,48 @@ static tvdb_status_t tool_cells_merge(tool_classify_slice* slices, size_t n,
     return tvdb_tree_error(cells->err, TVDB_ERROR_INVALID_ARGUMENT,
                            "sparse coordinate budget exceeded");
   tool_voxel* v = NULL;
+  tool_merge_run* runs = NULL;
   if (total) {
     size_t bytes;
     if (!tvdb_size_mul(total, sizeof(tool_voxel), &bytes))
       return tvdb_tree_error(cells->err, TVDB_ERROR_INVALID_ARGUMENT,
                              "mesh size overflow");
     v = (tool_voxel*)malloc(bytes);
-    if (!v)
+    runs = (tool_merge_run*)calloc(n ? n : 1, sizeof(*runs));
+    if (!v || !runs) {
+      free(v);
+      free(runs);
+      for (size_t i = 0; i < n; ++i) tool_map_free(&slices[i].cells);
       return tvdb_tree_error(cells->err, TVDB_ERROR_OUT_OF_MEMORY,
                              "sparse workspace allocation failed");
+    }
   }
-  size_t at = 0;
+  size_t active = 0;
   for (size_t i = 0; i < n; ++i) {
-    tool_map* m = &slices[i].cells;
-    if (m->count) memcpy(v + at, m->v, m->count * sizeof(*v));
-    at += m->count;
-    tool_map_free(m);
+    if (!slices[i].cells.count) continue;
+    runs[active].v = slices[i].cells.v;
+    runs[active].index = 0;
+    runs[active].count = slices[i].cells.count;
+    ++active;
   }
+  for (size_t r = active / 2; r > 0; --r) tool_merge_sift(runs, active, r - 1);
+  size_t at = 0;
+  while (active) {
+    const tool_voxel* top = runs[0].v + runs[0].index;
+    if (!at || memcmp(v[at - 1].c, top->c, sizeof(top->c)) != 0) v[at++] = *top;
+    if (++runs[0].index == runs[0].count) {
+      runs[0] = runs[--active];
+      if (!active) break;
+    }
+    tool_merge_sift(runs, active, 0);
+  }
+  for (size_t i = 0; i < n; ++i) tool_map_free(&slices[i].cells);
+  free(runs);
   free(cells->v);
   cells->v = v;
   cells->count = at;
   cells->capacity = total;
   cells->scans = scans;
-  if (at > 1) qsort(cells->v, at, sizeof(*v), tool_compare_voxel);
-  size_t kept = 0;
-  for (size_t i = 0; i < at; ++i) {
-    if (kept && !memcmp(cells->v[kept - 1].c, cells->v[i].c, sizeof(cells->v[i].c)))
-      continue;
-    cells->v[kept++] = cells->v[i];
-  }
-  cells->count = kept;
   return TVDB_OK;
 }
 static tvdb_status_t tool_surface_cells(const tvdb_tree_index* p, float iso,
@@ -1187,10 +1225,31 @@ done:
   free(vertices);
   return st;
 }
+/* Edge maps for one x slab. A cell can only reference an edge whose lower
+ * corner sits at its own x or the next one, so keeping three slabs alive (one
+ * ring slot each) is enough for any border: the maps then hold a few thousand
+ * entries and stay in cache instead of probing one 100 MB table. Every slab is
+ * cleared before reuse, which keeps the probe order (and so the vertex
+ * numbering) identical to a single unbounded map. */
+#define TOOL_EDGE_SLABS 3
+typedef struct {
+  tool_map map[3];  /* per edge axis */
+  int32_t slab;     /* x the maps hold; INT32_MIN when unused */
+} tool_edge_slab;
+static void tool_edge_slab_reset(tool_edge_slab* s) {
+  for (int a = 0; a < 3; ++a) {
+    if (s->map[a].slots)
+      memset(s->map[a].slots, 0, s->map[a].hash_capacity * sizeof(tool_slot));
+    s->map[a].count = 0;
+    s->map[a].scans = 0;
+  }
+}
 static tvdb_status_t tool_mesh(const tvdb_tree_index* p, const tool_map* cells,
                                float iso, double adapt,
                                tvdb_triangle_mesh* mesh, tvdb_error_t* err) {
-  tool_map edges[3] = {{0}};
+  tool_edge_slab slabs[TOOL_EDGE_SLABS];
+  memset(slabs, 0, sizeof(slabs));
+  for (int s = 0; s < TOOL_EDGE_SLABS; ++s) slabs[s].slab = INT32_MIN;
   double matrix[4][4];
   tvdb_tree_matrix(&p->grid->transform, matrix);
   tvdb_status_t st = TVDB_OK;
@@ -1198,10 +1257,11 @@ static tvdb_status_t tool_mesh(const tvdb_tree_index* p, const tool_map* cells,
   if (!tvdb_size_mul(cells->limit, 12, &edge_limit))
     return tvdb_tree_error(err, TVDB_ERROR_INVALID_ARGUMENT,
                            "edge budget overflow");
-  for (int a = 0; a < 3; ++a) {
-    edges[a].limit = edge_limit;
-    edges[a].err = err;
-  }
+  for (int s = 0; s < TOOL_EDGE_SLABS; ++s)
+    for (int a = 0; a < 3; ++a) {
+      slabs[s].map[a].limit = edge_limit;
+      slabs[s].map[a].err = err;
+    }
   double det = matrix[0][0] *
                    (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1]) -
                matrix[0][1] *
@@ -1232,14 +1292,25 @@ static tvdb_status_t tool_mesh(const tvdb_tree_index* p, const tool_map* cells,
           key[k] = (int32_t)q;
           if (tool_corners[a][k] != tool_corners[b][k]) axis = k;
         }
-        size_t at = tool_find(edges + axis, key);
+        /* The edge's slab is its lower corner's x; ring slots are reused
+         * across x and cleared when they first see a new slab. */
+        const int32_t slab_x = key[0];
+        tool_edge_slab* slab =
+            &slabs[(size_t)((slab_x % TOOL_EDGE_SLABS) + TOOL_EDGE_SLABS) %
+                   TOOL_EDGE_SLABS];
+        if (slab->slab != slab_x) {
+          slab->slab = slab_x;
+          tool_edge_slab_reset(slab);
+        }
+        tool_map* edges = slab->map + axis;
+        size_t at = tool_find(edges, key);
         if (at == SIZE_MAX) {
           if (mesh->vertex_count >= UINT32_MAX) {
             st = tvdb_tree_error(err, TVDB_ERROR_INVALID_ARGUMENT,
                                  "mesh index overflow");
             goto done;
           }
-          st = tool_insert(edges + axis, key, &at);
+          st = tool_insert(edges, key, &at);
           if (st != TVDB_OK) goto done;
           /* Store vertex IDs in the hash slot, not a float value. */
           st = tool_grow((void**)&mesh->vertices, &mesh->vertex_capacity,
@@ -1259,11 +1330,11 @@ static tvdb_status_t tool_mesh(const tvdb_tree_index* p, const tool_map* cells,
                                    "mesh world coordinate overflow");
               goto done;
             }
-          edges[axis].v[at].id = (uint32_t)mesh->vertex_count;
+          edges->v[at].id = (uint32_t)mesh->vertex_count;
           mesh->vertices[mesh->vertex_count++] =
               (tvdb_vec3f){(float)w[0], (float)w[1], (float)w[2]};
         }
-        vertex[e] = edges[axis].v[at].id;
+        vertex[e] = edges->v[at].id;
       }
     const int* tri = table + 16 * cube;
     for (int t = 0; t < 16 && tri[t] >= 0; t += 3) {
@@ -1278,7 +1349,8 @@ static tvdb_status_t tool_mesh(const tvdb_tree_index* p, const tool_map* cells,
   }
   st = tool_adapt(mesh, adapt, err);
 done:
-  for (int a = 0; a < 3; ++a) tool_map_free(edges + a);
+  for (int s = 0; s < TOOL_EDGE_SLABS; ++s)
+    for (int a = 0; a < 3; ++a) tool_map_free(&slabs[s].map[a]);
   return st;
 }
 static tvdb_status_t volume_to_mesh(const tvdb_grid_t* source, float iso,
