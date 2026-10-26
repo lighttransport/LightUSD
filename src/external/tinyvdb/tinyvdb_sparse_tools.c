@@ -720,11 +720,20 @@ static void tool_box_shell(tool_surface* s, const int32_t o[3], int n,
         }
     }
 }
+/* Box index offsets of a cell's 8 corners (tool_corners order) for an n^3 box,
+ * so a cell's corners are box[base + offset[k]] with one base computation. */
+static void tool_box_corner_offsets(int n, size_t off[8]) {
+  for (int k = 0; k < 8; ++k)
+    off[k] = (size_t)tool_corners[k][2] * (size_t)n * (size_t)n +
+             (size_t)tool_corners[k][1] * (size_t)n + (size_t)tool_corners[k][0];
+}
 /* The 8 cells around voxel c, in the per-voxel order, with corner values
  * from an n^3 box (x fastest) where the voxel sits at box index at[]. */
 static tvdb_status_t tool_voxel_cells(tool_surface* s, const int32_t c[3],
                                       const float* box, int n,
                                       const int at[3]) {
+  size_t off[8];
+  tool_box_corner_offsets(n, off);
   for (int i = 0; i < 8; ++i) {
     int64_t q[3];
     int lo[3];
@@ -732,11 +741,10 @@ static tvdb_status_t tool_voxel_cells(tool_surface* s, const int32_t c[3],
       lo[a] = at[a] - ((i >> a) & 1);
       q[a] = (int64_t)c[a] - ((i >> a) & 1);
     }
+    const size_t base = ((size_t)lo[2] * (size_t)n + (size_t)lo[1]) * (size_t)n +
+                        (size_t)lo[0];
     float corners[8];
-    for (int k = 0; k < 8; ++k)
-      corners[k] = box[((size_t)(lo[2] + tool_corners[k][2]) * n +
-                        (size_t)(lo[1] + tool_corners[k][1])) * n +
-                       (size_t)(lo[0] + tool_corners[k][0])];
+    for (int k = 0; k < 8; ++k) corners[k] = box[base + off[k]];
     tvdb_status_t st = tool_cell_values(s, q, corners, i);
     if (st != TVDB_OK) return st;
   }
@@ -778,6 +786,8 @@ static tvdb_status_t tool_surface_region(const int32_t c[3], int64_t span,
     for (size_t i = 0; i < (size_t)n * n * n && !crossing; ++i)
       crossing = (box[i] < s->iso) != side;
     if (!crossing) return TVDB_OK;
+    size_t off[8];
+    tool_box_corner_offsets(n, off);
     for (int a = 0; a < 3; ++a)
       for (int side = 0; side < 2; ++side) {
         int b = (a + 1) % 3, d = (a + 2) % 3;
@@ -788,12 +798,11 @@ static tvdb_status_t tool_surface_region(const int32_t c[3], int64_t span,
             k[b] = u + 1;
             k[d] = v + 1;
             for (int e = 0; e < 3; ++e) q[e] = (int64_t)c[e] - 1 + k[e];
+            const size_t base =
+                ((size_t)k[2] * (size_t)n + (size_t)k[1]) * (size_t)n +
+                (size_t)k[0];
             float corners[8];
-            for (int i = 0; i < 8; ++i)
-              corners[i] =
-                  box[((size_t)(k[2] + tool_corners[i][2]) * n +
-                       (size_t)(k[1] + tool_corners[i][1])) * n +
-                      (size_t)(k[0] + tool_corners[i][0])];
+            for (int i = 0; i < 8; ++i) corners[i] = box[base + off[i]];
             /* Tile slabs are visited once per region, so no ownership test:
              * a slab cell may have no voxel visit of its own. */
             tvdb_status_t st = tool_cell_values(s, q, corners, -1);
@@ -1124,8 +1133,33 @@ static int tool_compare_cluster(const void* a, const void* b) {
     if (x->c[i] != y->c[i]) return x->c[i] < y->c[i] ? -1 : 1;
   return x->vertex < y->vertex ? -1 : x->vertex != y->vertex;
 }
+/* Cluster keys of a vertex range: the adaptive clustering only needs these
+ * computed per vertex, so they run on the pool. */
+typedef struct {
+  tvdb_triangle_mesh* mesh;
+  tool_cluster* clusters;
+  double step;
+  atomic_int overflow;
+} tool_cluster_job;
+static void tool_cluster_range(size_t begin, size_t end, void* user) {
+  const tool_cluster_job* job = (const tool_cluster_job*)user;
+  for (size_t i = begin; i < end; ++i) {
+    double v[3] = {job->mesh->vertices[i].x, job->mesh->vertices[i].y,
+                   job->mesh->vertices[i].z};
+    job->clusters[i].vertex = i;
+    for (int a = 0; a < 3; ++a) {
+      const double q = floor(v[a] / job->step);
+      if (!isfinite(q) || q < -9223372036854775808.0 ||
+          q >= 9223372036854775808.0) {
+        atomic_store_explicit(&job->overflow, 1, memory_order_relaxed);
+        job->clusters[i].c[a] = 0;
+      } else
+        job->clusters[i].c[a] = (int64_t)q;
+    }
+  }
+}
 static tvdb_status_t tool_adapt(tvdb_triangle_mesh* mesh, double tolerance,
-                                tvdb_error_t* err) {
+                                tvdb_thread_pool_t* pool, tvdb_error_t* err) {
   if (!tolerance || !mesh->vertex_count) return TVDB_OK;
   size_t bytes;
   if (!tvdb_size_mul(mesh->vertex_count, sizeof(tool_cluster), &bytes))
@@ -1156,19 +1190,21 @@ static tvdb_status_t tool_adapt(tvdb_triangle_mesh* mesh, double tolerance,
                          "invalid cluster scale");
     goto done;
   }
-  for (size_t i = 0; i < mesh->vertex_count; ++i) {
-    double v[3] = {mesh->vertices[i].x, mesh->vertices[i].y,
-                   mesh->vertices[i].z};
-    clusters[i].vertex = i;
-    for (int a = 0; a < 3; ++a) {
-      double q = floor(v[a] / step);
-      if (!isfinite(q) || q < -9223372036854775808.0 ||
-          q >= 9223372036854775808.0) {
-        st = tvdb_tree_error(err, TVDB_ERROR_INVALID_ARGUMENT,
-                             "cluster coordinate overflow");
-        goto done;
-      }
-      clusters[i].c[a] = (int64_t)q;
+  {
+    tool_cluster_job job = {.mesh = mesh, .clusters = clusters, .step = step};
+    atomic_init(&job.overflow, 0);
+    const size_t threads = pool ? tvdb_thread_pool_size(pool) : 1;
+    if (threads > 1 && mesh->vertex_count >= 4096) {
+      st = tvdb_thread_pool_for(pool, 0, mesh->vertex_count, 2048,
+                                tool_cluster_range, &job, err);
+      if (st != TVDB_OK) goto done;
+    } else {
+      tool_cluster_range(0, mesh->vertex_count, &job);
+    }
+    if (atomic_load_explicit(&job.overflow, memory_order_relaxed)) {
+      st = tvdb_tree_error(err, TVDB_ERROR_INVALID_ARGUMENT,
+                           "cluster coordinate overflow");
+      goto done;
     }
   }
   qsort(clusters, mesh->vertex_count, sizeof(tool_cluster),
@@ -1245,7 +1281,7 @@ static void tool_edge_slab_reset(tool_edge_slab* s) {
   }
 }
 static tvdb_status_t tool_mesh(const tvdb_tree_index* p, const tool_map* cells,
-                               float iso, double adapt,
+                               float iso, double adapt, tvdb_thread_pool_t* pool,
                                tvdb_triangle_mesh* mesh, tvdb_error_t* err) {
   tool_edge_slab slabs[TOOL_EDGE_SLABS];
   memset(slabs, 0, sizeof(slabs));
@@ -1347,7 +1383,7 @@ static tvdb_status_t tool_mesh(const tvdb_tree_index* p, const tool_map* cells,
                           vertex[tri[t + (flip ? 1 : 2)]]};
     }
   }
-  st = tool_adapt(mesh, adapt, err);
+  st = tool_adapt(mesh, adapt, pool, err);
 done:
   for (int s = 0; s < TOOL_EDGE_SLABS; ++s)
     for (int a = 0; a < 3; ++a) tool_map_free(&slabs[s].map[a]);
@@ -1392,7 +1428,7 @@ static tvdb_status_t volume_to_mesh(const tvdb_grid_t* source, float iso,
     }
   }
   st = tool_surface_cells(&p, iso, &cells, pool);
-  if (st == TVDB_OK) st = tool_mesh(&p, &cells, iso, adapt, &mesh, err);
+  if (st == TVDB_OK) st = tool_mesh(&p, &cells, iso, adapt, pool, &mesh, err);
   if (st == TVDB_OK) {
     tvdb_triangle_mesh_free(out);
     *out = mesh;
@@ -1508,7 +1544,7 @@ tvdb_status_t tvdb_grid_level_set_rebuild(
   if (st != TVDB_OK) goto done;
   report.surface_cells = cells.count;
   if (cells.count) {
-    st = tool_mesh(&p, &cells, iso, 0, &mesh, err);
+    st = tool_mesh(&p, &cells, iso, 0, NULL, &mesh, err);
     if (st != TVDB_OK) goto done;
     st = tvdb_mesh_sdf_create(&mesh, &query, err);
     if (st != TVDB_OK) goto done;

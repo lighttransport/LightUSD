@@ -110,7 +110,10 @@ tvdb_status_t tvdb_grid_to_nanovdb(const tvdb_grid_t *grid, uint8_t **out_data,
 #define NV_GRID_OFF_BLIND_OFF    640u
 #define NV_GRID_OFF_BLIND_COUNT  648u
 
-#define NV_MAGIC_NUMBER 0x304244566f6e614eULL  /* "NanoVDB0" */
+/* GridData::magic. NanoVDB's C++ GridHandle and nanovdb::io expect the grid
+ * magic "NanoVDB1" ("NanoVDB0" is the legacy file-level number); tinyvdb's own
+ * reader accepts either. */
+#define NV_MAGIC_GRID 0x314244566f6e614eULL  /* "NanoVDB1" */
 #define NV_GRID_TYPE_FLOAT 1u
 
 /* version (Major,Minor,Patch) packed (Major<<21 | Minor<<10 | Patch). */
@@ -608,7 +611,7 @@ tvdb_status_t tvdb_grid_to_nanovdb(const tvdb_grid_t *grid, uint8_t **out_data,
                       (uint64_t)root_active_tiles * 4096u * 4096u * 4096u);
 
     /* GridData. */
-    nv__write_u64(buf, off_grid + NV_GRID_OFF_MAGIC, NV_MAGIC_NUMBER);
+    nv__write_u64(buf, off_grid + NV_GRID_OFF_MAGIC, NV_MAGIC_GRID);
     nv__write_u64(buf, off_grid + NV_GRID_OFF_CHECKSUM, 0xFFFFFFFFFFFFFFFFull);
     nv__write_u32(buf, off_grid + NV_GRID_OFF_VERSION, nv__make_version());
     /* HasBBox (1 << 1) and IsBreadthFirst (1 << 5). */

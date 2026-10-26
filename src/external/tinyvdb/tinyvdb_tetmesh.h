@@ -54,7 +54,10 @@ typedef struct {
 
 /* Field sampler for tvdb_sdf_to_tet_mesh; must be thread-safe and return a
  * finite value at every lattice vertex inside [bbox_min, bbox_max] padded by
- * one spacing. Return nonzero on success. */
+ * one spacing. Return nonzero on success. The field must be a signed distance
+ * (1-Lipschitz) function: undirected distances in world units, negative
+ * inside. The warp pass relies on that to skip vertices that no lattice edge
+ * can cross. */
 typedef int (*tvdb_sdf_sample_fn)(const double p[3], float* value, void* user);
 
 /* Interior of an analytic or caller-provided field over a world box that must

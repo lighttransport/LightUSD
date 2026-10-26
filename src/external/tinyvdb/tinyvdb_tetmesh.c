@@ -795,7 +795,12 @@ static tvdb_status_t tet_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
             const size_t v = center ? L.corners + (size_t)i + cx * (size_t)j + cxy * (size_t)k
                                     : (size_t)i + sx * (size_t)j + sxy * (size_t)k;
             const double fv = (double)value[v] - iso;
-            if (fv == 0) continue;
+            /* A sign change across an edge needs the two values to straddle
+             * the isovalue, and a 1-Lipschitz sampler (a signed distance
+             * field, including a trilinearly interpolated one) changes by at
+             * most sqrt(3) spacings over the longest edge, so a vertex farther
+             * than that cannot warp. */
+            if (fabs(fv) > 1.7320508075688772 * len_long) continue;
             double best = INFINITY, best_t = 0;
             size_t best_w = SIZE_MAX;
             for (int e = 0; e < 14; ++e) {
