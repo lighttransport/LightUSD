@@ -107,7 +107,8 @@ bool Compositor::ComposePrim(PrimSpec& target, const Layer& source_layer,
     return e && e->authored &&
            std::find(e->deleted.begin(), e->deleted.end(), a) != e->deleted.end();
   };
-  auto merge_arcs = [&](std::vector<std::string>& dst,
+  // `dst` is a PrimMetadata arc list: it allocates only when an arc lands.
+  auto merge_arcs = [&](LazyStringList& dst,
                         const std::vector<std::string>& src,
                         const ArcListOp* tgt_edit) {
     for (const std::string& a : src) {

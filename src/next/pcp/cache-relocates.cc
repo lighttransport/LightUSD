@@ -105,8 +105,8 @@ bool Cache::Impl::FlowsThroughRelocateSource(const Src &c,
     // subtree (SymRig -> LRig), so the intermediate path would be mis-computed
     // (TrickyRelocationOfPrimFromPayload false-positive on inherited /Rig/SymRig).
     if (c.arc_kind != ArcType::Reference) return false;
-    if (!c.arc_sites || c.arc_sites->size() < 2) return false;
-    const auto &trail = *c.arc_sites;
+    if (!c.arc_sites() || c.arc_sites()->size() < 2) return false;
+    const auto &trail = *c.arc_sites();
     const std::string &leaf_tgt = trail.back().second;
     if (!NamespaceMapping::AtOrUnder(c.site, leaf_tgt)) return false;
     const std::string suffix = c.site.substr(leaf_tgt.size());  // e.g. "/Child"
@@ -269,8 +269,8 @@ std::vector<Src> Cache::Impl::IsolatedRelocatedContent(
       }
       c.map_idx =
           InternMapping(NamespaceMapping::Compose(outer, Mapping(s.map_idx)));
-      c.offset = ps.offset.Compose(s.offset);
-      if (!c.expression_variables) c.expression_variables = ps.expression_variables;
+      c.set_offset(ps.offset().Compose(s.offset()));
+      if (!c.expression_variables()) c.set_expression_variables(ps.expression_variables());
       if (c.arc_kind == ArcType::Root) c.arc_kind = ArcType::Relocate;
       out.push_back(std::move(c));
     }
@@ -340,7 +340,7 @@ std::vector<Src> Cache::Impl::ComposedRelocatedContent(
       Src c = s;
       c.map_idx =
           InternMapping(NamespaceMapping::Compose(redirect, Mapping(s.map_idx)));
-      if (!c.expression_variables) c.expression_variables = ps.expression_variables;
+      if (!c.expression_variables()) c.set_expression_variables(ps.expression_variables());
       if (c.arc_kind == ArcType::Root) c.arc_kind = ArcType::Relocate;
       out.push_back(std::move(c));
     }
@@ -369,13 +369,12 @@ void Cache::Impl::AddRelocatedSources(const Src &ps,
     dst.stack_idx = ps.stack_idx;
     dst.site = arrival.dst_site;
     dst.map_idx = InternMapping(renamed_map(arrival.dst_site));
-    dst.offset = ps.offset;
+    // Offset, expression variables, arc chain and site trail: the parent's
+    // shared arc context.
+    dst.set_context(ps.context());
     dst.arc_kind = ps.arc_kind;
     dst.implied_anchor = ps.implied_anchor;
     dst.suppress_site_specs = false;  // the TARGET address is a legal site
-    dst.expression_variables = ps.expression_variables;
-    dst.arc_chain = ps.arc_chain;
-    dst.arc_sites = ps.arc_sites;
     dst.ancestral = true;  // child derivation, like DeriveChildSources
     base->push_back(std::move(dst));
 
@@ -432,10 +431,14 @@ std::vector<Src> Cache::Impl::DeriveChildSources(const std::vector<Src> &psrcs,
         continue;
       Src c;
       c.stack_idx = ps.stack_idx;
-      c.site = ps.site + "/" + cn;
+      // Exact-size join: `a + "/" + b` doubles its temporary, and every
+      // derived source keeps its site.
+      c.site.reserve(ps.site.size() + 1 + cn.size());
+      c.site.append(ps.site).append(1, '/').append(cn);
       c.map_idx = ps.map_idx;  // share the parent's mapping (no string copy)
-      c.expression_variables = ps.expression_variables;
-      c.offset = ps.offset;
+      // Offset, expression variables, arc chain (implied class arcs need the
+      // whole chain) and ancestral cycle trail: the parent's shared context.
+      c.set_context(ps.context());
       c.arc_kind = ps.arc_kind;
       c.implied_anchor = ps.implied_anchor;
       // Prohibited relocation-source namespace extends to DESCENDANTS: their
@@ -443,8 +446,6 @@ std::vector<Src> Cache::Impl::DeriveChildSources(const std::vector<Src> &psrcs,
       // ignored, while the Srcs themselves stay traversable for chained
       // relocations (arrivals registered under another relocate's source).
       c.suppress_site_specs = ps.suppress_site_specs;
-      c.arc_chain = ps.arc_chain;  // implied class arcs need the whole chain
-      c.arc_sites = ps.arc_sites;  // ancestral cycle trail (see Src::arc_sites)
       c.ancestral = true;          // arc was introduced at the parent
       base.push_back(std::move(c));
     }
@@ -505,8 +506,8 @@ const std::vector<Src> &Cache::Impl::SourcesForRelocateSource(uint32_t stack,
         Src s;
         s.stack_idx = stack;
         s.site = p.str();
-        s.expression_variables = std::make_shared<const Value>(
-            layer_stacks[stack].expression_variables);
+        s.set_expression_variables(std::make_shared<const Value>(
+            layer_stacks[stack].expression_variables));
         if (arrival) {
           AddRelocatedSources(s, *arrival, p.str(), &base, warn, err);
         } else {
@@ -601,8 +602,8 @@ const std::vector<Src> &Cache::Impl::SourcesForSite(uint32_t stack, const Path &
         s.stack_idx = stack;
         s.site = p.str();
         s.map_idx = InternMapping(WithStackRelocates(stack, NamespaceMapping{}));
-        s.expression_variables = std::make_shared<const Value>(
-            layer_stacks[stack].expression_variables);
+        s.set_expression_variables(std::make_shared<const Value>(
+            layer_stacks[stack].expression_variables));
         if (arrival) {
           AddRelocatedSources(s, *arrival, p.str(), &base, warn, err);
         } else {

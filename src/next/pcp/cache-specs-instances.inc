@@ -40,6 +40,18 @@
   // would store one key copy per (stack, site) for nothing.
   mutable std::vector<SpecRef> empty_specs_;
 
+  // Read-only spec resolution for threads of the parallel structure walk:
+  // while a thread has a store installed, Specs() never inserts into the
+  // shared caches or builds a filter (a miss is resolved into the store) and
+  // SpecsFor() writes no memo.
+  struct SpecReadOnlyStore {
+    std::deque<std::vector<SpecRef>> vals;
+  };
+  static SpecReadOnlyStore *&SpecReadOnlyTLS() {
+    static thread_local SpecReadOnlyStore *store = nullptr;
+    return store;
+  }
+
   const std::vector<SpecRef> &Specs(uint32_t stack_idx,
                                     const std::string &site) const ;
   // Build (or disable) the per-stack path filter from `layer_stacks[stack_idx]`.
@@ -121,6 +133,21 @@
   // (asset-relative, identical across instances). Keep only the latter --
   // `NamespaceMapping::MapsFrom`.
   std::string ComputeInstanceKeyImpl(const std::vector<Src> &srcs) const ;
+  // Drops sources that can no longer affect the composed stage (see
+  // cache-storage.cc); returns the number removed.
+  bool IsInertSource(const Src &s) const;
+  // Any non-variant source an arc targeted directly (MapsFrom): the sources
+  // an instanceable prim's subtree derives from when it is expanded.
+  bool HasSharedSource(const std::vector<Src> &srcs) const {
+    for (const Src &s : srcs)
+      if (!s.variant && Mapping(s.map_idx).MapsFrom(s.site)) return true;
+    return false;
+  }
+  size_t DropInertSources(const std::string &key, std::vector<Src> &srcs,
+                          const std::vector<std::string> *children);
+  // Set for a build whose sources die with it (release_build_sources): the
+  // source warm then drops inert sources as it goes (ExpandWarmNode).
+  bool warm_drop_inert_ = false;
 
   // Prototype bookkeeping for a prim that is an instance with key `ik`.
   //
@@ -150,14 +177,28 @@
   // instanceable (see BuildStage). Lets FlattenInstances* find prototypes
   // and members without a path->index map over all prims; a miss falls back
   // to building that map once.
-  std::unordered_map<std::string, uint32_t> instance_prim_index_;
+  struct InstanceIndexEntry {
+    PathStr path;  // backs the map key (shared with prototype_of)
+    uint32_t idx;
+  };
+  std::unordered_map<std::string_view, InstanceIndexEntry> instance_prim_index_;
+  void RecordInstanceIndex(const std::string &path, uint32_t idx) {
+    auto it = instance_prim_index_.find(path);
+    if (it != instance_prim_index_.end()) {
+      it->second.idx = idx;
+      return;
+    }
+    InstanceIndexEntry e{PathNode(path), idx};
+    const std::string_view key(e.path.str());
+    instance_prim_index_.emplace(key, std::move(e));
+  }
 
   // Retire one group: drop `prim_path` from it and, if that empties it or the
   // prim WAS the prototype, orphan the siblings and erase the group.
   // `it` must be valid; returns the iterator to use next.
-  std::unordered_map<std::string, std::vector<std::string>>::iterator
+  std::unordered_map<std::string, std::vector<PathStr>>::iterator
   DropInstancingFromGroup(
-      std::unordered_map<std::string, std::vector<std::string>>::iterator it,
+      std::unordered_map<std::string, std::vector<PathStr>>::iterator it,
       const std::string &prim_path) ;
 
   void DropInstancing(const std::string &prim_path) ;

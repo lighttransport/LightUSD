@@ -746,7 +746,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
 
   enum class ArcField { References, Payloads, Inherits, Specializes };
   auto SelectArc = [](PrimMetadata& meta,
-                      ArcField f) -> std::vector<std::string>& {
+                      ArcField f) -> LazyStringList& {
     switch (f) {
       case ArcField::References: return meta.references;
       case ArcField::Payloads: return meta.payloads;
@@ -831,7 +831,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         break;
     }
 
-    std::vector<std::string>* target = &SelectArc(meta, field);
+    std::vector<std::string>* target = &SelectArc(meta, field).mut();
     switch (qual) {
       case ArcQual::Explicit:
         *target = std::move(items);

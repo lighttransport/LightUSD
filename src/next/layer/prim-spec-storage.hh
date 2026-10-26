@@ -13,6 +13,7 @@ public:
   /// Store a value and return its offset
   uint32_t store(const Value& value);
   uint32_t store(Value&& value);
+  void reserve(size_t count);
 
   /// Get value at offset
   const Value* get(uint32_t offset) const;

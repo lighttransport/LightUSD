@@ -785,13 +785,13 @@ void WriteVariantSets(StreamWriter& os,
         return holder_arcs ? *holder_arcs : kEmpty;
       };
       const std::vector<std::string>& o_refs =
-          pick_arcs(var.references, hmeta ? &hmeta->references : nullptr);
+          pick_arcs(var.references, hmeta ? &hmeta->references.get() : nullptr);
       const std::vector<std::string>& o_pls =
-          pick_arcs(var.payloads, hmeta ? &hmeta->payloads : nullptr);
+          pick_arcs(var.payloads, hmeta ? &hmeta->payloads.get() : nullptr);
       const std::vector<std::string>& o_inh =
-          pick_arcs(var.inherits, hmeta ? &hmeta->inherits : nullptr);
+          pick_arcs(var.inherits, hmeta ? &hmeta->inherits.get() : nullptr);
       const std::vector<std::string>& o_spz =
-          pick_arcs(var.specializes, hmeta ? &hmeta->specializes : nullptr);
+          pick_arcs(var.specializes, hmeta ? &hmeta->specializes.get() : nullptr);
       const bool o_inactive = !var.active || (hmeta && !hmeta->active);
       const bool o_hidden = var.hidden || (hmeta && hmeta->hidden);
       // Authored `hidden = false` is a real opinion that must round-trip.

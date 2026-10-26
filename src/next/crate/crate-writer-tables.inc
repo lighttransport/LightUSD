@@ -15,6 +15,19 @@
       frozen_miss_ = true;  // pre-pass incomplete -> driver falls back to serial
       return 0;
     }
+    if (WorkerCtx* w = WorkerTLS()) {
+      // Workers never probe the live global tables (the commit thread mutates
+      // them); every miss logs one ordered event, replayed exactly once in
+      // chunk order at commit. Local ids start at the phase-start token count.
+      auto it = w->tok_map.find(s);
+      if (it != w->tok_map.end()) return it->second;
+      w->tok_store.emplace_back(s);
+      const std::string_view sv(w->tok_store.back());
+      const uint32_t id = w_base_tok + (w->ntok++);
+      w->tok_map.emplace(sv, id);
+      w->events.push_back(InternEvent{sv, id, 0});
+      return id;
+    }
     auto it = token_to_index_.find(s);
     if (it != token_to_index_.end()) return it->second;
     uint32_t idx = static_cast<uint32_t>(tokens_.size());
@@ -29,6 +42,19 @@
       if (it != frozen_str_->end()) return it->second;
       frozen_miss_ = true;
       return 0;
+    }
+    if (WorkerCtx* w = WorkerTLS()) {
+      // Token first (serial InternString interns the token too), then the
+      // string event -- the replay reproduces both tables' first-use order.
+      auto it = w->str_map.find(s);
+      if (it != w->str_map.end()) return it->second;
+      (void)InternToken(s);
+      w->str_store.emplace_back(s);
+      const std::string_view sv(w->str_store.back());
+      const uint32_t id = w_base_str + (w->nstr++);
+      w->str_map.emplace(sv, id);
+      w->events.push_back(InternEvent{sv, id, 1});
+      return id;
     }
     auto it = string_to_index_.find(s);
     if (it != string_to_index_.end()) return it->second;
@@ -85,72 +111,142 @@
 
   static constexpr size_t kNoPathSlot = static_cast<size_t>(-1);
 
+  static size_t PathShardOf(uint64_t h) {
+    return static_cast<size_t>(h >> 28) & (kPathShards - 1);
+  }
+  static uint64_t PathSlotTag(uint64_t h) { return h & 0xFFFFFFFF00000000ull; }
+  // Slot capacity keeps each shard's load factor <= 3/4: a probe chain is
+  // walked in the slot array alone (fingerprints), so a fuller table costs a
+  // few more adjacent slots, not more misses, and the 64-bit slots then take
+  // no more memory than 32-bit ones at load <= 1/2.
+  static bool PathSlotsFull(size_t n, size_t cap) { return n * 4 > cap * 3; }
+
   // Touch the slot a coming probe will read. The path table is far larger
   // than any cache on a big scene, so each intern otherwise starts with a
   // stalled random load; the emit loops know the next path one step ahead.
   void PrefetchPathSlot(uint64_t h) const {
+    if (WorkerTLS()) return;  // the global slot arrays may rehash concurrently
 #if defined(__GNUC__) || defined(__clang__)
-    if (!path_slots_.empty()) {
-      __builtin_prefetch(&path_slots_[static_cast<size_t>(h) &
-                                      (path_slots_.size() - 1)]);
-    }
+    const std::vector<uint64_t>& slots = path_shards_[PathShardOf(h)].slots;
+    if (!slots.empty())
+      __builtin_prefetch(&slots[static_cast<size_t>(h) & (slots.size() - 1)]);
 #else
     (void)h;
 #endif
   }
 
+  // Probe for (stem, name). On a miss, *empty_slot (if given) receives the
+  // empty slot ending the chain in the key's shard, for AddPathRec.
   uint32_t FindPathKey(std::string_view stem, std::string_view name,
                        uint64_t h, size_t* empty_slot = nullptr) const {
-    if (path_slots_.empty()) return UINT32_MAX;
-    const size_t mask = path_slots_.size() - 1;
+    const std::vector<uint64_t>& slots = path_shards_[PathShardOf(h)].slots;
+    if (slots.empty()) return UINT32_MAX;
+    const size_t mask = slots.size() - 1;
+    const uint64_t tag = PathSlotTag(h);
     for (size_t i = static_cast<size_t>(h) & mask;; i = (i + 1) & mask) {
-      const uint32_t slot = path_slots_[i];
+      const uint64_t slot = slots[i];
       if (slot == 0) {
         if (empty_slot) *empty_slot = i;
         return UINT32_MAX;
       }
-      const uint32_t idx = slot - 1;
+      if ((slot & 0xFFFFFFFF00000000ull) != tag) continue;
+      const uint32_t idx = static_cast<uint32_t>(slot) - 1;
       if (path_hashes_[idx] == h && paths_[idx].stem == stem &&
           paths_[idx].name == name) {
         return idx;
       }
     }
   }
-  void PlacePathSlot(uint32_t idx) {
-    const size_t mask = path_slots_.size() - 1;
-    size_t i = static_cast<size_t>(path_hashes_[idx]) & mask;
-    while (path_slots_[i] != 0) i = (i + 1) & mask;
-    path_slots_[i] = idx + 1;
+  static void PlaceInShard(std::vector<uint64_t>& slots, uint64_t h,
+                           uint32_t idx) {
+    const size_t mask = slots.size() - 1;
+    size_t i = static_cast<size_t>(h) & mask;
+    while (slots[i] != 0) i = (i + 1) & mask;
+    slots[i] = PathSlotTag(h) | (uint64_t(idx) + 1);
+  }
+  // Grow one shard to hold at least `n` records (re-places only its own
+  // entries, read back from the old slots; touches no other shard).
+  void ReservePathShard(PathShard& sh, size_t n) {
+    size_t cap = 16;
+    while (PathSlotsFull(n, cap)) cap *= 2;
+    if (cap <= sh.slots.size()) return;
+    std::vector<uint64_t> old;
+    old.swap(sh.slots);
+    sh.slots.assign(cap, 0);
+    for (const uint64_t slot : old) {
+      if (slot == 0) continue;
+      const uint32_t idx = static_cast<uint32_t>(slot) - 1;
+      PlaceInShard(sh.slots, path_hashes_[idx], idx);
+    }
   }
   void ReservePaths(size_t n) {
     paths_.reserve(n);
     path_hashes_.reserve(n);
-    size_t cap = 16;
-    while (cap < n * 2) cap *= 2;
-    if (cap > path_slots_.size()) {
-      path_slots_.assign(cap, 0);
-      for (uint32_t i = 0; i < paths_.size(); ++i) PlacePathSlot(i);
+    // Hash bits split records evenly; 1/8 slack covers the spread.
+    const size_t per = n / kPathShards;
+    for (PathShard& sh : path_shards_)
+      ReservePathShard(sh, per + per / 8 + 64);
+  }
+  // Insert record `idx` (hash h) into its shard, growing it when full;
+  // `slot` is a FindPathKey empty-slot hint in that shard (or kNoPathSlot).
+  void InsertPathSlot(uint64_t h, uint32_t idx, size_t slot = kNoPathSlot) {
+    PathShard& sh = path_shards_[PathShardOf(h)];
+    if (PathSlotsFull(sh.count + 1, sh.slots.size())) {
+      ReservePathShard(sh, std::max<size_t>(64, (sh.count + 1) * 2));
+      slot = kNoPathSlot;  // rehash invalidates the failed lookup's slot
     }
+    if (slot == kNoPathSlot) PlaceInShard(sh.slots, h, idx);
+    else sh.slots[slot] = PathSlotTag(h) | (uint64_t(idx) + 1);
+    ++sh.count;
   }
   // Append a new record (views must outlive the write).
   uint32_t AddPathRec(std::string_view stem, std::string_view name,
                       uint64_t h, size_t slot = kNoPathSlot) {
-    if ((paths_.size() + 1) * 2 > path_slots_.size()) {
-      ReservePaths(std::max<size_t>(64, (paths_.size() + 1) * 2));
-      slot = kNoPathSlot;  // rehash invalidates the failed lookup's slot
-    }
     const uint32_t idx = static_cast<uint32_t>(paths_.size());
     paths_.push_back(PathRec{stem, name});
     path_hashes_.push_back(h);
-    if (slot == kNoPathSlot) PlacePathSlot(idx);
-    else path_slots_[slot] = idx + 1;
+    InsertPathSlot(h, idx, slot);
     return idx;
+  }
+
+  // Append a new (or log-local) path record. Worker mode logs a PathEvent
+  // (the commit replays probe+insert in event order = serial first-use
+  // order) and mirrors it in the worker's private table. When `owned_full`
+  // is non-empty the caller's text may be transient (scratch built for one
+  // prim): duplicate it into the ctx's owned storage and use stable views for
+  // both the private table and the commit event.
+  uint32_t WorkerInternPathKey(WorkerCtx* w, std::string_view stem,
+                               std::string_view name, uint64_t h,
+                               std::string_view owned_full) {
+    size_t slot = kNoPathSlot;
+    const uint32_t hit = w->ptab.Find(stem, name, h, &slot);
+    if (hit != UINT32_MAX) return w_base_path + hit;
+    PathEvent ev;
+    ev.hash = h;
+    ev.stem = stem;
+    ev.name = name;
+    ev.store = kStableText;
+    if (!owned_full.empty()) {
+      ev.store = static_cast<uint32_t>(w->path_store.size());
+      w->path_store.emplace_back(owned_full);
+      const PathRec owned = SplitPath(w->path_store.back());
+      ev.stem = owned.stem;
+      ev.name = owned.name;
+    }
+    ev.local = w_base_path + static_cast<uint32_t>(w->ptab.recs.size());
+    w->ptab.Add(ev.stem, ev.name, h, slot);
+    w->pevents.push_back(ev);
+    return ev.local;
   }
 
   // Intern a path whose text is transient: copied (once) when new.
   uint32_t InternPath(const std::string& path) {
     const PathRec key = SplitPath(path);
     const uint64_t h = HashPathKey(HashStem(key.stem), key.name);
+    if (WorkerCtx* w = WorkerTLS()) {
+      return WorkerInternPathKey(w, key.stem, key.name, h,
+                                 std::string_view(path));
+    }
     size_t slot = kNoPathSlot;
     const uint32_t hit = FindPathKey(key.stem, key.name, h, &slot);
     if (hit != UINT32_MAX) return hit;
@@ -162,6 +258,9 @@
   uint32_t InternPathStable(std::string_view path) {
     const PathRec key = SplitPath(path);
     const uint64_t h = HashPathKey(HashStem(key.stem), key.name);
+    if (WorkerCtx* w = WorkerTLS()) {
+      return WorkerInternPathKey(w, key.stem, key.name, h, std::string_view());
+    }
     size_t slot = kNoPathSlot;
     const uint32_t hit = FindPathKey(key.stem, key.name, h, &slot);
     if (hit != UINT32_MAX) return hit;
@@ -173,6 +272,9 @@
   uint32_t InternPropPath(std::string_view prim_path, uint64_t prim_hash,
                           std::string_view name) {
     const uint64_t h = HashPathKey(prim_hash, name);
+    if (WorkerCtx* w = WorkerTLS()) {
+      return WorkerInternPathKey(w, prim_path, name, h, std::string_view());
+    }
     size_t slot = kNoPathSlot;
     const uint32_t hit = FindPathKey(prim_path, name, h, &slot);
     if (hit != UINT32_MAX) return hit;
@@ -236,7 +338,38 @@
       return have_walked && p.size() >= walked_floor.size() &&
              IsSlashPrefix(p, walked_stem);
     };
+    // Read-only parallel pre-pass: the walk below stops at the first ancestor
+    // already present, so a record can add a path only if its prim part (for a
+    // property) or its stem's parent is missing now. Presence only grows, so a
+    // record cleared here would add nothing in the ordered walk either.
+    std::vector<uint8_t> may_add(orig, uint8_t{0});
+    ParallelRanges(orig, 100000, [&](size_t, size_t lo, size_t hi) {
+      std::string_view last_stem;
+      bool have_last = false, last_add = false;
+      for (size_t i = lo; i < hi; ++i) {
+        const PathRec& rec = paths_[i];
+        if (!(have_last && rec.stem == last_stem)) {
+          const std::string_view stem = rec.stem;
+          bool add_any = false;
+          if (stem.size() > 1) {
+            const size_t sl = stem.rfind('/');
+            if (sl != std::string_view::npos && sl != 0 &&
+                FindPath(stem.substr(0, sl)) == UINT32_MAX)
+              add_any = true;
+          }
+          last_stem = stem;
+          last_add = add_any;
+          have_last = true;
+        }
+        bool add = last_add;
+        if (!add && !rec.name.empty() && !rec.stem.empty() &&
+            rec.stem != "/" && FindPath(rec.stem) == UINT32_MAX)
+          add = true;
+        may_add[i] = add ? 1 : 0;
+      }
+    });
     for (size_t i = 0; i < orig; i++) {
+      if (!may_add[i]) continue;
       const PathRec rec = paths_[i];
       if (have_walked && rec.stem == walked_stem) continue;
       std::string_view cur = rec.stem;
@@ -326,11 +459,91 @@
       ++seen_used;
       return true;
     };
+    // Read-only parallel pre-pass: flag the records with any component not in
+    // the token table yet (same split and longest-common-prefix skip as the
+    // ordered pass below, with lookups instead of inserts). Presence only
+    // grows, so an unflagged record would intern nothing below.
+    const size_t npaths = paths_.size();
+    std::vector<uint8_t> may_add(npaths, uint8_t{0});
+    auto has_token = [&](std::string_view t) {
+      return token_to_index_.find(t) != token_to_index_.end();
+    };
+    auto components_present = [&](std::string_view s, size_t start) {
+      while (start < s.size()) {
+        size_t end = s.size();
+        const size_t slash = s.find('/', start);
+        const size_t dot = s.find('.', start);
+        if (slash != std::string_view::npos) end = std::min(end, slash);
+        if (dot != std::string_view::npos) end = std::min(end, dot);
+        if (end > start && !has_token(s.substr(start, end - start)))
+          return false;
+        start = end + 1;
+      }
+      return true;
+    };
+    auto shared_start = [](std::string_view stem, std::string_view prev) {
+      // Longest common prefix, then back off to a '/' that is a component
+      // boundary in BOTH stems.
+      size_t start = 1;
+      const size_t lim = std::min(stem.size(), prev.size());
+      size_t k = 0;
+      while (k < lim && stem[k] == prev[k]) ++k;
+      size_t p = std::string_view::npos;
+      if (k == prev.size() && k < stem.size() && stem[k] == '/') {
+        p = k;  // stem is under prev
+      } else if (k > 0) {
+        p = stem.rfind('/', k - 1);  // same char in both below k
+      }
+      if (p != std::string_view::npos && p >= 1) start = p + 1;
+      return start;
+    };
+    ParallelRanges(npaths, 100000, [&](size_t, size_t lo, size_t hi) {
+      std::string_view prev;
+      bool have = false;
+      const char* last_name = nullptr;
+      size_t last_name_len = 0;
+      for (size_t i = lo; i < hi; ++i) {
+        const PathRec& rec = paths_[i];
+        if (rec.name.empty() && (rec.stem.empty() || rec.stem == "/")) {
+          may_add[i] = has_token("") ? 0 : 1;
+          continue;
+        }
+        bool add = false;
+        if (!(have && rec.stem == prev)) {
+          add = !components_present(rec.stem,
+                                    have ? shared_start(rec.stem, prev) : 1);
+        }
+        if (!add && !rec.name.empty() &&
+            !(rec.name.data() == last_name && rec.name.size() == last_name_len)) {
+          add = !components_present(rec.name, 0);
+          last_name = rec.name.data();
+          last_name_len = rec.name.size();
+        }
+        if (add) {
+          // A flagged record ends this slice's chain of verified stems.
+          have = false;
+          last_name = nullptr;
+        } else {
+          prev = rec.stem;
+          have = true;
+        }
+        may_add[i] = add ? 1 : 0;
+      }
+    });
+
     std::string_view prev_stem;
     bool have_prev = false;
-    for (const PathRec& rec : paths_) {
+    for (size_t ri = 0; ri < npaths; ++ri) {
+      const PathRec& rec = paths_[ri];
       if (rec.name.empty() && (rec.stem.empty() || rec.stem == "/")) {
-        InternToken("");  // Token 0 = empty string for root path marker
+        if (may_add[ri]) InternToken("");  // Token 0 = empty string for root path marker
+        continue;
+      }
+      if (!may_add[ri]) {
+        // Every component is interned already: nothing to add, and this
+        // stem is a valid shared-prefix reference for the next record.
+        prev_stem = rec.stem;
+        have_prev = true;
         continue;
       }
       if (!(have_prev && rec.stem == prev_stem)) {
@@ -436,6 +649,11 @@
     PropNameTable& name_table = GetPropNameTable();
     for (const auto& prim : layer.prims()) {
       prim_name_tokens_.push_back(InternToken(prim.name()));
+#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+      // Deferred fill: only the skeleton exists yet; the rest is interned
+      // when each prim is encoded (table order differs, content does not).
+      if (deferred_filler_) continue;
+#endif
       InternToken(prim.type_name());
 
       for (const auto& slot : prim.properties().slots()) {

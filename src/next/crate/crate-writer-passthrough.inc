@@ -73,7 +73,10 @@
     // Streaming write: a range already emitted (instance copies of one source
     // array) resolves to its output offset without building a DataBlock (a
     // shared_ptr copy) -- the same answer StreamInternBlock's cache gives.
-    if (stream_values_) {
+    // In worker mode the probe is skipped here (the commit thread owns the
+    // shared range table); the logged op replays the full probe + intern
+    // serially, byte-identically.
+    if (stream_values_ && !CurWorker()) {
       if (const uint64_t* cached = stream_source_ranges_.find(
               lr->source->identity(), lr->block_offset, lr->block_len)) {
         ++blocks_deduped_;

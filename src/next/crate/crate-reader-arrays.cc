@@ -20,6 +20,15 @@ namespace lightusd {
 namespace next {
 
 bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
+  // An empty array (payload 0) is cheaper to build than to look up.
+  if (rep.payload() == 0) return UnpackArrayUncached(rep, out);
+  if (FindDecoded(rep.raw(), out)) return true;
+  if (!UnpackArrayUncached(rep, out)) return false;
+  StoreDecoded(rep.raw(), out);
+  return true;
+}
+
+bool CrateReader::Impl::UnpackArrayUncached(ValueRep rep, Value& out) {
   CrateTypeId type_id = rep.type_id();
 
   // Fast path: keep numeric POD arrays as lazy references into the retained

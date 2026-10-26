@@ -45,6 +45,8 @@ CrateReadResult CrateReader::Impl::ParseFromSource() {
   specs_.clear();
   paths_.clear();
   path_parent_.clear();
+  // Decoded-value cache entries are keyed by this file's value offsets.
+  for (size_t i = 0; i < kDictCacheShards; ++i) dict_cache_[i].map.clear();
 
   if (!source_ || source_->size() < kCrateBootstrapSize) {
     AddError("Invalid input data");

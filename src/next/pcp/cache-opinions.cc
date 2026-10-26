@@ -48,10 +48,10 @@ std::vector<PropertyOpinion> Cache::GetPropertyStack(
           }
         }
         item.arc = "variant";
-        item.offset = source.offset.offset;
-        item.scale = source.offset.scale;
-        if (source.expression_variables) {
-          item.expression_variables = *source.expression_variables;
+        item.offset = source.offset().offset;
+        item.scale = source.offset().scale;
+        if (source.expression_variables()) {
+          item.expression_variables = *source.expression_variables();
         }
         item.has_default = !p.value.is_empty();
         item.default_value = p.value;
@@ -66,12 +66,12 @@ std::vector<PropertyOpinion> Cache::GetPropertyStack(
       item.layer_identifier = spec.layer_id();
       item.prim_path = spec.spec->path().str();
       item.arc = ArcTypeName(source.arc_kind);
-      const LayerOffset time = source.offset.Compose(spec.layer_offset);
+      const LayerOffset time = source.offset().Compose(spec.layer_offset);
       item.offset = time.offset;
       item.scale = time.scale;
       item.suppressed = source.suppress_site_specs;
-      if (source.expression_variables) {
-        item.expression_variables = *source.expression_variables;
+      if (source.expression_variables()) {
+        item.expression_variables = *source.expression_variables();
       }
       if (const auto* value = spec.spec->property_value(slot->name_id)) {
         item.has_default = !value->is_empty();
@@ -119,7 +119,10 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
     bool clips_snapshot_taken = false;
     std::vector<PropNameId> pre_clip_props;
     const auto snapshot_pre_clip_props = [&]() {
-      if (clips_snapshot_taken || !out->meta().clips().is_dictionary()) return;
+      // Read through a const view: the mutable accessor would allocate the
+      // metadata ext (~1.3 KB) on every composed prim.
+      const PrimMetadata &out_meta = out->meta();
+      if (clips_snapshot_taken || !out_meta.clips().is_dictionary()) return;
       clips_snapshot_taken = true;
       for (const PropSlot &sl : out->properties().slots()) {
         if (sl.is_relationship()) continue;
@@ -157,7 +160,7 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
           out->meta().doc() = s.variant->doc;
         }
         if (!s.variant->kind.empty() && !out->meta().kindAuthored() &&
-            out->meta().kind().empty()) {
+            static_cast<const PrimMetadata &>(out->meta()).kind().empty()) {
           out->meta().kind() = s.variant->kind;
           out->meta().setKindAuthored();
         }
@@ -237,7 +240,7 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
         // asset's internal targets (e.g. material:binding, .connect) resolve to
         // their flattened paths. Identity for local opinions. The time offset
       // composes the arc's offset with the spec layer's sublayer offset.
-      const LayerOffset spec_off = s.offset.Compose(sr.layer_offset);
+      const LayerOffset spec_off = s.offset().Compose(sr.layer_offset);
       const bool remap_opinion_targets = !s_target_map->pairs.empty();
       if (!remap_opinion_targets) {
         // Most local opinions do not cross an arc or relocation. Avoid
@@ -258,7 +261,7 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
                 return Mapping(s.map_idx).Apply(p);
               }
               std::string r = s_target_map->ApplyTarget(p);
-              if (!r.empty() || s.arc_kind != ArcType::Inherit || !s.arc_chain)
+              if (!r.empty() || s.arc_kind != ArcType::Inherit || !s.arc_chain())
                 return r;
               // A connection/relationship target authored in an inherited local
               // CLASS that points OUTSIDE the class namespace (at a SIBLING
@@ -273,7 +276,7 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
                   Path(Mapping(s.map_idx).Apply(s.site)).parent().str();
               const std::string prim =
                   p.substr(0, p.find_first_of(".["));  // strip .prop / [target]
-              for (auto it = s.arc_chain->rbegin(); it != s.arc_chain->rend();
+              for (auto it = s.arc_chain()->rbegin(); it != s.arc_chain()->rend();
                    ++it) {
                 const NamespaceMapping &cm = Mapping(it->second);
                 if (!cm.crosses_arc) continue;
@@ -355,6 +358,14 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
       std::string apply_err;
       Compositor::ResolveArrayEditsOnPrim(out, &apply_err);
     }
+
+    // Free what the merges touched but left at defaults (the stripped
+    // variant-set list op above leaves an empty rare metadata tier on every
+    // prim that references a variant-set asset), and share plain property
+    // metadata now rather than at the layer's finalize, after every prim of
+    // a ~10M-prim stage has been filled.
+    out->meta().trim_ext();
+    out->share_property_metas();
   }
 
 }  // namespace pcp
@@ -608,7 +619,7 @@ auto Cache::Impl::ComputePrimIndex_locked(const Path &prim_path,
       n.layer_stack_idx = s.stack_idx;
       n.site_path_idx = InternPath(s.site);
       n.map_to_root = Mapping(s.map_idx);
-      n.offset = s.offset;
+      n.offset = s.offset();
       const std::vector<SpecRef> &specs = SpecsFor(s);
       if (!specs.empty()) {
         n.flags |= NodeFlags::HasSpecs;

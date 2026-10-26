@@ -381,6 +381,17 @@ if(LIGHTUSD_NEXT_ENABLE_THREAD)
     target_link_libraries(lightusd_next PUBLIC Threads::Threads)
 endif()
 
+# Experimental USD-style deferred opinion fill: the pcp composition builds a
+# skeleton layer (name / path / children per prim) and the USDC writer composes
+# each prim's opinions on demand in its worker threads, releasing them once
+# encoded, instead of materializing the whole composed layer first. Enabled at
+# run time by CompositionOptions::defer_opinion_fill (lusdcat -f to USDC).
+# Output is semantically identical; token/string table order may differ.
+option(LIGHTUSD_NEXT_DEFERRED_FILL "Experimental deferred (USD-style) opinion fill for flatten-to-USDC" OFF)
+if(LIGHTUSD_NEXT_DEFERRED_FILL)
+    target_compile_definitions(lightusd_next PUBLIC LIGHTUSD_NEXT_DEFERRED_FILL)
+endif()
+
 # Optional fine-grained pcp::Cache locking: a std::shared_timed_mutex (pcp/
 # cache-lock.hh) so pure reads (ComposedChildNames, GetMemoryStats, IsInstance,
 # ...) take a shared lock instead of serializing behind the single exclusive

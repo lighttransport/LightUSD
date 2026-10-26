@@ -48,8 +48,11 @@
 #include <string_view>
 #include <type_traits>
 #include <cstdio>
+#include <atomic>  // also used by single-thread fallbacks of parallel loops
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include <thread>
+#include <condition_variable>
+#include <mutex>
 #endif
 
 // LZ4 for compression

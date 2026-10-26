@@ -77,6 +77,14 @@ struct CrateWriteOptions {
   /// output bytes are identical to a non-consuming write. Default off.
   bool consume_values = false;
 
+  /// Build the fields_specs lap (prim/property specs and their value blocks)
+  /// on worker threads: prims are chunked, each worker encodes into private
+  /// buffers with provisional token/string/path/block ids, and one ordered
+  /// commit pass replays the intern block/log ops into the shared tables.
+  /// Output bytes are identical to the serial path. Used by Write().
+  /// Only effective in a LIGHTUSD_ENABLE_THREAD build. Default on.
+  bool parallel_fields = true;
+
   /// Maximum complete crate size in bytes (0 = unlimited). The writer stops
   /// before growing the output buffer beyond this bound.
   uint64_t max_file_size_bytes = 0;

@@ -216,6 +216,14 @@ struct CompositionOptions {
   // warm; the one-shot ComposeStageFromLayer/File always enable it.
   bool release_build_sources = false;
 
+  // Experimental (LIGHTUSD_NEXT_DEFERRED_FILL builds only): build the stage
+  // as a skeleton layer and compose each prim's opinions on demand through
+  // the layer's PrimFiller (the USDC writer fills, encodes and releases prim
+  // by prim). For a stage that is written once (flatten to USDC). Ignored
+  // otherwise, for the ExtractedPrototypes instance mode, and for stages
+  // under 64 K prims (filled eagerly).
+  bool defer_opinion_fill = false;
+
   // Per-layer file/input memory cap for layers loaded by the compositor
   // (sublayers, references, payloads). 0 = no limit.
   size_t max_layer_memory = 0;

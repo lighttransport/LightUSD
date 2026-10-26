@@ -233,6 +233,7 @@ public:
 
   /// Get property count
   size_t size() const;
+  size_t capacity() const { return slots_.capacity(); }
 
   /// Sort slots by property name (canonical, run-stable order) for binary
   /// search. No-op while already sorted.

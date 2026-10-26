@@ -96,6 +96,10 @@
     uint32_t depth = 0;
     WarmOrder order;
     std::shared_ptr<const std::vector<Path>> protos;
+    // On the last child of a parent whose inert sources a worker drops once
+    // its children are derived: the parent's composed child names (see
+    // WarmSubtree / DropInertSources).
+    std::shared_ptr<const std::vector<std::string>> parent_children;
   };
 
   // State shared by the parallel-warm walk: the task queue (frontier roots,

@@ -37,7 +37,7 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
       const Value empty = Value::MakeDictionary();
       const ExpressionEvaluation expression = EvaluateAssetPathExpression(
           arc.asset_path,
-          src.expression_variables ? *src.expression_variables : empty);
+          src.expression_variables() ? *src.expression_variables() : empty);
       if (expression.is_expression && !expression.success) {
         AddIssue(ErrorCode::ExpressionVariableError, arc.asset_path,
                  expression.error,
@@ -113,10 +113,10 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
             remapped.map_idx = InternMapping(NamespaceMapping::Compose(
                 NamespaceMapping{composed_path, destination},
                 Mapping(target_src.map_idx)));
-            remapped.offset = src.offset.Compose(target_src.offset);
+            remapped.set_offset(src.offset().Compose(target_src.offset()));
             remapped.arc_kind = kind;
             remapped.ancestral = false;  // reached via this prim's own arc
-            remapped.expression_variables = src.expression_variables;
+            remapped.set_expression_variables(src.expression_variables());
             target->push_back(std::move(remapped));
           }
           return;
@@ -170,8 +170,8 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
       memo_key += '\1';
       memo_key += evaluated_asset_path;
       memo_key += '\1';
-      if (src.expression_variables) {
-        AppendExpressionVarsFingerprint(src.expression_variables->view(), &memo_key);
+      if (src.expression_variables()) {
+        AppendExpressionVarsFingerprint(src.expression_variables()->view(), &memo_key);
       }
 
       std::shared_ptr<Layer> arc_layer;
@@ -211,7 +211,7 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
         // the target stack's IDENTITY (pxr: (identifier, expression variables))
         // and feed its sublayer path expressions.
         arc_stack_idx = InternLayerStack(arc_layer, arc_id, warn, err,
-                                         src.expression_variables);
+                                         src.expression_variables());
         if (arc_stack_idx == kInvalidStack) return;
         arc_target_memo_.emplace(
             std::move(memo_key), ArcTargetEntry{arc_layer, arc_id, arc_stack_idx});
@@ -348,17 +348,17 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
         arc_off = arc_off.Compose(LayerOffset{0.0, parent_tcps / child_tcps});
       }
     }
-    arc_src.offset = src.offset.Compose(arc_off);
+    arc_src.set_offset(src.offset().Compose(arc_off));
     arc_src.arc_kind = kind;
     if (arc_stack_idx == src.stack_idx) {
-      arc_src.expression_variables = src.expression_variables;
+      arc_src.set_expression_variables(src.expression_variables());
     } else {
-      const Value inherited = src.expression_variables
-                                  ? *src.expression_variables
+      const Value inherited = src.expression_variables()
+                                  ? *src.expression_variables()
                                   : Value::MakeDictionary();
-      arc_src.expression_variables = std::make_shared<const Value>(
+      arc_src.set_expression_variables(std::make_shared<const Value>(
           ComposeExpressionVariables(
-              layer_stacks[arc_stack_idx].expression_variables, inherited));
+              layer_stacks[arc_stack_idx].expression_variables, inherited)));
     }
 
     // A specialize subtree is globally weakest: it (and everything beneath it)
@@ -398,7 +398,7 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
         std::map<std::string, std::string> ancestor_selections;
         for (const SpecRef& implied_spec : implied_specs) {
           RecordSelections(*implied_spec.spec, &ancestor_selections,
-                           arc_src.expression_variables, warn, err);
+                           arc_src.expression_variables(), warn, err);
         }
         // A variant selection the INHERITING prim (instance) authors on ITS OWN
         // path in this same ancestor stack beats the class's implied selection
@@ -415,7 +415,7 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
               Mapping(ancestor_map_idx).ReverseApply(dest);
           for (const SpecRef& own_spec : Specs(as, dest_in_as)) {
             RecordSelections(*own_spec.spec, &own_selections,
-                             arc_src.expression_variables, warn, err);
+                             arc_src.expression_variables(), warn, err);
           }
         }
         for (const auto& selection : ancestor_selections) {
@@ -622,14 +622,14 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
       // maps its own site to `arc_site`); compose it under this arc's mapping.
       s.map_idx = InternMapping(NamespaceMapping::Compose(
           Mapping(arc_src.map_idx), Mapping(target_src.map_idx)));
-      s.offset = arc_src.offset.Compose(target_src.offset);
+      s.set_offset(arc_src.offset().Compose(target_src.offset()));
       if (s.stack_idx != arc_stack_idx) {
-        const Value inherited = arc_src.expression_variables
-                                    ? *arc_src.expression_variables
+        const Value inherited = arc_src.expression_variables()
+                                    ? *arc_src.expression_variables()
                                     : Value::MakeDictionary();
-        s.expression_variables = std::make_shared<const Value>(
+        s.set_expression_variables(std::make_shared<const Value>(
             ComposeExpressionVariables(
-                layer_stacks[s.stack_idx].expression_variables, inherited));
+                layer_stacks[s.stack_idx].expression_variables, inherited)));
       }
 
       // Reference/payload arcs descend into a new layer stack -> extend the chain.
@@ -640,7 +640,7 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
       if (s.stack_idx != src.stack_idx) {
         child_chain.emplace_back(s.stack_idx, s.map_idx);
       }
-      s.arc_chain = std::make_shared<const ArcChain>(child_chain);
+      s.set_arc_chain(std::make_shared<const ArcChain>(child_chain));
 
       // Extend the persisted arc-site trail with EVERY arc hop (cross-stack
       // references AND same-stack internal inherits/specializes), so both an
@@ -652,9 +652,9 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
       // hit means the arc genuinely re-enters its own derivation path.
       {
         auto sites = std::make_shared<std::vector<std::pair<uint32_t, std::string>>>();
-        if (src.arc_sites) *sites = *src.arc_sites;
+        if (src.arc_sites()) *sites = *src.arc_sites();
         sites->emplace_back(s.stack_idx, s.site);
-        s.arc_sites = std::move(sites);
+        s.set_arc_sites(std::move(sites));
       }
 
       const ExpansionFrame cframe{s.stack_idx, s.map_idx, &s.site, frame,
@@ -690,7 +690,7 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
           s.map_idx = InternMapping(NamespaceMapping::Compose(
               NamespaceMapping{composed_path, destination},
               Mapping(composed_src.map_idx)));
-          s.offset = src.offset.Compose(composed_src.offset);
+          s.set_offset(src.offset().Compose(composed_src.offset()));
           s.arc_kind = kind;
           s.ancestral = false;  // reached via this prim's own arc
           target->push_back(std::move(s));

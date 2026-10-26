@@ -459,6 +459,11 @@ int main(int argc, char **argv) {
     // 1 = serial parse); same env knob as the --rewrite-layer path.
     opts.usda_parse_options.num_threads = parse_threads;
     opts.instance_flatten_mode = inst_mode;  // default Holder (self-contained)
+#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+    // Experimental: the stage is written once to USDC, so compose each prim's
+    // opinions on demand in the writer instead of up front.
+    opts.defer_opinion_fill = flatten && output_usdc;
+#endif
     opts.prototype_numbering = proto_num;
     // Parallel compose is byte-identical to serial. Default -1 = auto
     // (hardware concurrency); --compose-threads 1 = serial.

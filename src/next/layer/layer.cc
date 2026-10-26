@@ -94,7 +94,34 @@ void LayerMeta::FillAbsentStageMetaFrom(const LayerMeta& weaker) {
 // ============================================================
 
 Layer::Layer() = default;
-Layer::~Layer() = default;
+Layer::~Layer() {
+  // A composed stage's layer holds millions of prims whose destructors
+  // (metadata, property values, cold data) are independent of each other;
+  // freeing them serially took tens of seconds at the end of a large flatten.
+  // Large layers release each prim's contents in parallel (moving in an empty
+  // PrimSpec), then the vector frees the empty shells. Shared payloads
+  // (buffers, lazy-array sources) are refcounted atomically. Same threshold
+  // as the parallel finalize below, so small and per-worker layers stay
+  // serial.
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  const unsigned hw = std::thread::hardware_concurrency();
+  const size_t workers =
+      std::min<size_t>(hw ? hw : 1, static_cast<size_t>(kMaxExecutionThreads));
+  if (prims_.size() >= 65536 && workers > 1) {
+    std::vector<std::thread> pool;
+    pool.reserve(workers);
+    const size_t n = prims_.size();
+    for (size_t t = 0; t < workers; ++t) {
+      const size_t lo = n * t / workers;
+      const size_t hi = n * (t + 1) / workers;
+      pool.emplace_back([this, lo, hi]() {
+        for (size_t i = lo; i < hi; ++i) prims_[i] = PrimSpec();
+      });
+    }
+    for (std::thread& th : pool) th.join();
+  }
+#endif
+}
 
 // Hand-written moves: the deferred-index flag is an atomic (not movable by
 // default); everything else moves member-wise.
@@ -105,7 +132,8 @@ Layer::Layer(Layer&& other) noexcept
       meta_(std::move(other.meta_)),
       finalized_(other.finalized_),
       lazy_path_index_(other.lazy_path_index_),
-      path_index_dirty_(other.path_index_dirty_.load()) {
+      path_index_dirty_(other.path_index_dirty_.load()),
+      prim_filler_(std::move(other.prim_filler_)) {
   other.path_index_dirty_.store(false);
 }
 Layer& Layer::operator=(Layer&& other) noexcept {
@@ -118,6 +146,7 @@ Layer& Layer::operator=(Layer&& other) noexcept {
     lazy_path_index_ = other.lazy_path_index_;
     path_index_dirty_.store(other.path_index_dirty_.load());
     other.path_index_dirty_.store(false);
+    prim_filler_ = std::move(other.prim_filler_);
   }
   return *this;
 }
@@ -125,6 +154,10 @@ Layer& Layer::operator=(Layer&& other) noexcept {
 void Layer::reserve(size_t count) {
   prims_.reserve(count);
   root_indices_.reserve(count / 4);  // Estimate ~25% are roots
+}
+
+void Layer::resize_prims(size_t count) {
+  if (count > prims_.size()) prims_.resize(count);
 }
 
 uint32_t Layer::add_prim(PrimSpec&& spec) {
@@ -751,12 +784,17 @@ uint32_t LayerBuilder::begin_prim(const std::string& name, const std::string& ty
   // Build path based on parent stack
   std::string path_str;
   if (prim_stack_.empty()) {
-    path_str = path_prefix_ + "/" + name;  // prefix empty for a real root
+    // Exact-size joins (`a + "/" + b` doubles its temporary; every prim keeps
+    // its path). The prefix is empty for a real root.
+    path_str.reserve(path_prefix_.size() + 1 + name.size());
+    path_str.append(path_prefix_).append(1, '/').append(name);
   } else {
     // Get parent path
     const PrimSpec* parent = layer_.prim(prim_stack_.back());
     if (parent) {
-      path_str = parent->path().str() + "/" + name;
+      const std::string& pp = parent->path().str();
+      path_str.reserve(pp.size() + 1 + name.size());
+      path_str.append(pp).append(1, '/').append(name);
     } else {
       path_str = "/" + name;
     }

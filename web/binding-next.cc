@@ -347,10 +347,10 @@ class NextFlattenSession {
     std::vector<std::string>* arcs = nullptr;
     tn::ArcListOp* edit = nullptr;
     tn::ArcListOps& all_edits = meta.ensure_arc_edits();
-    if (kind == 0) { arcs = &meta.references; edit = &all_edits.references; }
-    else if (kind == 1) { arcs = &meta.payloads; edit = &all_edits.payloads; }
-    else if (kind == 2) { arcs = &meta.inherits; edit = &all_edits.inherits; }
-    else { arcs = &meta.specializes; edit = &all_edits.specializes; }
+    if (kind == 0) { arcs = &meta.references.mut(); edit = &all_edits.references; }
+    else if (kind == 1) { arcs = &meta.payloads.mut(); edit = &all_edits.payloads; }
+    else if (kind == 2) { arcs = &meta.inherits.mut(); edit = &all_edits.inherits; }
+    else { arcs = &meta.specializes.mut(); edit = &all_edits.specializes; }
     if (list_op != 0 && edit->authored && edit->is_explicit) {
       error_ = "Cannot mix explicit and qualified list-op edits for one arc field";
       return false;

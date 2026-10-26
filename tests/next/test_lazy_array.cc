@@ -151,6 +151,29 @@ int main() {
       // Exact tie between +1 and -1 counts: alternate them.
       for (size_t i = 0; i < count; ++i) v[i] = static_cast<uint32_t>(i & 1);
       assert(EncodeDeltaU32(v.data(), v.size()) == serial(v));
+      // FIELDSETS shape: runs of increasing ids separated by UINT32_MAX
+      // sentinels -- two distinct wide deltas per sentinel, small deltas
+      // win (the wide ones are only counted for summary candidates).
+      uint32_t id = 0;
+      for (size_t i = 0; i < count; ++i) {
+        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+        v[i] = (x % 4 == 0) ? UINT32_MAX : id++;
+      }
+      assert(EncodeDeltaU32(v.data(), v.size()) == serial(v));
+      // A wide delta is the most common one (survives every summary).
+      acc = 0;
+      for (size_t i = 0; i < count; ++i) {
+        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+        acc += (x % 3 == 0) ? 1u : 100000u;
+        v[i] = acc;
+      }
+      assert(EncodeDeltaU32(v.data(), v.size()) == serial(v));
+      // Almost no small deltas: exact counting of every wide delta.
+      for (size_t i = 0; i < count; ++i) {
+        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+        v[i] = static_cast<uint32_t>(x >> 32);
+      }
+      assert(EncodeDeltaU32(v.data(), v.size()) == serial(v));
     }
     std::cout << "  parallel delta encoder matches the serial encoder"
               << std::endl;
