@@ -402,7 +402,8 @@ def Volume "V"
     assert nanovdb is not None
     assert nanovdb["grid_type"] == 1 and nanovdb["components"] == 1
     assert nanovdb["value_type"] == "float" and nanovdb["grid_class"] == "levelSet"
-    assert nanovdb["data"][:8] == b"NanoVDB0" and len(nanovdb["data"]) > 736
+    # NanoVDB's own GridHandle writes the grid magic "NanoVDB1".
+    assert nanovdb["data"][:8] == b"NanoVDB1" and len(nanovdb["data"]) > 736
     # Cached: a second call returns the same bytes.
     assert scene.volume_nanovdb(0, 0)["data"] == nanovdb["data"]
 

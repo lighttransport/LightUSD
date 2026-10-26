@@ -134,10 +134,11 @@ int main(int argc, char** argv) {
     assert(nano.data != NULL && nano.size >= 736);
     assert(nano.grid_type == LIGHTUSD_NANOVDB_GRID_TYPE_FLOAT);
     assert(nano.components == 1);
-    /* GridData magic ("NanoVDB0") and the grid type field (offset 636). */
+    /* GridData magic ("NanoVDB1", what NanoVDB's GridHandle writes) and the
+       grid type field (offset 636). */
     uint64_t magic = 0;
     memcpy(&magic, nano.data, sizeof(magic));
-    assert(magic == 0x304244566f6e614eULL);
+    assert(magic == 0x314244566f6e614eULL);
     uint32_t header_type = 0;
     memcpy(&header_type, nano.data + 636, sizeof(header_type));
     assert(header_type == LIGHTUSD_NANOVDB_GRID_TYPE_FLOAT);

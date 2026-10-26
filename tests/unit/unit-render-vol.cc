@@ -378,7 +378,9 @@ void usdvol_nanovdb_sample_test(void) {
   }
   TEST_ASSERT(!bytes.empty());
 
-  // Float grid -> NanoVDB float grid with the "NanoVDB0" grid magic.
+  // Float grid -> NanoVDB float grid with the "NanoVDB1" grid magic (the
+  // value NanoVDB's own GridHandle writes; "NanoVDB0" is the legacy file-level
+  // number).
   {
     std::vector<uint8_t> nano;
     usdVol::VDBNanoVDBInfo info;
@@ -389,7 +391,7 @@ void usdvol_nanovdb_sample_test(void) {
     TEST_CHECK(nano.size() >= 736);
     uint64_t magic = 0;
     if (nano.size() >= 8) std::memcpy(&magic, nano.data(), 8);
-    TEST_CHECK(magic == 0x304244566f6e614eULL);
+    TEST_CHECK(magic == 0x314244566f6e614eULL);
     TEST_CHECK(info.grid_type == 1 && info.components == 1);
     TEST_CHECK(info.value_type == "float");
     uint32_t header_type = 0;
