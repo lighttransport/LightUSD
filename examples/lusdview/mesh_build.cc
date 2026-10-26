@@ -3587,6 +3587,7 @@ void BuildDrawVolumes(const tydra::RenderScene& rs, DrawScene* out) {
     }
     dv.densityScale = v.density_scale;
     dv.background = f.background;
+    dv.isLevelSet = f.level_set;
     out->volumes.push_back(std::move(dv));
   }
 }

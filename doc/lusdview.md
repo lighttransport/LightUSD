@@ -127,6 +127,20 @@ available. A missing `/dev/kfd` or `/dev/dri/renderD*` requires device
 passthrough at container/VM launch and cannot be fixed by creating repository
 files.
 
+### UsdVol volumes in the Vulkan raster path
+
+`vk/shaders/volume.frag` has two modes, selected by `VolumeUBO::params.x`. A
+fog/density field (`fieldClass` "fogVolume") is emission/absorption marched as
+before. A level-set field (`fieldClass` "levelSet", propagated from the
+resolved field as `DrawVolumeCPU::isLevelSet`) is treated as an isosurface: the
+shader marches to the first sign change of the field against `params.y` (0 for
+the UsdVol convention), refines it by bisection, and shades the hit with the
+field gradient as the normal, so a signed distance field renders as its surface
+instead of a thin density shell. The OpenGL and CUDA/OptiX paths still march
+every field as density; use `--backend vk` (the default) for isosurfaces.
+The embedded SPIR-V headers are regenerated with
+`examples/lusdview/vk/shaders/build-shaders.sh` and committed.
+
 ## Production path tracing
 
 `--path-trace` is the production multi-bounce mode; the existing `--rt` remains

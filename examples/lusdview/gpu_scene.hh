@@ -915,6 +915,11 @@ struct DrawVolumeCPU {
   float albedo[3]{0.6f, 0.6f, 0.65f};
   float emission[3]{0.0f, 0.0f, 0.0f};
   float background{0.0f};
+  // UsdVol fieldClass "levelSet": the field is a signed distance function, so
+  // the raster volume passes shade the isovalue surface instead of marcing it
+  // as density (the isosurface convention is value 0).
+  bool isLevelSet{false};
+  float isovalue{0.0f};
 };
 
 // Precomputed split-sum IBL for a DomeLight (baked at load from the HDR float
