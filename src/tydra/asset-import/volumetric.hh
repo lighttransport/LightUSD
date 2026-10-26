@@ -71,8 +71,10 @@ bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options,
 // VDB bytes of one level set (ZIP + active-mask compression).
 bool WriteLevelSetVDB(const LevelSet& level_set, std::vector<uint8_t>* bytes,
                       std::string* err);
+bool WriteLevelSetVDB(const LevelSet& level_set, std::string* bytes, std::string* err);
 // The first float grid of class "level set" (or, if none is classed, the
-// first float grid with a positive background) in VDB bytes.
+// first float grid with a positive background) in VDB bytes. Only the grids
+// needed to choose are decoded; the result does not reference `data`.
 bool ReadLevelSetVDB(const uint8_t* data, size_t size, LevelSet* out,
                      std::string* err);
 

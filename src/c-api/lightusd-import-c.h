@@ -110,6 +110,35 @@ LIGHTUSD_API lightusd_status lightusd_level_set_vdb_to_mesh(const uint8_t* vdb, 
 LIGHTUSD_API lightusd_status lightusd_level_set_vdb_to_tet_mesh(
     const uint8_t* vdb, size_t size, const char* settings_json, lightusd_string** points,
     lightusd_string** tets, lightusd_string** surface);
+/* A decoded level set, for several queries without re-reading VDB bytes
+ * (the lightusd_level_set_vdb_* calls above decode on every call). A handle
+ * does not reference the bytes or mesh it was made from. Queries only read
+ * the handle and may run concurrently; destroy must not race them. Settings
+ * and outputs are as for the matching *_vdb_* call. From VDB bytes, only the
+ * grid that is chosen (and grids examined before it) is decoded. */
+typedef struct lightusd_level_set lightusd_level_set;
+LIGHTUSD_API lightusd_status lightusd_level_set_from_mesh(
+    const float* points, size_t point_count, const int32_t* indices, size_t index_count,
+    const int32_t* counts, size_t count_count, const char* settings_json,
+    lightusd_level_set** out);
+LIGHTUSD_API lightusd_status lightusd_level_set_from_vdb(const uint8_t* vdb, size_t size,
+                                                        lightusd_level_set** out);
+LIGHTUSD_API void lightusd_level_set_destroy(lightusd_level_set* level_set);
+LIGHTUSD_API lightusd_status lightusd_level_set_get_info(const lightusd_level_set* level_set,
+                                                        lightusd_level_set_info* out);
+/* OpenVDB bytes (ZIP + active-mask compression). */
+LIGHTUSD_API lightusd_status lightusd_level_set_write_vdb(const lightusd_level_set* level_set,
+                                                         lightusd_string** vdb);
+LIGHTUSD_API lightusd_status lightusd_level_set_sample(const lightusd_level_set* level_set,
+                                                      const double* points, size_t count,
+                                                      float* values);
+LIGHTUSD_API lightusd_status lightusd_level_set_to_mesh(const lightusd_level_set* level_set,
+                                                       uint64_t max_cells,
+                                                       lightusd_string** points,
+                                                       lightusd_string** indices);
+LIGHTUSD_API lightusd_status lightusd_level_set_to_tet_mesh(
+    const lightusd_level_set* level_set, const char* settings_json, lightusd_string** points,
+    lightusd_string** tets, lightusd_string** surface);
 /* Attach a generated file (for example a level-set .vdb a stage references
  * by the relative path): written beside the layer by USDA/USDC saves and
  * packaged under that path in USDZ saves. Replaces an existing entry. */

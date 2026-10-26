@@ -71,32 +71,11 @@ lightusd_status Read(const uint8_t* vdb, size_t size, ia::LevelSet* out) {
   return LIGHTUSD_OK;
 }
 
-}  // namespace
-
-extern "C" {
-
-lightusd_status lightusd_volumetric_device_available(const char* device,
-                                                     lightusd_string** resolved) {
-  if (resolved) *resolved = nullptr;
-  std::string name, err;
-  if (!ia::VolumetricDeviceAvailable(device ? device : "cpu", &name, &err))
-    return Fail(DeviceStatus(device ? device : "cpu", &err), err);
-  if (resolved) {
-    auto* s = new (std::nothrow) lightusd_string();
-    if (!s) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "out of memory");
-    s->s = name;
-    *resolved = s;
-  }
-  return LIGHTUSD_OK;
-}
-
-lightusd_status lightusd_mesh_to_level_set_vdb(const float* points, size_t point_count,
-                                               const int32_t* indices, size_t index_count,
-                                               const int32_t* counts, size_t count_count,
-                                               const char* settings_json, lightusd_string** vdb) {
-  if (!vdb || !points || !indices || !point_count || !index_count || (count_count && !counts))
+lightusd_status FromMesh(const float* points, size_t point_count, const int32_t* indices,
+                         size_t index_count, const int32_t* counts, size_t count_count,
+                         const char* settings_json, ia::LevelSet* out) {
+  if (!points || !indices || !point_count || !index_count || (count_count && !counts))
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "level set: points, indices and output are required");
-  *vdb = nullptr;
   ia::Json settings;
   std::string err;
   if (!Settings(settings_json, &settings, &err)) return Fail(LIGHTUSD_ERR_INVALID_ARG, err);
@@ -125,13 +104,128 @@ lightusd_status lightusd_mesh_to_level_set_vdb(const float* points, size_t point
   mesh.positions.assign(points, points + 3 * point_count);
   mesh.indices.assign(indices, indices + index_count);
   if (count_count) mesh.counts.assign(counts, counts + count_count);
-  ia::LevelSet level_set;
-  std::vector<uint8_t> bytes;
-  if (!ia::MeshToLevelSet(mesh, o, &level_set, &err) ||
-      !ia::WriteLevelSetVDB(level_set, &bytes, &err))
+  if (!ia::MeshToLevelSet(mesh, o, out, &err)) return Failure(err);
+  return LIGHTUSD_OK;
+}
+
+lightusd_status WriteVDB(const ia::LevelSet& level_set, lightusd_string** vdb) {
+  auto* s = new (std::nothrow) lightusd_string();
+  if (!s) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "level set: out of memory");
+  std::string err;
+  if (!ia::WriteLevelSetVDB(level_set, &s->s, &err)) {
+    delete s;
     return Failure(err);
-  *vdb = Pack(bytes);
-  return *vdb ? LIGHTUSD_OK : Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "level set: out of memory");
+  }
+  *vdb = s;
+  return LIGHTUSD_OK;
+}
+
+void Info(const ia::LevelSet& level_set, lightusd_level_set_info* out) {
+  std::memset(out, 0, sizeof(*out));
+  out->voxel_size = level_set.voxel_size();
+  out->background = level_set.background();
+  out->active_voxels = level_set.active_voxels();
+}
+
+lightusd_status Sample(const ia::LevelSet& level_set, const double* points, size_t count,
+                       float* values) {
+  std::string err;
+  if (!ia::SampleLevelSet(level_set, points, count, values, &err))
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, err);
+  return LIGHTUSD_OK;
+}
+
+lightusd_status ToMesh(const ia::LevelSet& level_set, uint64_t max_cells, lightusd_string** points,
+                       lightusd_string** indices) {
+  ia::Mesh mesh;
+  std::string err;
+  if (!ia::LevelSetToMesh(level_set, max_cells > uint64_t(SIZE_MAX) ? SIZE_MAX : size_t(max_cells),
+                          &mesh, &err))
+    return Failure(err);
+  *points = Pack(mesh.positions);
+  *indices = Pack(mesh.indices);
+  if (!*points || !*indices) {
+    lightusd_string_destroy(*points);
+    lightusd_string_destroy(*indices);
+    *points = *indices = nullptr;
+    return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "level set mesh: out of memory");
+  }
+  return LIGHTUSD_OK;
+}
+
+lightusd_status StuffingSettings(const char* settings_json, ia::StuffingOptions* o) {
+  ia::Json settings;
+  std::string err;
+  if (!Settings(settings_json, &settings, &err)) return Fail(LIGHTUSD_ERR_INVALID_ARG, err);
+  o->spacing = Number(settings, "spacing", 0);
+  size_t threads = 0;
+  if (!Count(settings, "max_tets", kMaxCountSetting, &o->max_tets, &err) ||
+      !Count(settings, "max_lattice_vertices", kMaxCountSetting, &o->max_lattice_vertices, &err) ||
+      !Count(settings, "threads", 256, &threads, &err))
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh: " + err);
+  o->threads = int(threads);
+  if (!std::isfinite(o->spacing))
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh: spacing must be finite");
+  o->device = Device(settings);
+  if (!(o->spacing > 0) || o->threads < 0 || o->threads > 256)
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh: spacing > 0 and threads in [0, 256]");
+  const lightusd_status ds = DeviceStatus(o->device, &err);
+  if (ds != LIGHTUSD_OK) return Fail(ds, err);
+  return LIGHTUSD_OK;
+}
+
+lightusd_status ToTetMesh(const ia::LevelSet& level_set, const ia::StuffingOptions& o,
+                          lightusd_string** points, lightusd_string** tets,
+                          lightusd_string** surface) {
+  ia::TetMeshData mesh;
+  std::string err;
+  if (!ia::LevelSetToTetMesh(level_set, o, &mesh, &err)) return Failure(err);
+  *points = Pack(mesh.points);
+  *tets = Pack(mesh.tets);
+  *surface = Pack(mesh.surface);
+  if (!*points || !*tets || !*surface) {
+    lightusd_string_destroy(*points);
+    lightusd_string_destroy(*tets);
+    lightusd_string_destroy(*surface);
+    *points = *tets = *surface = nullptr;
+    return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "tet mesh: out of memory");
+  }
+  return LIGHTUSD_OK;
+}
+
+}  // namespace
+
+struct lightusd_level_set {
+  ia::LevelSet level_set;
+};
+
+extern "C" {
+
+lightusd_status lightusd_volumetric_device_available(const char* device,
+                                                     lightusd_string** resolved) {
+  if (resolved) *resolved = nullptr;
+  std::string name, err;
+  if (!ia::VolumetricDeviceAvailable(device ? device : "cpu", &name, &err))
+    return Fail(DeviceStatus(device ? device : "cpu", &err), err);
+  if (resolved) {
+    auto* s = new (std::nothrow) lightusd_string();
+    if (!s) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "out of memory");
+    s->s = name;
+    *resolved = s;
+  }
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_mesh_to_level_set_vdb(const float* points, size_t point_count,
+                                               const int32_t* indices, size_t index_count,
+                                               const int32_t* counts, size_t count_count,
+                                               const char* settings_json, lightusd_string** vdb) {
+  if (!vdb) return Fail(LIGHTUSD_ERR_INVALID_ARG, "level set: points, indices and output are required");
+  *vdb = nullptr;
+  ia::LevelSet level_set;
+  const lightusd_status st = FromMesh(points, point_count, indices, index_count, counts,
+                                      count_count, settings_json, &level_set);
+  return st != LIGHTUSD_OK ? st : WriteVDB(level_set, vdb);
 }
 
 lightusd_status lightusd_level_set_vdb_info(const uint8_t* vdb, size_t size,
@@ -140,10 +234,7 @@ lightusd_status lightusd_level_set_vdb_info(const uint8_t* vdb, size_t size,
   ia::LevelSet level_set;
   const lightusd_status st = Read(vdb, size, &level_set);
   if (st != LIGHTUSD_OK) return st;
-  std::memset(out, 0, sizeof(*out));
-  out->voxel_size = level_set.voxel_size();
-  out->background = level_set.background();
-  out->active_voxels = level_set.active_voxels();
+  Info(level_set, out);
   return LIGHTUSD_OK;
 }
 
@@ -208,11 +299,7 @@ lightusd_status lightusd_level_set_vdb_sample(const uint8_t* vdb, size_t size,
                                               const double* points, size_t count, float* values) {
   ia::LevelSet level_set;
   const lightusd_status st = Read(vdb, size, &level_set);
-  if (st != LIGHTUSD_OK) return st;
-  std::string err;
-  if (!ia::SampleLevelSet(level_set, points, count, values, &err))
-    return Fail(LIGHTUSD_ERR_INVALID_ARG, err);
-  return LIGHTUSD_OK;
+  return st != LIGHTUSD_OK ? st : Sample(level_set, points, count, values);
 }
 
 lightusd_status lightusd_level_set_vdb_to_mesh(const uint8_t* vdb, size_t size,
@@ -222,21 +309,7 @@ lightusd_status lightusd_level_set_vdb_to_mesh(const uint8_t* vdb, size_t size,
   *points = *indices = nullptr;
   ia::LevelSet level_set;
   const lightusd_status st = Read(vdb, size, &level_set);
-  if (st != LIGHTUSD_OK) return st;
-  ia::Mesh mesh;
-  std::string err;
-  if (!ia::LevelSetToMesh(level_set, max_cells > uint64_t(SIZE_MAX) ? SIZE_MAX : size_t(max_cells),
-                          &mesh, &err))
-    return Failure(err);
-  *points = Pack(mesh.positions);
-  *indices = Pack(mesh.indices);
-  if (!*points || !*indices) {
-    lightusd_string_destroy(*points);
-    lightusd_string_destroy(*indices);
-    *points = *indices = nullptr;
-    return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "level set mesh: out of memory");
-  }
-  return LIGHTUSD_OK;
+  return st != LIGHTUSD_OK ? st : ToMesh(level_set, max_cells, points, indices);
 }
 
 lightusd_status lightusd_level_set_vdb_to_tet_mesh(const uint8_t* vdb, size_t size,
@@ -247,41 +320,86 @@ lightusd_status lightusd_level_set_vdb_to_tet_mesh(const uint8_t* vdb, size_t si
   if (!points || !tets || !surface)
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh: outputs are required");
   *points = *tets = *surface = nullptr;
-  ia::Json settings;
-  std::string err;
-  if (!Settings(settings_json, &settings, &err)) return Fail(LIGHTUSD_ERR_INVALID_ARG, err);
   ia::StuffingOptions o;
-  o.spacing = Number(settings, "spacing", 0);
-  size_t threads = 0;
-  if (!Count(settings, "max_tets", kMaxCountSetting, &o.max_tets, &err) ||
-      !Count(settings, "max_lattice_vertices", kMaxCountSetting, &o.max_lattice_vertices, &err) ||
-      !Count(settings, "threads", 256, &threads, &err))
-    return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh: " + err);
-  o.threads = int(threads);
-  if (!std::isfinite(o.spacing))
-    return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh: spacing must be finite");
-  o.device = Device(settings);
-  if (!(o.spacing > 0) || o.threads < 0 || o.threads > 256)
-    return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh: spacing > 0 and threads in [0, 256]");
-  const lightusd_status ds = DeviceStatus(o.device, &err);
-  if (ds != LIGHTUSD_OK) return Fail(ds, err);
-  ia::LevelSet level_set;
-  const lightusd_status st = Read(vdb, size, &level_set);
+  lightusd_status st = StuffingSettings(settings_json, &o);
   if (st != LIGHTUSD_OK) return st;
-  ia::TetMeshData mesh;
-  if (!ia::LevelSetToTetMesh(level_set, o, &mesh, &err))
-    return Failure(err);
-  *points = Pack(mesh.points);
-  *tets = Pack(mesh.tets);
-  *surface = Pack(mesh.surface);
-  if (!*points || !*tets || !*surface) {
-    lightusd_string_destroy(*points);
-    lightusd_string_destroy(*tets);
-    lightusd_string_destroy(*surface);
-    *points = *tets = *surface = nullptr;
-    return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "tet mesh: out of memory");
+  ia::LevelSet level_set;
+  st = Read(vdb, size, &level_set);
+  return st != LIGHTUSD_OK ? st : ToTetMesh(level_set, o, points, tets, surface);
+}
+
+lightusd_status lightusd_level_set_from_mesh(const float* points, size_t point_count,
+                                             const int32_t* indices, size_t index_count,
+                                             const int32_t* counts, size_t count_count,
+                                             const char* settings_json, lightusd_level_set** out) {
+  if (!out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "level set: points, indices and output are required");
+  *out = nullptr;
+  auto* h = new (std::nothrow) lightusd_level_set();
+  if (!h) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "level set: out of memory");
+  const lightusd_status st = FromMesh(points, point_count, indices, index_count, counts,
+                                      count_count, settings_json, &h->level_set);
+  if (st != LIGHTUSD_OK) {
+    delete h;
+    return st;
   }
+  *out = h;
   return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_level_set_from_vdb(const uint8_t* vdb, size_t size,
+                                            lightusd_level_set** out) {
+  if (!out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "level set: output is required");
+  *out = nullptr;
+  auto* h = new (std::nothrow) lightusd_level_set();
+  if (!h) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "level set: out of memory");
+  const lightusd_status st = Read(vdb, size, &h->level_set);
+  if (st != LIGHTUSD_OK) {
+    delete h;
+    return st;
+  }
+  *out = h;
+  return LIGHTUSD_OK;
+}
+
+void lightusd_level_set_destroy(lightusd_level_set* level_set) { delete level_set; }
+
+lightusd_status lightusd_level_set_get_info(const lightusd_level_set* level_set,
+                                            lightusd_level_set_info* out) {
+  if (!level_set || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "level set info: handle and output are required");
+  Info(level_set->level_set, out);
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_level_set_write_vdb(const lightusd_level_set* level_set,
+                                             lightusd_string** vdb) {
+  if (!level_set || !vdb) return Fail(LIGHTUSD_ERR_INVALID_ARG, "level set: handle and output are required");
+  *vdb = nullptr;
+  return WriteVDB(level_set->level_set, vdb);
+}
+
+lightusd_status lightusd_level_set_sample(const lightusd_level_set* level_set,
+                                          const double* points, size_t count, float* values) {
+  if (!level_set) return Fail(LIGHTUSD_ERR_INVALID_ARG, "level set sample: handle is required");
+  return Sample(level_set->level_set, points, count, values);
+}
+
+lightusd_status lightusd_level_set_to_mesh(const lightusd_level_set* level_set, uint64_t max_cells,
+                                           lightusd_string** points, lightusd_string** indices) {
+  if (!level_set || !points || !indices)
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "level set mesh: handle and outputs are required");
+  *points = *indices = nullptr;
+  return ToMesh(level_set->level_set, max_cells, points, indices);
+}
+
+lightusd_status lightusd_level_set_to_tet_mesh(const lightusd_level_set* level_set,
+                                               const char* settings_json, lightusd_string** points,
+                                               lightusd_string** tets, lightusd_string** surface) {
+  if (!level_set || !points || !tets || !surface)
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh: handle and outputs are required");
+  *points = *tets = *surface = nullptr;
+  ia::StuffingOptions o;
+  const lightusd_status st = StuffingSettings(settings_json, &o);
+  return st != LIGHTUSD_OK ? st : ToTetMesh(level_set->level_set, o, points, tets, surface);
 }
 
 lightusd_status lightusd_stage_add_generated_asset(lightusd_stage* stage, const char* path,

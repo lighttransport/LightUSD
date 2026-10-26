@@ -316,23 +316,43 @@ bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options, LevelSet* 
   return true;
 }
 
-bool WriteLevelSetVDB(const LevelSet& level_set, std::vector<uint8_t>* bytes, std::string* err) {
-  if (level_set.empty() || !bytes) {
+namespace {
+// tinyvdb's malloc'd VDB bytes for one level set.
+uint8_t* WriteVDB(const LevelSet& level_set, size_t* size, std::string* err) {
+  if (level_set.empty()) {
     if (err) *err = "VDB write: empty level set";
-    return false;
+    return nullptr;
   }
   tvdb_file_t file;
   tvdb_file_init_for_write(&file, nullptr);
-  file.grids = const_cast<tvdb_grid*>(level_set.grid());
+  file.grids = const_cast<tvdb_grid*>(level_set.grid());  // read only
   file.num_grids = 1;
   uint8_t* data = nullptr;
-  size_t size = 0;
   tvdb_error_t e;
   std::memset(&e, 0, sizeof(e));
-  if (tvdb_write_to_memory(&file, TVDB_COMPRESS_ZIP | TVDB_COMPRESS_ACTIVE_MASK, 0, &data, &size,
-                           &e) != TVDB_OK)
-    return Fail(err, "VDB write", e);
+  if (tvdb_write_to_memory(&file, TVDB_COMPRESS_ZIP | TVDB_COMPRESS_ACTIVE_MASK, 0, &data, size,
+                           &e) != TVDB_OK) {
+    Fail(err, "VDB write", e);
+    return nullptr;
+  }
+  return data;
+}
+}  // namespace
+
+bool WriteLevelSetVDB(const LevelSet& level_set, std::vector<uint8_t>* bytes, std::string* err) {
+  size_t size = 0;
+  uint8_t* data = bytes ? WriteVDB(level_set, &size, err) : nullptr;
+  if (!data) return false;
   bytes->assign(data, data + size);
+  std::free(data);
+  return true;
+}
+
+bool WriteLevelSetVDB(const LevelSet& level_set, std::string* bytes, std::string* err) {
+  size_t size = 0;
+  uint8_t* data = bytes ? WriteVDB(level_set, &size, err) : nullptr;
+  if (!data) return false;
+  bytes->assign(reinterpret_cast<const char*>(data), size);
   std::free(data);
   return true;
 }
@@ -349,30 +369,43 @@ bool ReadLevelSetVDB(const uint8_t* data, size_t size, LevelSet* out, std::strin
   }
   tvdb_error_t e;
   std::memset(&e, 0, sizeof(e));
-  // The file keeps referencing `data` only until tvdb_read_all_grids
-  // materializes every grid into its own storage.
+  // Headers first (class and value type, no voxels); then only the grids
+  // needed to pick one are decoded. A decoded grid owns its storage, so the
+  // handle does not reference `data` afterwards.
+  auto fail = [&](const char* what) {
+    tvdb_file_close(file);
+    std::free(file);
+    return Fail(err, what, e);
+  };
   if (tvdb_file_open_memory(file, data, size, nullptr, &e) != TVDB_OK) {
     std::free(file);
     return Fail(err, "VDB read", e);
   }
-  if (tvdb_read_all_grids(file, &e) != TVDB_OK) {
-    tvdb_file_close(file);
-    std::free(file);
-    return Fail(err, "VDB read", e);
-  }
-  size_t pick = SIZE_MAX, fallback = SIZE_MAX;
+  std::vector<char> is_float(file->num_grids, 0);
   for (size_t i = 0; i < file->num_grids; ++i) {
+    if (tvdb_read_grid_header(file, i, &e) != TVDB_OK) return fail("VDB read");
     const tvdb_grid* g = file->grids + i;
-    if (!g->tree.num_nodes || g->tree.layout.num_levels < 1 ||
-        g->tree.layout.levels[g->tree.layout.num_levels - 1].value_type != TVDB_VALUE_FLOAT)
-      continue;
-    if (!std::strcmp(GridClass(g), "level set")) {
-      pick = i;
-      break;
-    }
-    if (fallback == SIZE_MAX && g->tree.nodes[0].u.root.background.u.f > 0) fallback = i;
+    is_float[i] = g->tree.layout.num_levels >= 1 &&
+                  g->tree.layout.levels[g->tree.layout.num_levels - 1].value_type == TVDB_VALUE_FLOAT;
   }
-  if (pick == SIZE_MAX) pick = fallback;
+  // The first float grid classed "level set", else the first float grid with
+  // a positive background.
+  size_t pick = SIZE_MAX;
+  for (size_t i = 0; i < file->num_grids && pick == SIZE_MAX; ++i) {
+    if (!is_float[i] || std::strcmp(GridClass(file->grids + i), "level set")) continue;
+    if (tvdb_read_grid(file, i, &e) != TVDB_OK) return fail("VDB read");
+    if (file->grids[i].tree.num_nodes) pick = i;
+  }
+  for (size_t i = 0; i < file->num_grids && pick == SIZE_MAX; ++i) {
+    if (!is_float[i]) continue;
+    if (!file->grids[i].tree.num_nodes && tvdb_read_grid(file, i, &e) != TVDB_OK)
+      return fail("VDB read");
+    const tvdb_grid* g = file->grids + i;
+    if (g->tree.num_nodes && g->tree.nodes[0].u.root.background.u.f > 0)
+      pick = i;
+    else
+      tvdb_grid_destroy(file->grids + i, nullptr);  // not this one: free its voxels
+  }
   if (pick == SIZE_MAX) {
     tvdb_file_close(file);
     std::free(file);

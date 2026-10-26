@@ -82,6 +82,34 @@ def test_mesh_level_set_samples_mesh_and_tets():
     np.testing.assert_array_equal(again.sample(q), v)
 
 
+def test_level_set_handle():
+    """A LevelSet is decoded once: bytes are written only on demand, read
+    bytes are kept as given, and concurrent queries agree."""
+    import threading
+    pts, tris = _sphere(8, 16)
+    ls = vol.mesh_to_level_set(pts, tris, voxel_size=0.1)
+    assert ls._vdb is None  # no VDB written yet
+    data = ls.vdb
+    assert ls.vdb is data
+    again = vol.read_level_set(bytearray(data))
+    assert again.vdb == data
+    q = np.random.default_rng(1).uniform(-1.2, 1.2, (2000, 3))
+    want = ls.sample(q)
+    np.testing.assert_array_equal(again.sample(q), want)
+    got = [None] * 4
+
+    def work(i):
+        got[i] = again.sample(q)
+
+    threads = [threading.Thread(target=work, args=(i,)) for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    for g in got:
+        np.testing.assert_array_equal(g, want)
+
+
 def test_level_set_errors():
     pts, tris = _sphere(8, 16)
     with pytest.raises(Exception):

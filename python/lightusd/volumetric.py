@@ -89,11 +89,22 @@ class TetMesh:
 
 
 class LevelSet:
-    """A float level set (negative inside) held as OpenVDB bytes."""
+    """A float level set (negative inside), decoded once and queried natively."""
 
-    def __init__(self, vdb: bytes):
-        self.vdb = bytes(vdb)
-        self.voxel_size, self.background, self.active_voxels = _core._level_set_info(self.vdb)
+    def __init__(self, vdb: bytes = None, *, _handle=None):
+        if _handle is None:
+            vdb = bytes(vdb)
+            _handle = _core._level_set_from_vdb(vdb)
+        self._handle = _handle
+        self._vdb = vdb
+        self.voxel_size, self.background, self.active_voxels = _core._level_set_info(_handle)
+
+    @property
+    def vdb(self) -> bytes:
+        """OpenVDB bytes: as read, or written on first use."""
+        if self._vdb is None:
+            self._vdb = _core._level_set_write_vdb(self._handle)
+        return self._vdb
 
     def save(self, path) -> None:
         with open(os.fspath(path), "wb") as f:
@@ -101,12 +112,12 @@ class LevelSet:
 
     def sample(self, points):
         """Trilinear world-space values at (n, 3) points."""
-        raw = _core._level_set_sample(self.vdb, _flat(points, "d", 3))
+        raw = _core._level_set_sample(self._handle, _flat(points, "d", 3))
         return _unpack(raw, "f", 1)
 
     def to_mesh(self, max_cells: int = 0):
         """Zero isosurface as (points (n, 3), triangle indices (m, 3))."""
-        pts, idx = _core._level_set_to_mesh(self.vdb, int(max_cells))
+        pts, idx = _core._level_set_to_mesh(self._handle, int(max_cells))
         return _unpack(pts, "f", 3), _unpack(idx, "i", 3)
 
     def to_tet_mesh(self, spacing: Optional[float] = None, *, max_tets: int = 0,
@@ -115,7 +126,7 @@ class LevelSet:
         spacing = float(spacing) if spacing else 4.0 * self.voxel_size
         settings = json.dumps({"spacing": spacing, "max_tets": int(max_tets), "threads": int(threads),
                                "device": str(device)})
-        pts, tets, surf = _core._level_set_to_tet_mesh(self.vdb, settings)
+        pts, tets, surf = _core._level_set_to_tet_mesh(self._handle, settings)
         return TetMesh(_unpack(pts, "f", 3), _unpack(tets, "i", 4), _unpack(surf, "i", 3))
 
 
@@ -160,9 +171,9 @@ def mesh_to_level_set(points, indices, counts=None, *, voxel_size: Optional[floa
                            "interior_width": band * voxel_size, "exact_winding": bool(exact_winding),
                            "threads": int(threads), "max_voxels": int(max_voxels), "name": name,
                            "device": str(device)})
-    vdb = _core._mesh_to_level_set(_flat(points, "f", 3), _flat(indices, "i", 0),
-                                   None if counts is None else _flat(counts, "i", 0), settings)
-    return LevelSet(vdb)
+    handle = _core._mesh_to_level_set(_flat(points, "f", 3), _flat(indices, "i", 0),
+                                      None if counts is None else _flat(counts, "i", 0), settings)
+    return LevelSet(_handle=handle)
 
 
 def _mesh_arrays(prim):

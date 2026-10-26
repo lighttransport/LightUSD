@@ -1338,6 +1338,19 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         add_test(NAME next_test_volume_c COMMAND test_lightusd_volume_c)
         set_tests_properties(next_test_volume_c PROPERTIES
                              LABELS "next;c-api;render;volume")
+        add_executable(test_lightusd_level_set_c
+            ../../tests/c-api/test_lightusd_level_set_c.c)
+        target_link_libraries(test_lightusd_level_set_c PRIVATE
+            lightusd_render_c)
+        set_target_properties(test_lightusd_level_set_c PROPERTIES
+            C_STANDARD 11 C_STANDARD_REQUIRED ON)
+        if(NOT MSVC)
+            target_compile_options(test_lightusd_level_set_c PRIVATE
+                -Wall -Wextra -Werror -pedantic)
+        endif()
+        add_test(NAME next_test_level_set_c COMMAND test_lightusd_level_set_c)
+        set_tests_properties(next_test_level_set_c PROPERTIES
+                             LABELS "next;c-api;volume")
     endif()
 
     # C API smoke test (pure C11 translation unit)

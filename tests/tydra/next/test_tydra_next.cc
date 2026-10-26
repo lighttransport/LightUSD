@@ -32,6 +32,7 @@
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/render-converter-assembly.hh"
 #include "tydra/asset-import/volumetric.hh"
+#include "tinyvdb_io.h"
 #include "tydra/next/usdz-entry-match.hh"
 #include "tydra/next/render-session.hh"
 #include "tydra/next/resource-budget.hh"
@@ -8239,6 +8240,70 @@ static void TestLevelSetFieldMesh() {
 // ResolveWithFirstGridFallback only falls back when fieldName was defaulted,
 // never for an authored name or a named grid the filter rejects; and the
 // dense box of a grid is cell-centred (a sphere at the origin stays there).
+// ReadLevelSetVDB reads every header first, then decodes only what it needs:
+// the first float grid classed "level set", else the first float grid with a
+// positive background.
+static void TestLevelSetGridChoice() {
+  std::cout << "Level-set grid choice\n";
+  namespace fs = std::filesystem;
+  namespace ia = lightusd::tydra::import_asset;
+  const fs::path path = WriteSphereLevelSet("grid_choice");
+  std::vector<uint8_t> sphere;
+  {
+    std::ifstream in(path, std::ios::binary);
+    sphere.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  }
+  fs::remove(path);
+  assert(!sphere.empty());
+  // Two copies of the sphere grid, re-classed and tagged "first"/"second".
+  auto two_grids = [&](const char* class0, const char* class1) {
+    const char* classes[2] = {class0, class1};
+    const char* tags[2] = {"first", "second"};
+    tvdb_file_t files[2];
+    tvdb_grid_t grids[2];
+    for (int i = 0; i < 2; ++i) {
+      tvdb_error_t e{};
+      assert(tvdb_file_open_memory(&files[i], sphere.data(), sphere.size(), nullptr, &e) ==
+             TVDB_OK);
+      assert(tvdb_read_grid(&files[i], 0, &e) == TVDB_OK);
+      assert(tvdb_grid_set_metadata_string(&files[i].grids[0], "class", classes[i], &e) ==
+             TVDB_OK);
+      assert(tvdb_grid_set_metadata_string(&files[i].grids[0], "tag", tags[i], &e) == TVDB_OK);
+      grids[i] = files[i].grids[0];  // shallow copy, only written
+    }
+    tvdb_file_t out;
+    tvdb_file_init_for_write(&out, nullptr);
+    out.grids = grids;
+    out.num_grids = 2;
+    uint8_t* data = nullptr;
+    size_t size = 0;
+    tvdb_error_t e{};
+    assert(tvdb_write_to_memory(&out, TVDB_COMPRESS_ZIP, 0, &data, &size, &e) == TVDB_OK);
+    std::vector<uint8_t> bytes(data, data + size);
+    std::free(data);
+    for (tvdb_file_t& f : files) tvdb_file_close(&f);
+    return bytes;
+  };
+  auto chosen = [](std::vector<uint8_t> bytes) {
+    ia::LevelSet level_set;
+    std::string err;
+    if (!ia::ReadLevelSetVDB(bytes.data(), bytes.size(), &level_set, &err))
+      return "error: " + err;
+    std::fill(bytes.begin(), bytes.end(), uint8_t(0));  // the level set owns its grid
+    bytes.clear();
+    bytes.shrink_to_fit();
+    const double p[3] = {0, 0, 0};
+    float inside = 1;
+    assert(ia::SampleLevelSet(level_set, p, 1, &inside, &err) && inside < 0);
+    const tvdb_meta_entry_t* tag = tvdb_grid_find_metadata(level_set.grid(), "tag");
+    return std::string(tag && tag->value.type == TVDB_VALUE_STRING ? tag->value.u.s.str : "?");
+  };
+  assert(chosen(two_grids("fog volume", "level set")) == "second");  // the class wins
+  assert(chosen(two_grids("level set", "level set")) == "first");
+  assert(chosen(two_grids("fog volume", "unknown")) == "first");  // positive background
+  std::cout << "  Level-set grid choice: PASSED\n";
+}
+
 static void TestFieldFallbackAndDenseBox() {
   std::cout << "Field fallback rules and dense box\n";
   namespace fs = std::filesystem;
@@ -8417,6 +8482,7 @@ int main() {
   TestOpenUsdVdbVolumeFixtures();
   TestLevelSetFieldMesh();
   TestFieldFallbackAndDenseBox();
+  TestLevelSetGridChoice();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
   return 0;
