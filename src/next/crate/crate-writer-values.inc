@@ -10,12 +10,14 @@
 
   /// Store data in VALUE section and return its offset.
   /// Returns the offset from the START of the VALUE section.
-  uint64_t StoreValueData(const void* data, size_t size, TypeId type) {
+  /// `tag` marks blob-internal provisional ids (parallel build fix-ups).
+  uint64_t StoreValueData(const void* data, size_t size, TypeId type,
+                          uint8_t tag = kBlobNone) {
     DataBlock block;
     block.type = type;
     block.data.resize(size);
     std::memcpy(block.data.data(), data, size);
-    return InternBlock(std::move(block));
+    return InternBlock(std::move(block), tag);
   }
 
   // Encode a Value into a ValueRep.
@@ -49,7 +51,8 @@
     }
     // Nested reps above are final offsets when streaming (see PushValueBlock);
     // staged, they are block indices relocated by _PatchDictBlock.
-    const uint64_t idx = PushValueBlock({TypeId::Dictionary, std::move(blk)});
+    const uint64_t idx = PushValueBlock({TypeId::Dictionary, std::move(blk)},
+                                        kBlobDict);
     return ValueRep::Make(CrateTypeId::Dictionary, idx, false, false);
   }
 
@@ -60,7 +63,8 @@
     const uint64_t nested_raw = nested.raw();
     std::memcpy(block.data(), &recursive_offset, 8);
     std::memcpy(block.data() + 8, &nested_raw, 8);
-    const uint64_t index = InternBlock({TypeId::Invalid, std::move(block)});
+    const uint64_t index = InternBlock({TypeId::Invalid, std::move(block)},
+                                       kBlobNestedRep);
     return ValueRep::Make(CrateTypeId::UnregisteredValue, index, false, false);
   }
 
@@ -82,7 +86,7 @@
     if (elem_crate == CrateTypeId::Invalid) {
       return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
     }
-    if (required_version_minor_ < 14) required_version_minor_ = 14;
+    WRequireMinor(14);
     if (edit.ops.empty()) {
       // Identity edit: no out-of-line data.
       return ValueRep::Make(elem_crate, 0, false, false, false,
@@ -225,14 +229,12 @@
     // This writer emits the uint64 count-header array layout introduced in
     // Crate 0.7. Upgrade an older requested version rather than stamping a
     // pre-0.7 bootstrap onto incompatible array bytes.
-    if (is_array && required_version_minor_ < 7) {
-      required_version_minor_ = 7;
-    }
+    // (WRequireMinor checks the current minimum itself; worker threads must
+    // not read required_version_minor_, which commit stage C updates.)
+    if (is_array) WRequireMinor(7);
 
     // pxr-style write-version upgrade: timecode values require crate 0.9.
-    if (type_id == TypeId::TimeCode && required_version_minor_ < 9) {
-      required_version_minor_ = 9;
-    }
+    if (type_id == TypeId::TimeCode) WRequireMinor(9);
 
     if (crate_type == CrateTypeId::Invalid) {
       return ValueRep::Make(CrateTypeId::Invalid, 0, is_array, false);
@@ -244,10 +246,10 @@
     if (is_array && val.is_lazy() && !val.is_dirty()) {
       ValueRep pt;
       if (TryPassThrough(val, &pt)) {
-        ++arrays_passed_through_;
+        WCountPassThrough();
         return pt;
       }
-      ++arrays_reencoded_;  // fell back to full decode + re-encode below
+      WCountReencode();  // fell back to full decode + re-encode below
     }
 
     // Handle inline scalars
@@ -347,8 +349,8 @@
         auto str = val.as_string();
         if (str) {
           uint32_t sidx = InternString(*str);
-          uint64_t data_idx = StoreValueData(&sidx, 4, type_id);
-          if (required_version_minor_ < 10) required_version_minor_ = 10;
+          uint64_t data_idx = StoreValueData(&sidx, 4, type_id, kBlobString4);
+          WRequireMinor(10);
           return ValueRep::Make(CrateTypeId::PathExpression, data_idx, false,
                                 false);
         }
@@ -429,7 +431,9 @@
       size_t elem_size = CrateValueSize(crate_type, false);
       (void)elem_size;
 
-      // Collect array data
+      // Collect array data. `arr_tag` records blob-internal provisional ids
+      // for the parallel build fix-up (token/string index arrays).
+      uint8_t arr_tag = kBlobNone;
       std::vector<uint8_t> arr_data;
       auto resize_counted_payload = [&](uint64_t item_count,
                                         size_t item_size) -> bool {
@@ -437,7 +441,7 @@
         size_t total = 0;
         if (!safe::mul(item_count, item_size, &bytes) ||
             !safe::add(size_t(8), bytes, &total)) {
-          result_.error = "Array payload size overflow";
+          WSetError("Array payload size overflow");
           return false;
         }
         arr_data.resize(total);
@@ -451,7 +455,7 @@
         }
         size_t bytes = 0;
         if (!safe::mul(item_count, item_size, &bytes)) {
-          result_.error = "Array payload size overflow";
+          WSetError("Array payload size overflow");
           return false;
         }
         if (bytes > 0) {
@@ -486,7 +490,7 @@
                 size_t total_size = 0;
                 if (!safe::add(size_t(8), cr.data.size(), &payload_size) ||
                     !safe::add(size_t(8), payload_size, &total_size)) {
-                  result_.error = "Compressed integer array payload size overflow";
+                  WSetError("Compressed integer array payload size overflow");
                   return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
                 }
                 arr_data.resize(total_size);
@@ -616,6 +620,7 @@
               uint32_t idx = InternToken((*arr)[k]);
               std::memcpy(arr_data.data() + 8 + k * 4, &idx, 4);
             }
+            arr_tag = kBlobTokenVec;
           }
           break;
         }
@@ -633,6 +638,7 @@
               uint32_t idx = InternString((*arr)[k]);
               std::memcpy(arr_data.data() + 8 + k * 4, &idx, 4);
             }
+            arr_tag = kBlobStringVec;
           }
           break;
         }
@@ -649,6 +655,7 @@
               uint32_t idx = InternString((*arr)[k]);
               std::memcpy(arr_data.data() + 8 + k * 4, &idx, 4);
             }
+            arr_tag = kBlobStringVec;
           }
           break;
         }
@@ -853,7 +860,7 @@
         DataBlock block;
         block.type = type_id;
         block.data = std::move(arr_data);
-        uint64_t idx = InternBlock(std::move(block));
+        uint64_t idx = InternBlock(std::move(block), arr_tag);
         // Return non-inline value rep (index will be resolved to offset later)
         return ValueRep::Make(crate_type, idx, true, false, data_compressed);
       }

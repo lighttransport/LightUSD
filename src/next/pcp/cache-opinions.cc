@@ -48,10 +48,10 @@ std::vector<PropertyOpinion> Cache::GetPropertyStack(
           }
         }
         item.arc = "variant";
-        item.offset = source.offset.offset;
-        item.scale = source.offset.scale;
-        if (source.expression_variables) {
-          item.expression_variables = *source.expression_variables;
+        item.offset = source.offset().offset;
+        item.scale = source.offset().scale;
+        if (source.expression_variables()) {
+          item.expression_variables = *source.expression_variables();
         }
         item.has_default = !p.value.is_empty();
         item.default_value = p.value;
@@ -66,12 +66,12 @@ std::vector<PropertyOpinion> Cache::GetPropertyStack(
       item.layer_identifier = spec.layer_id();
       item.prim_path = spec.spec->path().str();
       item.arc = ArcTypeName(source.arc_kind);
-      const LayerOffset time = source.offset.Compose(spec.layer_offset);
+      const LayerOffset time = source.offset().Compose(spec.layer_offset);
       item.offset = time.offset;
       item.scale = time.scale;
       item.suppressed = source.suppress_site_specs;
-      if (source.expression_variables) {
-        item.expression_variables = *source.expression_variables;
+      if (source.expression_variables()) {
+        item.expression_variables = *source.expression_variables();
       }
       if (const auto* value = spec.spec->property_value(slot->name_id)) {
         item.has_default = !value->is_empty();
@@ -119,7 +119,10 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
     bool clips_snapshot_taken = false;
     std::vector<PropNameId> pre_clip_props;
     const auto snapshot_pre_clip_props = [&]() {
-      if (clips_snapshot_taken || !out->meta().clips().is_dictionary()) return;
+      // Read through a const view: the mutable accessor would allocate the
+      // metadata ext (~1.3 KB) on every composed prim.
+      const PrimMetadata &out_meta = out->meta();
+      if (clips_snapshot_taken || !out_meta.clips().is_dictionary()) return;
       clips_snapshot_taken = true;
       for (const PropSlot &sl : out->properties().slots()) {
         if (sl.is_relationship()) continue;
@@ -157,7 +160,7 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
           out->meta().doc() = s.variant->doc;
         }
         if (!s.variant->kind.empty() && !out->meta().kindAuthored() &&
-            out->meta().kind().empty()) {
+            static_cast<const PrimMetadata &>(out->meta()).kind().empty()) {
           out->meta().kind() = s.variant->kind;
           out->meta().setKindAuthored();
         }
@@ -237,7 +240,7 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
         // asset's internal targets (e.g. material:binding, .connect) resolve to
         // their flattened paths. Identity for local opinions. The time offset
       // composes the arc's offset with the spec layer's sublayer offset.
-      const LayerOffset spec_off = s.offset.Compose(sr.layer_offset);
+      const LayerOffset spec_off = s.offset().Compose(sr.layer_offset);
       const bool remap_opinion_targets = !s_target_map->pairs.empty();
       if (!remap_opinion_targets) {
         // Most local opinions do not cross an arc or relocation. Avoid
@@ -258,7 +261,7 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
                 return Mapping(s.map_idx).Apply(p);
               }
               std::string r = s_target_map->ApplyTarget(p);
-              if (!r.empty() || s.arc_kind != ArcType::Inherit || !s.arc_chain)
+              if (!r.empty() || s.arc_kind != ArcType::Inherit || !s.arc_chain())
                 return r;
               // A connection/relationship target authored in an inherited local
               // CLASS that points OUTSIDE the class namespace (at a SIBLING
@@ -273,7 +276,7 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
                   Path(Mapping(s.map_idx).Apply(s.site)).parent().str();
               const std::string prim =
                   p.substr(0, p.find_first_of(".["));  // strip .prop / [target]
-              for (auto it = s.arc_chain->rbegin(); it != s.arc_chain->rend();
+              for (auto it = s.arc_chain()->rbegin(); it != s.arc_chain()->rend();
                    ++it) {
                 const NamespaceMapping &cm = Mapping(it->second);
                 if (!cm.crosses_arc) continue;
@@ -355,6 +358,14 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
       std::string apply_err;
       Compositor::ResolveArrayEditsOnPrim(out, &apply_err);
     }
+
+    // Free what the merges touched but left at defaults (the stripped
+    // variant-set list op above leaves an empty rare metadata tier on every
+    // prim that references a variant-set asset), and share plain property
+    // metadata now rather than at the layer's finalize, after every prim of
+    // a ~10M-prim stage has been filled.
+    out->meta().trim_ext();
+    out->share_property_metas();
   }
 
 }  // namespace pcp
@@ -608,7 +619,7 @@ auto Cache::Impl::ComputePrimIndex_locked(const Path &prim_path,
       n.layer_stack_idx = s.stack_idx;
       n.site_path_idx = InternPath(s.site);
       n.map_to_root = Mapping(s.map_idx);
-      n.offset = s.offset;
+      n.offset = s.offset();
       const std::vector<SpecRef> &specs = SpecsFor(s);
       if (!specs.empty()) {
         n.flags |= NodeFlags::HasSpecs;
@@ -798,7 +809,9 @@ auto Cache::Impl::BuildPreviewLayer(const Layer &structure) -> Layer {
     return preview;
   }
 
-auto Cache::Impl::FillOpinions(Layer *out) -> void {
+auto Cache::Impl::FillOpinions(
+    Layer *out,
+    const std::vector<const std::vector<Src> *>& shared_srcs) -> void {
     // The serial structure pass has parsed every referenced layer, so the full
     // set of property names is now interned. Freeze the name table: the parallel
     // fill below does heavy find() (and intern() that all HIT) on it, and the
@@ -808,28 +821,54 @@ auto Cache::Impl::FillOpinions(Layer *out) -> void {
     GetPropNameTable().freeze();
     // With release_build_sources, free each slot's composition sources the
     // moment its opinions are composed, so the transient compose state (~600
-    // MB of Src vectors on Island) drains as the output fills in instead of
+    // MB of Src vectors on reference scene) drains as the output fills in instead of
     // coexisting in full with the finished stage. The structure walk is done,
     // so nothing resolves sources again during the fill, and the caller drops
     // sources_cache right after it (those emptied entries must never be read
     // back as "no sources"). A vector shared by several slots (one source path
     // placed at two output paths) is left for the final drop.
     const bool release = options.release_build_sources;
-    std::vector<const std::vector<Src> *> shared_srcs;
-    if (release) {
-      std::vector<const std::vector<Src> *> seen;
-      seen.reserve(fill_.size());
-      for (const auto &record : fill_) {
-        if (record.second) seen.push_back(record.second);
+    auto release_shared = [&] {
+      if (!release) return;
+      const size_t n = shared_srcs.size();
+      if (shared_srcs.empty()) {
+        if (options.enable_timing)
+          LIGHTUSD_LOG_I("[next_fill] shared_vectors=0 shared_release=0ms");
+        return;
       }
-      std::sort(seen.begin(), seen.end());
-      for (size_t i = 1; i < seen.size(); ++i) {
-        if (seen[i] == seen[i - 1] &&
-            (shared_srcs.empty() || shared_srcs.back() != seen[i])) {
-          shared_srcs.push_back(seen[i]);
+      const auto start = std::chrono::steady_clock::now();
+      int nt = options.num_threads;
+      if (nt < 0)
+        nt = std::min<int>(static_cast<int>(std::thread::hardware_concurrency()),
+                           kMaxExecutionThreads);
+      nt = std::max(1, std::min(nt, kMaxExecutionThreads));
+      if (nt > 1 && n >= 2048) {
+        const size_t workers = std::min<size_t>(static_cast<size_t>(nt), n);
+        std::vector<std::thread> pool;
+        pool.reserve(workers);
+        for (size_t t = 0; t < workers; ++t) {
+          const size_t lo = n * t / workers;
+          const size_t hi = n * (t + 1) / workers;
+          pool.emplace_back([&, lo, hi] {
+            for (size_t i = lo; i < hi; ++i)
+              std::vector<Src>().swap(
+                  *const_cast<std::vector<Src> *>(shared_srcs[i]));
+          });
         }
+        for (std::thread &th : pool) th.join();
+      } else {
+        for (const std::vector<Src> *srcs : shared_srcs)
+          std::vector<Src>().swap(*const_cast<std::vector<Src> *>(srcs));
       }
-    }
+      if (options.enable_timing) {
+        const double elapsed = std::chrono::duration<double, std::milli>(
+                                   std::chrono::steady_clock::now() - start)
+                                   .count();
+        LIGHTUSD_LOG_I("[next_fill] shared_vectors=" +
+                       UIntToStr(n) + " shared_release=" +
+                       FormatMilliseconds(elapsed) + "ms");
+      }
+    };
     auto do_range = [&](size_t b, size_t e) {
       for (size_t i = b; i < e; ++i) {
         const std::vector<Src> *srcs = fill_[i].second;
@@ -838,7 +877,8 @@ auto Cache::Impl::FillOpinions(Layer *out) -> void {
           ComposeOpinions(*srcs, ps);
         }
         if (release &&
-            !std::binary_search(shared_srcs.begin(), shared_srcs.end(), srcs)) {
+            !std::binary_search(shared_srcs.begin(), shared_srcs.end(), srcs,
+                                std::less<const std::vector<Src> *>{})) {
           // sources_cache owns the vector (address-stable deque storage);
           // fill_ only borrows it read-only for the structure pass.
           std::vector<Src>().swap(*const_cast<std::vector<Src> *>(srcs));
@@ -876,10 +916,12 @@ auto Cache::Impl::FillOpinions(Layer *out) -> void {
         });
       }
       for (std::thread &th : pool) th.join();
+      release_shared();
       return;
     }
 #endif
     do_range(0, fill_.size());
+    release_shared();
   }
 
 }}} // namespace lightusd::next::pcp

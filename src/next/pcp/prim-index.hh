@@ -209,12 +209,20 @@ struct CompositionOptions {
   // When true, BuildStage frees each prim's cached composition sources as
   // soon as its opinions are filled and drops the sources cache afterwards,
   // so the transient compose state does not coexist in full with the finished
-  // stage (Island: ~400 MB lower peak RSS). Composed output is unaffected; a
+  // stage (reference scene: ~400 MB lower peak RSS). Composed output is unaffected; a
   // later per-prim query (GetPropertyStack, ComputePrimIndex, ...) re-resolves
   // the sources it needs instead of hitting the cache. Off by default so a
   // long-lived Cache (e.g. a StageSession with full cache retention) stays
   // warm; the one-shot ComposeStageFromLayer/File always enable it.
   bool release_build_sources = false;
+
+  // Experimental (LIGHTUSD_NEXT_DEFERRED_FILL builds only): build the stage
+  // as a skeleton layer and compose each prim's opinions on demand through
+  // the layer's PrimFiller (the USDC writer fills, encodes and releases prim
+  // by prim). For a stage that is written once (flatten to USDC). Ignored
+  // otherwise, for the ExtractedPrototypes instance mode, and for stages
+  // under 64 K prims (filled eagerly).
+  bool defer_opinion_fill = false;
 
   // Per-layer file/input memory cap for layers loaded by the compositor
   // (sublayers, references, payloads). 0 = no limit.

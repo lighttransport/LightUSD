@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include "lazy-containers.hh"
 #include "property-index.hh"
 #include "intern-table.hh"
 #include "../types/value.hh"
@@ -124,6 +125,7 @@ public:
   /// Get path (set during layer building)
   const Path& path() const;
   void set_path(const Path& path);
+  void set_path(Path&& path);
 
   /// Directory this prim's RELATIVE asset paths anchor to, as an id interned in
   /// asset-anchor.hh (0 = none -> the consumer falls back to the stage's base
@@ -215,6 +217,9 @@ public:
   /// crate writer's consume_values mode to cut peak RSS on write-and-discard
   /// flows.
   void release_value_payloads();
+  /// Drop everything but the name, path and child indices (a deferred-fill
+  /// writer's release after encoding; the path string is left in place).
+  void release_to_skeleton();
 
   // ============================================================
   // TimeSamples (stored separately for efficiency)
@@ -428,6 +433,12 @@ public:
   /// Get (lazily allocating) a property's mutable metadata for population.
   PropMeta& ensure_property_meta(const std::string& prop_name);
   PropMeta& ensure_property_meta(PropNameId name_id);
+  /// Set a property's metadata (replaces any existing).
+  void set_property_meta(PropNameId name_id, PropMeta&& meta);
+  void set_property_meta(const std::string& prop_name, PropMeta&& meta);
+  /// Share metadata that holds only interpolation / elementSize (done by
+  /// finalize_properties too).
+  void share_property_metas();
 
   // ============================================================
   // Children (stored as indices into Layer's prim array)
@@ -499,6 +510,11 @@ private:
   ColdData& cold();
   const ColdData& cold() const;
   std::unique_ptr<ColdData> cold_data_;
+  // Authored property metadata, sorted by property name id. Metadata holding
+  // only interpolation / elementSize (nearly all of it) is shared and copied
+  // on write (see prim-spec.cc).
+  struct PropMetaTable;
+  std::unique_ptr<PropMetaTable> prop_metas_;
 
   // Children stored as indices into parent Layer's prim array
   std::vector<uint32_t> child_indices_;

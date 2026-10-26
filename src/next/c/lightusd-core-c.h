@@ -898,8 +898,13 @@ typedef struct lu_value {
     uint8_t kind;   /* lu_value_kind */
     uint8_t flags;
     uint32_t size;  /* array element count where relevant */
+    /* 8-byte alignment covers every inline scalar (double / int64 lanes);
+     * max_align_t (16 on x86-64) would pad the carrier from 48 to 64 bytes,
+     * and composed stages hold tens of millions of values. The layout is
+     * reported at run time by lu_abi_get() (value_size / value_alignment). */
     union {
-        max_align_t _align;
+        uint64_t _align;
+        double _align_f;
         unsigned char bytes[LU_VALUE_INLINE_CAP];
     } store;
 } lu_value;

@@ -69,12 +69,16 @@ CompressResult CompressCrateBlob(const uint8_t* src, size_t src_size) {
     result.error = "LZ4_compressBound failed";
     return result;
   }
-  result.data.resize(bound);
+  // Compress into uninitialized scratch, then keep an exact-size copy: a
+  // vector resized to the bound zero-fills (and so makes resident) a buffer
+  // as large as the input, and keeps that capacity after shrinking -- ~1.4 GB
+  // per section on full-LOD benchmark scene, while the sections build concurrently.
+  std::unique_ptr<uint8_t[]> scratch(new uint8_t[bound ? bound : 1]);
   const char* error = nullptr;
   size_t out_size = 0;
-  if (lu_crate_blob_compress(src, src_size, result.data.data(), bound, &out_size,
+  if (lu_crate_blob_compress(src, src_size, scratch.get(), bound, &out_size,
                              &error)) {
-    result.data.resize(out_size);
+    result.data.assign(scratch.get(), scratch.get() + out_size);
     result.success = true;
   } else {
     result.data.clear();
@@ -333,6 +337,60 @@ struct WideDeltaCounts {
   }
 };
 
+// Misra-Gries summary of one chunk's wide deltas with kK counters: every
+// value occurring more than n/(kK+1) times among the n added survives.
+struct WideDeltaSummary {
+  static constexpr size_t kK = 64;
+  static constexpr size_t kSlots = 256;  // open-addressed, load <= 1/4
+  static constexpr int64_t kEmpty = INT64_MIN;
+  int64_t keys[kSlots];
+  size_t counts[kSlots];
+  size_t live = 0;
+  size_t added = 0;
+  WideDeltaSummary() {
+    for (size_t i = 0; i < kSlots; ++i) keys[i] = kEmpty;
+  }
+  static size_t Slot(int32_t d) { return WideDeltaCounts::Hash(d) & (kSlots - 1); }
+  void add(int32_t d) {
+    ++added;
+    size_t i = Slot(d);
+    for (; keys[i] != kEmpty; i = (i + 1) & (kSlots - 1)) {
+      if (keys[i] == d) {
+        ++counts[i];
+        return;
+      }
+    }
+    if (live < kK) {
+      keys[i] = d;
+      counts[i] = 1;
+      ++live;
+      return;
+    }
+    // Decrement every counter (the new value cancels one of each), dropping
+    // the ones that reach zero; rebuild to keep probe chains intact.
+    int64_t k2[kK];
+    size_t c2[kK];
+    size_t n2 = 0;
+    for (size_t j = 0; j < kSlots; ++j) {
+      if (keys[j] == kEmpty) continue;
+      if (counts[j] > 1) {
+        k2[n2] = keys[j];
+        c2[n2] = counts[j] - 1;
+        ++n2;
+      }
+      keys[j] = kEmpty;
+    }
+    live = 0;
+    for (size_t j = 0; j < n2; ++j) {
+      size_t s = Slot(static_cast<int32_t>(k2[j]));
+      while (keys[s] != kEmpty) s = (s + 1) & (kSlots - 1);
+      keys[s] = k2[j];
+      counts[s] = c2[j];
+      ++live;
+    }
+  }
+};
+
 bool EncodeDeltaU32Parallel(const uint32_t* values, size_t count,
                             std::vector<uint8_t>* out) {
   size_t code_bytes = 0;
@@ -358,11 +416,13 @@ bool EncodeDeltaU32Parallel(const uint32_t* values, size_t count,
   };
 
   // Pass 1: per-chunk histograms. Deltas in [-32768, 32767] go to a flat
-  // table; the rest to a per-chunk unordered map (rare in these columns).
+  // table; the rest only into a per-chunk Misra-Gries summary (columns like
+  // FIELDSETS have ~one distinct wide delta per sentinel: counting them all
+  // exactly cost seconds and GBs of hash table).
   constexpr int32_t kSmallMin = -32768;
   constexpr size_t kSmallSpan = 65536;
   std::vector<std::vector<uint32_t>> small(nt);
-  std::vector<WideDeltaCounts> large(nt);
+  std::vector<WideDeltaSummary> summary(nt);
   auto run = [nt](const std::function<void(size_t)>& fn) {
     std::vector<std::thread> pool;
     pool.reserve(nt);
@@ -376,7 +436,7 @@ bool EncodeDeltaU32Parallel(const uint32_t* values, size_t count,
       if (d >= kSmallMin && d < kSmallMin + static_cast<int32_t>(kSmallSpan)) {
         ++small[t][static_cast<size_t>(d - kSmallMin)];
       } else {
-        large[t].add(d, 1);
+        summary[t].add(d);
       }
     }
   });
@@ -398,18 +458,61 @@ bool EncodeDeltaU32Parallel(const uint32_t* values, size_t count,
     consider(static_cast<int32_t>(k) + kSmallMin, c);
   }
   std::vector<std::vector<uint32_t>>().swap(small);
-  {
+  size_t wide_total = 0;
+  for (size_t t = 0; t < nt; ++t) wide_total += summary[t].added;
+  if (wide_total) {
+    // Exact counts for a set of wide deltas, over all chunks.
+    const bool small_wins_bound =
+        have && best_count > wide_total / (WideDeltaSummary::kK + 1);
     WideDeltaCounts merged;
-    for (size_t t = 0; t < nt; ++t) {
-      const WideDeltaCounts& w = large[t];
-      for (size_t i = 0; i < w.keys.size(); ++i)
-        if (w.keys[i] != WideDeltaCounts::kEmpty)
-          merged.add(static_cast<int32_t>(w.keys[i]), w.counts[i]);
+    if (small_wins_bound) {
+      // A wide delta can only win (or tie) with a count >= best_count >
+      // wide_total / (kK + 1). Such a value has, in some chunk, more than
+      // that chunk's share / (kK + 1) occurrences, so it survives that
+      // chunk's summary: count only the survivors, exactly.
+      for (size_t t = 0; t < nt; ++t)
+        for (size_t j = 0; j < WideDeltaSummary::kSlots; ++j)
+          if (summary[t].keys[j] != WideDeltaSummary::kEmpty)
+            merged.add(static_cast<int32_t>(summary[t].keys[j]), 0);
     }
-    std::vector<WideDeltaCounts>().swap(large);
-    for (size_t i = 0; i < merged.keys.size(); ++i)
-      if (merged.keys[i] != WideDeltaCounts::kEmpty)
-        consider(static_cast<int32_t>(merged.keys[i]), merged.counts[i]);
+    std::vector<WideDeltaCounts> part(nt);
+    run([&](size_t t) {
+      WideDeltaCounts& c = part[t];
+      if (small_wins_bound) {
+        c.keys = merged.keys;  // candidate set, counts start at zero
+        c.counts.assign(merged.counts.size(), 0);
+        c.used = merged.used;
+      }
+      const size_t mask = c.keys.empty() ? 0 : c.keys.size() - 1;
+      for (size_t i = bnd[t]; i < bnd[t + 1]; ++i) {
+        const int32_t d = delta_at(i);
+        if (d >= kSmallMin && d < kSmallMin + static_cast<int32_t>(kSmallSpan))
+          continue;
+        if (!small_wins_bound) {
+          c.add(d, 1);
+          continue;
+        }
+        for (size_t k = WideDeltaCounts::Hash(d) & mask;; k = (k + 1) & mask) {
+          if (c.keys[k] == d) {
+            ++c.counts[k];
+            break;
+          }
+          if (c.keys[k] == WideDeltaCounts::kEmpty) break;  // not a candidate
+        }
+      }
+    });
+    std::vector<WideDeltaSummary>().swap(summary);
+    WideDeltaCounts total;
+    for (size_t t = 0; t < nt; ++t) {
+      const WideDeltaCounts& w = part[t];
+      for (size_t i = 0; i < w.keys.size(); ++i)
+        if (w.keys[i] != WideDeltaCounts::kEmpty && w.counts[i])
+          total.add(static_cast<int32_t>(w.keys[i]), w.counts[i]);
+    }
+    std::vector<WideDeltaCounts>().swap(part);
+    for (size_t i = 0; i < total.keys.size(); ++i)
+      if (total.keys[i] != WideDeltaCounts::kEmpty)
+        consider(static_cast<int32_t>(total.keys[i]), total.counts[i]);
   }
   const int32_t common = best;
 
@@ -478,14 +581,13 @@ std::vector<uint8_t> EncodeDeltaU32(const uint32_t* values, size_t count) {
 #endif
   size_t bound = 0;
   if (!lu_crate_encode_delta_u32_bound(count, &bound)) return result;
-  result.resize(bound);
+  // Uninitialized scratch + exact-size copy (see CompressCrateBlob).
+  std::unique_ptr<uint8_t[]> scratch(new uint8_t[bound ? bound : 1]);
   size_t out_size = 0;
   const char* error = nullptr;
-  if (lu_crate_encode_delta_u32(values, count, result.data(), bound, &out_size,
+  if (lu_crate_encode_delta_u32(values, count, scratch.get(), bound, &out_size,
                                 &error)) {
-    result.resize(out_size);
-  } else {
-    result.clear();
+    result.assign(scratch.get(), scratch.get() + out_size);
   }
   return result;
 }
@@ -500,14 +602,13 @@ std::vector<uint8_t> EncodeDeltaS32(const int32_t* values, size_t count) {
   if (count == 0 || !values) return result;
   size_t bound = 0;
   if (!lu_crate_encode_delta_s32_bound(count, &bound)) return result;
-  result.resize(bound);
+  // Uninitialized scratch + exact-size copy (see CompressCrateBlob).
+  std::unique_ptr<uint8_t[]> scratch(new uint8_t[bound ? bound : 1]);
   size_t out_size = 0;
   const char* error = nullptr;
-  if (lu_crate_encode_delta_s32(values, count, result.data(), bound, &out_size,
+  if (lu_crate_encode_delta_s32(values, count, scratch.get(), bound, &out_size,
                                 &error)) {
-    result.resize(out_size);
-  } else {
-    result.clear();
+    result.assign(scratch.get(), scratch.get() + out_size);
   }
   return result;
 }

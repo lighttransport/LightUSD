@@ -116,6 +116,22 @@ struct LayerMeta {
 /// - Path-to-index map for O(1) lookup
 /// - Root prims stored by index
 /// - Children stored as indices (no pointer chasing)
+class Layer;
+
+/// On-demand opinion composition for a layer whose prims are a skeleton
+/// (name, path, children) -- the experimental deferred fill
+/// (LIGHTUSD_NEXT_DEFERRED_FILL). Fill(i) composes prim i's opinions into the
+/// layer; Release(i) drops them again (back to the skeleton). Each prim is
+/// filled at most once (its composition sources are freed after the fill).
+class PrimFiller {
+ public:
+  virtual ~PrimFiller() = default;
+  virtual void Fill(Layer& layer, uint32_t index) = 0;
+  virtual void Release(Layer& layer, uint32_t index) = 0;
+  /// Whatever the filler composes from (e.g. the composition cache).
+  std::shared_ptr<void> keepalive;
+};
+
 class Layer {
 public:
   Layer();
@@ -136,6 +152,10 @@ public:
 
   /// Add a new PrimSpec and return its index
   uint32_t add_prim(PrimSpec&& spec);
+  /// Grow the prim array to `count` default-constructed prims (for callers
+  /// that fill prims by index, e.g. the parallel composition walk); existing
+  /// prims are kept. Link children / roots afterwards as usual.
+  void resize_prims(size_t count);
 
   /// Set parent-child relationship
   void set_parent(uint32_t child_index, uint32_t parent_index);
@@ -158,6 +178,12 @@ public:
   /// 10M-entry string map is never built. Default off: ordinary layers keep
   /// the eager index (their lookups run inside parallel compose workers).
   void set_lazy_path_index(bool lazy) { lazy_path_index_ = lazy; }
+
+  /// Deferred-fill hook (see PrimFiller); null for an ordinary layer.
+  PrimFiller* prim_filler() const { return prim_filler_.get(); }
+  void set_prim_filler(std::shared_ptr<PrimFiller> filler) {
+    prim_filler_ = std::move(filler);
+  }
 
   /// Sort prims so every ancestor precedes its descendants and subtrees are
   /// contiguous (lexicographic full-path order). The crate writer's
@@ -301,6 +327,7 @@ private:
   bool lazy_path_index_ = false;
   // Set by finalize() when the index was deferred; cleared by the build.
   mutable std::atomic<bool> path_index_dirty_{false};
+  std::shared_ptr<PrimFiller> prim_filler_;
 };
 
 /// Layer builder - helper for constructing layers from parsed data

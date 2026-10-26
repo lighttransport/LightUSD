@@ -1978,10 +1978,10 @@ static const std::vector<std::string>* ArcPaths(lightusd_prim p, uint8_t arc_typ
   if (!spec) return nullptr;
   const auto& meta = spec->meta();
   switch (arc_type) {
-    case LIGHTUSD_ARC_REFERENCE: return &meta.references;
-    case LIGHTUSD_ARC_PAYLOAD: return &meta.payloads;
-    case LIGHTUSD_ARC_INHERIT: return &meta.inherits;
-    case LIGHTUSD_ARC_SPECIALIZE: return &meta.specializes;
+    case LIGHTUSD_ARC_REFERENCE: return &meta.references.get();
+    case LIGHTUSD_ARC_PAYLOAD: return &meta.payloads.get();
+    case LIGHTUSD_ARC_INHERIT: return &meta.inherits.get();
+    case LIGHTUSD_ARC_SPECIALIZE: return &meta.specializes.get();
     default: return nullptr;
   }
 }

@@ -247,13 +247,13 @@ void CrateReader::Impl::EmitPrimBody(
           }
         };
         if (field.first == "references") {
-          apply_arc_field(field.second, ps->meta().references,
+          apply_arc_field(field.second, ps->meta().references.mut(),
                           [](ArcListOps& a) -> ArcListOp& { return a.references; },
                           "references");
           continue;
         }
         if (field.first == "payload") {
-          apply_arc_field(field.second, ps->meta().payloads,
+          apply_arc_field(field.second, ps->meta().payloads.mut(),
                           [](ArcListOps& a) -> ArcListOp& { return a.payloads; },
                           "payload");
           continue;
@@ -261,13 +261,13 @@ void CrateReader::Impl::EmitPrimBody(
         if (field.first == "inherits" || field.first == "inheritPaths") {
           // pxr's crate field name is "inheritPaths"; next's own writer used
           // "inherits". Accept both.
-          apply_arc_field(field.second, ps->meta().inherits,
+          apply_arc_field(field.second, ps->meta().inherits.mut(),
                           [](ArcListOps& a) -> ArcListOp& { return a.inherits; },
                           "inherits");
           continue;
         }
         if (field.first == "specializes") {
-          apply_arc_field(field.second, ps->meta().specializes,
+          apply_arc_field(field.second, ps->meta().specializes.mut(),
                           [](ArcListOps& a) -> ArcListOp& { return a.specializes; },
                           "specializes");
           continue;
@@ -642,7 +642,7 @@ void CrateReader::Impl::EmitPrimBody(
         }
         // Per-property metadata (full PropMeta round-trip).
         if (ai.meta && ai.meta->authored != 0) {
-          ps->ensure_property_meta(ai.name) = std::move(*ai.meta);
+          ps->set_property_meta(ai.name, std::move(*ai.meta));
         }
         ai = AttrInfo();  // release the record's leftovers on this task
       }
@@ -677,7 +677,7 @@ void CrateReader::Impl::EmitPrimBody(
                                              flags));
         }
         if (ri.meta && ri.meta->authored != 0) {
-          ps->ensure_property_meta(ri.name) = std::move(*ri.meta);
+          ps->set_property_meta(ri.name, std::move(*ri.meta));
         }
         ri = RelInfo();  // release the record's leftovers on this task
       }

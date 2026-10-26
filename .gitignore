@@ -474,6 +474,7 @@ cmake_install.cmake
 
 # AOUSD spec PDFs (keep local only)
 aousd/*.pdf
+aousd/**/*.pdf
 
 # OpenUSD source tree (should be external)
 aousd/OpenUSD/

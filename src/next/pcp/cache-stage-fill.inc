@@ -36,4 +36,5 @@
   // add_prim is done -- so distinct slots fill concurrently. Byte-identical to
   // the serial ComposeInto: the same ComposeOpinions runs on the same (slot,
   // srcs) pairs; only the order across independent slots changes.
-  void FillOpinions(Layer *out) ;
+  void FillOpinions(Layer *out,
+                    const std::vector<const std::vector<Src> *>& shared_srcs) ;

@@ -124,6 +124,10 @@ struct StackSpecCache {
   // their now-unused lookup keys/index. This cache becomes empty and reusable.
   std::deque<std::vector<SpecRef>> take_values();
 
+  // Read-only access for merging a worker's cache into the main cache.
+  size_t entry_count() const { return count_; }
+  const std::deque<std::string> &keys() const { return keys_; }
+  const std::deque<std::vector<SpecRef>> &vals() const { return vals_; }
  private:
   void place(uint64_t h, uint32_t vi) ;
   void rehash() ;
@@ -132,7 +136,7 @@ struct StackSpecCache {
 // Exact-safe negative lookup filter for Specs().
 //
 // Most ExpandArcs calls ask for a site that NO layer in the stack authors
-// (measured 85.6% on a full-LOD Caldera district). FindSpecs() answers each of
+// (measured 85.6% on a full-LOD benchmark scene district). FindSpecs() answers each of
 // those with one `std::unordered_map` probe per layer, hashing the (long) path
 // string every time. This Bloom filter over the union of the stack's authored
 // prim paths answers "definitely absent" with ONE cheap probe.
@@ -264,28 +268,14 @@ struct SpecState {
 };
 
 // A single composition source (one node's worth of provenance).
-struct Src {
-  uint32_t stack_idx = 0;
-  // Index into the owning Impl's nm_pool_ (0 == identity). The namespace mapping
-  // is created once per arc and SHARED by every Src in the subtree below it, so
-  // storing an index (and copying it on child-build) avoids re-copying the two
-  // path strings of a non-identity NamespaceMapping for all 140K+ descendants --
-  // the dominant path-string churn in compose. Fills stack_idx's padding hole.
-  uint32_t map_idx = 0;
-  std::string site;            // prim path within the layer stack
+// The arc context a source carries -- time offset, expression variables,
+// arc chain, arc-site trail. Every source derived through the same arc shares
+// it (full-LOD benchmark scene: 24.7M sources, 2.9M distinct contexts), so it lives
+// behind one shared pointer instead of 64 inline bytes per Src. Immutable
+// while shared: Src's setters copy it first (copy-on-write).
+struct SrcContext {
   LayerOffset offset;
-  ArcType arc_kind = ArcType::Root;  // arc this source arrived through
-  // True when the arc was introduced at a namespace ANCESTOR (the source was
-  // derived by DeriveChildSources rather than by this prim's own arc
-  // expansion). pxr PcpNodeRef::IsDueToAncestor analogue; specifier
-  // resolution treats a class from a direct inherit as weaker than any other
-  // defining specifier, but an ancestral one composes in plain strength order.
-  bool ancestral = false;
-  // For Variant sources: the selected variant's inline opinions (lives inside a
-  // shared layer's PrimMetadata, so the pointer is stable). null otherwise.
-  const PrimVariantData *variant = nullptr;
-  // Composed expression-variable context visible at this source. Shared so
-  // propagating a source to thousands of descendants stays cheap.
+  // Composed expression-variable context visible at this source.
   std::shared_ptr<const Value> expression_variables;
   // The arc chain this source was reached through (null == the root stack).
   std::shared_ptr<const ArcChain> arc_chain;
@@ -297,6 +287,20 @@ struct Src {
   // this persisted trail restores pxr's behavior: the cyclic arc is dropped and
   // the re-entrant prim materializes once as `over` (ErrorArcCycle).
   std::shared_ptr<const std::vector<std::pair<uint32_t, std::string>>> arc_sites;
+};
+
+struct Src {
+  uint32_t stack_idx = 0;
+  // Index into the owning Impl's nm_pool_ (0 == identity). The namespace mapping
+  // is created once per arc and SHARED by every Src in the subtree below it, so
+  // storing an index (and copying it on child-build) avoids re-copying the two
+  // path strings of a non-identity NamespaceMapping for all 140K+ descendants --
+  // the dominant path-string churn in compose. Fills stack_idx's padding hole.
+  uint32_t map_idx = 0;
+  std::string site;            // prim path within the layer stack
+  // For Variant sources: the selected variant's inline opinions (lives inside a
+  // shared layer's PrimMetadata, so the pointer is stable). null otherwise.
+  const PrimVariantData *variant = nullptr;
   // For IMPLIED class sources (and their subtree): the layer stack whose
   // strength position this source composes at. pxr expresses an implied
   // class in each ancestor stack of the introducing arc chain, and its
@@ -304,6 +308,13 @@ struct Src {
   // NOT at the introducing reference's position (see ExpandList's reorder).
   // UINT32_MAX == not an implied source.
   uint32_t implied_anchor = UINT32_MAX;
+  ArcType arc_kind = ArcType::Root;  // arc this source arrived through
+  // True when the arc was introduced at a namespace ANCESTOR (the source was
+  // derived by DeriveChildSources rather than by this prim's own arc
+  // expansion). pxr PcpNodeRef::IsDueToAncestor analogue; specifier
+  // resolution treats a class from a direct inherit as weaker than any other
+  // defining specifier, but an ancestral one composes in plain strength order.
+  bool ancestral = false;
   // Relocation-source anchor whose OWN spec opinions are ignored (pxr:
   // "opinions at relocation source" are a composition error). The Src stays
   // in the list because child derivation descends through it (chained
@@ -317,6 +328,53 @@ struct Src {
   // Points into the owning Impl's spec_cache_by_stack_ (stable storage). Resets
   // itself on any copy/move of the Src (see SpecsMemo).
   SpecsMemo specs_;
+
+  // Arc context (see SrcContext).
+  const LayerOffset &offset() const { return ctx().offset; }
+  const std::shared_ptr<const Value> &expression_variables() const {
+    return ctx().expression_variables;
+  }
+  const std::shared_ptr<const ArcChain> &arc_chain() const {
+    return ctx().arc_chain;
+  }
+  const std::shared_ptr<const std::vector<std::pair<uint32_t, std::string>>> &
+  arc_sites() const {
+    return ctx().arc_sites;
+  }
+  // Setters leave a shared context alone when the value does not change.
+  void set_offset(const LayerOffset &o) {
+    const LayerOffset &cur = offset();
+    if (cur.offset == o.offset && cur.scale == o.scale) return;
+    mutable_ctx().offset = o;
+  }
+  void set_expression_variables(std::shared_ptr<const Value> v) {
+    if (expression_variables() == v) return;
+    mutable_ctx().expression_variables = std::move(v);
+  }
+  void set_arc_chain(std::shared_ptr<const ArcChain> c) {
+    if (arc_chain() == c) return;
+    mutable_ctx().arc_chain = std::move(c);
+  }
+  void set_arc_sites(
+      std::shared_ptr<const std::vector<std::pair<uint32_t, std::string>>> t) {
+    if (arc_sites() == t) return;
+    mutable_ctx().arc_sites = std::move(t);
+  }
+  // The whole context, shared (e.g. remapped once per context in the merge).
+  const std::shared_ptr<SrcContext> &context() const { return ctx_; }
+  void set_context(std::shared_ptr<SrcContext> c) { ctx_ = std::move(c); }
+
+ private:
+  const SrcContext &ctx() const {
+    static const SrcContext kDefault;
+    return ctx_ ? *ctx_ : kDefault;
+  }
+  SrcContext &mutable_ctx() {
+    if (!ctx_) ctx_ = std::make_shared<SrcContext>();
+    else if (ctx_.use_count() > 1) ctx_ = std::make_shared<SrcContext>(*ctx_);
+    return *ctx_;
+  }
+  std::shared_ptr<SrcContext> ctx_;
 };
 
 // path -> expanded composition sources. The compose structure pass hammers
@@ -409,6 +467,18 @@ struct SrcCache {
   // Pre-size the index for `expected` live entries so a bulk merge does not
   // rehash its way up from the seed size.
   void reserve(size_t expected) ;
+
+  // Merge helpers (warm merge): the live entry indices in index order with
+  // their stored hashes; a read-only probe with a precomputed hash; key
+  // access by entry index; taking an entry's key (cache being discarded).
+  void live_with_hash(std::vector<uint32_t> *idx,
+                      std::vector<uint64_t> *hash) const;
+  const std::vector<Src> *find_hashed(const std::string &k, uint64_t h) const;
+  const std::string &key_ref(uint32_t index) const { return key_at(index); }
+  std::string take_key(uint32_t index) {
+    own_key(index);
+    return std::move(keys_[index]);
+  }
 
   // Insert only if absent (merge path). Consumes v when it inserts.
   void emplace_if_absent(const std::string &k, std::vector<Src> &&v) ;
@@ -597,12 +667,37 @@ struct Cache::Impl {
   LoadRules load_rules_;  // per-subtree payload overrides (on top of base policy)
 
   // Instancing: instance key -> prototype prim path; and the groupings.
-  std::map<std::string, std::string> prototype_by_key;
+  // Every registered prim's path appears in prototype_of, its group's member
+  // list and instance_prim_index_, and each member repeats its prototype's
+  // path: they share refcounted PathStr nodes instead (full-LOD benchmark scene:
+  // 1.06M instances, ~7K prototypes). prototype_of is keyed by a view into
+  // its entry's own path node, so lookups by std::string need no allocation.
+  std::map<std::string, PathStr> prototype_by_key;
   // Instance keys in DISCOVERY order (first registration during the stage
   // walk): pxr numbers flattened prototypes by this order, not by path.
   std::vector<std::string> instance_key_order;
-  std::unordered_map<std::string, std::string> prototype_of;           // prim -> prototype
-  std::unordered_map<std::string, std::vector<std::string>> instances_by_prototype;
+  struct PrototypeOfEntry {
+    PathStr path;   // the prim (backs the map key)
+    PathStr proto;  // its prototype
+  };
+  std::unordered_map<std::string_view, PrototypeOfEntry> prototype_of;  // prim -> prototype
+  std::unordered_map<std::string, std::vector<PathStr>> instances_by_prototype;
+  // prototype_of[prim] = proto, sharing `prim`'s node as the key.
+  void SetPrototypeOf(const PathStr &prim, const PathStr &proto) {
+    auto it = prototype_of.find(prim.str());
+    if (it != prototype_of.end()) {
+      it->second.proto = proto;
+      return;
+    }
+    PrototypeOfEntry e{prim, proto};
+    const std::string_view key(e.path.str());
+    prototype_of.emplace(key, std::move(e));
+  }
+  // The shared node for `path` when prototype_of has one, else a new one.
+  PathStr PathNode(const std::string &path) const {
+    auto it = prototype_of.find(path);
+    return it != prototype_of.end() ? it->second.path : PathStr(path);
+  }
 
   // Relocates are a per-LAYER-STACK property (LayerStack::relocates, built in
   // InternLayerStack) and are applied while deriving a prim's composition

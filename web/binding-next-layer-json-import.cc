@@ -259,12 +259,12 @@ bool ParseLayerJSONPrim(const minijson::Value& encoded, tn::LayerBuilder* builde
   if (!encoded["inherits"].is_null() || !encoded["specializes"].is_null() ||
       !encoded["references"].is_null() || !encoded["payloads"].is_null()) {
     tn::ArcListOps& edits = prim->meta().ensure_arc_edits();
-    if (!parse_path_ops("inherits", &prim->meta().inherits, &edits.inherits) ||
-        !parse_path_ops("specializes", &prim->meta().specializes,
+    if (!parse_path_ops("inherits", &prim->meta().inherits.mut(), &edits.inherits) ||
+        !parse_path_ops("specializes", &prim->meta().specializes.mut(),
                         &edits.specializes) ||
-        !parse_path_ops("references", &prim->meta().references,
+        !parse_path_ops("references", &prim->meta().references.mut(),
                         &edits.references, true) ||
-        !parse_path_ops("payloads", &prim->meta().payloads,
+        !parse_path_ops("payloads", &prim->meta().payloads.mut(),
                         &edits.payloads, true)) {
       builder->end_prim();
       return false;

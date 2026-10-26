@@ -21,6 +21,10 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <unordered_map>
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include <mutex>
+#endif
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include <atomic>
 #endif
@@ -379,6 +383,7 @@ class CrateReader::Impl {
   // values become canonical usda element text (see layer/array-edit.hh).
   bool UnpackArrayEditData(ValueRep rep, ArrayEditData* out);
   bool UnpackArray(ValueRep rep, Value& out);
+  bool UnpackArrayUncached(ValueRep rep, Value& out);
 
   bool UnpackBool(ValueRep rep, Value& out);
   bool UnpackInt(ValueRep rep, Value& out);
@@ -448,6 +453,25 @@ class CrateReader::Impl {
       ValueRep rep, std::vector<std::pair<std::string, std::string>>& out);
   bool DecodeTokenListOp(ValueRep rep, std::vector<std::string>& out);
   bool DecodeDictionary(ValueRep rep, Value& out, int depth);
+  bool DecodeDictionaryUncached(ValueRep rep, Value& out, int depth);
+  // Decoded dictionaries and arrays by ValueRep. A crate stores each distinct
+  // value once and every spec that authors it points at the same rep, so the
+  // specs share one decoded value (refcounted, copy-on-write) instead of a
+  // copy each -- benchmark scene's prefab prims all carry a small nested `customData`
+  // and the same few small arrays (~2.6 GB of dictionaries plus ~3.9 GB of
+  // arrays decoded per prim on full LOD). Sharded: EmitPrimBody decodes in
+  // parallel.
+  struct DictCacheShard {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    std::mutex mu;
+#endif
+    std::unordered_map<uint64_t, Value> map;
+  };
+  static constexpr size_t kDictCacheShards = 16;
+  std::unique_ptr<DictCacheShard[]> dict_cache_{new DictCacheShard[kDictCacheShards]};
+  // Returns true (with `out` set) on a hit; Store records a fresh decode.
+  bool FindDecoded(uint64_t rep, Value& out);
+  void StoreDecoded(uint64_t rep, const Value& v);
 
   bool ReportProgress(const char* phase, size_t current = 0,
                       size_t total = 0);

@@ -16,36 +16,27 @@
 namespace lightusd {
 namespace next {
 
-PrimMetadataCold::PrimMetadataCold(const PrimMetadataCold &o)
+PrimMetadataRare::PrimMetadataRare(const PrimMetadataRare &o)
       : doc(o.doc),
         comment(o.comment),
         doc_authored(o.doc_authored),
         comment_authored(o.comment_authored),
-        kind(o.kind),
-        kind_authored(o.kind_authored),
         displayName(o.displayName),
         display_name_authored(o.display_name_authored),
         permission(o.permission),
         displayGroupOrder(o.displayGroupOrder),
         displayGroupOrderAuthored(o.displayGroupOrderAuthored),
-        instance_prototype(o.instance_prototype),
-        apiSchemas(o.apiSchemas),
-        apiSchemasAuthored(o.apiSchemasAuthored),
-        apiSchemaEdits(o.apiSchemaEdits),
-        apiSchemasQualifier(o.apiSchemasQualifier),
         variantSets(o.variantSets),
         variantSetNameEdits(o.variantSetNameEdits),
         variantSelections(o.variantSelections),
         variantSelectionsAuthored(o.variantSelectionsAuthored),
         relocates(o.relocates),
         relocatesAuthored(o.relocatesAuthored),
-        customData(o.customData),
         assetInfo(o.assetInfo),
         sdrMetadata(o.sdrMetadata),
         clips(o.clips),
         clipSetEdits(o.clipSetEdits),
         clipShadowedProps(o.clipShadowedProps),
-        customDataAuthored(o.customDataAuthored),
         assetInfoAuthored(o.assetInfoAuthored),
         sdrMetadataAuthored(o.sdrMetadataAuthored),
         clipsAuthored(o.clipsAuthored),
@@ -54,8 +45,25 @@ PrimMetadataCold::PrimMetadataCold(const PrimMetadataCold &o)
         primOrderAuthored(o.primOrderAuthored),
         propertyOrderAuthored(o.propertyOrderAuthored),
         unknownMeta(o.unknownMeta),
-        unknownFields(o.unknownFields),
-        arc_edits(o.arc_edits ? new ArcListOps(*o.arc_edits) : nullptr) {}
+        unknownFields(o.unknownFields) {}
+
+PrimMetadataRare::PrimMetadataRare() = default;
+
+PrimMetadataRare::~PrimMetadataRare() = default;
+
+PrimMetadataCold::PrimMetadataCold(const PrimMetadataCold &o)
+      : kind(o.kind),
+        customData(o.customData),
+        instance_prototype(o.instance_prototype),
+        apiSchemas(o.apiSchemas),
+        kind_authored(o.kind_authored),
+        apiSchemasAuthored(o.apiSchemasAuthored),
+        customDataAuthored(o.customDataAuthored),
+        arc_edits(o.arc_edits ? new ArcListOps(*o.arc_edits) : nullptr),
+        api_schema_edits(o.api_schema_edits
+                             ? new ApiSchemaListOp(*o.api_schema_edits)
+                             : nullptr),
+        rare(o.rare ? new PrimMetadataRare(*o.rare) : nullptr) {}
 
 PrimMetadataCold::PrimMetadataCold() = default;
 
@@ -448,6 +456,8 @@ ValueBlockStorage::ValueBlockStorage() {
 }
 
 ValueBlockStorage::~ValueBlockStorage() = default;
+
+void ValueBlockStorage::reserve(size_t count) { values_.reserve(count); }
 
 uint32_t ValueBlockStorage::store(const Value& value) {
   uint32_t idx = static_cast<uint32_t>(values_.size());

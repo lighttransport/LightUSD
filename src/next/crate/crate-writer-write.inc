@@ -71,9 +71,12 @@
     string_indices_.clear();
     string_to_index_.clear();
     paths_.clear();
-    path_hashes_.clear();
-    path_slots_.clear();
+    for (PathShard& sh : path_shards_) {
+      sh.slots.clear();
+      sh.count = 0;
+    }
     path_owned_.clear();
+    path_fingerprints_.clear();
     fields_.clear();
     fieldset_offsets_.clear();
     flat_fieldsets_.clear();
@@ -102,12 +105,17 @@
 
     // Reserve table/map capacity up front: a big scene appends millions of
     // paths/specs/fields and dedup entries, and the repeated geometric reallocs +
-    // unordered_map rehashes are a top serial cost (alloc churn, ~18% on Island).
+    // unordered_map rehashes are a top serial cost (alloc churn, ~18% on reference scene).
     // Each prim yields ~1 prim spec + 1 spec per property; sizes are heuristic
     // (over-reserve is cheaper than rehashing), so this never changes output.
     {
       size_t nprim = layer.prims().size();
       size_t nprop = 0;
+#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+      // A deferred-fill layer has no properties yet (sizing hint only).
+      deferred_filler_ = layer.prim_filler();
+      if (!deferred_filler_)
+#endif
       for (const auto& p : layer.prims()) nprop += p.properties().slots().size();
       const size_t nspec = nprim + nprop + 16;
       ReservePaths(nspec);
@@ -158,7 +166,7 @@
 
     // Complete the path tree (synthesized ancestors) and pre-register every
     // path element token so they're included in the TOKENS section:
-    // WritePathsSection runs AFTER the TOKENS section is built.
+    // the PATHS payload only looks them up (built alongside TOKENS).
     SynthesizeAncestorPaths();
     RegisterPathElementTokens();
 
@@ -242,6 +250,8 @@
     std::vector<uint8_t> fields_payload;
     std::vector<uint8_t> fieldsets_payload;
     std::vector<uint8_t> specs_payload;
+    std::vector<uint8_t> paths_payload;
+    bool paths_ok = true;
     std::string fields_error;
     bool fields_ok = true;
     {
@@ -253,6 +263,9 @@
         BuildFieldsetsSectionPayload(&fieldsets_payload);
       };
       auto build_specs = [&]() { BuildSpecsSectionPayload(&specs_payload); };
+      auto build_paths = [&]() {
+        paths_ok = BuildPathsSectionPayload(&paths_payload);
+      };
       bool prepared = false;
 #if defined(LIGHTUSD_ENABLE_THREAD)
       if (ResolveThreads() > 1 &&
@@ -261,10 +274,12 @@
         std::thread th_fields(build_fields);
         std::thread th_fieldsets(build_fieldsets);
         std::thread th_specs(build_specs);
+        std::thread th_paths(build_paths);
         build_tokens();
         th_fields.join();
         th_fieldsets.join();
         th_specs.join();
+        th_paths.join();
         prepared = true;
       }
 #endif
@@ -273,7 +288,13 @@
         build_fields();
         build_fieldsets();
         build_specs();
+        build_paths();
       }
+    }
+    if (!paths_ok) {
+      result_.error = "Crate PATHS: a path element token is missing";
+      result_.success = false;
+      return result_;
     }
     if (!fields_ok) {
       result_.error = fields_error;
@@ -331,20 +352,9 @@
     std::vector<uint8_t>().swap(fieldsets_payload);
 
     // PATHS section
-    {
-      CrateSection sec;
-      std::memset(sec.name, 0, sizeof(sec.name));
-      std::strncpy(sec.name, "PATHS", sizeof(sec.name) - 1);
-      sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
-      WritePathsSection();
-      lap("PATHS");
-      if (writer_.failed()) {
-        result_.error = "Crate output exceeds configured file-size limit";
-        return result_;
-      }
-      sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
-      sections.push_back(sec);
-    }
+    if (!append_section("PATHS", paths_payload)) return result_;
+    std::vector<uint8_t>().swap(paths_payload);
+    lap("PATHS");
 
     // SPECS section
     if (!append_section("SPECS", specs_payload)) return result_;

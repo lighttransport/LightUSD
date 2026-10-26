@@ -48,7 +48,8 @@ static void emit_crate_limit_hint(const std::string &err,
                                   size_t max_crate_elements) {
   if (max_crate_elements == 0 &&
       (err.find("crate table limit") != std::string::npos ||
-       err.find("Too many ") != std::string::npos)) {
+       err.find("Too many ") != std::string::npos ||
+       err.find("exceeds max_array_elements") != std::string::npos)) {
     std::fprintf(stderr,
                  "ERR : hint: raise --max-crate-elements for large trusted "
                  "USDC files\n");
@@ -91,7 +92,7 @@ int main(int argc, char **argv) {
   // kMaxExecutionThreads), N = fixed, 1 = serial. Byte-identical to serial.
   // It prefetches arc layers, pre-warms the sources cache (LIVRPS arc
   // resolution, instance prototypes included) and fills opinions
-  // concurrently; a net win on every measured scene (Island, Scene A, Scene C,
+  // concurrently; a net win on every measured scene (reference scene, Scene A, Scene C,
   // House), so it defaults ON like parse/write. Force serial with
   // --compose-threads 1. (Independent of the writer's
   // LIGHTUSD_NEXT_NUM_THREADS.) A build without LIGHTUSD_NEXT_ENABLE_THREAD
@@ -459,6 +460,11 @@ int main(int argc, char **argv) {
     // 1 = serial parse); same env knob as the --rewrite-layer path.
     opts.usda_parse_options.num_threads = parse_threads;
     opts.instance_flatten_mode = inst_mode;  // default Holder (self-contained)
+#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+    // Experimental: the stage is written once to USDC, so compose each prim's
+    // opinions on demand in the writer instead of up front.
+    opts.defer_opinion_fill = flatten && output_usdc;
+#endif
     opts.prototype_numbering = proto_num;
     // Parallel compose is byte-identical to serial. Default -1 = auto
     // (hardware concurrency); --compose-threads 1 = serial.
@@ -493,6 +499,8 @@ int main(int argc, char **argv) {
   const auto t_loaded = Clock::now();
 
   emit_lines(warn, "WARN : ");
+  // Composition reports a layer the limits refused as a warning and goes on.
+  emit_crate_limit_hint(warn, max_crate_elements);
   if (!ok) {
     emit_lines(err.empty() ? std::string("load failed") : err, "ERR : ");
     emit_crate_limit_hint(err, max_crate_elements);

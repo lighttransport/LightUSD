@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
+// Included inside namespace lightusd::next by prim-spec.hh (which includes
+// lazy-containers.hh first).
 
 #include "prim-spec-variant-data.hh"
 
@@ -41,32 +43,22 @@ std::vector<std::string> ApplyStringListOp(
     const StringListOps &edits,
     const std::vector<std::string> &weaker);
 
-/// Cold PrimSpec metadata: fields that are empty on the vast majority of prims
-/// (no docs / variants / relocates / apiSchemas / instancing / list-op edits).
-/// Held behind a lazily-allocated unique_ptr on PrimMetadata so an ordinary
-/// prim pays only 8 pointer bytes instead of ~190 bytes of empty std::string /
-/// std::vector heads (Phase 8.1 footprint split).
-struct PrimMetadataCold {
+/// Rarely authored PrimSpec metadata (docs, variants, relocates, list-op
+/// edits, clips, ordering, unknown fields): a second lazily-allocated tier
+/// under PrimMetadataCold, so a prim that only carries a kind / customData /
+/// instance prototype / apiSchemas pays for those few fields (~0.15 KB)
+/// instead of every cold field head (~1.3 KB). Full-LOD benchmark scene composes
+/// 10M prims, most with a kind or customData and none with these.
+struct PrimMetadataRare {
   std::string doc;
   std::string comment;
   bool doc_authored = false;
   bool comment_authored = false;
-  std::string kind;         // model kind (component/group/assembly/...)
-  bool kind_authored = false;
   std::string displayName;  // UI display name
   bool display_name_authored = false;
   std::string permission;   // "public"/"private" (pxr SdfPermission)
   std::vector<std::string> displayGroupOrder;
   bool displayGroupOrderAuthored = false;
-  // When non-empty (set by composition), this prim is an instance whose
-  // children come from the prototype prim at this path (no duplicated subtree).
-  std::string instance_prototype;
-  std::vector<std::string> apiSchemas;
-  bool apiSchemasAuthored = false;
-  StringListOps apiSchemaEdits;
-  // Authored list-op qualifier for apiSchemas: "" (bare/explicit),
-  // "prepend", "append" or "delete" — pxr's own convention is prepend.
-  std::string apiSchemasQualifier;
   // Variant set definitions.
   std::vector<PrimVariantSetData> variantSets;
   StringListOps variantSetNameEdits;
@@ -77,8 +69,6 @@ struct PrimMetadataCold {
   // Relocates: namespace renames (absolute source path -> absolute target path).
   std::vector<std::pair<std::string, std::string>> relocates;
   bool relocatesAuthored = false;
-  // Dictionary-valued metadata (each a Dictionary Value; empty when unauthored).
-  Value customData;
   Value assetInfo;
   Value sdrMetadata;
   Value clips;
@@ -88,7 +78,6 @@ struct PrimMetadataCold {
   // source that introduced the clips metadata. Value-clip resolution takes
   // precedence over these (LVRPS: local > clips > references/payloads).
   std::vector<PropNameId> clipShadowedProps;
-  bool customDataAuthored = false;
   bool assetInfoAuthored = false;
   bool sdrMetadataAuthored = false;
   bool clipsAuthored = false;
@@ -103,8 +92,47 @@ struct PrimMetadataCold {
   // pipeline-specific opinions like `sceneName`).
   std::vector<std::pair<std::string, std::string>> unknownMeta;
   std::vector<DecodedExtensionField> unknownFields;
-  // Arc list-op qualifiers (Phase 7 S5); null unless authored.
+
+  PrimMetadataRare();
+  ~PrimMetadataRare();
+  PrimMetadataRare(const PrimMetadataRare &o);
+  PrimMetadataRare &operator=(const PrimMetadataRare &) = delete;
+};
+
+/// Cold PrimSpec metadata: fields that are empty on the vast majority of prims
+/// (no kind / customData / instancing / apiSchemas; the rest in
+/// PrimMetadataRare). Held behind a lazily-allocated unique_ptr on
+/// PrimMetadata so an ordinary prim pays only 8 pointer bytes instead of
+/// ~190 bytes of empty std::string / std::vector heads (Phase 8.1 footprint
+/// split).
+/// apiSchemas list-op edits: the one rare-ish field composed prims carry
+/// (full-LOD benchmark scene: 0.5M of them), kept off the 1 KB PrimMetadataRare.
+struct ApiSchemaListOp {
+  StringListOps edits;
+  // Authored list-op qualifier for apiSchemas: "" (bare/explicit),
+  // "prepend", "append" or "delete" — pxr's own convention is prepend.
+  std::string qualifier;
+};
+
+struct PrimMetadataCold {
+  // Held by most composed prims (full-LOD benchmark scene: 6.7M), so packed: the
+  // flags share one word and the fields few prims set are pointer-sized
+  // (lazy-containers.hh).
+  std::string kind;         // model kind (component/group/assembly/...)
+  // Dictionary-valued metadata (each a Dictionary Value; empty when unauthored).
+  Value customData;
+  // When non-empty (set by composition), this prim is an instance whose
+  // children come from the prototype prim at this path (no duplicated subtree).
+  LazyString instance_prototype;
+  LazyStringList apiSchemas;
+  bool kind_authored = false;
+  bool apiSchemasAuthored = false;
+  bool customDataAuthored = false;
+  // Arc list-op qualifiers (Phase 7 S5); null unless authored. Common
+  // enough on layer prims (every referencing prim) to stay off the rare tier.
   std::unique_ptr<ArcListOps> arc_edits;
+  std::unique_ptr<ApiSchemaListOp> api_schema_edits;
+  std::unique_ptr<PrimMetadataRare> rare;
 
   PrimMetadataCold();
   ~PrimMetadataCold();
@@ -131,15 +159,18 @@ struct PrimMetadata {
   bool instanceable_authored = false;  // instanceable=false is a real opinion
   bool instanceable = false;  // when true (with arcs), the prim is an instance
 
-  // Composition arcs (stored as paths for lazy resolution).
-  std::vector<std::string> references;
-  std::vector<std::string> payloads;
-  std::vector<std::string> inherits;
-  std::vector<std::string> specializes;
+  // Composition arcs (stored as paths for lazy resolution). Pointer-sized
+  // while empty (lazy-containers.hh): composed prims carry no arcs, and the
+  // 88 inline bytes of empty heads per PrimSpec cost ~1.1 GB on a full-LOD
+  // benchmark scene flatten.
+  LazyStringList references;
+  LazyStringList payloads;
+  LazyStringList inherits;
+  LazyStringList specializes;
 
-  // Legacy single "variantSet=selection" (kept inline; the plural list of
-  // selections lives in the ext).
-  std::string variantSelection;
+  // Legacy single "variantSet=selection" (the plural list of selections
+  // lives in the ext).
+  LazyString variantSelection;
 
   // Layer offset (applied at evaluation time). First = offset, second = scale.
   std::pair<double, double> layer_offset = {0.0, 1.0};
@@ -153,6 +184,9 @@ struct PrimMetadata {
 
   bool has_ext() const;
   void ensure_ext();
+  /// Free the ext tiers if every field in them is back to its default (a
+  /// merge may touch a field and later clear it).
+  void trim_ext();
   const PrimMetadataCold *ext() const;
 
   // Arc list-op edits (Phase 7 S5). Const returns null when none authored (the
@@ -241,6 +275,7 @@ struct PrimMetadata {
   std::vector<std::pair<std::string, std::string>> &unknownMeta();
 
  private:
+  PrimMetadataRare &ensure_rare();
   std::unique_ptr<PrimMetadataCold> ext_;
 };
 

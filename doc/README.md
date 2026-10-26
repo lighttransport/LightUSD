@@ -11,7 +11,7 @@ documents live in [archive/](archive/).
   variants; LIVRPS correctness analysis vs OpenUSD PCP.
 - [pcp.md](pcp.md) — Composition-graph (PCP / DAG engine) API reference,
   OpenUSD and AOUSD alignment.
-- [instancing.md](instancing.md) — OpenUSD instancing model, the Moana Island
+- [instancing.md](instancing.md) — OpenUSD instancing model, the Moana reference scene
   instancing structure, and LightUSD's instancing state + scaling plan.
 - [timesamples.md](timesamples.md) — Time-sampled attribute evaluation,
   interpolation, and value deduplication.
@@ -67,10 +67,13 @@ documents live in [archive/](archive/).
 
 - [memory-and-performance.md](memory-and-performance.md) — Memory profile and
   performance notes (parsing stages, Tydra conversion, config options).
-- [benchmarks.md](benchmarks.md) — Renderer benchmarks: Moana Island
+- [benchmarks.md](benchmarks.md) — Renderer benchmarks: Moana reference scene
   per-element and mid-scale scenes (Kitchen_set, Moore Lane).
-- [large-scene.md](large-scene.md) — Loading 10-20 GB production scenes (Island,
-  ALab, Caldera) within a bounded RAM budget, incl. validated VRAM-fit configs.
+- [large-scene.md](large-scene.md) — Loading 10-20 GB production scenes (reference scene,
+  ALab, benchmark scene) within a bounded RAM budget, incl. validated VRAM-fit configs.
+- [large-scene-vs-openusd.md](large-scene-vs-openusd.md) — benchmark scene compose/write
+  benchmark against OpenUSD v26.11.1 (build recipe, phase tables, USDA
+  newline-after-prim-spec finding).
 - [sanitizers.md](sanitizers.md) — ASan/TSan build and run notes.
 - [datarace.md](datarace.md) — Thread-safety and data-race notes.
 - [refactor-next.md](refactor-next.md) — `src/next` optimization & hardening

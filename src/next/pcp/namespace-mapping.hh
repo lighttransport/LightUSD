@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include <atomic>
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
@@ -21,6 +23,83 @@
 namespace lightusd {
 namespace next {
 namespace pcp {
+
+/// An immutable, refcounted path string: one pointer, shared by copies.
+/// Mapping pairs repeat the same few paths millions of times (full-LOD
+/// benchmark scene: 20.6M pair strings, 3.0M distinct) -- every composed mapping
+/// carries its inner pairs' sources and its outer pairs' targets -- so copies
+/// share one node instead of each owning a std::string. Empty == null.
+class PathStr {
+ public:
+  PathStr() = default;
+  PathStr(const std::string &s) : n_(s.empty() ? nullptr : new Node(s)) {}  // NOLINT
+  PathStr(std::string &&s)  // NOLINT
+      : n_(s.empty() ? nullptr : new Node(std::move(s))) {}
+  PathStr(const char *s) : PathStr(std::string(s)) {}  // NOLINT
+  PathStr(const PathStr &o) noexcept : n_(o.n_) { retain(); }
+  PathStr(PathStr &&o) noexcept : n_(o.n_) { o.n_ = nullptr; }
+  PathStr &operator=(const PathStr &o) noexcept {
+    if (n_ != o.n_) {
+      release();
+      n_ = o.n_;
+      retain();
+    }
+    return *this;
+  }
+  PathStr &operator=(PathStr &&o) noexcept {
+    if (this != &o) {
+      release();
+      n_ = o.n_;
+      o.n_ = nullptr;
+    }
+    return *this;
+  }
+  ~PathStr() { release(); }
+
+  const std::string &str() const { return n_ ? n_->s : Empty(); }
+  operator const std::string &() const { return str(); }  // NOLINT
+  bool empty() const { return !n_; }
+  size_t size() const { return n_ ? n_->s.size() : 0; }
+  std::string substr(size_t pos, size_t n = std::string::npos) const {
+    return str().substr(pos, n);
+  }
+
+  friend bool operator==(const PathStr &a, const PathStr &b) {
+    return a.n_ == b.n_ || a.str() == b.str();
+  }
+  friend bool operator!=(const PathStr &a, const PathStr &b) { return !(a == b); }
+  friend bool operator==(const PathStr &a, const std::string &b) { return a.str() == b; }
+  friend bool operator==(const std::string &a, const PathStr &b) { return a == b.str(); }
+  friend bool operator!=(const PathStr &a, const std::string &b) { return a.str() != b; }
+  friend bool operator!=(const std::string &a, const PathStr &b) { return a != b.str(); }
+  friend bool operator==(const PathStr &a, const char *b) { return a.str() == b; }
+  friend bool operator!=(const PathStr &a, const char *b) { return a.str() != b; }
+  friend bool operator<(const PathStr &a, const PathStr &b) { return a.str() < b.str(); }
+  friend std::string operator+(const PathStr &a, const std::string &b) { return a.str() + b; }
+  friend std::string operator+(const std::string &a, const PathStr &b) { return a + b.str(); }
+  friend std::string operator+(const PathStr &a, const char *b) { return a.str() + b; }
+
+ private:
+  struct Node {
+    explicit Node(const std::string &v) : s(v) {}
+    explicit Node(std::string &&v) : s(std::move(v)) {}
+    std::atomic<uint32_t> refs{1};
+    std::string s;
+  };
+  static const std::string &Empty() {
+    static const std::string kEmpty;
+    return kEmpty;
+  }
+  void retain() const {
+    if (n_) n_->refs.fetch_add(1, std::memory_order_relaxed);
+  }
+  void release() {
+    if (n_ && n_->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete n_;
+    n_ = nullptr;
+  }
+
+  Node *n_ = nullptr;
+};
 
 /// Time offset/scale applied to time samples coming through an arc.
 struct LayerOffset {
@@ -39,7 +118,7 @@ struct LayerOffset {
 /// target prefix. Empty == identity. Stores the mapping from a node's namespace
 /// to ROOT (composed once when the child arc is created).
 struct NamespaceMapping {
-  using Pair = std::pair<std::string, std::string>;  // (source, target)
+  using Pair = std::pair<PathStr, PathStr>;  // (source, target)
 
   std::vector<Pair> pairs;
   /// True once this mapping crosses a composition arc (reference/payload/
@@ -68,11 +147,11 @@ struct NamespaceMapping {
   // pairs are appended underneath it).
   const std::string &source_prefix() const {
     static const std::string kEmpty;
-    return pairs.empty() ? kEmpty : pairs.front().first;
+    return pairs.empty() ? kEmpty : pairs.front().first.str();
   }
   const std::string &target_prefix() const {
     static const std::string kEmpty;
-    return pairs.empty() ? kEmpty : pairs.front().second;
+    return pairs.empty() ? kEmpty : pairs.front().second.str();
   }
 
   /// Is `site` the ROOT of one of this mapping's renamed namespaces, i.e. the
@@ -137,6 +216,17 @@ struct NamespaceMapping {
     return p.second + path.substr(p.first.size());
   }
 
+  /// Apply() for a pair string, sharing the input (unmapped path) or the
+  /// pair target (exact prefix match) instead of building a new string.
+  PathStr ApplyShared(const PathStr &path) const {
+    const int i = MatchSource(path);
+    if (i < 0) return path;
+    const Pair &p = pairs[static_cast<size_t>(i)];
+    if (p.second.empty()) return path;
+    if (p.first.size() == path.size()) return p.second;
+    return PathStr(p.second + path.substr(p.first.size()));
+  }
+
   /// Map a target-namespace path back into this mapping's source namespace.
   std::string ReverseApply(const std::string &path) const {
     const int i = MatchTarget(path);
@@ -197,7 +287,7 @@ struct NamespaceMapping {
         (inner.intra_stack && (outer.intra_stack || !outer.crosses_arc)) ||
         (outer.intra_stack && (inner.intra_stack || !inner.crosses_arc));
     for (const Pair &in : inner.pairs) {
-      out.pairs.emplace_back(in.first, outer.Apply(in.second));
+      out.pairs.emplace_back(in.first, outer.ApplyShared(in.second));
       for (const Pair &o : outer.pairs) {
         // An outer rename authored strictly below this inner pair's target maps
         // a deeper slice of the inner namespace.

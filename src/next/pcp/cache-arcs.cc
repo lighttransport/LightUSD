@@ -118,7 +118,7 @@ void Cache::Impl::ProcessDeferredVariants(std::vector<Src> *main_list,
           vsrc.site = holder;
           vsrc.map_idx = InternMapping(NamespaceMapping::Compose(
               Mapping(e.src.map_idx), NamespaceMapping{holder, e.src.site}));
-          vsrc.offset = e.src.offset;
+          vsrc.set_offset(e.src.offset());
           vsrc.arc_kind = ArcType::Variant;
           vsrc.implied_anchor = e.src.implied_anchor;
           ExpandArcs(vsrc, nullptr, &tmp_main, &tmp_spec, sels, e.chain, warn,
@@ -195,7 +195,7 @@ void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame
             vsrc.site = "/__self__";
             vsrc.map_idx = InternMapping(NamespaceMapping::Compose(
                 Mapping(src.map_idx), NamespaceMapping{"/__self__", src.site}));
-            vsrc.offset = src.offset;
+            vsrc.set_offset(src.offset());
             vsrc.arc_kind = ArcType::Variant;
             const ExpansionFrame vframe{cstack, vsrc.map_idx, &vsrc.site, frame,
                                         frame ? frame->depth + 1 : 0};
@@ -326,7 +326,7 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
     // authored on a stronger source applies to a variantSet defined on a weaker
     // one (cross-source selection).
     for (const SpecRef &sr : specs) {
-      RecordSelections(*sr.spec, sels, src.expression_variables, warn, err);
+      RecordSelections(*sr.spec, sels, src.expression_variables(), warn, err);
     }
 
     // Phase 7 (S5): with apply_list_ops, gather each arc field once across the
@@ -423,7 +423,7 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
           vsrc.site = holder;
           vsrc.map_idx = InternMapping(NamespaceMapping::Compose(
               Mapping(src.map_idx), NamespaceMapping{holder, src.site}));
-          vsrc.offset = src.offset;
+          vsrc.set_offset(src.offset());
           vsrc.arc_kind = ArcType::Variant;
           const ExpansionFrame vframe{src.stack_idx, vsrc.map_idx, &vsrc.site, frame,
                                       frame ? frame->depth + 1 : 0};
@@ -545,7 +545,7 @@ std::vector<Src> Cache::Impl::ExpandList(const std::vector<Src> &base,
       // stack AND in every intermediate stack of the arc chain -- an override
       // authored on the class path at any of those levels composes.
       ArcChain chain;
-      if (s.arc_chain) chain = *s.arc_chain;
+      if (s.arc_chain()) chain = *s.arc_chain();
       if (chain.empty() || chain.front().first != 0) {
         chain.insert(chain.begin(), {0u, 0u});
       }
@@ -562,9 +562,9 @@ std::vector<Src> Cache::Impl::ExpandList(const std::vector<Src> &base,
       // live in s.arc_sites (held for this call), so the pointers stay valid.
       std::vector<ExpansionFrame> anc_frames;
       const ExpansionFrame *anc = nullptr;
-      if (s.arc_sites && !s.arc_sites->empty()) {
-        anc_frames.reserve(s.arc_sites->size());
-        for (const auto &hop : *s.arc_sites) {
+      if (s.arc_sites() && !s.arc_sites()->empty()) {
+        anc_frames.reserve(s.arc_sites()->size());
+        for (const auto &hop : *s.arc_sites()) {
           anc_frames.push_back(
               ExpansionFrame{hop.first, 0u, &hop.second, anc, 0u});
           anc = &anc_frames.back();

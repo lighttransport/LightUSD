@@ -63,7 +63,13 @@ private:
   }
   uint32_t FieldToken(FieldTok t) {
     uint32_t& tok = field_tok_[t];
-    if (tok == UINT32_MAX) tok = InternToken(FieldTokName(t));
+    if (tok != UINT32_MAX) return tok;
+    if (WorkerCtx* w = WorkerTLS()) {  // chunk-local cache; committed later
+      uint32_t& wtok = w->field_tok[t];
+      if (wtok == UINT32_MAX) wtok = InternToken(FieldTokName(t));
+      return wtok;
+    }
+    tok = InternToken(FieldTokName(t));
     return tok;
   }
   // Per-prim name token and per-property-name token, recorded while
@@ -89,15 +95,39 @@ private:
   std::unordered_map<std::string_view, uint32_t> string_to_index_;  // views of tokens_
 
   // Paths. Each path is a canonical (stem, name) VIEW pair (see PathRec in
-  // crate-writer-tables.inc); the views point at storage that outlives the
+  // crate-writer-tables.inc); pointers reference storage that outlives the
   // write: the input Layer's prim paths, the PropNameTable, or path_owned_.
   struct PathRec {
-    std::string_view stem;  // prim part (the whole path for a prim path)
-    std::string_view name;  // property name ("" for a prim path)
+    const char* stem_data = nullptr;
+    const char* name_data = nullptr;
+    uint32_t stem_size = 0;
+    uint32_t name_size = 0;
+
+    PathRec() = default;
+    PathRec(std::string_view stem, std::string_view name)
+        : stem_data(stem.empty() ? "" : stem.data()),
+          name_data(name.empty() ? "" : name.data()),
+          stem_size(static_cast<uint32_t>(stem.size())),
+          name_size(static_cast<uint32_t>(name.size())) {}
+    std::string_view stem() const { return {stem_data, stem_size}; }
+    std::string_view name() const { return {name_data, name_size}; }
   };
+  static_assert(sizeof(PathRec) == 24, "PathRec must stay compact");
   std::vector<PathRec> paths_;
-  std::vector<uint64_t> path_hashes_;   // per record, for rehash
-  std::vector<uint32_t> path_slots_;    // open-addressed index + 1 (0 = empty)
+  std::vector<uint16_t> path_fingerprints_;  // low hash bits; high bits live in index slots
+  // Open-addressed index, split into kPathShards independent tables by hash
+  // bits 28..31 (disjoint from the slot-index bits below and the fingerprint
+  // above), so the parallel commit can probe/insert shards concurrently while
+  // record ids stay global (paths_ order). A slot holds record index + 1 in
+  // its low 32 bits (0 = empty) and the record hash's high 32 bits, so a probe
+  // chain is walked without touching paths_ (far larger than any cache) until
+  // the 48-bit fingerprint matches.
+  static constexpr size_t kPathShards = 16;
+  struct PathShard {
+    std::vector<uint64_t> slots;
+    size_t count = 0;
+  };
+  PathShard path_shards_[kPathShards];
   std::deque<std::string> path_owned_;  // copies of transient path strings
 
   // Fields and fieldsets
@@ -169,13 +199,356 @@ private:
   uint64_t value_start_offset_ = 0; // absolute file offset of VALUE section start
   std::vector<uint64_t> value_offsets_; // offset in VALUE section for each data block
 
+  // ============================================================
+  // Parallel fields_specs workers
+  // ============================================================
+  // Design (doc/large-scene.md): the fields_specs lap is chunked over prims.
+  // Each worker encodes its chunk into private buffers:
+  //   * tokens/strings: a private table + ONE ordered intern-event stream
+  //     (kind, local id, text). Workers never read the live global tables
+  //     (the commit thread mutates them), so no snapshot/copy is needed and
+  //     every miss logs an event. Replaying the streams in chunk order = the
+  //     exact serial TOKENS/STRINGS first-use order.
+  //   * paths: a private open-addressed table; misses log a path event with a
+  //     precomputed hash, replayed serially (probe + insert) at commit.
+  //   * blocks: a block-op log (intern/push) with digests precomputed on the
+  //     worker; the commit replays exact InternBlock/StreamInternBlock
+  //     semantics. Provisional (log-local) block refs in field ValueReps and
+  //     inside tagged inline blobs are remapped at commit (see the blob tags
+  //     in crate-writer-fields.inc).
+  // Local id domains: tokens are provisional starting at the phase-start
+  // token count (base), likewise strings/paths, so a column value `v < base`
+  // is already global/final and `v >= base` remaps via the chunk's fin vector.
+  struct InternEvent {
+    std::string_view text;   // points into the worker's owned storage
+    uint32_t local;          // provisional id >= base
+    uint8_t kind;            // 0 = token, 1 = string
+  };
+  struct PathEvent {
+    std::string_view stem;
+    std::string_view name;
+    uint64_t hash;
+    uint32_t local;
+    // Index of the ctx path_store copy the views point into when the caller's
+    // text was transient (the commit adopts that string), or kStableText.
+    uint32_t store;
+  };
+  static constexpr uint32_t kStableText = UINT32_MAX;
+  // Block op kinds.
+  enum : uint8_t { kOpIntern = 0, kOpPush = 1 };
+
+  struct WorkerCtx {
+    // token/string local domains (ids offset by the phase-start base counts)
+    std::deque<std::string> tok_store;
+    std::unordered_map<std::string_view, uint32_t> tok_map;
+    uint32_t ntok = 0;
+    std::deque<std::string> str_store;
+    std::unordered_map<std::string_view, uint32_t> str_map;
+    uint32_t nstr = 0;
+
+    std::vector<InternEvent> events;
+
+    // path local table (ids offset by the phase-start path count)
+    struct WPathTable {
+      std::vector<uint32_t> slots;   // idx+1, 0 = empty (open-addressed)
+      std::vector<uint64_t> hashes;  // per record
+      std::vector<PathRec> recs;     // views into layer / PropNameTable / owned
+      void Reserve(size_t n) {
+        recs.reserve(n);
+        hashes.reserve(n);
+        size_t cap = 16;
+        while (cap < n * 2) cap *= 2;
+        if (cap > slots.size()) {
+          slots.assign(cap, 0);
+          for (uint32_t i = 0; i < recs.size(); ++i) {
+            size_t s = static_cast<size_t>(hashes[i]) & (cap - 1);
+            while (slots[s] != 0) s = (s + 1) & (cap - 1);
+            slots[s] = i + 1;
+          }
+        }
+      }
+      uint32_t Find(std::string_view stem, std::string_view name, uint64_t h,
+                    size_t* empty_slot = nullptr) const {
+        if (slots.empty()) return UINT32_MAX;
+        const size_t mask = slots.size() - 1;
+        for (size_t i = static_cast<size_t>(h) & mask;; i = (i + 1) & mask) {
+          const uint32_t slot = slots[i];
+          if (slot == 0) {
+            if (empty_slot) *empty_slot = i;
+            return UINT32_MAX;
+          }
+          const uint32_t idx = slot - 1;
+          if (hashes[idx] == h && recs[idx].stem() == stem &&
+              recs[idx].name() == name) {
+            return idx;
+          }
+        }
+      }
+      uint32_t Add(std::string_view stem, std::string_view name, uint64_t h,
+                   size_t slot) {
+        if ((recs.size() + 1) * 2 > slots.size()) {
+          Reserve(std::max<size_t>(64, (recs.size() + 1) * 2));
+          slot = kNoPathSlot;
+        }
+        const uint32_t idx = static_cast<uint32_t>(recs.size());
+        recs.push_back(PathRec{stem, name});
+        hashes.push_back(h);
+        if (slot == kNoPathSlot) {
+          const size_t mask = slots.size() - 1;
+          size_t s = static_cast<size_t>(h) & mask;
+          while (slots[s] != 0) s = (s + 1) & mask;
+          slots[s] = idx + 1;
+        } else {
+          slots[slot] = idx + 1;
+        }
+        return idx;
+      }
+    } ptab;
+    std::deque<std::string> path_store;  // owned copies of transient paths
+    uint32_t npath = 0;
+    std::vector<PathEvent> pevents;
+    // Streaming stage B per-op probe results (P1): pre_kind 1 = source-range
+    // hit, 2 = content-digest hit (pre_off = output offset), 3 = miss, 0 = not
+    // probed (raw push / block with embedded reps).
+    std::vector<uint8_t> pre_kind;
+    std::vector<uint64_t> pre_off;
+    // Blocks to write, in op order, with the offsets stage B planned for
+    // them (stage W writes them and checks the offsets).
+    std::vector<uint32_t> wjob_op;
+    std::vector<uint64_t> wjob_off;
+    // New dedup / source-range entries of this chunk (stage B, P3 inserts).
+    struct PendDedup { uint64_t h, h2, n, off; };
+    struct PendRange { uint64_t id, off, len, out; };
+    std::vector<PendDedup> pend_dd;
+    std::vector<PendRange> pend_rg;
+
+    // pevents indices grouped by path shard (built by the worker when the
+    // chunk is done): shard s owns pe_by_shard[pe_shard_off[s] ..
+    // pe_shard_off[s + 1]).
+    std::vector<uint32_t> pe_by_shard;
+    uint32_t pe_shard_off[kPathShards + 1] = {};
+
+    // block op log
+    struct BlockLogOp {
+      DataBlock block;
+      uint64_t digest = 0;   // staged: HashBlockBytes; streaming: XXH3 low64
+      uint64_t digest2 = 0;  // streaming: XXH3 high64
+      uint8_t kind = kOpIntern;  // kOpIntern | kOpPush
+      uint8_t tag = 0;           // BlockBlobTag (inline-blob id fix-ups)
+      // Streaming stage B: the id fix-up pass (P1) changed the bytes of a
+      // block whose embedded reps are fixed later (P2); its digest is redone
+      // after that.
+      bool ids_changed = false;
+    };
+    std::vector<BlockLogOp> ops;
+
+    // fields/fieldsets/specs chunk delta (rebased at commit)
+    FieldColumns fields;
+    std::vector<uint32_t> fs_offsets;  // per fieldset: local flat offset
+    std::vector<uint32_t> flat;        // local field ids + sentinels
+    std::vector<CrateSpec> specs;
+
+    // final ids for this chunk's provisional domains, produced by commit
+    // stage A (tok/str/path) and stage B (block), consumed by B and C
+    std::vector<uint32_t> fin_tok, fin_str, fin_path;
+    std::vector<uint64_t> fin_block;
+
+    // counters merged at commit
+    uint8_t req_minor = 0;
+    size_t passed = 0, reencoded = 0;
+
+    // chunk-local caches (the member caches are main-thread only)
+    uint32_t field_tok[kTokCount];
+    std::vector<uint32_t> type_cache;       // 2 * TypeId::Count lazily sized
+    std::vector<uint32_t> decl_type_cache;  // by TypeNameTable id
+
+    std::string error;
+    void Reset() {
+      tok_store.clear(); tok_map.clear(); ntok = 0;
+      str_store.clear(); str_map.clear(); nstr = 0;
+      events.clear();
+      ptab.slots.clear(); ptab.hashes.clear(); ptab.recs.clear();
+      path_store.clear();
+      npath = 0;
+      pevents.clear();
+      ops.clear();
+      fields.clear();
+      fs_offsets.clear(); flat.clear();
+      specs.clear();
+      req_minor = 0; passed = 0; reencoded = 0;
+      // Cached type-name tokens are chunk-local provisional ids; a reused ctx
+      // must not serve them to the next chunk. Keep the capacity.
+      type_cache.clear();
+      decl_type_cache.clear();
+      for (uint32_t& t : field_tok) t = UINT32_MAX;
+      error.clear();
+    }
+    WorkerCtx() { for (uint32_t& t : field_tok) t = UINT32_MAX; }
+  };
+
+  // Per-thread worker context (null on the main/commit thread and on serial runs).
+  static WorkerCtx*& WorkerTLS() {
+    static thread_local WorkerCtx* p = nullptr;
+    return p;
+  }
+  static WorkerCtx* CurWorker() { return WorkerTLS(); }
+
+  // Inline-blob fix-up tags: what provisional ids a worker-logged block
+  // contains. CommitChunk rewrites them into final global indices BEFORE the
+  // serial dedup/probe pass runs (so dedup compares final bytes, exactly like
+  // the serial writer). ValueReps recorded in a block's
+  // `embedded_value_rep_offsets` are fixed by that list, independent of tag.
+  enum BlockBlobTag : uint8_t {
+    kBlobNone = 0,
+    kBlobTokenVec,        // [u64 count][u32 token]*
+    kBlobStringVec,       // [u64 count][u32 string]*
+    kBlobTokenListOp,     // u8 header + runs [u64 n][u32 token]*
+    kBlobStringListOp,    // u8 header + runs [u64 n][u32 string]*
+    kBlobPathListOp,      // u8 header + runs [u64 n][u32 path]*
+    kBlobVarSel,          // [u64 count][(u32 string, u32 string)]*
+    kBlobRelocates,       // [u64 count][(u32 path, u32 path)]*
+    kBlobDict,            // [u64 count] + entries [u32 string][i64][u64 rep]
+    kBlobTimeSamples,     // [i64][rep][i64][u64 n][rep]*n (reps fixed via tag)
+    kBlobSpline,          // [u64 sz][blob][u64 n] + per knot [f64][u64 n] +
+                          //   entries [u32 string][i64][u64 rep]
+    kBlobRefItems,        // u8 header + runs of 24-byte SdfReference items
+                          //   (+ per-item customData mini-dict entries)
+    kBlobPayloadItems,    // u8 header + runs of 24-byte SdfPayload items
+    kBlobString4,         // single [u32 string] (pathExpression scalar block)
+    kBlobNestedRep,       // [i64 8][u64 rep] (unregistered value wrapper)
+  };
+
+  // Provisional base counts, captured right after the serial pre-phase.
+  uint32_t w_base_tok = 0, w_base_str = 0, w_base_path = 0;
+
+  void WSetError(std::string msg) {
+    if (WorkerCtx* w = WorkerTLS()) {
+      if (w->error.empty()) w->error = std::move(msg);
+    } else if (result_.error.empty()) {
+      result_.error = std::move(msg);
+    }
+  }
+  bool WHaveError() const {
+    const WorkerCtx* w = WorkerTLS();
+    return w ? !w->error.empty() : !result_.error.empty();
+  }
+  void WRequireMinor(uint8_t v) {
+    if (WorkerCtx* w = WorkerTLS()) {
+      if (w->req_minor < v) w->req_minor = v;
+    } else if (required_version_minor_ < v) {
+      required_version_minor_ = v;
+    }
+  }
+  void WCountPassThrough() {
+    if (WorkerCtx* w = WorkerTLS()) ++w->passed; else ++arrays_passed_through_;
+  }
+  void WCountReencode() {
+    if (WorkerCtx* w = WorkerTLS()) ++w->reencoded; else ++arrays_reencoded_;
+  }
+
+  // Worker-aware field/fieldset/spec emitters (fields_ etc. belong to the
+  // main thread; workers append to their own chunk columns).
+  size_t WFieldCount() const {
+    const WorkerCtx* w = WorkerTLS();
+    return w ? w->fields.size() : fields_.size();
+  }
+  void WPushField(const CrateField& f) {
+    if (WorkerCtx* w = WorkerTLS()) w->fields.push_back(f);
+    else fields_.push_back(f);
+  }
+  uint32_t WAddFieldset(const std::vector<uint32_t>& indices) {
+    if (WorkerCtx* w = WorkerTLS()) {
+      const uint32_t num = static_cast<uint32_t>(w->fs_offsets.size());
+      w->fs_offsets.push_back(static_cast<uint32_t>(w->flat.size()));
+      w->flat.insert(w->flat.end(), indices.begin(), indices.end());
+      w->flat.push_back(UINT32_MAX);
+      return num;
+    }
+    return AddFieldset(indices);
+  }
+  void WBeginFieldset() {
+    if (WorkerCtx* w = WorkerTLS()) {
+      w->fs_offsets.push_back(static_cast<uint32_t>(w->flat.size()));
+    } else {
+      fieldset_offsets_.push_back(static_cast<uint32_t>(flat_fieldsets_.size()));
+    }
+  }
+  void WFieldsetIndex(uint32_t local_field) {
+    if (WorkerCtx* w = WorkerTLS()) w->flat.push_back(local_field);
+    else flat_fieldsets_.push_back(local_field);
+  }
+  void WEndFieldset() {
+    if (WorkerCtx* w = WorkerTLS()) w->flat.push_back(UINT32_MAX);
+    else flat_fieldsets_.push_back(UINT32_MAX);
+  }
+  void WPushSpec(const CrateSpec& spec) {
+    if (WorkerCtx* w = WorkerTLS()) w->specs.push_back(spec);
+    else specs_.push_back(spec);
+  }
+
+  // EmitPropertySpec body shared by both modes.
+  void WEmitPropertySpec(uint32_t path_index, SpecType st,
+                         const std::vector<CrateField>& field_list) {
+    WBeginFieldset();
+    if (WHaveError()) return;
+    for (const auto& f : field_list) {
+      WFieldsetIndex(static_cast<uint32_t>(WFieldCount()));
+      WPushField(f);
+    }
+    WEndFieldset();
+    CrateSpec spec;
+    spec.path_index.value = path_index;
+    spec.fieldset_index.value = WFieldsetCount() - 1;
+    spec.spec_type = st;
+    WPushSpec(spec);
+  }
+  uint32_t WFieldsetCount() const {
+    const WorkerCtx* w = WorkerTLS();
+    return w ? static_cast<uint32_t>(w->fs_offsets.size())
+             : static_cast<uint32_t>(fieldset_offsets_.size());
+  }
+
+  // Log a block op in worker mode: digests are precomputed here (parallel),
+  // the serial table semantics replay at commit. Returns the provisional
+  // block ref (1 + op index; 0 stays the reserved empty-array marker).
+  uint64_t WorkerLogBlock(WorkerCtx& w, DataBlock&& block, uint8_t kind,
+                          uint8_t tag = kBlobNone) {
+    const size_t n = block.size();
+    WorkerCtx::BlockLogOp op;
+    op.kind = kind;
+    op.tag = tag;
+    op.block = std::move(block);
+    if (n) {
+      if (stream_values_) {
+        const XXH128_hash_t digest = XXH3_128bits(op.block.bytes(), n);
+        op.digest = digest.low64;
+        op.digest2 = digest.high64;
+      } else {
+        op.digest = HashBlockBytes(op.block.bytes(), n);
+      }
+    }
+    w.ops.push_back(std::move(op));
+    return w.ops.size();  // log-local block ref: op index + 1
+  }
+
   // Append `block` to value_data_ unless an existing block has identical bytes;
   // returns the (shared or new) block index. Must NOT be used for blocks that
   // are patched in place after creation (the TimeSamples indirection header):
   // sharing one would apply the index->offset patch twice.
-  uint64_t InternBlock(DataBlock&& block) {
+  uint64_t InternBlock(DataBlock&& block, uint8_t tag = kBlobNone) {
+    if (WorkerCtx* w = WorkerTLS())
+      return WorkerLogBlock(*w, std::move(block), kOpIntern, tag);
     const size_t n = block.size();
     if (stream_values_) return StreamInternBlock(block);
+    const uint8_t* p = block.bytes();
+    const uint64_t h = HashBlockBytes(p, n);
+    return InternBlockWithHash(std::move(block), h);
+  }
+
+  // Serial staged intern with a precomputed content hash (identical
+  // semantics + counters to the old inline body; CommitChunk reuses it).
+  uint64_t InternBlockWithHash(DataBlock&& block, uint64_t h) {
+    const size_t n = block.size();
     if (n == 0) {
       // Never share the empty block: payload 0 is the reserved empty-array
       // marker and a zero-length block at a nonzero offset has no meaning.
@@ -183,8 +556,6 @@ private:
       value_data_.push_back(std::move(block));
       return idx;
     }
-    const uint8_t* p = block.bytes();
-    const uint64_t h = HashBlockBytes(p, n);
     if (block_slots_.empty() || (block_slots_used_ + 1) * 2 > block_slots_.size()) {
       GrowBlockSlots(block_slots_.empty() ? 1024 : block_slots_.size() * 2);
     }
@@ -196,7 +567,7 @@ private:
       const BlockSlot& bs = block_slots_[slot];
       if (bs.hash != h) continue;
       const DataBlock& ex = value_data_[bs.idx];
-      if (ex.size() == n && std::memcmp(ex.bytes(), p, n) == 0) {
+      if (ex.size() == n && std::memcmp(ex.bytes(), block.bytes(), n) == 0) {
         ++blocks_deduped_;
         return bs.idx;
       }
@@ -225,6 +596,11 @@ private:
   const CrateWriteSink* value_sink_ = nullptr;
   uint64_t value_stream_pos_ = 0;  // absolute sink position of the VALUE tail
   bool value_stream_error_ = false;
+  // Streaming stage B plans each block's output offset ahead of the writes
+  // (stage W); this is the planned sink position (== value_stream_pos_ once
+  // W has caught up).
+  uint64_t stream_plan_pos_ = 0;
+  bool stream_plan_mismatch_ = false;
 
   // Streaming dedup: no block bytes are retained to memcmp against, so blocks
   // are content-addressed by a FULL-content 128-bit digest plus size (the
@@ -263,6 +639,26 @@ private:
       }
       return nullptr;
     }
+    // Two-step prefetch for a coming find(): the bucket head first, then
+    // (once the head is cached) the first chain entry. Hints only.
+    void prefetch_bucket(uint64_t h) const {
+#if defined(__GNUC__) || defined(__clang__)
+      if (!buckets.empty())
+        __builtin_prefetch(&buckets[static_cast<size_t>(h) & (buckets.size() - 1)]);
+#else
+      (void)h;
+#endif
+    }
+    void prefetch_entry(uint64_t h) const {
+#if defined(__GNUC__) || defined(__clang__)
+      if (buckets.empty()) return;
+      const uint32_t e = buckets[static_cast<size_t>(h) & (buckets.size() - 1)];
+      if (e != kInvalid)
+        __builtin_prefetch(&segments[e >> kSegmentBits][e & (kSegmentSize - 1)]);
+#else
+      (void)h;
+#endif
+    }
     void insert(uint64_t h, uint64_t h2, uint64_t sz, uint64_t off) {
       if (buckets.empty() || (count + 1) * 2 >= buckets.size()) {
         const size_t nb = buckets.empty() ? 1024 : buckets.size() * 2;
@@ -284,6 +680,25 @@ private:
       at(idx) = Entry{h, h2, sz, off, buckets[b]};
       buckets[b] = idx;
     }
+  };
+  // Content-dedup and source-range tables are split into kStreamShards
+  // independent tables by high hash bits (the slot / bucket index uses the
+  // low bits), so parallel commit stage B can insert shards concurrently.
+  // Keys are unique (a key is inserted only after a miss), so lookups do not
+  // depend on insertion order.
+  static constexpr size_t kStreamShards = 16;
+  struct ShardedStreamDedup {
+    StreamDedup shards[kStreamShards];
+    static size_t ShardOf(uint64_t h) { return static_cast<size_t>(h >> 60); }
+    void clear() { for (StreamDedup& d : shards) d.clear(); }
+    const uint64_t* find(uint64_t h, uint64_t h2, uint64_t sz) {
+      return shards[ShardOf(h)].find(h, h2, sz);
+    }
+    void insert(uint64_t h, uint64_t h2, uint64_t sz, uint64_t off) {
+      shards[ShardOf(h)].insert(h, h2, sz, off);
+    }
+    void prefetch_bucket(uint64_t h) const { shards[ShardOf(h)].prefetch_bucket(h); }
+    void prefetch_entry(uint64_t h) const { shards[ShardOf(h)].prefetch_entry(h); }
   } stream_dedup_;
 
   // Lazy-array Values are copied while composing instance subtrees, so many
@@ -327,6 +742,14 @@ private:
           return &e.out;
       }
     }
+    void prefetch(uint64_t id, uint64_t off, uint64_t len) const {
+#if defined(__GNUC__) || defined(__clang__)
+      if (!slots.empty())
+        __builtin_prefetch(&slots[Hash(id, off, len) & (slots.size() - 1)]);
+#else
+      (void)id; (void)off; (void)len;
+#endif
+    }
     // Insert if absent (an existing key keeps its first offset, like
     // unordered_map::emplace).
     void emplace(uint64_t id, uint64_t off, uint64_t len, uint64_t out) {
@@ -352,6 +775,22 @@ private:
       slots[i] = Entry{id, off, len, out};
       ++used;
     }
+  };
+  struct ShardedSourceRanges {
+    StreamSourceRangeTable shards[kStreamShards];
+    static size_t ShardOf(uint64_t id, uint64_t off, uint64_t len) {
+      return StreamSourceRangeTable::Hash(id, off, len) >> 60;
+    }
+    void clear() { for (StreamSourceRangeTable& t : shards) t.clear(); }
+    const uint64_t* find(uint64_t id, uint64_t off, uint64_t len) const {
+      return shards[ShardOf(id, off, len)].find(id, off, len);
+    }
+    void emplace(uint64_t id, uint64_t off, uint64_t len, uint64_t out) {
+      shards[ShardOf(id, off, len)].emplace(id, off, len, out);
+    }
+    void prefetch(uint64_t id, uint64_t off, uint64_t len) const {
+      shards[ShardOf(id, off, len)].prefetch(id, off, len);
+    }
   } stream_source_ranges_;
 
   // Write `n` bytes at the next 8-byte-aligned sink position; returns that
@@ -375,6 +814,19 @@ private:
 
   uint64_t StreamInternBlock(const DataBlock& block) {
     const size_t n = block.size();
+    uint64_t h = 0, h2 = 0;
+    if (n) {
+      const XXH128_hash_t digest = XXH3_128bits(block.bytes(), n);
+      h = digest.low64;
+      h2 = digest.high64;
+    }
+    return StreamInternBlockWithDigest(block, h, h2);
+  }
+
+  // Streaming intern with precomputed digests (CommitChunk reuses this).
+  uint64_t StreamInternBlockWithDigest(const DataBlock& block, uint64_t h,
+                                       uint64_t h2) {
+    const size_t n = block.size();
     const bool has_source_key = block.is_ref();
     const uint64_t key_id = has_source_key ? block.src->identity() : 0;
     if (has_source_key) {
@@ -385,13 +837,6 @@ private:
       }
     }
     const uint8_t* p = block.bytes();
-    uint64_t h = 0;
-    uint64_t h2 = 0;
-    if (n) {
-      const XXH128_hash_t digest = XXH3_128bits(p, n);
-      h = digest.low64;
-      h2 = digest.high64;
-    }
     if (const uint64_t* off = stream_dedup_.find(h, h2, n)) {
       ++blocks_deduped_;
       if (has_source_key)
@@ -412,7 +857,9 @@ private:
   // Append a block WITHOUT content dedup (the TimeSamples header, dictionary,
   // spline and array-edit blocks, which carry embedded ValueReps). Returns its
   // value_data_ index (staged) or absolute file offset (streaming).
-  uint64_t PushValueBlock(DataBlock&& block) {
+  uint64_t PushValueBlock(DataBlock&& block, uint8_t tag = kBlobNone) {
+    if (WorkerCtx* w = WorkerTLS())
+      return WorkerLogBlock(*w, std::move(block), kOpPush, tag);
     if (stream_values_) {
       const uint64_t off = StreamRawBlock(block.bytes(), block.size());
       if (block.is_ref()) DropStreamedSourceRange(block);
@@ -437,6 +884,24 @@ private:
     const uint64_t end = (block.src_offset + block.src_len) & ~(kPage - 1);
     if (end > begin) block.src->DiscardRange(begin, end - begin);
   }
+
+#if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
+  // Deferred-fill layer (see PrimFiller): prims are composed right before
+  // they are encoded and released after; null when the layer is complete
+  // (or was filled up front).
+  PrimFiller *deferred_filler_ = nullptr;
+  void FillForWrite(const Layer &layer, size_t i) {
+    if (deferred_filler_)
+      deferred_filler_->Fill(const_cast<Layer &>(layer), static_cast<uint32_t>(i));
+  }
+  void ReleaseAfterWrite(const Layer &layer, size_t i) {
+    if (deferred_filler_)
+      deferred_filler_->Release(const_cast<Layer &>(layer), static_cast<uint32_t>(i));
+  }
+#else
+  void FillForWrite(const Layer &, size_t) {}
+  void ReleaseAfterWrite(const Layer &, size_t) {}
+#endif
 
   // Lazy-array write accounting.
   size_t arrays_passed_through_ = 0;
@@ -529,6 +994,31 @@ private:
 #endif
   }
 
+  // Run fn(t, lo, hi) over contiguous slices of [0, n) on up to
+  // ResolveThreads() threads (t = slice number); serial below `min_parallel`
+  // items or in a non-threaded build. Returns the slice count used.
+  template <class Fn>
+  size_t ParallelRanges(size_t n, size_t min_parallel, Fn fn) const {
+    size_t T = 1;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    if (n >= min_parallel) T = static_cast<size_t>(ResolveThreads());
+    if (T > n) T = n;
+    if (T > 1) {
+      std::vector<std::thread> pool;
+      pool.reserve(T - 1);
+      for (size_t t = 1; t < T; ++t)
+        pool.emplace_back([&fn, t, n, T] { fn(t, n * t / T, n * (t + 1) / T); });
+      fn(size_t(0), size_t(0), n / T);
+      for (std::thread& th : pool) th.join();
+      return T;
+    }
+#else
+    (void)min_parallel;
+#endif
+    fn(size_t(0), size_t(0), n);
+    return 1;
+  }
+
   // Sort `v` with `cmp` across `nthreads` workers: sort P contiguous chunks in
   // parallel, then pairwise-merge the sorted runs (log P rounds, parallel within
   // a round). Falls back to std::sort when serial or small. Result is identical
@@ -574,6 +1064,8 @@ private:
     std::sort(v.begin(), v.end(), cmp);
 #endif
   }
+
+
 
   #include "crate-writer-tables.inc"
 

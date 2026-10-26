@@ -20,6 +20,15 @@ namespace lightusd {
 namespace next {
 
 bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
+  // An empty array (payload 0) is cheaper to build than to look up.
+  if (rep.payload() == 0) return UnpackArrayUncached(rep, out);
+  if (FindDecoded(rep.raw(), out)) return true;
+  if (!UnpackArrayUncached(rep, out)) return false;
+  StoreDecoded(rep.raw(), out);
+  return true;
+}
+
+bool CrateReader::Impl::UnpackArrayUncached(ValueRep rep, Value& out) {
   CrateTypeId type_id = rep.type_id();
 
   // Fast path: keep numeric POD arrays as lazy references into the retained
@@ -29,13 +38,20 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   if (options_.lazy_arrays && source_ &&
       CrateArrayTypeCanBeLazy(type_id, rep.is_compressed())) {
     LazyArrayRef lr;
-    // Pass the configured cap, not SIZE_MAX: otherwise a lazy Value could
-    // advertise an element count (via Value::array_size()) that eager decode
-    // would have rejected outright, and a consumer sizing a buffer from it
-    // allocates on that number long before materialization refuses the array.
-    if (ProbeArrayBlock(source_, rep,
-                        static_cast<size_t>(options_.max_array_elements),
-                        &lr) &&
+    // A COMPRESSED block's count is independent of its payload, so it is
+    // probed against the configured cap: otherwise a lazy Value could
+    // advertise (via Value::array_size()) a count eager decode would reject,
+    // and a consumer sizing a buffer from it allocates on the file's number.
+    // An UNCOMPRESSED block is lazy only when its count*stride bytes are in
+    // the file (block_len > 0 below), so its count is file-backed and may
+    // exceed the cap -- the FIELDS validation accepts exactly these
+    // (crate-reader-sections.cc). Such a value passes through to the writer
+    // byte for byte; materializing it still enforces the cap (max_elements).
+    const size_t probe_cap =
+        rep.is_compressed()
+            ? static_cast<size_t>(options_.max_array_elements)
+            : (std::numeric_limits<size_t>::max)();
+    if (ProbeArrayBlock(source_, rep, probe_cap, &lr) &&
         lr.element_count <=
             static_cast<uint64_t>((std::numeric_limits<uint32_t>::max)()) &&
         (rep.payload() == 0 || lr.block_len > 0)) {

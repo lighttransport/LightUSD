@@ -87,13 +87,18 @@ std::shared_ptr<Layer> ConvertLoadedUSDA(LoadResult &&r,
 
 std::shared_ptr<Layer> ConvertLoadedUSDC(USDCLoadResult &&r,
                                          const std::string &label,
-                                         std::string *err) {
+                                         std::string *warn, std::string *err) {
   if (!r.success) {
     if (err) {
       *err += "Failed to load USDC layer: " + label + " : " +
               r.error_summary + "\n";
     }
     return nullptr;
+  }
+  // Forward reader warnings like the USDA path does: a field the reader
+  // could not decode is dropped from the layer, and the caller must see it.
+  for (const auto &w : r.warnings) {
+    if (warn) *warn += "USDC layer " + label + ": " + w + "\n";
   }
   return r.stage.ReleaseRootLayer();
 }
@@ -225,7 +230,7 @@ std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
     lopts.crate_options.use_mmap = options.usdc_use_mmap;
     lopts.crate_options.strict_aousd_conformance =
         options.strict_aousd_conformance;
-    return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), label, err);
+    return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), label, warn, err);
   }
   if (is_usda) {
     LoadOptions lopts;
@@ -367,7 +372,7 @@ std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
     lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
     lopts.crate_options.use_mmap = options.usdc_use_mmap;
     return ConvertLoadedUSDC(LoadUSDCFromFile(resolved_path, lopts),
-                             resolved_path, err);
+                             resolved_path, warn, err);
   }
 
   if (ext == "usdz") {
@@ -758,7 +763,7 @@ std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
     lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
     lopts.crate_options.strict_aousd_conformance =
         options.strict_aousd_conformance;
-    return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), key, err);
+    return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), key, warn, err);
   }
 
   if (size >= 4 && std::memcmp(data, "PK\x03\x04", 4) == 0) {
@@ -834,7 +839,7 @@ std::shared_ptr<Layer> LoadLayerFromMemoryOwned(const std::string &key,
     lopts.crate_options.strict_aousd_conformance =
         options.strict_aousd_conformance;
     return ConvertLoadedUSDC(LoadUSDCFromMemoryOwned(std::move(data), lopts),
-                             key, err);
+                             key, warn, err);
   }
 
   if (data.size() >= 4 && std::memcmp(data.data(), "PK\x03\x04", 4) == 0) {

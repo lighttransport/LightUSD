@@ -96,6 +96,10 @@
     uint32_t depth = 0;
     WarmOrder order;
     std::shared_ptr<const std::vector<Path>> protos;
+    // On the last child of a parent whose inert sources a worker drops once
+    // its children are derived: the parent's composed child names (see
+    // WarmSubtree / DropInertSources).
+    std::shared_ptr<const std::vector<std::string>> parent_children;
   };
 
   // State shared by the parallel-warm walk: the task queue (frontier roots,
@@ -195,7 +199,7 @@
   // identifiers. Fills a cache only; missed paths still resolve identically in the
   // serial BuildStage.
   //
-  // Load balancing: subtrees are very uneven (one Island element holds a
+  // Load balancing: subtrees are very uneven (one reference scene element holds a
   // quarter of the namespace, one tree prototype 15k prims), so while another
   // worker is idle a busy worker donates its shallowest pending subtree to the
   // shared queue. The taker re-derives the donated prim's ancestors into its

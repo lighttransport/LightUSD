@@ -151,6 +151,29 @@ int main() {
       // Exact tie between +1 and -1 counts: alternate them.
       for (size_t i = 0; i < count; ++i) v[i] = static_cast<uint32_t>(i & 1);
       assert(EncodeDeltaU32(v.data(), v.size()) == serial(v));
+      // FIELDSETS shape: runs of increasing ids separated by UINT32_MAX
+      // sentinels -- two distinct wide deltas per sentinel, small deltas
+      // win (the wide ones are only counted for summary candidates).
+      uint32_t id = 0;
+      for (size_t i = 0; i < count; ++i) {
+        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+        v[i] = (x % 4 == 0) ? UINT32_MAX : id++;
+      }
+      assert(EncodeDeltaU32(v.data(), v.size()) == serial(v));
+      // A wide delta is the most common one (survives every summary).
+      acc = 0;
+      for (size_t i = 0; i < count; ++i) {
+        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+        acc += (x % 3 == 0) ? 1u : 100000u;
+        v[i] = acc;
+      }
+      assert(EncodeDeltaU32(v.data(), v.size()) == serial(v));
+      // Almost no small deltas: exact counting of every wide delta.
+      for (size_t i = 0; i < count; ++i) {
+        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+        v[i] = static_cast<uint32_t>(x >> 32);
+      }
+      assert(EncodeDeltaU32(v.data(), v.size()) == serial(v));
     }
     std::cout << "  parallel delta encoder matches the serial encoder"
               << std::endl;
@@ -436,6 +459,55 @@ int main() {
     assert(lazy_points->is_lazy());
     assert(!lazy_points->is_dirty());
     std::cout << "  serial range printer preserves lazy array text" << std::endl;
+
+    // An uncompressed array over max_array_elements has a file-backed count:
+    // it loads lazy, refuses to materialize, and still passes through to a
+    // rewrite byte for byte (it was silently dropped from the output before).
+    {
+      USDCLoadOptions capped;
+      capped.crate_options.max_array_elements = 1000;
+      USDCLoadResult cl =
+          LoadUSDCFromMemory(big_buf.data(), big_buf.size(), capped);
+      assert(cl.success);
+      const Value* cp =
+          cl.stage.GetPrimAtPath("/BigMesh").GetPropertyValue("points");
+      assert(cp && cp->is_lazy());
+      assert(cp->array_size() == big_points.size() / 3);
+      assert(cp->materialized_copy().is_empty());
+      std::vector<uint8_t> rewritten;
+      assert(WriteUSDCToMemory(rewritten, cl.stage).success);
+      USDCLoadResult rl = LoadUSDCFromMemory(rewritten.data(), rewritten.size());
+      assert(rl.success);
+      const Value* rp =
+          rl.stage.GetPrimAtPath("/BigMesh").GetPropertyValue("points");
+      assert(rp);
+      Value rv = rp->materialized_copy();
+      assert(rv.as_float_array() && *rv.as_float_array() == big_points);
+    }
+    // A compressed array's count is not file-backed: over the cap it fails
+    // the load instead of being dropped field by field.
+    {
+      std::vector<int32_t> indices(70000);
+      for (size_t i = 0; i < indices.size(); ++i)
+        indices[i] = static_cast<int32_t>(i % 977);
+      StageBuilder isb;
+      isb.SetDefaultPrim("M");
+      LayerBuilder& ilb = isb.GetLayerBuilder();
+      ilb.begin_prim("M", "Mesh");
+      ilb.add_property("faceVertexIndices", Value::MakeIntArray(indices));
+      ilb.end_prim();
+      ilb.finalize();
+      std::vector<uint8_t> ibuf;
+      assert(WriteUSDCToMemory(ibuf, isb.Build()).success);
+      USDCLoadOptions capped;
+      capped.crate_options.max_array_elements = 1000;
+      USDCLoadResult il = LoadUSDCFromMemory(ibuf.data(), ibuf.size(), capped);
+      assert(!il.success);
+      assert(il.error_summary.find("exceeds max_array_elements") !=
+             std::string::npos);
+      assert(LoadUSDCFromMemory(ibuf.data(), ibuf.size()).success);
+    }
+    std::cout << "  over-cap arrays pass through or fail the load" << std::endl;
 
     // File-backed USDC arrays must remain mmap-backed after crossing an
     // external reference and PCP Stage reconstruction. The same composition

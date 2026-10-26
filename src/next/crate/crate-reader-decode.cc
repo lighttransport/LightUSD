@@ -241,9 +241,11 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
                                   "Reference customData")) return false;
       if (!reader()->seek(dict_start)) return false;
       Value dictionary;
-      if (!DecodeDictionary(ValueRep::Make(CrateTypeId::Dictionary,
-                                           dict_start, false, false),
-                            dictionary, depth + 1)) return false;
+      // Uncached: the caller reads on from where this dictionary ends, and a
+      // cache hit would not move the stream (the rep is a stream position).
+      if (!DecodeDictionaryUncached(ValueRep::Make(CrateTypeId::Dictionary,
+                                                   dict_start, false, false),
+                                    dictionary, depth + 1)) return false;
       if (keep && count != 0) {
         PrintOptions print;
         print.float_precision = 9;
@@ -414,6 +416,33 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
     out = Value::MakeDictionary();
     return true;
   }
+  if (FindDecoded(rep.raw(), out)) return true;
+  if (!DecodeDictionaryUncached(rep, out, depth)) return false;
+  StoreDecoded(rep.raw(), out);
+  return true;
+}
+
+bool CrateReader::Impl::FindDecoded(uint64_t rep, Value& out) {
+  DictCacheShard& shard = dict_cache_[(rep ^ (rep >> 17)) % kDictCacheShards];
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lk(shard.mu);
+#endif
+  auto it = shard.map.find(rep);
+  if (it == shard.map.end()) return false;
+  out = it->second;
+  return true;
+}
+
+void CrateReader::Impl::StoreDecoded(uint64_t rep, const Value& v) {
+  DictCacheShard& shard = dict_cache_[(rep ^ (rep >> 17)) % kDictCacheShards];
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lk(shard.mu);
+#endif
+  shard.map.emplace(rep, v);
+}
+
+bool CrateReader::Impl::DecodeDictionaryUncached(ValueRep rep, Value& out,
+                                                 int depth) {
   if (!SeekToPayload(reader(), rep)) return false;
   uint64_t count = 0;
   if (!reader()->read_u64(count)) return false;

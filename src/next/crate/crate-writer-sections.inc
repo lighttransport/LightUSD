@@ -137,12 +137,12 @@
   bool PathRecRankLess(uint32_t ia, uint32_t ib) const {
     const PathRec& a = paths_[ia];
     const PathRec& b = paths_[ib];
-    const size_t la = a.stem.size() + (a.name.empty() ? 0 : 1 + a.name.size());
-    const size_t lb = b.stem.size() + (b.name.empty() ? 0 : 1 + b.name.size());
+    const size_t la = a.stem().size() + (a.name().empty() ? 0 : 1 + a.name().size());
+    const size_t lb = b.stem().size() + (b.name().empty() ? 0 : 1 + b.name().size());
     auto at = [](const PathRec& r, size_t k) -> unsigned char {
-      if (k < r.stem.size()) return static_cast<unsigned char>(r.stem[k]);
-      if (k == r.stem.size()) return static_cast<unsigned char>('.');
-      return static_cast<unsigned char>(r.name[k - r.stem.size() - 1]);
+      if (k < r.stem().size()) return static_cast<unsigned char>(r.stem()[k]);
+      if (k == r.stem().size()) return static_cast<unsigned char>('.');
+      return static_cast<unsigned char>(r.name()[k - r.stem().size() - 1]);
     };
     const uint32_t* rank = PathCharRank();
     const size_t n = (std::min)(la, lb);
@@ -154,7 +154,11 @@
     return la < lb;
   }
 
-  void WritePathsSection() {
+  // PATHS section payload. Reads only the finished path and token tables, so
+  // it is built concurrently with the other structural payloads. Returns
+  // false when a path element token is missing from TOKENS (already built).
+  bool BuildPathsSectionPayload(std::vector<uint8_t>* payload) {
+    StreamWriter out(*payload);
     // The compressed path tree is the pre-order of all paths sorted by their
     // full text under PathCharRank (`/` < `.` < name characters). That order
     // is derived here from the path table's (stem, name) split without
@@ -173,127 +177,142 @@
     // index as the empty path, matching pxr.
     const size_t N = paths_.size();
     constexpr uint32_t kNoNode = 0xFFFFFFFF;
+    // Per-record state, kept to ~21 bytes per path at the peak (61.8M paths
+    // on full-LOD benchmark scene, built concurrently with the other sections): the
+    // element is an offset into the record's stem (a property's element is
+    // its name), flags share one byte, and every array is released as soon
+    // as the next step no longer reads it.
+    enum : uint8_t { kEncoded = 1, kProp = 2, kRoot = 4, kSibling = 8 };
     std::vector<uint32_t> parent(N, kNoNode);
-    std::vector<std::string_view> elem(N);
-    std::vector<uint8_t> encoded(N, uint8_t{1});
-    std::vector<uint8_t> is_prop(N, uint8_t{0});
-    std::vector<uint8_t> is_root(N, uint8_t{0});
-    size_t num_paths = 0;
-    std::string_view cached_prop_stem;
-    uint32_t cached_prop_parent = kNoNode;
-    for (size_t i = 0; i < N; ++i) {
+    std::vector<uint32_t> elem_off(N, 0);
+    std::vector<uint8_t> flags(N, uint8_t{0});
+    auto elem_of = [&](size_t i) -> std::string_view {
       const PathRec& r = paths_[i];
-      if (r.stem.empty() && r.name.empty()) {
-        encoded[i] = 0;
-        continue;
-      }
-      ++num_paths;
-      if (!r.name.empty()) {
-        is_prop[i] = 1;
-        elem[i] = r.name;
-        if (!r.stem.empty()) {
-          if (r.stem != cached_prop_stem) {
-            cached_prop_parent = FindPath(r.stem);
-            cached_prop_stem = r.stem;
+      if (flags[i] & kProp) return r.name();
+      return std::string_view(r.stem()).substr(elem_off[i]);
+    };
+    // Parent/element per record: FindPath is a read-only probe, so slices run
+    // concurrently (each with its own last-stem cache; the cache only skips a
+    // repeated lookup of the same stem, so the results are identical).
+    std::vector<size_t> slice_paths(static_cast<size_t>(ResolveThreads()) + 1, 0);
+    ParallelRanges(N, 100000, [&](size_t t, size_t lo, size_t hi) {
+      size_t count = 0;
+      std::string_view cached_prop_stem;
+      uint32_t cached_prop_parent = kNoNode;
+      for (size_t i = lo; i < hi; ++i) {
+        const PathRec& r = paths_[i];
+        if (r.stem().empty() && r.name().empty()) continue;
+        flags[i] = kEncoded;
+        ++count;
+        if (!r.name().empty()) {
+          flags[i] |= kProp;
+          if (!r.stem().empty()) {
+            if (r.stem() != cached_prop_stem || cached_prop_parent == kNoNode) {
+              cached_prop_parent = FindPath(r.stem());
+              cached_prop_stem = r.stem();
+            }
+            parent[i] = cached_prop_parent;
           }
-          parent[i] = cached_prop_parent;
+          continue;
         }
-        continue;
+        if (r.stem() == "/") {
+          flags[i] |= kRoot;
+          continue;
+        }
+        const size_t sl = r.stem().rfind('/');
+        if (sl == std::string_view::npos) continue;  // relative: parentless
+        elem_off[i] = static_cast<uint32_t>(sl + 1);
+        parent[i] =
+            FindPath(sl == 0 ? std::string_view("/") : r.stem().substr(0, sl));
       }
-      if (r.stem == "/") {
-        is_root[i] = 1;
-        continue;
-      }
-      const size_t sl = r.stem.rfind('/');
-      if (sl == std::string_view::npos) {
-        elem[i] = r.stem;  // relative path: a parentless node
-        continue;
-      }
-      elem[i] = r.stem.substr(sl + 1);
-      parent[i] = FindPath(sl == 0 ? std::string_view("/") : r.stem.substr(0, sl));
-    }
+      slice_paths[t] = count;
+    });
+    size_t num_paths = 0;
+    for (size_t c : slice_paths) num_paths += c;
 
     // Write total paths count AND encoded tree nodes count
     uint64_t total_paths = static_cast<uint64_t>(N);
-    writer_.write_u64(total_paths);
-    writer_.write_u64(static_cast<uint64_t>(num_paths));
+    out.write_u64(total_paths);
+    out.write_u64(static_cast<uint64_t>(num_paths));
 
     if (num_paths == 0) {
       // No paths other than root, write empty arrays
       std::vector<uint8_t> empty_delta = EncodeDeltaU32(nullptr, 0);
       CompressResult empty_cr = CompressCrateBlob(empty_delta.data(), empty_delta.size());
-      writer_.write_u64(empty_cr.data.size());
-      writer_.write_bytes(empty_cr.data.data(), empty_cr.data.size());
-      writer_.write_u64(empty_cr.data.size());
-      writer_.write_bytes(empty_cr.data.data(), empty_cr.data.size());
-      writer_.write_u64(empty_cr.data.size());
-      writer_.write_bytes(empty_cr.data.data(), empty_cr.data.size());
-      return;
+      out.write_u64(empty_cr.data.size());
+      out.write_bytes(empty_cr.data.data(), empty_cr.data.size());
+      out.write_u64(empty_cr.data.size());
+      out.write_bytes(empty_cr.data.data(), empty_cr.data.size());
+      out.write_u64(empty_cr.data.size());
+      out.write_bytes(empty_cr.data.data(), empty_cr.data.size());
+      return true;
     }
 
-    // Children lists (CSR, slot 0 = parentless nodes), in table order.
-    std::vector<uint32_t> child_off(N + 2, 0);
-    for (size_t i = 0; i < N; ++i) {
-      if (!encoded[i]) continue;
-      ++child_off[(parent[i] == kNoNode ? 0 : size_t(parent[i]) + 1) + 1];
-    }
-    for (size_t k = 0; k + 1 < child_off.size(); ++k) {
-      child_off[k + 1] += child_off[k];
-    }
-    std::vector<uint32_t> children(num_paths);
-    {
-      std::vector<uint32_t> cursor(child_off.begin(), child_off.end() - 1);
-      for (size_t i = 0; i < N; ++i) {
-        if (!encoded[i]) continue;
-        const size_t list = parent[i] == kNoNode ? 0 : size_t(parent[i]) + 1;
-        children[cursor[list]++] = static_cast<uint32_t>(i);
-      }
-    }
-    auto sort_list = [&](size_t list) {
-      auto first = children.begin() + child_off[list];
-      auto last = children.begin() + child_off[list + 1];
-      if (last - first < 2) return;
-      const bool full_text = (list == 0) || is_root[list - 1];
-      if (full_text) {
-        std::sort(first, last, [&](uint32_t a, uint32_t b) {
-          return PathRecRankLess(a, b);
-        });
-      } else {
-        std::sort(first, last, [&](uint32_t a, uint32_t b) {
-          if (is_prop[a] != is_prop[b]) return is_prop[a] < is_prop[b];
-          return RankLess(elem[a], elem[b]);
-        });
-      }
-    };
-    const size_t num_lists = N + 1;
-    bool sorted_lists = false;
-#if defined(LIGHTUSD_ENABLE_THREAD)
-    const int nthreads = ResolveThreads();
-    if (nthreads > 1 && num_paths >= 200000) {
-      // Lists are disjoint slices; a strided split balances large parents.
-      std::vector<std::thread> pool;
-      pool.reserve(static_cast<size_t>(nthreads));
-      for (int t = 0; t < nthreads; ++t) {
-        pool.emplace_back([&, t] {
-          for (size_t list = static_cast<size_t>(t); list < num_lists;
-               list += static_cast<size_t>(nthreads)) {
-            sort_list(list);
-          }
-        });
-      }
-      for (auto& th : pool) th.join();
-      sorted_lists = true;
-    }
-#endif
-    if (!sorted_lists) {
-      for (size_t list = 0; list < num_lists; ++list) sort_list(list);
-    }
-
-    // Depth-first pre-order walk.
+    // Depth-first pre-order of the encoded nodes, plus subtree sizes; the
+    // children lists (CSR, slot 0 = parentless nodes, in table order) and the
+    // parent links die with this block.
     std::vector<uint32_t> order;
-    order.reserve(num_paths);
-    std::vector<uint8_t> has_sibling(N, uint8_t{0});
+    std::vector<uint32_t> subtree(N, 1);
     {
+      std::vector<uint32_t> child_off(N + 2, 0);
+      for (size_t i = 0; i < N; ++i) {
+        if (!(flags[i] & kEncoded)) continue;
+        ++child_off[(parent[i] == kNoNode ? 0 : size_t(parent[i]) + 1) + 1];
+      }
+      for (size_t k = 0; k + 1 < child_off.size(); ++k) {
+        child_off[k + 1] += child_off[k];
+      }
+      std::vector<uint32_t> children(num_paths);
+      {
+        std::vector<uint32_t> cursor(child_off.begin(), child_off.end() - 1);
+        for (size_t i = 0; i < N; ++i) {
+          if (!(flags[i] & kEncoded)) continue;
+          const size_t list = parent[i] == kNoNode ? 0 : size_t(parent[i]) + 1;
+          children[cursor[list]++] = static_cast<uint32_t>(i);
+        }
+      }
+      auto sort_list = [&](size_t list) {
+        auto first = children.begin() + child_off[list];
+        auto last = children.begin() + child_off[list + 1];
+        if (last - first < 2) return;
+        const bool full_text = (list == 0) || (flags[list - 1] & kRoot);
+        if (full_text) {
+          std::sort(first, last, [&](uint32_t a, uint32_t b) {
+            return PathRecRankLess(a, b);
+          });
+        } else {
+          std::sort(first, last, [&](uint32_t a, uint32_t b) {
+            const bool pa = (flags[a] & kProp) != 0, pb = (flags[b] & kProp) != 0;
+            if (pa != pb) return pa < pb;
+            return RankLess(elem_of(a), elem_of(b));
+          });
+        }
+      };
+      const size_t num_lists = N + 1;
+      bool sorted_lists = false;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+      const int nthreads = ResolveThreads();
+      if (nthreads > 1 && num_paths >= 200000) {
+        // Lists are disjoint slices; a strided split balances large parents.
+        std::vector<std::thread> pool;
+        pool.reserve(static_cast<size_t>(nthreads));
+        for (int t = 0; t < nthreads; ++t) {
+          pool.emplace_back([&, t] {
+            for (size_t list = static_cast<size_t>(t); list < num_lists;
+                 list += static_cast<size_t>(nthreads)) {
+              sort_list(list);
+            }
+          });
+        }
+        for (auto& th : pool) th.join();
+        sorted_lists = true;
+      }
+#endif
+      if (!sorted_lists) {
+        for (size_t list = 0; list < num_lists; ++list) sort_list(list);
+      }
+
+      order.reserve(num_paths);
       std::vector<std::pair<uint32_t, uint32_t>> stack;  // (list, next pos)
       stack.emplace_back(0u, child_off[0]);
       while (!stack.empty()) {
@@ -303,54 +322,78 @@
           continue;
         }
         const uint32_t node = children[top.second++];
-        if (top.second < child_off[top.first + 1]) has_sibling[node] = 1;
+        if (top.second < child_off[top.first + 1]) flags[node] |= kSibling;
         order.push_back(node);
         const uint32_t list = node + 1;
         if (child_off[list] < child_off[list + 1]) {
           stack.emplace_back(list, child_off[list]);
         }
       }
+      // Subtree sizes (reverse pre-order accumulation).
+      for (size_t k = order.size(); k-- > 0;) {
+        const uint32_t node = order[k];
+        if (parent[node] != kNoNode) subtree[parent[node]] += subtree[node];
+      }
     }
-    // Subtree sizes (reverse pre-order accumulation).
-    std::vector<uint32_t> subtree(N, 1);
-    for (size_t k = order.size(); k-- > 0;) {
-      const uint32_t node = order[k];
-      if (parent[node] != kNoNode) subtree[parent[node]] += subtree[node];
-    }
+    std::vector<uint32_t>().swap(parent);
 
-    // Build 3 arrays: path indices, element token indices (negated for a
-    // property), jump indices:
+    // Build 3 arrays: path indices (the pre-order itself), element token
+    // indices (negated for a property), jump indices:
     //   jump  > 0 : child (next node) AND sibling (at +jump = subtree size)
     //   jump == 0 : sibling only;  -1: child only;  -2: leaf
-    std::vector<uint32_t> path_indices(order.size());
     std::vector<uint32_t> element_tokens(order.size());
     std::vector<uint32_t> jump_indices(order.size());
-    for (size_t k = 0; k < order.size(); ++k) {
-      const uint32_t node = order[k];
-      path_indices[k] = node;
-      int32_t tok = static_cast<int32_t>(
-          InternToken(is_root[node] ? std::string_view() : elem[node]));
-      // Property element tokens are negated (pxr's is_property marker).
-      if (!is_root[node] && is_prop[node]) tok = -tok;
-      element_tokens[k] = static_cast<uint32_t>(tok);
-      const bool has_child = subtree[node] > 1;
-      int32_t jump;
-      if (has_sibling[node] && has_child) {
-        jump = static_cast<int32_t>(subtree[node]);
-      } else if (has_sibling[node]) {
-        jump = 0;
-      } else if (has_child) {
-        jump = -1;
-      } else {
-        jump = -2;
+    // Every element token was registered by RegisterPathElementTokens before
+    // TOKENS was built, so the slices only look tokens up (the table is read
+    // concurrently by the TOKENS payload build). A miss cannot be encoded.
+    std::atomic<bool> token_miss{false};
+    auto build_nodes = [&](size_t lo, size_t hi) {
+      for (size_t k = lo; k < hi; ++k) {
+        const uint32_t node = order[k];
+        const bool root = (flags[node] & kRoot) != 0;
+        const std::string_view tok_text = root ? std::string_view() : elem_of(node);
+        auto it = token_to_index_.find(tok_text);
+        if (it == token_to_index_.end()) {
+          token_miss.store(true, std::memory_order_relaxed);
+          return;
+        }
+        const uint32_t tok_id = it->second;
+        int32_t tok = static_cast<int32_t>(tok_id);
+        // Property element tokens are negated (pxr's is_property marker).
+        if (!root && (flags[node] & kProp)) tok = -tok;
+        element_tokens[k] = static_cast<uint32_t>(tok);
+        const bool has_child = subtree[node] > 1;
+        const bool has_sibling = (flags[node] & kSibling) != 0;
+        int32_t jump;
+        if (has_sibling && has_child) {
+          jump = static_cast<int32_t>(subtree[node]);
+        } else if (has_sibling) {
+          jump = 0;
+        } else if (has_child) {
+          jump = -1;
+        } else {
+          jump = -2;
+        }
+        jump_indices[k] = static_cast<uint32_t>(jump);
       }
-      jump_indices[k] = static_cast<uint32_t>(jump);
-    }
+    };
+    ParallelRanges(order.size(), 100000, [&](size_t, size_t lo, size_t hi) {
+      build_nodes(lo, hi);
+    });
+    if (token_miss.load()) return false;
+    std::vector<uint32_t>().swap(subtree);
+    std::vector<uint32_t>().swap(elem_off);
+    std::vector<uint8_t>().swap(flags);
 
-    // Write 3 compressed arrays using Usd_IntegerCompression (delta + LZ4)
-    WriteCompressedDeltaU32(writer_, path_indices.data(), order.size());
-    WriteCompressedDeltaU32(writer_, element_tokens.data(), order.size());
-    WriteCompressedDeltaU32(writer_, jump_indices.data(), order.size());
+    // Write 3 compressed arrays using Usd_IntegerCompression (delta + LZ4),
+    // each released once written.
+    const size_t num_nodes = order.size();
+    WriteCompressedDeltaU32(out, order.data(), num_nodes);
+    std::vector<uint32_t>().swap(order);
+    WriteCompressedDeltaU32(out, element_tokens.data(), num_nodes);
+    std::vector<uint32_t>().swap(element_tokens);
+    WriteCompressedDeltaU32(out, jump_indices.data(), num_nodes);
+    return true;
   }
 
   void BuildSpecsSectionPayload(std::vector<uint8_t>* payload) {
