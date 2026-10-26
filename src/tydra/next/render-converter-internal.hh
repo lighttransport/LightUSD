@@ -41,6 +41,10 @@ class RenderSceneConverter::Impl {
   Impl(const Impl&) = delete;
   Impl& operator=(const Impl&) = delete;
 
+  // Conversion time used by every time-sampled read.
+  void SetTimeCode(double time_code) { config_.time_code = time_code; }
+  double GetTimeCode() const { return config_.time_code; }
+
   // Main conversion entry point
   /// Read-only retained conversion. This never evicts values from `stage`, so
   /// it is safe to use with an immutable StageSnapshot.

@@ -7462,6 +7462,105 @@ def Xform "World"
   std::cout << "  incremental RenderSession dependencies: PASSED\n";
 }
 
+
+void TestRenderSessionTimeCode() {
+  std::cout << "Testing RenderSession time code...\n";
+  const char* usda = R"(#usda 1.0
+
+def Mesh "M"
+{
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    point3f[] points.timeSamples = {
+        0: [(0, 0, 0), (1, 0, 0), (0, 1, 0)],
+        10: [(5, 0, 0), (6, 0, 0), (5, 1, 0)],
+    }
+}
+
+def Volume "V"
+{
+    rel material:binding = </VolMat>
+}
+
+def Material "VolMat"
+{
+    token outputs:volume.connect = </VolMat/Shader.outputs:volume>
+
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_volume"
+        float inputs:density.timeSamples = {
+            0: 1,
+            10: 4,
+        }
+        token outputs:volume
+    }
+}
+)";
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse time-code USDA: " << lr.error_summary << ")\n";
+    return;
+  }
+  StageSnapshot first;
+  first.revision = 1;
+  first.stage.reset(new Stage(std::move(lr.stage)));
+  RecordingSceneUpdateSink sink;
+  RenderSession session;
+  RenderUpdateResult initial = session.Initialize(first, &sink);
+  if (!initial) std::cerr << "  time-code init failed: " << initial.error << "\n";
+  assert(initial && initial.full_resync);
+  assert(session.GetTimeCode() == 0.0);
+  {
+    RenderSceneSnapshot snap = session.GetSnapshot();
+    assert(snap);
+    assert(snap->meshes.size() == 1 && snap->volumes.size() == 1);
+    assert(std::fabs(sink.mesh_x.at("/M")) < 1.0e-6f);
+    assert(std::fabs(snap->volumes[0].density_scale - 1.0f) < 1.0e-6f);
+  }
+  /* An empty change set at the same time takes the no-op path. */
+  StageSnapshot second;
+  second.revision = 2;
+  second.stage = first.stage;
+  ::lightusd::next::StageChangeSet quiet;
+  quiet.base_revision = 1;
+  quiet.new_revision = 2;
+  RenderUpdateResult no_op = session.Apply(second, quiet, &sink);
+  if (!no_op) std::cerr << "  no-op apply failed: " << no_op.error << "\n";
+  assert(no_op && !no_op.full_resync && no_op.converted_resource_count == 0);
+  assert(sink.mesh_upserts == 0);
+  /* The same empty change set at a new time must re-evaluate everything. */
+  session.SetTimeCode(10.0);
+  assert(session.GetTimeCode() == 10.0);
+  StageSnapshot third;
+  third.revision = 3;
+  third.stage = first.stage;
+  ::lightusd::next::StageChangeSet quiet_at_time;
+  quiet_at_time.base_revision = 2;
+  quiet_at_time.new_revision = 3;
+  RenderUpdateResult timed = session.Apply(third, quiet_at_time, &sink);
+  if (!timed) std::cerr << "  time apply failed: " << timed.error << "\n";
+  assert(timed);
+  assert(timed.full_resync && timed.converted_resource_count > 0);
+  assert(timed.upsert_count > 0);
+  assert(std::fabs(sink.mesh_x.at("/M") - 5.0f) < 1.0e-6f);
+  {
+    RenderSceneSnapshot snap = session.GetSnapshot();
+    assert(snap && snap->volumes.size() == 1);
+    assert(std::fabs(snap->volumes[0].density_scale - 4.0f) < 1.0e-6f);
+  }
+  /* No pending time change: the next empty update is a no-op again. */
+  StageSnapshot fourth;
+  fourth.revision = 4;
+  fourth.stage = first.stage;
+  ::lightusd::next::StageChangeSet quiet_again;
+  quiet_again.base_revision = 3;
+  quiet_again.new_revision = 4;
+  RenderUpdateResult settled = session.Apply(fourth, quiet_again, &sink);
+  assert(settled && !settled.full_resync && settled.converted_resource_count == 0);
+  std::cout << "  RenderSession time code: PASSED\n";
+}
+
 void TestIncrementalRenderSession() {
   std::cout << "Testing incremental RenderSession...\n";
   auto source = [](float x) {
@@ -8473,6 +8572,7 @@ int main() {
   TestRenderColorManagement();
   TestIncrementalRenderSessionDependencies();
   TestIncrementalRenderSession();
+  TestRenderSessionTimeCode();
   TestRenderSessionResidentCap();
   TestPtexMaterialInterfaceAsset();
   TestSurfaceUnlitMaterialXConversion();

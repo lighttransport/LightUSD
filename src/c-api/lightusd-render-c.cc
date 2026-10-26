@@ -5,6 +5,7 @@
 
 #include "lightusd-render-c.h"
 
+#include <cmath>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -1310,6 +1311,19 @@ lightusd_status lightusd_render_session_create_document(
 
 void lightusd_render_session_destroy(lightusd_render_session* session) {
   delete session;
+}
+
+lightusd_status lightusd_render_session_set_time_code(
+    lightusd_render_session* session, double time_code) {
+  if (!session || !std::isfinite(time_code))
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid render session time code");
+  session->session.SetTimeCode(time_code);
+  return LIGHTUSD_OK;
+}
+
+double lightusd_render_session_time_code(
+    const lightusd_render_session* session) {
+  return session ? session->session.GetTimeCode() : 0.0;
 }
 
 uint64_t lightusd_render_session_revision(

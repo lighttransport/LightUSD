@@ -386,6 +386,14 @@ LIGHTUSD_API uint64_t lightusd_render_session_revision(
 LIGHTUSD_API uint64_t lightusd_render_session_resource_id(
     const lightusd_render_session* session, uint8_t kind, const char* key);
 LIGHTUSD_API void lightusd_render_session_reset(lightusd_render_session* session);
+/* Time code for subsequent updates. A changed time makes the next update a
+ * full resync: every resource is re-converted (time-sampled attributes, shader
+ * ports, transforms and UsdVol volume material constants), so an update with
+ * an empty change set still re-evaluates the scene. */
+LIGHTUSD_API lightusd_status lightusd_render_session_set_time_code(
+    lightusd_render_session* session, double time_code);
+LIGHTUSD_API double lightusd_render_session_time_code(
+    const lightusd_render_session* session);
 LIGHTUSD_API lightusd_status lightusd_render_session_set_event_sink(
     lightusd_render_session* session, const lightusd_render_event_sink* sink);
 LIGHTUSD_API lightusd_status lightusd_render_session_update(
