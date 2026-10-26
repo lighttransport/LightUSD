@@ -48,7 +48,8 @@ static void emit_crate_limit_hint(const std::string &err,
                                   size_t max_crate_elements) {
   if (max_crate_elements == 0 &&
       (err.find("crate table limit") != std::string::npos ||
-       err.find("Too many ") != std::string::npos)) {
+       err.find("Too many ") != std::string::npos ||
+       err.find("exceeds max_array_elements") != std::string::npos)) {
     std::fprintf(stderr,
                  "ERR : hint: raise --max-crate-elements for large trusted "
                  "USDC files\n");
@@ -498,6 +499,8 @@ int main(int argc, char **argv) {
   const auto t_loaded = Clock::now();
 
   emit_lines(warn, "WARN : ");
+  // Composition reports a layer the limits refused as a warning and goes on.
+  emit_crate_limit_hint(warn, max_crate_elements);
   if (!ok) {
     emit_lines(err.empty() ? std::string("load failed") : err, "ERR : ");
     emit_crate_limit_hint(err, max_crate_elements);

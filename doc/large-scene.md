@@ -4294,8 +4294,10 @@ ctest 61/61 (no TSan-only suite in this configuration).
 8 compose / 8 write threads). It was the first run after the copy. Then 21
 further runs, 12 warm-cache and 4 cold-cache (page cache evicted with
 `posix_fadvise`) plus 5 other thread mixes, all gave `267d237a…`. This
-looks like a rare scheduling-dependent race; next step is a loop under TSan
-on zen5. The differing output was not kept.
+looked like a rare scheduling-dependent race. **Resolved in §10.27: not a
+race.** That run passed `--max-crate-elements 300000000` (the command was
+shared with full45); the later runs did not. `a8f50922…` is the full Island
+output, and `267d237a…` was missing five arrays that were silently dropped.
 
 ### 10.26 Allocator evaluation on zen5 (2026-10-27)
 
@@ -4323,6 +4325,9 @@ maximum over runs.
   static buffer-placement solver for ML accelerators (known lifetimes →
   offsets), not a general-purpose heap. It is not applicable here and was
   not benchmarked.
+
+(Island here ran without `--max-crate-elements`, so it composed the
+truncated scene of §10.27; the allocator ratios are unaffected.)
 
 **Native** (`lusdcat -f` → USDC; district, Island 8/8/8 and merged ALab
 ×3, full45 ×2, interleaved):
@@ -4422,3 +4427,77 @@ Side findings (not allocator related; follow up separately):
 - `isHibiscus`, `isBayCedarA1` and `isDunesA` render do not finish within
   60 s on any allocator.
 - `getMeshCopy` costs ~30 ms per mesh (isKava: 1,080 meshes in 36 s).
+
+### 10.27 The Island "race" was silent data loss (2026-10-27)
+
+The open item from §10.25 (`a8f50922…` once vs `267d237a…`) was not a
+race. The odd run had `--max-crate-elements 300000000`. With the flag the
+output is `a8f50922…` (2,512,205,846 B) every time; without it, it is
+`267d237a…` (1,815,093,161 B), also every time. `a8f50922…` is the full
+scene, the same hash §9.2 recorded on the earlier snapshot.
+
+Without the flag, the default 16 M-element array cap silently dropped the
+values of five attributes:
+- `/island/isBeach/geometry/xgGroundCover/instancer`: `positions`,
+  `orientations`, `scales` and `protoIndices`, from
+  `isBeach/xgenInstances/xgGroundCover.usd`;
+- `/island/osOcean/geometry/ocean_geo.faceVertexIndices`, from
+  `osOcean/model.usd`.
+
+Only the declarations remained. The run exited 0 with no warning. Even a
+plain `--rewrite-layer` of `xgGroundCover.usd` (683 MB) produced an
+80 KB file.
+
+Three bugs combined:
+1. **Regression from `5b78bdef9` (2026-08-04).** The lazy-array probe in
+   `UnpackArrayUncached` was capped at `max_array_elements`, so a
+   compressed block could not advertise a count it doesn't hold. That also
+   capped *uncompressed* arrays, whose `count × stride` bytes must already
+   be in the file. Meanwhile the FIELDS validation
+   (`crate-reader-sections.cc`) still accepted over-cap lazy arrays. The
+   over-cap value fell through to eager decode, which refused it, and
+   `ResolveFieldset` dropped the field with a warning.
+2. **Warnings never left the reader.** `ConvertLoadedUSDC` (pcp layer
+   loading) discarded `USDCLoadResult::warnings`, unlike the USDA path.
+3. **The writer skips an unencodable `default` field** (on purpose, so
+   pxr can still read the layer). Anything dropped upstream vanished
+   without a trace.
+
+Fixes:
+- **Uncompressed arrays:** probed uncapped again; their count is
+  file-backed. They stay lazy, pass through to the writer byte for byte,
+  and materializing them still enforces the cap (`max_elements`).
+- **Compressed arrays:** stay capped, and an over-cap compressed array now
+  fails the layer load in FIELDS validation, instead of being accepted and
+  then dropped field by field.
+- **Warnings:** `ConvertLoadedUSDC` forwards reader warnings, prefixed
+  `USDC layer <path>:`.
+- **`lusdcat`:** prints the `raise --max-crate-elements` hint for this
+  error and for composition warnings that carry it.
+- **Test:** `test_lazy_array` covers both cases. Built without the fix, it
+  fails on `cp->is_lazy()`.
+
+Island without the flag now warns that the two layers failed to load
+(composition continues, as for any unloadable arc) and writes
+`adf9f5f3…` (1,719,598,316 B). With the flag nothing changes: `a8f50922…`.
+
+The bench kit now passes the flag for Island: `allocbench.sh`, the
+manifests and the README reference hash.
+
+The forwarded warnings exposed one more silent drop:
+- ALab's `vegetation_bonsai01` groom payload has eight `inactiveIds`
+  fields (`Int64ListOp`) that the crate reader cannot decode.
+- Instance deactivation is lost there. The ALab hash is unchanged, since
+  that data was never in the output.
+- Follow-up: support `Int64ListOp`.
+
+Verification:
+- Hashes unchanged: district `98619c40…`, full45 `a0175bc1…`, merged ALab
+  `2f7176c8…`.
+- ctest 61/61; Debug `test_lazy_array` passes.
+- Composition sweep (1,933 inputs) and rewrite sweep (705 fixtures), USDA
+  and USDC: byte-identical to R22.
+- Island with the flag, 10 plain runs at 2–32 threads: all `a8f50922…`.
+- TSan build (`-fsanitize=thread`, system malloc), Island at 8 and 16
+  threads: 0 reports, `a8f50922…`; 78 s / 65 s, ~10 GiB peak.
+

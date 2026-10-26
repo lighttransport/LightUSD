@@ -540,8 +540,13 @@ bool CrateReader::Impl::ReadFields() {
           AddError("Failed to restore FIELDS reader position");
           return false;
         }
+        // Over-cap arrays are accepted only when they stay lazy with a
+        // file-backed count (uncompressed; see UnpackArrayUncached). A
+        // compressed over-cap array could never be decoded, and dropping it
+        // field by field would silently lose data, so it fails the load here
+        // (raise max_array_elements for large trusted files).
         const bool lazy_over_cap_ok =
-            options_.lazy_arrays &&
+            options_.lazy_arrays && !rep.is_compressed() &&
             CrateArrayTypeCanBeLazy(rep.type_id(), rep.is_compressed());
         if (count > options_.max_array_elements && !lazy_over_cap_ok) {
           AddError("Array ValueRep element count exceeds max_array_elements limit");
