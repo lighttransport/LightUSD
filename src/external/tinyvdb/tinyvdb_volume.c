@@ -155,18 +155,33 @@ tvdb_status_t tvdb_grid_get_info(const tvdb_grid_t *g, tvdb_grid_info_t *out,
 }
 
 /* ---- Dense extraction ---------------------------------------------------- */
+/* Default scratch_bytes: the sums and counts of one slab of output layers. */
+#define VOL_SLAB_BYTES ((size_t)64 << 20)
+
 typedef struct {
   const tvdb_grid_t *g;
   const tvdb_tree_index *ix;
   tvdb_value_type_t vt;
   size_t vsize;
   int comps, stride, inactive_bg;
+  int magnitude;          /* vector grids: one channel, the length */
+  int empty;              /* no active voxels and no window */
   int64_t lo[3], hi[3];   /* window, inclusive */
   int32_t dims[3];
-  float *out;             /* stride 1: values; else unused */
-  double *sum;            /* stride > 1: comps per cell */
-  uint64_t *count;        /* stride > 1: covered voxels per cell */
+  size_t cells;
+  size_t scratch_bytes;
+  float bg[3];
+  double m[4][4];         /* index to world */
+  int64_t zlo, zhi;       /* index z range painted this pass, inclusive */
+  int32_t w0;             /* stride > 1: first output layer of the slab */
+  float *out;             /* stride 1: values */
+  double *sum;            /* stride > 1: comps per slab cell */
+  uint64_t *count;        /* stride > 1: covered voxels per slab cell */
 } vol_paint;
+
+static int vol_out_comps(const vol_paint *P) { return P->magnitude ? 1 : P->comps; }
+
+static float vol_length(const float v[3]) { return sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); }
 
 static size_t vol_cell(const vol_paint *P, int64_t x, int64_t y, int64_t z) {
   return (size_t)((x - P->lo[0]) / P->stride) +
@@ -174,21 +189,27 @@ static size_t vol_cell(const vol_paint *P, int64_t x, int64_t y, int64_t z) {
                                (size_t)P->dims[1] * (size_t)((z - P->lo[2]) / P->stride));
 }
 
-/* Value v over the index box [b0, b1) (clipped to the window). */
+/* Value v over the index box [b0, b1) (clipped to the window and the pass). */
 static void vol_paint_box(vol_paint *P, const int64_t b0[3], const int64_t b1[3], const float v[3]) {
   int64_t c0[3], c1[3];
   for (int a = 0; a < 3; ++a) {
     c0[a] = b0[a] > P->lo[a] ? b0[a] : P->lo[a];
     c1[a] = b1[a] < P->hi[a] + 1 ? b1[a] : P->hi[a] + 1;
-    if (c0[a] >= c1[a]) return;
   }
+  if (c0[2] < P->zlo) c0[2] = P->zlo;
+  if (c1[2] > P->zhi + 1) c1[2] = P->zhi + 1;
+  for (int a = 0; a < 3; ++a)
+    if (c0[a] >= c1[a]) return;
   const int C = P->comps;
   if (P->stride == 1) {
+    const int OC = vol_out_comps(P);
+    float o[3] = {v[0], v[1], v[2]};
+    if (P->magnitude) o[0] = vol_length(v);
     for (int64_t z = c0[2]; z < c1[2]; ++z)
       for (int64_t y = c0[1]; y < c1[1]; ++y) {
-        float *row = P->out + C * vol_cell(P, c0[0], y, z);
-        for (int64_t x = c0[0]; x < c1[0]; ++x, row += C)
-          for (int k = 0; k < C; ++k) row[k] = v[k];
+        float *row = P->out + OC * vol_cell(P, c0[0], y, z);
+        for (int64_t x = c0[0]; x < c1[0]; ++x, row += OC)
+          for (int k = 0; k < OC; ++k) row[k] = o[k];
       }
     return;
   }
@@ -206,7 +227,8 @@ static void vol_paint_box(vol_paint *P, const int64_t b0[3], const int64_t b1[3]
       for (int64_t u = u0[0]; u <= u1[0]; ++u) {
         const int64_t xl = P->lo[0] + u * s, xo = (c1[0] < xl + s ? c1[0] : xl + s) - (c0[0] > xl ? c0[0] : xl);
         const uint64_t n = (uint64_t)(xo * yo * zo);
-        const size_t cell = (size_t)u + (size_t)P->dims[0] * ((size_t)v2 + (size_t)P->dims[1] * (size_t)w);
+        const size_t cell =
+            (size_t)u + (size_t)P->dims[0] * ((size_t)v2 + (size_t)P->dims[1] * (size_t)(w - P->w0));
         P->count[cell] += n;
         for (int k = 0; k < C; ++k) P->sum[(size_t)C * cell + (size_t)k] += (double)v[k] * (double)n;
       }
@@ -222,6 +244,7 @@ static void vol_paint_node(vol_paint *P, size_t node) {
   const int32_t *o = P->ix->origins[node];
   for (int a = 0; a < 3; ++a)
     if ((int64_t)o[a] > P->hi[a] || (int64_t)o[a] + span <= P->lo[a]) return;
+  if ((int64_t)o[2] > P->zhi || (int64_t)o[2] + span <= P->zlo) return;
   const int64_t sub = l + 1 < P->ix->levels ? P->ix->span[l + 1] : 1;
   const size_t dim = (size_t)1 << L;
   float v[3];
@@ -258,168 +281,268 @@ static void vol_paint_node(vol_paint *P, size_t node) {
   }
 }
 
+/* Root: children and tiles. Uncovered space keeps the background. */
+static void vol_paint_root(vol_paint *P) {
+  const tvdb_root_node_t *r = &P->g->tree.nodes[0].u.root;
+  float v[3];
+  for (uint32_t i = 0; i < r->num_children; ++i) vol_paint_node(P, r->child_indices[i]);
+  for (uint32_t i = 0; i < r->num_tiles; ++i) {
+    if (P->inactive_bg && !r->tile_active[i]) continue;
+    const int64_t b0[3] = {r->tile_origins[3 * i], r->tile_origins[3 * i + 1], r->tile_origins[3 * i + 2]};
+    const int64_t b1[3] = {b0[0] + P->ix->span[1], b0[1] + P->ix->span[1], b0[2] + P->ix->span[1]};
+    vol_from_value(&r->tile_values[i], v);
+    vol_paint_box(P, b0, b1, v);
+  }
+}
+
+/* Window, stride and dims for the options. On TVDB_OK, *ix is live (the
+ * caller destroys it) and P refers to it. */
+static tvdb_status_t vol_plan(const tvdb_grid_t *g, const tvdb_dense_volume_options_t *options,
+                              tvdb_tree_index *ix, vol_paint *P, tvdb_error_t *err) {
+  tvdb_dense_volume_options_t opt;
+  memset(&opt, 0, sizeof(opt));
+  if (options) opt = *options;
+  if (!g || opt.stride < 0)
+    return vol_error(err, TVDB_ERROR_INVALID_ARGUMENT, "invalid dense volume arguments");
+  if (!vol_has_tree(g))
+    return vol_error(err, TVDB_ERROR_INVALID_ARGUMENT, "grid tree not decoded (tvdb_read_grid)");
+  if (g->tree.is_point_data_grid || g->tree.is_point_index_grid)
+    return vol_error(err, TVDB_ERROR_UNSUPPORTED_GRID_TYPE, "point grids have no voxel values");
+  tvdb_status_t st = tvdb_tree_index_create(g, 0, ix, err);
+  if (st != TVDB_OK) return st;
+  memset(P, 0, sizeof(*P));
+  P->g = g;
+  P->ix = ix;
+  P->vt = g->tree.layout.levels[ix->levels - 1].value_type;
+  if (!vol_supported(P->vt)) {
+    tvdb_tree_index_destroy(ix);
+    return vol_error(err, TVDB_ERROR_UNSUPPORTED_GRID_TYPE, "unsupported voxel value type");
+  }
+  P->vsize = tvdb_value_type_size(P->vt);
+  P->comps = vol_components(P->vt);
+  P->magnitude = opt.vector_magnitude && P->comps == 3;
+  P->inactive_bg = opt.inactive_as_background;
+  P->scratch_bytes = opt.scratch_bytes ? opt.scratch_bytes : VOL_SLAB_BYTES;
+  P->stride = 1;
+  vol_from_value(&g->tree.nodes[0].u.root.background, P->bg);
+  if (!tvdb_tree_matrix(&g->transform, P->m)) {
+    tvdb_tree_index_destroy(ix);
+    return vol_error(err, TVDB_ERROR_UNSUPPORTED_TRANSFORM, "grid transform is not linear");
+  }
+  if (opt.use_window) {
+    for (int a = 0; a < 3; ++a) {
+      if (opt.window_min[a] > opt.window_max[a]) {
+        tvdb_tree_index_destroy(ix);
+        return vol_error(err, TVDB_ERROR_INVALID_ARGUMENT, "empty dense volume window");
+      }
+      P->lo[a] = opt.window_min[a];
+      P->hi[a] = opt.window_max[a];
+    }
+  } else if (ix->has_bbox) {
+    for (int a = 0; a < 3; ++a) {
+      P->lo[a] = ix->bbox_min[a];
+      P->hi[a] = ix->bbox_max[a] - 1; /* exclusive in the index */
+    }
+  } else {
+    P->empty = 1; /* nothing active: an empty volume */
+    return TVDB_OK;
+  }
+  /* Stride: the given one, or the smallest whose cells fit the budget. */
+  int64_t ext[3];
+  for (int a = 0; a < 3; ++a) ext[a] = P->hi[a] - P->lo[a] + 1;
+  int s = opt.stride ? opt.stride : 1;
+  for (;;) {
+    const double cells = ceil((double)ext[0] / s) * ceil((double)ext[1] / s) * ceil((double)ext[2] / s);
+    if (!opt.max_voxels || cells <= (double)opt.max_voxels) break;
+    if (opt.stride || s >= (1 << 20)) {
+      tvdb_tree_index_destroy(ix);
+      return vol_error(err, TVDB_ERROR_INVALID_ARGUMENT, "dense volume exceeds the voxel budget");
+    }
+    ++s;
+  }
+  P->stride = s;
+  size_t cells = 1, bytes;
+  for (int a = 0; a < 3; ++a) {
+    const int64_t d = (ext[a] + s - 1) / s;
+    if (d > INT32_MAX || !tvdb_size_mul(cells, (size_t)d, &cells)) {
+      tvdb_tree_index_destroy(ix);
+      return vol_error(err, TVDB_ERROR_INVALID_ARGUMENT, "dense volume too large");
+    }
+    P->dims[a] = (int32_t)d;
+  }
+  if (!tvdb_size_mul(cells, (size_t)vol_out_comps(P) * sizeof(float), &bytes)) {
+    tvdb_tree_index_destroy(ix);
+    return vol_error(err, TVDB_ERROR_INVALID_ARGUMENT, "dense volume too large");
+  }
+  P->cells = cells;
+  return TVDB_OK;
+}
+
+/* The layout of a planned extraction, without data. */
+static void vol_layout(const vol_paint *P, tvdb_dense_volume_t *out) {
+  memset(out, 0, sizeof(*out));
+  out->components = vol_out_comps(P);
+  memcpy(out->background, P->bg, sizeof(P->bg));
+  out->stride = P->stride;
+  if (P->empty) {
+    memcpy(out->cell_to_world, P->m, sizeof(P->m));
+    return;
+  }
+  const int s = P->stride;
+  for (int a = 0; a < 3; ++a) {
+    out->dims[a] = P->dims[a];
+    out->index_min[a] = (int32_t)P->lo[a];
+  }
+  /* cell (u, v, w) -> index center lo + s * u + (s - 1) / 2 -> world. */
+  const double off = 0.5 * (double)(s - 1);
+  for (int a = 0; a < 3; ++a) {
+    for (int b = 0; b < 3; ++b) out->cell_to_world[a][b] = P->m[a][b] * (double)s;
+    out->cell_to_world[a][3] = P->m[a][3] + P->m[a][0] * ((double)P->lo[0] + off) +
+                               P->m[a][1] * ((double)P->lo[1] + off) +
+                               P->m[a][2] * ((double)P->lo[2] + off);
+  }
+  out->cell_to_world[3][3] = 1;
+}
+
+/* Paints a planned extraction into data (P->cells * out comps floats). */
+static tvdb_status_t vol_fill(vol_paint *P, float *data, tvdb_error_t *err) {
+  if (P->empty) return TVDB_OK;
+  const int C = P->comps, OC = vol_out_comps(P);
+  if (P->stride == 1) {
+    float o[3] = {P->bg[0], P->bg[1], P->bg[2]};
+    if (P->magnitude) o[0] = vol_length(P->bg);
+    for (size_t i = 0; i < P->cells; ++i)
+      for (int k = 0; k < OC; ++k) data[(size_t)OC * i + (size_t)k] = o[k];
+    P->out = data;
+    P->zlo = P->lo[2];
+    P->zhi = P->hi[2];
+    vol_paint_root(P);
+    return TVDB_OK;
+  }
+  /* Slabs of whole output layers; cells sum their voxels in double. */
+  const int64_t s = P->stride;
+  const size_t layer = (size_t)P->dims[0] * (size_t)P->dims[1]; /* <= cells */
+  size_t per_layer, sum_bytes, count_bytes;
+  if (!tvdb_size_mul(layer, (size_t)C * sizeof(double) + sizeof(uint64_t), &per_layer))
+    return vol_error(err, TVDB_ERROR_OUT_OF_MEMORY, "dense volume scratch too large");
+  size_t layers = per_layer ? P->scratch_bytes / per_layer : 1;
+  if (layers < 1) layers = 1;
+  if (layers > (size_t)P->dims[2]) layers = (size_t)P->dims[2];
+  if (!tvdb_size_mul(layers * layer, (size_t)C * sizeof(double), &sum_bytes) ||
+      !tvdb_size_mul(layers * layer, sizeof(uint64_t), &count_bytes))
+    return vol_error(err, TVDB_ERROR_OUT_OF_MEMORY, "dense volume scratch too large");
+  P->sum = (double *)malloc(sum_bytes);
+  P->count = (uint64_t *)malloc(count_bytes);
+  if (!P->sum || !P->count) {
+    free(P->sum);
+    free(P->count);
+    P->sum = NULL;
+    P->count = NULL;
+    return vol_error(err, TVDB_ERROR_OUT_OF_MEMORY, "dense volume allocation failed");
+  }
+  for (int32_t w0 = 0; w0 < P->dims[2]; w0 += (int32_t)layers) {
+    const int32_t nl = (int32_t)((size_t)(P->dims[2] - w0) < layers ? (size_t)(P->dims[2] - w0) : layers);
+    memset(P->sum, 0, (size_t)nl * layer * (size_t)C * sizeof(double));
+    memset(P->count, 0, (size_t)nl * layer * sizeof(uint64_t));
+    P->w0 = w0;
+    P->zlo = P->lo[2] + (int64_t)w0 * s;
+    P->zhi = P->lo[2] + (int64_t)(w0 + nl) * s - 1;
+    if (P->zhi > P->hi[2]) P->zhi = P->hi[2];
+    vol_paint_root(P);
+    for (int32_t w = w0; w < w0 + nl; ++w)
+      for (int32_t v2 = 0; v2 < P->dims[1]; ++v2)
+        for (int32_t u = 0; u < P->dims[0]; ++u) {
+          /* Voxels of this cell inside the window. */
+          uint64_t n = 1;
+          const int32_t c[3] = {u, v2, w};
+          for (int a = 0; a < 3; ++a) {
+            const int64_t l0 = P->lo[a] + (int64_t)c[a] * s;
+            const int64_t l1 = l0 + s - 1 < P->hi[a] ? l0 + s - 1 : P->hi[a];
+            n *= (uint64_t)(l1 - l0 + 1);
+          }
+          const size_t sc = (size_t)u + (size_t)P->dims[0] * ((size_t)v2 + (size_t)P->dims[1] * (size_t)(w - w0));
+          const size_t cell = (size_t)u + (size_t)P->dims[0] * ((size_t)v2 + (size_t)P->dims[1] * (size_t)w);
+          const double missing = (double)(n - P->count[sc]);
+          float val[3] = {0, 0, 0};
+          for (int k = 0; k < C; ++k)
+            val[k] = (float)((P->sum[(size_t)C * sc + (size_t)k] + missing * P->bg[k]) / (double)n);
+          if (P->magnitude) {
+            data[cell] = vol_length(val);
+          } else {
+            for (int k = 0; k < C; ++k) data[(size_t)C * cell + (size_t)k] = val[k];
+          }
+        }
+  }
+  free(P->sum);
+  free(P->count);
+  P->sum = NULL;
+  P->count = NULL;
+  return TVDB_OK;
+}
+
 void tvdb_dense_volume_free(tvdb_dense_volume_t *v) {
   if (!v) return;
   free(v->data);
   memset(v, 0, sizeof(*v));
 }
 
+tvdb_status_t tvdb_grid_dense_volume_layout(const tvdb_grid_t *g,
+                                            const tvdb_dense_volume_options_t *options,
+                                            tvdb_dense_volume_t *out, tvdb_error_t *err) {
+  if (!out) return vol_error(err, TVDB_ERROR_INVALID_ARGUMENT, "invalid dense volume arguments");
+  tvdb_tree_index ix;
+  vol_paint P;
+  const tvdb_status_t st = vol_plan(g, options, &ix, &P, err);
+  if (st != TVDB_OK) return st;
+  tvdb_tree_index_destroy(&ix);
+  vol_layout(&P, out);
+  return TVDB_OK;
+}
+
+tvdb_status_t tvdb_grid_to_dense_volume_buffer(const tvdb_grid_t *g,
+                                               const tvdb_dense_volume_options_t *options,
+                                               float *data, size_t count,
+                                               tvdb_dense_volume_t *layout, tvdb_error_t *err) {
+  tvdb_tree_index ix;
+  vol_paint P;
+  tvdb_status_t st = vol_plan(g, options, &ix, &P, err);
+  if (st != TVDB_OK) return st;
+  const size_t need = P.cells * (size_t)vol_out_comps(&P); /* checked by vol_plan */
+  if (count < need || (need && !data)) {
+    tvdb_tree_index_destroy(&ix);
+    return vol_error(err, TVDB_ERROR_INVALID_ARGUMENT, "dense volume buffer too small");
+  }
+  st = vol_fill(&P, data, err);
+  tvdb_tree_index_destroy(&ix);
+  if (st == TVDB_OK && layout) vol_layout(&P, layout);
+  return st;
+}
+
 tvdb_status_t tvdb_grid_to_dense_volume(const tvdb_grid_t *g,
                                         const tvdb_dense_volume_options_t *options,
                                         tvdb_dense_volume_t *out, tvdb_error_t *err) {
-  tvdb_dense_volume_options_t opt;
-  memset(&opt, 0, sizeof(opt));
-  if (options) opt = *options;
-  if (!g || !out || opt.stride < 0)
-    return vol_error(err, TVDB_ERROR_INVALID_ARGUMENT, "invalid dense volume arguments");
-  if (!vol_has_tree(g))
-    return vol_error(err, TVDB_ERROR_INVALID_ARGUMENT, "grid tree not decoded (tvdb_read_grid)");
-  if (g->tree.is_point_data_grid || g->tree.is_point_index_grid)
-    return vol_error(err, TVDB_ERROR_UNSUPPORTED_GRID_TYPE, "point grids have no voxel values");
+  if (!out) return vol_error(err, TVDB_ERROR_INVALID_ARGUMENT, "invalid dense volume arguments");
   tvdb_tree_index ix;
-  tvdb_status_t st = tvdb_tree_index_create(g, 0, &ix, err);
-  if (st != TVDB_OK) return st;
   vol_paint P;
-  memset(&P, 0, sizeof(P));
-  P.g = g;
-  P.ix = &ix;
-  P.vt = g->tree.layout.levels[ix.levels - 1].value_type;
-  if (!vol_supported(P.vt)) {
-    tvdb_tree_index_destroy(&ix);
-    return vol_error(err, TVDB_ERROR_UNSUPPORTED_GRID_TYPE, "unsupported voxel value type");
-  }
-  P.vsize = tvdb_value_type_size(P.vt);
-  P.comps = vol_components(P.vt);
-  P.inactive_bg = opt.inactive_as_background;
-  tvdb_dense_volume_t result;
-  memset(&result, 0, sizeof(result));
-  result.components = P.comps;
-  float bg[3];
-  vol_from_value(&g->tree.nodes[0].u.root.background, bg);
-  memcpy(result.background, bg, sizeof(bg));
-  double m[4][4];
-  if (!tvdb_tree_matrix(&g->transform, m)) {
-    tvdb_tree_index_destroy(&ix);
-    return vol_error(err, TVDB_ERROR_UNSUPPORTED_TRANSFORM, "grid transform is not linear");
-  }
-  if (opt.use_window) {
-    for (int a = 0; a < 3; ++a) {
-      if (opt.window_min[a] > opt.window_max[a]) {
-        tvdb_tree_index_destroy(&ix);
-        return vol_error(err, TVDB_ERROR_INVALID_ARGUMENT, "empty dense volume window");
-      }
-      P.lo[a] = opt.window_min[a];
-      P.hi[a] = opt.window_max[a];
-    }
-  } else if (ix.has_bbox) {
-    for (int a = 0; a < 3; ++a) {
-      P.lo[a] = ix.bbox_min[a];
-      P.hi[a] = ix.bbox_max[a] - 1; /* exclusive in the index */
-    }
-  } else {
-    /* Nothing active: an empty volume. */
-    memcpy(result.cell_to_world, m, sizeof(m));
-    result.stride = 1;
-    tvdb_dense_volume_free(out);
-    *out = result;
-    tvdb_tree_index_destroy(&ix);
-    return TVDB_OK;
-  }
-  /* Stride: the given one, or the smallest whose cells fit the budget. */
-  int64_t ext[3];
-  for (int a = 0; a < 3; ++a) ext[a] = P.hi[a] - P.lo[a] + 1;
-  int s = opt.stride ? opt.stride : 1;
-  for (;;) {
-    const double cells = ceil((double)ext[0] / s) * ceil((double)ext[1] / s) * ceil((double)ext[2] / s);
-    if (!opt.max_voxels || cells <= (double)opt.max_voxels) break;
-    if (opt.stride || s >= (1 << 20)) {
-      tvdb_tree_index_destroy(&ix);
-      return vol_error(err, TVDB_ERROR_INVALID_ARGUMENT, "dense volume exceeds the voxel budget");
-    }
-    ++s;
-  }
-  P.stride = s;
-  size_t cells = 1;
-  for (int a = 0; a < 3; ++a) {
-    const int64_t d = (ext[a] + s - 1) / s;
-    if (d > INT32_MAX || !tvdb_size_mul(cells, (size_t)d, &cells)) {
-      tvdb_tree_index_destroy(&ix);
-      return vol_error(err, TVDB_ERROR_INVALID_ARGUMENT, "dense volume too large");
-    }
-    P.dims[a] = (int32_t)d;
-  }
-  size_t fbytes;
-  if (!tvdb_size_mul(cells, (size_t)P.comps * sizeof(float), &fbytes) ||
-      !(result.data = (float *)malloc(fbytes ? fbytes : 1))) {
-    tvdb_tree_index_destroy(&ix);
-    return vol_error(err, TVDB_ERROR_OUT_OF_MEMORY, "dense volume allocation failed");
-  }
-  if (s == 1) {
-    P.out = result.data;
-    for (size_t i = 0; i < cells; ++i)
-      for (int k = 0; k < P.comps; ++k) result.data[(size_t)P.comps * i + (size_t)k] = bg[k];
-  } else {
-    P.sum = (double *)calloc(cells * (size_t)P.comps, sizeof(double));
-    P.count = (uint64_t *)calloc(cells, sizeof(uint64_t));
-    if (!P.sum || !P.count) {
-      free(P.sum);
-      free(P.count);
-      free(result.data);
+  tvdb_status_t st = vol_plan(g, options, &ix, &P, err);
+  if (st != TVDB_OK) return st;
+  float *data = NULL;
+  if (!P.empty) {
+    const size_t bytes = P.cells * (size_t)vol_out_comps(&P) * sizeof(float); /* checked */
+    if (!(data = (float *)malloc(bytes ? bytes : 1))) {
       tvdb_tree_index_destroy(&ix);
       return vol_error(err, TVDB_ERROR_OUT_OF_MEMORY, "dense volume allocation failed");
     }
+    st = vol_fill(&P, data, err);
   }
-  /* Root: children and tiles. Uncovered space keeps the background. */
-  const tvdb_root_node_t *r = &g->tree.nodes[0].u.root;
-  float v[3];
-  for (uint32_t i = 0; i < r->num_children; ++i) vol_paint_node(&P, r->child_indices[i]);
-  for (uint32_t i = 0; i < r->num_tiles; ++i) {
-    if (P.inactive_bg && !r->tile_active[i]) continue;
-    const int64_t b0[3] = {r->tile_origins[3 * i], r->tile_origins[3 * i + 1], r->tile_origins[3 * i + 2]};
-    const int64_t b1[3] = {b0[0] + ix.span[1], b0[1] + ix.span[1], b0[2] + ix.span[1]};
-    vol_from_value(&r->tile_values[i], v);
-    vol_paint_box(&P, b0, b1, v);
-  }
-  if (s > 1) {
-    for (int32_t w = 0; w < P.dims[2]; ++w)
-      for (int32_t v2 = 0; v2 < P.dims[1]; ++v2)
-        for (int32_t u = 0; u < P.dims[0]; ++u) {
-          /* Voxels of this cell inside the window. */
-          uint64_t n = 1;
-          const int32_t c[3] = {u, v2, w};
-          for (int a = 0; a < 3; ++a) {
-            const int64_t l0 = P.lo[a] + (int64_t)c[a] * s;
-            const int64_t l1 = l0 + s - 1 < P.hi[a] ? l0 + s - 1 : P.hi[a];
-            n *= (uint64_t)(l1 - l0 + 1);
-          }
-          const size_t cell = (size_t)u + (size_t)P.dims[0] * ((size_t)v2 + (size_t)P.dims[1] * (size_t)w);
-          const double missing = (double)(n - P.count[cell]);
-          for (int k = 0; k < P.comps; ++k)
-            result.data[(size_t)P.comps * cell + (size_t)k] =
-                (float)((P.sum[(size_t)P.comps * cell + (size_t)k] + missing * bg[k]) / (double)n);
-        }
-    free(P.sum);
-    free(P.count);
-  }
-  for (int a = 0; a < 3; ++a) {
-    result.dims[a] = P.dims[a];
-    result.index_min[a] = (int32_t)P.lo[a];
-  }
-  result.stride = s;
-  /* cell (u, v, w) -> index center lo + s * u + (s - 1) / 2 -> world. */
-  const double off = 0.5 * (double)(s - 1);
-  for (int a = 0; a < 4; ++a)
-    for (int b = 0; b < 4; ++b) result.cell_to_world[a][b] = 0;
-  for (int a = 0; a < 3; ++a) {
-    for (int b = 0; b < 3; ++b) result.cell_to_world[a][b] = m[a][b] * (double)s;
-    result.cell_to_world[a][3] = m[a][3] + m[a][0] * ((double)P.lo[0] + off) +
-                                 m[a][1] * ((double)P.lo[1] + off) +
-                                 m[a][2] * ((double)P.lo[2] + off);
-  }
-  result.cell_to_world[3][3] = 1;
   tvdb_tree_index_destroy(&ix);
+  if (st != TVDB_OK) {
+    free(data);
+    return st;
+  }
   tvdb_dense_volume_free(out);
-  *out = result;
+  vol_layout(&P, out);
+  out->data = data;
   return TVDB_OK;
 }
 

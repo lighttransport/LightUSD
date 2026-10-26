@@ -127,13 +127,25 @@ bool Convert(const tvdb_grid_t &source, size_t index, const VDBReadOptions &opti
     if (warn) *warn += "Skipping VDB grid '" + name + "': unsupported (nonlinear) transform.\n";
     return false;
   }
+  const bool vector = info.components == 3;
+  const bool keep_vector = vector && options.vector_components;
   tvdb_dense_volume_options_t o{};
   o.max_voxels = options.max_voxels ? options.max_voxels : kDefaultMaxVoxels;
   o.stride = options.downsample ? 0 : 1;
   o.inactive_as_background = 1;
+  o.vector_magnitude = vector && !keep_vector;
+  // Layout first, then decode straight into out->data (no second copy).
   tvdb_dense_volume_t d{};
-  const tvdb_status_t st = tvdb_grid_to_dense_volume(&source, &o, &d, &e);
+  tvdb_status_t st = tvdb_grid_dense_volume_layout(&source, &o, &d, &e);
+  if (st == TVDB_OK) {
+    size_t cells = 1;
+    for (int a = 0; a < 3; ++a) cells *= size_t(d.dims[a]);  // checked by tinyvdb
+    out->data.resize(cells * size_t(d.components));
+    st = tvdb_grid_to_dense_volume_buffer(&source, &o, out->data.data(), out->data.size(),
+                                          nullptr, &e);
+  }
   if (st != TVDB_OK) {
+    std::vector<float>().swap(out->data);
     if (warn)
       *warn += "Skipping VDB grid '" + name + "': " +
                (st == TVDB_ERROR_INVALID_ARGUMENT ? std::string("dense extent exceeds voxel limit")
@@ -141,34 +153,20 @@ bool Convert(const tvdb_grid_t &source, size_t index, const VDBReadOptions &opti
                ".\n";
     return false;
   }
-  const bool vector = d.components == 3;
-  const bool keep_vector = vector && options.vector_components;
   out->name = name;
   out->value_type = std::string(TypeName(info)) + (vector && !keep_vector ? "-magnitude" : "");
   out->grid_class = ClassToken(info.grid_class);
-  out->components = keep_vector ? 3 : 1;
+  out->components = d.components;
   out->stride = d.stride;
   out->source_index = index;
-  size_t cells = 1;
   for (int a = 0; a < 3; ++a) {
     out->origin[a] = d.index_min[a];
     out->dim[a] = d.dims[a];
-    cells *= size_t(d.dims[a]);
   }
   FillTransform(info.index_to_world, out->index_to_world, out->voxel_size,
                 out->world_translation);
   const float *bg = d.background;
   out->background = vector ? std::sqrt(bg[0] * bg[0] + bg[1] * bg[1] + bg[2] * bg[2]) : bg[0];
-  if (!vector || keep_vector) {
-    out->data.assign(d.data, d.data + cells * size_t(d.components));
-  } else {
-    out->data.resize(cells);
-    for (size_t i = 0; i < cells; ++i) {
-      const float *v = d.data + 3 * i;
-      out->data[i] = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-    }
-  }
-  tvdb_dense_volume_free(&d);
   return true;
 }
 

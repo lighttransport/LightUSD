@@ -60,13 +60,17 @@ typedef struct {
   size_t max_voxels;         /* output cell budget; 0: no limit */
   int stride;                /* index voxels per output cell per axis; 0: smallest fitting the budget */
   int inactive_as_background;/* inactive voxels and tiles read the background */
+  int vector_magnitude;      /* vector grids: one channel, each cell's length
+                                (of the averaged vector when strided) */
+  size_t scratch_bytes;      /* strided: bytes of sums per pass over the grid
+                                (at least one output layer); 0: 64 MiB */
 } tvdb_dense_volume_options_t;
 
 typedef struct {
   int32_t dims[3];           /* output cells per axis */
   int32_t index_min[3];      /* index of output cell (0,0,0)'s first voxel */
   int stride;                /* index voxels per output cell per axis */
-  int components;            /* 1 or 3 */
+  int components;            /* 1, or 3 for vector grids without vector_magnitude */
   float *data;               /* dims[0]*dims[1]*dims[2]*components, x fastest, interleaved */
   /* Output cell (u, v, w) center in world: cell_to_world * (u, v, w, 1). */
   double cell_to_world[4][4];
@@ -75,11 +79,27 @@ typedef struct {
 
 /* Cells average their stride^3 voxels (box filter; stride 1 copies). The
  * window is clipped to nothing and returns an empty volume when the grid has
- * no active voxels. Replaces out (initialized or zeroed) on success. */
+ * no active voxels. Replaces out (initialized or zeroed) on success. A strided
+ * extraction also sums in double, a slab of output layers (scratch_bytes) per
+ * pass over the tree. */
 tvdb_status_t tvdb_grid_to_dense_volume(const tvdb_grid_t *grid,
                                         const tvdb_dense_volume_options_t *options,
                                         tvdb_dense_volume_t *out, tvdb_error_t *err);
 void tvdb_dense_volume_free(tvdb_dense_volume_t *volume);
+
+/* Caller-owned output. tvdb_grid_dense_volume_layout fills everything but
+ * data (NULL) for the same options, without decoding voxels; it overwrites
+ * out without freeing it. tvdb_grid_to_dense_volume_buffer then writes the
+ * cells into data, which holds count floats, at least
+ * dims[0] * dims[1] * dims[2] * components (INVALID_ARGUMENT otherwise), and,
+ * when layout is not NULL, fills it as tvdb_grid_dense_volume_layout does. */
+tvdb_status_t tvdb_grid_dense_volume_layout(const tvdb_grid_t *grid,
+                                            const tvdb_dense_volume_options_t *options,
+                                            tvdb_dense_volume_t *out, tvdb_error_t *err);
+tvdb_status_t tvdb_grid_to_dense_volume_buffer(const tvdb_grid_t *grid,
+                                               const tvdb_dense_volume_options_t *options,
+                                               float *data, size_t count,
+                                               tvdb_dense_volume_t *layout, tvdb_error_t *err);
 
 /* ---- Sparse sampling ----------------------------------------------------- */
 typedef struct tvdb_volume_sampler tvdb_volume_sampler_t;
