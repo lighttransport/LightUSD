@@ -16,13 +16,45 @@ tvdb_status_t tvdb_tree_error(tvdb_error_t* err, tvdb_status_t st,
   }
   return st;
 }
-static unsigned tree_pop(unsigned x) {
-  return (unsigned)__builtin_popcount(x);
+/* Inline popcount: without -mpopcnt, __builtin_popcount* is a libgcc call. */
+static unsigned tree_pop64(uint64_t x) {
+#if defined(__POPCNT__) && (defined(__GNUC__) || defined(__clang__))
+  return (unsigned)__builtin_popcountll(x);
+#else
+  x = x - ((x >> 1) & UINT64_C(0x5555555555555555));
+  x = (x & UINT64_C(0x3333333333333333)) +
+      ((x >> 2) & UINT64_C(0x3333333333333333));
+  return (unsigned)((((x + (x >> 4)) & UINT64_C(0x0f0f0f0f0f0f0f0f)) *
+                     UINT64_C(0x0101010101010101)) >>
+                    56);
+#endif
+}
+/* 64-bit word w of the mask (bit b is byte b/8, bit b%8), zero-padded. */
+static uint64_t mask_word(const tvdb_nodemask_t* m, size_t w) {
+  size_t at = w * 8, bytes = (m->bits.num_bits + 7) / 8, take;
+  uint64_t v = 0;
+  if (at >= bytes) return 0;
+  take = bytes - at < 8 ? bytes - at : 8;
+  for (size_t i = 0; i < take; ++i)
+    v |= (uint64_t)m->bits.data[at + i] << (i * 8);
+  return v;
+}
+static size_t mask_words(const tvdb_nodemask_t* m) {
+  return (m->bits.num_bits + 63) / 64;
 }
 size_t tvdb_tree_mask_rank(const tvdb_nodemask_t* m, size_t bit) {
-  size_t n = 0, i;
-  for (i = 0; i < bit / 8; ++i) n += tree_pop(m->bits.data[i]);
-  if (bit % 8) n += tree_pop(m->bits.data[i] & ((1u << (bit % 8)) - 1));
+  size_t n = 0, w = bit / 64, i;
+  unsigned b = (unsigned)(bit % 64);
+  for (i = 0; i < w; ++i) n += tree_pop64(mask_word(m, i));
+  if (b) n += tree_pop64(mask_word(m, w) & ((UINT64_C(1) << b) - 1));
+  return n;
+}
+static size_t tree_child_rank(const tvdb_tree_index* p, size_t node,
+                              const tvdb_nodemask_t* m, size_t bit) {
+  size_t w = bit / 64;
+  unsigned b = (unsigned)(bit % 64);
+  size_t n = p->rank[p->rank_at[node] + w];
+  if (b) n += tree_pop64(mask_word(m, w) & ((UINT64_C(1) << b) - 1));
   return n;
 }
 static int mask_on(const tvdb_nodemask_t* m, size_t bit) {
@@ -162,7 +194,48 @@ void tvdb_tree_index_destroy(tvdb_tree_index* p) {
   free(p->origins);
   free(p->order);
   free(p->root_map);
+  free(p->rank);
+  free(p->rank_at);
   memset(p, 0, sizeof(*p));
+}
+static tvdb_status_t tree_rank_tables(tvdb_tree_index* p, tvdb_error_t* err) {
+  const tvdb_tree_t* t = &p->grid->tree;
+  size_t total = 0, bytes;
+  if (!tvdb_size_mul(t->num_nodes, sizeof(size_t), &bytes))
+    return tvdb_tree_error(err, TVDB_ERROR_INVALID_DATA,
+                           "tree index size overflow");
+  p->rank_at = malloc(bytes);
+  if (!p->rank_at)
+    return tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY,
+                           "tree index allocation failed");
+  for (size_t i = 0; i < t->num_nodes; ++i) {
+    p->rank_at[i] = total;
+    if (t->nodes[i].type != TVDB_NODE_INTERNAL) continue;
+    size_t words = mask_words(&t->nodes[i].u.internal.child_mask);
+    if (words > SIZE_MAX - total)
+      return tvdb_tree_error(err, TVDB_ERROR_INVALID_DATA,
+                             "tree index size overflow");
+    total += words;
+  }
+  if (!total) return TVDB_OK;
+  if (!tvdb_size_mul(total, sizeof(uint32_t), &bytes))
+    return tvdb_tree_error(err, TVDB_ERROR_INVALID_DATA,
+                           "tree index size overflow");
+  p->rank = malloc(bytes);
+  if (!p->rank)
+    return tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY,
+                           "tree index allocation failed");
+  for (size_t i = 0; i < t->num_nodes; ++i) {
+    if (t->nodes[i].type != TVDB_NODE_INTERNAL) continue;
+    const tvdb_nodemask_t* m = &t->nodes[i].u.internal.child_mask;
+    uint32_t* r = p->rank + p->rank_at[i];
+    uint32_t run = 0;
+    for (size_t w = 0, n = mask_words(m); w < n; ++w) {
+      r[w] = run;
+      run += tree_pop64(mask_word(m, w));
+    }
+  }
+  return TVDB_OK;
 }
 tvdb_status_t tvdb_tree_index_create(const tvdb_grid_t* g, int float_only,
                                      tvdb_tree_index* p, tvdb_error_t* err) {
@@ -262,9 +335,12 @@ tvdb_status_t tvdb_tree_index_create(const tvdb_grid_t* g, int float_only,
       }
     }
   }
-  if (w.used != t->num_nodes)
+  if (w.used != t->num_nodes) {
     st =
         tvdb_tree_error(err, TVDB_ERROR_INVALID_DATA, "unreachable tree nodes");
+    goto done;
+  }
+  st = tree_rank_tables(p, err);
 done:
   free(seen);
   if (st != TVDB_OK) tvdb_tree_index_destroy(p);
@@ -321,7 +397,7 @@ float tvdb_tree_get(const tvdb_tree_index* p, const int32_t coord[3],
       if (active) *active = mask_on(&in->value_mask, slot);
       return v;
     }
-    node = in->child_indices[tvdb_tree_mask_rank(&in->child_mask, slot)];
+    node = in->child_indices[tree_child_rank(p, node, &in->child_mask, slot)];
   }
   return NAN;
 }
@@ -380,7 +456,7 @@ void tvdb_tree_lookup(const tvdb_tree_index* p, const int32_t coord[3],
       if (active) *active = mask_on(&in->value_mask, slot);
       return;
     }
-    node = in->child_indices[tvdb_tree_mask_rank(&in->child_mask, slot)];
+    node = in->child_indices[tree_child_rank(p, node, &in->child_mask, slot)];
   }
   *value = &r->background;
 }

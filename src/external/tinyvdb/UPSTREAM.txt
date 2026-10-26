@@ -1,6 +1,6 @@
 Upstream: https://github.com/syoyo/tinyvdbio
-Commit:   1286600 (branch volumetric-sdf; 1020501 volume access, 5615965 half fix,
-          1286600 caller-buffer dense volumes)
+Commit:   82d5667 (branch volumetric-sdf; 1020501 volume access, 5615965 half fix,
+          1286600 caller-buffer dense volumes, 82d5667 O(1) tree child rank)
 Files:    the src/ subset needed by tvdb_mesh_to_level_set,
           tvdb_level_set_to_tet_mesh / tvdb_sdf_to_tet_mesh,
           tvdb_grid_volume_to_mesh, the volume access used by usdVol

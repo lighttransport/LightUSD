@@ -15,6 +15,11 @@ typedef struct {
   int span_shift[TVDB_MAX_TREE_DEPTH];  // log2(span[l]) == trailing zero bits
   int32_t (*origins)[3];
   size_t *order, *root_map, root_capacity;
+  /* Child-mask prefix ranks: internal node i's entry w (at rank + rank_at[i])
+   * counts the children before 64-bit mask word w, so a lookup ranks a slot
+   * with one table read and one popcount. */
+  uint32_t* rank;
+  size_t* rank_at;
   size_t active_voxels, active_tiles;
   int has_bbox;
   int64_t bbox_min[3], bbox_max[3];
