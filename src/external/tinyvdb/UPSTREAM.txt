@@ -1,12 +1,13 @@
 Upstream: https://github.com/syoyo/tinyvdbio
-Commit:   c7313d8 (branch volumetric-sdf; 1020501 volume access, 5615965 half fix,
+Commit:   6e5a188 (branch volumetric-sdf; 1020501 volume access, 5615965 half fix,
           1286600 caller-buffer dense volumes, 82d5667 O(1) tree child rank,
           762a777 tree accessor + boxed mesher, de1afb7 per-range stuffing
           sampler accessor, ee571c1 cached sparse CSG, b86ff79 threaded
           surface classification, 6e01f71 one owner per surface cell + tile
           skip, 443592c threaded tet boundaries, 9a7fde3 slab edge maps + k-way
           cell merge, c7313d8 warp early-out + corner base indices + pooled
-          cluster keys + NanoVDB1 grid magic)
+          cluster keys + NanoVDB1 grid magic, 6e5a188 NanoVDB-buffer GPU
+          level-set sampler)
 Files:    the src/ subset needed by tvdb_mesh_to_level_set,
           tvdb_level_set_to_tet_mesh / tvdb_sdf_to_tet_mesh,
           tvdb_grid_volume_to_mesh, the volume access used by usdVol
@@ -17,7 +18,8 @@ Files:    the src/ subset needed by tvdb_mesh_to_level_set,
           to_nanovdb (+ third_party/nanovdb/PNanoVDB.h, Apache-2.0, OpenVDB
           contributors), tree, tree_internal, volume, winding, tvdb_memory,
           lifecycle; and
-          gpu_compute(.h, .c, _internal.h), built only with
+          gpu_compute(.h, .c, _internal.h), nanovdb_device.h (+ generated string),
+          built only with
           LIGHTUSD_TINYVDB_GPU.
 Local:    tinyvdb_io.h includes ../miniz.h, ../../lz4/lz4.h, ../zstd.h.
 Update:   copy the same files from upstream src/, reapply the three include

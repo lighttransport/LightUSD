@@ -56,7 +56,24 @@ if(NOT TARGET lightusd_tinyvdb)
   # still runs, on the CPU, where no device exists. The CPU stays the default
   # device either way (`volumetric_device`).
   if(LIGHTUSD_TINYVDB_GPU AND NOT EMSCRIPTEN)
-    target_sources(lightusd_tinyvdb PRIVATE "${_lusd_tinyvdb_dir}/tinyvdb_gpu_compute.c")
+    # The device side of the level-set sampler is a normal header; NVRTC and
+    # hiprtc need its text, generated here as a C string.
+    set(_lusd_tinyvdb_device_inc
+        "${CMAKE_CURRENT_BINARY_DIR}/tinyvdb/generated/tinyvdb_nanovdb_device_src.inc")
+    add_custom_command(
+      OUTPUT "${_lusd_tinyvdb_device_inc}"
+      COMMAND ${CMAKE_COMMAND}
+              -DIN=${_lusd_tinyvdb_dir}/tinyvdb_nanovdb_device.h
+              -DOUT=${_lusd_tinyvdb_device_inc}
+              -P ${CMAKE_CURRENT_LIST_DIR}/embed-c-string.cmake
+      DEPENDS "${_lusd_tinyvdb_dir}/tinyvdb_nanovdb_device.h"
+              "${CMAKE_CURRENT_LIST_DIR}/embed-c-string.cmake"
+      VERBATIM)
+    target_sources(lightusd_tinyvdb PRIVATE
+                   "${_lusd_tinyvdb_dir}/tinyvdb_gpu_compute.c"
+                   "${_lusd_tinyvdb_device_inc}")
+    target_include_directories(lightusd_tinyvdb PRIVATE
+                               "${CMAKE_CURRENT_BINARY_DIR}/tinyvdb/generated")
     target_compile_definitions(lightusd_tinyvdb PUBLIC LIGHTUSD_HAVE_TINYVDB_GPU=1)
     target_link_libraries(lightusd_tinyvdb PRIVATE ${CMAKE_DL_LIBS})
   endif()

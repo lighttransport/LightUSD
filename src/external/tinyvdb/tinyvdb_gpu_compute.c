@@ -16,8 +16,20 @@
 #endif
 
 #include "tinyvdb_gpu_compute_internal.h"
+#include "tinyvdb_nanovdb_device.h" /* sampler body (host test compiles it too) */
 #include "tinyvdb_tree_internal.h"
 #include "tinyvdb_winding.h"
+/* Provided by tinyvdb_to_nanovdb.c (the nanovdb module): the level-set sampler
+ * reads a NanoVDB buffer, so this module needs the converter. Declared here
+ * rather than by including tinyvdb_nanovdb.h, which would pull the whole
+ * NanoVDB surface into the vendored GPU module. */
+struct tvdb_grid;
+tvdb_status_t tvdb_grid_to_nanovdb(const struct tvdb_grid* grid, uint8_t** out_data,
+                                   size_t* out_size, tvdb_error_t* err);
+
+/* Generated at configure time from the header above: the same text as a
+ * string for NVRTC/hiprtc. */
+#include "tinyvdb_nanovdb_device_src.inc"
 
 static void tvdb_compute_error(tvdb_error_t* err, tvdb_status_t st, const char* msg) {
   if (!err) return;
@@ -506,56 +518,14 @@ static const char kTvdbCudaVolumetricSource[] =
 "  out_winding[i] = (float)(sum / 12.566370614359172953850573533118);\n"
 "}\n"
 "\n"
-"/* ---- Level-set tree sampling ------------------------------------------- */\n"
-"/* Flattened tree: per node {origin x, y, z, leaf, log2dim, value offset,\n"
-"   child offset, shift}; internal slots hold a child node or -1 (tile). Root\n"
-"   items sit in an open-addressed table of {x, y, z, kind, payload}: kind 1 a\n"
-"   child node, kind 2 a tile whose value bits are the payload. */\n"
-"__device__ __forceinline__ unsigned int vol_root_hash(int x, int y, int z) {\n"
-"  unsigned int h = (unsigned int)x * 73856093u ^ (unsigned int)y * 19349663u ^ (unsigned int)z * 83492791u;\n"
-"  h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15;\n"
-"  return h;\n"
-"}\n"
-"__device__ __forceinline__ int vol_floor_shift(int v, int sh) {\n"
-"  return v >= 0 ? (v >> sh) : -1 - ((-1 - v) >> sh);\n"
-"}\n"
-"__device__ float vol_tree_get(const int* root, unsigned int root_mask, int root_shift, float background,\n"
-"                              const int* nodes, const float* values, const int* children,\n"
-"                              int levels, int x, int y, int z) {\n"
-"  int span = 1 << root_shift;\n"
-"  int o[3] = {vol_floor_shift(x, root_shift) * span, vol_floor_shift(y, root_shift) * span,\n"
-"              vol_floor_shift(z, root_shift) * span};\n"
-"  unsigned int hs = vol_root_hash(o[0], o[1], o[2]) & root_mask;\n"
-"  int node = -1;\n"
-"  for (;;) {\n"
-"    const int* e = &root[5u * hs];\n"
-"    if (e[3] == 0) return background;\n"
-"    if (e[0] == o[0] && e[1] == o[1] && e[2] == o[2]) {\n"
-"      if (e[3] == 2) return __int_as_float(e[4]);\n"
-"      node = e[4];\n"
-"      break;\n"
-"    }\n"
-"    hs = (hs + 1u) & root_mask;\n"
-"  }\n"
-"  for (int l = 1; l < levels; ++l) {\n"
-"    const int* n = &nodes[8 * node];\n"
-"    int L = n[4], sh = n[7];\n"
-"    unsigned int slot = (unsigned int)((x - n[0]) >> sh);\n"
-"    slot = (slot << L) | (unsigned int)((y - n[1]) >> sh);\n"
-"    slot = (slot << L) | (unsigned int)((z - n[2]) >> sh);\n"
-"    if (n[3]) return values[(size_t)n[5] + slot];\n"
-"    int child = children[(size_t)n[6] + slot];\n"
-"    if (child < 0) return values[(size_t)n[5] + slot];\n"
-"    node = child;\n"
-"  }\n"
-"  return __int_as_float(0x7fc00000);\n"
-"}\n"
-"/* Trilinear samples at world points (tet_grid_sample, in double). */\n"
-"extern \"C\" __global__ void tvdb_vol_tree_sample(\n"
+"/* ---- Level-set sampling from a NanoVDB buffer -------------------------- */\n"
+"/* tvdb_nvdb_get (prepended below, from tinyvdb_nanovdb_device.h) walks the\n"
+"   grid's own NanoVDB layout: root tiles, upper/lower internal nodes and\n"
+"   leaves, in index space. Trilinear samples at world points (tet_grid_sample,\n"
+"   in double). */\n"
+"extern \"C\" __global__ void tvdb_vol_nanovdb_sample(\n"
 "    const double* points, unsigned int count, const double* inverse,\n"
-"    const int* root, unsigned int root_mask, int root_shift, float background,\n"
-"    const int* nodes, const float* values, const int* children, int levels,\n"
-"    float* out) {\n"
+"    const unsigned char* field, unsigned long long field_size, float* out) {\n"
 "  unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;\n"
 "  if (i >= count) return;\n"
 "  const double* p = &points[3u * i];\n"
@@ -570,13 +540,15 @@ static const char kTvdbCudaVolumetricSource[] =
 "    base[a] = (int)fl;\n"
 "    f[a] = q[a] - fl;\n"
 "  }\n"
+"  tvdb_nvdb_grid g;\n"
+"  g.base = field;\n"
+"  g.size = field_size;\n"
 "  double sum = 0.0;\n"
 "  for (int c = 0; c < 8; ++c) {\n"
 "    int at[3] = {base[0] + (c & 1), base[1] + ((c >> 1) & 1), base[2] + ((c >> 2) & 1)};\n"
 "    double w = ((c & 1) ? f[0] : 1.0 - f[0]) * (((c >> 1) & 1) ? f[1] : 1.0 - f[1]) *\n"
 "               (((c >> 2) & 1) ? f[2] : 1.0 - f[2]);\n"
-"    sum += w * (double)vol_tree_get(root, root_mask, root_shift, background, nodes, values, children,\n"
-"                                    levels, at[0], at[1], at[2]);\n"
+"    sum += w * (double)tvdb_nvdb_get(&g, at[0], at[1], at[2]);\n"
 "  }\n"
 "  out[i] = (float)sum;\n"
 "}\n";
@@ -591,8 +563,21 @@ static tvdb_status_t tvdb_vol_get_module(tvdb_gpu_compute_t* ctx, CUmodule* modu
     return TVDB_OK;
   }
   nvrtcProgram prog = NULL;
-  if (ctx->cuda.nvrtcCreateProgram(&prog, kTvdbCudaVolumetricSource,
-                                   "tinyvdb_gpu_volumetric.cu", 0, NULL, NULL) != NVRTC_SUCCESS) {
+  /* The sampler walks NanoVDB's own layout; its accessor is a header so the
+   * host test can compile the same code (see tinyvdb_nanovdb_device.h). */
+  const size_t acc_len = sizeof(tvdb_nanovdb_device_src) - 1;
+  const size_t src_len = strlen(kTvdbCudaVolumetricSource);
+  char* source = (char*)malloc(acc_len + src_len + 1);
+  if (!source) {
+    tvdb_compute_error(err, TVDB_ERROR_OUT_OF_MEMORY, "volumetric kernel source allocation failed");
+    return TVDB_ERROR_OUT_OF_MEMORY;
+  }
+  memcpy(source, tvdb_nanovdb_device_src, acc_len);
+  memcpy(source + acc_len, kTvdbCudaVolumetricSource, src_len + 1);
+  const nvrtcResult created =
+      ctx->cuda.nvrtcCreateProgram(&prog, source, "tinyvdb_gpu_volumetric.cu", 0, NULL, NULL);
+  free(source);
+  if (created != NVRTC_SUCCESS) {
     tvdb_compute_error(err, TVDB_ERROR_IO, "volumetric kernel program creation failed");
     return TVDB_ERROR_IO;
   }
@@ -832,18 +817,15 @@ static uint32_t tvdb_vol_root_hash(int32_t x, int32_t y, int32_t z) {
 typedef struct {
   tvdb_gpu_compute_t* ctx;
   CUfunction fn;
-  CUdeviceptr root, nodes, values, children, inverse;
-  unsigned int root_mask;
-  int root_shift, levels;
-  float background;
+  CUdeviceptr field, inverse; /* NanoVDB grid bytes, world -> index map */
+  tvdb_nvdb_u64 field_size;
   CUdeviceptr points, out;
   size_t points_cap, out_cap;
 } tvdb_vol_tree;
 
 static void tvdb_vol_tree_free(tvdb_vol_tree* t) {
   if (!t->ctx) return;
-  CUdeviceptr* bufs[] = {&t->root, &t->nodes, &t->values, &t->children, &t->inverse,
-                         &t->points, &t->out};
+  CUdeviceptr* bufs[] = {&t->field, &t->inverse, &t->points, &t->out};
   for (size_t i = 0; i < sizeof(bufs) / sizeof(bufs[0]); ++i)
     if (*bufs[i]) t->ctx->cuda.cuMemFree(*bufs[i]);
   memset(t, 0, sizeof(*t));
@@ -883,115 +865,42 @@ static tvdb_status_t tvdb_vol_tree_init(tvdb_gpu_compute_t* ctx, const tvdb_grid
                                         tvdb_vol_tree* t, tvdb_error_t* err) {
   memset(t, 0, sizeof(*t));
   t->ctx = ctx;
-  tvdb_tree_index p;
-  memset(&p, 0, sizeof(p));
-  tvdb_status_t st = tvdb_tree_index_create(grid, 1, &p, err);
-  if (st != TVDB_OK) return st;
-  const tvdb_tree_t* tree = &grid->tree;
-  const tvdb_root_node_t* r = &tree->nodes[0].u.root;
-  int32_t* nodes = NULL;
-  int32_t* children = NULL;
-  int32_t* root = NULL;
-  float* values = NULL;
   double inverse[3][4];
-  CUmodule module = NULL;
   if (!tvdb_vol_inverse(grid, inverse)) {
-    st = TVDB_ERROR_UNSUPPORTED_TRANSFORM;
-    tvdb_compute_error(err, st, "level set transform not invertible");
-    goto done;
+    tvdb_compute_error(err, TVDB_ERROR_UNSUPPORTED_TRANSFORM,
+                       "level set transform not invertible");
+    return TVDB_ERROR_UNSUPPORTED_TRANSFORM;
   }
-  size_t value_total = 0, child_total = 0;
-  for (size_t i = 1; i < tree->num_nodes; ++i) {
-    const tvdb_tree_node_t* n = &tree->nodes[i];
-    const size_t slots = (size_t)1 << (3 * tree->layout.levels[n->level].log2dim);
-    value_total += slots;
-    if (n->type != TVDB_NODE_LEAF) child_total += slots;
+  /* The sampler reads NanoVDB's own layout, so one conversion replaces the
+   * per-node flattening: the buffer is the grid, and root tiles, internal
+   * tiles and the background come along unchanged. */
+  uint8_t* bytes = NULL;
+  size_t size = 0;
+  tvdb_status_t st = tvdb_grid_to_nanovdb(grid, &bytes, &size, err);
+  if (st != TVDB_OK) return st;
+  if (!bytes || size < TVDB_NVDB_GRID_BYTES + TVDB_NVDB_TREE_ROOT_OFF + 8u ||
+      size > (size_t)0x7fffffffu) {
+    free(bytes);
+    tvdb_compute_error(err, TVDB_ERROR_INVALID_DATA, "level set has no NanoVDB representation");
+    return TVDB_ERROR_INVALID_DATA;
   }
-  if (tree->num_nodes > (size_t)INT32_MAX / 8 || value_total > (size_t)INT32_MAX ||
-      child_total > (size_t)INT32_MAX) {
-    st = TVDB_ERROR_UNIMPLEMENTED;
-    tvdb_compute_error(err, st, "level set too large for the GPU sampler");
-    goto done;
+  CUmodule module = NULL;
+  if ((st = tvdb_vol_get_module(ctx, &module, err)) != TVDB_OK) {
+    free(bytes);
+    return st;
   }
-  const size_t items = (size_t)r->num_children + r->num_tiles;
-  size_t cap = 16;
-  while (cap < 2 * items) cap *= 2;
-  nodes = (int32_t*)calloc(8 * tree->num_nodes, sizeof(int32_t));
-  values = (float*)malloc((value_total ? value_total : 1) * sizeof(float));
-  children = (int32_t*)malloc((child_total ? child_total : 1) * sizeof(int32_t));
-  root = (int32_t*)calloc(5 * cap, sizeof(int32_t));
-  if (!nodes || !values || !children || !root) {
-    st = TVDB_ERROR_OUT_OF_MEMORY;
-    tvdb_compute_error(err, st, "GPU sampler allocation failed");
-    goto done;
-  }
-  size_t vo = 0, co = 0;
-  for (size_t i = 1; i < tree->num_nodes; ++i) {
-    const tvdb_tree_node_t* n = &tree->nodes[i];
-    const int l = n->level, L = tree->layout.levels[l].log2dim;
-    const size_t slots = (size_t)1 << (3 * L);
-    int32_t* d = nodes + 8 * i;
-    d[0] = p.origins[i][0];
-    d[1] = p.origins[i][1];
-    d[2] = p.origins[i][2];
-    d[3] = n->type == TVDB_NODE_LEAF;
-    d[4] = L;
-    d[5] = (int32_t)vo;
-    d[6] = (int32_t)co;
-    d[7] = l + 1 == p.levels ? 0 : p.span_shift[l + 1];
-    if (n->type == TVDB_NODE_LEAF) {
-      memcpy(values + vo, n->u.leaf.data, slots * sizeof(float));
-    } else {
-      const tvdb_internal_node_t* in = &n->u.internal;
-      memcpy(values + vo, in->values, slots * sizeof(float));
-      size_t rank = 0;
-      for (size_t s = 0; s < slots; ++s) {
-        const int on = (in->child_mask.bits.data[s / 8] >> (s % 8)) & 1;
-        children[co + s] = on ? (int32_t)in->child_indices[rank++] : -1;
-      }
-      co += slots;
-    }
-    vo += slots;
-  }
-  for (size_t item = 0; item < items; ++item) {
-    const int32_t* c = item < r->num_children ? r->child_origins + 3 * item
-                                              : r->tile_origins + 3 * (item - r->num_children);
-    size_t h = tvdb_vol_root_hash(c[0], c[1], c[2]) & (cap - 1);
-    while (root[5 * h + 3]) h = (h + 1) & (cap - 1);
-    int32_t* e = root + 5 * h;
-    e[0] = c[0];
-    e[1] = c[1];
-    e[2] = c[2];
-    if (item < r->num_children) {
-      e[3] = 1;
-      e[4] = (int32_t)r->child_indices[item];
-    } else {
-      e[3] = 2;
-      memcpy(&e[4], &r->tile_values[item - r->num_children].u.f, sizeof(float));
-    }
-  }
-  t->root_mask = (unsigned int)(cap - 1);
-  t->root_shift = p.span_shift[1];
-  t->levels = p.levels;
-  t->background = r->background.u.f;
-  if ((st = tvdb_vol_get_module(ctx, &module, err)) != TVDB_OK) goto done;
   if (!tvdb_cuda_ok(ctx, err, "cuModuleGetFunction",
-                    ctx->cuda.cuModuleGetFunction(&t->fn, module, "tvdb_vol_tree_sample"))) {
+                    ctx->cuda.cuModuleGetFunction(&t->fn, module,
+                                                  "tvdb_vol_nanovdb_sample"))) {
+    free(bytes);
     st = err ? err->status : TVDB_ERROR_IO;
-    goto done;
+    return st;
   }
-  if ((st = tvdb_cuda_alloc_copy_in(ctx, &t->root, root, 5 * cap * sizeof(int32_t), err)) != TVDB_OK ||
-      (st = tvdb_cuda_alloc_copy_in(ctx, &t->nodes, nodes, 8 * tree->num_nodes * sizeof(int32_t), err)) != TVDB_OK ||
-      (st = tvdb_cuda_alloc_copy_in(ctx, &t->values, values, value_total * sizeof(float), err)) != TVDB_OK ||
-      (st = tvdb_cuda_alloc_copy_in(ctx, &t->children, children, child_total * sizeof(int32_t), err)) != TVDB_OK ||
-      (st = tvdb_cuda_alloc_copy_in(ctx, &t->inverse, inverse, sizeof(inverse), err)) != TVDB_OK)
-    goto done;
-done:
-  free(nodes);
-  free(values);
-  free(children);
-  free(root);
-  tvdb_tree_index_destroy(&p);
+  t->field_size = (tvdb_nvdb_u64)size;
+  st = tvdb_cuda_alloc_copy_in(ctx, &t->field, bytes, size, err);
+  free(bytes);
+  if (st == TVDB_OK)
+    st = tvdb_cuda_alloc_copy_in(ctx, &t->inverse, inverse, sizeof(inverse), err);
   if (st != TVDB_OK) tvdb_vol_tree_free(t);
   return st;
 }
@@ -1011,8 +920,8 @@ static tvdb_status_t tvdb_vol_tree_run(void* user, const double* points, size_t 
                       ctx->cuda.cuMemcpyHtoD(t->points, points + 3 * begin, n * 3 * sizeof(double))))
       return err ? err->status : TVDB_ERROR_IO;
     unsigned int un = (unsigned int)n;
-    void* args[] = {&t->points, &un, &t->inverse, &t->root, &t->root_mask, &t->root_shift,
-                    &t->background, &t->nodes, &t->values, &t->children, &t->levels, &t->out};
+    tvdb_nvdb_u64 field_size = t->field_size;
+    void* args[] = {&t->points, &un, &t->inverse, &t->field, &field_size, &t->out};
     const unsigned int block = 256, grid = (un + block - 1u) / block;
     if (!tvdb_cuda_ok(ctx, err, "cuLaunchKernel",
                       ctx->cuda.cuLaunchKernel(t->fn, grid, 1, 1, block, 1, 1, 0, NULL, args, NULL)) ||
