@@ -14,8 +14,9 @@
  * quadrilaterals; this replaces the paper's parity stencils, so its exact
  * dihedral bounds (10.7 to 164.8 degrees for the default alphas) are not
  * guaranteed for those pieces. The boundary is watertight and every output
- * tetrahedron is positively oriented. Output is deterministic and independent
- * of the worker count. Values are negative inside. */
+ * tetrahedron is positively oriented. Lattice sampling and boundary
+ * extraction run on the task pool; output is deterministic and independent of
+ * the worker count. Values are negative inside. */
 #include <stdint.h>
 
 #include "tinyvdb_io.h"

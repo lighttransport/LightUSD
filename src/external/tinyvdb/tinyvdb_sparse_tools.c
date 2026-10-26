@@ -645,13 +645,31 @@ typedef struct {
   float iso;
   int bg_below;
 } tool_surface;
-/* Classify a cell whose 8 corner values (tool_corners order) are known. */
+/* The voxel that visits a cell sits on cell bit (x,y,z) = (i&1, (i>>1)&1,
+ * (i>>2)&1); its index in tool_corners order is this permutation of i. */
+static const int tool_corner_of_bit[8] = {0, 1, 3, 2, 4, 5, 7, 6};
+/* Classify a cell whose 8 corner values (tool_corners order) are known.
+ *
+ * A crossing cell is examined from every one of its voxels that the region
+ * walk visits, i.e. up to eight times, and only the first classification
+ * survives the map. `corner` is the cell corner that the visiting voxel sits
+ * on (tool_corners order); the cell is then classified only by its *owner*,
+ * the lowest-numbered corner on the walk's side of the isovalue, which is
+ * always visited. That drops the redundant work by up to eight times without
+ * changing which cells are emitted. `corner < 0` (tile boundary slabs, which
+ * the walk visits once) skips the ownership test. */
 static tvdb_status_t tool_cell_values(tool_surface* s, const int64_t c[3],
-                                      const float corners[8]) {
+                                      const float corners[8], int corner) {
   int cube = 0;
   for (int i = 0; i < 8; ++i)
     if (corners[i] < s->iso) cube |= 1 << i;
   if (cube == 0 || cube == 255) return TVDB_OK;
+  if (corner >= 0) {
+    /* Voxels on the walk's side: above the isovalue when the background is
+     * below it, below otherwise. */
+    const unsigned side = (s->bg_below ? (unsigned)~cube : (unsigned)cube) & 0xFFu;
+    if (tool_corner_of_bit[corner & 7] != __builtin_ctz(side)) return TVDB_OK;
+  }
   int32_t q[3];
   for (int a = 0; a < 3; ++a) {
     if (c[a] < INT32_MIN || c[a] > INT32_MAX)
@@ -659,8 +677,10 @@ static tvdb_status_t tool_cell_values(tool_surface* s, const int64_t c[3],
                              "surface cell outside int32");
     q[a] = (int32_t)c[a];
   }
+  tvdb_status_t st = tool_scan(s->cells);
+  if (st != TVDB_OK) return st;
   size_t i;
-  tvdb_status_t st = tool_insert(s->cells, q, &i);
+  st = tool_insert(s->cells, q, &i);
   if (st == TVDB_OK) {
     s->cells->v[i].active = (unsigned char)cube;
     memcpy(s->cells->v[i].corners, corners, 8 * sizeof(float));
@@ -668,15 +688,13 @@ static tvdb_status_t tool_cell_values(tool_surface* s, const int64_t c[3],
   return st;
 }
 static tvdb_status_t tool_cell(tool_surface* s, const int64_t c[3]) {
-  tvdb_status_t st = tool_scan(s->cells);
-  if (st != TVDB_OK) return st;
   float corners[8];
   for (int i = 0; i < 8; ++i) {
     int64_t q[3];
     for (int a = 0; a < 3; ++a) q[a] = c[a] + tool_corners[i][a];
     corners[i] = tool_get64(&s->acc, q, NULL);
   }
-  return tool_cell_values(s, c, corners);
+  return tool_cell_values(s, c, corners, -1);
 }
 /* Look up the one-voxel shell of an n^3 box (x fastest) whose index 0
  * sits at o - 1: x faces, then y faces without x edges, then z faces
@@ -714,14 +732,12 @@ static tvdb_status_t tool_voxel_cells(tool_surface* s, const int32_t c[3],
       lo[a] = at[a] - ((i >> a) & 1);
       q[a] = (int64_t)c[a] - ((i >> a) & 1);
     }
-    tvdb_status_t st = tool_scan(s->cells);
-    if (st != TVDB_OK) return st;
     float corners[8];
     for (int k = 0; k < 8; ++k)
       corners[k] = box[((size_t)(lo[2] + tool_corners[k][2]) * n +
                         (size_t)(lo[1] + tool_corners[k][1])) * n +
                        (size_t)(lo[0] + tool_corners[k][0])];
-    st = tool_cell_values(s, q, corners);
+    tvdb_status_t st = tool_cell_values(s, q, corners, i);
     if (st != TVDB_OK) return st;
   }
   return TVDB_OK;
@@ -754,6 +770,14 @@ static tvdb_status_t tool_surface_region(const int32_t c[3], int64_t span,
     float box[(TOOL_TILE_BOX + 2) * (TOOL_TILE_BOX + 2) * (TOOL_TILE_BOX + 2)];
     for (size_t i = 0; i < (size_t)n * n * n; ++i) box[i] = value;
     tool_box_shell(s, c, n, box);
+    /* Boundary cells can only cross where a neighbour value sits on the other
+     * side of the isovalue. Deep-interior tiles (the bulk of a level set's
+     * filled interior) skip the slab scan and its per-cell classification. */
+    const int side = value < s->iso;
+    int crossing = 0;
+    for (size_t i = 0; i < (size_t)n * n * n && !crossing; ++i)
+      crossing = (box[i] < s->iso) != side;
+    if (!crossing) return TVDB_OK;
     for (int a = 0; a < 3; ++a)
       for (int side = 0; side < 2; ++side) {
         int b = (a + 1) % 3, d = (a + 2) % 3;
@@ -764,15 +788,15 @@ static tvdb_status_t tool_surface_region(const int32_t c[3], int64_t span,
             k[b] = u + 1;
             k[d] = v + 1;
             for (int e = 0; e < 3; ++e) q[e] = (int64_t)c[e] - 1 + k[e];
-            tvdb_status_t st = tool_scan(s->cells);
-            if (st != TVDB_OK) return st;
             float corners[8];
             for (int i = 0; i < 8; ++i)
               corners[i] =
                   box[((size_t)(k[2] + tool_corners[i][2]) * n +
                        (size_t)(k[1] + tool_corners[i][1])) * n +
                       (size_t)(k[0] + tool_corners[i][0])];
-            st = tool_cell_values(s, q, corners);
+            /* Tile slabs are visited once per region, so no ownership test:
+             * a slab cell may have no voxel visit of its own. */
+            tvdb_status_t st = tool_cell_values(s, q, corners, -1);
             if (st != TVDB_OK) return st;
           }
       }

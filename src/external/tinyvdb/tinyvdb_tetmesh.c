@@ -370,7 +370,17 @@ void tvdb_tet_mesh_free(tvdb_tet_mesh *mesh) {
  * tetrahedron sees them. Faces are bucketed by their smallest vertex (output
  * vertices are numbered in first-use order, so buckets are local), each
  * bucket is sorted by its other two vertices and singletons are kept. The
- * result is in sorted-triple order. Linear memory: 16 bytes per face. */
+ * result is in sorted-triple order. Linear memory: 16 bytes per face.
+ *
+ * The counting sort runs on the pool in four passes:
+ *   1. every slice counts its own tets into a private per-bucket table;
+ *   2. a serial prefix sum turns the per-bucket totals into bucket starts and
+ *      each slice's table into its write cursor (slice order inside a bucket
+ *      is tet order, so every face lands where the serial scatter put it);
+ *   3. the slices scatter their faces;
+ *   4. bucket ranges are sorted and their singletons emitted in parallel, with
+ *      the per-bucket output offsets coming from one serial prefix sum.
+ * The output is therefore identical for any worker count. */
 typedef struct {
   int32_t s1, s2;   /* the other two vertices, ascending */
   uint64_t face;    /* 4 * tet + local face */
@@ -393,8 +403,11 @@ static void tet_sorted_face(const int32_t *tet, int f, int32_t s[3]) {
         s[j] = x;
       }
 }
-static tvdb_status_t tet_boundary(const int32_t *tets, size_t tet_count, size_t vertex_count,
-                                  int32_t **out, size_t *out_count, tvdb_error_t *err) {
+/* Single-slice fallback: the fused sort-and-emit loop, which never needs
+ * the per-bucket singleton counts that the parallel emit pass does. */
+static tvdb_status_t tet_boundary_serial(const int32_t *tets, size_t tet_count,
+                                         size_t vertex_count, int32_t **out,
+                                         size_t *out_count, tvdb_error_t *err) {
   size_t faces, bytes, start_bytes;
   if (!tvdb_size_mul(tet_count, 4, &faces) ||
       !tvdb_size_mul(faces, sizeof(tet_face_entry), &bytes) ||
@@ -471,6 +484,205 @@ static tvdb_status_t tet_boundary(const int32_t *tets, size_t tet_count, size_t 
   *out_count = count;
   return TVDB_OK;
 }
+
+typedef struct {
+  const int32_t *tets;
+  tet_face_entry *entry;
+  uint32_t *cursors; /* slices * vertex_count */
+  size_t tet_count, vertex_count, slice_tets;
+} tet_boundary_job;
+typedef struct {
+  const int32_t *tets;
+  tet_face_entry *entry;
+  const size_t *start;
+  size_t *counts; /* singletons per bucket, then their output offsets */
+  int32_t *list;
+} tet_boundary_bucket_job;
+static void tet_boundary_count_range(size_t begin, size_t end, void *user) {
+  const tet_boundary_job *job = (const tet_boundary_job *)user;
+  for (size_t c = begin; c < end; ++c) {
+    uint32_t *cursors = job->cursors + c * job->vertex_count;
+    const size_t t0 = c * job->slice_tets;
+    size_t t1 = t0 + job->slice_tets;
+    if (t1 > job->tet_count) t1 = job->tet_count;
+    for (size_t t = t0; t < t1; ++t)
+      for (int f = 0; f < 4; ++f) {
+        int32_t s[3];
+        tet_sorted_face(job->tets + 4 * t, f, s);
+        ++cursors[(size_t)s[0]];
+      }
+  }
+}
+static void tet_boundary_scatter_range(size_t begin, size_t end, void *user) {
+  const tet_boundary_job *job = (const tet_boundary_job *)user;
+  for (size_t c = begin; c < end; ++c) {
+    uint32_t *cursors = job->cursors + c * job->vertex_count;
+    const size_t t0 = c * job->slice_tets;
+    size_t t1 = t0 + job->slice_tets;
+    if (t1 > job->tet_count) t1 = job->tet_count;
+    for (size_t t = t0; t < t1; ++t)
+      for (int f = 0; f < 4; ++f) {
+        int32_t s[3];
+        tet_sorted_face(job->tets + 4 * t, f, s);
+        tet_face_entry *e = job->entry + cursors[(size_t)s[0]]++;
+        e->s1 = s[1];
+        e->s2 = s[2];
+        e->face = 4 * (uint64_t)t + (uint64_t)f;
+      }
+  }
+}
+/* Sort one bucket and record how many singleton faces it holds. */
+static void tet_boundary_bucket_sort(tet_face_entry *b, size_t k) {
+  if (k > 24) {
+    qsort(b, k, sizeof(*b), tet_face_entry_compare);
+  } else {
+    for (size_t i = 1; i < k; ++i)
+      for (size_t j = i; j > 0 && tet_face_entry_less(b + j, b + j - 1); --j) {
+        const tet_face_entry x = b[j];
+        b[j] = b[j - 1];
+        b[j - 1] = x;
+      }
+  }
+}
+static void tet_boundary_tally_range(size_t begin, size_t end, void *user) {
+  const tet_boundary_bucket_job *job = (const tet_boundary_bucket_job *)user;
+  for (size_t v = begin; v < end; ++v) {
+    tet_face_entry *b = job->entry + job->start[v];
+    const size_t k = job->start[v + 1] - job->start[v];
+    tet_boundary_bucket_sort(b, k);
+    size_t singles = 0;
+    for (size_t i = 0; i < k;) {
+      size_t j = i + 1;
+      while (j < k && b[j].s1 == b[i].s1 && b[j].s2 == b[i].s2) ++j;
+      if (j == i + 1) ++singles;
+      i = j;
+    }
+    job->counts[v] = singles;
+  }
+}
+static void tet_boundary_emit_range(size_t begin, size_t end, void *user) {
+  const tet_boundary_bucket_job *job = (const tet_boundary_bucket_job *)user;
+  for (size_t v = begin; v < end; ++v) {
+    const tet_face_entry *b = job->entry + job->start[v];
+    const size_t k = job->start[v + 1] - job->start[v];
+    size_t out = job->counts[v];
+    for (size_t i = 0; i < k;) {
+      size_t j = i + 1;
+      while (j < k && b[j].s1 == b[i].s1 && b[j].s2 == b[i].s2) ++j;
+      if (j == i + 1) {
+        const int32_t *tet = job->tets + 4 * (size_t)(b[i].face / 4);
+        const int f = (int)(b[i].face % 4);
+        for (int c = 0; c < 3; ++c) job->list[3 * out + c] = tet[tet_faces[f][c]];
+        ++out;
+      }
+      i = j;
+    }
+    job->counts[v] = out;
+  }
+}
+static tvdb_status_t tet_boundary(const int32_t *tets, size_t tet_count, size_t vertex_count,
+                                  tvdb_thread_pool_t *pool, int32_t **out,
+                                  size_t *out_count, tvdb_error_t *err) {
+  size_t faces, bytes, start_bytes, cursor_cells, cursors_bytes;
+  if (!tvdb_size_mul(tet_count, 4, &faces) ||
+      !tvdb_size_mul(faces, sizeof(tet_face_entry), &bytes) ||
+      vertex_count == SIZE_MAX || !tvdb_size_mul(vertex_count + 1, sizeof(size_t), &start_bytes))
+    return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT, "tet face overflow");
+  /* Faces land in per-bucket uint32 cursors, so the total must fit one. */
+  if (faces > UINT32_MAX)
+    return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT, "tet face overflow");
+  size_t slices = pool ? tvdb_thread_pool_size(pool) : 1;
+  if (slices > 8) slices = 8; /* one cursor table per slice: 4 bytes a vertex */
+  if (slices < 1) slices = 1;
+  if (tet_count < 4096) slices = 1;
+  const size_t slice_tets = slices > 1 ? (tet_count + slices - 1) / slices : tet_count;
+  const size_t used = slice_tets ? (tet_count + slice_tets - 1) / slice_tets : 1;
+  if (used == 1) return tet_boundary_serial(tets, tet_count, vertex_count, out, out_count, err);
+  if (!tvdb_size_mul(used, vertex_count, &cursor_cells) ||
+      !tvdb_size_mul(cursor_cells, sizeof(uint32_t), &cursors_bytes))
+    return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT, "tet face overflow");
+  size_t *start = (size_t *)calloc(1, start_bytes);
+  uint32_t *cursors = (uint32_t *)calloc(1, cursors_bytes ? cursors_bytes : 1);
+  tet_face_entry *entry = (tet_face_entry *)malloc(bytes ? bytes : 1);
+  size_t *singles = (size_t *)calloc(1, start_bytes);
+  int32_t *list = NULL;
+  tvdb_status_t st = TVDB_OK;
+  if (!start || !cursors || !entry || !singles) {
+    st = tet_error(err, TVDB_ERROR_OUT_OF_MEMORY, "tet face allocation failed");
+    goto done;
+  }
+  tet_boundary_job job = {.tets = tets,
+                          .entry = entry,
+                          .cursors = cursors,
+                          .tet_count = tet_count,
+                          .vertex_count = vertex_count,
+                          .slice_tets = slice_tets};
+  st = tvdb_thread_pool_for(pool, 0, used, 1, tet_boundary_count_range, &job, err);
+  if (st != TVDB_OK) goto done;
+  /* Bucket starts, then each slice's cursor: slice c writes at the bucket
+   * start plus the faces earlier slices claimed there. */
+  for (size_t v = 0; v < vertex_count; ++v) {
+    size_t total = 0;
+    for (size_t c = 0; c < used; ++c) total += cursors[c * vertex_count + v];
+    start[v + 1] = start[v] + total;
+  }
+  for (size_t v = 0; v < vertex_count; ++v) {
+    size_t at = start[v];
+    for (size_t c = 0; c < used; ++c) {
+      const size_t n = cursors[c * vertex_count + v];
+      cursors[c * vertex_count + v] = (uint32_t)at;
+      at += n;
+    }
+  }
+  st = tvdb_thread_pool_for(pool, 0, used, 1, tet_boundary_scatter_range, &job, err);
+  if (st != TVDB_OK) goto done;
+  /* Sort each bucket once (the scatter left every slice's faces in bucket
+   * order), then count its singletons. */
+  tet_boundary_bucket_job buckets = {
+      .tets = tets, .entry = entry, .start = start, .counts = singles, .list = NULL};
+  {
+    const size_t vslice = (vertex_count + used - 1) / used;
+    st = tvdb_thread_pool_for(pool, 0, vertex_count, vslice, tet_boundary_tally_range,
+                              &buckets, err);
+    if (st != TVDB_OK) goto done;
+  }
+  size_t boundary = 0;
+  for (size_t v = 0; v < vertex_count; ++v) {
+    const size_t n = singles[v];
+    singles[v] = boundary;
+    boundary += n;
+  }
+  if (boundary) {
+    size_t list_bytes;
+    if (!tvdb_size_mul(boundary, 3 * sizeof(int32_t), &list_bytes)) {
+      st = tet_error(err, TVDB_ERROR_INVALID_ARGUMENT, "tet face overflow");
+      goto done;
+    }
+    list = (int32_t *)malloc(list_bytes);
+    if (!list) {
+      st = tet_error(err, TVDB_ERROR_OUT_OF_MEMORY, "tet boundary allocation failed");
+      goto done;
+    }
+  }
+  buckets.list = list;
+  {
+    const size_t vslice = (vertex_count + used - 1) / used;
+    st = tvdb_thread_pool_for(pool, 0, vertex_count, vslice, tet_boundary_emit_range,
+                              &buckets, err);
+    if (st != TVDB_OK) goto done;
+  }
+  *out = list;
+  *out_count = boundary;
+  list = NULL;
+done:
+  free(start);
+  free(cursors);
+  free(entry);
+  free(singles);
+  free(list);
+  return st;
+}
+
 static tvdb_status_t tet_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
                                          const tet_sample_scope *scope,
                                          const double bbox_min[3],
@@ -704,8 +916,8 @@ static tvdb_status_t tet_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
     for (size_t i = 0; i < 3 * B.vertex_count; ++i) result.positions[i] = (float)B.positions[i];
     result.tets = B.tets;
     B.tets = NULL;
-    st = tet_boundary(result.tets, result.tet_count, result.vertex_count, &result.boundary,
-                      &result.boundary_count, err);
+    st = tet_boundary(result.tets, result.tet_count, result.vertex_count, pool,
+                      &result.boundary, &result.boundary_count, err);
     if (st != TVDB_OK) {
       tvdb_tet_mesh_free(&result);
       goto done;

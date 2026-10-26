@@ -32,8 +32,11 @@ tvdb_status_t tvdb_grid_resample(const tvdb_grid_t* source,
  * clusters remove faces with repeated indices. Classic ambiguities/clustering
  * do not guarantee manifoldness or preserve topology. max_cells also bounds
  * boundary scan work (32 times this budget), so huge tile faces can fail
- * explicitly. Regions are collected in tree order and their cells classified
- * on the task pool, so the mesh is identical for any worker count. */
+ * explicitly (a scan is one cell classification; each crossing cell is
+ * classified once, by the lowest-numbered voxel of it that the walk visits,
+ * and tiles whose shell cannot cross skip their slab scan). Regions are
+ * collected in tree order and their cells classified on the task pool, so the
+ * mesh is identical for any worker count. */
 tvdb_status_t tvdb_grid_volume_to_mesh(const tvdb_grid_t* source,
                                        float isovalue, double adaptivity,
                                        size_t max_cells,
