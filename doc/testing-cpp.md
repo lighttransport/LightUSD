@@ -1719,6 +1719,23 @@ run representative fixtures to cover the change. Since the serialization is
 native binary, compare builds on the same host with the same ABI. This does
 not independently check internal scan-budget counts.
 
+To profile CPU mesh-to-level-set construction with a reproducible closed mesh,
+build `bench_volumetric` from tinyvdb's `tests/bench_volumetric.c` against its
+CPU libraries, then run:
+
+```sh
+python3 tests/volumetric/make-profile-sphere.py /tmp/profile-sphere.obj
+nice valgrind --tool=callgrind --callgrind-out-file=/tmp/vol.callgrind \
+  /path/to/bench_volumetric /tmp/profile-sphere.obj --res 32 --tets 0 --threads 1
+callgrind_annotate --inclusive=yes --threshold=95 /tmp/vol.callgrind
+```
+
+The fixture has 1,106 vertices and 2,208 triangles. At tinyvdb `33a9532` this
+run recorded 10.86 billion instructions for 48,458 candidates; winding-number
+evaluation accounted for 94.7% inclusive. Use representative meshes and retain
+instruction counts when comparing runs under shared CPU load. `--host-only`
+uses a synthetic evaluator, so its output is not a correctness comparison.
+
 `lusdview_incremental_scene_update_test` now builds without linking next core
 and exercises the public C change-record planner interface. It retains the
 slot/remap/deformation/material/texture cases and checks short records, null
