@@ -36,21 +36,6 @@ static tvdb_status_t tet_error(tvdb_error_t *err, tvdb_status_t st,
   return st;
 }
 
-/* Doubled coordinates to a vertex id; SIZE_MAX outside the lattice or for
- * mixed parity. */
-static size_t tet_id(const tet_lattice *L, int64_t x, int64_t y, int64_t z) {
-  const int odd = (int)(x & 1);
-  if ((int)(y & 1) != odd || (int)(z & 1) != odd || x < 0 || y < 0 || z < 0)
-    return SIZE_MAX;
-  if (!odd) {
-    const int64_t i = x / 2, j = y / 2, k = z / 2;
-    if (i > L->nx || j > L->ny || k > L->nz) return SIZE_MAX;
-    return (size_t)i + (size_t)(L->nx + 1) * ((size_t)j + (size_t)(L->ny + 1) * (size_t)k);
-  }
-  const int64_t i = (x - 1) / 2, j = (y - 1) / 2, k = (z - 1) / 2;
-  if (i >= L->nx || j >= L->ny || k >= L->nz) return SIZE_MAX;
-  return L->corners + (size_t)i + (size_t)L->nx * ((size_t)j + (size_t)L->ny * (size_t)k);
-}
 static void tet_coords(const tet_lattice *L, size_t id, int64_t c[3]) {
   if (id < L->corners) {
     const size_t sx = (size_t)L->nx + 1, sy = (size_t)L->ny + 1;
@@ -876,25 +861,28 @@ static tvdb_status_t tet_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
     }
     stencil_scoped = 1;
   }
+  const size_t corner_stride[3] = {1, (size_t)L.nx + 1,
+                                  ((size_t)L.nx + 1) * ((size_t)L.ny + 1)};
+  const size_t center_stride[3] = {1, (size_t)L.nx, (size_t)L.nx * (size_t)L.ny};
+  const int cell_dims[3] = {L.nx, L.ny, L.nz};
   for (int k = 0; k < L.nz && B.st == TVDB_OK; ++k)
     for (int j = 0; j < L.ny && B.st == TVDB_OK; ++j)
       for (int i = 0; i < L.nx && B.st == TVDB_OK; ++i) {
-        const int64_t c[3] = {2 * (int64_t)i + 1, 2 * (int64_t)j + 1, 2 * (int64_t)k + 1};
-        const size_t center = tet_id(&L, c[0], c[1], c[2]);
+        const int c[3] = {i, j, k};
+        const size_t center = L.corners + (size_t)i + center_stride[1] * (size_t)j +
+                              center_stride[2] * (size_t)k;
+        const size_t corner_base = (size_t)i + corner_stride[1] * (size_t)j +
+                                   corner_stride[2] * (size_t)k;
         for (int a = 0; a < 3 && B.st == TVDB_OK; ++a) {
-          int64_t c2[3] = {c[0], c[1], c[2]};
-          c2[a] += 2;
-          const size_t other = tet_id(&L, c2[0], c2[1], c2[2]);
-          if (other == SIZE_MAX) continue;
+          if (c[a] + 1 >= cell_dims[a]) continue;
+          const size_t other = center + center_stride[a];
           const int b = (a + 1) % 3, cc = (a + 2) % 3;
           static const int ring[4][2] = {{1, 1}, {-1, 1}, {-1, -1}, {1, -1}};
           size_t r[4];
           for (int q = 0; q < 4; ++q) {
-            int64_t p[3] = {c[0], c[1], c[2]};
-            p[a] += 1;
-            p[b] += ring[q][0];
-            p[cc] += ring[q][1];
-            r[q] = tet_id(&L, p[0], p[1], p[2]);
+            r[q] = corner_base + corner_stride[a] +
+                   (ring[q][0] > 0 ? corner_stride[b] : 0) +
+                   (ring[q][1] > 0 ? corner_stride[cc] : 0);
           }
           /* Most of the lattice is outside: when all six vertices are, none
            * of the four tetrahedra emits anything (tet_stencil's nm == 0,

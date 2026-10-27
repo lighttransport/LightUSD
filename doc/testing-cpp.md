@@ -1777,6 +1777,11 @@ nice valgrind --tool=callgrind --callgrind-out-file=/tmp/surface.callgrind \
 This includes file loading and one-worker surface construction; compare
 instruction counts rather than inferring CPU speed from a loaded host.
 
+For the corresponding one-worker tetrahedral stuffing workload, use
+`tests/volumetric/profile-tet.c` with the same compiler and libraries, then
+pass the VDB path and a spacing to the resulting executable under Callgrind.
+This includes file loading, lattice sampling, stuffing and boundary assembly.
+
 To profile CPU mesh-to-level-set construction with a reproducible closed mesh,
 build `bench_volumetric` from tinyvdb's `tests/bench_volumetric.c` against its
 CPU libraries, then run:
