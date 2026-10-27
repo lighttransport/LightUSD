@@ -293,21 +293,12 @@ def _check_bullet_dynamics():
 
 def _check_imported_scaled_dynamics(path):
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    result = bpy.ops.wm.usd_import(filepath=str(path), merge_parent_xform=True)
-    assert 'FINISHED' in result, result
-    body = bpy.data.objects.get('Cube')
-    assert body and body.rigid_body, 'scaled imported USD body is missing physics'
-    for actual, expected in zip(body.matrix_world.to_scale(), (2.0, 0.5, 1.5)):
-        _assert_close(actual, expected)
-
-    # Isolate the scaled active body from the spring-joint roundtrip scene.
-    keep = {body, body.parent}
-    for obj in list(bpy.data.objects):
-        if obj not in keep:
-            bpy.data.objects.remove(obj, do_unlink=True)
-    body.location = (0.0, 0.0, 2.0)
-    body.rotation_euler = (0.0, 0.0, 0.0)
-
+    scene = bpy.context.scene
+    scene.gravity = (0.0, 0.0, -9.81)
+    scene.render.fps = 60
+    scene.render.fps_base = 1.25
+    scene.frame_start = 1
+    scene.frame_end = 120
     bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0.0, 0.0, -0.5))
     floor = bpy.context.object
     floor.name = 'ScaleCheckFloor'
@@ -315,30 +306,75 @@ def _check_imported_scaled_dynamics(path):
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
     bpy.ops.rigidbody.object_add(type='PASSIVE')
     floor.rigid_body.collision_shape = 'BOX'
+    floor.rigid_body.friction = 0.7
 
-    scene = bpy.context.scene
-    scene.gravity = (0.0, 0.0, -9.81)
-    scene.render.fps = 60
-    scene.render.fps_base = 1.0
-    scene.frame_start = 1
-    scene.frame_end = 120
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0.0, 0.0, 2.0))
+    source_body = bpy.context.object
+    source_body.name = 'ScaleCheckBody'
+    source_body.scale = (2.0, 0.5, 1.5)
+    bpy.ops.rigidbody.object_add(type='ACTIVE')
+    source_body.rigid_body.collision_shape = 'CONVEX_HULL'
+    source_body.rigid_body.mass = 2.5
+    source_body.rigid_body.friction = 0.7
+    source_body.rigid_body.restitution = 0.0
+
     world = scene.rigidbody_world
     assert world
     world.substeps_per_frame = 10
     world.solver_iterations = 50
     world.point_cache.frame_start = 1
     world.point_cache.frame_end = 120
-    for frame in range(1, 121):
-        scene.frame_set(frame)
 
-    bpy.context.view_layer.update()
-    body_z = float(body.evaluated_get(
-        bpy.context.evaluated_depsgraph_get()
-    ).matrix_world.translation.z)
+    export_result = bpy.ops.wm.usd_export(
+        filepath=str(path), export_custom_properties=True,
+        export_materials=False, export_animation=False,
+    )
+    assert 'FINISHED' in export_result, export_result
+
+    def trajectory(body):
+        positions = {}
+        for frame in range(1, 121):
+            scene.frame_set(frame)
+            if frame in (1, 30, 60, 120):
+                bpy.context.view_layer.update()
+                positions[frame] = float(body.evaluated_get(
+                    bpy.context.evaluated_depsgraph_get()
+                ).matrix_world.translation.z)
+        return positions
+
+    source_positions = trajectory(source_body)
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    result = bpy.ops.wm.usd_import(filepath=str(path), merge_parent_xform=True)
+    assert 'FINISHED' in result, result
+    scene = bpy.context.scene
+    assert scene.render.fps == 48
+    _assert_close(scene.render.fps_base, 1.0)
+    active_bodies = [obj for obj in bpy.data.objects
+                     if obj.rigid_body and obj.rigid_body.type == 'ACTIVE']
+    assert len(active_bodies) == 1, active_bodies
+    body = active_bodies[0]
+    for actual, expected in zip(body.matrix_world.to_scale(), (2.0, 0.5, 1.5)):
+        _assert_close(actual, expected)
+
+    world = scene.rigidbody_world
+    assert world
+    world.substeps_per_frame = 10
+    world.solver_iterations = 50
+    world.point_cache.frame_start = 1
+    world.point_cache.frame_end = 120
+    imported_positions = trajectory(body)
+
     # The scaled cube is 1.5 Blender units tall; the floor top is z=0.
-    assert 0.68 <= body_z <= 0.84, body_z
+    assert 0.68 <= imported_positions[120] <= 0.84, imported_positions
+    print('BLENDER_SOURCE_IMPORTED_TRAJECTORIES', source_positions,
+          imported_positions)
+    for frame, expected in source_positions.items():
+        assert abs(imported_positions[frame] - expected) <= 0.02, (
+            frame, imported_positions[frame], expected)
     print('BLENDER_IMPORTED_SCALE_DYNAMICS_PASS',
-          {'scale': tuple(body.matrix_world.to_scale()), 'settled_z': body_z})
+          {'scale': tuple(body.matrix_world.to_scale()),
+           'source_z': source_positions, 'imported_z': imported_positions})
 
 
 def main():
@@ -353,6 +389,7 @@ def main():
     path.unlink()
     collision_groups_path = path.with_name(path.stem + '-groups.usda')
     multi_mesh_path = path.with_name(path.stem + '-multi-mesh.usda')
+    scale_dynamics_path = path.with_name(path.stem + '-scale-dynamics.usda')
     try:
         hook.register()
         _make_scene_and_export(path)
@@ -362,7 +399,7 @@ def main():
         _check_collision_group_import(collision_groups_path)
         _make_multi_mesh_fixture(multi_mesh_path)
         _check_multi_mesh_import(multi_mesh_path)
-        _check_imported_scaled_dynamics(path)
+        _check_imported_scaled_dynamics(scale_dynamics_path)
         hook.unregister()
         _check_bullet_dynamics()
     finally:
@@ -372,6 +409,8 @@ def main():
             collision_groups_path.unlink()
         if multi_mesh_path.exists():
             multi_mesh_path.unlink()
+        if scale_dynamics_path.exists():
+            scale_dynamics_path.unlink()
         try:
             hook.unregister()
         except RuntimeError:

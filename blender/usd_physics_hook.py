@@ -129,7 +129,7 @@ def _apply_scene_physics(stage, scene, mode):
         if rbw:
             scene_prim.CreateAttribute(
                 "mjc:option:timestep", Sdf.ValueTypeNames.Double
-            ).Set(1.0 / scene.render.fps)
+            ).Set(float(scene.render.fps_base) / scene.render.fps)
             scene_prim.CreateAttribute(
                 "mjc:option:iterations", Sdf.ValueTypeNames.Int
             ).Set(rbw.solver_iterations)
@@ -717,6 +717,21 @@ def _apply_physics_to_blender(result):
             if scene.rigidbody_world is None:
                 bpy.ops.rigidbody.world_add()
             rbw = scene.rigidbody_world
+            if 'timestep' in sd['mjc']:
+                timestep = float(sd['mjc']['timestep'])
+                if math.isfinite(timestep) and timestep > 0.0:
+                    frame_rate = 1.0 / timestep
+                    fps = int(round(frame_rate))
+                    fps_base = frame_rate / fps if fps else 0.0
+                    if 1 <= fps <= 32767 and math.isfinite(fps_base) and fps_base > 0.0:
+                        scene.render.fps = fps
+                        scene.render.fps_base = fps_base
+                    else:
+                        log.warning("[USDPhysicsHook] Ignoring unsupported "
+                                    "physics timestep %.9g", timestep)
+                else:
+                    log.warning("[USDPhysicsHook] Ignoring invalid physics "
+                                "timestep %r", timestep)
             if 'iterations' in sd['mjc']:
                 rbw.solver_iterations = sd['mjc']['iterations']
 
