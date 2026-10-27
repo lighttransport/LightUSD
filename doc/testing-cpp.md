@@ -1707,7 +1707,41 @@ It needs the out-of-tree tinyvdbio reference corpus (`TINYVDBIO_DATA_DIR` or
 argv[1], expected under `reference/`) and prints SKIP without it, like the
 `usdvol-vdb-corpus` C++ test.
 The legacy `usdvol_vdb_corpus_test` also checks that a dense grid rejected by
-its voxel limit reports both the requested cell count and the limit.
+its voxel limit reports both the requested cell count and the limit. It checks
+header and sparse decoder budget failures release partial allocations and
+rejects sampling below the retained grid-and-sampler footprint.
+
+On a 32-bit native build, `volumetric-tet-overflow-32` (legacy) or
+`next_test_tet_overflow_32` (next) checks that a lattice whose position buffer
+would overflow `size_t` is rejected before allocation or sampling. A standalone
+build against a 32-bit tinyvdb checkout can run the same fixture:
+
+```sh
+cc -m32 -std=c11 -O2 -I/path/to/tinyvdb/src tests/volumetric/tet-overflow-32.c \
+  /path/to/tinyvdb-build/libtinyvdb_mesh_ops.a \
+  /path/to/tinyvdb-build/libtinyvdb.a -lm -pthread -o /tmp/tet-overflow-32
+/tmp/tet-overflow-32
+```
+
+The experimental CPU sparse renderer can be checked with the optional teapot
+corpus (the test skips when the file is unavailable):
+
+```sh
+TINYVDBIO_DATA_DIR=/path/to/tinyvdb/data \
+  ctest --test-dir build_ninja/sdf-legacy \
+  -R '^tool-lusdrender-sparse-volume-cpu$' --output-on-failure
+```
+
+It checks a volume-only render, field translation, 180-degree rotation, uniform
+and nonuniform scaling, foreground and coincident-volume depth ordering,
+identical images with one and two
+threads, low-memory diagnostics, and the shared budget across two VDB files.
+When `icosahedron.vdb` is available, it compares visible images from the dense
+and sparse paths byte-for-byte. It also compares animated field-transform and
+VDB file-path frames with equivalent single-time renders.
+The foreground check fails with the old scaled-field depth
+calculation. This compares the two LightUSD paths, not an external reference. Custom
+asset readers allocate their own file buffers outside the cache budget.
 
 For CPU mesher changes, build each tinyvdb revision separately and compare a
 level-set fixture on the same host (the test uses two workers and writes only

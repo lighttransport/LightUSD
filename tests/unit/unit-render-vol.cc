@@ -489,4 +489,64 @@ void usdvol_nanovdb_sample_test(void) {
       TEST_CHECK(tri.size() == 1 && tri[0] >= lo - 1e-6f && tri[0] <= hi + 1e-6f);
     }
   }
+
+  // Header, sparse decode and sampler failures must honor cache limits and
+  // release partial allocations.
+  {
+    std::ifstream in(float_vdb.c_str(), std::ios::binary | std::ios::ate);
+    const size_t file_size = static_cast<size_t>(in.tellg());
+    lightusd::tydra::vol::FieldCache cache(lightusd::tydra::vol::AssetReader{},
+                                           file_size + 64);
+    lightusd::tydra::vol::FieldRequest request;
+    request.field_prim = "/vol/density";
+    request.prim_type = "OpenVDBAsset";
+    request.file_path = float_vdb;
+    request.field_name = "float_test";
+    lightusd::tydra::vol::ResolvedField field;
+    std::string err;
+    const double point[3] = {0.5, 0.5, 0.5};
+    std::vector<float> values;
+    int components = 0;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      err.clear();
+      TEST_CHECK(!cache.Resolve(request, &field, &err));
+      TEST_CHECK_(err.find("memory budget") != std::string::npos, "%s", err.c_str());
+      TEST_CHECK(cache.bytes_used() == 0);
+    }
+
+    lightusd::tydra::vol::FieldCache probe;
+    TEST_CHECK_(probe.Resolve(request, &field, &err), "%s", err.c_str());
+    TEST_CHECK_(probe.SampleWorld(field, point, 1, true, &values, &components, &err),
+                "%s", err.c_str());
+    const size_t sampled_bytes = probe.bytes_used();
+    TEST_CHECK(sampled_bytes > file_size);
+    size_t low = file_size, high = sampled_bytes;
+    while (low < high) {
+      const size_t mid = low + (high - low) / 2;
+      lightusd::tydra::vol::FieldCache candidate(lightusd::tydra::vol::AssetReader{}, mid);
+      lightusd::tydra::vol::ResolvedField candidate_field;
+      if (candidate.Resolve(request, &candidate_field, nullptr)) high = mid;
+      else low = mid + 1;
+    }
+    lightusd::tydra::vol::FieldCache decode_limited(lightusd::tydra::vol::AssetReader{}, high);
+    TEST_CHECK_(decode_limited.Resolve(request, &field, &err), "%s", err.c_str());
+    const size_t baseline = decode_limited.bytes_used();
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      err.clear();
+      TEST_CHECK(!decode_limited.SampleWorld(field, point, 1, true, &values, &components, &err));
+      TEST_CHECK_(err.find("sparse grid exceeds the memory budget") != std::string::npos,
+                  "%s", err.c_str());
+      TEST_CHECK(decode_limited.bytes_used() == baseline);
+    }
+    lightusd::tydra::vol::FieldCache limited(lightusd::tydra::vol::AssetReader{},
+                                             sampled_bytes - 1);
+    TEST_CHECK_(limited.Resolve(request, &field, &err), "%s", err.c_str());
+    err.clear();
+    TEST_CHECK(!limited.SampleWorld(field, point, 1, true, &values, &components, &err));
+    // Decode can transiently exceed its final retained size, so the limit
+    // just below the final footprint may reject either decode or the index.
+    TEST_CHECK_(err.find("exceeds the memory budget") != std::string::npos,
+                "%s", err.c_str());
+    TEST_CHECK(limited.bytes_used() < sampled_bytes);
+  }
 }

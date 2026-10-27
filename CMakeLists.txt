@@ -2308,6 +2308,14 @@ if(LIGHTUSD_BUILD_TESTS)
   add_subdirectory(${PROJECT_SOURCE_DIR}/tests/pprint)
 
 
+  if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND TARGET lightusd_tinyvdb)
+    add_executable(test-tet-overflow-32 tests/volumetric/tet-overflow-32.c)
+    target_include_directories(test-tet-overflow-32 PRIVATE src/external/tinyvdb)
+    target_link_libraries(test-tet-overflow-32 PRIVATE lightusd_tinyvdb)
+    add_test(NAME volumetric-tet-overflow-32 COMMAND test-tet-overflow-32)
+    set_tests_properties(volumetric-tet-overflow-32 PROPERTIES LABELS "cpu;volume;security")
+  endif()
+
   # Prefer an explicitly configured interpreter so CTest can use a virtualenv,
   # cross-build host Python, or another interpreter selected by CI. Keep the
   # automatic lookup as the default for ordinary native builds.
@@ -2351,6 +2359,14 @@ if(LIGHTUSD_BUILD_TESTS)
     endif()
   endif()
   if(TARGET lusdrender AND LUSDR_PYTHON)
+    add_test(
+      NAME tool-lusdrender-sparse-volume-cpu
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_sparse_volume.py
+              "$<TARGET_FILE:lusdrender>")
+    set_tests_properties(tool-lusdrender-sparse-volume-cpu PROPERTIES
+                         TIMEOUT 180 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;volume")
     add_test(
       NAME tool-lusdrender-smoke
       COMMAND ${LUSDR_PYTHON}

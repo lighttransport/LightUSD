@@ -1830,11 +1830,14 @@ static bool TraceLevelSetSurface(const VolumeData &vd, const Vec3 &o,
                                  float *t_hit) {
   if (!t_hit) return false;
   const float dir_len = Length(d);
-  const float min_step = std::max(1.0e-6f, vd.voxel_size * 0.25f);
+  if (!std::isfinite(dir_len) || dir_len <= 1.0e-9f) return false;
+  // t is the world-ray parameter, while the field and voxel size are in
+  // object space. Convert all object-space distances to ray parameters.
+  const float min_step = std::max(1.0e-6f, vd.voxel_size * 0.25f) / dir_len;
   // Capping the sphere-trace step degrades to a fine march when the stored
   // values are not world-unit distances (a mis-scaled SDF then still finds
   // the crossing instead of stepping over it).
-  const float max_step = std::max(min_step, vd.voxel_size * 4.0f);
+  const float max_step = std::max(min_step, vd.voxel_size * 4.0f / dir_len);
   auto sample_at = [&](float t) {
     return SampleVolumeDensity(vd, Add(o, Mul(d, t)));
   };
@@ -1849,7 +1852,7 @@ static bool TraceLevelSetSurface(const VolumeData &vd, const Vec3 &o,
   for (int i = 0; i < max_steps; ++i) {
     const float step = std::max(
         min_step,
-        std::min(max_step, std::fabs(v_prev) / std::max(dir_len, 1.0e-9f) * 0.8f));
+        std::min(max_step, std::fabs(v_prev) / dir_len * 0.8f));
     const float t_next = std::min(t_prev + step, t1);
     const float v_next = sample_at(t_next);
     if (other_side(v_next)) {
@@ -1932,6 +1935,7 @@ Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
                       float ambient, float scene_hit,
                       Options::VolumeLevelSet level_set_shading) {
   Vec3 result = bg;
+  float nearest_surface = scene_hit;
   for (const VolumeData &vd : vols) {
     // World -> object space.
     Vec3 o = TransformPoint(vd.inv_world, worg);
@@ -1944,8 +1948,9 @@ Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
     if (vd.level_set && level_set_shading == Options::VolumeLevelSet::Surface) {
       float hit = 0.0f;
       if (!TraceLevelSetSurface(vd, o, d, t0, t1, &hit)) continue;
-      const float world_t = hit * Length(d);  // |d| maps object -> world length
-      if (world_t >= scene_hit) continue;     // geometry is in front
+      // o + d * hit is the inverse transform of worg + wdir * hit, so
+      // `hit` already uses the same world-ray parameter as scene_hit.
+      if (hit >= nearest_surface) continue;  // geometry or a volume is in front
       const Vec3 p_obj = Add(o, Mul(d, hit));
       const Vec3 n_obj = LevelSetObjectGradient(vd, p_obj);
       Vec3 n = Length(n_obj) > 1.0e-8f
@@ -1954,6 +1959,7 @@ Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
       if (Dot(n, wdir) > 0.0f) n = Mul(n, -1.0f);
       result = ShadeLevelSetSurface(vd, TransformPoint(vd.world, p_obj), n,
                                     lights, ambient);
+      nearest_surface = hit;
       continue;
     }
 

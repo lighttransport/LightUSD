@@ -720,6 +720,12 @@ static tvdb_status_t tet_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
       (n = corners + centers) > max_vertices || n > (size_t)INT32_MAX)
     return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT,
                      "stuffing lattice exceeds the vertex budget");
+  size_t value_bytes, position_bytes, vertex_out_bytes;
+  if (!tvdb_size_mul(n, sizeof(float), &value_bytes) ||
+      !tvdb_size_mul(n, 3 * sizeof(double), &position_bytes) ||
+      !tvdb_size_mul(n, sizeof(int32_t), &vertex_out_bytes))
+    return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT,
+                     "stuffing lattice allocation size overflow");
   L.corners = corners;
   L.vertices = n;
   const double alpha_long = options->alpha_long ? options->alpha_long : TET_ALPHA_LONG;
@@ -727,9 +733,9 @@ static tvdb_status_t tet_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
 
   tvdb_status_t st = TVDB_OK;
   tvdb_thread_pool_t *owned = NULL;
-  float *value = (float *)malloc(n * sizeof(float));
-  double *pos = (double *)malloc(n * 3 * sizeof(double));
-  int32_t *vertex_out = (int32_t *)malloc(n * sizeof(int32_t));
+  float *value = (float *)malloc(value_bytes);
+  double *pos = (double *)malloc(position_bytes);
+  int32_t *vertex_out = (int32_t *)malloc(vertex_out_bytes);
   tet_builder B;
   memset(&B, 0, sizeof(B));
   if (!value || !pos || !vertex_out) {
@@ -913,8 +919,13 @@ static tvdb_status_t tet_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
     memset(&result, 0, sizeof(result));
     result.vertex_count = B.vertex_count;
     result.tet_count = B.tet_count;
+    size_t output_bytes;
+    if (!tvdb_size_mul(B.vertex_count, 3 * sizeof(float), &output_bytes)) {
+      st = tet_error(err, TVDB_ERROR_INVALID_ARGUMENT, "tet output size overflow");
+      goto done;
+    }
     if (B.vertex_count &&
-        !(result.positions = (float *)malloc(B.vertex_count * 3 * sizeof(float)))) {
+        !(result.positions = (float *)malloc(output_bytes))) {
       st = tet_error(err, TVDB_ERROR_OUT_OF_MEMORY, "tet output allocation failed");
       goto done;
     }

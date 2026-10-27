@@ -48,10 +48,10 @@ std::string Message(const tvdb_error_t &e, tvdb_status_t st) {
 }
 
 bool Open(OpenFile *f, const uint8_t *data, size_t len, const std::string *path,
-          const std::string &uri, std::string *err) {
+          const std::string &uri, std::string *err, const tvdb_allocator_t *allocator = nullptr) {
   tvdb_error_t e{};
-  const tvdb_status_t st = path ? tvdb_file_open(&f->file, path->c_str(), nullptr, &e)
-                                : tvdb_file_open_memory(&f->file, data, len, nullptr, &e);
+  const tvdb_status_t st = path ? tvdb_file_open(&f->file, path->c_str(), allocator, &e)
+                                : tvdb_file_open_memory(&f->file, data, len, allocator, &e);
   if (st != TVDB_OK) {
     if (err) *err += "Failed to decode VDB (" + uri + "): " + Message(e, st) + "\n";
     return false;
@@ -214,10 +214,11 @@ bool ReadAll(const uint8_t *data, size_t len, const std::string *path, const std
 }
 
 bool ReadInfo(const uint8_t *data, size_t len, const std::string *path, const std::string &uri,
-              std::vector<VDBGridInfo> *grids, std::string *err) {
+              std::vector<VDBGridInfo> *grids, std::string *err,
+              const tvdb_allocator_t *allocator = nullptr) {
   if (!grids) return false;
   OpenFile f;
-  if (!Open(&f, data, len, path, uri, err)) return false;
+  if (!Open(&f, data, len, path, uri, err, allocator)) return false;
   for (size_t i = 0; i < f.file.num_grids; ++i) {
     tvdb_error_t e{};
     tvdb_status_t st = tvdb_read_grid_header(&f.file, i, &e);
@@ -340,6 +341,16 @@ bool ReadVDBGridInfo(const uint8_t *data, size_t len, const std::string &uri,
     return false;
   }
   return ReadInfo(data, len, nullptr, uri, grids, err);
+}
+
+bool ReadVDBGridInfoWithAllocator(const uint8_t *data, size_t len, const std::string &uri,
+                                  std::vector<VDBGridInfo> *grids, std::string *err,
+                                  const tvdb_allocator *allocator) {
+  if (!data || !len) {
+    if (err) *err += "usdVol::ReadVDBGridInfo: empty buffer (" + uri + ").\n";
+    return false;
+  }
+  return ReadInfo(data, len, nullptr, uri, grids, err, allocator);
 }
 
 bool ReadVDBGridInfoFromFile(const std::string &filepath, std::vector<VDBGridInfo> *grids,

@@ -920,8 +920,16 @@ struct VolumeScalarField {
   float background = 0.0f;
 };
 
+// Optional CPU-side sparse level-set sampler. Implementations own their grid
+// and support concurrent calls from rendering workers.
+struct VolumeSparseSampler {
+  virtual ~VolumeSparseSampler() = default;
+  virtual float Sample(const Vec3 &p) const = 0;
+};
+
 struct VolumeData {
   std::vector<float> density;  // dense grid, x-contiguous
+  std::shared_ptr<const VolumeSparseSampler> sparse_density;
   // Optional scalar fields on the same index-space lattice as `density`.
   // emission modulates the authored emission color. temperature is converted
   // to a blackbody tint (Kelvin when > 100, normalized fire heat otherwise).
@@ -979,6 +987,7 @@ inline float SampleVolumeField(const std::vector<float> &field, const int dim[3]
 }
 
 inline float SampleVolumeDensity(const VolumeData &vd, const Vec3 &p) {
+  if (vd.sparse_density) return vd.sparse_density->Sample(p);
   return SampleVolumeField(vd.density, vd.dim, vd.bmin, vd.bmax, p);
 }
 

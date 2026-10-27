@@ -1160,7 +1160,7 @@ typedef struct {
   atomic_int overflow;
 } tool_cluster_job;
 static void tool_cluster_range(size_t begin, size_t end, void* user) {
-  const tool_cluster_job* job = (const tool_cluster_job*)user;
+  tool_cluster_job* job = (tool_cluster_job*)user;
   for (size_t i = begin; i < end; ++i) {
     double v[3] = {job->mesh->vertices[i].x, job->mesh->vertices[i].y,
                    job->mesh->vertices[i].z};

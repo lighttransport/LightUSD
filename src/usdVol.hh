@@ -32,6 +32,7 @@
 #include <vector>
 
 struct tvdb_grid;
+struct tvdb_allocator;
 
 namespace lightusd {
 namespace usdVol {
@@ -133,6 +134,10 @@ bool ReadVDBFromMemory(const uint8_t *data, size_t len, const std::string &uri,
 ///
 bool ReadVDBGridInfo(const uint8_t *data, size_t len, const std::string &uri,
                      std::vector<VDBGridInfo> *grids, std::string *err = nullptr);
+// Internal cache variant: use the supplied allocator for temporary VDB headers.
+bool ReadVDBGridInfoWithAllocator(const uint8_t *data, size_t len, const std::string &uri,
+                                  std::vector<VDBGridInfo> *grids, std::string *err,
+                                  const tvdb_allocator *allocator);
 bool ReadVDBGridInfoFromFile(const std::string &filepath, std::vector<VDBGridInfo> *grids,
                              std::string *err = nullptr);
 

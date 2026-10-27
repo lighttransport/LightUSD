@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -13,7 +14,9 @@
 #include <sys/types.h>
 
 #include "external/tinyvdb/tinyvdb_io.h"
+#include "external/tinyvdb/tinyvdb_checked.h"
 #include "external/tinyvdb/tinyvdb_sparse_tools.h"
+#include "external/tinyvdb/tinyvdb_tree_internal.h"
 #include "external/tinyvdb/tinyvdb_volume.h"
 
 namespace lightusd {
@@ -123,18 +126,97 @@ std::string SparseKey(const std::string &path, size_t source_index) {
 // One decoded sparse grid plus its world sampler. Declared in the header as
 // an incomplete type so tinyvdb stays out of the public includes.
 struct FieldCache::SparseGrid {
+  // Track the allocation's actual size rather than trusting the size supplied
+  // to tinyvdb's free callback. The header retains max_align_t alignment.
+  union Header {
+    size_t bytes;
+    std::max_align_t alignment;
+  };
+  size_t *used = nullptr;
+  size_t limit = 0;
+  bool exhausted = false;
+  size_t sampler_reservation = 0;
+
+  // The tinyvdb sampler currently uses malloc directly for its index. Reserve
+  // a conservative upper bound, including its temporary validation bitmap,
+  // before creation. Keep that reservation until the sampler is destroyed.
+  static bool SamplerBytes(const tvdb_grid_t &grid, size_t *result) {
+    const tvdb_tree_t &tree = grid.tree;
+    if (!tree.nodes || !tree.num_nodes || tree.num_nodes > tree.nodes_capacity ||
+        tree.nodes[0].type != TVDB_NODE_ROOT) return false;
+    const tvdb_root_node_t &root = tree.nodes[0].u.root;
+    if (root.num_children > SIZE_MAX - root.num_tiles) return false;
+    size_t capacity = 0;
+    if (!tvdb_hash_capacity_scaled(root.num_children + root.num_tiles, 4, 3, &capacity))
+      return false;
+    size_t total = sizeof(tvdb_tree_index) + 1024;
+    auto add = [&total](size_t count, size_t size) {
+      if (count && size > (SIZE_MAX - total) / count) return false;
+      total += count * size;
+      return true;
+    };
+    // origins, order, rank_at and the transient validation bitmap
+    if (!add(tree.num_nodes, 3 * sizeof(int32_t) + 2 * sizeof(size_t) + 1) ||
+        !add(capacity, sizeof(size_t))) return false;
+    for (size_t i = 0; i < tree.num_nodes; ++i) {
+      if (tree.nodes[i].type != TVDB_NODE_INTERNAL) continue;
+      const size_t bits = tree.nodes[i].u.internal.child_mask.bits.num_bits;
+      if (bits > SIZE_MAX - 63 || !add((bits + 63) / 64, sizeof(uint32_t)))
+        return false;
+    }
+    *result = total;
+    return true;
+  }
+
+  static void *Allocate(size_t size, void *context) {
+    auto *self = static_cast<SparseGrid *>(context);
+    if (size > SIZE_MAX - sizeof(Header)) return nullptr;
+    const size_t total = size + sizeof(Header);
+    if (total > SIZE_MAX - *self->used ||
+        (self->limit && total > self->limit - std::min(self->limit, *self->used))) {
+      self->exhausted = true;
+      return nullptr;
+    }
+    auto *header = static_cast<Header *>(std::malloc(total));
+    if (!header) return nullptr;
+    header->bytes = total;
+    *self->used += total;
+    return header + 1;
+  }
+  static void *Reallocate(void *ptr, size_t, size_t size, void *context) {
+    if (!ptr) return Allocate(size, context);
+    auto *header = static_cast<Header *>(ptr) - 1;
+    const size_t old_size = header->bytes - sizeof(Header);
+    // realloc may temporarily keep both blocks alive. Charge both until the
+    // copy completes, and leave the original untouched on failure.
+    void *replacement = Allocate(size, context);
+    if (!replacement) return nullptr;
+    std::memcpy(replacement, ptr, std::min(old_size, size));
+    Free(ptr, old_size, context);
+    return replacement;
+  }
+  static void Free(void *ptr, size_t, void *context) {
+    if (!ptr) return;
+    auto *self = static_cast<SparseGrid *>(context);
+    auto *header = static_cast<Header *>(ptr) - 1;
+    *self->used -= header->bytes;
+    std::free(header);
+  }
+
   tvdb_file_t file{};
   bool open = false;
   tvdb_volume_sampler_t *sampler = nullptr;
   ~SparseGrid() {
     if (sampler) tvdb_volume_sampler_destroy(sampler);
+    if (sampler_reservation) *used -= sampler_reservation;
     if (open) tvdb_file_close(&file);
   }
 };
 
 FieldCache::~FieldCache() = default;
 
-bool ReadFileAsset(const std::string &path, std::vector<uint8_t> *bytes, std::string *err) {
+static bool ReadFileAssetLimited(const std::string &path, std::vector<uint8_t> *bytes,
+                                 std::string *err, size_t remaining, bool limited) {
   // Asset paths come from the stage: read only regular files (opening a FIFO
   // blocks; devices such as /dev/zero never end) up to kMaxVolumeFileBytes,
   // checked before opening.
@@ -163,6 +245,10 @@ bool ReadFileAsset(const std::string &path, std::vector<uint8_t> *bytes, std::st
     if (err) *err = path + " exceeds the volume file size limit";
     return false;
   }
+  if (limited && uint64_t(size) > remaining) {
+    if (err) *err = path + " exceeds the memory budget";
+    return false;
+  }
   bytes->resize(size_t(size));
   in.seekg(0);
   if (size && !in.read(reinterpret_cast<char *>(bytes->data()), size)) {
@@ -170,6 +256,10 @@ bool ReadFileAsset(const std::string &path, std::vector<uint8_t> *bytes, std::st
     return false;
   }
   return true;
+}
+
+bool ReadFileAsset(const std::string &path, std::vector<uint8_t> *bytes, std::string *err) {
+  return ReadFileAssetLimited(path, bytes, err, 0, false);
 }
 
 bool FieldDataTypeMatches(const std::string &t, const std::string &vt, bool saved_as_half) {
@@ -204,23 +294,44 @@ void IndexToWorldRowVector(const usdVol::VDBGridInfo &grid, double out[4][4]) {
 }
 
 FieldCache::FieldCache(AssetReader reader, size_t max_bytes)
-    : reader_(reader ? std::move(reader) : AssetReader(ReadFileAsset)), max_bytes_(max_bytes) {}
+    : default_reader_(!reader), reader_(std::move(reader)), max_bytes_(max_bytes) {}
 
 const FieldCache::File *FieldCache::Load(const std::string &path, std::string *err) {
   auto it = files_.find(path);
   if (it == files_.end()) {
     File f;
     std::string why;
-    if (!reader_(path, &f.bytes, &why)) {
+    const size_t remaining = max_bytes_ - std::min(max_bytes_, bytes_used_);
+    const bool read_ok = default_reader_
+        ? ReadFileAssetLimited(path, &f.bytes, &why, remaining, max_bytes_ != 0)
+        : reader_(path, &f.bytes, &why);
+    if (!read_ok) {
+      if (default_reader_ && why.find("memory budget") != std::string::npos) {
+        if (err) *err = why;
+        return nullptr;
+      }
       f.error = "cannot read volume file " + path + (why.empty() ? "" : ": " + why);
-    } else if (max_bytes_ && bytes_used_ + f.bytes.size() > max_bytes_) {
+    } else if (f.bytes.size() > SIZE_MAX - bytes_used_ ||
+               (max_bytes_ && f.bytes.size() > max_bytes_ - std::min(max_bytes_, bytes_used_))) {
       // Not cached: TakeDense may release budget before the next request.
       if (err) *err = "volume file " + path + " exceeds the memory budget";
       return nullptr;
     } else {
       bytes_used_ += f.bytes.size();
-      if (!usdVol::ReadVDBGridInfo(f.bytes.data(), f.bytes.size(), path, &f.grids, &why))
+      SparseGrid header_alloc;
+      header_alloc.used = &bytes_used_;
+      header_alloc.limit = max_bytes_;
+      const tvdb_allocator_t allocator{SparseGrid::Allocate, SparseGrid::Reallocate,
+                                       SparseGrid::Free, &header_alloc};
+      if (!usdVol::ReadVDBGridInfoWithAllocator(f.bytes.data(), f.bytes.size(), path,
+                                                &f.grids, &why, &allocator)) {
+        if (header_alloc.exhausted) {
+          bytes_used_ -= f.bytes.size();
+          if (err) *err = "volume file " + path + ": header exceeds the memory budget";
+          return nullptr;
+        }
         f.error = why.empty() ? "not a VDB file: " + path : why;
+      }
     }
     it = files_.emplace(path, std::move(f)).first;
   }
@@ -372,7 +483,8 @@ const usdVol::VDBGrid *FieldCache::Dense(const ResolvedField &field,
     return nullptr;
   }
   const size_t bytes = grid->data.size() * sizeof(float);
-  if (max_bytes_ && bytes_used_ + bytes > max_bytes_) {
+  if (bytes > SIZE_MAX - bytes_used_ ||
+      (max_bytes_ && bytes > max_bytes_ - std::min(max_bytes_, bytes_used_))) {
     if (err) *err = field.request.field_prim + ": dense voxels exceed the memory budget";
     return nullptr;
   }
@@ -393,10 +505,21 @@ bool FieldCache::SampleWorld(const ResolvedField &field, const double *points, s
     sparse = LoadSparse(field.request.file_path, field.grid.source_index, err);
     if (!sparse) return false;
     if (!sparse->sampler) {
+      size_t reserve = 0;
+      if (!SparseGrid::SamplerBytes(sparse->file.grids[field.grid.source_index], &reserve) ||
+          reserve > SIZE_MAX - bytes_used_ ||
+          (max_bytes_ && reserve > max_bytes_ - std::min(max_bytes_, bytes_used_))) {
+        if (err) *err = field.request.field_prim + ": sparse sampler exceeds the memory budget";
+        return false;
+      }
+      bytes_used_ += reserve;
+      sparse->sampler_reservation = reserve;
       tvdb_error_t e{};
       const tvdb_status_t st =
           tvdb_volume_sampler_create(&sparse->file.grids[field.grid.source_index], &sparse->sampler, &e);
       if (st != TVDB_OK || !sparse->sampler) {
+        bytes_used_ -= sparse->sampler_reservation;
+        sparse->sampler_reservation = 0;
         if (err)
           *err = field.request.field_prim + ": cannot sample the grid: " +
                  (e.message[0] ? e.message : tvdb_status_string(st));
@@ -578,7 +701,8 @@ const std::vector<uint8_t> *FieldCache::NanoVDB(const ResolvedField &field,
   converted.grid_class = field.grid_class;
   FieldMapColumnVector(field, converted.index_to_world);
   const size_t bytes = buffer->size();
-  if (max_bytes_ && bytes_used_ + bytes > max_bytes_) {
+  if (bytes > SIZE_MAX - bytes_used_ ||
+      (max_bytes_ && bytes > max_bytes_ - std::min(max_bytes_, bytes_used_))) {
     if (err) *err = field.request.field_prim + ": NanoVDB grid exceeds the memory budget";
     return nullptr;
   }
@@ -599,19 +723,25 @@ FieldCache::SparseGrid *FieldCache::LoadSparse(const std::string &path, size_t s
     return nullptr;
   }
   std::unique_ptr<SparseGrid> sparse(new SparseGrid);
+  sparse->used = &bytes_used_;
+  sparse->limit = max_bytes_;
+  const tvdb_allocator_t allocator{SparseGrid::Allocate, SparseGrid::Reallocate,
+                                   SparseGrid::Free, sparse.get()};
   tvdb_error_t e{};
   tvdb_status_t st = tvdb_file_open_memory(&sparse->file, file->bytes.data(), file->bytes.size(),
-                                           nullptr, &e);
+                                           &allocator, &e);
   if (st != TVDB_OK) {
-    if (err) *err = "cannot open " + path + ": " + (e.message[0] ? e.message : tvdb_status_string(st));
+    if (err) *err = sparse->exhausted ? path + ": sparse grid exceeds the memory budget" :
+        "cannot open " + path + ": " + (e.message[0] ? e.message : tvdb_status_string(st));
     return nullptr;
   }
   sparse->open = true;
   st = tvdb_read_grid(&sparse->file, source_index, &e);
   if (st != TVDB_OK) {
     if (err)
-      *err = "cannot decode " + path + " grid #" + std::to_string(source_index) + ": " +
-             (e.message[0] ? e.message : tvdb_status_string(st));
+      *err = sparse->exhausted ? path + ": sparse grid exceeds the memory budget" :
+          "cannot decode " + path + " grid #" + std::to_string(source_index) + ": " +
+              (e.message[0] ? e.message : tvdb_status_string(st));
     return nullptr;
   }
   return (sparse_[key] = std::move(sparse)).get();

@@ -93,7 +93,7 @@ bool ReadFileAsset(const std::string &path, std::vector<uint8_t> *bytes, std::st
 
 class FieldCache {
  public:
-  explicit FieldCache(AssetReader reader = ReadFileAsset, size_t max_bytes = 0);
+  explicit FieldCache(AssetReader reader = {}, size_t max_bytes = 0);
   ~FieldCache();
 
   // Select and describe the grid a field names. False with *err (and no
@@ -160,6 +160,7 @@ class FieldCache {
   // threads: every public member locks. Sampling and meshing run unlocked on
   // the sparse grid (read-only once built; entries are never erased).
   mutable std::recursive_mutex mu_;
+  bool default_reader_ = true;
   AssetReader reader_;
   size_t max_bytes_ = 0;
   size_t bytes_used_ = 0;
