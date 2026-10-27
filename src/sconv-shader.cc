@@ -7,6 +7,8 @@
 #include "sconv-detail.hh"
 #include "usdShade.hh"
 
+#include <type_traits>
+
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-parameter"
@@ -158,6 +160,12 @@ bool CrateWriter::AddMaterialOutputSpecs(
   };
 
   if (!add_terminal("outputs:surface", material->surface)) return false;
+  // MaterialX's surface terminal. The reconstruction table lifts it out of the
+  // property map into the typed `mtlxSurface` member (and the pretty-printer
+  // prints it), but it has to be written back here or the connection vanishes
+  // from the crate entirely -- `usdcat` then shows a Material with no
+  // `outputs:mtlx:surface.connect` at all.
+  if (!add_terminal("outputs:mtlx:surface", material->mtlxSurface)) return false;
   if (!add_terminal("outputs:displacement", material->displacement)) return false;
   if (!add_terminal("outputs:volume", material->volume)) return false;
 
@@ -506,8 +514,12 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
 // the stage->USDC write. Mirrors AddUsdPreviewSurfaceInputSpecs, including
 // value+connection coexistence.
 // ============================================================================
-bool CrateWriter::AddMtlxOpenPBRSurfaceInputSpecs(
-    const MtlxOpenPBRSurface* surface, const Path& prim_path, std::string* err) {
+// OpenPBRSurface (UsdShade) and MtlxOpenPBRSurface (MaterialX's
+// ND_open_pbr_surface_surfaceshader) carry the same input members; emit both
+// through one body so neither node type silently drops its typed inputs.
+template <typename SurfaceT>
+bool CrateWriter::AddOpenPBRInputSpecs(
+    const SurfaceT* surface, const Path& prim_path, std::string* err) {
 
   auto add_input_spec = [&](const std::string& input_name, const std::string& type_name,
                             const crate::CrateValue& value,
@@ -589,15 +601,28 @@ bool CrateWriter::AddMtlxOpenPBRSurfaceInputSpecs(
     } else if (_c) { if (!add_input_connection_spec(NAME, TYPENAME, *_c)) return false; } \
     else { if (!add_input_decl(NAME, TYPENAME)) return false; } \
   }
+// Same, for a vector member declared as TypedAttributeWithFallback<Animatable<T>>
+// (the plain OpenPBRSurface declares normal/tangent that way).
+#define EMIT_V3F(NAME, MEMBER, TYPENAME, VT) \
+  if (surface->MEMBER.authored()) { \
+    const std::vector<Path>* _c = MTLX_CONNS(MEMBER); VT _vv; \
+    if (surface->MEMBER.has_value() && surface->MEMBER.get_value().get_scalar(&_vv)) { \
+      value::float3 _f3 = {_vv.x, _vv.y, _vv.z}; crate::CrateValue _v; _v.Set(_f3); \
+      if (!add_input_spec(NAME, TYPENAME, _v, _c)) return false; \
+    } else if (_c) { if (!add_input_connection_spec(NAME, TYPENAME, *_c)) return false; } \
+    else { if (!add_input_decl(NAME, TYPENAME)) return false; } \
+  }
 
   EMIT_F("inputs:base_weight", base_weight)
   EMIT_C3("inputs:base_color", base_color)
+  EMIT_F("inputs:base_roughness", base_roughness)
   EMIT_F("inputs:base_metalness", base_metalness)
   EMIT_F("inputs:base_diffuse_roughness", base_diffuse_roughness)
   EMIT_F("inputs:specular_weight", specular_weight)
   EMIT_C3("inputs:specular_color", specular_color)
   EMIT_F("inputs:specular_roughness", specular_roughness)
   EMIT_F("inputs:specular_ior", specular_ior)
+  EMIT_F("inputs:specular_ior_level", specular_ior_level)
   EMIT_F("inputs:specular_anisotropy", specular_anisotropy)
   EMIT_F("inputs:specular_rotation", specular_rotation)
   EMIT_F("inputs:specular_roughness_anisotropy", specular_roughness_anisotropy)
@@ -616,6 +641,9 @@ bool CrateWriter::AddMtlxOpenPBRSurfaceInputSpecs(
   EMIT_F("inputs:subsurface_scale", subsurface_scale)
   EMIT_F("inputs:subsurface_anisotropy", subsurface_anisotropy)
   EMIT_F("inputs:subsurface_scatter_anisotropy", subsurface_scatter_anisotropy)
+  EMIT_F("inputs:sheen_weight", sheen_weight)
+  EMIT_C3("inputs:sheen_color", sheen_color)
+  EMIT_F("inputs:sheen_roughness", sheen_roughness)
   EMIT_F("inputs:coat_weight", coat_weight)
   EMIT_C3("inputs:coat_color", coat_color)
   EMIT_F("inputs:coat_roughness", coat_roughness)
@@ -634,23 +662,205 @@ bool CrateWriter::AddMtlxOpenPBRSurfaceInputSpecs(
   EMIT_F("inputs:thin_film_weight", thin_film_weight)
   EMIT_F("inputs:emission_luminance", emission_luminance)
   EMIT_C3("inputs:emission_color", emission_color)
-  EMIT_F("inputs:geometry_opacity", geometry_opacity)
-  EMIT_B("inputs:geometry_thin_walled", geometry_thin_walled)
-  EMIT_V3("inputs:geometry_normal", geometry_normal, "normal3f", value::normal3f)
-  EMIT_V3("inputs:geometry_tangent", geometry_tangent, "vector3f", value::vector3f)
-  EMIT_V3("inputs:geometry_coat_normal", geometry_coat_normal, "normal3f", value::normal3f)
-  EMIT_V3("inputs:geometry_coat_tangent", geometry_coat_tangent, "vector3f", value::vector3f)
+  // The two OpenPBR carriers name the geometry block differently: MaterialX
+  // prefixes it (`geometry_opacity`, `geometry_normal`, ...), the plain
+  // OpenPBRSurface does not (`opacity`, `normal`, `tangent`).
+  if constexpr (std::is_same<SurfaceT, MtlxOpenPBRSurface>::value) {
+    EMIT_F("inputs:geometry_opacity", geometry_opacity)
+    EMIT_B("inputs:geometry_thin_walled", geometry_thin_walled)
+    EMIT_V3("inputs:geometry_normal", geometry_normal, "normal3f", value::normal3f)
+    EMIT_V3("inputs:geometry_tangent", geometry_tangent, "vector3f", value::vector3f)
+    EMIT_V3("inputs:geometry_coat_normal", geometry_coat_normal, "normal3f", value::normal3f)
+    EMIT_V3("inputs:geometry_coat_tangent", geometry_coat_tangent, "vector3f", value::vector3f)
+  } else {
+    EMIT_F("inputs:opacity", opacity)
+    EMIT_V3F("inputs:normal", normal, "normal3f", value::normal3f)
+    EMIT_V3F("inputs:tangent", tangent, "vector3f", value::vector3f)
+  }
 
 #undef EMIT_F
 #undef EMIT_C3
 #undef EMIT_B
 #undef EMIT_V3
+#undef EMIT_V3F
 #undef MTLX_CONNS
 
   // Terminal output (token outputs:surface) — no value, just the declaration.
   if (surface->surface.authored()) {
     Attribute a; a.set_type_name("token");
     ConvertAttributeToFields("outputs:surface", a, prim_path, false, err);
+  }
+
+  return true;
+}
+
+bool CrateWriter::AddMtlxOpenPBRSurfaceInputSpecs(
+    const MtlxOpenPBRSurface* surface, const Path& prim_path, std::string* err) {
+  return AddOpenPBRInputSpecs(surface, prim_path, err);
+}
+
+bool CrateWriter::AddOpenPBRSurfaceInputSpecs(
+    const OpenPBRSurface* surface, const Path& prim_path, std::string* err) {
+  return AddOpenPBRInputSpecs(surface, prim_path, err);
+}
+
+// ============================================================================
+// MaterialX standard_surface Shader Input Specs
+// ============================================================================
+//
+// `MtlxAutodeskStandardSurface` covers both info:ids that reconstruct into it
+// (`MtlxAutodeskStandardSurface` and MaterialX's
+// `ND_standard_surface_surfaceshader`). Its typed inputs were never written
+// back: the reconstruction table consumes them out of the props map, so
+// without this writer every `inputs:*` of a standard_surface shader and its
+// `token outputs:out` disappeared from the crate (usdcat then showed an empty
+// Shader). Names/types follow the Autodesk standard_surface definition, which
+// is also what usdMtlx-write.cc emits for the same struct.
+bool CrateWriter::AddMtlxAutodeskStandardSurfaceInputSpecs(
+    const MtlxAutodeskStandardSurface* surface, const Path& prim_path,
+    std::string* err) {
+
+  auto add_input_spec = [&](const std::string& input_name, const std::string& type_name,
+                            const crate::CrateValue& value,
+                            const std::vector<Path>* connections) -> bool {
+    Path input_path = prim_path.AppendProperty(input_name);
+    crate::FieldValuePairVector input_fields;
+    crate::CrateValue type_value; value::token type_tok(type_name); type_value.Set(type_tok);
+    input_fields.push_back({"typeName", type_value});
+    input_fields.push_back({"default", value});
+    if (connections && !connections->empty()) {
+      ListOp<Path> conn_listop; conn_listop.ClearAndMakeExplicit();
+      conn_listop.SetExplicitItems(*connections);
+      crate::CrateValue conn_value; conn_value.Set(conn_listop);
+      input_fields.push_back({"connectionPaths", conn_value});
+    }
+    return AddSpec(input_path, SpecType::Attribute, input_fields, err);
+  };
+  auto add_input_connection_spec = [&](const std::string& input_name,
+                                       const std::string& type_name,
+                                       const std::vector<Path>& conn_paths) -> bool {
+    Path input_path = prim_path.AppendProperty(input_name);
+    crate::FieldValuePairVector input_fields;
+    crate::CrateValue type_value; value::token type_tok(type_name); type_value.Set(type_tok);
+    input_fields.push_back({"typeName", type_value});
+    ListOp<Path> conn_listop; conn_listop.ClearAndMakeExplicit();
+    conn_listop.SetExplicitItems(conn_paths);
+    crate::CrateValue conn_value; conn_value.Set(conn_listop);
+    input_fields.push_back({"connectionPaths", conn_value});
+    return AddSpec(input_path, SpecType::Attribute, input_fields, err);
+  };
+  // Declared-but-value-less input (`float inputs:coat`), kept as typeName only.
+  auto add_input_decl = [&](const std::string& input_name, const std::string& type_name) -> bool {
+    Path input_path = prim_path.AppendProperty(input_name);
+    crate::FieldValuePairVector input_fields;
+    crate::CrateValue type_value; value::token type_tok(type_name); type_value.Set(type_tok);
+    input_fields.push_back({"typeName", type_value});
+    return AddSpec(input_path, SpecType::Attribute, input_fields, err);
+  };
+
+#define SAS_CONNS(MEMBER) (surface->MEMBER.has_connections() ? &surface->MEMBER.connections() : nullptr)
+#define SAS_EMIT_F(NAME, MEMBER) \
+  if (surface->MEMBER.authored()) { \
+    const std::vector<Path>* _c = SAS_CONNS(MEMBER); float _s = 0.0f; \
+    if (surface->MEMBER.has_value() && surface->MEMBER.get_value().get_scalar(&_s)) { \
+      crate::CrateValue _v; _v.Set(_s); \
+      if (!add_input_spec(NAME, "float", _v, _c)) return false; \
+    } else if (_c) { if (!add_input_connection_spec(NAME, "float", *_c)) return false; } \
+    else { if (!add_input_decl(NAME, "float")) return false; } \
+  }
+#define SAS_EMIT_C3(NAME, MEMBER) \
+  if (surface->MEMBER.authored()) { \
+    const std::vector<Path>* _c = SAS_CONNS(MEMBER); value::color3f _col; \
+    if (surface->MEMBER.has_value() && surface->MEMBER.get_value().get_scalar(&_col)) { \
+      value::float3 _f3 = {_col.r, _col.g, _col.b}; crate::CrateValue _v; _v.Set(_f3); \
+      if (!add_input_spec(NAME, "color3f", _v, _c)) return false; \
+    } else if (_c) { if (!add_input_connection_spec(NAME, "color3f", *_c)) return false; } \
+    else { if (!add_input_decl(NAME, "color3f")) return false; } \
+  }
+#define SAS_EMIT_B(NAME, MEMBER) \
+  if (surface->MEMBER.authored()) { \
+    const std::vector<Path>* _c = SAS_CONNS(MEMBER); bool _b = false; \
+    if (surface->MEMBER.has_value() && surface->MEMBER.get_value().get_scalar(&_b)) { \
+      crate::CrateValue _v; _v.Set(_b); \
+      if (!add_input_spec(NAME, "bool", _v, _c)) return false; \
+    } else if (_c) { if (!add_input_connection_spec(NAME, "bool", *_c)) return false; } \
+    else { if (!add_input_decl(NAME, "bool")) return false; } \
+  }
+#define SAS_EMIT_V3(NAME, MEMBER, TYPENAME, VT) \
+  if (surface->MEMBER.authored()) { \
+    const std::vector<Path>* _c = SAS_CONNS(MEMBER); auto _ov = surface->MEMBER.get_value(); VT _vv; \
+    if (_ov.has_value() && _ov.value().get_scalar(&_vv)) { \
+      value::float3 _f3 = {_vv.x, _vv.y, _vv.z}; crate::CrateValue _v; _v.Set(_f3); \
+      if (!add_input_spec(NAME, TYPENAME, _v, _c)) return false; \
+    } else if (_c) { if (!add_input_connection_spec(NAME, TYPENAME, *_c)) return false; } \
+    else { if (!add_input_decl(NAME, TYPENAME)) return false; } \
+  }
+
+  SAS_EMIT_F("inputs:base", base)
+  SAS_EMIT_C3("inputs:base_color", base_color)
+  SAS_EMIT_F("inputs:diffuse_roughness", diffuse_roughness)
+  SAS_EMIT_F("inputs:metalness", metalness)
+
+  SAS_EMIT_F("inputs:specular", specular)
+  SAS_EMIT_C3("inputs:specular_color", specular_color)
+  SAS_EMIT_F("inputs:specular_roughness", specular_roughness)
+  SAS_EMIT_F("inputs:specular_IOR", specular_IOR)
+  SAS_EMIT_F("inputs:specular_anisotropy", specular_anisotropy)
+  SAS_EMIT_F("inputs:specular_rotation", specular_rotation)
+
+  SAS_EMIT_F("inputs:transmission", transmission)
+  SAS_EMIT_C3("inputs:transmission_color", transmission_color)
+  SAS_EMIT_F("inputs:transmission_depth", transmission_depth)
+  SAS_EMIT_C3("inputs:transmission_scatter", transmission_scatter)
+  SAS_EMIT_F("inputs:transmission_scatter_anisotropy", transmission_scatter_anisotropy)
+  SAS_EMIT_F("inputs:transmission_dispersion", transmission_dispersion)
+  SAS_EMIT_F("inputs:transmission_extra_roughness", transmission_extra_roughness)
+
+  SAS_EMIT_F("inputs:subsurface", subsurface)
+  SAS_EMIT_C3("inputs:subsurface_color", subsurface_color)
+  SAS_EMIT_C3("inputs:subsurface_radius", subsurface_radius)
+  SAS_EMIT_F("inputs:subsurface_scale", subsurface_scale)
+  SAS_EMIT_F("inputs:subsurface_anisotropy", subsurface_anisotropy)
+
+  SAS_EMIT_F("inputs:sheen", sheen)
+  SAS_EMIT_C3("inputs:sheen_color", sheen_color)
+  SAS_EMIT_F("inputs:sheen_roughness", sheen_roughness)
+
+  SAS_EMIT_F("inputs:coat", coat)
+  SAS_EMIT_C3("inputs:coat_color", coat_color)
+  SAS_EMIT_F("inputs:coat_roughness", coat_roughness)
+  SAS_EMIT_F("inputs:coat_anisotropy", coat_anisotropy)
+  SAS_EMIT_F("inputs:coat_rotation", coat_rotation)
+  SAS_EMIT_F("inputs:coat_IOR", coat_IOR)
+  SAS_EMIT_F("inputs:coat_affect_color", coat_affect_color)
+  SAS_EMIT_F("inputs:coat_affect_roughness", coat_affect_roughness)
+
+  SAS_EMIT_F("inputs:thin_film_thickness", thin_film_thickness)
+  SAS_EMIT_F("inputs:thin_film_IOR", thin_film_IOR)
+
+  SAS_EMIT_F("inputs:emission", emission)
+  SAS_EMIT_C3("inputs:emission_color", emission_color)
+  SAS_EMIT_C3("inputs:opacity", opacity)
+  SAS_EMIT_B("inputs:thin_walled", thin_walled)
+
+  SAS_EMIT_V3("inputs:normal", normal, "normal3f", value::normal3f)
+  SAS_EMIT_V3("inputs:tangent", tangent, "vector3f", value::vector3f)
+  SAS_EMIT_V3("inputs:coat_normal", coat_normal, "normal3f", value::normal3f)
+
+  SAS_EMIT_F("inputs:displacement", displacement)
+
+#undef SAS_EMIT_F
+#undef SAS_EMIT_C3
+#undef SAS_EMIT_B
+#undef SAS_EMIT_V3
+#undef SAS_CONNS
+
+  // Terminal output (token outputs:out) — declaration only.
+  if (surface->out.authored()) {
+    Attribute a; a.set_type_name("token");
+    if (!ConvertAttributeToFields("outputs:out", a, prim_path, false, err)) {
+      return false;
+    }
   }
 
   return true;

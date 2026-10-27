@@ -87,6 +87,14 @@ const std::map<std::string, Property> *GetShaderNodeProps(
   GET_SHADER_NODE_PROPS(UsdPrimvarReader_matrix)
   GET_SHADER_NODE_PROPS(OpenPBRSurface)
   GET_SHADER_NODE_PROPS(MtlxOpenPBRSurface)
+  // MaterialX standard_surface. Its `props` map holds every authored input
+  // that is not a typed field AND the `outputs:surface`/`outputs:out`
+  // declarations; without this entry they were silently dropped on write.
+  GET_SHADER_NODE_PROPS(MtlxAutodeskStandardSurface)
+  GET_SHADER_NODE_PROPS(MtlxUniformEdf)
+  GET_SHADER_NODE_PROPS(MtlxConicalEdf)
+  GET_SHADER_NODE_PROPS(MtlxMeasuredEdf)
+  GET_SHADER_NODE_PROPS(MtlxLight)
   GET_SHADER_NODE_PROPS(ShaderNode)  // generic fallback (info:id-only shaders)
 #undef GET_SHADER_NODE_PROPS
   return nullptr;
@@ -1248,6 +1256,19 @@ bool CrateWriter::ConvertSinglePrim(
         // MaterialX ND_open_pbr_surface_surfaceshader -> typed MtlxOpenPBRSurface
         if (!AddMtlxOpenPBRSurfaceInputSpecs(mtlx_surface, prim_path, err)) {
           if (err) *err = "Failed to add MtlxOpenPBRSurface input specs: " + *err;
+          return false;
+        }
+      } else if (auto* open_pbr = shader->value.as<OpenPBRSurface>()) {
+        // Plain OpenPBRSurface node (same input set as the MaterialX carrier).
+        if (!AddOpenPBRSurfaceInputSpecs(open_pbr, prim_path, err)) {
+          if (err) *err = "Failed to add OpenPBRSurface input specs: " + *err;
+          return false;
+        }
+      } else if (auto* mtlx_std = shader->value.as<MtlxAutodeskStandardSurface>()) {
+        // MaterialX standard_surface (`MtlxAutodeskStandardSurface` and
+        // `ND_standard_surface_surfaceshader`).
+        if (!AddMtlxAutodeskStandardSurfaceInputSpecs(mtlx_std, prim_path, err)) {
+          if (err) *err = "Failed to add MtlxAutodeskStandardSurface input specs: " + *err;
           return false;
         }
       }

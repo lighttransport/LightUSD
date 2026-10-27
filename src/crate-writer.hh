@@ -641,6 +641,20 @@ private:
   /// this the typed MaterialX OpenPBR inputs are dropped on stage->USDC write.
   bool AddMtlxOpenPBRSurfaceInputSpecs(const MtlxOpenPBRSurface* surface, const Path& prim_path, std::string* err);
 
+  /// Same for the plain (non-MaterialX) OpenPBRSurface node. It carries the
+  /// identical input set, so both share AddOpenPBRInputSpecs.
+  bool AddOpenPBRSurfaceInputSpecs(const OpenPBRSurface* surface, const Path& prim_path, std::string* err);
+
+  /// Shared body of the two writers above (defined in sconv-shader.cc).
+  template <typename SurfaceT>
+  bool AddOpenPBRInputSpecs(const SurfaceT* surface, const Path& prim_path,
+                            std::string* err);
+
+  /// Add MaterialX standard_surface shader input specs (info:id
+  /// `ND_standard_surface_surfaceshader` and `MtlxAutodeskStandardSurface`).
+  bool AddMtlxAutodeskStandardSurfaceInputSpecs(const MtlxAutodeskStandardSurface* surface,
+                                                const Path& prim_path, std::string* err);
+
   /// Add material binding relationships as separate relationship specs (called after Prim spec is added)
   /// Handles material:binding, material:binding:preview, and material:binding:full relationships
   bool AddMaterialBindingSpecs(const Prim& prim, const Path& prim_path, std::string* err);
