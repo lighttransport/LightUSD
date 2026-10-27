@@ -2309,6 +2309,10 @@ if(LIGHTUSD_BUILD_TESTS)
 
 
   if(TARGET lightusd_tinyvdb)
+    add_executable(test-tet-float-range tests/volumetric/tet-float-range.c src/lz4/lz4.c)
+    target_link_libraries(test-tet-float-range PRIVATE lightusd_tinyvdb)
+    add_test(NAME volumetric-tet-float-range COMMAND test-tet-float-range)
+    set_tests_properties(volumetric-tet-float-range PROPERTIES LABELS "cpu;volume;security")
     add_executable(test-graded-stencil tests/volumetric/test-graded-stencil.c src/lz4/lz4.c)
     target_link_libraries(test-graded-stencil PRIVATE lightusd_tinyvdb)
     add_test(NAME volumetric-graded-stencil COMMAND test-graded-stencil)

@@ -1,6 +1,7 @@
 #include "tinyvdb_tetmesh.h"
 
 #include <math.h>
+#include <float.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -218,6 +219,28 @@ static double tet_volume6(const double *p0, const double *p1, const double *p2,
   const double c[3] = {p3[0] - p0[0], p3[1] - p0[1], p3[2] - p0[2]};
   return a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) +
          a[2] * (b[0] * c[1] - b[1] * c[0]);
+}
+/* The public mesh stores floats. A valid double-precision tet can overflow,
+ * collapse, or invert when converted, especially at large world offsets. */
+static tvdb_status_t tet_validate_float_output(const tet_builder *B, tvdb_tet_mesh *out,
+                                                tvdb_error_t *err) {
+  for (size_t i = 0; i < 3 * B->vertex_count; ++i) {
+    double x = B->positions[i];
+    if (!isfinite(x) || fabs(x) > FLT_MAX)
+      return tet_error(err, TVDB_ERROR_INVALID_DATA, "tet vertex exceeds float range");
+    out->positions[i] = (float)x;
+  }
+  for (size_t i = 0; i < B->tet_count; ++i) {
+    double p[4][3];
+    for (size_t j = 0; j < 4; ++j) {
+      size_t vertex = (size_t)B->tets[4*i+j];
+      for (size_t k = 0; k < 3; ++k) p[j][k] = out->positions[3*vertex+k];
+    }
+    double volume = tet_volume6(p[0], p[1], p[2], p[3]);
+    if (!isfinite(volume) || !(volume > 0))
+      return tet_error(err, TVDB_ERROR_INVALID_DATA, "tet collapses or inverts at float precision");
+  }
+  return TVDB_OK;
 }
 static void tet_emit(tet_builder *B, tet_point p0, tet_point p1, tet_point p2,
                      tet_point p3) {
@@ -923,7 +946,8 @@ static tvdb_status_t tet_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
       st = tet_error(err, TVDB_ERROR_OUT_OF_MEMORY, "tet output allocation failed");
       goto done;
     }
-    for (size_t i = 0; i < 3 * B.vertex_count; ++i) result.positions[i] = (float)B.positions[i];
+    st = tet_validate_float_output(&B, &result, err);
+    if (st != TVDB_OK) { tvdb_tet_mesh_free(&result); goto done; }
     result.tets = B.tets;
     B.tets = NULL;
     st = tet_boundary(result.tets, result.tet_count, result.vertex_count, pool,
@@ -1053,7 +1077,8 @@ tvdb_status_t tvdb_tet_graded_stencil(const tvdb_tet_refine_graph *graph,
       st = tet_error(err, TVDB_ERROR_OUT_OF_MEMORY, "graded output allocation failed");
       goto done_graded;
     }
-    for (size_t i = 0; i < 3*B.vertex_count; ++i) result.positions[i] = (float)B.positions[i];
+    st = tet_validate_float_output(&B, &result, err);
+    if (st != TVDB_OK) { tvdb_tet_mesh_free(&result); goto done_graded; }
     result.tets = B.tets; B.tets = NULL;
     st = tet_boundary(result.tets, result.tet_count, result.vertex_count, NULL,
                       &result.boundary, &result.boundary_count, err);

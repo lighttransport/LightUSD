@@ -63,7 +63,9 @@ typedef int (*tvdb_sdf_sample_fn)(const double p[3], float* value, void* user);
 
 /* Interior of an analytic or caller-provided field over a world box that must
  * contain the whole interior. Replaces out (an initialized, possibly empty
- * mesh) on success; failure preserves it. */
+ * mesh) on success; failure preserves it. Output coordinates are floats;
+ * coordinates outside float range or tetrahedra that collapse or invert
+ * after conversion are rejected with TVDB_ERROR_INVALID_DATA. */
 tvdb_status_t tvdb_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void* user,
                                    const double bbox_min[3],
                                    const double bbox_max[3],

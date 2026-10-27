@@ -22,7 +22,9 @@ typedef struct {
  * called at edge midpoints, vertices, and tetrahedron centers. This path is
  * experimental: features smaller than the requested resolution may be missed,
  * dihedral bounds are not guaranteed, and output volume is approximate.
- * Execution is serial and deterministic; on failure, out is preserved. */
+ * Output coordinates are floats; overflow or a tetrahedron that collapses or
+ * inverts after conversion is rejected. Execution is serial and deterministic;
+ * on failure, out is preserved. */
 tvdb_status_t tvdb_sdf_to_tet_mesh_graded(tvdb_sdf_sample_fn sample, void *user,
     const double bbox_min[3], const double bbox_max[3],
     const tvdb_graded_stuffing_options_t *options, tvdb_tet_mesh *out,

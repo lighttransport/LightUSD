@@ -1772,6 +1772,10 @@ bash tests/volumetric/compare-graded-identity.sh \
 This compares counts and all vertex, tetrahedron and boundary array bytes.
 The refinement suite also tests a high-valence edge; these three outputs do
 not cover every topology or numeric scale.
+The `volumetric-tet-float-range` CPU test checks that both uniform and graded
+stuffing reject coordinates outside float range and tetrahedra that collapse
+when a small object is represented at a large world offset, while preserving
+the caller's existing output.
 
 For the corresponding single-thread analytic sphere instruction profile:
 
