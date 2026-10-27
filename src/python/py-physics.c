@@ -2,6 +2,7 @@
 #include "lightusd-render-c.h"
 #include "lightusd-physics-c.h"
 #include "next/c/lightusd-core-c.h"
+#include "next/c/generated-schema-tables.h"
 #include "py-internal.h"
 
 static int put(PyObject* dict, const char* key, PyObject* value) {
@@ -16,6 +17,11 @@ static PyObject* vector3(const float* v) {
 static PyObject* schema_text(lu_view text) {
   lightusd_sv view = {text.data, text.len};
   return lightusd_sv_to_str(view);
+}
+
+PyObject* lightusd_physics_schema_provenance(PyObject* module, PyObject* noargs) {
+  (void)module; (void)noargs;
+  return PyUnicode_FromString(lu_validation_schema_provenance);
 }
 
 PyObject* lightusd_physics_schema_definitions(PyObject* module, PyObject* noargs) {

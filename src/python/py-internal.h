@@ -87,6 +87,7 @@ PyObject* lightusd_import_report_object(lightusd_string*);
 PyObject* lightusd_query_physics(PyObject*, PyObject*, PyObject*);
 PyObject* lightusd_convert_units(PyObject*, PyObject*, PyObject*);
 PyObject* lightusd_physics_schema_definitions(PyObject*, PyObject*);
+PyObject* lightusd_physics_schema_provenance(PyObject*, PyObject*);
 PyObject* lightusd_validate_physics(PyObject*, PyObject*, PyObject*);
 
 int lightusd_numbers_from_python(lightusd_state*, lightusd_type, uint8_t array,

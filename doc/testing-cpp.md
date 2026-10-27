@@ -2419,6 +2419,8 @@ engine properties, dictionary metadata, large array views, stage edits/closure
 and invalid arguments. The new C header is also valid C11.
 Generated standard physics descriptor cases verify uniform/varying authoring,
 allowed-token metadata and drive/limit instance namespaces. The descriptor
+tests also compare immutable OpenUSD, MuJoCo and Newton version and commit
+provenance against the generated schema manifests. The descriptor
 lookups also link from a pure C11 consumer of `lightusd_core_c`, without the
 C++ validation engine.
 

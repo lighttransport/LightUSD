@@ -371,6 +371,8 @@ static PyMethodDef module_methods[] = {
      METH_VARARGS | METH_KEYWORDS, "Validate physics through the native semantic validator."},
     {"_physics_schema_definitions", lightusd_physics_schema_definitions, METH_NOARGS,
      "Return generated native UsdPhysics schema/property descriptors."},
+    {"_physics_schema_provenance", lightusd_physics_schema_provenance, METH_NOARGS,
+     "Return generated schema provenance as JSON."},
     {"_query_physics", (PyCFunction)(void (*)(void))lightusd_query_physics,
      METH_VARARGS | METH_KEYWORDS, "Query owned authored physics values through the native snapshot API."},
     {"_convert_units", (PyCFunction)(void (*)(void))lightusd_convert_units,
