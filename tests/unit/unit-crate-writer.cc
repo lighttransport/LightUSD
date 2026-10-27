@@ -6820,7 +6820,12 @@ void crate_writer_compressed_uint_array_roundtrip_test(void) {
   cleanup_file(filename);
 }
 
-void crate_writer_compressed_string_token_asset_array_test(void) {
+// string[]/token[]/asset[] are stored as uncompressed StringIndex/TokenIndex
+// arrays (see WriteIndexArray32 in crate-writer-values.cc): OpenUSD never
+// integer-compresses those columns, and a compressed stream decodes as garbage
+// in pxr for any array of >= 16 elements. This test locks that encoding in:
+// the arrays must round-trip *and* stay uncompressed.
+void crate_writer_string_token_asset_index_array_test(void) {
   std::string filename = get_temp_filename("test_compressed_string_token_asset_array");
   std::string err;
 
@@ -6931,9 +6936,9 @@ void crate_writer_compressed_string_token_asset_array_test(void) {
   bool found_string_spec = false;
   bool found_token_spec = false;
   bool found_asset_spec = false;
-  bool compressed_string = false;
-  bool compressed_token = false;
-  bool compressed_asset = false;
+  bool uncompressed_string = false;
+  bool uncompressed_token = false;
+  bool uncompressed_asset = false;
 
   auto compare_asset_paths = [](const std::vector<value::AssetPath>& lhs,
                                const std::vector<value::AssetPath>& rhs) {
@@ -7041,21 +7046,22 @@ void crate_writer_compressed_string_token_asset_array_test(void) {
         continue;
       }
       TEST_CHECK(field.value_rep.IsArray());
-      TEST_CHECK(field.value_rep.IsCompressed());
+      // Index arrays are never integer-compressed (pxr compatibility).
+      TEST_CHECK(field.value_rep.IsCompressed() == false);
       if (kind == ArrayKind::kString &&
           field.value_rep.IsArray() &&
-          field.value_rep.IsCompressed()) {
-        compressed_string = true;
+          !field.value_rep.IsCompressed()) {
+        uncompressed_string = true;
       }
       if (kind == ArrayKind::kToken &&
           field.value_rep.IsArray() &&
-          field.value_rep.IsCompressed()) {
-        compressed_token = true;
+          !field.value_rep.IsCompressed()) {
+        uncompressed_token = true;
       }
       if (kind == ArrayKind::kAsset &&
           field.value_rep.IsArray() &&
-          field.value_rep.IsCompressed()) {
-        compressed_asset = true;
+          !field.value_rep.IsCompressed()) {
+        uncompressed_asset = true;
       }
     }
   }
@@ -7063,9 +7069,9 @@ void crate_writer_compressed_string_token_asset_array_test(void) {
   TEST_CHECK(found_string_spec);
   TEST_CHECK(found_token_spec);
   TEST_CHECK(found_asset_spec);
-  TEST_CHECK(compressed_string);
-  TEST_CHECK(compressed_token);
-  TEST_CHECK(compressed_asset);
+  TEST_CHECK(uncompressed_string);
+  TEST_CHECK(uncompressed_token);
+  TEST_CHECK(uncompressed_asset);
 
   Stage loaded_stage;
   std::string warn;

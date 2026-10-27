@@ -434,7 +434,7 @@ TEST_LIST = {
   { "crate_writer_compression_test", crate_writer_compression_test },
   { "crate_writer_compressed_int_array_roundtrip_test", crate_writer_compressed_int_array_roundtrip_test },
   { "crate_writer_compressed_uint_array_roundtrip_test", crate_writer_compressed_uint_array_roundtrip_test },
-  { "crate_writer_compressed_string_token_asset_array_test", crate_writer_compressed_string_token_asset_array_test },
+  { "crate_writer_string_token_asset_index_array_test", crate_writer_string_token_asset_index_array_test },
   { "crate_reader_parallel_inlined_fieldsets_test", crate_reader_parallel_inlined_fieldsets_test },
   { "crate_writer_specializes_test", crate_writer_specializes_test },
   { "crate_writer_nan_dedup_test", crate_writer_nan_dedup_test },
