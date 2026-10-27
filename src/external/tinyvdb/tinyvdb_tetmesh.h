@@ -53,8 +53,9 @@ typedef struct {
 } tvdb_stuffing_options_t;
 
 /* Field sampler for tvdb_sdf_to_tet_mesh; must be thread-safe and return a
- * finite value at every lattice vertex inside [bbox_min, bbox_max] padded by
- * one spacing. Return nonzero on success. The field must be a signed distance
+ * finite value at every lattice vertex and any tetrahedron center queried
+ * inside [bbox_min, bbox_max] padded by one spacing. Return nonzero on success.
+ * The field must be a signed distance
  * (1-Lipschitz) function: undirected distances in world units, negative
  * inside. The warp pass relies on that to skip vertices that no lattice edge
  * can cross. */

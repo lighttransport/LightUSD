@@ -2309,6 +2309,11 @@ if(LIGHTUSD_BUILD_TESTS)
 
 
   if(TARGET lightusd_tinyvdb)
+    add_executable(test-tet-center-sample tests/volumetric/tet-center-sample.c
+      src/lz4/lz4.c)
+    target_link_libraries(test-tet-center-sample PRIVATE lightusd_tinyvdb)
+    add_test(NAME volumetric-tet-center-sample COMMAND test-tet-center-sample)
+    set_tests_properties(volumetric-tet-center-sample PROPERTIES LABELS "cpu;volume")
     # The graded background is experimental and not wired into stuffing yet.
     add_executable(test-graded-refine tests/volumetric/test-graded-refine.c
       src/external/tinyvdb/tinyvdb_tet_refine.c)

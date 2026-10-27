@@ -299,7 +299,11 @@ static void tet_stencil(tet_builder *B, const size_t id[4],
     for (int i = 0; i < 4; ++i)
       for (int k = 0; k < 3; ++k) c[k] += 0.25 * B->pos[3 * id[i] + k];
     float f = 0;
-    if (!sample(c, &f, user) || !(f < B->iso)) return;
+    if (!sample(c, &f, user) || !isfinite(f)) {
+      B->st = tet_error(B->err, TVDB_ERROR_INVALID_DATA, "stuffing sample failed");
+      return;
+    }
+    if (!(f < B->iso)) return;
   }
   if (np == 0) {
     tet_emit(B, tet_lattice_point(B, id[0]), tet_lattice_point(B, id[1]),
