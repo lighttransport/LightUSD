@@ -1425,8 +1425,10 @@ int64_t CrateWriter::WriteValueBody(const crate::CrateValue& value,
     for (const auto& str : *string_array) {
       idxs.push_back(GetOrCreateString(str).value);
     }
-    if (WriteCompressedArray32(reinterpret_cast<const uint32_t *>(idxs.data()), count,
-                              "string", is_compressed, err) < 0) {
+    // Index array: pxr never compresses string/token/asset index arrays (see
+    // WriteIndexArray32); a compressed stream here decodes as garbage in pxr
+    // for every array of >= 16 elements.
+    if (WriteIndexArray32(idxs.data(), count, "string", err) < 0) {
       return -1;
     }
   }
@@ -1445,8 +1447,7 @@ int64_t CrateWriter::WriteValueBody(const crate::CrateValue& value,
     for (const auto& ap : *asset_array) {
       idxs.push_back(GetOrCreateString(ap.GetAssetPath()).value);
     }
-    if (WriteCompressedArray32(reinterpret_cast<const uint32_t *>(idxs.data()), count,
-                              "assetPath", is_compressed, err) < 0) {
+    if (WriteIndexArray32(idxs.data(), count, "assetPath", err) < 0) {
       return -1;
     }
   }
@@ -1512,8 +1513,7 @@ int64_t CrateWriter::WriteValueBody(const crate::CrateValue& value,
     for (const auto& tok : *token_array) {
       idxs.push_back(GetOrCreateToken(tok.str()).value);
     }
-    if (WriteCompressedArray32(reinterpret_cast<const uint32_t *>(idxs.data()), count,
-                              "token", is_compressed, err) < 0) {
+    if (WriteIndexArray32(idxs.data(), count, "token", err) < 0) {
       return -1;
     }
   }

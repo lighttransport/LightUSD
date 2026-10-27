@@ -2588,6 +2588,17 @@ crate::FieldSetIndex CrateWriter::GetOrCreateFieldSet(const std::vector<crate::F
 // Compressed Array Helpers
 // ============================================================================
 
+int64_t CrateWriter::WriteIndexArray32(
+    const uint32_t* data, uint64_t count, const char* typeName, std::string* err) {
+  for (uint64_t i = 0; i < count; ++i) {
+    if (!Write(data[i])) {
+      if (err) { *err = "Failed to write "; *err += typeName; *err += " array element"; }
+      return -1;
+    }
+  }
+  return 0;
+}
+
 int64_t CrateWriter::WriteCompressedArray32(
     const uint32_t* data, uint64_t count,
     const char* typeName, bool* is_compressed, std::string* err) {

@@ -967,6 +967,20 @@ private:
   bool CompressData(const char* input, size_t inputSize,
                     std::vector<char>* compressed, std::string* err);
 
+  /// Write an uncompressed uint32 array (count + raw elements).
+  ///
+  /// Required for the "index array" value types -- string[], asset[] and
+  /// token[] store table indices, and pxr's writer only ever compresses
+  /// *numeric* element types: `_WritePossiblyCompressedArray` has overloads
+  /// for int/uint/int64/uint64 and for half/float/double, and everything else
+  /// (including TfToken / std::string / SdfAssetPath arrays) falls through to
+  /// `_WriteUncompressedArray`. pxr's reader mirrors that: those types ignore
+  /// the ValueRep compressed bit, so a Usd_IntegerCompression stream there is
+  /// read back as raw indices and silently corrupts every array of >= 16
+  /// strings/tokens/assets.
+  int64_t WriteIndexArray32(const uint32_t* data, uint64_t count,
+                            const char* typeName, std::string* err);
+
   /// Write a compressed integer array (32-bit) using Usd_IntegerCompression.
   /// If compression fails or count < 16, writes uncompressed.
   /// Sets `is_compressed` to match the bytes actually written.
