@@ -1032,6 +1032,7 @@ attributes only), or `BOTH` (default — both).
 | Rigid body (active) | `PhysicsRigidBodyAPI` + `PhysicsMassAPI` | `physics:rigidBodyEnabled`, `physics:mass` |
 | Rigid body (passive) | `PhysicsRigidBodyAPI` | `physics:rigidBodyEnabled=false`, `physics:kinematicEnabled` |
 | Collision shape | `PhysicsCollisionAPI` | applied to mesh prims |
+| Collision collections | `PhysicsCollisionGroup` | Bodies with disjoint Blender masks are filtered; each exported body also stores its mask for Blender re-import |
 | Friction / restitution | `PhysicsMaterialAPI` | `physics:staticFriction`, `physics:dynamicFriction`, `physics:restitution` |
 | Hinge / Slider / Fixed / Point constraint | `PhysicsRevolute` / `Prismatic` / `Fixed` / `SphericalJoint` | `physics:axis`, limits, `physics:body0/1`, `physics:localPos0/1`, `physics:localRot0/1` |
 | Generic spring | `PhysicsJoint` with per-axis `PhysicsDriveAPI` and `PhysicsLimitAPI` | Enabled translation and rotation drives and limits; angular limits use degrees |
@@ -1049,8 +1050,11 @@ The addon writes the MjcPhysics names above as they are; MuJoCo 3.16's decoder
 reads several of them as deprecated aliases (see the deprecation note before
 section 1).
 
-**Limitations:** soft body and cloth are not exported; collision groups are not
-mapped; spring behavior is an approximation across different physics solvers,
+**Limitations:** soft body and cloth are not exported. Collision filtering is
+exported for up to 512 distinct Blender masks; beyond that limit the addon logs
+a warning and omits USD filters while retaining the per-body masks. Import
+restores those authored Blender masks; it does not infer masks from arbitrary
+USD collision groups. Spring behavior is an approximation across different physics solvers,
 and MuJoCo-only mode retains the legacy X-axis scalar spring mapping. MuJoCo
 actuators and tendons have no Blender equivalent (preserved only if authored
 directly in the USD). Blender runtime roundtrip testing remains outstanding.

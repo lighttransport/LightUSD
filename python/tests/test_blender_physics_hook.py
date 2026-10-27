@@ -163,3 +163,52 @@ def test_export_joint_skips_singular_body_transform(hook):
     obj = SimpleNamespace(name='joint', matrix_world=ZMatrix(), rigid_body_constraint=constraint)
     module._export_constraint(stage, obj, 'USD')
     assert not stage.GetPrimAtPath('/Joints/joint')
+
+
+def test_collision_collection_masks_export_and_import(hook):
+    module, bpy = hook
+    stage = Usd.Stage.CreateInMemory()
+    masks = [0, 1, 2, 3, 1]
+    objects = []
+    for index, mask in enumerate(masks):
+        name = f'Body{index}'
+        prim = stage.DefinePrim('/' + name, 'Cube')
+        UsdPhysics.RigidBodyAPI.Apply(prim)
+        UsdPhysics.CollisionAPI.Apply(prim)
+        flags = [bool(mask & (1 << i)) for i in range(20)]
+        objects.append(SimpleNamespace(name=name, rigid_body=SimpleNamespace(collision_collections=flags)))
+    module._export_collision_groups(stage, objects)
+    for mask in set(masks):
+        group = UsdPhysics.CollisionGroup.Get(stage, f'/BlenderPhysicsCollisionGroups/mask_{mask:05x}')
+        assert group
+        members = {str(p) for p in group.GetCollidersCollectionAPI().GetIncludesRel().GetTargets()}
+        assert members == {f'/Body{i}' for i, m in enumerate(masks) if m == mask}
+        assert group.GetCollidersCollectionAPI().GetExpansionRuleAttr().Get() == 'explicitOnly'
+        filtered = {str(p) for p in group.GetFilteredGroupsRel().GetTargets()}
+        for other in set(masks):
+            assert (f'/BlenderPhysicsCollisionGroups/mask_{other:05x}' in filtered) == (mask & other == 0)
+    bodies = module._read_usd_physics(stage, 'USD')['bodies']
+    assert {name: data['collision_collections'] for name, data in bodies} == {
+        obj.name: obj.rigid_body.collision_collections for obj in objects}
+    imported = {obj.name: SimpleNamespace(rigid_body=SimpleNamespace()) for obj in objects}
+    bpy.data = SimpleNamespace(objects=imported)
+    bpy.context = SimpleNamespace(scene=SimpleNamespace(),
+                                  view_layer=SimpleNamespace(objects=SimpleNamespace(active=None)))
+    module._apply_physics_to_blender({'scene': None, 'bodies': bodies, 'joints': []})
+    for obj in objects:
+        assert imported[obj.name].rigid_body.collision_collections == obj.rigid_body.collision_collections
+
+
+def test_collision_group_limit_warns_and_retains_masks(hook, caplog):
+    module, _ = hook
+    stage = Usd.Stage.CreateInMemory()
+    objects = []
+    for mask in range(513):
+        name = f'B{mask}'
+        stage.DefinePrim('/' + name, 'Cube')
+        objects.append(SimpleNamespace(name=name, rigid_body=SimpleNamespace(
+            collision_collections=[bool(mask & (1 << i)) for i in range(20)])))
+    module._export_collision_groups(stage, objects)
+    assert 'Too many distinct collision masks' in caplog.text
+    assert not stage.GetPrimAtPath('/BlenderPhysicsCollisionGroups')
+    assert stage.GetPrimAtPath('/B512').GetAttribute('userProperties:blender:collisionMask').Get() == 512

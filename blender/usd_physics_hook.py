@@ -152,6 +152,37 @@ def _blender_shape_to_usd(shape_enum):
     return mapping.get(shape_enum, 'Mesh')
 
 
+def _export_collision_groups(stage, objects):
+    """Export pair filters for Blender's 20-bit shared collision collections."""
+    members = {}
+    for obj in objects:
+        rb = obj.rigid_body
+        if not rb:
+            continue
+        path = _find_prim_path(stage, obj.name)
+        if not path:
+            continue
+        mask = sum(1 << index for index, enabled in enumerate(rb.collision_collections) if enabled)
+        prim = stage.GetPrimAtPath(path)
+        prim.CreateAttribute('userProperties:blender:collisionMask', Sdf.ValueTypeNames.Int).Set(mask)
+        members.setdefault(mask, []).append(Sdf.Path(path))
+    if len(members) > 512:
+        log.warning("[USDPhysicsHook] Too many distinct collision masks (%d); USD collision filters omitted",
+                    len(members))
+        return
+    root = '/BlenderPhysicsCollisionGroups'
+    groups = {}
+    for mask in sorted(members):
+        group = UsdPhysics.CollisionGroup.Define(stage, f'{root}/mask_{mask:05x}')
+        collection = group.GetCollidersCollectionAPI()
+        collection.CreateExpansionRuleAttr().Set('explicitOnly')
+        collection.CreateIncludesRel().SetTargets(members[mask])
+        groups[mask] = group
+    for mask, group in groups.items():
+        filtered = [other.GetPath() for other_mask, other in groups.items() if not (mask & other_mask)]
+        group.CreateFilteredGroupsRel().SetTargets(filtered)
+
+
 def _joint_type_and_attrs(rbc):
     """Return (usd_joint_type, axis, lower, upper) from a Blender constraint."""
     if rbc.type == 'HINGE':
@@ -355,7 +386,14 @@ def _read_rigid_body(prim, mode):
         'restitution': 0.0,
         'kinematic': False,
         'shape': 'CONVEX_HULL',
+        'collision_collections': None,
     }
+
+    mask_attr = prim.GetAttribute('userProperties:blender:collisionMask')
+    if mask_attr and mask_attr.HasAuthoredValueOpinion():
+        mask = mask_attr.Get()
+        if isinstance(mask, int) and 0 <= mask < (1 << 20):
+            data['collision_collections'] = [bool(mask & (1 << i)) for i in range(20)]
 
     rb_api = UsdPhysics.RigidBodyAPI(prim)
     enabled = rb_api.GetRigidBodyEnabledAttr().Get()
@@ -515,6 +553,8 @@ def _apply_physics_to_blender(result):
         rb.restitution = rb_data['restitution']
         rb.kinematic = rb_data['kinematic']
         rb.collision_shape = rb_data['shape']
+        if rb_data['collision_collections'] is not None:
+            rb.collision_collections = rb_data['collision_collections']
 
     # Joints -> rigid body constraints
     for joint_name, jd in result['joints']:
@@ -624,6 +664,9 @@ class USDPhysicsExportHook(bpy.types.USDHook):
                     if prim:
                         _apply_rigid_body_api(prim, obj.rigid_body, mode)
                         exported_count += 1
+
+        if mode in ('USD', 'BOTH'):
+            _export_collision_groups(stage, bpy.data.objects)
 
         # Export constraints as joints
         for obj in bpy.data.objects:
