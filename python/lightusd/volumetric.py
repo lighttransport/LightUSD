@@ -128,7 +128,10 @@ class LevelSet:
 
         Set ``graded_coarse_spacing`` to opt into experimental CPU grading.
         Features smaller than ``spacing`` may be missed and quality bounds
-        are not guaranteed. The graded algorithm runs serially.
+        are not guaranteed. The graded algorithm runs serially. For the
+        requested coarse size to be reachable away from the surface, the
+        level-set band should be at least
+        ``(graded_coarse_spacing - spacing) / graded_growth`` world units.
         """
         spacing = float(spacing) if spacing else 4.0 * self.voxel_size
         settings = json.dumps({"spacing": spacing, "max_tets": int(max_tets), "threads": int(threads),

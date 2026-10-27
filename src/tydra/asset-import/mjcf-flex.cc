@@ -154,6 +154,10 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
     so.graded_coarse_spacing = opts.flex_tet_coarse_spacing;
     so.threads = opts.threads;
     so.device = VolumetricDevice();
+    if (so.graded_coarse_spacing > 0 &&
+        double(level_set.background()) * so.graded_growth < so.graded_coarse_spacing - so.spacing)
+      active_reader->Warn("graded VDB flexcomp level-set band is too narrow to reach the requested coarse spacing",
+                          "mjcf.flex_graded_narrow_band");
     so.max_tets = std::max<size_t>(1000, std::min<size_t>(budget / 256, 4000000));
     so.max_background_tets = std::max<size_t>(1000, std::min<size_t>(budget / 512, 8000000));
     // The stuffing lattice is dense (~32 B per vertex before any tet exists).
@@ -239,8 +243,25 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
     const double extent = std::max({hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]});
     const auto& opts = active_reader->options;
     const double spacing = opts.flex_tet_spacing > 0 ? opts.flex_tet_spacing : extent / 12;
+    if (opts.flex_tet_coarse_spacing > 0 && opts.flex_tet_coarse_spacing < spacing) {
+      if (err) *err = "flexcomp graded coarse spacing is smaller than the resolved fine spacing";
+      return false;
+    }
     LevelSetOptions ls;
     ls.voxel_size = spacing / 4;
+    if (opts.flex_tet_coarse_spacing > 0) {
+      // The size field grows by 0.8 per unit distance. Preserve enough SDF
+      // range on both sides for it to reach the requested coarse spacing;
+      // the regular candidate-voxel budget still bounds this wider band.
+      const double band = std::max(3 * ls.voxel_size,
+          (opts.flex_tet_coarse_spacing - spacing) / 0.8 + ls.voxel_size);
+      if (!std::isfinite(band)) {
+        if (err) *err = "flexcomp graded level-set band is too large";
+        return false;
+      }
+      ls.exterior_width = band;
+      ls.interior_width = band;
+    }
     ls.threads = opts.threads;
     ls.device = VolumetricDevice();
     const size_t budget = opts.max_memory - std::min(opts.max_memory, active_reader->bytes);

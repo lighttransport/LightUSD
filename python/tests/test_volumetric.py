@@ -327,6 +327,8 @@ def test_flexcomp_graded_stuffing(tmp_path):
         lightusd.import_mjcf(path, flex_tet_coarse_spacing=0.4, volumetric_device='auto')
     with pytest.raises(lightusd.UsdError, match='flex_tetrahedralize=stuffing'):
         lightusd.import_mjcf(path, flex_tet_coarse_spacing=0.4)
+    with pytest.raises(lightusd.UsdError, match='resolved fine spacing'):
+        lightusd.import_mjcf(path, flex_tetrahedralize='stuffing', flex_tet_coarse_spacing=0.01)
 
 
 def test_vdb_mesh_asset_and_flexcomp(tmp_path):
@@ -348,6 +350,7 @@ def test_vdb_mesh_asset_and_flexcomp(tmp_path):
     assert vols.min() > 0 and vols.sum() == pytest.approx(4 / 3 * math.pi * 0.2 ** 3, rel=0.05)
     graded_stage = lightusd.import_mjcf(path, flex_tet_spacing=0.04,
                                       flex_tet_coarse_spacing=0.12)
+    assert 'level-set band is too narrow' in graded_stage.warnings()
     graded = graded_stage.prim_at('/World/Deformables/soft')
     vols = _tet_volumes(graded['points'], graded['tetVertexIndices'])
     assert len(vols) and vols.min() > 0
