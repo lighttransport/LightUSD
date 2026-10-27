@@ -246,6 +246,50 @@ int main(int argc, char** argv) {
 
   lightusd_render_scene_destroy(scene);
   lightusd_stage_destroy(stage);
+
+  /* A time-only update must rebuild the VDB-backed field and its transform. */
+  {
+    const int len = snprintf(
+        usda, sizeof(usda),
+        "#usda 1.0\n"
+        "def Volume \"V\" {\n"
+        "  rel field:density = </V/density>\n"
+        "  def OpenVDBAsset \"density\" {\n"
+        "    asset filePath = @%s/reference/ref_float.vdb@\n"
+        "    token fieldName = \"float_test\"\n"
+        "    double3 xformOp:translate.timeSamples = { 0: (0, 0, 0), 10: (5, 0, 0) }\n"
+        "    uniform token[] xformOpOrder = [\"xformOp:translate\"]\n"
+        "  }\n"
+        "}\n", root);
+    assert(len > 0 && (size_t)len < sizeof(usda));
+    stage = NULL;
+    assert(lightusd_stage_load_from_memory((const uint8_t*)usda, (size_t)len,
+                                           NULL, &stage) == LIGHTUSD_OK);
+    lightusd_render_session* session = NULL;
+    assert(lightusd_render_session_create(stage, &config, &session) == LIGHTUSD_OK);
+    lightusd_render_scene* first = NULL;
+    assert(lightusd_render_session_update(session, stage, &first, NULL) == LIGHTUSD_OK);
+    check_volume(first, 0, 1);
+    lightusd_render_volume_field_info before = {0};
+    assert(lightusd_render_volume_field_get_info(first, 0, 0, &before) == LIGHTUSD_OK);
+    const double x = before.index_to_world[12];
+    assert(lightusd_render_session_set_time_code(session, 10.0) == LIGHTUSD_OK);
+    lightusd_render_change_set changes;
+    lightusd_render_change_set_init(&changes);
+    lightusd_render_update_info update;
+    lightusd_render_update_info_init(&update);
+    lightusd_render_scene* second = NULL;
+    assert(lightusd_render_session_apply(session, stage, &changes, &second, &update) == LIGHTUSD_OK);
+    assert(update.full_resync);
+    check_volume(second, 0, 1);
+    lightusd_render_volume_field_info after = {0};
+    assert(lightusd_render_volume_field_get_info(second, 0, 0, &after) == LIGHTUSD_OK);
+    assert(after.index_to_world[12] - x > 4.999 && after.index_to_world[12] - x < 5.001);
+    lightusd_render_scene_destroy(second);
+    lightusd_render_scene_destroy(first);
+    lightusd_render_session_destroy(session);
+    lightusd_stage_destroy(stage);
+  }
   printf("volume C API: OK\n");
   return 0;
 }
