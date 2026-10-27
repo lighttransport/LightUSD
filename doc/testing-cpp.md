@@ -226,6 +226,41 @@ USDC, or written-crate checker failures. Declaration-only relationships have no
 target list-op; the comparator ignores their unused qualifiers while preserving
 the distinction between declarations and authored `None`/`[]` target opinions.
 
+### pxr crate fidelity (does OpenUSD read our crates as the source layer?)
+
+`run-usdcat-compare.sh` compares our *reader* against pxr's (both tools read the
+same input) and asks `usdchecker` whether our crates validate like the source.
+A third failure mode is left uncovered by both: a crate our own reader accepts
+but pxr decodes differently. `tests/run-pxr-crate-fidelity.sh` covers it — for
+each fixture it writes our crate with `lusdcat`, then has *pxr's* `usdcat` print
+both the source and our crate and diffs the two prints:
+
+```bash
+# tests/usda/*.usda by default; pass a pattern/binding for another corpus
+LUSDCAT_PATH=./build/lusdcat USDCAT_PATH=ref/dist/bin/usdcat \
+  bash tests/run-pxr-crate-fidelity.sh
+
+LUSDCAT_PATH=./build/lusdcat USDCAT_PATH=ref/dist/bin/usdcat \
+  bash tests/run-pxr-crate-fidelity.sh 'tests/usdc/*.usdc'
+
+SHOW=40 bash tests/run-pxr-crate-fidelity.sh tests/usda/variantSet-003.usda
+```
+
+It reports byte-identical / text-only / semantic counts and exits nonzero on a
+semantic difference. Textual differences (spec field and property ordering) are
+re-classified through `tests/compare-usda.js` so they do not mask data loss.
+Fixtures `lusdcat` cannot write standalone are skipped and remain covered by
+`run-usdcat-compare.sh`'s checker pass; a source pxr cannot parse is skipped
+too.
+
+This is the check that found variant specs without a `properties` field,
+integer-compressed `string[]`/`token[]`/`asset[]` index arrays, `= None`
+relationships and payloads written as `ValueBlock`, the `relocates` /
+`layerRelocates` crate field rename, and the shader/material node types that had
+no writer (`MtlxAutodeskStandardSurface`, `OpenPBRSurface`, MaterialX
+`outputs:mtlx:surface`). Each of those was invisible to a self-round-trip
+because our reader accepts both encodings.
+
 ### Headless NVIDIA viewer regression
 
 The viewer tests are part of the native CTest tree only when
