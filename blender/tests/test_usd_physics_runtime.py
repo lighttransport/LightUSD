@@ -451,6 +451,132 @@ def _check_hinge_dynamics(path):
     print('BLENDER_USD_HINGE_DYNAMICS_PASS', samples)
 
 
+def _make_two_link_dynamics_fixture(path):
+    stage = Usd.Stage.CreateNew(str(path))
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    world = UsdGeom.Xform.Define(stage, '/World')
+    stage.SetDefaultPrim(world.GetPrim())
+    scene = UsdPhysics.Scene.Define(stage, '/World/PhysicsScene')
+    scene.CreateGravityDirectionAttr().Set(Gf.Vec3f(0.0, 0.0, -1.0))
+    scene.CreateGravityMagnitudeAttr().Set(9.81)
+    scene.GetPrim().CreateAttribute(
+        'mjc:option:timestep', Sdf.ValueTypeNames.Double).Set(1.0 / 60.0)
+    scene.GetPrim().CreateAttribute(
+        'mjc:option:iterations', Sdf.ValueTypeNames.Int).Set(50)
+
+    def rigid_body(name, x, geometry_name, active, collision_mask):
+        prim = UsdGeom.Xform.Define(stage, '/World/' + name).GetPrim()
+        UsdGeom.Xformable(prim).AddTranslateOp().Set(Gf.Vec3d(x, 0.0, 0.0))
+        body_api = UsdPhysics.RigidBodyAPI.Apply(prim)
+        body_api.CreateRigidBodyEnabledAttr(active)
+        UsdPhysics.MassAPI.Apply(prim).CreateMassAttr(1.0)
+        prim.CreateAttribute('userProperties:blender:collisionMask',
+                             Sdf.ValueTypeNames.Int).Set(collision_mask)
+        if active:
+            geom = UsdGeom.Capsule.Define(
+                stage, f'/World/{name}/{geometry_name}')
+            geom.CreateAxisAttr().Set(UsdGeom.Tokens.x)
+            geom.CreateHeightAttr(1.9)
+            geom.CreateRadiusAttr(0.05)
+        else:
+            geom = UsdGeom.Cube.Define(
+                stage, f'/World/{name}/{geometry_name}')
+            geom.CreateSizeAttr(0.002)
+        UsdPhysics.CollisionAPI.Apply(geom.GetPrim())
+        return prim
+
+    anchor = rigid_body('Anchor', 0.0, 'AnchorGeom', False, 1)
+    link1 = rigid_body('Link1', 1.0, 'Link1Rod', True, 2)
+    link2 = rigid_body('Link2', 3.1, 'Link2Rod', True, 4)
+    frame_rotation = Gf.Quatf(math.sqrt(0.5), math.sqrt(0.5), 0.0, 0.0)
+
+    def hinge(name, body0, body1, local_pos0, local_pos1):
+        joint = UsdPhysics.RevoluteJoint.Define(stage, '/World/Joints/' + name)
+        joint.CreateBody0Rel().SetTargets([body0.GetPath()])
+        joint.CreateBody1Rel().SetTargets([body1.GetPath()])
+        joint.CreateAxisAttr().Set('Y')
+        joint.CreateLocalPos0Attr().Set(Gf.Vec3f(*local_pos0))
+        joint.CreateLocalRot0Attr().Set(frame_rotation)
+        joint.CreateLocalPos1Attr().Set(Gf.Vec3f(*local_pos1))
+        joint.CreateLocalRot1Attr().Set(frame_rotation)
+
+    hinge('Hinge1', anchor, link1, (0.0, 0.0, 0.0), (-1.0, 0.0, 0.0))
+    hinge('Hinge2', link1, link2, (1.1, 0.0, 0.0), (-1.0, 0.0, 0.0))
+    stage.GetRootLayer().Save()
+
+
+def _check_two_link_dynamics(path):
+    from mathutils import Vector
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    result = bpy.ops.wm.usd_import(filepath=str(path), merge_parent_xform=True)
+    assert 'FINISHED' in result, result
+    scene = bpy.context.scene
+    assert scene.render.fps == 60
+    world = scene.rigidbody_world
+    assert world
+    world.substeps_per_frame = 10
+    world.solver_iterations = 50
+    world.point_cache.frame_start = 1
+    world.point_cache.frame_end = 121
+
+    anchor = bpy.data.objects['AnchorGeom']
+    link1 = bpy.data.objects['Link1Rod']
+    link2 = bpy.data.objects['Link2Rod']
+    assert anchor.rigid_body and anchor.rigid_body.type == 'PASSIVE'
+    assert link1.rigid_body and link1.rigid_body.type == 'ACTIVE'
+    assert link2.rigid_body and link2.rigid_body.type == 'ACTIVE'
+    hinges = {obj.name: obj.rigid_body_constraint for obj in bpy.data.objects
+              if obj.rigid_body_constraint}
+    assert hinges['Hinge1'].type == 'HINGE'
+    assert hinges['Hinge1'].object1 == anchor and hinges['Hinge1'].object2 == link1
+    assert hinges['Hinge2'].type == 'HINGE'
+    assert hinges['Hinge2'].object1 == link1 and hinges['Hinge2'].object2 == link2
+
+    samples = {}
+    for frame in range(1, 122):
+        scene.frame_set(frame)
+        if frame not in (1, 31, 61, 91, 121):
+            continue
+        bpy.context.view_layer.update()
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        a, b = link1.evaluated_get(depsgraph), link2.evaluated_get(depsgraph)
+        ma, mb = a.matrix_world, b.matrix_world
+        pa, pb = ma.translation.copy(), mb.translation.copy()
+        qa, qb = ma.to_quaternion().copy(), mb.to_quaternion().copy()
+        pivot1 = pa + ma.to_3x3() @ Vector((-1.0, 0.0, 0.0))
+        pivot2_a = pa + ma.to_3x3() @ Vector((1.1, 0.0, 0.0))
+        pivot2_b = pb + mb.to_3x3() @ Vector((-1.0, 0.0, 0.0))
+        samples[frame] = {
+            'link1': tuple(float(v) for v in pa),
+            'link2': tuple(float(v) for v in pb),
+            'pivot1': tuple(float(v) for v in pivot1),
+            'pivot2_parent': tuple(float(v) for v in pivot2_a),
+            'pivot2_child': tuple(float(v) for v in pivot2_b),
+            'rotation1_y': float(qa.y),
+            'rotation2_y': float(qb.y),
+        }
+
+    assert samples[1]['link1'] == (1.0, 0.0, 0.0), samples
+    assert all(abs(actual - expected) < 1e-4 for actual, expected in
+               zip(samples[1]['link2'], (3.1, 0.0, 0.0))), samples
+    assert abs(samples[61]['rotation1_y']) > 0.2, samples
+    assert abs(samples[61]['rotation2_y']) > 0.2, samples
+    for frame, sample in samples.items():
+        values = (sample['link1'] + sample['link2'] + sample['pivot1'] +
+                  sample['pivot2_parent'] + sample['pivot2_child'] +
+                  (sample['rotation1_y'], sample['rotation2_y']))
+        assert all(math.isfinite(value) for value in values), (frame, sample)
+        assert math.sqrt(sum(v * v for v in sample['pivot1'])) < 0.01, (
+            frame, sample)
+        mismatch = math.sqrt(sum(
+            (sample['pivot2_parent'][axis] - sample['pivot2_child'][axis]) ** 2
+            for axis in range(3)))
+        assert mismatch < 0.01, (frame, sample)
+    print('BLENDER_USD_TWO_LINK_DYNAMICS_PASS', samples)
+
+
 def _check_bullet_dynamics():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
@@ -612,6 +738,7 @@ def main():
     scale_dynamics_path = path.with_name(path.stem + '-scale-dynamics.usda')
     friction_path = path.with_name(path.stem + '-mujoco-friction.usda')
     hinge_path = path.with_name(path.stem + '-hinge-dynamics.usda')
+    two_link_path = path.with_name(path.stem + '-two-link-dynamics.usda')
     try:
         hook.register()
         _make_scene_and_export(path)
@@ -625,6 +752,8 @@ def main():
         _check_default_mass_dynamics(default_mass_path)
         _make_hinge_dynamics_fixture(hinge_path)
         _check_hinge_dynamics(hinge_path)
+        _make_two_link_dynamics_fixture(two_link_path)
+        _check_two_link_dynamics(two_link_path)
         _make_mjcf_friction_fixture(friction_path)
         _check_mjcf_friction_dynamics(friction_path)
         _check_imported_scaled_dynamics(scale_dynamics_path)
@@ -645,6 +774,8 @@ def main():
             friction_path.unlink()
         if hinge_path.exists():
             hinge_path.unlink()
+        if two_link_path.exists():
+            two_link_path.unlink()
         try:
             hook.unregister()
         except RuntimeError:

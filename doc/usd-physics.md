@@ -1099,6 +1099,12 @@ within 0.1 mm of the anchor over two seconds. A matching MuJoCo 3.10.1 CPU run
 sampled the capsule center at 0.5, 1.0, 1.5 and 2.0 s; the largest
 Blender-versus-MuJoCo position difference was 0.082 m at 1.5 s. This is one
 no-contact joint case, not a general claim of solver equivalence.
+A second fixture imports two linked capsules with two Y-axis revolute joints.
+It verifies that both joints resolve to the intended bodies and that each
+pivot remains within 1 cm of its counterpart throughout the two-second run.
+In a matching MuJoCo 3.10.1 CPU comparison, the second link's center position
+differs by at most 0.397 m at the four sample times (largest at 2.0 s); coupled
+joint trajectories still diverge between Bullet and MuJoCo.
 
 The addon writes the MjcPhysics names above as they are; MuJoCo 3.16's decoder
 reads several of them as deprecated aliases (see the deprecation note before
