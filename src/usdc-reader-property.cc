@@ -230,11 +230,6 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     DCOUT(" fv name " << fv.first << "(type = " << fv.second.type_name()
                       << ")");
 
-    // Debug: Check timeSamples field specifically
-    if (fv.first.find("time") != std::string::npos) {
-      DCOUT(">>> DEBUG: Found field with 'time' in name: '" << fv.first << "', length = " << fv.first.size());
-    }
-
     if (fv.first == "custom") {
       if (auto pv = fv.second.get_value<bool>()) {
         custom = pv.value();

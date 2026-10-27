@@ -242,15 +242,23 @@ static ParseResult ParseTypedAttributeUnified(
 
   // Check type match. Role types (for example color4f) are accepted when
   // their underlying storage matches the schema type (for example float4).
-  const uint32_t target_underlying_type_id =
-      value::TypeTraits<T>::underlying_type_id();
-  const uint32_t attr_underlying_type_id =
-      value::GetUnderlyingTypeId(attr_type_name);
-  if ((value::TypeTraits<T>::type_name() != attr_type_name) &&
-      (value::TypeTraits<T>::underlying_type_name() != attr_type_name) &&
-      (target_underlying_type_id == value::TYPE_ID_INVALID ||
-       attr_underlying_type_id == value::TYPE_ID_INVALID ||
-       target_underlying_type_id != attr_underlying_type_id)) {
+  //
+  // The underlying-type id lookup is a runtime string -> id table probe; do it
+  // only when the authored type name is neither the schema type nor its
+  // underlying type name (the common case), which keeps it off the hot path.
+  bool type_matches = (value::TypeTraits<T>::type_name() == attr_type_name) ||
+                      (value::TypeTraits<T>::underlying_type_name() ==
+                       attr_type_name);
+  if (!type_matches) {
+    const uint32_t target_underlying_type_id =
+        value::TypeTraits<T>::underlying_type_id();
+    const uint32_t attr_underlying_type_id =
+        value::GetUnderlyingTypeId(attr_type_name);
+    type_matches = (target_underlying_type_id != value::TYPE_ID_INVALID &&
+                    attr_underlying_type_id != value::TYPE_ID_INVALID &&
+                    target_underlying_type_id == attr_underlying_type_id);
+  }
+  if (!type_matches) {
     // A connection-only property (`X.connect = </path>` with no authored value)
     // carries no value to type-check — a connection is a type-agnostic path.
     // Some assets declare it with a non-conformant type (e.g.
