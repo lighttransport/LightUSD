@@ -1,0 +1,73 @@
+#include "tinyvdb_tet_refine_internal.h"
+#include <assert.h>
+#include <math.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+static double volume6(const double *p, const uint32_t *t) {
+    const double *a = p + 3*t[0], *b = p + 3*t[1];
+    const double *c = p + 3*t[2], *d = p + 3*t[3];
+    double x1=b[0]-a[0], y1=b[1]-a[1], z1=b[2]-a[2];
+    double x2=c[0]-a[0], y2=c[1]-a[1], z2=c[2]-a[2];
+    double x3=d[0]-a[0], y3=d[1]-a[1], z3=d[2]-a[2];
+    return x1*(y2*z3-z2*y3)-y1*(x2*z3-z2*x3)+z1*(x2*y3-y2*x3);
+}
+static int face_count(const uint32_t *t, size_t n, uint32_t a, uint32_t b, uint32_t c) {
+    size_t i; int count = 0;
+    for (i = 0; i < n; ++i) {
+        int x=0, y=0, z=0; unsigned j;
+        for (j=0; j<4; ++j) { x |= t[4*i+j]==a; y |= t[4*i+j]==b; z |= t[4*i+j]==c; }
+        count += x && y && z;
+    }
+    return count;
+}
+int main(void) {
+    const double p[] = {0,0,0, 1,0,0, 0,1,0, 0,0,1, 0,0,-1};
+    const uint32_t t[] = {0,1,2,3, 0,2,1,4};
+    tvdb_tet_refine_graph *g = NULL, *h = NULL;
+    tvdb_error_t error; uint32_t m, n, m2, n2; size_t i;
+    const uint32_t *out; const double *pos; double sum = 0;
+    assert(tvdb_tet_refine_create(p, 5, t, 2, 20, 20, &g, &error) == TVDB_OK);
+    assert(tvdb_tet_refine_create(p, 5, t, 2, 20, 20, &h, &error) == TVDB_OK);
+    assert(tvdb_tet_refine_split(g, 0, 1, &m, &error) == TVDB_OK);
+    assert(m == 5 && tvdb_tet_refine_tet_count(g) == 4);
+    out = tvdb_tet_refine_tets(g);
+    assert(face_count(out, 4, 0, m, 2) == 2);
+    assert(face_count(out, 4, 1, m, 2) == 2);
+    assert(tvdb_tet_refine_split(g, 0, m, &n, &error) == TVDB_OK);
+    assert(tvdb_tet_refine_split(h, 0, 1, &m2, &error) == TVDB_OK);
+    assert(tvdb_tet_refine_split(h, 0, m2, &n2, &error) == TVDB_OK);
+    assert(m == m2 && n == n2 && tvdb_tet_refine_tet_count(g) == 6);
+    out = tvdb_tet_refine_tets(g); pos = tvdb_tet_refine_positions(g);
+    assert(face_count(out, 6, 0, n, 2) == 2);
+    assert(face_count(out, 6, m, n, 2) == 2);
+    for (i=0; i<6; ++i) { double v = volume6(pos, out+4*i); assert(v > 0); sum += v; }
+    assert(fabs(sum - 2.0) < 1e-12);
+    assert(memcmp(out, tvdb_tet_refine_tets(h), 6*4*sizeof(uint32_t)) == 0);
+    assert(memcmp(pos, tvdb_tet_refine_positions(h), 7*3*sizeof(double)) == 0);
+    tvdb_tet_refine_destroy(g); tvdb_tet_refine_destroy(h);
+    /* Repeatedly refine the same edge star. Stale incidence entries must not
+       cause duplicate splits, including after the incidence array grows. */
+    assert(tvdb_tet_refine_create(p, 5, t, 2, 80, 150, &g, &error) == TVDB_OK);
+    m = 1;
+    for (i = 0; i < 60; ++i) {
+        assert(tvdb_tet_refine_split(g, 0, m, &n, &error) == TVDB_OK);
+        m = n;
+        assert(tvdb_tet_refine_tet_count(g) == 4 + 2*i);
+    }
+    out = tvdb_tet_refine_tets(g); pos = tvdb_tet_refine_positions(g); sum = 0;
+    for (i = 0; i < tvdb_tet_refine_tet_count(g); ++i) {
+        double v = volume6(pos, out + 4*i); assert(v > 0); sum += v;
+    }
+    assert(fabs(sum - 2.0) < 1e-12);
+    tvdb_tet_refine_destroy(g);
+    assert(tvdb_tet_refine_create(p, 5, t, 2, 5, 3, &g, &error) == TVDB_OK);
+    assert(tvdb_tet_refine_split(g, 0, 1, &m, &error) == TVDB_ERROR_INVALID_DATA);
+    tvdb_tet_refine_destroy(g);
+    { const uint32_t bad[] = {0,1,1,3};
+      assert(tvdb_tet_refine_create(p, 5, bad, 1, 6, 2, &g, &error) == TVDB_ERROR_INVALID_DATA);
+      assert(g == NULL); }
+    puts("graded refinement topology: ok");
+    return 0;
+}

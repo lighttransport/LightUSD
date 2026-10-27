@@ -2308,6 +2308,20 @@ if(LIGHTUSD_BUILD_TESTS)
   add_subdirectory(${PROJECT_SOURCE_DIR}/tests/pprint)
 
 
+  if(TARGET lightusd_tinyvdb)
+    # The graded background is experimental and not wired into stuffing yet.
+    add_executable(test-graded-refine tests/volumetric/test-graded-refine.c
+      src/external/tinyvdb/tinyvdb_tet_refine.c)
+    target_include_directories(test-graded-refine PRIVATE src/external/tinyvdb)
+    if(MSVC)
+      target_compile_options(test-graded-refine PRIVATE /UNDEBUG)
+    else()
+      target_compile_options(test-graded-refine PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME volumetric-graded-refine COMMAND test-graded-refine)
+    set_tests_properties(volumetric-graded-refine PROPERTIES LABELS "cpu;volume")
+  endif()
+
   if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND TARGET lightusd_tinyvdb)
     add_executable(test-tet-overflow-32 tests/volumetric/tet-overflow-32.c)
     target_include_directories(test-tet-overflow-32 PRIVATE src/external/tinyvdb)
