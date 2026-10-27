@@ -1763,6 +1763,20 @@ The tinyvdb `test_sparse_tools` suite additionally checks meshing when the
 background is below the isovalue, alongside its threaded determinism and
 budget-failure cases.
 
+For a reproducible one-worker surface-mesher instruction count, build the same
+driver against each revision and use the same VDB and host:
+
+```sh
+cc -O2 -I/path/to/tinyvdb/src tests/volumetric/profile-surface.c \
+  /path/to/build/libtinyvdb_mesh_ops.a /path/to/build/libtinyvdb.a \
+  -lm -pthread -o /tmp/profile-surface
+nice valgrind --tool=callgrind --callgrind-out-file=/tmp/surface.callgrind \
+  /tmp/profile-surface /path/to/level-set.vdb
+```
+
+This includes file loading and one-worker surface construction; compare
+instruction counts rather than inferring CPU speed from a loaded host.
+
 To profile CPU mesh-to-level-set construction with a reproducible closed mesh,
 build `bench_volumetric` from tinyvdb's `tests/bench_volumetric.c` against its
 CPU libraries, then run:

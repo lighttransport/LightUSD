@@ -704,15 +704,15 @@ static void tool_box_shell(tool_surface* s, const int32_t o[3], int n,
   for (int a = 0; a < 3; ++a)
     for (int side = 0; side < 2; ++side) {
       const int b = (a + 1) % 3, d = (a + 2) % 3;
-      for (int u = 0; u < n; ++u)
-        for (int w = 0; w < n; ++w) {
+      /* Earlier faces already visited their edges. Restrict the other two
+       * coordinates instead of visiting and rejecting those points. */
+      const int bu = b < a, dw = d < a;
+      for (int u = bu; u < n - bu; ++u)
+        for (int w = dw; w < n - dw; ++w) {
           int k[3];
           k[a] = side ? n - 1 : 0;
           k[b] = u;
           k[d] = w;
-          int done = 0;
-          for (int e = 0; e < a; ++e) done |= k[e] == 0 || k[e] == n - 1;
-          if (done) continue;
           int64_t q[3];
           for (int e = 0; e < 3; ++e) q[e] = (int64_t)o[e] - 1 + k[e];
           box[((size_t)k[2] * n + k[1]) * n + k[0]] =
