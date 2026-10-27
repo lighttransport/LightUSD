@@ -295,6 +295,13 @@ tetrahedralizes a level set's interior:
   it can increase memory and runtime substantially. Its conservative bound
   assumes a 1-Lipschitz SDF, which interpolated grids may not satisfy, and it
   cannot guarantee recovery of features below the fine spacing.
+- The vendored TinyVDB C API can measure a conservative one-sided boundary
+  distance for an exact signed-distance sampler. It subdivides each output
+  triangle once, samples the four subtriangle centroids, and adds each
+  centroid's maximum distance to its subtriangle vertices. This bounds output
+  boundary-to-zero-set distance only; it does not bound missing components or
+  the reverse surface-to-mesh distance, and it is not exposed by the Python
+  volumetric API. Interpolated VDB samples may not meet the exact SDF assumption.
 - **Bunny example:** the fan overlaps on non-star-shaped meshes. On MuJoCo's
   bunny its tets sum to 125% of the mesh volume, while stuffing converges from
   below: 94% at spacing extent/12, 97% at extent/24.

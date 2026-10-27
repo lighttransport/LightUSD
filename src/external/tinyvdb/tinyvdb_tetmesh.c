@@ -1688,3 +1688,81 @@ tvdb_status_t tvdb_tet_mesh_quality(const tvdb_tet_mesh *mesh,
   *out = q;
   return TVDB_OK;
 }
+
+tvdb_status_t tvdb_tet_mesh_surface_distance_bound(
+    const tvdb_tet_mesh *mesh, tvdb_sdf_sample_fn sample, void *user,
+    float isovalue, double *out_bound, tvdb_error_t *err) {
+  if (!mesh || !sample || !out_bound || !isfinite(isovalue) ||
+      !mesh->boundary_count || !mesh->boundary || !mesh->positions)
+    return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT,
+                     "invalid boundary distance bound arguments");
+  if (mesh->vertex_count > SIZE_MAX / (3 * sizeof(float)) ||
+      mesh->boundary_count > SIZE_MAX / (3 * sizeof(int32_t)))
+    return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT,
+                     "boundary distance bound mesh is too large");
+
+  double bound = 0.0;
+  for (size_t face = 0; face < mesh->boundary_count; ++face) {
+    double p[3][3];
+    for (int i = 0; i < 3; ++i) {
+      const int32_t index = mesh->boundary[3 * face + (size_t)i];
+      if (index < 0 || (size_t)index >= mesh->vertex_count)
+        return tet_error(err, TVDB_ERROR_INVALID_DATA,
+                         "boundary index out of range");
+      for (int axis = 0; axis < 3; ++axis) {
+        p[i][axis] = mesh->positions[3 * (size_t)index + (size_t)axis];
+        if (!isfinite(p[i][axis]))
+          return tet_error(err, TVDB_ERROR_INVALID_DATA,
+                           "non-finite boundary vertex");
+      }
+    }
+
+    double midpoint[3][3];
+    for (int edge = 0; edge < 3; ++edge) {
+      const int next = (edge + 1) % 3;
+      for (int axis = 0; axis < 3; ++axis)
+        midpoint[edge][axis] = 0.5 * (p[edge][axis] + p[next][axis]);
+    }
+    const double subtets[4][3][3] = {
+        {{p[0][0],p[0][1],p[0][2]}, {midpoint[0][0],midpoint[0][1],midpoint[0][2]},
+         {midpoint[2][0],midpoint[2][1],midpoint[2][2]}},
+        {{midpoint[0][0],midpoint[0][1],midpoint[0][2]}, {p[1][0],p[1][1],p[1][2]},
+         {midpoint[1][0],midpoint[1][1],midpoint[1][2]}},
+        {{midpoint[2][0],midpoint[2][1],midpoint[2][2]},
+         {midpoint[1][0],midpoint[1][1],midpoint[1][2]}, {p[2][0],p[2][1],p[2][2]}},
+        {{midpoint[0][0],midpoint[0][1],midpoint[0][2]},
+         {midpoint[1][0],midpoint[1][1],midpoint[1][2]},
+         {midpoint[2][0],midpoint[2][1],midpoint[2][2]}}};
+    for (int sub = 0; sub < 4; ++sub) {
+      double center[3] = {0.0, 0.0, 0.0};
+      for (int vertex = 0; vertex < 3; ++vertex)
+        for (int axis = 0; axis < 3; ++axis)
+          center[axis] += subtets[sub][vertex][axis] / 3.0;
+
+      float value = 0.0f;
+      if (!sample(center, &value, user) || !isfinite(value))
+        return tet_error(err, TVDB_ERROR_INVALID_DATA,
+                         "invalid boundary centroid sample");
+
+      double radius = 0.0;
+      for (int vertex = 0; vertex < 3; ++vertex) {
+        const double dx = subtets[sub][vertex][0] - center[0];
+        const double dy = subtets[sub][vertex][1] - center[1];
+        const double dz = subtets[sub][vertex][2] - center[2];
+        const double distance = hypot(hypot(dx, dy), dz);
+        if (!isfinite(distance))
+          return tet_error(err, TVDB_ERROR_INVALID_DATA,
+                           "invalid boundary triangle radius");
+        if (distance > radius) radius = distance;
+      }
+      const double sub_bound = fabs((double)value - (double)isovalue) + radius;
+      if (!isfinite(sub_bound))
+        return tet_error(err, TVDB_ERROR_INVALID_DATA,
+                         "invalid boundary distance bound");
+      if (sub_bound > bound) bound = sub_bound;
+    }
+  }
+
+  *out_bound = bound;
+  return TVDB_OK;
+}

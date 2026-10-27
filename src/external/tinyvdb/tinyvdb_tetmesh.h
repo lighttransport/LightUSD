@@ -89,6 +89,19 @@ tvdb_status_t tvdb_tet_mesh_quality(const tvdb_tet_mesh* mesh,
                                     tvdb_tet_mesh_quality_t* out,
                                     tvdb_error_t* err);
 
+/* Conservative one-sided boundary-distance bound for a mesh made from the
+ * same signed-distance field. Each output boundary triangle is split into
+ * four subtriangles; the field is sampled at each subtriangle centroid and
+ * the centroid-to-vertex radius is added. If sample is an exact
+ * signed-distance function to the requested isosurface (so
+ * sample(p)-isovalue is its signed distance), every point on the mesh
+ * boundary is within the returned distance of that isosurface. This does not
+ * bound missed surface components or the reverse distance from the isosurface
+ * to the mesh. */
+tvdb_status_t tvdb_tet_mesh_surface_distance_bound(
+    const tvdb_tet_mesh* mesh, tvdb_sdf_sample_fn sample, void* user,
+    float isovalue, double* out_bound, tvdb_error_t* err);
+
 #ifdef __cplusplus
 }
 #endif

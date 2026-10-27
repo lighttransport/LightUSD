@@ -27,6 +27,22 @@ static int small_sphere(const double p[3], float *v, void *user) {
 static int fail_sample(const double p[3], float *v, void *user) {
   (void)p; (void)v; (void)user; return 0;
 }
+static int boundary_samples_within_bound(const tvdb_tet_mesh *m, double bound) {
+  for (size_t face = 0; face < m->boundary_count; ++face) {
+    const float *a = m->positions + 3*(size_t)m->boundary[3*face];
+    const float *b = m->positions + 3*(size_t)m->boundary[3*face+1];
+    const float *c = m->positions + 3*(size_t)m->boundary[3*face+2];
+    for (int i = 0; i <= 4; ++i) for (int j = 0; j <= 4-i; ++j) {
+      const double wa = (double)i/4.0, wb = (double)j/4.0;
+      const double wc = 1.0-wa-wb;
+      double p[3]; float value;
+      for (int axis = 0; axis < 3; ++axis)
+        p[axis] = wa*a[axis] + wb*b[axis] + wc*c[axis];
+      if (!sphere(p,&value,NULL) || fabs(value) > bound+1e-6) return 0;
+    }
+  }
+  return 1;
+}
 typedef struct { int32_t a, b; int sign; } edge;
 static int cmp(const void *x, const void *y) {
   const edge *a = (const edge *)x, *b = (const edge *)y;
@@ -73,6 +89,16 @@ int main(void) {
   CHECK(tvdb_tet_mesh_quality(&m,&q,&err)==TVDB_OK && !q.inverted);
   CHECK(q.min_dihedral > 10 && q.max_dihedral < 170);
   CHECK(fabs(q.volume-4.1887902047863905)<0.8);
+  {
+    double distance_bound = -1.0;
+    CHECK(tvdb_tet_mesh_surface_distance_bound(&m,sphere,NULL,0,&distance_bound,&err)==TVDB_OK);
+    CHECK(distance_bound > 0 && distance_bound < 0.2);
+    CHECK(boundary_samples_within_bound(&m,distance_bound));
+    double saved_bound = distance_bound;
+    CHECK(tvdb_tet_mesh_surface_distance_bound(&m,fail_sample,NULL,0,&distance_bound,&err)==TVDB_ERROR_INVALID_DATA);
+    CHECK(distance_bound == saved_bound);
+    printf("graded sphere sampled one-sided surface bound %.6f\n",saved_bound);
+  }
   printf("graded sphere: %zu tets, %zu faces, volume %.6f, dihedral %.3f..%.3f\n",
          m.tet_count,m.boundary_count,q.volume,q.min_dihedral,q.max_dihedral);
   {
