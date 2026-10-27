@@ -734,13 +734,31 @@ static tvdb_status_t tool_voxel_cells(tool_surface* s, const int32_t c[3],
                                       const int at[3]) {
   size_t off[8];
   tool_box_corner_offsets(n, off);
+  /* Classify the shared 3x3x3 neighbourhood once. Bit x+3*y+9*z is
+   * the sample below the isovalue; each cell selects eight of those bits. */
+  uint32_t signs = 0;
+  for (int z = 0; z < 3; ++z)
+    for (int y = 0; y < 3; ++y)
+      for (int x = 0; x < 3; ++x) {
+        const size_t j = ((size_t)(at[2] + z - 1) * (size_t)n +
+                          (size_t)(at[1] + y - 1)) * (size_t)n +
+                         (size_t)(at[0] + x - 1);
+        if (box[j] < s->iso) signs |= UINT32_C(1) << (x + 3 * y + 9 * z);
+      }
+  static const int bit_off[8] = {0, 1, 4, 3, 9, 10, 13, 12};
   for (int i = 0; i < 8; ++i) {
-    int64_t q[3];
     int lo[3];
-    for (int a = 0; a < 3; ++a) {
-      lo[a] = at[a] - ((i >> a) & 1);
-      q[a] = (int64_t)c[a] - ((i >> a) & 1);
-    }
+    for (int a = 0; a < 3; ++a) lo[a] = at[a] - ((i >> a) & 1);
+    const int b = (1 - (i & 1)) + 3 * (1 - ((i >> 1) & 1)) +
+                  9 * (1 - ((i >> 2) & 1));
+    unsigned cube = 0;
+    for (int k = 0; k < 8; ++k) cube |= ((signs >> (b + bit_off[k])) & 1u) << k;
+    if (cube == 0 || cube == 255) continue;
+    const unsigned side = (s->bg_below ? ~cube : cube) & 0xffu;
+    if (tool_corner_of_bit[i] != __builtin_ctz(side)) continue;
+    const int64_t q[3] = {(int64_t)c[0] - (i & 1),
+                          (int64_t)c[1] - ((i >> 1) & 1),
+                          (int64_t)c[2] - ((i >> 2) & 1)};
     const size_t base = ((size_t)lo[2] * (size_t)n + (size_t)lo[1]) * (size_t)n +
                         (size_t)lo[0];
     float corners[8];

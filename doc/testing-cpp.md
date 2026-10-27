@@ -1718,6 +1718,9 @@ on differences or empty output. Choose a spacing appropriate for the fixture;
 run representative fixtures to cover the change. Since the serialization is
 native binary, compare builds on the same host with the same ABI. This does
 not independently check internal scan-budget counts.
+The tinyvdb `test_sparse_tools` suite additionally checks meshing when the
+background is below the isovalue, alongside its threaded determinism and
+budget-failure cases.
 
 To profile CPU mesh-to-level-set construction with a reproducible closed mesh,
 build `bench_volumetric` from tinyvdb's `tests/bench_volumetric.c` against its
