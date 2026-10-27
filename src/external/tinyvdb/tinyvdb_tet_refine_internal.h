@@ -24,6 +24,15 @@ tvdb_status_t tvdb_tet_refine_create(const double *positions, size_t nvertices,
  * parent-index order. No existing vertex IDs change. */
 tvdb_status_t tvdb_tet_refine_split(tvdb_tet_refine_graph *graph, uint32_t a,
                                     uint32_t b, uint32_t *midpoint, tvdb_error_t *err);
+/* Desired maximum edge length at a midpoint. Return nonzero and set a finite,
+ * positive size; the callback must be deterministic during one refinement. */
+typedef int (*tvdb_tet_refine_size_fn)(const double point[3], double *size, void *user);
+/* Refine all edges longer than the midpoint size. The edge star is split as a
+ * unit; changed tetrahedra are revisited until the criterion holds everywhere.
+ * Graph limits bound the operation. On failure the graph must be discarded. */
+tvdb_status_t tvdb_tet_refine_adapt(tvdb_tet_refine_graph *graph,
+                                    tvdb_tet_refine_size_fn size, void *user,
+                                    tvdb_error_t *err);
 const double *tvdb_tet_refine_positions(const tvdb_tet_refine_graph *graph);
 const uint32_t *tvdb_tet_refine_tets(const tvdb_tet_refine_graph *graph);
 size_t tvdb_tet_refine_vertex_count(const tvdb_tet_refine_graph *graph);

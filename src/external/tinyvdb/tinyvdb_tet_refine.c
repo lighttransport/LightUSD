@@ -103,12 +103,23 @@ static int compare_size(const void *a, const void *b) {
     size_t x = *(const size_t *)a, y = *(const size_t *)b;
     return (x > y) - (x < y);
 }
-tvdb_status_t tvdb_tet_refine_split(tvdb_tet_refine_graph *g, uint32_t a,
-        uint32_t b, uint32_t *midpoint, tvdb_error_t *err) {
+static tvdb_status_t split_impl(tvdb_tet_refine_graph *g, uint32_t a,
+        uint32_t b, uint32_t *midpoint, size_t **changed, size_t *changed_count,
+        tvdb_error_t *err) {
     size_t node, count = 0, i, j, old_nt, extra, *parents = NULL;
     uint32_t m;
     if (!g || !midpoint || a == b || a >= g->nv || b >= g->nv)
         return fail(err, TVDB_ERROR_INVALID_ARGUMENT, "Invalid edge");
+    {
+        int same_a = 1, same_b = 1;
+        for (j = 0; j < 3; ++j) {
+            double x = g->positions[3*(size_t)a+j], y = g->positions[3*(size_t)b+j];
+            double m = x * 0.5 + y * 0.5;
+            same_a &= m == x; same_b &= m == y;
+        }
+        if (same_a || same_b)
+            return fail(err, TVDB_ERROR_INVALID_DATA, "Edge midpoint is not representable");
+    }
     for (node = g->heads[a]; node != NONE; node = g->incidence[node].next) {
         const incidence_t *e = &g->incidence[node];
         if (e->generation != g->generations[e->tet]) continue;
@@ -149,7 +160,60 @@ tvdb_status_t tvdb_tet_refine_split(tvdb_tet_refine_graph *g, uint32_t a,
         ++g->generations[p]; g->generations[child] = 0;
         index_tet(g, p); index_tet(g, child);
     }
-    free(parents); *midpoint = m; return TVDB_OK;
+    if (changed) { *changed = parents; *changed_count = count; }
+    else free(parents);
+    *midpoint = m; return TVDB_OK;
+}
+tvdb_status_t tvdb_tet_refine_split(tvdb_tet_refine_graph *g, uint32_t a,
+        uint32_t b, uint32_t *midpoint, tvdb_error_t *err) {
+    return split_impl(g, a, b, midpoint, NULL, NULL, err);
+}
+tvdb_status_t tvdb_tet_refine_adapt(tvdb_tet_refine_graph *g,
+        tvdb_tet_refine_size_fn size, void *user, tvdb_error_t *err) {
+    size_t *queue = NULL, cap = 0, head = 0, tail = 0, i;
+    tvdb_status_t st = TVDB_OK;
+    if (!g || !size) return fail(err, TVDB_ERROR_INVALID_ARGUMENT, "Missing refinement graph or size callback");
+    if (!reserve((void **)&queue, &cap, g->nt, sizeof(size_t)))
+        return fail(err, TVDB_ERROR_OUT_OF_MEMORY, "Refinement queue allocation failed");
+    for (i = 0; i < g->nt; ++i) queue[tail++] = i;
+    while (head < tail) {
+        size_t t = queue[head++];
+        uint32_t a = 0, b = 0;
+        double longest = 0;
+        for (unsigned x = 0; x < 4; ++x) for (unsigned y = x + 1; y < 4; ++y) {
+            uint32_t u = g->tets[4*t+x], v = g->tets[4*t+y];
+            double midpoint[3], delta[3], desired = NAN, length;
+            for (unsigned d = 0; d < 3; ++d) {
+                double p = g->positions[3*(size_t)u+d], q = g->positions[3*(size_t)v+d];
+                midpoint[d] = 0.5*p + 0.5*q; delta[d] = p-q;
+            }
+            length = hypot(hypot(delta[0], delta[1]), delta[2]);
+            if (!isfinite(length) || !size(midpoint, &desired, user) ||
+                !isfinite(desired) || desired <= 0) {
+                st = fail(err, TVDB_ERROR_INVALID_DATA, "Invalid refinement size or edge length");
+                goto done;
+            }
+            if (length > desired && length > longest) { longest = length; a = u; b = v; }
+        }
+        if (longest > 0) {
+            size_t old_nt = g->nt, *parents = NULL, count = 0, extra;
+            uint32_t midpoint;
+            st = split_impl(g, a, b, &midpoint, &parents, &count, err);
+            if (st != TVDB_OK) goto done;
+            if (!tvdb_size_mul(count, 2, &extra) || extra > SIZE_MAX - tail ||
+                !reserve((void **)&queue, &cap, tail + extra, sizeof(size_t))) {
+                free(parents);
+                st = fail(err, TVDB_ERROR_OUT_OF_MEMORY, "Refinement queue allocation failed");
+                goto done;
+            }
+            for (i = 0; i < count; ++i) {
+                queue[tail++] = parents[i]; queue[tail++] = old_nt + i;
+            }
+            free(parents);
+        }
+    }
+done:
+    free(queue); return st;
 }
 const double *tvdb_tet_refine_positions(const tvdb_tet_refine_graph *g) { return g ? g->positions : NULL; }
 const uint32_t *tvdb_tet_refine_tets(const tvdb_tet_refine_graph *g) { return g ? g->tets : NULL; }
