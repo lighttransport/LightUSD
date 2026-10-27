@@ -156,6 +156,28 @@ int main(void) {
       assert(tvdb_tet_refine_box(lo, hi, cells, 26, 40000, &g, &error) == TVDB_ERROR_INVALID_ARGUMENT);
       assert(g == NULL);
     }
+    {
+      /* High-valence edge exercises the general sorting fallback. */
+      double points[82*3] = {0}; uint32_t cells[40*4];
+      points[3] = 1;
+      for (i = 0; i < 40; ++i) {
+        double angle = 2 * 3.14159265358979323846 * (double)i / 40;
+        points[3*(2+2*i)+1] = cos(angle); points[3*(2+2*i)+2] = sin(angle);
+        points[3*(3+2*i)+1] = cos(angle+0.05); points[3*(3+2*i)+2] = sin(angle+0.05);
+        cells[4*i] = 0; cells[4*i+1] = 1;
+        cells[4*i+2] = (uint32_t)(2+2*i); cells[4*i+3] = (uint32_t)(3+2*i);
+      }
+      assert(tvdb_tet_refine_create(points, 82, cells, 40, 83, 80, &g, &error) == TVDB_OK);
+      assert(tvdb_tet_refine_split(g, 0, 1, &m, &error) == TVDB_OK);
+      assert(m == 82 && tvdb_tet_refine_tet_count(g) == 80);
+      out = tvdb_tet_refine_tets(g);
+      for (i = 0; i < 40; ++i) {
+        assert(out[4*i] == m && out[4*i+1] == 1);
+        assert(out[4*(40+i)] == 0 && out[4*(40+i)+1] == m);
+        assert(out[4*i+2] == cells[4*i+2] && out[4*(40+i)+2] == cells[4*i+2]);
+      }
+      tvdb_tet_refine_destroy(g);
+    }
     assert(tvdb_tet_refine_create(p, 5, t, 2, 5, 3, &g, &error) == TVDB_OK);
     assert(tvdb_tet_refine_split(g, 0, 1, &m, &error) == TVDB_ERROR_INVALID_DATA);
     tvdb_tet_refine_destroy(g);

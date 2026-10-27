@@ -1,5 +1,5 @@
 Upstream: https://github.com/syoyo/tinyvdbio
-Commit:   dce7ea0 (branch volumetric-sdf; 1020501 volume access, 5615965 half fix,
+Commit:   69d9a42 (branch volumetric-sdf; 1020501 volume access, 5615965 half fix,
           1286600 caller-buffer dense volumes, 82d5667 O(1) tree child rank,
           762a777 tree accessor + boxed mesher, de1afb7 per-range stuffing
           sampler accessor, ee571c1 cached sparse CSG, b86ff79 threaded
@@ -15,7 +15,8 @@ Commit:   dce7ea0 (branch volumetric-sdf; 1020501 volume access, 5615965 half fi
           9b8cd12 use direct lattice indices during tetrahedral stuffing,
           1869a20 reject failed or non-finite stuffing center samples,
           77022b5 experimental CPU graded stuffing API,
-          dce7ea0 graded level-set tetrahedralization)
+          dce7ea0 graded level-set tetrahedralization,
+          69d9a42 sort small graded edge stars without qsort)
 Files:    the src/ subset needed by tvdb_mesh_to_level_set,
           tvdb_level_set_to_tet_mesh / tvdb_sdf_to_tet_mesh,
           tvdb_grid_volume_to_mesh, the volume access used by usdVol

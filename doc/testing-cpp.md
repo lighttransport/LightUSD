@@ -1759,6 +1759,31 @@ on differences or empty output. Choose a spacing appropriate for the fixture;
 run representative fixtures to cover the change. Since the serialization is
 native binary, compare builds on the same host with the same ABI. This does
 not independently check internal scan-budget counts.
+
+For experimental CPU graded stuffing, compare an analytic sphere, box and
+torus using two builds on the same host:
+
+```sh
+bash tests/volumetric/compare-graded-identity.sh \
+  /path/to/old-tinyvdb /path/to/old-build \
+  /path/to/new-tinyvdb /path/to/new-build 0.2
+```
+
+This compares counts and all vertex, tetrahedron and boundary array bytes.
+The refinement suite also tests a high-valence edge; these three outputs do
+not cover every topology or numeric scale.
+
+For the corresponding single-thread analytic sphere instruction profile:
+
+```sh
+cc -O2 -I/path/to/tinyvdb/src tests/volumetric/profile-graded.c \
+  /path/to/build/libtinyvdb_mesh_ops.a /path/to/build/libtinyvdb.a \
+  -lm -pthread -o /tmp/profile-graded
+nice valgrind --tool=callgrind --callgrind-out-file=/tmp/graded.callgrind \
+  /tmp/profile-graded 0.2
+```
+
+The hash is a quick diagnostic, not a substitute for the byte comparison.
 The tinyvdb `test_sparse_tools` suite additionally checks meshing when the
 background is below the isovalue, alongside its threaded determinism and
 budget-failure cases.

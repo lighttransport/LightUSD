@@ -192,7 +192,17 @@ static tvdb_status_t split_impl(tvdb_tet_refine_graph *g, uint32_t a,
         if (e->generation != g->generations[e->tet]) continue;
         for (j = 0; j < 4; ++j) if (g->tets[4*e->tet+j] == b) { parents[i++] = e->tet; break; }
     }
-    qsort(parents, count, sizeof(size_t), compare_size);
+    /* Ordinary tetrahedral edge stars are small; keep the same ascending
+     * parent order without a general-purpose sort allocation/callback. */
+    if (count <= 32) {
+        for (size_t x = 1; x < count; ++x) {
+            size_t v = parents[x], y = x;
+            while (y && parents[y-1] > v) { parents[y] = parents[y-1]; --y; }
+            parents[y] = v;
+        }
+    } else {
+        qsort(parents, count, sizeof(size_t), compare_size);
+    }
     for (i = 0; i < count; ++i) if (g->generations[parents[i]] == SIZE_MAX) {
         free(parents); return fail(err, TVDB_ERROR_INVALID_DATA, "Generation overflow");
     }
