@@ -1163,11 +1163,12 @@ static int tet_grid_sample(const double p[3], float *value, void *user) {
   *value = (float)sum;
   return 1;
 }
-tvdb_status_t tvdb_level_set_to_tet_mesh(const tvdb_grid_t *grid,
-                                         const tvdb_stuffing_options_t *options,
-                                         tvdb_thread_pool_t *pool,
-                                         tvdb_tet_mesh *out, tvdb_error_t *err) {
-  if (!grid || !options || !out)
+static tvdb_status_t tet_grid_to_mesh(const tvdb_grid_t *grid,
+                                     const tvdb_stuffing_options_t *options,
+                                     const tvdb_graded_stuffing_options_t *graded,
+                                     tvdb_thread_pool_t *pool,
+                                     tvdb_tet_mesh *out, tvdb_error_t *err) {
+  if (!grid || (!options && !graded) || !out)
     return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT, "invalid stuffing arguments");
   tet_grid_sampler s;
   memset(&s, 0, sizeof(s));
@@ -1214,10 +1215,27 @@ tvdb_status_t tvdb_level_set_to_tet_mesh(const tvdb_grid_t *grid,
     }
   }
   /* The sampler keeps its tree accessor per range (see tet_sample_scope). */
-  const tet_sample_scope scope = {tet_sampler_begin, tet_sampler_end};
-  st = tet_sdf_to_tet_mesh(tet_grid_sample, &s, &scope, lo, hi, options, pool, out, err);
+  if (graded) {
+    tet_sample_state state;
+    state.inverse = s.inverse;
+    tvdb_tree_accessor_init(&state.acc, &s.index);
+    st = tvdb_sdf_to_tet_mesh_graded(tet_grid_sample, &state, lo, hi, graded, out, err);
+  } else {
+    const tet_sample_scope scope = {tet_sampler_begin, tet_sampler_end};
+    st = tet_sdf_to_tet_mesh(tet_grid_sample, &s, &scope, lo, hi, options, pool, out, err);
+  }
   tvdb_tree_index_destroy(&s.index);
   return st;
+}
+tvdb_status_t tvdb_level_set_to_tet_mesh(const tvdb_grid_t *grid,
+                                         const tvdb_stuffing_options_t *options,
+                                         tvdb_thread_pool_t *pool,
+                                         tvdb_tet_mesh *out, tvdb_error_t *err) {
+  return tet_grid_to_mesh(grid, options, NULL, pool, out, err);
+}
+tvdb_status_t tvdb_level_set_to_tet_mesh_graded(const tvdb_grid_t *grid,
+    const tvdb_graded_stuffing_options_t *options, tvdb_tet_mesh *out, tvdb_error_t *err) {
+  return tet_grid_to_mesh(grid, NULL, options, NULL, out, err);
 }
 
 tvdb_status_t tvdb_tet_mesh_quality(const tvdb_tet_mesh *mesh,

@@ -9,6 +9,7 @@
 #include "tinyvdb_sparse_tools.h"
 #include "tinyvdb_sparse_tree.h"
 #include "tinyvdb_tetmesh.h"
+#include "tinyvdb_tet_graded.h"
 #include "tinyvdb_tree.h"
 #include "tinyvdb_tree_internal.h"
 #if defined(LIGHTUSD_HAVE_TINYVDB_GPU)
@@ -505,8 +506,11 @@ bool LevelSetToMesh(const LevelSet& level_set, size_t max_cells, Mesh* out, std:
 
 bool LevelSetToTetMesh(const LevelSet& level_set, const StuffingOptions& options,
                        TetMeshData* out, std::string* err, std::string* device_used) {
-  if (level_set.empty() || !out || !(options.spacing > 0)) {
-    if (err) *err = "tet mesh: empty level set or nonpositive spacing";
+  if (level_set.empty() || !out || !std::isfinite(options.spacing) || !(options.spacing > 0) ||
+      !std::isfinite(options.graded_coarse_spacing) || options.graded_coarse_spacing < 0 ||
+      !std::isfinite(options.graded_growth) || options.graded_growth <= 0 ||
+      (options.graded_coarse_spacing > 0 && options.graded_coarse_spacing < options.spacing)) {
+    if (err) *err = "tet mesh: empty level set or invalid spacing or grading";
     return false;
   }
   tvdb_stuffing_options_t o;
@@ -514,6 +518,10 @@ bool LevelSetToTetMesh(const LevelSet& level_set, const StuffingOptions& options
   o.spacing = options.spacing;
   o.max_tets = options.max_tets;
   o.max_lattice_vertices = options.max_lattice_vertices;
+  if (options.graded_coarse_spacing > 0 && options.device != "cpu") {
+    if (err) *err = "tet mesh: graded stuffing requires the cpu device";
+    return false;
+  }
   Pool pool;
   if (!pool.Make(options.threads, err)) return false;
   DeviceLease lease;
@@ -536,7 +544,19 @@ bool LevelSetToTetMesh(const LevelSet& level_set, const StuffingOptions& options
     }
   } else
 #endif
-    st = tvdb_level_set_to_tet_mesh(level_set.grid(), &o, pool.pool, &tm, &e);
+    if (options.graded_coarse_spacing > 0) {
+      tvdb_graded_stuffing_options_t graded = {};
+      graded.fine_spacing = options.spacing;
+      graded.coarse_spacing = options.graded_coarse_spacing;
+      graded.grading = options.graded_growth;
+      graded.warp_alpha = 0.2;
+      graded.max_vertices = options.max_lattice_vertices;
+      graded.max_background_tets = options.max_background_tets;
+      graded.max_output_tets = options.max_tets;
+      st = tvdb_level_set_to_tet_mesh_graded(level_set.grid(), &graded, &tm, &e);
+    } else {
+      st = tvdb_level_set_to_tet_mesh(level_set.grid(), &o, pool.pool, &tm, &e);
+    }
   if (st != TVDB_OK) return Fail(err, "tet mesh", e);
   if (device_used) *device_used = lease.name;
   out->points.assign(tm.positions, tm.positions + 3 * tm.vertex_count);

@@ -110,6 +110,25 @@ def test_level_set_handle():
         np.testing.assert_array_equal(g, want)
 
 
+def test_experimental_graded_level_set_tets():
+    pts, tris = _sphere(12, 24)
+    ls = vol.mesh_to_level_set(pts, tris, voxel_size=0.1)
+    mesh = ls.to_tet_mesh(0.2, graded_coarse_spacing=0.6)
+    volumes = _tet_volumes(mesh.points, mesh.tets)
+    assert len(volumes) and volumes.min() > 0 and _closed(mesh.surface)
+    assert volumes.sum() == pytest.approx(_mesh_volume(pts, tris), rel=0.12)
+    again = ls.to_tet_mesh(0.2, graded_coarse_spacing=0.6)
+    np.testing.assert_array_equal(mesh.points, again.points)
+    np.testing.assert_array_equal(mesh.tets, again.tets)
+    np.testing.assert_array_equal(mesh.surface, again.surface)
+    with pytest.raises(ValueError):
+        ls.to_tet_mesh(0.2, graded_coarse_spacing=0.1)
+    with pytest.raises(ValueError):
+        ls.to_tet_mesh(0.2, graded_coarse_spacing=0.6, graded_growth=0)
+    with pytest.raises(lightusd.UsdError, match="limit"):
+        ls.to_tet_mesh(0.2, graded_coarse_spacing=0.6, max_background_tets=10)
+
+
 def test_level_set_errors():
     pts, tris = _sphere(8, 16)
     with pytest.raises(Exception):

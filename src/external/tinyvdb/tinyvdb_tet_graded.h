@@ -27,6 +27,11 @@ tvdb_status_t tvdb_sdf_to_tet_mesh_graded(tvdb_sdf_sample_fn sample, void *user,
     const double bbox_min[3], const double bbox_max[3],
     const tvdb_graded_stuffing_options_t *options, tvdb_tet_mesh *out,
     tvdb_error_t *err);
+/* Graded tetrahedralization of a float level set with an invertible affine
+ * transform. Uses the same active-voxel bounds as the uniform path. */
+tvdb_status_t tvdb_level_set_to_tet_mesh_graded(const tvdb_grid_t *level_set,
+    const tvdb_graded_stuffing_options_t *options, tvdb_tet_mesh *out,
+    tvdb_error_t *err);
 
 #ifdef __cplusplus
 }

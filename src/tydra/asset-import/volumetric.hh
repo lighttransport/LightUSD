@@ -96,6 +96,9 @@ struct StuffingOptions {
   double spacing = 0;   // lattice spacing (> 0)
   size_t max_tets = 0;  // 0 selects 4,000,000
   size_t max_lattice_vertices = 0;  // dense stuffing lattice (~32 B each); 0 selects 8,000,000
+  double graded_coarse_spacing = 0; // 0 selects uniform; experimental CPU path otherwise
+  double graded_growth = 0.8;
+  size_t max_background_tets = 0; // graded background; 0 selects 8,000,000
   int threads = 0;
   std::string device = "cpu"; // cpu | cuda | hip | auto (lattice samples)
 };

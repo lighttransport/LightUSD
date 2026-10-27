@@ -121,11 +121,21 @@ class LevelSet:
         return _unpack(pts, "f", 3), _unpack(idx, "i", 3)
 
     def to_tet_mesh(self, spacing: Optional[float] = None, *, max_tets: int = 0,
-                    threads: int = 0, device: str = "cpu") -> TetMesh:
-        """Tetrahedra of the interior; `spacing` defaults to 4 voxels."""
+                    threads: int = 0, device: str = "cpu",
+                    graded_coarse_spacing: Optional[float] = None,
+                    graded_growth: float = 0.8, max_background_tets: int = 0) -> TetMesh:
+        """Tetrahedra of the interior; `spacing` defaults to 4 voxels.
+
+        Set ``graded_coarse_spacing`` to opt into experimental CPU grading.
+        Features smaller than ``spacing`` may be missed and quality bounds
+        are not guaranteed. The graded algorithm runs serially.
+        """
         spacing = float(spacing) if spacing else 4.0 * self.voxel_size
         settings = json.dumps({"spacing": spacing, "max_tets": int(max_tets), "threads": int(threads),
-                               "device": str(device)})
+                               "device": str(device),
+                               "graded_coarse_spacing": float(graded_coarse_spacing or 0),
+                               "graded_growth": float(graded_growth),
+                               "max_background_tets": int(max_background_tets)})
         pts, tets, surf = _core._level_set_to_tet_mesh(self._handle, settings)
         return TetMesh(_unpack(pts, "f", 3), _unpack(tets, "i", 4), _unpack(surf, "i", 3))
 

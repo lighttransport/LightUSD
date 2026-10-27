@@ -158,15 +158,22 @@ lightusd_status StuffingSettings(const char* settings_json, ia::StuffingOptions*
   std::string err;
   if (!Settings(settings_json, &settings, &err)) return Fail(LIGHTUSD_ERR_INVALID_ARG, err);
   o->spacing = Number(settings, "spacing", 0);
+  o->graded_coarse_spacing = Number(settings, "graded_coarse_spacing", 0);
+  o->graded_growth = Number(settings, "graded_growth", 0.8);
   size_t threads = 0;
   if (!Count(settings, "max_tets", kMaxCountSetting, &o->max_tets, &err) ||
       !Count(settings, "max_lattice_vertices", kMaxCountSetting, &o->max_lattice_vertices, &err) ||
+      !Count(settings, "max_background_tets", kMaxCountSetting, &o->max_background_tets, &err) ||
       !Count(settings, "threads", 256, &threads, &err))
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh: " + err);
   o->threads = int(threads);
-  if (!std::isfinite(o->spacing))
-    return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh: spacing must be finite");
+  if (!std::isfinite(o->spacing) || !std::isfinite(o->graded_coarse_spacing) ||
+      !std::isfinite(o->graded_growth) || o->graded_coarse_spacing < 0 || o->graded_growth <= 0 ||
+      (o->graded_coarse_spacing > 0 && o->graded_coarse_spacing < o->spacing))
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh: invalid graded spacing or growth");
   o->device = Device(settings);
+  if (o->graded_coarse_spacing > 0 && o->device != "cpu")
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh: graded stuffing requires the cpu device");
   if (!(o->spacing > 0) || o->threads < 0 || o->threads > 256)
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh: spacing > 0 and threads in [0, 256]");
   const lightusd_status ds = DeviceStatus(o->device, &err);

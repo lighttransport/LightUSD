@@ -105,8 +105,12 @@ LIGHTUSD_API lightusd_status lightusd_level_set_vdb_to_mesh(const uint8_t* vdb, 
                                                            lightusd_string** points,
                                                            lightusd_string** indices);
 /* Isosurface-stuffing tetrahedra: settings_json {"spacing" (> 0, required),
- * "max_tets", "threads", "device"}. Outputs float32 xyz points, int32x4 tets (positive
- * orientation) and int32x3 outward boundary triangles. */
+ * "max_tets", "max_lattice_vertices", "threads", "device"}. The optional
+ * "graded_coarse_spacing" (>= spacing) selects experimental serial CPU
+ * grading; "graded_growth" (default 0.8) and "max_background_tets" (0 uses
+ * the default) control its sizing and budget. Small features may be missed,
+ * and element-quality bounds are not guaranteed. Outputs float32 xyz points,
+ * int32x4 tets (positive orientation) and int32x3 outward boundary triangles. */
 LIGHTUSD_API lightusd_status lightusd_level_set_vdb_to_tet_mesh(
     const uint8_t* vdb, size_t size, const char* settings_json, lightusd_string** points,
     lightusd_string** tets, lightusd_string** surface);
