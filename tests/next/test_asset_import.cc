@@ -278,6 +278,22 @@ int main() {
           "</flexcomp></worldbody></mujoco>";
       assert(rejected(bad));
     }
+    // Connectivity is integral: truncating 2.5 would silently turn a bad
+    // direct triangle into a different, otherwise valid triangle.
+    for (const char* elements : {"0 1 2.5", "0 1 2147483648", "0 1 -1"}) {
+      const std::string bad = std::string("<mujoco><worldbody><flexcomp name='f' type='direct' ") +
+          "dim='2' point='0 0 0 1 0 0 0 1 0' element='" + elements +
+          "'/></worldbody></mujoco>";
+      assert(rejected(bad));
+    }
+    const char* direct = "<mujoco><worldbody><flexcomp name='f' type='direct' dim='2' "
+                         "point='0 0 0 1 0 0 0 1 0' element='0 1 2'/>"
+                         "</worldbody></mujoco>";
+    lightusd_stage* direct_stage = nullptr;
+    assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(direct), std::strlen(direct),
+                                  "memory:direct.xml", &limits, &direct_stage) == LIGHTUSD_OK);
+    assert(direct_stage);
+    lightusd_stage_destroy(direct_stage);
     // MuJoCo combines pin attributes across elements before parsing tuples.
     const char* split_pins = "<mujoco><worldbody><flexcomp name='f' type='grid' "
         "dim='2' count='3 3 1' spacing='.1 .1 .1'><pin range='0'/><pin range='1'/>"

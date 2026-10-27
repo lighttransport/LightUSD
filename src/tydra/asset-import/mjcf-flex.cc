@@ -658,7 +658,13 @@ bool CollectBodyFlexcompsJson(const pugi::xml_node& body_node,
       return false;
     if (type == "direct") {
       point = ParseDoubles(Attr(f, "point"));
-      for (double v : ParseDoubles(Attr(f, "element"))) element.push_back(ToInt32(v, "element"));
+      for (double v : ParseDoubles(Attr(f, "element"))) {
+        if (!std::isfinite(v) || std::trunc(v) != v || v < INT32_MIN || v > INT32_MAX) {
+          if (err) *err = "flexcomp `" + name + "`: element must contain int32 values";
+          return false;
+        }
+        element.push_back(static_cast<int>(v));
+      }
     } else if (type == "mesh" || type == "gmsh") {
       const std::string file = Attr(f, "file");
       if (file.empty()) {
@@ -1050,7 +1056,18 @@ bool CollectMujocoRawFlexesJson(const pugi::xml_node& root,
     }
     const std::vector<double> vertex = ParseDoubles(Attr(f, "vertex"));
     std::vector<int> element;
-    for (double e : ParseDoubles(Attr(f, "element"))) element.push_back(ToInt32(e, "element"));
+    bool integral_elements = true;
+    for (double e : ParseDoubles(Attr(f, "element"))) {
+      if (!std::isfinite(e) || std::trunc(e) != e || e < INT32_MIN || e > INT32_MAX) {
+        integral_elements = false;
+        break;
+      }
+      element.push_back(static_cast<int>(e));
+    }
+    if (!integral_elements) {
+      if (!skip("element indices must be int32 values", "mjcf.flex_invalid")) return false;
+      continue;
+    }
     const size_t npnt = vertex.empty() ? names.size() : vertex.size() / 3;
     if (dim < 1 || dim > 3 || names.empty() || vertex.size() % 3 ||
         (names.size() != 1 && names.size() != npnt) || element.empty() ||

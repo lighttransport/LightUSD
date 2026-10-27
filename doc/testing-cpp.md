@@ -2463,7 +2463,10 @@ stage's paths remain unchanged.
 validation and the shared unsupported-feature policies through the C API.
 Its MJCF flexcomp cases reject incomplete pin tuples, fractional or out-of-range
 pin indices, and out-of-bounds reversed ranges; they also check valid tuples
-split across pin elements and valid empty ranges.
+split across pin elements and valid empty ranges. Direct flexcomp connectivity
+rejects fractional, out-of-range and missing vertex indices while accepting a
+valid triangle. `python/tests/test_mjcf_raw_flex.py` verifies raw flex index
+diagnostics in warn and error policies.
 `next_test_obj_textures` also checks native collector reuse, bounded diagnostic
 storage, malformed UTF-8 and explicit truncation counts.
 `python/tests/test_import_report.py` exercises independent input/memory/depth

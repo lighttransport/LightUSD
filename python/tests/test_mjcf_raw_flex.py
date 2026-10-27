@@ -57,6 +57,8 @@ def test_referenced_vertex_bodies_and_world_vertices_pin():
     (dict(root_extra='<keyframe><key qpos="0 0 0 0 0 0 0 0 0"/></keyframe>'), "keyframes"),
     (dict(flex_extra='dof="trilinear"'), "interpolated"),
     (dict(elements="0 1 7"), "element or body reference is missing"),
+    (dict(elements="0 1 2.5"), "element indices must be int32 values"),
+    (dict(elements="0 1 2147483648"), "element indices must be int32 values"),
 ])
 def test_unconvertible_flexes_are_reported(variant, message):
     elements = variant.pop("elements", None)
