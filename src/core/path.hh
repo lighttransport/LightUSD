@@ -486,6 +486,12 @@ class Path {
   // Assemble `_full` + offsets from prim/prop parts (eager, no mutable state).
   // Defined in prim-types.cc.
   void _assemble(const std::string &prim, const std::string &prop);
+
+  // Slice form of _assemble: builds `_full` from caller-owned slices without
+  // copying either part into an intermediate string first. The slices need not
+  // be NUL-terminated. Defined in prim-types.cc.
+  void _assemble_slices(const char *prim, size_t prim_len, const char *prop,
+                        size_t prop_len);
 };
 
 bool operator==(const Path &lhs, const Path &rhs);
