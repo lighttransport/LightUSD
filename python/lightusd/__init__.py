@@ -191,7 +191,7 @@ def _import(*, path=None, data=None, source="", format="auto", max_memory=0,
             profile="newton", obj_topology="expanded", layout="flat", progress=None,
             threads=0, sdf="auto", sdf_resolution=64, sdf_band=3.0,
             flex_tetrahedralize="mujoco", flex_tet_spacing=0.0,
-            flex_tet_coarse_spacing=0.0, volumetric_device="cpu"):
+            flex_tet_coarse_spacing=0.0, flex_tet_surface_guard=False, volumetric_device="cpu"):
     import json
     if max_memory < 0:
         raise ValueError("max_memory must be non-negative")
@@ -227,6 +227,10 @@ def _import(*, path=None, data=None, source="", format="auto", max_memory=0,
         raise ValueError("flex_tet_coarse_spacing must be at least flex_tet_spacing")
     if flex_tet_coarse_spacing and volumetric_device != "cpu":
         raise ValueError("graded flex stuffing requires the cpu device")
+    if not isinstance(flex_tet_surface_guard, bool):
+        raise ValueError("flex_tet_surface_guard must be boolean")
+    if flex_tet_surface_guard and not flex_tet_coarse_spacing:
+        raise ValueError("flex_tet_surface_guard requires flex_tet_coarse_spacing")
     if volumetric_device not in ("cpu", "cuda", "hip", "auto"):
         raise ValueError("volumetric_device must be cpu, cuda, hip or auto")
     settings = json.dumps({
@@ -239,6 +243,7 @@ def _import(*, path=None, data=None, source="", format="auto", max_memory=0,
         "sdf_band": float(sdf_band), "flex_tetrahedralize": flex_tetrahedralize,
         "flex_tet_spacing": float(flex_tet_spacing),
         "flex_tet_coarse_spacing": float(flex_tet_coarse_spacing), "volumetric_device": volumetric_device,
+        "flex_tet_surface_guard": flex_tet_surface_guard,
     })
     return _core._import_scene(path=path, data=data, source=source, format=format,
                                settings=settings, max_memory=max_memory, resolver=resolver,

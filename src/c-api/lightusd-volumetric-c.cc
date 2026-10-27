@@ -160,6 +160,11 @@ lightusd_status StuffingSettings(const char* settings_json, ia::StuffingOptions*
   o->spacing = Number(settings, "spacing", 0);
   o->graded_coarse_spacing = Number(settings, "graded_coarse_spacing", 0);
   o->graded_growth = Number(settings, "graded_growth", 0.8);
+  if (settings.contains("graded_surface_guard")) {
+    if (!settings["graded_surface_guard"].is_boolean())
+      return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh: graded_surface_guard must be boolean");
+    o->graded_surface_guard = settings["graded_surface_guard"].get<bool>();
+  }
   size_t threads = 0;
   if (!Count(settings, "max_tets", kMaxCountSetting, &o->max_tets, &err) ||
       !Count(settings, "max_lattice_vertices", kMaxCountSetting, &o->max_lattice_vertices, &err) ||
@@ -169,7 +174,8 @@ lightusd_status StuffingSettings(const char* settings_json, ia::StuffingOptions*
   o->threads = int(threads);
   if (!std::isfinite(o->spacing) || !std::isfinite(o->graded_coarse_spacing) ||
       !std::isfinite(o->graded_growth) || o->graded_coarse_spacing < 0 || o->graded_growth <= 0 ||
-      (o->graded_coarse_spacing > 0 && o->graded_coarse_spacing < o->spacing))
+      (o->graded_coarse_spacing > 0 && o->graded_coarse_spacing < o->spacing) ||
+      (o->graded_surface_guard && o->graded_coarse_spacing <= 0))
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh: invalid graded spacing or growth");
   o->device = Device(settings);
   if (o->graded_coarse_spacing > 0 && o->device != "cpu")

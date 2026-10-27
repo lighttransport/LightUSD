@@ -152,6 +152,7 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
     StuffingOptions so;
     so.spacing = opts.flex_tet_spacing > 0 ? opts.flex_tet_spacing : 4 * level_set.voxel_size();
     so.graded_coarse_spacing = opts.flex_tet_coarse_spacing;
+    so.graded_surface_guard = opts.flex_tet_surface_guard;
     so.threads = opts.threads;
     so.device = VolumetricDevice();
     if (so.graded_coarse_spacing > 0 &&
@@ -270,6 +271,7 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
     StuffingOptions so;
     so.spacing = spacing;
     so.graded_coarse_spacing = opts.flex_tet_coarse_spacing;
+    so.graded_surface_guard = opts.flex_tet_surface_guard;
     so.threads = opts.threads;
     so.device = ls.device;
     so.max_tets = std::max<size_t>(1000, std::min<size_t>(budget / 256, 4000000));

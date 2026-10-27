@@ -21,7 +21,10 @@ int main(int argc, char **argv) {
   tvdb_graded_stuffing_options_t options = {0}; tvdb_tet_mesh mesh = {0}; tvdb_error_t err;
   options.fine_spacing = argc > 1 ? strtod(argv[1], NULL) : 0.2;
   options.coarse_spacing = 0.8; options.grading = 0.8; options.warp_alpha = 0.2;
-  if (tvdb_sdf_to_tet_mesh_graded(sphere, NULL, lo, hi, &options, &mesh, &err) != TVDB_OK) {
+  tvdb_status_t st = argc > 2 && atoi(argv[2])
+      ? tvdb_sdf_to_tet_mesh_graded_guarded(sphere, NULL, lo, hi, &options, &mesh, &err)
+      : tvdb_sdf_to_tet_mesh_graded(sphere, NULL, lo, hi, &options, &mesh, &err);
+  if (st != TVDB_OK) {
     fprintf(stderr, "graded mesh: %s\n", err.message); return 1;
   }
   uint64_t hash = hash_bytes(UINT64_C(14695981039346656037), mesh.positions,

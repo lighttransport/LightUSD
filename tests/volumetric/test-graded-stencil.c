@@ -24,6 +24,9 @@ static int small_sphere(const double p[3], float *v, void *user) {
   *v = (float)(hypot(hypot(p[0]-0.61,p[1]-0.77),p[2]+0.52)-0.05);
   return 1;
 }
+static int fail_sample(const double p[3], float *v, void *user) {
+  (void)p; (void)v; (void)user; return 0;
+}
 typedef struct { int32_t a, b; int sign; } edge;
 static int cmp(const void *x, const void *y) {
   const edge *a = (const edge *)x, *b = (const edge *)y;
@@ -144,6 +147,39 @@ int main(void) {
     tvdb_tet_mesh_free(&m); tvdb_tet_refine_destroy(g);
   }
   {
+    /* A small off-grid sphere is missed by midpoint sizing at this
+       resolution. The optional conservative cell guard recovers it. */
+    g = NULL;
+    CHECK(tvdb_tet_refine_box(lo,hi,cells,200000,600000,&g,&err)==TVDB_OK);
+    CHECK(tvdb_tet_refine_adapt_sdf_guarded(g,small_sphere,NULL,0,0.1,2.5,0.8,&err)==TVDB_OK);
+    {
+      const double *p = tvdb_tet_refine_positions(g);
+      const uint32_t *t = tvdb_tet_refine_tets(g);
+      for (size_t i = 0; i < tvdb_tet_refine_tet_count(g); ++i) {
+        double center[3] = {0}, radius = 0, longest = 0; float value;
+        for (unsigned a = 0; a < 4; ++a) for (unsigned d = 0; d < 3; ++d)
+          center[d] += 0.25*p[3*t[4*i+a]+d];
+        CHECK(small_sphere(center,&value,NULL));
+        for (unsigned a = 0; a < 4; ++a) {
+          const double *x = p+3*t[4*i+a];
+          radius = fmax(radius,hypot(hypot(x[0]-center[0],x[1]-center[1]),x[2]-center[2]));
+          for (unsigned b = a+1; b < 4; ++b) {
+            const double *y = p+3*t[4*i+b];
+            longest = fmax(longest,hypot(hypot(x[0]-y[0],x[1]-y[1]),x[2]-y[2]));
+          }
+        }
+        if (fabs(value) <= radius*(1+1e-6) + 1e-8) CHECK(longest <= 0.1);
+      }
+    }
+    CHECK(tvdb_tet_graded_stencil(g,small_sphere,NULL,0,0.2,600000,&m,&err)==TVDB_OK);
+    CHECK(m.tet_count && closed(&m) && euler(&m)==2);
+    CHECK(tvdb_tet_mesh_quality(&m,&q,&err)==TVDB_OK && !q.inverted);
+    CHECK(fabs(q.volume-0.0005235987755982988) < 0.6*0.0005235987755982988);
+    printf("guarded small sphere: %zu background tets, %zu output tets, volume %.9f\n",
+           tvdb_tet_refine_tet_count(g),m.tet_count,q.volume);
+    tvdb_tet_mesh_free(&m); tvdb_tet_refine_destroy(g);
+  }
+  {
     const double min_box[] = {-1,-1,-1}, max_box[] = {1,1,1};
     tvdb_graded_stuffing_options_t options = {0};
     options.fine_spacing = 0.4; options.coarse_spacing = 1.0;
@@ -158,6 +194,12 @@ int main(void) {
     CHECK(m.positions == saved && m.tet_count == count);
     options.max_background_tets = 0; options.grading = 0;
     CHECK(tvdb_sdf_to_tet_mesh_graded(sphere,NULL,min_box,max_box,&options,&m,&err)==TVDB_ERROR_INVALID_ARGUMENT);
+    CHECK(m.positions == saved && m.tet_count == count);
+    options.grading = 0.8;
+    CHECK(tvdb_sdf_to_tet_mesh_graded_guarded(sphere,NULL,min_box,max_box,&options,&m,&err)==TVDB_OK);
+    CHECK(m.tet_count && closed(&m) && euler(&m)==2);
+    saved = m.positions; count = m.tet_count;
+    CHECK(tvdb_sdf_to_tet_mesh_graded_guarded(fail_sample,NULL,min_box,max_box,&options,&m,&err)==TVDB_ERROR_INVALID_DATA);
     CHECK(m.positions == saved && m.tet_count == count);
     tvdb_tet_mesh_free(&m);
   }

@@ -117,6 +117,8 @@ lightusd_status Options(const lightusd_import_options* in, ia::Options* out) {
         if (!(out->flex_tet_coarse_spacing >= 0) || !std::isfinite(out->flex_tet_coarse_spacing))
           return Fail(LIGHTUSD_ERR_INVALID_ARG, "flex_tet_coarse_spacing must be a nonnegative number");
       }
+      else if (key == "flex_tet_surface_guard" && v.is_boolean())
+        out->flex_tet_surface_guard = v.get<bool>();
       else if (key == "threads" && v.is_number()) {
         const double threads = v.get<double>();
         if (!(threads >= 0 && threads <= 256) || threads != std::floor(threads))
@@ -155,6 +157,8 @@ lightusd_status Options(const lightusd_import_options* in, ia::Options* out) {
   }
   if (out->flex_tet_coarse_spacing > 0 && out->volumetric_device != "cpu")
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "graded flex stuffing requires the cpu device");
+  if (out->flex_tet_surface_guard && out->flex_tet_coarse_spacing <= 0)
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "flex_tet_surface_guard requires flex_tet_coarse_spacing");
   if (out->flex_tet_coarse_spacing > 0 && out->flex_tet_spacing > 0 &&
       out->flex_tet_coarse_spacing < out->flex_tet_spacing)
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "flex_tet_coarse_spacing must be at least flex_tet_spacing");

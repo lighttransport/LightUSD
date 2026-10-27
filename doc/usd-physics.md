@@ -291,6 +291,10 @@ tetrahedralizes a level set's interior:
   the generated level-set band is widened to support the requested grading.
   A preexisting VDB with a band too narrow to reach the requested coarse size
   produces `mjcf.flex_graded_narrow_band` and retains its stored distances.
+  `flex_tet_surface_guard=True` also refines cells that may contain a surface;
+  it can increase memory and runtime substantially. Its conservative bound
+  assumes a 1-Lipschitz SDF, which interpolated grids may not satisfy, and it
+  cannot guarantee recovery of features below the fine spacing.
 - **Bunny example:** the fan overlaps on non-star-shaped meshes. On MuJoCo's
   bunny its tets sum to 125% of the mesh volume, while stuffing converges from
   below: 94% at spacing extent/12, 97% at extent/24.

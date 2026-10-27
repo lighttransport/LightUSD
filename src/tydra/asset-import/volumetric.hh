@@ -98,6 +98,7 @@ struct StuffingOptions {
   size_t max_lattice_vertices = 0;  // dense stuffing lattice (~32 B each); 0 selects 8,000,000
   double graded_coarse_spacing = 0; // 0 selects uniform; experimental CPU path otherwise
   double graded_growth = 0.8;
+  bool graded_surface_guard = false; // refine cells that may intersect the SDF surface
   size_t max_background_tets = 0; // graded background; 0 selects 8,000,000
   int threads = 0;
   std::string device = "cpu"; // cpu | cuda | hip | auto (lattice samples)

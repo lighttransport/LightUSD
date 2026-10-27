@@ -1788,6 +1788,8 @@ nice valgrind --tool=callgrind --callgrind-out-file=/tmp/graded.callgrind \
 ```
 
 The hash is a quick diagnostic, not a substitute for the byte comparison.
+Pass `1` as a second argument to `/tmp/profile-graded` to enable the optional
+surface guard; compare it separately because it intentionally changes the mesh.
 
 For a CPU-only wasm32 graded regression, after building the next WASM target
 with `LIGHTUSD_TINYVDB_GPU=OFF`, run the refinement and complete stencil tests

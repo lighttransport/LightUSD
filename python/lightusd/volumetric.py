@@ -123,7 +123,8 @@ class LevelSet:
     def to_tet_mesh(self, spacing: Optional[float] = None, *, max_tets: int = 0,
                     threads: int = 0, device: str = "cpu",
                     graded_coarse_spacing: Optional[float] = None,
-                    graded_growth: float = 0.8, max_background_tets: int = 0) -> TetMesh:
+                    graded_growth: float = 0.8, max_background_tets: int = 0,
+                    graded_surface_guard: bool = False) -> TetMesh:
         """Tetrahedra of the interior; `spacing` defaults to 4 voxels.
 
         Set ``graded_coarse_spacing`` to opt into experimental CPU grading.
@@ -132,12 +133,16 @@ class LevelSet:
         requested coarse size to be reachable away from the surface, the
         level-set band should be at least
         ``(graded_coarse_spacing - spacing) / graded_growth`` world units.
+        ``graded_surface_guard=True`` refines cells whose center and radius
+        indicate a possible surface crossing; it can require much more memory.
+        Its bound assumes a 1-Lipschitz field, which sampled VDBs may not meet.
         """
         spacing = float(spacing) if spacing else 4.0 * self.voxel_size
         settings = json.dumps({"spacing": spacing, "max_tets": int(max_tets), "threads": int(threads),
                                "device": str(device),
                                "graded_coarse_spacing": float(graded_coarse_spacing or 0),
                                "graded_growth": float(graded_growth),
+                               "graded_surface_guard": graded_surface_guard,
                                "max_background_tets": int(max_background_tets)})
         pts, tets, surf = _core._level_set_to_tet_mesh(self._handle, settings)
         return TetMesh(_unpack(pts, "f", 3), _unpack(tets, "i", 4), _unpack(surf, "i", 3))

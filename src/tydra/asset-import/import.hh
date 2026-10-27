@@ -90,6 +90,7 @@ struct Options {
   std::string flex_tetrahedralize = "mujoco";
   double flex_tet_spacing = 0;
   double flex_tet_coarse_spacing = 0; // opt in to experimental CPU grading
+  bool flex_tet_surface_guard = false; // refine cells that may contain the surface
   // Device for those level sets and tets: "cpu", "cuda", "hip" or "auto"
   // (volumetric.hh). An unavailable CUDA/HIP device falls back to the CPU
   // with asset.volumetric_device_unavailable; results are the same.

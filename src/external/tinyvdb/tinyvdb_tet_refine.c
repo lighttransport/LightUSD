@@ -258,8 +258,9 @@ static void longest_edge_closure(const tvdb_tet_refine_graph *g, uint32_t *a, ui
         *a = next_a; *b = next_b; length = best;
     }
 }
-tvdb_status_t tvdb_tet_refine_adapt(tvdb_tet_refine_graph *g,
-        tvdb_tet_refine_size_fn size, void *user, tvdb_error_t *err) {
+static tvdb_status_t adapt_impl(tvdb_tet_refine_graph *g,
+        tvdb_tet_refine_size_fn size, void *user, tvdb_tet_refine_sdf_fn guard,
+        void *guard_user, float iso, double fine, tvdb_error_t *err) {
     size_t *queue = NULL, cap = 0, head = 0, tail = 0, i;
     tvdb_status_t st = TVDB_OK;
     if (!g || !size) return fail(err, TVDB_ERROR_INVALID_ARGUMENT, "Missing refinement graph or size callback");
@@ -268,8 +269,8 @@ tvdb_status_t tvdb_tet_refine_adapt(tvdb_tet_refine_graph *g,
     for (i = 0; i < g->nt; ++i) queue[tail++] = i;
     while (head < tail) {
         size_t t = queue[head++];
-        uint32_t a = 0, b = 0;
-        double longest = 0;
+        uint32_t a = 0, b = 0, max_a = 0, max_b = 0;
+        double longest = 0, max_length = 0;
         for (unsigned x = 0; x < 4; ++x) for (unsigned y = x + 1; y < 4; ++y) {
             uint32_t u = g->tets[4*t+x], v = g->tets[4*t+y];
             double midpoint[3], delta[3], desired = NAN, length;
@@ -284,6 +285,30 @@ tvdb_status_t tvdb_tet_refine_adapt(tvdb_tet_refine_graph *g,
                 goto done;
             }
             if (length > desired && length > longest) { longest = length; a = u; b = v; }
+            if (guard && length > max_length) { max_length = length; max_a = u; max_b = v; }
+        }
+        if (guard && max_length > fine && max_length > longest) {
+            double center[3] = {0, 0, 0}, radius = 0;
+            float value = NAN;
+            for (unsigned j = 0; j < 4; ++j) {
+                size_t v = g->tets[4*t+j];
+                for (unsigned d = 0; d < 3; ++d) center[d] += 0.25*g->positions[3*v+d];
+            }
+            if (!isfinite(center[0]) || !isfinite(center[1]) || !isfinite(center[2]) ||
+                !guard(center, &value, guard_user) || !isfinite(value)) {
+                st = fail(err, TVDB_ERROR_INVALID_DATA, "Invalid surface guard sample"); goto done;
+            }
+            for (unsigned j = 0; j < 4; ++j) {
+                size_t v = g->tets[4*t+j];
+                double dx = center[0]-g->positions[3*v], dy = center[1]-g->positions[3*v+1];
+                double dz = center[2]-g->positions[3*v+2];
+                double distance = hypot(hypot(dx,dy),dz);
+                if (!isfinite(distance)) { st = fail(err, TVDB_ERROR_INVALID_DATA, "Invalid surface guard radius"); goto done; }
+                if (distance > radius) radius = distance;
+            }
+            if (fabs((double)value - iso) <= radius * (1.0 + 1e-6) + fine * 1e-7) {
+                longest = max_length; a = max_a; b = max_b;
+            }
         }
         if (longest > 0) {
             size_t old_nt = g->nt, *parents = NULL, count = 0, extra;
@@ -307,6 +332,10 @@ tvdb_status_t tvdb_tet_refine_adapt(tvdb_tet_refine_graph *g,
 done:
     free(queue); return st;
 }
+tvdb_status_t tvdb_tet_refine_adapt(tvdb_tet_refine_graph *g,
+        tvdb_tet_refine_size_fn size, void *user, tvdb_error_t *err) {
+    return adapt_impl(g, size, user, NULL, NULL, 0, 0, err);
+}
 typedef struct {
     tvdb_tet_refine_sdf_fn sdf; void *user;
     float iso; double fine, coarse, slope;
@@ -320,14 +349,24 @@ static int sdf_size(const double p[3], double *size, void *user) {
     *size = distance >= range / ctx->slope ? ctx->coarse : ctx->fine + distance * ctx->slope;
     return 1;
 }
-tvdb_status_t tvdb_tet_refine_adapt_sdf(tvdb_tet_refine_graph *g,
+static tvdb_status_t adapt_sdf(tvdb_tet_refine_graph *g,
         tvdb_tet_refine_sdf_fn sdf, void *user, float iso, double fine,
-        double coarse, double slope, tvdb_error_t *err) {
+        double coarse, double slope, int guarded, tvdb_error_t *err) {
     sdf_size_context ctx = {sdf, user, iso, fine, coarse, slope};
     if (!g || !sdf || !isfinite(iso) || !isfinite(fine) || fine <= 0 ||
         !isfinite(coarse) || coarse < fine || !isfinite(slope) || slope <= 0)
         return fail(err, TVDB_ERROR_INVALID_ARGUMENT, "Invalid SDF refinement options");
-    return tvdb_tet_refine_adapt(g, sdf_size, &ctx, err);
+    return adapt_impl(g, sdf_size, &ctx, guarded ? sdf : NULL, user, iso, fine, err);
+}
+tvdb_status_t tvdb_tet_refine_adapt_sdf(tvdb_tet_refine_graph *g,
+        tvdb_tet_refine_sdf_fn sdf, void *user, float iso, double fine,
+        double coarse, double slope, tvdb_error_t *err) {
+    return adapt_sdf(g, sdf, user, iso, fine, coarse, slope, 0, err);
+}
+tvdb_status_t tvdb_tet_refine_adapt_sdf_guarded(tvdb_tet_refine_graph *g,
+        tvdb_tet_refine_sdf_fn sdf, void *user, float iso, double fine,
+        double coarse, double slope, tvdb_error_t *err) {
+    return adapt_sdf(g, sdf, user, iso, fine, coarse, slope, 1, err);
 }
 const double *tvdb_tet_refine_positions(const tvdb_tet_refine_graph *g) { return g ? g->positions : NULL; }
 const uint32_t *tvdb_tet_refine_tets(const tvdb_tet_refine_graph *g) { return g ? g->tets : NULL; }

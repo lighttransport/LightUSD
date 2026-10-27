@@ -121,10 +121,17 @@ def test_experimental_graded_level_set_tets():
     np.testing.assert_array_equal(mesh.points, again.points)
     np.testing.assert_array_equal(mesh.tets, again.tets)
     np.testing.assert_array_equal(mesh.surface, again.surface)
+    guarded = ls.to_tet_mesh(0.2, graded_coarse_spacing=0.6, graded_surface_guard=True)
+    assert len(guarded.tets) and _tet_volumes(guarded.points, guarded.tets).min() > 0
+    assert _closed(guarded.surface)
     with pytest.raises(ValueError):
         ls.to_tet_mesh(0.2, graded_coarse_spacing=0.1)
     with pytest.raises(ValueError):
         ls.to_tet_mesh(0.2, graded_coarse_spacing=0.6, graded_growth=0)
+    with pytest.raises(ValueError):
+        ls.to_tet_mesh(0.2, graded_surface_guard=True)
+    with pytest.raises(ValueError):
+        ls.to_tet_mesh(0.2, graded_coarse_spacing=0.6, graded_surface_guard='yes')
     with pytest.raises(lightusd.UsdError, match="limit"):
         ls.to_tet_mesh(0.2, graded_coarse_spacing=0.6, max_background_tets=10)
 
@@ -321,10 +328,16 @@ def test_flexcomp_graded_stuffing(tmp_path):
     again = lightusd.import_mjcf(path, **kwargs).prim_at('/World/Deformables/soft')
     np.testing.assert_array_equal(soft['points'], again['points'])
     np.testing.assert_array_equal(soft['tetVertexIndices'], again['tetVertexIndices'])
+    guarded = lightusd.import_mjcf(path, **kwargs, flex_tet_surface_guard=True).prim_at('/World/Deformables/soft')
+    guarded_volumes = _tet_volumes(guarded['points'], guarded['tetVertexIndices'])
+    assert len(guarded_volumes) and guarded_volumes.min() > 0
+    assert guarded_volumes.sum() == pytest.approx(1.0, rel=0.08)
     with pytest.raises(ValueError, match='at least'):
         lightusd.import_mjcf(path, flex_tet_spacing=0.2, flex_tet_coarse_spacing=0.1)
     with pytest.raises(ValueError, match='cpu'):
         lightusd.import_mjcf(path, flex_tet_coarse_spacing=0.4, volumetric_device='auto')
+    with pytest.raises(ValueError, match='requires'):
+        lightusd.import_mjcf(path, flex_tet_surface_guard=True)
     with pytest.raises(lightusd.UsdError, match='flex_tetrahedralize=stuffing'):
         lightusd.import_mjcf(path, flex_tet_coarse_spacing=0.4)
     with pytest.raises(lightusd.UsdError, match='resolved fine spacing'):

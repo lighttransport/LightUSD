@@ -44,6 +44,10 @@ tvdb_status_t tvdb_tet_refine_adapt_sdf(tvdb_tet_refine_graph *graph,
                                         tvdb_tet_refine_sdf_fn sdf, void *user,
                                         float isovalue, double fine, double coarse,
                                         double slope, tvdb_error_t *err);
+tvdb_status_t tvdb_tet_refine_adapt_sdf_guarded(tvdb_tet_refine_graph *graph,
+                                        tvdb_tet_refine_sdf_fn sdf, void *user,
+                                        float isovalue, double fine, double coarse,
+                                        double slope, tvdb_error_t *err);
 const double *tvdb_tet_refine_positions(const tvdb_tet_refine_graph *graph);
 const uint32_t *tvdb_tet_refine_tets(const tvdb_tet_refine_graph *graph);
 size_t tvdb_tet_refine_vertex_count(const tvdb_tet_refine_graph *graph);

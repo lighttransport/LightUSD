@@ -108,7 +108,9 @@ LIGHTUSD_API lightusd_status lightusd_level_set_vdb_to_mesh(const uint8_t* vdb, 
  * "max_tets", "max_lattice_vertices", "threads", "device"}. The optional
  * "graded_coarse_spacing" (>= spacing) selects experimental serial CPU
  * grading; "graded_growth" (default 0.8) and "max_background_tets" (0 uses
- * the default) control its sizing and budget. Small features may be missed,
+ * the default) control its sizing and budget. "graded_surface_guard" enables
+ * extra refinement of cells that may contain the surface. It assumes a
+ * 1-Lipschitz SDF and can use substantially more memory. Small features may be missed,
  * and element-quality bounds are not guaranteed. Outputs float32 xyz points,
  * int32x4 tets (positive orientation) and int32x3 outward boundary triangles. */
 LIGHTUSD_API lightusd_status lightusd_level_set_vdb_to_tet_mesh(

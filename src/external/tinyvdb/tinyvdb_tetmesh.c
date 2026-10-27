@@ -1089,10 +1089,10 @@ done_graded:
   free(pos); free(value); free(vertex_out); free(B.cuts); free(B.positions); free(B.tets);
   return st;
 }
-tvdb_status_t tvdb_sdf_to_tet_mesh_graded(tvdb_sdf_sample_fn sample, void *user,
+static tvdb_status_t tet_sdf_to_tet_mesh_graded(tvdb_sdf_sample_fn sample, void *user,
     const double bbox_min[3], const double bbox_max[3],
     const tvdb_graded_stuffing_options_t *options, tvdb_tet_mesh *out,
-    tvdb_error_t *err) {
+    int surface_guard, tvdb_error_t *err) {
   double lo[3], hi[3]; size_t cells[3]; tvdb_tet_refine_graph *graph = NULL;
   tvdb_status_t st;
   if (!sample || !bbox_min || !bbox_max || !options || !out ||
@@ -1116,15 +1116,31 @@ tvdb_status_t tvdb_sdf_to_tet_mesh_graded(tvdb_sdf_sample_fn sample, void *user,
   size_t max_background = options->max_background_tets ? options->max_background_tets : 8000000;
   size_t max_output = options->max_output_tets ? options->max_output_tets : 4000000;
   st = tvdb_tet_refine_box(lo, hi, cells, max_vertices, max_background, &graph, err);
-  if (st == TVDB_OK)
-    st = tvdb_tet_refine_adapt_sdf(graph, sample, user, options->isovalue,
-                                   options->fine_spacing, options->coarse_spacing,
-                                   options->grading, err);
+  if (st == TVDB_OK) {
+    if (surface_guard)
+      st = tvdb_tet_refine_adapt_sdf_guarded(graph, sample, user, options->isovalue,
+                                             options->fine_spacing, options->coarse_spacing,
+                                             options->grading, err);
+    else
+      st = tvdb_tet_refine_adapt_sdf(graph, sample, user, options->isovalue,
+                                     options->fine_spacing, options->coarse_spacing,
+                                     options->grading, err);
+  }
   if (st == TVDB_OK)
     st = tvdb_tet_graded_stencil(graph, sample, user, options->isovalue,
                                   options->warp_alpha, max_output, out, err);
   tvdb_tet_refine_destroy(graph);
   return st;
+}
+tvdb_status_t tvdb_sdf_to_tet_mesh_graded(tvdb_sdf_sample_fn sample, void *user,
+    const double bbox_min[3], const double bbox_max[3],
+    const tvdb_graded_stuffing_options_t *options, tvdb_tet_mesh *out, tvdb_error_t *err) {
+  return tet_sdf_to_tet_mesh_graded(sample, user, bbox_min, bbox_max, options, out, 0, err);
+}
+tvdb_status_t tvdb_sdf_to_tet_mesh_graded_guarded(tvdb_sdf_sample_fn sample, void *user,
+    const double bbox_min[3], const double bbox_max[3],
+    const tvdb_graded_stuffing_options_t *options, tvdb_tet_mesh *out, tvdb_error_t *err) {
+  return tet_sdf_to_tet_mesh_graded(sample, user, bbox_min, bbox_max, options, out, 1, err);
 }
 
 tvdb_status_t tvdb_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
@@ -1191,6 +1207,7 @@ static int tet_grid_sample(const double p[3], float *value, void *user) {
 static tvdb_status_t tet_grid_to_mesh(const tvdb_grid_t *grid,
                                      const tvdb_stuffing_options_t *options,
                                      const tvdb_graded_stuffing_options_t *graded,
+                                     int surface_guard,
                                      tvdb_thread_pool_t *pool,
                                      tvdb_tet_mesh *out, tvdb_error_t *err) {
   if (!grid || (!options && !graded) || !out)
@@ -1244,7 +1261,8 @@ static tvdb_status_t tet_grid_to_mesh(const tvdb_grid_t *grid,
     tet_sample_state state;
     state.inverse = s.inverse;
     tvdb_tree_accessor_init(&state.acc, &s.index);
-    st = tvdb_sdf_to_tet_mesh_graded(tet_grid_sample, &state, lo, hi, graded, out, err);
+    st = tet_sdf_to_tet_mesh_graded(tet_grid_sample, &state, lo, hi, graded, out,
+                                    surface_guard, err);
   } else {
     const tet_sample_scope scope = {tet_sampler_begin, tet_sampler_end};
     st = tet_sdf_to_tet_mesh(tet_grid_sample, &s, &scope, lo, hi, options, pool, out, err);
@@ -1256,11 +1274,15 @@ tvdb_status_t tvdb_level_set_to_tet_mesh(const tvdb_grid_t *grid,
                                          const tvdb_stuffing_options_t *options,
                                          tvdb_thread_pool_t *pool,
                                          tvdb_tet_mesh *out, tvdb_error_t *err) {
-  return tet_grid_to_mesh(grid, options, NULL, pool, out, err);
+  return tet_grid_to_mesh(grid, options, NULL, 0, pool, out, err);
 }
 tvdb_status_t tvdb_level_set_to_tet_mesh_graded(const tvdb_grid_t *grid,
     const tvdb_graded_stuffing_options_t *options, tvdb_tet_mesh *out, tvdb_error_t *err) {
-  return tet_grid_to_mesh(grid, NULL, options, NULL, out, err);
+  return tet_grid_to_mesh(grid, NULL, options, 0, NULL, out, err);
+}
+tvdb_status_t tvdb_level_set_to_tet_mesh_graded_guarded(const tvdb_grid_t *grid,
+    const tvdb_graded_stuffing_options_t *options, tvdb_tet_mesh *out, tvdb_error_t *err) {
+  return tet_grid_to_mesh(grid, NULL, options, 1, NULL, out, err);
 }
 
 tvdb_status_t tvdb_tet_mesh_quality(const tvdb_tet_mesh *mesh,

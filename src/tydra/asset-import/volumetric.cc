@@ -509,6 +509,7 @@ bool LevelSetToTetMesh(const LevelSet& level_set, const StuffingOptions& options
   if (level_set.empty() || !out || !std::isfinite(options.spacing) || !(options.spacing > 0) ||
       !std::isfinite(options.graded_coarse_spacing) || options.graded_coarse_spacing < 0 ||
       !std::isfinite(options.graded_growth) || options.graded_growth <= 0 ||
+      (options.graded_surface_guard && options.graded_coarse_spacing <= 0) ||
       (options.graded_coarse_spacing > 0 && options.graded_coarse_spacing < options.spacing)) {
     if (err) *err = "tet mesh: empty level set or invalid spacing or grading";
     return false;
@@ -553,7 +554,9 @@ bool LevelSetToTetMesh(const LevelSet& level_set, const StuffingOptions& options
       graded.max_vertices = options.max_lattice_vertices;
       graded.max_background_tets = options.max_background_tets;
       graded.max_output_tets = options.max_tets;
-      st = tvdb_level_set_to_tet_mesh_graded(level_set.grid(), &graded, &tm, &e);
+      st = options.graded_surface_guard
+        ? tvdb_level_set_to_tet_mesh_graded_guarded(level_set.grid(), &graded, &tm, &e)
+        : tvdb_level_set_to_tet_mesh_graded(level_set.grid(), &graded, &tm, &e);
     } else {
       st = tvdb_level_set_to_tet_mesh(level_set.grid(), &o, pool.pool, &tm, &e);
     }
