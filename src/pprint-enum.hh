@@ -158,7 +158,7 @@ std::string to_string(const std::string &s);
 template <typename T>
 std::string to_string(const std::vector<T> &v, const uint32_t level = 0) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
   ss << pprint::Indent(level) << "[";
   for (size_t i = 0; i < v.size(); i++) {
     ss << to_string(v[i]);
@@ -173,7 +173,7 @@ std::string to_string(const std::vector<T> &v, const uint32_t level = 0) {
 template <typename T>
 std::string to_string(const ListOp<T> &op, const uint32_t indent_level = 0) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
   ss << pprint::Indent(indent_level) << "ListOp(isExplicit " << op.IsExplicit()
      << ") {\n";
   ss << pprint::Indent(indent_level)

@@ -305,7 +305,7 @@ std::string to_string(const CustomDataType &custom) {
 //
 std::string to_string(const Reference &v) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   // For internal references (no asset path, just prim path), don't output "@@"
   if (!v.asset_path.GetAssetPath().empty()) {
@@ -330,7 +330,7 @@ std::string to_string(const Reference &v) {
 //
 std::string to_string(const Payload &v) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   if (v.is_none()) {
     // pxrUSD serialize and prints 'None' for payload by filling all members in
@@ -582,7 +582,7 @@ std::string to_string(lightusd::Variability v) {
 //
 std::string to_string(lightusd::Extent e) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << "[" << e.lower << ", " << e.upper << "]";
 
@@ -603,7 +603,7 @@ std::string to_string(const Path &path, bool show_full_path) {
 std::string to_string(const std::vector<Path> &v, bool show_full_path) {
   // TODO(syoyo): indent
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
   ss << "[";
 
   for (size_t i = 0; i < v.size(); i++) {
@@ -689,7 +689,7 @@ std::string to_string(const XformOp::OpType &op) {
 //
 std::string dump_path(const Path &path) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
   ss << "Path: Prim part = " << path.prim_part();
   ss << ", Prop part = " << path.prop_part();
   ss << ", Variant part = " << path.variant_part();

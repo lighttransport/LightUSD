@@ -4,6 +4,8 @@
 
 #include "value-pprint.hh"
 
+#include <charconv>
+#include <cstring>
 #include <sstream>
 
 #include "pprinter.hh"
@@ -42,6 +44,94 @@ inline void append_float_to_stream(std::ostream &os, float v) {
   char buf[lightusd::DTOS_MAX_CHARS_FLOAT];
   size_t len = lightusd::dtos(v, buf);
   os.write(buf, static_cast<std::streamsize>(len));
+}
+
+// 3-component tuples print as "(x, y, z)". Formatting that into a local buffer
+// and writing it once turns seven stream insertions (five of them literals, each
+// with its own sentry + xsputn hop) into one: point/normal/vector arrays are the
+// bulk of an array-heavy layer, so this is the hottest single value printer.
+inline void append_float3_tuple(std::ostream &os, float x, float y, float z) {
+  char buf[3 * lightusd::DTOS_MAX_CHARS_FLOAT + 8];
+  char *p = buf;
+  *p++ = '(';
+  p += lightusd::dtos(x, p);
+  *p++ = ',';
+  *p++ = ' ';
+  p += lightusd::dtos(y, p);
+  *p++ = ',';
+  *p++ = ' ';
+  p += lightusd::dtos(z, p);
+  *p++ = ')';
+  os.write(buf, static_cast<std::streamsize>(p - buf));
+}
+
+// --- buffered scalar-array writer -----------------------------------------
+// "[1, 2, 3]" used to be emitted one element insertion at a time: each insertion
+// pays the ostream sentry/xsputn toll, and integers additionally go through the
+// locale-backed num_put path. Formatting into a local buffer and writing it out
+// in a few large chunks removes both. The output is the same text as before.
+constexpr size_t kArrayBufBytes = 4096;
+// Widest element text this writer produces, plus the ", " separator.
+constexpr size_t kArrayElemReserve = 40;
+
+template <typename T, typename WriteFn>
+inline std::ostream &write_scalar_array(std::ostream &ofs,
+                                        const std::vector<T> &v,
+                                        WriteFn write_element) {
+  char buf[kArrayBufBytes];
+  size_t n = 0;
+  buf[n++] = '[';
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) {
+      buf[n++] = ',';
+      buf[n++] = ' ';
+    }
+    n += write_element(buf + n, v[i]);
+    if (n + kArrayElemReserve > kArrayBufBytes) {
+      ofs.write(buf, static_cast<std::streamsize>(n));
+      n = 0;
+    }
+  }
+  buf[n++] = ']';
+  ofs.write(buf, static_cast<std::streamsize>(n));
+  return ofs;
+}
+
+inline size_t write_float_element(char *p, float v) {
+  return lightusd::dtos(v, p);
+}
+
+inline size_t write_double_element(char *p, double v) {
+  return lightusd::dtos(v, p);
+}
+
+// Integer elements: plain decimal digits, no locale involvement (same text as
+// the stream's default numeric formatting).
+template <typename T>
+inline size_t write_int_element(char *p, T v) {
+#if defined(LIGHTUSD_LOCAL_USE_JEAIII_ITOA)
+  lightusd::itoa(v, p);
+  return std::strlen(p);
+#else
+  auto res = std::to_chars(p, p + kArrayElemReserve, v);
+  return static_cast<size_t>(res.ptr - p);
+#endif
+}
+
+inline void append_double3_tuple(std::ostream &os, double x, double y,
+                                 double z) {
+  char buf[3 * lightusd::DTOS_MAX_CHARS_DOUBLE + 8];
+  char *p = buf;
+  *p++ = '(';
+  p += lightusd::dtos(x, p);
+  *p++ = ',';
+  *p++ = ' ';
+  p += lightusd::dtos(y, p);
+  *p++ = ',';
+  *p++ = ' ';
+  p += lightusd::dtos(z, p);
+  *p++ = ')';
+  os.write(buf, static_cast<std::streamsize>(p - buf));
 }
 
 }  // namespace
@@ -327,19 +417,12 @@ std::ostream &operator<<(std::ostream &os, const lightusd::value::vector3h &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const lightusd::value::vector3f &v) {
-  os << "(";
-  append_float_to_stream(os, v.x);
-  os << ", ";
-  append_float_to_stream(os, v.y);
-  os << ", ";
-  append_float_to_stream(os, v.z);
-  os << ")";
+  append_float3_tuple(os, v.x, v.y, v.z);
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const lightusd::value::vector3d &v) {
-  os << "(" << lightusd::dtos(v.x) << ", " << lightusd::dtos(v.y) << ", "
-     << lightusd::dtos(v.z) << ")";
+  append_double3_tuple(os, v.x, v.y, v.z);
   return os;
 }
 
@@ -349,19 +432,12 @@ std::ostream &operator<<(std::ostream &os, const lightusd::value::normal3h &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const lightusd::value::normal3f &v) {
-  os << "(";
-  append_float_to_stream(os, v.x);
-  os << ", ";
-  append_float_to_stream(os, v.y);
-  os << ", ";
-  append_float_to_stream(os, v.z);
-  os << ")";
+  append_float3_tuple(os, v.x, v.y, v.z);
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const lightusd::value::normal3d &v) {
-  os << "(" << lightusd::dtos(v.x) << ", " << lightusd::dtos(v.y) << ", "
-     << lightusd::dtos(v.z) << ")";
+  append_double3_tuple(os, v.x, v.y, v.z);
   return os;
 }
 
@@ -371,19 +447,12 @@ std::ostream &operator<<(std::ostream &os, const lightusd::value::point3h &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const lightusd::value::point3f &v) {
-  os << "(";
-  append_float_to_stream(os, v.x);
-  os << ", ";
-  append_float_to_stream(os, v.y);
-  os << ", ";
-  append_float_to_stream(os, v.z);
-  os << ")";
+  append_float3_tuple(os, v.x, v.y, v.z);
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const lightusd::value::point3d &v) {
-  os << "(" << lightusd::dtos(v.x) << ", " << lightusd::dtos(v.y) << ", "
-     << lightusd::dtos(v.z) << ")";
+  append_double3_tuple(os, v.x, v.y, v.z);
   return os;
 }
 
@@ -674,16 +743,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
         elems, lightusd::pprint::GetPrefixColumns(), col_limit);
     return ofs;
   }
-  ofs << "[";
-  for (size_t i = 0; i < v.size(); i++) {
-    if (i > 0) {
-      ofs << ", ";
-    }
-    ofs << lightusd::dtos(v[i]);
-  }
-  ofs << "]";
-
-  return ofs;
+  return write_scalar_array(ofs, v, write_double_element);
 }
 
 template <>
@@ -699,16 +759,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<float> &v) {
         elems, lightusd::pprint::GetPrefixColumns(), col_limit);
     return ofs;
   }
-  ofs << "[";
-  for (size_t i = 0; i < v.size(); i++) {
-    if (i > 0) {
-      ofs << ", ";
-    }
-    ofs << lightusd::dtos(v[i]);
-  }
-  ofs << "]";
-
-  return ofs;
+  return write_scalar_array(ofs, v, write_float_element);
 }
 
 template <>
@@ -726,26 +777,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int32_t> &v) {
         elems, lightusd::pprint::GetPrefixColumns(), col_limit);
     return ofs;
   }
-#if defined(LIGHTUSD_LOCAL_USE_JEAIII_ITOA)
-  // numeric_limits<uint64_t>::digits10 is 19, so 32 should suffice.
-  char buf[32];
-#endif
-
-  ofs << "[";
-  for (size_t i = 0; i < v.size(); i++) {
-    if (i > 0) {
-      ofs << ", ";
-    }
-#if defined(LIGHTUSD_LOCAL_USE_JEAIII_ITOA)
-    lightusd::itoa(v[i], buf);
-    ofs << buf;
-#else
-    ofs << v[i];
-#endif
-  }
-  ofs << "]";
-
-  return ofs;
+  return write_scalar_array(ofs, v, write_int_element<int32_t>);
 }
 
 template <>
@@ -763,30 +795,12 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<uint32_t> &v) {
         elems, lightusd::pprint::GetPrefixColumns(), col_limit);
     return ofs;
   }
-#if defined(LIGHTUSD_LOCAL_USE_JEAIII_ITOA)
-  char buf[32];
-#endif
-
-  ofs << "[";
-  for (size_t i = 0; i < v.size(); i++) {
-    if (i > 0) {
-      ofs << ", ";
-    }
-#if defined(LIGHTUSD_LOCAL_USE_JEAIII_ITOA)
-    lightusd::itoa(v[i], buf);
-    ofs << buf;
-#else
-    ofs << v[i];
-#endif
-  }
-  ofs << "]";
-
-  return ofs;
+  return write_scalar_array(ofs, v, write_int_element<uint32_t>);
 }
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<uint8_t> &v) {
-  // uchar[]: print each element as an integer (os << uint8_t would emit a char).
+  // uchar[]: print each element as an integer (`os << uint8_t` would emit a char).
   uint32_t col_limit = lightusd::pprint::GetColumnLimit();
   if (col_limit > 0 && v.size() > 1) {
     std::vector<std::string> elems;
@@ -800,15 +814,10 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<uint8_t> &v) {
         elems, lightusd::pprint::GetPrefixColumns(), col_limit);
     return ofs;
   }
-  ofs << "[";
-  for (size_t i = 0; i < v.size(); i++) {
-    if (i > 0) {
-      ofs << ", ";
-    }
-    ofs << static_cast<unsigned int>(v[i]);
-  }
-  ofs << "]";
-  return ofs;
+  return write_scalar_array(
+      ofs, v, [](char *p, uint8_t e) {
+        return write_int_element(p, static_cast<unsigned int>(e));
+      });
 }
 
 template <>
@@ -826,26 +835,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int64_t> &v) {
         elems, lightusd::pprint::GetPrefixColumns(), col_limit);
     return ofs;
   }
-#if defined(LIGHTUSD_LOCAL_USE_JEAIII_ITOA)
-  // numeric_limits<uint64_t>::digits10 is 19, so 32 should suffice.
-  char buf[32];
-#endif
-
-  ofs << "[";
-  for (size_t i = 0; i < v.size(); i++) {
-    if (i > 0) {
-      ofs << ", ";
-    }
-#if defined(LIGHTUSD_LOCAL_USE_JEAIII_ITOA)
-    lightusd::itoa(v[i], buf);
-    ofs << buf;
-#else
-    ofs << v[i];
-#endif
-  }
-  ofs << "]";
-
-  return ofs;
+  return write_scalar_array(ofs, v, write_int_element<int64_t>);
 }
 
 template <>
@@ -863,25 +853,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<uint64_t> &v) {
         elems, lightusd::pprint::GetPrefixColumns(), col_limit);
     return ofs;
   }
-#if defined(LIGHTUSD_LOCAL_USE_JEAIII_ITOA)
-  char buf[32];
-#endif
-
-  ofs << "[";
-  for (size_t i = 0; i < v.size(); i++) {
-    if (i > 0) {
-      ofs << ", ";
-    }
-#if defined(LIGHTUSD_LOCAL_USE_JEAIII_ITOA)
-    lightusd::itoa(v[i], buf);
-    ofs << buf;
-#else
-    ofs << v[i];
-#endif
-  }
-  ofs << "]";
-
-  return ofs;
+  return write_scalar_array(ofs, v, write_int_element<uint64_t>);
 }
 
 }  // namespace std

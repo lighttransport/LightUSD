@@ -39,6 +39,7 @@
 #include <ostream>
 #include <streambuf>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace lightusd {
@@ -70,16 +71,70 @@ class StringSink : public std::streambuf {
   std::string s_;
 };
 
+/// Append-oriented front end for a Scratch buffer.
+///
+/// `std::ostream << x` costs ~200 instructions before it stores a byte: sentry
+/// construction, width/fill checks, then a virtual xsputn hop into the buffer.
+/// Most printer insertions are literals, names and already-formatted strings, so
+/// this class appends those straight to the string and only falls back to the
+/// stream for values that need real formatting (numbers, vectors, enum tokens).
+///
+/// The stream writes into the *same* string, so mixing the two keeps the output
+/// order -- there is no buffering to flush between them. Appender is a view over
+/// a Scratch, so it must not outlive it.
+class Appender {
+ public:
+  Appender(std::string &str, std::ostream &os) : str_(str), os_(os) {}
+
+  Appender(const Appender &) = delete;
+  Appender &operator=(const Appender &) = delete;
+
+  // --- direct appends (no stream machinery) ---
+  Appender &operator<<(const char *s) {
+    str_.append(s);
+    return *this;
+  }
+  Appender &operator<<(const std::string &s) {
+    str_.append(s);
+    return *this;
+  }
+  Appender &operator<<(std::string_view s) {
+    str_.append(s.data(), s.size());
+    return *this;
+  }
+  Appender &operator<<(char c) {
+    str_.push_back(c);
+    return *this;
+  }
+
+  // --- everything else formats through the stream, into the same buffer ---
+  template <typename T>
+  Appender &operator<<(const T &v) {
+    os_ << v;
+    return *this;
+  }
+
+  std::string &str() { return str_; }
+  size_t size() const { return str_.size(); }
+  void resize(size_t n) { str_.resize(n); }
+  std::ostream &os() { return os_; }
+
+ private:
+  std::string &str_;
+  std::ostream &os_;
+};
+
 /// One reusable text buffer + stream. Not thread-safe by itself: each thread
 /// owns a pool of them and borrows through `ScratchRef`.
 class Scratch {
  public:
-  Scratch() : os_(&sink_) {}
+  Scratch() : os_(&sink_), app_(sink_.str(), os_) {}
 
   Scratch(const Scratch &) = delete;
   Scratch &operator=(const Scratch &) = delete;
 
   std::ostream &os() { return os_; }
+  Appender &app() { return app_; }
   std::string &str() { return sink_.str(); }
 
   /// Empty the buffer, keeping its capacity. Also clears sticky stream state so
@@ -93,6 +148,7 @@ class Scratch {
  private:
   StringSink sink_;
   std::ostream os_;
+  Appender app_;
 };
 
 namespace detail {
@@ -139,6 +195,9 @@ class ScratchRef {
   ScratchRef &operator=(const ScratchRef &) = delete;
 
   std::ostream &os() { return scratch_->os(); }
+
+  /// Append-oriented view of the same buffer (see Appender).
+  Appender &app() { return scratch_->app(); }
 
   /// The formatted text. Returns a copy, so the buffer can be reused as soon as
   /// the caller is done with it.

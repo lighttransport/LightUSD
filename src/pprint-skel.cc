@@ -14,7 +14,7 @@ namespace lightusd {
 std::string to_string(const SkelRoot &root, const uint32_t indent,
                       bool closing_brace) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(root.spec) << " SkelRoot \""
      << root.name << "\"\n";
@@ -62,7 +62,7 @@ std::string to_string(const SkelRoot &root, const uint32_t indent,
 std::string to_string(const Skeleton &skel, const uint32_t indent,
                       bool closing_brace) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(skel.spec) << " Skeleton \""
      << skel.name << "\"\n";
@@ -109,7 +109,7 @@ std::string to_string(const Skeleton &skel, const uint32_t indent,
 std::string to_string(const SkelAnimation &skelanim, const uint32_t indent,
                       bool closing_brace) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(skelanim.spec)
      << " SkelAnimation \"" << skelanim.name << "\"\n";
@@ -140,7 +140,7 @@ std::string to_string(const SkelAnimation &skelanim, const uint32_t indent,
 std::string to_string(const BlendShape &prim, const uint32_t indent,
                       bool closing_brace) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(prim.spec) << " BlendShape \""
      << prim.name << "\"\n";

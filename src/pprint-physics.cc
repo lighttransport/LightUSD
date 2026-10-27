@@ -21,7 +21,7 @@ static std::string print_rel_prop(const RelationshipProperty &rp,
 // Helper: print MjcSceneAPI attributes
 static std::string print_mjc_scene_api(const MjcSceneAPI &api, uint32_t indent) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   // Option attributes
   ss << print_typed_attr(api.timestep, "mjc:option:timestep", indent);
@@ -98,7 +98,7 @@ static std::string print_mjc_scene_api(const MjcSceneAPI &api, uint32_t indent) 
 // Helper: print MjcJointAPI attributes
 static std::string print_mjc_joint_api(const MjcJointAPI &api, uint32_t indent) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << print_typed_attr(api.group, "mjc:group", indent);
   ss << print_typed_attr(api.stiffness, "mjc:stiffness", indent);
@@ -123,7 +123,7 @@ static std::string print_mjc_joint_api(const MjcJointAPI &api, uint32_t indent) 
 
 static std::string print_newton_scene_api(const NewtonSceneAPI &api, uint32_t indent) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
   ss << print_typed_attr(api.maxSolverIterations, "newton:maxSolverIterations", indent);
   ss << print_typed_attr(api.timeStepsPerSecond, "newton:timeStepsPerSecond", indent);
   ss << print_typed_attr(api.gravityEnabled, "newton:gravityEnabled", indent);
@@ -133,7 +133,7 @@ static std::string print_newton_scene_api(const NewtonSceneAPI &api, uint32_t in
 static std::string print_newton_xpbd_scene_api(const NewtonXpbdSceneAPI &api,
                                                uint32_t indent) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
   ss << print_typed_attr(api.softBodyRelaxation, "newton:xpbd:softBodyRelaxation", indent);
   ss << print_typed_attr(api.softContactRelaxation, "newton:xpbd:softContactRelaxation", indent);
   ss << print_typed_attr(api.jointLinearRelaxation, "newton:xpbd:jointLinearRelaxation", indent);
@@ -150,7 +150,7 @@ static std::string print_newton_xpbd_scene_api(const NewtonXpbdSceneAPI &api,
 static std::string print_newton_kamino_scene_api(const NewtonKaminoSceneAPI &api,
                                                  uint32_t indent) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
   ss << print_typed_attr(api.padmmPrimalTolerance, "newton:kamino:padmm:primalTolerance", indent);
   ss << print_typed_attr(api.padmmDualTolerance, "newton:kamino:padmm:dualTolerance", indent);
   ss << print_typed_attr(api.padmmComplementarityTolerance, "newton:kamino:padmm:complementarityTolerance", indent);
@@ -166,7 +166,7 @@ static std::string print_newton_kamino_scene_api(const NewtonKaminoSceneAPI &api
 
 static std::string print_newton_mimic_api(const NewtonMimicAPI &api, uint32_t indent) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
   ss << print_typed_attr(api.mimicEnabled, "newton:mimicEnabled", indent);
   ss << print_rel_prop(api.mimicJoint, "newton:mimicJoint", indent);
   ss << print_typed_attr(api.mimicCoef0, "newton:mimicCoef0", indent);
@@ -178,7 +178,7 @@ static std::string print_newton_mimic_api(const NewtonMimicAPI &api, uint32_t in
 template <typename JointT>
 static std::string print_joint_base(const JointT &joint, uint32_t indent) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << print_rel_prop(joint.body0, "physics:body0", indent);
   ss << print_rel_prop(joint.body1, "physics:body1", indent);
@@ -226,7 +226,7 @@ static std::string print_joint_base(const JointT &joint, uint32_t indent) {
 std::string to_string(const PhysicsScene &scene, const uint32_t indent,
                       bool closing_brace) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   PRINT_PRIM_HEADER(scene, "PhysicsScene");
 
@@ -253,7 +253,7 @@ std::string to_string(const PhysicsScene &scene, const uint32_t indent,
 std::string to_string(const PhysicsRevoluteJoint &joint, const uint32_t indent,
                       bool closing_brace) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   PRINT_PRIM_HEADER(joint, "PhysicsRevoluteJoint");
 
@@ -269,7 +269,7 @@ std::string to_string(const PhysicsRevoluteJoint &joint, const uint32_t indent,
 std::string to_string(const PhysicsPrismaticJoint &joint, const uint32_t indent,
                       bool closing_brace) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   PRINT_PRIM_HEADER(joint, "PhysicsPrismaticJoint");
 
@@ -285,7 +285,7 @@ std::string to_string(const PhysicsPrismaticJoint &joint, const uint32_t indent,
 std::string to_string(const PhysicsSphericalJoint &joint, const uint32_t indent,
                       bool closing_brace) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   PRINT_PRIM_HEADER(joint, "PhysicsSphericalJoint");
 
@@ -301,7 +301,7 @@ std::string to_string(const PhysicsSphericalJoint &joint, const uint32_t indent,
 std::string to_string(const PhysicsJoint &joint, const uint32_t indent,
                       bool closing_brace) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   PRINT_PRIM_HEADER(joint, "PhysicsJoint");
 
@@ -314,7 +314,7 @@ std::string to_string(const PhysicsJoint &joint, const uint32_t indent,
 std::string to_string(const PhysicsFixedJoint &joint, const uint32_t indent,
                       bool closing_brace) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   PRINT_PRIM_HEADER(joint, "PhysicsFixedJoint");
 
@@ -327,7 +327,7 @@ std::string to_string(const PhysicsFixedJoint &joint, const uint32_t indent,
 std::string to_string(const PhysicsDistanceJoint &joint, const uint32_t indent,
                       bool closing_brace) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   PRINT_PRIM_HEADER(joint, "PhysicsDistanceJoint");
 
@@ -342,7 +342,7 @@ std::string to_string(const PhysicsDistanceJoint &joint, const uint32_t indent,
 std::string to_string(const PhysicsCollisionGroup &group, const uint32_t indent,
                       bool closing_brace) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   PRINT_PRIM_HEADER(group, "PhysicsCollisionGroup");
 
@@ -357,7 +357,7 @@ std::string to_string(const PhysicsCollisionGroup &group, const uint32_t indent,
 std::string to_string(const MjcActuator &actuator, const uint32_t indent,
                       bool closing_brace) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   PRINT_PRIM_HEADER(actuator, "MjcActuator");
 
@@ -401,7 +401,7 @@ std::string to_string(const MjcActuator &actuator, const uint32_t indent,
 std::string to_string(const NewtonActuator &actuator, const uint32_t indent,
                       bool closing_brace) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   PRINT_PRIM_HEADER(actuator, "NewtonActuator");
 
@@ -427,7 +427,7 @@ std::string to_string(const NewtonActuator &actuator, const uint32_t indent,
 std::string to_string(const MjcTendon &tendon, const uint32_t indent,
                       bool closing_brace) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   PRINT_PRIM_HEADER(tendon, "MjcTendon");
 
@@ -470,7 +470,7 @@ std::string to_string(const MjcTendon &tendon, const uint32_t indent,
 std::string to_string(const MjcKeyframe &keyframe, const uint32_t indent,
                       bool closing_brace) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   PRINT_PRIM_HEADER(keyframe, "MjcKeyframe");
 
@@ -488,7 +488,7 @@ std::string to_string(const MjcKeyframe &keyframe, const uint32_t indent,
 std::string to_string(const MjcSensor &sensor, const uint32_t indent,
                       bool closing_brace) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   PRINT_PRIM_HEADER(sensor, "MjcSensor");
 

@@ -95,7 +95,7 @@ std::string to_string(const UsdUVTexture::Wrap v) {
 static std::string print_common_shader_params(const ShaderNode &shader,
                                               const uint32_t indent) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << print_props(shader.props, indent);
 
@@ -106,7 +106,7 @@ template<typename PrimvarReaderT>
 static std::string print_shader_params(const PrimvarReaderT &shader,
                                        const uint32_t indent) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << print_str_attr(shader.varname, "inputs:varname", indent);
   ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
@@ -120,7 +120,7 @@ static std::string print_shader_params(const PrimvarReaderT &shader,
 static std::string print_shader_params(const UsdTransform2d &shader,
                                        const uint32_t indent) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << print_typed_attr(shader.in, "inputs:in", indent);
   ss << print_typed_attr(shader.rotation, "inputs:rotation", indent);
@@ -136,7 +136,7 @@ static std::string print_shader_params(const UsdTransform2d &shader,
 static std::string print_shader_params(const UsdPreviewSurface &shader,
                                        const uint32_t indent) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << print_typed_attr(shader.diffuseColor, "inputs:diffuseColor", indent);
   ss << print_typed_attr(shader.emissiveColor, "inputs:emissiveColor", indent);
@@ -171,7 +171,7 @@ static std::string print_shader_params(const UsdPreviewSurface &shader,
 static std::string print_shader_params(const UsdUVTexture &shader,
                                        const uint32_t indent) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << print_typed_attr(shader.file, "inputs:file", indent);
 
@@ -206,7 +206,7 @@ static std::string print_shader_params(const UsdUVTexture &shader,
 static std::string print_shader_params(const MtlxOpenPBRSurface &shader,
                                        const uint32_t indent) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   // Base properties
   ss << print_typed_attr(shader.base_weight, "inputs:base_weight", indent);
@@ -287,7 +287,7 @@ static std::string print_shader_params(const MtlxOpenPBRSurface &shader,
 static std::string print_shader_params(
     const MtlxAutodeskStandardSurface &shader, const uint32_t indent) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << print_typed_attr(shader.base, "inputs:base", indent);
   ss << print_typed_attr(shader.base_color, "inputs:base_color", indent);
@@ -372,7 +372,7 @@ static std::string print_shader_params(
 static std::string print_shader_params(const OpenPBRSurface &shader,
                                        const uint32_t indent) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   // Base properties
   ss << print_typed_attr(shader.base_weight, "inputs:base_weight", indent);
@@ -455,7 +455,7 @@ static std::string print_shader_params(const OpenPBRSurface &shader,
 std::string to_string(const Material &material, const uint32_t indent,
                       bool closing_brace) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(material.spec) << " Material \""
      << material.name << "\"\n";
@@ -656,7 +656,7 @@ std::string to_string(const Shader &shader, const uint32_t indent,
                       bool closing_brace) {
   // generic Shader class
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(shader.spec) << " Shader \""
      << shader.name << "\"\n";
@@ -724,7 +724,7 @@ std::string to_string(const Shader &shader, const uint32_t indent,
 std::string to_string(const NodeGraph &nodegraph, const uint32_t indent,
                       bool closing_brace) {
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << to_string(nodegraph.spec) << " NodeGraph \""
      << nodegraph.name << "\"\n";
@@ -760,7 +760,7 @@ std::string to_string(const UsdPreviewSurface &surf, const uint32_t indent,
                       bool closing_brace) {
   // TODO: Print spec and meta?
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << "{\n";
   ss << print_shader_params(surf, indent);
@@ -775,7 +775,7 @@ std::string to_string(const UsdUVTexture &tex, const uint32_t indent,
                       bool closing_brace) {
   // TODO: Print spec and meta?
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << "{\n";
   ss << print_shader_params(tex, indent);
@@ -790,7 +790,7 @@ std::string to_string(const UsdPrimvarReader_float2 &preader,
                       const uint32_t indent, bool closing_brace) {
   // TODO: Print spec and meta?
   ::lightusd::pprint::ScratchRef pp_ss;
-  std::ostream &ss = pp_ss.os();
+  ::lightusd::pprint::Appender &ss = pp_ss.app();
 
   ss << pprint::Indent(indent) << "{\n";
   ss << print_shader_params(preader, indent);
