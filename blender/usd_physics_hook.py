@@ -387,7 +387,22 @@ def _read_rigid_body(prim, mode):
         'kinematic': False,
         'shape': 'CONVEX_HULL',
         'collision_collections': None,
+        'geometry_names': [],
     }
+
+    # Blender's USD importer merges parent Xforms by default. A rigid-body
+    # prim such as /BodyA can then arrive as the mesh object named after its
+    # child prim (for example, Cube). Retain descendant mesh names so import
+    # can resolve the physics data to that merged object.
+    for child in Usd.PrimRange(prim):
+        if child == prim or not child.IsA(UsdGeom.Mesh):
+            continue
+        data['geometry_names'].append(child.GetName())
+        data_name = child.GetAttribute('userProperties:blender:data_name')
+        if data_name and data_name.IsValid():
+            authored_name = data_name.Get()
+            if authored_name and authored_name not in data['geometry_names']:
+                data['geometry_names'].append(authored_name)
 
     mask_attr = prim.GetAttribute('userProperties:blender:collisionMask')
     if mask_attr and mask_attr.HasAuthoredValueOpinion():
@@ -513,6 +528,17 @@ def _apply_physics_to_blender(result):
     """Apply imported physics data to Blender objects."""
     scene = bpy.context.scene
 
+    def activate_object(obj):
+        # USD import callbacks may run without an active/selected object.
+        # Rigid-body operators poll the active selection, so establish it
+        # explicitly instead of relying on the importer's current context.
+        for selected in getattr(bpy.context, 'selected_objects', ()):
+            if hasattr(selected, 'select_set'):
+                selected.select_set(False)
+        if hasattr(obj, 'select_set'):
+            obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
+
     # Scene gravity
     if result['scene']:
         sd = result['scene']
@@ -530,20 +556,42 @@ def _apply_physics_to_blender(result):
                 rbw.solver_iterations = sd['mjc']['iterations']
 
     # Rigid bodies
+    body_objects = {}
     for prim_name, rb_data in result['bodies']:
         obj = bpy.data.objects.get(prim_name)
+        # With merge_parent_xform=False the body prim is an Empty and its
+        # collider mesh is a child. Apply the rigid body to that mesh when
+        # there is exactly one; otherwise preserve the exact prim match.
+        if obj and getattr(obj, 'type', None) == 'EMPTY':
+            mesh_children = [child for child in getattr(obj, 'children_recursive', ())
+                             if getattr(child, 'type', None) == 'MESH']
+            if len(mesh_children) == 1:
+                obj = mesh_children[0]
+            elif len(mesh_children) > 1:
+                log.warning("[USDPhysicsHook] Body '%s' has multiple imported mesh "
+                            "children; cannot map it to one Blender rigid body",
+                            prim_name)
+                obj = None
         if not obj:
-            # Try finding by searching children
-            for o in bpy.data.objects:
-                if o.name.replace(".", "_") == prim_name:
-                    obj = o
-                    break
+            mesh_candidates = []
+            for geometry_name in rb_data.get('geometry_names', ()):
+                for candidate in (geometry_name, geometry_name.replace('.', '_')):
+                    candidate_obj = bpy.data.objects.get(candidate)
+                    if candidate_obj and getattr(candidate_obj, 'type', None) == 'MESH':
+                        if candidate_obj not in mesh_candidates:
+                            mesh_candidates.append(candidate_obj)
+            if len(mesh_candidates) == 1:
+                obj = mesh_candidates[0]
+            elif len(mesh_candidates) > 1:
+                log.warning("[USDPhysicsHook] Body '%s' maps to multiple imported "
+                            "mesh objects; cannot choose one rigid body", prim_name)
         if not obj:
             log.warning(f"[USDPhysicsHook] Object '{prim_name}' not found, "
                         f"skipping rigid body import")
             continue
 
-        bpy.context.view_layer.objects.active = obj
+        body_objects[prim_name] = obj
+        activate_object(obj)
         if not obj.rigid_body:
             bpy.ops.rigidbody.object_add(type=rb_data['type'])
         rb = obj.rigid_body
@@ -561,8 +609,8 @@ def _apply_physics_to_blender(result):
         # Find or create the constraint empty
         obj = bpy.data.objects.get(joint_name)
         if not obj:
-            bpy.ops.object.empty_add(location=(0, 0, 0))
-            obj = bpy.context.active_object
+            obj = bpy.data.objects.new(joint_name, None)
+            scene.collection.objects.link(obj)
             obj.name = joint_name
 
         # Map USD joint type to Blender constraint type
@@ -576,7 +624,7 @@ def _apply_physics_to_blender(result):
         }
         bl_type = blender_type_map.get(jd['type'], 'FIXED')
 
-        bpy.context.view_layer.objects.active = obj
+        activate_object(obj)
         if not obj.rigid_body_constraint:
             bpy.ops.rigidbody.constraint_add(type=bl_type)
         rbc = obj.rigid_body_constraint
@@ -599,10 +647,10 @@ def _apply_physics_to_blender(result):
         # Resolve body references
         if jd['body0']:
             leaf = jd['body0'].rsplit('/', 1)[-1]
-            rbc.object1 = bpy.data.objects.get(leaf)
+            rbc.object1 = body_objects.get(leaf) or bpy.data.objects.get(leaf)
         if jd['body1']:
             leaf = jd['body1'].rsplit('/', 1)[-1]
-            rbc.object2 = bpy.data.objects.get(leaf)
+            rbc.object2 = body_objects.get(leaf) or bpy.data.objects.get(leaf)
 
         # Reconstruct the world frame from either resolved body and its local
         # frame. Body 0 is preferred when both are present.

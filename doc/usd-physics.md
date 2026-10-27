@@ -1055,10 +1055,24 @@ When the mode includes MuJoCo, collision/world/constraint prims also get
 `mjc:condim`, `mjc:friction`, `mjc:solmix`, `mjc:margin`, `mjc:option:timestep`,
 `mjc:option:iterations`, `mjc:flag:gravity`, `mjc:damping`, `mjc:stiffness`,
 `mjc:group`. Import reverses the joint/body/material mapping and matches USD prim
-names to Blender objects (exact, then `.`→`_` fallback).
+names to Blender objects (exact and `.`→`_` matches first, then child mesh
+names when the importer merges parent Xforms).
 Constraint frames are exported relative to each body's world transform and
-restored from the first resolved body on import. Singular body transforms are
-skipped; non-rigid scale and solver behavior still need Blender validation.
+restored from the first resolved body on import. Import also resolves body
+prim names to merged child-mesh objects, which Blender's USD importer creates
+when `merge_parent_xform` is enabled. It selects the target before invoking
+Blender's rigid-body operators. Singular body transforms are skipped.
+
+Run the Blender runtime smoke test with:
+
+```sh
+blender -b --factory-startup --python blender/tests/test_usd_physics_runtime.py
+```
+
+The test uses Blender's actual USD export/import operators in both parent-Xform
+merge modes, then checks a Bullet free-fall and floor-contact simulation. It
+was run with Blender 5.2.3 LTS. It does not establish cross-solver dynamics
+equivalence; non-rigid scale still needs validation.
 
 The addon writes the MjcPhysics names above as they are; MuJoCo 3.16's decoder
 reads several of them as deprecated aliases (see the deprecation note before
@@ -1071,4 +1085,8 @@ restores those authored Blender masks; it does not infer masks from arbitrary
 USD collision groups. Spring behavior is an approximation across different physics solvers,
 and MuJoCo-only mode retains the legacy X-axis scalar spring mapping. MuJoCo
 actuators and tendons have no Blender equivalent (preserved only if authored
-directly in the USD). Blender runtime roundtrip testing remains outstanding.
+directly in the USD). The Blender 5.2.3 LTS runtime roundtrip is covered by
+the smoke test above. Import does not infer masks from arbitrary USD collision
+groups; bodies with multiple separate child mesh prims are not combined into
+compound Blender colliders. The smoke test does not establish spring or
+cross-solver dynamics equivalence.
