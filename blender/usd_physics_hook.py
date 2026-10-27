@@ -366,10 +366,16 @@ def _read_usd_physics(stage, mode):
         # second Blender body.
         if mode in ('USD', 'BOTH'):
             has_rigid_body = prim.HasAPI(UsdPhysics.RigidBodyAPI)
-            static_collider = (prim.HasAPI(UsdPhysics.CollisionAPI) and
+            has_collision_api = prim.HasAPI(UsdPhysics.CollisionAPI)
+            has_geometry = prim.IsA(UsdGeom.Gprim)
+            if not has_geometry and (has_rigid_body or has_collision_api):
+                has_geometry = any(child.IsA(UsdGeom.Gprim)
+                                   for child in Usd.PrimRange(prim)
+                                   if child != prim)
+            static_collider = (has_collision_api and has_geometry and
                                not has_rigid_body and
                                not _has_rigid_body_ancestor(prim))
-            if has_rigid_body or static_collider:
+            if (has_rigid_body and has_geometry) or static_collider:
                 rb_data = _read_rigid_body(prim, mode, static_collider)
                 if rb_data:
                     result['bodies'].append((prim.GetName(), rb_data))
@@ -412,10 +418,11 @@ def _read_rigid_body(prim, mode, passive_collision=False):
 
     # Blender's USD importer merges parent Xforms by default. A rigid-body
     # prim such as /BodyA can then arrive as the mesh object named after its
-    # child prim (for example, Cube). Retain descendant mesh names so import
-    # can resolve the physics data to that merged object.
+    # child prim (for example, Cube). Retain descendant geometry names so
+    # import can resolve the physics data to that merged object; primitive
+    # Gprims need not use the Mesh schema.
     for child in Usd.PrimRange(prim):
-        if child == prim or not child.IsA(UsdGeom.Mesh):
+        if child == prim or not child.IsA(UsdGeom.Gprim):
             continue
         data['geometry_names'].append(child.GetName())
         data_name = child.GetAttribute('userProperties:blender:data_name')
@@ -442,9 +449,11 @@ def _read_rigid_body(prim, mode, passive_collision=False):
 
     if prim.HasAPI(UsdPhysics.MassAPI):
         mass_api = UsdPhysics.MassAPI(prim)
-        m = mass_api.GetMassAttr().Get()
-        if m is not None:
-            data['mass'] = m
+        mass_attr = mass_api.GetMassAttr()
+        if mass_attr.HasAuthoredValueOpinion():
+            m = mass_attr.Get()
+            if m is not None and math.isfinite(float(m)) and m > 0.0:
+                data['mass'] = m
 
     if prim.HasAPI(UsdPhysics.MaterialAPI):
         mat_api = UsdPhysics.MaterialAPI(prim)
@@ -771,6 +780,16 @@ def _apply_physics_to_blender(result):
             continue
 
         body_objects[prim_name] = obj
+        if ((rb_data['type'] == 'ACTIVE' or rb_data['kinematic']) and
+                obj.parent and not obj.parent.rigid_body):
+            # Blender does not simulate a rigid body while an un-simulated
+            # parent continues to impose its transform. Preserve world-space
+            # scale and pose, then detach the collider from the imported
+            # Xform container before enabling dynamics.
+            bpy.context.view_layer.update()
+            world_transform = obj.matrix_world.copy()
+            obj.parent = None
+            obj.matrix_world = world_transform
         activate_object(obj)
         if not obj.rigid_body:
             bpy.ops.rigidbody.object_add(type=rb_data['type'])

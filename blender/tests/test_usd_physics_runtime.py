@@ -134,7 +134,7 @@ def _check_import(path, merge_parent_xform):
 
     if not merge_parent_xform:
         assert objects['BodyA'].type == 'EMPTY'
-        assert body_a.parent == objects['BodyA']
+        assert body_a.parent is None
     print('BLENDER_USD_IMPORT_PASS',
           'merge_parent_xform=' + str(merge_parent_xform),
           body_a.name, body_b.name, joint.type)
@@ -230,6 +230,58 @@ def _check_multi_mesh_import(path):
     # bodies; it reports this ambiguous compound shape and leaves it untouched.
     assert not part_a.rigid_body and not part_b.rigid_body
     print('BLENDER_USD_MULTI_MESH_GUARD_PASS', body.name, part_a.name, part_b.name)
+
+
+def _make_default_mass_fixture(path):
+    stage = Usd.Stage.CreateNew(str(path))
+    world = UsdGeom.Xform.Define(stage, '/World')
+    stage.SetDefaultPrim(world.GetPrim())
+    scene = UsdPhysics.Scene.Define(stage, '/World/PhysicsScene')
+    scene.CreateGravityDirectionAttr().Set(Gf.Vec3f(0.0, 0.0, -1.0))
+    scene.CreateGravityMagnitudeAttr().Set(9.81)
+    scene_prim = scene.GetPrim()
+    scene_prim.CreateAttribute(
+        'mjc:option:timestep', Sdf.ValueTypeNames.Double).Set(1.0 / 48.0)
+    scene_prim.CreateAttribute(
+        'mjc:option:iterations', Sdf.ValueTypeNames.Int).Set(50)
+
+    UsdGeom.Xform.Define(stage, '/World/Links')
+    world_body = UsdGeom.Xform.Define(stage, '/World/Links/__world').GetPrim()
+    world_api = UsdPhysics.RigidBodyAPI.Apply(world_body)
+    world_api.CreateRigidBodyEnabledAttr(False)
+    UsdPhysics.MassAPI.Apply(world_body)
+
+    body = UsdGeom.Xform.Define(stage, '/World/Links/drop').GetPrim()
+    UsdGeom.Xformable(body).AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, 5.0))
+    body_api = UsdPhysics.RigidBodyAPI.Apply(body)
+    body_api.CreateRigidBodyEnabledAttr(True)
+    UsdPhysics.MassAPI.Apply(body)  # No authored physics:mass: use Blender's default.
+    collider = UsdGeom.Cube.Define(stage, '/World/Links/drop/Geom').GetPrim()
+    UsdPhysics.CollisionAPI.Apply(collider)
+    stage.GetRootLayer().Save()
+
+
+def _check_default_mass_dynamics(path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    result = bpy.ops.wm.usd_import(filepath=str(path), merge_parent_xform=True)
+    assert 'FINISHED' in result, result
+    scene = bpy.context.scene
+    assert scene.render.fps == 48
+    body = next(obj for obj in bpy.data.objects
+                if obj.rigid_body and obj.rigid_body.type == 'ACTIVE')
+    _assert_close(body.rigid_body.mass, 1.0)
+    assert scene.rigidbody_world
+
+    positions = {}
+    for frame in range(1, 14):
+        scene.frame_set(frame)
+        if frame in (1, 13):
+            bpy.context.view_layer.update()
+            positions[frame] = float(body.evaluated_get(
+                bpy.context.evaluated_depsgraph_get()
+            ).matrix_world.translation.z)
+    assert positions[13] < positions[1] - 0.1, positions
+    print('BLENDER_USD_DEFAULT_MASS_DYNAMICS_PASS', positions)
 
 
 def _check_bullet_dynamics():
@@ -389,6 +441,7 @@ def main():
     path.unlink()
     collision_groups_path = path.with_name(path.stem + '-groups.usda')
     multi_mesh_path = path.with_name(path.stem + '-multi-mesh.usda')
+    default_mass_path = path.with_name(path.stem + '-default-mass.usda')
     scale_dynamics_path = path.with_name(path.stem + '-scale-dynamics.usda')
     try:
         hook.register()
@@ -399,6 +452,8 @@ def main():
         _check_collision_group_import(collision_groups_path)
         _make_multi_mesh_fixture(multi_mesh_path)
         _check_multi_mesh_import(multi_mesh_path)
+        _make_default_mass_fixture(default_mass_path)
+        _check_default_mass_dynamics(default_mass_path)
         _check_imported_scaled_dynamics(scale_dynamics_path)
         hook.unregister()
         _check_bullet_dynamics()
@@ -409,6 +464,8 @@ def main():
             collision_groups_path.unlink()
         if multi_mesh_path.exists():
             multi_mesh_path.unlink()
+        if default_mass_path.exists():
+            default_mass_path.unlink()
         if scale_dynamics_path.exists():
             scale_dynamics_path.unlink()
         try:
