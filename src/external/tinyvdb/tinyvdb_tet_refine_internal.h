@@ -19,6 +19,11 @@ tvdb_status_t tvdb_tet_refine_create(const double *positions, size_t nvertices,
                                      const uint32_t *tets, size_t ntets,
                                      size_t max_vertices, size_t max_tets,
                                      tvdb_tet_refine_graph **out, tvdb_error_t *err);
+/* Create six consistently oriented tetrahedra per rectangular grid cell. */
+tvdb_status_t tvdb_tet_refine_box(const double lo[3], const double hi[3],
+                                  const size_t cells[3], size_t max_vertices,
+                                  size_t max_tets, tvdb_tet_refine_graph **out,
+                                  tvdb_error_t *err);
 /* On failure the graph is disposable but must not be reused. The new vertex
  * is the midpoint; children replace parents in place and append in increasing
  * parent-index order. No existing vertex IDs change. */
@@ -33,6 +38,12 @@ typedef int (*tvdb_tet_refine_size_fn)(const double point[3], double *size, void
 tvdb_status_t tvdb_tet_refine_adapt(tvdb_tet_refine_graph *graph,
                                     tvdb_tet_refine_size_fn size, void *user,
                                     tvdb_error_t *err);
+typedef int (*tvdb_tet_refine_sdf_fn)(const double point[3], float *value, void *user);
+/* Edge size grows linearly with |SDF-isovalue|, clamped to [fine, coarse]. */
+tvdb_status_t tvdb_tet_refine_adapt_sdf(tvdb_tet_refine_graph *graph,
+                                        tvdb_tet_refine_sdf_fn sdf, void *user,
+                                        float isovalue, double fine, double coarse,
+                                        double slope, tvdb_error_t *err);
 const double *tvdb_tet_refine_positions(const tvdb_tet_refine_graph *graph);
 const uint32_t *tvdb_tet_refine_tets(const tvdb_tet_refine_graph *graph);
 size_t tvdb_tet_refine_vertex_count(const tvdb_tet_refine_graph *graph);

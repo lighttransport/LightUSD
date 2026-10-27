@@ -28,6 +28,12 @@ static int local_size(const double point[3], double *size, void *user) {
 static int invalid_size(const double point[3], double *size, void *user) {
     (void)point; (void)user; *size = NAN; return 1;
 }
+static int sphere_sdf(const double point[3], float *value, void *user) {
+    (void)user; *value = (float)(hypot(hypot(point[0], point[1]), point[2]) - 1.2); return 1;
+}
+static int fail_sdf(const double point[3], float *value, void *user) {
+    (void)point; (void)value; (void)user; return 0;
+}
 int main(void) {
     const double p[] = {0,0,0, 1,0,0, 0,1,0, 0,0,1, 0,0,-1};
     const uint32_t t[] = {0,1,2,3, 0,2,1,4};
@@ -110,6 +116,45 @@ int main(void) {
       assert(tvdb_tet_refine_create(points, 9, cells, 3, 9, 3, &g, &error) == TVDB_OK);
       assert(tvdb_tet_refine_adapt(g, local_size, NULL, &error) == TVDB_ERROR_INVALID_DATA);
       tvdb_tet_refine_destroy(g);
+    }
+    {
+      const double lo[] = {-2,-2,-2}, hi[] = {2,2,2};
+      const size_t cells[] = {2,2,2};
+      assert(tvdb_tet_refine_box(lo, hi, cells, 10000, 40000, &g, &error) == TVDB_OK);
+      assert(tvdb_tet_refine_vertex_count(g) == 27 && tvdb_tet_refine_tet_count(g) == 48);
+      pos = tvdb_tet_refine_positions(g); out = tvdb_tet_refine_tets(g); sum = 0;
+      for (i = 0; i < 48; ++i) { double v = volume6(pos, out+4*i); assert(v > 0); sum += v; }
+      assert(fabs(sum - 384) < 1e-10);
+      assert(tvdb_tet_refine_adapt_sdf(g, sphere_sdf, NULL, 0, 1.0, 3.0, 1.0, &error) == TVDB_OK);
+      size_t count = tvdb_tet_refine_tet_count(g);
+      assert(count > 48);
+      pos = tvdb_tet_refine_positions(g); out = tvdb_tet_refine_tets(g); sum = 0;
+      for (i = 0; i < count; ++i) {
+        const uint32_t *cell = out + 4*i;
+        double v = volume6(pos, cell); assert(v > 0); sum += v;
+        for (unsigned a = 0; a < 4; ++a) {
+          for (unsigned b = a+1; b < 4; ++b) {
+            const double *x = pos+3*cell[a], *y = pos+3*cell[b];
+            double mid[3]; float field;
+            for (unsigned d = 0; d < 3; ++d) mid[d] = 0.5*x[d] + 0.5*y[d];
+            sphere_sdf(mid, &field, NULL);
+            double target = fmin(3.0, 1.0 + fabs((double)field));
+            assert(hypot(hypot(x[0]-y[0], x[1]-y[1]), x[2]-y[2]) <= target);
+          }
+          uint32_t f[3]; unsigned nface = 0;
+          for (unsigned b = 0; b < 4; ++b) if (a != b) f[nface++] = cell[b];
+          for (unsigned d = 0; d < 3; ++d)
+            if (pos[3*f[0]+d] == 0 && pos[3*f[1]+d] == 0 && pos[3*f[2]+d] == 0)
+              assert(face_count(out, count, f[0], f[1], f[2]) == 2);
+        }
+      }
+      assert(fabs(sum - 384) < 1e-9);
+      tvdb_tet_refine_destroy(g);
+      assert(tvdb_tet_refine_box(lo, hi, cells, 100, 100, &g, &error) == TVDB_OK);
+      assert(tvdb_tet_refine_adapt_sdf(g, fail_sdf, NULL, 0, 1, 3, 1, &error) == TVDB_ERROR_INVALID_DATA);
+      tvdb_tet_refine_destroy(g);
+      assert(tvdb_tet_refine_box(lo, hi, cells, 26, 40000, &g, &error) == TVDB_ERROR_INVALID_ARGUMENT);
+      assert(g == NULL);
     }
     assert(tvdb_tet_refine_create(p, 5, t, 2, 5, 3, &g, &error) == TVDB_OK);
     assert(tvdb_tet_refine_split(g, 0, 1, &m, &error) == TVDB_ERROR_INVALID_DATA);
