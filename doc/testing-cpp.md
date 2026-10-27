@@ -1702,6 +1702,23 @@ argv[1], expected under `reference/`) and prints SKIP without it, like the
 The legacy `usdvol_vdb_corpus_test` also checks that a dense grid rejected by
 its voxel limit reports both the requested cell count and the limit.
 
+For CPU mesher changes, build each tinyvdb revision separately and compare a
+level-set fixture on the same host (the test uses two workers and writes only
+temporary files):
+
+```sh
+bash tests/volumetric/compare-mesh-identity.sh \
+  /path/to/old-tinyvdb /path/to/old-build \
+  /path/to/new-tinyvdb /path/to/new-build /path/to/level-set.vdb 0.15
+```
+
+The command compares the bytes of surface vertices and triangles, tetrahedral
+vertices and cells, and boundary triangles. It reports SHA-256 hashes and fails
+on differences or empty output. Choose a spacing appropriate for the fixture;
+run representative fixtures to cover the change. Since the serialization is
+native binary, compare builds on the same host with the same ABI. This does
+not independently check internal scan-budget counts.
+
 `lusdview_incremental_scene_update_test` now builds without linking next core
 and exercises the public C change-record planner interface. It retains the
 slot/remap/deformation/material/texture cases and checks short records, null
