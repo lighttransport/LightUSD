@@ -1,7 +1,7 @@
 TinyVDB (OpenVDB I/O, sparse level-set tools, isosurface stuffing) — vendored into lightusd
 =========================================================================================
 
-Source: https://github.com/syoyo/tinyvdbio
+Source: https://github.com/syoyo/tinyvdb
 License: Apache License 2.0
 Revision: see UPSTREAM.txt
 

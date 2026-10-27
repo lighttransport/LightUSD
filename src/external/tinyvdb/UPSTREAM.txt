@@ -1,6 +1,7 @@
 Upstream: https://github.com/syoyo/tinyvdb
-Commit:   9217101 (branch main; merges volumetric-sdf and PR #5's tight
-          NanoVDB bounding-box fix)
+Commit:   e52e6bb969c71f8dc0325ea5972ddc32cd213b61 (branch main; includes
+          portable flood-fill popcount, Windows inline fixes, and portable
+          sparse-mesher bit scans)
 Files:    the src/ subset needed by tvdb_mesh_to_level_set,
           tvdb_level_set_to_tet_mesh / tvdb_sdf_to_tet_mesh,
           tvdb_grid_volume_to_mesh, the volume access used by usdVol
@@ -26,8 +27,10 @@ Local:    tinyvdb_io.c is LightUSD's wrapper, not upstream's parser. tinyvdb_io.
           multi-worker warp now uses ordered corner/center wavefronts over
           increasing coordinate sums, preserving serial neighbor dependencies
           and byte-identical output across worker counts.
-Update:   the vendored API sources match upstream main at 9217101, apart from
-          the local I/O adaptations and CPU changes above. When syncing later
-          revisions, preserve those local changes and rebuild
-          cmake/lightusd-tinyvdb.cmake's source list if the dependency closure
-          changes (link a probe calling the entry points above).
+Update:   Vendored upstream source files now match main at e52e6bb, except
+          for the LightUSD I/O adaptations and CPU changes described above.
+          The upstream delta since 9217101 adds portable popcount/ctz helpers
+          and compiler-specific NanoVDB force-inline handling. The selected
+          source closure is unchanged, so cmake/lightusd-tinyvdb.cmake needs no
+          source-list update. Recheck the dependency closure when syncing later
+          revisions (link a probe calling the entry points above).

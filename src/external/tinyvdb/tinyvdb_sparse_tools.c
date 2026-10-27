@@ -43,6 +43,19 @@ typedef struct {
   tvdb_error_t* err;
 } tool_map;
 static size_t tool_limit(size_t n) { return n ? n : 1000000; }
+static unsigned tool_ctz32(unsigned x) {
+  if (!x) return 32u;
+#if defined(__GNUC__) || defined(__clang__)
+  return (unsigned)__builtin_ctz(x);
+#else
+  unsigned n = 0;
+  while ((x & 1u) == 0u) {
+    x >>= 1;
+    ++n;
+  }
+  return n;
+#endif
+}
 static uint64_t tool_hash(const int32_t c[3]) {
   uint64_t h = (uint32_t)c[0] * UINT64_C(73856093) ^
                (uint32_t)c[1] * UINT64_C(19349663) ^
@@ -668,7 +681,7 @@ static tvdb_status_t tool_cell_values(tool_surface* s, const int64_t c[3],
     /* Voxels on the walk's side: above the isovalue when the background is
      * below it, below otherwise. */
     const unsigned side = (s->bg_below ? (unsigned)~cube : (unsigned)cube) & 0xFFu;
-    if (tool_corner_of_bit[corner & 7] != __builtin_ctz(side)) return TVDB_OK;
+    if (tool_corner_of_bit[corner & 7] != tool_ctz32(side)) return TVDB_OK;
   }
   int32_t q[3];
   for (int a = 0; a < 3; ++a) {
@@ -754,7 +767,7 @@ static tvdb_status_t tool_voxel_cells(tool_surface* s, const int32_t c[3],
     for (int k = 0; k < 8; ++k) cube |= ((signs >> (b + bit_off[k])) & 1u) << k;
     if (cube == 0 || cube == 255) continue;
     const unsigned side = (s->bg_below ? ~cube : cube) & 0xffu;
-    if (tool_corner_of_bit[i] != __builtin_ctz(side)) continue;
+    if (tool_corner_of_bit[i] != tool_ctz32(side)) continue;
     const int64_t q[3] = {(int64_t)c[0] - (i & 1),
                           (int64_t)c[1] - ((i >> 1) & 1),
                           (int64_t)c[2] - ((i >> 2) & 1)};

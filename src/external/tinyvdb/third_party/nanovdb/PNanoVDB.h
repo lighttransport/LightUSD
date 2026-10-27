@@ -79,10 +79,12 @@
 #endif
 #if defined(__CUDACC__)
 #define PNANOVDB_BUF_FORCE_INLINE static __host__ __device__ __forceinline__
+#elif defined(__GNUC__) || defined(__clang__)
+#define PNANOVDB_BUF_FORCE_INLINE static inline __attribute__((always_inline))
 #elif defined(_WIN32)
 #define PNANOVDB_BUF_FORCE_INLINE static inline __forceinline
 #else
-#define PNANOVDB_BUF_FORCE_INLINE static inline __attribute__((always_inline))
+#define PNANOVDB_BUF_FORCE_INLINE static inline
 #endif
 typedef struct pnanovdb_buf_t
 {
@@ -340,10 +342,12 @@ void pnanovdb_buf_write_uint64(pnanovdb_buf_t buf, uint byte_offset, uvec2 value
 #if defined(PNANOVDB_C)
 #if defined(__CUDACC__)
 #define PNANOVDB_FORCE_INLINE static __host__ __device__ __forceinline__
+#elif defined(__GNUC__) || defined(__clang__)
+#define PNANOVDB_FORCE_INLINE static inline __attribute__((always_inline))
 #elif defined(_WIN32)
 #define PNANOVDB_FORCE_INLINE static inline __forceinline
 #else
-#define PNANOVDB_FORCE_INLINE static inline __attribute__((always_inline))
+#define PNANOVDB_FORCE_INLINE static inline
 #endif
 #elif defined(PNANOVDB_HLSL)
 #define PNANOVDB_FORCE_INLINE

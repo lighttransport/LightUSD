@@ -1005,12 +1005,12 @@ tvdb_status_t tvdb_grid_signed_flood_fill(const tvdb_grid_t* g, float outside,
         unsigned short crun = 0;
         for (size_t bi = 0; bi < nbytes; ++bi) {
           ranktab[bi] = crun;
-          crun = (unsigned short)(crun + __builtin_popcount(mask->bits.data[bi]));
+          crun = (unsigned short)(crun + tree_pop64(mask->bits.data[bi]));
         }
       }
       #define MASK_RANK_FAST(m, bit) \
         (fast_rank ? ((size_t)ranktab[(bit) / 8] + \
-         (size_t)__builtin_popcount((m)->bits.data[(bit) / 8] & ((1u << ((bit) % 8)) - 1))) \
+         (size_t)tree_pop64((m)->bits.data[(bit) / 8] & ((1u << ((bit) % 8)) - 1))) \
                    : tvdb_tree_mask_rank(m, bit))
       int xinside =
           leaf ? v[first] < 0 : ends[n->u.internal.child_indices[0]][0] < 0;
