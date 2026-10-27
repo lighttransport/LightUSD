@@ -1033,7 +1033,7 @@ attributes only), or `BOTH` (default — both).
 | Rigid body (passive) | `PhysicsRigidBodyAPI` | `physics:rigidBodyEnabled=false`, `physics:kinematicEnabled` |
 | Collision shape | `PhysicsCollisionAPI` | applied to mesh prims |
 | Friction / restitution | `PhysicsMaterialAPI` | `physics:staticFriction`, `physics:dynamicFriction`, `physics:restitution` |
-| Hinge / Slider / Fixed / Point constraint | `PhysicsRevolute` / `Prismatic` / `Fixed` / `SphericalJoint` | `physics:axis`, limits, `physics:body0/1`, `physics:localPos0/1` |
+| Hinge / Slider / Fixed / Point constraint | `PhysicsRevolute` / `Prismatic` / `Fixed` / `SphericalJoint` | `physics:axis`, limits, `physics:body0/1`, `physics:localPos0/1`, `physics:localRot0/1` |
 | Generic spring | `PhysicsJoint` with per-axis `PhysicsDriveAPI` and `PhysicsLimitAPI` | Enabled translation and rotation drives and limits; angular limits use degrees |
 
 When the mode includes MuJoCo, collision/world/constraint prims also get
@@ -1041,6 +1041,9 @@ When the mode includes MuJoCo, collision/world/constraint prims also get
 `mjc:option:iterations`, `mjc:flag:gravity`, `mjc:damping`, `mjc:stiffness`,
 `mjc:group`. Import reverses the joint/body/material mapping and matches USD prim
 names to Blender objects (exact, then `.`→`_` fallback).
+Constraint frames are exported relative to each body's world transform and
+restored from the first resolved body on import. Singular body transforms are
+skipped; non-rigid scale and solver behavior still need Blender validation.
 
 The addon writes the MjcPhysics names above as they are; MuJoCo 3.16's decoder
 reads several of them as deprecated aliases (see the deprecation note before

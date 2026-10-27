@@ -178,6 +178,19 @@ def _export_constraint(stage, obj, mode):
     if not rbc or not rbc.object1 or not rbc.object2:
         return
 
+    frames = []
+    if mode in ('USD', 'BOTH'):
+        for body in (rbc.object1, rbc.object2):
+            try:
+                relative = body.matrix_world.inverted() @ obj.matrix_world
+            except ValueError:
+                log.warning("[USDPhysicsHook] Cannot export constraint '%s': body '%s' has a singular transform",
+                            obj.name, body.name)
+                return
+            position = relative.translation
+            rotation = relative.to_quaternion().normalized()
+            frames.append((position, rotation))
+
     joint_type, axis, lower, upper = _joint_type_and_attrs(rbc)
     if rbc.type == 'GENERIC_SPRING' and mode == 'MJC':
         # The MuJoCo-only representation remains the legacy scalar mapping.
@@ -199,18 +212,15 @@ def _export_constraint(stage, obj, mode):
             joint_prim.CreateRelationship("physics:body1").SetTargets(
                 [Sdf.Path(body1_path)])
 
-        # Local positions from constraint empty location relative to bodies
-        loc = obj.location
-        if rbc.object1:
-            rel0 = loc - rbc.object1.location
+        # The constraint object is a world-space joint frame. Transform it
+        # into each body's local space, including parent transforms and rotation.
+        for index, (position, rotation) in enumerate(frames):
             joint_prim.CreateAttribute(
-                "physics:localPos0", Sdf.ValueTypeNames.Point3f
-            ).Set(Gf.Vec3f(rel0[0], rel0[1], rel0[2]))
-        if rbc.object2:
-            rel1 = loc - rbc.object2.location
+                f"physics:localPos{index}", Sdf.ValueTypeNames.Point3f
+            ).Set(Gf.Vec3f(position[0], position[1], position[2]))
             joint_prim.CreateAttribute(
-                "physics:localPos1", Sdf.ValueTypeNames.Point3f
-            ).Set(Gf.Vec3f(rel1[0], rel1[1], rel1[2]))
+                f"physics:localRot{index}", Sdf.ValueTypeNames.Quatf
+            ).Set(Gf.Quatf(rotation.w, Gf.Vec3f(rotation.x, rotation.y, rotation.z)))
 
         # Axis and limits
         if axis:
@@ -394,6 +404,7 @@ def _read_joint(prim, mode):
         'enabled': True,
         'mjc': {},
         'axes': {},
+        'frames': {},
     }
 
     if mode in ('USD', 'BOTH'):
@@ -422,6 +433,15 @@ def _read_joint(prim, mode):
         je = prim.GetAttribute("physics:jointEnabled")
         if je and je.IsValid():
             data['enabled'] = je.Get()
+
+        for index in (0, 1):
+            pos = prim.GetAttribute(f"physics:localPos{index}")
+            rot = prim.GetAttribute(f"physics:localRot{index}")
+            if pos and rot and (pos.HasAuthoredValueOpinion() or rot.HasAuthoredValueOpinion()):
+                p, q = pos.Get(), rot.Get()
+                if p is not None and q is not None:
+                    imag = q.GetImaginary()
+                    data['frames'][index] = (tuple(p), (q.GetReal(), imag[0], imag[1], imag[2]))
 
         if prim.GetTypeName() == 'PhysicsJoint':
             for dof, _, _, angular in _spring_axes():
@@ -543,6 +563,16 @@ def _apply_physics_to_blender(result):
         if jd['body1']:
             leaf = jd['body1'].rsplit('/', 1)[-1]
             rbc.object2 = bpy.data.objects.get(leaf)
+
+        # Reconstruct the world frame from either resolved body and its local
+        # frame. Body 0 is preferred when both are present.
+        for index, body in enumerate((rbc.object1, rbc.object2)):
+            if body and index in jd['frames']:
+                from mathutils import Matrix, Quaternion
+                position, rotation = jd['frames'][index]
+                obj.matrix_world = (body.matrix_world @ Matrix.Translation(position) @
+                                    Quaternion(rotation).to_matrix().to_4x4())
+                break
 
         # Limits
         if bl_type == 'HINGE' and jd['lower'] is not None:
