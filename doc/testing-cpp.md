@@ -2642,6 +2642,12 @@ PYTHONPATH="$ISOLATED_PYTHON_PACKAGE:$OPENUSD_PYTHONPATH" "$OPENUSD_PYTHON" \
 failed stage opens and missing required parser records without needing OpenUSD.
 These checks establish validation and parser coverage, not dynamics equivalence.
 
+With Python OpenUSD available, `python/tests/test_openusd_physics_semantics.py`
+also checks a rotated URDF hinge's parsed world-space anchor, axis, limits and
+body relationships across three profiles and both layouts. It checks parsed
+site-frame connect and weld joints across the two physics profiles and both
+layouts. These are rest-frame semantic checks; they do not simulate dynamics.
+
 The urdf-usd-converter test corpus (`tests/data/*.urdf`, 81 files) is a useful
 URDF sweep: all non-`error_*` files except those referencing deliberately
 missing meshes (strict by default; use `allow_missing`) convert, including the
