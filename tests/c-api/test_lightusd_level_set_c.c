@@ -17,6 +17,8 @@ static const int32_t kCubeTris[] = {0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5,
                                     1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7};
 static const char kSettings[] = "{\"voxel_size\": 0.1, \"threads\": 1}";
 static const char kTetSettings[] = "{\"spacing\": 0.4, \"threads\": 1}";
+static const char kGradedSettings[] =
+    "{\"spacing\": 0.4, \"graded_coarse_spacing\": 0.8, \"threads\": 1}";
 
 static int same(lightusd_string* a, lightusd_string* b) {
   const lightusd_sv x = lightusd_string_view(a), y = lightusd_string_view(b);
@@ -83,6 +85,15 @@ int main(void) {
   lightusd_string_destroy(tt2);
   lightusd_string_destroy(ts2);
 
+  /* Graded CPU meshes from the decoded handle and VDB bytes agree exactly. */
+  tp1 = tt1 = ts1 = tp2 = tt2 = ts2 = NULL;
+  assert(lightusd_level_set_to_tet_mesh(from_vdb, kGradedSettings, &tp1, &tt1, &ts1) == LIGHTUSD_OK);
+  assert(lightusd_level_set_vdb_to_tet_mesh(bytes, view.len, kGradedSettings, &tp2, &tt2, &ts2) ==
+         LIGHTUSD_OK);
+  assert(same(tp1, tp2) && same(tt1, tt2) && same(ts1, ts2));
+  lightusd_string_destroy(tp1); lightusd_string_destroy(tt1); lightusd_string_destroy(ts1);
+  lightusd_string_destroy(tp2); lightusd_string_destroy(tt2); lightusd_string_destroy(ts2);
+
   /* Errors leave outputs NULL. */
   lightusd_level_set* bad = (lightusd_level_set*)&a;
   const uint8_t junk[] = "not a vdb";
@@ -99,6 +110,14 @@ int main(void) {
   assert(lightusd_level_set_to_tet_mesh(from_vdb, "{\"spacing\": 0}", &tp, &tt, &ts) ==
              LIGHTUSD_ERR_INVALID_ARG &&
          !tp && !tt && !ts);
+  tp = tt = ts = (lightusd_string*)&a;
+  assert(lightusd_level_set_to_tet_mesh(from_vdb,
+      "{\"spacing\":0.4,\"graded_coarse_spacing\":0.2}", &tp, &tt, &ts) ==
+      LIGHTUSD_ERR_INVALID_ARG && !tp && !tt && !ts);
+  tp = tt = ts = (lightusd_string*)&a;
+  assert(lightusd_level_set_to_tet_mesh(from_vdb,
+      "{\"spacing\":0.4,\"graded_coarse_spacing\":0.8,\"max_background_tets\":10}",
+      &tp, &tt, &ts) == LIGHTUSD_ERR_RESOURCE_LIMIT && !tp && !tt && !ts);
   lightusd_string* w = (lightusd_string*)&a;
   assert(lightusd_level_set_write_vdb(NULL, &w) == LIGHTUSD_ERR_INVALID_ARG);
 

@@ -1784,6 +1784,27 @@ nice valgrind --tool=callgrind --callgrind-out-file=/tmp/graded.callgrind \
 ```
 
 The hash is a quick diagnostic, not a substitute for the byte comparison.
+
+For a CPU-only wasm32 graded regression, after building the next WASM target
+with `LIGHTUSD_TINYVDB_GPU=OFF`, run the refinement and complete stencil tests
+with Emscripten and Node. Set `EM_CACHE` to a writable cache if needed:
+
+```sh
+EMCC_CORES=2 emcc -O2 -std=c11 -Isrc/external/tinyvdb \
+  tests/volumetric/test-graded-refine.c src/external/tinyvdb/tinyvdb_tet_refine.c \
+  -sENVIRONMENT=node -sEXIT_RUNTIME=1 -o /tmp/graded-refine-wasm.js
+node /tmp/graded-refine-wasm.js
+EMCC_CORES=2 emcc -O2 -std=c11 -Isrc/external/tinyvdb \
+  tests/volumetric/test-graded-stencil.c src/lz4/lz4.c \
+  web/build_ninja/vol-next/lightusd_next_build/tydra_next_build/liblightusd_tinyvdb.a \
+  -sENVIRONMENT=node -sEXIT_RUNTIME=1 -o /tmp/graded-stencil-wasm.js
+node /tmp/graded-stencil-wasm.js
+```
+
+The tests check topology, positive volumes, accuracy and limits on each
+platform. Identical serialized output across native and wasm32 is not
+guaranteed: the three analytic fixtures had equal counts but different array
+bytes across the tested builds.
 The tinyvdb `test_sparse_tools` suite additionally checks meshing when the
 background is below the isovalue, alongside its threaded determinism and
 budget-failure cases.
