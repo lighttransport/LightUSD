@@ -2512,7 +2512,20 @@ joints by sorted prim path, not authored order).
 `tests/next/run-openusd-physics-check.py` saves every profile as USDA, runs all
 registered OpenUSD `UsdValidation` validators (including
 `usdPhysicsValidators:*`) and reports what `UsdPhysics.LoadUsdPhysicsFromRange`
-recovers. It exits nonzero on any validator issue.
+recovers. It fails if the four physics validators are unavailable, a converted
+stage cannot be opened, or a validator reports an issue. Repeat `--require-kind
+KIND=COUNT` to require at least that many parsed records in each result; for
+example:
+
+```sh
+PYTHONPATH="$ISOLATED_PYTHON_PACKAGE:$OPENUSD_PYTHONPATH" "$OPENUSD_PYTHON" \
+  tests/next/run-openusd-physics-check.py --require-kind RevoluteJoint=1 \
+  --require-kind CubeShape=2 tests/feat/physics-oracle/hinge.urdf
+```
+
+`python/tests/test_openusd_physics_harness.py` checks missing validators,
+failed stage opens and missing required parser records without needing OpenUSD.
+These checks establish validation and parser coverage, not dynamics equivalence.
 
 The urdf-usd-converter test corpus (`tests/data/*.urdf`, 81 files) is a useful
 URDF sweep: all non-`error_*` files except those referencing deliberately
