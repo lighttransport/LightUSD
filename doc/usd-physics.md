@@ -1091,7 +1091,12 @@ Blender at 1.5 s. Friction mapping is verified, but those contact responses
 are not equivalent. The smoke test was run with Blender 5.2.3 LTS. It also
 preserves a non-uniform USD scale `(2.0, 0.5, 1.5)` in both import modes and
 compares source/import Bullet drops at frames 1, 30, 60 and 120 within 0.02
-Blender units.
+Blender units. It also imports a 2 m capsule pendulum with a Y-axis revolute
+joint, verifies that it swings under gravity, and checks that its pivot stays
+within 0.1 mm of the anchor over two seconds. A matching MuJoCo 3.10.1 CPU run
+sampled the capsule center at 0.5, 1.0, 1.5 and 2.0 s; the largest
+Blender-versus-MuJoCo position difference was 0.082 m at 1.5 s. This is one
+no-contact joint case, not a general claim of solver equivalence.
 
 The addon writes the MjcPhysics names above as they are; MuJoCo 3.16's decoder
 reads several of them as deprecated aliases (see the deprecation note before

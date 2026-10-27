@@ -356,6 +356,101 @@ def _check_default_mass_dynamics(path):
     print('BLENDER_USD_DEFAULT_MASS_DYNAMICS_PASS', positions)
 
 
+def _make_hinge_dynamics_fixture(path):
+    stage = Usd.Stage.CreateNew(str(path))
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    world = UsdGeom.Xform.Define(stage, '/World')
+    stage.SetDefaultPrim(world.GetPrim())
+    scene = UsdPhysics.Scene.Define(stage, '/World/PhysicsScene')
+    scene.CreateGravityDirectionAttr().Set(Gf.Vec3f(0.0, 0.0, -1.0))
+    scene.CreateGravityMagnitudeAttr().Set(9.81)
+    scene.GetPrim().CreateAttribute(
+        'mjc:option:timestep', Sdf.ValueTypeNames.Double).Set(1.0 / 60.0)
+    scene.GetPrim().CreateAttribute(
+        'mjc:option:iterations', Sdf.ValueTypeNames.Int).Set(50)
+
+    anchor = UsdGeom.Xform.Define(stage, '/World/Anchor').GetPrim()
+    anchor_api = UsdPhysics.RigidBodyAPI.Apply(anchor)
+    anchor_api.CreateRigidBodyEnabledAttr(False)
+    UsdPhysics.MassAPI.Apply(anchor)
+    anchor_geom = UsdGeom.Cube.Define(stage, '/World/Anchor/Geom')
+    anchor_geom.CreateSizeAttr(0.002)
+    UsdPhysics.CollisionAPI.Apply(anchor_geom.GetPrim())
+
+    pendulum = UsdGeom.Xform.Define(stage, '/World/Pendulum').GetPrim()
+    UsdGeom.Xformable(pendulum).AddTranslateOp().Set(Gf.Vec3d(1.0, 0.0, 0.0))
+    UsdPhysics.RigidBodyAPI.Apply(pendulum)
+    UsdPhysics.MassAPI.Apply(pendulum).CreateMassAttr(1.0)
+    rod = UsdGeom.Capsule.Define(stage, '/World/Pendulum/Rod')
+    rod.CreateAxisAttr().Set(UsdGeom.Tokens.x)
+    rod.CreateHeightAttr(1.9)
+    rod.CreateRadiusAttr(0.05)
+    UsdPhysics.CollisionAPI.Apply(rod.GetPrim())
+
+    # Blender's rigid-body hinge uses local Z. Rotate both USD joint frames
+    # so that its constraint axis follows the authored USD Y axis.
+    frame_rotation = Gf.Quatf(math.sqrt(0.5), math.sqrt(0.5), 0.0, 0.0)
+    hinge = UsdPhysics.RevoluteJoint.Define(stage, '/World/Joints/Hinge')
+    hinge.CreateBody0Rel().SetTargets([anchor.GetPath()])
+    hinge.CreateBody1Rel().SetTargets([pendulum.GetPath()])
+    hinge.CreateAxisAttr().Set('Y')
+    hinge.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+    hinge.CreateLocalRot0Attr().Set(frame_rotation)
+    hinge.CreateLocalPos1Attr().Set(Gf.Vec3f(-1.0, 0.0, 0.0))
+    hinge.CreateLocalRot1Attr().Set(frame_rotation)
+    stage.GetRootLayer().Save()
+
+
+def _check_hinge_dynamics(path):
+    from mathutils import Vector
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    result = bpy.ops.wm.usd_import(filepath=str(path), merge_parent_xform=True)
+    assert 'FINISHED' in result, result
+    scene = bpy.context.scene
+    assert scene.render.fps == 60
+    world = scene.rigidbody_world
+    assert world
+    world.substeps_per_frame = 10
+    world.solver_iterations = 50
+    world.point_cache.frame_start = 1
+    world.point_cache.frame_end = 121
+
+    body = next(obj for obj in bpy.data.objects
+                if obj.rigid_body and obj.rigid_body.type == 'ACTIVE')
+    hinge = next(obj for obj in bpy.data.objects if obj.rigid_body_constraint)
+    assert hinge.rigid_body_constraint.type == 'HINGE'
+    assert hinge.rigid_body_constraint.object1
+    assert hinge.rigid_body_constraint.object2 == body
+
+    samples = {}
+    for frame in range(1, 122):
+        scene.frame_set(frame)
+        if frame not in (1, 31, 61, 91, 121):
+            continue
+        bpy.context.view_layer.update()
+        evaluated = body.evaluated_get(bpy.context.evaluated_depsgraph_get())
+        matrix = evaluated.matrix_world
+        position = matrix.translation.copy()
+        pivot = position + matrix.to_3x3() @ Vector((-1.0, 0.0, 0.0))
+        rotation = matrix.to_quaternion().copy()
+        samples[frame] = {
+            'position': tuple(float(value) for value in position),
+            'pivot': tuple(float(value) for value in pivot),
+            'rotation': tuple(float(value) for value in rotation),
+        }
+
+    assert samples[1]['position'] == (1.0, 0.0, 0.0), samples
+    assert abs(samples[61]['rotation'][2]) > 0.2, samples
+    for frame, sample in samples.items():
+        assert all(math.isfinite(value) for value in sample['position'] +
+                   sample['pivot'] + sample['rotation']), (frame, sample)
+        assert math.sqrt(sum(value * value for value in sample['pivot'])) < 0.05, (
+            frame, sample)
+    print('BLENDER_USD_HINGE_DYNAMICS_PASS', samples)
+
+
 def _check_bullet_dynamics():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
@@ -516,6 +611,7 @@ def main():
     default_mass_path = path.with_name(path.stem + '-default-mass.usda')
     scale_dynamics_path = path.with_name(path.stem + '-scale-dynamics.usda')
     friction_path = path.with_name(path.stem + '-mujoco-friction.usda')
+    hinge_path = path.with_name(path.stem + '-hinge-dynamics.usda')
     try:
         hook.register()
         _make_scene_and_export(path)
@@ -527,6 +623,8 @@ def main():
         _check_multi_mesh_import(multi_mesh_path)
         _make_default_mass_fixture(default_mass_path)
         _check_default_mass_dynamics(default_mass_path)
+        _make_hinge_dynamics_fixture(hinge_path)
+        _check_hinge_dynamics(hinge_path)
         _make_mjcf_friction_fixture(friction_path)
         _check_mjcf_friction_dynamics(friction_path)
         _check_imported_scaled_dynamics(scale_dynamics_path)
@@ -545,6 +643,8 @@ def main():
             scale_dynamics_path.unlink()
         if friction_path.exists():
             friction_path.unlink()
+        if hinge_path.exists():
+            hinge_path.unlink()
         try:
             hook.unregister()
         except RuntimeError:
