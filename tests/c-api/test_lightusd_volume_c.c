@@ -278,6 +278,69 @@ int main(int argc, char** argv) {
   lightusd_render_scene_destroy(scene);
   lightusd_stage_destroy(stage);
 
+  /* A large level set must remain sampleable when dense extraction is over
+   * budget. The large corpus fixture is optional alongside the references. */
+  {
+    char path[MAX_USDA];
+    int len = snprintf(path, sizeof(path), "%s/utahteapot.vdb", root);
+    assert(len > 0 && (size_t)len < sizeof(path));
+    FILE* fixture = fopen(path, "rb");
+    if (!fixture) {
+      printf("SKIP: optional large VDB fixture %s\n", path);
+    } else {
+      fclose(fixture);
+      len = snprintf(usda, sizeof(usda),
+          "#usda 1.0\ndef Volume \"V\" {\n"
+          "  rel field:sdf = </V/sdf>\n"
+          "  def OpenVDBAsset \"sdf\" {\n"
+          "    asset filePath = @%s@\n"
+          "    token fieldName = \"ls_utahteapot\"\n"
+          "    token fieldClass = \"levelSet\"\n"
+          "  }\n}\n", path);
+      assert(len > 0 && (size_t)len < sizeof(usda));
+      stage = NULL;
+      scene = NULL;
+      assert(lightusd_stage_load_from_memory((const uint8_t*)usda, (size_t)len,
+                                             NULL, &stage) == LIGHTUSD_OK);
+      assert(lightusd_render_convert(stage, &config, &scene) == LIGHTUSD_OK);
+      check_volume(scene, 0, 1);
+      lightusd_render_volume_field_info info = {0};
+      assert(lightusd_render_volume_field_get_info(scene, 0, 0, &info) == LIGHTUSD_OK);
+      assert(info.level_set && info.has_bounds);
+      lightusd_render_volume_dense dense = {0};
+      assert(lightusd_render_volume_field_dense(scene, 0, 0, 1000, 0, 0, &dense) ==
+             LIGHTUSD_ERR_RESOURCE_LIMIT);
+      /* Probe a grid over the active world bounds plus an exterior point. */
+      double points[(21 * 21 * 21 + 1) * 3];
+      size_t count = 0;
+      for (int z = 0; z < 21; ++z)
+        for (int y = 0; y < 21; ++y)
+          for (int x = 0; x < 21; ++x) {
+            const int step[3] = {x, y, z};
+            for (int a = 0; a < 3; ++a)
+              points[3 * count + a] = info.world_min[a] +
+                  (info.world_max[a] - info.world_min[a]) * step[a] / 20.0;
+            ++count;
+          }
+      for (int a = 0; a < 3; ++a)
+        points[3 * count + a] = info.world_max[a] + 10;
+      ++count;
+      lightusd_render_volume_samples samples = {0};
+      assert(lightusd_render_volume_field_sample(scene, 0, 0, points, count, 1, &samples) ==
+             LIGHTUSD_OK);
+      assert(samples.count == count && samples.components == 1);
+      int negative = 0, positive = 0;
+      for (size_t i = 0; i < count; ++i) {
+        assert(isfinite(samples.values[i]));
+        negative |= samples.values[i] < 0;
+        positive |= samples.values[i] > 0;
+      }
+      assert(negative && positive && samples.values[count - 1] > 0);
+      lightusd_render_scene_destroy(scene);
+      lightusd_stage_destroy(stage);
+    }
+  }
+
   /* Singular USD field transforms cannot be inverted for world sampling. */
   {
     const int len = snprintf(usda, sizeof(usda),
