@@ -201,6 +201,78 @@ def _check_collision_group_import(path):
            for name, obj in bodies.items()})
 
 
+def _make_mjcf_friction_fixture(path):
+    stage = Usd.Stage.CreateNew(str(path))
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    world = UsdGeom.Xform.Define(stage, '/World')
+    stage.SetDefaultPrim(world.GetPrim())
+    scene = UsdPhysics.Scene.Define(stage, '/World/PhysicsScene')
+    scene.CreateGravityDirectionAttr().Set(Gf.Vec3f(0.0, 0.0, -1.0))
+    scene.CreateGravityMagnitudeAttr().Set(9.81)
+    scene.GetPrim().CreateAttribute(
+        'mjc:option:timestep', Sdf.ValueTypeNames.Double).Set(1.0 / 48.0)
+    scene.GetPrim().CreateAttribute(
+        'mjc:option:iterations', Sdf.ValueTypeNames.Int).Set(50)
+
+    incline = UsdGeom.Cube.Define(stage, '/World/Incline')
+    incline.CreateSizeAttr(2.0)
+    incline_xform = UsdGeom.Xformable(incline.GetPrim())
+    incline_xform.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, -0.1))
+    incline_xform.AddRotateYOp().Set(10.0)
+    incline_xform.AddScaleOp().Set(Gf.Vec3f(5.0, 5.0, 0.1))
+    UsdPhysics.CollisionAPI.Apply(incline.GetPrim())
+    incline.GetPrim().CreateAttribute(
+        'mjc:geomFriction', Sdf.ValueTypeNames.DoubleArray).Set(
+            [0.8, 0.005, 0.0001])
+
+    body = UsdGeom.Xform.Define(stage, '/World/Slider').GetPrim()
+    UsdGeom.Xformable(body).AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, 0.3))
+    body_api = UsdPhysics.RigidBodyAPI.Apply(body)
+    body_api.CreateRigidBodyEnabledAttr(True)
+    UsdPhysics.MassAPI.Apply(body).CreateMassAttr(1.0)
+    collider = UsdGeom.Cube.Define(stage, '/World/Slider/Geom')
+    collider.CreateSizeAttr(0.2)
+    UsdPhysics.CollisionAPI.Apply(collider.GetPrim())
+    collider.GetPrim().CreateAttribute(
+        'mjc:geomFriction', Sdf.ValueTypeNames.DoubleArray).Set(
+            [0.8, 0.005, 0.0001])
+    stage.GetRootLayer().Save()
+
+
+def _check_mjcf_friction_dynamics(path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    result = bpy.ops.wm.usd_import(filepath=str(path), merge_parent_xform=True)
+    assert 'FINISHED' in result, result
+    scene = bpy.context.scene
+    assert scene.render.fps == 48
+    world = scene.rigidbody_world
+    assert world
+    world.substeps_per_frame = 10
+    world.solver_iterations = 50
+    world.point_cache.frame_start = 1
+    world.point_cache.frame_end = 73
+    bodies = [obj for obj in bpy.data.objects if obj.rigid_body]
+    slider = next(obj for obj in bodies if obj.rigid_body.type == 'ACTIVE')
+    incline = next(obj for obj in bodies if obj.rigid_body.type == 'PASSIVE')
+    _assert_close(slider.rigid_body.friction, 0.8)
+    _assert_close(incline.rigid_body.friction, 0.8)
+
+    samples = {}
+    for frame in range(1, 74):
+        scene.frame_set(frame)
+        if frame in (1, 13, 25, 37, 49, 61, 73):
+            bpy.context.view_layer.update()
+            position = slider.evaluated_get(
+                bpy.context.evaluated_depsgraph_get()).matrix_world.translation
+            samples[frame] = tuple(float(position[i]) for i in range(3))
+    assert samples[73][0] > 0.2, samples
+    assert all(math.isfinite(value) for sample in samples.values() for value in sample)
+    print('BLENDER_MUJOCO_FRICTION_DYNAMICS_PASS', samples,
+          {'body_friction': slider.rigid_body.friction,
+           'incline_friction': incline.rigid_body.friction})
+
+
 def _make_multi_mesh_fixture(path):
     stage = Usd.Stage.CreateNew(str(path))
     world = UsdGeom.Xform.Define(stage, '/World')
@@ -443,6 +515,7 @@ def main():
     multi_mesh_path = path.with_name(path.stem + '-multi-mesh.usda')
     default_mass_path = path.with_name(path.stem + '-default-mass.usda')
     scale_dynamics_path = path.with_name(path.stem + '-scale-dynamics.usda')
+    friction_path = path.with_name(path.stem + '-mujoco-friction.usda')
     try:
         hook.register()
         _make_scene_and_export(path)
@@ -454,6 +527,8 @@ def main():
         _check_multi_mesh_import(multi_mesh_path)
         _make_default_mass_fixture(default_mass_path)
         _check_default_mass_dynamics(default_mass_path)
+        _make_mjcf_friction_fixture(friction_path)
+        _check_mjcf_friction_dynamics(friction_path)
         _check_imported_scaled_dynamics(scale_dynamics_path)
         hook.unregister()
         _check_bullet_dynamics()
@@ -468,6 +543,8 @@ def main():
             default_mass_path.unlink()
         if scale_dynamics_path.exists():
             scale_dynamics_path.unlink()
+        if friction_path.exists():
+            friction_path.unlink()
         try:
             hook.unregister()
         except RuntimeError:

@@ -1063,6 +1063,19 @@ prim names to merged child-mesh objects, which Blender's USD importer creates
 when `merge_parent_xform` is enabled. It selects the target before invoking
 Blender's rigid-body operators. Singular body transforms are skipped.
 
+On import, `mjc:geomFriction` on collider prims maps its first value (MuJoCo's
+sliding coefficient) to Blender's single rigid-body friction value. When a
+rigid body has several colliders with authored MuJoCo friction, the hook uses
+their arithmetic mean; a `PhysicsMaterialAPI` with authored static friction on
+the rigid-body prim takes precedence. Blender does not represent MuJoCo's
+torsional or rolling terms or its contact-friction mixing rules.
+
+USD `PhysicsCollisionGroup` filters are read on import and mapped to Blender's
+20 collision layers. Inference is bounded to 256 bodies and 256 groups. A
+graph that needs more than 20 layers, or exceeds those bounds, disables
+imported body collisions and logs a warning rather than allowing filtered
+pairs to collide.
+
 Run the Blender runtime smoke test with:
 
 ```sh
@@ -1070,23 +1083,27 @@ blender -b --factory-startup --python blender/tests/test_usd_physics_runtime.py
 ```
 
 The test uses Blender's actual USD export/import operators in both parent-Xform
-merge modes, then checks a Bullet free-fall and floor-contact simulation. It
-was run with Blender 5.2.3 LTS. It does not establish cross-solver dynamics
-equivalence; non-rigid scale still needs validation.
+merge modes, checks a Bullet free-fall and floor-contact simulation, and runs
+an inclined-contact fixture with MuJoCo friction attributes on child colliders.
+The imported body and incline both receive Bullet friction 0.8. A CPU comparison
+with MuJoCo 3.10.1 put the slider near x=0.020 m in MuJoCo and x=0.558 m in
+Blender at 1.5 s. Friction mapping is verified, but those contact responses
+are not equivalent. The smoke test was run with Blender 5.2.3 LTS. It also
+preserves a non-uniform USD scale `(2.0, 0.5, 1.5)` in both import modes and
+compares source/import Bullet drops at frames 1, 30, 60 and 120 within 0.02
+Blender units.
 
 The addon writes the MjcPhysics names above as they are; MuJoCo 3.16's decoder
 reads several of them as deprecated aliases (see the deprecation note before
 section 1).
 
-**Limitations:** soft body and cloth are not exported. Collision filtering is
-exported for up to 512 distinct Blender masks; beyond that limit the addon logs
-a warning and omits USD filters while retaining the per-body masks. Import
-restores those authored Blender masks; it does not infer masks from arbitrary
-USD collision groups. Spring behavior is an approximation across different physics solvers,
-and MuJoCo-only mode retains the legacy X-axis scalar spring mapping. MuJoCo
-actuators and tendons have no Blender equivalent (preserved only if authored
-directly in the USD). The Blender 5.2.3 LTS runtime roundtrip is covered by
-the smoke test above. Import does not infer masks from arbitrary USD collision
-groups; bodies with multiple separate child mesh prims are not combined into
-compound Blender colliders. The smoke test does not establish spring or
-cross-solver dynamics equivalence.
+**Limitations:** soft body and cloth are not exported. Export supports up to
+512 distinct Blender collision masks; beyond that limit the addon logs a
+warning and omits USD filters while retaining the per-body masks. Imported
+collision groups are mapped to Blender layers as described above. Spring
+behavior is approximate across physics solvers, and MuJoCo-only mode retains
+the legacy X-axis scalar spring mapping. MuJoCo actuators and tendons have no
+Blender equivalent (preserved only if authored directly in the USD). Bodies
+with multiple separate child mesh prims are not combined into compound Blender
+colliders. The runtime checks do not establish spring or cross-solver dynamics
+equivalence.

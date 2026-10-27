@@ -402,6 +402,17 @@ def _has_rigid_body_ancestor(prim):
     return False
 
 
+def _is_in_rigid_body_subtree(prim, body):
+    ancestor = prim.GetParent()
+    while ancestor and ancestor.IsValid() and ancestor.GetPath() != Sdf.Path('/'):
+        if ancestor == body:
+            return True
+        if ancestor.HasAPI(UsdPhysics.RigidBodyAPI):
+            return False
+        ancestor = ancestor.GetParent()
+    return False
+
+
 def _read_rigid_body(prim, mode, passive_collision=False):
     """Extract rigid body data from a USD prim."""
     data = {
@@ -447,6 +458,35 @@ def _read_rigid_body(prim, mode, passive_collision=False):
         if kin is not None:
             data['kinematic'] = kin
 
+    # MuJoCo records geom friction as [sliding, torsional, rolling], while
+    # Blender exposes one rigid-body friction coefficient. Use the sliding
+    # term as the best-effort Bullet mapping when no UsdPhysics material is
+    # authored. MaterialAPI below takes precedence in USD/BOTH mode.
+    sliding_frictions = []
+    for candidate in Usd.PrimRange(prim):
+        if candidate != prim:
+            if (not candidate.HasAPI(UsdPhysics.CollisionAPI) or
+                    not _is_in_rigid_body_subtree(candidate, prim)):
+                continue
+        geom_friction = candidate.GetAttribute('mjc:geomFriction')
+        if (not geom_friction or not geom_friction.IsValid() or
+                not geom_friction.HasAuthoredValueOpinion()):
+            continue
+        values = geom_friction.Get()
+        try:
+            sliding_friction = (float(values[0])
+                                if values is not None and len(values) else None)
+        except (TypeError, ValueError, IndexError):
+            sliding_friction = None
+        if (sliding_friction is not None and math.isfinite(sliding_friction) and
+                sliding_friction >= 0.0):
+            sliding_frictions.append(sliding_friction)
+    if sliding_frictions:
+        # Blender has one friction value per rigid body. For a compound body,
+        # use the arithmetic mean of its valid MuJoCo collider sliding terms.
+        data['friction'] = math.fsum(
+            value / len(sliding_frictions) for value in sliding_frictions)
+
     if prim.HasAPI(UsdPhysics.MassAPI):
         mass_api = UsdPhysics.MassAPI(prim)
         mass_attr = mass_api.GetMassAttr()
@@ -458,8 +498,8 @@ def _read_rigid_body(prim, mode, passive_collision=False):
     if prim.HasAPI(UsdPhysics.MaterialAPI):
         mat_api = UsdPhysics.MaterialAPI(prim)
         sf = mat_api.GetStaticFrictionAttr().Get()
-        if sf is not None:
-            data['friction'] = sf
+        if sf is not None and math.isfinite(float(sf)) and sf >= 0.0:
+            data['friction'] = float(sf)
         rest = mat_api.GetRestitutionAttr().Get()
         if rest is not None:
             data['restitution'] = rest

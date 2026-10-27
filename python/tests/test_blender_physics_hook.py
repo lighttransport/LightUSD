@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 pxr = pytest.importorskip('pxr')
-from pxr import Gf, Usd, UsdPhysics
+from pxr import Gf, Sdf, Usd, UsdPhysics
 
 
 class ZMatrix:
@@ -190,13 +190,46 @@ def test_collision_collection_masks_export_and_import(hook):
     bodies = module._read_usd_physics(stage, 'USD')['bodies']
     assert {name: data['collision_collections'] for name, data in bodies} == {
         obj.name: obj.rigid_body.collision_collections for obj in objects}
-    imported = {obj.name: SimpleNamespace(rigid_body=SimpleNamespace()) for obj in objects}
+    imported = {obj.name: SimpleNamespace(rigid_body=SimpleNamespace(), parent=None)
+                for obj in objects}
     bpy.data = SimpleNamespace(objects=imported)
     bpy.context = SimpleNamespace(scene=SimpleNamespace(),
                                   view_layer=SimpleNamespace(objects=SimpleNamespace(active=None)))
     module._apply_physics_to_blender({'scene': None, 'bodies': bodies, 'joints': []})
     for obj in objects:
         assert imported[obj.name].rigid_body.collision_collections == obj.rigid_body.collision_collections
+
+
+def test_mujoco_sliding_friction_maps_to_bullet(hook):
+    module, _ = hook
+    stage = Usd.Stage.CreateInMemory()
+    body = stage.DefinePrim('/Body', 'Cube')
+    UsdPhysics.RigidBodyAPI.Apply(body)
+    collider = stage.DefinePrim('/Body/Collider', 'Cube')
+    UsdPhysics.CollisionAPI.Apply(collider)
+    collider.CreateAttribute('mjc:geomFriction', Sdf.ValueTypeNames.DoubleArray).Set(
+        [0.8, 0.005, 0.0001])
+    assert module._read_rigid_body(body, 'MJC')['friction'] == pytest.approx(0.8)
+
+    collider2 = stage.DefinePrim('/Body/Collider2', 'Cube')
+    UsdPhysics.CollisionAPI.Apply(collider2)
+    collider2.CreateAttribute('mjc:geomFriction', Sdf.ValueTypeNames.DoubleArray).Set(
+        [0.6, 0.005, 0.0001])
+    assert module._read_rigid_body(body, 'MJC')['friction'] == pytest.approx(0.7)
+
+    # In combined mode, standard USD material data wins when present; it is
+    # the closest authored source for Blender's scalar friction property.
+    material = UsdPhysics.MaterialAPI.Apply(body)
+    material.CreateStaticFrictionAttr(0.3)
+    assert module._read_rigid_body(body, 'BOTH')['friction'] == pytest.approx(0.3)
+
+    bad_body = stage.DefinePrim('/BadBody', 'Cube')
+    UsdPhysics.RigidBodyAPI.Apply(bad_body)
+    bad_collider = stage.DefinePrim('/BadBody/Collider', 'Cube')
+    UsdPhysics.CollisionAPI.Apply(bad_collider)
+    bad_collider.CreateAttribute('mjc:geomFriction', Sdf.ValueTypeNames.DoubleArray).Set(
+        [float('nan'), 0.005, 0.0001])
+    assert module._read_rigid_body(bad_body, 'MJC')['friction'] == pytest.approx(0.5)
 
 
 def test_collision_group_limit_warns_and_retains_masks(hook, caplog):
