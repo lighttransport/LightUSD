@@ -22,7 +22,10 @@ Local:    tinyvdb_io.c is LightUSD's wrapper, not upstream's parser. tinyvdb_io.
           the shell, avoiding a redundant full-box scan. tinyvdb_tetmesh.c
           parallelizes stuffing over z slabs for pools with multiple workers;
           each slab uses compact local maps and the final merge follows the
-          original z/y/x traversal, preserving byte-identical output.
+          original z/y/x traversal, preserving byte-identical output. Its
+          multi-worker warp now uses ordered corner/center wavefronts over
+          increasing coordinate sums, preserving serial neighbor dependencies
+          and byte-identical output across worker counts.
 Update:   the vendored API sources match upstream main at 9217101, apart from
           the local I/O adaptations and CPU changes above. When syncing later
           revisions, preserve those local changes and rebuild

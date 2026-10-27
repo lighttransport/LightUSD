@@ -142,6 +142,43 @@ int main(void) {
   fprintf(stderr, "PASS: %zu vertices, %zu tets, %zu boundary triangles across 1/2/4/8 workers\n",
           reference.vertex_count, reference.tet_count, reference.boundary_count);
   tvdb_tet_mesh_free(&reference);
+  {
+    const double asymmetric_lo[3] = {-0.8, -0.4, -0.25};
+    const double asymmetric_hi[3] = {0.8, 0.4, 0.25};
+    memset(&options, 0, sizeof(options));
+    options.spacing = 0.1;
+    options.alpha_long = 0.19;
+    options.alpha_short = 0.33;
+    for (size_t i = 0; i < sizeof(worker_counts) / sizeof(worker_counts[0]); ++i) {
+      tvdb_thread_pool_t *pool = NULL;
+      tvdb_tet_mesh mesh = {0};
+      tvdb_error_t err = {0};
+      if (tvdb_thread_pool_create(worker_counts[i], &pool, &err) != TVDB_OK ||
+          tvdb_sdf_to_tet_mesh(sphere, NULL, asymmetric_lo, asymmetric_hi,
+                               &options, pool, &mesh, &err) != TVDB_OK) {
+        fprintf(stderr, "asymmetric %zu-worker run: %s\n", worker_counts[i],
+                err.message);
+        tvdb_tet_mesh_free(&mesh);
+        tvdb_thread_pool_destroy(pool);
+        tvdb_tet_mesh_free(&reference);
+        return 1;
+      }
+      tvdb_thread_pool_destroy(pool);
+      if (!mesh.vertex_count || !mesh.tet_count || !mesh.boundary_count ||
+          (i && !same_mesh(&reference, &mesh))) {
+        fprintf(stderr, "asymmetric tet output differs with %zu workers\n",
+                worker_counts[i]);
+        tvdb_tet_mesh_free(&mesh);
+        tvdb_tet_mesh_free(&reference);
+        return 1;
+      }
+      if (!i) reference = mesh;
+      else tvdb_tet_mesh_free(&mesh);
+    }
+    fprintf(stderr,
+            "PASS: asymmetric lattice with custom warp limits matches across 1/2/4/8 workers\n");
+    tvdb_tet_mesh_free(&reference);
+  }
   if (!check_aggregate_tet_budget()) return 1;
   const char *data_dir = getenv("TINYVDBIO_DATA_DIR");
   if (data_dir && *data_dir) {

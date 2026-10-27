@@ -804,6 +804,155 @@ static void tet_stuff_cells(tet_builder *B, int k_begin, int k_end,
       }
 }
 
+typedef struct {
+  const tet_lattice *L;
+  float *value;
+  double *pos;
+  float iso;
+  double alpha_long, alpha_short;
+  int center;
+  int ext[3];
+  size_t stride[3];
+  size_t base;
+  int rank, axis, other, derived;
+} tet_warp_job;
+
+static void tet_warp_job_init(tet_warp_job *job, const tet_lattice *L,
+                              float *value, double *pos, float iso,
+                              double alpha_long, double alpha_short,
+                              int center) {
+  memset(job, 0, sizeof(*job));
+  job->L = L;
+  job->value = value;
+  job->pos = pos;
+  job->iso = iso;
+  job->alpha_long = alpha_long;
+  job->alpha_short = alpha_short;
+  job->center = center;
+  job->ext[0] = center ? L->nx : L->nx + 1;
+  job->ext[1] = center ? L->ny : L->ny + 1;
+  job->ext[2] = center ? L->nz : L->nz + 1;
+  if (center) {
+    job->base = L->corners;
+    job->stride[0] = 1;
+    job->stride[1] = (size_t)L->nx;
+    job->stride[2] = (size_t)L->nx * (size_t)L->ny;
+  } else {
+    job->stride[0] = 1;
+    job->stride[1] = (size_t)L->nx + 1;
+    job->stride[2] = ((size_t)L->nx + 1) * ((size_t)L->ny + 1);
+  }
+}
+
+static void tet_warp_vertex(tet_warp_job *job, size_t v, const int at[3]) {
+  const tet_lattice *L = job->L;
+  const int cell_dims[3] = {L->nx, L->ny, L->nz};
+  const double fv = (double)job->value[v] - job->iso;
+  const double len_long = L->h, len_short = L->h * 0.86602540378443864676;
+  /* A sign change across an edge needs the two values to straddle the
+   * isovalue, and a 1-Lipschitz sampler changes by at most sqrt(3) spacings
+   * over the longest edge, so a farther vertex cannot warp. */
+  if (fabs(fv) > 1.7320508075688772 * len_long) return;
+  double best = INFINITY, best_t = 0;
+  size_t best_w = SIZE_MAX;
+  for (int e = 0; e < 14; ++e) {
+    size_t w;
+    double alpha, len;
+    if (e < 6) {
+      /* Same-kind neighbor one cell along axis e / 2. */
+      const int axis = e / 2, step = (e & 1) ? -1 : 1, q = at[axis] + step;
+      if (q < 0 || q >= job->ext[axis]) continue;
+      int c[3] = {at[0], at[1], at[2]};
+      c[axis] = q;
+      w = job->base + (size_t)c[0] * job->stride[0] +
+          (size_t)c[1] * job->stride[1] + (size_t)c[2] * job->stride[2];
+      alpha = job->alpha_long;
+      len = len_long;
+    } else {
+      /* Other-kind neighbor half a cell along every axis. */
+      const int sd = e - 6;
+      int c[3], ok = 1;
+      for (int a2 = 0; a2 < 3; ++a2) {
+        const int plus = (sd >> a2) & 1;
+        /* corner i -> centers i-1 / i; center i -> corners i / i+1 */
+        c[a2] = job->center ? at[a2] + plus : at[a2] - 1 + plus;
+        const int neighbor_ext = cell_dims[a2] + job->center;
+        if (c[a2] < 0 || c[a2] >= neighbor_ext) ok = 0;
+      }
+      if (!ok) continue;
+      w = job->center ? (size_t)c[0] + ((size_t)L->nx + 1) * (size_t)c[1] +
+                            ((size_t)L->nx + 1) * ((size_t)L->ny + 1) * (size_t)c[2]
+                      : L->corners + (size_t)c[0] + (size_t)L->nx * (size_t)c[1] +
+                            (size_t)L->nx * (size_t)L->ny * (size_t)c[2];
+      alpha = job->alpha_short;
+      len = len_short;
+    }
+    const double fw = (double)job->value[w] - job->iso;
+    if (!((fv < 0 && fw > 0) || (fv > 0 && fw < 0))) continue;
+    const double t = fv / (fv - fw);
+    if (t < alpha && t * len < best) {
+      best = t * len;
+      best_t = t;
+      best_w = w;
+    }
+  }
+  if (best_w == SIZE_MAX) return;
+  double pw[3];
+  tet_position(L, best_w, pw);
+  for (int c = 0; c < 3; ++c)
+    job->pos[3 * v + c] += best_t * (pw[c] - job->pos[3 * v + c]);
+  job->value[v] = job->iso;
+}
+
+static void tet_warp_range(size_t begin, size_t end, void *user) {
+  tet_warp_job *job = (tet_warp_job *)user;
+  int at[3] = {0, 0, 0};
+  for (size_t q = begin; q < end; ++q) {
+    at[job->axis] = (int)q;
+    const int r = job->rank - (int)q;
+    int lo = r - (job->ext[job->derived] - 1);
+    int hi = r;
+    if (lo < 0) lo = 0;
+    if (hi >= job->ext[job->other]) hi = job->ext[job->other] - 1;
+    for (int b = lo; b <= hi; ++b) {
+      at[job->other] = b;
+      at[job->derived] = r - b;
+      const size_t v = job->base + (size_t)at[0] * job->stride[0] +
+                       (size_t)at[1] * job->stride[1] +
+                       (size_t)at[2] * job->stride[2];
+      tet_warp_vertex(job, v, at);
+    }
+  }
+}
+
+static tvdb_status_t tet_warp_parallel(const tet_lattice *L, float *value,
+                                       double *pos, float iso,
+                                       double alpha_long, double alpha_short,
+                                       tvdb_thread_pool_t *pool,
+                                       tvdb_error_t *err) {
+  for (int center = 0; center < 2; ++center) {
+    tet_warp_job job;
+    tet_warp_job_init(&job, L, value, pos, iso, alpha_long, alpha_short, center);
+    job.axis = 0;
+    for (int a = 1; a < 3; ++a)
+      if (job.ext[a] > job.ext[job.axis]) job.axis = a;
+    job.other = (job.axis + 1) % 3;
+    job.derived = (job.axis + 2) % 3;
+    const int max_rank = job.ext[0] + job.ext[1] + job.ext[2] - 3;
+    /* Same-kind axis neighbors differ in coordinate sum by one. Therefore a
+     * wave has no same-kind edges, and every earlier neighbor has completed
+     * before the next wave starts. The two phases preserve the original
+     * corners-before-centers dependency: corners see unmodified centers, then
+     * centers see the completed corner phase. */
+    for (job.rank = 0; job.rank <= max_rank; ++job.rank) {
+      const tvdb_status_t st = tvdb_thread_pool_for(
+          pool, 0, (size_t)job.ext[job.axis], 1, tet_warp_range, &job, err);
+      if (st != TVDB_OK) return st;
+    }
+  }
+  return TVDB_OK;
+}
+
 static void tet_stuff_part_range(size_t begin, size_t end, void *user) {
   tet_stuff_job *job = (tet_stuff_job *)user;
   const tet_lattice *L = job->L;
@@ -1047,78 +1196,27 @@ static tvdb_status_t tet_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
       st = tet_error(err, TVDB_ERROR_INVALID_DATA, "stuffing sample failed");
     if (st != TVDB_OK) goto done;
   }
-  /* Warp: snap each vertex to its nearest violating cut point. A cut point
-   * can violate only one endpoint (alphas < 1/2), and a warped endpoint takes
-   * the isovalue, so later vertices see no cut point on its edges. Vertices
-   * go in id order (corners, then centers, x fastest); neighbors come from
-   * index arithmetic, in the order of the 6 axis then 8 diagonal edges. */
-  {
-    const float iso = options->isovalue;
-    const double len_long = L.h, len_short = L.h * 0.86602540378443864676;
-    const size_t sx = (size_t)L.nx + 1, sxy = sx * ((size_t)L.ny + 1);
-    const size_t cx = (size_t)L.nx, cxy = cx * (size_t)L.ny;
-    const int dims[3] = {L.nx, L.ny, L.nz};
+  /* A warped vertex takes the isovalue, so later neighbors can make different
+   * cut-point choices. Keep the original flat serial traversal for one worker.
+   * With multiple workers, exact-order wavefronts complete every predecessor
+   * before a vertex while allowing independent vertices to run concurrently. */
+  if (tvdb_thread_pool_size(pool) > 1) {
+    st = tet_warp_parallel(&L, value, pos, options->isovalue, alpha_long,
+                           alpha_short, pool, err);
+    if (st != TVDB_OK) goto done;
+  } else {
     for (int center = 0; center < 2; ++center) {
-      const int ext[3] = {center ? L.nx : L.nx + 1, center ? L.ny : L.ny + 1,
-                          center ? L.nz : L.nz + 1};
-      for (int k = 0; k < ext[2]; ++k)
-        for (int j = 0; j < ext[1]; ++j)
-          for (int i = 0; i < ext[0]; ++i) {
+      tet_warp_job job;
+      tet_warp_job_init(&job, &L, value, pos, options->isovalue,
+                        alpha_long, alpha_short, center);
+      for (int k = 0; k < job.ext[2]; ++k)
+        for (int j = 0; j < job.ext[1]; ++j)
+          for (int i = 0; i < job.ext[0]; ++i) {
             const int at[3] = {i, j, k};
-            const size_t v = center ? L.corners + (size_t)i + cx * (size_t)j + cxy * (size_t)k
-                                    : (size_t)i + sx * (size_t)j + sxy * (size_t)k;
-            const double fv = (double)value[v] - iso;
-            /* A sign change across an edge needs the two values to straddle
-             * the isovalue, and a 1-Lipschitz sampler (a signed distance
-             * field, including a trilinearly interpolated one) changes by at
-             * most sqrt(3) spacings over the longest edge, so a vertex farther
-             * than that cannot warp. */
-            if (fabs(fv) > 1.7320508075688772 * len_long) continue;
-            double best = INFINITY, best_t = 0;
-            size_t best_w = SIZE_MAX;
-            for (int e = 0; e < 14; ++e) {
-              size_t w;
-              double alpha, len;
-              if (e < 6) {
-                /* Same-kind neighbor one cell along axis e / 2. */
-                const int axis = e / 2, step = (e & 1) ? -1 : 1, q = at[axis] + step;
-                if (q < 0 || q >= ext[axis]) continue;
-                int c[3] = {i, j, k};
-                c[axis] = q;
-                w = center ? L.corners + (size_t)c[0] + cx * (size_t)c[1] + cxy * (size_t)c[2]
-                           : (size_t)c[0] + sx * (size_t)c[1] + sxy * (size_t)c[2];
-                alpha = alpha_long;
-                len = len_long;
-              } else {
-                /* Other-kind neighbor half a cell along every axis. */
-                const int sd = e - 6;
-                int c[3], ok = 1;
-                for (int a2 = 0; a2 < 3; ++a2) {
-                  const int plus = (sd >> a2) & 1;
-                  /* corner i -> centers i-1 / i; center i -> corners i / i+1 */
-                  c[a2] = center ? at[a2] + plus : at[a2] - 1 + plus;
-                  if (!center && (c[a2] < 0 || c[a2] >= dims[a2])) ok = 0;
-                }
-                if (!ok) continue;
-                w = center ? (size_t)c[0] + sx * (size_t)c[1] + sxy * (size_t)c[2]
-                           : L.corners + (size_t)c[0] + cx * (size_t)c[1] + cxy * (size_t)c[2];
-                alpha = alpha_short;
-                len = len_short;
-              }
-              const double fw = (double)value[w] - iso;
-              if (!((fv < 0 && fw > 0) || (fv > 0 && fw < 0))) continue;
-              const double t = fv / (fv - fw);
-              if (t < alpha && t * len < best) {
-                best = t * len;
-                best_t = t;
-                best_w = w;
-              }
-            }
-            if (best_w == SIZE_MAX) continue;
-            double pw[3];
-            tet_position(&L, best_w, pw);
-            for (int c2 = 0; c2 < 3; ++c2) pos[3 * v + c2] += best_t * (pw[c2] - pos[3 * v + c2]);
-            value[v] = iso;
+            const size_t v = job.base + (size_t)i * job.stride[0] +
+                             (size_t)j * job.stride[1] +
+                             (size_t)k * job.stride[2];
+            tet_warp_vertex(&job, v, at);
           }
     }
   }
