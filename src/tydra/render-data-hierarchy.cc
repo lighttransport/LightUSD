@@ -399,8 +399,12 @@ bool RenderSceneConverter::ConvertVolume(
         grid->dim[1] <= 0 || grid->dim[2] <= 0) {
       DCOUT("Failed to decode vdb field '" << field_name << "': " << resolvedPath << " : "
                                            << resolve_err << decode_err);
-      PushWarn("Volume field '" + field_name + "' (" + resolvedPath +
-               "): " + (resolve_err.empty() ? decode_err : resolve_err));
+      std::string detail = resolve_err;
+      if (!decode_err.empty()) {
+        if (!detail.empty()) detail += ": ";
+        detail += decode_err;
+      }
+      PushWarn("Volume field '" + field_name + "' (" + resolvedPath + "): " + detail);
       continue;
     }
 

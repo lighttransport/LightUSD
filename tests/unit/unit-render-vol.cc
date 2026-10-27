@@ -219,6 +219,16 @@ void usdvol_vdb_corpus_test(void) {
     TEST_CHECK(grid.data.size() == 64);
   }
 
+  // A rejected dense extent must say how much was requested and permitted.
+  {
+    std::vector<usdVol::VDBGrid> grids;
+    std::string warn, err;
+    const std::string path = std::string(root) + "/reference/ref_float.vdb";
+    TEST_CHECK(!usdVol::ReadVDBFromFile(path, &grids, &warn, &err, 32));
+    TEST_CHECK_(warn.find("dense extent 64 voxels, limit 32") != std::string::npos,
+                "missing voxel counts in warning: %s", warn.c_str());
+  }
+
   // USDZ asset resolution supplies VDB bytes rather than a filesystem path.
   // Exercise the external-buffer ownership path separately.
   {

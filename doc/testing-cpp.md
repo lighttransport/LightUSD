@@ -1699,6 +1699,8 @@ buffer identity), `lightusd_render_volume_field_sample` in world space
 needs the out-of-tree tinyvdbio reference corpus (`TINYVDBIO_DATA_DIR` or
 argv[1], expected under `reference/`) and prints SKIP without it, like the
 `usdvol-vdb-corpus` C++ test.
+The legacy `usdvol_vdb_corpus_test` also checks that a dense grid rejected by
+its voxel limit reports both the requested cell count and the limit.
 
 `lusdview_incremental_scene_update_test` now builds without linking next core
 and exercises the public C change-record planner interface. It retains the

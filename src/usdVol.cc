@@ -151,11 +151,27 @@ bool Convert(const tvdb_grid_t &source, size_t index, const VDBReadOptions &opti
   }
   if (st != TVDB_OK) {
     std::vector<float>().swap(out->data);
-    if (warn)
-      *warn += "Skipping VDB grid '" + name + "': " +
-               (st == TVDB_ERROR_INVALID_ARGUMENT ? std::string("dense extent exceeds voxel limit")
-                                                  : Message(e, st)) +
-               ".\n";
+    if (warn) {
+      std::string reason = Message(e, st);
+      if (st == TVDB_ERROR_INVALID_ARGUMENT &&
+          reason == "dense volume exceeds the voxel budget") {
+        uint64_t cells = 1;
+        bool overflow = false;
+        for (int a = 0; a < 3; ++a) {
+          const uint64_t extent = uint64_t(int64_t(info.index_max[a]) -
+                                           int64_t(info.index_min[a]) + 1);
+          if (!extent || cells > std::numeric_limits<uint64_t>::max() / extent) {
+            overflow = true;
+            break;
+          }
+          cells *= extent;
+        }
+        reason += " (dense extent " + (overflow ? std::string("over 2^64") :
+                                                   std::to_string(cells)) +
+                  " voxels, limit " + std::to_string(o.max_voxels) + ")";
+      }
+      *warn += "Skipping VDB grid '" + name + "': " + reason + ".\n";
+    }
     return false;
   }
   out->name = name;
