@@ -283,6 +283,11 @@ tetrahedralizes a level set's interior:
   surface triangle to `origin` for `dim=3 type=mesh` flexcomps
   (`mjcf.flex_tetrahedralized`). Pins given by vertex id are dropped
   (`mjcf.flex_pin_unmapped`).
+- **Experimental grading:** set `flex_tet_coarse_spacing` to a value at least
+  `flex_tet_spacing` to grade stuffing for a mesh flexcomp or a VDB flexcomp.
+  This path is serial and CPU-only; small features can be missed and element
+  quality is not guaranteed. The importer limits the background by its memory
+  budget. For non-VDB meshes, also select `flex_tetrahedralize="stuffing"`.
 - **Bunny example:** the fan overlaps on non-star-shaped meshes. On MuJoCo's
   bunny its tets sum to 125% of the mesh volume, while stuffing converges from
   below: 94% at spacing extent/12, 97% at extent/24.

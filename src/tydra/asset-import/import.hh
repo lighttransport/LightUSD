@@ -89,6 +89,7 @@ struct Options {
   // mesh's level set, flex_tet_spacing apart; 0 picks extent / 12).
   std::string flex_tetrahedralize = "mujoco";
   double flex_tet_spacing = 0;
+  double flex_tet_coarse_spacing = 0; // opt in to experimental CPU grading
   // Device for those level sets and tets: "cpu", "cuda", "hip" or "auto"
   // (volumetric.hh). An unavailable CUDA/HIP device falls back to the CPU
   // with asset.volumetric_device_unavailable; results are the same.

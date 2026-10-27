@@ -305,6 +305,30 @@ def test_flexcomp_stuffing_opt_in(tmp_path):
     assert 'tetrahedralized by isosurface stuffing' in warnings and 'pin is ignored' in warnings
 
 
+def test_flexcomp_graded_stuffing(tmp_path):
+    (tmp_path / 'cube.obj').write_text(_CUBE_OBJ)
+    path = tmp_path / 'flex.xml'
+    path.write_text('<mujoco><worldbody><flexcomp name="soft" type="mesh" file="cube.obj" '
+                    'dim="3" radius=".001" mass="2"/></worldbody></mujoco>')
+    kwargs = dict(flex_tetrahedralize='stuffing', flex_tet_spacing=0.15,
+                  flex_tet_coarse_spacing=0.45)
+    stage = lightusd.import_mjcf(path, **kwargs)
+    soft = stage.prim_at('/World/Deformables/soft')
+    volumes = _tet_volumes(soft['points'], soft['tetVertexIndices'])
+    assert len(volumes) and volumes.min() > 0
+    assert volumes.sum() == pytest.approx(1.0, rel=0.08)
+    assert sum(soft['physics:masses']) == pytest.approx(2.0)
+    again = lightusd.import_mjcf(path, **kwargs).prim_at('/World/Deformables/soft')
+    np.testing.assert_array_equal(soft['points'], again['points'])
+    np.testing.assert_array_equal(soft['tetVertexIndices'], again['tetVertexIndices'])
+    with pytest.raises(ValueError, match='at least'):
+        lightusd.import_mjcf(path, flex_tet_spacing=0.2, flex_tet_coarse_spacing=0.1)
+    with pytest.raises(ValueError, match='cpu'):
+        lightusd.import_mjcf(path, flex_tet_coarse_spacing=0.4, volumetric_device='auto')
+    with pytest.raises(lightusd.UsdError, match='flex_tetrahedralize=stuffing'):
+        lightusd.import_mjcf(path, flex_tet_coarse_spacing=0.4)
+
+
 def test_vdb_mesh_asset_and_flexcomp(tmp_path):
     pts, tris = _sphere()
     vol.mesh_to_level_set(pts * 0.2, tris, voxel_size=0.01).save(tmp_path / 'ball.vdb')
@@ -322,6 +346,12 @@ def test_vdb_mesh_asset_and_flexcomp(tmp_path):
     tets = stage.prim_at('/World/Deformables/soft')
     vols = _tet_volumes(tets['points'], tets['tetVertexIndices'])
     assert vols.min() > 0 and vols.sum() == pytest.approx(4 / 3 * math.pi * 0.2 ** 3, rel=0.05)
+    graded_stage = lightusd.import_mjcf(path, flex_tet_spacing=0.04,
+                                      flex_tet_coarse_spacing=0.12)
+    graded = graded_stage.prim_at('/World/Deformables/soft')
+    vols = _tet_volumes(graded['points'], graded['tetVertexIndices'])
+    assert len(vols) and vols.min() > 0
+    assert vols.sum() == pytest.approx(4 / 3 * math.pi * 0.2 ** 3, rel=0.10)
 
 
 def test_volumetric_cli(tmp_path, capsys):

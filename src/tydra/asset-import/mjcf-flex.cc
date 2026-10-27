@@ -151,9 +151,11 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
     const size_t budget = opts.max_memory - std::min(opts.max_memory, active_reader->bytes);
     StuffingOptions so;
     so.spacing = opts.flex_tet_spacing > 0 ? opts.flex_tet_spacing : 4 * level_set.voxel_size();
+    so.graded_coarse_spacing = opts.flex_tet_coarse_spacing;
     so.threads = opts.threads;
     so.device = VolumetricDevice();
     so.max_tets = std::max<size_t>(1000, std::min<size_t>(budget / 256, 4000000));
+    so.max_background_tets = std::max<size_t>(1000, std::min<size_t>(budget / 512, 8000000));
     // The stuffing lattice is dense (~32 B per vertex before any tet exists).
     so.max_lattice_vertices = std::max<size_t>(100000, std::min<size_t>(budget / 64, 8000000));
     TetMeshData tm;
@@ -246,9 +248,11 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
     LevelSet level_set;
     StuffingOptions so;
     so.spacing = spacing;
+    so.graded_coarse_spacing = opts.flex_tet_coarse_spacing;
     so.threads = opts.threads;
     so.device = ls.device;
     so.max_tets = std::max<size_t>(1000, std::min<size_t>(budget / 256, 4000000));
+    so.max_background_tets = std::max<size_t>(1000, std::min<size_t>(budget / 512, 8000000));
     // The stuffing lattice is dense (~32 B per vertex before any tet exists).
     so.max_lattice_vertices = std::max<size_t>(100000, std::min<size_t>(budget / 64, 8000000));
     TetMeshData tm;
@@ -266,6 +270,9 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
                             std::to_string(tm.tets.size() / 4) + " tets, spacing " +
                             std::to_string(spacing) + ") instead of MuJoCo's fan to origin",
                         "mjcf.flex_tetrahedralized");
+  } else if (active_reader->options.flex_tet_coarse_spacing > 0) {
+    if (err) *err = "graded flex mesh requires flex_tetrahedralize=stuffing";
+    return false;
   } else {
     if (!has_origin) {
       if (err) *err = "origin must be specified for mesh flexcomps if dim=3";
