@@ -486,6 +486,17 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
     AddURDFCustom(layer, link_path + "/" + name, prim, JsonObject(mesh_json, "urdfCustom"), &children);
   }
   SetToken(prim, "subdivisionScheme", "none", true);
+  std::vector<float> extent(6);
+  for (size_t c = 0; c < 3; ++c)
+    extent[c] = extent[c + 3] = (*positions)[c];
+  for (size_t i = 3; i < positions->size(); i += 3)
+    for (size_t c = 0; c < 3; ++c) {
+      extent[c] = std::min(extent[c], (*positions)[i + c]);
+      extent[c + 3] = std::max(extent[c + 3], (*positions)[i + c]);
+    }
+  Set(prim, "extent",
+      tn::Value::MakeFloatCompArray(std::move(extent), tn::TypeId::Float3, 3),
+      "float3[]");
   Set(prim, "points",
       tn::Value::MakeFloatCompArray(owned ? std::move(json_positions)
                                           : std::vector<float>(*positions),

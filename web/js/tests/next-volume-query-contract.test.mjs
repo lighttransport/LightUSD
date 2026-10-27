@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-// UsdVol render query contract: the NanoVDB export and world-space sampling
-// methods exposed by RenderStream. The voxel data path is covered end to end by
-// the C API test (next_test_volume_c) and the Python suite; this pins the JS
-// surface: method presence, argument validation, the null results for fields
-// that do not resolve, and that a failed field never throws.
+// UsdVol render query contract: sparse/dense voxel queries and copied Gaussian
+// particle arrays exposed by RenderStream. The VDB payload path is covered by
+// next_test_volume_c and the Python suite; this pins JS argument validation,
+// unresolved-field behavior, and ownership of returned particle arrays.
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
@@ -14,7 +13,8 @@ const {default: createNext} = await import(new URL(
   import.meta.url));
 const Module = await createNext();
 
-for (const name of ['getVolumeNanovdb', 'getVolumeSample']) {
+for (const name of ['getVolumes', 'getParticleField', 'getVolumeDense',
+                    'getVolumeNanovdb', 'getVolumeSample']) {
   assert.equal(typeof Module.RenderStream.prototype[name], 'function', `${name} is exported`);
 }
 
@@ -62,6 +62,43 @@ try {
   stream.delete();
 }
 console.log('ok - volume NanoVDB/sample query contract');
+
+// Gaussian particle arrays are copied out of the WASM heap and include the
+// schema defaults/materialized coefficient layout expected by CPU clients.
+{
+  const particleStream = new Module.RenderStream();
+  try {
+    const particlePath = new URL('../../../tests/usda/lusdview-gaussian-splat.usda', import.meta.url);
+    const loaded = particleStream.begin(new Uint8Array(readFileSync(particlePath)), 'particles.usda');
+    assert.equal(loaded.success, true, particleStream.error());
+    const catalog = particleStream.getVolumes();
+    assert.equal(catalog.volumes.length, 0);
+    assert.equal(catalog.particleFields.length, 1);
+    assert.equal(catalog.particleFields[0].primPath, '/GaussianFixture/SplatField');
+    assert.equal(catalog.particleFields[0].count, 2);
+    assert.equal(catalog.particleFields[0].shDegree, 0);
+
+    const field = particleStream.getParticleField(0);
+    assert.ok(field.positions instanceof Float32Array);
+    assert.ok(field.orientations instanceof Float32Array);
+    assert.ok(field.scales instanceof Float32Array);
+    assert.ok(field.opacities instanceof Float32Array);
+    assert.ok(field.shCoefficients instanceof Float32Array);
+    assert.deepEqual(field.positions, new Float32Array([-0.35, 0, 0, 0.35, 0, 0]));
+    assert.deepEqual(field.scales, new Float32Array([0.18, 0.08, 0.02, 0.08, 0.18, 0.02]));
+    assert.deepEqual(field.opacities, new Float32Array([0.9, 0.75]));
+    assert.deepEqual(field.shCoefficients, new Float32Array([1, 0.2, 0.05, 0.05, 0.3, 1]));
+    assert.deepEqual(field.orientations, new Float32Array([1, 0, 0, 0, 1, 0, 0, 0]));
+    assert.equal(particleStream.getParticleField(9), null);
+    const secondCopy = particleStream.getParticleField(0).positions;
+    assert.notEqual(field.positions.buffer, secondCopy.buffer);
+    secondCopy[0] = 99;
+    assert.deepEqual(field.positions, new Float32Array([-0.35, 0, 0, 0.35, 0, 0]));
+  } finally {
+    particleStream.delete();
+  }
+}
+console.log('ok - Gaussian particle field copied-array query contract');
 
 // Exercise real VDB bytes when the same optional corpus used by the native
 // volume tests is available. Keep the missing-field contract runnable without it.
