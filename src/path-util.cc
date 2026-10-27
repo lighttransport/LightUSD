@@ -208,28 +208,32 @@ bool ValidatePrimPath(const Path &path, std::string *err) {
 }
 
 bool ValidatePropPath(const Path &path, std::string *err) {
-  if (path.prop_part() == ":") {
+  return ValidatePropName(path.prop_part(), err);
+}
+
+bool ValidatePropName(tstring_view prop_name, std::string *err) {
+  if (prop_name == ":") {
     if (err) {
       (*err) = "Proparty path is composed of namespace delimiter only(`:`).";
     }
     return false;
   }
 
-  if (startsWith(path.prop_part(), ":")) {
+  if (prop_name.starts_with(":")) {
     if (err) {
       (*err) = "Property path starts with namespace delimiter(`:`).";
     }
     return false;
   }
 
-  if (endsWith(path.prop_part(), ":")) {
+  if (prop_name.ends_with(":")) {
     if (err) {
       (*err) = "Property path ends with namespace delimiter(`:`).";
     }
     return false;
   }
 
-  if (contains_str(path.prop_part(), "::")) {
+  if (prop_name.contains("::")) {
     if (err) {
       (*err) = "Empty path among namespace delimiters(`::`) in Property path.";
     }
