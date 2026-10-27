@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "volume-field.hh"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -38,6 +39,49 @@ void Multiply(const double a[4][4], const double b[4][4], double out[4][4]) {
       t[r][c] = s;
     }
   std::memcpy(out, t, sizeof(t));
+}
+
+// Invert the USD field's affine row-vector transform. Pivoting avoids dividing
+// by a zero diagonal for rotations and rejects singular/non-finite matrices.
+bool InvertAffine(const double m[4][4], double out[4][4]) {
+  if (m[0][3] != 0 || m[1][3] != 0 || m[2][3] != 0 || m[3][3] != 1) return false;
+  double a[3][6];
+  for (int r = 0; r < 4; ++r)
+    for (int c = 0; c < 4; ++c)
+      if (!std::isfinite(m[r][c])) return false;
+  for (int r = 0; r < 3; ++r)
+    for (int c = 0; c < 6; ++c) {
+      a[r][c] = c < 3 ? m[r][c] : double(c - 3 == r);
+      if (!std::isfinite(a[r][c])) return false;
+    }
+  for (int c = 0; c < 3; ++c) {
+    int pivot = c;
+    for (int r = c + 1; r < 3; ++r)
+      if (std::fabs(a[r][c]) > std::fabs(a[pivot][c])) pivot = r;
+    if (a[pivot][c] == 0) return false;
+    if (pivot != c)
+      for (int j = 0; j < 6; ++j) std::swap(a[pivot][j], a[c][j]);
+    const double divisor = a[c][c];
+    for (int j = 0; j < 6; ++j) a[c][j] /= divisor;
+    for (int r = 0; r < 3; ++r) {
+      if (r == c) continue;
+      const double factor = a[r][c];
+      for (int j = 0; j < 6; ++j) a[r][j] -= factor * a[c][j];
+    }
+  }
+  for (int r = 0; r < 3; ++r) {
+    out[r][3] = 0;
+    for (int c = 0; c < 3; ++c) {
+      out[r][c] = a[r][c + 3];
+      if (!std::isfinite(out[r][c])) return false;
+    }
+  }
+  for (int c = 0; c < 3; ++c) {
+    out[3][c] = -(m[3][0] * out[0][c] + m[3][1] * out[1][c] + m[3][2] * out[2][c]);
+    if (!std::isfinite(out[3][c])) return false;
+  }
+  out[3][3] = 1;
+  return true;
 }
 
 // World box of the voxel-corner box of [lo, hi] under a row-vector matrix.
@@ -362,24 +406,44 @@ bool FieldCache::SampleWorld(const ResolvedField &field, const double *points, s
   }
   const int comps = tvdb_volume_sampler_components(sparse->sampler);
   const size_t output_components = size_t(comps > 0 ? comps : 1);
-  if (count && output_components > SIZE_MAX / count) {
+  if (count > SIZE_MAX / 3 || (count && output_components > SIZE_MAX / count)) {
     if (err) *err = field.request.field_prim + ": sample count overflow";
     return false;
   }
-  values->resize(count * output_components);
   if (components) *components = int(output_components);
-  if (count == 0) return true;
-  tvdb_error_t e{};
-  const tvdb_status_t st =
-      tvdb_volume_sample_world(sparse->sampler, points, count,
-                               trilinear ? TVDB_VOLUME_FILTER_TRILINEAR : TVDB_VOLUME_FILTER_NEAREST,
-                               values->data(), &e);
-  if (st != TVDB_OK) {
-    if (err)
-      *err = field.request.field_prim + ": volume sampling failed: " +
-             (e.message[0] ? e.message : tvdb_status_string(st));
+  if (count == 0) {
+    values->clear();
+    return true;
+  }
+  double inverse[4][4];
+  if (!InvertAffine(field.request.field_to_world, inverse)) {
+    if (err) *err = field.request.field_prim + ": field transform is not invertible affine";
     values->clear();
     return false;
+  }
+  values->resize(count * output_components);
+  // Bound intermediate storage regardless of the caller's sample count.
+  constexpr size_t kBatch = 256;
+  double local[kBatch * 3];
+  for (size_t begin = 0; begin < count;) {
+    const size_t n = std::min(kBatch, count - begin);
+    for (size_t i = 0; i < n; ++i)
+      for (int a = 0; a < 3; ++a)
+        local[3 * i + a] = points[3 * (begin + i)] * inverse[0][a] +
+                           points[3 * (begin + i) + 1] * inverse[1][a] +
+                           points[3 * (begin + i) + 2] * inverse[2][a] + inverse[3][a];
+    tvdb_error_t e{};
+    const tvdb_status_t st = tvdb_volume_sample_world(
+        sparse->sampler, local, n,
+        trilinear ? TVDB_VOLUME_FILTER_TRILINEAR : TVDB_VOLUME_FILTER_NEAREST,
+        values->data() + begin * output_components, &e);
+    if (st != TVDB_OK) {
+      if (err) *err = field.request.field_prim + ": volume sampling failed: " +
+                      (e.message[0] ? e.message : tvdb_status_string(st));
+      values->clear();
+      return false;
+    }
+    begin += n;
   }
   return true;
 }

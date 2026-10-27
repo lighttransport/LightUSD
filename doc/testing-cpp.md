@@ -1696,6 +1696,9 @@ path remains separate.
 `lightusd_render_volume_field_nanovdb` (grid magic, header grid type, cached
 buffer identity), `lightusd_render_volume_field_sample` in world space
 (nearest and trilinear, scalar and vec3) and the unsupported bool grid. It
+also compares sparse samples with dense voxel values under translated,
+rotated and scaled field transforms, covers batches above 256 points, and
+checks rejection of a singular field transform. It
 needs the out-of-tree tinyvdbio reference corpus (`TINYVDBIO_DATA_DIR` or
 argv[1], expected under `reference/`) and prints SKIP without it, like the
 `usdvol-vdb-corpus` C++ test.

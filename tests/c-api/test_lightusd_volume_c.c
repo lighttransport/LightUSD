@@ -7,6 +7,7 @@
  * files are expected under <dir>/reference/), or pass <dir> as argv[1]. Without
  * it the test prints SKIP and exits 0, like the C++ usdvol corpus test. */
 #include <assert.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -77,7 +78,9 @@ int main(int argc, char** argv) {
       "        token fieldDataType = \"float3\"\n"
       "        token vectorDataRoleHint = \"Vector\"\n"
       "        double3 xformOp:translate = (5, 0, 0)\n"
-      "        uniform token[] xformOpOrder = [\"xformOp:translate\"]\n"
+      "        float xformOp:rotateZ = 90\n"
+      "        float3 xformOp:scale = (2, 3, 4)\n"
+      "        uniform token[] xformOpOrder = [\"xformOp:translate\", \"xformOp:rotateZ\", \"xformOp:scale\"]\n"
       "    }\n"
       "    def OpenVDBAsset \"broken\"\n"
       "    {\n"
@@ -189,6 +192,34 @@ int main(int argc, char** argv) {
            LIGHTUSD_OK);
     assert(dense.components == 3 && dense.data != NULL);
 
+    /* The dense map includes the field prim's +5 translation. Sampling all
+     * cell centers in world space must return the same stored values. */
+    {
+      double centers[320 * 3];
+      assert(dense.dims[0] == 4 && dense.dims[1] == 4 && dense.dims[2] == 4);
+      for (int z = 0; z < 4; ++z)
+        for (int y = 0; y < 4; ++y)
+          for (int x = 0; x < 4; ++x) {
+            const size_t i = (size_t)(x + 4 * (y + 4 * z));
+            for (int a = 0; a < 3; ++a)
+              centers[3 * i + a] = x * dense.cell_to_world[a] +
+                  y * dense.cell_to_world[4 + a] + z * dense.cell_to_world[8 + a] +
+                  dense.cell_to_world[12 + a];
+          }
+      /* Cross the sampler's bounded intermediate-buffer boundary. */
+      for (int i = 64; i < 320; ++i)
+        for (int a = 0; a < 3; ++a) centers[3 * i + a] = centers[3 * (i % 64) + a];
+      lightusd_render_volume_samples at_center = {0};
+      assert(lightusd_render_volume_field_sample(scene, 0, vec, centers, 320, 0,
+                                                 &at_center) == LIGHTUSD_OK);
+      assert(at_center.count == 320 && at_center.components == 3);
+      for (int k = 0; k < 320 * 3; ++k) assert(at_center.values[k] == dense.data[k % (64 * 3)]);
+      assert(lightusd_render_volume_field_sample(scene, 0, vec, centers, 320, 1,
+                                                 &at_center) == LIGHTUSD_OK);
+      for (int k = 0; k < 320 * 3; ++k)
+        assert(fabsf(at_center.values[k] - dense.data[k % (64 * 3)]) < 1e-5f);
+    }
+
     lightusd_render_volume_nanovdb nano;
     memset(&nano, 0, sizeof(nano));
     assert(lightusd_render_volume_field_nanovdb(scene, 0, vec, &nano) ==
@@ -246,6 +277,32 @@ int main(int argc, char** argv) {
 
   lightusd_render_scene_destroy(scene);
   lightusd_stage_destroy(stage);
+
+  /* Singular USD field transforms cannot be inverted for world sampling. */
+  {
+    const int len = snprintf(usda, sizeof(usda),
+        "#usda 1.0\ndef Volume \"V\" {\n"
+        "  rel field:density = </V/density>\n"
+        "  def OpenVDBAsset \"density\" {\n"
+        "    asset filePath = @%s/reference/ref_float.vdb@\n"
+        "    token fieldName = \"float_test\"\n"
+        "    float3 xformOp:scale = (0, 1, 1)\n"
+        "    uniform token[] xformOpOrder = [\"xformOp:scale\"]\n"
+        "  }\n}\n", root);
+    assert(len > 0 && (size_t)len < sizeof(usda));
+    stage = NULL;
+    scene = NULL;
+    assert(lightusd_stage_load_from_memory((const uint8_t*)usda, (size_t)len,
+                                           NULL, &stage) == LIGHTUSD_OK);
+    assert(lightusd_render_convert(stage, &config, &scene) == LIGHTUSD_OK);
+    check_volume(scene, 0, 1);
+    const double point[3] = {0, 0, 0};
+    lightusd_render_volume_samples samples = {0};
+    assert(lightusd_render_volume_field_sample(scene, 0, 0, point, 1, 0, &samples) ==
+           LIGHTUSD_ERR_UNSUPPORTED);
+    lightusd_render_scene_destroy(scene);
+    lightusd_stage_destroy(stage);
+  }
 
   /* A time-only update must rebuild the VDB-backed field and its transform. */
   {
