@@ -1917,19 +1917,30 @@ void CrateWriter::ExtractPrimMeta(
   auto convert_payload_listop = [](
       const std::vector<std::pair<ListEditQual, std::vector<Payload>>>& src) {
     ListOp<Payload> out;
+    // `payload = None` is an empty explicit list-op on the wire; a none-payload
+    // placeholder item would be written as a real (empty) payload and pxr
+    // would read back `payload = <>`. Drop such placeholders.
+    auto drop_none = [](const std::vector<Payload>& in) {
+      std::vector<Payload> kept;
+      kept.reserve(in.size());
+      for (const auto& p : in) {
+        if (!p.is_none()) kept.push_back(p);
+      }
+      return kept;
+    };
     for (const auto& op : src) {
       switch (op.first) {
         case ListEditQual::ResetToExplicit:
           out.ClearAndMakeExplicit();
-          out.SetExplicitItems(op.second);
+          out.SetExplicitItems(drop_none(op.second));
           break;
-        case ListEditQual::Append:  out.SetAppendedItems(op.second); break;
-        case ListEditQual::Prepend: out.SetPrependedItems(op.second); break;
-        case ListEditQual::Add:     out.SetAddedItems(op.second); break;
-        case ListEditQual::Delete:  out.SetDeletedItems(op.second); break;
+        case ListEditQual::Append:  out.SetAppendedItems(drop_none(op.second)); break;
+        case ListEditQual::Prepend: out.SetPrependedItems(drop_none(op.second)); break;
+        case ListEditQual::Add:     out.SetAddedItems(drop_none(op.second)); break;
+        case ListEditQual::Delete:  out.SetDeletedItems(drop_none(op.second)); break;
         default:
           out.ClearAndMakeExplicit();
-          out.SetExplicitItems(op.second);
+          out.SetExplicitItems(drop_none(op.second));
           break;
       }
     }
@@ -2934,10 +2945,16 @@ bool CrateWriter::ConvertRelationshipToFields(
   };
 
   if (rel.is_blocked()) {
-    // Add ValueBlock for the relationship
-    crate::CrateValue blocked_value;
-    blocked_value.Set(value::ValueBlock());
-    rel_fields.push_back({"targetPaths", blocked_value});
+    // `<rel> = None` is an authored "no targets" opinion, which pxr stores as
+    // an explicit EMPTY PathListOp (`SdfPathListOp(Explicit Items: [])`), not
+    // as a ValueBlock. A ValueBlock on targetPaths is silently dropped by
+    // pxr's reader (usdcat printed a bare `rel material:binding`, losing the
+    // None), while the explicit empty list-op round-trips as `= None`.
+    crate::CrateValue empty_value;
+    ListOp<Path> listop;
+    listop.SetExplicitItems(std::vector<Path>{});
+    empty_value.Set(listop);
+    rel_fields.push_back({"targetPaths", empty_value});
   } else if (rel.is_path()) {
     crate::CrateValue path_value;
     ListOp<Path> listop;

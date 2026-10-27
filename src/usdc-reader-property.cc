@@ -416,9 +416,12 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
         if (items.empty() && (spec_type != SpecType::Connection)) {
           if (qual == ListEditQual::ResetToExplicit) {
-            // An explicit empty target list clears weaker targets. Keep the
-            // opinion; a declaration-only relationship has no targetPaths.
-            rel.set(std::vector<Path>{});
+            // An explicitly EMPTY target list is what pxr stores for
+            // `<rel> = None`: "no targets, authored". Model it as the blocked
+            // relationship our ASCII parser produces for the same text, so
+            // `= None` survives a USDC round-trip byte-identically instead of
+            // turning into an empty PathVector.
+            rel.set_blocked();
           } else {
             // An authored but EMPTY bucket: a list-edit qualifier on a
             // relationship with no targets (`append rel myval`). rel.set({}) would
