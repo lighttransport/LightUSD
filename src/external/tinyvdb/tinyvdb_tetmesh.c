@@ -7,6 +7,9 @@
 
 #include "tinyvdb_checked.h"
 #include "tinyvdb_tree_internal.h"
+#ifdef TVDB_EXPERIMENTAL_GRADED
+#include "tinyvdb_tet_graded_internal.h"
+#endif
 
 /* Lattice vertices use doubled integer coordinates: cube corners have all
  * coordinates even, cube centers all odd. Axis ("long") edges join vertices
@@ -943,6 +946,128 @@ done:
   free(B.tets);
   return st;
 }
+#ifdef TVDB_EXPERIMENTAL_GRADED
+/* Conservative edge warp: reject any snap that would invert or collapse an
+ * incident background tetrahedron. The adjacency is local to this prototype. */
+static tvdb_status_t graded_warp(double *pos, float *value, float iso,
+                                 size_t n, const uint32_t *tets, size_t nt,
+                                 double alpha, tvdb_error_t *err) {
+  size_t bytes, incidences, *offset = NULL, *cursor = NULL, *adj = NULL;
+  tvdb_status_t st = TVDB_OK;
+  if (!alpha) return TVDB_OK;
+  if (n == SIZE_MAX || !tvdb_size_mul(n+1, sizeof(size_t), &bytes) ||
+      !tvdb_size_mul(nt, 4, &incidences))
+    return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT, "graded adjacency overflow");
+  offset = (size_t *)calloc(1, bytes);
+  if (!tvdb_size_mul(n, sizeof(size_t), &bytes) || !(cursor = (size_t *)malloc(bytes ? bytes : 1)) ||
+      !tvdb_size_mul(incidences, sizeof(size_t), &bytes) ||
+      !(adj = (size_t *)malloc(bytes ? bytes : 1)) || !offset) {
+    st = tet_error(err, TVDB_ERROR_OUT_OF_MEMORY, "graded adjacency allocation failed"); goto done;
+  }
+  for (size_t i = 0; i < incidences; ++i) ++offset[(size_t)tets[i]+1];
+  for (size_t i = 0; i < n; ++i) { offset[i+1] += offset[i]; cursor[i] = offset[i]; }
+  for (size_t i = 0; i < incidences; ++i) adj[cursor[tets[i]]++] = i/4;
+  for (size_t v = 0; v < n; ++v) {
+    double fv = (double)value[v] - iso, best = INFINITY, best_t = 0;
+    size_t best_w = SIZE_MAX;
+    for (size_t i = offset[v]; i < offset[v+1]; ++i) {
+      size_t t = adj[i];
+      for (size_t j = 0; j < 4; ++j) {
+        size_t w = tets[4*t+j]; double fw = (double)value[w] - iso;
+        if (!((fv < 0 && fw > 0) || (fv > 0 && fw < 0))) continue;
+        double f = fv / (fv-fw);
+        double dx = pos[3*v]-pos[3*w], dy = pos[3*v+1]-pos[3*w+1], dz = pos[3*v+2]-pos[3*w+2];
+        double distance = f * hypot(hypot(dx,dy),dz);
+        if (f < alpha && (distance < best || (distance == best && w < best_w))) {
+          best = distance; best_t = f; best_w = w;
+        }
+      }
+    }
+    if (best_w == SIZE_MAX) continue;
+    double candidate[3]; int valid = 1;
+    for (size_t d = 0; d < 3; ++d)
+      candidate[d] = pos[3*v+d] + best_t*(pos[3*best_w+d]-pos[3*v+d]);
+    for (size_t i = offset[v]; i < offset[v+1] && valid; ++i) {
+      size_t t = adj[i]; const double *before[4], *after[4];
+      for (size_t j = 0; j < 4; ++j) {
+        size_t w = tets[4*t+j]; before[j] = pos+3*w; after[j] = w == v ? candidate : before[j];
+      }
+      double a = tet_volume6(before[0], before[1], before[2], before[3]);
+      double b = tet_volume6(after[0], after[1], after[2], after[3]);
+      if (!isfinite(a) || !isfinite(b) || a == 0 || b == 0 ||
+          (a > 0) != (b > 0) || fabs(b) <= fabs(a)*1e-8) valid = 0;
+    }
+    if (valid) { memcpy(pos+3*v, candidate, sizeof(candidate)); value[v] = iso; }
+  }
+done:
+  free(offset); free(cursor); free(adj); return st;
+}
+/* Exercise the shared cut/stencil code on a graded background; not public. */
+tvdb_status_t tvdb_tet_graded_stencil(const tvdb_tet_refine_graph *graph,
+                                     tvdb_sdf_sample_fn sample, void *user,
+                                     float iso, double alpha, size_t max_tets,
+                                     tvdb_tet_mesh *out, tvdb_error_t *err) {
+  tvdb_status_t st = TVDB_OK;
+  tet_builder B;
+  size_t n, nt, bytes;
+  float *value = NULL;
+  int32_t *vertex_out = NULL;
+  double *pos = NULL;
+  const uint32_t *tets;
+  memset(&B, 0, sizeof(B));
+  if (!graph || !sample || !out || !isfinite(iso) || !isfinite(alpha) || alpha < 0 || alpha >= 0.5 || !max_tets)
+    return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT, "invalid graded stencil arguments");
+  n = tvdb_tet_refine_vertex_count(graph); nt = tvdb_tet_refine_tet_count(graph);
+  tets = tvdb_tet_refine_tets(graph);
+  if (!tvdb_size_mul(n, sizeof(float), &bytes) || n > INT32_MAX)
+    return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT, "graded vertex budget exceeded");
+  value = (float *)malloc(bytes ? bytes : 1);
+  if (!tvdb_size_mul(n, sizeof(int32_t), &bytes) ||
+      !(vertex_out = (int32_t *)malloc(bytes ? bytes : 1)) || !value) {
+    st = tet_error(err, TVDB_ERROR_OUT_OF_MEMORY, "graded stencil allocation failed");
+    goto done_graded;
+  }
+  if (!tvdb_size_mul(n, 3*sizeof(double), &bytes) || !(pos = (double *)malloc(bytes ? bytes : 1))) {
+    st = tet_error(err, TVDB_ERROR_OUT_OF_MEMORY, "graded position allocation failed"); goto done_graded;
+  }
+  if (n) memcpy(pos, tvdb_tet_refine_positions(graph), bytes);
+  for (size_t i = 0; i < n; ++i) {
+    value[i] = NAN; vertex_out[i] = -1;
+    if (!sample(pos + 3*i, &value[i], user) || !isfinite(value[i])) {
+      st = tet_error(err, TVDB_ERROR_INVALID_DATA, "graded sample failed"); goto done_graded;
+    }
+  }
+  st = graded_warp(pos, value, iso, n, tets, nt, alpha, err);
+  if (st != TVDB_OK) goto done_graded;
+  B.value = value; B.pos = pos; B.iso = iso; B.vertex_out = vertex_out;
+  B.max_tets = max_tets; B.err = err; B.st = TVDB_OK;
+  for (size_t i = 0; i < nt && B.st == TVDB_OK; ++i) {
+    size_t id[4] = {tets[4*i], tets[4*i+1], tets[4*i+2], tets[4*i+3]};
+    tet_stencil(&B, id, sample, user);
+  }
+  st = B.st;
+  if (st != TVDB_OK) goto done_graded;
+  {
+    tvdb_tet_mesh result = {0};
+    result.vertex_count = B.vertex_count; result.tet_count = B.tet_count;
+    if (!tvdb_size_mul(B.vertex_count, 3*sizeof(float), &bytes) ||
+        (B.vertex_count && !(result.positions = (float *)malloc(bytes)))) {
+      st = tet_error(err, TVDB_ERROR_OUT_OF_MEMORY, "graded output allocation failed");
+      goto done_graded;
+    }
+    for (size_t i = 0; i < 3*B.vertex_count; ++i) result.positions[i] = (float)B.positions[i];
+    result.tets = B.tets; B.tets = NULL;
+    st = tet_boundary(result.tets, result.tet_count, result.vertex_count, NULL,
+                      &result.boundary, &result.boundary_count, err);
+    if (st != TVDB_OK) { tvdb_tet_mesh_free(&result); goto done_graded; }
+    tvdb_tet_mesh_free(out); *out = result;
+  }
+done_graded:
+  free(pos); free(value); free(vertex_out); free(B.cuts); free(B.positions); free(B.tets);
+  return st;
+}
+#endif
+
 tvdb_status_t tvdb_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
                                    const double bbox_min[3],
                                    const double bbox_max[3],
