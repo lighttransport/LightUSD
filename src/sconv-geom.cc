@@ -2138,9 +2138,13 @@ bool CrateWriter::ExtractImageableAttrs(
   }
 
   if (purpose.authored()) {
-    crate::CrateValue purpose_crate_val;
-    purpose_crate_val.Set(value::token(to_string(purpose.get_value())));
-    fields.push_back({"purpose", purpose_crate_val});
+    if (purpose.is_value_empty()) {
+      sconv_detail::EmitAttrDeclaration("purpose", "token", fields);
+    } else {
+      crate::CrateValue purpose_crate_val;
+      purpose_crate_val.Set(value::token(to_string(purpose.get_value())));
+      fields.push_back({"purpose", purpose_crate_val});
+    }
     sconv_detail::EmitAttrVariability("purpose", purpose, fields);
   }
 
@@ -2302,18 +2306,22 @@ bool CrateWriter::ExtractGPrimProperties(
 
   // Extract orientation
   if (gprim->orientation.authored()) {
-    Orientation orient_val = gprim->orientation.get_value();
-    {  // Write it even when it EQUALS the default: `uniform token orientation =
-       // "rightHanded"` is an authored opinion, and an authored opinion blocks
-       // weaker ones during composition. Skipping it "because it looks like the
-       // default" silently changed what the layer means.
+    if (gprim->orientation.is_value_empty()) {
+      // DECLARED without a value (`uniform token orientation`): write the
+      // declaration only -- get_value() would author the schema fallback.
+      sconv_detail::EmitAttrDeclaration("orientation", "token", fields);
+    } else {
+      Orientation orient_val = gprim->orientation.get_value();
+      // Write it even when it EQUALS the default: `uniform token orientation =
+      // "rightHanded"` is an authored opinion, and an authored opinion blocks
+      // weaker ones during composition. Skipping it "because it looks like the
+      // default" silently changed what the layer means.
       crate::CrateValue orient_crate_val;
       value::token orient_tok(to_string(orient_val));
       orient_crate_val.Set(orient_tok);
       fields.push_back({"orientation", orient_crate_val});
-      sconv_detail::EmitAttrVariability("orientation", gprim->orientation,
-                                        fields);
     }
+    sconv_detail::EmitAttrVariability("orientation", gprim->orientation, fields);
   }
 
   return true;
