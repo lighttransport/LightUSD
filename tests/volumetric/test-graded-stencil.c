@@ -1,4 +1,5 @@
 #include "tinyvdb_tet_graded_internal.h"
+#include "tinyvdb_tet_graded.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -141,6 +142,24 @@ int main(void) {
     CHECK(tvdb_tet_mesh_quality(&m,&q,&err)==TVDB_OK && !q.inverted);
     CHECK(fabs(q.volume-exact_volume) < 0.3*exact_volume);
     tvdb_tet_mesh_free(&m); tvdb_tet_refine_destroy(g);
+  }
+  {
+    const double min_box[] = {-1,-1,-1}, max_box[] = {1,1,1};
+    tvdb_graded_stuffing_options_t options = {0};
+    options.fine_spacing = 0.4; options.coarse_spacing = 1.0;
+    options.grading = 0.8; options.warp_alpha = 0.2;
+    CHECK(tvdb_sdf_to_tet_mesh_graded(sphere,NULL,min_box,max_box,&options,&m,&err)==TVDB_OK);
+    CHECK(m.tet_count && closed(&m) && euler(&m)==2);
+    CHECK(tvdb_tet_mesh_quality(&m,&q,&err)==TVDB_OK && !q.inverted &&
+          fabs(q.volume-4.1887902047863905)<0.5);
+    float *saved = m.positions; size_t count = m.tet_count;
+    options.max_background_tets = 10;
+    CHECK(tvdb_sdf_to_tet_mesh_graded(sphere,NULL,min_box,max_box,&options,&m,&err)!=TVDB_OK);
+    CHECK(m.positions == saved && m.tet_count == count);
+    options.max_background_tets = 0; options.grading = 0;
+    CHECK(tvdb_sdf_to_tet_mesh_graded(sphere,NULL,min_box,max_box,&options,&m,&err)==TVDB_ERROR_INVALID_ARGUMENT);
+    CHECK(m.positions == saved && m.tet_count == count);
+    tvdb_tet_mesh_free(&m);
   }
   return 0;
 }

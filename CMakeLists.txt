@@ -2309,10 +2309,7 @@ if(LIGHTUSD_BUILD_TESTS)
 
 
   if(TARGET lightusd_tinyvdb)
-    add_executable(test-graded-stencil tests/volumetric/test-graded-stencil.c
-      src/external/tinyvdb/tinyvdb_tetmesh.c
-      src/external/tinyvdb/tinyvdb_tet_refine.c src/lz4/lz4.c)
-    target_compile_definitions(test-graded-stencil PRIVATE TVDB_EXPERIMENTAL_GRADED)
+    add_executable(test-graded-stencil tests/volumetric/test-graded-stencil.c src/lz4/lz4.c)
     target_link_libraries(test-graded-stencil PRIVATE lightusd_tinyvdb)
     add_test(NAME volumetric-graded-stencil COMMAND test-graded-stencil)
     set_tests_properties(volumetric-graded-stencil PROPERTIES LABELS "cpu;volume")

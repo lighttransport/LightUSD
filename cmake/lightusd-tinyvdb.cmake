@@ -17,6 +17,7 @@ if(NOT TARGET lightusd_tinyvdb)
     "${_lusd_tinyvdb_dir}/tinyvdb_sparse_tools.c"
     "${_lusd_tinyvdb_dir}/tinyvdb_sparse_tree.c"
     "${_lusd_tinyvdb_dir}/tinyvdb_tetmesh.c"
+    "${_lusd_tinyvdb_dir}/tinyvdb_tet_refine.c"
     "${_lusd_tinyvdb_dir}/tinyvdb_thread.c"
     "${_lusd_tinyvdb_dir}/tinyvdb_to_nanovdb.c"
     "${_lusd_tinyvdb_dir}/tinyvdb_tree.c"

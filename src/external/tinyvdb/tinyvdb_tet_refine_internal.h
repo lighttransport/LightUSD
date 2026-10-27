@@ -1,7 +1,7 @@
 #pragma once
 /* Internal conforming edge-star refinement for a graded stuffing background.
- * Not a public mesh API: the graded sampler and stuffing path are not yet
- * connected. Each split bisects every tetrahedron incident to the edge. */
+ * Not a public mesh API. Each split bisects every tetrahedron incident to the
+ * edge. */
 #include <stddef.h>
 #include <stdint.h>
 #include "tinyvdb_io.h"

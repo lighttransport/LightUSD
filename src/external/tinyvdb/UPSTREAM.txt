@@ -1,5 +1,5 @@
 Upstream: https://github.com/syoyo/tinyvdbio
-Commit:   1869a20 (branch volumetric-sdf; 1020501 volume access, 5615965 half fix,
+Commit:   77022b5 (branch volumetric-sdf; 1020501 volume access, 5615965 half fix,
           1286600 caller-buffer dense volumes, 82d5667 O(1) tree child rank,
           762a777 tree accessor + boxed mesher, de1afb7 per-range stuffing
           sampler accessor, ee571c1 cached sparse CSG, b86ff79 threaded
@@ -13,14 +13,16 @@ Commit:   1869a20 (branch volumetric-sdf; 1020501 volume access, 5615965 half fi
           04407f4 skip already-covered shell edges during surface classification,
           4699f4d reuse leaf corner offsets during classification,
           9b8cd12 use direct lattice indices during tetrahedral stuffing,
-          1869a20 reject failed or non-finite stuffing center samples)
+          1869a20 reject failed or non-finite stuffing center samples,
+          77022b5 experimental CPU graded stuffing API)
 Files:    the src/ subset needed by tvdb_mesh_to_level_set,
           tvdb_level_set_to_tet_mesh / tvdb_sdf_to_tet_mesh,
           tvdb_grid_volume_to_mesh, the volume access used by usdVol
           (tvdb_read_grid, tinyvdb_volume, tvdb_grid_to_nanovdb) and the I/O:
           tinyvdb_io.h (+ tinyvdb_io.c wrapper, lightusd's own), checked,
           mc_tri_table, mesh, mesh_conversion(.inl), ops.h, ray.h, sdf_tree,
-          sparse, sparse_tools, sparse_tree, stats.h, tetmesh, thread,
+          sparse, sparse_tools, sparse_tree, stats.h, tetmesh, tet_refine,
+          tet_graded, thread,
           to_nanovdb (+ third_party/nanovdb/PNanoVDB.h, Apache-2.0, OpenVDB
           contributors), tree, tree_internal, volume, winding, tvdb_memory,
           lifecycle; and

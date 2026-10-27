@@ -7,9 +7,8 @@
 
 #include "tinyvdb_checked.h"
 #include "tinyvdb_tree_internal.h"
-#ifdef TVDB_EXPERIMENTAL_GRADED
 #include "tinyvdb_tet_graded_internal.h"
-#endif
+#include "tinyvdb_tet_graded.h"
 
 /* Lattice vertices use doubled integer coordinates: cube corners have all
  * coordinates even, cube centers all odd. Axis ("long") edges join vertices
@@ -946,7 +945,6 @@ done:
   free(B.tets);
   return st;
 }
-#ifdef TVDB_EXPERIMENTAL_GRADED
 /* Conservative edge warp: reject any snap that would invert or collapse an
  * incident background tetrahedron. The adjacency is local to this prototype. */
 static tvdb_status_t graded_warp(double *pos, float *value, float iso,
@@ -1066,7 +1064,43 @@ done_graded:
   free(pos); free(value); free(vertex_out); free(B.cuts); free(B.positions); free(B.tets);
   return st;
 }
-#endif
+tvdb_status_t tvdb_sdf_to_tet_mesh_graded(tvdb_sdf_sample_fn sample, void *user,
+    const double bbox_min[3], const double bbox_max[3],
+    const tvdb_graded_stuffing_options_t *options, tvdb_tet_mesh *out,
+    tvdb_error_t *err) {
+  double lo[3], hi[3]; size_t cells[3]; tvdb_tet_refine_graph *graph = NULL;
+  tvdb_status_t st;
+  if (!sample || !bbox_min || !bbox_max || !options || !out ||
+      !isfinite(options->fine_spacing) || options->fine_spacing <= 0 ||
+      !isfinite(options->coarse_spacing) || options->coarse_spacing < options->fine_spacing ||
+      !isfinite(options->grading) || options->grading <= 0 ||
+      !isfinite(options->warp_alpha) || options->warp_alpha < 0 || options->warp_alpha >= 0.5 ||
+      !isfinite(options->isovalue))
+    return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT, "invalid graded stuffing arguments");
+  for (int i = 0; i < 3; ++i) {
+    if (!isfinite(bbox_min[i]) || !isfinite(bbox_max[i]) || bbox_max[i] < bbox_min[i])
+      return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT, "invalid graded stuffing box");
+    lo[i] = bbox_min[i] - options->coarse_spacing;
+    hi[i] = bbox_max[i] + options->coarse_spacing;
+    double count = ceil((hi[i] - lo[i]) / options->coarse_spacing);
+    if (!isfinite(lo[i]) || !isfinite(hi[i]) || !isfinite(count) || count < 1 || count > (1 << 20))
+      return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT, "graded stuffing box too large");
+    cells[i] = (size_t)count;
+  }
+  size_t max_vertices = options->max_vertices ? options->max_vertices : 8000000;
+  size_t max_background = options->max_background_tets ? options->max_background_tets : 8000000;
+  size_t max_output = options->max_output_tets ? options->max_output_tets : 4000000;
+  st = tvdb_tet_refine_box(lo, hi, cells, max_vertices, max_background, &graph, err);
+  if (st == TVDB_OK)
+    st = tvdb_tet_refine_adapt_sdf(graph, sample, user, options->isovalue,
+                                   options->fine_spacing, options->coarse_spacing,
+                                   options->grading, err);
+  if (st == TVDB_OK)
+    st = tvdb_tet_graded_stencil(graph, sample, user, options->isovalue,
+                                  options->warp_alpha, max_output, out, err);
+  tvdb_tet_refine_destroy(graph);
+  return st;
+}
 
 tvdb_status_t tvdb_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
                                    const double bbox_min[3],
