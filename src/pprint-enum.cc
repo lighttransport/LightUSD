@@ -304,7 +304,8 @@ std::string to_string(const CustomDataType &custom) {
 // Reference
 //
 std::string to_string(const Reference &v) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   // For internal references (no asset path, just prim path), don't output "@@"
   if (!v.asset_path.GetAssetPath().empty()) {
@@ -321,14 +322,15 @@ std::string to_string(const Reference &v) {
     ss << print_customData(v.customData, "customData", /* indent */ 0);
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 //
 // Payload
 //
 std::string to_string(const Payload &v) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   if (v.is_none()) {
     // pxrUSD serialize and prints 'None' for payload by filling all members in
@@ -347,7 +349,7 @@ std::string to_string(const Payload &v) {
     ss << v.layerOffset;
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 //
@@ -579,11 +581,12 @@ std::string to_string(lightusd::Variability v) {
 // Extent
 //
 std::string to_string(lightusd::Extent e) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   ss << "[" << e.lower << ", " << e.upper << "]";
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 //
@@ -599,7 +602,8 @@ std::string to_string(const Path &path, bool show_full_path) {
 
 std::string to_string(const std::vector<Path> &v, bool show_full_path) {
   // TODO(syoyo): indent
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
   ss << "[";
 
   for (size_t i = 0; i < v.size(); i++) {
@@ -609,7 +613,7 @@ std::string to_string(const std::vector<Path> &v, bool show_full_path) {
     }
   }
   ss << "]";
-  return ss.str();
+  return pp_ss.str();
 }
 
 //
@@ -684,7 +688,8 @@ std::string to_string(const XformOp::OpType &op) {
 // dump_path (debug helper)
 //
 std::string dump_path(const Path &path) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
   ss << "Path: Prim part = " << path.prim_part();
   ss << ", Prop part = " << path.prop_part();
   ss << ", Variant part = " << path.variant_part();
@@ -693,7 +698,7 @@ std::string dump_path(const Path &path) {
   ss << ", isAbsolute = " << path.is_absolute_path();
   ss << ", isRelative = " << path.is_relative_path();
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 }  // namespace lightusd

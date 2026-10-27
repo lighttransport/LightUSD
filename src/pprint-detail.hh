@@ -36,7 +36,8 @@ std::string print_props(const std::map<std::string, Property> &props,
 
 // Helper: print ".connect = <path>" for any attribute with connections
 inline std::string fmt_connections(const std::vector<Path> &paths) {
-  std::stringstream s;
+  ::lightusd::pprint::ScratchRef pp_s;
+  std::ostream &s = pp_s.os();
   if (paths.size() == 1) {
     s << paths[0];
   } else if (paths.empty()) {
@@ -44,11 +45,11 @@ inline std::string fmt_connections(const std::vector<Path> &paths) {
   } else {
     s << paths;
   }
-  return s.str();
+  return pp_s.str();
 }
 
 // Helper: print attribute metadata block
-inline void print_attr_metas_block(std::stringstream &ss,
+inline void print_attr_metas_block(std::ostream &ss,
                                    const AttrMeta &metas,
                                    const uint32_t indent) {
   if (metas.authored()) {
@@ -68,7 +69,8 @@ inline void print_attr_metas_block(std::stringstream &ss,
 template <typename T>
 inline std::string print_enum_timesamples(const value::TimeSamples &v,
                                            const uint32_t indent = 0) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   ss << "{\n";
 
@@ -86,7 +88,7 @@ inline std::string print_enum_timesamples(const value::TimeSamples &v,
 
   ss << pprint::Indent(indent) << "}\n";
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // Value-type timesamples from a type-erased value::TimeSamples store. Each
@@ -95,7 +97,8 @@ inline std::string print_enum_timesamples(const value::TimeSamples &v,
 template <typename T>
 inline std::string print_value_typed_timesamples(const value::TimeSamples &v,
                                                   const uint32_t indent = 0) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   ss << "{\n";
 
@@ -113,7 +116,7 @@ inline std::string print_value_typed_timesamples(const value::TimeSamples &v,
 
   ss << pprint::Indent(indent) << "}\n";
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // Enum-valued attributes that serialize as quoted tokens (Purpose, Visibility,
@@ -121,7 +124,8 @@ inline std::string print_value_typed_timesamples(const value::TimeSamples &v,
 template <typename T>
 inline std::string print_enum_token_timesamples(const value::TimeSamples &v,
                                                  const uint32_t indent = 0) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   ss << "{\n";
 
@@ -139,14 +143,15 @@ inline std::string print_enum_token_timesamples(const value::TimeSamples &v,
 
   ss << pprint::Indent(indent) << "}\n";
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // Token timesamples from a type-erased value::TimeSamples store (value::token,
 // which is a registered value type).
 inline std::string print_value_token_timesamples(const value::TimeSamples &v,
                                                   const uint32_t indent = 0) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   ss << "{\n";
 
@@ -164,12 +169,13 @@ inline std::string print_value_token_timesamples(const value::TimeSamples &v,
 
   ss << pprint::Indent(indent) << "}\n";
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 inline std::string print_str_timesamples(
     const value::TimeSamples &v, const uint32_t indent = 0) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   ss << "{\n";
 
@@ -187,7 +193,7 @@ inline std::string print_str_timesamples(
 
   ss << pprint::Indent(indent) << "}\n";
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // ============================================================================
@@ -199,7 +205,8 @@ inline std::string print_animatable_default(const Animatable<T> &v,
                                             const uint32_t indent = 0) {
   (void)indent;
 
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   if (v.is_blocked()) {
     ss << "None";
@@ -213,13 +220,14 @@ inline std::string print_animatable_default(const Animatable<T> &v,
     ss << a;
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 template <typename T>
 inline std::string print_animatable_timesamples(const Animatable<T> &v,
                                                 const uint32_t indent = 0) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   if (v.has_timesamples()) {
     if constexpr (animatable_detail::has_value_type_traits<T>::value) {
@@ -235,7 +243,7 @@ inline std::string print_animatable_timesamples(const Animatable<T> &v,
     }
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // ============================================================================
@@ -246,7 +254,8 @@ template <typename T>
 inline std::string print_typed_attr(
     const TypedAttribute<Animatable<T>> &attr, const std::string &name,
     const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   if (attr.authored()) {
     const std::string &tyname = attr.has_actual_type()
@@ -286,7 +295,8 @@ inline std::string print_typed_attr(
       } else if (has_default) {
         T a;
         if (pv.value().get_scalar(&a)) {
-          std::stringstream val_ss;
+          ::lightusd::pprint::ScratchRef pp_val_ss;
+          std::ostream &val_ss = pp_val_ss.os();
           // Set prefix_columns for column-wrapping of arrays
           uint32_t pcols = static_cast<uint32_t>(
               pprint::Indent(indent).size() +
@@ -294,7 +304,7 @@ inline std::string print_typed_attr(
               1 + name.size() + 3);  // " " + name + " = "
           pprint::ScopedPrefixColumns spc(pcols);
           val_ss << a;
-          std::string val_str = val_ss.str();
+          std::string val_str = pp_val_ss.str();
           if (!val_str.empty()) {
             ss << " = " << val_str;
           }
@@ -325,7 +335,7 @@ inline std::string print_typed_attr(
     }
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // ============================================================================
@@ -335,7 +345,8 @@ inline std::string print_typed_attr(
 inline std::string print_str_attr(
     const TypedAttribute<Animatable<std::string>> &attr,
     const std::string &name, const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   if (attr.authored()) {
     const std::string &tyname = attr.has_actual_type()
@@ -408,7 +419,7 @@ inline std::string print_str_attr(
     }
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // ============================================================================
@@ -419,7 +430,8 @@ template <typename T>
 inline std::string print_typed_attr(const TypedAttribute<T> &attr,
                                     const std::string &name,
                                     const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   if (attr.authored()) {
     const std::string &tyname = attr.has_actual_type()
@@ -473,7 +485,7 @@ inline std::string print_typed_attr(const TypedAttribute<T> &attr,
     }
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // ============================================================================
@@ -484,7 +496,8 @@ template <typename T>
 inline std::string print_typed_attr(
     const TypedAttributeWithFallback<Animatable<T>> &attr,
     const std::string &name, const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   if (attr.authored()) {
     const std::string &tyname = attr.has_actual_type()
@@ -565,7 +578,7 @@ inline std::string print_typed_attr(
     }
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // ============================================================================
@@ -576,7 +589,8 @@ template <typename T>
 inline std::string print_typed_terminal_attr(
     const TypedTerminalAttribute<T> &attr, const std::string &name,
     const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   if (attr.authored()) {
     ss << pprint::Indent(indent);
@@ -595,7 +609,7 @@ inline std::string print_typed_terminal_attr(
     ss << "\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // ============================================================================
@@ -606,7 +620,8 @@ template <typename T>
 inline std::string print_typed_attr(
     const TypedAttributeWithFallback<T> &attr, const std::string &name,
     const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   if (attr.authored()) {
     const std::string &tyname = attr.has_actual_type()
@@ -655,7 +670,7 @@ inline std::string print_typed_attr(
     }
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // ============================================================================
@@ -666,7 +681,8 @@ template <typename T>
 inline std::string print_typed_token_attr(
     const TypedAttributeWithFallback<Animatable<T>> &attr,
     const std::string &name, const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   if (attr.authored()) {
 
@@ -730,7 +746,7 @@ inline std::string print_typed_token_attr(
     }
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // ============================================================================
@@ -741,7 +757,8 @@ template <typename T>
 inline std::string print_typed_token_attr(
     const TypedAttributeWithFallback<T> &attr, const std::string &name,
     const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   if (attr.authored()) {
 
@@ -773,7 +790,7 @@ inline std::string print_typed_token_attr(
     }
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // ============================================================================
@@ -782,7 +799,8 @@ inline std::string print_typed_token_attr(
 
 inline std::string print_rel_only(const Relationship &rel,
                                   const std::string &name, uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   ss << "rel " << name;
 
@@ -812,7 +830,7 @@ inline std::string print_rel_only(const Relationship &rel,
 
   ss << "\n";
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 inline std::string print_relationship(const Relationship &rel,
@@ -820,7 +838,8 @@ inline std::string print_relationship(const Relationship &rel,
                                       const bool custom,
                                       const std::string &name,
                                       uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   ss << pprint::Indent(indent);
 
@@ -838,7 +857,7 @@ inline std::string print_relationship(const Relationship &rel,
 
   ss << print_rel_only(rel, name, indent);
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // ============================================================================
@@ -848,7 +867,8 @@ inline std::string print_relationship(const Relationship &rel,
 template <typename T>
 inline std::string print_gprim_predefined(const T &gprim,
                                           const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   // properties
   ss << print_typed_attr(gprim.doubleSided, "doubleSided", indent);
@@ -870,7 +890,7 @@ inline std::string print_gprim_predefined(const T &gprim,
 
   ss << print_xformOps(gprim.xformOps, indent);
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // ============================================================================
@@ -880,7 +900,8 @@ inline std::string print_gprim_predefined(const T &gprim,
 template <typename PrimT>
 inline std::string print_prim_header(const PrimT &prim, const char *type_name,
                                      uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
   ss << pprint::Indent(indent) << to_string(prim.spec) << " " << type_name
      << " \"" << prim.name << "\"\n";
   if (prim.meta.authored()) {
@@ -889,16 +910,17 @@ inline std::string print_prim_header(const PrimT &prim, const char *type_name,
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
-  return ss.str();
+  return pp_ss.str();
 }
 
 template <typename GeomT>
 inline std::string print_axis_attr(const GeomT &geom, uint32_t indent) {
   if (!geom.axis.authored()) return {};
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
   ss << pprint::Indent(indent) << "uniform token axis = \""
      << to_string(geom.axis.get_value()) << "\"\n";
-  return ss.str();
+  return pp_ss.str();
 }
 
 }  // namespace lightusd

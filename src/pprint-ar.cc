@@ -41,71 +41,78 @@ static std::string print_rel_prop(const RelationshipProperty &rp,
 
 std::string to_string(const Preliminary_PhysicsGravitationalForce &prim,
                       const uint32_t indent, bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
   PRINT_PRIM_HEADER(prim, "Preliminary_PhysicsGravitationalForce");
   ss << print_typed_attr(prim.acceleration, "physics:gravitationalForce:acceleration", indent + 1);
   PRINT_PRIM_FOOTER(prim);
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const Preliminary_InfiniteColliderPlane &prim,
                       const uint32_t indent, bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
   PRINT_PRIM_HEADER(prim, "Preliminary_InfiniteColliderPlane");
   ss << print_typed_attr(prim.position, "position", indent + 1);
   ss << print_typed_attr(prim.normal, "normal", indent + 1);
   PRINT_PRIM_FOOTER(prim);
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const Preliminary_ReferenceImage &prim,
                       const uint32_t indent, bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
   PRINT_PRIM_HEADER(prim, "Preliminary_ReferenceImage");
   ss << print_typed_attr(prim.image, "image", indent + 1);
   ss << print_typed_attr(prim.physicalWidth, "physicalWidth", indent + 1);
   PRINT_PRIM_FOOTER(prim);
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const Preliminary_Behavior &prim,
                       const uint32_t indent, bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
   PRINT_PRIM_HEADER(prim, "Preliminary_Behavior");
   ss << print_rel_prop(prim.triggers, "triggers", indent + 1);
   ss << print_rel_prop(prim.actions, "actions", indent + 1);
   ss << print_typed_attr(prim.exclusive, "exclusive", indent + 1);
   PRINT_PRIM_FOOTER(prim);
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const Preliminary_Trigger &prim,
                       const uint32_t indent, bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
   PRINT_PRIM_HEADER(prim, "Preliminary_Trigger");
   ss << print_typed_attr(prim.info_id, "info:id", indent + 1);
   PRINT_PRIM_FOOTER(prim);
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const Preliminary_Action &prim,
                       const uint32_t indent, bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
   PRINT_PRIM_HEADER(prim, "Preliminary_Action");
   ss << print_typed_attr(prim.info_id, "info:id", indent + 1);
   ss << print_typed_attr(prim.multiplePerformOperation, "multiplePerformOperation", indent + 1);
   PRINT_PRIM_FOOTER(prim);
-  return ss.str();
+  return pp_ss.str();
 }
 
 // Helper: print a string attribute with proper quoting
 static std::string print_string_attr(const TypedAttributeWithFallback<std::string> &attr,
                                      const std::string &name, uint32_t indent) {
   if (!attr.authored()) return "";
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
   ss << pprint::Indent(indent) << "string " << name << " = "
      << quote(attr.get_value()) << "\n";
-  return ss.str();
+  return pp_ss.str();
 }
 
 // Helper: print a string array attribute with proper quoting
@@ -114,19 +121,21 @@ static std::string print_string_array_attr(const TypedAttribute<std::vector<std:
   if (!attr.authored()) return "";
   auto v = attr.get_value();
   if (!v) return "";
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
   ss << pprint::Indent(indent) << "string[] " << name << " = [";
   for (size_t i = 0; i < v.value().size(); i++) {
     if (i > 0) ss << ", ";
     ss << quote(v.value()[i]);
   }
   ss << "]\n";
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string to_string(const Preliminary_Text &prim,
                       const uint32_t indent, bool closing_brace) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
   PRINT_PRIM_HEADER(prim, "Preliminary_Text");
   ss << print_string_attr(prim.content, "content", indent + 1);
   ss << print_string_array_attr(prim.font, "font", indent + 1);
@@ -138,7 +147,7 @@ std::string to_string(const Preliminary_Text &prim,
   ss << print_typed_attr(prim.horizontalAlignment, "horizontalAlignment", indent + 1);
   ss << print_typed_attr(prim.verticalAlignment, "verticalAlignment", indent + 1);
   PRINT_PRIM_FOOTER(prim);
-  return ss.str();
+  return pp_ss.str();
 }
 
 }  // namespace lightusd

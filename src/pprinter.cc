@@ -53,17 +53,19 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
   }
 
   if (metas.metersPerUnit.authored()) {
-    std::stringstream ss;
+    ::lightusd::pprint::ScratchRef pp_ss;
+    std::ostream &ss = pp_ss.os();
     ss << pprint::Indent(indent)
        << "metersPerUnit = " << dnum(metas.metersPerUnit.get_value()) << "\n";
-    add("metersPerUnit", ss.str());
+    add("metersPerUnit", pp_ss.str());
   }
 
   if (metas.kilogramsPerUnit.authored()) {
-    std::stringstream ss;
+    ::lightusd::pprint::ScratchRef pp_ss;
+    std::ostream &ss = pp_ss.os();
     ss << pprint::Indent(indent)
        << "kilogramsPerUnit = " << dnum(metas.kilogramsPerUnit.get_value()) << "\n";
-    add("kilogramsPerUnit", ss.str());
+    add("kilogramsPerUnit", pp_ss.str());
   }
 
   if (metas.upAxis.authored()) {
@@ -72,38 +74,43 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
   }
 
   if (metas.timeCodesPerSecond.authored()) {
-    std::stringstream ss;
+    ::lightusd::pprint::ScratchRef pp_ss;
+    std::ostream &ss = pp_ss.os();
     ss << pprint::Indent(indent)
        << "timeCodesPerSecond = " << dnum(metas.timeCodesPerSecond.get_value()) << "\n";
-    add("timeCodesPerSecond", ss.str());
+    add("timeCodesPerSecond", pp_ss.str());
   }
 
   if (metas.startTimeCode.authored()) {
-    std::stringstream ss;
+    ::lightusd::pprint::ScratchRef pp_ss;
+    std::ostream &ss = pp_ss.os();
     ss << pprint::Indent(indent)
        << "startTimeCode = " << dnum(metas.startTimeCode.get_value()) << "\n";
-    add("startTimeCode", ss.str());
+    add("startTimeCode", pp_ss.str());
   }
 
   if (metas.endTimeCode.authored()) {
-    std::stringstream ss;
+    ::lightusd::pprint::ScratchRef pp_ss;
+    std::ostream &ss = pp_ss.os();
     ss << pprint::Indent(indent)
        << "endTimeCode = " << dnum(metas.endTimeCode.get_value()) << "\n";
-    add("endTimeCode", ss.str());
+    add("endTimeCode", pp_ss.str());
   }
 
   if (metas.framesPerSecond.authored()) {
-    std::stringstream ss;
+    ::lightusd::pprint::ScratchRef pp_ss;
+    std::ostream &ss = pp_ss.os();
     ss << pprint::Indent(indent)
        << "framesPerSecond = " << dnum(metas.framesPerSecond.get_value()) << "\n";
-    add("framesPerSecond", ss.str());
+    add("framesPerSecond", pp_ss.str());
   }
 
   // TODO: Do not print subLayers when consumed(after composition evaluated)
   if (metas.subLayers.size()) {
-    std::stringstream ss;
+    ::lightusd::pprint::ScratchRef pp_ss;
+    std::ostream &ss = pp_ss.os();
     ss << pprint::Indent(indent) << "subLayers = " << metas.subLayers << "\n";
-    add("subLayers", ss.str());
+    add("subLayers", pp_ss.str());
   }
 
   if (metas.defaultPrim.str().size()) {
@@ -141,10 +148,11 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
 
   // AOUSD Core Spec layer metadata
   if (metas.colorConfiguration) {
-    std::stringstream ss;
+    ::lightusd::pprint::ScratchRef pp_ss;
+    std::ostream &ss = pp_ss.os();
     ss << pprint::Indent(indent)
        << "colorConfiguration = " << metas.colorConfiguration.value() << "\n";
-    add("colorConfiguration", ss.str());
+    add("colorConfiguration", pp_ss.str());
   }
 
   if (metas.colorManagementSystem) {
@@ -178,7 +186,8 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
 
   // AOUSD Core Spec 10.3.2.6: relocates
   if (!metas.layerRelocates.empty()) {
-    std::stringstream ss;
+    ::lightusd::pprint::ScratchRef pp_ss;
+    std::ostream &ss = pp_ss.os();
     ss << pprint::Indent(indent) << "relocates = {\n";
     for (size_t i = 0; i < metas.layerRelocates.size(); i++) {
       const auto &entry = metas.layerRelocates[i];
@@ -194,7 +203,7 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
       ss << "\n";
     }
     ss << pprint::Indent(indent) << "}\n";
-    add("layerRelocates", ss.str());
+    add("layerRelocates", pp_ss.str());
   }
 
   // Unregistered layer metadata: write the stored raw text verbatim -- it
@@ -214,11 +223,12 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
                      });
   }
 
-  std::stringstream meta_ss;
+  ::lightusd::pprint::ScratchRef pp_meta_ss;
+  std::ostream &meta_ss = pp_meta_ss.os();
   for (const auto &f : fields) {
     meta_ss << f.second;
   }
-  return meta_ss.str();
+  return pp_meta_ss.str();
 }
 
 std::string print_layer(const Layer &layer, const uint32_t indent, bool parallel) {
@@ -226,17 +236,19 @@ std::string print_layer(const Layer &layer, const uint32_t indent, bool parallel
   (void)parallel; // Threading disabled
 #endif
 
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   // FIXME: print magic-header outside of this function?
   ss << pprint::Indent(indent) << "#usda 1.0\n";
 
-  std::stringstream meta_ss;
+  ::lightusd::pprint::ScratchRef pp_meta_ss;
+  std::ostream &meta_ss = pp_meta_ss.os();
   meta_ss << print_layer_metas(layer.metas(), indent + 1);
 
-  if (meta_ss.str().size()) {
+  if (pp_meta_ss.str().size()) {
     ss << "(\n";
-    ss << meta_ss.str();
+    ss << pp_meta_ss.str();
     ss << ")\n";
   }
 
@@ -306,7 +318,7 @@ std::string print_layer(const Layer &layer, const uint32_t indent, bool parallel
     }
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // prim-pprint.hh
@@ -317,7 +329,8 @@ namespace prim {
 // verbatim from parse; pxr keeps them in unflattened output).
 static std::string print_reorder_stmts(const PrimMetas &metas,
                                        const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
   auto emit = [&](const char *field, const std::vector<value::token> &toks) {
     if (toks.empty()) return;
     ss << pprint::Indent(indent) << "reorder " << field << " = [";
@@ -329,11 +342,12 @@ static std::string print_reorder_stmts(const PrimMetas &metas,
   };
   emit("nameChildren", metas.nameChildrenReorder);
   emit("properties", metas.propertiesReorder);
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string print_prim(const Prim &prim, const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   // Two-phase iterative DFS: ENTER prints header + variant + children-start,
   // EXIT prints closing brace.
@@ -459,7 +473,7 @@ std::string print_prim(const Prim &prim, const uint32_t indent) {
     }
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
@@ -471,7 +485,8 @@ std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
     return {};
   }
 
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   // Two-phase iterative DFS
   enum Phase { ENTER, EXIT };
@@ -582,7 +597,7 @@ std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
     }
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // ============================================================================

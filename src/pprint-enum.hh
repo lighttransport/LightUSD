@@ -11,6 +11,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "pprint-buf.hh"           // pprint::ScratchRef
 #include "core/prim-enums.hh"        // Specifier, Permission, Variability, SpecType, Kind, Axis, Visibility, Orientation, Interpolation, Purpose
 #include "core/path.hh"              // Path
 #include "core/composition-types.hh" // Reference, Payload, APISchemas
@@ -156,7 +157,8 @@ std::string to_string(const std::string &s);
 
 template <typename T>
 std::string to_string(const std::vector<T> &v, const uint32_t level = 0) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
   ss << pprint::Indent(level) << "[";
   for (size_t i = 0; i < v.size(); i++) {
     ss << to_string(v[i]);
@@ -165,12 +167,13 @@ std::string to_string(const std::vector<T> &v, const uint32_t level = 0) {
     }
   }
   ss << "]";
-  return ss.str();
+  return pp_ss.str();
 }
 
 template <typename T>
 std::string to_string(const ListOp<T> &op, const uint32_t indent_level = 0) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
   ss << pprint::Indent(indent_level) << "ListOp(isExplicit " << op.IsExplicit()
      << ") {\n";
   ss << pprint::Indent(indent_level)
@@ -186,7 +189,7 @@ std::string to_string(const ListOp<T> &op, const uint32_t indent_level = 0) {
   ss << pprint::Indent(indent_level)
      << "  ordered_items = " << to_string(op.GetOrderedItems()) << "\n";
   ss << pprint::Indent(indent_level) << "}";
-  return ss.str();
+  return pp_ss.str();
 }
 
 }  // namespace lightusd

@@ -174,13 +174,23 @@ static bool sPreserveAuthoredOrder = false;
 static bool sUSDTextFormat = false;
 
 std::string Indent(uint32_t n) {
-  std::stringstream ss;
-
-  for (uint32_t i = 0; i < n; i++) {
-    ss << sIndentString;
+  // Called once per printed line, so this must not build a std::stringstream:
+  // its ios_base/locale setup is ~400x the cost of the copy it produces. One
+  // allocation plus one memcpy per level is all a repeat of sIndentString needs.
+  if (n == 0) {
+    return std::string();
   }
-
-  return ss.str();
+  const size_t unit = sIndentString.size();
+  if (unit == 1) {
+    return std::string(n, sIndentString[0]);
+  }
+  std::string out;
+  out.resize(unit * n);
+  char *dst = out.data();
+  for (uint32_t i = 0; i < n; i++, dst += unit) {
+    std::memcpy(dst, sIndentString.data(), unit);
+  }
+  return out;
 }
 
 void SetIndentString(const std::string &s) { sIndentString = s; }
@@ -207,7 +217,8 @@ namespace {
 // Print a single reference listop (e.g., "prepend references = ...")
 std::string print_reference_listop(const prim::ReferenceListOp &ref_op,
                                    const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   auto listEditQual = std::get<0>(ref_op);
   auto vars = std::get<1>(ref_op);
@@ -231,17 +242,18 @@ std::string print_reference_listop(const prim::ReferenceListOp &ref_op,
   }
   ss << "\n";
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // Print all reference listops (supports multiple listops per prim)
 std::string print_references(const prim::ReferenceList &references,
                              const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
   for (const auto &ref_op : references) {
     ss << print_reference_listop(ref_op, indent);
   }
-  return ss.str();
+  return pp_ss.str();
 }
 
 }  // namespace
@@ -249,7 +261,8 @@ std::string print_references(const prim::ReferenceList &references,
 // Print a single payload listop (e.g., "prepend payload = ...")
 static std::string print_payload_listop(const prim::PayloadListOp &payload_op,
                                         const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   auto listEditQual = std::get<0>(payload_op);
   auto vars = std::get<1>(payload_op);
@@ -272,24 +285,25 @@ static std::string print_payload_listop(const prim::PayloadListOp &payload_op,
   }
   ss << "\n";
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // Print all payload listops (supports multiple listops per prim)
 static std::string print_payload(const prim::PayloadList &payload,
                                  const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
   for (const auto &payload_op : payload) {
     ss << print_payload_listop(payload_op, indent);
   }
-  return ss.str();
+  return pp_ss.str();
 }
 
 // Emit the `apiSchemas` metadatum (handles `= None`, authored list-ops, and the
 // resolved name view). Factored out so the USD-text-format path can emit it
 // FIRST in the metadata block (where usdcat places it) while the default keeps
 // it in lightusd's historical position.
-static void print_apiSchemas_block(std::stringstream &ss,
+static void print_apiSchemas_block(std::ostream &ss,
                                    const APISchemas &schemas, uint32_t indent) {
   if (schemas.explicitlyEmpty) {
     // Authored as `apiSchemas = None` (explicit empty list). pxrUSD preserves
@@ -372,7 +386,8 @@ static void print_apiSchemas_block(std::stringstream &ss,
 }
 
 std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   // usdcat places `apiSchemas` FIRST in the prim-metadata block; lightusd's
   // default emits it later. Under the USD-text-format opt-in, emit it up front.
@@ -546,11 +561,12 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   //   ss << pprint::Indent(indent) << to_string(item) << "\n";
   // }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   if (meta.has_interpolation()) {
     ss << pprint::Indent(indent)
@@ -656,7 +672,7 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
     ss << pprint::Indent(indent) << to_string(item) << "\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // Forward declaration (defined later in this file).
@@ -679,10 +695,11 @@ std::string print_timesamples(const value::TimeSamples &v,
 
 std::string print_rel_prop(const Property &prop, const std::string &name,
                            uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   if (!prop.is_relationship()) {
-    return ss.str();
+    return pp_ss.str();
   }
 
   ss << pprint::Indent(indent);
@@ -704,12 +721,13 @@ std::string print_rel_prop(const Property &prop, const std::string &name,
 
   ss << print_rel_only(rel, name, indent);
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string print_prop(const Property &prop, const std::string &prop_name,
                        uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   if (prop.is_relationship()) {
     ss << print_rel_prop(prop, prop_name, indent);
@@ -864,12 +882,13 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
     ss << "[Invalid Property] " << prop_name << "\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string print_props(const std::map<std::string, Property> &props,
                         uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   for (const auto &item : props) {
     const Property &prop = item.second;
@@ -877,7 +896,7 @@ std::string print_props(const std::map<std::string, Property> &props,
     ss << print_prop(prop, item.first, indent);
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // Print user-defined (custom) properties.
@@ -885,7 +904,8 @@ std::string print_props(const std::map<std::string, Property> &props,
                         std::set<std::string> &tok_table,
                         const std::vector<value::token> &propNames,
                         uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   if (propNames.size()) {
     for (size_t i = 0; i < propNames.size(); i++) {
@@ -904,12 +924,13 @@ std::string print_props(const std::map<std::string, Property> &props,
     ss << print_props(props, indent);
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string print_xformOpOrder(const std::vector<XformOp> &xformOps,
                                const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   if (xformOps.size()) {
     ss << pprint::Indent(indent) << "uniform token[] xformOpOrder = [";
@@ -932,12 +953,13 @@ std::string print_xformOpOrder(const std::vector<XformOp> &xformOps,
     ss << "]\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string print_xformOps(const std::vector<XformOp> &xformOps,
                            const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   // To prevent printing xformOp attributes multiple times.
   std::set<std::string> printed_vars;
@@ -1012,7 +1034,7 @@ std::string print_xformOps(const std::vector<XformOp> &xformOps,
   // uniform token[] xformOpOrder
   ss << print_xformOpOrder(xformOps, indent);
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 
@@ -1021,7 +1043,8 @@ std::string print_material_binding(const MaterialBinding *mb, const uint32_t ind
     return std::string();
   }
 
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   if (mb->materialBinding.authored()) {
     ss << print_relationship(mb->materialBinding.relationship(),
@@ -1091,13 +1114,14 @@ std::string print_material_binding(const MaterialBinding *mb, const uint32_t ind
     }
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // Emit a `.spline = { ... }` value block (AOUSD Core Spec 7.4.2.4).
 std::string print_spline(const primvar::PrimVar::SplineData &sd,
                          const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   auto num = [](const value::Value &v) -> double {
     if (auto d = v.get_value<double>()) return d.value();
@@ -1188,11 +1212,12 @@ std::string print_spline(const primvar::PrimVar::SplineData &sd,
   }
 
   ss << pprint::Indent(indent) << "}";
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string print_collection(const Collection *coll, const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   if (!coll) {
     return std::string();
@@ -1243,15 +1268,16 @@ std::string print_collection(const Collection *coll, const uint32_t indent) {
                            prefix + ":membershipExpression", indent);
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string print_variantSelectionMap(const VariantSelectionMap &m,
                                       const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   if (m.empty()) {
-    return ss.str();
+    return pp_ss.str();
   }
 
   ss << pprint::Indent(indent) << "variants = {\n";
@@ -1261,13 +1287,14 @@ std::string print_variantSelectionMap(const VariantSelectionMap &m,
   }
   ss << pprint::Indent(indent) << "}\n";
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string print_customData(const CustomDataType &customData,
                              const std::string &dict_name,
                              const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   ss << pprint::Indent(indent);
   if (!dict_name.empty()) {
@@ -1287,7 +1314,7 @@ std::string print_customData(const CustomDataType &customData,
   }
   ss << pprint::Indent(indent) << "}\n";
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string print_meta(const MetaVariable &meta, const uint32_t indent, bool emit_type_name,
@@ -1298,7 +1325,8 @@ std::string print_meta(const MetaVariable &meta, const uint32_t indent, bool emi
     return {};
   }
 
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   // ss << "TODO: isObject " << meta.is_object() << ", isValue " <<
   // meta.IsValue() << "\n";
@@ -1339,7 +1367,7 @@ std::string print_meta(const MetaVariable &meta, const uint32_t indent, bool emi
        << pprint_value(meta.get_raw_value()) << "\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // Forward declaration — print_prim is defined in pprinter.cc namespace prim
@@ -1347,7 +1375,8 @@ namespace prim { std::string print_prim(const Prim &prim, const uint32_t indent)
 
 std::string print_variantSetStmt(
     const std::map<std::string, VariantSet> &vslist, const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   for (const auto &variantSet : vslist) {
     if (variantSet.second.variantSet.empty()) {
@@ -1413,13 +1442,14 @@ std::string print_variantSetStmt(
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string print_variantSetSpecStmt(
     const std::map<std::string, VariantSetSpec> &vslist,
     const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   // ss << "# variantSet.size = " << std::to_string(vslist.size()) << "\n";
   for (const auto &variantSet : vslist) {
@@ -1481,7 +1511,7 @@ std::string print_variantSetSpecStmt(
     ss << pprint::Indent(indent) << "}\n";
   }
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 // prim:: namespace wrappers
@@ -1490,9 +1520,11 @@ namespace prim {
 std::string print_references(const ReferenceList &references,
                              const uint32_t indent) {
   // Delegate to anonymous namespace implementation
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
   for (const auto &ref_op : references) {
-    std::stringstream rs;
+    ::lightusd::pprint::ScratchRef pp_rs;
+    std::ostream &rs = pp_rs.os();
     auto listEditQual = std::get<0>(ref_op);
     auto vars = std::get<1>(ref_op);
     rs << pprint::Indent(indent);
@@ -1510,9 +1542,9 @@ std::string print_references(const ReferenceList &references,
       }
     }
     rs << "\n";
-    ss << rs.str();
+    ss << pp_rs.str();
   }
-  return ss.str();
+  return pp_ss.str();
 }
 
 std::string print_payload(const PayloadList &payload, const uint32_t indent) {
@@ -1522,7 +1554,8 @@ std::string print_payload(const PayloadList &payload, const uint32_t indent) {
 
 std::string print_layeroffset(const LayerOffset &layeroffset,
                               const uint32_t indent) {
-  std::stringstream ss;
+  ::lightusd::pprint::ScratchRef pp_ss;
+  std::ostream &ss = pp_ss.os();
 
   ss << pprint::Indent(indent);
 
@@ -1552,7 +1585,7 @@ std::string print_layeroffset(const LayerOffset &layeroffset,
   }
   ss << ")";
 
-  return ss.str();
+  return pp_ss.str();
 }
 
 }  // namespace prim
