@@ -1,24 +1,6 @@
-Upstream: https://github.com/syoyo/tinyvdbio
-Commit:   4a0ae28 (branch volumetric-sdf; 1020501 volume access, 5615965 half fix,
-          1286600 caller-buffer dense volumes, 82d5667 O(1) tree child rank,
-          762a777 tree accessor + boxed mesher, de1afb7 per-range stuffing
-          sampler accessor, ee571c1 cached sparse CSG, b86ff79 threaded
-          surface classification, 6e01f71 one owner per surface cell + tile
-          skip, 443592c threaded tet boundaries, 9a7fde3 slab edge maps + k-way
-          cell merge, c7313d8 warp early-out + corner base indices + pooled
-          cluster keys + NanoVDB1 grid magic, 6e5a188 NanoVDB-buffer GPU
-          level-set sampler, f990ab8 skip winding outside both level-set bands,
-          a49c891 reuse voxel-neighborhood signs during surface classification,
-          02fa1a4 checked 32-bit allocation sizes and WASM atomic compatibility,
-          04407f4 skip already-covered shell edges during surface classification,
-          4699f4d reuse leaf corner offsets during classification,
-          9b8cd12 use direct lattice indices during tetrahedral stuffing,
-          1869a20 reject failed or non-finite stuffing center samples,
-          77022b5 experimental CPU graded stuffing API,
-          dce7ea0 graded level-set tetrahedralization,
-          69d9a42 sort small graded edge stars without qsort,
-          b0a1223 reject unrepresentable float tetrahedral meshes,
-          4a0ae28 add guarded graded surface refinement)
+Upstream: https://github.com/syoyo/tinyvdb
+Commit:   9217101 (branch main; merges volumetric-sdf and PR #5's tight
+          NanoVDB bounding-box fix)
 Files:    the src/ subset needed by tvdb_mesh_to_level_set,
           tvdb_level_set_to_tet_mesh / tvdb_sdf_to_tet_mesh,
           tvdb_grid_volume_to_mesh, the volume access used by usdVol
@@ -33,7 +15,13 @@ Files:    the src/ subset needed by tvdb_mesh_to_level_set,
           gpu_compute(.h, .c, _internal.h), nanovdb_device.h (+ generated string),
           built only with
           LIGHTUSD_TINYVDB_GPU.
-Local:    tinyvdb_io.h includes ../miniz.h, ../../lz4/lz4.h, ../zstd.h.
-Update:   copy the same files from upstream src/, reapply the three include
-          lines, and rebuild cmake/lightusd-tinyvdb.cmake's source list if
-          the closure changes (link a probe calling the entry points above).
+Local:    tinyvdb_io.c is LightUSD's wrapper, not upstream's parser. tinyvdb_io.h
+          adapts includes to ../miniz.h, ../../lz4/lz4.h and ../zstd.h.
+          tinyvdb_sparse_tools.c also carries LightUSD commit dad7e2b7's CPU
+          mesher optimization: detect shell isovalue crossings while gathering
+          the shell, avoiding a redundant full-box scan.
+Update:   the vendored API sources match upstream main at 9217101, apart from
+          the local I/O adaptations and CPU optimization above. When syncing
+          later revisions, preserve those local changes and rebuild
+          cmake/lightusd-tinyvdb.cmake's source list if the dependency closure
+          changes (link a probe calling the entry points above).
