@@ -731,9 +731,7 @@ static void tool_box_corner_offsets(int n, size_t off[8]) {
  * from an n^3 box (x fastest) where the voxel sits at box index at[]. */
 static tvdb_status_t tool_voxel_cells(tool_surface* s, const int32_t c[3],
                                       const float* box, int n,
-                                      const int at[3]) {
-  size_t off[8];
-  tool_box_corner_offsets(n, off);
+                                      const int at[3], const size_t off[8]) {
   /* Classify the shared 3x3x3 neighbourhood once. Bit x+3*y+9*z is
    * the sample below the isovalue; each cell selects eight of those bits. */
   uint32_t signs = 0;
@@ -788,7 +786,9 @@ static tvdb_status_t tool_surface_region(const int32_t c[3], int64_t span,
           hood[(z * 3 + y) * 3 + x] = tool_get64(&s->acc, q, NULL);
         }
     const int at[3] = {1, 1, 1};
-    return tool_voxel_cells(s, c, hood, 3, at);
+    size_t off[8];
+    tool_box_corner_offsets(3, off);
+    return tool_voxel_cells(s, c, hood, 3, at, off);
   } else if (span <= TOOL_TILE_BOX) {
     /* Small tile: read the one-voxel shell around it once; the inside is
        the tile value. Then classify the boundary slabs from that box. */
@@ -870,6 +870,8 @@ static int tool_surface_leaf(size_t node, void* user, tvdb_status_t* st) {
     box[((size_t)(z + 1) * n + (y + 1)) * n + (x + 1)] = values[v];
   }
   tool_box_shell(s, o, n, box);
+  size_t off[8];
+  tool_box_corner_offsets(n, off);
   for (size_t v = first; v < slots; ++v) {
     if ((values[v] < s->iso) == s->bg_below) continue;
     const int at[3] = {(int)(v >> (2 * L)) + 1, (int)((v >> L) & (dim - 1)) + 1,
@@ -877,7 +879,7 @@ static int tool_surface_leaf(size_t node, void* user, tvdb_status_t* st) {
     const int32_t c[3] = {(int32_t)((int64_t)o[0] + at[0] - 1),
                           (int32_t)((int64_t)o[1] + at[1] - 1),
                           (int32_t)((int64_t)o[2] + at[2] - 1)};
-    *st = tool_voxel_cells(s, c, box, n, at);
+    *st = tool_voxel_cells(s, c, box, n, at, off);
     if (*st != TVDB_OK) return 1;
   }
   return 1;
