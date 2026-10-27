@@ -2,8 +2,10 @@
 #include "volumetric.hh"
 
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 
 #include "tinyvdb_io.h"
 #include "tinyvdb_sparse_tools.h"
@@ -22,6 +24,43 @@ namespace lightusd {
 namespace tydra {
 namespace import_asset {
 
+struct LevelSetBudget {
+  union Header { size_t bytes; std::max_align_t alignment; };
+  size_t used = 0, peak = 0, limit = 0;
+  bool exhausted = false;
+  static void* Allocate(size_t size, void* context) {
+    auto* self = static_cast<LevelSetBudget*>(context);
+    if (size > SIZE_MAX - sizeof(Header)) { self->exhausted = true; return nullptr; }
+    const size_t total = size + sizeof(Header);
+    if (total > self->limit - std::min(self->used, self->limit)) {
+      self->exhausted = true; return nullptr;
+    }
+    auto* header = static_cast<Header*>(std::malloc(total));
+    if (!header) return nullptr;
+    header->bytes = total;
+    self->used += total;
+    self->peak = std::max(self->peak, self->used);
+    return header + 1;
+  }
+  static void Free(void* ptr, size_t, void* context) {
+    if (!ptr) return;
+    auto* self = static_cast<LevelSetBudget*>(context);
+    auto* header = static_cast<Header*>(ptr) - 1;
+    self->used -= header->bytes;
+    std::free(header);
+  }
+  static void* Reallocate(void* ptr, size_t, size_t size, void* context) {
+    if (!ptr) return Allocate(size, context);
+    auto* header = static_cast<Header*>(ptr) - 1;
+    const size_t old = header->bytes - sizeof(Header);
+    void* replacement = Allocate(size, context);
+    if (!replacement) return nullptr;
+    std::memcpy(replacement, ptr, std::min(old, size));
+    Free(ptr, old, context);
+    return replacement;
+  }
+};
+
 struct LevelSetAccess {
   static void Reset(LevelSet* s) {
     if (s->owned_) {
@@ -34,26 +73,30 @@ struct LevelSetAccess {
       std::free(s->file_);
       s->file_ = nullptr;
     }
+    delete s->budget_;
+    s->budget_ = nullptr;
     s->file_grid_ = 0;
   }
   static void Adopt(LevelSet* s, tvdb_grid* grid) {
     Reset(s);
     s->owned_ = grid;
   }
-  static void AdoptFile(LevelSet* s, tvdb_file* file, size_t index) {
+  static void AdoptFile(LevelSet* s, tvdb_file* file, size_t index, LevelSetBudget* budget) {
     Reset(s);
     s->file_ = file;
     s->file_grid_ = index;
+    s->budget_ = budget;
   }
 };
 
 LevelSet::LevelSet() = default;
 LevelSet::~LevelSet() { LevelSetAccess::Reset(this); }
 LevelSet::LevelSet(LevelSet&& o) noexcept
-    : owned_(o.owned_), file_(o.file_), file_grid_(o.file_grid_) {
+    : owned_(o.owned_), file_(o.file_), file_grid_(o.file_grid_), budget_(o.budget_) {
   o.owned_ = nullptr;
   o.file_ = nullptr;
   o.file_grid_ = 0;
+  o.budget_ = nullptr;
 }
 LevelSet& LevelSet::operator=(LevelSet&& o) noexcept {
   if (this != &o) {
@@ -61,11 +104,16 @@ LevelSet& LevelSet::operator=(LevelSet&& o) noexcept {
     owned_ = o.owned_;
     file_ = o.file_;
     file_grid_ = o.file_grid_;
+    budget_ = o.budget_;
     o.owned_ = nullptr;
     o.file_ = nullptr;
     o.file_grid_ = 0;
+    o.budget_ = nullptr;
   }
   return *this;
+}
+size_t LevelSet::decode_peak_bytes() const {
+  return budget_ ? budget_->peak + sizeof(LevelSetBudget) + sizeof(tvdb_file) : 0;
 }
 const tvdb_grid* LevelSet::grid() const {
   if (owned_) return owned_;
@@ -358,31 +406,51 @@ bool WriteLevelSetVDB(const LevelSet& level_set, std::string* bytes, std::string
   return true;
 }
 
-bool ReadLevelSetVDB(const uint8_t* data, size_t size, LevelSet* out, std::string* err) {
+bool ReadLevelSetVDB(const uint8_t* data, size_t size, LevelSet* out, std::string* err,
+                     size_t max_decode_bytes) {
   if (!data || !size || !out) {
     if (err) *err = "VDB read: no data";
     return false;
   }
+  LevelSetBudget* budget = nullptr;
+  if (max_decode_bytes) {
+    const size_t fixed = sizeof(tvdb_file) + sizeof(LevelSetBudget);
+    if (max_decode_bytes <= fixed) {
+      if (err) *err = "VDB read: memory budget exceeded";
+      return false;
+    }
+    budget = new (std::nothrow) LevelSetBudget();
+    if (!budget) { if (err) *err = "VDB read: out of memory"; return false; }
+    budget->limit = max_decode_bytes - fixed;
+  }
   auto* file = static_cast<tvdb_file*>(std::calloc(1, sizeof(tvdb_file)));
   if (!file) {
+    delete budget;
     if (err) *err = "VDB read: out of memory";
     return false;
   }
   tvdb_error_t e;
   std::memset(&e, 0, sizeof(e));
+  uint8_t* is_float = nullptr;
   // Headers first (class and value type, no voxels); then only the grids
   // needed to pick one are decoded. A decoded grid owns its storage, so the
   // handle does not reference `data` afterwards.
   auto fail = [&](const char* what) {
+    if (is_float) file->alloc.free_fn(is_float, file->num_grids, file->alloc.user_ctx);
+    const bool exhausted = budget && budget->exhausted;
     tvdb_file_close(file);
     std::free(file);
+    delete budget;
+    if (exhausted) { if (err) *err = "VDB read: memory budget exceeded"; return false; }
     return Fail(err, what, e);
   };
-  if (tvdb_file_open_memory(file, data, size, nullptr, &e) != TVDB_OK) {
-    std::free(file);
-    return Fail(err, "VDB read", e);
-  }
-  std::vector<char> is_float(file->num_grids, 0);
+  tvdb_allocator_t allocator{LevelSetBudget::Allocate, LevelSetBudget::Reallocate,
+                             LevelSetBudget::Free, budget};
+  if (tvdb_file_open_memory(file, data, size, budget ? &allocator : nullptr, &e) != TVDB_OK)
+    return fail("VDB read");
+  is_float = static_cast<uint8_t*>(file->alloc.malloc_fn(file->num_grids ? file->num_grids : 1,
+                                                         file->alloc.user_ctx));
+  if (!is_float) { e.status = TVDB_ERROR_OUT_OF_MEMORY; return fail("VDB read"); }
   for (size_t i = 0; i < file->num_grids; ++i) {
     if (tvdb_read_grid_header(file, i, &e) != TVDB_OK) return fail("VDB read");
     const tvdb_grid* g = file->grids + i;
@@ -405,15 +473,18 @@ bool ReadLevelSetVDB(const uint8_t* data, size_t size, LevelSet* out, std::strin
     if (g->tree.num_nodes && g->tree.nodes[0].u.root.background.u.f > 0)
       pick = i;
     else
-      tvdb_grid_destroy(file->grids + i, nullptr);  // not this one: free its voxels
+      tvdb_grid_destroy(file->grids + i, &file->alloc);  // not this one: free its voxels
   }
   if (pick == SIZE_MAX) {
+    file->alloc.free_fn(is_float, file->num_grids, file->alloc.user_ctx);
     tvdb_file_close(file);
     std::free(file);
+    delete budget;
     if (err) *err = "VDB read: no float level-set grid";
     return false;
   }
-  LevelSetAccess::AdoptFile(out, file, pick);
+  file->alloc.free_fn(is_float, file->num_grids, file->alloc.user_ctx);
+  LevelSetAccess::AdoptFile(out, file, pick, budget);
   return true;
 }
 

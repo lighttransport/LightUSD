@@ -1776,6 +1776,10 @@ The `volumetric-tet-float-range` CPU test checks that both uniform and graded
 stuffing reject coordinates outside float range and tetrahedra that collapse
 when a small object is represented at a large world offset, while preserving
 the caller's existing output.
+`next_test_tydra` exercises bounded VDB decoding, grid-selection fallback and
+allocator ownership across moves. The Python volumetric suite additionally
+tests that a compressed MJCF VDB exceeding the decoded-memory budget is
+rejected and that a larger budget succeeds.
 
 For the corresponding single-thread analytic sphere instruction profile:
 

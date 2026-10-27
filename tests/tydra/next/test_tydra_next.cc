@@ -8355,7 +8355,7 @@ static void TestLevelSetGridChoice() {
   fs::remove(path);
   assert(!sphere.empty());
   // Two copies of the sphere grid, re-classed and tagged "first"/"second".
-  auto two_grids = [&](const char* class0, const char* class1) {
+  auto two_grids = [&](const char* class0, const char* class1, bool negative_first = false) {
     const char* classes[2] = {class0, class1};
     const char* tags[2] = {"first", "second"};
     tvdb_file_t files[2];
@@ -8368,6 +8368,12 @@ static void TestLevelSetGridChoice() {
       assert(tvdb_grid_set_metadata_string(&files[i].grids[0], "class", classes[i], &e) ==
              TVDB_OK);
       assert(tvdb_grid_set_metadata_string(&files[i].grids[0], "tag", tags[i], &e) == TVDB_OK);
+      if (i == 0 && negative_first) {
+        tvdb_value_t background{};
+        background.type = TVDB_VALUE_FLOAT;
+        background.u.f = -1.0f;
+        tvdb_grid_set_background(&files[i].grids[0], background);
+      }
       grids[i] = files[i].grids[0];  // shallow copy, only written
     }
     tvdb_file_t out;
@@ -8383,10 +8389,10 @@ static void TestLevelSetGridChoice() {
     for (tvdb_file_t& f : files) tvdb_file_close(&f);
     return bytes;
   };
-  auto chosen = [](std::vector<uint8_t> bytes) {
+  auto chosen = [](std::vector<uint8_t> bytes, size_t budget = 0) {
     ia::LevelSet level_set;
     std::string err;
-    if (!ia::ReadLevelSetVDB(bytes.data(), bytes.size(), &level_set, &err))
+    if (!ia::ReadLevelSetVDB(bytes.data(), bytes.size(), &level_set, &err, budget))
       return "error: " + err;
     std::fill(bytes.begin(), bytes.end(), uint8_t(0));  // the level set owns its grid
     bytes.clear();
@@ -8400,6 +8406,32 @@ static void TestLevelSetGridChoice() {
   assert(chosen(two_grids("fog volume", "level set")) == "second");  // the class wins
   assert(chosen(two_grids("level set", "level set")) == "first");
   assert(chosen(two_grids("fog volume", "unknown")) == "first");  // positive background
+  assert(chosen(two_grids("unknown", "unknown", true), 64 * 1024 * 1024) == "second");
+  {
+    // Bounded decoding preserves an existing result on failure and retains
+    // the allocator correctly through move construction and assignment.
+    ia::LevelSet level_set;
+    std::string err;
+    constexpr size_t limit = 64 * 1024 * 1024;
+    assert(ia::ReadLevelSetVDB(sphere.data(), sphere.size(), &level_set, &err, limit));
+    const size_t peak = level_set.decode_peak_bytes();
+    assert(peak > 0 && peak <= limit);
+    const auto* original = level_set.grid();
+    assert(!ia::ReadLevelSetVDB(sphere.data(), sphere.size(), &level_set, &err, 1024));
+    assert(err.find("memory budget") != std::string::npos && level_set.grid() == original);
+    assert(!ia::ReadLevelSetVDB(sphere.data(), sphere.size(), &level_set, &err, peak - 1));
+    assert(err.find("memory budget") != std::string::npos && level_set.grid() == original);
+    const uint8_t malformed[] = {'n', 'o', 't', 'v', 'd', 'b'};
+    assert(!ia::ReadLevelSetVDB(malformed, sizeof(malformed), &level_set, &err, limit));
+    assert(level_set.grid() == original);
+    ia::LevelSet moved(std::move(level_set));
+    assert(level_set.empty() && moved.grid() == original && moved.decode_peak_bytes() == peak);
+    ia::LevelSet assigned;
+    assigned = std::move(moved);
+    assert(moved.empty() && assigned.grid() == original && assigned.decode_peak_bytes() == peak);
+    const double p[3] = {0, 0, 0}; float value = 1;
+    assert(ia::SampleLevelSet(assigned, p, 1, &value, &err) && value < 0);
+  }
   std::cout << "  Level-set grid choice: PASSED\n";
 }
 

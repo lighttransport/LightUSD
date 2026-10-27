@@ -878,10 +878,17 @@ bool LoadLevelSetVDB(const fs::path& filename, LevelSet* out, std::string* err) 
   std::string resolved;
   if (!active_reader->Read(filename.string(), active_reader->root_source, &bytes, &resolved, err))
     return false;
-  if (!ReadLevelSetVDB(bytes.data(), bytes.size(), out, err)) {
+  const size_t budget = active_reader->options.max_memory -
+      std::min(active_reader->options.max_memory, active_reader->bytes);
+  if (!budget) {
+    if (err) *err = "VDB read: memory budget exceeded";
+    return false;
+  }
+  if (!ReadLevelSetVDB(bytes.data(), bytes.size(), out, err, budget)) {
     if (err) *err = filename.string() + ": " + *err;
     return false;
   }
+  if (!active_reader->Charge(out->decode_peak_bytes(), err)) return false;
   return true;
 }
 
@@ -890,7 +897,11 @@ bool LoadVDBMesh(const fs::path& filename, Mesh* mesh, std::string* err) {
   if (!LoadLevelSetVDB(filename, &level_set, err)) return false;
   const auto& opts = active_reader->options;
   const size_t budget = opts.max_memory - std::min(opts.max_memory, active_reader->bytes);
-  if (!LevelSetToMesh(level_set, std::max<size_t>(100000, budget / 256), mesh, err)) return false;
+  if (budget < 256) {
+    if (err) *err = "VDB surface mesh exceeds memory budget";
+    return false;
+  }
+  if (!LevelSetToMesh(level_set, budget / 256, mesh, err)) return false;
   if (!active_reader->ChargeArray(mesh->positions.size() + mesh->indices.size(), 4, err))
     return false;
   active_reader->Warn("level-set VDB " + filename.filename().string() +

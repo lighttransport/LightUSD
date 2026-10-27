@@ -306,6 +306,11 @@ no VDB meshes):
   isovalue.
 - A flexcomp `type="mesh" file="x.vdb" dim="3"` is stuffed directly (spacing
   default 4 voxels).
+- MJCF VDB assets are decoded with the remaining import memory budget, and
+  their decoder peak is charged before meshing or tetrahedralization. Voxel,
+  background-tet and output-tet counts are also derived from the remaining
+  budget without minimum floors. These count estimates do not account exactly
+  for every downstream temporary or generated level set.
 
 **APIs.**
 - **C** (`lightusd-import-c.h`): `lightusd_mesh_to_level_set_vdb`,

@@ -342,6 +342,11 @@ def test_flexcomp_graded_stuffing(tmp_path):
         lightusd.import_mjcf(path, flex_tet_coarse_spacing=0.4)
     with pytest.raises(lightusd.UsdError, match='resolved fine spacing'):
         lightusd.import_mjcf(path, flex_tetrahedralize='stuffing', flex_tet_coarse_spacing=0.01)
+    # A small import budget must constrain candidate voxels, not silently
+    # restore the old 100,000-voxel minimum.
+    with pytest.raises(lightusd.UsdError, match='level set: .*budget exceeded'):
+        lightusd.import_mjcf(path, flex_tetrahedralize='stuffing',
+                             flex_tet_spacing=0.2, max_memory=800_000)
 
 
 def test_vdb_mesh_asset_and_flexcomp(tmp_path):
@@ -368,6 +373,25 @@ def test_vdb_mesh_asset_and_flexcomp(tmp_path):
     vols = _tet_volumes(graded['points'], graded['tetVertexIndices'])
     assert len(vols) and vols.min() > 0
     assert vols.sum() == pytest.approx(4 / 3 * math.pi * 0.2 ** 3, rel=0.10)
+
+
+def test_vdb_flexcomp_decode_respects_import_memory(tmp_path):
+    pts, tris = _sphere(12, 24)
+    path = tmp_path / 'sphere.vdb'
+    vol.mesh_to_level_set(pts, tris, voxel_size=0.05).save(path)
+    scene = tmp_path / 'scene.xml'
+    scene.write_text('<mujoco><worldbody><flexcomp name="soft" type="mesh" '
+                     'file="sphere.vdb" dim="3"/></worldbody></mujoco>')
+    # The compressed file fits, but its decoded tree does not fit after the
+    # importer has accounted for the XML and asset bytes.
+    assert path.stat().st_size < 400_000
+    with pytest.raises(lightusd.UsdError, match='VDB read: memory budget exceeded'):
+        lightusd.import_mjcf(scene, max_memory=800_000, flex_tet_spacing=0.2)
+    stage = lightusd.import_mjcf(scene, max_memory=16_000_000, flex_tet_spacing=0.2)
+    mesh = stage.prim_at('/World/Deformables/soft')
+    volumes = _tet_volumes(mesh['points'], mesh['tetVertexIndices'])
+    assert len(volumes) and volumes.min() > 0
+    assert volumes.sum() == pytest.approx(_mesh_volume(pts, tris), rel=0.06)
 
 
 def test_volumetric_cli(tmp_path, capsys):

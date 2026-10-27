@@ -26,6 +26,8 @@ namespace lightusd {
 namespace tydra {
 namespace import_asset {
 
+struct LevelSetBudget;
+
 // A float level-set grid: negative inside, background = exterior width.
 class LevelSet {
  public:
@@ -40,12 +42,14 @@ class LevelSet {
   double voxel_size() const;       // first axis of the grid transform
   float background() const;
   size_t active_voxels() const;
+  size_t decode_peak_bytes() const; // bounded VDB decoder allocations, including overhead
 
  private:
   friend struct LevelSetAccess;
   tvdb_grid* owned_ = nullptr;     // built here (libc allocations)
   tvdb_file* file_ = nullptr;      // or read from VDB bytes
   size_t file_grid_ = 0;
+  LevelSetBudget* budget_ = nullptr;
 };
 
 // Whether `device` can run here; *resolved receives the device it maps to
@@ -76,7 +80,7 @@ bool WriteLevelSetVDB(const LevelSet& level_set, std::string* bytes, std::string
 // first float grid with a positive background) in VDB bytes. Only the grids
 // needed to choose are decoded; the result does not reference `data`.
 bool ReadLevelSetVDB(const uint8_t* data, size_t size, LevelSet* out,
-                     std::string* err);
+                     std::string* err, size_t max_decode_bytes = 0);
 
 // Trilinear world-space samples of the stored values (inactive tiles
 // included, background outside), for `count` points (3 doubles each).

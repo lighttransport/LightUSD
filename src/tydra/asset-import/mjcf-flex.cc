@@ -6,6 +6,20 @@ namespace lightusd {
 namespace tydra {
 namespace import_asset {
 namespace mjcf_detail {
+/* tinyvdb treats zero as its default, so reject an insufficient budget rather
+ * than accidentally replacing a small limit with a much larger default. */
+static bool SetFlexStuffingBudget(size_t budget, StuffingOptions* options, std::string* err) {
+  const size_t max_tets = budget / 256, max_background = budget / 512;
+  const size_t max_vertices = budget / 64;
+  if (!max_tets || !max_background || !max_vertices) {
+    if (err) *err = "flexcomp tetrahedralization exceeds memory budget";
+    return false;
+  }
+  options->max_tets = std::min<size_t>(max_tets, 4000000);
+  options->max_background_tets = std::min<size_t>(max_background, 8000000);
+  options->max_lattice_vertices = std::min<size_t>(max_vertices, 8000000);
+  return true;
+}
 bool IsSupportedFlexcompType(const std::string& type) {
   for (const char* t : {"grid", "circle", "square", "disc", "direct", "box", "cylinder",
                         "ellipsoid", "mesh", "gmsh"})
@@ -159,10 +173,7 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
         double(level_set.background()) * so.graded_growth < so.graded_coarse_spacing - so.spacing)
       active_reader->Warn("graded VDB flexcomp level-set band is too narrow to reach the requested coarse spacing",
                           "mjcf.flex_graded_narrow_band");
-    so.max_tets = std::max<size_t>(1000, std::min<size_t>(budget / 256, 4000000));
-    so.max_background_tets = std::max<size_t>(1000, std::min<size_t>(budget / 512, 8000000));
-    // The stuffing lattice is dense (~32 B per vertex before any tet exists).
-    so.max_lattice_vertices = std::max<size_t>(100000, std::min<size_t>(budget / 64, 8000000));
+    if (!SetFlexStuffingBudget(budget, &so, err)) return false;
     TetMeshData tm;
     if (!LevelSetToTetMesh(level_set, so, &tm, err)) return false;
     if (!active_reader->ChargeArray(tm.points.size() + tm.tets.size(), 8, err)) return false;
@@ -266,7 +277,11 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
     ls.threads = opts.threads;
     ls.device = VolumetricDevice();
     const size_t budget = opts.max_memory - std::min(opts.max_memory, active_reader->bytes);
-    ls.max_voxels = std::max<size_t>(100000, std::min<size_t>(budget / 128, 50000000));
+    if (budget < 128) {
+      if (err) *err = "flexcomp level set exceeds memory budget";
+      return false;
+    }
+    ls.max_voxels = std::min<size_t>(budget / 128, 50000000);
     LevelSet level_set;
     StuffingOptions so;
     so.spacing = spacing;
@@ -274,10 +289,7 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
     so.graded_surface_guard = opts.flex_tet_surface_guard;
     so.threads = opts.threads;
     so.device = ls.device;
-    so.max_tets = std::max<size_t>(1000, std::min<size_t>(budget / 256, 4000000));
-    so.max_background_tets = std::max<size_t>(1000, std::min<size_t>(budget / 512, 8000000));
-    // The stuffing lattice is dense (~32 B per vertex before any tet exists).
-    so.max_lattice_vertices = std::max<size_t>(100000, std::min<size_t>(budget / 64, 8000000));
+    if (!SetFlexStuffingBudget(budget, &so, err)) return false;
     TetMeshData tm;
     std::string why;
     if (!(extent > 0) || !MeshToLevelSet(surface, ls, &level_set, &why) ||
