@@ -456,6 +456,18 @@ struct Shader : UsdShadePrim {
 
   std::string info_id;  // ShaderNode type.
 
+  // Authored variability of `info:id`. UsdShade declares it `uniform token`;
+  // the schema default is kept so programmatically built shaders write the
+  // qualifier pxr expects, while a layer that authored it varying keeps that
+  // (pxr stores, and prints, exactly what the layer said).
+  bool info_id_uniform{true};
+
+  // `info:id` present in the layer, possibly with no value (Omniverse MDL
+  // shaders declare it and supply the identity through
+  // `info:implementationSource`). The declaration itself is an authored
+  // opinion, so it has to be written back even when the value is empty.
+  bool info_id_authored{false};
+
   // Holds the concrete ShaderNode (UsdPreviewSurface, UsdUVTexture,
   // UsdPrimvarReader_*, OpenPBRSurface, MaterialX nodes, etc.)
   // stored as value::Value for type-erased polymorphism.

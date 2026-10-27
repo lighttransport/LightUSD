@@ -10,9 +10,11 @@
 #include "crate-writer.hh"
 #include "sconv-detail.hh"
 #include "array-edit.hh"  // value::ArrayEdit (VtArrayEdit)
+#include <algorithm>
 #include <iostream>
 #include <sstream>
 #include <set>
+#include <string_view>
 #include <unordered_set>
 #include "layer.hh"
 #include "common-macros.inc"
@@ -910,13 +912,22 @@ bool CrateWriter::ConvertSinglePrim(
     bool is_spline = false;
     bool is_conn = false;
     bool is_decl_type = false;
+    bool is_uniform_flag = false;
     std::string meta_key;  // non-empty when fv.first is `<base>.<meta_key>`
     const std::string ts_suffix = ".timeSamples";
     const std::string interp_suffix = ".interpolation";
     const std::string spline_suffix = ".spline";
     const std::string conn_suffix = ".connect";
     const std::string decl_suffix = ".typeName";
-    if (base_name.size() > conn_suffix.size() &&
+    const std::string uniform_suffix = ".uniform";
+    if (base_name.size() > uniform_suffix.size() &&
+        base_name.compare(base_name.size() - uniform_suffix.size(),
+                          uniform_suffix.size(), uniform_suffix) == 0) {
+      // Authored `uniform` qualifier carried out of a typed attribute (see
+      // sconv_detail::EmitAttrVariability). `<name>.uniform = true/false`.
+      base_name = base_name.substr(0, base_name.size() - uniform_suffix.size());
+      is_uniform_flag = true;
+    } else if (base_name.size() > conn_suffix.size() &&
         base_name.compare(base_name.size() - conn_suffix.size(),
                           conn_suffix.size(), conn_suffix) == 0) {
       base_name = base_name.substr(0, base_name.size() - conn_suffix.size());
@@ -988,6 +999,9 @@ bool CrateWriter::ConvertSinglePrim(
     if (is_conn) {
       entry->conn_val = std::move(fv.second);
       entry->has_conn = true;
+    } else if (is_uniform_flag) {
+      entry->variability_val = std::move(fv.second);
+      entry->has_variability = true;
     } else if (is_decl_type) {
       if (auto tok = fv.second.get_value<value::token>()) {
         entry->decl_type_name = tok.value().str();
@@ -1055,8 +1069,6 @@ bool CrateWriter::ConvertSinglePrim(
     "subdivisionScheme", "interpolateBoundary", "faceVaryingLinearInterpolation",
     "triangleSubdivisionRule",  // Mesh
     "elementType", "familyName",  // GeomSubset
-    "projection", "stereoRole",  // Camera
-    "type", "basis", "wrap",  // BasisCurves
     "joints", "jointNames", "bindTransforms", "restTransforms",  // Skeleton
     "blendShapes",  // SkelAnimation
     "inactiveIds",  // PointInstancer
@@ -1109,7 +1121,18 @@ bool CrateWriter::ConvertSinglePrim(
         (pe.name.size() > kFamilyTypeSuffix.size()) &&
         (pe.name.compare(pe.name.size() - kFamilyTypeSuffix.size(),
                          kFamilyTypeSuffix.size(), kFamilyTypeSuffix) == 0);
-    const bool is_uniform = kUniformProps.count(pe.name) || is_family_type;
+    // Authored variability wins; only fall back to the schema heuristics when
+    // the layer said nothing (typed attributes carry it via `.uniform`).
+    bool is_uniform = false;
+    if (pe.has_variability) {
+      bool authored_uniform = false;
+      if (auto ub = pe.variability_val.get_value<bool>()) {
+        authored_uniform = *ub;
+      }
+      is_uniform = authored_uniform;
+    } else {
+      is_uniform = kUniformProps.count(pe.name) || is_family_type;
+    }
 
     if (is_uniform && !pe.has_ts) {
       crate::CrateValue var_value;
@@ -1413,7 +1436,13 @@ bool CrateWriter::ConvertSinglePrim(
       if (inst.includeRoot.authored()) {
         bool b = false;
         if (inst.includeRoot.get_value().get_scalar(&b)) {
-          Attribute a = Attribute::Uniform(b);
+          // UsdCollectionAPI declares includeRoot uniform, but keep the authored
+          // qualifier: a layer that wrote plain `bool ...:includeRoot` must not
+          // gain a `uniform` on write.
+          Attribute a = inst.includeRoot.has_variability() &&
+                                inst.includeRoot.variability() == Variability::Uniform
+                            ? Attribute::Uniform(b)
+                            : Attribute(b);
           a.set_type_name("bool");
           std::string ce;
           if (!ConvertAttributeToFields(prefix + ":includeRoot", a,

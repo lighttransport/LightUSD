@@ -19,6 +19,7 @@ namespace experimental {
       fields.push_back({(name), _cv}); \
     } \
   } \
+  sconv_detail::EmitAttrVariability((name), (attr), fields); \
 } while(0)
 
 // NOTE: guarded on authored(). A TypedAttributeWithFallback ALWAYS yields a
@@ -34,6 +35,7 @@ namespace experimental {
   if (ConvertValue(_v, _cv, &_cerr)) { \
     fields.push_back({(name), _cv}); \
   } \
+  sconv_detail::EmitAttrVariability((name), (attr), fields); \
 } while(0)
 
 #define EXTRACT_TOKEN_FALLBACK(attr, name) do { \
@@ -41,6 +43,7 @@ namespace experimental {
   crate::CrateValue _cv; \
   _cv.Set((attr).get_value()); \
   fields.push_back({(name), _cv}); \
+  sconv_detail::EmitAttrVariability((name), (attr), fields); \
 } while(0)
 
 bool CrateWriter::ExtractSpatialAudioProperties(

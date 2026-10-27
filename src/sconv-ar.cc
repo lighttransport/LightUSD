@@ -26,6 +26,7 @@ namespace experimental {
       } \
     } \
   } \
+  sconv_detail::EmitAttrVariability((name), (attr), fields); \
 } while(0)
 
 // NOTE: guarded on authored(). A TypedAttributeWithFallback ALWAYS yields a
@@ -48,6 +49,7 @@ namespace experimental {
       fields.push_back({std::string(name) + ".typeName", _ty}); \
     } \
   } \
+  sconv_detail::EmitAttrVariability((name), (attr), fields); \
 } while(0)
 
 #define EXTRACT_TOKEN(attr, name) do { \
@@ -57,6 +59,7 @@ namespace experimental {
     _cv.Set(_opt.value()); \
     fields.push_back({(name), _cv}); \
   } \
+  sconv_detail::EmitAttrVariability((name), (attr), fields); \
 } while(0)
 
 #define EXTRACT_TOKEN_FALLBACK(attr, name) do { \
@@ -64,6 +67,7 @@ namespace experimental {
   crate::CrateValue _cv; \
   _cv.Set((attr).get_value()); \
   fields.push_back({(name), _cv}); \
+  sconv_detail::EmitAttrVariability((name), (attr), fields); \
 } while(0)
 
 #define EXTRACT_REL(rp, name) do { \

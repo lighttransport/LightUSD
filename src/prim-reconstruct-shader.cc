@@ -242,6 +242,11 @@ bool ReconstructPrim<Shader>(
   if (!is_generic_shader) {
     if (info_id_prop->second.is_attribute()) {
       const Attribute &attr = info_id_prop->second.get_attribute();
+      // Remember the authored qualifier: `uniform token info:id` is the schema
+      // spelling, but a layer that wrote plain `token info:id` must not gain a
+      // `uniform` on write (pxr stores and prints what the layer said).
+      shader->info_id_uniform = (attr.variability() == Variability::Uniform);
+      shader->info_id_authored = true;
       if ((attr.type_name() == value::kToken)) {
         if (auto pv = attr.get_value<value::token>()) {
           shader_type = pv.value().str();

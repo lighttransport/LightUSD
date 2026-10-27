@@ -43,6 +43,7 @@ bool CrateWriter::ExtractMaterialProperties(
       crate::CrateValue purpose_crate_val;
       purpose_crate_val.Set(value::token(to_string(purpose_val)));
       fields.push_back({"purpose", purpose_crate_val});
+      sconv_detail::EmitAttrVariability("purpose", material->purpose, fields);
     }
   }
 
@@ -1651,6 +1652,21 @@ bool CrateWriter::ExtractShaderProperties(
     value::token tok(shader->info_id);
     info_id_value.Set(tok);
     fields.push_back({"info:id", info_id_value});
+    // Always state the qualifier (rather than only when uniform): `info:id` is
+    // in the writer's schema-uniform name list, so a non-conformant authored
+    // `token info:id` needs an explicit `false` to stay varying.
+    crate::CrateValue info_id_uniform;
+    info_id_uniform.Set(shader->info_id_uniform);
+    fields.push_back({"info:id.uniform", info_id_uniform});
+  } else if (shader->info_id_authored) {
+    // Declaration-only `info:id` (no value authored): keep the declaration, a
+    // bare `uniform token info:id`, instead of dropping the opinion entirely.
+    crate::CrateValue type_value;
+    type_value.Set(value::token(value::kToken));
+    fields.push_back({"info:id.typeName", type_value});
+    crate::CrateValue info_id_uniform;
+    info_id_uniform.Set(shader->info_id_uniform);
+    fields.push_back({"info:id.uniform", info_id_uniform});
   }
 
   // Shader inputs and outputs are handled through the props map
@@ -1677,6 +1693,7 @@ bool CrateWriter::ExtractNodeGraphProperties(
       crate::CrateValue purpose_crate_val;
       purpose_crate_val.Set(value::token(to_string(purpose_val)));
       fields.push_back({"purpose", purpose_crate_val});
+      sconv_detail::EmitAttrVariability("purpose", node_graph->purpose, fields);
     }
   }
 

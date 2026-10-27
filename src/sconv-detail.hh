@@ -111,6 +111,26 @@ inline void EmitAttrDeclaration(const std::string &name, const std::string &type
 // Cube was dropped. The field router in ConvertSinglePrim (stage-converter.cc)
 // recognizes the `.connect` suffix and folds it into the attribute spec's
 // `connectionPaths`.
+// Carry an authored `uniform` qualifier from a typed attribute into the field
+// stream. The field router (ConvertSinglePrim) folds `<name>.uniform` into the
+// attribute spec's `variability`; without it, variability is guessed from the
+// property name, which loses `uniform` for every schema property whose name is
+// not on that list (and mis-stamps non-conformant authored `uniform`).
+template <typename T>
+void EmitAttrVariability(const std::string &name, const T &attr,
+                         crate::FieldValuePairVector &fields) {
+  if (!attr.has_variability()) {
+    return;
+  }
+  // Emit BOTH values. `false` matters: without it the writer falls back to its
+  // schema-uniform name list, which would over-stamp a schema-uniform property
+  // the layer deliberately authored as `varying` (e.g. `token projection`).
+  // The value is an inline bool, so the cost is one field index per spec.
+  crate::CrateValue v;
+  v.Set(attr.variability() == Variability::Uniform);
+  fields.push_back({name + ".uniform", v});
+}
+
 template <typename T>
 void EmitAttrConnections(const std::string &name, const T &attr,
                          crate::FieldValuePairVector &fields) {
@@ -155,6 +175,7 @@ bool CrateWriter::EmitTypedAnimatableAttr(
       }
     }
     sconv_detail::EmitAttrMetas(name, attr.metas(), fields);
+    sconv_detail::EmitAttrVariability(name, attr, fields);
   }
 
   // A connection is authored independently of a value, so this sits outside the

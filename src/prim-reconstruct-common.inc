@@ -234,6 +234,12 @@ static ParseResult ParseTypedAttributeUnified(
   Attribute &attr = prop.attribute();
   std::string attr_type_name = attr.type_name();
 
+  // Remember the AUTHORED variability. The code below consumes the value into
+  // a typed field, and the typed wrappers model values only -- so without this
+  // a `uniform` opinion is lost on write and the attribute becomes animatable
+  // (pxr prints the qualifier from the spec, so the crate differs too).
+  target.set_variability(attr.variability());
+
   // Check type match. Role types (for example color4f) are accepted when
   // their underlying storage matches the schema type (for example float4).
   const uint32_t target_underlying_type_id =
@@ -1300,6 +1306,8 @@ bool ParseTimeSampledEnumProperty(
     if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) && \
         __prop.second.is_attribute() && __prop.second.is_empty()) {              \
       DCOUT("No value assigned to `" << __name << "` token attribute. Set default token value."); \
+      __target.set_value_empty();                                                \
+      __target.set_variability(attr.variability());                              \
       __target.metas() = std::move(__prop.second.attribute().metas());           \
       __table.insert(__name);                                                    \
       continue;                                                                  \
@@ -1308,6 +1316,7 @@ bool ParseTimeSampledEnumProperty(
     if (!__parser_fn(__name, __strict_check, fun, attr, &__target, warn, err)) { \
       return false;                                                              \
     }                                                                            \
+    __target.set_variability(attr.variability());                                \
     __target.metas() = std::move(__prop.second.attribute().metas());             \
     __table.insert(__name);                                                      \
     continue;                                                                    \
@@ -1334,6 +1343,8 @@ bool ParseTimeSampledEnumProperty(
       if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) &&          \
           __prop.second.is_attribute() && __prop.second.is_empty()) {                                   \
         DCOUT("No value assigned to `" << __name << "` token attribute. Set default token value."); \
+        __target.set_value_empty();                                                                      \
+        __target.set_variability(attr.variability());                                                    \
         __target.metas() = std::move(__prop.second.attribute().metas());                                \
         __table.insert(__name);                                                                         \
       } else {                                                                                          \
@@ -1341,6 +1352,7 @@ bool ParseTimeSampledEnumProperty(
         if (!ParseUniformEnumProperty(__name, __strict_check, fun, attr, &__target, warn, err)) { \
           return false;                                                                                 \
         }                                                                                               \
+        __target.set_variability(attr.variability());                                                    \
         __target.metas() = std::move(__prop.second.attribute().metas());                                \
         __table.insert(__name);                                                                         \
       }                                                                                                 \
