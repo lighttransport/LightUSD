@@ -48,11 +48,21 @@ def test_gaussian_field_matches_openusd(tmp_path, precision):
                                   np.array([[matrix[i][j] for j in range(4)] for i in range(4)]))
 
 
-@pytest.mark.xfail(strict=True, reason='LightUSD applies xform ops on an untyped ancestor')
-def test_untyped_parent_transform_matches_openusd():
+@pytest.mark.parametrize('parent_type', ['', 'Scope', 'Xform'])
+@pytest.mark.parametrize('reset', [False, True])
+def test_parent_transform_matches_openusd(tmp_path, parent_type, reset):
     path = Path(__file__).resolve().parents[2] / 'tests/usda/lusdview-gaussian-half.usda'
+    source = path.read_text().replace('def "GaussianHalfFixture"',
+                                      f'def {parent_type} "GaussianHalfFixture"')
+    if reset:
+        source = source.replace('["xformOp:scale"]', '["!resetXformStack!", "xformOp:scale"]')
+    source = source.replace('#usda 1.0', '#usda 1.0\n\ndef Xform "Outer" {\n'
+                            'double3 xformOp:translate = (3, 4, 5)\n'
+                            'uniform token[] xformOpOrder = ["xformOp:translate"]', 1) + '\n}\n'
+    path = tmp_path / 'parent.usda'
+    path.write_text(source)
     usd_stage = Usd.Stage.Open(str(path))
-    prim = usd_stage.GetPrimAtPath('/GaussianHalfFixture/SplatField')
+    prim = usd_stage.GetPrimAtPath('/Outer/GaussianHalfFixture/SplatField')
     matrix = UsdGeom.XformCache().GetLocalToWorldTransform(prim)
     particle = tydra.to_render_scene(lightusd.load(str(path))).particle_fields()[0]
     np.testing.assert_array_equal(np.asarray(particle['world_matrix']),

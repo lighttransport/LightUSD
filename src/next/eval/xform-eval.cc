@@ -4,6 +4,7 @@
 #include "xform-eval.hh"
 #include "../stage/stage.hh"
 #include "../layer/prim-spec.hh"
+#include "../schema/schema-registry.hh"
 #include <cmath>
 #include <cstring>
 #include <string_view>
@@ -30,6 +31,16 @@ const ::lightusd::next::PropNameId& kXformOpOrder() {
 namespace {
 
 void SetIdentity(double* m) { lu_mat4_identity(m); }
+
+// Unknown schemas may be external Xformable types; preserve their authored
+// operations until their ancestry is available. Untyped prims and known
+// non-Xformable types do not contribute a transform to their descendants.
+bool MayBeXformable(const UsdPrim& prim) {
+  const std::string type = prim.GetTypeName();
+  if (type.empty()) return false;
+  const SchemaRegistry& registry = GetSchemaRegistry();
+  return !registry.HasParentEntry(type) || registry.InheritsFrom(type, "Xformable");
+}
 
 // --- Bit-exact xform evaluation -------------------------------------------
 //
@@ -143,6 +154,7 @@ bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset, double time)
   if (reset) *reset = false;
   SetIdentity(out);
   if (!prim.IsValid()) return false;
+  if (!MayBeXformable(prim)) return true;
 
   // xformOpOrder is uniform (not time-sampled) -> default value.
   const Value* orderv = prim.GetPropertyValue(kXformOpOrder());
@@ -308,6 +320,7 @@ bool ComputeWorldTransform(const Stage& stage, const UsdPrim& prim, float* matri
 
 bool HasResetXformStack(const UsdPrim& prim) {
   if (!prim.IsValid()) return false;
+  if (!MayBeXformable(prim)) return false;
   const Value* orderv = prim.GetPropertyValue(kXformOpOrder());
   auto order =
       orderv ? orderv->as_token_array() : nullptr;
