@@ -3199,12 +3199,13 @@ bool CrateWriter::ConvertVariantToFields(
   DCOUT("[ConvertVariantToFields] Creating Variant spec: "
             << v_path.full_path_name());
 
-  // Variant spec contains variant metadata and prim children
+  // Variant spec contains variant metadata, properties and prim children
   crate::FieldValuePairVector v_fields;
 
-  // Add variant specifier (always "def" for variants)
+  // pxr writes every Variant spec as `over`: a variant statement is an
+  // overlay on the prim, never a new prim (its `def`s live in primChildren).
   crate::CrateValue spec_value;
-  spec_value.Set(Specifier::Def);
+  spec_value.Set(Specifier::Over);
   v_fields.push_back({"specifier", spec_value});
 
   // A variant statement carries its own Prim metadata block -- `active`,
@@ -3230,6 +3231,27 @@ bool CrateWriter::ConvertVariantToFields(
         if (err) *err = "Failed to convert variant relationship: " + prop_name;
         return false;
       }
+    }
+  }
+
+  // "properties" on the VARIANT spec: without it pxr never reaches the
+  // attribute/relationship specs below the variant -- the specs are in the
+  // crate, but `SdfVariantSpec::GetProperties()` (and therefore usdcat,
+  // sdfdump and anything composing through the variant) sees an empty
+  // variant. Our own reader walks spec paths, so round-trips never missed
+  // it; a pxr-written crate of the same layer always carries the field.
+  {
+    std::vector<value::token> property_tokens;
+    for (const auto& prop_item : variant.properties()) {
+      const auto& prop = prop_item.second;
+      if (prop.is_attribute() || prop.is_relationship()) {
+        property_tokens.push_back(value::token(prop_item.first));
+      }
+    }
+    if (!property_tokens.empty()) {
+      crate::CrateValue props_value;
+      props_value.Set(property_tokens);
+      v_fields.push_back({"properties", props_value});
     }
   }
 
