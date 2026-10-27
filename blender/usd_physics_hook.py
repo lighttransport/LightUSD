@@ -361,11 +361,18 @@ def _read_usd_physics(stage, mode):
                     scene_data['mjc']['iterations'] = it.Get()
             result['scene'] = scene_data
 
-        # RigidBodyAPI on mesh prims
-        if mode in ('USD', 'BOTH') and prim.HasAPI(UsdPhysics.RigidBodyAPI):
-            rb_data = _read_rigid_body(prim, mode)
-            if rb_data:
-                result['bodies'].append((prim.GetName(), rb_data))
+        # Rigid bodies and stand-alone static collision prims. A collider
+        # nested below a rigid body belongs to that body and must not become a
+        # second Blender body.
+        if mode in ('USD', 'BOTH'):
+            has_rigid_body = prim.HasAPI(UsdPhysics.RigidBodyAPI)
+            static_collider = (prim.HasAPI(UsdPhysics.CollisionAPI) and
+                               not has_rigid_body and
+                               not _has_rigid_body_ancestor(prim))
+            if has_rigid_body or static_collider:
+                rb_data = _read_rigid_body(prim, mode, static_collider)
+                if rb_data:
+                    result['bodies'].append((prim.GetName(), rb_data))
 
         # Joint prims
         if prim_type in ('PhysicsRevoluteJoint', 'PhysicsPrismaticJoint',
@@ -374,13 +381,26 @@ def _read_usd_physics(stage, mode):
             joint_data = _read_joint(prim, mode)
             result['joints'].append((prim.GetName(), joint_data))
 
+    if mode in ('USD', 'BOTH'):
+        _infer_blender_collision_collections(stage, result['bodies'])
+
     return result
 
 
-def _read_rigid_body(prim, mode):
+def _has_rigid_body_ancestor(prim):
+    ancestor = prim.GetParent()
+    while ancestor and ancestor.IsValid() and ancestor.GetPath() != Sdf.Path('/'):
+        if ancestor.HasAPI(UsdPhysics.RigidBodyAPI):
+            return True
+        ancestor = ancestor.GetParent()
+    return False
+
+
+def _read_rigid_body(prim, mode, passive_collision=False):
     """Extract rigid body data from a USD prim."""
     data = {
-        'type': 'ACTIVE',
+        'type': 'PASSIVE' if passive_collision else 'ACTIVE',
+        'prim_path': str(prim.GetPath()),
         'mass': 1.0,
         'friction': 0.5,
         'restitution': 0.0,
@@ -410,14 +430,15 @@ def _read_rigid_body(prim, mode):
         if isinstance(mask, int) and 0 <= mask < (1 << 20):
             data['collision_collections'] = [bool(mask & (1 << i)) for i in range(20)]
 
-    rb_api = UsdPhysics.RigidBodyAPI(prim)
-    enabled = rb_api.GetRigidBodyEnabledAttr().Get()
-    if enabled is not None and not enabled:
-        data['type'] = 'PASSIVE'
+    if not passive_collision:
+        rb_api = UsdPhysics.RigidBodyAPI(prim)
+        enabled = rb_api.GetRigidBodyEnabledAttr().Get()
+        if enabled is not None and not enabled:
+            data['type'] = 'PASSIVE'
 
-    kin = rb_api.GetKinematicEnabledAttr().Get()
-    if kin is not None:
-        data['kinematic'] = kin
+        kin = rb_api.GetKinematicEnabledAttr().Get()
+        if kin is not None:
+            data['kinematic'] = kin
 
     if prim.HasAPI(UsdPhysics.MassAPI):
         mass_api = UsdPhysics.MassAPI(prim)
@@ -443,6 +464,150 @@ def _read_rigid_body(prim, mode):
     data['shape'] = shape_map.get(prim_type, 'CONVEX_HULL')
 
     return data
+
+
+def _infer_blender_collision_collections(stage, bodies):
+    try:
+        _infer_blender_collision_collections_impl(stage, bodies)
+    except Exception as exc:
+        log.warning("[USDPhysicsHook] Failed to evaluate USD collision groups "
+                    "(%s); imported body collisions disabled",
+                    type(exc).__name__)
+        for _, data in bodies:
+            data['collision_collections'] = [False] * 20
+
+
+def _infer_blender_collision_collections_impl(stage, bodies):
+    """Map UsdPhysics collision-group filtering to Blender's 20 bit layers.
+
+    Blender tests collisions when two objects share a collision-collection bit.
+    The exact USD collision graph can be represented as a cover of allowed
+    collider pairs by cliques. If more than 20 cliques are needed, disable the
+    imported body pairs rather than accidentally re-enabling a filtered pair.
+    """
+    group_prims = [prim for prim in stage.Traverse()
+                   if prim.IsA(UsdPhysics.CollisionGroup)]
+    if not group_prims or not bodies:
+        return
+
+    authored_masks = [data['collision_collections'] is not None
+                      for _, data in bodies]
+    if any(authored_masks):
+        if not all(authored_masks):
+            log.warning("[USDPhysicsHook] Collision-group inference skipped: "
+                        "Blender masks are authored for only some bodies; "
+                        "unannotated body collisions disabled")
+            for _, data in bodies:
+                if data['collision_collections'] is None:
+                    data['collision_collections'] = [False] * 20
+        return
+
+    if len(bodies) > 256 or len(group_prims) > 256:
+        log.warning("[USDPhysicsHook] Collision-group inference skipped for %d "
+                    "bodies and %d groups (limit 256 each); imported body "
+                    "collisions disabled", len(bodies), len(group_prims))
+        for _, data in bodies:
+            data['collision_collections'] = [False] * 20
+        return
+
+    path_to_key = {}
+    groups = {}
+    for prim in group_prims:
+        merge_attr = prim.GetAttribute('physics:mergeGroupName')
+        merge_name = merge_attr.Get() if merge_attr and merge_attr.IsValid() else None
+        key = ('merge', str(merge_name)) if merge_name else ('path', str(prim.GetPath()))
+        path_to_key[prim.GetPath()] = key
+        group = groups.setdefault(key, {'queries': [], 'rules': []})
+        usd_group = UsdPhysics.CollisionGroup(prim)
+        collection = usd_group.GetCollidersCollectionAPI()
+        query = collection.ComputeMembershipQuery()
+        group['queries'].append(query)
+        invert_attr = usd_group.GetInvertFilteredGroupsAttr()
+        invert = bool(invert_attr.Get()) if invert_attr and invert_attr.IsValid() else False
+        targets = set(usd_group.GetFilteredGroupsRel().GetTargets())
+        group['rules'].append((invert, targets))
+
+    for group in groups.values():
+        merged_rules = {}
+        for invert, targets in group['rules']:
+            merged_rules.setdefault(invert, set()).update(
+                path_to_key[target] for target in targets if target in path_to_key)
+        group['rules'] = list(merged_rules.items())
+
+    body_memberships = [set() for _ in bodies]
+    for index, (_, data) in enumerate(bodies):
+        body_prim = stage.GetPrimAtPath(data['prim_path'])
+        body_paths = [prim.GetPath() for prim in Usd.PrimRange(body_prim)]
+        for key, group in groups.items():
+            if any(query.IsPathIncluded(path)
+                   for query in group['queries'] for path in body_paths):
+                body_memberships[index].add(key)
+
+    def group_disables(group_key, other_memberships):
+        for invert, target_keys in groups[group_key]['rules']:
+            matches_target = bool(other_memberships & target_keys)
+            if (invert and not matches_target) or (not invert and matches_target):
+                return True
+        return False
+
+    count = len(bodies)
+    neighbors = [set() for _ in bodies]
+    for first in range(count):
+        for second in range(first + 1, count):
+            disabled = any(group_disables(key, body_memberships[second])
+                           for key in body_memberships[first])
+            if not disabled:
+                disabled = any(group_disables(key, body_memberships[first])
+                               for key in body_memberships[second])
+            if not disabled:
+                neighbors[first].add(second)
+                neighbors[second].add(first)
+
+    possible_pairs = count * (count - 1) // 2
+    if sum(len(entries) for entries in neighbors) // 2 == possible_pairs:
+        return
+
+    remaining = {(first, second) for first in range(count)
+                 for second in neighbors[first] if first < second}
+    masks = [0] * count
+    bit = 0
+    while remaining and bit < 20:
+        degrees = [sum(1 for pair in remaining if index in pair)
+                   for index in range(count)]
+        first, second = max(
+            remaining,
+            key=lambda pair: (degrees[pair[0]] + degrees[pair[1]],
+                              max(degrees[pair[0]], degrees[pair[1]]),
+                              -pair[0], -pair[1]))
+        clique = {first, second}
+        candidates = neighbors[first] & neighbors[second]
+        while candidates:
+            candidate = max(
+                candidates,
+                key=lambda index: (sum(1 for member in clique
+                                       if tuple(sorted((index, member))) in remaining),
+                                   degrees[index], -index))
+            clique.add(candidate)
+            candidates &= neighbors[candidate]
+        for index in clique:
+            masks[index] |= 1 << bit
+        members = sorted(clique)
+        for first_index, first_member in enumerate(members):
+            for second_member in members[first_index + 1:]:
+                remaining.discard((first_member, second_member))
+        bit += 1
+
+    if remaining:
+        log.warning("[USDPhysicsHook] USD collision filtering needs more than "
+                    "20 Blender layers; imported body collisions disabled")
+        masks = [0] * count
+    else:
+        log.info("[USDPhysicsHook] Mapped USD collision groups to %d Blender "
+                 "collision layers", bit)
+
+    for index, (_, data) in enumerate(bodies):
+        data['collision_collections'] = [bool(masks[index] & (1 << layer))
+                                         for layer in range(20)]
 
 
 def _read_joint(prim, mode):

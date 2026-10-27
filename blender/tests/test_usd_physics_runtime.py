@@ -15,7 +15,7 @@ from pathlib import Path
 import tempfile
 
 import bpy
-from pxr import Usd, UsdPhysics
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -39,6 +39,7 @@ def _make_scene_and_export(path):
     bpy.ops.mesh.primitive_cube_add(size=1.0, location=(1.0, 0.0, 0.0))
     body_a = bpy.context.object
     body_a.name = 'BodyA'
+    body_a.scale = (2.0, 0.5, 1.5)
     bpy.ops.rigidbody.object_add(type='ACTIVE')
     body_a.rigid_body.mass = 2.5
     body_a.rigid_body.friction = 0.7
@@ -106,6 +107,8 @@ def _check_import(path, merge_parent_xform):
     body_b = objects.get('Cube_001')
     assert body_a and body_a.rigid_body, 'BodyA collider did not regain rigid-body data'
     assert body_b and body_b.rigid_body, 'BodyB collider did not regain rigid-body data'
+    for actual, expected in zip(body_a.matrix_world.to_scale(), (2.0, 0.5, 1.5)):
+        _assert_close(actual, expected)
     _assert_close(body_a.rigid_body.mass, 2.5)
     assert body_a.rigid_body.collision_collections[0]
     assert not body_a.rigid_body.collision_collections[1]
@@ -135,6 +138,98 @@ def _check_import(path, merge_parent_xform):
     print('BLENDER_USD_IMPORT_PASS',
           'merge_parent_xform=' + str(merge_parent_xform),
           body_a.name, body_b.name, joint.type)
+
+
+def _make_collision_group_fixture(path):
+    stage = Usd.Stage.CreateNew(str(path))
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    world = UsdGeom.Xform.Define(stage, '/World')
+    stage.SetDefaultPrim(world.GetPrim())
+    for index, name in enumerate(('A', 'B', 'C', 'D', 'E', 'Static')):
+        cube = UsdGeom.Cube.Define(stage, f'/World/{name}')
+        cube.CreateSizeAttr(1.0)
+        prim = cube.GetPrim()
+        UsdGeom.Xformable(prim).AddTranslateOp().Set(Gf.Vec3d(index * 2.0, 0.0, 0.0))
+        UsdPhysics.CollisionAPI.Apply(prim)
+        if name != 'Static':
+            UsdPhysics.RigidBodyAPI.Apply(prim)
+
+    def group(name, body_names, filtered=(), invert=False):
+        result = UsdPhysics.CollisionGroup.Define(stage, f'/World/Groups/{name}')
+        collection = result.GetCollidersCollectionAPI()
+        collection.CreateExpansionRuleAttr().Set('explicitOnly')
+        collection.CreateIncludesRel().SetTargets(
+            [Sdf.Path(f'/World/{body}') for body in body_names])
+        if filtered:
+            result.CreateFilteredGroupsRel().SetTargets(
+                [Sdf.Path(f'/World/Groups/{target}') for target in filtered])
+        if invert:
+            result.CreateInvertFilteredGroupsAttr().Set(True)
+        return result
+
+    group('GroupA', ('A',), filtered=('GroupB',))
+    group('GroupB', ('B',))
+    group('GroupD', ('D',), filtered=('GroupE',), invert=True)
+    group('GroupE', ('E',))
+    stage.GetRootLayer().Save()
+
+
+def _check_collision_group_import(path):
+    _clear_scene()
+    result = bpy.ops.wm.usd_import(filepath=str(path), merge_parent_xform=True)
+    assert 'FINISHED' in result, result
+    bodies = {name: bpy.data.objects.get(name)
+              for name in ('A', 'B', 'C', 'D', 'E', 'Static')}
+    assert all(obj and obj.rigid_body for obj in bodies.values()), bodies
+    assert bodies['Static'].rigid_body.type == 'PASSIVE'
+
+    def collides(first, second):
+        a = bodies[first].rigid_body.collision_collections
+        b = bodies[second].rigid_body.collision_collections
+        return any(left and right for left, right in zip(a, b))
+
+    assert not collides('A', 'B')
+    assert collides('A', 'C') and collides('B', 'C')
+    assert collides('D', 'E')
+    assert not collides('D', 'C') and not collides('D', 'A')
+    assert collides('E', 'C') and collides('E', 'A')
+    assert not collides('D', 'Static') and collides('E', 'Static')
+    print('BLENDER_USD_COLLISION_GROUP_IMPORT_PASS',
+          {name: sum(1 << i for i, enabled in enumerate(
+              obj.rigid_body.collision_collections) if enabled)
+           for name, obj in bodies.items()})
+
+
+def _make_multi_mesh_fixture(path):
+    stage = Usd.Stage.CreateNew(str(path))
+    world = UsdGeom.Xform.Define(stage, '/World')
+    stage.SetDefaultPrim(world.GetPrim())
+    body = UsdGeom.Xform.Define(stage, '/World/MultiMeshBody').GetPrim()
+    UsdPhysics.RigidBodyAPI.Apply(body)
+    UsdPhysics.CollisionAPI.Apply(body)
+    for index, name in enumerate(('PartA', 'PartB')):
+        cube = UsdGeom.Cube.Define(stage, f'/World/MultiMeshBody/{name}')
+        UsdGeom.Xformable(cube.GetPrim()).AddTranslateOp().Set(
+            Gf.Vec3d(index * 1.5, 0.0, 0.0))
+        UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
+    stage.GetRootLayer().Save()
+
+
+def _check_multi_mesh_import(path):
+    _clear_scene()
+    result = bpy.ops.wm.usd_import(filepath=str(path), merge_parent_xform=False)
+    assert 'FINISHED' in result, result
+    body = bpy.data.objects.get('MultiMeshBody')
+    part_a = bpy.data.objects.get('PartA')
+    part_b = bpy.data.objects.get('PartB')
+    assert body and body.type == 'EMPTY'
+    assert part_a and part_a.type == 'MESH'
+    assert part_b and part_b.type == 'MESH'
+    # The hook must not turn one USD rigid body into two independent Blender
+    # bodies; it reports this ambiguous compound shape and leaves it untouched.
+    assert not part_a.rigid_body and not part_b.rigid_body
+    print('BLENDER_USD_MULTI_MESH_GUARD_PASS', body.name, part_a.name, part_b.name)
 
 
 def _check_bullet_dynamics():
@@ -196,6 +291,56 @@ def _check_bullet_dynamics():
            'solver_iterations': world.solver_iterations})
 
 
+def _check_imported_scaled_dynamics(path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    result = bpy.ops.wm.usd_import(filepath=str(path), merge_parent_xform=True)
+    assert 'FINISHED' in result, result
+    body = bpy.data.objects.get('Cube')
+    assert body and body.rigid_body, 'scaled imported USD body is missing physics'
+    for actual, expected in zip(body.matrix_world.to_scale(), (2.0, 0.5, 1.5)):
+        _assert_close(actual, expected)
+
+    # Isolate the scaled active body from the spring-joint roundtrip scene.
+    keep = {body, body.parent}
+    for obj in list(bpy.data.objects):
+        if obj not in keep:
+            bpy.data.objects.remove(obj, do_unlink=True)
+    body.location = (0.0, 0.0, 2.0)
+    body.rotation_euler = (0.0, 0.0, 0.0)
+
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0.0, 0.0, -0.5))
+    floor = bpy.context.object
+    floor.name = 'ScaleCheckFloor'
+    floor.dimensions = (20.0, 20.0, 1.0)
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    bpy.ops.rigidbody.object_add(type='PASSIVE')
+    floor.rigid_body.collision_shape = 'BOX'
+
+    scene = bpy.context.scene
+    scene.gravity = (0.0, 0.0, -9.81)
+    scene.render.fps = 60
+    scene.render.fps_base = 1.0
+    scene.frame_start = 1
+    scene.frame_end = 120
+    world = scene.rigidbody_world
+    assert world
+    world.substeps_per_frame = 10
+    world.solver_iterations = 50
+    world.point_cache.frame_start = 1
+    world.point_cache.frame_end = 120
+    for frame in range(1, 121):
+        scene.frame_set(frame)
+
+    bpy.context.view_layer.update()
+    body_z = float(body.evaluated_get(
+        bpy.context.evaluated_depsgraph_get()
+    ).matrix_world.translation.z)
+    # The scaled cube is 1.5 Blender units tall; the floor top is z=0.
+    assert 0.68 <= body_z <= 0.84, body_z
+    print('BLENDER_IMPORTED_SCALE_DYNAMICS_PASS',
+          {'scale': tuple(body.matrix_world.to_scale()), 'settled_z': body_z})
+
+
 def main():
     spec = importlib.util.spec_from_file_location('lightusd_usd_physics_hook', HOOK_PATH)
     hook = importlib.util.module_from_spec(spec)
@@ -206,16 +351,27 @@ def main():
     os.close(fd)
     path = Path(path_string)
     path.unlink()
+    collision_groups_path = path.with_name(path.stem + '-groups.usda')
+    multi_mesh_path = path.with_name(path.stem + '-multi-mesh.usda')
     try:
         hook.register()
         _make_scene_and_export(path)
         _check_import(path, merge_parent_xform=True)
         _check_import(path, merge_parent_xform=False)
+        _make_collision_group_fixture(collision_groups_path)
+        _check_collision_group_import(collision_groups_path)
+        _make_multi_mesh_fixture(multi_mesh_path)
+        _check_multi_mesh_import(multi_mesh_path)
+        _check_imported_scaled_dynamics(path)
         hook.unregister()
         _check_bullet_dynamics()
     finally:
         if path.exists():
             path.unlink()
+        if collision_groups_path.exists():
+            collision_groups_path.unlink()
+        if multi_mesh_path.exists():
+            multi_mesh_path.unlink()
         try:
             hook.unregister()
         except RuntimeError:
