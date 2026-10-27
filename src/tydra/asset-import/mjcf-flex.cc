@@ -658,6 +658,13 @@ bool CollectBodyFlexcompsJson(const pugi::xml_node& body_node,
       return false;
     }
     const std::string dof = ToLower(Attr(f, "dof", "full"));
+    // Do not turn a misspelled or unknown MJCF enum into a plausible but
+    // physically different full-DOF deformable.
+    if (dof != "full" && dof != "radial" && dof != "trilinear" &&
+        dof != "quadratic" && dof != "2d") {
+      if (err) *err = "flexcomp `" + name + "`: invalid dof `" + dof + "`";
+      return false;
+    }
     if (dof != "full" &&
         !UnsupportedXML(f, "flexcomp `" + name + "` dof=`" + dof +
                                "` is approximated by free vertices (dof=full)",

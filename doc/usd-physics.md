@@ -962,7 +962,12 @@ default `newton` profile; [Output profiles](#output-profiles) lists the
 | MJCF `<site>` | a gprim under its body with `MjcSiteAPI` + `NewtonSiteAPI` |
 | MJCF `<equality>` connect/weld | `PhysicsSphericalJoint` / `PhysicsFixedJoint` excluded from the articulation (`active` → `physics:jointEnabled`); unsupported equality types are reported (`mjcf.equality_unsupported`) |
 | MJCF `<contact><exclude>` / `<pair>` | `PhysicsFilteredPairsAPI` on the first body / an `Xform` under `/World/Contacts` with `mjc:geom1`/`mjc:geom2` tokens and the pair's `condim`/`margin`/`gap`/`friction`/`sol*` (no MjcPhysics schema covers pairs; `openusd` omits it) |
-| MJCF `<flexcomp>`, raw `<flex>` | UsdPhysics deformables; interpolated (`node`/`dof`) flexes are approximated as full-dof |
+| MJCF `<flexcomp>`, raw `<flex>` | UsdPhysics deformables; reduced flexcomp DOFs are approximated as full-dof and reported, while interpolated raw flexes are skipped and reported |
+
+For converted flexcomps, the importer recognizes MuJoCo's `full`, `radial`,
+`trilinear`, `quadratic`, and `2d` DOF values and rejects unknown values. The
+non-full modes are approximations; `unsupported_policy="preserve"` retains the
+original XML as non-executable source data.
 | MJCF `<skin>` | UsdSkel `SkelRoot`/`Skeleton`/skinned `Mesh` under `/World/Skins` + `lightusd:mjcSkin:*` extension data (see above) |
 | MJCF `<frame scale/massscale>` | the frame's pose is applied, its scale is reported (`mjcf.frame_scale_unsupported`) |
 | MJCF mesh paths that leave the model directory (MuJoCo's own `plugin/sdf/mug.xml` uses `../../mug/mug.obj`) | resolve relative to the model file, but only under an allowed asset root: pass `asset_dirs` (Python/C/CLI `--asset-dir`); otherwise reported as `Asset outside allowed roots` | same | same |

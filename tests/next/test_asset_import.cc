@@ -257,6 +257,9 @@ int main() {
     };
     // An empty <replicate> still adds one <frame> per copy.
     assert(rejected("<mujoco><worldbody><replicate count='2000000'/></worldbody></mujoco>"));
+    assert(rejected("<mujoco><worldbody><flexcomp name='f' type='grid' dim='3' "
+                    "count='2 2 2' spacing='.1 .1 .1' dof='trilnear'/>"
+                    "</worldbody></mujoco>"));
     // Cable composites share the expansion budget (each is 512 vertices).
     std::string cables = "<mujoco><worldbody>";
     for (int i = 0; i < 300; ++i)

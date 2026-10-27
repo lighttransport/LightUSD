@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """MJCF flexcomp soft bodies as UsdPhysics deformables (newton profile)."""
+import json
 import numpy as np
 import pytest
 
@@ -76,6 +77,28 @@ def test_flexcomp_outside_newton_profile_is_unsupported():
     with pytest.raises(KeyError):
         stage.prim_at('/World/Deformables')
     assert 'Unsupported MJCF element: flexcomp' in stage.warnings()
+
+
+@pytest.mark.parametrize('dof', ['radial', 'trilinear', 'quadratic', '2d'])
+def test_valid_reduced_dof_reports_approximation(dof):
+    xml = (FLEX % ('flex', 3, '3 3 3', '')).replace('type="grid"', f'type="grid" dof="{dof}"')
+    stage = lightusd.load_bytes(xml.encode(), format='mjcf')
+    assert stage.prim_at('/World/Deformables/flex').type_name == 'TetMesh'
+    assert f'dof=`{dof}` is approximated' in stage.warnings()
+    with pytest.raises(lightusd.UsdError, match='approximated'):
+        lightusd.load_bytes(xml.encode(), format='mjcf', unsupported_policy='error')
+    preserved = lightusd.load_bytes(xml.encode(), format='mjcf', unsupported_policy='preserve')
+    records = json.loads(preserved.custom_layer_data['lightusdImportUnsupported'])
+    assert any(record['feature'] == 'mjcf.flexcomp' and f'dof="{dof}"' in record['data']
+               and not record['executable'] for record in records)
+
+
+@pytest.mark.parametrize('dof', ['trilnear', '3d', 'bogus'])
+@pytest.mark.parametrize('policy', ['warn', 'error', 'preserve'])
+def test_invalid_flex_dof_is_rejected(dof, policy):
+    xml = (FLEX % ('flex', 3, '3 3 3', '')).replace('type="grid"', f'type="grid" dof="{dof}"')
+    with pytest.raises(lightusd.UsdError, match='invalid dof'):
+        lightusd.load_bytes(xml.encode(), format='mjcf', unsupported_policy=policy)
 
 
 def test_flexcomp_matches_mujoco_vertices():
