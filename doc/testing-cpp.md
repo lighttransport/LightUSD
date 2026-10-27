@@ -1742,6 +1742,9 @@ VDB file-path frames with equivalent single-time renders.
 The foreground check fails with the old scaled-field depth
 calculation. This compares the two LightUSD paths, not an external reference. Custom
 asset readers allocate their own file buffers outside the cache budget.
+When `LIGHTUSD_WITH_QJS=ON`, CMake adds `--with-qjs` to this regression. It
+also renders both time samples through the persistent `-js` `setTime` path and
+compares them byte-for-byte with the corresponding frame renders.
 
 For CPU mesher changes, build each tinyvdb revision separately and compare a
 level-set fixture on the same host (the test uses two workers and writes only

@@ -2389,11 +2389,15 @@ if(LIGHTUSD_BUILD_TESTS)
     endif()
   endif()
   if(TARGET lusdrender AND LUSDR_PYTHON)
+    set(LUSDR_SPARSE_QJS_ARG)
+    if(LIGHTUSD_WITH_QJS)
+      set(LUSDR_SPARSE_QJS_ARG --with-qjs)
+    endif()
     add_test(
       NAME tool-lusdrender-sparse-volume-cpu
       COMMAND ${LUSDR_PYTHON}
               ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_sparse_volume.py
-              "$<TARGET_FILE:lusdrender>")
+              "$<TARGET_FILE:lusdrender>" ${LUSDR_SPARSE_QJS_ARG})
     set_tests_properties(tool-lusdrender-sparse-volume-cpu PROPERTIES
                          TIMEOUT 180 SKIP_RETURN_CODE 77
                          LABELS "lusdrender;cpu;volume")

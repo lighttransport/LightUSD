@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """CPU sparse-level-set image regression; requires TINYVDBIO_DATA_DIR."""
 
+import json
 import os
 from pathlib import Path
 import shutil
@@ -51,8 +52,9 @@ def Xform "World" {{
 
 
 def main():
-    if len(sys.argv) != 2:
-        raise SystemExit('usage: check_sparse_volume.py /path/to/lusdrender')
+    if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] != '--with-qjs'):
+        raise SystemExit('usage: check_sparse_volume.py /path/to/lusdrender [--with-qjs]')
+    with_qjs = len(sys.argv) == 3
     root = os.environ.get('TINYVDBIO_DATA_DIR')
     asset = Path(root or '') / 'utahteapot.vdb'
     if not root or not asset.is_file():
@@ -181,6 +183,25 @@ def main():
         frame2 = read_png_rgba(tmp / 'frame.2.png')[2]
         if frame1 != image or frame2 != translated:
             raise RuntimeError('animated field transforms do not match single-time renders')
+
+        def check_scripted_frames(source, name, expected):
+            script = tmp / f'{name}.js'
+            outputs = [tmp / f'{name}-{frame}.png' for frame in (1, 2)]
+            script.write_text('\n'.join(
+                f'lusdrender.setTime({frame}); lusdrender.render({json.dumps(str(output))});'
+                for frame, output in zip((1, 2), outputs)))
+            result = subprocess.run([renderer, str(source), '-js', str(script), '-rtPreview',
+                                     '-camera', '/World/Camera', '-w', '64', '-height', '64',
+                                     '-threads', '1', '-noShadows', '-maxMem', '1'],
+                                    capture_output=True, text=True, timeout=120)
+            if result.returncode:
+                raise RuntimeError(f'{name} scripted rendering failed: {result.stderr}')
+            for frame, output, reference in zip((1, 2), outputs, expected):
+                if read_png_rgba(output)[2] != reference:
+                    raise RuntimeError(f'{name} scripted frame {frame} differs from frame render')
+
+        if with_qjs:
+            check_scripted_frames(animated_source, 'script-transform', [frame1, frame2])
         # Two coincident level sets with different colors must keep the first
         # surface at equal depth; a later field must not overwrite it.
         colored = scene(asset.resolve().as_posix(), 0, True).replace(
@@ -242,6 +263,8 @@ def main():
             asset_frames = [read_png_rgba(tmp / f'assets.{i}.png')[2] for i in (1, 2)]
             if asset_frames[0] == asset_frames[1]:
                 raise RuntimeError('time-sampled VDB paths produced identical frames')
+            if with_qjs:
+                check_scripted_frames(source, 'script-assets', asset_frames)
             for frame in (1, 2):
                 output = tmp / f'asset-single-{frame}.png'
                 result = subprocess.run([renderer, str(source), str(output), *args,
