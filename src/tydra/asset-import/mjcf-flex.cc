@@ -6,6 +6,11 @@ namespace lightusd {
 namespace tydra {
 namespace import_asset {
 namespace mjcf_detail {
+static bool FloatPointRepresentable(const std::array<double, 3>& p) {
+  const double limit = std::numeric_limits<float>::max();
+  return std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]) &&
+         std::abs(p[0]) <= limit && std::abs(p[1]) <= limit && std::abs(p[2]) <= limit;
+}
 /* tinyvdb treats zero as its default, so reject an insufficient budget rather
  * than accidentally replacing a small limit with a much larger default. */
 static bool SetFlexStuffingBudget(size_t budget, StuffingOptions* options, std::string* err) {
@@ -651,8 +656,8 @@ bool CollectBodyFlexcompsJson(const pugi::xml_node& body_node,
     if (!IsSupportedFlexcompType(type)) continue;
     const double dim_value = ParseDoubleAttr(f, "dim", 2.0);
     if (!std::isfinite(dim_value) || std::trunc(dim_value) != dim_value ||
-        dim_value < INT32_MIN || dim_value > INT32_MAX) {
-      if (err) *err = "flexcomp `" + name + "`: dim must be an int32 value";
+        dim_value < 1 || dim_value > 3) {
+      if (err) *err = "flexcomp `" + name + "`: dim must be an integer between 1 and 3";
       return false;
     }
     int dim = static_cast<int>(dim_value);
@@ -945,9 +950,17 @@ bool CollectBodyFlexcompsJson(const pugi::xml_node& body_node,
     Json points = Json::array(), pins = Json::array(), pin_coords = Json::array();
     for (size_t i = 0; i < point.size() / 3; ++i) {
       const auto w = apply(world, &point[3 * i]);
+      if (!FloatPointRepresentable(w)) {
+        if (err) *err = "flexcomp `" + name + "`: world point exceeds float range";
+        return false;
+      }
       points.push_back(Json::array({w[0], w[1], w[2]}));
       if (pinned[i]) {
         const auto b = apply(local, &point[3 * i]);
+        if (!FloatPointRepresentable(b)) {
+          if (err) *err = "flexcomp `" + name + "`: pin coordinate exceeds float range";
+          return false;
+        }
         pins.push_back(static_cast<int>(i));
         pin_coords.push_back(Json::array({b[0], b[1], b[2]}));
       }
@@ -1158,6 +1171,7 @@ bool CollectMujocoRawFlexesJson(const pugi::xml_node& root,
     std::vector<const void*> absorbed;
     double damping = 0.0;
     size_t free_points = 0;
+    bool points_representable = true;
     for (size_t i = 0; i < npnt; ++i) {
       const std::string& bname = names.size() == 1 ? names[0] : names[i];
       const BodyInfo& b = bodies.at(bname);
@@ -1165,12 +1179,19 @@ bool CollectMujocoRawFlexesJson(const pugi::xml_node& root,
                                vertex.empty() ? 0.0 : vertex[3 * i + 1],
                                vertex.empty() ? 0.0 : vertex[3 * i + 2]};
       const auto& m = b.world;
-      points.push_back(Json::array({m[0] * local[0] + m[4] * local[1] + m[8] * local[2] + m[12],
-                                    m[1] * local[0] + m[5] * local[1] + m[9] * local[2] + m[13],
-                                    m[2] * local[0] + m[6] * local[1] + m[10] * local[2] + m[14]}));
+      const std::array<double, 3> world_point{{
+          m[0] * local[0] + m[4] * local[1] + m[8] * local[2] + m[12],
+          m[1] * local[0] + m[5] * local[1] + m[9] * local[2] + m[13],
+          m[2] * local[0] + m[6] * local[1] + m[10] * local[2] + m[14]}};
       double mass = 0.0;
       // A single body carries every vertex rigidly: pin them all to it.
       const int kind = names.size() == 1 ? -1 : classify(b, &mass);
+      if (!FloatPointRepresentable(world_point) ||
+          (kind != 1 && !FloatPointRepresentable({{local[0], local[1], local[2]}}))) {
+        points_representable = false;
+        break;
+      }
+      points.push_back(Json::array({world_point[0], world_point[1], world_point[2]}));
       masses.push_back(kind == 1 ? mass : 0.0);
       if (kind == 1) {
         ++free_points;
@@ -1183,6 +1204,10 @@ bool CollectMujocoRawFlexesJson(const pugi::xml_node& root,
       pins.push_back(static_cast<int>(i));
       pin_coords.push_back(Json::array({local[0], local[1], local[2]}));
       pin_bodies.push_back(kind == 0 || !b.node ? std::string() : bname);
+    }
+    if (!points_representable) {
+      if (!skip("point or pin coordinate exceeds float range", "mjcf.flex_invalid")) return false;
+      continue;
     }
     if (!free_points) {
       if (!skip("no vertex body is a free point mass", "mjcf.flex_rigid")) return false;

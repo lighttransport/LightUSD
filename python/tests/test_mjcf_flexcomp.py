@@ -114,6 +114,20 @@ def test_invalid_flex_grid_integers_are_rejected(attribute, value):
         lightusd.load_bytes(xml.encode(), format='mjcf')
 
 
+@pytest.mark.parametrize('shape', ['circle', 'square', 'disc'])
+def test_shape_override_does_not_hide_invalid_dimension(shape):
+    xml = (FLEX % ('flex', 4, '3 3 1', '')).replace('type="grid"', f'type="{shape}"')
+    with pytest.raises(lightusd.UsdError, match='dim'):
+        lightusd.load_bytes(xml.encode(), format='mjcf')
+
+
+@pytest.mark.parametrize('position', ['1e39 0 0', '1e308 1e308 1e308'])
+def test_flex_points_outside_float_range_are_rejected(position):
+    xml = (FLEX % ('flex', 2, '3 3 1', '')).replace('pos=".1 0 0"', f'pos="{position}"')
+    with pytest.raises(lightusd.UsdError, match='float range'):
+        lightusd.load_bytes(xml.encode(), format='mjcf')
+
+
 def test_flexcomp_matches_mujoco_vertices():
     mujoco = pytest.importorskip('mujoco')
     # MuJoCo accepts edge stiffness only for 1D flexes.
