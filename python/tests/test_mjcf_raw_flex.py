@@ -78,3 +78,12 @@ def test_other_profiles_keep_reporting_the_deformable():
     assert stage.get_prim_at("/World/Deformables/cloth") is None
     assert "Unsupported MJCF element: deformable" in stage.warnings()
     assert {"v1", "v2", "v3"} <= {p.name for p in stage if p.path.startswith("/World/Links/")}
+
+
+def test_fractional_raw_flex_dimension_is_reported():
+    xml = _model().replace(b'dim="2"', b'dim="2.5"')
+    stage = lightusd.load_bytes(xml, format="mjcf")
+    assert stage.get_prim_at("/World/Deformables/cloth") is None
+    assert "dim must be an integer" in stage.warnings()
+    with pytest.raises(lightusd.UsdError, match="dim must be an integer"):
+        lightusd.load_bytes(xml, format="mjcf", unsupported_policy="error")

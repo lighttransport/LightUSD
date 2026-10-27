@@ -649,7 +649,13 @@ bool CollectBodyFlexcompsJson(const pugi::xml_node& body_node,
     };
     // Other types were already reported as unsupported while reading the XML.
     if (!IsSupportedFlexcompType(type)) continue;
-    int dim = ToInt32(ParseDoubleAttr(f, "dim", 2.0), "dim");
+    const double dim_value = ParseDoubleAttr(f, "dim", 2.0);
+    if (!std::isfinite(dim_value) || std::trunc(dim_value) != dim_value ||
+        dim_value < INT32_MIN || dim_value > INT32_MAX) {
+      if (err) *err = "flexcomp `" + name + "`: dim must be an int32 value";
+      return false;
+    }
+    int dim = static_cast<int>(dim_value);
     if (type == "circle") dim = 1;
     if (type == "square" || type == "disc") dim = 2;
     const bool box_type = type == "box" || type == "cylinder" || type == "ellipsoid";
@@ -682,7 +688,17 @@ bool CollectBodyFlexcompsJson(const pugi::xml_node& body_node,
     std::array<int, 3> count{{10, 10, 10}};
     {
       const auto c = ParseDoubles(Attr(f, "count"));
-      for (size_t i = 0; i < 3 && i < c.size(); ++i) count[i] = ToInt32(c[i], "count");
+      if (HasAttr(f, "count") && c.size() != 3) {
+        if (err) *err = "flexcomp `" + name + "`: count must contain three integers";
+        return false;
+      }
+      for (size_t i = 0; i < c.size(); ++i) {
+        if (!std::isfinite(c[i]) || std::trunc(c[i]) != c[i] || c[i] < 1 || c[i] > 100000) {
+          if (err) *err = "flexcomp `" + name + "`: invalid count";
+          return false;
+        }
+        count[i] = static_cast<int>(c[i]);
+      }
     }
     const auto spacing = ParseDouble3(Attr(f, "spacing"), {{0.02, 0.02, 0.02}});
     const auto scale = ParseDouble3(Attr(f, "scale"), {{1, 1, 1}});
@@ -1097,7 +1113,13 @@ bool CollectMujocoRawFlexesJson(const pugi::xml_node& root,
         return false;
       continue;
     }
-    const int dim = ToInt32(ParseDoubleAttr(f, "dim", 2.0), "dim");
+    const double dim_value = ParseDoubleAttr(f, "dim", 2.0);
+    if (!std::isfinite(dim_value) || std::trunc(dim_value) != dim_value ||
+        dim_value < 1 || dim_value > 3) {
+      if (!skip("dim must be an integer between 1 and 3", "mjcf.flex_invalid")) return false;
+      continue;
+    }
+    const int dim = static_cast<int>(dim_value);
     std::vector<std::string> names;
     {
       std::istringstream in(Attr(f, "body"));
