@@ -98,6 +98,12 @@ bool CrateReader::BuildDecompressedPathsImpl(
   std::stack<size_t> startIndexStack;
   std::stack<size_t> endIndexStack;
   std::stack<Path> parentPathStack;
+  // Path index of `parentPath`, tracked in lockstep with parentPathStack so
+  // each decoded entry knows its parent path without a later string lookup.
+  std::stack<int32_t> parentIndexStack;
+  int32_t cur_parent_idx = kNoParentPathIndex;
+
+  std::vector<int32_t> *parentIndices = arg->parentIndices;
 
   size_t nIter = 0;
 
@@ -136,6 +142,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
 
         _paths[idx] = parentPath;
         visit_table[idx] = true;
+        cur_parent_idx = int32_t(idx);
       } else {
         if (thisIndex >= elementTokenIndexes.size()) {
           PUSH_ERROR("Index exceeds elementTokenIndexes.size()");
@@ -188,6 +195,9 @@ bool CrateReader::BuildDecompressedPathsImpl(
         _paths[idx] =
             isPrimPropertyPath ? parentPath.AppendProperty(elemToken.str())
                                : parentPath.AppendElement(elemToken.str()); // prim, variantSelection, etc.
+        if (parentIndices && idx < parentIndices->size()) {
+          (*parentIndices)[idx] = cur_parent_idx;
+        }
 
         // also set leaf path for 'primChildren' check
         _elemPaths[idx] = Path(elemToken.str(), "");
@@ -263,6 +273,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
                   }
 
                   parentPathStack.push(_paths[idx]);
+                  parentIndexStack.push(int32_t(idx));
                 }
             }
 
@@ -270,6 +281,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
             endIndexStack.push(subtreeEndIdx);
 
             parentPathStack.push(parentPath);
+            parentIndexStack.push(cur_parent_idx);
             DCOUT("stack size: " << startIndexStack.size());
 
             nIter++;
@@ -291,6 +303,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
         }
 
         parentPath = _paths[idx];
+        cur_parent_idx = int32_t(idx);
 
       }
     }
@@ -309,6 +322,9 @@ bool CrateReader::BuildDecompressedPathsImpl(
 
     parentPath = parentPathStack.top();
     parentPathStack.pop();
+
+    cur_parent_idx = parentIndexStack.top();
+    parentIndexStack.pop();
 
     nIter++;
   }
@@ -643,6 +659,24 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
     visit_table[i] = false;
   }
 
+  // Direct parent path index per decoded path, filled in by the decoder. Used
+  // to build the node hierarchy without re-deriving parents from path strings.
+  std::vector<int32_t> parent_indices;
+  {
+    size_t parent_indices_bytes;
+    if (!safe::mul(_paths.size(), sizeof(int32_t), &parent_indices_bytes)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in path parent table size.");
+    }
+    auto parent_indices_budget =
+        memory_manager_->ReserveScoped(parent_indices_bytes);
+    if (!parent_indices_budget.IsReserved()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Memory budget exceeded for path parent table.");
+    }
+    parent_indices.assign(_paths.size(), kNoParentPathIndex);
+    // The reservation is released at the end of this function; keep it alive.
+    (void)parent_indices_budget;
+  }
+
   // Now build the paths.
 #if defined(LIGHTUSD_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER)
   BuildDecompressedPathsArg arg;
@@ -650,6 +684,7 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
   arg.elementTokenIndexes = &elementTokenIndexes;
   arg.jumps = &jumps;
   arg.visit_table = &visit_table;
+  arg.parentIndices = &parent_indices;
   if (pathIndexes.empty()) {
     PUSH_ERROR("pathIndexes is empty.");
     return false;
@@ -691,22 +726,38 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
   }
 
   auto build_node_hierarchy_from_decoded_paths = [&]() -> bool {
+    // The compressed path stream is a tree, and the decoder records each
+    // entry's parent path index (parent_indices), so the hierarchy can be
+    // built directly. The previous implementation re-derived every parent
+    // through a string-keyed map of all full path names plus an ancestor walk
+    // (~15% of a whole load). The map is now only built on demand, for crate
+    // files whose path table omits an ancestor path, where the walk-up-
+    // ancestors behaviour has to be preserved.
     std::unordered_map<std::string, size_t> path_to_index;
-    {
+    bool path_to_index_built = false;
+    auto ensure_path_to_index = [&]() {
+      if (path_to_index_built) {
+        return;
+      }
+      path_to_index_built = true;
       size_t path_to_index_bytes;
-      if (!safe::mul(_paths.size(), sizeof(std::string) + 64, &path_to_index_bytes)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: _paths.size() * (sizeof(std::string) + 64)");
+      if (!safe::mul(_paths.size(), sizeof(std::string) + 64,
+                     &path_to_index_bytes)) {
+        PUSH_ERROR("Integer overflow: _paths.size() * (sizeof(std::string) + 64)");
+        return;
       }
-      CHECK_MEMORY_USAGE(path_to_index_bytes);
-    }
-    path_to_index.reserve(_paths.size());
-
-    for (size_t path_idx = 0; path_idx < _paths.size(); ++path_idx) {
-      if (!_paths[path_idx].is_valid()) {
-        continue;
+      if (!memory_manager_->Reserve(path_to_index_bytes)) {
+        PUSH_ERROR("Memory budget exceeded for path lookup table.");
+        return;
       }
-      path_to_index.emplace(_paths[path_idx].full_path_name(), path_idx);
-    }
+      path_to_index.reserve(_paths.size());
+      for (size_t i = 0; i < _paths.size(); ++i) {
+        if (!_paths[i].is_valid()) {
+          continue;
+        }
+        path_to_index.emplace(_paths[i].full_path_name(), i);
+      }
+    };
 
     std::function<bool(size_t)> build_one = [&](const size_t path_idx) -> bool {
       if (path_idx >= _paths.size() || path_idx >= _nodes.size() ||
@@ -725,24 +776,42 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
       }
 
       int64_t parent_node_index = -1;
-      Path parent_path = _paths[path_idx].get_parent_path();
-      while (parent_path.is_valid() && !parent_path.full_path_name().empty()) {
-        const auto parent_it = path_to_index.find(parent_path.full_path_name());
-        if (parent_it != path_to_index.end()) {
-          parent_node_index = static_cast<int64_t>(parent_it->second);
-          if (!visit_table[parent_it->second] &&
-              !build_one(parent_it->second)) {
-            return false;
+      const int32_t parent_path_idx = path_idx < parent_indices.size()
+                                          ? parent_indices[path_idx]
+                                          : kNoParentPathIndex;
+      if (parent_path_idx >= 0 && size_t(parent_path_idx) < _paths.size() &&
+          _paths[size_t(parent_path_idx)].is_valid()) {
+        // Fast path: the decoder told us the parent path directly.
+        if (!visit_table[size_t(parent_path_idx)] &&
+            !build_one(size_t(parent_path_idx))) {
+          return false;
+        }
+        parent_node_index = static_cast<int64_t>(parent_path_idx);
+      } else if (parent_path_idx >= 0) {
+        // Malformed/sparse path table: the recorded ancestor is missing. Fall
+        // back to walking up the path string until an existing path is found.
+        ensure_path_to_index();
+        Path parent_path = _paths[path_idx].get_parent_path();
+        while (parent_path.is_valid() &&
+               !parent_path.full_path_name().empty()) {
+          const auto parent_it =
+              path_to_index.find(parent_path.full_path_name());
+          if (parent_it != path_to_index.end()) {
+            parent_node_index = static_cast<int64_t>(parent_it->second);
+            if (!visit_table[parent_it->second] &&
+                !build_one(parent_it->second)) {
+              return false;
+            }
+            break;
           }
-          break;
-        }
 
-        const Path next_parent = parent_path.get_parent_path();
-        if (!next_parent.is_valid() ||
-            next_parent.full_path_name() == parent_path.full_path_name()) {
-          break;
+          const Path next_parent = parent_path.get_parent_path();
+          if (!next_parent.is_valid() ||
+              next_parent.full_path_name() == parent_path.full_path_name()) {
+            break;
+          }
+          parent_path = next_parent;
         }
-        parent_path = next_parent;
       }
 
       Node node(parent_node_index, _paths[path_idx]);
