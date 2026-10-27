@@ -67,3 +67,80 @@ def test_parent_transform_matches_openusd(tmp_path, parent_type, reset):
     particle = tydra.to_render_scene(lightusd.load(str(path))).particle_fields()[0]
     np.testing.assert_array_equal(np.asarray(particle['world_matrix']),
                                   np.array([[matrix[i][j] for j in range(4)] for i in range(4)]))
+
+
+def test_gaussian_ply_conversion_matches_openusd(tmp_path):
+    converter = pytest.importorskip('usd_convert_gsplat')
+    property_names = [
+        'x', 'y', 'z', 'scale_0', 'scale_1', 'scale_2',
+        'rot_0', 'rot_1', 'rot_2', 'rot_3', 'opacity',
+        'f_dc_0', 'f_dc_1', 'f_dc_2',
+        *(f'f_rest_{i}' for i in range(9)),
+    ]
+    header = [
+        'ply', 'format ascii 1.0', 'element vertex 2',
+        *(f'property float {name}' for name in property_names),
+        'end_header',
+    ]
+    rows = [
+        {
+            'x': 1.25, 'y': -2.5, 'z': 3.75,
+            'scale_0': -0.69314718, 'scale_1': 0.0, 'scale_2': 0.40546511,
+            'rot_0': 2.0, 'rot_1': 0.0, 'rot_2': 0.0, 'rot_3': 0.0,
+            'opacity': 0.0,
+            'f_dc_0': 0.1, 'f_dc_1': 0.2, 'f_dc_2': 0.3,
+            **{f'f_rest_{i}': (i + 1) / 100.0 for i in range(9)},
+        },
+        {
+            'x': -4.0, 'y': 0.5, 'z': 8.0,
+            'scale_0': 0.69314718, 'scale_1': -0.69314718, 'scale_2': 0.0,
+            'rot_0': 0.5, 'rot_1': 0.5, 'rot_2': -0.5, 'rot_3': 0.5,
+            'opacity': 1.09861229,
+            'f_dc_0': 0.4, 'f_dc_1': 0.5, 'f_dc_2': 0.6,
+            **{f'f_rest_{i}': -(i + 1) / 100.0 for i in range(9)},
+        },
+    ]
+    rows_text = [' '.join(format(row[name], '.9g') for name in property_names)
+                 for row in rows]
+    ply_path = tmp_path / 'synthetic-3dgs.ply'
+    ply_path.write_text('\n'.join([*header, *rows_text, '']))
+
+    usd_path = tmp_path / 'synthetic-3dgs.usda'
+    splat_data = converter.read_ply(str(ply_path))
+    assert splat_data.count == len(rows)
+    converter.write_gaussian_splat_usd(
+        splat_data, str(usd_path), source_file=str(ply_path), prim_name='ConvertedSplats')
+
+    usd_stage = Usd.Stage.Open(str(usd_path))
+    assert usd_stage
+    prim = usd_stage.GetPrimAtPath('/ConvertedSplats')
+    schema = UsdVol.ParticleField3DGaussianSplat(prim)
+    assert schema
+    assert prim.IsA(UsdVol.ParticleField3DGaussianSplat)
+
+    particle = tydra.to_render_scene(lightusd.load(str(usd_path))).particle_fields()[0]
+    assert particle['prim_path'] == str(prim.GetPath())
+    assert particle['kernel'] == 'gaussianEllipsoid'
+    assert particle['count'] == len(rows)
+
+    for output, attribute in [
+        ('positions', 'positions'),
+        ('scales', 'scales'),
+        ('opacities', 'opacities'),
+        ('sh_coefficients', 'radiance:sphericalHarmonicsCoefficients'),
+    ]:
+        expected = np.asarray(prim.GetAttribute(attribute).Get(), dtype=np.float32)
+        if output == 'sh_coefficients':
+            expected = expected.reshape(len(rows), -1)
+        np.testing.assert_array_equal(np.asarray(particle[output]), expected)
+
+    quaternions = prim.GetAttribute('orientations').Get()
+    expected_orientations = [[q.GetReal(), *q.GetImaginary()] for q in quaternions]
+    np.testing.assert_array_equal(np.asarray(particle['orientations']),
+                                  np.asarray(expected_orientations, dtype=np.float32))
+    assert prim.GetAttribute('radiance:sphericalHarmonicsDegree').Get() == 1
+    assert particle['sh_degree'] == 1
+    matrix = UsdGeom.XformCache().GetLocalToWorldTransform(prim)
+    np.testing.assert_array_equal(
+        np.asarray(particle['world_matrix']),
+        np.array([[matrix[i][j] for j in range(4)] for i in range(4)]))
