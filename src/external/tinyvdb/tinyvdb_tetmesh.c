@@ -104,17 +104,27 @@ typedef struct {
   int32_t index;
 } tet_cut_slot;
 typedef struct {
+  uint64_t a, b; /* lattice vertex (a == b), or sorted cut edge */
+} tet_vertex_key;
+typedef struct {
   const tet_lattice *L;
   const float *value;
   const double *pos; /* 3 per lattice vertex (warped) */
   float iso;
   int32_t *vertex_out; /* per lattice vertex, -1 unused */
+  /* A z-slab builder stores only its corner and center map ranges. */
+  int compact_vertex_out;
+  size_t corner_map_base, corner_map_count, center_map_base, center_map_count;
+  int collect_keys;
+  tet_vertex_key *keys;
+  size_t key_capacity;
   tet_cut_slot *cuts;
   size_t cut_capacity, cut_count;
   double *positions; /* 3 per output vertex */
   size_t vertex_count, vertex_capacity;
   int32_t *tets;
   size_t tet_count, tet_capacity, max_tets;
+  atomic_size_t *shared_tet_count; /* optional aggregate budget for slab builders */
   double min_volume;
   tvdb_error_t *err;
   tvdb_status_t st;
@@ -139,21 +149,47 @@ static int tet_grow(void **ptr, size_t *capacity, size_t need, size_t elem) {
   *capacity = n;
   return 1;
 }
-static int32_t tet_add_vertex(tet_builder *B, const double p[3]) {
+static int32_t tet_add_vertex(tet_builder *B, const double p[3], uint64_t a,
+                              uint64_t b) {
   if (B->vertex_count >= (size_t)INT32_MAX ||
       !tet_grow((void **)&B->positions, &B->vertex_capacity, B->vertex_count + 1,
-                3 * sizeof(double))) {
+                3 * sizeof(double)) ||
+      (B->collect_keys &&
+       !tet_grow((void **)&B->keys, &B->key_capacity, B->vertex_count + 1,
+                 sizeof(tet_vertex_key)))) {
     B->st = tet_error(B->err, TVDB_ERROR_OUT_OF_MEMORY, "tet vertex allocation failed");
     return -1;
   }
   memcpy(B->positions + 3 * B->vertex_count, p, 3 * sizeof(double));
+  if (B->collect_keys) B->keys[B->vertex_count] = (tet_vertex_key){a, b};
   return (int32_t)B->vertex_count++;
 }
+static int32_t *tet_vertex_map_slot(tet_builder *B, size_t id) {
+  if (!B->compact_vertex_out) return B->vertex_out + id;
+  if (id < B->L->corners) {
+    if (id < B->corner_map_base ||
+        id - B->corner_map_base >= B->corner_map_count)
+      return NULL;
+    return B->vertex_out + (id - B->corner_map_base);
+  }
+  if (id < B->center_map_base) return NULL;
+  const size_t center_offset = id - B->center_map_base;
+  if (center_offset >= B->center_map_count) return NULL;
+  const size_t slot = B->corner_map_count + center_offset;
+  return B->vertex_out + slot;
+}
 static tet_point tet_lattice_point(tet_builder *B, size_t id) {
-  tet_point q = {id, id, B->vertex_out[id]};
+  tet_point q = {id, id, -1};
+  int32_t *slot = tet_vertex_map_slot(B, id);
+  if (!slot) {
+    B->st = tet_error(B->err, TVDB_ERROR_INVALID_DATA,
+                      "tet slab lattice index out of range");
+    return q;
+  }
+  q.index = *slot;
   if (q.index < 0) {
-    q.index = tet_add_vertex(B, B->pos + 3 * id);
-    B->vertex_out[id] = q.index;
+    q.index = tet_add_vertex(B, B->pos + 3 * id, (uint64_t)id, (uint64_t)id);
+    *slot = q.index;
   }
   return q;
 }
@@ -201,7 +237,7 @@ static tet_point tet_cut_point(tet_builder *B, size_t u, size_t w) {
   double p[3];
   for (int k = 0; k < 3; ++k)
     p[k] = B->pos[3 * a + k] + t * (B->pos[3 * b + k] - B->pos[3 * a + k]);
-  q.index = tet_add_vertex(B, p);
+  q.index = tet_add_vertex(B, p, a, b);
   if (q.index < 0) return q;
   B->cuts[s].a = a;
   B->cuts[s].b = b;
@@ -258,7 +294,19 @@ static void tet_emit(tet_builder *B, tet_point p0, tet_point p1, tet_point p2,
     v[2] = v[3];
     v[3] = t;
   }
-  if (B->tet_count >= B->max_tets) {
+  if (B->shared_tet_count) {
+    size_t total = atomic_load_explicit(B->shared_tet_count, memory_order_relaxed);
+    for (;;) {
+      if (total >= B->max_tets) {
+        B->st = tet_error(B->err, TVDB_ERROR_INVALID_ARGUMENT, "tet budget exceeded");
+        return;
+      }
+      if (atomic_compare_exchange_weak_explicit(B->shared_tet_count, &total, total + 1,
+                                                memory_order_relaxed,
+                                                memory_order_relaxed))
+        break;
+    }
+  } else if (B->tet_count >= B->max_tets) {
     B->st = tet_error(B->err, TVDB_ERROR_INVALID_ARGUMENT, "tet budget exceeded");
     return;
   }
@@ -697,6 +745,209 @@ done:
   return st;
 }
 
+typedef struct {
+  tet_builder builder;
+  tvdb_status_t status;
+  tvdb_error_t err;
+} tet_stuff_part;
+typedef struct {
+  const tet_lattice *L;
+  const float *value;
+  const double *pos;
+  float iso;
+  size_t max_tets, part_count;
+  double min_volume;
+  tvdb_sdf_sample_fn sample;
+  void *user;
+  const tet_sample_scope *scope;
+  atomic_size_t total_tets;
+  tet_stuff_part *parts;
+} tet_stuff_job;
+
+static void tet_stuff_cells(tet_builder *B, int k_begin, int k_end,
+                            tvdb_sdf_sample_fn sample, void *user) {
+  const tet_lattice *L = B->L;
+  const size_t corner_stride[3] = {1, (size_t)L->nx + 1,
+                                  ((size_t)L->nx + 1) * ((size_t)L->ny + 1)};
+  const size_t center_stride[3] = {1, (size_t)L->nx, (size_t)L->nx * (size_t)L->ny};
+  const int cell_dims[3] = {L->nx, L->ny, L->nz};
+  for (int k = k_begin; k < k_end && B->st == TVDB_OK; ++k)
+    for (int j = 0; j < L->ny && B->st == TVDB_OK; ++j)
+      for (int i = 0; i < L->nx && B->st == TVDB_OK; ++i) {
+        const int c[3] = {i, j, k};
+        const size_t center = L->corners + (size_t)i + center_stride[1] * (size_t)j +
+                              center_stride[2] * (size_t)k;
+        const size_t corner_base = (size_t)i + corner_stride[1] * (size_t)j +
+                                   corner_stride[2] * (size_t)k;
+        for (int a = 0; a < 3 && B->st == TVDB_OK; ++a) {
+          if (c[a] + 1 >= cell_dims[a]) continue;
+          const size_t other = center + center_stride[a];
+          const int b = (a + 1) % 3, cc = (a + 2) % 3;
+          static const int ring[4][2] = {{1, 1}, {-1, 1}, {-1, -1}, {1, -1}};
+          size_t r[4];
+          for (int q = 0; q < 4; ++q) {
+            r[q] = corner_base + corner_stride[a] +
+                   (ring[q][0] > 0 ? corner_stride[b] : 0) +
+                   (ring[q][1] > 0 ? corner_stride[cc] : 0);
+          }
+          /* Most of the lattice is outside: skip cells whose six vertices
+           * are all positive, since none of their tetrahedra emit. */
+          if (B->value[center] - B->iso > 0 && B->value[other] - B->iso > 0 &&
+              B->value[r[0]] - B->iso > 0 && B->value[r[1]] - B->iso > 0 &&
+              B->value[r[2]] - B->iso > 0 && B->value[r[3]] - B->iso > 0)
+            continue;
+          for (int q = 0; q < 4 && B->st == TVDB_OK; ++q) {
+            const size_t ids[4] = {center, other, r[q], r[(q + 1) % 4]};
+            tet_stencil(B, ids, sample, user);
+          }
+        }
+      }
+}
+
+static void tet_stuff_part_range(size_t begin, size_t end, void *user) {
+  tet_stuff_job *job = (tet_stuff_job *)user;
+  const tet_lattice *L = job->L;
+  for (size_t index = begin; index < end; ++index) {
+    tet_stuff_part *part = &job->parts[index];
+    tet_builder *B = &part->builder;
+    const int k0 = (int)((size_t)L->nz * index / job->part_count);
+    const int k1 = (int)((size_t)L->nz * (index + 1) / job->part_count);
+    const int center_k1 = k1 < L->nz ? k1 + 1 : k1;
+    size_t corner_plane, center_plane, corner_count, center_count, map_count, map_bytes;
+    if (!tvdb_size_mul((size_t)L->nx + 1, (size_t)L->ny + 1, &corner_plane) ||
+        !tvdb_size_mul((size_t)L->nx, (size_t)L->ny, &center_plane) ||
+        !tvdb_size_mul((size_t)(k1 - k0) + 1, corner_plane, &corner_count) ||
+        !tvdb_size_mul((size_t)(center_k1 - k0), center_plane, &center_count) ||
+        corner_count > SIZE_MAX - center_count) {
+      part->status = tet_error(&part->err, TVDB_ERROR_INVALID_ARGUMENT,
+                               "tet slab map size overflow");
+      return;
+    }
+    map_count = corner_count + center_count;
+    if (!tvdb_size_mul(map_count, sizeof(int32_t), &map_bytes)) {
+      part->status = tet_error(&part->err, TVDB_ERROR_INVALID_ARGUMENT,
+                               "tet slab map size overflow");
+      return;
+    }
+    B->L = L;
+    B->value = job->value;
+    B->pos = job->pos;
+    B->iso = job->iso;
+    B->vertex_out = (int32_t *)malloc(map_bytes ? map_bytes : 1);
+    B->compact_vertex_out = 1;
+    B->corner_map_base = (size_t)k0 * corner_plane;
+    B->corner_map_count = corner_count;
+    B->center_map_base = L->corners + (size_t)k0 * center_plane;
+    B->center_map_count = center_count;
+    B->collect_keys = 1;
+    B->max_tets = job->max_tets;
+    B->shared_tet_count = &job->total_tets;
+    B->min_volume = job->min_volume;
+    B->err = &part->err;
+    B->st = TVDB_OK;
+    if (!B->vertex_out) {
+      part->status = tet_error(&part->err, TVDB_ERROR_OUT_OF_MEMORY,
+                               "tet slab map allocation failed");
+      return;
+    }
+    for (size_t i = 0; i < map_count; ++i) B->vertex_out[i] = -1;
+    void *stencil_user = job->user;
+    int scoped = 0;
+    if (job->scope) {
+      if (!(stencil_user = job->scope->begin(job->user))) {
+        B->st = tet_error(B->err, TVDB_ERROR_OUT_OF_MEMORY,
+                          "stuffing sampler allocation failed");
+      } else {
+        scoped = 1;
+      }
+    }
+    if (B->st == TVDB_OK)
+      tet_stuff_cells(B, k0, k1, job->sample, stencil_user);
+    if (scoped) job->scope->end(job->user, stencil_user);
+    part->status = B->st;
+  }
+}
+
+static void tet_stuff_parts_free(tet_stuff_part *parts, size_t count) {
+  if (!parts) return;
+  for (size_t i = 0; i < count; ++i) {
+    tet_builder *B = &parts[i].builder;
+    free(B->vertex_out);
+    free(B->cuts);
+    free(B->positions);
+    free(B->keys);
+    free(B->tets);
+  }
+  free(parts);
+}
+
+static tvdb_status_t tet_stuff_parts_merge(tet_builder *B,
+                                           tet_stuff_part *parts,
+                                           size_t count,
+                                           tvdb_error_t *err) {
+  for (size_t p = 0; p < count; ++p) {
+    tet_builder *src = &parts[p].builder;
+    size_t remap_bytes;
+    if (!tvdb_size_mul(src->vertex_count, sizeof(int32_t), &remap_bytes))
+      return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT, "tet remap size overflow");
+    int32_t *remap = src->vertex_count ? (int32_t *)malloc(remap_bytes) : NULL;
+    if (src->vertex_count && !remap)
+      return tet_error(err, TVDB_ERROR_OUT_OF_MEMORY, "tet remap allocation failed");
+    for (size_t i = 0; i < src->vertex_count; ++i) {
+      const tet_vertex_key key = src->keys[i];
+      tet_point point;
+      if (key.a > (uint64_t)SIZE_MAX || key.b > (uint64_t)SIZE_MAX) {
+        free(remap);
+        return tet_error(err, TVDB_ERROR_INVALID_DATA, "tet remap key out of range");
+      }
+      if (key.a == key.b)
+        point = tet_lattice_point(B, (size_t)key.a);
+      else
+        point = tet_cut_point(B, (size_t)key.a, (size_t)key.b);
+      if (point.index < 0) {
+        const tvdb_status_t st = B->st;
+        free(remap);
+        return tet_error(err, st, "tet merge failed");
+      }
+      remap[i] = point.index;
+    }
+    if (B->tet_count > B->max_tets ||
+        src->tet_count > B->max_tets - B->tet_count) {
+      free(remap);
+      return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT, "tet budget exceeded");
+    }
+    if (!tet_grow((void **)&B->tets, &B->tet_capacity,
+                  B->tet_count + src->tet_count, 4 * sizeof(int32_t))) {
+      free(remap);
+      return tet_error(err, TVDB_ERROR_OUT_OF_MEMORY, "tet allocation failed");
+    }
+    for (size_t t = 0; t < src->tet_count; ++t) {
+      int32_t *dst = B->tets + 4 * (B->tet_count + t);
+      for (size_t v = 0; v < 4; ++v) {
+        const int32_t local = src->tets[4 * t + v];
+        if (local < 0 || (size_t)local >= src->vertex_count) {
+          free(remap);
+          return tet_error(err, TVDB_ERROR_INVALID_DATA, "tet local index out of range");
+        }
+        dst[v] = remap[(size_t)local];
+      }
+    }
+    B->tet_count += src->tet_count;
+    free(remap);
+    free(src->vertex_out);
+    src->vertex_out = NULL;
+    free(src->cuts);
+    src->cuts = NULL;
+    free(src->positions);
+    src->positions = NULL;
+    free(src->keys);
+    src->keys = NULL;
+    free(src->tets);
+    src->tets = NULL;
+  }
+  return TVDB_OK;
+}
+
 static tvdb_status_t tet_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
                                          const tet_sample_scope *scope,
                                          const double bbox_min[3],
@@ -747,6 +998,8 @@ static tvdb_status_t tet_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
 
   tvdb_status_t st = TVDB_OK;
   tvdb_thread_pool_t *owned = NULL;
+  tet_stuff_part *parts = NULL;
+  size_t part_count = 0;
   float *value = (float *)malloc(value_bytes);
   double *pos = (double *)malloc(position_bytes);
   int32_t *vertex_out = (int32_t *)malloc(vertex_out_bytes);
@@ -878,58 +1131,59 @@ static tvdb_status_t tet_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
   B.min_volume = 6.0 * 1e-12 * L.h * L.h * L.h;
   B.err = err;
   B.st = TVDB_OK;
-  /* The stuffing loop is serial, so one scope state covers its rare interior
-   * probes (all-surface tetrahedra). */
-  void *stencil_user = user;
-  int stencil_scoped = 0;
-  if (scope) {
-    if (!(stencil_user = scope->begin(user))) {
-      st = tet_error(err, TVDB_ERROR_OUT_OF_MEMORY,
-                     "stuffing sampler allocation failed");
+  size_t workers = tvdb_thread_pool_size(pool);
+  if (workers > 8) workers = 8;
+  if (workers > (size_t)L.nz) workers = (size_t)L.nz;
+  if (workers > 1) {
+    size_t part_bytes;
+    if (!tvdb_size_mul(workers, sizeof(*parts), &part_bytes)) {
+      st = tet_error(err, TVDB_ERROR_INVALID_ARGUMENT, "tet slab table size overflow");
       goto done;
     }
-    stencil_scoped = 1;
-  }
-  const size_t corner_stride[3] = {1, (size_t)L.nx + 1,
-                                  ((size_t)L.nx + 1) * ((size_t)L.ny + 1)};
-  const size_t center_stride[3] = {1, (size_t)L.nx, (size_t)L.nx * (size_t)L.ny};
-  const int cell_dims[3] = {L.nx, L.ny, L.nz};
-  for (int k = 0; k < L.nz && B.st == TVDB_OK; ++k)
-    for (int j = 0; j < L.ny && B.st == TVDB_OK; ++j)
-      for (int i = 0; i < L.nx && B.st == TVDB_OK; ++i) {
-        const int c[3] = {i, j, k};
-        const size_t center = L.corners + (size_t)i + center_stride[1] * (size_t)j +
-                              center_stride[2] * (size_t)k;
-        const size_t corner_base = (size_t)i + corner_stride[1] * (size_t)j +
-                                   corner_stride[2] * (size_t)k;
-        for (int a = 0; a < 3 && B.st == TVDB_OK; ++a) {
-          if (c[a] + 1 >= cell_dims[a]) continue;
-          const size_t other = center + center_stride[a];
-          const int b = (a + 1) % 3, cc = (a + 2) % 3;
-          static const int ring[4][2] = {{1, 1}, {-1, 1}, {-1, -1}, {1, -1}};
-          size_t r[4];
-          for (int q = 0; q < 4; ++q) {
-            r[q] = corner_base + corner_stride[a] +
-                   (ring[q][0] > 0 ? corner_stride[b] : 0) +
-                   (ring[q][1] > 0 ? corner_stride[cc] : 0);
-          }
-          /* Most of the lattice is outside: when all six vertices are, none
-           * of the four tetrahedra emits anything (tet_stencil's nm == 0,
-           * nz == 0 case), so skip them. */
-          if (B.value[center] - B.iso > 0 && B.value[other] - B.iso > 0 &&
-              r[0] != SIZE_MAX && r[1] != SIZE_MAX && r[2] != SIZE_MAX && r[3] != SIZE_MAX &&
-              B.value[r[0]] - B.iso > 0 && B.value[r[1]] - B.iso > 0 &&
-              B.value[r[2]] - B.iso > 0 && B.value[r[3]] - B.iso > 0)
-            continue;
-          for (int q = 0; q < 4 && B.st == TVDB_OK; ++q) {
-            const size_t ids[4] = {center, other, r[q], r[(q + 1) % 4]};
-            if (ids[2] == SIZE_MAX || ids[3] == SIZE_MAX) continue;
-            tet_stencil(&B, ids, sample, stencil_user);
-          }
-        }
+    parts = (tet_stuff_part *)calloc(1, part_bytes);
+    if (!parts) {
+      st = tet_error(err, TVDB_ERROR_OUT_OF_MEMORY, "tet slab table allocation failed");
+      goto done;
+    }
+    part_count = workers;
+    tet_stuff_job job = {.L = &L,
+                         .value = value,
+                         .pos = pos,
+                         .iso = options->isovalue,
+                         .max_tets = B.max_tets,
+                         .part_count = part_count,
+                         .min_volume = B.min_volume,
+                         .sample = sample,
+                         .user = user,
+                         .scope = scope,
+                         .parts = parts};
+    atomic_init(&job.total_tets, 0);
+    st = tvdb_thread_pool_for(pool, 0, part_count, 1, tet_stuff_part_range,
+                              &job, err);
+    if (st != TVDB_OK) goto done;
+    for (size_t i = 0; i < part_count; ++i) {
+      if (parts[i].status != TVDB_OK) {
+        st = tet_error(err, parts[i].status, parts[i].err.message);
+        goto done;
       }
-  if (stencil_scoped) scope->end(user, stencil_user);
-  st = B.st;
+    }
+    st = tet_stuff_parts_merge(&B, parts, part_count, err);
+  } else {
+    /* One scope state covers the serial loop's rare interior probes. */
+    void *stencil_user = user;
+    int stencil_scoped = 0;
+    if (scope) {
+      if (!(stencil_user = scope->begin(user))) {
+        st = tet_error(err, TVDB_ERROR_OUT_OF_MEMORY,
+                       "stuffing sampler allocation failed");
+        goto done;
+      }
+      stencil_scoped = 1;
+    }
+    tet_stuff_cells(&B, 0, L.nz, sample, stencil_user);
+    if (stencil_scoped) scope->end(user, stencil_user);
+    st = B.st;
+  }
   if (st != TVDB_OK) goto done;
   {
     tvdb_tet_mesh result;
@@ -961,11 +1215,13 @@ static tvdb_status_t tet_sdf_to_tet_mesh(tvdb_sdf_sample_fn sample, void *user,
   }
 done:
   tvdb_thread_pool_destroy(owned);
+  tet_stuff_parts_free(parts, part_count);
   free(value);
   free(pos);
   free(vertex_out);
   free(B.cuts);
   free(B.positions);
+  free(B.keys);
   free(B.tets);
   return st;
 }

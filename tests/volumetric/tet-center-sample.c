@@ -18,19 +18,29 @@ static int sample(const double p[3], float *value, void *user) {
 }
 int main(void) {
   const double lo[3] = {0, 0, 0}, hi[3] = {1, 1, 1};
+  const size_t worker_counts[] = {1, 4};
   tvdb_stuffing_options_t options = {0};
-  tvdb_tet_mesh mesh = {0}; tvdb_error_t error;
+  tvdb_error_t error;
   options.spacing = 1;
-  mesh.positions = (float *)malloc(3 * sizeof(float));
-  CHECK(mesh.positions);
-  mesh.positions[0] = 123; mesh.vertex_count = 1;
-  float *original = mesh.positions;
-  for (int mode = 0; mode < 2; ++mode) {
-    CHECK(tvdb_sdf_to_tet_mesh(sample, &mode, lo, hi, &options, NULL, &mesh, &error) == TVDB_ERROR_INVALID_DATA);
-    CHECK(error.status == TVDB_ERROR_INVALID_DATA);
-    CHECK(mesh.positions == original && mesh.vertex_count == 1 && mesh.positions[0] == 123);
+  for (size_t w = 0; w < sizeof(worker_counts) / sizeof(worker_counts[0]); ++w) {
+    tvdb_thread_pool_t *pool = NULL;
+    CHECK(tvdb_thread_pool_create(worker_counts[w], &pool, &error) == TVDB_OK);
+    for (int mode = 0; mode < 2; ++mode) {
+      tvdb_tet_mesh mesh = {0};
+      mesh.positions = (float *)malloc(3 * sizeof(float));
+      CHECK(mesh.positions);
+      mesh.positions[0] = 123;
+      mesh.vertex_count = 1;
+      float *original = mesh.positions;
+      CHECK(tvdb_sdf_to_tet_mesh(sample, &mode, lo, hi, &options, pool, &mesh,
+                                 &error) == TVDB_ERROR_INVALID_DATA);
+      CHECK(error.status == TVDB_ERROR_INVALID_DATA);
+      CHECK(mesh.positions == original && mesh.vertex_count == 1 &&
+            mesh.positions[0] == 123);
+      tvdb_tet_mesh_free(&mesh);
+    }
+    tvdb_thread_pool_destroy(pool);
   }
-  tvdb_tet_mesh_free(&mesh);
   puts("tetrahedron center sample failure: ok");
   return 0;
 }

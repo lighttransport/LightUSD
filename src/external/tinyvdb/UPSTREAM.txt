@@ -19,9 +19,12 @@ Local:    tinyvdb_io.c is LightUSD's wrapper, not upstream's parser. tinyvdb_io.
           adapts includes to ../miniz.h, ../../lz4/lz4.h and ../zstd.h.
           tinyvdb_sparse_tools.c also carries LightUSD commit dad7e2b7's CPU
           mesher optimization: detect shell isovalue crossings while gathering
-          the shell, avoiding a redundant full-box scan.
+          the shell, avoiding a redundant full-box scan. tinyvdb_tetmesh.c
+          parallelizes stuffing over z slabs for pools with multiple workers;
+          each slab uses compact local maps and the final merge follows the
+          original z/y/x traversal, preserving byte-identical output.
 Update:   the vendored API sources match upstream main at 9217101, apart from
-          the local I/O adaptations and CPU optimization above. When syncing
-          later revisions, preserve those local changes and rebuild
+          the local I/O adaptations and CPU changes above. When syncing later
+          revisions, preserve those local changes and rebuild
           cmake/lightusd-tinyvdb.cmake's source list if the dependency closure
           changes (link a probe calling the entry points above).

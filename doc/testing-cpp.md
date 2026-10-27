@@ -1763,6 +1763,18 @@ run representative fixtures to cover the change. Since the serialization is
 native binary, compare builds on the same host with the same ABI. This does
 not independently check internal scan-budget counts.
 
+`volumetric-tet-worker-identity` checks that the uniform stuffing output stays
+byte-identical with 1, 2, 4 and 8 workers for an analytic sphere. When
+`TINYVDBIO_DATA_DIR` contains `icosahedron.vdb`, it repeats the comparison
+through the real level-set sampler, including its per-worker accessor state.
+Run it with:
+
+```sh
+TINYVDBIO_DATA_DIR=/path/to/tinyvdb/data \
+  ctest --test-dir build_ninja/sdf-legacy \
+  -R '^volumetric-tet-worker-identity$' --output-on-failure
+```
+
 For experimental CPU graded stuffing, compare an analytic sphere, box and
 torus using two builds on the same host:
 
@@ -1836,10 +1848,18 @@ nice valgrind --tool=callgrind --callgrind-out-file=/tmp/surface.callgrind \
 This includes file loading and one-worker surface construction; compare
 instruction counts rather than inferring CPU speed from a loaded host.
 
-For the corresponding one-worker tetrahedral stuffing workload, use
-`tests/volumetric/profile-tet.c` with the same compiler and libraries, then
-pass the VDB path and a spacing to the resulting executable under Callgrind.
+For the corresponding tetrahedral stuffing workload, build the `profile-tet`
+target and pass the VDB path, spacing and optional worker count (default 1):
+
+```sh
+nice cmake --build build_ninja/sdf-legacy --target profile-tet -j2
+nice valgrind --tool=callgrind --callgrind-out-file=/tmp/tet.callgrind \
+  build_ninja/sdf-legacy/profile-tet /path/to/level-set.vdb 1.0 8
+```
+
 This includes file loading, lattice sampling, stuffing and boundary assembly.
+The worker argument makes the parallel stuffing path reproducible; use wall
+clock comparisons only on an idle host.
 
 To profile CPU mesh-to-level-set construction with a reproducible closed mesh,
 build `bench_volumetric` from tinyvdb's `tests/bench_volumetric.c` against its
