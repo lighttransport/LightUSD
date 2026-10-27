@@ -189,10 +189,18 @@ int main(void) {
     CHECK(tvdb_tet_mesh_quality(&m,&q,&err)==TVDB_OK && !q.inverted &&
           fabs(q.volume-4.1887902047863905)<0.5);
     float *saved = m.positions; size_t count = m.tet_count;
+    options.max_vertices = 10;
+    CHECK(tvdb_sdf_to_tet_mesh_graded(sphere,NULL,min_box,max_box,&options,&m,&err)!=TVDB_OK);
+    CHECK(m.positions == saved && m.tet_count == count);
+    options.max_vertices = 0;
     options.max_background_tets = 10;
     CHECK(tvdb_sdf_to_tet_mesh_graded(sphere,NULL,min_box,max_box,&options,&m,&err)!=TVDB_OK);
     CHECK(m.positions == saved && m.tet_count == count);
-    options.max_background_tets = 0; options.grading = 0;
+    options.max_background_tets = 0;
+    options.max_output_tets = 1;
+    CHECK(tvdb_sdf_to_tet_mesh_graded(sphere,NULL,min_box,max_box,&options,&m,&err)!=TVDB_OK);
+    CHECK(m.positions == saved && m.tet_count == count);
+    options.max_output_tets = 0; options.grading = 0;
     CHECK(tvdb_sdf_to_tet_mesh_graded(sphere,NULL,min_box,max_box,&options,&m,&err)==TVDB_ERROR_INVALID_ARGUMENT);
     CHECK(m.positions == saved && m.tet_count == count);
     options.grading = 0.8;
