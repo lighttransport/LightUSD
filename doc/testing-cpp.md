@@ -1701,8 +1701,9 @@ rotated and scaled field transforms, covers batches above 256 points, and
 checks rejection of a singular field transform. When the optional corpus
 contains `utahteapot.vdb`, it checks that sparse world sampling still reaches
 interior and exterior values after dense extraction exceeds its voxel budget.
-It
-needs the out-of-tree tinyvdbio reference corpus (`TINYVDBIO_DATA_DIR` or
+It checks sample count overflow, and has been run as a 32-bit Linux executable
+to verify that the 8 GiB request cap does not wrap on a 32-bit `size_t`.
+It needs the out-of-tree tinyvdbio reference corpus (`TINYVDBIO_DATA_DIR` or
 argv[1], expected under `reference/`) and prints SKIP without it, like the
 `usdvol-vdb-corpus` C++ test.
 The legacy `usdvol_vdb_corpus_test` also checks that a dense grid rejected by

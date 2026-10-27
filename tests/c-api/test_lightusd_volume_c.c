@@ -172,6 +172,9 @@ int main(int argc, char** argv) {
     }
     assert(nearest.values[0] >= lo && nearest.values[0] <= hi);
     assert(trilinear.values[0] >= lo - 1e-5f && trilinear.values[0] <= hi + 1e-5f);
+    /* Reject impossible counts before touching the supplied point buffer. */
+    assert(lightusd_render_volume_field_sample(scene, 0, density, point, UINT64_MAX, 0,
+                                               &nearest) == LIGHTUSD_ERR_OVERFLOW);
   }
 
   /* Vec3 field: three components, vec3f NanoVDB grid, three values per point. */

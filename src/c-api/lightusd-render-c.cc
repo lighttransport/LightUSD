@@ -3253,7 +3253,8 @@ lightusd_status lightusd_render_volume_field_sample(const lightusd_render_scene*
       !safe::mul(out_bytes, sizeof(float), &out_bytes) ||
       !safe::mul(size_t(count), size_t(3) * sizeof(double), &in_bytes))
     return Fail(LIGHTUSD_ERR_OVERFLOW, "sample count overflow");
-  if (out_bytes > (size_t(8) << 30) || in_bytes > (size_t(8) << 30))
+  const uint64_t max_sample_bytes = uint64_t(8) << 30;
+  if (uint64_t(out_bytes) > max_sample_bytes || uint64_t(in_bytes) > max_sample_bytes)
     return Fail(LIGHTUSD_ERR_RESOURCE_LIMIT, "sample request exceeds 8 GiB");
   std::string err;
   int components = 1;
