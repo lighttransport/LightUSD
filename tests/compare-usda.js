@@ -2293,7 +2293,7 @@ function compareSingleFile(inputFile, options) {
     content2: null
   };
 
-  // Filename-based XFAIL for .usdc fixtures that can't carry an inline
+  // Filename-based XFAIL hint for .usdc fixtures that can't carry an inline
   // marker. Keyed on basename so it's path-independent. Mirrors the
   // `# XFAIL:` comment used by .usda fixtures.
   const usdcXfails = {
@@ -2302,25 +2302,23 @@ function compareSingleFile(inputFile, options) {
       '(fixed in 24.x per OpenUSD#2560)',
   };
   const base = require('path').basename(inputFile);
-  if (usdcXfails[base]) {
-    result.status = 'xfail';
-    result.error = usdcXfails[base];
-    return result;
-  }
 
-  // Check for XFAIL/XDIFF marker near the top of USDA fixtures. XFAIL skips
-  // comparison because one tool is expected not to parse the file. XDIFF still
-  // compares both outputs, but classifies non-empty diffs as expected.
+  // XFAIL/XDIFF markers near the top of USDA fixtures, plus the .usdc table
+  // above. XFAIL is a *hint*, not a skip: the fixture is still compared, and
+  // only reported as expected-failure when the OpenUSD side really cannot
+  // parse it. pxr fixed most of these (one-line prim bodies, UTF-8 asset
+  // paths), so against a current usdcat the same fixtures give real coverage
+  // instead of silently dropping out. XDIFF still compares both outputs but
+  // classifies non-empty diffs as expected.
+  let xfailTag = usdcXfails[base] || null;
   let xdiffTag = null;
   try {
     const head = fs.readFileSync(inputFile, 'utf-8').split('\n').slice(0, 32);
     for (const line of head) {
       const trimmed = line.trim();
       if (trimmed.startsWith('# XFAIL:')) {
-        const tag = trimmed.slice('# XFAIL:'.length).trim();
-        result.status = 'xfail';
-        result.error = tag;
-        return result;
+        xfailTag = trimmed.slice('# XFAIL:'.length).trim();
+        break;
       }
       if (trimmed.startsWith('# XDIFF:')) {
         xdiffTag = trimmed.slice('# XDIFF:'.length).trim();
@@ -2356,8 +2354,14 @@ function compareSingleFile(inputFile, options) {
     try {
       content2 = runUsdTool(options.usdcat, inputFile);
     } catch (e) {
-      result.status = 'error';
       const timeoutMsg = e.code === 'ETIMEDOUT' ? `timeout (${options.timeout / 1000}s)` : e.message;
+      if (xfailTag && e.code !== 'ETIMEDOUT') {
+        // The marker exists because OpenUSD could not parse this fixture.
+        result.status = 'xfail';
+        result.error = xfailTag;
+        return result;
+      }
+      result.status = 'error';
       result.error = `usdcat failed: ${timeoutMsg}`;
       return result;
     }
@@ -2394,6 +2398,11 @@ function compareSingleFile(inputFile, options) {
     try {
       usda2 = parseUsda(content2);
     } catch (e) {
+      if (xfailTag) {
+        result.status = 'xfail';
+        result.error = xfailTag;
+        return result;
+      }
       result.status = 'error';
       result.error = `Failed to parse usdcat output: ${e.message}`;
       // Show context in verbose mode
