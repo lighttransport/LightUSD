@@ -1,5 +1,5 @@
 Upstream: https://github.com/syoyo/tinyvdbio
-Commit:   6e5a188 (branch volumetric-sdf; 1020501 volume access, 5615965 half fix,
+Commit:   33a9532 (branch volumetric-sdf; 1020501 volume access, 5615965 half fix,
           1286600 caller-buffer dense volumes, 82d5667 O(1) tree child rank,
           762a777 tree accessor + boxed mesher, de1afb7 per-range stuffing
           sampler accessor, ee571c1 cached sparse CSG, b86ff79 threaded

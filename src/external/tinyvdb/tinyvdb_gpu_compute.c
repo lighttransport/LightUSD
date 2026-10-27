@@ -865,6 +865,14 @@ static tvdb_status_t tvdb_vol_tree_init(tvdb_gpu_compute_t* ctx, const tvdb_grid
                                         tvdb_vol_tree* t, tvdb_error_t* err) {
   memset(t, 0, sizeof(*t));
   t->ctx = ctx;
+  /* The sampler's accessor reads 4-byte float tables (NanoVDB FloatGrid); other
+   * value types would decode to garbage, so refuse them as the flattened
+   * sampler's float-only tree index did. */
+  if (grid->tree.layout.levels[0].value_type != TVDB_VALUE_FLOAT) {
+    tvdb_compute_error(err, TVDB_ERROR_UNIMPLEMENTED,
+                       "GPU level-set sampling supports float grids only");
+    return TVDB_ERROR_UNIMPLEMENTED;
+  }
   double inverse[3][4];
   if (!tvdb_vol_inverse(grid, inverse)) {
     tvdb_compute_error(err, TVDB_ERROR_UNSUPPORTED_TRANSFORM,
