@@ -133,6 +133,49 @@ int main() {
   lightusd_string_destroy(text);
   lightusd_stage_destroy(stage);
 
+  // The importer can approximate reduced flexcomp DOFs and skip interpolated
+  // raw flexes, but preserve mode must retain the original non-executable XML.
+  const char* reduced_flexcomp =
+      "<mujoco><worldbody><flexcomp name='radial' type='grid' dim='2' "
+      "count='2 2 1' spacing='.1 .1 .1' dof='radial'/></worldbody></mujoco>";
+  lightusd_import_options_init(&options);
+  options.format = LIGHTUSD_IMPORT_MJCF;
+  options.settings_json = "{\"profile\":\"newton\",\"unsupported_policy\":\"preserve\"}";
+  assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(reduced_flexcomp),
+      std::strlen(reduced_flexcomp), "memory:reduced-flexcomp.xml", &options, &stage) ==
+      LIGHTUSD_OK);
+  report = Report(stage);
+  assert(report["features"][size_t(0)]["disposition"].get<std::string>() == "preserved");
+  assert(lightusd_stage_export_usda(stage, &text) == LIGHTUSD_OK);
+  auto preserved = lightusd_string_view(text);
+  const std::string reduced_usda(preserved.data, preserved.len);
+  assert(reduced_usda.find("lightusdImportUnsupported") != std::string::npos);
+  assert(reduced_usda.find("dof") != std::string::npos &&
+         reduced_usda.find("radial") != std::string::npos);
+  lightusd_string_destroy(text);
+  lightusd_stage_destroy(stage);
+
+  const char* interpolated_flex = R"(<mujoco><worldbody>
+    <body name="v0"/><body name="v1"/>
+  </worldbody><deformable><flex name="interpolated" body="v0 v1"
+    vertex="0 0 0 1 0 0" element="0 1" dim="1" node="0 1" dof="0 1"/>
+  </deformable></mujoco>)";
+  assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(interpolated_flex),
+      std::strlen(interpolated_flex), "memory:interpolated-flex.xml", &options, &stage) ==
+      LIGHTUSD_OK);
+  report = Report(stage);
+  assert(report["features"][size_t(0)]["disposition"].get<std::string>() == "preserved");
+  assert(!lightusd_prim_is_valid(
+      lightusd_stage_prim_at_path(stage, "/World/Deformables/interpolated")));
+  assert(lightusd_stage_export_usda(stage, &text) == LIGHTUSD_OK);
+  preserved = lightusd_string_view(text);
+  const std::string interpolated_usda(preserved.data, preserved.len);
+  assert(interpolated_usda.find("lightusdImportUnsupported") != std::string::npos);
+  assert(interpolated_usda.find("node") != std::string::npos &&
+         interpolated_usda.find("dof") != std::string::npos);
+  lightusd_string_destroy(text);
+  lightusd_stage_destroy(stage);
+
   // Newton profile paths in one model (also the sanitizer target): inferred
   // inertia, stacked joints, expanded actuators, sites below bodies, every
   // equality kind and physics materials; then the legacy and openusd profiles.
