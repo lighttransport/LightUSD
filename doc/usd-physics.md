@@ -1033,7 +1033,8 @@ attributes only), or `BOTH` (default — both).
 | Rigid body (passive) | `PhysicsRigidBodyAPI` | `physics:rigidBodyEnabled=false`, `physics:kinematicEnabled` |
 | Collision shape | `PhysicsCollisionAPI` | applied to mesh prims |
 | Friction / restitution | `PhysicsMaterialAPI` | `physics:staticFriction`, `physics:dynamicFriction`, `physics:restitution` |
-| Hinge / Slider / Fixed / Point / Spring constraint | `PhysicsRevolute` / `Prismatic` / `Fixed` / `Spherical` / `DistanceJoint` | `physics:axis`, limits, `physics:body0/1`, `physics:localPos0/1` |
+| Hinge / Slider / Fixed / Point constraint | `PhysicsRevolute` / `Prismatic` / `Fixed` / `SphericalJoint` | `physics:axis`, limits, `physics:body0/1`, `physics:localPos0/1` |
+| Generic spring | `PhysicsJoint` with per-axis `PhysicsDriveAPI` and `PhysicsLimitAPI` | Enabled translation and rotation drives and limits; angular limits use degrees |
 
 When the mode includes MuJoCo, collision/world/constraint prims also get
 `mjc:condim`, `mjc:friction`, `mjc:solmix`, `mjc:margin`, `mjc:option:timestep`,
@@ -1046,6 +1047,7 @@ reads several of them as deprecated aliases (see the deprecation note before
 section 1).
 
 **Limitations:** soft body and cloth are not exported; collision groups are not
-mapped; per-axis springs export only the X-axis spring/damping; MuJoCo actuators
-and tendons have no Blender equivalent (preserved only if authored directly in
-the USD).
+mapped; spring behavior is an approximation across different physics solvers,
+and MuJoCo-only mode retains the legacy X-axis scalar spring mapping. MuJoCo
+actuators and tendons have no Blender equivalent (preserved only if authored
+directly in the USD). Blender runtime roundtrip testing remains outstanding.

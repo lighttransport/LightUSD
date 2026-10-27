@@ -167,7 +167,7 @@ def _joint_type_and_attrs(rbc):
     elif rbc.type == 'POINT':
         return 'PhysicsSphericalJoint', 'Y', None, None
     elif rbc.type == 'GENERIC_SPRING':
-        return 'PhysicsDistanceJoint', None, None, None
+        return 'PhysicsJoint', None, None, None
     else:
         return 'PhysicsFixedJoint', None, None, None
 
@@ -179,6 +179,9 @@ def _export_constraint(stage, obj, mode):
         return
 
     joint_type, axis, lower, upper = _joint_type_and_attrs(rbc)
+    if rbc.type == 'GENERIC_SPRING' and mode == 'MJC':
+        # The MuJoCo-only representation remains the legacy scalar mapping.
+        joint_type = 'PhysicsDistanceJoint'
 
     # Create joint prim under /Joints/
     safe_name = obj.name.replace(".", "_")
@@ -223,6 +226,9 @@ def _export_constraint(stage, obj, mode):
         joint_prim.CreateAttribute(
             "physics:jointEnabled", Sdf.ValueTypeNames.Bool).Set(rbc.enabled)
 
+        if rbc.type == 'GENERIC_SPRING':
+            _export_generic_spring(joint_prim, rbc)
+
     if mode in ('MJC', 'BOTH'):
         joint_prim.CreateAttribute(
             "mjc:group", Sdf.ValueTypeNames.Int).Set(0)
@@ -235,6 +241,36 @@ def _export_constraint(stage, obj, mode):
             joint_prim.CreateAttribute(
                 "mjc:stiffness", Sdf.ValueTypeNames.Double
             ).Set(float(rbc.spring_stiffness_x))
+
+
+def _spring_axes():
+    """USD DOF, Blender property suffix, limit suffix, angular flag."""
+    for axis in 'xyz':
+        yield 'trans' + axis.upper(), axis, 'lin_' + axis, False
+        yield 'rot' + axis.upper(), 'ang_' + axis, 'ang_' + axis, True
+
+
+def _export_generic_spring(prim, rbc):
+    """Represent the enabled axes as D6 drives and limits.
+
+    USD angular drives use degrees; Blender's angular displacements use
+    radians. Scale coefficients accordingly. Solver behavior remains an
+    approximation, particularly for Blender's legacy spring model.
+    """
+    for dof, spring_suffix, limit_suffix, angular in _spring_axes():
+        if getattr(rbc, 'use_spring_' + spring_suffix, False):
+            drive = UsdPhysics.DriveAPI.Apply(prim, dof)
+            factor = math.pi / 180.0 if angular else 1.0
+            drive.CreateStiffnessAttr(float(getattr(rbc, 'spring_stiffness_' + spring_suffix)) * factor)
+            drive.CreateDampingAttr(float(getattr(rbc, 'spring_damping_' + spring_suffix)) * factor)
+        if getattr(rbc, 'use_limit_' + limit_suffix, False):
+            limit = UsdPhysics.LimitAPI.Apply(prim, dof)
+            lower = float(getattr(rbc, 'limit_' + limit_suffix + '_lower'))
+            upper = float(getattr(rbc, 'limit_' + limit_suffix + '_upper'))
+            if angular:
+                lower, upper = math.degrees(lower), math.degrees(upper)
+            limit.CreateLowAttr(lower)
+            limit.CreateHighAttr(upper)
 
 
 def _find_prim_path(stage, blender_name):
@@ -293,7 +329,7 @@ def _read_usd_physics(stage, mode):
         # Joint prims
         if prim_type in ('PhysicsRevoluteJoint', 'PhysicsPrismaticJoint',
                          'PhysicsSphericalJoint', 'PhysicsFixedJoint',
-                         'PhysicsDistanceJoint'):
+                         'PhysicsDistanceJoint', 'PhysicsJoint'):
             joint_data = _read_joint(prim, mode)
             result['joints'].append((prim.GetName(), joint_data))
 
@@ -357,6 +393,7 @@ def _read_joint(prim, mode):
         'upper': None,
         'enabled': True,
         'mjc': {},
+        'axes': {},
     }
 
     if mode in ('USD', 'BOTH'):
@@ -385,6 +422,23 @@ def _read_joint(prim, mode):
         je = prim.GetAttribute("physics:jointEnabled")
         if je and je.IsValid():
             data['enabled'] = je.Get()
+
+        if prim.GetTypeName() == 'PhysicsJoint':
+            for dof, _, _, angular in _spring_axes():
+                axis = {}
+                if prim.HasAPI(UsdPhysics.DriveAPI, dof):
+                    drive = UsdPhysics.DriveAPI(prim, dof)
+                    factor = 180.0 / math.pi if angular else 1.0
+                    axis['stiffness'] = drive.GetStiffnessAttr().Get() * factor
+                    axis['damping'] = drive.GetDampingAttr().Get() * factor
+                if prim.HasAPI(UsdPhysics.LimitAPI, dof):
+                    limit = UsdPhysics.LimitAPI(prim, dof)
+                    lower, upper = limit.GetLowAttr().Get(), limit.GetHighAttr().Get()
+                    if lower is not None and upper is not None:
+                        axis['lower'] = math.radians(lower) if angular else lower
+                        axis['upper'] = math.radians(upper) if angular else upper
+                if axis:
+                    data['axes'][dof] = axis
 
     if mode in ('MJC', 'BOTH'):
         for attr_name in ('mjc:group', 'mjc:damping', 'mjc:stiffness',
@@ -458,6 +512,7 @@ def _apply_physics_to_blender(result):
             'PhysicsSphericalJoint': 'POINT',
             'PhysicsFixedJoint': 'FIXED',
             'PhysicsDistanceJoint': 'GENERIC_SPRING',
+            'PhysicsJoint': 'GENERIC_SPRING' if any('stiffness' in a for a in jd['axes'].values()) else 'GENERIC',
         }
         bl_type = blender_type_map.get(jd['type'], 'FIXED')
 
@@ -467,6 +522,19 @@ def _apply_physics_to_blender(result):
         rbc = obj.rigid_body_constraint
         rbc.type = bl_type
         rbc.enabled = jd['enabled']
+
+        if jd['type'] == 'PhysicsJoint':
+            for dof, spring_suffix, limit_suffix, _ in _spring_axes():
+                axis = jd['axes'].get(dof, {})
+                if bl_type == 'GENERIC_SPRING':
+                    setattr(rbc, 'use_spring_' + spring_suffix, 'stiffness' in axis)
+                    if 'stiffness' in axis:
+                        setattr(rbc, 'spring_stiffness_' + spring_suffix, axis['stiffness'])
+                        setattr(rbc, 'spring_damping_' + spring_suffix, axis['damping'])
+                setattr(rbc, 'use_limit_' + limit_suffix, 'lower' in axis)
+                if 'lower' in axis:
+                    setattr(rbc, 'limit_' + limit_suffix + '_lower', axis['lower'])
+                    setattr(rbc, 'limit_' + limit_suffix + '_upper', axis['upper'])
 
         # Resolve body references
         if jd['body0']:
