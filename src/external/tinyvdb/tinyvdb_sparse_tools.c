@@ -1817,6 +1817,7 @@ typedef struct {
   const tvdb_mesh_sdf_t* query;
   const tvdb_winding_t* wn;
   double h;
+  float max_band;
   atomic_int bad;
 } tool_level_set_job;
 static void tool_level_set_range(size_t begin, size_t end, void* user) {
@@ -1828,6 +1829,15 @@ static void tool_level_set_range(size_t begin, size_t end, void* user) {
     if (tvdb_mesh_sdf_distance(job->query, w, &d, NULL) != TVDB_OK ||
         !isfinite(d)) {
       atomic_store_explicit(&job->bad, 1, memory_order_relaxed);
+      continue;
+    }
+    /* Band membership uses the rounded float distance below. At or beyond
+     * both widths, neither sign can retain this candidate; flood fill later
+     * determines the inactive interior. Preserve that exact float boundary. */
+    const float stored_d = (float)d;
+    if (stored_d >= job->max_band) {
+      job->distance[i] = stored_d;
+      job->winding[i] = 0.0;
       continue;
     }
     const double wn = tvdb_winding_eval(job->wn, w);
@@ -2045,7 +2055,8 @@ tvdb_status_t tvdb_mesh_to_level_set(const tvdb_triangle_mesh* mesh,
       if (st != TVDB_OK) goto done;
     }
     tool_level_set_job job = {.ijk = ijk, .distance = distance, .winding = winding,
-                              .query = query, .wn = wn, .h = h};
+                              .query = query, .wn = wn, .h = h,
+                              .max_band = fmaxf(outside, inside)};
     atomic_init(&job.bad, 0);
     if (cpu_voxels && options->evaluate) {
       for (size_t i = 0; i < total; ++i)

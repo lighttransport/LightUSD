@@ -1732,8 +1732,13 @@ callgrind_annotate --inclusive=yes --threshold=95 /tmp/vol.callgrind
 
 The fixture has 1,106 vertices and 2,208 triangles. At tinyvdb `33a9532` this
 run recorded 10.86 billion instructions for 48,458 candidates; winding-number
-evaluation accounted for 94.7% inclusive. Use representative meshes and retain
-instruction counts when comparing runs under shared CPU load. `--host-only`
+evaluation accounted for 94.7% inclusive. At `f990ab8`, skipping winding for
+candidates outside both band widths reduced the count to 5.01 billion and
+produced the same VDB bytes on that fixture. The tinyvdb mesh-level-set test
+also compares a full evaluator against the optimized path for asymmetric bands,
+open and closed meshes, both winding modes and partial evaluator fallback.
+Use representative meshes and retain instruction counts when comparing runs
+under shared CPU load. `--host-only`
 uses a synthetic evaluator, so its output is not a correctness comparison.
 
 `lusdview_incremental_scene_update_test` now builds without linking next core
