@@ -2409,6 +2409,11 @@ if(LIGHTUSD_BUILD_TESTS)
               ${PROJECT_SOURCE_DIR}
               ${CMAKE_BINARY_DIR}/tools/lusdrender
     )
+    # This smoke mixes CPU assertions with optional HIP/Vulkan requests, so
+    # exclude it from explicitly CPU-only profiles even when those backends
+    # happen to be installed on the test host.
+    set_tests_properties(tool-lusdrender-smoke PROPERTIES
+                         LABELS "lusdrender;cpu;gpu")
 
     add_test(
       NAME tool-lusdrender-materialx-cpu-graph
@@ -2560,6 +2565,13 @@ if(LIGHTUSD_BUILD_TESTS)
                 "$<TARGET_FILE:lusdrender>"
       )
       set_tests_properties(tool-lusdrender-${t} PROPERTIES SKIP_RETURN_CODE 77)
+      if(t MATCHES "gpu|^vk-ray-tiling$|^hermite-curves$|^gaussian-carrier-dispatch$")
+        set_tests_properties(tool-lusdrender-${t} PROPERTIES
+                             LABELS "lusdrender;gpu")
+      else()
+        set_tests_properties(tool-lusdrender-${t} PROPERTIES
+                             LABELS "lusdrender;cpu")
+      endif()
     endforeach()
 
     # run-material-resolver.sh takes the binary via $LUSDRENDER (its positional
