@@ -269,6 +269,33 @@ int main() {
     assert(rejected("<mujoco><worldbody><flexcomp name='f' type='grid' dim='2' count='3 3 1' "
                     "spacing='.1 .1 .1'><pin gridrange='0 0 2147483647 2'/></flexcomp>"
                     "</worldbody></mujoco>"));
+    for (const char* pin : {"<pin id='1.5'/>", "<pin id='2147483648'/>",
+                            "<pin range='0'/>", "<pin grid='0'/>",
+                            "<pin gridrange='0 0 1'/>", "<pin range='99 -1'/>",
+                            "<pin gridrange='99 0 -1 2'/>"}) {
+      const std::string bad = std::string("<mujoco><worldbody><flexcomp name='f' type='grid' ") +
+          "dim='2' count='3 3 1' spacing='.1 .1 .1'>" + pin +
+          "</flexcomp></worldbody></mujoco>";
+      assert(rejected(bad));
+    }
+    // MuJoCo combines pin attributes across elements before parsing tuples.
+    const char* split_pins = "<mujoco><worldbody><flexcomp name='f' type='grid' "
+        "dim='2' count='3 3 1' spacing='.1 .1 .1'><pin range='0'/><pin range='1'/>"
+        "<pin grid='1'/><pin grid='2'/><pin gridrange='2 0'/><pin gridrange='2 1'/>"
+        "<pin range='2 1' gridrange='1 2 0 1'/>"
+        "</flexcomp></worldbody></mujoco>";
+    lightusd_stage* pin_stage = nullptr;
+    assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(split_pins),
+                                  std::strlen(split_pins), "memory:pins.xml", &limits,
+                                  &pin_stage) == LIGHTUSD_OK);
+    auto pins = lightusd_stage_prim_at_path(pin_stage, "/World/Deformables/f_pins");
+    assert(lightusd_prim_is_valid(pins));
+    lightusd_value_view pin_indices{};
+    assert(lightusd_attr_get(pins, "physics:indices0", &pin_indices) == LIGHTUSD_OK);
+    const int32_t expected_pins[] = {0, 1, 5, 6, 7};
+    assert(pin_indices.count == 5 &&
+           std::memcmp(pin_indices.data, expected_pins, sizeof(expected_pins)) == 0);
+    lightusd_stage_destroy(pin_stage);
     // A 10M-point lattice is charged before it is built.
     assert(rejected("<mujoco><worldbody><flexcomp name='f' type='grid' dim='3' "
                     "count='215 215 215' spacing='.1 .1 .1'/></worldbody></mujoco>",

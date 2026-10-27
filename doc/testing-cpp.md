@@ -2408,6 +2408,9 @@ stage's paths remain unchanged.
 
 `next_test_asset_import` covers owned report queries, failure reports, option
 validation and the shared unsupported-feature policies through the C API.
+Its MJCF flexcomp cases reject incomplete pin tuples, fractional or out-of-range
+pin indices, and out-of-bounds reversed ranges; they also check valid tuples
+split across pin elements and valid empty ranges.
 `next_test_obj_textures` also checks native collector reuse, bounded diagnostic
 storage, malformed UTF-8 and explicit truncation counts.
 `python/tests/test_import_report.py` exercises independent input/memory/depth

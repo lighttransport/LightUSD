@@ -767,6 +767,7 @@ bool CollectBodyFlexcompsJson(const pugi::xml_node& body_node,
       }
     // Pins (ids before compaction, as MuJoCo applies them).
     std::vector<bool> pinned(static_cast<size_t>(npnt), MjcBoolAttr(Attr(f, "rigid", "false")));
+    std::vector<int> pin_ids, pin_ranges, pin_grid, pin_grid_ranges;
     for (const auto& pin : Children(f, "pin")) {
       if (stuffed) {
         active_reader->Warn("flexcomp `" + name + "`: <pin> vertex ids do not survive "
@@ -774,62 +775,71 @@ bool CollectBodyFlexcompsJson(const pugi::xml_node& body_node,
                             "mjcf.flex_pin_unmapped");
         continue;
       }
-      auto ints = [&](const char* key) {
-        std::vector<int> v;
-        for (double d : ParseDoubles(Attr(pin, key))) v.push_back(ToInt32(d, key));
-        return v;
-      };
-      auto grid_id = [&](const std::vector<int>& g, size_t i) {
-        return dim == 2 ? g[i] * count[1] + g[i + 1]
-                        : g[i] * count[1] * count[2] + g[i + 1] * count[2] + g[i + 2];
-      };
-      auto set = [&](int id) {
-        if (id < 0 || id >= npnt) return false;
-        pinned[size_t(id)] = true;
-        return true;
-      };
-      bool ok = true;
-      for (int id : ints("id")) ok &= set(id);
-      const auto range = ints("range");
-      for (size_t i = 0; ok && i + 1 < range.size(); i += 2) {
-        if (range[i] > range[i + 1]) continue;  // empty
-        ok = range[i] >= 0 && range[i + 1] < npnt;
-        for (int k = range[i]; ok && k <= range[i + 1]; ++k) ok &= set(k);
-      }
-      const size_t d = static_cast<size_t>(dim);
-      const auto grid = ints("grid");
-      const auto gridrange = ints("gridrange");
-      if ((!grid.empty() || !gridrange.empty()) && (type != "grid" || dim == 1)) ok = false;
-      // Grid coordinates must lie in the lattice before they are combined
-      // (and before a range is iterated), so ids cannot overflow and a huge
-      // range cannot spin.
-      const auto in_lattice = [&](const std::vector<int>& g, size_t i) {
-        for (size_t a = 0; a < d; ++a)
-          if (g[i + a] < 0 || g[i + a] >= count[a]) return false;
-        return true;
-      };
-      for (size_t i = 0; ok && i + d <= grid.size(); i += d)
-        ok = in_lattice(grid, i) && set(grid_id(grid, i));
-      for (size_t i = 0; ok && i + 2 * d <= gridrange.size(); i += 2 * d) {
-        bool empty = false;
-        for (size_t a = 0; a < d; ++a) empty |= gridrange[i + a] > gridrange[i + d + a];
-        if (empty) continue;
-        ok = in_lattice(gridrange, i) && in_lattice(gridrange, i + d);
-        if (!ok) break;
-        std::vector<int> g(3, 0);
-        if (dim == 2) {
-          for (g[0] = gridrange[i]; g[0] <= gridrange[i + 2]; ++g[0])
-            for (g[1] = gridrange[i + 1]; g[1] <= gridrange[i + 3]; ++g[1]) ok &= set(grid_id(g, 0));
-        } else {
-          for (g[0] = gridrange[i]; g[0] <= gridrange[i + 3]; ++g[0])
-            for (g[1] = gridrange[i + 1]; g[1] <= gridrange[i + 4]; ++g[1])
-              for (g[2] = gridrange[i + 2]; g[2] <= gridrange[i + 5]; ++g[2]) ok &= set(grid_id(g, 0));
+      auto append = [&](const char* key, std::vector<int>* values) {
+        for (double v : ParseDoubles(Attr(pin, key))) {
+          if (!std::isfinite(v) || std::trunc(v) != v || v < INT32_MIN || v > INT32_MAX) {
+            if (err) *err = "flexcomp `" + name + "`: pin " + key + " must contain int32 values";
+            return false;
+          }
+          values->push_back(static_cast<int>(v));
         }
-      }
-      if (!ok) {
-        if (err) *err = "flexcomp `" + name + "`: pin is out of range";
+        return true;
+      };
+      if (!append("id", &pin_ids) || !append("range", &pin_ranges) ||
+          !append("grid", &pin_grid) || !append("gridrange", &pin_grid_ranges))
         return false;
+    }
+    const size_t d = static_cast<size_t>(dim);
+    // MuJoCo combines each attribute across all <pin> elements before
+    // validating its tuple arity, so a tuple may span multiple elements.
+    if (pin_ranges.size() % 2 || pin_grid.size() % d || pin_grid_ranges.size() % (2 * d)) {
+      if (err) *err = "flexcomp `" + name + "`: invalid pin tuple size";
+      return false;
+    }
+    auto grid_id = [&](const std::vector<int>& g, size_t i) {
+      return dim == 2 ? g[i] * count[1] + g[i + 1]
+                      : g[i] * count[1] * count[2] + g[i + 1] * count[2] + g[i + 2];
+    };
+    auto set = [&](int id) {
+      if (id < 0 || id >= npnt) return false;
+      pinned[size_t(id)] = true;
+      return true;
+    };
+    bool ok = true;
+    for (int id : pin_ids) ok &= set(id);
+    for (size_t i = 0; ok && i < pin_ranges.size(); i += 2) {
+      const int lo = pin_ranges[i], hi = pin_ranges[i + 1];
+      ok = lo >= 0 && lo < npnt && hi >= 0 && hi < npnt;
+      for (int k = lo; ok && k <= hi; ++k) ok &= set(k);
+    }
+    if ((!pin_grid.empty() || !pin_grid_ranges.empty()) && (type != "grid" || dim == 1)) ok = false;
+    // Validate both endpoints even for reversed (empty) ranges. Do this
+    // before calculating ids or iterating so malformed ranges cannot wrap.
+    const auto in_lattice = [&](const std::vector<int>& g, size_t i) {
+      for (size_t a = 0; a < d; ++a)
+        if (g[i + a] < 0 || g[i + a] >= count[a]) return false;
+      return true;
+    };
+    for (size_t i = 0; ok && i < pin_grid.size(); i += d)
+      ok = in_lattice(pin_grid, i) && set(grid_id(pin_grid, i));
+    for (size_t i = 0; ok && i < pin_grid_ranges.size(); i += 2 * d) {
+      ok = in_lattice(pin_grid_ranges, i) && in_lattice(pin_grid_ranges, i + d);
+      if (!ok) break;
+      std::vector<int> g(3, 0);
+      if (dim == 2) {
+        for (g[0] = pin_grid_ranges[i]; g[0] <= pin_grid_ranges[i + 2]; ++g[0])
+          for (g[1] = pin_grid_ranges[i + 1]; g[1] <= pin_grid_ranges[i + 3]; ++g[1])
+            ok &= set(grid_id(g, 0));
+      } else {
+        for (g[0] = pin_grid_ranges[i]; g[0] <= pin_grid_ranges[i + 3]; ++g[0])
+          for (g[1] = pin_grid_ranges[i + 1]; g[1] <= pin_grid_ranges[i + 4]; ++g[1])
+            for (g[2] = pin_grid_ranges[i + 2]; g[2] <= pin_grid_ranges[i + 5]; ++g[2])
+              ok &= set(grid_id(g, 0));
       }
+    }
+    if (!ok) {
+      if (err) *err = "flexcomp `" + name + "`: pin is out of range";
+      return false;
     }
     // Direct, mesh and gmsh types drop unreferenced points.
     if (direct) {
