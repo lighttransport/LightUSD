@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Raw MJCF <deformable><flex> (as mj_saveXML writes flexcomps) -> soft bodies."""
+import json
+
 import numpy as np
 import pytest
 
@@ -78,6 +80,19 @@ def test_other_profiles_keep_reporting_the_deformable():
     assert stage.get_prim_at("/World/Deformables/cloth") is None
     assert "Unsupported MJCF element: deformable" in stage.warnings()
     assert {"v1", "v2", "v3"} <= {p.name for p in stage if p.path.startswith("/World/Links/")}
+
+
+def test_interpolated_raw_flex_preserves_non_executable_source():
+    stage = lightusd.load_bytes(
+        _model(flex_extra='node="0 1 2 3" dof="0 1 2 3"'),
+        format="mjcf", unsupported_policy="preserve")
+    assert stage.get_prim_at("/World/Deformables/cloth") is None
+    records = json.loads(stage.custom_layer_data["lightusdImportUnsupported"])
+    record = next(item for item in records if item["feature"] == "mjcf.deformable")
+    assert record["encoding"] == "xml"
+    assert not record["executable"]
+    assert 'node="0 1 2 3"' in record["data"]
+    assert 'dof="0 1 2 3"' in record["data"]
 
 
 def test_fractional_raw_flex_dimension_is_reported():

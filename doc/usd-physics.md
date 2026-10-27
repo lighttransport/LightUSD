@@ -967,7 +967,9 @@ default `newton` profile; [Output profiles](#output-profiles) lists the
 For converted flexcomps, the importer recognizes MuJoCo's `full`, `radial`,
 `trilinear`, `quadratic`, and `2d` DOF values and rejects unknown values. The
 non-full modes are approximations; `unsupported_policy="preserve"` retains the
-original XML as non-executable source data.
+original XML as non-executable source data. Interpolated raw flexes with
+`node`/`dof` are skipped under the normal unsupported policy; preserve mode
+retains their original `<flex>` XML as a non-executable source record.
 | MJCF `<skin>` | UsdSkel `SkelRoot`/`Skeleton`/skinned `Mesh` under `/World/Skins` + `lightusd:mjcSkin:*` extension data (see above) |
 | MJCF `<frame scale/massscale>` | the frame's pose is applied, its scale is reported (`mjcf.frame_scale_unsupported`) |
 | MJCF mesh paths that leave the model directory (MuJoCo's own `plugin/sdf/mug.xml` uses `../../mug/mug.obj`) | resolve relative to the model file, but only under an allowed asset root: pass `asset_dirs` (Python/C/CLI `--asset-dir`); otherwise reported as `Asset outside allowed roots` | same | same |
