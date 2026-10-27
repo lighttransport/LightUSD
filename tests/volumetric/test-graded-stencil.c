@@ -18,6 +18,11 @@ static int shape(const double p[3], float *v, void *user) {
   } else *v = (float)(hypot(hypot(x,y)-0.7,z)-0.25);
   return 1;
 }
+static int small_sphere(const double p[3], float *v, void *user) {
+  (void)user;
+  *v = (float)(hypot(hypot(p[0]-0.61,p[1]-0.77),p[2]+0.52)-0.05);
+  return 1;
+}
 typedef struct { int32_t a, b; int sign; } edge;
 static int cmp(const void *x, const void *y) {
   const edge *a = (const edge *)x, *b = (const edge *)y;
@@ -54,6 +59,7 @@ int main(void) {
   const double lo[3]={-2,-2,-2}, hi[3]={2,2,2}; const size_t cells[3]={2,2,2};
   tvdb_tet_refine_graph *g = NULL; tvdb_error_t err; tvdb_tet_mesh m={0}, raw={0};
   tvdb_tet_mesh_quality_t q, raw_q;
+  double torus_error = 0;
   CHECK(tvdb_tet_refine_box(lo,hi,cells,100000,500000,&g,&err)==TVDB_OK);
   CHECK(tvdb_tet_refine_adapt_sdf(g,sphere,NULL,0,0.5,2.5,0.8,&err)==TVDB_OK);
   CHECK(tvdb_tet_graded_stencil(g,sphere,NULL,0,0,500000,&raw,&err)==TVDB_OK);
@@ -95,6 +101,7 @@ int main(void) {
     CHECK(m.tet_count && closed(&m) && euler(&m)==expected_euler[mode]);
     CHECK(tvdb_tet_mesh_quality(&m,&q,&err)==TVDB_OK && !q.inverted);
     CHECK(fabs(q.volume-expected[mode]) < tolerance[mode]*expected[mode]);
+    if (mode == 2) torus_error = fabs(q.volume-expected[mode]);
     CHECK(q.min_dihedral > 5 && q.max_dihedral < 170);
     CHECK(tvdb_tet_graded_stencil(g,shape,&mode,0,0.2,600000,&raw,&err)==TVDB_OK);
     CHECK(raw.vertex_count == m.vertex_count && raw.tet_count == m.tet_count &&
@@ -105,6 +112,35 @@ int main(void) {
     printf("graded shape %d: near %.3f far %.3f, volume %.6f, angles %.3f..%.3f\n",
            mode, near_sum/near_n, far_sum/far_n, q.volume, q.min_dihedral, q.max_dihedral);
     tvdb_tet_mesh_free(&raw); tvdb_tet_mesh_free(&m); tvdb_tet_refine_destroy(g);
+  }
+  {
+    const double fine_sizes[] = {0.3, 0.2, 0.15};
+    const double exact_volume = 0.8635903850953188;
+    int torus = 2;
+    for (size_t i = 0; i < 3; ++i) {
+      g = NULL;
+      CHECK(tvdb_tet_refine_box(lo,hi,cells,200000,600000,&g,&err)==TVDB_OK);
+      CHECK(tvdb_tet_refine_adapt_sdf(g,shape,&torus,0,fine_sizes[i],2.5,0.8,&err)==TVDB_OK);
+      CHECK(tvdb_tet_graded_stencil(g,shape,&torus,0,0.2,600000,&m,&err)==TVDB_OK);
+      CHECK(m.tet_count && closed(&m) && euler(&m)==0);
+      CHECK(tvdb_tet_mesh_quality(&m,&q,&err)==TVDB_OK && !q.inverted);
+      CHECK(fabs(q.volume-exact_volume) < torus_error);
+      torus_error = fabs(q.volume-exact_volume);
+      printf("torus fine %.2f: %zu tets, volume %.6f\n",fine_sizes[i],m.tet_count,q.volume);
+      tvdb_tet_mesh_free(&m); tvdb_tet_refine_destroy(g);
+    }
+    CHECK(torus_error < 0.03*exact_volume);
+  }
+  {
+    const double exact_volume = 0.0005235987755982988;
+    g = NULL;
+    CHECK(tvdb_tet_refine_box(lo,hi,cells,200000,600000,&g,&err)==TVDB_OK);
+    CHECK(tvdb_tet_refine_adapt_sdf(g,small_sphere,NULL,0,0.05,2.5,0.8,&err)==TVDB_OK);
+    CHECK(tvdb_tet_graded_stencil(g,small_sphere,NULL,0,0.2,600000,&m,&err)==TVDB_OK);
+    CHECK(m.tet_count && closed(&m) && euler(&m)==2);
+    CHECK(tvdb_tet_mesh_quality(&m,&q,&err)==TVDB_OK && !q.inverted);
+    CHECK(fabs(q.volume-exact_volume) < 0.3*exact_volume);
+    tvdb_tet_mesh_free(&m); tvdb_tet_refine_destroy(g);
   }
   return 0;
 }
