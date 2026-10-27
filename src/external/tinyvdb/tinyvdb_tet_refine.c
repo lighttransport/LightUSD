@@ -222,6 +222,32 @@ tvdb_status_t tvdb_tet_refine_split(tvdb_tet_refine_graph *g, uint32_t a,
         uint32_t b, uint32_t *midpoint, tvdb_error_t *err) {
     return split_impl(g, a, b, midpoint, NULL, NULL, err);
 }
+static double edge_length(const tvdb_tet_refine_graph *g, uint32_t a, uint32_t b) {
+    const double *p = g->positions + 3*(size_t)a, *q = g->positions + 3*(size_t)b;
+    return hypot(hypot(p[0]-q[0], p[1]-q[1]), p[2]-q[2]);
+}
+/* Before splitting an edge, follow strictly longer edges from its incident
+ * tetrahedra. Splitting the final edge bisects a longest edge of every tet in
+ * its star; queued tets will revisit the originally requested edge. */
+static void longest_edge_closure(const tvdb_tet_refine_graph *g, uint32_t *a, uint32_t *b) {
+    double length = edge_length(g, *a, *b);
+    for (;;) {
+        double best = length; uint32_t next_a = *a, next_b = *b;
+        for (size_t node = g->heads[*a]; node != NONE; node = g->incidence[node].next) {
+            const incidence_t *e = &g->incidence[node];
+            if (e->generation != g->generations[e->tet]) continue;
+            const uint32_t *tet = g->tets + 4*e->tet; int contains = 0;
+            for (unsigned i = 0; i < 4; ++i) contains |= tet[i] == *b;
+            if (!contains) continue;
+            for (unsigned i = 0; i < 4; ++i) for (unsigned j = i+1; j < 4; ++j) {
+                double candidate = edge_length(g, tet[i], tet[j]);
+                if (candidate > best) { best = candidate; next_a = tet[i]; next_b = tet[j]; }
+            }
+        }
+        if (best == length) return;
+        *a = next_a; *b = next_b; length = best;
+    }
+}
 tvdb_status_t tvdb_tet_refine_adapt(tvdb_tet_refine_graph *g,
         tvdb_tet_refine_size_fn size, void *user, tvdb_error_t *err) {
     size_t *queue = NULL, cap = 0, head = 0, tail = 0, i;
@@ -252,9 +278,10 @@ tvdb_status_t tvdb_tet_refine_adapt(tvdb_tet_refine_graph *g,
         if (longest > 0) {
             size_t old_nt = g->nt, *parents = NULL, count = 0, extra;
             uint32_t midpoint;
+            longest_edge_closure(g, &a, &b);
             st = split_impl(g, a, b, &midpoint, &parents, &count, err);
             if (st != TVDB_OK) goto done;
-            if (!tvdb_size_mul(count, 2, &extra) || extra > SIZE_MAX - tail ||
+            if (!tvdb_size_mul(count, 2, &extra) || extra == SIZE_MAX || ++extra > SIZE_MAX - tail ||
                 !reserve((void **)&queue, &cap, tail + extra, sizeof(size_t))) {
                 free(parents);
                 st = fail(err, TVDB_ERROR_OUT_OF_MEMORY, "Refinement queue allocation failed");
@@ -263,6 +290,7 @@ tvdb_status_t tvdb_tet_refine_adapt(tvdb_tet_refine_graph *g,
             for (i = 0; i < count; ++i) {
                 queue[tail++] = parents[i]; queue[tail++] = old_nt + i;
             }
+            queue[tail++] = t;
             free(parents);
         }
     }

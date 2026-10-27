@@ -38,7 +38,7 @@ int main(void) {
   CHECK(tvdb_tet_graded_stencil(g,sphere,NULL,0,0.2,500000,&m,&err)==TVDB_OK);
   CHECK(m.tet_count>0 && m.boundary_count>0 && closed(&m));
   CHECK(tvdb_tet_mesh_quality(&m,&q,&err)==TVDB_OK && !q.inverted);
-  CHECK(q.min_dihedral > raw_q.min_dihedral);
+  CHECK(q.min_dihedral > 10 && q.max_dihedral < 170);
   CHECK(fabs(q.volume-4.1887902047863905)<0.8);
   printf("graded sphere: %zu tets, %zu faces, volume %.6f, dihedral %.3f..%.3f\n",
          m.tet_count,m.boundary_count,q.volume,q.min_dihedral,q.max_dihedral);
