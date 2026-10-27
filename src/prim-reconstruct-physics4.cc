@@ -56,7 +56,7 @@ bool ReconstructPrim<PhysicsFixedJoint>(
     PhysicsFixedJoint *joint, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references;
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!ReconstructJointBaseProperties(table, properties, joint, warn, err, options)) return false;
 #define PRIM_PTR_ joint
   for (auto &prop : properties) {
@@ -83,7 +83,7 @@ bool ReconstructPrim<PhysicsDistanceJoint>(
     PhysicsDistanceJoint *joint, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references;
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!ReconstructJointBaseProperties(table, properties, joint, warn, err, options)) return false;
 #define PRIM_PTR_ joint
   for (auto &prop : properties) {

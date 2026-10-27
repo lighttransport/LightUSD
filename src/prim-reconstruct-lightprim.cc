@@ -117,7 +117,7 @@ DomeLight1TextureFormatEnumHandler(const std::string &tok) {
 #define RECONSTRUCT_LIGHT_PRIM_BODY(LightClass, light_ptr, TYPED_ATTRS, COMMON_ATTRS, EXTENT_HANDLING, SPECIAL_HANDLING) \
   (void)references; \
   \
-  std::set<std::string> table; \
+  ParsePropertyTable table; \
   \
   if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light_ptr->xformOps, err)) { \
     return false; \
@@ -388,7 +388,7 @@ bool ReconstructPrim<LightFilter>(
     const PrimReconstructOptions &options) {
   (void)references;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
 
   if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &filter->xformOps, err)) {
     return false;
@@ -417,7 +417,7 @@ bool ReconstructPrim<PluginLightFilter>(
     const PrimReconstructOptions &options) {
   (void)references;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
 
   if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &filter->xformOps, err)) {
     return false;

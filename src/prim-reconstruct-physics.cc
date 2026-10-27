@@ -60,7 +60,7 @@ bool ReconstructPrim<PhysicsJoint>(
     PhysicsJoint *joint, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references;
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!ReconstructJointBaseProperties(table, properties, joint, warn, err, options)) return false;
 #define PRIM_PTR_ joint
   for (auto &prop : properties) {
@@ -95,7 +95,7 @@ bool ReconstructPrim<PhysicsScene>(
   (void)references;
   (void)options;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
 
   if (!scene->mjcScene.has_value() && HasPropertyPrefix(properties, "mjc:")) {
     scene->mjcScene = MjcSceneAPI();

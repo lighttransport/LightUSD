@@ -110,7 +110,7 @@ bool ReconstructPrim<GeomSubset>(
   // Use centralized enum handler
   auto ElementTypeHandler = enum_handler::ElementType;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
 
   if (!prim::ReconstructMaterialBindingProperties(table, properties, subset, err)) {
     return false;
@@ -159,7 +159,7 @@ bool ReconstructPrim<GeomPointInstancer>(
 
   DCOUT("Reconstruct GeomPointInstancer.");
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!ReconstructGPrimProperties(spec, table, properties, instancer, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
@@ -206,7 +206,7 @@ bool ReconstructPrim<GeomCamera>(
   auto ProjectionHandler = enum_handler::CameraProjection;
   auto StereoRoleHandler = enum_handler::CameraStereoRole;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!ReconstructGPrimProperties(spec, table, properties, camera, warn, err, options.strict_allowedToken_check)) {
     return false;
   }

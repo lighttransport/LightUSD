@@ -52,7 +52,7 @@ bool ReconstructPrim<Preliminary_PhysicsGravitationalForce>(
     Preliminary_PhysicsGravitationalForce *prim, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references; (void)options;
-  std::set<std::string> table;
+  ParsePropertyTable table;
 #define PRIM_PTR_ prim
   for (auto &prop : properties) {
     PRELIMINARY_GRAVITATIONAL_FORCE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -72,7 +72,7 @@ bool ReconstructPrim<Preliminary_InfiniteColliderPlane>(
     Preliminary_InfiniteColliderPlane *prim, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references; (void)options;
-  std::set<std::string> table;
+  ParsePropertyTable table;
 #define PRIM_PTR_ prim
   for (auto &prop : properties) {
     PRELIMINARY_INFINITE_COLLIDER_PLANE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -92,7 +92,7 @@ bool ReconstructPrim<Preliminary_ReferenceImage>(
     Preliminary_ReferenceImage *prim, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references; (void)options;
-  std::set<std::string> table;
+  ParsePropertyTable table;
 #define PRIM_PTR_ prim
   for (auto &prop : properties) {
     PRELIMINARY_REFERENCE_IMAGE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -112,7 +112,7 @@ bool ReconstructPrim<Preliminary_Behavior>(
     Preliminary_Behavior *prim, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references; (void)options;
-  std::set<std::string> table;
+  ParsePropertyTable table;
 #define PRIM_PTR_ prim
   for (auto &prop : properties) {
     PRELIMINARY_BEHAVIOR_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -133,7 +133,7 @@ bool ReconstructPrim<Preliminary_Trigger>(
     Preliminary_Trigger *prim, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references; (void)options;
-  std::set<std::string> table;
+  ParsePropertyTable table;
 #define PRIM_PTR_ prim
   for (auto &prop : properties) {
     PRELIMINARY_TRIGGER_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -153,7 +153,7 @@ bool ReconstructPrim<Preliminary_Action>(
     Preliminary_Action *prim, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references; (void)options;
-  std::set<std::string> table;
+  ParsePropertyTable table;
 #define PRIM_PTR_ prim
   for (auto &prop : properties) {
     PRELIMINARY_ACTION_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -173,7 +173,7 @@ bool ReconstructPrim<Preliminary_Text>(
     Preliminary_Text *prim, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references; (void)options;
-  std::set<std::string> table;
+  ParsePropertyTable table;
 #define PRIM_PTR_ prim
   for (auto &prop : properties) {
     PRELIMINARY_TEXT_TYPED_ATTRS(EXPAND_TYPED_ATTR)

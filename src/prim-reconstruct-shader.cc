@@ -46,8 +46,8 @@ namespace prim {
 namespace mtlx_validation {
 
 // Known MaterialX node categories (from MaterialX spec)
-static const std::set<std::string> &GetKnownNodeCategories() {
-  static const std::set<std::string> s = {
+static const ParsePropertyTable &GetKnownNodeCategories() {
+  static const ParsePropertyTable s = {
     // Math operations
     "add", "subtract", "multiply", "divide", "power", "min", "max",
     "absval", "floor", "ceil", "round", "sqrt", "sin", "cos", "tan",
@@ -75,8 +75,8 @@ static const std::set<std::string> &GetKnownNodeCategories() {
 }
 
 // Known MaterialX types
-static const std::set<std::string> &GetKnownTypes() {
-  static const std::set<std::string> s = {
+static const ParsePropertyTable &GetKnownTypes() {
+  static const ParsePropertyTable s = {
     "float", "color3", "color4", "vector2", "vector3", "vector4",
     "matrix33", "matrix44", "string", "filename", "boolean", "integer",
     "surfaceshader", "displacementshader", "volumeshader"
@@ -472,7 +472,7 @@ bool ReconstructPrim<Material>(
   (void)spec;
   (void)references;
   (void)options;
-  std::set<std::string> table;
+  ParsePropertyTable table;
 
   // TODO: special treatment for properties with 'inputs' and 'outputs' namespace.
 
@@ -576,7 +576,7 @@ bool ReconstructPrim<NodeGraph>(
   (void)spec;
   (void)references;
   (void)warn;
-  std::set<std::string> table;
+  ParsePropertyTable table;
 
   // NodeGraph can have arbitrary outputs (e.g., outputs:result, outputs:normal, etc.)
   // They are stored in the props map, so we just add all properties

@@ -77,7 +77,7 @@ static void PopulateDriveLimitMaps(const PropertyMap &properties, JointT *joint)
 // Helper: reconstruct PhysicsJointBase properties (shared by all joint types)
 template <typename JointT>
 static bool ReconstructJointBaseProperties(
-    std::set<std::string> &table,
+    ParsePropertyTable &table,
     PropertyMap &properties,
     JointT *joint,
     std::string *warn,

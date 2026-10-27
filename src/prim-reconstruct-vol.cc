@@ -226,7 +226,7 @@ bool ReconstructPrim<Volume>(
   (void)references;
   DCOUT("Reconstruct Volume.");
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!ReconstructGPrimProperties(spec, table, properties, volume, warn, err,
                                   options.strict_allowedToken_check)) {
     return false;
