@@ -807,6 +807,20 @@ private:
   crate::ValueRep PackTokenVectorValue(const std::vector<value::token>& tokens,
                                        std::string* err);
 
+  /// PackTokenVectorValue with payload reuse: the same token-index list (the
+  /// `properties` / `primChildren` / `variantChildren` fields) is written once
+  /// and shared by every spec that carries it.
+  ///
+  /// These fields bypass PackValue's value dedup (they are packed as the
+  /// dedicated uncompressed TokenVector type), so without this cache every prim
+  /// got its own copy of an identical name list. That cost 1 field per prim,
+  /// and because identical prims then had distinct FIELDSETS, their fieldset
+  /// offsets stopped repeating -- which is exactly the pattern the SPECS
+  /// section's integer compression feeds on. A 4000-mesh test layer came out
+  /// 31% larger than pxr's and its fieldset index column was 17x pxr's.
+  crate::ValueRep PackTokenVectorValueDeduped(
+      const std::vector<value::token>& tokens, std::string* err);
+
   /// Pack a StringVector metadata value (e.g. `subLayers`) into ValueRep.
   crate::ValueRep PackStringVectorValue(const std::vector<std::string>& strs,
                                         std::string* err);
@@ -1203,6 +1217,10 @@ private:
   size_t GetValueDedupBudgetBytes() const;
 
   std::unordered_multimap<size_t, ValueDedupEntry> value_dedup_map_;
+
+  /// TokenVector payloads already written, keyed by their raw token-index
+  /// bytes (see PackTokenVectorValueDeduped).
+  std::unordered_map<std::string, crate::ValueRep> token_vector_rep_cache_;
   size_t value_dedup_bytes_ = 0;
 
   // Finalize phase profiling, enabled by LIGHTUSD_CRATE_PROFILE=1 (stderr

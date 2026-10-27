@@ -684,7 +684,7 @@ bool CrateWriter::Finalize(std::string* err) {
       if ((fname == "primChildren" || fname == "properties" ||
            fname == "variantSetChildren" || fname == "variantChildren") &&
           field_pair.second.as<std::vector<value::token>>()) {
-        field.value_rep = PackTokenVectorValue(
+        field.value_rep = PackTokenVectorValueDeduped(
             *field_pair.second.as<std::vector<value::token>>(), err);
       } else if (fname == "subLayers" &&
                  field_pair.second.as<std::vector<std::string>>()) {

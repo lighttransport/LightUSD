@@ -742,6 +742,62 @@ bool CrateWriter::ComputeValueDedupDescriptor(const crate::CrateValue& cv,
   DEDUP_DESC_ARRAY(value::int4, 1, false, CRATE_DATA_TYPE_VEC4I)
   DEDUP_DESC_ARRAY(value::quath, 1, false, CRATE_DATA_TYPE_QUATH)
 
+  // ListOps. `targetPaths` (material bindings, shader connections) and
+  // `apiSchemas` repeat verbatim across most prims of a scene; without a dedup
+  // key every prim got its own copy, which also made every prim's FIELDSET
+  // distinct -- and non-repeating fieldset offsets are what the SPECS section's
+  // integer compression feeds on (a 4000-mesh layer then wrote a 24 KB spec
+  // section where pxr writes 221 bytes).
+  if (auto* lop = cv.as<ListOp<Path>>()) {
+    bytes->clear();
+    bytes->push_back(static_cast<char>(BuildListOpHeader(*lop).bits));
+    auto append_paths = [&](const std::vector<Path>& v) {
+      const uint32_t n = static_cast<uint32_t>(v.size());
+      bytes->insert(bytes->end(), reinterpret_cast<const char*>(&n),
+                    reinterpret_cast<const char*>(&n) + sizeof(n));
+      for (const auto& p : v) {
+        const std::string full = p.full_path_name();
+        bytes->insert(bytes->end(), full.begin(), full.end());
+        bytes->push_back('\0');
+      }
+    };
+    append_paths(lop->GetExplicitItems());
+    append_paths(lop->GetAddedItems());
+    append_paths(lop->GetDeletedItems());
+    append_paths(lop->GetOrderedItems());
+    append_paths(lop->GetPrependedItems());
+    append_paths(lop->GetAppendedItems());
+    *element_size = 1;
+    *is_float = false;
+    *wire_tag = static_cast<uint32_t>(
+        crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_LIST_OP);
+    return true;
+  }
+  if (auto* lop = cv.as<ListOp<value::token>>()) {
+    bytes->clear();
+    bytes->push_back(static_cast<char>(BuildListOpHeader(*lop).bits));
+    auto append_tokens = [&](const std::vector<value::token>& v) {
+      const uint32_t n = static_cast<uint32_t>(v.size());
+      bytes->insert(bytes->end(), reinterpret_cast<const char*>(&n),
+                    reinterpret_cast<const char*>(&n) + sizeof(n));
+      for (const auto& t : v) {
+        bytes->insert(bytes->end(), t.str().begin(), t.str().end());
+        bytes->push_back('\0');
+      }
+    };
+    append_tokens(lop->GetExplicitItems());
+    append_tokens(lop->GetAddedItems());
+    append_tokens(lop->GetDeletedItems());
+    append_tokens(lop->GetOrderedItems());
+    append_tokens(lop->GetPrependedItems());
+    append_tokens(lop->GetAppendedItems());
+    *element_size = 1;
+    *is_float = false;
+    *wire_tag = static_cast<uint32_t>(
+        crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_LIST_OP);
+    return true;
+  }
+
   // Out-of-line scalars (vec/matrix/quat). Checked after arrays so an array
   // never matches a scalar branch (distinct types).
   DEDUP_DESC_SCALAR(double, sizeof(double), true, CRATE_DATA_TYPE_DOUBLE)
@@ -2561,6 +2617,33 @@ crate::ValueRep CrateWriter::PackTokenVectorValue(
       static_cast<int32_t>(
           crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR),
       false, false, static_cast<uint64_t>(value_offset));
+}
+
+crate::ValueRep CrateWriter::PackTokenVectorValueDeduped(
+    const std::vector<value::token>& tokens, std::string* err) {
+  if (!options_.enable_deduplication) {
+    return PackTokenVectorValue(tokens, err);
+  }
+
+  // Intern first: the key must be the token INDEX list, not the strings, so
+  // equal name lists map to the same bytes regardless of authoring order.
+  std::string key;
+  key.resize(tokens.size() * sizeof(uint32_t));
+  for (size_t i = 0; i < tokens.size(); ++i) {
+    const uint32_t idx = GetOrCreateToken(tokens[i].str()).value;
+    std::memcpy(&key[i * sizeof(uint32_t)], &idx, sizeof(uint32_t));
+  }
+
+  auto it = token_vector_rep_cache_.find(key);
+  if (it != token_vector_rep_cache_.end()) {
+    return it->second;
+  }
+  const crate::ValueRep rep = PackTokenVectorValue(tokens, err);
+  if (err && !err->empty()) {
+    return rep;
+  }
+  token_vector_rep_cache_.emplace(std::move(key), rep);
+  return rep;
 }
 
 // `subLayers` must be the dedicated StringVector crate type (uint64 count +
