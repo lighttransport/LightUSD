@@ -312,7 +312,16 @@ namespace {
 
 // Flattened crate-path sort key; plain byte comparison of two keys reproduces
 // pathlib::CompareParsedPaths ordering (see the sort in Finalize).
-std::string BuildCratePathSortKey(const lightusd::Path& path) {
+//
+// Specs are grouped the way pxr groups them, because the SPECS section's
+// integer compression works on the fieldset-offset column: identical prims must
+// be ADJACENT for their shared fieldset to show up as a constant run. pxr writes
+// every prim spec first, then the property specs grouped by property name, so
+// `/World/m0, /World/m1, ..., m0.points, m1.points, ...` (not our previous
+// prim-then-its-own-properties interleave, which made the column cycle). On a
+// 4000-mesh layer this is the difference between a 24 KB and a sub-KB SPECS
+// section. Property specs are leaves, so their relative order is free.
+std::string BuildCratePathSortKeyImpl(const lightusd::Path& path) {
   const std::string& prim = path.prim_part();
   const std::string& prop = path.prop_part();
   std::string key;
@@ -342,6 +351,23 @@ std::string BuildCratePathSortKey(const lightusd::Path& path) {
     key.push_back('\x01');
     key.append(prop);
   }
+  return key;
+}
+
+std::string BuildCratePathSortKey(const lightusd::Path& path) {
+  const bool is_property = !path.prop_part().empty();
+  std::string key;
+  key.reserve(path.prim_part().size() + path.prop_part().size() + 4);
+  // Class byte: prim-ish specs (0) before property specs (1).
+  key.push_back(is_property ? '\x01' : '\x00');
+  if (is_property) {
+    // Group by property name first (all `points` specs adjacent), then by the
+    // owning prim path, so equal values share a fieldset AND land next to each
+    // other.
+    key.append(path.prop_part());
+    key.push_back('\x00');
+  }
+  key.append(BuildCratePathSortKeyImpl(path));
   return key;
 }
 
