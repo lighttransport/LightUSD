@@ -700,9 +700,9 @@ static tvdb_status_t tool_cell(tool_surface* s, const int64_t c[3]) {
  * sits at o - 1: x faces, then y faces without x edges, then z faces
  * without both, so consecutive lookups stay in one neighbouring node. */
 static void tool_box_shell(tool_surface* s, const int32_t o[3], int n,
-                           float* box) {
+                           float* box, int base_side, int* crossing) {
   for (int a = 0; a < 3; ++a)
-    for (int side = 0; side < 2; ++side) {
+    for (int face_side = 0; face_side < 2; ++face_side) {
       const int b = (a + 1) % 3, d = (a + 2) % 3;
       /* Earlier faces already visited their edges. Restrict the other two
        * coordinates instead of visiting and rejecting those points. */
@@ -710,13 +710,14 @@ static void tool_box_shell(tool_surface* s, const int32_t o[3], int n,
       for (int u = bu; u < n - bu; ++u)
         for (int w = dw; w < n - dw; ++w) {
           int k[3];
-          k[a] = side ? n - 1 : 0;
+          k[a] = face_side ? n - 1 : 0;
           k[b] = u;
           k[d] = w;
           int64_t q[3];
           for (int e = 0; e < 3; ++e) q[e] = (int64_t)o[e] - 1 + k[e];
-          box[((size_t)k[2] * n + k[1]) * n + k[0]] =
-              tool_get64(&s->acc, q, NULL);
+          const float value = tool_get64(&s->acc, q, NULL);
+          box[((size_t)k[2] * n + k[1]) * n + k[0]] = value;
+          if (crossing && (value < s->iso) != base_side) *crossing = 1;
         }
     }
 }
@@ -795,14 +796,12 @@ static tvdb_status_t tool_surface_region(const int32_t c[3], int64_t span,
     const int n = (int)span + 2;
     float box[(TOOL_TILE_BOX + 2) * (TOOL_TILE_BOX + 2) * (TOOL_TILE_BOX + 2)];
     for (size_t i = 0; i < (size_t)n * n * n; ++i) box[i] = value;
-    tool_box_shell(s, c, n, box);
+    int crossing = 0;
+    const int side = value < s->iso;
+    tool_box_shell(s, c, n, box, side, &crossing);
     /* Boundary cells can only cross where a neighbour value sits on the other
      * side of the isovalue. Deep-interior tiles (the bulk of a level set's
      * filled interior) skip the slab scan and its per-cell classification. */
-    const int side = value < s->iso;
-    int crossing = 0;
-    for (size_t i = 0; i < (size_t)n * n * n && !crossing; ++i)
-      crossing = (box[i] < s->iso) != side;
     if (!crossing) return TVDB_OK;
     size_t off[8];
     tool_box_corner_offsets(n, off);
@@ -869,7 +868,7 @@ static int tool_surface_leaf(size_t node, void* user, tvdb_status_t* st) {
               z = (int)(v & (dim - 1));
     box[((size_t)(z + 1) * n + (y + 1)) * n + (x + 1)] = values[v];
   }
-  tool_box_shell(s, o, n, box);
+  tool_box_shell(s, o, n, box, -1, NULL);
   size_t off[8];
   tool_box_corner_offsets(n, off);
   for (size_t v = first; v < slots; ++v) {
