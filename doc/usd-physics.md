@@ -1186,6 +1186,19 @@ equivalence.
 Run `/tmp/mujoco-chain-dynamics tests/feat/physics-oracle/four-link-chain.xml`
 to sample its MuJoCo trajectory.
 
+A fifth CPU fixture extends the chain to eight capsules and eight revolute
+joints. Blender verifies all body/joint bindings, finite motion for every link,
+and pivot stability: the largest sampled fixed-anchor drift is 0.000015 m and
+the largest inter-link pivot mismatch is 0.000243 m. The matching MuJoCo 3.10.1
+oracle is `tests/feat/physics-oracle/eight-link-chain.xml`; maximum body-center
+errors over the eight links are 0.040, 0.027, 0.254 and 1.238 m at 0.5, 1.0,
+1.5 and 2.0 s. The late error is largest on link 8. This longer chain confirms
+that the importer preserves the bindings and constraints for this fixture, but
+also shows that Bullet and MuJoCo trajectories diverge substantially over time.
+It is not evidence of general solver equivalence. Run
+`/tmp/mujoco-chain-dynamics tests/feat/physics-oracle/eight-link-chain.xml`
+to reproduce the MuJoCo samples.
+
 The runtime suite also imports an asymmetric box with authored principal
 moments and a rotated principal frame, connected by an X-axis revolute joint
 whose frame points along `(2, 1, 0)`. It verifies that Blender aligns the hinge
