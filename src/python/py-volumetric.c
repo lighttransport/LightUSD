@@ -203,7 +203,7 @@ PyObject* lightusd_py_tet_mesh_quality(PyObject* module, PyObject* args) {
     PyBuffer_Release(&positions);
     return NULL;
   }
-  lightusd_tet_mesh_quality quality = {};
+  lightusd_tet_mesh_quality quality = {0};
   const lightusd_status status = lightusd_tet_mesh_get_quality(
       (const float*)positions.buf, (size_t)positions.len / 12,
       (const int32_t*)tets.buf, (size_t)tets.len / 16, &quality);
