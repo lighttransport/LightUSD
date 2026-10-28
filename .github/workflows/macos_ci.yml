@@ -49,75 +49,78 @@ jobs:
       - name: Ctest
         run: cd build_next && ctest --output-on-failure
 
-  build-macos:
-
-    runs-on: macos-latest
-    name: Build for macOS
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-      - name: ccache
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          key: macos-legacy-asan
-          max-size: 2G
-      - name: CmakeAndBuild
-        run: |
-            ./scripts/bootstrap-cmake-macos.sh
-            cd build
-            make -j $(sysctl -n hw.ncpu)
-      - name: Ctest
-        # ASan build: run tests on all cores and skip timing-only benchmarks
-        # (label "benchmark"), which are slow under the sanitizer.
-        run: |
-            cd build
-            ctest --output-on-failure -j $(sysctl -n hw.ncpu) -LE benchmark
-
-      # Test with OpenUSD binary (macOS ARM64)
-      - name: Download OpenUSD binary (macOS ARM64)
-        run: |
-          gh release download v25.11-lte \
-            --repo lighttransport/openusd-bin \
-            --pattern 'openusd-*-minsizerel-macos-arm64.tar.gz'
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Extract and setup OpenUSD (macOS ARM64)
-        run: |
-          mkdir -p openusd
-          tar -xzf openusd-*-minsizerel-macos-arm64.tar.gz -C openusd
-          USD_ROOT="$(pwd)/openusd"
-          echo "USD_INSTALL_ROOT=$USD_ROOT" >> $GITHUB_ENV
-          echo "$USD_ROOT/bin" >> $GITHUB_PATH
-          echo "DYLD_LIBRARY_PATH=$USD_ROOT/lib:$USD_ROOT/tbb/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
-          echo "PYTHONPATH=$USD_ROOT/lib/python:$PYTHONPATH" >> $GITHUB_ENV
-          echo "PXR_PLUGINPATH_NAME=$USD_ROOT/lib/usd" >> $GITHUB_ENV
-
-      - name: Verify OpenUSD installation (macOS ARM64)
-        run: |
-          usdcat --help
-          echo "OpenUSD binary: $(which usdcat)"
-
-      - name: Test LightUSD and OpenUSD interoperability (macOS ARM64)
-        run: |
-          echo "=== Testing LightUSD <-> OpenUSD interoperability on macOS ARM64 ==="
-
-          # Test 1: Read files with both tools
-          for usd_file in models/suzanne.usdc models/cube.usda; do
-            if [ -f "$usd_file" ]; then
-              echo "Testing $usd_file"
-              ./build/lusdcat "$usd_file" > /tmp/lusdcat.txt
-              usdcat "$usd_file" > /tmp/usdcat.txt
-              echo "✓ Both tools read $usd_file"
-            fi
-          done
-
-          # Test 2: Convert with LightUSD, verify with OpenUSD
-          if [ -f "models/suzanne.usdc" ]; then
-            ./build/lusdcat models/suzanne.usdc > /tmp/lightusd.usda
-            usdcat /tmp/lightusd.usda > /dev/null
-            echo "✓ OpenUSD read LightUSD-generated USDA"
-          fi
-
-          echo "All macOS ARM64 tests passed!"
+  # Legacy AddressSanitizer build (scripts/bootstrap-cmake-macos.sh) plus the
+  # OpenUSD interop check. Disabled: it was added for debugging and is no
+  # longer required; the next-backend job above covers the macOS build.
+  # build-macos:
+  #
+  #   runs-on: macos-latest
+  #   name: Build for macOS
+  #
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v5
+  #     - name: ccache
+  #       uses: hendrikmuhs/ccache-action@v1.2
+  #       with:
+  #         key: macos-legacy-asan
+  #         max-size: 2G
+  #     - name: CmakeAndBuild
+  #       run: |
+  #           ./scripts/bootstrap-cmake-macos.sh
+  #           cd build
+  #           make -j $(sysctl -n hw.ncpu)
+  #     - name: Ctest
+  #       # ASan build: run tests on all cores and skip timing-only benchmarks
+  #       # (label "benchmark"), which are slow under the sanitizer.
+  #       run: |
+  #           cd build
+  #           ctest --output-on-failure -j $(sysctl -n hw.ncpu) -LE benchmark
+  #
+  #     # Test with OpenUSD binary (macOS ARM64)
+  #     - name: Download OpenUSD binary (macOS ARM64)
+  #       run: |
+  #         gh release download v25.11-lte \
+  #           --repo lighttransport/openusd-bin \
+  #           --pattern 'openusd-*-minsizerel-macos-arm64.tar.gz'
+  #       env:
+  #         GH_TOKEN: ${{ github.token }}
+  #
+  #     - name: Extract and setup OpenUSD (macOS ARM64)
+  #       run: |
+  #         mkdir -p openusd
+  #         tar -xzf openusd-*-minsizerel-macos-arm64.tar.gz -C openusd
+  #         USD_ROOT="$(pwd)/openusd"
+  #         echo "USD_INSTALL_ROOT=$USD_ROOT" >> $GITHUB_ENV
+  #         echo "$USD_ROOT/bin" >> $GITHUB_PATH
+  #         echo "DYLD_LIBRARY_PATH=$USD_ROOT/lib:$USD_ROOT/tbb/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
+  #         echo "PYTHONPATH=$USD_ROOT/lib/python:$PYTHONPATH" >> $GITHUB_ENV
+  #         echo "PXR_PLUGINPATH_NAME=$USD_ROOT/lib/usd" >> $GITHUB_ENV
+  #
+  #     - name: Verify OpenUSD installation (macOS ARM64)
+  #       run: |
+  #         usdcat --help
+  #         echo "OpenUSD binary: $(which usdcat)"
+  #
+  #     - name: Test LightUSD and OpenUSD interoperability (macOS ARM64)
+  #       run: |
+  #         echo "=== Testing LightUSD <-> OpenUSD interoperability on macOS ARM64 ==="
+  #
+  #         # Test 1: Read files with both tools
+  #         for usd_file in models/suzanne.usdc models/cube.usda; do
+  #           if [ -f "$usd_file" ]; then
+  #             echo "Testing $usd_file"
+  #             ./build/lusdcat "$usd_file" > /tmp/lusdcat.txt
+  #             usdcat "$usd_file" > /tmp/usdcat.txt
+  #             echo "✓ Both tools read $usd_file"
+  #           fi
+  #         done
+  #
+  #         # Test 2: Convert with LightUSD, verify with OpenUSD
+  #         if [ -f "models/suzanne.usdc" ]; then
+  #           ./build/lusdcat models/suzanne.usdc > /tmp/lightusd.usda
+  #           usdcat /tmp/lightusd.usda > /dev/null
+  #           echo "✓ OpenUSD read LightUSD-generated USDA"
+  #         fi
+  #
+  #         echo "All macOS ARM64 tests passed!"
