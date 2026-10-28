@@ -1338,6 +1338,14 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         add_test(NAME next_test_volume_c COMMAND test_lightusd_volume_c)
         set_tests_properties(next_test_volume_c PROPERTIES
                              LABELS "next;c-api;render;volume")
+        if(TARGET lightusd_tinyvdb)
+            add_executable(test_next_level_set_allocator
+                ../../tests/volumetric/test-level-set-allocator.c)
+            target_link_libraries(test_next_level_set_allocator PRIVATE lightusd_tinyvdb lightusd_next)
+            set_target_properties(test_next_level_set_allocator PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+            add_test(NAME next_test_level_set_allocator COMMAND test_next_level_set_allocator)
+            set_tests_properties(next_test_level_set_allocator PROPERTIES LABELS "next;cpu;volume;security")
+        endif()
         if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND TARGET lightusd_tinyvdb)
             add_executable(test_next_tet_overflow_32
                 ../../tests/volumetric/tet-overflow-32.c)

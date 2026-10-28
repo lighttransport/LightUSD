@@ -16,7 +16,16 @@ Files:    the src/ subset needed by tvdb_mesh_to_level_set,
           gpu_compute(.h, .c, _internal.h), nanovdb_device.h (+ generated string),
           built only with
           LIGHTUSD_TINYVDB_GPU.
-Local:    tinyvdb_io.c is LightUSD's wrapper, not upstream's parser. tinyvdb_io.h
+Local:    CPU SDF allocation-aware entry points are local: tinyvdb_work.h plus
+          mesh/BVH, mesh_conversion, winding, sparse_tools, sparse_tree and tree
+          helpers pass an operation allocator through all generation scratch and
+          retained output. Old entry points preserve default allocation. The new
+          callbacks track their own block sizes (scratch frees/reallocs may pass
+          zero for the previous size); the allocator must outlive owning outputs.
+          Bounded sorts use deterministic in-place heapsort. grid_destroy_owned
+          now uses the grid's allocator for its descriptor as well as its tree.
+          Local tet-quality/balance changes remain documented in resume-vol.md.
+          tinyvdb_io.c is LightUSD's wrapper, not upstream's parser. tinyvdb_io.h
           adapts includes to ../miniz.h, ../../lz4/lz4.h and ../zstd.h.
           tinyvdb_sparse_tools.c also carries LightUSD commit dad7e2b7's CPU
           mesher optimization: detect shell isovalue crossings while gathering

@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "tinyvdb_checked.h"
+#include "tinyvdb_work.h"
 #include "tinyvdb_tree_internal.h"
 
 tvdb_status_t tvdb_tree_error(tvdb_error_t* err, tvdb_status_t st,
@@ -191,20 +192,22 @@ static tvdb_status_t validate_node(tree_walk* w, size_t idx, int level,
   return TVDB_OK;
 }
 void tvdb_tree_index_destroy(tvdb_tree_index* p) {
-  free(p->origins);
-  free(p->order);
-  free(p->root_map);
-  free(p->rank);
-  free(p->rank_at);
+  tvdb_allocator_t *wa = p->allocator;
+  tvdb_work_free(wa, p->origins);
+  tvdb_work_free(wa, p->order);
+  tvdb_work_free(wa, p->root_map);
+  tvdb_work_free(wa, p->rank);
+  tvdb_work_free(wa, p->rank_at);
   memset(p, 0, sizeof(*p));
 }
 static tvdb_status_t tree_rank_tables(tvdb_tree_index* p, tvdb_error_t* err) {
+  tvdb_allocator_t *wa = p->allocator;
   const tvdb_tree_t* t = &p->grid->tree;
   size_t total = 0, bytes;
   if (!tvdb_size_mul(t->num_nodes, sizeof(size_t), &bytes))
     return tvdb_tree_error(err, TVDB_ERROR_INVALID_DATA,
                            "tree index size overflow");
-  p->rank_at = malloc(bytes);
+  p->rank_at = tvdb_work_malloc(wa, bytes);
   if (!p->rank_at)
     return tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY,
                            "tree index allocation failed");
@@ -221,7 +224,7 @@ static tvdb_status_t tree_rank_tables(tvdb_tree_index* p, tvdb_error_t* err) {
   if (!tvdb_size_mul(total, sizeof(uint32_t), &bytes))
     return tvdb_tree_error(err, TVDB_ERROR_INVALID_DATA,
                            "tree index size overflow");
-  p->rank = malloc(bytes);
+  p->rank = tvdb_work_malloc(wa, bytes);
   if (!p->rank)
     return tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY,
                            "tree index allocation failed");
@@ -237,11 +240,12 @@ static tvdb_status_t tree_rank_tables(tvdb_tree_index* p, tvdb_error_t* err) {
   }
   return TVDB_OK;
 }
-tvdb_status_t tvdb_tree_index_create(const tvdb_grid_t* g, int float_only,
-                                     tvdb_tree_index* p, tvdb_error_t* err) {
+tvdb_status_t tvdb_tree_index_create_with_allocator(const tvdb_grid_t* g, int float_only,
+                                     tvdb_tree_index* p, tvdb_error_t* err, tvdb_allocator_t *wa) {
   if (!p)
     return tvdb_tree_error(err, TVDB_ERROR_INVALID_ARGUMENT, "NULL tree index");
   memset(p, 0, sizeof(*p));
+  p->allocator = wa;
   if (!g) return tvdb_tree_error(err, TVDB_ERROR_INVALID_ARGUMENT, "NULL grid");
   const tvdb_tree_t* t = &g->tree;
   if (g->metadata.count > g->metadata.capacity ||
@@ -288,14 +292,14 @@ tvdb_status_t tvdb_tree_index_create(const tvdb_grid_t* g, int float_only,
       !tvdb_size_mul(t->num_nodes, sizeof(*p->origins), &bytes))
     return tvdb_tree_error(err, TVDB_ERROR_INVALID_DATA,
                            "tree index size overflow");
-  p->origins = calloc(1, bytes);
+  p->origins = tvdb_work_calloc(wa, 1, bytes);
   if (!tvdb_size_mul(t->num_nodes, sizeof(size_t), &bytes)) goto overflow;
-  p->order = malloc(bytes);
+  p->order = tvdb_work_malloc(wa, bytes);
   if (!tvdb_size_mul(p->root_capacity, sizeof(size_t), &bytes)) goto overflow;
-  p->root_map = calloc(1, bytes);
-  unsigned char* seen = calloc(t->num_nodes, 1);
+  p->root_map = tvdb_work_calloc(wa, 1, bytes);
+  unsigned char* seen = tvdb_work_calloc(wa, t->num_nodes, 1);
   if (!p->origins || !p->order || !p->root_map || !seen) {
-    free(seen);
+    tvdb_work_free(wa, seen);
     tvdb_tree_index_destroy(p);
     return tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY,
                            "tree index allocation failed");
@@ -343,7 +347,7 @@ tvdb_status_t tvdb_tree_index_create(const tvdb_grid_t* g, int float_only,
   }
   st = tree_rank_tables(p, err);
 done:
-  free(seen);
+  tvdb_work_free(wa, seen);
   if (st != TVDB_OK) tvdb_tree_index_destroy(p);
   return st;
 overflow:
@@ -570,36 +574,36 @@ static void tree_free(void* p, size_t n, void* u) {
 }
 static tvdb_allocator_t tree_allocator = {tree_malloc, tree_realloc, tree_free,
                                           NULL};
-static void* tree_copy(const void* src, size_t n) {
+static void* tree_copy(tvdb_allocator_t *wa, const void* src, size_t n) {
   if (!n) return NULL;
   if (!src) return NULL;
-  void* p = malloc(n);
+  void* p = tvdb_work_malloc(wa, n);
   if (p) memcpy(p, src, n);
   return p;
 }
-static char* tree_string(const char* s) {
-  return s ? tree_copy(s, strlen(s) + 1) : NULL;
+static char* tree_string(tvdb_allocator_t *wa, const char* s) {
+  return s ? tree_copy(wa, s, strlen(s) + 1) : NULL;
 }
-static int clone_mask(const tvdb_nodemask_t* src, tvdb_nodemask_t* dst) {
+static int clone_mask(tvdb_allocator_t *wa, const tvdb_nodemask_t* src, tvdb_nodemask_t* dst) {
   *dst = *src;
-  dst->bits.alloc = &tree_allocator;
-  dst->bits.data = tree_copy(src->bits.data, src->bits.num_bytes);
+  dst->bits.alloc = wa ? wa : &tree_allocator;
+  dst->bits.data = tree_copy(wa, src->bits.data, src->bits.num_bytes);
   return dst->bits.data != NULL;
 }
-static int clone_array(const void* src, size_t count, size_t width,
+static int clone_array(tvdb_allocator_t *wa, const void* src, size_t count, size_t width,
                        void** out) {
   size_t bytes;
   *out = NULL;
   if (!tvdb_size_mul(count, width, &bytes)) return 0;
   if (!bytes) return 1;
-  *out = tree_copy(src, bytes);
+  *out = tree_copy(wa, src, bytes);
   return *out != NULL;
 }
-tvdb_status_t tvdb_tree_copy_attributes(const tvdb_grid_t* s, tvdb_grid_t* d,
-                                        tvdb_error_t* err) {
+tvdb_status_t tvdb_tree_copy_attributes_with_allocator(const tvdb_grid_t* s, tvdb_grid_t* d,
+                                        tvdb_error_t* err, tvdb_allocator_t *wa) {
   memset(d, 0, sizeof(*d));
-  d->tree.alloc = &tree_allocator;
-  d->metadata.alloc = &tree_allocator;
+  d->tree.alloc = wa ? wa : &tree_allocator;
+  d->metadata.alloc = wa ? wa : &tree_allocator;
   d->descriptor = s->descriptor;
   d->descriptor.grid_name = d->descriptor.unique_name =
       d->descriptor.grid_type = d->descriptor.instance_parent_name = NULL;
@@ -607,7 +611,7 @@ tvdb_status_t tvdb_tree_copy_attributes(const tvdb_grid_t* s, tvdb_grid_t* d,
       d->descriptor.end_byte_offset = 0;
 #define CLONE_STRING(field)                                    \
   do {                                                         \
-    d->descriptor.field = tree_string(s->descriptor.field);    \
+    d->descriptor.field = tree_string(wa, s->descriptor.field);    \
     if (s->descriptor.field && !d->descriptor.field) goto oom; \
   } while (0)
   CLONE_STRING(grid_name);
@@ -624,26 +628,26 @@ tvdb_status_t tvdb_tree_copy_attributes(const tvdb_grid_t* s, tvdb_grid_t* d,
     size_t bytes;
     if (!tvdb_size_mul(s->metadata.count, sizeof(tvdb_meta_entry_t), &bytes))
       goto invalid;
-    d->metadata.entries = calloc(1, bytes);
+    d->metadata.entries = tvdb_work_calloc(wa, 1, bytes);
     if (!d->metadata.entries) goto oom;
     d->metadata.capacity = s->metadata.count;
     for (size_t i = 0; i < s->metadata.count; ++i) {
       const tvdb_meta_entry_t* a = s->metadata.entries + i;
       tvdb_meta_entry_t* b = d->metadata.entries + i;
       ++d->metadata.count;
-      b->name = tree_string(a->name);
-      b->type_name = tree_string(a->type_name);
+      b->name = tree_string(wa, a->name);
+      b->type_name = tree_string(wa, a->type_name);
       b->value = a->value;
       if (a->value.type == TVDB_VALUE_STRING) {
         b->value.u.s.str = NULL;
         if (a->value.u.s.len == SIZE_MAX || !a->value.u.s.str) goto invalid;
-        b->value.u.s.str = tree_copy(a->value.u.s.str, a->value.u.s.len + 1);
+        b->value.u.s.str = tree_copy(wa, a->value.u.s.str, a->value.u.s.len + 1);
         if (!b->value.u.s.str) goto oom;
       }
       b->raw_data_len = a->raw_data_len;
       if ((a->name && !b->name) || (a->type_name && !b->type_name)) goto oom;
       if (a->raw_data_len && !a->raw_data) goto invalid;
-      b->raw_data = tree_copy(a->raw_data, a->raw_data_len);
+      b->raw_data = tree_copy(wa, a->raw_data, a->raw_data_len);
       if (a->raw_data_len && !b->raw_data) goto oom;
     }
   }
@@ -659,13 +663,14 @@ oom:
 }
 static tvdb_status_t clone_grid(const tvdb_tree_index* p, tvdb_grid_t* d,
                                 tvdb_error_t* err) {
+  tvdb_allocator_t *wa = p->allocator;
   const tvdb_grid_t* s = p->grid;
-  tvdb_status_t st = tvdb_tree_copy_attributes(s, d, err);
+  tvdb_status_t st = tvdb_tree_copy_attributes_with_allocator(s, d, err, wa);
   if (st != TVDB_OK) return st;
   size_t bytes;
   if (!tvdb_size_mul(s->tree.num_nodes, sizeof(tvdb_tree_node_t), &bytes))
     goto invalid;
-  d->tree.nodes = calloc(1, bytes);
+  d->tree.nodes = tvdb_work_calloc(wa, 1, bytes);
   if (!d->tree.nodes) goto oom;
   d->tree.num_nodes = d->tree.nodes_capacity = s->tree.num_nodes;
   d->tree.layout = s->tree.layout;
@@ -681,15 +686,15 @@ static tvdb_status_t clone_grid(const tvdb_tree_index* p, tvdb_grid_t* d,
       q->background = r->background;
       q->num_children = r->num_children;
       q->num_tiles = r->num_tiles;
-      if (!clone_array(r->child_origins, r->num_children, 3 * sizeof(int32_t),
+      if (!clone_array(wa, r->child_origins, r->num_children, 3 * sizeof(int32_t),
                        (void**)&q->child_origins) ||
-          !clone_array(r->child_indices, r->num_children, sizeof(size_t),
+          !clone_array(wa, r->child_indices, r->num_children, sizeof(size_t),
                        (void**)&q->child_indices) ||
-          !clone_array(r->tile_origins, r->num_tiles, 3 * sizeof(int32_t),
+          !clone_array(wa, r->tile_origins, r->num_tiles, 3 * sizeof(int32_t),
                        (void**)&q->tile_origins) ||
-          !clone_array(r->tile_values, r->num_tiles, sizeof(tvdb_value_t),
+          !clone_array(wa, r->tile_values, r->num_tiles, sizeof(tvdb_value_t),
                        (void**)&q->tile_values) ||
-          !clone_array(r->tile_active, r->num_tiles, sizeof(int),
+          !clone_array(wa, r->tile_active, r->num_tiles, sizeof(int),
                        (void**)&q->tile_active))
         goto oom;
     } else if (a->type == TVDB_NODE_INTERNAL) {
@@ -697,10 +702,10 @@ static tvdb_status_t clone_grid(const tvdb_tree_index* p, tvdb_grid_t* d,
       tvdb_internal_node_t* q = &b->u.internal;
       q->num_children = r->num_children;
       q->values_size = r->values_size;
-      if (!clone_mask(&r->child_mask, &q->child_mask) ||
-          !clone_mask(&r->value_mask, &q->value_mask) ||
-          !clone_array(r->values, r->values_size, 1, (void**)&q->values) ||
-          !clone_array(r->child_indices, r->num_children, sizeof(size_t),
+      if (!clone_mask(wa, &r->child_mask, &q->child_mask) ||
+          !clone_mask(wa, &r->value_mask, &q->value_mask) ||
+          !clone_array(wa, r->values, r->values_size, 1, (void**)&q->values) ||
+          !clone_array(wa, r->child_indices, r->num_children, sizeof(size_t),
                        (void**)&q->child_indices))
         goto oom;
     } else {
@@ -708,8 +713,8 @@ static tvdb_status_t clone_grid(const tvdb_tree_index* p, tvdb_grid_t* d,
       tvdb_leaf_node_t* q = &b->u.leaf;
       q->num_voxels = r->num_voxels;
       q->data_size = r->data_size;
-      if (!clone_mask(&r->value_mask, &q->value_mask) ||
-          !clone_array(r->data, r->data_size, 1, (void**)&q->data))
+      if (!clone_mask(wa, &r->value_mask, &q->value_mask) ||
+          !clone_array(wa, r->data, r->data_size, 1, (void**)&q->data))
         goto oom;
     }
   }
@@ -954,15 +959,15 @@ static void node_ends(const tvdb_tree_node_t* n, int L, const float (*ends)[2],
       memcpy(result + 1, in->values + (slots - 1) * 4, 4);
   }
 }
-tvdb_status_t tvdb_grid_signed_flood_fill(const tvdb_grid_t* g, float outside,
+tvdb_status_t tvdb_grid_signed_flood_fill_with_allocator(const tvdb_grid_t* g, float outside,
                                           float inside, tvdb_grid_t* out,
-                                          tvdb_error_t* err) {
+                                          tvdb_error_t* err, tvdb_allocator_t *wa) {
   if (!constructor_valid(g, out) || !isfinite(outside) || !isfinite(inside) ||
       outside <= 0 || inside >= 0)
     return tvdb_tree_error(err, TVDB_ERROR_INVALID_ARGUMENT,
                            "invalid flood-fill source/output/widths");
   tvdb_tree_index p;
-  tvdb_status_t st = tvdb_tree_index_create(g, 1, &p, err);
+  tvdb_status_t st = tvdb_tree_index_create_with_allocator(g, 1, &p, err, wa);
   if (st != TVDB_OK) return st;
   tvdb_grid_t d = {0};
   float (*ends)[2] = NULL;
@@ -978,7 +983,7 @@ tvdb_status_t tvdb_grid_signed_flood_fill(const tvdb_grid_t* g, float outside,
   if (st != TVDB_OK) goto done;
   size_t bytes;
   if (!tvdb_size_mul(g->tree.num_nodes, sizeof(*ends), &bytes)) goto overflow;
-  ends = calloc(1, bytes);
+  ends = tvdb_work_calloc(wa, 1, bytes);
   if (!ends) goto oom;
   for (size_t at = g->tree.num_nodes; at > 1; --at) {
     size_t ni = p.order[at - 1];
@@ -1044,7 +1049,7 @@ tvdb_status_t tvdb_grid_signed_flood_fill(const tvdb_grid_t* g, float outside,
   tvdb_root_node_t* r = &d.tree.nodes[0].u.root;
   if (!tvdb_size_mul(r->num_children, sizeof(*children), &bytes)) goto overflow;
   if (bytes) {
-    children = malloc(bytes);
+    children = tvdb_work_malloc(wa, bytes);
     if (!children) goto oom;
   }
   for (size_t i = 0; i < r->num_children; ++i) {
@@ -1053,7 +1058,7 @@ tvdb_status_t tvdb_grid_signed_flood_fill(const tvdb_grid_t* g, float outside,
     children[i].node = r->child_indices[i];
   }
   if (r->num_children > 1)
-    qsort(children, r->num_children, sizeof(*children), root_entry_cmp);
+    tvdb_work_sort(wa, children, r->num_children, sizeof(*children), root_entry_cmp);
   size_t total = r->num_tiles;
   for (size_t i = 1; i < r->num_children; ++i) {
     root_entry *a = children + i - 1, *b = children + i;
@@ -1067,7 +1072,7 @@ tvdb_status_t tvdb_grid_signed_flood_fill(const tvdb_grid_t* g, float outside,
   }
   if (!tvdb_size_mul(total, sizeof(*tiles), &bytes)) goto overflow;
   if (bytes) {
-    tiles = malloc(bytes);
+    tiles = tvdb_work_malloc(wa, bytes);
     if (!tiles) goto oom;
   }
   size_t used = 0;
@@ -1093,22 +1098,22 @@ tvdb_status_t tvdb_grid_signed_flood_fill(const tvdb_grid_t* g, float outside,
       e->priority = 1;
     }
   }
-  if (used > 1) qsort(tiles, used, sizeof(*tiles), root_entry_cmp);
+  if (used > 1) tvdb_work_sort(wa, tiles, used, sizeof(*tiles), root_entry_cmp);
   size_t unique = 0;
   for (size_t i = 0; i < used; ++i)
     if (!unique || memcmp(tiles[i].c, tiles[unique - 1].c, sizeof(tiles[i].c)))
       tiles[unique++] = tiles[i];
-  free(r->tile_origins);
-  free(r->tile_values);
-  free(r->tile_active);
+  tvdb_work_free(wa, r->tile_origins);
+  tvdb_work_free(wa, r->tile_values);
+  tvdb_work_free(wa, r->tile_active);
   r->tile_origins = NULL;
   r->tile_values = NULL;
   r->tile_active = NULL;
   r->num_tiles = (uint32_t)unique;
   if (unique) {
-    r->tile_origins = malloc(unique * 3 * sizeof(int32_t));
-    r->tile_values = calloc(unique, sizeof(tvdb_value_t));
-    r->tile_active = calloc(unique, sizeof(int));
+    r->tile_origins = tvdb_work_malloc(wa, unique * 3 * sizeof(int32_t));
+    r->tile_values = tvdb_work_calloc(wa, unique, sizeof(tvdb_value_t));
+    r->tile_active = tvdb_work_calloc(wa, unique, sizeof(int));
     if (!r->tile_origins || !r->tile_values || !r->tile_active) goto oom;
     for (size_t i = 0; i < unique; ++i) {
       memcpy(r->tile_origins + 3 * i, tiles[i].c, sizeof(tiles[i].c));
@@ -1130,32 +1135,32 @@ oom:
   st = tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY,
                        "flood-fill allocation failed");
 done:
-  free(ends);
-  free(children);
-  free(tiles);
+  tvdb_work_free(wa, ends);
+  tvdb_work_free(wa, children);
+  tvdb_work_free(wa, tiles);
   tvdb_grid_destroy_owned(&d);
   tvdb_tree_index_destroy(&p);
   return st;
 }
-static void free_node(tvdb_tree_node_t* n) {
+static void free_node(tvdb_tree_node_t* n, tvdb_allocator_t *wa) {
   if (n->type == TVDB_NODE_LEAF) {
-    free(n->u.leaf.value_mask.bits.data);
-    free(n->u.leaf.data);
+    tvdb_work_free(wa, n->u.leaf.value_mask.bits.data);
+    tvdb_work_free(wa, n->u.leaf.data);
   } else if (n->type == TVDB_NODE_INTERNAL) {
-    free(n->u.internal.child_mask.bits.data);
-    free(n->u.internal.value_mask.bits.data);
-    free(n->u.internal.values);
-    free(n->u.internal.child_indices);
+    tvdb_work_free(wa, n->u.internal.child_mask.bits.data);
+    tvdb_work_free(wa, n->u.internal.value_mask.bits.data);
+    tvdb_work_free(wa, n->u.internal.values);
+    tvdb_work_free(wa, n->u.internal.child_indices);
   }
   memset(n, 0, sizeof(*n));
 }
-tvdb_status_t tvdb_grid_prune(const tvdb_grid_t* g, tvdb_grid_t* out,
-                              tvdb_error_t* err) {
+tvdb_status_t tvdb_grid_prune_with_allocator(const tvdb_grid_t* g, tvdb_grid_t* out,
+                              tvdb_error_t* err, tvdb_allocator_t *wa) {
   if (!constructor_valid(g, out))
     return tvdb_tree_error(err, TVDB_ERROR_INVALID_ARGUMENT,
                            "prune requires distinct owning output");
   tvdb_tree_index p;
-  tvdb_status_t st = tvdb_tree_index_create(g, 1, &p, err);
+  tvdb_status_t st = tvdb_tree_index_create_with_allocator(g, 1, &p, err, wa);
   if (st != TVDB_OK) return st;
   tvdb_grid_t d = {0};
   unsigned char *uniform = NULL, *active = NULL, *keep = NULL;
@@ -1168,13 +1173,13 @@ tvdb_status_t tvdb_grid_prune(const tvdb_grid_t* g, tvdb_grid_t* out,
   st = clone_grid(&p, &d, err);
   if (st != TVDB_OK) goto done;
   size_t count = g->tree.num_nodes;
-  uniform = calloc(count, 1);
-  active = calloc(count, 1);
-  keep = calloc(count, 1);
+  uniform = tvdb_work_calloc(wa, count, 1);
+  active = tvdb_work_calloc(wa, count, 1);
+  keep = tvdb_work_calloc(wa, count, 1);
   if (!tvdb_size_mul(count, sizeof(float), &bytes)) goto overflow;
-  value = malloc(bytes);
+  value = tvdb_work_malloc(wa, bytes);
   if (!tvdb_size_mul(count, sizeof(size_t), &bytes)) goto overflow;
-  map = malloc(bytes);
+  map = tvdb_work_malloc(wa, bytes);
   if (!uniform || !active || !keep || !value || !map) goto oom;
   for (size_t at = count; at > 1; --at) {
     size_t ni = p.order[at - 1];
@@ -1220,13 +1225,13 @@ tvdb_status_t tvdb_grid_prune(const tvdb_grid_t* g, tvdb_grid_t* out,
     if (uniform[r->child_indices[i]]) ++total;
   if (total > UINT32_MAX || !tvdb_size_mul(total, 3 * sizeof(int32_t), &bytes))
     goto overflow;
-  int32_t* origins = bytes ? malloc(bytes) : NULL;
-  tvdb_value_t* values = total ? calloc(total, sizeof(tvdb_value_t)) : NULL;
-  int* states = total ? malloc(total * sizeof(int)) : NULL;
+  int32_t* origins = bytes ? tvdb_work_malloc(wa, bytes) : NULL;
+  tvdb_value_t* values = total ? tvdb_work_calloc(wa, total, sizeof(tvdb_value_t)) : NULL;
+  int* states = total ? tvdb_work_malloc(wa, total * sizeof(int)) : NULL;
   if (total && (!origins || !values || !states)) {
-    free(origins);
-    free(values);
-    free(states);
+    tvdb_work_free(wa, origins);
+    tvdb_work_free(wa, values);
+    tvdb_work_free(wa, states);
     goto oom;
   }
   size_t nt = 0, nc = 0;
@@ -1253,9 +1258,9 @@ tvdb_status_t tvdb_grid_prune(const tvdb_grid_t* g, tvdb_grid_t* out,
       ++nc;
     }
   }
-  free(r->tile_origins);
-  free(r->tile_values);
-  free(r->tile_active);
+  tvdb_work_free(wa, r->tile_origins);
+  tvdb_work_free(wa, r->tile_values);
+  tvdb_work_free(wa, r->tile_active);
   r->tile_origins = origins;
   r->tile_values = values;
   r->tile_active = states;
@@ -1282,52 +1287,52 @@ tvdb_status_t tvdb_grid_prune(const tvdb_grid_t* g, tvdb_grid_t* out,
       if (in->num_children == g->tree.nodes[ni].u.internal.num_children)
         continue;
       if (!in->num_children) {
-        free(in->child_indices);
+        tvdb_work_free(wa, in->child_indices);
         in->child_indices = NULL;
       } else {
         size_t* q =
-            realloc(in->child_indices, in->num_children * sizeof(size_t));
+            tvdb_work_realloc(wa, in->child_indices, in->num_children * sizeof(size_t));
         if (!q) goto oom;
         in->child_indices = q;
       }
     }
   if (nc != g->tree.nodes[0].u.root.num_children) {
     if (!nc) {
-      free(r->child_indices);
-      free(r->child_origins);
+      tvdb_work_free(wa, r->child_indices);
+      tvdb_work_free(wa, r->child_origins);
       r->child_indices = NULL;
       r->child_origins = NULL;
     } else {
-      size_t* ci = realloc(r->child_indices, nc * sizeof(size_t));
+      size_t* ci = tvdb_work_realloc(wa, r->child_indices, nc * sizeof(size_t));
       if (!ci) goto oom;
       r->child_indices = ci;
-      int32_t* co = realloc(r->child_origins, nc * 3 * sizeof(int32_t));
+      int32_t* co = tvdb_work_realloc(wa, r->child_origins, nc * 3 * sizeof(int32_t));
       if (!co) goto oom;
       r->child_origins = co;
     }
   }
   if (nt != total) {
     if (!nt) {
-      free(r->tile_origins);
-      free(r->tile_values);
-      free(r->tile_active);
+      tvdb_work_free(wa, r->tile_origins);
+      tvdb_work_free(wa, r->tile_values);
+      tvdb_work_free(wa, r->tile_active);
       r->tile_origins = NULL;
       r->tile_values = NULL;
       r->tile_active = NULL;
     } else {
-      int32_t* co = realloc(r->tile_origins, nt * 3 * sizeof(int32_t));
+      int32_t* co = tvdb_work_realloc(wa, r->tile_origins, nt * 3 * sizeof(int32_t));
       if (!co) goto oom;
       r->tile_origins = co;
-      tvdb_value_t* v = realloc(r->tile_values, nt * sizeof(tvdb_value_t));
+      tvdb_value_t* v = tvdb_work_realloc(wa, r->tile_values, nt * sizeof(tvdb_value_t));
       if (!v) goto oom;
       r->tile_values = v;
-      int* on = realloc(r->tile_active, nt * sizeof(int));
+      int* on = tvdb_work_realloc(wa, r->tile_active, nt * sizeof(int));
       if (!on) goto oom;
       r->tile_active = on;
     }
   }
   if (!tvdb_size_mul(retained, sizeof(*nodes), &bytes)) goto overflow;
-  nodes = malloc(bytes);
+  nodes = tvdb_work_malloc(wa, bytes);
   if (!nodes) goto oom;
   size_t used = 0;
   for (size_t i = 0; i < count; ++i)
@@ -1349,8 +1354,8 @@ tvdb_status_t tvdb_grid_prune(const tvdb_grid_t* g, tvdb_grid_t* out,
     for (size_t j = 0; j < nchildren; ++j) children[j] = map[children[j]];
   }
   for (size_t i = 1; i < count; ++i)
-    if (!keep[i]) free_node(d.tree.nodes + i);
-  free(d.tree.nodes);
+    if (!keep[i]) free_node(d.tree.nodes + i, wa);
+  tvdb_work_free(wa, d.tree.nodes);
   d.tree.nodes = nodes;
   nodes = NULL;
   d.tree.num_nodes = d.tree.nodes_capacity = retained;
@@ -1367,12 +1372,12 @@ oom:
   st =
       tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY, "prune allocation failed");
 done:
-  free(nodes);
-  free(uniform);
-  free(active);
-  free(keep);
-  free(value);
-  free(map);
+  tvdb_work_free(wa, nodes);
+  tvdb_work_free(wa, uniform);
+  tvdb_work_free(wa, active);
+  tvdb_work_free(wa, keep);
+  tvdb_work_free(wa, value);
+  tvdb_work_free(wa, map);
   tvdb_grid_destroy_owned(&d);
   tvdb_tree_index_destroy(&p);
   return st;
@@ -1535,4 +1540,19 @@ done:
   tvdb_dense_grid_free(&d);
   tvdb_tree_index_destroy(&p);
   return st;
+}
+
+tvdb_status_t tvdb_tree_index_create(const tvdb_grid_t *g, int f, tvdb_tree_index *p, tvdb_error_t *e) {
+ return tvdb_tree_index_create_with_allocator(g, f, p, e, NULL);
+}
+
+tvdb_status_t tvdb_tree_copy_attributes(const tvdb_grid_t *s, tvdb_grid_t *d, tvdb_error_t *e) {
+ return tvdb_tree_copy_attributes_with_allocator(s, d, e, NULL);
+}
+
+tvdb_status_t tvdb_grid_signed_flood_fill(const tvdb_grid_t *g, float o, float i, tvdb_grid_t *d, tvdb_error_t *e) {
+ return tvdb_grid_signed_flood_fill_with_allocator(g, o, i, d, e, NULL);
+}
+tvdb_status_t tvdb_grid_prune(const tvdb_grid_t *g, tvdb_grid_t *d, tvdb_error_t *e) {
+ return tvdb_grid_prune_with_allocator(g, d, e, NULL);
 }

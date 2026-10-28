@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 typedef struct {
+  tvdb_allocator_t *allocator;
   const tvdb_grid_t* grid;
   int levels;
   int64_t span[TVDB_MAX_TREE_DEPTH];
@@ -27,6 +28,14 @@ typedef struct {
 } tvdb_tree_index;
 tvdb_status_t tvdb_tree_index_create(const tvdb_grid_t*, int float_only,
                                      tvdb_tree_index*, tvdb_error_t*);
+tvdb_status_t tvdb_tree_index_create_with_allocator(const tvdb_grid_t*, int,
+ tvdb_tree_index*, tvdb_error_t*, tvdb_allocator_t*);
+tvdb_status_t tvdb_tree_copy_attributes_with_allocator(const tvdb_grid_t*, tvdb_grid_t*,
+ tvdb_error_t*, tvdb_allocator_t*);
+tvdb_status_t tvdb_grid_signed_flood_fill_with_allocator(const tvdb_grid_t*, float, float,
+ tvdb_grid_t*, tvdb_error_t*, tvdb_allocator_t*);
+tvdb_status_t tvdb_grid_prune_with_allocator(const tvdb_grid_t*, tvdb_grid_t*,
+ tvdb_error_t*, tvdb_allocator_t*);
 void tvdb_tree_index_destroy(tvdb_tree_index*);
 float tvdb_tree_get(const tvdb_tree_index*, const int32_t coord[3],
                     int* active);

@@ -78,6 +78,7 @@ static tvdb_vec3f mesh_position(const tvdb_dense_grid *g, int x, int y, int z) {
 }
 
 struct tvdb_mesh_sdf {
+    tvdb_allocator_t *allocator;
     const tvdb_triangle_mesh *mesh;
     const tvdb_vec3f *vertices;
     const tvdb_triangle *faces;
@@ -100,23 +101,24 @@ static tvdb_vec3f mesh_normal(tvdb_vec3f a, tvdb_vec3f b, tvdb_vec3f c) {
         return (tvdb_vec3f){0, 0, 0};
     return (tvdb_vec3f){(float)(n[0] / length), (float)(n[1] / length), (float)(n[2] / length)};
 }
-tvdb_status_t tvdb_mesh_sdf_create(const tvdb_triangle_mesh *mesh, tvdb_mesh_sdf_t **out,
-                                   tvdb_error_t *err) {
+tvdb_status_t tvdb_mesh_sdf_create_with_allocator(const tvdb_triangle_mesh *mesh, tvdb_mesh_sdf_t **out,
+                                   tvdb_error_t *err, tvdb_allocator_t *a) {
     if (!out)
         return mesh_error(err, TVDB_ERROR_INVALID_ARGUMENT, "null mesh workspace output");
     *out = NULL;
     tvdb_status_t st = mesh_validate(mesh, err);
     if (st != TVDB_OK)
         return st;
-    tvdb_mesh_sdf_t *p = calloc(1, sizeof(*p));
+    tvdb_mesh_sdf_t *p = tvdb_work_calloc(a, 1, sizeof(*p));
     if (!p)
         return mesh_error(err, TVDB_ERROR_OUT_OF_MEMORY, "mesh workspace allocation failed");
+    p->allocator = a;
     p->mesh = mesh;
     p->vertices = mesh->vertices;
     p->faces = mesh->faces;
     p->vertex_count = mesh->vertex_count;
     p->face_count = mesh->face_count;
-    p->normals = malloc(mesh->face_count * sizeof(tvdb_vec3f));
+    p->normals = tvdb_work_malloc(a, mesh->face_count * sizeof(tvdb_vec3f));
     if (!p->normals)
         goto oom;
     p->low = p->high = mesh->vertices[0];
@@ -134,7 +136,7 @@ tvdb_status_t tvdb_mesh_sdf_create(const tvdb_triangle_mesh *mesh, tvdb_mesh_sdf
         p->normals[i] =
             mesh_normal(mesh->vertices[f.v0], mesh->vertices[f.v1], mesh->vertices[f.v2]);
     }
-    if (tvdb_bvh_init(&p->bvh, mesh, mesh->face_count) != 0)
+    if (tvdb_bvh_init(&p->bvh, mesh, mesh->face_count, a) != 0)
         goto oom;
     *out = p;
     return TVDB_OK;
@@ -143,11 +145,15 @@ oom:
     return mesh_error(err, TVDB_ERROR_OUT_OF_MEMORY, "mesh acceleration allocation failed");
 }
 void tvdb_mesh_sdf_destroy(tvdb_mesh_sdf_t *p) {
+    tvdb_allocator_t *a = p ? p->allocator : NULL;
     if (p) {
         tvdb_bvh_free(&p->bvh);
-        free(p->normals);
-        free(p);
+        tvdb_work_free(a, p->normals);
+        tvdb_work_free(a, p);
     }
+}
+tvdb_status_t tvdb_mesh_sdf_create(const tvdb_triangle_mesh *mesh, tvdb_mesh_sdf_t **out, tvdb_error_t *err) {
+ return tvdb_mesh_sdf_create_with_allocator(mesh, out, err, NULL);
 }
 void tvdb_mesh_sdf_info(const tvdb_mesh_sdf_t *p, tvdb_mesh_sdf_info_t *out) {
     if (p && out) {

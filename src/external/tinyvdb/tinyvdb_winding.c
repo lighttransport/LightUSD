@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "tinyvdb_checked.h"
+#include "tinyvdb_work.h"
 
 /* Exact solid angles: Van Oosterom and Strackee 1983,
  *   tan(Omega/2) = a.(b x c) / (|a||b||c| + (a.b)|c| + (b.c)|a| + (c.a)|b|)
@@ -23,6 +24,7 @@
 typedef tvdb_winding_node_t wn_node;
 
 struct tvdb_winding {
+  tvdb_allocator_t *allocator;
   double *v;      /* 9 per face */
   double *center; /* 3 per face */
   double *normal; /* 3 per face, area-weighted */
@@ -104,11 +106,12 @@ static void wn_fill_node(tvdb_winding_t *w, wn_node *n) {
  * binary tree over n faces with leaves of at most TVDB_WN_LEAF faces has
  * fewer than 2 * n nodes). */
 static int wn_build(tvdb_winding_t *w) {
+  tvdb_allocator_t *a = w ? w->allocator : NULL;
   size_t cap = 2 * w->faces + 1;
-  w->nodes = (wn_node *)calloc(cap, sizeof(wn_node));
-  wn_key *keys = (wn_key *)malloc(w->faces * sizeof(wn_key));
+  w->nodes = (wn_node *)tvdb_work_calloc(a, cap, sizeof(wn_node));
+  wn_key *keys = (wn_key *)tvdb_work_malloc(a, w->faces * sizeof(wn_key));
   if (!w->nodes || !keys) {
-    free(keys);
+    tvdb_work_free(a, keys);
     return 0;
   }
   int32_t stack[TVDB_WN_STACK];
@@ -135,11 +138,11 @@ static int wn_build(tvdb_winding_t *w) {
       keys[i].key = w->center[3 * (size_t)f + axis];
       keys[i].face = f;
     }
-    qsort(keys, (size_t)n->count, sizeof(wn_key), wn_compare);
+    tvdb_work_sort(a, keys, (size_t)n->count, sizeof(wn_key), wn_compare);
     for (int32_t i = 0; i < n->count; ++i) w->order[n->first + i] = keys[i].face;
     const int32_t half = n->count / 2;
     if (w->node_count + 2 > cap || depth + 2 > TVDB_WN_STACK) {
-      free(keys);
+      tvdb_work_free(a, keys);
       return 0;
     }
     const int32_t l = (int32_t)w->node_count++, r = (int32_t)w->node_count++;
@@ -153,24 +156,25 @@ static int wn_build(tvdb_winding_t *w) {
     stack[depth++] = r;
     stack[depth++] = l;
   }
-  free(keys);
+  tvdb_work_free(a, keys);
   return 1;
 }
 
 void tvdb_winding_destroy(tvdb_winding_t *w) {
+  tvdb_allocator_t *a = w ? w->allocator : NULL;
   if (!w) return;
-  free(w->v);
-  free(w->center);
-  free(w->normal);
-  free(w->area);
-  free(w->order);
-  free(w->nodes);
-  free(w);
+  tvdb_work_free(a, w->v);
+  tvdb_work_free(a, w->center);
+  tvdb_work_free(a, w->normal);
+  tvdb_work_free(a, w->area);
+  tvdb_work_free(a, w->order);
+  tvdb_work_free(a, w->nodes);
+  tvdb_work_free(a, w);
 }
 
-tvdb_status_t tvdb_winding_create(const tvdb_triangle_mesh *mesh,
+tvdb_status_t tvdb_winding_create_with_allocator(const tvdb_triangle_mesh *mesh,
                                   tvdb_winding_kind_t kind,
-                                  tvdb_winding_t **out, tvdb_error_t *err) {
+                                  tvdb_winding_t **out, tvdb_error_t *err, tvdb_allocator_t *a) {
   if (!mesh || !out || !mesh->vertices || !mesh->faces || !mesh->face_count ||
       (kind != TVDB_WINDING_EXACT && kind != TVDB_WINDING_FAST) ||
       mesh->face_count > (size_t)INT32_MAX / 2)
@@ -187,14 +191,15 @@ tvdb_status_t tvdb_winding_create(const tvdb_triangle_mesh *mesh,
       !tvdb_size_mul(nf, 3 * sizeof(double), &bytes3) ||
       !tvdb_size_mul(nf, sizeof(double), &bytes1))
     return wn_error(err, TVDB_ERROR_INVALID_ARGUMENT, "winding size overflow");
-  tvdb_winding_t *w = (tvdb_winding_t *)calloc(1, sizeof(*w));
+  tvdb_winding_t *w = (tvdb_winding_t *)tvdb_work_calloc(a, 1, sizeof(*w));
   if (!w) return wn_error(err, TVDB_ERROR_OUT_OF_MEMORY, "winding allocation failed");
+  w->allocator = a;
   w->faces = nf;
   w->kind = kind;
-  w->v = (double *)malloc(bytes9);
-  w->center = (double *)malloc(bytes3);
-  w->normal = (double *)malloc(bytes3);
-  w->area = (double *)malloc(bytes1);
+  w->v = (double *)tvdb_work_malloc(a, bytes9);
+  w->center = (double *)tvdb_work_malloc(a, bytes3);
+  w->normal = (double *)tvdb_work_malloc(a, bytes3);
+  w->area = (double *)tvdb_work_malloc(a, bytes1);
   if (!w->v || !w->center || !w->normal || !w->area) goto oom;
   for (size_t f = 0; f < nf; ++f) {
     const uint32_t idx[3] = {mesh->faces[f].v0, mesh->faces[f].v1,
@@ -223,7 +228,7 @@ tvdb_status_t tvdb_winding_create(const tvdb_triangle_mesh *mesh,
     }
   }
   if (kind == TVDB_WINDING_FAST) {
-    w->order = (int32_t *)malloc(nf * sizeof(int32_t));
+    w->order = (int32_t *)tvdb_work_malloc(a, nf * sizeof(int32_t));
     if (!w->order) goto oom;
     for (size_t f = 0; f < nf; ++f) w->order[f] = (int32_t)f;
     if (!wn_build(w)) goto oom;
@@ -292,4 +297,9 @@ double tvdb_winding_eval(const tvdb_winding_t *w, const double p[3]) {
     stack[depth++] = n->left;
   }
   return sum / four_pi;
+}
+
+tvdb_status_t tvdb_winding_create(const tvdb_triangle_mesh *mesh,
+ tvdb_winding_kind_t kind, tvdb_winding_t **out, tvdb_error_t *err) {
+ return tvdb_winding_create_with_allocator(mesh, kind, out, err, NULL);
 }

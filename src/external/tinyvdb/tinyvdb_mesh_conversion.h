@@ -16,6 +16,8 @@ typedef struct {
  * open/inconsistently oriented meshes. Degenerate faces have zero normals. */
 tvdb_status_t tvdb_mesh_sdf_create(const tvdb_triangle_mesh *mesh, tvdb_mesh_sdf_t **out,
                                    tvdb_error_t *err);
+tvdb_status_t tvdb_mesh_sdf_create_with_allocator(const tvdb_triangle_mesh *mesh,
+ tvdb_mesh_sdf_t **out, tvdb_error_t *err, tvdb_allocator_t *allocator);
 void tvdb_mesh_sdf_destroy(tvdb_mesh_sdf_t *workspace);
 void tvdb_mesh_sdf_info(const tvdb_mesh_sdf_t *workspace, tvdb_mesh_sdf_info_t *out);
 /* Unsigned closest-triangle distance at a finite world point. Output is

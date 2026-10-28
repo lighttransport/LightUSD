@@ -1,3 +1,4 @@
+#include "tinyvdb_work.h"
 #include "tinyvdb_mesh.h"
 #include "tvdb_memory.h"
 #include "tinyvdb_mesh_conversion.h"
@@ -293,6 +294,7 @@ _Static_assert(sizeof(tvdb_mesh_bvh_node_t) == 40,
 typedef tvdb_mesh_bvh_node_t tvdb_bvh_node_t;
 
 typedef struct {
+    tvdb_allocator_t *allocator;
     int32_t *prim;              /* face indices, partitioned by the build */
     int32_t prim_count;
     tvdb_bvh_node_t *nodes;
@@ -309,19 +311,21 @@ typedef struct {
 struct tvdb_mesh_bvh { tvdb_bvh_t b; };
 
 static void tvdb_bvh_free(tvdb_bvh_t *b) {
+    tvdb_allocator_t *a = b ? b->allocator : NULL;
     if (!b) return;
-    free(b->prim);
-    free(b->nodes);
-    free(b->tri_box);
+    tvdb_work_free(a, b->prim);
+    tvdb_work_free(a, b->nodes);
+    tvdb_work_free(a, b->tri_box);
     memset(b, 0, sizeof(*b));
 }
 
 static int32_t tvdb_bvh_new_node(tvdb_bvh_t *b) {
+    tvdb_allocator_t *a = b ? b->allocator : NULL;
     if (b->node_count >= b->node_capacity) {
         if (b->node_capacity == INT32_MAX) return -1;
         int32_t new_cap = !b->node_capacity ? 256 : b->node_capacity > INT32_MAX/2 ? INT32_MAX : b->node_capacity*2;
         if ((size_t)new_cap > SIZE_MAX/sizeof(tvdb_bvh_node_t)) return -1;
-        tvdb_bvh_node_t *n = (tvdb_bvh_node_t *)realloc(
+        tvdb_bvh_node_t *n = (tvdb_bvh_node_t *)tvdb_work_realloc(a,
             b->nodes, (size_t)new_cap * sizeof(*n));
         if (!n) return -1;
         b->nodes = n;
@@ -449,14 +453,15 @@ static int32_t tvdb_bvh_build(tvdb_bvh_t *b, int32_t lo, int32_t hi, int depth) 
 }
 
 /* Build the hierarchy over all `nf` faces of `mesh`. Returns 0 on success. */
-static int tvdb_bvh_init(tvdb_bvh_t *b, const tvdb_triangle_mesh *mesh, size_t nf) {
+static int tvdb_bvh_init(tvdb_bvh_t *b, const tvdb_triangle_mesh *mesh, size_t nf, tvdb_allocator_t *a) {
     memset(b, 0, sizeof(*b));
+    b->allocator = a;
     if (nf == 0) return -1;
     if (nf > (size_t)INT32_MAX || nf > SIZE_MAX/(6*sizeof(float))) return -1;
     b->prim_count = (int32_t)nf;
 
-    b->prim = (int32_t *)malloc(nf * sizeof(int32_t));
-    b->tri_box = (float *)malloc(nf * 6 * sizeof(float));
+    b->prim = (int32_t *)tvdb_work_malloc(a, nf * sizeof(int32_t));
+    b->tri_box = (float *)tvdb_work_malloc(a, nf * 6 * sizeof(float));
     if (!b->prim || !b->tri_box) { tvdb_bvh_free(b); return -1; }
 
     for (size_t f = 0; f < nf; ++f) {
@@ -498,7 +503,7 @@ bool tvdb_mesh_bvh_build(const tvdb_triangle_mesh* mesh, tvdb_mesh_bvh_t** out) 
     if (mesh_validate(mesh, NULL) != TVDB_OK) return false;
     tvdb_mesh_bvh_t* h = (tvdb_mesh_bvh_t*)calloc(1, sizeof(*h));
     if (!h) return false;
-    if (tvdb_bvh_init(&h->b, mesh, mesh->face_count) != 0) { free(h); return false; }
+    if (tvdb_bvh_init(&h->b, mesh, mesh->face_count, NULL) != 0) { free(h); return false; }
     *out = h;
     return true;
 }

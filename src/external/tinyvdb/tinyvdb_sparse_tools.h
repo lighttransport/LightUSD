@@ -111,6 +111,14 @@ tvdb_status_t tvdb_mesh_to_level_set(const tvdb_triangle_mesh* mesh,
                                      tvdb_thread_pool_t* pool, tvdb_grid_t* out,
                                      tvdb_mesh_level_set_result_t* result,
                                      tvdb_error_t* err);
+/* CPU allocation-aware variant. Includes all explicit construction scratch
+ * and retained grid allocations; excludes pool/runtime and callback storage.
+ * Callbacks must track their own block sizes (previous sizes may be zero).
+ * allocator and its context must outlive the output grid. Destroy the output
+ * with tvdb_grid_destroy_owned. Failure preserves out and result. */
+tvdb_status_t tvdb_mesh_to_level_set_with_allocator(const tvdb_triangle_mesh*,
+ const tvdb_mesh_level_set_options_t*, tvdb_thread_pool_t*, tvdb_grid_t*,
+ tvdb_mesh_level_set_result_t*, tvdb_error_t*, tvdb_allocator_t*);
 tvdb_status_t tvdb_grid_level_set_track(const tvdb_grid_t* source,
                                         float outside_width, float inside_width,
                                         size_t max_voxels, tvdb_grid_t* out,

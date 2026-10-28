@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "tinyvdb_checked.h"
+#include "tinyvdb_work.h"
 #include "tinyvdb_mesh_conversion.h"
 #include "tinyvdb_tree_internal.h"
 #include "tinyvdb_winding.h"
@@ -30,6 +31,7 @@ typedef struct {
   uint32_t index;
 } tool_slot;
 typedef struct {
+  tvdb_allocator_t *allocator;
   tool_voxel* v;
   tool_slot* slots;
   size_t count, capacity, hash_capacity, limit, scans;
@@ -65,8 +67,9 @@ static uint64_t tool_hash(const int32_t c[3]) {
   return h ^ (h >> 33);
 }
 static void tool_map_free(tool_map* m) {
-  free(m->v);
-  free(m->slots);
+  tvdb_allocator_t *wa = m->allocator;
+  tvdb_work_free(wa, m->v);
+  tvdb_work_free(wa, m->slots);
   memset(m, 0, sizeof(*m));
 }
 /* The voxel at c, or SIZE_MAX with *empty (if given) at the slot where it
@@ -363,9 +366,9 @@ static tvdb_status_t tool_regions_collect(const tvdb_tree_index* p, float iso,
   tool_collect_ctx ctx = {out, p, err, iso, bg_below};
   return tool_regions_leaf(p, tool_collect_region, tool_collect_leaf, &ctx);
 }
-static tvdb_status_t tool_build(const tvdb_grid_t* source, const tool_map* m,
+static tvdb_status_t tool_build_with_allocator(const tvdb_grid_t* source, const tool_map* m,
                                 float bg, const tvdb_transform_t* transform,
-                                tvdb_grid_t* out, tvdb_error_t* err) {
+                                tvdb_grid_t* out, tvdb_error_t* err, tvdb_allocator_t *wa) {
   tvdb_sparse_grid sg = {0};
   tvdb_grid_t tmpl = {0}, generated = {0}, attrs = {0};
   tvdb_status_t st = TVDB_OK;
@@ -380,14 +383,22 @@ static tvdb_status_t tool_build(const tvdb_grid_t* source, const tool_map* m,
                                            : l == 3 ? TVDB_NODE_LEAF
                                                     : TVDB_NODE_INTERNAL;
   }
-  if (m->count && !tvdb_sparse_grid_reserve(&sg, m->count)) goto oom;
+  if (wa && m->count) {
+    size_t cb, vb;
+    if (!tvdb_size_mul(m->count, sizeof(*sg.coords), &cb) ||
+        !tvdb_size_mul(m->count, sizeof(*sg.values), &vb)) goto oom;
+    sg.coords = tvdb_work_malloc(wa, cb);
+    sg.values = tvdb_work_malloc(wa, vb);
+    if (!sg.coords || !sg.values) goto oom;
+  } else if (m->count && !tvdb_sparse_grid_reserve(&sg, m->count)) goto oom;
   sg.count = m->count;
   for (size_t i = 0; i < m->count; ++i) {
     sg.coords[i] = (tvdb_vec3i){m->v[i].c[0], m->v[i].c[1], m->v[i].c[2]};
     sg.values[i] = m->v[i].value;
   }
-  if (!tvdb_grid_from_sparse_using_template(
-          &tmpl, &sg, source->descriptor.grid_name, bg, &generated))
+  if (!tvdb_grid_from_sparse_typed_using_template_with_allocator(
+          &tmpl, sg.coords, sg.values, sg.count, TVDB_VALUE_FLOAT, &bg,
+          source->descriptor.grid_name, &generated, wa))
     goto oom;
   {
     const int nlevels = generated.tree.layout.num_levels;
@@ -452,7 +463,7 @@ static tvdb_status_t tool_build(const tvdb_grid_t* source, const tool_map* m,
     #undef tvdb_level_span
     #undef TVDB_MASK_ON
   }
-  st = tvdb_tree_copy_attributes(source, &attrs, err);
+  st = tvdb_tree_copy_attributes_with_allocator(source, &attrs, err, wa);
   if (st != TVDB_OK) goto done;
   attrs.transform = *transform;
   for (size_t i = 0; i < attrs.metadata.count;) {
@@ -462,20 +473,21 @@ static tvdb_status_t tool_build(const tvdb_grid_t* source, const tool_map* m,
         (!strcmp(name, "file_bbox_min") || !strcmp(name, "file_bbox_max") ||
          !strcmp(name, "file_voxel_count") ||
          !strcmp(name, "file_mem_bytes"))) {
-      free(e->name);
-      free(e->type_name);
-      free(e->raw_data);
-      if (e->value.type == TVDB_VALUE_STRING) free(e->value.u.s.str);
+      tvdb_work_free(wa, e->name);
+      tvdb_work_free(wa, e->type_name);
+      tvdb_work_free(wa, e->raw_data);
+      if (e->value.type == TVDB_VALUE_STRING) tvdb_work_free(wa, e->value.u.s.str);
       memmove(e, e + 1, (attrs.metadata.count - i - 1) * sizeof(*e));
       --attrs.metadata.count;
     } else
       ++i;
   }
-  free(attrs.descriptor.grid_type);
+  tvdb_work_free(wa, attrs.descriptor.grid_type);
   attrs.descriptor.grid_type = generated.descriptor.grid_type;
   generated.descriptor.grid_type = NULL;
   attrs.tree = generated.tree;
   memset(&generated.tree, 0, sizeof(generated.tree));
+  generated.tree.alloc = wa;  // descriptor still belongs to the operation allocator
   *out = attrs;
   memset(&attrs, 0, sizeof(attrs));
   goto done;
@@ -483,11 +495,17 @@ oom:
   st = tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY,
                        "sparse tree construction failed");
 done:
-  tvdb_sparse_grid_free(&sg);
+  if (wa) { tvdb_work_free(wa, sg.coords); tvdb_work_free(wa, sg.values); }
+  else tvdb_sparse_grid_free(&sg);
   tvdb_grid_destroy_owned(&generated);
   tvdb_grid_destroy_owned(&attrs);
   return st;
 }
+static tvdb_status_t tool_build(const tvdb_grid_t *s, const tool_map *m, float b,
+ const tvdb_transform_t *t, tvdb_grid_t *o, tvdb_error_t *e) {
+ return tool_build_with_allocator(s, m, b, t, o, e, NULL);
+}
+
 static float tool_get64(tvdb_tree_accessor* acc, const int64_t c[3],
                         int* active) {
   int32_t q[3];
@@ -1489,17 +1507,18 @@ tvdb_status_t tvdb_grid_volume_to_mesh_pooled(const tvdb_grid_t* source,
 /* Set (or add) string metadata `key`. */
 static tvdb_status_t tool_set_string(tvdb_grid_t* g, const char* key,
                                      const char* text, tvdb_error_t* err) {
+  tvdb_allocator_t *wa = g->metadata.alloc;
   size_t i = 0;
   for (; i < g->metadata.count; ++i)
     if (g->metadata.entries[i].name &&
         !strcmp(g->metadata.entries[i].name, key))
       break;
-  char *name = malloc(strlen(key) + 1), *type = malloc(7),
-       *value = malloc(strlen(text) + 1);
+  char *name = tvdb_work_malloc(wa, strlen(key) + 1), *type = tvdb_work_malloc(wa, 7),
+       *value = tvdb_work_malloc(wa, strlen(text) + 1);
   if (!name || !type || !value) {
-    free(name);
-    free(type);
-    free(value);
+    tvdb_work_free(wa, name);
+    tvdb_work_free(wa, type);
+    tvdb_work_free(wa, value);
     return tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY,
                            "metadata allocation failed");
   }
@@ -1510,17 +1529,17 @@ static tvdb_status_t tool_set_string(tvdb_grid_t* g, const char* key,
     size_t bytes;
     if (i == SIZE_MAX ||
         !tvdb_size_mul(i + 1, sizeof(tvdb_meta_entry_t), &bytes)) {
-      free(name);
-      free(type);
-      free(value);
+      tvdb_work_free(wa, name);
+      tvdb_work_free(wa, type);
+      tvdb_work_free(wa, value);
       return tvdb_tree_error(err, TVDB_ERROR_INVALID_ARGUMENT,
                              "metadata size overflow");
     }
-    void* p = realloc(g->metadata.entries, bytes);
+    void* p = tvdb_work_realloc(wa, g->metadata.entries, bytes);
     if (!p) {
-      free(name);
-      free(type);
-      free(value);
+      tvdb_work_free(wa, name);
+      tvdb_work_free(wa, type);
+      tvdb_work_free(wa, value);
       return tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY,
                              "metadata allocation failed");
     }
@@ -1529,10 +1548,10 @@ static tvdb_status_t tool_set_string(tvdb_grid_t* g, const char* key,
     memset(g->metadata.entries + i, 0, sizeof(tvdb_meta_entry_t));
   }
   tvdb_meta_entry_t* e = g->metadata.entries + i;
-  free(e->name);
-  free(e->type_name);
-  free(e->raw_data);
-  if (e->value.type == TVDB_VALUE_STRING) free(e->value.u.s.str);
+  tvdb_work_free(wa, e->name);
+  tvdb_work_free(wa, e->type_name);
+  tvdb_work_free(wa, e->raw_data);
+  if (e->value.type == TVDB_VALUE_STRING) tvdb_work_free(wa, e->value.u.s.str);
   memset(e, 0, sizeof(*e));
   e->name = name;
   e->type_name = type;
@@ -1675,6 +1694,7 @@ done:
  * each dilation step is a few shifts per slice plus the faces pulled from the
  * six neighbor bricks, instead of six hash probes per voxel. */
 typedef struct {
+  tvdb_allocator_t *allocator;
   int32_t (*key)[3];
   uint64_t (*mask)[8];
   size_t count, capacity;
@@ -1684,9 +1704,10 @@ typedef struct {
 #define TOOL_X0 UINT64_C(0x0101010101010101) /* bits with x == 0 */
 #define TOOL_X7 UINT64_C(0x8080808080808080) /* bits with x == 7 */
 static void tool_bricks_free(tool_bricks* b) {
-  free(b->key);
-  free(b->mask);
-  free(b->slots);
+  tvdb_allocator_t *wa = b->allocator;
+  tvdb_work_free(wa, b->key);
+  tvdb_work_free(wa, b->mask);
+  tvdb_work_free(wa, b->slots);
   memset(b, 0, sizeof(*b));
 }
 static int32_t tool_brick_of(int32_t c) { return c >= 0 ? c / 8 : -1 - (-1 - c) / 8; }
@@ -1702,6 +1723,7 @@ static size_t tool_brick_find(const tool_bricks* b, const int32_t k[3]) {
 }
 /* The brick at k, appended empty when missing; SIZE_MAX if out of memory. */
 static size_t tool_brick_get(tool_bricks* b, const int32_t k[3]) {
+  tvdb_allocator_t *wa = b->allocator;
   size_t i = tool_brick_find(b, k);
   if (i != SIZE_MAX) return i;
   if (b->count >= UINT32_MAX - 1) return SIZE_MAX;
@@ -1710,10 +1732,10 @@ static size_t tool_brick_get(tool_bricks* b, const int32_t k[3]) {
     size_t kb, mb;
     if (!tvdb_size_mul(n, sizeof(*b->key), &kb) || !tvdb_size_mul(n, sizeof(*b->mask), &mb))
       return SIZE_MAX;
-    void* key = realloc(b->key, kb);
+    void* key = tvdb_work_realloc(wa, b->key, kb);
     if (!key) return SIZE_MAX;
     b->key = key;
-    void* mask = realloc(b->mask, mb);
+    void* mask = tvdb_work_realloc(wa, b->mask, mb);
     if (!mask) return SIZE_MAX;
     b->mask = mask;
     b->capacity = n;
@@ -1723,14 +1745,14 @@ static size_t tool_brick_get(tool_bricks* b, const int32_t k[3]) {
     if (!tvdb_hash_capacity_scaled(b->count + 1, 4, 1, &n) ||
         !tvdb_size_mul(n, sizeof(uint32_t), &bytes))
       return SIZE_MAX;
-    uint32_t* slots = calloc(1, bytes);
+    uint32_t* slots = tvdb_work_calloc(wa, 1, bytes);
     if (!slots) return SIZE_MAX;
     for (size_t j = 0; j < b->count; ++j) {
       size_t s = (size_t)tool_hash(b->key[j]) & (n - 1);
       while (slots[s]) s = (s + 1) & (n - 1);
       slots[s] = (uint32_t)(j + 1);
     }
-    free(b->slots);
+    tvdb_work_free(wa, b->slots);
     b->slots = slots;
     b->hash_capacity = n;
   }
@@ -1771,6 +1793,7 @@ static size_t tool_bricks_voxels(const tool_bricks* b) {
 /* One 6-neighbor dilation step. */
 static tvdb_status_t tool_bricks_dilate(tool_bricks* b, uint64_t (**scratch)[8],
                                         size_t* scratch_cap, tvdb_error_t* err) {
+  tvdb_allocator_t *wa = b->allocator;
   static const int dir[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
                                 {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
   /* Create the bricks the boundary bits spill into (their slices start
@@ -1808,7 +1831,7 @@ static tvdb_status_t tool_bricks_dilate(tool_bricks* b, uint64_t (**scratch)[8],
     size_t bytes;
     if (!tvdb_size_mul(b->capacity, sizeof(**scratch), &bytes))
       return tvdb_tree_error(err, TVDB_ERROR_INVALID_ARGUMENT, "mesh level set size overflow");
-    void* p = realloc(*scratch, bytes);
+    void* p = tvdb_work_realloc(wa, *scratch, bytes);
     if (!p)
       return tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY, "mesh level set allocation failed");
     *scratch = p;
@@ -1887,13 +1910,19 @@ static int tool_nearest_voxel(const double p[3], double inv_h, int32_t c[3]) {
   }
   return 1;
 }
-tvdb_status_t tvdb_mesh_to_level_set(const tvdb_triangle_mesh* mesh,
+tvdb_status_t tvdb_mesh_to_level_set_with_allocator(const tvdb_triangle_mesh* mesh,
                                      const tvdb_mesh_level_set_options_t* options,
                                      tvdb_thread_pool_t* pool, tvdb_grid_t* out,
                                      tvdb_mesh_level_set_result_t* result,
-                                     tvdb_error_t* err) {
+                                     tvdb_error_t* err, tvdb_allocator_t *wa) {
+  if (wa && (!wa->malloc_fn || !wa->free_fn || !wa->realloc_fn))
+    return tvdb_tree_error(err, TVDB_ERROR_INVALID_ARGUMENT, "invalid working allocator");
   if (!mesh || !options || !out || !mesh->faces || !mesh->vertices ||
-      !mesh->face_count || !isfinite(options->voxel_size) ||
+      !mesh->face_count || mesh->vertex_count > UINT32_MAX ||
+      mesh->vertex_count > SIZE_MAX / sizeof(tvdb_vec3f) ||
+      mesh->face_count > INT32_MAX / 2 ||
+      mesh->face_count > SIZE_MAX / sizeof(tvdb_triangle) ||
+      !isfinite(options->voxel_size) ||
       options->voxel_size <= 0 || !isfinite(options->exterior_width) ||
       options->exterior_width <= 0 || !isfinite(options->interior_width) ||
       options->interior_width <= 0 ||
@@ -1919,9 +1948,11 @@ tvdb_status_t tvdb_mesh_to_level_set(const tvdb_triangle_mesh* mesh,
               inside = options->interior_width;
   const size_t limit = tool_limit(options->max_voxels);
   tool_bricks bricks = {0};
+  bricks.allocator = wa;
   uint64_t(*scratch)[8] = NULL;
   size_t scratch_cap = 0, total = 0;
   tool_map band = {0};
+  band.allocator = wa;
   tvdb_mesh_sdf_t* query = NULL;
   tvdb_winding_t* wn = NULL;
   tvdb_thread_pool_t* owned = NULL;
@@ -2012,7 +2043,7 @@ tvdb_status_t tvdb_mesh_to_level_set(const tvdb_triangle_mesh* mesh,
       }
     }
   }
-  free(scratch);
+  tvdb_work_free(wa, scratch);
   scratch = NULL;
   report.candidate_voxels = total;
   {
@@ -2024,16 +2055,16 @@ tvdb_status_t tvdb_mesh_to_level_set(const tvdb_triangle_mesh* mesh,
                            "mesh level set size overflow");
       goto done;
     }
-    ijk = (int32_t*)malloc(ibytes ? ibytes : 1);
-    distance = (float*)malloc(fbytes ? fbytes : 1);
-    winding = (double*)malloc(dbytes ? dbytes : 1);
+    ijk = (int32_t*)tvdb_work_malloc(wa, ibytes ? ibytes : 1);
+    distance = (float*)tvdb_work_malloc(wa, fbytes ? fbytes : 1);
+    winding = (double*)tvdb_work_malloc(wa, dbytes ? dbytes : 1);
     if (!ijk || !distance || !winding) {
       st = tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY,
                            "mesh level set allocation failed");
       goto done;
     }
     tool_brick_order* order =
-        (tool_brick_order*)malloc((bricks.count ? bricks.count : 1) * sizeof(tool_brick_order));
+        (tool_brick_order*)tvdb_work_malloc(wa, (bricks.count ? bricks.count : 1) * sizeof(tool_brick_order));
     if (!order) {
       st = tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY,
                            "mesh level set allocation failed");
@@ -2044,7 +2075,7 @@ tvdb_status_t tvdb_mesh_to_level_set(const tvdb_triangle_mesh* mesh,
       order[i].brick = (uint32_t)i;
     }
     /* Keys are unique, so qsort's instability cannot reorder anything. */
-    qsort(order, bricks.count, sizeof(*order), tool_brick_compare);
+    tvdb_work_sort(wa, order, bricks.count, sizeof(*order), tool_brick_compare);
     size_t n = 0;
     for (size_t o = 0; o < bricks.count; ++o) {
       const size_t i = order[o].brick;
@@ -2058,7 +2089,7 @@ tvdb_status_t tvdb_mesh_to_level_set(const tvdb_triangle_mesh* mesh,
             ++n;
           }
     }
-    free(order);
+    tvdb_work_free(wa, order);
     tool_bricks_free(&bricks);
   }
   {
@@ -2077,13 +2108,13 @@ tvdb_status_t tvdb_mesh_to_level_set(const tvdb_triangle_mesh* mesh,
       for (size_t i = 0; i < total; ++i) cpu_voxels += isnan(distance[i]) != 0;
     }
     if (cpu_voxels) {
-      st = tvdb_mesh_sdf_create(mesh, &query, err);
+      st = tvdb_mesh_sdf_create_with_allocator(mesh, &query, err, wa);
       if (st != TVDB_OK) goto done;
-      st = tvdb_winding_create(mesh,
+      st = tvdb_winding_create_with_allocator(mesh,
                                options->sign == TVDB_LEVEL_SET_SIGN_WINDING_EXACT
                                    ? TVDB_WINDING_EXACT
                                    : TVDB_WINDING_FAST,
-                               &wn, err);
+                               &wn, err, wa);
       if (st != TVDB_OK) goto done;
     }
     tool_level_set_job job = {.ijk = ijk, .distance = distance, .winding = winding,
@@ -2125,7 +2156,7 @@ tvdb_status_t tvdb_mesh_to_level_set(const tvdb_triangle_mesh* mesh,
     if (band.count == band.capacity) {
       const size_t n = band.capacity ? 2 * band.capacity : 1024;
       size_t bytes;
-      void* p = tvdb_size_mul(n, sizeof(tool_voxel), &bytes) ? realloc(band.v, bytes) : NULL;
+      void* p = tvdb_size_mul(n, sizeof(tool_voxel), &bytes) ? tvdb_work_realloc(wa, band.v, bytes) : NULL;
       if (!p) {
         st = tvdb_tree_error(err, TVDB_ERROR_OUT_OF_MEMORY,
                              "mesh level set allocation failed");
@@ -2143,9 +2174,9 @@ tvdb_status_t tvdb_mesh_to_level_set(const tvdb_triangle_mesh* mesh,
     if (d > report.max_distance) report.max_distance = d;
   }
   report.active_voxels = band.count;
-  free(ijk);
-  free(distance);
-  free(winding);
+  tvdb_work_free(wa, ijk);
+  tvdb_work_free(wa, distance);
+  tvdb_work_free(wa, winding);
   ijk = NULL;
   distance = NULL;
   winding = NULL;
@@ -2158,15 +2189,15 @@ tvdb_status_t tvdb_mesh_to_level_set(const tvdb_triangle_mesh* mesh,
     stub.descriptor.grid_name =
         (char*)(options->grid_name ? options->grid_name : "surface");
     stub.transform = transform;
-    st = tool_build(&stub, &band, outside, &transform, &generated, err);
+    st = tool_build_with_allocator(&stub, &band, outside, &transform, &generated, err, wa);
   }
   if (st == TVDB_OK) st = tool_set_string(&generated, "class", "level set", err);
   /* OpenVDB keeps the grid name as metadata too; its tools display that. */
   if (st == TVDB_OK)
     st = tool_set_string(&generated, "name", stub.descriptor.grid_name, err);
   if (st == TVDB_OK)
-    st = tvdb_grid_signed_flood_fill(&generated, outside, -inside, &filled, err);
-  if (st == TVDB_OK) st = tvdb_grid_prune(&filled, &pruned, err);
+    st = tvdb_grid_signed_flood_fill_with_allocator(&generated, outside, -inside, &filled, err, wa);
+  if (st == TVDB_OK) st = tvdb_grid_prune_with_allocator(&filled, &pruned, err, wa);
   if (st == TVDB_OK) {
     tvdb_grid_destroy_owned(out);
     *out = pruned;
@@ -2175,14 +2206,14 @@ tvdb_status_t tvdb_mesh_to_level_set(const tvdb_triangle_mesh* mesh,
   }
 done:
   tool_bricks_free(&bricks);
-  free(scratch);
+  tvdb_work_free(wa, scratch);
   tool_map_free(&band);
   tvdb_mesh_sdf_destroy(query);
   tvdb_winding_destroy(wn);
   tvdb_thread_pool_destroy(owned);
-  free(ijk);
-  free(distance);
-  free(winding);
+  tvdb_work_free(wa, ijk);
+  tvdb_work_free(wa, distance);
+  tvdb_work_free(wa, winding);
   tvdb_grid_destroy_owned(&generated);
   tvdb_grid_destroy_owned(&filled);
   tvdb_grid_destroy_owned(&pruned);
@@ -2499,4 +2530,10 @@ done:
   tvdb_tree_index_destroy(&index);
   tvdb_grid_destroy_owned(&generated);
   return st;
+}
+
+tvdb_status_t tvdb_mesh_to_level_set(const tvdb_triangle_mesh *m,
+ const tvdb_mesh_level_set_options_t *o, tvdb_thread_pool_t *p, tvdb_grid_t *g,
+ tvdb_mesh_level_set_result_t *r, tvdb_error_t *e) {
+ return tvdb_mesh_to_level_set_with_allocator(m, o, p, g, r, e, NULL);
 }

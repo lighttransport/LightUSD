@@ -131,6 +131,12 @@ bool tvdb_grid_from_sparse_typed_using_template(const tvdb_grid_t *tmpl,
                                                 const char *grid_name,
                                                 tvdb_grid_t *out);
 
+/* Allocator and context must outlive out; callbacks track block sizes (the
+ * previous size supplied on scratch free/realloc may be zero). */
+bool tvdb_grid_from_sparse_typed_using_template_with_allocator(const tvdb_grid_t*,
+ const tvdb_vec3i*, const void*, size_t, tvdb_value_type_t, const void*,
+ const char*, tvdb_grid_t*, tvdb_allocator_t*);
+
 // Vec3 (Tree_vec3s_5_4_3) variant. `coords` and `values` describe `count`
 // active voxels; `values` is `count*3` floats laid out (vx,vy,vz) per voxel.
 // Template grid must be a vec3 grid (leaf level value_type == VEC3F);

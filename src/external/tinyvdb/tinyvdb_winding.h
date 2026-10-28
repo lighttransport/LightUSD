@@ -26,6 +26,8 @@ typedef enum {
 tvdb_status_t tvdb_winding_create(const tvdb_triangle_mesh *mesh,
                                   tvdb_winding_kind_t kind,
                                   tvdb_winding_t **out, tvdb_error_t *err);
+tvdb_status_t tvdb_winding_create_with_allocator(const tvdb_triangle_mesh *mesh,
+ tvdb_winding_kind_t kind, tvdb_winding_t **out, tvdb_error_t *err, tvdb_allocator_t *allocator);
 void tvdb_winding_destroy(tvdb_winding_t *winding);
 /* Winding number at a finite point; NAN for invalid arguments. */
 double tvdb_winding_eval(const tvdb_winding_t *winding, const double p[3]);
