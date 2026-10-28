@@ -144,7 +144,8 @@ std::array<double, 3> FaceNormal(const tobj_index* indices, size_t count,
   }
   return n;
 }
-Json RGB(const float* v) { return Json::array({v[0], v[1], v[2]}); }
+// Not `RGB`: <wingdi.h> defines that as a macro on Windows.
+Json ColorJSON(const float* v) { return Json::array({v[0], v[1], v[2]}); }
 }  // namespace
 
 Json MeshRefJSON(const Mesh& m, Reader& reader) {
@@ -302,8 +303,8 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
     Json mat{{"name", name},
              {"rgba", Json::array({m.diffuse[0], m.diffuse[1], m.diffuse[2],
                                    m.dissolve})},
-             {"specularColor", RGB(m.specular)},
-             {"emissiveColor", RGB(m.emission)},
+             {"specularColor", ColorJSON(m.specular)},
+             {"emissiveColor", ColorJSON(m.emission)},
              {"roughness", info.roughness
                                ? m.roughness
                                : float(std::sqrt(2.0 / (m.shininess + 2.0)))},
