@@ -68,9 +68,11 @@ jobs:
             cd build
             make -j $(sysctl -n hw.ncpu)
       - name: Ctest
+        # ASan build: run tests on all cores and skip timing-only benchmarks
+        # (label "benchmark"), which are slow under the sanitizer.
         run: |
             cd build
-            ctest --output-on-failure
+            ctest --output-on-failure -j $(sysctl -n hw.ncpu) -LE benchmark
 
       # Test with OpenUSD binary (macOS ARM64)
       - name: Download OpenUSD binary (macOS ARM64)
