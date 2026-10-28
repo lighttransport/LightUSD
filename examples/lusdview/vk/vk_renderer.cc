@@ -3922,7 +3922,7 @@ void VulkanRenderer::appendVolume(const DrawVolumeCPU& v) {
   vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
   vci.image = gv.img;
   vci.viewType = VK_IMAGE_VIEW_TYPE_3D;
-  vci.format = VK_FORMAT_R32_SFLOAT;
+  vci.format = VK_FORMAT_R32G32B32A32_SFLOAT;
   vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   vci.subresourceRange.levelCount = 1;
   vci.subresourceRange.layerCount = 1;

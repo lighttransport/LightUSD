@@ -54,6 +54,7 @@ bool rayAABB(vec3 o, vec3 d, vec3 lo, vec3 hi, out float t0, out float t1) {
 }
 
 void main() {
+  gl_FragDepth = gl_FragCoord.z;
   vec3 bmin = u.bmin.xyz;
   vec3 bmax = u.bmax.xyz;
   float densityScale = u.albedo.w;
@@ -75,21 +76,21 @@ void main() {
     // shade the surface with the field gradient (the field is a signed
     // distance, so the gradient points out of the interior).
     float iso = u.params.y;
-    float step = min(ext.x, min(ext.y, ext.z)) / 256.0;
+    float step = max((t1 - t0) / 512.0, min(ext.x, min(ext.y, ext.z)) / 256.0);
     if (step <= 0.0) step = (t1 - t0) / 256.0;
     float prev = texture(uFields, (oo + od * t0 - bmin) * invExt).r - iso;
     float t = t0;
     float hit = -1.0;
     for (int i = 0; i < 512; i++) {
-      float tn = t + step;
-      if (tn >= t1) break;
+      float tn = min(t0 + float(i + 1) * step, t1);
       float f = texture(uFields, (oo + od * tn - bmin) * invExt).r - iso;
-      if (f * prev < 0.0) {
+      if ((f < 0.0 && prev > 0.0) || (f > 0.0 && prev < 0.0)) {
         float lo = t, hi = tn, flo = prev;
         for (int k = 0; k < 16; k++) {
           float mid = 0.5 * (lo + hi);
           float fm = texture(uFields, (oo + od * mid - bmin) * invExt).r - iso;
-          if (fm * flo > 0.0) { lo = mid; flo = fm; } else { hi = mid; }
+          if (fm == 0.0) { lo = hi = mid; break; }
+          if ((fm > 0.0) == (flo > 0.0)) { lo = mid; flo = fm; } else { hi = mid; }
         }
         hit = 0.5 * (lo + hi);
         break;
@@ -97,8 +98,9 @@ void main() {
       /* An exact zero is not a hit: narrow-band VDB leaves store 0 in
        * inactive voxels outside the band, so only a sign change marks the
        * surface. */
-      prev = f;
-      t = tn;
+      if (f != 0.0) { prev = f; t = tn; }
+      else if (prev == 0.0) t = tn;
+      if (tn >= t1) break;
     }
     if (hit < 0.0) discard;
     vec3 p = oo + od * hit;
@@ -111,11 +113,13 @@ void main() {
             texture(uFields, uvw - vec3(0.0, e.y, 0.0)).r,
         texture(uFields, uvw + vec3(0.0, 0.0, e.z)).r -
             texture(uFields, uvw - vec3(0.0, 0.0, e.z)).r);
-    vec3 n = g * invExt;  // gradient per object-space unit
-    if (dot(n, n) > 0.0) n = normalize(n); else n = normalize(-od);
-    if (dot(n, od) > 0.0) n = -n;  // face the viewer
-    vec3 nWorld = normalize((u.model * vec4(n, 0.0)).xyz);
-    float ndl = max(dot(nWorld, normalize(-od)), 0.0);
+    vec3 n = transpose(mat3(u.invModel)) * (g * invExt / e);
+    vec3 worldPoint = (u.model * vec4(p, 1.0)).xyz;
+    vec3 viewDir = normalize(u.camPos.xyz - worldPoint);
+    if (dot(n, n) > 0.0) n = normalize(n); else n = viewDir;
+    float ndl = abs(dot(n, viewDir));
+    vec4 clip = u.vp * vec4(worldPoint, 1.0);
+    gl_FragDepth = clip.z / clip.w;
     vec3 srgb = u.albedo.xyz * (0.15 + 0.85 * ndl) + u.emission.xyz;
 #ifdef LUSDVIEW_OIT
     float weight = clamp(
