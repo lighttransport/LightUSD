@@ -2360,7 +2360,7 @@ if(LIGHTUSD_BUILD_TESTS)
   endif()
 
   if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND TARGET lightusd_tinyvdb)
-    add_executable(test-tet-overflow-32 tests/volumetric/tet-overflow-32.c)
+    add_executable(test-tet-overflow-32 tests/volumetric/tet-overflow-32.c src/lz4/lz4.c)
     target_include_directories(test-tet-overflow-32 PRIVATE src/external/tinyvdb)
     target_link_libraries(test-tet-overflow-32 PRIVATE lightusd_tinyvdb)
     add_test(NAME volumetric-tet-overflow-32 COMMAND test-tet-overflow-32)
