@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
-// CPU-only trajectory sampler for tests/feat/physics-oracle/three-link-chain.xml.
+// CPU-only trajectory sampler for the checked-in MuJoCo chain fixtures.
 // Build against MuJoCo with:
 //   c++ -std=c++17 -I$MUJOCO_SOURCE/include \
-//       tests/next/mujoco-three-link-dynamics.cc \
+//       tests/next/mujoco-chain-dynamics.cc \
 //       -L$MUJOCO_BUILD/lib -Wl,-rpath,$MUJOCO_BUILD/lib -lmujoco \
-//       -o /tmp/mujoco-three-link-dynamics
+//       -o /tmp/mujoco-chain-dynamics
 #include <mujoco/mujoco.h>
 
 #include <cstdio>
+#include <string>
+#include <vector>
 
 int main(int argc, char** argv) {
   if (argc != 2) {
@@ -21,15 +23,17 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "mj_loadXML: %s\n", error);
     return 1;
   }
-  const int body_ids[] = {mj_name2id(model, mjOBJ_BODY, "link1"),
-                          mj_name2id(model, mjOBJ_BODY, "link2"),
-                          mj_name2id(model, mjOBJ_BODY, "link3")};
-  for (int id : body_ids) {
-    if (id < 0) {
-      std::fprintf(stderr, "model is missing a named link body\n");
-      mj_deleteModel(model);
-      return 1;
-    }
+  std::vector<int> body_ids;
+  for (int link = 1; link <= 16; ++link) {
+    const std::string name = "link" + std::to_string(link);
+    const int id = mj_name2id(model, mjOBJ_BODY, name.c_str());
+    if (id < 0) break;
+    body_ids.push_back(id);
+  }
+  if (body_ids.size() < 3) {
+    std::fprintf(stderr, "model must contain a chain named link1..linkN (N >= 3)\n");
+    mj_deleteModel(model);
+    return 1;
   }
 
   mjData* data = mj_makeData(model);

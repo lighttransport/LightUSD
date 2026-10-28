@@ -824,6 +824,108 @@ def _check_three_link_dynamics(path):
     print('BLENDER_USD_THREE_LINK_DYNAMICS_PASS', samples)
 
 
+def _make_four_link_dynamics_fixture(path):
+    _make_three_link_dynamics_fixture(path)
+    stage = Usd.Stage.Open(str(path))
+    link3 = stage.GetPrimAtPath('/World/Link3')
+
+    link4 = UsdGeom.Xform.Define(stage, '/World/Link4').GetPrim()
+    UsdGeom.Xformable(link4).AddTranslateOp().Set(Gf.Vec3d(7.3, 0.0, 0.0))
+    UsdPhysics.RigidBodyAPI.Apply(link4)
+    UsdPhysics.MassAPI.Apply(link4).CreateMassAttr(1.0)
+    link4.CreateAttribute('userProperties:blender:collisionMask',
+                          Sdf.ValueTypeNames.Int).Set(16)
+    rod = UsdGeom.Capsule.Define(stage, '/World/Link4/Link4Rod')
+    rod.CreateAxisAttr().Set(UsdGeom.Tokens.x)
+    rod.CreateHeightAttr(1.9)
+    rod.CreateRadiusAttr(0.05)
+    UsdPhysics.CollisionAPI.Apply(rod.GetPrim())
+
+    hinge = UsdPhysics.RevoluteJoint.Define(stage, '/World/Joints/Hinge4')
+    hinge.CreateBody0Rel().SetTargets([link3.GetPath()])
+    hinge.CreateBody1Rel().SetTargets([link4.GetPath()])
+    hinge.CreateAxisAttr().Set('Y')
+    hinge.CreateLocalPos0Attr().Set(Gf.Vec3f(1.1, 0.0, 0.0))
+    hinge.CreateLocalRot0Attr().Set(Gf.Quatf(1.0))
+    hinge.CreateLocalPos1Attr().Set(Gf.Vec3f(-1.0, 0.0, 0.0))
+    hinge.CreateLocalRot1Attr().Set(Gf.Quatf(1.0))
+    stage.GetRootLayer().Save()
+
+
+def _check_four_link_dynamics(path):
+    from mathutils import Vector
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    result = bpy.ops.wm.usd_import(filepath=str(path), merge_parent_xform=True)
+    assert 'FINISHED' in result, result
+    scene = bpy.context.scene
+    scene.render.fps = 60
+    world = scene.rigidbody_world
+    assert world
+    world.substeps_per_frame = 10
+    world.solver_iterations = 50
+    world.point_cache.frame_start = 1
+    world.point_cache.frame_end = 121
+
+    anchor = bpy.data.objects['AnchorGeom']
+    links = [bpy.data.objects[f'Link{index}Rod'] for index in range(1, 5)]
+    assert anchor.rigid_body and anchor.rigid_body.type == 'PASSIVE'
+    assert all(link.rigid_body and link.rigid_body.type == 'ACTIVE' for link in links)
+    hinges = {obj.name: obj.rigid_body_constraint for obj in bpy.data.objects
+              if obj.rigid_body_constraint}
+    expected_bodies = [('Hinge1', anchor, links[0]),
+                       ('Hinge2', links[0], links[1]),
+                       ('Hinge3', links[1], links[2]),
+                       ('Hinge4', links[2], links[3])]
+    for name, body0, body1 in expected_bodies:
+        constraint = hinges[name]
+        assert constraint.type == 'HINGE'
+        assert constraint.object1 == body0 and constraint.object2 == body1
+
+    samples = {}
+    for frame in range(1, 122):
+        scene.frame_set(frame)
+        if frame not in (1, 31, 61, 91, 121):
+            continue
+        bpy.context.view_layer.update()
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        evaluated = [link.evaluated_get(depsgraph) for link in links]
+        matrices = [obj.matrix_world.copy() for obj in evaluated]
+        positions = [matrix.translation.copy() for matrix in matrices]
+        pivots = [positions[0] + matrices[0].to_3x3() @ Vector((-1.0, 0.0, 0.0))]
+        for index in range(3):
+            pivots.append(positions[index] + matrices[index].to_3x3() @
+                          Vector((1.1, 0.0, 0.0)))
+            pivots.append(positions[index + 1] + matrices[index + 1].to_3x3() @
+                          Vector((-1.0, 0.0, 0.0)))
+        samples[frame] = {
+            'positions': [tuple(float(v) for v in position) for position in positions],
+            'pivots': [tuple(float(v) for v in pivot) for pivot in pivots],
+            'rotations': [tuple(float(v) for v in matrix.to_quaternion())
+                          for matrix in matrices],
+        }
+
+    for index, expected_x in enumerate((1.0, 3.1, 5.2, 7.3)):
+        _assert_close(samples[1]['positions'][index][0], expected_x, 1e-4)
+    assert all(position[2] < -0.1
+               for position in samples[31]['positions']), samples
+    assert all(abs(rotation[2]) > 0.2
+               for rotation in samples[91]['rotations']), samples
+    for frame, sample in samples.items():
+        flattened = [value for vector in sample['positions'] + sample['pivots'] +
+                     sample['rotations'] for value in vector]
+        assert all(math.isfinite(value) for value in flattened), (frame, sample)
+        assert math.sqrt(sum(value * value for value in sample['pivots'][0])) < 0.01, (
+            frame, sample)
+        for parent_index, child_index in ((1, 2), (3, 4), (5, 6)):
+            mismatch = math.sqrt(sum(
+                (sample['pivots'][parent_index][axis] -
+                 sample['pivots'][child_index][axis]) ** 2
+                for axis in range(3)))
+            assert mismatch < 0.01, (frame, sample)
+    print('BLENDER_USD_FOUR_LINK_DYNAMICS_PASS', samples)
+
+
 def _check_bullet_dynamics():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
@@ -988,6 +1090,7 @@ def main():
     offdiagonal_path = path.with_name(path.stem + '-offdiagonal-inertia.usda')
     two_link_path = path.with_name(path.stem + '-two-link-dynamics.usda')
     three_link_path = path.with_name(path.stem + '-three-link-dynamics.usda')
+    four_link_path = path.with_name(path.stem + '-four-link-dynamics.usda')
     try:
         hook.register()
         _make_scene_and_export(path)
@@ -1007,6 +1110,8 @@ def main():
         _check_two_link_dynamics(two_link_path)
         _make_three_link_dynamics_fixture(three_link_path)
         _check_three_link_dynamics(three_link_path)
+        _make_four_link_dynamics_fixture(four_link_path)
+        _check_four_link_dynamics(four_link_path)
         _make_mjcf_friction_fixture(friction_path)
         _check_mjcf_friction_dynamics(friction_path)
         _check_imported_scaled_dynamics(scale_dynamics_path)
@@ -1033,6 +1138,8 @@ def main():
             two_link_path.unlink()
         if three_link_path.exists():
             three_link_path.unlink()
+        if four_link_path.exists():
+            four_link_path.unlink()
         try:
             hook.unregister()
         except RuntimeError:

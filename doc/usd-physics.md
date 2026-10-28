@@ -1155,17 +1155,27 @@ MuJoCo 3.10.1 CPU run from
 errors across the three links of 0.043, 0.031, 0.314 and 0.678 m at 0.5, 1.0,
 1.5 and 2.0 s; link 3 has the maximum at each sample. The coupled trajectories
 diverge over time, so this does not establish solver equivalence. The
-reproducible C API probe is `tests/next/mujoco-three-link-dynamics.cc`:
+reproducible C API probe is `tests/next/mujoco-chain-dynamics.cc`:
 
 ```sh
 c++ -std=c++17 -I"$MUJOCO_SOURCE/include" \
-  tests/next/mujoco-three-link-dynamics.cc \
+  tests/next/mujoco-chain-dynamics.cc \
   -L"$MUJOCO_BUILD/lib" -Wl,-rpath,"$MUJOCO_BUILD/lib" -lmujoco \
-  -o /tmp/mujoco-three-link-dynamics
-/tmp/mujoco-three-link-dynamics tests/feat/physics-oracle/three-link-chain.xml
+  -o /tmp/mujoco-chain-dynamics
+/tmp/mujoco-chain-dynamics tests/feat/physics-oracle/three-link-chain.xml
 ```
 
 `MUJOCO_SOURCE` and `MUJOCO_BUILD` are the MuJoCo source and build trees.
+
+A fourth CPU fixture adds one more body and hinge. The Blender run checks all
+four constraints, finite motion and pivot stability at five frames; the same
+MuJoCo sampler accepts `tests/feat/physics-oracle/four-link-chain.xml` for
+trajectory measurements. Maximum body-center errors are 0.042, 0.031, 0.380
+and 0.762 m at 0.5, 1.0, 1.5 and 2.0 s. The divergence remains modest through
+1.0 s, then grows; passing these checks does not establish large-rig
+equivalence.
+Run `/tmp/mujoco-chain-dynamics tests/feat/physics-oracle/four-link-chain.xml`
+to sample its MuJoCo trajectory.
 
 The runtime suite also imports an asymmetric box with authored principal
 moments and a rotated principal frame, connected by an X-axis revolute joint
