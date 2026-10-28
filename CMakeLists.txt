@@ -1721,6 +1721,12 @@ endif()
 # Optional: next::pcp::Cache backend for LargeSceneLoader
 #
 if(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+  if(LIGHTUSD_BUILD_EXAMPLES)
+    # examples/lusdcat defines the legacy `lusdcat`; keep the next subproject
+    # from defining its own CLI (and the tests that require it) under that name.
+    set(LIGHTUSD_NEXT_BUILD_TOOLS OFF CACHE BOOL "Build next CLI tools (lusdcat)" FORCE)
+    set(LIGHTUSD_NEXT_BUILD_TESTS OFF CACHE BOOL "Build tests for stable LightUSD Next" FORCE)
+  endif()
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/next lightusd_next_build)
 endif()
 
