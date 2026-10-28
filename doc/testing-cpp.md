@@ -1796,6 +1796,29 @@ allocator ownership across moves. The Python volumetric suite additionally
 tests that a compressed MJCF VDB exceeding the decoded-memory budget is
 rejected and that a larger budget succeeds.
 
+`volumetric-level-set-allocator` (legacy) and `next_test_level_set_allocator`
+(next) sweep allocation failures through the CPU mesh-to-level-set pipeline.
+They verify unchanged existing outputs/reports, complete cleanup, exact-cap
+success and just-below-cap rejection, byte-identical serialized grids versus
+normal allocation and multiple worker counts, and independent concurrent calls.
+The initial tetrahedron fixture covers 350 allocation sites. The sweep also
+passes Valgrind with zero errors and no leaked blocks.
+
+`next_test_tydra` additionally checks generated-field peak/retained accounting,
+move ownership, bounded replacement failure and retry, and serialized identity.
+The Python volumetric suite exercises repeated distinct SDF assets within one
+import budget and successful retry after optional generation failures.
+
+The Blender CPU runtime script `blender/tests/test_usd_physics_runtime.py`
+checks fractional timestep restoration, finite/unlimited hinge and slider limits,
+D6 locked/free axes, skipped unsupported limits and unlimited export. Its
+motor-driven hinge must rotate more than a full revolution. Run with
+`ALSOFT_DRIVERS=null blender -b --factory-startup --python
+blender/tests/test_usd_physics_runtime.py`; require the final
+`BLENDER_USD_PHYSICS_RUNTIME_PASS` marker as well as process success, since
+Blender can exit zero after a Python exception. The lightweight Python hook
+suite also covers invalid timesteps and one-sided/out-of-range limits.
+
 For the corresponding single-thread analytic sphere instruction profile:
 
 ```sh

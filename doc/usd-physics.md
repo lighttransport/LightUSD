@@ -266,19 +266,22 @@ set (float 5/4/3 tree, class `level set`, negative inside):
   asset share one file.
 - **Sidecar:** written as the generated asset `sdf/<mesh>.vdb`. USDA/USDC saves
   write it beside the layer, and USDZ saves package it.
-- **Memory limit:** the candidate-voxel cap is derived from the import's
-  remaining memory budget at approximately 128 bytes per candidate; there is no
-  fixed minimum that can exceed the remaining allowance. The estimate also
-  reserves converted vertex/triangle arrays and approximately 512 bytes per
-  triangle plus a 10 KiB fixed allowance for known BVH/winding workspace;
-  generated flexcomp meshes reserve their temporary surface copy as well. If
-  the cap is too small to build the field, LightUSD reports
-  `mjcf.sdf_level_set_failed` and omits the
-  optional sidecar. After generation, LightUSD also charges approximately 128
-  bytes per active voxel while the grid and serialized sidecar coexist. VDB
-  compression uses a budgeted allocator, including the overlap while its output
-  is copied into the generated-asset buffer. This remains a workspace estimate
-  rather than exact accounting of every temporary used to generate the field.
+- **Memory limit:** the candidate-voxel cap remains an independent work guard
+  derived at approximately 128 bytes per candidate, without a fixed minimum.
+  CPU generation additionally enforces the remaining import budget through an
+  operation-local allocator covering converted input arrays, candidate buffers,
+  BVH/winding acceleration, metadata, sparse-tree construction, flood fill and
+  pruning. Accounting includes allocation headers, tree pool chunks, and old/new
+  buffers overlapping during reallocations. Bounded builds use an in-place sort
+  to avoid hidden sorting workspace. Caller-owned source arrays, pre-existing
+  outputs, thread/runtime storage and system allocator overhead are excluded;
+  this is not a process-RSS guarantee. GPU generation retains its prior estimates.
+  Generated flexcomp meshes also reserve their temporary surface copy. If a field
+  cannot fit, `mjcf.sdf_level_set_failed` reports an omitted optional sidecar.
+  After generation, measured CPU grid storage is reserved while serializing or
+  tetrahedralizing, then released; temporary build peaks do not accumulate across
+  assets. VDB compression remains budgeted, including its output-copy overlap.
+  Tetrahedralization's downstream workspace limits remain estimates.
 - **Collider:** `newton:sdfMaxResolution` and, in an unscaled frame,
   `newton:sdfNarrowBandInner/Outer`, so Newton's own (CUDA) SDF build matches
   the sidecar.
@@ -1239,3 +1242,24 @@ Blender equivalent (preserved only if authored directly in the USD). Bodies
 with multiple separate child mesh prims are not combined into compound Blender
 colliders. The runtime checks do not establish spring or cross-solver dynamics
 equivalence.
+
+### Blender timestep and motion-limit hardening
+
+The hook restores an authored effective timestep using `fps_base = fps * timestep`,
+including fractional rates such as 59.94 fps. Invalid or unsupported timesteps
+leave scene timing unchanged and produce a warning.
+
+Unlimited hinge and slider constraints export `-inf`/`inf`, and import with
+Blender limit flags disabled. Finite angular limits convert degrees to radians
+once and must fit the running Blender version's RNA ranges. D6 `LimitAPI` axes
+with `low > high` become zero-width locks; fully unlimited axes remain free.
+One-sided, non-finite, reversed finite, or out-of-range limits that cannot be
+represented cause the affected constraint to be skipped before modification,
+with its USD path and reason reported. Bodies and other supported joints still
+import. Existing Blender constraints are left untouched when their replacement
+is unsupported.
+
+The CPU runtime regression exercises fractional timing, finite/unlimited hinge
+and slider mappings, D6 locks, unsupported-limit skips, and unlimited hinge
+export. A motor-driven imported unlimited hinge rotated 31.86 radians in four
+seconds; this verifies motion-limit mapping, not cross-solver equivalence.
