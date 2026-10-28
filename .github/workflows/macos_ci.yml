@@ -11,6 +11,12 @@ on:
   pull_request:
     branches: [ main ]
 
+# ccache (installed and persisted per job by hendrikmuhs/ccache-action; the
+# root CMakeLists picks it up as the compiler launcher).
+env:
+  CCACHE_SLOPPINESS: pch_defines,time_macros,include_file_mtime,include_file_ctime
+  CCACHE_COMPRESS: "true"
+
 jobs:
 
   # Build with the experimental `next` (pcp large-scene) backend enabled.
@@ -24,6 +30,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: macos-build-next
+          max-size: 500M
       - name: CmakeAndBuild
         run: |
             cmake -B build_next -S . \
@@ -34,7 +45,7 @@ jobs:
               -DLIGHTUSD_BUILD_TOOLS=On \
               -DLIGHTUSD_BUILD_EXAMPLES=On \
               -DLIGHTUSD_BUILD_TESTS=On
-            cmake --build build_next
+            cmake --build build_next -j $(sysctl -n hw.ncpu)
       - name: Ctest
         run: cd build_next && ctest --output-on-failure
 
@@ -46,11 +57,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: macos-build
+          max-size: 500M
       - name: CmakeAndBuild
         run: |
             ./scripts/bootstrap-cmake-macos.sh
             cd build
-            make VERBOSE=1
+            make -j $(sysctl -n hw.ncpu)
       - name: Ctest
         run: |
             cd build

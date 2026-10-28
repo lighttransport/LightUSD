@@ -29,7 +29,7 @@ jobs:
           mkdir build_arm64
           cmake -G "Visual Studio 18 2026" -A ARM64 -Bbuild_arm64 -DLIGHTUSD_NATIVE_PRODUCT=legacy -DLIGHTUSD_WITH_EXR=1 -DLIGHTUSD_WITH_TIFF=1 -S.
       - name: Build
-        run: cmake --build build_arm64 --config Release
+        run: cmake --build build_arm64 --config Release --parallel
 
   # Windows(ARM32) + Visual Studio 2026 build
   # From 2024 Nov 22, arm32 build is starting to fail at cmake bootstrap for some reason. disabled for a while.

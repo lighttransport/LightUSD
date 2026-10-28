@@ -31,7 +31,7 @@ jobs:
         # `run:` step executes in PowerShell, which mis-parses `-H.`.
         run: cmake -S . -B build_next -G "Visual Studio 18 2026" -A x64 -DLIGHTUSD_WITH_OPENSUBDIV=On -DLIGHTUSD_WITH_TINYSUBDIV=Off -DLIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=On -DLIGHTUSD_NATIVE_PRODUCT=legacy
       - name: Build
-        run: cmake --build build_next --config Release
+        run: cmake --build build_next --config Release --parallel
       - name: Test
         run: ctest --test-dir build_next -C Release --output-on-failure
 
@@ -49,7 +49,7 @@ jobs:
       - name: Configure
         run: .\vcsetup.bat
       - name: Build
-        run: cmake --build build --config Release
+        run: cmake --build build --config Release --parallel
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
       - name: Archive production artifacts
@@ -152,6 +152,6 @@ jobs:
       - name: Configure
         run: .\vcsetup-32bit.bat
       - name: Build
-        run: cmake --build build_win32 --config Release
+        run: cmake --build build_win32 --config Release --parallel
       - name: Test
         run: ctest --test-dir build_win32 -C Release --output-on-failure
