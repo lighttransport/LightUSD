@@ -393,6 +393,8 @@ static PyMethodDef module_methods[] = {
      "_level_set_to_mesh(level_set, max_cells) -> (points_f32, indices_i32) bytes"},
     {"_level_set_to_tet_mesh", lightusd_py_level_set_to_tet_mesh, METH_VARARGS,
      "_level_set_to_tet_mesh(level_set, settings) -> (points_f32, tets_i32, surface_i32) bytes"},
+    {"_tet_mesh_quality", lightusd_py_tet_mesh_quality, METH_VARARGS,
+     "_tet_mesh_quality(points_f32, tets_i32) -> mesh quality metrics"},
     {"_volumetric_device", lightusd_py_volumetric_device, METH_VARARGS,
      "_volumetric_device(device) -> 'cpu' | 'cuda' | 'hip' (raises UsdError when unavailable)"},
     {"_import_scene", (PyCFunction)(void (*)(void))lightusd_import_scene,

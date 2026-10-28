@@ -145,6 +145,19 @@ LIGHTUSD_API lightusd_status lightusd_level_set_to_mesh(const lightusd_level_set
 LIGHTUSD_API lightusd_status lightusd_level_set_to_tet_mesh(
     const lightusd_level_set* level_set, const char* settings_json, lightusd_string** points,
     lightusd_string** tets, lightusd_string** surface);
+/* Validate a float32 tetrahedral mesh and report aggregate signed volume,
+ * minimum tet volume, dihedral range and the number of zero/negative-volume
+ * tets. Inputs are packed xyz float32 positions and int32x4 tet indices. */
+typedef struct lightusd_tet_mesh_quality {
+  double min_dihedral_degrees;
+  double max_dihedral_degrees;
+  double volume;
+  double min_tet_volume;
+  uint64_t inverted_tets;
+} lightusd_tet_mesh_quality;
+LIGHTUSD_API lightusd_status lightusd_tet_mesh_get_quality(
+    const float* positions, size_t point_count, const int32_t* tets,
+    size_t tet_count, lightusd_tet_mesh_quality* out);
 /* Attach a generated file (for example a level-set .vdb a stage references
  * by the relative path): written beside the layer by USDA/USDC saves and
  * packaged under that path in USDZ saves. Replaces an existing entry. */

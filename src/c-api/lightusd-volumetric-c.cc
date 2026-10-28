@@ -11,6 +11,7 @@
 #include "tydra/asset-import/import.hh"
 #include "tydra/asset-import/volumetric.hh"
 #include "tydra/vol/volume-field.hh"
+#include "tinyvdb_tetmesh.h"
 
 #include <sstream>
 
@@ -413,6 +414,40 @@ lightusd_status lightusd_level_set_to_tet_mesh(const lightusd_level_set* level_s
   ia::StuffingOptions o;
   const lightusd_status st = StuffingSettings(settings_json, &o);
   return st != LIGHTUSD_OK ? st : ToTetMesh(level_set->level_set, o, points, tets, surface);
+}
+
+lightusd_status lightusd_tet_mesh_get_quality(const float* positions,
+                                              size_t point_count,
+                                              const int32_t* tets,
+                                              size_t tet_count,
+                                              lightusd_tet_mesh_quality* out) {
+  if (!out || (point_count && !positions) || (tet_count && !tets) ||
+      point_count > static_cast<size_t>(INT32_MAX) + 1 ||
+      point_count > SIZE_MAX / (3 * sizeof(float)) ||
+      tet_count > SIZE_MAX / (4 * sizeof(int32_t)) ||
+      (tet_count && !point_count))
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "tet mesh quality: invalid buffers or counts");
+
+  tvdb_tet_mesh mesh = {};
+  mesh.positions = const_cast<float*>(positions);
+  mesh.vertex_count = point_count;
+  mesh.tets = const_cast<int32_t*>(tets);
+  mesh.tet_count = tet_count;
+  tvdb_tet_mesh_quality_t measured = {};
+  tvdb_error_t err = {};
+  const tvdb_status_t status = tvdb_tet_mesh_quality(&mesh, &measured, &err);
+  if (status != TVDB_OK)
+    return Fail(LIGHTUSD_ERR_INVALID_ARG,
+                err.message[0] ? err.message : "tet mesh quality: invalid mesh");
+
+  lightusd_tet_mesh_quality result = {};
+  result.min_dihedral_degrees = measured.min_dihedral;
+  result.max_dihedral_degrees = measured.max_dihedral;
+  result.volume = measured.volume;
+  result.min_tet_volume = measured.min_volume;
+  result.inverted_tets = static_cast<uint64_t>(measured.inverted);
+  *out = result;
+  return LIGHTUSD_OK;
 }
 
 lightusd_status lightusd_stage_add_generated_asset(lightusd_stage* stage, const char* path,

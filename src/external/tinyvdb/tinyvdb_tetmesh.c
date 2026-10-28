@@ -1652,7 +1652,12 @@ tvdb_status_t tvdb_tet_mesh_quality(const tvdb_tet_mesh *mesh,
       const int32_t v = mesh->tets[4 * t + i];
       if (v < 0 || (size_t)v >= mesh->vertex_count)
         return tet_error(err, TVDB_ERROR_INVALID_DATA, "tet index out of range");
-      for (int k = 0; k < 3; ++k) p[i][k] = mesh->positions[3 * (size_t)v + k];
+      for (int k = 0; k < 3; ++k) {
+        p[i][k] = mesh->positions[3 * (size_t)v + k];
+        if (!isfinite(p[i][k]))
+          return tet_error(err, TVDB_ERROR_INVALID_DATA,
+                           "non-finite tetrahedron vertex");
+      }
     }
     const double vol = tet_volume6(p[0], p[1], p[2], p[3]) / 6.0;
     q.volume += vol;

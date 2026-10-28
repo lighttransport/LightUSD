@@ -341,9 +341,11 @@ no VDB meshes):
 **APIs.**
 - **C** (`lightusd-import-c.h`): `lightusd_mesh_to_level_set_vdb`,
   `lightusd_level_set_vdb_info` / `_sample` / `_to_mesh` / `_to_tet_mesh`, and
-  `lightusd_stage_add_generated_asset`.
+  `lightusd_tet_mesh_get_quality` (signed volume, minimum tet volume, dihedral
+  range and non-positive tet count), and `lightusd_stage_add_generated_asset`.
 - **Python** (`lightusd.volumetric`): `mesh_to_level_set`,
   `LevelSet.sample/to_mesh/to_tet_mesh/save`, `read_level_set`,
+  `TetMesh.quality()` (diagnostics, not guarantees),
   `add_mesh_sdf(stage, mesh_path)` (the importer's layout on any Mesh prim)
   and `make_volume_deformable(stage, mesh_or_volume)` (a `TetMesh` with
   `PhysicsVolumeDeformableSimAPI`, per-point masses and a bound

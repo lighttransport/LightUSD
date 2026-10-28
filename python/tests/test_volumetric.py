@@ -117,6 +117,11 @@ def test_experimental_graded_level_set_tets():
     volumes = _tet_volumes(mesh.points, mesh.tets)
     assert len(volumes) and volumes.min() > 0 and _closed(mesh.surface)
     assert volumes.sum() == pytest.approx(_mesh_volume(pts, tris), rel=0.12)
+    quality = mesh.quality()
+    assert quality["inverted_tets"] == 0
+    assert quality["volume"] == pytest.approx(volumes.sum(), rel=1e-6)
+    assert quality["min_tet_volume"] == pytest.approx(volumes.min(), rel=1e-6)
+    assert 0 < quality["min_dihedral_degrees"] < quality["max_dihedral_degrees"] < 180
     again = ls.to_tet_mesh(0.2, graded_coarse_spacing=0.6)
     np.testing.assert_array_equal(mesh.points, again.points)
     np.testing.assert_array_equal(mesh.tets, again.tets)
@@ -134,6 +139,16 @@ def test_experimental_graded_level_set_tets():
         ls.to_tet_mesh(0.2, graded_coarse_spacing=0.6, graded_surface_guard='yes')
     with pytest.raises(lightusd.UsdError, match="limit"):
         ls.to_tet_mesh(0.2, graded_coarse_spacing=0.6, max_background_tets=10)
+
+    bad_tets = np.array(mesh.tets, copy=True)
+    bad_tets[0, 0] = len(mesh.points)
+    with pytest.raises(ValueError, match="tet index out of range"):
+        vol.TetMesh(mesh.points, bad_tets, mesh.surface).quality()
+
+    bad_points = np.array(mesh.points, copy=True)
+    bad_points[mesh.tets[0, 0], 0] = np.nan
+    with pytest.raises(ValueError, match="non-finite tetrahedron vertex"):
+        vol.TetMesh(bad_points, mesh.tets, mesh.surface).quality()
 
 
 def test_level_set_errors():

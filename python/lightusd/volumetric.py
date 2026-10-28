@@ -87,6 +87,20 @@ class TetMesh:
     def __init__(self, points, tets, surface):
         self.points, self.tets, self.surface = points, tets, surface
 
+    def quality(self) -> dict:
+        """Measure signed volume, minimum tet volume, dihedral range and
+        non-positive tetrahedra. These are diagnostics, not quality bounds.
+        """
+        metrics = _core._tet_mesh_quality(
+            _flat(self.points, "f", 3), _flat(self.tets, "i", 4))
+        return {
+            "min_dihedral_degrees": metrics[0],
+            "max_dihedral_degrees": metrics[1],
+            "volume": metrics[2],
+            "min_tet_volume": metrics[3],
+            "inverted_tets": metrics[4],
+        }
+
 
 class LevelSet:
     """A float level set (negative inside), decoded once and queried natively."""

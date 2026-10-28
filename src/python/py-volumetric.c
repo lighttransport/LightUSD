@@ -192,6 +192,31 @@ PyObject* lightusd_py_level_set_to_tet_mesh(PyObject* module, PyObject* args) {
   return Py_BuildValue("(NNN)", a, b, c);
 }
 
+PyObject* lightusd_py_tet_mesh_quality(PyObject* module, PyObject* args) {
+  PyObject *points_obj, *tets_obj;
+  if (!PyArg_ParseTuple(args, "OO:_tet_mesh_quality", &points_obj, &tets_obj))
+    return NULL;
+  lightusd_state* st = lightusd_state_from_module(module);
+  Py_buffer positions = {0}, tets = {0};
+  if (!get_buffer(points_obj, &positions, 12, "positions")) return NULL;
+  if (!get_buffer(tets_obj, &tets, 16, "tets")) {
+    PyBuffer_Release(&positions);
+    return NULL;
+  }
+  lightusd_tet_mesh_quality quality = {};
+  const lightusd_status status = lightusd_tet_mesh_get_quality(
+      (const float*)positions.buf, (size_t)positions.len / 12,
+      (const int32_t*)tets.buf, (size_t)tets.len / 16, &quality);
+  PyBuffer_Release(&positions);
+  PyBuffer_Release(&tets);
+  if (status != LIGHTUSD_OK)
+    return lightusd_raise(st, status, "tet mesh quality");
+  return Py_BuildValue("(ddddK)", quality.min_dihedral_degrees,
+                       quality.max_dihedral_degrees, quality.volume,
+                       quality.min_tet_volume,
+                       (unsigned long long)quality.inverted_tets);
+}
+
 PyObject* lightusd_py_volumetric_device(PyObject* module, PyObject* args) {
   const char* device;
   if (!PyArg_ParseTuple(args, "s:_volumetric_device", &device)) return NULL;
