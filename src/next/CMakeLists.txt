@@ -1381,7 +1381,11 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     else()
         target_link_libraries(test_lightusd_c PRIVATE lightusd_validation_c)
     endif()
-    set_target_properties(test_lightusd_c PROPERTIES C_STANDARD 11)
+    # Sources stay pure C11, but link with the C++ driver: the C API library is
+    # C++, and under -fsanitize=undefined its vptr checks need the C++ UBSan
+    # runtime that only the C++ driver adds.
+    set_target_properties(test_lightusd_c PROPERTIES C_STANDARD 11
+                          LINKER_LANGUAGE CXX)
     if(NOT MSVC)
         target_compile_options(test_lightusd_c PRIVATE
             -Wall -Wextra -Werror -pedantic)
