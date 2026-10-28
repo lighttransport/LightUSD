@@ -245,3 +245,26 @@ def test_collision_group_limit_warns_and_retains_masks(hook, caplog):
     assert 'Too many distinct collision masks' in caplog.text
     assert not stage.GetPrimAtPath('/BlenderPhysicsCollisionGroups')
     assert stage.GetPrimAtPath('/B512').GetAttribute('userProperties:blender:collisionMask').Get() == 512
+
+
+@pytest.mark.parametrize('timestep', [1.001 / 60, 0.003, 1 / 48])
+def test_fractional_timestep_preserves_effective_rate(hook, timestep):
+    module, bpy = hook
+    render = SimpleNamespace(fps=24, fps_base=1.0)
+    bpy.context = SimpleNamespace(scene=SimpleNamespace(
+        render=render, rigidbody_world=SimpleNamespace()))
+    module._apply_physics_to_blender({
+        'scene': {'mjc': {'timestep': timestep}}, 'bodies': [], 'joints': []})
+    assert render.fps_base / render.fps == pytest.approx(timestep)
+
+
+@pytest.mark.parametrize('timestep', [0, -1, float('nan'), float('inf'), 1e-320, 1e300])
+def test_invalid_or_unsupported_timestep_keeps_scene_rate(hook, timestep, caplog):
+    module, bpy = hook
+    render = SimpleNamespace(fps=24, fps_base=1.25)
+    bpy.context = SimpleNamespace(scene=SimpleNamespace(
+        render=render, rigidbody_world=SimpleNamespace()))
+    module._apply_physics_to_blender({
+        'scene': {'mjc': {'timestep': timestep}}, 'bodies': [], 'joints': []})
+    assert (render.fps, render.fps_base) == (24, 1.25)
+    assert 'timestep' in caplog.text

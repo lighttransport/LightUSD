@@ -777,8 +777,8 @@ def _apply_physics_to_blender(result):
                 timestep = float(sd['mjc']['timestep'])
                 if math.isfinite(timestep) and timestep > 0.0:
                     frame_rate = 1.0 / timestep
-                    fps = int(round(frame_rate))
-                    fps_base = frame_rate / fps if fps else 0.0
+                    fps = int(round(frame_rate)) if math.isfinite(frame_rate) else 0
+                    fps_base = fps * timestep if fps else 0.0
                     if 1 <= fps <= 32767 and math.isfinite(fps_base) and fps_base > 0.0:
                         scene.render.fps = fps
                         scene.render.fps_base = fps_base
