@@ -1112,6 +1112,11 @@ pivot remains within 1 cm of its counterpart throughout the two-second run.
 In a matching MuJoCo 3.10.1 CPU comparison, the second link's center position
 differs by at most 0.397 m at the four sample times (largest at 2.0 s); coupled
 joint trajectories still diverge between Bullet and MuJoCo.
+A third CPU fixture extends that chain to three capsules and three revolute
+joints. Blender resolves all three body pairs, all links move under gravity,
+and the fixed and inter-link pivots remain within 1 cm over two seconds. This
+is a runtime integration check; no MuJoCo trajectory comparison or general
+solver-equivalence claim is made for the three-link chain.
 
 The addon writes the MjcPhysics names above as they are; MuJoCo 3.16's decoder
 reads several of them as deprecated aliases (see the deprecation note before
