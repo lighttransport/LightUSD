@@ -160,6 +160,18 @@ class LayerRegistry {
     return out;
   }
 
+  /// The resolved identifiers of every cached layer (the keys Drop takes).
+  std::vector<std::string> identifiers() const {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    std::lock_guard<std::mutex> lk(*mu_);
+#endif
+    std::vector<std::string> out;
+    out.reserve(by_resolved_.size());
+    for (const auto &entry : by_resolved_)
+      if (entry.second) out.push_back(entry.first);
+    return out;
+  }
+
   size_t memory_usage() const {
 #if defined(LIGHTUSD_ENABLE_THREAD)
     std::lock_guard<std::mutex> lk(*mu_);

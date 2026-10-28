@@ -5827,3 +5827,305 @@ The default's 23.5 GiB is under 24 GiB, but not under 24 GB (25.2 GB).
 - CTest 65/65 with one skip; staged parallel == serial (`98ad30c3…`).
 - The no-thread build gives the district hash; the deferred build compiles.
 
+### 10.76 ALab and Island in both profiles; nothrow-movable `Src` (2026-10-28)
+
+Goal: speed up ALab and Island in both profiles, without giving back full45.
+Everything below is byte-identical.
+
+**Results** (`--fast-exit`, output to `/dev/null`, wall from process start to
+exit; ALab and Island three runs each, full45 two or three):
+
+| scene | profile | before | after |
+|---|---|---:|---:|
+| ALab | default | 0.80 s / 0.73 GiB | 0.78–0.79 s / 0.73 GiB |
+| ALab | low | 5.7 s / 0.86 GiB | **1.68 s / 0.76 GiB** |
+| Island | default | 3.48–3.51 s / 3.06 GiB | 3.47–3.49 s / 3.07 GiB |
+| Island | low | 10.2 s / 3.5 GiB | **5.3–5.4 s / 3.02–3.06 GiB** |
+| full45 | default | 40.3–41.5 s / 23.5 GiB | **38.2–39.1 s** / 23.6–24.0 GiB |
+| full45 | low | 85.5 s / 11.94 GiB | **80.0–81.4 s / 11.7 GiB** |
+
+Before this round, the low profile was slower and larger than the default on
+both small scenes. Each fits in one pass-2 batch, so the profile cannot save
+memory there. Its peak is now no higher than the default's.
+
+**Changes.**
+- **`Src` is nothrow-movable.** `SpecsMemo`'s move operations lacked
+  `noexcept`, so every `std::vector<Src>` growth copied each element: its site
+  string and its context `shared_ptr`. That was the hot path of the warm
+  workers (`ExpandArcs`). A `static_assert` now guards it.
+  - full45 warm workers drop from 9.2 to 7.4–7.7 s, and compose from 24.5 to
+    22.1–22.6 s. Island and ALab compose drop by about 3%.
+  - On a growth, `SpecState` now moves, keeping its "has specs" memo where the
+    copy reset it. The memo caches a fixed answer, and every hash and sweep
+    is unchanged.
+- **Pass-1 batch ramp.** A new parent's roots join a pass-1 batch at most
+  `fresh_cap` at a time, which was a fixed 4. ALab (9,667 roots under 3,377
+  parents) was planned in 1,079 batches and Island in 2,021, at about 3 ms of
+  fixed cost each.
+  - `fresh_cap` now doubles after each batch that fills under half the target,
+    while the plan's running total fits one batch target. An overshoot, or a
+    total past the target, resets it to 4. ALab plans in 12 batches (4.1 →
+    0.44 s), Island in 13 (6.8 → 1.9 s).
+  - The total condition matters. Pass 1 records a layer's last use per batch,
+    as the batch's last root. Unrestricted ramping made full45's pass-1
+    batches coarse (about 250 roots, against 80), and pass 2 then kept layers
+    1 GiB longer at its peak (12.7 GiB). Within one pass-2 batch's worth of
+    prims, coarse records cost nothing.
+- **Discovery.**
+  - It runs the arc-layer prefetch while it walks the spine, and stops it, not
+    drains it, when the walk ends. After pass 1, layers that no batch read
+    are dropped from the registry. ALab discovery: 0.9 → 0.6 s. full45: 1.04 →
+    0.87 s.
+  - A level that overflows `max_frontier` is no longer finished, since its
+    result is discarded. Island: 1.24 → 1.06 s.
+- **Pass-2 memory.**
+  - The writer reserves its tables at the first `WriteBatch`, not at
+    `BeginBatchedFile`. The reserve is 446 + 60 MiB on Island, and it used to
+    sit under the pass-2 compose.
+  - One purge between the passes, and one after each pass-2 batch is composed.
+    The allocator otherwise keeps the freed composition cache's pages while
+    the write grows: Island's peak drops from 3.42 to 3.01–3.05 GiB. Island had
+    1,140 MiB resident against 593 MiB allocated after the plan.
+  - The opinion fill in a pass-2 batch releases the layers no later batch
+    reads (`BatchScope::releasable_layers`, from pass 1's last use), as the
+    default fill does. The registry drops them before the batch goes to the
+    writer.
+- `Layer::~Layer` and `Layer::finalize` called `hardware_concurrency()`, which
+  reads sysfs, on every layer, including the parser's many small fragment
+  layers. They now ask only for a layer of 64 K+ prims.
+
+**Rejected.**
+- Waiting for the discovery prefetch to drain. On full45 it loads all 63 K
+  layers on 6 workers before pass 1: discovery took 7.7 s, the run 114 s and
+  13.8 GiB.
+- Growing `fresh_cap` 8x per batch. On full45 it planned all of the stage in
+  one 10.2 M-prim pass-1 batch: 22.3 GiB.
+- A depth-max guard on new-parent roots. It did not prevent the overshoot (the
+  1.99 M-prim pass-1 batch is one heavy root), and the total condition above
+  replaced it.
+
+**Measurement notes.**
+- Temporary probes that call `WaitForBackgroundReclaim()` inside the write
+  serialize the reclaim with the write: +4 s on the full45 default write.
+- jemalloc `prof_gdump` writes a dump at every high-water mark: 137 K files
+  (16 GB) for one Island run. Dump at chosen points instead
+  (`mallctl("prof.dump")`, `MALLOC_CONF=prof:true,lg_prof_sample:17`).
+
+**Still open.**
+- Island and ALab low compose the stage three times: discovery, pass 1, and
+  the single pass-2 batch. (§10.77: pass 2 now reuses pass 1's batches when
+  the plan fits one batch.)
+- Island's write: `TryPassThrough` hashes each large pass-through block with
+  XXH3-128 for the streaming dedup, about 0.25 s of CPU near the end of
+  `fields_specs`. (Done in §10.79.)
+
+**Verification.**
+- Hashes in both profiles: full45 `a0175bc1…`, district `98619c40…`, ALab
+  `2f7176c8…`, Island `a8f50922…`.
+- Composition sweep 3,866/3,866; rewrite sweep 1,410/1,410.
+- Low-profile sweep 1,933/1,933 at `--batch-prims 1`, `50` with
+  `--batch-frontier 64`, and `400`. The last two exercise the ramp.
+- CTest 65/65; staged parallel == serial (`98ad30c3…`); no-thread build gives
+  the district hash; deferred build compiles.
+
+### 10.77 Low profile: write pass 1's batches when the plan fits one batch (2026-10-28)
+
+When pass 1's batches add up to no more than one pass-2 batch
+(`target_batch_prims`), pass 2 used to compose that single batch again. Pass 1
+now keeps its batches while their running total fits the target, and `Run()`
+writes them instead. Everything below is byte-identical.
+
+**Results** (`--fast-exit`, `/dev/null`, three runs each):
+
+| scene | profile | before (§10.76) | after |
+|---|---|---:|---:|
+| ALab | low | 1.68 s / 0.76 GiB | **1.47–1.48 s / 0.74 GiB** |
+| Island | low | 5.3–5.4 s / 3.02–3.06 GiB | **4.61–4.62 s / 2.16–2.17 GiB** |
+| ALab | default | 0.78–0.79 s / 0.73 GiB | 0.78–0.79 s / 0.73 GiB |
+| Island | default | 3.47–3.49 s / 3.07 GiB | 3.45–3.49 s / 3.03–3.08 GiB |
+| full45 | default | 38.2–39.1 s / 23.6–24.0 GiB | 39.1 s / 23.55 GiB (one run) |
+| full45 | low | 80.0–81.4 s / 11.7 GiB | 81.0–81.5 s / 11.71–11.75 GiB |
+
+Island's low profile now peaks 0.9 GiB under the default profile. full45
+plans past the target in its first batches, so it keeps nothing and runs as
+before.
+
+**How.**
+- **What pass 2 would change.** Pass-1 and pass-2 batches with the same bounds
+  differ only in `holders_with_peers`. A prototype whose instance group has
+  no other member in its own batch, but has peers in later batches, stays
+  instanceable in pass 1. Pass 2 makes it a plain reference target
+  (`FlattenInstances`). Released source layers change no output.
+  - `ComposeBatch` records such "lone" prototypes in pass 1. Once all peers
+    are known, `FixKeptHolders` applies the same two edits pass 2 would:
+    `instanceable = false` and an empty `instance_prototype`.
+  - This runs 31 times on ALab, 5 on Island and in 2 sweep inputs. Skipping
+    it changes ALab's hash (`dfda67bc`), so the sweeps do check it.
+- **Groups, not batches.** Each `WriteBatch` fills and drains the writer's
+  chunk pipeline, and a batch under 8 K prims encodes serially. Writing
+  Island's 13 pass-1 batches one by one took 1.51 s (45–75 ms each for
+  2–20 K prims), against 0.89 s for one batch of the same prims.
+  - A `BatchMerger` (now shared with `ComposeStageBatched`) concatenates
+    consecutive batches into groups of about 64 K prims (`kKeptGroupPrims`).
+    A spine prim repeated within a group is kept once and gains the later
+    batch's children; one an earlier group produced stays repeated.
+  - The merge runs on pass 1's callback thread, under the next batch's
+    compose. Each group is freed once written.
+
+  | Island low, kept plan written as | wall | peak |
+  |---|---:|---:|
+  | 13 pass-1 batches | 4.82 s | 2.21 GiB |
+  | groups of 50 K / 100 K prims | 4.56–4.58 s | 2.20–2.21 GiB |
+  | one group | 4.64 s | 2.37 GiB |
+- **The batched writer stays narrow.** A write of 256+ chunks used 16 workers
+  with two chunk slots each. In a batched write (`serial_sections_`) it now
+  uses at most 8 workers with one slot each.
+  - Island's merged plan with wide workers: 4.42 s / 2.98 GiB; narrow:
+    4.78 s / 2.41 GiB. The difference is encoded chunks in flight: Island's
+    chunks carry large arrays.
+  - full45 low is neutral (81.2 s / 11.75 GiB wide, 81.0 s / 11.67 GiB
+    narrow, one run each), because its batches are written under the next
+    batch's compose.
+- **Layer release.** The source layers leave the registry on a background
+  thread while the groups are written, followed by one purge. The writer reads
+  only the composed prims, whose lazy arrays hold their own sources. Done
+  before the write instead, it cost 0.15 s on Island and gave a higher peak
+  (2.42 vs 2.36 GiB, one-group runs).
+
+**Rejected.**
+- A faster pass-1 ramp (`fresh_cap` x4 or x8 per batch, still only while the
+  plan's total fits the target). ALab low 1.48 → 1.38 s (x4), Island
+  4.61 → 4.46 s (x4) and 4.36 s (x8). On full45, x8 again planned all
+  10.2 M prims in one pass-1 batch (22.6 GiB). x4 held 11.74 GiB, but its
+  largest pass-1 batch was 4.5 M prims, against 1.99 M at x2, too close to
+  the same failure for 0.1–0.15 s.
+
+**Measurement notes.**
+- ALab's low-profile peak with the kept plan is file pages: the two animated
+  geocache payloads (stoat 239 MiB, remi 136 MiB mapped) are resident
+  together. Written as its 12 pass-1 batches, ALab peaked at 0.45 GiB,
+  because remi's batch was freed, and its file unmapped, before stoat's was
+  read. That is a property of where the batch boundaries fall, not a general
+  gain, and smaller groups cost Island time. Lowering the writer's
+  resident-page drop threshold (`kDropResidentMinBytes`, 1 MiB) to 64 KiB or
+  8 KiB lowered ALab only to 0.69–0.71 GiB.
+- Timed runs writing a real file in the scratch directory are 0.4–1.5 s
+  slower than `/dev/null` runs. Compare like with like.
+
+**Still open.**
+- Island low: discovery 1.0 s and pass 1 1.77 s, against 1.95 s for the
+  default load and compose. Discovery is almost all first-touch layer loads
+  (`SourcesForPath` 925 of 968 ms; the 22-prim second level alone takes
+  434 ms). Pass 1's 13 batches build in 1.57 s, against about 0.9 s for
+  the one default build. The write cannot start before pass 1 ends,
+  because pass 1 fixes the token and string order.
+
+**Verification.**
+- Hashes in both profiles: full45 `a0175bc1…`, district `98619c40…`, ALab
+  `2f7176c8…`, Island `a8f50922…`.
+- Low-profile sweep 1,933/1,933 at `--batch-prims 1`, `50` with
+  `--batch-frontier 64`, and `400`.
+- CTest 65/65.
+- No-thread build: ALab hash in both profiles and the district hash in low.
+  Deferred-fill build: ALab hash in low.
+
+### 10.78 Keep the speculative PATHS payload when only element tokens are missing (2026-10-28)
+
+A streamed write builds the PATHS payload speculatively, alongside the dry
+runs of `SynthesizeAncestorPaths` and `RegisterPathElementTokens`. If either
+dry run found something missing, the payload was dropped and built again
+during `structural_payloads`.
+
+On Island the token dry run always finds one: `outputs:ptexFaceOffset`, a
+property name that appears only in connection target paths. Its whole PATHS
+build (243 ms of the 297 ms `path_tokens`) was wasted, and the rebuild was
+most of `structural_payloads` (227 ms).
+
+**Change.**
+- The builder's tree work (parent lookups, child sort, pre-order walk) reads
+  no token. `BuildPathsSectionPayload` now takes a `before_tokens` callback,
+  called just before its first token lookup.
+- In the speculative build, that callback waits for the dry run's verdict.
+  When tokens are missing, it runs the real `RegisterPathElementTokens` there
+  (it changes only `tokens_` and `token_to_index_`). That is the same call,
+  in the same order, that the serial path runs after the no-op
+  `SynthesizeAncestorPaths`.
+- When an ancestor path is missing (ALab), the builder now stops right after
+  its parent pass instead of finishing a payload that is dropped. Nothing
+  else changes on that path.
+
+**Results** (default profile, `/dev/null`, three runs):
+
+| scene | before | after |
+|---|---:|---:|
+| Island | 3.45–3.49 s (write 1.39–1.41 s) | **3.21–3.22 s (write 1.17–1.18 s)** |
+| ALab | 0.78–0.79 s | 0.78–0.79 s |
+| full45 | 38.2–39.8 s | 39.8 s (one run; its payload was already kept) |
+
+Island's `structural_payloads` drops from 227 to 7 ms. The low profile's
+batched write builds its sections serially (§10.74) and is unaffected.
+
+**Verification.**
+- Hashes: full45 `a0175bc1…`, district `98619c40…`, ALab `2f7176c8…`, Island
+  `a8f50922…`.
+- Rewrite sweep 1,410/1,410; composition sweep 3,866/3,866.
+- Staged parallel output equals serial (`98ad30c3…`); CTest 65/65.
+- No-thread build: Island hash. Deferred-fill build: ALab low hash.
+
+### 10.79 Parallel streaming-dedup digest for large blocks (2026-10-28)
+
+The streaming dedup keys a value block by its XXH3-128 digest and length,
+and trusts the key without comparing bytes. A single XXH3-128 runs at about
+6 GB/s here (256 MB in 42 ms, with or without `-march=native`).
+
+Island's slowest encoder chunks each hold a prim with very large lazy arrays:
+- the ground-cover instancer: three 21.4 M-element arrays, 119 ms;
+- `mountainb0004`: 10.7 M points, 67 ms, with three more such meshes in
+  the same chunk.
+
+Chunks commit in order. So while one of these chunks encodes (126–145 ms,
+against a 20 ms average), the commit stages wait, and the 32 chunk slots
+fill up with finished chunks. On average only 7.4 of the 16 workers were
+busy over `fields_specs` (5.4 s of encode CPU in 0.75 s of wall time).
+
+**Change.** `StreamDigest` replaces `XXH3_128bits` at all four
+streaming-dedup digest sites:
+- the worker log;
+- the serial intern;
+- the commit-time re-digest of fixed-up blocks;
+- `DigestBlock`.
+
+A block of 32 MiB or more is digested as fixed 4 MiB pieces on up to 8
+threads (at most `ResolveThreads()`). The piece digests are then digested
+again, seeded with the length. The result depends only on the bytes: the
+no-thread build and `--write-threads 1` give the same Island hash. Smaller
+blocks keep the single XXH3-128.
+
+The instancer's arrays now digest in 7–11 ms instead of 29–46 ms.
+
+**Results** (`/dev/null`, three runs; full45 two runs):
+
+| scene | profile | before (§10.78) | after |
+|---|---|---:|---:|
+| Island | default | 3.21–3.22 s / 3.04–3.06 GiB | **3.12–3.14 s** / 3.16 GiB |
+| Island | low | 4.61–4.62 s / 2.16–2.17 GiB | **4.44–4.47 s** / 2.17 GiB |
+| ALab | default / low | 0.78–0.79 s / 1.47–1.48 s | 0.78 s / 1.47–1.48 s |
+| full45 | default | 38.2–39.8 s / 23.5–24.0 GiB | 38.6–39.8 s / 23.4–23.7 GiB |
+| full45 | low | 80.0–81.5 s / 11.7 GiB | 80.4 s / 11.69 GiB (one run) |
+
+Island's default peak rises 0.1 GiB (+3.6%, within the 1.05× rule). The
+extra memory is clean file pages: 1.19 against 1.01 GiB at the peak (RSS
+tracer, with and without the change). Large source arrays are now hashed,
+and so faulted in, sooner. They stay resident until the commit writes the
+block and drops its pages (`DropStreamedSourceRange`). The low profile's
+narrow encoder (§10.77) keeps its peak unchanged.
+
+**Verification.**
+- Hashes in both profiles: full45 `a0175bc1…`, district `98619c40…`, ALab
+  `2f7176c8…`, Island `a8f50922…`.
+- Island with the no-thread build and with `--write-threads 1`: `a8f50922…`.
+- Rewrite sweep 1,410/1,410; composition sweep 3,866/3,866.
+- Staged parallel output equals serial (`98ad30c3…`); CTest 65/65.
+- Deferred-fill build: Island `7d3bffa5…` and district USDA `765953e1…`,
+  both identical to a deferred build of `d6c8573a8`. (That build's Island
+  output already differed from the default build's.)

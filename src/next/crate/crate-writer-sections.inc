@@ -159,9 +159,13 @@
   // false when a path element token is missing from TOKENS (already built).
   // `missing_parent` (optional): set when an absolute path's parent is not in
   // the table -- exactly when SynthesizeAncestorPaths would add a path (every
-  // ancestor present means every record's parent lookup hits).
-  bool BuildPathsSectionPayload(std::vector<uint8_t>* payload,
-                                bool* missing_parent = nullptr) {
+  // ancestor present means every record's parent lookup hits); the build then
+  // stops, since its caller drops the payload. `before_tokens` (optional)
+  // runs once the tree is ordered, before the first token lookup: the token
+  // table may still change until then.
+  bool BuildPathsSectionPayload(
+      std::vector<uint8_t>* payload, bool* missing_parent = nullptr,
+      const std::function<void()>& before_tokens = std::function<void()>()) {
     StreamWriter out(*payload);
     // The compressed path tree is the pre-order of all paths sorted by their
     // full text under PathCharRank (`/` < `.` < name characters). That order
@@ -236,7 +240,10 @@
       }
       slice_paths[t] = count;
     });
-    if (missing_parent) *missing_parent = parent_miss.load();
+    if (missing_parent) {
+      *missing_parent = parent_miss.load();
+      if (*missing_parent) return true;
+    }
     size_t num_paths = 0;
     for (size_t c : slice_paths) num_paths += c;
 
@@ -483,6 +490,7 @@
     // TOKENS was built, so the slices only look tokens up (the table is read
     // concurrently by the TOKENS payload build). A miss cannot be encoded.
     std::atomic<bool> token_miss{false};
+    if (before_tokens) before_tokens();
     auto build_nodes = [&](size_t lo, size_t hi) {
       for (size_t k = lo; k < hi; ++k) {
         const uint32_t node = order[k];

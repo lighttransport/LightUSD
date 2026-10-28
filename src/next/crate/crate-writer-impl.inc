@@ -520,7 +520,7 @@ private:
     op.block = std::move(block);
     if (n) {
       if (stream_values_) {
-        const XXH128_hash_t digest = XXH3_128bits(op.block.bytes(), n);
+        const XXH128_hash_t digest = StreamDigest(op.block.bytes(), n);
         op.digest = digest.low64;
         op.digest2 = digest.high64;
       } else {
@@ -816,7 +816,7 @@ private:
     const size_t n = block.size();
     uint64_t h = 0, h2 = 0;
     if (n) {
-      const XXH128_hash_t digest = XXH3_128bits(block.bytes(), n);
+      const XXH128_hash_t digest = StreamDigest(block.bytes(), n);
       h = digest.low64;
       h2 = digest.high64;
     }
@@ -894,9 +894,11 @@ private:
   std::deque<Path> stream_paths_;
   bool stream_meta_done_ = false;
   bool stream_root_done_ = false;
+  bool stream_reserved_ = false;  // ReserveTables done for this stream
   size_t stream_nprim_ = 0;
   size_t stream_nprop_ = 0;
-  // Build the structural payloads one at a time, freeing their tables.
+  // Batched (low-memory) write: build the structural payloads one at a time,
+  // freeing their tables, and keep the field encoder narrow.
   bool serial_sections_ = false;
   // Release each prim to its skeleton once encoded (options_.consume_prims).
   bool consume_prims_ = false;
@@ -965,6 +967,40 @@ private:
       while (block_slots_[slot].idx != 0) slot = (slot + 1) & mask;
       block_slots_[slot] = bs;
     }
+  }
+
+  // Streaming-dedup digest of a block's bytes; the dedup table trusts it
+  // without comparing bytes, so every site uses this one function. A block of
+  // kParallelDigestMinBytes+ (Island: 256 MB pass-through arrays, single
+  // XXH3-128 runs at ~6 GB/s, and the in-order commit waits for their chunk)
+  // digests fixed kDigestPieceBytes pieces on several threads, then the piece
+  // digests seeded with the length: the result depends only on the bytes.
+  static constexpr size_t kDigestPieceBytes = size_t(4) << 20;
+  static constexpr size_t kParallelDigestMinBytes = size_t(32) << 20;
+  XXH128_hash_t StreamDigest(const uint8_t* p, size_t n) const {
+    if (n < kParallelDigestMinBytes) return XXH3_128bits(p, n);
+    const size_t pieces = (n + kDigestPieceBytes - 1) / kDigestPieceBytes;
+    std::vector<XXH128_hash_t> d(pieces);
+    auto run = [&](size_t lo, size_t hi) {
+      for (size_t k = lo; k < hi; ++k) {
+        const size_t off = k * kDigestPieceBytes;
+        d[k] = XXH3_128bits(p + off, std::min(kDigestPieceBytes, n - off));
+      }
+    };
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    const size_t T = std::min<size_t>(8, static_cast<size_t>(ResolveThreads()));
+    if (T > 1) {
+      std::vector<std::thread> pool;
+      pool.reserve(T - 1);
+      for (size_t t = 1; t < T; ++t)
+        pool.emplace_back(run, pieces * t / T, pieces * (t + 1) / T);
+      run(0, pieces / T);
+      for (std::thread& th : pool) th.join();
+    } else
+#endif
+      run(0, pieces);
+    return XXH3_128bits_withSeed(d.data(), pieces * sizeof(XXH128_hash_t),
+                                 static_cast<XXH64_hash_t>(n));
   }
 
   static uint64_t HashBlockBytes(const uint8_t* p, size_t n) {

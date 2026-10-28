@@ -232,8 +232,10 @@ struct SpecsMemo {
     p = nullptr;
     return *this;
   }
-  SpecsMemo(SpecsMemo &&) {}
-  SpecsMemo &operator=(SpecsMemo &&) {
+  // noexcept: keeps Src nothrow-movable, so a growing std::vector<Src>
+  // moves its elements instead of copying each site string and context.
+  SpecsMemo(SpecsMemo &&) noexcept {}
+  SpecsMemo &operator=(SpecsMemo &&) noexcept {
     p = nullptr;
     return *this;
   }
@@ -392,6 +394,9 @@ struct Src {
 // (never on the flatten hot path): tombstones keep probe chains valid; dead
 // deque entries are reclaimed on clear(). Default copy deep-copies (worker
 // seeding; Src's SpecsMemo resets on that element-wise copy).
+static_assert(std::is_nothrow_move_constructible<Src>::value,
+              "std::vector<Src> growth must move, not copy");
+
 struct SrcCache {
   static uint64_t Hash(const std::string &s) {
     return StackSpecCache::HashSite(s.data(), s.size());
@@ -573,6 +578,10 @@ struct BatchScope {
   std::unordered_set<std::string> seeded_keys;
   std::unordered_set<std::string> seeded_proto_paths;
   const std::unordered_set<std::string> *holders_with_peers = nullptr;
+  // Layers (registry ids) no later batch reads (pass 2, from pass 1's last
+  // use): the opinion fill may release them as the default build does. Null:
+  // the fill releases no layer.
+  const std::unordered_set<std::string> *releasable_layers = nullptr;
   // Output: spine prim path -> its full child names (walk threads add here).
 #if defined(LIGHTUSD_ENABLE_THREAD)
   std::mutex full_children_mu;

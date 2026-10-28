@@ -1719,7 +1719,7 @@
           h2 = 0;
         } else if (stream_values_) {
           const XXH128_hash_t digest =
-              XXH3_128bits(op.block.bytes(), op.block.size());
+              StreamDigest(op.block.bytes(), op.block.size());
           h = digest.low64;
           h2 = digest.high64;
         } else {
@@ -1740,7 +1740,7 @@
     *h2 = 0;
     if (b.size() == 0) return;
     if (stream_values_) {
-      const XXH128_hash_t d = XXH3_128bits(b.bytes(), b.size());
+      const XXH128_hash_t d = StreamDigest(b.bytes(), b.size());
       *h = d.low64;
       *h2 = d.high64;
     } else {
@@ -2058,9 +2058,12 @@
     // Each worker holds up to one encoded chunk until its commit finishes, a
     // roughly fixed per-worker cost: 16 workers pay off only on large layers
     // (district: fields_specs 3.1 -> 2.5 s from 8 to 16), while on a small one
-    // (merged ALab, ~24 chunks) they just add ~50 MB of peak RSS.
+    // (merged ALab, ~24 chunks) they just add ~50 MB of peak RSS. A batched
+    // (low-memory) write stays narrow: Island's in-flight chunks hold 0.6 GB
+    // when wide, and full45's batches are written under the next compose.
     int want = ResolveThreads();
-    const int max_workers = nchunks >= kChunksForWideFields ? 16 : 8;
+    const bool wide = nchunks >= kChunksForWideFields && !serial_sections_;
+    const int max_workers = wide ? 16 : 8;
     if (want > max_workers) want = max_workers;
     if (want > static_cast<int>(nchunks)) want = static_cast<int>(nchunks);
     if (want <= 1) return false;
@@ -2072,7 +2075,7 @@
     // wide (large-layer) runs get 2 ctx per worker -- with one, workers spent
     // more time parked than encoding. Small layers keep one per worker (each
     // ctx holds an encoded chunk: memory).
-    const size_t P = nchunks >= kChunksForWideFields ? 2 * W : W;
+    const size_t P = wide ? 2 * W : W;
     std::unique_ptr<WorkerCtx[]> ctx(new WorkerCtx[P]);
     std::vector<size_t> free_ctx;
     free_ctx.reserve(P);

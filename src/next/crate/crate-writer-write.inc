@@ -134,7 +134,10 @@
   bool StreamWriteBegin(const CrateWriteSink* sink) {
     if (!result_.error.empty()) return false;
     serial_sections_ = true;
-    ReserveTables(stream_nprim_, stream_nprop_, false);
+    // The tables are reserved by the first batch: until then pass 2 is
+    // composing it, and the reserve (hundreds of MB, partly touched) would
+    // sit under that compose.
+    stream_reserved_ = false;
     return BeginValueStream(sink);
   }
 
@@ -143,6 +146,10 @@
       const std::vector<uint8_t>& repeated,
       const std::unordered_map<std::string, std::vector<std::string>>& full_children) {
     if (!result_.error.empty()) return false;
+    if (!stream_reserved_) {
+      ReserveTables(stream_nprim_, stream_nprop_, false);
+      stream_reserved_ = true;
+    }
     const size_t n = batch.prims().size();
     // A full child list in the order Layer::apply_namespace_ordering gives
     // the linked children: the names `order` lists first, then the rest.
@@ -425,18 +432,39 @@
     bool paths_ready = false;  // paths_payload built (speculatively, below)
 #if defined(LIGHTUSD_ENABLE_THREAD)
     if (early_started) {
-      // A composed stage normally has every ancestor path and element token
-      // already, so the PATHS payload is built while the two read-only
-      // pre-passes confirm that. If anything is missing, the speculative
-      // payload is dropped and rebuilt after the additions (same bytes).
-      // The PATHS build's parent lookups answer SynthesizeAncestorPaths'
-      // dry run; the element-token check runs alongside.
+      // A composed stage normally has every ancestor path, so the PATHS
+      // payload is built while the two read-only pre-passes confirm that. If
+      // an ancestor is missing, the speculative payload is dropped and rebuilt
+      // after the additions (same bytes). The PATHS build's parent lookups
+      // answer SynthesizeAncestorPaths' dry run; the element-token check runs
+      // alongside. Element tokens it finds missing (Island: one, a property
+      // name seen only in connection targets) are registered before the
+      // build's first token lookup, which waits for that: its tree work reads
+      // no token.
       bool add_paths = false;
-      std::thread th_paths(
-          [&] { paths_ok = BuildPathsSectionPayload(&paths_payload, &add_paths); });
-      const bool add_tokens = RegisterPathElementTokens(/*dry_run=*/true);
+      std::mutex tok_mu;
+      std::condition_variable tok_cv;
+      int add_tokens = -1;  // unknown until the dry run ends
+      bool tokens_registered = false;
+      std::thread th_paths([&] {
+        paths_ok = BuildPathsSectionPayload(&paths_payload, &add_paths, [&] {
+          std::unique_lock<std::mutex> lk(tok_mu);
+          tok_cv.wait(lk, [&] { return add_tokens >= 0; });
+          // No ancestor is missing (the build stops otherwise), so this is
+          // the RegisterPathElementTokens the serial order runs next.
+          if (add_tokens) RegisterPathElementTokens();
+          tokens_registered = true;
+        });
+      });
+      const bool dry_tokens = RegisterPathElementTokens(/*dry_run=*/true);
+      {
+        std::lock_guard<std::mutex> lk(tok_mu);
+        add_tokens = dry_tokens ? 1 : 0;
+      }
+      tok_cv.notify_all();
       th_paths.join();
-      if (add_paths || add_tokens) {
+      // (A build that encodes no path returns before that lookup.)
+      if (add_paths || (add_tokens && !tokens_registered)) {
         std::vector<uint8_t>().swap(paths_payload);
         paths_ok = true;
         SynthesizeAncestorPaths();

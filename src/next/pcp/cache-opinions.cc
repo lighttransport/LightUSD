@@ -850,8 +850,22 @@ auto Cache::Impl::PlanLayerRelease(size_t opinion_batch, int nt) -> LayerRelease
       if (last[t][st] != UINT32_MAX && (lst == UINT32_MAX || last[t][st] > lst))
         lst = last[t][st];
     if (lst == UINT32_MAX) continue;  // stack read by no record
-    for (const auto &l : layer_stacks[st].layers) {
+    const LayerStack &stack = layer_stacks[st];
+    for (size_t li = 0; li < stack.layers.size(); ++li) {
+      const auto &l = stack.layers[li];
       if (!l || keep.count(l.get())) continue;
+      if (batch_scope_) {
+        // A batch releases only the layers no later batch reads.
+        const std::string &id = li < stack.layer_identifiers.size()
+                                    ? stack.layer_identifiers[li]
+                                    : stack.identifier;
+        if (!batch_scope_->releasable_layers ||
+            !batch_scope_->releasable_layers->count(id)) {
+          keep.insert(l.get());
+          layer_last.erase(l.get());
+          continue;
+        }
+      }
       uint32_t &v = layer_last[l.get()];
       if (lst + 1 > v) v = lst + 1;  // stored +1: 0 = unset
     }
@@ -969,7 +983,8 @@ auto Cache::Impl::FillOpinions(
       // release_layers_during_fill: a source layer's prims are freed once
       // every batch up to the last record reading it is done.
       LayerReleasePlan plan;
-      if (release && options.release_layers_during_fill && !batch_scope_)
+      if (release && options.release_layers_during_fill &&
+          (!batch_scope_ || batch_scope_->releasable_layers))
         plan = PlanLayerRelease(opinion_batch, nt);
       const size_t nbatches = (fill_.size() + opinion_batch - 1) / opinion_batch;
       std::unique_ptr<std::atomic<uint8_t>[]> batch_done;

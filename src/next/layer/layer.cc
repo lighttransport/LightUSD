@@ -105,10 +105,14 @@ Layer::~Layer() {
   // as the parallel finalize below, so small and per-worker layers stay
   // serial.
 #if defined(LIGHTUSD_ENABLE_THREAD)
-  const unsigned hw = std::thread::hardware_concurrency();
+  // (hardware_concurrency() reads sysfs on every call: ask only for a
+  // layer large enough to split; parsers destroy many small fragments.)
   const size_t workers =
-      std::min<size_t>(hw ? hw : 1, static_cast<size_t>(kMaxExecutionThreads));
-  if (prims_.size() >= 65536 && workers > 1) {
+      prims_.size() < 65536
+          ? 1
+          : std::min<size_t>(std::max(1u, std::thread::hardware_concurrency()),
+                             static_cast<size_t>(kMaxExecutionThreads));
+  if (workers > 1) {
     std::vector<std::thread> pool;
     pool.reserve(workers);
     const size_t n = prims_.size();
@@ -581,10 +585,14 @@ void Layer::finalize() {
   // layers -- including per-worker layers finalized during a parallel scene
   // load -- on the serial path, avoiding nested thread fan-out.
 #if defined(LIGHTUSD_ENABLE_THREAD)
-  const unsigned hw = std::thread::hardware_concurrency();
+  // (hardware_concurrency() reads sysfs on every call: ask only for a
+  // layer large enough to split; parsers destroy many small fragments.)
   const size_t workers =
-      std::min<size_t>(hw ? hw : 1, static_cast<size_t>(kMaxExecutionThreads));
-  if (prims_.size() >= 65536 && workers > 1) {
+      prims_.size() < 65536
+          ? 1
+          : std::min<size_t>(std::max(1u, std::thread::hardware_concurrency()),
+                             static_cast<size_t>(kMaxExecutionThreads));
+  if (workers > 1) {
     std::vector<std::thread> pool;
     pool.reserve(workers);
     const size_t n = prims_.size();
