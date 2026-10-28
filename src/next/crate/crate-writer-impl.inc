@@ -133,9 +133,26 @@ private:
   // Fields and fieldsets
   // The two FIELDS columns are compressed independently. Retaining them in
   // column order avoids CrateField padding and full-column extraction copies.
-  struct FieldColumns {
+  // The worker chunk delta keeps plain vectors; shortcuts (indexed reference)
+  // commit it once per batch.
+  struct ChunkFieldColumns {
     std::vector<uint32_t> tokens;
     std::vector<ValueRep> reps;
+    size_t size() const { return reps.size(); }
+    void clear() { tokens.clear(); reps.clear(); }
+    void reserve(size_t count) { tokens.reserve(count); reps.reserve(count); }
+    void push_back(const CrateField& field) {
+      tokens.push_back(field.token_index.value);
+      reps.push_back(field.value_rep);
+    }
+  };
+  // Main-stage columns: identical semantics to the chunk struct, but the
+  // storage is a SpillVec (0-byte budget = exactly one plain vector, as
+  // before; with a budget, fully committed prefixes move to the spill file at
+  // batch boundaries and return via Resolve()).
+  struct FieldColumns {
+    SpillVec<uint32_t> tokens;
+    SpillVec<ValueRep> reps;
     size_t size() const { return reps.size(); }
     void clear() { tokens.clear(); reps.clear(); }
     void reserve(size_t count) { tokens.reserve(count); reps.reserve(count); }
@@ -146,8 +163,8 @@ private:
   } fields_;
   // Retain fieldsets in their final flat order, including the sentinel. Each
   // spec needs only an offset instead of an allocated vector of field indices.
-  std::vector<uint32_t> fieldset_offsets_;
-  std::vector<uint32_t> flat_fieldsets_;
+  SpillVec<uint32_t> fieldset_offsets_;
+  SpillVec<uint32_t> flat_fieldsets_;
 
   uint32_t BeginFieldset(size_t field_count) {
     const size_t limit = (std::numeric_limits<uint32_t>::max)();
@@ -164,13 +181,88 @@ private:
   uint32_t AddFieldset(const std::vector<uint32_t>& indices) {
     const uint32_t number = BeginFieldset(indices.size());
     if (!result_.error.empty()) return 0;
-    flat_fieldsets_.insert(flat_fieldsets_.end(), indices.begin(), indices.end());
+    flat_fieldsets_.append(indices.data(), indices.size());
     flat_fieldsets_.push_back(UINT32_MAX);
     return number;
   }
 
   // Specs
-  std::vector<CrateSpec> specs_;
+  SpillVec<CrateSpec> specs_;
+
+  // ---- Append-only column spill (batched/streamed writes) ------------------
+  // The structural columns whose committed prefixes may move out of memory
+  // while the shared budget is exceeded. Order is only a tie-breaker; the
+  // flush driver always drains whichever column holds the most sealed bytes.
+  void SpillColumns(SpillColumnBase** out) {
+    out[0] = &fields_.tokens;
+    out[1] = &fields_.reps;
+    out[2] = &fieldset_offsets_;
+    out[3] = &flat_fieldsets_;
+    out[4] = &specs_;
+  }
+  static constexpr size_t kSpillColumnCount = 5;
+
+  // One-time per-write configuration (the columns are empty here, in
+  // ReserveTables). Only streamed/batched writes ever spill, but enabling the
+  // storage mode is harmless for the others: nothing evicts without a budget
+  // and the flush driver checks stream_values_.
+  void ConfigureSpillColumns() {
+    SpillColumnBase* cols[kSpillColumnCount] = {};
+    SpillColumns(cols);
+    const bool on = options_.spill_columns_bytes != 0;
+    for (SpillColumnBase* c : cols) {
+      c->set_spill_enabled(on);
+      if (on) c->set_spill_directory(options_.spill_directory);
+    }
+  }
+
+  // Move fully committed column prefixes to the spill file while the shared
+  // resident budget is exceeded. Runs strictly at batch boundaries: all
+  // appends of the batch are complete there, so any chunk that is not the
+  // (still growing) last one can move without changing element semantics.
+  // The commit's rebases (fields_before / fs_before / flat offsets) and every
+  // size() stay absolute across evictions; only the section builders read
+  // spilled bytes, through Resolve().
+  void MaybeSpillColumns() {
+    const uint64_t budget = options_.spill_columns_bytes;
+    if (!stream_values_ || budget == 0) return;
+    SpillColumnBase* cols[kSpillColumnCount] = {};
+    SpillColumns(cols);
+    for (int round = 0; round < 32; ++round) {
+      uint64_t resident = 0;
+      uint64_t best_sealed = 0;
+      SpillColumnBase* best = nullptr;
+      for (SpillColumnBase* c : cols) {
+        resident += c->ResidentBytes();
+        const uint64_t sealed = c->SealedBytes();
+        if (sealed > best_sealed) {
+          best_sealed = sealed;
+          best = c;
+        }
+      }
+      if (resident <= budget) return;
+      if (!best) return;  // only the open (append) chunks remain
+      std::string error;
+      const uint64_t freed = best->SpillSealed(resident - budget, &error);
+      if (!error.empty()) {
+        // The writer keeps every byte in memory on a spill I/O problem (the
+        // output is still exact) and reports the fault once.
+        if (result_.error.empty()) result_.error = error;
+        return;
+      }
+      if (!freed) return;  // nothing evictable left
+    }
+  }
+
+  // True when any column's spill write or re-read hit an I/O error (queued by
+  // the array itself so thread-built sections can report too).
+  bool SpillIoFailed() {
+    SpillColumnBase* cols[kSpillColumnCount] = {};
+    SpillColumns(cols);
+    for (SpillColumnBase* c : cols)
+      if (c->io_failed()) return true;
+    return false;
+  }
 
   // VALUE data section payloads. A block is either inline (`data`) or a verbatim
   // pass-through reference into a retained source crate buffer (`src` pins the
@@ -343,7 +435,7 @@ private:
     std::vector<BlockLogOp> ops;
 
     // fields/fieldsets/specs chunk delta (rebased at commit)
-    FieldColumns fields;
+    ChunkFieldColumns fields;
     std::vector<uint32_t> fs_offsets;  // per fieldset: local flat offset
     std::vector<uint32_t> flat;        // local field ids + sentinels
     std::vector<CrateSpec> specs;

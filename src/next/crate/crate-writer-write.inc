@@ -225,6 +225,10 @@
       if (!repeated[i])
         stream_paths_.push_back(batch.prim(static_cast<uint32_t>(i))->take_path());
     }
+    // Batch boundary: every column append of this batch is complete, so the
+    // front chunks can move to the spill file without any element changing
+    // meaning.
+    MaybeSpillColumns();
     if (!result_.error.empty()) {
       result_.success = false;
       return false;
@@ -323,6 +327,10 @@
   void ReserveTables(size_t nprim, size_t nprop, bool staged) {
     const size_t nspec = nprim + nprop + 16;
     ReservePaths(nspec);
+    // Structural columns spill mode, configured once, before any append (the
+    // columns are empty here).
+    const bool spill_columns = options_.spill_columns_bytes != 0;
+    ConfigureSpillColumns();
     specs_.reserve(nspec);
     fieldset_offsets_.reserve(nspec);
     // Replace the old per-spec vector-header reservation with the smaller
@@ -334,17 +342,19 @@
     fields_.reserve(nspec * 3);
     // Large writes: back the big append-only tables with huge pages (fewer
     // first-touch faults, and a process exit tears ~6 GB down in a fraction
-    // of the 4 KiB-page cost).
+    // of the 4 KiB-page cost). In spill mode each chunk is small and fresh,
+    // so the reserved-span advice would be near-useless; skip it.
     if (nspec >= (size_t(1) << 22)) {
       AdviseHugePages(paths_.data(), paths_.capacity() * sizeof(PathRec));
       AdviseHugePages(path_fingerprints_.data(),
                       path_fingerprints_.capacity() * sizeof(uint16_t));
-      AdviseHugePages(fields_.tokens.data(), fields_.tokens.capacity() * sizeof(uint32_t));
-      AdviseHugePages(fields_.reps.data(), fields_.reps.capacity() * sizeof(ValueRep));
-      AdviseHugePages(flat_fieldsets_.data(), flat_fieldsets_.capacity() * sizeof(uint32_t));
-      AdviseHugePages(fieldset_offsets_.data(),
-                      fieldset_offsets_.capacity() * sizeof(uint32_t));
-      AdviseHugePages(specs_.data(), specs_.capacity() * sizeof(CrateSpec));
+      if (!spill_columns) {
+        fields_.tokens.AdviseHugePagesOnChunks();
+        fields_.reps.AdviseHugePagesOnChunks();
+        flat_fieldsets_.AdviseHugePagesOnChunks();
+        fieldset_offsets_.AdviseHugePagesOnChunks();
+        specs_.AdviseHugePagesOnChunks();
+      }
     }
     if (staged) {
       // Staged VALUE blocks (the streaming write keeps none).
@@ -575,17 +585,17 @@
         // With the path table gone the rest fit side by side.
         auto fields_task = [&]() {
           build_fields();
-          fields_.tokens = std::vector<uint32_t>();
-          fields_.reps = std::vector<ValueRep>();
+          fields_.tokens.Release();
+          fields_.reps.Release();
         };
         auto fieldsets_task = [&]() {
           build_fieldsets();
-          std::vector<uint32_t>().swap(flat_fieldsets_);
+          flat_fieldsets_.Release();
         };
         auto specs_task = [&]() {
           build_specs();
-          std::vector<uint32_t>().swap(fieldset_offsets_);
-          std::vector<CrateSpec>().swap(specs_);
+          fieldset_offsets_.Release();
+          specs_.Release();
         };
 #if defined(LIGHTUSD_ENABLE_THREAD)
         if (ResolveThreads() > 1) {
@@ -643,6 +653,13 @@
     }
     if (!paths_ok) {
       result_.error = "Crate PATHS: a path element token is missing";
+      result_.success = false;
+      return result_;
+    }
+    if (SpillIoFailed()) {
+      result_.error = fields_error.empty()
+                          ? "Crate writer spill file I/O failed"
+                          : fields_error;
       result_.success = false;
       return result_;
     }

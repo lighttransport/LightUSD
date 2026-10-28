@@ -66,6 +66,22 @@ struct CrateWriteOptions {
   /// lightusd::logging.
   bool enable_timing = false;
 
+  /// Shared in-memory byte budget for the append-only structural columns
+  /// (FIELDS tokens/reps, FIELDSET offsets/flat indices, SPECS). When a write
+  /// exceeds it (streamed/batched writes only), each column moves its oldest
+  /// fully committed elements to a spill file and hands the bytes back
+  /// contiguously when the structural sections build, so a multi-GB scene's
+  /// columns never all sit in memory at once. Bytes move, values don't: the
+  /// output is byte-identical to an in-memory write.
+  /// 0 = never spill (default; the columns stay plain in-memory vectors).
+  uint64_t spill_columns_bytes = 0;
+
+  /// Directory receiving the (unlinked) spill file when
+  /// `spill_columns_bytes` is set. Empty = the system temp directory ("/tmp").
+  /// The library never reads the environment; callers resolve their own
+  /// directory (an app's temp-dir option or env) and pass it here.
+  std::string spill_directory;
+
   /// Consume the input layer's property values while writing: after a prim's
   /// fields are built (its values encoded into the crate's value blocks), the
   /// prim's default values and time samples are released

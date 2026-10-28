@@ -1970,8 +1970,8 @@
       }
       std::vector<ValueRep>& reps = w.fields.reps;
       for (ValueRep& r : reps) r = RemapValueRep(r, fin);
-      fields_.tokens.insert(fields_.tokens.end(), toks.begin(), toks.end());
-      fields_.reps.insert(fields_.reps.end(), reps.begin(), reps.end());
+      fields_.tokens.append(toks.data(), toks.size());
+      fields_.reps.append(reps.data(), reps.size());
     }
 
     // 5. fieldsets (rebase local flat ids by the fields appended so far)
@@ -1984,9 +1984,8 @@
       // w.fs_offsets entries are uint32_t slot offsets into w.flat.
       for (uint32_t& v : w.fs_offsets)
         v += static_cast<uint32_t>(flat_before);
-      fieldset_offsets_.insert(fieldset_offsets_.end(), w.fs_offsets.begin(),
-                               w.fs_offsets.end());
-      flat_fieldsets_.insert(flat_fieldsets_.end(), w.flat.begin(), w.flat.end());
+      fieldset_offsets_.append(w.fs_offsets.data(), w.fs_offsets.size());
+      flat_fieldsets_.append(w.flat.data(), w.flat.size());
     }
 
     // 6. specs (path domain remap, fieldset rebase)

@@ -853,6 +853,10 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_crate_limits.cc
     )
     target_link_libraries(test_crate_limits PRIVATE lightusd_next)
+    add_executable(test_spill_array
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_spill_array.cc
+    )
+    target_link_libraries(test_spill_array PRIVATE lightusd_next)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -1469,6 +1473,8 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_crate_limits COMMAND test_crate_limits
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_spill_array COMMAND test_spill_array
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_load_rules COMMAND test_load_rules
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -1533,6 +1539,7 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         next_test_crash_regressions
         next_test_usdc_malformed
          next_test_crate_limits
+         next_test_spill_array
          next_test_load_rules
          next_test_path_expression_c_core
          next_test_layer_diff

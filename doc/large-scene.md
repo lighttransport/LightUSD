@@ -6129,3 +6129,77 @@ narrow encoder (§10.77) keeps its peak unchanged.
 - Deferred-fill build: Island `7d3bffa5…` and district USDA `765953e1…`,
   both identical to a deferred build of `d6c8573a8`. (That build's Island
   output already differed from the default build's.)
+
+### 10.80 Spill the append-only writer columns in the low profile (2026-10-29)
+
+The low profile's peak (11.64 GiB on full45) sat at the end of pass 2's
+build. A census at the batch boundary — temporary probes, not committed —
+attributed about 6.0 GiB of it to the writer's five append-only structural
+columns, which are only read once, when the structural sections build at
+the end:
+
+| column | bytes at batch 25 |
+|---|---:|
+| FIELDS value reps (`fields_.reps`) | 1.3 GiB |
+| FIELDSET flat indices (`flat_fieldsets_`) | 0.9 GiB |
+| FIELDS tokens (`fields_.tokens`) | 0.7 GiB |
+| SPECS records (`specs_`) | 0.7 GiB |
+| fieldset offsets (`fieldset_offsets_`) | 0.2 GiB |
+
+A jemalloc heap profile at the same point agreed (12.19 GB in use;
+`StreamWriteBatch`/`ReserveTables` 6.37 GB), and a batch-to-batch diff
+showed the rest was pcp cache and still-resident source layers.
+
+**Change.** `src/next/crate/spill-array.hh` adds `SpillVec<T>` (behind the
+type-erased `SpillColumnBase`), used for those five columns:
+
+- Elements live in ~8 MiB chunks. `CrateWriteOptions::spill_columns_bytes`
+  (default 0) sets a *shared* resident budget; at every batch boundary
+  (`StreamWriteBatch`) the writer moves whole sealed chunks from the front
+  of the largest column into an unlinked spill file in
+  `CrateWriteOptions::spill_directory` (empty = `/tmp`) until the total is
+  back under budget. The library itself never reads the environment.
+- Appends are only at the back and evictions only from the front, so
+  absolute element identity never moves: the commit's rebases
+  (`fields_before`, `fs_before`, flat offsets, spec fieldset numbers) and
+  every `size()` keep their meaning.
+- The section builders (`BuildFieldsSectionPayload`,
+  `BuildFieldsetsSectionPayload`, `BuildSpecsSectionPayload`) call
+  `Resolve()`: one sequential `pread` rebuilds the spilled prefix into a
+  raw (not zero-filled) buffer and the resident tail is copied behind it.
+  The codec calls are untouched, so the bytes are the ones a fully
+  resident write encodes.
+- Budget 0 keeps a single vector per column — exactly the previous
+  storage, growth and huge-page advice. Only streamed (batched) writes
+  spill; the staged path never does, so `ComputeValueLayoutAndPatch`'s
+  in-place rep patching is unaffected (the reps column can also be walked
+  chunk-wise if a budget is ever set there).
+- A spill write/read failure degrades to fully in-memory columns and
+  reports one error; output is never silently wrong.
+
+`lusdcat` enables a 512 MiB budget on the low-profile flatten path and
+passes the directory through: `--spill-mib N` (0 disables) and
+`--spill-dir DIR` (default: system temp).
+
+**Results** (full45 `-o /dev/null`, two runs each, paired):
+
+| configuration | wall | peak RSS |
+|---|---:|---:|
+| `--spill-mib 0` (previous behavior) | 79.1–80.8 s | 11.63–11.66 GiB |
+| `--spill-mib 512` (default) | 81.4–81.5 s | **9.30–9.31 GiB** |
+
+That is 2.34 GiB (20%) off the peak for 1.4–2.4 s (about 2–3%) of wall time:
+the spill writes and the rebuild pread copy about 4.5 GiB each way. Sampled
+child swap was 0 in every timed run. The default profile is untouched
+(38.2–39.7 s / 23.4–23.7 GiB, spill unreachable) and the new residual peak
+is mid pass 2 (rsstrace: 9.35 GiB at 53 s), not the section build.
+
+**Verification.**
+- Hashes in the low profile, spill on and off, equal to the pre-change
+  binary: full45 `a0175bc1…` (3,014,654,530 bytes), district `98619c40…`,
+  ALab `2f7176c8…`, Island `a8f50922…`.
+- District with `--spill-mib 8` (hundreds of evictions): `98619c40…`.
+- No-thread build output equals the threaded build (district `98619c40…`).
+- Rewrite sweep 1,410/1,410; composition sweep 3,866/3,866.
+- Staged parallel output equals serial (579,974,418 bytes both ways);
+  CTest 65/65.

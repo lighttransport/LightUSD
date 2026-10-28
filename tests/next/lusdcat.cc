@@ -121,6 +121,12 @@ int main(int argc, char **argv) {
   bool low_memory = false;
   size_t batch_frontier = 65536;
   size_t batch_prims = 400000;
+  // Low profile writer: shared resident budget (MiB) for the append-only
+  // structural columns; the oldest committed chunks move to `spill_dir` past
+  // it. 0 keeps every column in memory.
+  uint64_t spill_mib = 512;
+  // Directory for the (unlinked) spill file; empty = system temp ("/tmp").
+  std::string spill_dir;
   // --variant-fallback set=opt1,opt2  (repeatable). Stock pxr registers NO
   // fallbacks; the AOUSD supplemental corpus expectations were generated in
   // an environment with the classic standin->render fallback, so its runner
@@ -248,6 +254,10 @@ int main(int argc, char **argv) {
       batch_frontier = static_cast<size_t>(std::atol(argv[++i]));
     } else if (std::strcmp(argv[i], "--batch-prims") == 0 && i + 1 < argc) {
       batch_prims = static_cast<size_t>(std::atol(argv[++i]));
+    } else if (std::strcmp(argv[i], "--spill-mib") == 0 && i + 1 < argc) {
+      spill_mib = static_cast<uint64_t>(std::strtoull(argv[++i], nullptr, 10));
+    } else if (std::strcmp(argv[i], "--spill-dir") == 0 && i + 1 < argc) {
+      spill_dir = argv[++i];
     } else if (std::strcmp(argv[i], "--fast-exit") == 0) {
       fast_exit = true;
     } else if (std::strcmp(argv[i], "--load-payloads") == 0) {
@@ -286,6 +296,7 @@ int main(int argc, char **argv) {
                          "[--load-payloads|--defer-payloads] "
                          "[--no-consume-values] "
                          "[--memory-profile default|low] [--batch-prims N] "
+                         "[--spill-mib N] [--spill-dir DIR] "
                          "[--fast-exit] "
                          "[--aousd-strict] "
                          "[--max-crate-elements N] "
@@ -521,6 +532,10 @@ int main(int argc, char **argv) {
       wopts.enable_timing = timing;
       wopts.consume_values = consume_values;
       wopts.consume_prims = consume_values;
+      // Round C: spill the append-only structural columns past a shared
+      // resident budget (0 keeps them fully in memory).
+      wopts.spill_columns_bytes = spill_mib << 20;
+      wopts.spill_directory = spill_dir;
       CrateWriteResult res;
       const bool flat_ok = pcp::FlattenToUSDCFileBatched(
           filename, resolver, out_path, opts, bopts, wopts, &res, &warn, &err);

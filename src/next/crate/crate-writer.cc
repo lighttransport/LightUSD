@@ -56,6 +56,10 @@
 #include <mutex>
 #endif
 
+// SpillVec: the append-only structural columns (fields, fieldsets, specs) in
+// the batched write may push committed prefixes to an unlinked spill file.
+#include "spill-array.hh"
+
 // LZ4 for compression
 #include "lz4/lz4.h"
 

@@ -83,8 +83,20 @@
     uint64_t num_fields = fields_.size();
     out.write_u64(num_fields);
 
+    // Whole-column contiguous bytes. A spilled column hands back its spilled
+    // prefix with one private copy; an unspilled one aliases the resident
+    // storage exactly as the plain vectors did.
+    std::unique_ptr<uint32_t[]> tok_copy;
+    std::unique_ptr<ValueRep[]> rep_copy;
+    const uint32_t* tokens = nullptr;
+    const ValueRep* reps = nullptr;
+    if (!fields_.tokens.Resolve(&tok_copy, &tokens, error) ||
+        !fields_.reps.Resolve(&rep_copy, &reps, error)) {
+      return false;
+    }
+
     // Encode the retained token column directly (delta + LZ4).
-    WriteCompressedDeltaU32(out, fields_.tokens.data(), num_fields);
+    WriteCompressedDeltaU32(out, tokens, num_fields);
 
     // Write compressed value reps (TfFastCompression LZ4 format)
     size_t value_rep_bytes = 0;
@@ -96,7 +108,9 @@
                       std::is_trivially_copyable<ValueRep>::value,
                   "ValueRep must retain its raw 64-bit object representation");
     WriteCompressedBytes(out,
-        reinterpret_cast<const uint8_t*>(fields_.reps.data()), value_rep_bytes);
+        reinterpret_cast<const uint8_t*>(reps), value_rep_bytes);
+    // The copies (if any) die here; the resident chunks die with the caller's
+    // Release() calls.
     return true;
   }
 
@@ -104,10 +118,21 @@
     StreamWriter out(*payload);
     // The construction pass already retains indices and sentinels in exactly
     // this order. Compress in place without a second full-size flat copy.
+    std::unique_ptr<uint32_t[]> flat_copy;
+    const uint32_t* flat = nullptr;
+    {
+      std::string resolve_error;
+      if (!flat_fieldsets_.Resolve(&flat_copy, &flat, &resolve_error)) {
+        // The writer-level spill I/O flag aborts the finish; leave the
+        // payload incomplete rather than corrupt the shared result from this
+        // thread.
+        return;
+      }
+    }
     const uint64_t flat_count = flat_fieldsets_.size();
     out.write_u64(flat_count);
     // Use Usd_IntegerCompression (delta + LZ4)
-    WriteCompressedDeltaU32(out, flat_fieldsets_.data(), static_cast<size_t>(flat_count));
+    WriteCompressedDeltaU32(out, flat, static_cast<size_t>(flat_count));
   }
 
   // Pre-order rank of a path character: the structural separators sort below
@@ -564,27 +589,42 @@
     uint64_t num_specs = specs_.size();
     out.write_u64(num_specs);
 
+    // Rebuild the (possibly spilled) columns contiguously. A spilled spec /
+    // fieldset-offset column returns through one private pread copy; the
+    // unspilled shapes alias as before.
+    std::unique_ptr<CrateSpec[]> spec_copy;
+    const CrateSpec* spec_arr = nullptr;
+    std::unique_ptr<uint32_t[]> fs_off_copy;
+    const uint32_t* fs_off = nullptr;
+    {
+      std::string resolve_error;
+      if (!specs_.Resolve(&spec_copy, &spec_arr, &resolve_error) ||
+          !fieldset_offsets_.Resolve(&fs_off_copy, &fs_off, &resolve_error)) {
+        return;  // io flag aborts below
+      }
+    }
+
     // Compress each column before reusing its storage for the next. Keeping
     // all three columns live together costs eight extra bytes per spec and
     // provides no benefit to the independent, ordered codec calls below.
     std::vector<uint32_t> indices(num_specs);
     for (size_t i = 0; i < num_specs; i++) {
-      indices[i] = specs_[i].path_index.value;
+      indices[i] = spec_arr[i].path_index.value;
     }
     WriteCompressedDeltaU32(out, indices.data(), num_specs);
 
     // Offsets were recorded when each fieldset was appended.
     for (size_t i = 0; i < num_specs; i++) {
       // Convert fieldset number → flat array offset
-      uint32_t fs_num = specs_[i].fieldset_index.value;
+      uint32_t fs_num = spec_arr[i].fieldset_index.value;
       indices[i] = (fs_num < fieldset_offsets_.size())
-                       ? fieldset_offsets_[fs_num]
+                       ? fs_off[fs_num]
                        : 0;
     }
     WriteCompressedDeltaU32(out, indices.data(), num_specs);
 
     for (size_t i = 0; i < num_specs; i++) {
-      indices[i] = static_cast<uint32_t>(specs_[i].spec_type);
+      indices[i] = static_cast<uint32_t>(spec_arr[i].spec_type);
     }
     WriteCompressedDeltaU32(out, indices.data(), num_specs);
   }
@@ -705,16 +745,18 @@
       current_offset += value_data_[i].size();
     }
 
-    // Patch all field ValueReps with actual file offsets (absolute).
-    for (ValueRep& field : fields_.reps) {
-      if (field.is_inlined()) continue;
+    // Patch all field ValueReps with actual file offsets (absolute). The
+    // columns are chunked containers; spill is inactive on this (non-stream)
+    // path, but iterate through chunks regardless of layout.
+    fields_.reps.ForEachMut([&](ValueRep& field) {
+      if (field.is_inlined()) return;
 
       CrateTypeId type = field.type_id();
       uint64_t data_idx = field.payload();
 
       // payload 0 (non-inlined) is the empty-array marker (block 0 is reserved
       // and never referenced) — leave it as 0 so it is not relocated.
-      if (data_idx == 0) continue;
+      if (data_idx == 0) return;
 
       if (data_idx < value_data_.size() && data_idx < value_offsets_.size()) {
         uint64_t offset = value_start_offset_ + value_offsets_[data_idx];
@@ -727,7 +769,7 @@
       if (type == CrateTypeId::TimeSamples) {
         _PatchTimeSamplesBlock(data_idx);
       }
-    }
+    });
 
     // Patch embedded ValueReps in Dictionary blocks. Nested dictionaries are
     // referenced from other dict blocks (not from fields), so iterate every
