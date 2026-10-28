@@ -203,6 +203,17 @@ def test_mjcf_sdf_geom_writes_level_set_sidecar(tmp_path):
         assert not [p for p in other if p.type_name == 'Volume']
 
 
+def test_mjcf_sdf_voxel_budget_uses_remaining_import_memory(tmp_path):
+    path = _sdf_mjcf(tmp_path)
+    # Parsing and retaining the source mesh leaves less than 100,000 voxels'
+    # estimated workspace. The SDF builder must use that remainder instead of
+    # restoring its old fixed minimum.
+    stage = lightusd.import_mjcf(path, sdf_resolution=8, max_memory=128 * 1024)
+    assert not stage.generated_assets()
+    assert any(d['code'] == 'mjcf.sdf_level_set_failed'
+               for d in stage.import_report()['diagnostics'])
+
+
 _USDA_MESH = '''#usda 1.0
 def Xform "World" {
   def Mesh "box" {

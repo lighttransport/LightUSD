@@ -266,6 +266,12 @@ set (float 5/4/3 tree, class `level set`, negative inside):
   asset share one file.
 - **Sidecar:** written as the generated asset `sdf/<mesh>.vdb`. USDA/USDC saves
   write it beside the layer, and USDZ saves package it.
+- **Memory limit:** the candidate-voxel cap is derived from the import's
+  remaining memory budget at approximately 128 bytes per candidate; there is no
+  fixed minimum that can exceed the remaining allowance. If the cap is too small
+  to build the field, LightUSD reports `mjcf.sdf_level_set_failed` and omits the
+  optional sidecar. This remains a workspace estimate rather than exact
+  accounting of every temporary used to generate and serialize the field.
 - **Collider:** `newton:sdfMaxResolution` and, in an unscaled frame,
   `newton:sdfNarrowBandInner/Outer`, so Newton's own (CUDA) SDF build matches
   the sidecar.
@@ -321,8 +327,10 @@ no VDB meshes):
 - MJCF VDB assets are decoded with the remaining import memory budget, and
   their decoder peak is charged before meshing or tetrahedralization. Voxel,
   background-tet and output-tet counts are also derived from the remaining
-  budget without minimum floors. These count estimates do not account exactly
-  for every downstream temporary or generated level set.
+  budget without minimum floors. Generated MJCF SDF sidecars likewise derive
+  their candidate-voxel cap from the remaining budget, without the former
+  100,000-voxel floor. These estimates do not account exactly for every
+  downstream temporary or generated level set.
 
 **APIs.**
 - **C** (`lightusd-import-c.h`): `lightusd_mesh_to_level_set_vdb`,

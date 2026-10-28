@@ -694,7 +694,12 @@ bool MjcfSdfLevelSet(const std::string& mesh_name, const Mesh& mesh, Json* out,
   ls.device = VolumetricDevice();
   // ~128 bytes per candidate voxel while building.
   const size_t budget = opts.max_memory - std::min(opts.max_memory, active_reader->bytes);
-  ls.max_voxels = std::max<size_t>(100000, std::min<size_t>(budget / 128, 50000000));
+  const size_t voxel_budget = budget / 128;
+  if (!voxel_budget) {
+    *why = "the remaining memory budget cannot hold a level-set voxel";
+    return false;
+  }
+  ls.max_voxels = std::min<size_t>(voxel_budget, 50000000);
   LevelSet level_set;
   std::vector<uint8_t> bytes;
   if (!MeshToLevelSet(mesh, ls, &level_set, why) || !WriteLevelSetVDB(level_set, &bytes, why))
