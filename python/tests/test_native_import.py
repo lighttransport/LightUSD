@@ -104,7 +104,7 @@ def test_mtl_maps_subsets_and_usdz(tmp_path):
     assert surface.attribute("inputs:normal").type_name == "normal3f"
     assert surface.attribute("inputs:normal").connections
     texture = next(p for p in stage if p.type_name == "Shader" and p.get("info:id") == "UsdUVTexture")
-    assert texture["inputs:file"] == str(tmp_path / "mats" / "color.png")
+    assert texture["inputs:file"] == (tmp_path / "mats" / "color.png").as_posix()
     assert texture["inputs:wrapS"] == "clamp"
     for save in (stage.save, stage.save_usdz):
         output = tmp_path / "out.usdz"
@@ -113,7 +113,7 @@ def test_mtl_maps_subsets_and_usdz(tmp_path):
             assert any(archive.read(n) == png for n in archive.namelist() if n.endswith('.png'))
         loaded = lightusd.load(output)
         assert '.png' in loaded.export_usda()
-    assert texture["inputs:file"] == str(tmp_path / "mats" / "color.png")
+    assert texture["inputs:file"] == (tmp_path / "mats" / "color.png").as_posix()
 
 
 def test_missing_mtl_warns(tmp_path):

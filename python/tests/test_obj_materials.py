@@ -116,8 +116,8 @@ def test_duplicate_material_names_keep_their_source_metadata(tmp_path, newline, 
     assert first["inputs:useSpecularWorkflow"] == 1
     assert second["inputs:roughness"] == pytest.approx(.8)
     assert second["inputs:useSpecularWorkflow"] == 0
-    assert stage.prim_at("/World/Materials/shared/Map_0")["inputs:file"] == str(tmp_path / "first/color.png")
-    assert stage.prim_at("/World/Materials/shared_1/Map_0")["inputs:file"] == str(tmp_path / "second/color.png")
+    assert stage.prim_at("/World/Materials/shared/Map_0")["inputs:file"] == (tmp_path / "first/color.png").as_posix()
+    assert stage.prim_at("/World/Materials/shared_1/Map_0")["inputs:file"] == (tmp_path / "second/color.png").as_posix()
     assert stage.prims_of_type("GeomSubset")[0].relationship("material:binding").targets == ("/World/Materials/shared",)
 
 
