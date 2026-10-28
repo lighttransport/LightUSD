@@ -1099,7 +1099,10 @@ Constraint frames are exported relative to each body's world transform and
 restored from the first resolved body on import. Import also resolves body
 prim names to merged child-mesh objects, which Blender's USD importer creates
 when `merge_parent_xform` is enabled. It selects the target before invoking
-Blender's rigid-body operators. Singular body transforms are skipped.
+Blender's rigid-body operators. Singular body transforms are skipped. On import,
+revolute `physics:axis` is aligned to Blender's local-Z hinge axis, and
+prismatic `physics:axis` is aligned to Blender's local-X slider axis; the
+alignment is composed with the authored joint-frame rotation.
 
 On import, `mjc:geomFriction` on collider prims maps its first value (MuJoCo's
 sliding coefficient) to Blender's single rigid-body friction value. When a
@@ -1160,6 +1163,32 @@ c++ -std=c++17 -I"$MUJOCO_SOURCE/include" \
 ```
 
 `MUJOCO_SOURCE` and `MUJOCO_BUILD` are the MuJoCo source and build trees.
+
+The runtime suite also imports an asymmetric box with authored principal
+moments and a rotated principal frame, connected by an X-axis revolute joint
+whose frame points along `(2, 1, 0)`. It verifies that Blender aligns the hinge
+axis correctly, the body swings under gravity, and the pivot stays within
+10 mm. A matching MuJoCo fixture is
+`tests/feat/physics-oracle/offdiagonal-hinge.xml`; its C API sampler is
+`tests/next/mujoco-offdiagonal-dynamics.cc`. At 0.5, 1.0, 1.5 and 2.0 seconds,
+the center-position differences are approximately 0.17, 0.38, 0.11 and 0.51 m.
+This is evidence of substantial divergence for this one off-diagonal inertia
+case, not solver equivalence. Blender's rigid-body API has no custom inertia
+tensor property; the import hook applies mass and relies on Bullet to derive
+inertia from the collider shape. Authored `physics:diagonalInertia` and
+`physics:principalAxes` therefore cannot override the shape-derived tensor.
+When `physics:centerOfMass`, `physics:diagonalInertia`, or
+`physics:principalAxes` has an authored value, the hook logs that Blender
+derives mass properties from collider geometry instead of applying it.
+Build and run the MuJoCo sampler with:
+
+```sh
+c++ -std=c++17 -I"$MUJOCO_SOURCE/include" \
+  tests/next/mujoco-offdiagonal-dynamics.cc \
+  -L"$MUJOCO_BUILD/lib" -Wl,-rpath,"$MUJOCO_BUILD/lib" -lmujoco \
+  -o /tmp/mujoco-offdiagonal-dynamics
+/tmp/mujoco-offdiagonal-dynamics tests/feat/physics-oracle/offdiagonal-hinge.xml
+```
 
 The addon writes the MjcPhysics names above as they are; MuJoCo 3.16's decoder
 reads several of them as deprecated aliases (see the deprecation note before

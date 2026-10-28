@@ -425,6 +425,7 @@ def _read_rigid_body(prim, mode, passive_collision=False):
         'shape': 'CONVEX_HULL',
         'collision_collections': None,
         'geometry_names': [],
+        'unsupported_mass_properties': [],
     }
 
     # Blender's USD importer merges parent Xforms by default. A rigid-body
@@ -494,6 +495,12 @@ def _read_rigid_body(prim, mode, passive_collision=False):
             m = mass_attr.Get()
             if m is not None and math.isfinite(float(m)) and m > 0.0:
                 data['mass'] = m
+        for property_name, attr in (
+                ('physics:centerOfMass', mass_api.GetCenterOfMassAttr()),
+                ('physics:diagonalInertia', mass_api.GetDiagonalInertiaAttr()),
+                ('physics:principalAxes', mass_api.GetPrincipalAxesAttr())):
+            if attr.HasAuthoredValueOpinion():
+                data['unsupported_mass_properties'].append(property_name)
 
     if prim.HasAPI(UsdPhysics.MaterialAPI):
         mat_api = UsdPhysics.MaterialAPI(prim)
@@ -836,6 +843,10 @@ def _apply_physics_to_blender(result):
         rb = obj.rigid_body
         rb.type = rb_data['type']
         rb.mass = rb_data['mass']
+        if rb_data['unsupported_mass_properties']:
+            log.warning("[USDPhysicsHook] Body '%s' has authored %s; Blender "
+                        "derives center of mass and inertia from collider geometry",
+                        prim_name, ', '.join(rb_data['unsupported_mass_properties']))
         rb.friction = rb_data['friction']
         rb.restitution = rb_data['restitution']
         rb.kinematic = rb_data['kinematic']
@@ -897,6 +908,31 @@ def _apply_physics_to_blender(result):
             if body and index in jd['frames']:
                 from mathutils import Matrix, Quaternion
                 position, rotation = jd['frames'][index]
+                if jd['type'] in ('PhysicsRevoluteJoint',
+                                  'PhysicsPrismaticJoint'):
+                    # UsdPhysics.axis is expressed in the joint frame. Blender
+                    # uses local Z for hinges and local X for sliders, so rotate
+                    # the constraint frame to align Blender's motion axis with
+                    # the authored USD axis before placing it in world space.
+                    axis = jd.get('axis', 'X')
+                    axis_vector = {
+                        'X': (1.0, 0.0, 0.0),
+                        'Y': (0.0, 1.0, 0.0),
+                        'Z': (0.0, 0.0, 1.0),
+                    }.get(axis)
+                    if axis_vector is None:
+                        log.warning("[USDPhysicsHook] Joint '%s' has unsupported "
+                                    "axis %r; keeping Blender's default axis",
+                                    joint_name, axis)
+                    else:
+                        from mathutils import Vector
+                        blender_axis = (Vector((0.0, 0.0, 1.0))
+                                        if jd['type'] == 'PhysicsRevoluteJoint'
+                                        else Vector((1.0, 0.0, 0.0)))
+                        axis_alignment = blender_axis.rotation_difference(
+                            Vector(axis_vector))
+                        rotation = tuple(
+                            (Quaternion(rotation) @ axis_alignment).normalized())
                 obj.matrix_world = (body.matrix_world @ Matrix.Translation(position) @
                                     Quaternion(rotation).to_matrix().to_4x4())
                 break

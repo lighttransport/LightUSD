@@ -388,17 +388,14 @@ def _make_hinge_dynamics_fixture(path):
     rod.CreateRadiusAttr(0.05)
     UsdPhysics.CollisionAPI.Apply(rod.GetPrim())
 
-    # Blender's rigid-body hinge uses local Z. Rotate both USD joint frames
-    # so that its constraint axis follows the authored USD Y axis.
-    frame_rotation = Gf.Quatf(math.sqrt(0.5), math.sqrt(0.5), 0.0, 0.0)
     hinge = UsdPhysics.RevoluteJoint.Define(stage, '/World/Joints/Hinge')
     hinge.CreateBody0Rel().SetTargets([anchor.GetPath()])
     hinge.CreateBody1Rel().SetTargets([pendulum.GetPath()])
     hinge.CreateAxisAttr().Set('Y')
     hinge.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-    hinge.CreateLocalRot0Attr().Set(frame_rotation)
+    hinge.CreateLocalRot0Attr().Set(Gf.Quatf(1.0))
     hinge.CreateLocalPos1Attr().Set(Gf.Vec3f(-1.0, 0.0, 0.0))
-    hinge.CreateLocalRot1Attr().Set(frame_rotation)
+    hinge.CreateLocalRot1Attr().Set(Gf.Quatf(1.0))
     stage.GetRootLayer().Save()
 
 
@@ -451,6 +448,158 @@ def _check_hinge_dynamics(path):
     print('BLENDER_USD_HINGE_DYNAMICS_PASS', samples)
 
 
+def _make_offdiagonal_inertia_dynamics_fixture(path):
+    stage = Usd.Stage.CreateNew(str(path))
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    world = UsdGeom.Xform.Define(stage, '/World')
+    stage.SetDefaultPrim(world.GetPrim())
+    scene = UsdPhysics.Scene.Define(stage, '/World/PhysicsScene')
+    scene.CreateGravityDirectionAttr().Set(Gf.Vec3f(0.0, 0.0, -1.0))
+    scene.CreateGravityMagnitudeAttr().Set(9.81)
+    scene.GetPrim().CreateAttribute(
+        'mjc:option:timestep', Sdf.ValueTypeNames.Double).Set(1.0 / 60.0)
+    scene.GetPrim().CreateAttribute(
+        'mjc:option:iterations', Sdf.ValueTypeNames.Int).Set(50)
+
+    anchor = UsdGeom.Xform.Define(stage, '/World/Anchor').GetPrim()
+    UsdPhysics.RigidBodyAPI.Apply(anchor).CreateRigidBodyEnabledAttr(False)
+    UsdPhysics.MassAPI.Apply(anchor)
+    anchor_geom = UsdGeom.Cube.Define(stage, '/World/Anchor/Geom')
+    anchor_geom.CreateSizeAttr(0.002)
+    UsdPhysics.CollisionAPI.Apply(anchor_geom.GetPrim())
+
+    bar = UsdGeom.Xform.Define(stage, '/World/Bar').GetPrim()
+    UsdGeom.Xformable(bar).AddTranslateOp().Set(Gf.Vec3d(1.0, 0.0, 0.0))
+    UsdPhysics.RigidBodyAPI.Apply(bar)
+    mass = UsdPhysics.MassAPI.Apply(bar)
+    mass.CreateMassAttr(1.0)
+    mass.CreateCenterOfMassAttr(Gf.Vec3f(0.0, 0.0, 0.0))
+    mass.CreateDiagonalInertiaAttr(Gf.Vec3f(0.65, 0.35, 0.8))
+    mass.CreatePrincipalAxesAttr(Gf.Quatf(
+        math.cos(math.pi / 8), Gf.Vec3f(0.0, 0.0, -math.sin(math.pi / 8))))
+
+    # This box has principal moments (0.35, 0.65, 0.8), rotated 45 degrees
+    # about Z. Its body-frame tensor therefore has Ixy = -0.15.
+    half_extents = (math.sqrt(1.65), math.sqrt(0.75), math.sqrt(0.3))
+    points = []
+    for x, y, z in ((-half_extents[0], -half_extents[1], -half_extents[2]),
+                    (half_extents[0], -half_extents[1], -half_extents[2]),
+                    (half_extents[0], half_extents[1], -half_extents[2]),
+                    (-half_extents[0], half_extents[1], -half_extents[2]),
+                    (-half_extents[0], -half_extents[1], half_extents[2]),
+                    (half_extents[0], -half_extents[1], half_extents[2]),
+                    (half_extents[0], half_extents[1], half_extents[2]),
+                    (-half_extents[0], half_extents[1], half_extents[2])):
+        points.append(Gf.Vec3f((x - y) / math.sqrt(2.0),
+                               (x + y) / math.sqrt(2.0), z))
+    mesh = UsdGeom.Mesh.Define(stage, '/World/Bar/Box')
+    mesh.CreatePointsAttr(points)
+    mesh.CreateFaceVertexCountsAttr([4] * 6)
+    mesh.CreateFaceVertexIndicesAttr(
+        [0, 3, 2, 1, 4, 5, 6, 7, 0, 1, 5, 4, 1, 2, 6, 5,
+         2, 3, 7, 6, 3, 0, 4, 7])
+    UsdPhysics.CollisionAPI.Apply(mesh.GetPrim())
+
+    axis_angle = math.atan2(1.0, 2.0)
+    frame_rotation = Gf.Quatf(math.cos(axis_angle / 2.0),
+                              Gf.Vec3f(0.0, 0.0, math.sin(axis_angle / 2.0)))
+    hinge = UsdPhysics.RevoluteJoint.Define(stage, '/World/Joints/Hinge')
+    hinge.CreateBody0Rel().SetTargets([anchor.GetPath()])
+    hinge.CreateBody1Rel().SetTargets([bar.GetPath()])
+    hinge.CreateAxisAttr().Set('X')
+    hinge.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+    hinge.CreateLocalRot0Attr().Set(frame_rotation)
+    hinge.CreateLocalPos1Attr().Set(Gf.Vec3f(-1.0, 0.0, 0.0))
+    hinge.CreateLocalRot1Attr().Set(frame_rotation)
+
+    slider_anchor = UsdGeom.Xform.Define(stage, '/World/SliderAnchor').GetPrim()
+    UsdGeom.Xformable(slider_anchor).AddTranslateOp().Set(Gf.Vec3d(3.0, 0.0, 0.0))
+    UsdPhysics.RigidBodyAPI.Apply(slider_anchor).CreateRigidBodyEnabledAttr(False)
+    UsdPhysics.MassAPI.Apply(slider_anchor)
+    slider_anchor_geom = UsdGeom.Cube.Define(
+        stage, '/World/SliderAnchor/AnchorGeom')
+    slider_anchor_geom.CreateSizeAttr(0.002)
+    UsdPhysics.CollisionAPI.Apply(slider_anchor_geom.GetPrim())
+    slider = UsdGeom.Xform.Define(stage, '/World/Slider').GetPrim()
+    UsdGeom.Xformable(slider).AddTranslateOp().Set(Gf.Vec3d(3.0, 0.0, 0.0))
+    UsdPhysics.RigidBodyAPI.Apply(slider)
+    UsdPhysics.MassAPI.Apply(slider).CreateMassAttr(1.0)
+    slider_geom = UsdGeom.Cube.Define(stage, '/World/Slider/SliderGeom')
+    slider_geom.CreateSizeAttr(0.1)
+    UsdPhysics.CollisionAPI.Apply(slider_geom.GetPrim())
+    slider_joint = UsdPhysics.PrismaticJoint.Define(
+        stage, '/World/Joints/SliderJoint')
+    slider_joint.CreateBody0Rel().SetTargets([slider_anchor.GetPath()])
+    slider_joint.CreateBody1Rel().SetTargets([slider.GetPath()])
+    slider_joint.CreateAxisAttr().Set('Z')
+    slider_joint.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+    slider_joint.CreateLocalRot0Attr().Set(Gf.Quatf(1.0))
+    slider_joint.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+    slider_joint.CreateLocalRot1Attr().Set(Gf.Quatf(1.0))
+    stage.GetRootLayer().Save()
+
+
+def _check_offdiagonal_inertia_dynamics(path):
+    from mathutils import Vector
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    result = bpy.ops.wm.usd_import(filepath=str(path), merge_parent_xform=True)
+    assert 'FINISHED' in result, result
+    scene = bpy.context.scene
+    assert scene.render.fps == 60
+    world = scene.rigidbody_world
+    assert world
+    world.substeps_per_frame = 10
+    world.solver_iterations = 50
+    world.point_cache.frame_start = 1
+    world.point_cache.frame_end = 121
+
+    body = bpy.data.objects['Box']
+    assert body.rigid_body and body.rigid_body.type == 'ACTIVE'
+    hinge_obj = next(obj for obj in bpy.data.objects
+                     if obj.rigid_body_constraint and
+                     obj.rigid_body_constraint.type == 'HINGE')
+    hinge = hinge_obj.rigid_body_constraint
+    assert hinge.type == 'HINGE'
+    assert hinge.object1 and hinge.object2 == body
+    # The USD frame maps its local X axis to this world axis. Blender's local Z
+    # hinge axis must be reoriented by the import hook to match it.
+    expected_axis = Vector((2.0 / math.sqrt(5.0), 1.0 / math.sqrt(5.0), 0.0))
+    actual_axis = hinge_obj.matrix_world.to_3x3() @ Vector((0.0, 0.0, 1.0))
+    assert (actual_axis - expected_axis).length < 1e-5, (actual_axis, expected_axis)
+    slider_obj = next(obj for obj in bpy.data.objects
+                      if obj.rigid_body_constraint and
+                      obj.rigid_body_constraint.type == 'SLIDER')
+    slider_axis = (slider_obj.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0)))
+    assert (slider_axis - Vector((0.0, 0.0, 1.0))).length < 1e-5, slider_axis
+
+    samples = {}
+    for frame in range(1, 122):
+        scene.frame_set(frame)
+        if frame not in (1, 31, 61, 91, 121):
+            continue
+        bpy.context.view_layer.update()
+        evaluated = body.evaluated_get(bpy.context.evaluated_depsgraph_get())
+        matrix = evaluated.matrix_world
+        position = matrix.translation.copy()
+        pivot = position + matrix.to_3x3() @ Vector((-1.0, 0.0, 0.0))
+        samples[frame] = {
+            'position': tuple(float(value) for value in position),
+            'pivot': tuple(float(value) for value in pivot),
+            'rotation': tuple(float(value) for value in matrix.to_quaternion()),
+        }
+
+    assert samples[1]['position'] == (1.0, 0.0, 0.0), samples
+    assert max(abs(value) for value in samples[61]['rotation'][1:]) > 0.1, samples
+    for frame, sample in samples.items():
+        assert all(math.isfinite(value) for value in sample['position'] +
+                   sample['pivot'] + sample['rotation']), (frame, sample)
+        assert math.sqrt(sum(value * value for value in sample['pivot'])) < 0.01, (
+            frame, sample)
+    print('BLENDER_USD_OFFDIAGONAL_INERTIA_DYNAMICS_PASS', samples)
+
+
 def _make_two_link_dynamics_fixture(path):
     stage = Usd.Stage.CreateNew(str(path))
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
@@ -489,17 +638,15 @@ def _make_two_link_dynamics_fixture(path):
     anchor = rigid_body('Anchor', 0.0, 'AnchorGeom', False, 1)
     link1 = rigid_body('Link1', 1.0, 'Link1Rod', True, 2)
     link2 = rigid_body('Link2', 3.1, 'Link2Rod', True, 4)
-    frame_rotation = Gf.Quatf(math.sqrt(0.5), math.sqrt(0.5), 0.0, 0.0)
-
     def hinge(name, body0, body1, local_pos0, local_pos1):
         joint = UsdPhysics.RevoluteJoint.Define(stage, '/World/Joints/' + name)
         joint.CreateBody0Rel().SetTargets([body0.GetPath()])
         joint.CreateBody1Rel().SetTargets([body1.GetPath()])
         joint.CreateAxisAttr().Set('Y')
         joint.CreateLocalPos0Attr().Set(Gf.Vec3f(*local_pos0))
-        joint.CreateLocalRot0Attr().Set(frame_rotation)
+        joint.CreateLocalRot0Attr().Set(Gf.Quatf(1.0))
         joint.CreateLocalPos1Attr().Set(Gf.Vec3f(*local_pos1))
-        joint.CreateLocalRot1Attr().Set(frame_rotation)
+        joint.CreateLocalRot1Attr().Set(Gf.Quatf(1.0))
 
     hinge('Hinge1', anchor, link1, (0.0, 0.0, 0.0), (-1.0, 0.0, 0.0))
     hinge('Hinge2', link1, link2, (1.1, 0.0, 0.0), (-1.0, 0.0, 0.0))
@@ -594,15 +741,14 @@ def _make_three_link_dynamics_fixture(path):
     rod.CreateRadiusAttr(0.05)
     UsdPhysics.CollisionAPI.Apply(rod.GetPrim())
 
-    frame_rotation = Gf.Quatf(math.sqrt(0.5), math.sqrt(0.5), 0.0, 0.0)
     hinge = UsdPhysics.RevoluteJoint.Define(stage, '/World/Joints/Hinge3')
     hinge.CreateBody0Rel().SetTargets([link2.GetPath()])
     hinge.CreateBody1Rel().SetTargets([link3.GetPath()])
     hinge.CreateAxisAttr().Set('Y')
     hinge.CreateLocalPos0Attr().Set(Gf.Vec3f(1.1, 0.0, 0.0))
-    hinge.CreateLocalRot0Attr().Set(frame_rotation)
+    hinge.CreateLocalRot0Attr().Set(Gf.Quatf(1.0))
     hinge.CreateLocalPos1Attr().Set(Gf.Vec3f(-1.0, 0.0, 0.0))
-    hinge.CreateLocalRot1Attr().Set(frame_rotation)
+    hinge.CreateLocalRot1Attr().Set(Gf.Quatf(1.0))
     stage.GetRootLayer().Save()
 
 
@@ -839,6 +985,7 @@ def main():
     scale_dynamics_path = path.with_name(path.stem + '-scale-dynamics.usda')
     friction_path = path.with_name(path.stem + '-mujoco-friction.usda')
     hinge_path = path.with_name(path.stem + '-hinge-dynamics.usda')
+    offdiagonal_path = path.with_name(path.stem + '-offdiagonal-inertia.usda')
     two_link_path = path.with_name(path.stem + '-two-link-dynamics.usda')
     three_link_path = path.with_name(path.stem + '-three-link-dynamics.usda')
     try:
@@ -854,6 +1001,8 @@ def main():
         _check_default_mass_dynamics(default_mass_path)
         _make_hinge_dynamics_fixture(hinge_path)
         _check_hinge_dynamics(hinge_path)
+        _make_offdiagonal_inertia_dynamics_fixture(offdiagonal_path)
+        _check_offdiagonal_inertia_dynamics(offdiagonal_path)
         _make_two_link_dynamics_fixture(two_link_path)
         _check_two_link_dynamics(two_link_path)
         _make_three_link_dynamics_fixture(three_link_path)
@@ -878,6 +1027,8 @@ def main():
             friction_path.unlink()
         if hinge_path.exists():
             hinge_path.unlink()
+        if offdiagonal_path.exists():
+            offdiagonal_path.unlink()
         if two_link_path.exists():
             two_link_path.unlink()
         if three_link_path.exists():
