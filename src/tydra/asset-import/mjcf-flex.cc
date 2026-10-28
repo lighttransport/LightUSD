@@ -294,12 +294,23 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
     so.graded_surface_guard = opts.flex_tet_surface_guard;
     so.threads = opts.threads;
     so.device = ls.device;
-    if (!SetFlexStuffingBudget(budget, &so, err)) return false;
     TetMeshData tm;
     std::string why;
-    if (!(extent > 0) || !MeshToLevelSet(surface, ls, &level_set, &why) ||
-        !LevelSetToTetMesh(level_set, so, &tm, &why)) {
+    if (!(extent > 0) || !MeshToLevelSet(surface, ls, &level_set, &why)) {
       if (err) *err = "flexcomp tetrahedralization failed: " + (why.empty() ? std::string("no extent") : why);
+      return false;
+    }
+    // MeshToLevelSet uses tinyvdb's default allocator. Charge a conservative
+    // estimate for its retained grid before deriving the remaining tet budget.
+    if (!active_reader->ChargeArray(level_set.active_voxels(), 128, &why)) {
+      if (err) *err = "flexcomp tetrahedralization failed: " + why;
+      return false;
+    }
+    const size_t tet_budget = opts.max_memory -
+        std::min(opts.max_memory, active_reader->bytes);
+    if (!SetFlexStuffingBudget(tet_budget, &so, &why) ||
+        !LevelSetToTetMesh(level_set, so, &tm, &why)) {
+      if (err) *err = "flexcomp tetrahedralization failed: " + why;
       return false;
     }
     if (!active_reader->ChargeArray(tm.points.size() + tm.tets.size(), 8, err)) return false;

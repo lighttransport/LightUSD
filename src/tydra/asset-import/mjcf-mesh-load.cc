@@ -702,8 +702,12 @@ bool MjcfSdfLevelSet(const std::string& mesh_name, const Mesh& mesh, Json* out,
   ls.max_voxels = std::min<size_t>(voxel_budget, 50000000);
   LevelSet level_set;
   std::vector<uint8_t> bytes;
-  if (!MeshToLevelSet(mesh, ls, &level_set, why) || !WriteLevelSetVDB(level_set, &bytes, why))
-    return false;
+  if (!MeshToLevelSet(mesh, ls, &level_set, why)) return false;
+  // The mesh-to-level-set path uses the default tinyvdb allocator. Account a
+  // conservative per-active-voxel estimate while the grid and serialized
+  // sidecar coexist, then charge the sidecar bytes below.
+  if (!active_reader->ChargeArray(level_set.active_voxels(), 128, why) ||
+      !WriteLevelSetVDB(level_set, &bytes, why)) return false;
   if (!active_reader->Charge(bytes.size(), why)) return false;
   std::string file;
   for (char c : mesh_name)

@@ -187,6 +187,8 @@ def test_mjcf_sdf_geom_writes_level_set_sidecar(tmp_path):
         assert field.type_name == 'OpenVDBAsset' and str(field['filePath']) == 'sdf/cube.vdb'
         assert field['fieldClass'] == 'levelSet'
     ls = vol.read_level_set(assets['sdf/cube.vdb'])
+    assert stage.import_report()['estimated_peak_memory_bytes'] >= (
+        128 * ls.active_voxels + len(assets['sdf/cube.vdb']))
     # Inside the 3-voxel band (3/64) the values are exact box distances;
     # deeper inside they read the flood-filled interior value.
     v = ls.sample([[0, 0, 0], [0.5 + 2 / 64, 0, 0], [0.48, 0, 0]])
