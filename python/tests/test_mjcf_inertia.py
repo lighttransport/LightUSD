@@ -76,6 +76,29 @@ def test_parallel_axis_combination_and_visual_geoms_count():
     assert i == pytest.approx(np.sort([2 * base, 2 * base + 2 * m * .25, 2 * base + 2 * m * .25]), rel=1e-5)
 
 
+def test_fullinertia_principal_axes_reconstruct_mjcf_tensor():
+    full = (5.0, 6.0, 7.0, 0.4, -0.2, 0.3)
+    xml = _mjcf('<body name="b"><freejoint/>'
+                '<inertial pos="0 0 0" mass="2" '
+                'fullinertia="5 6 7 0.4 -0.2 0.3"/>'
+                '<geom size=".1"/></body>')
+    body = _body(lightusd.load_bytes(xml, format='mjcf'), 'b')
+    diagonal = np.asarray(body['physics:diagonalInertia'], dtype=float)
+    # LightUSD exposes quatf in scalar-first (w, x, y, z) order.
+    w, x, y, z = body['physics:principalAxes']
+    rotation = np.array([
+        [1 - 2 * (y*y + z*z), 2 * (x*y - w*z), 2 * (x*z + w*y)],
+        [2 * (x*y + w*z), 1 - 2 * (x*x + z*z), 2 * (y*z - w*x)],
+        [2 * (x*z - w*y), 2 * (y*z + w*x), 1 - 2 * (x*x + y*y)],
+    ])
+    reconstructed = rotation @ np.diag(diagonal) @ rotation.T
+    expected = np.array([[full[0], full[3], full[4]],
+                         [full[3], full[1], full[5]],
+                         [full[4], full[5], full[2]]])
+    np.testing.assert_allclose(reconstructed, expected, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(_inertia_tensor(body), full, rtol=0, atol=0)
+
+
 def test_inertia_group_range_and_explicit_inertial():
     xml = _mjcf('<body name="a"><freejoint/><geom type="sphere" size=".1" group="4"/></body>'
                 '<body name="b" pos="2 0 0"><freejoint/><inertial pos="0 0 0" mass="3" diaginertia="1 1 1"/>'

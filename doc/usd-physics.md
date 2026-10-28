@@ -90,6 +90,11 @@ in one of three profiles, selected with `profile=` (Python), `"profile"` in the 
 | URDF inputs Newton's `add_urdf` accepts | zero-size primitives and unsupported mesh formats are skipped (`urdf.geometry_unsupported`); negative MTL `Ns` is clamped to 0; mimic chains resolve to the leading joint; explicit zero `<mass>`/`<inertia>` use the 1e-12 stand-ins; ghost links are judged by their `<visual>`/`<collision>` elements (urdf-usd-converter) | same | errors / as authored |
 | OBJ stage | `metersPerUnit = 1`, root `kind = component` | same | no units |
 
+MJCF `<inertial fullinertia>` is diagonalized into `physics:diagonalInertia`
+and `physics:principalAxes`; the six source tensor values are also retained as
+`newton:inertia` in the `newton` profile. The focused Python inertia regression
+reconstructs the source matrix from the principal moments and quaternion axes.
+
 MJCF spatial tendons follow MuJoCo's USD decoder and mujoco-usd-converter:
 ordered sites, wrap geoms and pulleys become `mjc:path` + `mjc:path:indices`,
 `mjc:path:segments` (a pulley, including a leading one, starts a new segment)
