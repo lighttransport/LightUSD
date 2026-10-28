@@ -311,6 +311,10 @@ endif()
 if(LIGHTUSD_NEXT_USE_PCH)
   target_precompile_headers(lightusd_next PRIVATE
     "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/pch.hh>")
+  # Without this, clang embeds the header mtimes in the PCH and ccache cannot
+  # cache any TU that uses it (CI sets the matching CCACHE_SLOPPINESS).
+  target_compile_options(lightusd_next PRIVATE
+    "$<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:SHELL:-Xclang -fno-pch-timestamp>")
 endif()
 target_link_libraries(lightusd_next PUBLIC lightusd_core_c)
 

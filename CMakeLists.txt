@@ -45,6 +45,46 @@ if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "legacy")
   message(DEPRECATION
     "LIGHTUSD_NATIVE_PRODUCT=legacy is deprecated; use next for new integrations. The legacy product remains available for compatibility and CI.")
 endif()
+# [ccache] Configured before the next-product branch below (which returns
+# early) so both products use it.
+option(LIGHTUSD_USE_CCACHE "Use ccache for faster recompile." ON)
+option(LIGHTUSD_USE_PCH "Use a precompiled header (does not help this codebase; opt-in)." OFF)
+if(LIGHTUSD_USE_CCACHE)
+  if(MSVC)
+    # No ccache support
+  else()
+    find_program(CCACHE_EXE ccache)
+    if(CCACHE_EXE)
+
+      message(STATUS "Use ccache : " ${CCACHE_EXE})
+
+      # ccache + precompiled headers: ccache will refuse to cache PCH-using TUs
+      # unless told to relax the PCH/time-macro hash checks. Wrap the launcher
+      # with `env CCACHE_SLOPPINESS=...` (Unix; MSVC path does not use ccache).
+      set(CCACHE_LAUNCHER "${CCACHE_EXE}")
+      if(LIGHTUSD_USE_PCH AND CMAKE_HOST_UNIX)
+        set(CCACHE_LAUNCHER env CCACHE_SLOPPINESS=pch_defines,time_macros "${CCACHE_EXE}")
+      endif()
+
+      # CMAKE_C_COMPILER_LAUNCHER = available from cmake 3.4+)
+      if(CMAKE_C_COMPILER_LAUNCHER)
+        set(CMAKE_C_COMPILER_LAUNCHER "${CMAKE_C_COMPILER_LAUNCHER}"
+                                      ${CCACHE_LAUNCHER})
+      else()
+        set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_LAUNCHER})
+      endif()
+
+      if(CMAKE_CXX_COMPILER_LAUNCHER)
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${CMAKE_CXX_COMPILER_LAUNCHER}"
+                                        ${CCACHE_LAUNCHER})
+      else()
+        set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_LAUNCHER})
+      endif()
+
+    endif(CCACHE_EXE)
+  endif()
+endif()
+
 if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
   # The next product returns before the legacy dependency/configuration block
   # below. Load sanitizer support here as well so SANITIZE_ADDRESS and
@@ -154,11 +194,9 @@ else()
 endif ()
 
 # options
-option(LIGHTUSD_USE_CCACHE "Use ccache for faster recompile." ON)
 # NOTE: Measured to NOT help (and slightly hurt codegen) on this codebase: the
 # compile cost is dominated by template *instantiation* and -O3 codegen, not by
 # header parsing, which is all a PCH can cache. Kept as an opt-in knob; default OFF.
-option(LIGHTUSD_USE_PCH "Use a precompiled header (does not help this codebase; opt-in)." OFF)
 option(LIGHTUSD_BUILD_SHARED_LIBS "Build as dll?" ${BUILD_SHARED_LIBS})
 option(LIGHTUSD_ENABLE_THREAD "Enable optional std::thread parallel paths (default OFF; keep OFF for default WASM/browser builds)" OFF)
 option(LIGHTUSD_MSAN "Build with MSAN support(for developer only)" OFF)
@@ -529,42 +567,6 @@ if(MSVC)
   add_compile_definitions(_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
 endif()
 
-# [ccache]
-if(LIGHTUSD_USE_CCACHE)
-  if(MSVC)
-    # No ccache support
-  else()
-    find_program(CCACHE_EXE ccache)
-    if(CCACHE_EXE)
-
-      message(STATUS "Use ccache : " ${CCACHE_EXE})
-
-      # ccache + precompiled headers: ccache will refuse to cache PCH-using TUs
-      # unless told to relax the PCH/time-macro hash checks. Wrap the launcher
-      # with `env CCACHE_SLOPPINESS=...` (Unix; MSVC path does not use ccache).
-      set(CCACHE_LAUNCHER "${CCACHE_EXE}")
-      if(LIGHTUSD_USE_PCH AND CMAKE_HOST_UNIX)
-        set(CCACHE_LAUNCHER env CCACHE_SLOPPINESS=pch_defines,time_macros "${CCACHE_EXE}")
-      endif()
-
-      # CMAKE_C_COMPILER_LAUNCHER = available from cmake 3.4+)
-      if(CMAKE_C_COMPILER_LAUNCHER)
-        set(CMAKE_C_COMPILER_LAUNCHER "${CMAKE_C_COMPILER_LAUNCHER}"
-                                      ${CCACHE_LAUNCHER})
-      else()
-        set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_LAUNCHER})
-      endif()
-
-      if(CMAKE_CXX_COMPILER_LAUNCHER)
-        set(CMAKE_CXX_COMPILER_LAUNCHER "${CMAKE_CXX_COMPILER_LAUNCHER}"
-                                        ${CCACHE_LAUNCHER})
-      else()
-        set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_LAUNCHER})
-      endif()
-
-    endif(CCACHE_EXE)
-  endif()
-endif()
 
 
 if (LIGHTUSD_WITH_MCP_SERVER)
