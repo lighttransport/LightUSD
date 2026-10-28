@@ -149,7 +149,8 @@ bool ReadRegularFileInto(const std::string& path, bool verify_identity,
   }
   f.seekg(0, std::ios::beg);
   out->resize(size);
-  if (size > 0 && !f.read(out->data(), size)) {
+  if (size > 0 &&
+      !f.read(reinterpret_cast<char*>(out->data()), static_cast<std::streamsize>(size))) {
     if (err) *err += "ReadAsset: short read: " + path + "\n";
     out->clear();
     return false;

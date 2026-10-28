@@ -34,6 +34,10 @@ function(lightusd_next_harden tgt)
   endif()
   if(MSVC)
     target_compile_options(${tgt} PRIVATE /sdl /guard:cf)
+    # /sdl turns the CRT deprecation warning (C4996: fopen, getenv, gmtime,
+    # strncpy, ...) into an error. Keep /sdl's runtime checks but silence that
+    # one, as the clang-cl toolchain files already do.
+    target_compile_definitions(${tgt} PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_link_options(${tgt} PRIVATE /guard:cf /DYNAMICBASE /NXCOMPAT)
   elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(${tgt} PRIVATE -fstack-protector-strong)
