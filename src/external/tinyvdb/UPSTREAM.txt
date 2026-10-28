@@ -36,6 +36,10 @@ Local:    CPU SDF allocation-aware entry points are local: tinyvdb_work.h plus
           multi-worker warp now uses ordered corner/center wavefronts over
           increasing coordinate sums, preserving serial neighbor dependencies
           and byte-identical output across worker counts.
+          tinyvdb_sparse_tools.c's parallel classification saturates its
+          shared scan cap (tool_scan_guard) instead of wrapping 32 * max_cells
+          on 32-bit targets, and its merge admits exactly 32 * max_cells scans
+          like the serial path.
 Update:   Vendored upstream source files now match main at e52e6bb, except
           for the LightUSD I/O adaptations and CPU changes described above.
           The upstream delta since 9217101 adds portable popcount/ctz helpers

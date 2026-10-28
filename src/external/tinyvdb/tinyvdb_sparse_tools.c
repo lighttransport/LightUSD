@@ -182,6 +182,17 @@ static tvdb_status_t tool_scan(tool_map* m) {
   ++m->scans;
   return TVDB_OK;
 }
+/* Shared scan cap: the serial budget (32 scans per cell) plus each slice's
+ * unused batch reservations. Saturates instead of wrapping, so a large
+ * max_cells (e.g. above SIZE_MAX / 32 on 32-bit targets) cannot shrink it; the
+ * merge still checks the exact total against the serial budget. */
+static size_t tool_scan_guard(size_t limit, size_t slices) {
+  if (limit > SIZE_MAX / 32) return SIZE_MAX;
+  const size_t base = 32 * limit;
+  if (slices > SIZE_MAX / (2 * TOOL_BUDGET_BATCH)) return SIZE_MAX;
+  const size_t slack = 2 * TOOL_BUDGET_BATCH * slices;
+  return slack > SIZE_MAX - base ? SIZE_MAX : base + slack;
+}
 static int tool_mask(const tvdb_nodemask_t* m, size_t i) {
   return (m->bits.data[i / 8] >> (i % 8)) & 1;
 }
@@ -953,8 +964,7 @@ static void tool_classify_range(size_t begin, size_t end, void* user) {
   if (job->shared) {
     sl->cells.shared_cells = &job->cells_used;
     sl->cells.shared_scans = &job->scans_used;
-    sl->cells.shared_scan_guard =
-        32 * job->limit + 2 * TOOL_BUDGET_BATCH * job->slices_count;
+    sl->cells.shared_scan_guard = tool_scan_guard(job->limit, job->slices_count);
   }
   sl->surface.cells = &sl->cells;
   sl->surface.iso = job->iso;
@@ -1010,8 +1020,9 @@ static void tool_merge_sift(tool_merge_run* runs, size_t n, size_t i) {
 static tvdb_status_t tool_cells_merge(tool_classify_slice* slices, size_t n,
                                       tool_map* cells, size_t scans) {
   /* The serial classification counts every cell it looks at; the merged total
-   * must fit the same budget (32 scans per cell of max_cells). */
-  if (scans / 32 >= cells->limit)
+   * must fit the same budget (32 scans per cell of max_cells). tool_scan admits
+   * a scan while scans / 32 < limit, so exactly 32 * limit scans succeed. */
+  if (scans > 0 && (scans - 1) / 32 >= cells->limit)
     return tvdb_tree_error(cells->err, TVDB_ERROR_INVALID_ARGUMENT,
                            "sparse scan budget exceeded");
   size_t total = 0;
