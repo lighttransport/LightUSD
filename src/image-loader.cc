@@ -148,33 +148,38 @@ namespace lightusd {
 namespace image {
 
 namespace {
-std::mutex g_image_loader_mutex;
+// Leaked function-local mutex: a namespace-scope std::mutex needs a global
+// destructor under libc++ (-Wglobal-constructors / -Wexit-time-destructors).
+std::mutex &ImageLoaderMutex() {
+  static std::mutex *mutex = new std::mutex();
+  return *mutex;
+}
 LoadImageDataFunction g_image_loader = nullptr;
 void *g_image_loader_user_data = nullptr;
 GetImageInfoFunction g_image_info_loader = nullptr;
 void *g_image_info_loader_user_data = nullptr;
 
 void GetImageLoader(LoadImageDataFunction *loader, void **user_data) {
-  std::lock_guard<std::mutex> lock(g_image_loader_mutex);
+  std::lock_guard<std::mutex> lock(ImageLoaderMutex());
   *loader = g_image_loader;
   *user_data = g_image_loader_user_data;
 }
 
 void GetImageInfoLoader(GetImageInfoFunction *loader, void **user_data) {
-  std::lock_guard<std::mutex> lock(g_image_loader_mutex);
+  std::lock_guard<std::mutex> lock(ImageLoaderMutex());
   *loader = g_image_info_loader;
   *user_data = g_image_info_loader_user_data;
 }
 }  // namespace
 
 void SetImageLoader(LoadImageDataFunction loader, void *user_data) {
-  std::lock_guard<std::mutex> lock(g_image_loader_mutex);
+  std::lock_guard<std::mutex> lock(ImageLoaderMutex());
   g_image_loader = loader;
   g_image_loader_user_data = user_data;
 }
 
 void SetImageInfoLoader(GetImageInfoFunction loader, void *user_data) {
-  std::lock_guard<std::mutex> lock(g_image_loader_mutex);
+  std::lock_guard<std::mutex> lock(ImageLoaderMutex());
   g_image_info_loader = loader;
   g_image_info_loader_user_data = user_data;
 }
