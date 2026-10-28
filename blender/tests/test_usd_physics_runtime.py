@@ -661,8 +661,8 @@ def _check_three_link_dynamics(path):
 
     for index, expected_x in enumerate((1.0, 3.1, 5.2)):
         _assert_close(samples[1]['positions'][index][0], expected_x, 1e-4)
-    assert any(abs(samples[61]['rotations'][index][2]) > 0.2
-               for index in range(3)), samples
+    assert all(abs(rotation[2]) > 0.2
+               for rotation in samples[61]['rotations']), samples
     for frame, sample in samples.items():
         flattened = [value for vector in sample['positions'] + sample['pivots'] +
                      sample['rotations'] for value in vector]
