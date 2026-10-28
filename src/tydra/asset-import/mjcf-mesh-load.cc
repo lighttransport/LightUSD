@@ -704,10 +704,21 @@ bool MjcfSdfLevelSet(const std::string& mesh_name, const Mesh& mesh, Json* out,
   LevelSet level_set;
   std::vector<uint8_t> bytes;
   if (!MeshToLevelSet(mesh, ls, &level_set, why)) return false;
-  // The mesh-to-level-set path uses the default tinyvdb allocator. Account a
-  // conservative per-active-voxel estimate while the grid and serialized
-  // sidecar coexist, then charge the sidecar bytes below.
-  if (!active_reader->ChargeArray(level_set.active_voxels(), 128, why)) return false;
+  {
+    ScopedMemoryCharge peak(*active_reader);
+    if (!peak.Charge(level_set.build_peak_bytes(), why)) return false;
+  }
+  size_t retained_bytes = level_set.retained_allocation_bytes();
+  if (!retained_bytes) {  // GPU grids retain the historical estimate.
+    const size_t active = level_set.active_voxels();
+    if (active > SIZE_MAX / 128) {
+      *why = "level set: memory budget overflow";
+      return false;
+    }
+    retained_bytes = active * 128;
+  }
+  ScopedMemoryCharge retained(*active_reader);
+  if (!retained.Charge(retained_bytes, why)) return false;
   const size_t write_budget = opts.max_memory -
       std::min(opts.max_memory, active_reader->bytes);
   if (!write_budget) {

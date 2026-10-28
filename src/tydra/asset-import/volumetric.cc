@@ -28,6 +28,7 @@ struct LevelSetBudget {
   union Header { size_t bytes; std::max_align_t alignment; };
   size_t used = 0, peak = 0, limit = 0;
   bool exhausted = false;
+  tvdb_allocator_t allocator{Allocate, Reallocate, Free, this};
   static void* Allocate(size_t size, void* context) {
     auto* self = static_cast<LevelSetBudget*>(context);
     if (size > SIZE_MAX - sizeof(Header)) { self->exhausted = true; return nullptr; }
@@ -77,9 +78,10 @@ struct LevelSetAccess {
     s->budget_ = nullptr;
     s->file_grid_ = 0;
   }
-  static void Adopt(LevelSet* s, tvdb_grid* grid) {
+  static void Adopt(LevelSet* s, tvdb_grid* grid, LevelSetBudget* budget) {
     Reset(s);
     s->owned_ = grid;
+    s->budget_ = budget;
   }
   static void AdoptFile(LevelSet* s, tvdb_file* file, size_t index, LevelSetBudget* budget) {
     Reset(s);
@@ -113,8 +115,16 @@ LevelSet& LevelSet::operator=(LevelSet&& o) noexcept {
   return *this;
 }
 size_t LevelSet::decode_peak_bytes() const {
-  return budget_ ? budget_->peak + sizeof(LevelSetBudget) + sizeof(tvdb_file) : 0;
+  return file_ && budget_ ? budget_->peak + sizeof(LevelSetBudget) + sizeof(tvdb_file) : 0;
 }
+size_t LevelSet::retained_allocation_bytes() const {
+  return budget_ ? budget_->used + sizeof(LevelSetBudget) +
+      (owned_ ? sizeof(tvdb_grid) : sizeof(tvdb_file)) : 0;
+}
+size_t LevelSet::build_peak_bytes() const {
+  return owned_ && budget_ ? budget_->peak + sizeof(LevelSetBudget) + sizeof(tvdb_grid) : 0;
+}
+
 const tvdb_grid* LevelSet::grid() const {
   if (owned_) return owned_;
   if (file_ && file_grid_ < file_->num_grids) return file_->grids + file_grid_;
@@ -281,25 +291,14 @@ bool LevelSetMeshSizes(const Mesh& mesh, size_t* vertex_count,
   }
   const size_t vertex_bytes = nv * sizeof(tvdb_vec3f);
   const size_t triangle_bytes = nf * sizeof(tvdb_triangle);
-  /* Reserve the largest known simultaneous face workspaces before granting
-   * candidate voxels: MeshSDF's normals and BVH, plus the fast winding arrays,
-   * nodes, and build keys. This rounds their known face-scaled storage up to
-   * 512 bytes per face and covers small-mesh BVH capacity with 10 KiB fixed. */
-  const size_t fixed_workspace = 10 * 1024;
-  if (nf > (SIZE_MAX - fixed_workspace) / 512) {
-    if (err) *err = "level set: face workspace size overflow";
-    return false;
-  }
-  const size_t face_workspace = fixed_workspace + nf * 512;
-  if (triangle_bytes > SIZE_MAX - vertex_bytes ||
-      face_workspace > SIZE_MAX - vertex_bytes - triangle_bytes) {
+  if (triangle_bytes > SIZE_MAX - vertex_bytes) {
     if (err) *err = "level set: converted mesh size overflow";
     return false;
   }
   if (vertex_count) *vertex_count = nv;
   if (triangle_count) *triangle_count = nf;
   if (fixed_working_bytes)
-    *fixed_working_bytes = vertex_bytes + triangle_bytes + face_workspace;
+    *fixed_working_bytes = vertex_bytes + triangle_bytes;
   return true;
 }
 
@@ -323,24 +322,31 @@ bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options, LevelSet* 
   if (!LevelSetMeshSizes(mesh, &nv, &triangle_count, &fixed_working_bytes, err))
     return false;
   size_t max_voxels = options.max_voxels ? options.max_voxels : 8000000;
-  if (options.max_working_memory_bytes) {
-    if (fixed_working_bytes >= options.max_working_memory_bytes) {
-      if (err) *err = "level set: mesh conversion exceeds working memory budget";
-      return false;
-    }
-    const size_t voxel_budget =
-        (options.max_working_memory_bytes - fixed_working_bytes) / 128;
-    if (!voxel_budget) {
-      if (err) *err = "level set: mesh conversion leaves no voxel budget";
-      return false;
-    }
-    max_voxels = std::min(max_voxels, voxel_budget);
+  const size_t overhead = sizeof(LevelSetBudget) + sizeof(tvdb_grid);
+  const size_t limit = options.max_working_memory_bytes ? options.max_working_memory_bytes : SIZE_MAX;
+  if (limit <= overhead || fixed_working_bytes > limit - overhead) {
+    if (err) *err = "level set: mesh conversion exceeds working memory budget";
+    return false;
   }
-  std::vector<tvdb_vec3f> vertices(nv);
+  std::unique_ptr<LevelSetBudget> budget(new (std::nothrow) LevelSetBudget);
+  if (!budget) { if (err) *err = "level set: out of memory"; return false; }
+  budget->limit = limit - overhead;
+  struct Buffer {
+    LevelSetBudget* budget;
+    void* data;
+    ~Buffer() { LevelSetBudget::Free(data, 0, budget); }
+  };
+  Buffer vb{budget.get(), LevelSetBudget::Allocate(nv * sizeof(tvdb_vec3f), budget.get())};
+  Buffer fb{budget.get(), LevelSetBudget::Allocate(triangle_count * sizeof(tvdb_triangle), budget.get())};
+  if (!vb.data || !fb.data) {
+    if (err) *err = budget->exhausted ? "level set: memory budget exceeded" : "level set: out of memory";
+    return false;
+  }
+  auto* vertices = static_cast<tvdb_vec3f*>(vb.data);
+  auto* faces = static_cast<tvdb_triangle*>(fb.data);
+  size_t face_count = 0;
   for (size_t i = 0; i < nv; ++i)
     vertices[i] = {mesh.positions[3 * i], mesh.positions[3 * i + 1], mesh.positions[3 * i + 2]};
-  std::vector<tvdb_triangle> faces;
-  if (options.max_working_memory_bytes) faces.reserve(triangle_count);
   auto index = [&](size_t i, uint32_t* v) {
     const int32_t x = mesh.indices[i];
     if (x < 0 || size_t(x) >= nv) return false;
@@ -361,7 +367,7 @@ bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options, LevelSet* 
           if (err) *err = "level set: face index out of range";
           return false;
         }
-        faces.push_back({a, b, d});
+        faces[face_count++] = {a, b, d};
       }
       at += size_t(c);
     }
@@ -372,25 +378,25 @@ bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options, LevelSet* 
         if (err) *err = "level set: face index out of range";
         return false;
       }
-      faces.push_back({a, b, d});
+      faces[face_count++] = {a, b, d};
     }
   }
-  if (faces.empty()) {
+  if (!face_count) {
     if (err) *err = "level set: mesh has no faces";
     return false;
   }
-  if (options.exact_winding && double(faces.size()) * double(max_voxels) > kMaxExactWindingWork) {
+  if (options.exact_winding && double(face_count) * double(max_voxels) > kMaxExactWindingWork) {
     if (err)
-      *err = "level set: exact winding work exceeds the limit (" + std::to_string(faces.size()) +
+      *err = "level set: exact winding work exceeds the limit (" + std::to_string(face_count) +
              " faces); use the fast signs or fewer voxels";
     return false;
   }
   tvdb_triangle_mesh tm;
   std::memset(&tm, 0, sizeof(tm));
-  tm.vertices = vertices.data();
-  tm.vertex_count = tm.vertex_capacity = vertices.size();
-  tm.faces = faces.data();
-  tm.face_count = tm.face_capacity = faces.size();
+  tm.vertices = vertices;
+  tm.vertex_count = tm.vertex_capacity = nv;
+  tm.faces = faces;
+  tm.face_count = tm.face_capacity = face_count;
   tvdb_mesh_level_set_options_t o;
   std::memset(&o, 0, sizeof(o));
   o.voxel_size = float(options.voxel_size);
@@ -416,6 +422,22 @@ bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options, LevelSet* 
   tvdb_status_t st;
 #if defined(LIGHTUSD_HAVE_TINYVDB_GPU)
   if (lease.device) {
+    // GPU construction retains the previous estimate; allocator-exact tracking
+    // below applies to the CPU pipeline only.
+    if (options.max_working_memory_bytes) {
+      const size_t cap = options.max_working_memory_bytes;
+      const size_t fixed = 10 * 1024;
+      if (triangle_count > (SIZE_MAX - fixed) / 512 ||
+          fixed_working_bytes >= cap ||
+          fixed + triangle_count * 512 >= cap - fixed_working_bytes ||
+          (cap - fixed_working_bytes - fixed - triangle_count * 512) / 128 == 0) {
+        std::free(grid);
+        if (err) *err = "level set: mesh conversion exceeds working memory budget";
+        return false;
+      }
+      o.max_voxels = std::min(o.max_voxels,
+          (cap - fixed_working_bytes - fixed - triangle_count * 512) / 128);
+    }
     st = tvdb_gpu_compute_mesh_to_level_set(lease.device, &tm, &o, pool.pool, grid, nullptr, &e);
     // "auto" falls back to the CPU when the device fails at run time (for
     // example out of device memory), not only when none can be opened.
@@ -424,17 +446,21 @@ bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options, LevelSet* 
     if (st != TVDB_OK && st != TVDB_ERROR_INVALID_ARGUMENT && options.device == "auto") {
       std::memset(grid, 0, sizeof(tvdb_grid));
       std::memset(&e, 0, sizeof(e));
-      st = tvdb_mesh_to_level_set(&tm, &o, pool.pool, grid, nullptr, &e);
+      st = tvdb_mesh_to_level_set_with_allocator(&tm, &o, pool.pool, grid, nullptr, &e, &budget->allocator);
       lease.name = "cpu";
     }
   } else
 #endif
-    st = tvdb_mesh_to_level_set(&tm, &o, pool.pool, grid, nullptr, &e);
+    st = tvdb_mesh_to_level_set_with_allocator(&tm, &o, pool.pool, grid, nullptr, &e, &budget->allocator);
   if (st != TVDB_OK) {
     std::free(grid);
+    if (budget->exhausted) { if (err) *err = "level set: memory budget exceeded"; return false; }
     return Fail(err, "level set", e);
   }
-  LevelSetAccess::Adopt(out, grid);
+  // Converted arrays are temporary; retain only the resulting grid.
+  LevelSetBudget::Free(vb.data, 0, budget.get()); vb.data = nullptr;
+  LevelSetBudget::Free(fb.data, 0, budget.get()); fb.data = nullptr;
+  LevelSetAccess::Adopt(out, grid, lease.name == "cpu" ? budget.release() : nullptr);
   if (device_used) *device_used = lease.name;
   return true;
 }

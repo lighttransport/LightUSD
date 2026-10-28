@@ -545,3 +545,28 @@ def Volume "V"
         scene.volume_sample(0, 0, [1.0, 2.0])
     with pytest.raises(ValueError):
         scene.volume_sample(0, 0, [(1.0, 2.0)])
+
+
+def test_mjcf_sdf_releases_temporary_grid_charges_between_assets(tmp_path):
+    source = _sdf_mjcf(tmp_path)
+    single = lightusd.import_mjcf(source, sdf_resolution=8)
+    budget = single.import_report()['estimated_peak_memory_bytes'] + 256 * 1024
+    # Separate mesh records must each generate a sidecar. Retaining each
+    # construction peak would incorrectly prevent the later assets fitting.
+    source.write_text('''<mujoco><asset>
+      <mesh name="a" file="cube.obj"/><mesh name="b" file="cube.obj"/>
+      <mesh name="c" file="cube.obj"/></asset><worldbody>
+      <body><freejoint/><geom type="sdf" mesh="a"/></body>
+      <body pos="2 0 0"><freejoint/><geom type="sdf" mesh="b"/></body>
+      <body pos="4 0 0"><freejoint/><geom type="sdf" mesh="c"/></body>
+      </worldbody></mujoco>''')
+    stage = lightusd.import_mjcf(source, sdf_resolution=8, max_memory=budget)
+    assert set(stage.generated_assets()) == {'sdf/a.vdb', 'sdf/b.vdb', 'sdf/c.vdb'}
+    assert stage.import_report()['estimated_peak_memory_bytes'] <= budget
+    assert not [d for d in stage.import_report()['diagnostics']
+                if d['code'] == 'mjcf.sdf_level_set_failed']
+    # A failed optional generation must not poison a later import's budget.
+    small = lightusd.import_mjcf(source, sdf_resolution=8, max_memory=128 * 1024)
+    assert not small.generated_assets()
+    retry = lightusd.import_mjcf(source, sdf_resolution=8, max_memory=budget)
+    assert retry.generated_assets() == stage.generated_assets()

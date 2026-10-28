@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -236,6 +237,26 @@ struct Reader {
                    size_t line = 0, std::string data = {},
                    const char* encoding = "xml", bool approximated = false);
 };
+// Temporary operation storage contributes to the peak but is released from
+// the retained budget on all exit paths, including cancellation/failure.
+struct ScopedMemoryCharge {
+  Reader& reader;
+  size_t charged = 0;
+  explicit ScopedMemoryCharge(Reader& value) : reader(value) {}
+  ScopedMemoryCharge(const ScopedMemoryCharge&) = delete;
+  ScopedMemoryCharge& operator=(const ScopedMemoryCharge&) = delete;
+  bool Charge(size_t amount, std::string* err) {
+    const size_t before = reader.bytes;
+    const bool ok = reader.Charge(amount, err);
+    charged += reader.bytes - before;
+    return ok;
+  }
+  ~ScopedMemoryCharge() {
+    reader.bytes -= charged;
+    reader.reported_bytes = std::min(reader.reported_bytes, reader.bytes);
+  }
+};
+
 // MJCF <texture builtin=...> parameters (type="2d").
 struct BuiltinTexture {
   std::string builtin, mark;

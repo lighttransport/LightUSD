@@ -317,9 +317,26 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
     // no longer needed once the sparse field has been built.
     std::vector<float>().swap(surface.positions);
     std::vector<int32_t>().swap(surface.indices);
-    // MeshToLevelSet uses tinyvdb's default allocator. Charge a conservative
-    // estimate for its retained grid before deriving the remaining tet budget.
-    if (!active_reader->ChargeArray(level_set.active_voxels(), 128, &why)) {
+    {
+      ScopedMemoryCharge peak(*active_reader);
+      // The temporary surface arrays overlapped generation and are now freed.
+      if (surface_bytes > SIZE_MAX - level_set.build_peak_bytes() ||
+          !peak.Charge(surface_bytes + level_set.build_peak_bytes(), &why)) {
+        if (err) *err = "flexcomp tetrahedralization failed: " + why;
+        return false;
+      }
+    }
+    size_t retained_bytes = level_set.retained_allocation_bytes();
+    if (!retained_bytes) {  // GPU grids retain the historical estimate.
+      const size_t active = level_set.active_voxels();
+      if (active > SIZE_MAX / 128) {
+        if (err) *err = "level set: memory budget overflow";
+        return false;
+      }
+      retained_bytes = active * 128;
+    }
+    ScopedMemoryCharge retained(*active_reader);
+    if (!retained.Charge(retained_bytes, &why)) {
       if (err) *err = "flexcomp tetrahedralization failed: " + why;
       return false;
     }

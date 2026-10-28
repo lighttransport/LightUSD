@@ -42,6 +42,8 @@ class LevelSet {
   double voxel_size() const;       // first axis of the grid transform
   float background() const;
   size_t active_voxels() const;
+  size_t retained_allocation_bytes() const; // explicit owned allocations incl. bookkeeping
+  size_t build_peak_bytes() const; // generated CPU grid + construction scratch
   size_t decode_peak_bytes() const; // bounded VDB decoder allocations, including overhead
 
  private:
@@ -62,9 +64,9 @@ struct LevelSetOptions {
   double exterior_width = 0;  // > 0; 0 selects 3 voxels
   double interior_width = 0;  // > 0; 0 selects 3 voxels
   size_t max_voxels = 0;      // candidate budget (~128 B each); 0 selects 8,000,000
-  // Optional estimated build cap: deduct converted vertex/triangle arrays and
-  // face-scaled BVH/winding workspace before sizing candidates (~128 B each).
-  // Zero leaves this additional cap disabled; this is not exact allocator tracking.
+  // CPU cap on explicit build allocations, including converted mesh arrays,
+  // acceleration, tree construction/flood/prune, headers and realloc overlap.
+  // Excludes caller inputs and pool/runtime storage. Zero disables the cap.
   size_t max_working_memory_bytes = 0;
   int threads = 0;            // 0 automatic (up to 8), 1 serial
   bool exact_winding = false; // exact (O(faces) per voxel; refused past 1e11 face-voxels)
