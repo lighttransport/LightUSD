@@ -4378,6 +4378,12 @@ if(LIGHTUSD_BUILD_TESTS)
       tests/feat/lightrt-uv/test-lightrt-uv.cc
       ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_tri.c)
     add_sanitizers(feat-lightrt-uv)
+    # lightrt_c_tri.c uses <stdatomic.h>: C11 plus, on MSVC, the C11 atomics flag.
+    set_target_properties(feat-lightrt-uv PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+    if(MSVC)
+      target_compile_options(feat-lightrt-uv PRIVATE
+        $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
+    endif()
     target_include_directories(feat-lightrt-uv PRIVATE
       ${PROJECT_SOURCE_DIR}/src/external/lightrt)
     if(UNIX AND NOT APPLE)

@@ -40,6 +40,12 @@ if(NOT TARGET lightusd_tinyvdb)
   endif()
   set_target_properties(lightusd_tinyvdb PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON POSITION_INDEPENDENT_CODE ON)
+  if(MSVC)
+    # The threaded paths use <stdatomic.h>, which MSVC gates behind this flag
+    # (with /std:c11, from C_STANDARD 11).
+    target_compile_options(lightusd_tinyvdb PRIVATE
+      $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
+  endif()
   target_include_directories(lightusd_tinyvdb PUBLIC "$<BUILD_INTERFACE:${_lusd_tinyvdb_dir}>")
   find_package(Threads)
   if(TARGET Threads::Threads)
