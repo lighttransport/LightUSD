@@ -982,6 +982,14 @@ retains their original `<flex>` XML as a non-executable source record.
 | MJCF mesh paths that leave the model directory (MuJoCo's own `plugin/sdf/mug.xml` uses `../../mug/mug.obj`) | resolve relative to the model file, but only under an allowed asset root: pass `asset_dirs` (Python/C/CLI `--asset-dir`); otherwise reported as `Asset outside allowed roots` | same | same |
 | MJCF cube textures on materials | reported (`mjcf.texture_builtin_unsupported`); builtin skyboxes become a latlong `DomeLight` |
 
+The deformable schemas carry simulation geometry, topology, material data and
+attachments, but no reduced control-node basis or per-vertex interpolation map.
+They therefore cannot reproduce MuJoCo's reduced flexcomp DOFs or interpolated
+raw-flex motion exactly. The importer keeps the reduced flexcomp approximation
+diagnostic and skips interpolated raw flex; use preserve mode when its source
+semantics must survive as data. Executable support needs a target schema
+extension that carries the missing control-node and interpolation semantics.
+
 ---
 
 ## LightUSD Implementation Status
