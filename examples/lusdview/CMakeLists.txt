@@ -258,7 +258,7 @@ if(LUSDVIEW_HAVE_OPTIX)
               -DOUTPUT=${LUSDVIEW_OPTIX_IR_HEADER}
               -DSYMBOL=kLusdviewOptixDeviceIr
               -P ${CMAKE_CURRENT_SOURCE_DIR}/cuda/embed_binary.cmake
-      DEPENDS cuda/optix_device.cu cuda/embed_binary.cmake
+      DEPENDS cuda/optix_device.cu cuda/optix_launch_abi.hh cuda/embed_binary.cmake
       VERBATIM
       COMMENT "Generating embedded lusdview OptiX IR")
   add_custom_target(lusdview_optix_ir DEPENDS ${LUSDVIEW_OPTIX_IR_HEADER})

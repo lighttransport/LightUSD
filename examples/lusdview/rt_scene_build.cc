@@ -1959,6 +1959,8 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     vp.dim[3] = static_cast<int>(out->volDens.size());
     vp.albedo[3] = dv.densityScale;
     vp.emission[3] = dv.background;
+    vp.bmin[3] = dv.isLevelSet ? 1.f : 0.f;
+    vp.bmax[3] = dv.isovalue;
     out->volDens.insert(out->volDens.end(), dv.density.begin(), dv.density.begin() + n);
     out->volParams.push_back(vp);
   }

@@ -1,3 +1,4 @@
+#include "optix_launch_abi.hh"
 // SPDX-License-Identifier: Apache-2.0
 #include "cuda/optix_runtime.hh"
 
@@ -198,7 +199,7 @@ bool OptixRuntime::createPreviewPipeline(const void* optixIr,
   pipelineOptions.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
   pipelineOptions.pipelineLaunchParamsVariableName =
       "lusdviewOptixLaunchParams";
-  pipelineOptions.pipelineLaunchParamsSizeInBytes = 312u;
+  pipelineOptions.pipelineLaunchParamsSizeInBytes = kOptixLaunchParamsBytes;
   pipelineOptions.usesPrimitiveTypeFlags =
       OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE;
   char log[4096]{};
