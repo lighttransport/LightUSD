@@ -29,6 +29,20 @@
 extern "C" {
 #endif
 
+/* Maximally aligned scalar. MSVC's C headers do not declare max_align_t even
+ * in C11 mode; its C++ max_align_t is double, which this union matches in size
+ * and alignment, so C and C++ translation units agree on lu_value's layout. */
+#if defined(_MSC_VER) && !defined(__cplusplus)
+typedef union lu_max_align_t {
+    long long ll;
+    long double ld;
+    double d;
+    void* p;
+} lu_max_align_t;
+#else
+typedef max_align_t lu_max_align_t;
+#endif
+
 #ifndef LU_CORE_API
 #if defined(_WIN32) && defined(LU_CORE_BUILD_SHARED)
 #define LU_CORE_API __declspec(dllexport)
@@ -899,7 +913,7 @@ typedef struct lu_value {
     uint8_t flags;
     uint32_t size;  /* array element count where relevant */
     union {
-        max_align_t _align;
+        lu_max_align_t _align;
         unsigned char bytes[LU_VALUE_INLINE_CAP];
     } store;
 } lu_value;

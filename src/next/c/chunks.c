@@ -26,7 +26,7 @@ static void* allocate_chunk(const lu_chunks* s, size_t count) {
   void* data;
   uintptr_t address;
   if (!lu_budget_add(owner(s)->budget, bytes)) return NULL;
-  if (s->alignment <= _Alignof(max_align_t)) data = malloc(bytes);
+  if (s->alignment <= _Alignof(lu_max_align_t)) data = malloc(bytes);
   else {
     if (bytes > SIZE_MAX - sizeof(void*) - (s->alignment - 1)) {
       lu_budget_sub(owner(s)->budget, bytes); return NULL;
@@ -41,7 +41,7 @@ static void* allocate_chunk(const lu_chunks* s, size_t count) {
 }
 static void free_chunk(const lu_chunks* s, void* data, size_t count) {
   void* raw = data;
-  if (s->alignment > _Alignof(max_align_t)) memcpy(&raw, (unsigned char*)data - sizeof(raw), sizeof(raw));
+  if (s->alignment > _Alignof(lu_max_align_t)) memcpy(&raw, (unsigned char*)data - sizeof(raw), sizeof(raw));
   free(raw);
   lu_budget_sub(owner(s)->budget, count * s->element_size);
 }

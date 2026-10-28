@@ -6,7 +6,13 @@
 #include <limits.h>
 
 typedef struct Budget { size_t used, limit; } Budget;
-typedef union Block { size_t size; max_align_t alignment; } Block;
+/* Spelled out: MSVC's C headers do not declare max_align_t. */
+typedef union Block {
+  size_t size;
+  long long ll;
+  long double ld;
+  void* p;
+} Block;
 static void* allocate(void* context, size_t size) {
   Budget* b = (Budget*)context;
   if (size > SIZE_MAX - sizeof(Block)) return NULL;
