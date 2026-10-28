@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Mesh asset loading (STL, OBJ, GMSH/MSH, VDB), preload and the mesh cache.
 #include "mjcf-internal.hh"
+#include "external/fast_float/include/fast_float/fast_float.h"
 
 namespace lightusd {
 namespace tydra {
@@ -102,7 +103,8 @@ bool LoadASCIISTL(std::string_view text, const fs::path& filename, bool smoothno
     for (float& c : v) {
       skip_space();
       const char* begin = text.data() + pos;
-      const auto parsed = std::from_chars(begin, text.data() + text.size(), c);
+      // fast_float: Apple libc++ lacks floating-point std::from_chars.
+      const auto parsed = fast_float::from_chars(begin, text.data() + text.size(), c);
       if (parsed.ec != std::errc() || !std::isfinite(c)) {
         if (err) *err = "Invalid ASCII STL vertex: " + filename.string();
         return false;
