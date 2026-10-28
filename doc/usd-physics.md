@@ -269,9 +269,11 @@ set (float 5/4/3 tree, class `level set`, negative inside):
 - **Memory limit:** the candidate-voxel cap is derived from the import's
   remaining memory budget at approximately 128 bytes per candidate; there is no
   fixed minimum that can exceed the remaining allowance. The estimate also
-  reserves the converted vertex/triangle arrays; generated flexcomp meshes
-  reserve their temporary surface copy as well. If the cap is too small to
-  build the field, LightUSD reports `mjcf.sdf_level_set_failed` and omits the
+  reserves converted vertex/triangle arrays and approximately 512 bytes per
+  triangle plus a 10 KiB fixed allowance for known BVH/winding workspace;
+  generated flexcomp meshes reserve their temporary surface copy as well. If
+  the cap is too small to build the field, LightUSD reports
+  `mjcf.sdf_level_set_failed` and omits the
   optional sidecar. After generation, LightUSD also charges approximately 128
   bytes per active voxel while the grid and serialized sidecar coexist. VDB
   compression uses a budgeted allocator, including the overlap while its output
@@ -338,10 +340,10 @@ no VDB meshes):
   budget without minimum floors. Generated MJCF SDF sidecars likewise derive
   their candidate-voxel cap from the remaining budget, without the former
   100,000-voxel floor, and charge a retained-grid estimate before sidecar
-  serialization. The candidate estimate reserves the additional converted
-  vertex/triangle arrays; generated flexcomp level sets also reserve their
-  temporary surface arrays. Their VDB writer is bounded by the post-grid
-  remainder.
+  serialization. The candidate estimate reserves converted vertex/triangle
+  arrays and known BVH/winding workspace; generated flexcomp level sets also
+  reserve their temporary surface arrays. Their VDB writer is bounded by the
+  post-grid remainder.
   Generated mesh flexcomps charge the same estimate before deriving the
   remaining tetrahedralization budget. These estimates do not account exactly
   for every downstream temporary.

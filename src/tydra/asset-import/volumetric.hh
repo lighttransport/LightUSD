@@ -62,8 +62,9 @@ struct LevelSetOptions {
   double exterior_width = 0;  // > 0; 0 selects 3 voxels
   double interior_width = 0;  // > 0; 0 selects 3 voxels
   size_t max_voxels = 0;      // candidate budget (~128 B each); 0 selects 8,000,000
-  // Optional build cap: deduct converted vertex/triangle arrays before sizing
-  // the candidate voxel budget. Zero leaves this additional cap disabled.
+  // Optional estimated build cap: deduct converted vertex/triangle arrays and
+  // face-scaled BVH/winding workspace before sizing candidates (~128 B each).
+  // Zero leaves this additional cap disabled; this is not exact allocator tracking.
   size_t max_working_memory_bytes = 0;
   int threads = 0;            // 0 automatic (up to 8), 1 serial
   bool exact_winding = false; // exact (O(faces) per voxel; refused past 1e11 face-voxels)

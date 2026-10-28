@@ -239,7 +239,7 @@ const char* GridClass(const tvdb_grid* g) {
 }
 
 bool LevelSetMeshSizes(const Mesh& mesh, size_t* vertex_count,
-                       size_t* triangle_count, size_t* converted_bytes,
+                       size_t* triangle_count, size_t* fixed_working_bytes,
                        std::string* err) {
   if (mesh.positions.size() % 3) {
     if (err) *err = "level set: mesh positions are not xyz triples";
@@ -281,13 +281,25 @@ bool LevelSetMeshSizes(const Mesh& mesh, size_t* vertex_count,
   }
   const size_t vertex_bytes = nv * sizeof(tvdb_vec3f);
   const size_t triangle_bytes = nf * sizeof(tvdb_triangle);
-  if (triangle_bytes > SIZE_MAX - vertex_bytes) {
+  /* Reserve the largest known simultaneous face workspaces before granting
+   * candidate voxels: MeshSDF's normals and BVH, plus the fast winding arrays,
+   * nodes, and build keys. This rounds their known face-scaled storage up to
+   * 512 bytes per face and covers small-mesh BVH capacity with 10 KiB fixed. */
+  const size_t fixed_workspace = 10 * 1024;
+  if (nf > (SIZE_MAX - fixed_workspace) / 512) {
+    if (err) *err = "level set: face workspace size overflow";
+    return false;
+  }
+  const size_t face_workspace = fixed_workspace + nf * 512;
+  if (triangle_bytes > SIZE_MAX - vertex_bytes ||
+      face_workspace > SIZE_MAX - vertex_bytes - triangle_bytes) {
     if (err) *err = "level set: converted mesh size overflow";
     return false;
   }
   if (vertex_count) *vertex_count = nv;
   if (triangle_count) *triangle_count = nf;
-  if (converted_bytes) *converted_bytes = vertex_bytes + triangle_bytes;
+  if (fixed_working_bytes)
+    *fixed_working_bytes = vertex_bytes + triangle_bytes + face_workspace;
   return true;
 }
 
@@ -307,17 +319,17 @@ bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options, LevelSet* 
     if (err) *err = "level set: voxel size must be positive";
     return false;
   }
-  size_t nv = 0, triangle_count = 0, converted_bytes = 0;
-  if (!LevelSetMeshSizes(mesh, &nv, &triangle_count, &converted_bytes, err))
+  size_t nv = 0, triangle_count = 0, fixed_working_bytes = 0;
+  if (!LevelSetMeshSizes(mesh, &nv, &triangle_count, &fixed_working_bytes, err))
     return false;
   size_t max_voxels = options.max_voxels ? options.max_voxels : 8000000;
   if (options.max_working_memory_bytes) {
-    if (converted_bytes >= options.max_working_memory_bytes) {
+    if (fixed_working_bytes >= options.max_working_memory_bytes) {
       if (err) *err = "level set: mesh conversion exceeds working memory budget";
       return false;
     }
     const size_t voxel_budget =
-        (options.max_working_memory_bytes - converted_bytes) / 128;
+        (options.max_working_memory_bytes - fixed_working_bytes) / 128;
     if (!voxel_budget) {
       if (err) *err = "level set: mesh conversion leaves no voxel budget";
       return false;
