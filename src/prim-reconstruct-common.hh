@@ -59,7 +59,7 @@ bool ParseTypedAttributeFromDescriptors(
     ParsePropertyTable& table,
     const std::string& prop_name,
     const Property& prop,
-    PrimT* prim,
+    PrimT* /*prim*/,
     const std::array<TypedAttributeDescriptor<PrimT, AttrT>, N>& descriptors,
     std::string* err) {
 

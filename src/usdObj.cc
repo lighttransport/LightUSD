@@ -173,8 +173,8 @@ bool ReadObjLayerFromMemory(const std::string& text, const std::string& source,
   std::string usda;
   if (!usda::ExportToUSDAString(stage, &usda, warn, err)) return false;
   USDLoadOptions load_options;
-  load_options.max_memory_limit_in_mb =
-      std::max(size_t(1), options.max_memory / (1024 * 1024));
+  load_options.max_memory_limit_in_mb = static_cast<int32_t>(std::min(
+      size_t(INT32_MAX), std::max(size_t(1), options.max_memory / (1024 * 1024))));
   return LoadLayerFromMemory(reinterpret_cast<const uint8_t*>(usda.data()),
                              usda.size(), source, layer, warn, err,
                              load_options);

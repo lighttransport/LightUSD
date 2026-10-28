@@ -62,9 +62,6 @@ namespace crate {
 
 #define kTag "[Crate]"
 
-#define CHECK_MEMORY_USAGE(__nbytes) \
-  MEMORY_BUDGET_CHECK((*memory_manager_), (__nbytes), kTag)
-
 #if defined(LIGHTUSD_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER)
 bool CrateReader::BuildDecompressedPathsImpl(
     BuildDecompressedPathsArg *arg) {
