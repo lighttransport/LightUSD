@@ -139,6 +139,8 @@ inline void append_double3_tuple(std::ostream &os, double x, double y,
 namespace lightusd {
 namespace pprint {
 
+StringSink::~StringSink() = default;
+
 std::string format_wrapped_array(const std::vector<std::string> &elements,
                                  uint32_t prefix_cols, uint32_t column_limit) {
   if (elements.empty()) {

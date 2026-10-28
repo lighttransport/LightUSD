@@ -50,6 +50,10 @@ namespace pprint {
 /// no put-area bookkeeping is needed: every write lands in the string directly.
 class StringSink : public std::streambuf {
  public:
+  StringSink() = default;
+  // Defined out of line (value-pprint.cc) to anchor the vtable.
+  ~StringSink() override;
+
   std::string &str() { return s_; }
 
   void clear() { s_.clear(); }
