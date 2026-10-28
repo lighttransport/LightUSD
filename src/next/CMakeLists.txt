@@ -1137,6 +1137,13 @@ if(LIGHTUSD_NEXT_BUILD_SHARED_C_API)
         PRIVATE LIGHTUSD_C_BUILD_SHARED=1
         INTERFACE LIGHTUSD_C_USE_SHARED=1)
     set_target_properties(lightusd_c_shared PROPERTIES OUTPUT_NAME lightusd_c)
+    if(WIN32)
+        # On Windows the DLL's import library is lightusd_c.lib, the same file
+        # the static lightusd_c archive would write; the import library (C
+        # exports only) then replaces the archive and static consumers such as
+        # lightusd_render_c lose the internal C++ helpers (LNK2019).
+        set_target_properties(lightusd_c PROPERTIES OUTPUT_NAME lightusd_c_static)
+    endif()
     list(APPEND LIGHTUSD_C_TARGETS lightusd_c_shared)
 endif()
 

@@ -66,8 +66,15 @@
 #include <intrin.h>
 static inline int lrt_clzll(unsigned long long x) {
     unsigned long idx;
+#if defined(_M_X64) || defined(_M_ARM64) || defined(_M_AMD64)
     _BitScanReverse64(&idx, x);
     return 63 - (int)idx;
+#else
+    /* 32-bit MSVC (x86/ARM) has no _BitScanReverse64: scan the halves. */
+    if (_BitScanReverse(&idx, (unsigned long)(x >> 32))) return 31 - (int)idx;
+    _BitScanReverse(&idx, (unsigned long)x);
+    return 63 - (int)idx;
+#endif
 }
 static inline int lrt_ctz(unsigned int x) {
     unsigned long idx;
