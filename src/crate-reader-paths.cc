@@ -661,21 +661,18 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
 
   // Direct parent path index per decoded path, filled in by the decoder. Used
   // to build the node hierarchy without re-deriving parents from path strings.
-  std::vector<int32_t> parent_indices;
-  {
-    size_t parent_indices_bytes;
-    if (!safe::mul(_paths.size(), sizeof(int32_t), &parent_indices_bytes)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in path parent table size.");
-    }
-    auto parent_indices_budget =
-        memory_manager_->ReserveScoped(parent_indices_bytes);
-    if (!parent_indices_budget.IsReserved()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Memory budget exceeded for path parent table.");
-    }
-    parent_indices.assign(_paths.size(), kNoParentPathIndex);
-    // The reservation is released at the end of this function; keep it alive.
-    (void)parent_indices_budget;
+  // The reservation lives at function scope so the table stays charged while
+  // paths are decoded and the hierarchy is built; it is released on return.
+  size_t parent_indices_bytes;
+  if (!safe::mul(_paths.size(), sizeof(int32_t), &parent_indices_bytes)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in path parent table size.");
   }
+  auto parent_indices_budget =
+      memory_manager_->ReserveScoped(parent_indices_bytes);
+  if (!parent_indices_budget.IsReserved()) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Memory budget exceeded for path parent table.");
+  }
+  std::vector<int32_t> parent_indices(_paths.size(), kNoParentPathIndex);
 
   // Now build the paths.
 #if defined(LIGHTUSD_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER)
@@ -735,21 +732,22 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
     // ancestors behaviour has to be preserved.
     std::unordered_map<std::string, size_t> path_to_index;
     bool path_to_index_built = false;
-    auto ensure_path_to_index = [&]() {
+    // Returns false (with an error pushed) when the lookup table cannot be
+    // built; the caller must then fail instead of leaving the node unparented.
+    auto ensure_path_to_index = [&]() -> bool {
       if (path_to_index_built) {
-        return;
+        return true;
       }
-      path_to_index_built = true;
       size_t path_to_index_bytes;
       if (!safe::mul(_paths.size(), sizeof(std::string) + 64,
                      &path_to_index_bytes)) {
-        PUSH_ERROR("Integer overflow: _paths.size() * (sizeof(std::string) + 64)");
-        return;
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "Integer overflow: _paths.size() * (sizeof(std::string) + 64)");
       }
       if (!memory_manager_->Reserve(path_to_index_bytes)) {
-        PUSH_ERROR("Memory budget exceeded for path lookup table.");
-        return;
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Memory budget exceeded for path lookup table.");
       }
+      path_to_index_built = true;
       path_to_index.reserve(_paths.size());
       for (size_t i = 0; i < _paths.size(); ++i) {
         if (!_paths[i].is_valid()) {
@@ -757,6 +755,7 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
         }
         path_to_index.emplace(_paths[i].full_path_name(), i);
       }
+      return true;
     };
 
     std::function<bool(size_t)> build_one = [&](const size_t path_idx) -> bool {
@@ -790,7 +789,9 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
       } else if (parent_path_idx >= 0) {
         // Malformed/sparse path table: the recorded ancestor is missing. Fall
         // back to walking up the path string until an existing path is found.
-        ensure_path_to_index();
+        if (!ensure_path_to_index()) {
+          return false;
+        }
         Path parent_path = _paths[path_idx].get_parent_path();
         while (parent_path.is_valid() &&
                !parent_path.full_path_name().empty()) {
