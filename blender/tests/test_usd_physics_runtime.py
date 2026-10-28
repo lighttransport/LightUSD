@@ -1088,6 +1088,105 @@ def _check_imported_scaled_dynamics(path):
            'source_z': source_positions, 'imported_z': imported_positions})
 
 
+def _check_timing_and_limit_runtime(hook):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    scene = bpy.context.scene
+    bpy.ops.rigidbody.world_add()
+    for timestep in (1.001 / 60, 0.003, 1 / 48):
+        hook._apply_physics_to_blender({
+            'scene': {'mjc': {'timestep': timestep}}, 'bodies': [], 'joints': []})
+        _assert_close(scene.render.fps_base / scene.render.fps, timestep, 1e-8)
+    print('BLENDER_USD_FRACTIONAL_TIMESTEP_PASS')
+    scene.gravity = (0, 0, 0)
+    scene.render.fps = 60
+    scene.render.fps_base = 1
+    bpy.ops.mesh.primitive_cube_add(size=0.5)
+    body = bpy.context.object
+    body.name = 'LimitBody'
+    bpy.ops.rigidbody.object_add()
+    body.rigid_body.angular_damping = 0
+    bpy.ops.mesh.primitive_cube_add(size=0.1)
+    anchor = bpy.context.object
+    anchor.name = 'LimitAnchor'
+    bpy.ops.rigidbody.object_add(type='PASSIVE')
+    stage = Usd.Stage.CreateInMemory()
+    stage.DefinePrim('/LimitBody', 'Cube')
+    stage.DefinePrim('/LimitAnchor', 'Cube')
+    cases = [('UnlimitedHinge', UsdPhysics.RevoluteJoint, -math.inf, math.inf),
+             ('BoundedHinge', UsdPhysics.RevoluteJoint, -45, 60),
+             ('UnlimitedSlider', UsdPhysics.PrismaticJoint, -math.inf, math.inf),
+             ('BoundedSlider', UsdPhysics.PrismaticJoint, -0.5, 0.75),
+             ('OneSidedHinge', UsdPhysics.RevoluteJoint, 0, math.inf),
+             ('OutOfRangeHinge', UsdPhysics.RevoluteJoint, -500, 500)]
+    for name, schema, low, high in cases:
+        joint = schema.Define(stage, '/' + name)
+        joint.CreateBody0Rel().SetTargets(['/LimitAnchor'])
+        joint.CreateBody1Rel().SetTargets(['/LimitBody'])
+        joint.CreateLocalPos0Attr(Gf.Vec3f(0))
+        joint.CreateLocalPos1Attr(Gf.Vec3f(0))
+        joint.CreateAxisAttr('Z' if schema == UsdPhysics.RevoluteJoint else 'X')
+        joint.CreateLowerLimitAttr(low)
+        joint.CreateUpperLimitAttr(high)
+    d6 = UsdPhysics.Joint.Define(stage, '/LimitD6')
+    d6.CreateBody0Rel().SetTargets(['/LimitAnchor'])
+    d6.CreateBody1Rel().SetTargets(['/LimitBody'])
+    for dof, low, high in [('transX', 1, -1), ('rotY', -math.inf, math.inf)]:
+        limit = UsdPhysics.LimitAPI.Apply(d6.GetPrim(), dof)
+        limit.CreateLowAttr(low)
+        limit.CreateHighAttr(high)
+    hook._apply_physics_to_blender(hook._read_usd_physics(stage, 'USD'))
+    hinge = bpy.data.objects['UnlimitedHinge'].rigid_body_constraint
+    slider = bpy.data.objects['UnlimitedSlider'].rigid_body_constraint
+    assert not hinge.use_limit_ang_z and not slider.use_limit_lin_x
+    bounded = bpy.data.objects['BoundedHinge'].rigid_body_constraint
+    assert bounded.use_limit_ang_z
+    _assert_close(bounded.limit_ang_z_lower, -math.pi / 4)
+    _assert_close(bounded.limit_ang_z_upper, math.pi / 3)
+    bounded_slider = bpy.data.objects['BoundedSlider'].rigid_body_constraint
+    assert bounded_slider.use_limit_lin_x
+    _assert_close(bounded_slider.limit_lin_x_lower, -0.5)
+    _assert_close(bounded_slider.limit_lin_x_upper, 0.75)
+    for name in ('OneSidedHinge', 'OutOfRangeHinge'):
+        obj = bpy.data.objects.get(name)
+        assert obj is None or obj.rigid_body_constraint is None
+    constraint = bpy.data.objects['LimitD6'].rigid_body_constraint
+    assert constraint.use_limit_lin_x and not constraint.use_limit_ang_y
+    _assert_close(constraint.limit_lin_x_lower, 0)
+    _assert_close(constraint.limit_lin_x_upper, 0)
+    # Roundtrip the unlimited constraint through the USD schema mapping.
+    hook._export_constraint(stage, bpy.data.objects['UnlimitedHinge'], 'USD')
+    exported = stage.GetPrimAtPath('/Joints/UnlimitedHinge')
+    assert exported.GetAttribute('physics:lowerLimit').Get() == -math.inf
+    assert exported.GetAttribute('physics:upperLimit').Get() == math.inf
+    for obj in bpy.data.objects:
+        if obj.rigid_body_constraint:
+            obj.rigid_body_constraint.enabled = obj.name == 'UnlimitedHinge'
+            obj.rigid_body_constraint.disable_collisions = True
+    # Apply a motor about the hinge's Z axis and unwrap the actual simulated
+    # body angle. The imported hinge must permit more than a full revolution.
+    bpy.ops.object.empty_add()
+    motor_obj = bpy.context.object
+    motor_obj.rotation_euler.y = math.pi / 2
+    bpy.ops.rigidbody.constraint_add(type='MOTOR')
+    motor = motor_obj.rigid_body_constraint
+    motor.object1, motor.object2 = anchor, body
+    motor.disable_collisions = True
+    motor.use_motor_ang = True
+    motor.motor_ang_target_velocity = 8
+    motor.motor_ang_max_impulse = 100
+    scene.rigidbody_world.substeps_per_frame = 10
+    scene.rigidbody_world.solver_iterations = 50
+    previous = total = 0
+    for frame in range(1, 241):
+        scene.frame_set(frame)
+        matrix = body.evaluated_get(bpy.context.evaluated_depsgraph_get()).matrix_world
+        angle = math.atan2(matrix[1][0], matrix[0][0])
+        total += math.atan2(math.sin(angle - previous), math.cos(angle - previous))
+        previous = angle
+    assert abs(total) > 2 * math.pi, total
+    print('BLENDER_USD_JOINT_LIMITS_PASS', {'unwrapped_radians': total})
+
+
 def main():
     spec = importlib.util.spec_from_file_location('lightusd_usd_physics_hook', HOOK_PATH)
     hook = importlib.util.module_from_spec(spec)
@@ -1111,6 +1210,7 @@ def main():
     eight_link_path = path.with_name(path.stem + '-eight-link-dynamics.usda')
     try:
         hook.register()
+        _check_timing_and_limit_runtime(hook)
         _make_scene_and_export(path)
         _check_import(path, merge_parent_xform=True)
         _check_import(path, merge_parent_xform=False)

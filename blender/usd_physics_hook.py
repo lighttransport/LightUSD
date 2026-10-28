@@ -186,12 +186,12 @@ def _export_collision_groups(stage, objects):
 def _joint_type_and_attrs(rbc):
     """Return (usd_joint_type, axis, lower, upper) from a Blender constraint."""
     if rbc.type == 'HINGE':
-        lower = math.degrees(rbc.limit_ang_z_lower) if rbc.use_limit_ang_z else -360
-        upper = math.degrees(rbc.limit_ang_z_upper) if rbc.use_limit_ang_z else 360
+        lower = math.degrees(rbc.limit_ang_z_lower) if rbc.use_limit_ang_z else -math.inf
+        upper = math.degrees(rbc.limit_ang_z_upper) if rbc.use_limit_ang_z else math.inf
         return 'PhysicsRevoluteJoint', 'Z', lower, upper
     elif rbc.type == 'SLIDER':
-        lower = rbc.limit_lin_x_lower if rbc.use_limit_lin_x else -1e6
-        upper = rbc.limit_lin_x_upper if rbc.use_limit_lin_x else 1e6
+        lower = rbc.limit_lin_x_lower if rbc.use_limit_lin_x else -math.inf
+        upper = rbc.limit_lin_x_upper if rbc.use_limit_lin_x else math.inf
         return 'PhysicsPrismaticJoint', 'X', lower, upper
     elif rbc.type == 'FIXED':
         return 'PhysicsFixedJoint', None, None, None
@@ -670,6 +670,7 @@ def _read_joint(prim, mode):
     """Extract joint data from a USD joint prim."""
     data = {
         'type': prim.GetTypeName(),
+        'path': str(prim.GetPath()),
         'body0': None,
         'body1': None,
         'axis': 'Z',
@@ -856,6 +857,48 @@ def _apply_physics_to_blender(result):
 
     # Joints -> rigid body constraints
     for joint_name, jd in result['joints']:
+        # Validate before touching an existing constraint: RNA silently clamps
+        # infinite and out-of-range limits.
+        unsupported = False
+        ranges = []
+        if jd['type'] in ('PhysicsRevoluteJoint', 'PhysicsPrismaticJoint'):
+            angular = jd['type'] == 'PhysicsRevoluteJoint'
+            suffix = 'ang_z' if angular else 'lin_x'
+            ranges.append((jd['lower'], jd['upper'], angular, False, suffix))
+        for dof, _, suffix, angular in _spring_axes():
+            values = jd['axes'].get(dof, {})
+            if 'lower' in values:
+                ranges.append((values['lower'], values['upper'], angular, True, suffix))
+        reason = ''
+        rna = getattr(getattr(bpy.types, 'RigidBodyConstraint', None), 'bl_rna', None)
+        for lower, upper, angular, d6, suffix in ranges:
+            if lower is None and upper is None:
+                continue
+            if lower == -math.inf and upper == math.inf:
+                continue
+            if d6 and lower > upper:
+                continue
+            if (lower is None or upper is None or
+                    not math.isfinite(lower) or not math.isfinite(upper)):
+                reason = 'one-sided or non-finite limit'
+            elif lower > upper:
+                reason = 'reversed limit range'
+            else:
+                factor = math.pi / 180 if angular and not d6 else 1.0
+                bound = 2 * math.pi if angular else 3.4028234663852886e38
+                for value, end in ((lower * factor, 'lower'), (upper * factor, 'upper')):
+                    prop = rna.properties['limit_' + suffix + '_' + end] if rna else None
+                    minimum, maximum = (prop.hard_min, prop.hard_max) if prop else (-bound, bound)
+                    if not minimum <= value <= maximum:
+                        reason = 'limit outside Blender RNA range'
+                        break
+            if reason:
+                unsupported = True
+                break
+        if unsupported:
+            log.warning("[USDPhysicsHook] Skipping joint '%s': unsupported motion limits (%s)",
+                        jd.get('path', joint_name), reason)
+            continue
         # Find or create the constraint empty
         obj = bpy.data.objects.get(joint_name)
         if not obj:
@@ -889,12 +932,19 @@ def _apply_physics_to_blender(result):
                     if 'stiffness' in axis:
                         setattr(rbc, 'spring_stiffness_' + spring_suffix, axis['stiffness'])
                         setattr(rbc, 'spring_damping_' + spring_suffix, axis['damping'])
+                if 'lower' in axis:
+                    if axis['lower'] == -math.inf and axis['upper'] == math.inf:
+                        axis = {k: v for k, v in axis.items() if k not in ('lower', 'upper')}
+                    elif axis['lower'] > axis['upper']:
+                        axis = dict(axis, lower=0.0, upper=0.0)
                 setattr(rbc, 'use_limit_' + limit_suffix, 'lower' in axis)
                 if 'lower' in axis:
                     setattr(rbc, 'limit_' + limit_suffix + '_lower', axis['lower'])
                     setattr(rbc, 'limit_' + limit_suffix + '_upper', axis['upper'])
 
-        # Resolve body references
+        # Resolve body references, including explicitly world-attached sides.
+        rbc.object1 = None
+        rbc.object2 = None
         if jd['body0']:
             leaf = jd['body0'].rsplit('/', 1)[-1]
             rbc.object1 = body_objects.get(leaf) or bpy.data.objects.get(leaf)
@@ -938,11 +988,15 @@ def _apply_physics_to_blender(result):
                 break
 
         # Limits
-        if bl_type == 'HINGE' and jd['lower'] is not None:
+        if bl_type == 'HINGE':
+            rbc.use_limit_ang_z = False
+        elif bl_type == 'SLIDER':
+            rbc.use_limit_lin_x = False
+        if bl_type == 'HINGE' and jd['lower'] is not None and math.isfinite(jd['lower']):
             rbc.use_limit_ang_z = True
             rbc.limit_ang_z_lower = math.radians(jd['lower'])
             rbc.limit_ang_z_upper = math.radians(jd['upper'])
-        elif bl_type == 'SLIDER' and jd['lower'] is not None:
+        elif bl_type == 'SLIDER' and jd['lower'] is not None and math.isfinite(jd['lower']):
             rbc.use_limit_lin_x = True
             rbc.limit_lin_x_lower = jd['lower']
             rbc.limit_lin_x_upper = jd['upper']

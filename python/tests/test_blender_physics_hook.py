@@ -258,6 +258,29 @@ def test_fractional_timestep_preserves_effective_rate(hook, timestep):
     assert render.fps_base / render.fps == pytest.approx(timestep)
 
 
+@pytest.mark.parametrize('kind', ['HINGE', 'SLIDER'])
+def test_unlimited_export_has_no_artificial_range(hook, kind):
+    module, _ = hook
+    constraint = SimpleNamespace(type=kind, use_limit_ang_z=False,
+                                 use_limit_lin_x=False)
+    _, _, lower, upper = module._joint_type_and_attrs(constraint)
+    assert lower == -math.inf and upper == math.inf
+
+
+def test_one_sided_limit_skips_constraint_before_mutation(hook, caplog):
+    module, bpy = hook
+    stage = Usd.Stage.CreateInMemory()
+    joint = UsdPhysics.RevoluteJoint.Define(stage, '/Joint')
+    joint.CreateLowerLimitAttr(0)
+    target = SimpleNamespace(rigid_body_constraint=SimpleNamespace(type='FIXED'))
+    bpy.data = SimpleNamespace(objects={'Joint': target})
+    bpy.context = SimpleNamespace(scene=SimpleNamespace())
+    module._apply_physics_to_blender({'scene': None, 'bodies': [],
+        'joints': [('Joint', module._read_joint(joint.GetPrim(), 'USD'))]})
+    assert target.rigid_body_constraint.type == 'FIXED'
+    assert '/Joint' in caplog.text and 'unsupported motion limits' in caplog.text
+
+
 @pytest.mark.parametrize('timestep', [0, -1, float('nan'), float('inf'), 1e-320, 1e300])
 def test_invalid_or_unsupported_timestep_keeps_scene_rate(hook, timestep, caplog):
     module, bpy = hook
@@ -268,3 +291,51 @@ def test_invalid_or_unsupported_timestep_keeps_scene_rate(hook, timestep, caplog
         'scene': {'mjc': {'timestep': timestep}}, 'bodies': [], 'joints': []})
     assert (render.fps, render.fps_base) == (24, 1.25)
     assert 'timestep' in caplog.text
+
+
+@pytest.mark.parametrize('joint_type', ['RevoluteJoint', 'PrismaticJoint'])
+@pytest.mark.parametrize('bounds', [(-math.inf, math.inf), (-20, 30), (-math.inf, 1),
+                                  (0, math.inf), (-500, 500), (math.nan, 1)])
+def test_joint_limit_import_policy(hook, joint_type, bounds, caplog):
+    module, bpy = hook
+    stage = Usd.Stage.CreateInMemory()
+    joint = getattr(UsdPhysics, joint_type).Define(stage, '/Joint')
+    joint.CreateLowerLimitAttr(bounds[0])
+    joint.CreateUpperLimitAttr(bounds[1])
+    constraint = SimpleNamespace(type='FIXED', enabled=True)
+    bpy.data = SimpleNamespace(objects={'Joint': SimpleNamespace(rigid_body_constraint=constraint)})
+    bpy.context = SimpleNamespace(scene=SimpleNamespace(),
+        view_layer=SimpleNamespace(objects=SimpleNamespace(active=None)))
+    module._apply_physics_to_blender({'scene': None, 'bodies': [],
+        'joints': [('Joint', module._read_joint(joint.GetPrim(), 'USD'))]})
+    unlimited = bounds == (-math.inf, math.inf)
+    finite = all(math.isfinite(x) for x in bounds)
+    supported = unlimited or (finite and (joint_type == 'PrismaticJoint' or max(abs(x) for x in bounds) <= 360))
+    if not supported:
+        assert constraint.type == 'FIXED'
+        assert 'unsupported motion limits' in caplog.text
+    else:
+        suffix = 'ang_z' if joint_type == 'RevoluteJoint' else 'lin_x'
+        assert getattr(constraint, 'use_limit_' + suffix) == (not unlimited)
+        if not unlimited:
+            factor = math.pi/180 if joint_type == 'RevoluteJoint' else 1
+            assert getattr(constraint, 'limit_' + suffix + '_lower') == pytest.approx(bounds[0]*factor)
+
+
+def test_d6_unlimited_and_locked_axes(hook):
+    module, bpy = hook
+    stage = Usd.Stage.CreateInMemory()
+    joint = UsdPhysics.Joint.Define(stage, '/Joint')
+    for dof, low, high in [('transX', 1, -1), ('rotY', -math.inf, math.inf)]:
+        limit = UsdPhysics.LimitAPI.Apply(joint.GetPrim(), dof)
+        limit.CreateLowAttr(low)
+        limit.CreateHighAttr(high)
+    constraint = SimpleNamespace(type=None, enabled=None)
+    bpy.data = SimpleNamespace(objects={'Joint': SimpleNamespace(rigid_body_constraint=constraint)})
+    bpy.context = SimpleNamespace(scene=SimpleNamespace(),
+        view_layer=SimpleNamespace(objects=SimpleNamespace(active=None)))
+    module._apply_physics_to_blender({'scene': None, 'bodies': [],
+        'joints': [('Joint', module._read_joint(joint.GetPrim(), 'USD'))]})
+    assert constraint.use_limit_lin_x
+    assert constraint.limit_lin_x_lower == constraint.limit_lin_x_upper == 0
+    assert not constraint.use_limit_ang_y
