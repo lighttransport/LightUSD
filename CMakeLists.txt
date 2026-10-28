@@ -464,10 +464,16 @@ find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
 # __asan_report_load*, __asan_memcpy, etc. Setting CMAKE_EXE_LINKER_FLAGS
 # globally avoids that footgun across examples/, tests/feat/,
 # tests/pprint/, ... — every binary in the build tree gets the runtime
-# automatically.
+# automatically. Shared libraries need it too: liblightusd_c embeds the
+# instrumented asset-import and render-support objects, and macOS rejects
+# undefined __asan_* references when linking a dylib.
 if(SANITIZE_ADDRESS)
   set(CMAKE_EXE_LINKER_FLAGS
       "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+  set(CMAKE_SHARED_LINKER_FLAGS
+      "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+  set(CMAKE_MODULE_LINKER_FLAGS
+      "${CMAKE_MODULE_LINKER_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
 endif()
 
 # [cifuzz]
@@ -1681,6 +1687,11 @@ if(LIGHTUSD_WITH_ZSTD_COMPRESSION AND NOT LIGHTUSD_USE_SYSTEM_ZSTD)
   set(LIGHTUSD_TINYVDB_ZSTD ON)
 endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/lightusd-asset-import.cmake")
+if(TARGET lightusd_asset_import)
+  # lightusd_asset_import compiles pugixml and is linked below; a second copy
+  # in lightusd_static gives macOS ld duplicate pugi:: symbols.
+  list(REMOVE_ITEM LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/pugixml.cpp)
+endif()
 add_library(${LIGHTUSD_TARGET_STATIC} STATIC ${LIGHTUSD_SOURCES} ${LIGHTUSD_DEP_SOURCES} ${LIGHTUSD_EXT_SOURCES})
 target_link_libraries(${LIGHTUSD_TARGET_STATIC} lightusd_asset_import)
 set_target_properties(${LIGHTUSD_TARGET_STATIC} PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -4381,8 +4392,11 @@ if(LIGHTUSD_BUILD_TESTS)
     # lightrt_c_tri.c uses <stdatomic.h>: C11 plus, on MSVC, the C11 atomics flag.
     set_target_properties(feat-lightrt-uv PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
     if(MSVC)
-      target_compile_options(feat-lightrt-uv PRIVATE
-        $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
+      # A source property, not $<COMPILE_LANGUAGE:C>: Visual Studio generators
+      # ignore that genex on targets that mix C and C++.
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_tri.c
+        PROPERTIES COMPILE_OPTIONS "/experimental:c11atomics")
     endif()
     target_include_directories(feat-lightrt-uv PRIVATE
       ${PROJECT_SOURCE_DIR}/src/external/lightrt)
