@@ -72,9 +72,11 @@ struct LevelSetOptions {
 bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options,
                     LevelSet* out, std::string* err, std::string* device_used = nullptr);
 
-// VDB bytes of one level set (ZIP + active-mask compression).
+// VDB bytes of one level set (ZIP + active-mask compression). A nonzero memory
+// limit bounds writer allocations and the temporary overlap while copying the
+// serialized buffer into `bytes`; zero leaves the writer unbounded.
 bool WriteLevelSetVDB(const LevelSet& level_set, std::vector<uint8_t>* bytes,
-                      std::string* err);
+                      std::string* err, size_t max_working_memory_bytes = 0);
 bool WriteLevelSetVDB(const LevelSet& level_set, std::string* bytes, std::string* err);
 // The first float grid of class "level set" (or, if none is classed, the
 // first float grid with a positive background) in VDB bytes. Only the grids

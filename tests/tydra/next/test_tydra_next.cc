@@ -8188,7 +8188,8 @@ static void TestOpenUsdVdbVolumeFixtures() {
 // A radius-1 sphere's narrow-band level set (grid "sdf") written to a temp
 // .vdb, so the volume tests need no external corpus. Returns its path.
 static const double kSphereLevelSetVoxel = 2.0 / 24.0;
-static std::filesystem::path WriteSphereLevelSet(const char* tag) {
+static std::filesystem::path WriteSphereLevelSet(const char* tag,
+                                                 bool check_write_budget = false) {
   namespace fs = std::filesystem;
   using lightusd::tydra::import_asset::LevelSet;
   using lightusd::tydra::import_asset::LevelSetOptions;
@@ -8232,6 +8233,14 @@ static std::filesystem::path WriteSphereLevelSet(const char* tag) {
   LevelSet level_set;
   std::string err;
   assert(MeshToLevelSet(sphere, options, &level_set, &err));
+  if (check_write_budget) {
+    std::vector<uint8_t> limited{0x12, 0x34};
+    const std::vector<uint8_t> previous = limited;
+    std::string budget_error;
+    assert(!WriteLevelSetVDB(level_set, &limited, &budget_error, 1));
+    assert(budget_error.find("memory budget exceeded") != std::string::npos);
+    assert(limited == previous);
+  }
   std::vector<uint8_t> bytes;
   assert(WriteLevelSetVDB(level_set, &bytes, &err));
   assert(!bytes.empty());
@@ -8259,7 +8268,7 @@ static void TestLevelSetFieldMesh() {
   using lightusd::tydra::vol::FieldRequest;
   using lightusd::tydra::vol::ResolvedField;
 
-  const fs::path path = WriteSphereLevelSet("level_set_mesh");
+  const fs::path path = WriteSphereLevelSet("level_set_mesh", true);
   std::string err;
   FieldCache cache;
   FieldRequest request;

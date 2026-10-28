@@ -271,9 +271,10 @@ set (float 5/4/3 tree, class `level set`, negative inside):
   fixed minimum that can exceed the remaining allowance. If the cap is too small
   to build the field, LightUSD reports `mjcf.sdf_level_set_failed` and omits the
   optional sidecar. After generation, LightUSD also charges approximately 128
-  bytes per active voxel while the grid and serialized sidecar coexist. This
-  remains a workspace estimate rather than exact accounting of every temporary
-  used to generate and serialize the field.
+  bytes per active voxel while the grid and serialized sidecar coexist. VDB
+  compression uses a budgeted allocator, including the overlap while its output
+  is copied into the generated-asset buffer. This remains a workspace estimate
+  rather than exact accounting of every temporary used to generate the field.
 - **Collider:** `newton:sdfMaxResolution` and, in an unscaled frame,
   `newton:sdfNarrowBandInner/Outer`, so Newton's own (CUDA) SDF build matches
   the sidecar.
@@ -332,9 +333,10 @@ no VDB meshes):
   budget without minimum floors. Generated MJCF SDF sidecars likewise derive
   their candidate-voxel cap from the remaining budget, without the former
   100,000-voxel floor, and charge a retained-grid estimate before sidecar
-  serialization. Generated mesh flexcomps charge the same estimate before
-  deriving the remaining tetrahedralization budget. These estimates do not
-  account exactly for every downstream temporary.
+  serialization. Their VDB writer is also bounded by the post-grid remainder.
+  Generated mesh flexcomps charge the same estimate before deriving the
+  remaining tetrahedralization budget. These estimates do not account exactly
+  for every downstream temporary.
 
 **APIs.**
 - **C** (`lightusd-import-c.h`): `lightusd_mesh_to_level_set_vdb`,

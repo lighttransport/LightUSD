@@ -367,13 +367,14 @@ bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options, LevelSet* 
 
 namespace {
 // tinyvdb's malloc'd VDB bytes for one level set.
-uint8_t* WriteVDB(const LevelSet& level_set, size_t* size, std::string* err) {
+uint8_t* WriteVDB(const LevelSet& level_set, size_t* size, std::string* err,
+                  const tvdb_allocator_t* allocator = nullptr) {
   if (level_set.empty()) {
     if (err) *err = "VDB write: empty level set";
     return nullptr;
   }
   tvdb_file_t file;
-  tvdb_file_init_for_write(&file, nullptr);
+  tvdb_file_init_for_write(&file, allocator);
   file.grids = const_cast<tvdb_grid*>(level_set.grid());  // read only
   file.num_grids = 1;
   uint8_t* data = nullptr;
@@ -388,12 +389,35 @@ uint8_t* WriteVDB(const LevelSet& level_set, size_t* size, std::string* err) {
 }
 }  // namespace
 
-bool WriteLevelSetVDB(const LevelSet& level_set, std::vector<uint8_t>* bytes, std::string* err) {
+bool WriteLevelSetVDB(const LevelSet& level_set, std::vector<uint8_t>* bytes,
+                      std::string* err, size_t max_working_memory_bytes) {
+  if (!bytes) {
+    if (err) *err = "VDB write: no output buffer";
+    return false;
+  }
+  LevelSetBudget budget;
+  tvdb_allocator_t allocator = {LevelSetBudget::Allocate, LevelSetBudget::Reallocate,
+                                LevelSetBudget::Free, &budget};
+  const tvdb_allocator_t* allocator_ptr = nullptr;
+  if (max_working_memory_bytes) {
+    budget.limit = max_working_memory_bytes;
+    allocator_ptr = &allocator;
+  }
   size_t size = 0;
-  uint8_t* data = bytes ? WriteVDB(level_set, &size, err) : nullptr;
-  if (!data) return false;
+  uint8_t* data = WriteVDB(level_set, &size, err, allocator_ptr);
+  if (!data) {
+    if (budget.exhausted && err) *err = "VDB write: memory budget exceeded";
+    return false;
+  }
+  if (allocator_ptr && (budget.peak > max_working_memory_bytes ||
+                        size > max_working_memory_bytes - budget.peak)) {
+    allocator.free_fn(data, size, &budget);
+    if (err) *err = "VDB write: memory budget exceeded";
+    return false;
+  }
   bytes->assign(data, data + size);
-  std::free(data);
+  if (allocator_ptr) allocator.free_fn(data, size, &budget);
+  else std::free(data);
   return true;
 }
 
