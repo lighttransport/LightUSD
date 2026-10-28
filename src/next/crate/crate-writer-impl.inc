@@ -112,7 +112,8 @@ private:
     std::string_view stem() const { return {stem_data, stem_size}; }
     std::string_view name() const { return {name_data, name_size}; }
   };
-  static_assert(sizeof(PathRec) == 24, "PathRec must stay compact");
+  static_assert(sizeof(PathRec) == 2 * sizeof(const char*) + 2 * sizeof(uint32_t),
+                "PathRec must stay compact on 32-bit and 64-bit targets");
   std::vector<PathRec> paths_;
   std::vector<uint16_t> path_fingerprints_;  // low hash bits; high bits live in index slots
   // Open-addressed index, split into kPathShards independent tables by hash

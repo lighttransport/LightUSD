@@ -1399,6 +1399,11 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         target_link_libraries(test_lightusd_c PRIVATE lightusd_validation_c)
     endif()
     set_target_properties(test_lightusd_c PROPERTIES C_STANDARD 11)
+    if(SANITIZE_UNDEFINED AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # Keep C11 compilation, but supply the C++ UBSan runtime needed by
+        # the instrumented shared library. Normal builds test C-only linking.
+        set_target_properties(test_lightusd_c PROPERTIES LINKER_LANGUAGE CXX)
+    endif()
     if(NOT MSVC)
         target_compile_options(test_lightusd_c PRIVATE
             -Wall -Wextra -Werror -pedantic)

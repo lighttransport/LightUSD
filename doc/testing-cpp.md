@@ -941,6 +941,14 @@ python3 ../tests/tydra_to_renderscene/runner.py ../models
 
 ### Stable `next` library tests
 
+CI builds the default `next` product with the MCP server enabled and with
+ASan/UBSan. The C ABI test stays compiled as C11 and links through the C++
+driver so Clang supplies the C++ UBSan runtime used by the shared library.
+The legacy product with `LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=ON` and examples
+also needs a configure check: the unified `lusdcat` target must be created
+only once. Keep compact writer-layout assertions valid on both 32-bit and
+64-bit targets.
+
 `next` (`src/next/`, library `lightusd_next`) has a standalone regression suite.
 Run it explicitly when changing shared code or the next product:
 

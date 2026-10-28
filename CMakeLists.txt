@@ -2113,7 +2113,9 @@ if(LIGHTUSD_WITH_TCMALLOC)
 endif()
 
 if(LIGHTUSD_BUILD_EXAMPLES)
-  add_subdirectory(examples/lusdcat)
+  if(NOT TARGET lusdcat)
+    add_subdirectory(examples/lusdcat)
+  endif()
   if(LIGHTUSD_WITH_TEXTOOLS)
     # Authors .ktx2 texture companions + the legacy-safe customData hints.
     add_subdirectory(examples/usd-texcomp)

@@ -2,6 +2,7 @@
 #include "usdObj.hh"
 
 #include <algorithm>
+#include <limits>
 
 #include "core/composition-types.hh"
 #include "lightusd.hh"
@@ -173,8 +174,10 @@ bool ReadObjLayerFromMemory(const std::string& text, const std::string& source,
   std::string usda;
   if (!usda::ExportToUSDAString(stage, &usda, warn, err)) return false;
   USDLoadOptions load_options;
-  load_options.max_memory_limit_in_mb =
+  const size_t memory_mib =
       std::max(size_t(1), options.max_memory / (1024 * 1024));
+  load_options.max_memory_limit_in_mb = static_cast<int32_t>(std::min(
+      memory_mib, static_cast<size_t>((std::numeric_limits<int32_t>::max)())));
   return LoadLayerFromMemory(reinterpret_cast<const uint8_t*>(usda.data()),
                              usda.size(), source, layer, warn, err,
                              load_options);
