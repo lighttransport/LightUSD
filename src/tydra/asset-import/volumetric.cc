@@ -238,6 +238,59 @@ const char* GridClass(const tvdb_grid* g) {
   return "";
 }
 
+bool LevelSetMeshSizes(const Mesh& mesh, size_t* vertex_count,
+                       size_t* triangle_count, size_t* converted_bytes,
+                       std::string* err) {
+  if (mesh.positions.size() % 3) {
+    if (err) *err = "level set: mesh positions are not xyz triples";
+    return false;
+  }
+  const size_t nv = mesh.positions.size() / 3;
+  if (!nv) {
+    if (err) *err = "level set: mesh has no vertices";
+    return false;
+  }
+  size_t nf = 0;
+  if (mesh.counts.empty()) {
+    if (mesh.indices.size() % 3) {
+      if (err) *err = "level set: indices are not triangles";
+      return false;
+    }
+    nf = mesh.indices.size() / 3;
+  } else {
+    size_t at = 0;
+    for (int32_t count : mesh.counts) {
+      if (count < 3 || at > mesh.indices.size() ||
+          size_t(count) > mesh.indices.size() - at) {
+        if (err) *err = "level set: invalid polygon counts";
+        return false;
+      }
+      const size_t added = size_t(count) - 2;
+      if (added > SIZE_MAX - nf) {
+        if (err) *err = "level set: triangle count overflow";
+        return false;
+      }
+      nf += added;
+      at += size_t(count);
+    }
+  }
+  if (nv > SIZE_MAX / sizeof(tvdb_vec3f) ||
+      nf > SIZE_MAX / sizeof(tvdb_triangle)) {
+    if (err) *err = "level set: converted mesh size overflow";
+    return false;
+  }
+  const size_t vertex_bytes = nv * sizeof(tvdb_vec3f);
+  const size_t triangle_bytes = nf * sizeof(tvdb_triangle);
+  if (triangle_bytes > SIZE_MAX - vertex_bytes) {
+    if (err) *err = "level set: converted mesh size overflow";
+    return false;
+  }
+  if (vertex_count) *vertex_count = nv;
+  if (triangle_count) *triangle_count = nf;
+  if (converted_bytes) *converted_bytes = vertex_bytes + triangle_bytes;
+  return true;
+}
+
 }  // namespace
 
 bool VolumetricDeviceAvailable(const std::string& device, std::string* resolved,
@@ -254,15 +307,28 @@ bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options, LevelSet* 
     if (err) *err = "level set: voxel size must be positive";
     return false;
   }
-  const size_t nv = mesh.positions.size() / 3;
-  if (nv == 0 || mesh.positions.size() % 3) {
-    if (err) *err = "level set: mesh has no vertices";
+  size_t nv = 0, triangle_count = 0, converted_bytes = 0;
+  if (!LevelSetMeshSizes(mesh, &nv, &triangle_count, &converted_bytes, err))
     return false;
+  size_t max_voxels = options.max_voxels ? options.max_voxels : 8000000;
+  if (options.max_working_memory_bytes) {
+    if (converted_bytes >= options.max_working_memory_bytes) {
+      if (err) *err = "level set: mesh conversion exceeds working memory budget";
+      return false;
+    }
+    const size_t voxel_budget =
+        (options.max_working_memory_bytes - converted_bytes) / 128;
+    if (!voxel_budget) {
+      if (err) *err = "level set: mesh conversion leaves no voxel budget";
+      return false;
+    }
+    max_voxels = std::min(max_voxels, voxel_budget);
   }
   std::vector<tvdb_vec3f> vertices(nv);
   for (size_t i = 0; i < nv; ++i)
     vertices[i] = {mesh.positions[3 * i], mesh.positions[3 * i + 1], mesh.positions[3 * i + 2]};
   std::vector<tvdb_triangle> faces;
+  if (options.max_working_memory_bytes) faces.reserve(triangle_count);
   auto index = [&](size_t i, uint32_t* v) {
     const int32_t x = mesh.indices[i];
     if (x < 0 || size_t(x) >= nv) return false;
@@ -272,7 +338,8 @@ bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options, LevelSet* 
   if (!mesh.counts.empty()) {
     size_t at = 0;
     for (int32_t c : mesh.counts) {
-      if (c < 3 || at + size_t(c) > mesh.indices.size()) {
+      if (c < 3 || at > mesh.indices.size() ||
+          size_t(c) > mesh.indices.size() - at) {
         if (err) *err = "level set: invalid polygon counts";
         return false;
       }
@@ -287,10 +354,6 @@ bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options, LevelSet* 
       at += size_t(c);
     }
   } else {
-    if (mesh.indices.size() % 3) {
-      if (err) *err = "level set: indices are not triangles";
-      return false;
-    }
     for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
       uint32_t a = 0, b = 0, d = 0;
       if (!index(i, &a) || !index(i + 1, &b) || !index(i + 2, &d)) {
@@ -304,7 +367,6 @@ bool MeshToLevelSet(const Mesh& mesh, const LevelSetOptions& options, LevelSet* 
     if (err) *err = "level set: mesh has no faces";
     return false;
   }
-  const size_t max_voxels = options.max_voxels ? options.max_voxels : 8000000;
   if (options.exact_winding && double(faces.size()) * double(max_voxels) > kMaxExactWindingWork) {
     if (err)
       *err = "level set: exact winding work exceeds the limit (" + std::to_string(faces.size()) +

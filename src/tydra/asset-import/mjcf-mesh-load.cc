@@ -699,6 +699,7 @@ bool MjcfSdfLevelSet(const std::string& mesh_name, const Mesh& mesh, Json* out,
     *why = "the remaining memory budget cannot hold a level-set voxel";
     return false;
   }
+  ls.max_working_memory_bytes = budget;
   ls.max_voxels = std::min<size_t>(voxel_budget, 50000000);
   LevelSet level_set;
   std::vector<uint8_t> bytes;

@@ -282,10 +282,23 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
     ls.threads = opts.threads;
     ls.device = VolumetricDevice();
     const size_t budget = opts.max_memory - std::min(opts.max_memory, active_reader->bytes);
-    if (budget < 128) {
+    if (surface.positions.size() > SIZE_MAX / sizeof(float) ||
+        surface.indices.size() > SIZE_MAX / sizeof(int32_t)) {
+      if (err) *err = "flexcomp level-set mesh size overflow";
+      return false;
+    }
+    const size_t surface_position_bytes = surface.positions.size() * sizeof(float);
+    const size_t surface_index_bytes = surface.indices.size() * sizeof(int32_t);
+    if (surface_index_bytes > SIZE_MAX - surface_position_bytes) {
+      if (err) *err = "flexcomp level-set mesh size overflow";
+      return false;
+    }
+    const size_t surface_bytes = surface_position_bytes + surface_index_bytes;
+    if (surface_bytes >= budget || budget - surface_bytes < 128) {
       if (err) *err = "flexcomp level set exceeds memory budget";
       return false;
     }
+    ls.max_working_memory_bytes = budget - surface_bytes;
     ls.max_voxels = std::min<size_t>(budget / 128, 50000000);
     LevelSet level_set;
     StuffingOptions so;
@@ -300,6 +313,10 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
       if (err) *err = "flexcomp tetrahedralization failed: " + (why.empty() ? std::string("no extent") : why);
       return false;
     }
+    // The surface copies were part of the level-set candidate budget and are
+    // no longer needed once the sparse field has been built.
+    std::vector<float>().swap(surface.positions);
+    std::vector<int32_t>().swap(surface.indices);
     // MeshToLevelSet uses tinyvdb's default allocator. Charge a conservative
     // estimate for its retained grid before deriving the remaining tet budget.
     if (!active_reader->ChargeArray(level_set.active_voxels(), 128, &why)) {
