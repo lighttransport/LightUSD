@@ -74,6 +74,7 @@ struct CrateWriteOptions {
   /// columns never all sit in memory at once. Bytes move, values don't: the
   /// output is byte-identical to an in-memory write.
   /// 0 = never spill (default; the columns stay plain in-memory vectors).
+  /// Windows keeps these columns in memory regardless of this budget.
   uint64_t spill_columns_bytes = 0;
 
   /// Directory receiving the (unlinked) spill file when

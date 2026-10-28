@@ -2435,3 +2435,8 @@ skin weights, geometry-property parity with a native USDA import, binary/package
 roundtrips and physics JSON authoring. Pass its module path and a native USDA
 fixture exported from the inline OBJ source in the script. This avoids replacing
 another worker's WASM artifacts.
+
+The `next_test_spill_array` test checks append/resolve equivalence with spilling
+enabled and disabled. On Windows, requesting spill uses an in-memory fallback;
+the test verifies that no bytes spill and no I/O failure is reported. The
+structural-column spill budget and directory have no effect on Windows.

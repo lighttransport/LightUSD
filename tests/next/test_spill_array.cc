@@ -117,10 +117,18 @@ void Exercise(bool spill_on, const char* what_prefix) {
       std::printf("FAIL %s: spill error: %s\n", what_prefix, err.c_str());
       std::exit(1);
     }
+#if defined(_WIN32)
+    if (u32.spilled_bytes() != 0 || rec.spilled_bytes() != 0 ||
+        u32.io_failed() || rec.io_failed()) {
+      std::printf("FAIL %s: Windows fallback must remain in memory\n", what_prefix);
+      std::exit(1);
+    }
+#else
     if (spill_on && round > 0 && u32.spilled_bytes() == 0) {
       std::printf("FAIL %s: expected the u32 column to spill\n", what_prefix);
       std::exit(1);
     }
+#endif
     CheckResolve(u32, u32_ref, what_prefix);
     CheckResolve(rec, rec_ref, what_prefix);
   }

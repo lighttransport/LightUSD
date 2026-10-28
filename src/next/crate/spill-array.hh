@@ -32,6 +32,7 @@
 #include <atomic>
 #include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -43,8 +44,8 @@
 #if !defined(_WIN32)
 #include <fcntl.h>
 #include <unistd.h>
-#include "../memory-trim.hh"  // AdviseHugePages
 #endif
+#include "../memory-trim.hh"  // AdviseHugePages (portable no-op off Linux)
 
 namespace lightusd {
 namespace next {
@@ -65,7 +66,16 @@ class SpillColumnBase {
   virtual ~SpillColumnBase() = default;
 
   // Enables 8 MiB chunking + front eviction. Off keeps one plain vector.
-  void set_spill_enabled(bool on) { spill_enabled_ = on; }
+  void set_spill_enabled(bool on) {
+#if defined(_WIN32)
+    // The unlinked POSIX spill-file backend is unavailable on Windows.
+    // Keep one plain vector even when the caller requests a spill budget.
+    (void)on;
+    spill_enabled_ = false;
+#else
+    spill_enabled_ = on;
+#endif
+  }
   // Directory for the (unlinked) spill file; empty means "/tmp".
   void set_spill_directory(std::string dir) { spill_dir_ = std::move(dir); }
 
@@ -181,7 +191,9 @@ class SpillVec final : public SpillColumnBase {
   void Release() noexcept {
     chunks_.clear();
     if (spill_fd_ >= 0) {
+#if !defined(_WIN32)
       ::close(spill_fd_);
+#endif
       spill_fd_ = -1;
     }
     spill_bytes_ = 0;
@@ -197,6 +209,11 @@ class SpillVec final : public SpillColumnBase {
   // (everything stays in memory; no data is lost), raises io_failed() and
   // sets *error.
   uint64_t SpillSealed(uint64_t want_free, std::string* error) override {
+#if defined(_WIN32)
+    (void)want_free;
+    (void)error;
+    return 0;
+#else
     if (!spill_enabled_ || degraded_to_memory_) return 0;
     uint64_t freed = 0;
     while (chunks_.size() > 1 && freed < want_free) {
@@ -217,6 +234,7 @@ class SpillVec final : public SpillColumnBase {
       chunks_.pop_front();
     }
     return freed;
+#endif
   }
 
   // Whole-array contiguous access for the section builders. When nothing is
@@ -241,11 +259,13 @@ class SpillVec final : public SpillColumnBase {
     }
     std::unique_ptr<T[]> buf(new T[size_ ? size_ : 1]);
     T* d = buf.get();
+#if !defined(_WIN32)
     if (spilled_elems_) {
       const size_t bytes = spilled_elems_ * sizeof(T);
       if (!ReadAll(d, bytes, error)) return false;
       d += spilled_elems_;
     }
+#endif
     for (const std::vector<T>& c : chunks_) {
       if (c.empty()) continue;
       std::memcpy(d, c.data(), c.size() * sizeof(T));
@@ -271,6 +291,7 @@ class SpillVec final : public SpillColumnBase {
     chunks_.back().reserve(kChunkElems);
   }
 
+#if !defined(_WIN32)
   bool OpenSpillFile(std::string* error) const {
     const std::string& dir = spill_dir_.empty() ? std::string("/tmp") : spill_dir_;
     const std::string tmpl = dir + "/lusd-spill-XXXXXX";
@@ -340,6 +361,8 @@ class SpillVec final : public SpillColumnBase {
     }
     return true;
   }
+
+#endif  // !defined(_WIN32)
 
   // Resident storage. Without spill this holds exactly one vector whose
   // behavior (incl. capacity growth) matches the std::vector it replaced.
