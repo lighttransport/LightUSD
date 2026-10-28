@@ -24,15 +24,21 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#ifdef __cplusplus
+#include <cstddef>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Maximally aligned scalar. MSVC's C headers do not declare max_align_t even
- * in C11 mode; its C++ max_align_t is double, which this union matches in size
- * and alignment, so C and C++ translation units agree on lu_value's layout. */
-#if defined(_MSC_VER) && !defined(__cplusplus)
+/* Maximally aligned scalar. MSVC declares max_align_t only as std::max_align_t
+ * in C++ and not at all in C (even in C11 mode). Its C++ max_align_t is double,
+ * which the C union matches in size and alignment, so C and C++ translation
+ * units agree on lu_value's layout. */
+#if defined(__cplusplus)
+typedef std::max_align_t lu_max_align_t;
+#elif defined(_MSC_VER)
 typedef union lu_max_align_t {
     long long ll;
     long double ld;

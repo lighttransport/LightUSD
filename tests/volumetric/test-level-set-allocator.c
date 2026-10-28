@@ -7,7 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); exit(1); } } while (0)
-typedef union { size_t bytes; max_align_t alignment; } Header;
+/* Spelled out: MSVC's C headers do not declare max_align_t. */
+typedef union { size_t bytes; long long ll; long double ld; void *p; } Header;
 typedef struct { size_t used, peak, limit, calls, fail_at; } Budget;
 static void *allocate(size_t n, void *ctx) {
   Budget *b = ctx;
