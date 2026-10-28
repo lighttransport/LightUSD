@@ -885,6 +885,24 @@ private:
     if (end > begin) block.src->DiscardRange(begin, end - begin);
   }
 
+  // Batched write (see StreamWriteBatch): prims of the current batch an
+  // earlier batch already wrote; full primChildren tokens of the batch's prims
+  // whose children span batches; the prim paths the path table views, kept
+  // after their batch is freed; pass-1 counts for the table reserves.
+  const std::vector<uint8_t>* skip_prims_ = nullptr;
+  std::unordered_map<uint32_t, std::vector<uint32_t>> stream_child_tokens_;
+  std::deque<Path> stream_paths_;
+  bool stream_meta_done_ = false;
+  bool stream_root_done_ = false;
+  size_t stream_nprim_ = 0;
+  size_t stream_nprop_ = 0;
+  // Build the structural payloads one at a time, freeing their tables.
+  bool serial_sections_ = false;
+  // Release each prim to its skeleton once encoded (options_.consume_prims).
+  bool consume_prims_ = false;
+  // The parallel build releases them on reaper threads instead.
+  bool reap_prims_ = false;
+
 #if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
   // Deferred-fill layer (see PrimFiller): prims are composed right before
   // they are encoded and released after; null when the layer is complete

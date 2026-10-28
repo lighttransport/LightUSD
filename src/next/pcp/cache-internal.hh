@@ -25,6 +25,7 @@
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
+#include "../memory-trim.hh"
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include <atomic>
 #include <condition_variable>
@@ -557,6 +558,52 @@ struct ExpansionFrame {
   }
 };
 
+// Namespace scope of one batch of a batched (low-memory) build. Only the
+// subtrees under `roots` are composed, plus their ancestors (`spine`); a spine
+// prim's other children are left out, and its full child-name list is
+// recorded so the writer can still emit the prim's primChildren. Instancing
+// carries across batches: `seeded_protos` (instance key -> prototype path,
+// from earlier batches) makes every later member an instance, and a
+// prototype in `holders_with_peers` is a Holder even when its peers are all in
+// other batches.
+struct BatchScope {
+  std::unordered_set<std::string> spine;  // proper ancestors of the roots
+  std::unordered_set<std::string> roots;
+  std::vector<std::pair<std::string, std::string>> seeded_protos;
+  std::unordered_set<std::string> seeded_keys;
+  std::unordered_set<std::string> seeded_proto_paths;
+  const std::unordered_set<std::string> *holders_with_peers = nullptr;
+  // Output: spine prim path -> its full child names (walk threads add here).
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  std::mutex full_children_mu;
+#endif
+  std::unordered_map<std::string, std::vector<std::string>> full_children;
+
+  bool Masks(const std::string &parent) const { return spine.count(parent) != 0; }
+  // Keeps the children that are spine prims or batch roots; records the full
+  // list first. `parent` is a spine prim (Masks(parent)).
+  void Filter(const std::string &parent, std::vector<std::string> *children) {
+    {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+      std::lock_guard<std::mutex> lk(full_children_mu);
+#endif
+      full_children.emplace(parent, *children);
+    }
+    std::string child;
+    size_t kept = 0;
+    for (size_t i = 0; i < children->size(); ++i) {
+      child.assign(parent == "/" ? std::string() : parent);
+      child += '/';
+      child += (*children)[i];
+      if (spine.count(child) || roots.count(child)) {
+        if (kept != i) (*children)[kept] = std::move((*children)[i]);
+        ++kept;
+      }
+    }
+    children->resize(kept);
+  }
+};
+
 }  // namespace cache_detail
 using namespace cache_detail;
 
@@ -568,6 +615,11 @@ struct Cache::Impl {
   AssetResolver *resolver = nullptr;
   CompositionOptions options;
   LayerRegistry registry;          // owned by this Impl
+  // Set for one batch of a batched build (see BatchScope); null otherwise.
+  BatchScope *batch_scope_ = nullptr;
+  // BuildStage with release_layers_during_fill: returns freed pages to the OS
+  // off the critical path (see MemoryTrimmer); null otherwise.
+  MemoryTrimmer *trimmer_ = nullptr;
   LayerRegistry *reg_ = &registry;  // borrowed pointer: worker Impls point this
                                     // at the *main* Impl's registry (parse-once
                                     // shared across the parallel build).
@@ -672,7 +724,10 @@ struct Cache::Impl {
   // path: they share refcounted PathStr nodes instead (full-LOD benchmark scene:
   // 1.06M instances, ~7K prototypes). prototype_of is keyed by a view into
   // its entry's own path node, so lookups by std::string need no allocation.
-  std::map<std::string, PathStr> prototype_by_key;
+  // Hashed: the in-order structure commit looks every instance key up here
+  // (long keys; ordered-map compares were a serial cost). Iteration order is
+  // never relied on.
+  std::unordered_map<std::string, PathStr> prototype_by_key;
   // Instance keys in DISCOVERY order (first registration during the stage
   // walk): pxr numbers flattened prototypes by this order, not by path.
   std::vector<std::string> instance_key_order;

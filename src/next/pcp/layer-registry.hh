@@ -148,6 +148,18 @@ class LayerRegistry {
     return parse_count_;
   }
 
+  /// Every cached layer (a snapshot of the shared pointers).
+  std::vector<std::shared_ptr<Layer>> layers() const {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    std::lock_guard<std::mutex> lk(*mu_);
+#endif
+    std::vector<std::shared_ptr<Layer>> out;
+    out.reserve(by_resolved_.size());
+    for (const auto &entry : by_resolved_)
+      if (entry.second) out.push_back(entry.second);
+    return out;
+  }
+
   size_t memory_usage() const {
 #if defined(LIGHTUSD_ENABLE_THREAD)
     std::lock_guard<std::mutex> lk(*mu_);

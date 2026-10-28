@@ -172,6 +172,9 @@
     if (cap <= sh.slots.size()) return;
     std::vector<uint64_t> old;
     old.swap(sh.slots);
+    sh.slots.reserve(cap);
+    // A big shard is probed at random: huge pages before the zero fill.
+    if (cap >= (size_t(1) << 18)) AdviseHugePages(sh.slots.data(), cap * sizeof(uint64_t));
     sh.slots.assign(cap, 0);
     for (const uint64_t slot : old) {
       if (slot == 0) continue;
@@ -186,8 +189,13 @@
     path_fingerprints_.reserve(n);
     // Hash bits split records evenly; 1/8 slack covers the spread.
     const size_t per = n / kPathShards;
-    for (PathShard& sh : path_shards_)
-      ReservePathShard(sh, per + per / 8 + 64);
+    // The shards are independent zero-filled tables (~1 GB on a 60 M-path
+    // write): touch large ones in parallel.
+    ParallelRanges(kPathShards, per >= (size_t(1) << 18) ? 1 : kPathShards + 1,
+                   [&](size_t, size_t lo, size_t hi) {
+                     for (size_t k = lo; k < hi; ++k)
+                       ReservePathShard(path_shards_[k], per + per / 8 + 64);
+                   });
   }
   // Insert record `idx` (hash h) into its shard, growing it when full;
   // `slot` is a FindPathKey empty-slot hint in that shard (or kNoPathSlot).
@@ -314,7 +322,9 @@
     return a.size() == b.size() || b[a.size()] == '/';
   }
 
-  void SynthesizeAncestorPaths() {
+  // With `dry_run`, only report whether any ancestor path is missing (the
+  // read-only pre-pass; nothing is added).
+  bool SynthesizeAncestorPaths(bool dry_run = false) {
     auto add = [&](std::string_view v) -> bool {
       const PathRec key = SplitPath(v);
       const uint64_t h = HashPathKey(HashStem(key.stem()), key.name());
@@ -348,6 +358,9 @@
     ParallelRanges(orig, 100000, [&](size_t, size_t lo, size_t hi) {
       std::string_view last_stem;
       bool have_last = false, last_add = false;
+      // The stem's own presence, probed once per run of records sharing it
+      // (a prim's property records arrive together): 0 = not probed yet.
+      int last_stem_missing = 0;
       for (size_t i = lo; i < hi; ++i) {
         const PathRec& rec = paths_[i];
         if (!(have_last && rec.stem() == last_stem)) {
@@ -361,15 +374,24 @@
           }
           last_stem = stem;
           last_add = add_any;
+          last_stem_missing = 0;
           have_last = true;
         }
         bool add = last_add;
         if (!add && !rec.name().empty() && !rec.stem().empty() &&
-            rec.stem() != "/" && FindPath(rec.stem()) == UINT32_MAX)
-          add = true;
+            rec.stem() != "/") {
+          if (last_stem_missing == 0)
+            last_stem_missing = FindPath(rec.stem()) == UINT32_MAX ? 1 : -1;
+          add = last_stem_missing > 0;
+        }
         may_add[i] = add ? 1 : 0;
       }
     });
+    if (dry_run) {
+      for (uint8_t m : may_add)
+        if (m) return true;
+      return false;
+    }
     for (size_t i = 0; i < orig; i++) {
       if (!may_add[i]) continue;
       const PathRec rec = paths_[i];
@@ -397,6 +419,7 @@
       walked_floor = floor;
       have_walked = true;
     }
+    return true;
   }
 
   // Register every path-element token before the TOKENS section is written
@@ -409,7 +432,8 @@
   //    the previous record's stem were interned when that stem was split;
   //  - property names are views into the PropNameTable, so a repeated
   //    (pointer, length) is a name already split once.
-  void RegisterPathElementTokens() {
+  // With `dry_run`, only report whether any path element token is missing.
+  bool RegisterPathElementTokens(bool dry_run = false) {
     auto intern_components = [&](std::string_view s, size_t start) {
       while (start < s.size()) {
         size_t end = s.size();
@@ -532,6 +556,11 @@
         may_add[i] = add ? 1 : 0;
       }
     });
+    if (dry_run) {
+      for (uint8_t m : may_add)
+        if (m) return true;
+      return false;
+    }
 
     std::string_view prev_stem;
     bool have_prev = false;
@@ -572,6 +601,7 @@
       if (!rec.name().empty() && seen_insert(rec.name()))
         intern_components(rec.name(), 0);
     }
+    return true;
   }
 
   // First-use-order prim/type/property-name interning, built in parallel.
@@ -777,6 +807,23 @@
   static constexpr size_t kPrimTablesParallelMinPrims = 65536;
 
   void BuildTables(const Layer& layer) {
+    InternFixedTokens(layer);
+
+    // Prim names, type names, property names. Record the prim-name and
+    // property-name tokens: BuildOnePrim re-emits them in `primChildren` and
+    // `properties`, and a property name shared by millions of prims is hashed
+    // once here instead of once per slot.
+    prim_name_tokens_.reserve(layer.prims().size());
+    PropNameTable& name_table = GetPropNameTable();
+    // Large layers build the same tables from a parallel first-use scan.
+    if (BuildPrimTablesParallel(layer, name_table)) return;
+    for (const auto& prim : layer.prims()) {
+      prim_name_tokens_.push_back(InternPrimTables(prim, name_table));
+    }
+  }
+
+  // The tokens every write interns first, then the layer metadata's.
+  void InternFixedTokens(const Layer& layer) {
     // Token 0: magic marker expected by pxrUSD's crate reader
     InternToken(";-)");  // software identifier (pxrUSD convention)
     // Token 1: empty string, reserved for root path marker in PATHS
@@ -841,78 +888,73 @@
     if (layer.meta().doc_set || !layer.meta().doc.empty()) {
       InternString(layer.meta().doc);
     }
+  }
 
-    // Prim names, type names, property names. Record the prim-name and
-    // property-name tokens: BuildOnePrim re-emits them in `primChildren` and
-    // `properties`, and a property name shared by millions of prims is hashed
-    // once here instead of once per slot.
-    prim_name_tokens_.reserve(layer.prims().size());
-    PropNameTable& name_table = GetPropNameTable();
-    // Large layers build the same tables from a parallel first-use scan.
-    if (BuildPrimTablesParallel(layer, name_table)) return;
-    for (const auto& prim : layer.prims()) {
-      prim_name_tokens_.push_back(InternToken(prim.name()));
+  // One prim's names, type name, property names and metadata tokens/strings,
+  // in BuildTables order. Returns the prim name's token.
+  uint32_t InternPrimTables(const PrimSpec& prim, PropNameTable& name_table) {
+    const uint32_t name_token = InternToken(prim.name());
 #if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
-      // Deferred fill: only the skeleton exists yet; the rest is interned
-      // when each prim is encoded (table order differs, content does not).
-      if (deferred_filler_) continue;
+    // Deferred fill: only the skeleton exists yet; the rest is interned
+    // when each prim is encoded (table order differs, content does not).
+    if (deferred_filler_) return name_token;
 #endif
-      InternToken(prim.type_name());
+    InternToken(prim.type_name());
 
-      for (const auto& slot : prim.properties().slots()) {
-        const uint32_t id = slot.name_id.id;
-        if (id == UINT32_MAX) continue;
-        if (id >= prop_name_tokens_.size()) {
-          prop_name_tokens_.resize(
-              std::max<size_t>(id + 1, prop_name_tokens_.size() * 2),
-              UINT32_MAX);
-        }
-        uint32_t& tok = prop_name_tokens_[id];
-        if (tok == UINT32_MAX) tok = InternToken(name_table.get(slot.name_id));
+    for (const auto& slot : prim.properties().slots()) {
+      const uint32_t id = slot.name_id.id;
+      if (id == UINT32_MAX) continue;
+      if (id >= prop_name_tokens_.size()) {
+        prop_name_tokens_.resize(
+            std::max<size_t>(id + 1, prop_name_tokens_.size() * 2),
+            UINT32_MAX);
       }
+      uint32_t& tok = prop_name_tokens_[id];
+      if (tok == UINT32_MAX) tok = InternToken(name_table.get(slot.name_id));
+    }
 
-      // Metadata strings
-      if (prim.meta().doc_authored() || !prim.meta().doc().empty()) {
-        InternString(prim.meta().doc());
-      }
-      for (const auto& schema : prim.meta().apiSchemas()) {
-        InternToken(schema);
-      }
-      {
-        const StringListOps& edits = prim.meta().apiSchemaEdits();
-        const std::vector<std::string>* lists[] = {
-            &edits.explicit_items, &edits.added, &edits.prepended,
-            &edits.appended, &edits.deleted, &edits.ordered};
-        for (const std::vector<std::string>* list : lists) {
-          for (const std::string& item : *list) InternToken(item);
-        }
-      }
-      {
-        const StringListOps& edits = prim.meta().clipSetEdits();
-        const std::vector<std::string>* lists[] = {
-            &edits.explicit_items, &edits.added, &edits.prepended,
-            &edits.appended, &edits.deleted, &edits.ordered};
-        for (const std::vector<std::string>* list : lists) {
-          for (const std::string& item : *list) InternToken(item);
-        }
-      }
-      for (const auto& variant_set : prim.meta().variantSets()) {
-        InternString(variant_set.name);
-      }
-      {
-        const StringListOps& edits = prim.meta().variantSetNameEdits();
-        const std::vector<std::string>* lists[] = {
-            &edits.explicit_items, &edits.added, &edits.prepended,
-            &edits.appended, &edits.deleted, &edits.ordered};
-        for (const std::vector<std::string>* list : lists) {
-          for (const std::string& item : *list) InternString(item);
-        }
-      }
-      for (const auto& ref : prim.meta().references) {
-        InternString(ref);
-      }
-      for (const auto& inher : prim.meta().inherits) {
-        InternString(inher);
+    // Metadata strings
+    if (prim.meta().doc_authored() || !prim.meta().doc().empty()) {
+      InternString(prim.meta().doc());
+    }
+    for (const auto& schema : prim.meta().apiSchemas()) {
+      InternToken(schema);
+    }
+    {
+      const StringListOps& edits = prim.meta().apiSchemaEdits();
+      const std::vector<std::string>* lists[] = {
+          &edits.explicit_items, &edits.added, &edits.prepended,
+          &edits.appended, &edits.deleted, &edits.ordered};
+      for (const std::vector<std::string>* list : lists) {
+        for (const std::string& item : *list) InternToken(item);
       }
     }
+    {
+      const StringListOps& edits = prim.meta().clipSetEdits();
+      const std::vector<std::string>* lists[] = {
+          &edits.explicit_items, &edits.added, &edits.prepended,
+          &edits.appended, &edits.deleted, &edits.ordered};
+      for (const std::vector<std::string>* list : lists) {
+        for (const std::string& item : *list) InternToken(item);
+      }
+    }
+    for (const auto& variant_set : prim.meta().variantSets()) {
+      InternString(variant_set.name);
+    }
+    {
+      const StringListOps& edits = prim.meta().variantSetNameEdits();
+      const std::vector<std::string>* lists[] = {
+          &edits.explicit_items, &edits.added, &edits.prepended,
+          &edits.appended, &edits.deleted, &edits.ordered};
+      for (const std::vector<std::string>* list : lists) {
+        for (const std::string& item : *list) InternString(item);
+      }
+    }
+    for (const auto& ref : prim.meta().references) {
+      InternString(ref);
+    }
+    for (const auto& inher : prim.meta().inherits) {
+      InternString(inher);
+    }
+    return name_token;
   }

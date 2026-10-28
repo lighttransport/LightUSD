@@ -4,6 +4,7 @@
 // LightUSD Next - Layer Implementation
 
 #include "layer.hh"
+#include "../memory-trim.hh"
 #include "../prim/identifier.hh"
 #include "../../safe-arithmetic.hh"
 #include <algorithm>
@@ -157,7 +158,16 @@ void Layer::reserve(size_t count) {
 }
 
 void Layer::resize_prims(size_t count) {
-  if (count > prims_.size()) prims_.resize(count);
+  if (count <= prims_.size()) return;
+  // A composed stage's prim array is GBs: default-constructing it serially
+  // also takes every first-touch page fault on one thread. Populate the
+  // reserved pages from several threads first (no object is touched).
+  if (count >= (size_t(1) << 20) && count > prims_.capacity()) {
+    prims_.reserve(count);
+    PopulatePagesParallel(prims_.data() + prims_.size(),
+                          (count - prims_.size()) * sizeof(PrimSpec));
+  }
+  prims_.resize(count);
 }
 
 uint32_t Layer::add_prim(PrimSpec&& spec) {
@@ -370,12 +380,15 @@ void Layer::apply_namespace_ordering() {
   };
   apply(&root_indices_, meta_.rootPrimOrder, prims_);
   for (PrimSpec& prim : prims_) {
-    std::vector<uint32_t> children = prim.child_indices();
     // Namespace ordering is a read-only finalization pass.  Bind metadata as
     // const so overload resolution cannot select the mutable cold-field
     // accessor, which materializes a PrimMetadataCold for otherwise ordinary
     // prims.
     const PrimMetadata& meta = prim.meta();
+    // No authored order: the children stay as linked (apply would return
+    // them unchanged; skip rebuilding the list).
+    if (meta.primOrder().empty() || prim.child_indices().empty()) continue;
+    std::vector<uint32_t> children = prim.child_indices();
     apply(&children, meta.primOrder(), prims_);
     prim.clear_child_indices();
     for (uint32_t child : children) prim.add_child_index(child);
@@ -544,6 +557,12 @@ bool Layer::rename_prim_at_path(const std::string& path,
   }
   prim(index)->set_name(new_name);
   return true;
+}
+
+void Layer::release_prims() {
+  std::vector<PrimSpec>().swap(prims_);
+  std::vector<uint32_t>().swap(root_indices_);
+  std::unordered_map<std::string, uint32_t>().swap(path_to_index_);
 }
 
 void Layer::finalize() {

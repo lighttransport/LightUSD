@@ -33,6 +33,8 @@
   mutable uint64_t prof_source_misses_ = 0;
   mutable uint64_t prof_structure_nodes_ = 0;
 
+  // Names of the pseudo-root's children, in composed order.
+  std::vector<std::string> ComposeRootNames() const;
   void BuildStage(Layer *out, const BuildStageWork &root_work,
                   std::string *warn, std::string *err) ;
 

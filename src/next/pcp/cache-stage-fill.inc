@@ -31,6 +31,15 @@
   // cheap shared backing.
   Layer BuildPreviewLayer(const Layer &structure) ;
 
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  // release_layers_during_fill: source layers to free after each fill batch.
+  struct LayerReleasePlan {
+    std::vector<std::vector<Layer *>> by_batch;
+    size_t layers = 0;
+    double ms = 0;
+  };
+  LayerReleasePlan PlanLayerRelease(size_t opinion_batch, int nt);
+#endif
   // OPINION-FILL PASS: compose each slot's opinions from its (already cached)
   // sources. Slots are disjoint PrimSpec objects, sources_cache is only read, and
   // add_prim is done -- so distinct slots fill concurrently. Byte-identical to

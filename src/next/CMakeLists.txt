@@ -127,6 +127,7 @@ set(LIGHTUSD_NEXT_SOURCES
     pcp/cache-layers.cc
     pcp/cache-opinions.cc
     pcp/cache-storage.cc
+    pcp/batched-compose.cc
 
     # AOUSD Core validation
 

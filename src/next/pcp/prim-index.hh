@@ -249,6 +249,20 @@ struct CompositionOptions {
   // the CLI sets this from its own flag/env.
   bool enable_timing = false;
 
+  // ComposeStageFromLayer/File: free the composition cache (source layers,
+  // sources, instancing maps) on a background thread instead of before
+  // returning, so the caller's next step (e.g. the write) overlaps it. Call
+  // pcp::WaitForBackgroundReclaim() before tearing down the process. Threaded
+  // builds only; otherwise the reclaim stays synchronous.
+  bool background_reclaim = false;
+
+  // With release_build_sources (ComposeStageFromLayer/File): free each source
+  // layer's prims during the opinion fill once the fill is past the last prim
+  // whose sources read it, instead of keeping every layer until the cache
+  // dies. Lowers the composition peak; the layers are unusable afterwards
+  // (root layer stack excluded). Threaded builds only.
+  bool release_layers_during_fill = false;
+
   /// Per-payload load policy. Invoked with (prim path that authors the payload,
   /// payload asset path); return true to load, false to defer. When null, the
   /// `load_payloads` flag is used. (Per-prim Load/UnloadPayload overrides this.)

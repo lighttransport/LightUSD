@@ -743,6 +743,13 @@ bool PrimSpec::has_relationship_data() const {
                         !cold_data_->rel_opinion_stacks.empty());
 }
 
+size_t PrimSpec::extra_property_spec_bound() const {
+  size_t n = time_samples_ ? time_samples_->property_count() : 0;
+  if (has_relationship_data())
+    n += cold().relationships.size() + relationship_edits().size();
+  return n;
+}
+
 std::vector<std::string> PrimSpec::relationship_names() const {
   std::vector<std::string> names;
   names.reserve(cold().relationships.size() + relationship_edits().size());
@@ -1662,6 +1669,7 @@ void PrimSpec::set_specifier(PrimSpecifier spec) { specifier_ = spec; }
 const Path& PrimSpec::path() const { return path_; }
 void PrimSpec::set_path(const Path& path) { path_ = path; }
 void PrimSpec::set_path(Path&& path) { path_ = std::move(path); }
+Path PrimSpec::take_path() { return std::move(path_); }
 uint32_t PrimSpec::asset_anchor_id() const { return asset_anchor_id_; }
 void PrimSpec::set_asset_anchor_id(uint32_t id) { asset_anchor_id_ = id; }
 PropSlot* PrimSpec::property_mutable(PropNameId name_id) {

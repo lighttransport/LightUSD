@@ -157,7 +157,11 @@
   // PATHS section payload. Reads only the finished path and token tables, so
   // it is built concurrently with the other structural payloads. Returns
   // false when a path element token is missing from TOKENS (already built).
-  bool BuildPathsSectionPayload(std::vector<uint8_t>* payload) {
+  // `missing_parent` (optional): set when an absolute path's parent is not in
+  // the table -- exactly when SynthesizeAncestorPaths would add a path (every
+  // ancestor present means every record's parent lookup hits).
+  bool BuildPathsSectionPayload(std::vector<uint8_t>* payload,
+                                bool* missing_parent = nullptr) {
     StreamWriter out(*payload);
     // The compressed path tree is the pre-order of all paths sorted by their
     // full text under PathCharRank (`/` < `.` < name characters). That order
@@ -195,6 +199,7 @@
     // concurrently (each with its own last-stem cache; the cache only skips a
     // repeated lookup of the same stem, so the results are identical).
     std::vector<size_t> slice_paths(static_cast<size_t>(ResolveThreads()) + 1, 0);
+    std::atomic<bool> parent_miss{false};
     ParallelRanges(N, 100000, [&](size_t t, size_t lo, size_t hi) {
       size_t count = 0;
       std::string_view cached_prop_stem;
@@ -212,6 +217,8 @@
               cached_prop_stem = r.stem();
             }
             parent[i] = cached_prop_parent;
+            if (cached_prop_parent == kNoNode && r.stem() != "/")
+              parent_miss.store(true, std::memory_order_relaxed);
           }
           continue;
         }
@@ -224,9 +231,12 @@
         elem_off[i] = static_cast<uint32_t>(sl + 1);
         parent[i] =
             FindPath(sl == 0 ? std::string_view("/") : r.stem().substr(0, sl));
+        if (parent[i] == kNoNode && sl != 0)
+          parent_miss.store(true, std::memory_order_relaxed);
       }
       slice_paths[t] = count;
     });
+    if (missing_parent) *missing_parent = parent_miss.load();
     size_t num_paths = 0;
     for (size_t c : slice_paths) num_paths += c;
 
@@ -254,22 +264,32 @@
     std::vector<uint32_t> order;
     std::vector<uint32_t> subtree(N, 1);
     {
+      // Children lists (CSR). Counting and scattering run in parallel; the
+      // order inside a list is irrelevant because every list is sorted below
+      // by a total order (siblings have distinct elements).
       std::vector<uint32_t> child_off(N + 2, 0);
-      for (size_t i = 0; i < N; ++i) {
-        if (!(flags[i] & kEncoded)) continue;
-        ++child_off[(parent[i] == kNoNode ? 0 : size_t(parent[i]) + 1) + 1];
-      }
+      ParallelRanges(N, 1000000, [&](size_t, size_t lo, size_t hi) {
+        for (size_t i = lo; i < hi; ++i) {
+          if (!(flags[i] & kEncoded)) continue;
+          __atomic_fetch_add(
+              &child_off[(parent[i] == kNoNode ? 0 : size_t(parent[i]) + 1) + 1],
+              1u, __ATOMIC_RELAXED);
+        }
+      });
       for (size_t k = 0; k + 1 < child_off.size(); ++k) {
         child_off[k + 1] += child_off[k];
       }
       std::vector<uint32_t> children(num_paths);
       {
         std::vector<uint32_t> cursor(child_off.begin(), child_off.end() - 1);
-        for (size_t i = 0; i < N; ++i) {
-          if (!(flags[i] & kEncoded)) continue;
-          const size_t list = parent[i] == kNoNode ? 0 : size_t(parent[i]) + 1;
-          children[cursor[list]++] = static_cast<uint32_t>(i);
-        }
+        ParallelRanges(N, 1000000, [&](size_t, size_t lo, size_t hi) {
+          for (size_t i = lo; i < hi; ++i) {
+            if (!(flags[i] & kEncoded)) continue;
+            const size_t list = parent[i] == kNoNode ? 0 : size_t(parent[i]) + 1;
+            children[__atomic_fetch_add(&cursor[list], 1u, __ATOMIC_RELAXED)] =
+                static_cast<uint32_t>(i);
+          }
+        });
       }
       auto sort_list = [&](size_t list) {
         auto first = children.begin() + child_off[list];
@@ -312,27 +332,143 @@
         for (size_t list = 0; list < num_lists; ++list) sort_list(list);
       }
 
+      // (list, next pos, pre-order position of the list's owner): a node's
+      // subtree size is known when its list is exhausted.
+      struct Frame {
+        uint32_t list, next, pos;
+      };
+      bool walked = false;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+      if (nthreads > 1 && num_paths >= (size_t(1) << 20)) {
+        // Large trees: split the walk at a frontier of subtree roots (whole
+        // levels expanded while fewer than 65536 have children). Their sizes are
+        // counted in parallel, a serial walk of the levels above places each
+        // frontier subtree in the pre-order, and the subtrees are then walked
+        // in parallel into their slots. Same order, sizes and sibling flags.
+        constexpr uint8_t kTask = 16;
+        // Only nodes with children count (property leaves would fill a level
+        // long before a deep subtree is split); leaves above the frontier are
+        // emitted by the top walk.
+        std::vector<uint32_t> tasks;
+        auto add_inner = [&](uint32_t list, std::vector<uint32_t>* to) {
+          for (uint32_t k = child_off[list]; k < child_off[list + 1]; ++k) {
+            const uint32_t node = children[k];
+            if (child_off[node + 1] < child_off[node + 2]) to->push_back(node);
+          }
+        };
+        add_inner(0, &tasks);
+        for (int depth = 0; depth < 64 && tasks.size() < 65536; ++depth) {
+          std::vector<uint32_t> next;
+          for (uint32_t node : tasks) add_inner(node + 1, &next);
+          if (next.empty()) break;
+          tasks.swap(next);
+        }
+        for (size_t k = 0; k < tasks.size(); ++k) {
+          flags[tasks[k]] |= kTask;
+          subtree[tasks[k]] = static_cast<uint32_t>(k);  // task index until placed
+        }
+        std::vector<uint32_t> task_size(tasks.size(), 0), task_pos(tasks.size(), 0);
+        auto run_tasks = [&](auto&& fn) {
+          std::atomic<size_t> next_task{0};
+          std::vector<std::thread> pool;
+          pool.reserve(static_cast<size_t>(nthreads));
+          for (int t = 0; t < nthreads; ++t)
+            pool.emplace_back([&] {
+              for (size_t k; (k = next_task.fetch_add(1, std::memory_order_relaxed)) <
+                             tasks.size();)
+                fn(k);
+            });
+          for (auto& th : pool) th.join();
+        };
+        run_tasks([&](size_t k) {
+          std::vector<uint32_t> st{tasks[k]};
+          uint32_t count = 0;
+          while (!st.empty()) {
+            const uint32_t node = st.back();
+            st.pop_back();
+            ++count;
+            st.insert(st.end(), children.begin() + child_off[node + 1],
+                      children.begin() + child_off[node + 2]);
+          }
+          task_size[k] = count;
+        });
+        order.resize(num_paths);
+        uint32_t cursor = 0;
+        std::vector<Frame> stack;
+        stack.push_back({0u, child_off[0], 0u});
+        while (!stack.empty()) {
+          Frame& top = stack.back();
+          if (top.next >= child_off[top.list + 1]) {
+            if (top.list != 0) subtree[top.list - 1] = cursor - top.pos;
+            stack.pop_back();
+            continue;
+          }
+          const uint32_t node = children[top.next++];
+          if (top.next < child_off[top.list + 1]) flags[node] |= kSibling;
+          const uint32_t pos = cursor;
+          if (flags[node] & kTask) {
+            const uint32_t k = subtree[node];
+            task_pos[k] = pos;
+            subtree[node] = task_size[k];
+            cursor += task_size[k];
+            continue;
+          }
+          order[cursor++] = node;
+          const uint32_t list = node + 1;
+          if (child_off[list] < child_off[list + 1]) {
+            stack.push_back({list, child_off[list], pos});
+          }
+        }
+        run_tasks([&](size_t k) {
+          const uint32_t root = tasks[k];
+          uint32_t c = task_pos[k];
+          order[c++] = root;
+          std::vector<Frame> st;
+          if (child_off[root + 1] < child_off[root + 2])
+            st.push_back({root + 1, child_off[root + 1], task_pos[k]});
+          while (!st.empty()) {
+            Frame& top = st.back();
+            if (top.next >= child_off[top.list + 1]) {
+              subtree[top.list - 1] = c - top.pos;
+              st.pop_back();
+              continue;
+            }
+            const uint32_t node = children[top.next++];
+            if (top.next < child_off[top.list + 1]) flags[node] |= kSibling;
+            const uint32_t pos = c;
+            order[c++] = node;
+            const uint32_t list = node + 1;
+            if (child_off[list] < child_off[list + 1]) {
+              st.push_back({list, child_off[list], pos});
+            }
+          }
+        });
+        order.resize(cursor);
+        walked = true;
+      }
+#endif
+      if (!walked) {
       order.reserve(num_paths);
-      std::vector<std::pair<uint32_t, uint32_t>> stack;  // (list, next pos)
-      stack.emplace_back(0u, child_off[0]);
+      std::vector<Frame> stack;
+      stack.push_back({0u, child_off[0], 0u});
       while (!stack.empty()) {
-        auto& top = stack.back();
-        if (top.second >= child_off[top.first + 1]) {
+        Frame& top = stack.back();
+        if (top.next >= child_off[top.list + 1]) {
+          if (top.list != 0)
+            subtree[top.list - 1] =
+                static_cast<uint32_t>(order.size() - top.pos);
           stack.pop_back();
           continue;
         }
-        const uint32_t node = children[top.second++];
-        if (top.second < child_off[top.first + 1]) flags[node] |= kSibling;
+        const uint32_t node = children[top.next++];
+        if (top.next < child_off[top.list + 1]) flags[node] |= kSibling;
+        const uint32_t pos = static_cast<uint32_t>(order.size());
         order.push_back(node);
         const uint32_t list = node + 1;
         if (child_off[list] < child_off[list + 1]) {
-          stack.emplace_back(list, child_off[list]);
+          stack.push_back({list, child_off[list], pos});
         }
       }
-      // Subtree sizes (reverse pre-order accumulation).
-      for (size_t k = order.size(); k-- > 0;) {
-        const uint32_t node = order[k];
-        if (parent[node] != kNoNode) subtree[parent[node]] += subtree[node];
       }
     }
     std::vector<uint32_t>().swap(parent);
@@ -388,6 +524,25 @@
     // Write 3 compressed arrays using Usd_IntegerCompression (delta + LZ4),
     // each released once written.
     const size_t num_nodes = order.size();
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    if (num_nodes >= (size_t(1) << 20) && ResolveThreads() > 1) {
+      // The three columns compress independently (LZ4 is single-threaded per
+      // blob); append them in order.
+      std::vector<uint8_t> col[3];
+      const uint32_t* data[3] = {order.data(), element_tokens.data(),
+                                 jump_indices.data()};
+      auto compress = [&](int c) {
+        StreamWriter w(col[c]);
+        WriteCompressedDeltaU32(w, data[c], num_nodes);
+      };
+      std::thread t1(compress, 1), t2(compress, 2);
+      compress(0);
+      t1.join();
+      t2.join();
+      for (const auto& bytes : col) out.write_bytes(bytes.data(), bytes.size());
+      return true;
+    }
+#endif
     WriteCompressedDeltaU32(out, order.data(), num_nodes);
     std::vector<uint32_t>().swap(order);
     WriteCompressedDeltaU32(out, element_tokens.data(), num_nodes);

@@ -353,27 +353,69 @@ PrimVariantData::~PrimVariantData() {
 // TypeNameTable
 // ============================================================
 
+#if defined(LIGHTUSD_ENABLE_THREAD)
+TypeNameTable::TypeNameTable()
+    : by_id_(new std::atomic<const std::string*>[UINT16_MAX]),
+      slots_(new std::atomic<uint32_t>[kSlots]) {
+  for (size_t i = 0; i < UINT16_MAX; ++i) by_id_[i].store(nullptr, std::memory_order_relaxed);
+  for (size_t i = 0; i < kSlots; ++i) slots_[i].store(0, std::memory_order_relaxed);
+}
+
+// Runs under the exclusive lock right after names_.push_back.
+void TypeNameTable::Publish(void* self) {
+  TypeNameTable& t = *static_cast<TypeNameTable*>(self);
+  const size_t id = t.names_.size() - 1;
+  const std::string* name = &t.names_[id];
+  t.by_id_[id].store(name, std::memory_order_release);
+  size_t i = std::hash<std::string>{}(*name) & (kSlots - 1);
+  while (t.slots_[i].load(std::memory_order_relaxed) != 0) i = (i + 1) & (kSlots - 1);
+  t.slots_[i].store(static_cast<uint32_t>(id + 1), std::memory_order_release);
+}
+
+TypeNameId TypeNameTable::find_published(const std::string& name) const {
+  for (size_t i = std::hash<std::string>{}(name) & (kSlots - 1);;
+       i = (i + 1) & (kSlots - 1)) {
+    const uint32_t v = slots_[i].load(std::memory_order_acquire);
+    if (v == 0) return TypeNameId{};
+    const std::string* p = by_id_[v - 1].load(std::memory_order_acquire);
+    if (p && *p == name) return make_id(v - 1);
+  }
+}
+#else
+TypeNameTable::TypeNameTable() = default;
+#endif
+
 TypeNameId TypeNameTable::intern(const std::string& name) {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  const TypeNameId hit = find_published(name);
+  if (hit.is_valid()) return hit;
+  return intern_locked(name, &TypeNameTable::Publish, this);
+#else
   return intern_locked(name);
+#endif
 }
 
 const std::string& TypeNameTable::get(TypeNameId id) const {
   static const std::string empty;
+  if (!id.is_valid()) return empty;
 #if defined(LIGHTUSD_ENABLE_THREAD)
-  // names_ is a deque: elements never relocate on push_back, so the returned
-  // reference stays valid after the lock is released.
-  std::shared_lock<std::shared_mutex> rlk(mu_);
-#endif
-  if (!id.is_valid() || id.id >= names_.size()) return empty;
+  // Every id was published before intern() returned it.
+  const std::string* p = by_id_[id.id].load(std::memory_order_acquire);
+  return p ? *p : empty;
+#else
+  if (id.id >= names_.size()) return empty;
   return names_[id.id];
+#endif
 }
 
 TypeNameId TypeNameTable::find(const std::string& name) const {
 #if defined(LIGHTUSD_ENABLE_THREAD)
+  const TypeNameId hit = find_published(name);
+  if (hit.is_valid()) return hit;
   std::shared_lock<std::shared_mutex> rlk(mu_);
 #endif
-  const TypeNameId hit = find_live(name);
-  if (hit.is_valid()) return hit;
+  const TypeNameId h = find_live(name);
+  if (h.is_valid()) return h;
   return TypeNameId{};
 }
 

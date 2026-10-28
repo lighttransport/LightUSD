@@ -809,6 +809,66 @@ auto Cache::Impl::BuildPreviewLayer(const Layer &structure) -> Layer {
     return preview;
   }
 
+#if defined(LIGHTUSD_ENABLE_THREAD)
+// For release_layers_during_fill: the fill batch after which each source
+// layer is no longer read. A source reads specs (and variant content) from the
+// layers of its layer stack, so every layer of every stack a record's sources
+// use counts as read by that record. Root-stack layers (possibly the caller's)
+// are never released.
+auto Cache::Impl::PlanLayerRelease(size_t opinion_batch, int nt) -> LayerReleasePlan {
+  const auto t0 = std::chrono::steady_clock::now();
+  LayerReleasePlan plan;
+  const size_t nstacks = layer_stacks.size();
+  const size_t n = fill_.size();
+  const size_t workers = std::max<size_t>(1, std::min<size_t>(nt, 16));
+  // Last record per stack, per worker slice (records ascend within a slice).
+  std::vector<std::vector<uint32_t>> last(workers,
+                                          std::vector<uint32_t>(nstacks, UINT32_MAX));
+  {
+    std::vector<std::thread> pool;
+    for (size_t t = 0; t < workers; ++t) {
+      pool.emplace_back([&, t] {
+        std::vector<uint32_t> &mine = last[t];
+        const size_t lo = n * t / workers, hi = n * (t + 1) / workers;
+        for (size_t i = lo; i < hi; ++i) {
+          const std::vector<Src> *srcs = fill_[i].second;
+          if (!srcs) continue;
+          for (const Src &s : *srcs)
+            if (s.stack_idx < nstacks) mine[s.stack_idx] = static_cast<uint32_t>(i);
+        }
+      });
+    }
+    for (std::thread &th : pool) th.join();
+  }
+  std::unordered_set<const Layer *> keep;
+  if (!layer_stacks.empty())
+    for (const auto &l : layer_stacks[0].layers) keep.insert(l.get());
+  std::unordered_map<Layer *, uint32_t> layer_last;
+  for (size_t st = 0; st < nstacks; ++st) {
+    uint32_t lst = UINT32_MAX;
+    for (size_t t = 0; t < workers; ++t)
+      if (last[t][st] != UINT32_MAX && (lst == UINT32_MAX || last[t][st] > lst))
+        lst = last[t][st];
+    if (lst == UINT32_MAX) continue;  // stack read by no record
+    for (const auto &l : layer_stacks[st].layers) {
+      if (!l || keep.count(l.get())) continue;
+      uint32_t &v = layer_last[l.get()];
+      if (lst + 1 > v) v = lst + 1;  // stored +1: 0 = unset
+    }
+  }
+  // A layer some stack keeps but no record reads stays (not in the map).
+  const size_t nbatches = (n + opinion_batch - 1) / opinion_batch;
+  plan.by_batch.resize(nbatches);
+  for (const auto &kv : layer_last) {
+    plan.by_batch[(kv.second - 1) / opinion_batch].push_back(kv.first);
+    ++plan.layers;
+  }
+  plan.ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t0).count();
+  return plan;
+}
+#endif
+
 auto Cache::Impl::FillOpinions(
     Layer *out,
     const std::vector<const std::vector<Src> *>& shared_srcs) -> void {
@@ -837,6 +897,7 @@ auto Cache::Impl::FillOpinions(
         return;
       }
       const auto start = std::chrono::steady_clock::now();
+#if defined(LIGHTUSD_ENABLE_THREAD)
       int nt = options.num_threads;
       if (nt < 0)
         nt = std::min<int>(static_cast<int>(std::thread::hardware_concurrency()),
@@ -856,7 +917,9 @@ auto Cache::Impl::FillOpinions(
           });
         }
         for (std::thread &th : pool) th.join();
-      } else {
+      } else
+#endif
+      {
         for (const std::vector<Src> *srcs : shared_srcs)
           std::vector<Src>().swap(*const_cast<std::vector<Src> *>(srcs));
       }
@@ -903,6 +966,47 @@ auto Cache::Impl::FillOpinions(
                                                     (static_cast<size_t>(nt) *
                                                      static_cast<size_t>(32)));
       std::atomic<size_t> next{0};
+      // release_layers_during_fill: a source layer's prims are freed once
+      // every batch up to the last record reading it is done.
+      LayerReleasePlan plan;
+      if (release && options.release_layers_during_fill && !batch_scope_)
+        plan = PlanLayerRelease(opinion_batch, nt);
+      const size_t nbatches = (fill_.size() + opinion_batch - 1) / opinion_batch;
+      std::unique_ptr<std::atomic<uint8_t>[]> batch_done;
+      std::mutex watermark_mu;
+      size_t watermark = 0;  // every batch below is done
+      std::atomic<size_t> released_prims{0};
+      std::atomic<size_t> purged_at{0};
+      if (!plan.by_batch.empty()) {
+        batch_done.reset(new std::atomic<uint8_t>[nbatches]);
+        for (size_t k = 0; k < nbatches; ++k) batch_done[k].store(0);
+      }
+      auto finish_batch = [&](size_t k) {
+        if (!batch_done) return;
+        batch_done[k].store(1, std::memory_order_release);
+        std::vector<Layer *> free_now;
+        {
+          std::lock_guard<std::mutex> lk(watermark_mu);
+          while (watermark < nbatches &&
+                 batch_done[watermark].load(std::memory_order_acquire)) {
+            for (Layer *l : plan.by_batch[watermark]) free_now.push_back(l);
+            ++watermark;
+          }
+        }
+        size_t freed = 0;
+        for (Layer *l : free_now) {
+          freed += l->prims().size();
+          l->release_prims();
+        }
+        if (!freed) return;
+        // Hand the freed pages back in steps, not per layer (a purge walks
+        // every arena).
+        const size_t total = released_prims.fetch_add(freed) + freed;
+        size_t last = purged_at.load();
+        if (trimmer_ && total - last >= (size_t(1) << 20) &&
+            purged_at.compare_exchange_strong(last, total))
+          trimmer_->Request();
+      };
       std::vector<std::thread> pool;
       pool.reserve(nt);
       for (int t = 0; t < nt; ++t) {
@@ -912,11 +1016,18 @@ auto Cache::Impl::FillOpinions(
                                             std::memory_order_relaxed);
             if (b >= fill_.size()) break;
             do_range(b, std::min(fill_.size(), b + opinion_batch));
+            finish_batch(b / opinion_batch);
           }
         });
       }
       for (std::thread &th : pool) th.join();
       release_shared();
+      if (batch_done && trimmer_) trimmer_->Request();
+      if (options.enable_timing && !plan.by_batch.empty())
+        LIGHTUSD_LOG_I("[next_fill] layers_released=" +
+                       UIntToStr(plan.layers) + " layer_prims_released=" +
+                       UIntToStr(released_prims.load()) + " plan=" +
+                       FormatMilliseconds(plan.ms) + "ms");
       return;
     }
 #endif

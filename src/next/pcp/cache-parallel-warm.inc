@@ -121,10 +121,12 @@
     size_t busy = 0;
     std::atomic<int> idle{0};
     std::unordered_map<std::string, WarmOrder> first_member;  // key -> order
+    size_t claims = 0;  // Claim calls: instanceable prims reached
 
     // True when `order` is the earliest member of `key` seen so far.
     bool Claim(std::string key, const WarmOrder &order) {
       std::lock_guard<std::mutex> lk(mu);
+      ++claims;
       auto ins = first_member.emplace(std::move(key), order);
       if (ins.second) return true;
       if (!(order < ins.first->second)) return false;

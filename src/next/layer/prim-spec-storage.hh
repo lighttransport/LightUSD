@@ -94,6 +94,8 @@ public:
 
   /// Get all property IDs with time samples
   std::vector<PropNameId> properties() const;
+  /// Number of properties with time samples.
+  size_t property_count() const { return samples_.size(); }
 
   /// Check if empty
   bool empty() const;

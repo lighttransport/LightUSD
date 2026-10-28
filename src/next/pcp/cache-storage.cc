@@ -1158,15 +1158,37 @@ auto cache_detail::SrcCache::own_key(size_t index) -> void {
   }
 
 auto cache_detail::SrcCache::borrow_site_keys() -> size_t {
-    size_t borrowed = 0;
-    for (size_t i = 0; i < live_.size(); ++i) {
-      if (live_[i] != kLive || vals_[i].empty() ||
-          keys_[i] != vals_[i].front().site) continue;
-      std::string().swap(keys_[i]);
-      live_[i] = kLive | kSiteKey;
-      ++borrowed;
+    // Entries are independent (key compare + free per index): a 10 M-entry
+    // cache splits across threads.
+    auto range = [this](size_t lo, size_t hi) {
+      size_t borrowed = 0;
+      for (size_t i = lo; i < hi; ++i) {
+        if (live_[i] != kLive || vals_[i].empty() ||
+            keys_[i] != vals_[i].front().site) continue;
+        std::string().swap(keys_[i]);
+        live_[i] = kLive | kSiteKey;
+        ++borrowed;
+      }
+      return borrowed;
+    };
+    const size_t n = live_.size();
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    const size_t hw = std::max(1u, std::thread::hardware_concurrency());
+    const size_t T = n >= 262144 ? std::min<size_t>(hw, 16) : 1;
+    if (T > 1) {
+      std::vector<size_t> counts(T, 0);
+      std::vector<std::thread> pool;
+      pool.reserve(T - 1);
+      for (size_t t = 1; t < T; ++t)
+        pool.emplace_back([&, t] { counts[t] = range(n * t / T, n * (t + 1) / T); });
+      counts[0] = range(0, n / T);
+      for (std::thread &th : pool) th.join();
+      size_t total = 0;
+      for (size_t c : counts) total += c;
+      return total;
     }
-    return borrowed;
+#endif
+    return range(0, n);
   }
 
 auto cache_detail::SrcCache::find(const std::string &k) -> std::vector<Src> * {

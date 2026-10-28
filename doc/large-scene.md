@@ -482,6 +482,11 @@ LIGHTUSD_NEXT_TIMING=1 "$NEXT_TUSD" -f \
 # Flattened USDC output profile
 LIGHTUSD_NEXT_TIMING=1 "$NEXT_TUSD" -f \
   --compose-threads-auto --load-payloads -o "/tmp/$(basename "$1").usdc" "$1"
+
+# Low-memory flatten to USDC (§10.74): same bytes, about 0.44x the peak RSS on
+# full45, about 2.3x the wall time. --batch-prims sets the batch size.
+LIGHTUSD_NEXT_TIMING=1 "$NEXT_TUSD" -f --memory-profile low \
+  --compose-threads-auto --load-payloads -o "/tmp/$(basename "$1").usdc" "$1"
 ```
 
 2) `tydra_to_renderscene`: `--next` conversion and low-memory release path:
@@ -5485,4 +5490,340 @@ ALab and reference scene were neutral at 1.000 elapsed; maximum RSS ratios were 
 and 1.0029. The direct full45 output remained 3,014,654,530 bytes with SHA-256
 `a0175bc1292f189afdb4108261cf2b36d9db13129691fdea87e34f873ced9867`.
 The full CTest run passed 60 tests with one expected skip. Keep R66.
+
+### 10.74 Low-memory profile: batched compose streamed into the writer (2026-10-28)
+
+`lusdcat -f --memory-profile low ... -o out.usdc` (library entry
+`pcp::FlattenToUSDCFileBatched`, `src/next/pcp/batched-compose.{hh,cc}`)
+flattens to USDC with the composed stage, its composition sources and the
+source layers never resident all at once. The output is byte-identical to
+the default profile. The goal was a full45 peak of about twice the source
+asset (6.55 GiB of USD on disk, 63,685 files), so 12–13 GiB against 28 GiB.
+
+**Where the default's memory goes.** A census with jemalloc `stats.allocated`
+/ `stats.resident` at the phase boundaries (temporary instrumentation, not
+committed), full45:
+
+| point | allocated | anon RSS | file RSS |
+|---|---:|---:|---:|
+| end of warm | 17.2 GiB | 20.7 GiB | 3.3 GiB |
+| end of fill (process peak) | 18.2 GiB | 24.1 GiB | 3.3 GiB |
+| compose done (layers and cache freed in `reclaim`) | **12.05 GiB** | 22.9 GiB | 1.9 GiB |
+| writer after `fields_specs` | 21.3 GiB | 24.6 GiB | 0 |
+| writer destroyed | 11.1 GiB | 17.6 GiB | 0 |
+
+- The composed layer alone is 12 GiB allocated. `consume_values` releases
+  only about 1 GiB of it, because most array values are lazy references.
+- The source layers and cache are about 6.4 GiB allocated, plus up to 3.3 GiB
+  of mapped crate pages.
+- The writer's whole-scene tables are about 7 GiB: path records, path shards,
+  fields, fieldsets and specs.
+- About 11 GiB of freed-but-resident heap is left at compose end.
+- Fewer threads do not help: with 4 threads everywhere the peak is 29.1 GiB.
+
+**Design.** Only one namespace batch of the composed stage exists at a time.
+
+1. **Frontier discovery.** One `Cache` composes the namespace top-down, a whole
+   level at a time, while the next level stays within `max_frontier` (64 K)
+   roots. It expands only active, non-instanceable prims with children. On
+   full45 the frontier is 10,612 roots at depth 6; the expanded prims above
+   them form the *spine* (237 prims).
+2. **`BatchScope` namespace mask** (`cache-internal.hh`). A batch composes a
+   run of consecutive frontier roots plus their ancestors. Each place that
+   lists a prim's children filters a spine prim's children down to spine prims
+   and the batch's roots, recording the full list for the writer:
+   - the serial walk;
+   - `SpeculativeWalk`;
+   - `ExpandWarmNode`, in the main `Impl` and in the warm workers' `Impl`s;
+   - the root names.
+
+   Each batch gets a fresh `Cache` (`BatchedComposeAccess::Open`) over one
+   shared `LayerRegistry`, so the batch's sources, spec caches and instancing
+   maps all die with it. The arc-layer prefetch is off in batches: it would
+   re-crawl every loaded layer's arcs once per batch.
+3. **Instancing across batches.** Instance keys are made of stack
+   identifiers, sites and offsets, so they are comparable across `Cache`s.
+   - Every key an earlier batch claimed is seeded into the next batch's
+     `prototype_by_key`, the walk's `WalkClaims` and the warm's `WarmShared`.
+     A later member therefore stays an instance, and the prototype (Holder) is
+     still the pre-order-first member.
+   - `FlattenInstances` rewrites members whose prototype lives in an earlier
+     batch.
+   - It clears `instanceable` on a Holder whose peers are all in later batches
+     (`holders_with_peers`, recorded by pass 1).
+4. **Two passes.** Pass 1 (`BatchedComposer::Plan`) composes every batch and
+   discards it. It records:
+   - the writer's token/string table order (below);
+   - Holders that have peers;
+   - each frontier root's composed prim count;
+   - the composed children and subtree sizes under heavy roots;
+   - each layer's last-use root.
+
+   Pass 2 (`Run`) recomposes with exact batch cuts at the target size. Roots
+   over the target are split into their children, which become spine prims.
+   After each batch, pass 2 drops from the registry every layer no later batch
+   uses (45,095 of 63,366 on full45). A layer that is needed again would simply
+   reload, because each batch has its own `Cache`.
+5. **Batched writer** (`CrateWriter::AddBatchTables` / `BeginBatchedFile` /
+   `WriteBatch` / `FinishBatched`).
+   - The first thing that fixes output bytes is the token/string order of
+     `BuildTables`. Pass 1 replays its per-prim interning
+     (`InternPrimTables`) batch by batch, in prim order, on the same writer,
+     so the tables match the whole-layer `BuildTables` exactly.
+   - Pass 2 runs the unchanged per-prim encoder and parallel chunk pipeline
+     (`BuildPrimSpecs`) on each batch:
+     - ancestors an earlier batch wrote are skipped (`skip_prims_`);
+     - spine prims take their full child list, ordered as
+       `Layer::apply_namespace_ordering` orders linked children by
+       `primOrder` / `rootPrimOrder`;
+     - the written prims' `Path`s move into the writer (`stream_paths_`),
+       because `PathRec`s view their text. Paths of 15 characters or fewer
+       are made heap strings first, since short-string-optimized text would
+       move with the object.
+   - Value dedup and source-range tables carry across batches.
+   - The structural payloads are built one at a time, PATHS first, and each
+     source table is freed as soon as its payload exists (`serial_sections_`).
+
+`Write()` was split into `CheckWriteOptions`, `ResetWriteState`,
+`ReserveTables`, `BeginValueStream` and `FinishWrite`, and `BuildTables` /
+`BuildFieldsAndSpecs` into `InternFixedTokens` + `InternPrimTables` and
+`EmitPseudoRootSpec` + `BuildPrimSpecs`. The default path runs the same code
+in the same order: its hashes, the rewrite sweep and staged mode are unchanged.
+
+**Bugs found on the way.**
+- The warm workers' `Impl`s did not inherit the batch scope at first. A spine
+  prim handed to a worker expanded its whole subtree: one 268 K-prim batch
+  warmed 10.2 M sources and the run peaked at 20.8 GiB.
+- Batch-local `finalize()` orders only the linked part of a spine prim's
+  children, so 7 sweep inputs with authored `primOrder` differed until the
+  writer applied the same ordering to the full list.
+
+**Results at the time** (full45, single runs, `--fast-exit`, output to
+`/dev/null`; the hash run wrote to `/dev/shm`). The next round (§10.75) took
+the low profile to 88.8 s / 11.9 GiB and the default to 42.6 s / 23.5 GiB:
+
+| profile | batch target | wall | peak RSS |
+|---|---:|---:|---:|
+| default | — | 53.2 s | 27.67 GiB |
+| low | 150 K prims | 140.3 s | 12.24 GiB |
+| low | **300 K prims (default)** | **121.8 s** | **12.23 GiB** |
+| low | 500 K prims | 114.1 s | 13.14 GiB |
+
+- With the 300 K target, pass 1 took about 48 s in 133 batches (largest 1.58 M
+  prims) and pass 2 about 59 s in 39 batches (largest 299 K prims).
+- During pass 2, RSS stays at 10–11.7 GiB. The final structural build peaks
+  at about 11.7 GiB.
+- The process peak, mid pass 2, is about 10.7 GiB anonymous plus 1.5 GiB
+  file-backed: the writer's tables, the layers still in use and the current
+  batch.
+- Smaller batches stop helping below about 300 K prims.
+- On small stages the profile does not pay: Island (283 K prims) becomes one
+  pass-2 batch and peaks at 3.9–4.2 GiB against 3.3 GiB by default.
+
+**Verification.**
+- Low profile:
+  - full45 `a0175bc1…`, district `98619c40…`, merged ALab `2f7176c8…` and
+    Island `a8f50922…` all equal the default output.
+  - Composition sweep, USDC: 1,933/1,933 inputs identical at two batch
+    settings: `--batch-prims 1`, and `--batch-prims 50 --batch-frontier 64`.
+  - The batched compose alone, merged back into one layer
+    (`pcp::ComposeStageBatched`, lusdcat `--batched-compose N`), matched
+    3,866/3,866 USDA and USDC outputs at 1 and at 4 roots per batch.
+- Default profile: district and full45 hashes unchanged; rewrite sweep
+  1,410/1,410; staged parallel == serial (`98ad30c3…`); CTest 65/65 with one
+  skip.
+- The no-thread build compiles again. The R47/R48 parallel pointer sort and
+  the shared-source release used `std::thread` unguarded and are now under
+  `LIGHTUSD_ENABLE_THREAD`. District is `98619c40…` there in both profiles.
+- No paired timing runs were made: the default profile's code path is a
+  refactor of the same calls in the same order.
+
+**Next levers** (remaining resident set at the peak):
+- Spill the append-only `fields_` / `flat_fieldsets_` / `fieldset_offsets_` /
+  `specs_` columns (about 4 GiB at the end) to a temporary file and map them
+  back one at a time for the section build.
+- Writer-owned path nodes `{parent, element token}` instead of `PathRec`
+  views plus the kept prim path strings (about 2 GiB of text).
+- `MADV_DONTNEED` the mapped crate pages that parsing touched (up to 1.5 GiB
+  file RSS).
+- A cheaper pass 1: it only needs names, type names, property names and the
+  instancing facts, not composed values.
+- Choose the default profile automatically when pass 1 finds the whole stage
+  fits in one batch.
+
+### 10.75 Both profiles faster and leaner (2026-10-28)
+
+Goal: the low profile at about 100 s and about 13 GB; the default profile at
+about 40 s and under 24 GB. Every step below is byte-identical.
+
+**Where full45 ended up** (`--fast-exit`, output to `/dev/null`, single runs,
+wall from process start to exit):
+
+| profile | before (§10.74) | after |
+|---|---:|---:|
+| default | 53.2 s / 27.67 GiB | **40.3–41.5 s / 23.45–23.6 GiB** (lusdcat total 39.0–40.1 s) |
+| low (`--memory-profile low`) | 121.8 s / 12.23 GiB | **85.4–85.9 s / 11.9 GiB** |
+
+The default's wall stays about 1 s above 40 s. Of the remaining ~41 s:
+- compose is ~24.5 s: warm ~14.5 s (workers 9.2 + merge 5.0), structure walk
+  ~7.7 s, fill 2.1 s;
+- the write is ~15 s: `fields_specs` 9.8 s, paths and sections ~4 s;
+- process exit is ~1.4 s. The kernel frees 4 KiB pages at about 2.4 s per
+  20 GB on this host, against 0.11 s for huge pages.
+
+The default's 23.5 GiB is under 24 GiB, but not under 24 GB (25.2 GB).
+
+**Memory**
+- **Parsed crate pages dropped** (`CrateReader::ReadFile`): once a crate has
+  been parsed, `DiscardRange` frees its whole mapping. Lazy arrays fault their
+  pages back in from the page cache. This removes the 3.3 GiB of file-backed
+  RSS that the compose peak held.
+- **`CrateWriteOptions::consume_prims`** (set by lusdcat together with
+  `consume_values`): each written prim is released to its skeleton (name, path,
+  children). Reaper threads do this only after the chunk's commit, which keeps
+  the serial fallback valid. With this the writer phase stays at or below about
+  21 GiB, below the compose peak.
+- **`PropertySpecBound`**: the spec / path / fieldset reserves now count
+  relationships and time-sampled properties. Before, `paths_`, `specs_` and
+  `fieldset_offsets_` doubled near the end of `fields_specs`; those multi-GB
+  copies cost about 2 s.
+- **`CompositionOptions::release_layers_during_fill`** (lusdcat):
+  - `PlanLayerRelease` records each layer's last fill batch. Every layer of a
+    stack that a record's sources use counts as read, which is conservative.
+  - Once the fill's completion watermark passes that batch, the layer's prims
+    are freed with `Layer::release_prims`; the root stack and batched builds
+    are excluded. 45,089 layers are released on full45.
+  - After the walk, the prims of the 18 K layers that no layer stack holds
+    (prefetched proxy-LOD arcs) are freed too.
+- **`MemoryTrimmer`** (`memory-trim.hh`) returns freed pages through an
+  asynchronous jemalloc `arena.<all>.purge`, falling back to `mi_collect`. It
+  runs after the source compaction, during the fill and at the start of the
+  writer's tail.
+  - A synchronous purge costs 0.1–0.9 s each.
+  - A purge right after the warm contended with the structure walk (+0.7 s, no
+    lower peak) and was dropped.
+- Net: the default peak went 27.67 → 23.5 GiB, now set at fill start
+  (layers + skeleton + sources).
+
+**Time**
+- `TypeNameTable` reads are lock-free:
+  - id → name pointer, plus a fixed open-addressed index, published under the
+    exclusive lock before `intern` returns the id;
+  - the rwlock had been about 30% of fill samples;
+  - fill 2.85 → 2.05 s.
+- `BuildPrimSpecs` prelude: the two serial `'{'` scans over 10 M prim paths
+  became one parallel scan. Prims without relationship data skip
+  `relationship_names()`, which allocates and sorts. `fields_specs` went
+  10.9 → 9.8 s.
+- Writer tail:
+  - FIELDS / FIELDSETS / SPECS payloads build while the path tree is checked;
+  - the PATHS payload is built speculatively during the element-token dry run.
+    Its parent lookups answer the ancestor-synthesis question, since a missing
+    ancestor is exactly a failed parent lookup;
+  - the three PATHS columns compress concurrently;
+  - the CSR is built in parallel, and subtree sizes come out of the DFS;
+  - path-synthesis pre-pass: one stem probe per run of records that share it;
+  - sections stream straight to the sink instead of through `buffer_`.
+
+  Together: path_tokens + structural 5.5 → 4.0 s; PATHS / toc copies
+  1.45 → 0.09 s.
+- Writer head:
+  - reserves (shards zero-filled in parallel) overlap `BuildTables`, so
+    setup + tables went 1.83 → 1.54 s;
+  - `LayerNeedsVariantHolders` scans in parallel.
+- Compose tail:
+  - `FlattenInstances` edits groups in parallel (0.94 → 0.10 s). Lookups that
+    miss the recorded index fall back to the serial pass.
+  - `apply_namespace_ordering` skips prims with no `primOrder` (finalize
+    0.59 → 0.35 s).
+  - `CompositionOptions::background_reclaim`: the cache is destroyed off
+    thread; join it with `pcp::WaitForBackgroundReclaim`.
+- `SrcCache::borrow_site_keys` (10 M key compares and frees between the warm
+  and the walk) is split across threads: structure 9.0 → 7.7 s.
+  - The rest of the walk tail is the in-order commit. `prototype_by_key` is
+    now hashed; its compares of long keys were serial in the commit.
+  - `add_task` copies the rank and notifies outside the queue lock.
+  - Both of these were neutral within noise.
+- `Layer::resize_prims` prefaults a large prim array with
+  `MADV_POPULATE_WRITE` from several threads before the serial default
+  construction (compose about −0.3 s). The helper is
+  `PopulatePagesParallel` in `memory-trim.hh`.
+- The structure walk's instancing maps (`prototype_of`,
+  `instance_prim_index_`) are reserved once after the warm. The size is the
+  warm's instance `Claim` count; both walks skip later instances' subtrees.
+  Before this, the in-order commit rehashed them through ~1 M serial inserts.
+  Structure drops from 7.9–8.1 to 7.2–7.8 s, and compose by about 0.6 s.
+- The commit's `ctx.nodes`, `ctx.parents` and `fill_` are reserved from the
+  source-cache size, which is about one entry per committed prim. Structure
+  drops to 7.1–7.3 s.
+- PATHS pre-order walk (0.55 s serial) is split at a namespace frontier for
+  1 M+ paths. Levels are expanded while fewer than 65,536 nodes have children;
+  only nodes with children count, because full45's root level already holds
+  about 4.3 K small prototype roots next to the one 61.8 M-node world subtree.
+  - Frontier subtree sizes are counted in parallel. A serial walk of the
+    levels above places each subtree, and the subtrees are walked in parallel
+    into their slots. Order, subtree sizes and sibling flags are unchanged.
+  - Full45: 78,961 tasks, largest 2.37 M nodes. The walk takes 0.24 s and
+    `path_tokens` drops from 4.4 to 4.0–4.2 s.
+  - Verified with the walk forced on for every input: rewrite sweep 1410
+    SAME and composition sweep 3866 SAME.
+- `ShardTeam` helpers and the caller spin about 20 µs before sleeping. The
+  commit stages run several team phases per chunk, about 50 K on full45, and
+  each condvar wake added its latency. `fields_specs` went 9.2–9.8 →
+  9.15–9.3 s; stage B measured P1 3.6, P2 2.7 and P3 1.2 s.
+- The writer tables get `MADV_HUGEPAGE` (`AdviseHugePages`): fewer faults and
+  a cheaper exit. lusdcat owns its `CrateWriter` and leaves its ~6 GB to
+  process exit under `--fast-exit`; without it they are freed during teardown.
+- **Low profile**:
+  - the writer callback runs on a consumer thread one batch behind the compose
+    (`BatchConsumer`, at most two batches alive): 116.9 → 102.3 s;
+  - after PATHS, the remaining payloads build concurrently;
+  - the default batch target is 400 K prims (97.7 s / 11.9 GiB measured, then
+    88.8 s with the writer gains above).
+
+**Measured and rejected**
+- jemalloc decay 0, `narenas` 1 / 2 / 8, `percpu_arena`: no lower peak, slower.
+- Vendored mimalloc: `purge_delay=0` gave 64 s / 25.0 GiB; the default delay
+  33 GiB.
+- Prefaulting the writer tables (`MADV_POPULATE_WRITE`): setup +2.1 s,
+  `fields_specs` −0.1 s.
+- `fields_specs`:
+  - stage B team 4 → 8: B is bound by its serial planning loop;
+  - 3 ctx per worker;
+  - a per-chunk mask on the chunk dedup table.
+
+  None of these moved it. Its stages measured A1 1.0, A2 5.9, B 7.5, W 3.8 and
+  C 5.8 s of busy time, against a 9.8–10.5 s lap.
+- A per-resolver stat memo, and 8 prefetch workers: no warm change.
+- `MALLOC_CONF=thp:always`:
+  - throughout: write +5–8 s;
+  - during compose only (`PR_SET_THP_DISABLE` before the write): 37.6–39.9 s
+    in good runs, but one run stalled on direct compaction (50.6 s), and the
+    peak reached 23.7–24.65 GiB;
+  - `MADV_HUGEPAGE` on the composed prim array: noise or slower.
+- A warm-only worker count of 24 or 16 (rest at 32): no gain.
+- A synchronous purge (instead of the async trimmer) after the source
+  compaction, before the prim array: 41–42.8 s and up to 23.97 GiB, so worse.
+- A parallel prefault of the warm merge's 512 MiB index: −20 ms.
+- Exit tail (1.35 s): at `_Exit`, jemalloc has 12.1 GiB allocated, 16.0
+  active and 16.5 resident, with 0.01 GiB dirty. 6.5 GiB is on huge pages
+  (the writer tables). The tail is the kernel freeing live 4 KiB pages, so
+  no purge removes it.
+- A pointer memo for PATHS element tokens: no change. That step (0.65 s) is
+  bound by random access, not hashing. The PATHS steps measured: parents
+  0.92, CSR 0.83, sort 0.39, DFS 0.55, nodes 0.65 s.
+- Huge pages for the prim array, at reserve or before the prefault: exit tail
+  unchanged. At exit 15.3 GiB is resident, of which 6.2 GiB is on huge pages
+  (the writer tables).
+- Compose threads 24: 42.4–42.5 s and 23.3 GiB, against 42.9–43.4 s and
+  23.6–23.8 GiB at 32. That is host-specific, so the automatic policy is
+  unchanged; pass `--compose-threads 24` on 16-core / 32-thread hosts.
+
+**Verification** (final tree)
+- full45 `a0175bc1…`, district `98619c40…`, merged ALab `2f7176c8…` and Island
+  `a8f50922…`, in both profiles.
+- Composition sweep 3,866/3,866 against `lusdcat-base`; rewrite sweep
+  1,410/1,410; low-profile USDC sweep (`--batch-prims 1`) 1,933/1,933.
+- CTest 65/65 with one skip; staged parallel == serial (`98ad30c3…`).
+- The no-thread build gives the district hash; the deferred build compiles.
 

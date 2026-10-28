@@ -77,6 +77,13 @@ struct CrateWriteOptions {
   /// output bytes are identical to a non-consuming write. Default off.
   bool consume_values = false;
 
+  /// With consume_values, also release each prim down to its namespace
+  /// skeleton (name, path, child links) once its specs are encoded: type,
+  /// properties, metadata. For a stage that is discarded after the write (a
+  /// flatten); byte-identical. Ignored for layers with variant-namespace prims
+  /// (their encoding reads an owner prim's metadata).
+  bool consume_prims = false;
+
   /// Build the fields_specs lap (prim/property specs and their value blocks)
   /// on worker threads: prims are chunked, each worker encodes into private
   /// buffers with provisional token/string/path/block ids, and one ordered
@@ -154,9 +161,28 @@ public:
                                             const CrateWritePatch& patch,
                                             const Layer& layer);
 
+  /// Batched (low-memory) write of one composed layer that arrives as
+  /// consecutive namespace pre-order batches (pcp::BatchedComposer), twice.
+  /// Pass 1: AddBatchTables for every batch, in order. Pass 2:
+  /// BeginBatchedFile, WriteBatch for the same batches in the same order,
+  /// FinishBatched. `repeated` flags a batch's prims an earlier batch already
+  /// holds (written once); a prim in `full_children` (flagged in `spine`)
+  /// gets that child-name list as its primChildren. The file is
+  /// byte-identical to WriteLayerToFile of the whole layer. WriteBatch moves
+  /// the written prims' paths out of `batch`.
+  void AddBatchTables(const Layer& batch, const std::vector<uint8_t>& repeated);
+  bool BeginBatchedFile(const char* filename);
+  bool WriteBatch(Layer& batch, const std::vector<uint8_t>& spine,
+                  const std::vector<uint8_t>& repeated,
+                  const std::unordered_map<std::string, std::vector<std::string>>&
+                      full_children);
+  CrateWriteResult FinishBatched();
+
 private:
   class Impl;
   std::unique_ptr<Impl> impl_;
+  struct BatchedFile;
+  std::unique_ptr<BatchedFile> batched_file_;
 };
 
 }  // namespace next

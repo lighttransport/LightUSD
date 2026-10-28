@@ -13,6 +13,8 @@
           std::map<std::string, std::vector<std::string>>>& variant_names,
       const std::unordered_map<std::string, std::vector<std::string>>&
           parent_children) {
+      // Batched write: an ancestor an earlier batch already wrote.
+      if (skip_prims_ && (*skip_prims_)[i]) return;
       const PrimSpec& prim = layer.prims()[i];
       // The next prim's path probe (InternPathStable below) is a random load
       // into the path table; start it now.
@@ -214,7 +216,18 @@
             "displayGroupOrder", prim.meta().displayGroupOrder()));
       }
 
-      if (children_from_links_) {
+      auto batch_children = stream_child_tokens_.empty()
+                                ? stream_child_tokens_.end()
+                                : stream_child_tokens_.find(static_cast<uint32_t>(i));
+      if (batch_children != stream_child_tokens_.end()) {
+        // Batched write: a prim whose children span batches (tokens of its
+        // full child list, resolved before the batch).
+        if (!batch_children->second.empty()) {
+          fieldset.push_back(WFieldCount());
+          WPushField(MakeTokenVectorFieldFromTokens(
+              FieldToken(kTokPrimChildren), batch_children->second));
+        }
+      } else if (children_from_links_) {
         // Verified fully linked layer: the children are exactly the linked
         // prims, in link order (the order the map path substitutes anyway).
         const std::vector<uint32_t>& ci = prim.child_indices();
@@ -582,6 +595,8 @@
         }
       }
       WPushSpec(spec);
+      if (consume_prims_ && !reap_prims_)
+        const_cast<PrimSpec&>(prim).release_to_skeleton();
   }
 
   static bool IsVariantHolderName(const std::string& nm) {
@@ -647,6 +662,16 @@
 
   void BuildFieldsAndSpecs(const Layer& layer) {
     // 1. PseudoRoot spec (index 0)
+    EmitPseudoRootSpec(layer, nullptr);
+    // 2. Prim specs
+    BuildPrimSpecs(layer);
+  }
+
+  // The pseudo-root spec from the layer metadata. Its primChildren are the
+  // layer's root prims, or `root_names` when given (a batched write whose
+  // batch holds only some of them).
+  void EmitPseudoRootSpec(const Layer& layer,
+                          const std::vector<std::string>* root_names) {
     {
       std::vector<uint32_t> fieldset;
 
@@ -938,7 +963,9 @@
 
       {
         std::vector<std::string> root_children;
-        if (!layer.root_indices().empty()) {
+        if (root_names) {
+          root_children = *root_names;
+        } else if (!layer.root_indices().empty()) {
           root_children.reserve(layer.root_indices().size());
           for (uint32_t ri : layer.root_indices()) {
             if (const PrimSpec* rp = layer.prim(ri)) {
@@ -968,7 +995,11 @@
       spec.spec_type = SpecType::PseudoRoot;
       WPushSpec(spec);
     }
+  }
 
+  // Every prim's specs, in layer order (prims flagged in skip_prims_ are left
+  // out).
+  void BuildPrimSpecs(const Layer& layer) {
     // Pre-scan variant holder prims ("/owning/{vset=var}") to recover, per
     // owning prim, each variant set's variant names — needed to emit
     // variantSetChildren (on the owning prim) and variantChildren (on each
@@ -1044,8 +1075,19 @@
       }
     }
 
-    // 2. Prim specs
     const size_t nprims = layer.prims().size();
+    // A prim path with a variant component: its encoding reads the owner
+    // prim's metadata (and workers then probe prims by path).
+    std::atomic<bool> any_variant_path{false};
+    ParallelRanges(nprims, 65536, [&](size_t, size_t lo, size_t hi) {
+      for (size_t i = lo; i < hi && !any_variant_path.load(std::memory_order_relaxed); ++i)
+        if (layer.prims()[i].path().str().find('{') != std::string::npos)
+          any_variant_path.store(true, std::memory_order_relaxed);
+    });
+    // Release prims as they are written only when no prim is read by another
+    // prim's encoding (variant owners are).
+    consume_prims_ = options_.consume_values && options_.consume_prims &&
+                     !any_variant_path.load();
 #if defined(LIGHTUSD_ENABLE_THREAD)
     const bool want_parallel = options_.parallel_fields &&
                                nprims >= kMinPrimsForParallelFields &&
@@ -1062,7 +1104,6 @@
       // ids at first emit; intern them up front so worker threads never
       // mutate the shared table (and every PropNameId has a token slot).
       PropNameTable& name_table = GetPropNameTable();
-      bool any_variant_path = false;
       for (const auto& prim : layer.prims()) {
 #if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
         // Deferred fill: no relationships yet; workers intern new names in
@@ -1070,12 +1111,11 @@
         // does not.
         if (!deferred_filler_)
 #endif
-        for (const std::string& rel_name : prim.relationship_names()) {
-          (void)name_table.intern(rel_name);
-        }
-        if (!any_variant_path &&
-            prim.path().str().find('{') != std::string::npos) {
-          any_variant_path = true;
+        // (relationship_names() copies and sorts; most prims have none.)
+        if (prim.has_relationship_data()) {
+          for (const std::string& rel_name : prim.relationship_names()) {
+            (void)name_table.intern(rel_name);
+          }
         }
       }
 #if defined(LIGHTUSD_NEXT_DEFERRED_FILL)
@@ -1479,13 +1519,24 @@
   struct ShardTeam {
     size_t size = 1;
 #if defined(LIGHTUSD_ENABLE_THREAD)
+    // Runs come back to back (several per committed chunk, ~10 K chunks on a
+    // large write), so both sides spin briefly before sleeping: a condvar
+    // wake per run otherwise adds its latency to every commit stage.
+    static constexpr int kSpin = 4096;
     std::mutex m;
     std::condition_variable go, done;
-    uint64_t gen = 0;
-    size_t pending = 0;
-    bool quit = false;
-    const std::function<void(size_t)>* job = nullptr;
+    std::atomic<uint64_t> gen{0};
+    std::atomic<size_t> pending{0};
+    std::atomic<int> sleepers{0};  // helpers blocked on `go` (counted under m)
+    std::atomic<bool> quit{false};
+    std::atomic<const std::function<void(size_t)>*> job{nullptr};
     std::vector<std::thread> threads;
+
+    static void Relax() {
+#if defined(__x86_64__) || defined(__i386__)
+      __builtin_ia32_pause();
+#endif
+    }
 
     void Start(size_t n) {
       size = n < 1 ? 1 : n;
@@ -1493,17 +1544,28 @@
         threads.emplace_back([this, t] {
           uint64_t seen = 0;
           for (;;) {
-            const std::function<void(size_t)>* j;
-            {
-              std::unique_lock<std::mutex> lk(m);
-              go.wait(lk, [&] { return quit || gen != seen; });
-              if (quit) return;
-              seen = gen;
-              j = job;
+            bool ready = false;
+            for (int i = 0; i < kSpin && !ready; ++i) {
+              if (quit.load(std::memory_order_acquire)) return;
+              ready = gen.load(std::memory_order_acquire) != seen;
+              if (!ready) Relax();
             }
-            (*j)(t);
-            std::lock_guard<std::mutex> lk(m);
-            if (--pending == 0) done.notify_one();
+            if (!ready) {
+              std::unique_lock<std::mutex> lk(m);
+              sleepers.fetch_add(1, std::memory_order_relaxed);
+              go.wait(lk, [&] {
+                return quit.load(std::memory_order_acquire) ||
+                       gen.load(std::memory_order_acquire) != seen;
+              });
+              sleepers.fetch_sub(1, std::memory_order_relaxed);
+              if (quit.load(std::memory_order_acquire)) return;
+            }
+            seen = gen.load(std::memory_order_acquire);
+            (*job.load(std::memory_order_acquire))(t);
+            if (pending.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+              std::lock_guard<std::mutex> lk(m);
+              done.notify_one();
+            }
           }
         });
       }
@@ -1513,16 +1575,22 @@
         fn(0);
         return;
       }
+      job.store(&fn, std::memory_order_release);
+      pending.store(size - 1, std::memory_order_release);
       {
+        // Under m: a helper about to sleep has counted itself and re-checks
+        // `gen` while holding m, so this bump is never missed.
         std::lock_guard<std::mutex> lk(m);
-        job = &fn;
-        pending = size - 1;
-        ++gen;
+        gen.fetch_add(1, std::memory_order_acq_rel);
       }
-      go.notify_all();
+      if (sleepers.load(std::memory_order_acquire) > 0) go.notify_all();
       fn(0);
+      for (int i = 0; i < kSpin; ++i) {
+        if (pending.load(std::memory_order_acquire) == 0) return;
+        Relax();
+      }
       std::unique_lock<std::mutex> lk(m);
-      done.wait(lk, [&] { return pending == 0; });
+      done.wait(lk, [&] { return pending.load(std::memory_order_acquire) == 0; });
     }
     void Stop() {
       {
@@ -1976,6 +2044,11 @@
     const size_t nchunks =
         (nprims + kFieldsChunkPrims - 1) / kFieldsChunkPrims;
     if (nchunks == 0) return false;
+    struct ReapScope {
+      bool& flag;
+      ReapScope(bool& f, bool on) : flag(f) { flag = on; }
+      ~ReapScope() { flag = false; }
+    } reap_scope(reap_prims_, consume_prims_);
 
 #if !defined(LIGHTUSD_ENABLE_THREAD)
     (void)variant_names;  // only the worker path emits per-chunk specs
@@ -2064,6 +2137,29 @@
           }
           ReleaseWorkerTLS();
         });
+      }
+
+      // consume_prims: committed chunks are released to their skeletons on
+      // reaper threads, off the encoders' path.
+      constexpr size_t kReapers = 2;
+      if (reap_prims_) {
+        for (size_t r = 0; r < kReapers; ++r) {
+          threads.emplace_back([&, r] {
+            for (size_t k = r; k < nchunks; k += kReapers) {
+              {
+                std::unique_lock<std::mutex> lk(mut);
+                // Committed: a fallback to the serial build (which
+                // re-encodes every prim) happens only before any commit.
+                cv.wait(lk, [&] { return fatal || c_done > k; });
+                if (fatal) return;
+              }
+              const size_t lo = k * kFieldsChunkPrims;
+              const size_t hi = std::min(nprims, lo + kFieldsChunkPrims);
+              for (size_t i = lo; i < hi; ++i)
+                const_cast<PrimSpec&>(layer.prims()[i]).release_to_skeleton();
+            }
+          });
+        }
       }
 
       // Commit stages A1, B and C trail chunk readiness / the stage before

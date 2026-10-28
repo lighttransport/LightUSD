@@ -12,6 +12,7 @@
 #include "../parser/value-parser.hh"
 #include "crate-data-source.hh"
 #include "crate-timing.hh"
+#include "../memory-trim.hh"
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
@@ -143,10 +144,67 @@ class BufferedFileSink {
 
 #include "crate-writer-impl.inc"
 
+// Output file of a batched write (CrateWriter::BeginBatchedFile).
+struct CrateWriter::BatchedFile {
+  std::string filename;
+  std::ofstream ofs;
+  std::unique_ptr<BufferedFileSink> file_sink;
+  CrateWriteSink sink;
+  CrateWritePatch patch;
+};
+
 CrateWriter::CrateWriter(const CrateWriteOptions& options)
     : impl_(new Impl(options)) {}
 
 CrateWriter::~CrateWriter() = default;
+
+void CrateWriter::AddBatchTables(const Layer& batch,
+                                 const std::vector<uint8_t>& repeated) {
+  impl_->StreamTablesBatch(batch, repeated);
+}
+
+bool CrateWriter::BeginBatchedFile(const char* filename) {
+  if (!filename) return false;
+  batched_file_.reset(new BatchedFile());
+  BatchedFile& f = *batched_file_;
+  f.filename = filename;
+  f.ofs.open(filename, std::ios::out | std::ios::binary | std::ios::trunc);
+  if (!f.ofs) return false;
+  f.file_sink.reset(new BufferedFileSink(&f.ofs));
+  BufferedFileSink* fs = f.file_sink.get();
+  f.sink = [fs](const uint8_t* data, size_t size) { return fs->Write(data, size); };
+  f.patch = [fs](uint64_t pos, const uint8_t* data, size_t size) {
+    return fs->Patch(pos, data, size);
+  };
+  return impl_->StreamWriteBegin(&f.sink);
+}
+
+bool CrateWriter::WriteBatch(
+    Layer& batch, const std::vector<uint8_t>& spine,
+    const std::vector<uint8_t>& repeated,
+    const std::unordered_map<std::string, std::vector<std::string>>& full_children) {
+  if (!batched_file_) return false;
+  return impl_->StreamWriteBatch(batch, spine, repeated, full_children);
+}
+
+CrateWriteResult CrateWriter::FinishBatched() {
+  CrateWriteResult result;
+  if (!batched_file_) {
+    result.error = "batched write was not started";
+    return result;
+  }
+  BatchedFile& f = *batched_file_;
+  result = impl_->StreamFinish(&f.sink, &f.patch);
+  const bool flushed = f.file_sink->Flush();
+  f.ofs.close();
+  if (result.success && (!flushed || f.ofs.fail())) {
+    result.success = false;
+    result.error = "Failed to write";
+  }
+  if (!result.success) std::remove(f.filename.c_str());
+  batched_file_.reset();
+  return result;
+}
 
 CrateWriteResult CrateWriter::WriteToFile(const char* filename, const Stage& stage) {
   if (!filename) { CrateWriteResult r; r.error = "Null filename"; return r; }

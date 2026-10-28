@@ -19,10 +19,12 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <memory>
 #include <vector>
 
 #include "logger.hh"  // lightusd::logging (next routes diagnostics through it)
 #include "next/pcp/cache.hh"
+#include "next/pcp/batched-compose.hh"
 #include "next/pcp/layer-registry.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
@@ -110,6 +112,15 @@ int main(int argc, char **argv) {
   // write. Disabled by default because it intentionally skips destructors and
   // atexit handlers; see ExitAfterSuccessfulWrite().
   bool fast_exit = false;
+  // Debug: compose in namespace batches (pcp::ComposeStageBatched) and merge
+  // them; output must match the regular compose byte for byte.
+  long batch_roots = -1;
+  // --memory-profile low: flatten to USDC in namespace batches, streaming each
+  // into the writer (pcp::FlattenToUSDCFileBatched). Same bytes, slower,
+  // a fraction of the peak memory.
+  bool low_memory = false;
+  size_t batch_frontier = 65536;
+  size_t batch_prims = 400000;
   // --variant-fallback set=opt1,opt2  (repeatable). Stock pxr registers NO
   // fallbacks; the AOUSD supplemental corpus expectations were generated in
   // an environment with the classic standin->render fallback, so its runner
@@ -223,6 +234,20 @@ int main(int argc, char **argv) {
       compose_threads = -1;
     } else if (std::strcmp(argv[i], "--no-consume-values") == 0) {
       consume_values = false;
+    } else if (std::strcmp(argv[i], "--memory-profile") == 0 && i + 1 < argc) {
+      const char* m = argv[++i];
+      if (std::strcmp(m, "low") == 0) low_memory = true;
+      else if (std::strcmp(m, "default") == 0) low_memory = false;
+      else {
+        std::fprintf(stderr, "ERR : --memory-profile must be default or low\n");
+        return 2;
+      }
+    } else if (std::strcmp(argv[i], "--batched-compose") == 0 && i + 1 < argc) {
+      batch_roots = std::atol(argv[++i]);
+    } else if (std::strcmp(argv[i], "--batch-frontier") == 0 && i + 1 < argc) {
+      batch_frontier = static_cast<size_t>(std::atol(argv[++i]));
+    } else if (std::strcmp(argv[i], "--batch-prims") == 0 && i + 1 < argc) {
+      batch_prims = static_cast<size_t>(std::atol(argv[++i]));
     } else if (std::strcmp(argv[i], "--fast-exit") == 0) {
       fast_exit = true;
     } else if (std::strcmp(argv[i], "--load-payloads") == 0) {
@@ -260,6 +285,7 @@ int main(int argc, char **argv) {
                          "[--output-format usda|usdc] [--compose-only] "
                          "[--load-payloads|--defer-payloads] "
                          "[--no-consume-values] "
+                         "[--memory-profile default|low] [--batch-prims N] "
                          "[--fast-exit] "
                          "[--aousd-strict] "
                          "[--max-crate-elements N] "
@@ -285,6 +311,10 @@ int main(int argc, char **argv) {
   if (output_usdc && (!out_path || (!flatten && !rewrite_layer))) {
     std::fprintf(stderr, "ERR : USDC output requires -o and -f or --rewrite-layer\n");
     return 2;
+  }
+  if (low_memory && !(flatten && output_usdc)) {
+    std::fprintf(stderr, "WARN : --memory-profile low applies to -f with USDC "
+                         "output; using the default profile\n");
   }
   if (parse_threads < 0) {
     const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS");
@@ -473,7 +503,56 @@ int main(int argc, char **argv) {
     // Forward the CLI timing flag to the library (which no longer reads the env):
     // gates the [next_compose]/[next_build]/[next_warm] diagnostics.
     opts.enable_timing = timing;
-    ok = pcp::ComposeStageFromFile(filename, resolver, &stage, opts, &warn, &err);
+    // The stage is written right after composing: free the composition cache
+    // while the writer starts.
+    opts.background_reclaim = true;
+    // ... and its source layers as soon as the opinion fill is past them.
+    opts.release_layers_during_fill = true;
+    if (low_memory && output_usdc) {
+      pcp::BatchedComposeOptions bopts;
+      bopts.max_frontier = batch_frontier;
+      bopts.target_batch_prims = batch_prims;
+      if (batch_roots > 0) bopts.roots_per_batch = static_cast<size_t>(batch_roots);
+      CrateWriteOptions wopts;
+      wopts.num_threads = 0;
+      if (const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS"))
+        wopts.num_threads = std::atoi(nt);
+      if (write_threads >= 0) wopts.num_threads = write_threads;
+      wopts.enable_timing = timing;
+      wopts.consume_values = consume_values;
+      wopts.consume_prims = consume_values;
+      CrateWriteResult res;
+      const bool flat_ok = pcp::FlattenToUSDCFileBatched(
+          filename, resolver, out_path, opts, bopts, wopts, &res, &warn, &err);
+      emit_lines(warn, "WARN : ");
+      emit_crate_limit_hint(warn, max_crate_elements);
+      if (!flat_ok) {
+        if (!res.error.empty()) emit_lines(res.error, "ERR : ");
+        emit_lines(err.empty() ? std::string("low-memory flatten failed") : err,
+                   "ERR : ");
+        return 1;
+      }
+      if (!err.empty()) emit_lines(err, "WARN : ");
+      if (timing) {
+        std::fprintf(stderr,
+                     "[lusdcat] flatten(low-memory)=%.1fms wrote %zu bytes "
+                     "(tokens=%zu paths=%zu specs=%zu)\n",
+                     ms(Clock::now() - t_start), res.bytes_written,
+                     res.token_count, res.path_count, res.spec_count);
+      }
+      if (fast_exit) ExitAfterSuccessfulWrite();
+      return 0;
+    }
+    if (batch_roots >= 0) {
+      pcp::BatchedComposeOptions bopts;
+      bopts.max_frontier = batch_frontier;
+      bopts.target_batch_prims = batch_prims;
+      bopts.roots_per_batch = static_cast<size_t>(batch_roots);
+      ok = pcp::ComposeStageBatched(filename, resolver, &stage, opts, bopts,
+                                    &warn, &err);
+    } else {
+      ok = pcp::ComposeStageFromFile(filename, resolver, &stage, opts, &warn, &err);
+    }
   } else {
     LoadUSDOptions load_opts;
     set_crate_limits(load_opts.usdc_options.crate_options,
@@ -521,6 +600,7 @@ int main(int argc, char **argv) {
     std::printf("composed: %zu prims\n", stage.GetStats().prim_count);
     if (timing) std::fprintf(stderr, "[lusdcat] load+compose=%.1fms\n",
                              ms(t_loaded - t_start));
+    pcp::WaitForBackgroundReclaim();
     stage = Stage();
     if (timing) std::fprintf(stderr, "[lusdcat] teardown=%.1fms\n",
                              ms(Clock::now() - t_loaded));
@@ -536,12 +616,17 @@ int main(int argc, char **argv) {
     // The composed stage is discarded right after this write: let the writer
     // release each prim's values once they are encoded (byte-identical).
     copts.crate_options.consume_values = consume_values;
+    copts.crate_options.consume_prims = consume_values;
     if (const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS")) {
       copts.crate_options.num_threads = std::atoi(nt);
     }
     if (write_threads >= 0) copts.crate_options.num_threads = write_threads;
     const auto t_w0 = Clock::now();
-    USDCWriteResult res = WriteUSDCToFile(out_path, stage, copts);
+    // The writer's tables (~6 GB on a full-LOD stage) outlive the write
+    // here: --fast-exit leaves them to process exit, otherwise they are freed
+    // with the stage teardown below.
+    std::unique_ptr<CrateWriter> writer(new CrateWriter(copts.crate_options));
+    const CrateWriteResult res = writer->WriteToFile(out_path, stage);
     const auto t_written = Clock::now();
     if (!res.success) {
       std::fprintf(stderr, "ERR : %s\n",
@@ -563,6 +648,8 @@ int main(int argc, char **argv) {
       }
     }
     if (fast_exit) ExitAfterSuccessfulWrite();
+    writer.reset();
+    pcp::WaitForBackgroundReclaim();
     stage = Stage();
     if (timing) std::fprintf(stderr, "[lusdcat] teardown=%.1fms\n",
                              ms(Clock::now() - t_written));
@@ -635,6 +722,7 @@ int main(int argc, char **argv) {
   }
   if (flatten && fast_exit) ExitAfterSuccessfulWrite();
   const auto t_teardown = Clock::now();
+  pcp::WaitForBackgroundReclaim();
   stage = Stage();
   if (timing) std::fprintf(stderr, "[lusdcat] teardown=%.1fms\n",
                            ms(Clock::now() - t_teardown));
