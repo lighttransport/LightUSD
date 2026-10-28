@@ -1122,9 +1122,23 @@ differs by at most 0.397 m at the four sample times (largest at 2.0 s); coupled
 joint trajectories still diverge between Bullet and MuJoCo.
 A third CPU fixture extends that chain to three capsules and three revolute
 joints. Blender resolves all three body pairs, all links move under gravity,
-and the fixed and inter-link pivots remain within 1 cm over two seconds. This
-is a runtime integration check; no MuJoCo trajectory comparison or general
-solver-equivalence claim is made for the three-link chain.
+and the fixed and inter-link pivots remain within 1 cm over two seconds. A
+MuJoCo 3.10.1 CPU run from
+`tests/feat/physics-oracle/three-link-chain.xml` gives maximum body-center
+errors across the three links of 0.043, 0.031, 0.314 and 0.678 m at 0.5, 1.0,
+1.5 and 2.0 s; link 3 has the maximum at each sample. The coupled trajectories
+diverge over time, so this does not establish solver equivalence. The
+reproducible C API probe is `tests/next/mujoco-three-link-dynamics.cc`:
+
+```sh
+c++ -std=c++17 -I"$MUJOCO_SOURCE/include" \
+  tests/next/mujoco-three-link-dynamics.cc \
+  -L"$MUJOCO_BUILD/lib" -Wl,-rpath,"$MUJOCO_BUILD/lib" -lmujoco \
+  -o /tmp/mujoco-three-link-dynamics
+/tmp/mujoco-three-link-dynamics tests/feat/physics-oracle/three-link-chain.xml
+```
+
+`MUJOCO_SOURCE` and `MUJOCO_BUILD` are the MuJoCo source and build trees.
 
 The addon writes the MjcPhysics names above as they are; MuJoCo 3.16's decoder
 reads several of them as deprecated aliases (see the deprecation note before
