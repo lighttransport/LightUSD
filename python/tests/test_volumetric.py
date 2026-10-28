@@ -227,8 +227,14 @@ def test_mjcf_sdf_voxel_budget_uses_remaining_import_memory(tmp_path):
     # restoring its old fixed minimum.
     stage = lightusd.import_mjcf(path, sdf_resolution=8, max_memory=128 * 1024)
     assert not stage.generated_assets()
-    assert any(d['code'] == 'mjcf.sdf_level_set_failed'
-               for d in stage.import_report()['diagnostics'])
+    # The import report's diagnostics share this tiny budget (max_memory / 16),
+    # so whether the mjcf.sdf_level_set_failed record fits depends on
+    # platform-specific allocation sizes (it is dropped on macOS/libc++). The
+    # warning log is not budgeted; check the failure there.
+    assert 'sdf geom `g`: no level set' in stage.warnings()
+    report = stage.import_report()
+    assert (any(d['code'] == 'mjcf.sdf_level_set_failed' for d in report['diagnostics'])
+            or report['dropped_records'] > 0)
 
 
 _USDA_MESH = '''#usda 1.0
