@@ -33,7 +33,7 @@ jobs:
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: macos-build-next
+          key: macos-legacy-with-next
           max-size: 500M
       - name: CmakeAndBuild
         run: |
@@ -60,8 +60,8 @@ jobs:
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: macos-build
-          max-size: 500M
+          key: macos-legacy-asan
+          max-size: 2G
       - name: CmakeAndBuild
         run: |
             ./scripts/bootstrap-cmake-macos.sh

@@ -88,8 +88,8 @@ jobs:
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: linux-build-32bit
-        max-size: 500M
+        key: linux-i386-asan
+        max-size: 2G
     - name: setup
       run: |
           sudo apt update
@@ -119,7 +119,7 @@ jobs:
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: linux-build
+        key: linux-clang-legacy
         max-size: 500M
     # ubuntu-latest(Ubuntu 22.04 as of 2024/01/03) has clang installed,
     # so use clang
@@ -196,7 +196,7 @@ jobs:
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: linux-build-mcp-qjs
+        key: linux-mcp-qjs
         max-size: 500M
     - name: configure
       run: |
@@ -226,7 +226,7 @@ jobs:
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: linux-build-next-product
+        key: linux-next-product
         max-size: 500M
     - name: configure
       run: |
@@ -255,7 +255,7 @@ jobs:
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: linux-next-fuzz-cabi
+        key: linux-fuzz-cabi
         max-size: 500M
     - name: configure (clang + sanitizers)
       run: |
@@ -331,7 +331,7 @@ jobs:
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: linux-next-hardening
+        key: linux-hardening
         max-size: 500M
     - name: configure
       run: |
@@ -373,7 +373,7 @@ jobs:
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: linux-build-lusdview-hermetic
+        key: linux-lusdview-hermetic
         max-size: 500M
     - name: install configure dependencies
       run: |
@@ -418,7 +418,7 @@ jobs:
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: linux-build-next
+        key: linux-legacy-with-next
         max-size: 500M
     - name: configure
       run: |
@@ -449,7 +449,7 @@ jobs:
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: linux-build-aousd
+        key: linux-aousd
         max-size: 500M
     - name: Fetch AOUSD supplemental
       run: |
@@ -522,7 +522,7 @@ jobs:
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: linux-build-arm64-gcc
+        key: linux-arm64-gcc
         max-size: 500M
 
     - name: prep
@@ -565,7 +565,7 @@ jobs:
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: linux-build-arm64-clang
+        key: linux-arm64-clang
         max-size: 500M
 
     - name: prep
