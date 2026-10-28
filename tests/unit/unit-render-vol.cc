@@ -310,15 +310,15 @@ void usdvol_vdb_corpus_test(void) {
     // Budget-driven downsampling keeps the extent and fits the cap.
     opt.max_voxels = 100000;
     opt.downsample = true;
-    usdVol::VDBGrid small;
-    TEST_CHECK(usdVol::ReadVDBGridFromFile(path, "temperature", 0, opt, &small, &warn, &err));
-    TEST_CHECK(small.stride > 1 &&
-               size_t(small.dim[0]) * size_t(small.dim[1]) * size_t(small.dim[2]) <= 100000);
-    TEST_CHECK(small.dim[0] == (temperature.dim[0] + small.stride - 1) / small.stride);
+    usdVol::VDBGrid downsampled;
+    TEST_CHECK(usdVol::ReadVDBGridFromFile(path, "temperature", 0, opt, &downsampled, &warn, &err));
+    TEST_CHECK(downsampled.stride > 1 &&
+               size_t(downsampled.dim[0]) * size_t(downsampled.dim[1]) * size_t(downsampled.dim[2]) <= 100000);
+    TEST_CHECK(downsampled.dim[0] == (temperature.dim[0] + downsampled.stride - 1) / downsampled.stride);
     // Without downsampling the same cap rejects the grid.
     opt.downsample = false;
     err.clear();
-    TEST_CHECK(!usdVol::ReadVDBGridFromFile(path, "temperature", 0, opt, &small, &warn, &err));
+    TEST_CHECK(!usdVol::ReadVDBGridFromFile(path, "temperature", 0, opt, &downsampled, &warn, &err));
   }
   // Vector grids as three components.
   {
