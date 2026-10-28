@@ -1,6 +1,7 @@
 #include "tinyvdb_tet_graded_internal.h"
 #include "tinyvdb_tet_graded.h"
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -214,6 +215,23 @@ int main(void) {
     CHECK(tvdb_tet_mesh_quality(&m,&q,&err)==TVDB_OK && !q.inverted);
     CHECK(fabs(q.volume-exact_volume) < 0.3*exact_volume);
     tvdb_tet_mesh_free(&m); tvdb_tet_refine_destroy(g);
+  }
+  {
+    tvdb_tet_mesh oversized = {0};
+    tvdb_tet_mesh_quality_t q = {1,2,3,4,5};
+    int32_t one_tet_index = 0;
+    float one_position = 0;
+    oversized.positions = &one_position;
+    oversized.tets = &one_tet_index;
+    oversized.vertex_count = SIZE_MAX / (3 * sizeof(float)) + 1;
+    CHECK(tvdb_tet_mesh_quality(&oversized,&q,&err)==TVDB_ERROR_INVALID_ARGUMENT);
+    CHECK(q.min_dihedral == 1 && q.max_dihedral == 2 && q.volume == 3 &&
+          q.min_volume == 4 && q.inverted == 5);
+    oversized.vertex_count = 1;
+    oversized.tet_count = SIZE_MAX / (4 * sizeof(int32_t)) + 1;
+    CHECK(tvdb_tet_mesh_quality(&oversized,&q,&err)==TVDB_ERROR_INVALID_ARGUMENT);
+    CHECK(q.min_dihedral == 1 && q.max_dihedral == 2 && q.volume == 3 &&
+          q.min_volume == 4 && q.inverted == 5);
   }
   {
     /* A small off-grid sphere is missed by midpoint sizing at this

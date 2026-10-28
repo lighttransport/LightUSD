@@ -85,6 +85,8 @@ typedef struct {
   double volume, min_volume;
   size_t inverted;                   /* tetrahedra with volume <= 0 */
 } tvdb_tet_mesh_quality_t;
+/* Validates declared array byte extents, tet indices, and used coordinates
+ * before computing diagnostics. Leaves out unchanged on failure. */
 tvdb_status_t tvdb_tet_mesh_quality(const tvdb_tet_mesh* mesh,
                                     tvdb_tet_mesh_quality_t* out,
                                     tvdb_error_t* err);

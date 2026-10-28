@@ -348,7 +348,9 @@ no VDB meshes):
   range and non-positive tet count), and `lightusd_stage_add_generated_asset`.
 - **Python** (`lightusd.volumetric`): `mesh_to_level_set`,
   `LevelSet.sample/to_mesh/to_tet_mesh/save`, `read_level_set`,
-  `TetMesh.quality()` (diagnostics, not guarantees),
+  `TetMesh.quality()` (diagnostics, not guarantees; the native checker rejects
+  impossible declared array extents before indexing and leaves its result
+  unchanged on failure),
   `add_mesh_sdf(stage, mesh_path)` (the importer's layout on any Mesh prim)
   and `make_volume_deformable(stage, mesh_or_volume)` (a `TetMesh` with
   `PhysicsVolumeDeformableSimAPI`, per-point masses and a bound

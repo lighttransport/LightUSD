@@ -1648,6 +1648,10 @@ tvdb_status_t tvdb_tet_mesh_quality(const tvdb_tet_mesh *mesh,
                                     tvdb_error_t *err) {
   if (!mesh || !out || (mesh->tet_count && (!mesh->tets || !mesh->positions)))
     return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT, "invalid tet mesh");
+  if (mesh->vertex_count > SIZE_MAX / (3 * sizeof(float)) ||
+      mesh->tet_count > SIZE_MAX / (4 * sizeof(int32_t)))
+    return tet_error(err, TVDB_ERROR_INVALID_ARGUMENT,
+                     "tet quality mesh is too large");
   tvdb_tet_mesh_quality_t q = {180.0, 0.0, 0.0, INFINITY, 0};
   static const int opp[6][2] = {{0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}};
   for (size_t t = 0; t < mesh->tet_count; ++t) {
