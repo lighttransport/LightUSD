@@ -164,8 +164,9 @@ bool LoadFlexMesh(const fs::path& path, const std::string& text, int dim,
   const std::string ext = ToLower(path.extension().string());
   if (ext == ".vdb" && dim == 3) {
     // A level set is already volumetric: stuff it directly.
+    ScopedMemoryCharge level_set_charge(*active_reader);
     LevelSet level_set;
-    if (!LoadLevelSetVDB(path, &level_set, err)) return false;
+    if (!LoadLevelSetVDB(path, &level_set, &level_set_charge, err)) return false;
     const auto& opts = active_reader->options;
     const size_t budget = opts.max_memory - std::min(opts.max_memory, active_reader->bytes);
     StuffingOptions so;

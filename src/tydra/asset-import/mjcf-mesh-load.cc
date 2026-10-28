@@ -902,7 +902,8 @@ bool LoadLegacyMSH(const fs::path& filename, Mesh* mesh, std::string* err) {
 // A level-set .vdb as a mesh asset (LightUSD extension; MuJoCo has no VDB
 // meshes): the first float level-set grid, read through the reader's
 // budget and meshed at its zero isovalue by sparse marching cubes.
-bool LoadLevelSetVDB(const fs::path& filename, LevelSet* out, std::string* err) {
+bool LoadLevelSetVDB(const fs::path& filename, LevelSet* out, ScopedMemoryCharge* charge,
+                     std::string* err) {
   std::vector<uint8_t> bytes;
   std::string resolved;
   if (!active_reader->Read(filename.string(), active_reader->root_source, &bytes, &resolved, err))
@@ -917,13 +918,13 @@ bool LoadLevelSetVDB(const fs::path& filename, LevelSet* out, std::string* err) 
     if (err) *err = filename.string() + ": " + *err;
     return false;
   }
-  if (!active_reader->Charge(out->decode_peak_bytes(), err)) return false;
-  return true;
+  return charge->Charge(out->decode_peak_bytes(), err);
 }
 
 bool LoadVDBMesh(const fs::path& filename, Mesh* mesh, std::string* err) {
+  ScopedMemoryCharge level_set_charge(*active_reader);
   LevelSet level_set;
-  if (!LoadLevelSetVDB(filename, &level_set, err)) return false;
+  if (!LoadLevelSetVDB(filename, &level_set, &level_set_charge, err)) return false;
   const auto& opts = active_reader->options;
   const size_t budget = opts.max_memory - std::min(opts.max_memory, active_reader->bytes);
   if (budget < 256) {

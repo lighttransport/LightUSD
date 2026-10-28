@@ -335,7 +335,10 @@ bool LoadMeshFile(const fs::path& filename, bool smoothnormal, Mesh* mesh,
                   std::string* err);
 bool LoadGMSHMesh(const fs::path& filename, Mesh* mesh, std::string* err);
 bool LoadLegacyMSH(const fs::path& filename, Mesh* mesh, std::string* err);
-bool LoadLevelSetVDB(const fs::path& filename, LevelSet* out, std::string* err);
+// The decode peak is charged to `charge`, so it is released with the caller's
+// scope (when the level set is dropped) rather than kept in the import budget.
+bool LoadLevelSetVDB(const fs::path& filename, LevelSet* out, ScopedMemoryCharge* charge,
+                     std::string* err);
 bool LoadVDBMesh(const fs::path& filename, Mesh* mesh, std::string* err);
 bool LoadMeshFileUncached(const fs::path& filename, bool smoothnormal, Mesh* mesh,
                           std::string* err);
