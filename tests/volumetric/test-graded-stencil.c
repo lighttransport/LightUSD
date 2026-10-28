@@ -75,13 +75,24 @@ static int euler(const tvdb_tet_mesh *m) {
   free(used);
   return (int)vertices - (int)(3*m->boundary_count/2) + (int)m->boundary_count;
 }
+static double graph_tet_volume(const double *p, const uint32_t *t) {
+  const double *a=p+3*t[0], *b=p+3*t[1], *c=p+3*t[2], *d=p+3*t[3];
+  double x0=b[0]-a[0], x1=b[1]-a[1], x2=b[2]-a[2];
+  double y0=c[0]-a[0], y1=c[1]-a[1], y2=c[2]-a[2];
+  double z0=d[0]-a[0], z1=d[1]-a[1], z2=d[2]-a[2];
+  return (x0*(y1*z2-y2*z1)-x1*(y0*z2-y2*z0)+x2*(y0*z1-y1*z0))/6.0;
+}
 int main(void) {
   const double lo[3]={-2,-2,-2}, hi[3]={2,2,2}; const size_t cells[3]={2,2,2};
   tvdb_tet_refine_graph *g = NULL; tvdb_error_t err; tvdb_tet_mesh m={0}, raw={0};
   tvdb_tet_mesh_quality_t q, raw_q;
-  double torus_error = 0;
+  double torus_error = 0, balance_ratio = 0;
   CHECK(tvdb_tet_refine_box(lo,hi,cells,100000,500000,&g,&err)==TVDB_OK);
   CHECK(tvdb_tet_refine_adapt_sdf(g,sphere,NULL,0,0.5,2.5,0.8,&err)==TVDB_OK);
+  CHECK(tvdb_tet_refine_balance_2to1(g,&balance_ratio,&err)==TVDB_OK);
+  CHECK(balance_ratio <= 2.0 + 1e-12);
+  printf("graded sphere background max face ratio %.6f (%zu tets)\n",
+         balance_ratio,tvdb_tet_refine_tet_count(g));
   CHECK(tvdb_tet_graded_stencil(g,sphere,NULL,0,0,500000,&raw,&err)==TVDB_OK);
   CHECK(closed(&raw) && tvdb_tet_mesh_quality(&raw,&raw_q,&err)==TVDB_OK && !raw_q.inverted);
   CHECK(tvdb_tet_graded_stencil(g,sphere,NULL,0,0.2,500000,&m,&err)==TVDB_OK);
@@ -107,6 +118,38 @@ int main(void) {
     CHECK(m.positions == saved && m.tet_count == count);
   }
   tvdb_tet_mesh_free(&raw); tvdb_tet_mesh_free(&m); tvdb_tet_refine_destroy(g);
+  {
+    const double positions[] = {0,0,0, 1,0,0, 0,1,0, 0,0,10, 0,0,-0.1};
+    const uint32_t tets[] = {0,1,2,3, 0,2,1,4};
+    size_t before;
+    double before_volume, after_volume;
+    double ratio = 0;
+    g = NULL;
+    CHECK(tvdb_tet_refine_create(positions,5,tets,2,100,2,&g,&err)==TVDB_OK);
+    CHECK(tvdb_tet_refine_balance_2to1(g,&ratio,&err)==TVDB_ERROR_INVALID_DATA);
+    tvdb_tet_refine_destroy(g);
+    g = NULL;
+    CHECK(tvdb_tet_refine_create(positions,5,tets,2,200000,600000,&g,&err)==TVDB_OK);
+    before = tvdb_tet_refine_tet_count(g);
+    before_volume = 0;
+    for (size_t i=0; i<before; ++i)
+      before_volume += graph_tet_volume(positions,tets+4*i);
+    CHECK(tvdb_tet_refine_balance_2to1(g,&ratio,&err)==TVDB_OK);
+    CHECK(ratio <= 2.0 + 1e-12);
+    CHECK(tvdb_tet_refine_tet_count(g) > before);
+    after_volume = 0;
+    const double *balanced_positions = tvdb_tet_refine_positions(g);
+    const uint32_t *balanced_tets = tvdb_tet_refine_tets(g);
+    for (size_t i=0; i<tvdb_tet_refine_tet_count(g); ++i) {
+      double volume = graph_tet_volume(balanced_positions,balanced_tets+4*i);
+      CHECK(volume > 0);
+      after_volume += volume;
+    }
+    CHECK(fabs(after_volume-before_volume) < 1e-12);
+    printf("scaled adjacent tetrahedra balanced: %zu -> %zu tets, max face ratio %.6f\n",
+           before,tvdb_tet_refine_tet_count(g),ratio);
+    tvdb_tet_refine_destroy(g);
+  }
   for (int mode = 0; mode < 3; ++mode) {
     const double expected[] = {4.1887902047863905, 3.024, 0.8635903850953188};
     const double tolerance[] = {0.25, 0.25, 0.30};

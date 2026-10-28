@@ -300,7 +300,10 @@ tetrahedralizes a level set's interior:
 - **Experimental grading:** set `flex_tet_coarse_spacing` to a value at least
   `flex_tet_spacing` to grade stuffing for a mesh flexcomp or a VDB flexcomp.
   This path is serial and CPU-only; small features can be missed and element
-  quality is not guaranteed. The importer limits the background by its memory
+  quality is not guaranteed. Face-adjacent background tetrahedra are refined
+  until their maximum edge lengths differ by at most 2:1; this does not use the
+  BCC/octree transitions from the isosurface stuffing paper and does not give
+  its element-quality bounds. The importer limits the background by its memory
   budget. For non-VDB meshes, also select `flex_tetrahedralize="stuffing"`;
   the generated level-set band is widened to support the requested grading.
   A preexisting VDB with a band too narrow to reach the requested coarse size

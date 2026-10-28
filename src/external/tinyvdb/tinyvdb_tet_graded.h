@@ -21,7 +21,9 @@ typedef struct {
  * added. sample must be a finite 1-Lipschitz signed-distance field and may be
  * called at edge midpoints, vertices, and tetrahedron centers. This path is
  * experimental: features smaller than the requested resolution may be missed,
- * dihedral bounds are not guaranteed, and output volume is approximate.
+ * face-adjacent background tetrahedra are refined until their maximum edge
+ * lengths differ by at most 2:1, but this is not the paper's octree transition
+ * scheme and dihedral bounds are not guaranteed; output volume is approximate.
  * Output coordinates are floats; overflow or a tetrahedron that collapses or
  * inverts after conversion is rejected. Execution is serial and deterministic;
  * on failure, out is preserved. */

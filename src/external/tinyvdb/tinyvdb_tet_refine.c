@@ -258,6 +258,205 @@ static void longest_edge_closure(const tvdb_tet_refine_graph *g, uint32_t *a, ui
         *a = next_a; *b = next_b; length = best;
     }
 }
+
+typedef struct {
+    size_t *items, capacity, head, tail;
+    unsigned char *queued;
+    size_t queued_capacity;
+} refine_queue;
+
+static int refine_queue_push(refine_queue *q, size_t tet) {
+    size_t old_capacity;
+    if (tet >= q->queued_capacity) {
+        old_capacity = q->queued_capacity;
+        if (!reserve((void **)&q->queued, &q->queued_capacity, tet + 1,
+                     sizeof(*q->queued))) return 0;
+        memset(q->queued + old_capacity, 0, q->queued_capacity - old_capacity);
+    }
+    if (q->queued[tet]) return 1;
+    if (q->tail == q->capacity) {
+        if (q->head) {
+            memmove(q->items, q->items + q->head,
+                    (q->tail - q->head) * sizeof(*q->items));
+            q->tail -= q->head;
+            q->head = 0;
+        }
+        if (q->tail == q->capacity &&
+            !reserve((void **)&q->items, &q->capacity, q->tail + 1,
+                     sizeof(*q->items))) return 0;
+    }
+    q->items[q->tail++] = tet;
+    q->queued[tet] = 1;
+    return 1;
+}
+
+static int tet_has_face(const uint32_t *tet, uint32_t a, uint32_t b,
+                        uint32_t c) {
+    int has_a = 0, has_b = 0, has_c = 0;
+    for (unsigned i = 0; i < 4; ++i) {
+        has_a |= tet[i] == a;
+        has_b |= tet[i] == b;
+        has_c |= tet[i] == c;
+    }
+    return has_a && has_b && has_c;
+}
+
+static tvdb_status_t tet_max_edge(const tvdb_tet_refine_graph *g, size_t t,
+                                  double *length, uint32_t *edge_a,
+                                  uint32_t *edge_b, tvdb_error_t *err) {
+    const uint32_t *tet = g->tets + 4 * t;
+    double longest = 0;
+    for (unsigned i = 0; i < 4; ++i) for (unsigned j = i + 1; j < 4; ++j) {
+        double candidate = edge_length(g, tet[i], tet[j]);
+        if (!isfinite(candidate) || candidate <= 0)
+            return fail(err, TVDB_ERROR_INVALID_DATA,
+                        "Invalid tetrahedron edge during balancing");
+        if (candidate > longest) {
+            longest = candidate;
+            *edge_a = tet[i];
+            *edge_b = tet[j];
+        }
+    }
+    *length = longest;
+    return TVDB_OK;
+}
+
+/* Add a tetrahedron and every tetrahedron sharing one of its faces. */
+static int balance_queue_tet_and_neighbors(const tvdb_tet_refine_graph *g,
+                                           size_t t, refine_queue *q) {
+    const uint32_t *tet = g->tets + 4 * t;
+    if (!refine_queue_push(q, t)) return 0;
+    for (unsigned omit = 0; omit < 4; ++omit) {
+        uint32_t face[3]; unsigned at = 0;
+        for (unsigned i = 0; i < 4; ++i) if (i != omit) face[at++] = tet[i];
+        for (size_t node = g->heads[face[0]]; node != NONE;
+             node = g->incidence[node].next) {
+            const incidence_t *entry = &g->incidence[node];
+            size_t neighbor = entry->tet;
+            if (entry->generation != g->generations[neighbor] || neighbor == t)
+                continue;
+            if (tet_has_face(g->tets + 4 * neighbor, face[0], face[1], face[2]) &&
+                !refine_queue_push(q, neighbor)) return 0;
+        }
+    }
+    return 1;
+}
+
+static tvdb_status_t find_unbalanced_neighbor(const tvdb_tet_refine_graph *g,
+        size_t t, size_t *coarse, int *found, tvdb_error_t *err) {
+    const uint32_t *tet = g->tets + 4 * t;
+    double length_t; uint32_t edge_a, edge_b;
+    tvdb_status_t st = tet_max_edge(g, t, &length_t, &edge_a, &edge_b, err);
+    if (st != TVDB_OK) return st;
+    *found = 0;
+    for (unsigned omit = 0; omit < 4; ++omit) {
+        uint32_t face[3]; unsigned at = 0;
+        for (unsigned i = 0; i < 4; ++i) if (i != omit) face[at++] = tet[i];
+        for (size_t node = g->heads[face[0]]; node != NONE;
+             node = g->incidence[node].next) {
+            const incidence_t *entry = &g->incidence[node];
+            size_t neighbor = entry->tet;
+            if (neighbor == t || entry->generation != g->generations[neighbor] ||
+                !tet_has_face(g->tets + 4 * neighbor, face[0], face[1], face[2]))
+                continue;
+            double length_neighbor; uint32_t na, nb;
+            st = tet_max_edge(g, neighbor, &length_neighbor, &na, &nb, err);
+            if (st != TVDB_OK) return st;
+            if (length_t > 2.0 * length_neighbor ||
+                length_neighbor > 2.0 * length_t) {
+                *coarse = length_t > length_neighbor ? t : neighbor;
+                *found = 1;
+                return TVDB_OK;
+            }
+        }
+    }
+    return TVDB_OK;
+}
+
+tvdb_status_t tvdb_tet_refine_balance_2to1(tvdb_tet_refine_graph *g,
+        double *max_face_ratio, tvdb_error_t *err) {
+    refine_queue q = {0};
+    tvdb_status_t st = TVDB_OK;
+    size_t coarse;
+    if (!g || !max_face_ratio)
+        return fail(err, TVDB_ERROR_INVALID_ARGUMENT,
+                    "Missing graph or balance ratio output");
+    for (size_t t = 0; t < g->nt; ++t) {
+        int found;
+        st = find_unbalanced_neighbor(g, t, &coarse, &found, err);
+        if (st != TVDB_OK) goto done_balance;
+        if (found && !refine_queue_push(&q, coarse)) {
+            st = fail(err, TVDB_ERROR_OUT_OF_MEMORY,
+                      "Balance queue allocation failed");
+            goto done_balance;
+        }
+    }
+    while (q.head < q.tail) {
+        size_t t = q.items[q.head++];
+        q.queued[t] = 0;
+        if (q.head == q.tail) q.head = q.tail = 0;
+        {
+            int found;
+            st = find_unbalanced_neighbor(g, t, &coarse, &found, err);
+            if (st != TVDB_OK) goto done_balance;
+            if (found) {
+                double length; uint32_t edge_a, edge_b, midpoint;
+                st = tet_max_edge(g, coarse, &length, &edge_a, &edge_b, err);
+                if (st != TVDB_OK) goto done_balance;
+                size_t old_nt = g->nt, *parents = NULL, count = 0;
+                st = split_impl(g, edge_a, edge_b, &midpoint, &parents,
+                                &count, err);
+                if (st != TVDB_OK) goto done_balance;
+                for (size_t i = 0; i < count; ++i) {
+                    size_t child = old_nt + i;
+                    if (!balance_queue_tet_and_neighbors(g, parents[i], &q) ||
+                        !balance_queue_tet_and_neighbors(g, child, &q)) {
+                        free(parents);
+                        st = fail(err, TVDB_ERROR_OUT_OF_MEMORY,
+                                  "Balance queue allocation failed");
+                        goto done_balance;
+                    }
+                }
+                free(parents);
+            }
+        }
+    }
+    st = TVDB_OK;
+    /* A final complete pass supplies a checkable postcondition. */
+    *max_face_ratio = 1.0;
+    for (size_t t = 0; t < g->nt; ++t) {
+        const uint32_t *tet = g->tets + 4 * t;
+        double length_t; uint32_t edge_a, edge_b;
+        st = tet_max_edge(g, t, &length_t, &edge_a, &edge_b, err);
+        if (st != TVDB_OK) goto done_balance;
+        for (unsigned omit = 0; omit < 4; ++omit) {
+            uint32_t face[3]; unsigned at = 0;
+            for (unsigned i = 0; i < 4; ++i) if (i != omit) face[at++] = tet[i];
+            for (size_t node = g->heads[face[0]]; node != NONE;
+                 node = g->incidence[node].next) {
+                const incidence_t *entry = &g->incidence[node];
+                size_t neighbor = entry->tet;
+                if (neighbor <= t || entry->generation != g->generations[neighbor] ||
+                    !tet_has_face(g->tets + 4 * neighbor, face[0], face[1], face[2]))
+                    continue;
+                double length_neighbor; uint32_t na, nb;
+                st = tet_max_edge(g, neighbor, &length_neighbor, &na, &nb, err);
+                if (st != TVDB_OK) goto done_balance;
+                double ratio = length_t > length_neighbor ?
+                               length_t / length_neighbor : length_neighbor / length_t;
+                if (ratio > *max_face_ratio) *max_face_ratio = ratio;
+            }
+        }
+    }
+    if (*max_face_ratio > 2.0 + 1e-12)
+        st = fail(err, TVDB_ERROR_INVALID_DATA,
+                  "Face-neighbor balance did not converge to 2:1");
+done_balance:
+    free(q.items);
+    free(q.queued);
+    return st;
+}
+
 static tvdb_status_t adapt_impl(tvdb_tet_refine_graph *g,
         tvdb_tet_refine_size_fn size, void *user, tvdb_tet_refine_sdf_fn guard,
         void *guard_user, float iso, double fine, tvdb_error_t *err) {

@@ -1480,6 +1480,10 @@ static tvdb_status_t tet_sdf_to_tet_mesh_graded(tvdb_sdf_sample_fn sample, void 
                                      options->fine_spacing, options->coarse_spacing,
                                      options->grading, err);
   }
+  if (st == TVDB_OK) {
+    double max_face_ratio;
+    st = tvdb_tet_refine_balance_2to1(graph, &max_face_ratio, err);
+  }
   if (st == TVDB_OK)
     st = tvdb_tet_graded_stencil(graph, sample, user, options->isovalue,
                                   options->warp_alpha, max_output, out, err);
