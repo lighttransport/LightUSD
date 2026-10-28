@@ -24,7 +24,7 @@ Local:    CPU SDF allocation-aware entry points are local: tinyvdb_work.h plus
           zero for the previous size); the allocator must outlive owning outputs.
           Bounded sorts use deterministic in-place heapsort. grid_destroy_owned
           now uses the grid's allocator for its descriptor as well as its tree.
-          Local tet-quality/balance changes remain documented in resume-vol.md.
+          Local tet-quality/balance changes are not yet upstreamed.
           tinyvdb_io.c is LightUSD's wrapper, not upstream's parser. tinyvdb_io.h
           adapts includes to ../miniz.h, ../../lz4/lz4.h and ../zstd.h.
           tinyvdb_sparse_tools.c also carries LightUSD commit dad7e2b7's CPU

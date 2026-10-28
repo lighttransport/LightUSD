@@ -2712,3 +2712,13 @@ skin weights, geometry-property parity with a native USDA import, binary/package
 roundtrips and physics JSON authoring. Pass its module path and a native USDA
 fixture exported from the inline OBJ source in the script. This avoids replacing
 another worker's WASM artifacts.
+
+### Opt-in NVIDIA level-set regression
+
+For bounded OpenGL, Vulkan, CUDA and OptiX surface checks, use
+`examples/lusdview/tests/check-level-set-gpu.py` and the optional
+`profile-gpu-level-set` fixture/profiling target. The runner verifies actual
+backend selection, transformed silhouettes and mesh occlusion, and monitors
+additional VRAM without changing other GPU processes. Build, Xvfb, validation
+layer and profiler instructions are in [lusdview.md](lusdview.md). These hardware
+checks are opt-in and are not part of the ordinary CPU regression suite.

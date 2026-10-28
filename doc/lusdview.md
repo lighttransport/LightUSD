@@ -127,7 +127,7 @@ available. A missing `/dev/kfd` or `/dev/dri/renderD*` requires device
 passthrough at container/VM launch and cannot be fixed by creating repository
 files.
 
-### UsdVol volumes in the Vulkan raster path
+### UsdVol level sets and density volumes
 
 `vk/shaders/volume.frag` has two modes, selected by `VolumeUBO::params.x`. A
 fog/density field (`fieldClass` "fogVolume") is emission/absorption marched as
@@ -136,10 +136,68 @@ resolved field as `DrawVolumeCPU::isLevelSet`) is treated as an isosurface: the
 shader marches to the first sign change of the field against `params.y` (0 for
 the UsdVol convention), refines it by bisection, and shades the hit with the
 field gradient as the normal, so a signed distance field renders as its surface
-instead of a thin density shell. The OpenGL and CUDA/OptiX paths still march
-every field as density; use `--backend vk` (the default) for isosurfaces.
+instead of a thin density shell. OpenGL now carries `isLevelSet`/`isovalue`
+into matching shader uniforms. CUDA software BVH and OptiX consume the same
+packed volume buffers: `HostVolParam::bmin.w` selects an isosurface and `bmax.w`
+carries its isovalue, preserving the existing volume-buffer layout. OptiX's
+launch-parameter byte count is shared between host upload, pipeline creation
+and device layout assertions. Auto transport can select OptiX for level-set
+scenes with triangle acceleration; density volumes retain their software-BVH
+fallback. Volume-only scenes without an OptiX IAS continue using CUDA software
+traversal unless an explicit transport is requested.
+
+These are primary-ray, headlight-shaded surface previews; they do not add
+secondary-ray or participating-media integration to the path tracer. Surface
+normals use the inverse transpose with per-axis voxel spacing, including
+nonuniform scale. Raster paths output the refined hit depth, and RT surfaces
+respect the closest mesh/volume depth. Exact-zero plateaus do not create false
+hits or stall the sampler. Fog/density emission-absorption marching is retained.
+The packed Vulkan volume image and its view both use RGBA32F; validation found
+and fixed the previous invalid R32F view of the RGBA image.
 The embedded SPIR-V headers are regenerated with
 `examples/lusdview/vk/shaders/build-shaders.sh` and committed.
+
+A reproducible NVIDIA check is `examples/lusdview/tests/check-level-set-gpu.py`.
+It uses a small generated sphere, checks plain/transformed/occluded images and
+actual backend/transport JSON reports, and monitors VRAM while running one
+renderer at a time. Its renderer planning cap is 8 GiB; it stops its own renderer
+if aggregate use grows by more than 9 GiB or free memory drops below 512 MiB.
+Other GPU jobs are left running. OpenGL uses a window under Xvfb: `--headless`
+forces Vulkan and must not be used to validate the OpenGL renderer.
+
+With an explicitly GPU-enabled legacy build, generate the fixture and run:
+
+```sh
+cmake --build build_ninja/sdf-legacy -j2 --target lusdview profile-gpu-level-set
+./build_ninja/sdf-legacy/profile-gpu-level-set 32 fast /tmp/level-set-sphere.vdb
+xvfb-run -a -s "-screen 0 640x480x24" env \
+  __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia \
+  __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json \
+  python3 examples/lusdview/tests/check-level-set-gpu.py \
+  build_ninja/sdf-legacy/lusdview /tmp/level-set-sphere.vdb /tmp/level-set-images
+```
+
+OptiX needs the optional build described below. For Vulkan checks, also set
+`VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation` and the source-built layer paths
+from the validation section. The generated images, render reports, logs and
+VRAM measurements remain in the requested output directory.
+
+The bounded `profile-gpu-level-set` benchmark uses a 1,106-vertex/2,208-triangle
+sphere, a two-million-candidate cap and no large assets. It warms CUDA kernels,
+measures three builds, and compares counts and 4,096 samples with one CPU worker.
+Use `32 fast` and `32 exact` under `nsys profile --trace=cuda --sample=none
+--cpuctxsw=none` for reproducible traces. On the RTX 5060 Ti with a concurrent GPU
+workload, the initial fast builds took 38–43 ms versus 980 ms for one CPU worker;
+Nsight reported about 9.5 ms (fast) and 5.5 ms (exact) per combined distance/winding
+kernel across four launches including warm-up. The NanoVDB sampling kernel took
+about 29 microseconds for 4,096 points. Sample differences were zero. These are
+one-workload measurements under contention, not unloaded or general speed claims.
+
+The 2026-10-29 NVIDIA run passed all 20 image cases across OpenGL, Vulkan,
+CUDA software traversal and forced OptiX. Five Vulkan cases also passed
+GPU-Assisted Validation; the CUDA numerical marcher check passed Compute
+Sanitizer with zero errors. Peak additional renderer residency was 533 MiB
+(6,295 MiB total alongside an existing GPU workload); GPU-AV added 134 MiB.
 
 ## Production path tracing
 
