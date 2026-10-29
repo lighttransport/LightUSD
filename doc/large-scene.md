@@ -6203,3 +6203,17 @@ is mid pass 2 (rsstrace: 9.35 GiB at 53 s), not the section build.
 - Rewrite sweep 1,410/1,410; composition sweep 3,866/3,866.
 - Staged parallel output equals serial (579,974,418 bytes both ways);
   CTest 65/65.
+
+## Cached surface previews
+
+`lusdpreview` and `--scene-preview` in `lusdview` / `lusdrender` convert a composed
+scene on the CPU into portable Gaussian splats (default), constant-surflet
+`ParticleField` points, or `UsdVol` / OpenVDB surface bricks. Cached geometry and
+baked colors are reused by CPU, Vulkan and CUDA rendering. The default GPU
+budget is one quarter of installed VRAM (2 GiB on an 8 GiB GPU), with a runtime
+reserve and conservative geometry/scratch accounting.
+
+See [the converter guide](../tools/lusdpreview/README.md) for conversion,
+export, explicit resolution/budget refinement, cache invalidation, memory
+limits and headless hardware qualification. Volume previews include a cached
+colored isosurface carrier for the existing surface renderers.

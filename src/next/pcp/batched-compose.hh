@@ -79,6 +79,8 @@ class BatchedComposer {
   bool whole() const;
   size_t frontier_size() const;
   size_t batch_count() const;
+  // Loaded source identifiers, for dependency manifests after Plan().
+  std::vector<std::string> source_identifiers() const;
 
   // Pass 1: composes every batch and discards it, recording the cross-batch
   // instancing facts (Holder prototypes with peers elsewhere). `on_batch`

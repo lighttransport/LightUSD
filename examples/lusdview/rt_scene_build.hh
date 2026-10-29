@@ -164,7 +164,8 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
 // previews; full mode preserves the higher-quality legacy proxy.
 std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene,
                                                   bool compact = false,
-                                                  size_t maxTriangles = 0);
+                                                  size_t maxTriangles = 0,
+                                                  bool tessellateAnalytic = false);
 
 // Fully-built host scene, device-upload ready. Arrays mirror the kernel inputs.
 struct HostScene {
@@ -259,7 +260,8 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                     BuildProgress* progress = nullptr, RefitMap* refitOut = nullptr,
                     size_t textureBudgetBytes = 0,
                     const std::vector<uint8_t>* meshVisible = nullptr,
-                    uint32_t purposeVisibleMask = 0x3u);
+                    uint32_t purposeVisibleMask = 0x3u,
+                    bool nativePointCarriers = true);
 
 // Re-pose `hs` in place from `scene`'s CURRENT vertex data: rewrite tris/nrms
 // in the recorded leaf order, then refit every BLAS/TLAS node bound over the

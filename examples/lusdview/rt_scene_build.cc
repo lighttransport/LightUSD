@@ -1121,7 +1121,7 @@ size_t RtProxyTriangleLimit() {
 
 std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene,
                                                   bool compact,
-                                                  size_t maxTriangles) {
+                                                  size_t maxTriangles, bool tessellateAnalytic) {
   std::vector<DrawMeshCPU> proxies;
   proxies.reserve(scene.points.size() + scene.curves.size());
   const size_t proxyTriangleLimit = RtProxyTriangleLimit();
@@ -1140,7 +1140,7 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene,
         src.ellipseMajorAxes.size() >= pointCount * 3;
     const bool analytic_points =
         !src.gaussian && src.normals.size() >= pointCount * 3;
-    if (native_gaussian || analytic_points) {
+    if (!tessellateAnalytic && (native_gaussian || analytic_points)) {
       continue;  // native ellipse carrier is uploaded by CUDA/HIP/Vulkan RT paths
     }
     DrawMeshCPU mesh;
@@ -1188,8 +1188,8 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene,
         float minor[3] = {normal[1] * major[2] - normal[2] * major[1],
                           normal[2] * major[0] - normal[0] * major[2],
                           normal[0] * major[1] - normal[1] * major[0]};
-        const float rx = 0.5f * src.ellipseRadii[i * 2] * majorLen;
-        const float ry = 0.5f * src.ellipseRadii[i * 2 + 1] *
+        const float rx = src.ellipseRadii[i * 2] * majorLen;
+        const float ry = src.ellipseRadii[i * 2 + 1] *
                          std::sqrt(minor[0] * minor[0] + minor[1] * minor[1] +
                                    minor[2] * minor[2]);
         float color[3] = {1.0f, 1.0f, 1.0f};
@@ -1421,7 +1421,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                     BuildProgress* progress, RefitMap* refitOut,
                     size_t textureBudgetBytes,
                     const std::vector<uint8_t>* meshVisible,
-                    uint32_t purposeVisibleMask) {
+                    uint32_t purposeVisibleMask, bool nativePointCarriers) {
   if (refitOut) {
     refitOut->valid = false;
     refitOut->meshes.clear();
@@ -1454,7 +1454,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   // Keep Gaussian splats and authored-normal Points as analytic ellipses. The
   // carrier stores local-space radii and axes; bake only the affine placement
   // here so CUDA/HIP RT does not expand disk/oval point clouds into triangles.
-  for (const DrawPointsCPU& src : scene.points) {
+  if (nativePointCarriers) for (const DrawPointsCPU& src : scene.points) {
     const size_t n = src.points.size() / 3;
     const bool gaussian =
         src.gaussian && src.ellipseRadii.size() >= n * 2 &&
@@ -1680,9 +1680,11 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   // the carrier data in the bounded analytic representation above while
   // preserving meshes as the higher-priority input.
   std::vector<DrawMeshCPU> nonMeshProxies;
-  const bool compactNonMeshProxies = maxTris > 0 && maxTris <= 64000000;
+  const bool compactNonMeshProxies = nativePointCarriers && maxTris > 0 && maxTris <= 64000000;
   if (!compactNonMeshProxies)
-    nonMeshProxies = BuildNonMeshRtProxyMeshes(scene, false, 0);
+    nonMeshProxies = BuildNonMeshRtProxyMeshes(scene, !nativePointCarriers,
+                                              nativePointCarriers ? 0 : maxTris,
+                                              !nativePointCarriers);
   if (compactNonMeshProxies) {
     LOGI("RT geometry: compact analytic point/curve carriers enabled "
          "(sample budget=%zu, max-tris=%zu)", compactPointBudget, maxTris);

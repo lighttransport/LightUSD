@@ -100,7 +100,8 @@ void PushRecord(RenderPrimRecord&& rec, const RenderExtractOptions& options,
   if (options.collect_records) out->records.push_back(stored);
   if (!options.collect_categories) return;
   if (stored->type_name == "Points" ||
-      stored->type_name == "ParticleField3DGaussianSplat") {
+      stored->type_name == "ParticleField3DGaussianSplat" ||
+      stored->type_name == "ParticleField") {
     out->points.push_back(stored);
     return;
   }
@@ -292,7 +293,7 @@ bool IsMeshRenderableTypeName(const std::string& type_name) {
 
 bool IsUnsupportedRenderableTypeName(const std::string& type_name) {
   return type_name == "Points" ||
-         type_name == "ParticleField3DGaussianSplat" ||
+         type_name == "ParticleField3DGaussianSplat" || type_name == "ParticleField" ||
          type_name == "NurbsPatch";
 }
 

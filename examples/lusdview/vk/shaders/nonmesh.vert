@@ -71,9 +71,9 @@ void main() {
     vTangent = camUp;
   } else if (pc.ids.x == 2) {
     // Gaussian carrier: aPrev/aNext contain the transformed major/minor
-    // covariance axes (full diameters). This preserves the authored 3-D
+    // covariance semi-axes. This preserves the authored 3-D
     // orientation while perspective projection turns the disk into an ellipse.
-    p = aP0 + (aPrev * corner.x + aNext * corner.y) * 0.5;
+    p = aP0 + (aPrev * corner.x + aNext * corner.y);
     vLocal = corner;
     vColor = aColor0;
     vTangent = normalize(aPrev);

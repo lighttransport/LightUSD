@@ -2735,3 +2735,21 @@ backend selection, transformed silhouettes and mesh occlusion, and monitors
 additional VRAM without changing other GPU processes. Build, Xvfb, validation
 layer and profiler instructions are in [lusdview.md](lusdview.md). These hardware
 checks are opt-in and are not part of the ordinary CPU regression suite.
+
+### Cached large-scene preview regression
+
+Build `lusdpreview` and `test_scene_preview`, then run
+`ctest --test-dir build_ninja -R '^next_test_scene_preview$' --output-on-failure`.
+The generated fixtures cover all three representations, bounded outputs,
+portable export, cross-batch native instances, forward PointInstancers,
+texture baking, dependency invalidation, malformed/truncated cache recovery,
+cancellation and default VRAM sizing.
+
+For headless hardware qualification run
+[check-renderers.py](../tools/lusdpreview/check-renderers.py) with the built
+viewer/renderer, source scene, cache and output directories. It exercises both
+applications on CPU / Vulkan / CUDA for Gaussian, point and volume previews,
+records actual per-process NVML VRAM and RSS, and requires hardware allocations.
+Use the [Vulkan validation layer procedure](lusdview.md#gpu-assisted-validation-shader-faults--device-loss)
+for shader/descriptor qualification. Keep large source assets, cached sidecars,
+images and measurement logs in ignored build directories.

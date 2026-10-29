@@ -2361,7 +2361,7 @@ bool IsRenderableGeometryPrim(const lightusd::next::UsdPrim &prim) {
   const std::string &type = prim.GetTypeName();
   return type == "Mesh" || type == "BasisCurves" ||
          type == "HermiteCurves" || type == "NurbsCurves" || type == "Points" ||
-         type == "ParticleField3DGaussianSplat" ||
+         type == "ParticleField3DGaussianSplat" || type == "ParticleField" ||
          type == "PointInstancer" || type == "UsdGeomPointInstancer";
 }
 
@@ -3873,7 +3873,7 @@ bool BuildNextGaussianEllipses(const lightusd::next::Stage &stage,
     lightusd::tydra::next::ComputeLocalTransform(prim, dmat, time);
     const matrix4d local = Mat4FromArray(dmat);
     const matrix4d world = local * parent;
-    if (prim.GetTypeName() == "ParticleField3DGaussianSplat") {
+    if (lightusd::next::IsParticleField(prim)) {
       lightusd::next::ParticleFieldData field;
       std::string field_warning;
       if (!lightusd::next::GetParticleFieldData(
@@ -3951,8 +3951,9 @@ bool BuildNextGaussianEllipses(const lightusd::next::Stage &stage,
         const Vec3 nx = TransformVector(world, TransformVector(r4, Vec3{1, 0, 0}));
         const Vec3 ny = TransformVector(world, TransformVector(r4, Vec3{0, 1, 0}));
         const Vec3 nz = Normalize(TransformVector(world, TransformVector(r4, Vec3{0, 0, 1})));
-        const float rx = std::max(1.0e-6f, 2.0f * sx * Length(nx));
-        const float ry = std::max(1.0e-6f, 2.0f * sy * Length(ny));
+        const float kernel_scale = field.kernel == lightusd::next::ParticleKernel::ConstantSurflet ? 1.0f : 2.0f;
+        const float rx = std::max(1.0e-6f, kernel_scale * sx * Length(nx));
+        const float ry = std::max(1.0e-6f, kernel_scale * sy * Length(ny));
         centers.insert(centers.end(), {c.x, c.y, c.z});
         radii.insert(radii.end(), {rx, ry});
         normals.insert(normals.end(), {nz.x, nz.y, nz.z});

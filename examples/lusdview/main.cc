@@ -11,6 +11,8 @@
 // 3D viewport with Maya-style navigation (Alt+LMB orbit / Alt+MMB pan /
 // Alt+RMB+wheel dolly, 'F' to frame the scene).
 #include <algorithm>
+#include "tydra/next/scene-preview.hh"
+#include "preview_gpu_budget.hh"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -236,6 +238,14 @@ uint64_t HostMemoryCapacityBytes() {
 }  // namespace
 
 int main(int argc, char** argv) {
+  lusdview::PreviewGpuBudgetReport previewBudgetReport;
+  lightusd::tydra::next::ScenePreviewRequest scenePreview;
+  std::string scenePreviewError;
+  if (!lightusd::tydra::next::ExtractScenePreviewArguments(
+          &argc, argv, &scenePreview, &scenePreviewError)) {
+    std::fprintf(stderr, "%s\n", scenePreviewError.c_str());
+    return 1;
+  }
   const std::string executableName =
       (argc > 0 && argv[0]) ? std::filesystem::path(argv[0]).filename().string()
                             : std::string();
@@ -1262,6 +1272,12 @@ int main(int argc, char** argv) {
           "  --stereo      Resolve authored stereoRole left/right cameras; "
           "headless raster screenshots are side-by-side (use --camera when "
           "multiple pairs exist).\n"
+          "  --scene-preview  Convert/cache a bounded scene preview before loading.\n"
+          "  --preview-kind gaussian|points|volume  Representation (default gaussian).\n"
+          "  --preview-budget-mib N  Total renderer budget (default 1/4 VRAM).\n"
+          "  --preview-resolution N  Explicit sampling resolution.\n"
+          "  --preview-cache-dir DIR  Reuse portable cached USD sidecars.\n"
+          "  --preview-refresh  Regenerate the cached preview.\n"
           "  --cuda        Ray-trace the screenshot on CUDA (driver API + NVRTC "
           "loaded at runtime via cuew; falls back if no CUDA device).\n"
           "  --cuda-rt-backend MODE  CUDA traversal: auto, optix, or software.\n"
@@ -1481,6 +1497,28 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  if (scenePreview.enabled) {
+    scenePreview.options.time_code = timeCode.value_or(0.0);
+    scenePreview.options.composition.load_payloads = !deferPayloads.value_or(false);
+    if (!lightusd::tydra::next::PrepareScenePreview(
+            &file, scenePreview, 0, &scenePreviewError)) {
+      LOGE("scene preview: %s", scenePreviewError.c_str());
+      return 1;
+    }
+    useNextLoader = true;
+    largeSceneProfile = LargeSceneProfile::Off;
+    largeSceneProfileExplicit = true;
+    dynamicLod = false;
+    const double budgetGiB = double(scenePreview.options.gpu_budget_bytes) /
+                             double(uint64_t(1) << 30);
+    vramBudgetGiB = budgetGiB;
+    vramBudgetExplicit = true;
+    maxGpuMemGiB = budgetGiB;
+    maxGpuMemExplicit = true;
+    lusdview::ScenePreviewGpuBudget().configure(scenePreview.options.gpu_budget_bytes);
+    textureOptions.textureBudgetMB = 32;
+    textureBudgetExplicit = true;
+  }
   LargeSceneProfile effectiveProfile = largeSceneProfile;
   // Large production assets should receive the interactive streaming budget
   // even when opened directly from the command line. Keep `--large-scene-

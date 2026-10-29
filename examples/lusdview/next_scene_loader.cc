@@ -7714,7 +7714,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // backends receive the converter's evaluated widths/colors at `time` plus the
   // inherited world transform and material binding.
   for (const PublicRenderRecord& rec : extracted.points) {
-    const bool gaussian = rec.type_name == "ParticleField3DGaussianSplat";
+    const bool gaussian = rec.type_name == "ParticleField3DGaussianSplat" || rec.type_name == "ParticleField";
     if (rec.type_name != "Points" && !gaussian) continue;
 
     // Gaussian fields are commonly millions of records. Read their numeric
@@ -7840,7 +7840,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           const auto r = lightusd::to_matrix3x3(q);
           dp.points.insert(dp.points.end(), {px, py, pz});
           dp.widths.push_back(2.0f * std::max(sx, std::max(sy, sz)));
-          dp.ellipseRadii.insert(dp.ellipseRadii.end(), {2.0f * sx, 2.0f * sy});
+          const float support = rec.type_name == "ParticleField" ? 1.0f : 2.0f;
+          dp.ellipseRadii.insert(dp.ellipseRadii.end(), {support * sx, support * sy});
           dp.ellipseMajorAxes.insert(
               dp.ellipseMajorAxes.end(),
               {float(r.m[0][0]), float(r.m[0][1]), float(r.m[0][2])});

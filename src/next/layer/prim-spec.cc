@@ -188,6 +188,7 @@ PrimSpec PrimSpec::Clone() const {
   c.type_id_ = type_id_;
   c.specifier_ = specifier_;
   c.path_ = path_;
+  c.asset_anchor_id_ = asset_anchor_id_;
 
   // Deep copy properties (slots carry value-storage indices + flags).
   c.props_ = props_;

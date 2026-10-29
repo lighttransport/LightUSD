@@ -4,6 +4,8 @@
 // lusdrender: CPU preview raytrace renderer for USD scenes.
 //
 #include <algorithm>
+#include "tydra/next/scene-preview.hh"
+#include "preview_gpu_budget.hh"
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -252,7 +254,7 @@ void CollectGpuPointsRec(
   lightusd::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
   const matrix4d world = local * parent_world;
-  if (prim.GetTypeName() == "ParticleField3DGaussianSplat") {
+  if (lightusd::next::IsParticleField(prim)) {
     lightusd::next::ParticleFieldData field;
     std::string field_warning;
     if (!lightusd::next::GetParticleFieldData(
@@ -1140,6 +1142,14 @@ static bool TryRunInstancedVk(const lightusd::next::Stage &stage,
 #endif  // HAVE_VULKAN
 
 int main(int argc, char **argv) {
+  lusdview::PreviewGpuBudgetReport previewBudgetReport;
+  lightusd::tydra::next::ScenePreviewRequest scenePreview;
+  std::string scenePreviewError;
+  if (!lightusd::tydra::next::ExtractScenePreviewArguments(
+          &argc, argv, &scenePreview, &scenePreviewError)) {
+    std::cerr << scenePreviewError << "\n";
+    return EXIT_FAILURE;
+  }
 #if defined(__GLIBC__)
   // Triangle streaming allocates and frees large transient per-job buffers
   // (megabytes each) while the final geometry buffers stay live. glibc's default
@@ -1163,6 +1173,36 @@ int main(int argc, char **argv) {
   Options opt;
   if (!ParseArgs(argc, argv, &opt)) {
     return EXIT_FAILURE;
+  }
+  if (scenePreview.enabled) {
+    scenePreview.options.time_code = std::isfinite(opt.timecode) ? opt.timecode : 0.0;
+    scenePreview.options.composition.variant_overrides = opt.variant_overrides;
+    if (!opt.mask.empty()) {
+      std::cerr << "scene preview does not yet accept -mask; use a USD wrapper layer\n";
+      return EXIT_FAILURE;
+    }
+    if (!lightusd::tydra::next::PrepareScenePreview(
+            &opt.input, scenePreview, 0, &scenePreviewError)) {
+      std::cerr << "scene preview: " << scenePreviewError << "\n";
+      return EXIT_FAILURE;
+    }
+    opt.rt_preview = true;
+    opt.legacy_load = false;
+    opt.max_vram_gib = double(scenePreview.options.gpu_budget_bytes) /
+                       double(uint64_t(1) << 30);
+    opt.texture_budget_mb = 32;
+    opt.texture_budget_explicit = true;
+    opt.large_scene_profile = Options::LargeSceneProfile::Off;
+    opt.lod_stream = false;
+    lusdview::ScenePreviewGpuBudget().configure(scenePreview.options.gpu_budget_bytes);
+    const uint64_t width=static_cast<uint64_t>(std::max(1,opt.width));
+    const uint64_t height=static_cast<uint64_t>(opt.height>0?opt.height:540);
+    const uint64_t samples = static_cast<uint64_t>(std::max(1, opt.samples));
+    const uint64_t frameLimit = scenePreview.options.gpu_budget_bytes / 2 / 256;
+    if (width > frameLimit / height / samples) {
+      std::cerr << "preview frame/sampling buffers exceed the GPU budget; reduce resolution or samples\n";
+      return EXIT_FAILURE;
+    }
   }
   SetIblBackendEnvmap(opt.ibl_envmap);
   ApplyLargeSceneProfile(&opt);
@@ -1912,7 +1952,8 @@ int main(int argc, char **argv) {
 #ifdef HAVE_CUDA_RT
     if (opt.cuda) {
       if (!RunCudaSharedRT(opt, base_colors, geos, gpu_materials,
-                           gpu_textures, gpu_lights, camera, out_height)) {
+                           gpu_textures, gpu_lights, camera, out_height,
+                           native_gaussian ? &gaussian_ctx.direct.ellipse_chunks : nullptr)) {
         return EXIT_FAILURE;
       }
       return EXIT_SUCCESS;

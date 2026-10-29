@@ -55,7 +55,7 @@ bool CpuRayTracer::build(const DrawScene& scene, size_t maxTris, size_t maxInsta
   hs_ = HostScene();  // drop the previous flatten before building the next one
   if (!BuildHostScene(scene, maxTris, maxInstances, displacementScale, &hs_, err,
                       progress, /*refitOut=*/nullptr, textureBudgetBytes_, nullptr,
-                      purposeVisibleMask)) {
+                      purposeVisibleMask, /*nativePointCarriers=*/false)) {
     return false;
   }
   truncated_ = hs_.truncated;

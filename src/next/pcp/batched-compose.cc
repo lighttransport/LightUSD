@@ -801,6 +801,13 @@ bool BatchedComposer::Open(const std::string &filename, AssetResolver &resolver,
 bool BatchedComposer::whole() const { return impl_->whole; }
 size_t BatchedComposer::frontier_size() const { return impl_->frontier.size(); }
 size_t BatchedComposer::batch_count() const { return impl_->bounds.size() - 1; }
+std::vector<std::string> BatchedComposer::source_identifiers() const {
+  auto result = impl_->registry.identifiers();
+  result.push_back(impl_->root_identifier);
+  std::sort(result.begin(), result.end());
+  result.erase(std::unique(result.begin(), result.end()), result.end());
+  return result;
+}
 
 bool BatchedComposer::Plan(std::string *warn, std::string *err,
                            const std::function<bool(ComposedBatch &)> &on_batch) {

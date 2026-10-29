@@ -22,6 +22,7 @@
 #endif
 
 #include "cuew.h"
+#include "preview_gpu_budget.hh"
 #include "displacement_bake.hh"
 #include "log.hh"
 #include "lightrt_mtlx_bridge.hh"
@@ -35,6 +36,23 @@
 #endif
 
 namespace lusdview {
+
+namespace {
+CUresult PreviewCudaAlloc(CUdeviceptr* pointer,size_t bytes) {
+  if (!ScenePreviewGpuBudget().reserve(bytes)) return CUDA_ERROR_OUT_OF_MEMORY;
+  const CUresult result=cuMemAlloc(pointer,bytes);
+  if(result==CUDA_SUCCESS)ScenePreviewGpuBudget().record(static_cast<uint64_t>(*pointer),bytes);
+  else ScenePreviewGpuBudget().cancel(bytes);
+  return result;
+}
+CUresult PreviewCudaFree(CUdeviceptr pointer) {
+  const CUresult result=cuMemFree(pointer);
+  if(result==CUDA_SUCCESS)ScenePreviewGpuBudget().release(static_cast<uint64_t>(pointer));
+  return result;
+}
+}
+#define cuMemAlloc PreviewCudaAlloc
+#define cuMemFree PreviewCudaFree
 
 namespace {
 

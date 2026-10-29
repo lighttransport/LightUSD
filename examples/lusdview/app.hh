@@ -70,7 +70,11 @@ class App
 {
  public:
   explicit App(Backend backend);
-  ~App() override;
+  ~App()
+#if defined(LUSDVIEW_HAVE_MCP)
+      override
+#endif
+      ;
 
   // Optional render budget (for scripting/testing). maxTris==0 keeps the default.
   void setLoadBudget(std::size_t maxTris, double convertTimeBudgetSec) {

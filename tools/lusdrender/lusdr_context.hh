@@ -405,7 +405,8 @@ bool RunCudaSharedRT(const Options &opt,
                      const std::vector<ResolvedMat> &materials,
                      const std::vector<Texture> &textures,
                      const LightCache &lights,
-                     const CameraFrame &camera, int height);
+                     const CameraFrame &camera, int height,
+                     const std::vector<EllipseSceneChunk>* ellipses = nullptr);
 #endif
 
 // ---- lusdr_next.cc (next loader + driver) ----

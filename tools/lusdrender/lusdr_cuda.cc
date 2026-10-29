@@ -400,12 +400,45 @@ bool RunSharedRT(const char *backend, const Options &opt,
                  const std::vector<ResolvedMat> &materials,
                  const std::vector<Texture> &textures,
                  const LightCache &lights,
-                 const CameraFrame &camera, int height) {
+                 const CameraFrame &camera, int height,
+                 const std::vector<EllipseSceneChunk>* ellipses = nullptr) {
   lusdview::DrawScene scene;
   if (!BuildSharedDrawScene(base_colors, geos, materials, textures, lights,
-                            opt.input, &scene)) {
+                            opt.input, &scene) &&
+      !(geos.empty() && ellipses && !ellipses->empty())) {
     std::cerr << backend << " RT scene conversion failed.\n";
     return false;
+  }
+  if (ellipses && !ellipses->empty()) {
+    if (scene.materials.empty()) scene.materials.emplace_back();
+    if (!scene.hasBounds) {
+      std::fill(scene.aabbMin, scene.aabbMin+3, std::numeric_limits<float>::max());
+      std::fill(scene.aabbMax, scene.aabbMax+3, -std::numeric_limits<float>::max());
+    }
+    for (const auto& chunk : *ellipses) {
+      lusdview::DrawPointsCPU points;
+      SetIdentity(points.world);
+      points.gaussian = true;
+      points.materialId = 0;
+      points.purpose = "default";
+      points.points = chunk.centers;
+      points.ellipseRadii = chunk.radii;
+      points.ellipseNormals = chunk.normals;
+      points.ellipseMajorAxes = chunk.major_axes;
+      for (size_t i=0;i<chunk.count;++i) {
+        const Vec3 color = chunk.info[i].base_color;
+        points.colors.insert(points.colors.end(), {color.x,color.y,color.z});
+        points.opacities.push_back(1.f);
+        const float radius=std::max(chunk.radii[i*2],chunk.radii[i*2+1]);
+        for(int k=0;k<3;++k) {
+          scene.aabbMin[k]=std::min(scene.aabbMin[k],chunk.centers[i*3+size_t(k)]-radius);
+          scene.aabbMax[k]=std::max(scene.aabbMax[k],chunk.centers[i*3+size_t(k)]+radius);
+        }
+      }
+      scene.points.push_back(std::move(points));
+    }
+    scene.hasBounds=true;
+    std::cerr << backend << " native Gaussian carriers: " << scene.points.size() << " chunk(s)\n";
   }
   Tracer tracer;
   std::string err;
@@ -522,10 +555,11 @@ bool RunCudaSharedRT(const Options &opt,
                      const std::vector<ResolvedMat> &materials,
                      const std::vector<Texture> &textures,
                      const LightCache &lights,
-                     const CameraFrame &camera, int height) {
+                     const CameraFrame &camera, int height,
+                     const std::vector<EllipseSceneChunk>* ellipses) {
   return RunSharedRT<lusdview::CudaRayTracer>(
       "CUDA", opt, base_colors, geos, materials, textures, lights, camera,
-      height);
+      height, ellipses);
 }
 #endif
 
