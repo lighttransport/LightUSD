@@ -297,8 +297,16 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
         primMeta.payload->push_back(
             std::make_pair(ListEditQual::ResetToExplicit, std::vector<Payload>()));
       } else if (auto pv = fv.second.as<Payload>()) {
+        // pxr's crate encoding of `payload = None` is a single Payload with
+        // empty asset path and no prim path (see Payload::is_none()), NOT a
+        // ValueBlock and not a payload entry. Keep the empty explicit list-op
+        // the ASCII parser produces for the same text -- storing the empty
+        // Payload as an item made the writer emit `payload = <>`, which pxr
+        // reads back as a payload with empty paths.
         std::vector<Payload> pls;
-        pls.push_back(*pv);
+        if (!pv->is_none()) {
+          pls.push_back(*pv);
+        }
         primMeta.payload = std::vector<std::pair<ListEditQual, std::vector<Payload>>>();
         primMeta.payload->push_back(std::make_pair(ListEditQual::ResetToExplicit, pls));
       } else if (auto pvs = fv.second.as<ListOp<Payload>>()) {

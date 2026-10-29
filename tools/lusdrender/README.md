@@ -196,6 +196,18 @@ Multi-field volumes are composited once: `density` controls extinction, while
 shading. CPU rendering samples independently transformed/resolved VDB fields;
 the interactive GL/Vulkan paths resample auxiliary fields onto the density
 lattice before uploading packed 3D textures.
+`fieldClass = "levelSet"` fields are signed distance functions, not densities,
+and are shaded as an isosurface: the CPU integrator sphere-traces the primary
+ray to the first sign change (narrow-band grids included), takes the normal from
+the distance gradient and shades it as a matte surface with the scene's
+punctual lights and the volume's albedo/emission. It is composited only when it
+lies in front of the scene geometry; shadow/indirect light and fog behind the
+surface are not computed by this preview path. `-volumeLevelSet fog` instead
+treats the SDF as a density (`clamp(-sdf)`) and marches it like any other
+field, which for narrow-band grids fills just the band. `fogVolume` and other
+classes keep the emission/absorption march below. A level-set Volume that
+produced a blank image before this (the signed distances were read as a
+density) now renders.
 Inherited UsdShade material bindings are followed through `outputs:volume`.
 Constant MaterialX/OpenPBR volume inputs for density, scattering color,
 emission color, and emission intensity are honored; connected procedural

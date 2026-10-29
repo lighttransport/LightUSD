@@ -71,6 +71,78 @@ bool ReconstructShader(
 #include "prim-reconstruct-geom-detail.inc"
 
 template <>
+bool ReconstructPrim<VolumeFieldBase>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    VolumeFieldBase *field,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+  DCOUT("Reconstruct VolumeFieldBase.");
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ VolumeFieldBase
+#define PRIM_PTR_ field
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(VolumeFieldBase, field, VOLUME_FIELD_BASE_TYPED_ATTRS, /* no enums */)
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<FieldBase>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    FieldBase *field,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+  DCOUT("Reconstruct FieldBase.");
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ FieldBase
+#define PRIM_PTR_ field
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(FieldBase, field, FIELD_BASE_TYPED_ATTRS, /* no enums */)
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<VolumeFieldAsset>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    VolumeFieldAsset *field,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+  DCOUT("Reconstruct VolumeFieldAsset.");
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ VolumeFieldAsset
+#define PRIM_PTR_ field
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(VolumeFieldAsset, field, VOLUME_FIELD_ASSET_TYPED_ATTRS, /* no enums */)
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
 bool ReconstructPrim<FieldAsset>(
     const Specifier &spec,
     PropertyMap &properties,
@@ -154,7 +226,7 @@ bool ReconstructPrim<Volume>(
   (void)references;
   DCOUT("Reconstruct Volume.");
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!ReconstructGPrimProperties(spec, table, properties, volume, warn, err,
                                   options.strict_allowedToken_check)) {
     return false;

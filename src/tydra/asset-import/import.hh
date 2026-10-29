@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -76,6 +77,25 @@ struct Options {
   // OBJ import topology: "expanded" (split points per unique corner) or
   // "indexed" (source positions, face-varying indexed normals/UVs).
   std::string obj_topology = "expanded";
+  // MJCF type="sdf" colliders (newton profile): "auto" computes a narrow-band
+  // level set of the collider mesh as a .vdb sidecar (generated asset) with
+  // sdf_resolution voxels across the mesh's largest extent and sdf_band
+  // voxels each side; "off" only marks the collider with
+  // NewtonSDFCollisionAPI.
+  std::string sdf = "auto";
+  int sdf_resolution = 64;
+  double sdf_band = 3;
+  // MJCF flexcomp dim=3 type=mesh tets: "mujoco" (MuJoCo's fan of every
+  // surface triangle to `origin`) or "stuffing" (isosurface stuffing of the
+  // mesh's level set, flex_tet_spacing apart; 0 picks extent / 12).
+  std::string flex_tetrahedralize = "mujoco";
+  double flex_tet_spacing = 0;
+  double flex_tet_coarse_spacing = 0; // opt in to experimental CPU grading
+  bool flex_tet_surface_guard = false; // refine cells that may contain the surface
+  // Device for those level sets and tets: "cpu", "cuda", "hip" or "auto"
+  // (volumetric.hh). An unavailable CUDA/HIP device falls back to the CPU
+  // with asset.volumetric_device_unavailable; results are the same.
+  std::string volumetric_device = "cpu";
   bool allow_missing = false;
   bool tessellate_collision_shapes = false;
   UnsupportedPolicy unsupported_policy = UnsupportedPolicy::Warn;
@@ -152,11 +172,19 @@ struct Reader {
   const Options& options;
   // URDF package roots: Options::packages plus roots BuildURDF discovers.
   std::map<std::string, std::string> packages;
+  // Further allowed asset roots found by the importer (a ROS package that
+  // holds the URDF in urdf/ next to meshes/).
+  std::vector<std::string> extra_roots;
   size_t bytes = 0;
   std::string warnings, failure, root_source;
   bool allow_unanchored = true;
   size_t reported_bytes = 0;  // last progress callback
   AssetMap textures;
+  // Files the importer generates (relative output paths, e.g. sdf/<mesh>.vdb)
+  // and their per-source cache.
+  AssetMap generated;
+  std::map<std::string, Json> generated_cache;
+  std::string volumetric_device;  // options.volumetric_device once resolved
   std::map<std::string, MeshBuffer> meshes;
   bool obj_indexed = false;  // set by the OBJ scene import (obj_topology)
   struct TextureRequest {
@@ -170,6 +198,9 @@ struct Reader {
   // trace and warning in order, so a speculative child reader's work can be
   // replayed into its parent.
   size_t peak_bytes = 0;
+  // MJCF elements that <attach>, cable composites and <replicate> may still
+  // add (one budget per import; see ChargeExpansion in mjcf-expand.cc).
+  size_t expansion_elements_left = 1000000;
   bool record_accesses = false;
   struct Access {
     std::string name, anchor, identifier;
@@ -206,6 +237,26 @@ struct Reader {
                    size_t line = 0, std::string data = {},
                    const char* encoding = "xml", bool approximated = false);
 };
+// Temporary operation storage contributes to the peak but is released from
+// the retained budget on all exit paths, including cancellation/failure.
+struct ScopedMemoryCharge {
+  Reader& reader;
+  size_t charged = 0;
+  explicit ScopedMemoryCharge(Reader& value) : reader(value) {}
+  ScopedMemoryCharge(const ScopedMemoryCharge&) = delete;
+  ScopedMemoryCharge& operator=(const ScopedMemoryCharge&) = delete;
+  bool Charge(size_t amount, std::string* err) {
+    const size_t before = reader.bytes;
+    const bool ok = reader.Charge(amount, err);
+    charged += reader.bytes - before;
+    return ok;
+  }
+  ~ScopedMemoryCharge() {
+    reader.bytes -= charged;
+    reader.reported_bytes = std::min(reader.reported_bytes, reader.bytes);
+  }
+};
+
 // MJCF <texture builtin=...> parameters (type="2d").
 struct BuiltinTexture {
   std::string builtin, mark;
@@ -237,8 +288,18 @@ struct Mesh {
   std::vector<float> joint_weights;
   int32_t influences = 0;
 };
+// MuJoCo's analytic SDF plugins (mujoco.sdf.torus, bowl, gear, nut, bolt),
+// meshed as MuJoCo's compiler meshes a plugin mesh asset. `config` holds the
+// plugin instance's <config key value>; the grid must fit in max_bytes.
+bool IsMjcfSdfPlugin(const std::string& plugin);
+bool GenerateMjcfSdfMesh(const std::string& plugin, const std::map<std::string, std::string>& config,
+                         size_t max_bytes, Mesh* mesh, std::string* err);
+
 struct OBJ {
   std::vector<Mesh> meshes;
+  // File-order vertex positions (xyz) when ReadOBJ was asked to collect them
+  // and the file has no polygon primitives. MuJoCo hulls such mesh assets.
+  std::vector<float> vertices;
   Json materials = Json::array();
 };
 template <class T>
@@ -249,7 +310,8 @@ Json Array(const std::vector<T>& values) {
   return result;
 }
 bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
-             bool triangulate, OBJ* obj, std::string* err);
+             bool triangulate, OBJ* obj, std::string* err,
+             bool collect_vertices = false);
 // COLLADA triangle meshes for URDF/MJCF assets (same layout as ReadOBJ).
 bool ReadDAE(std::string_view text, const std::string& source, Reader& reader,
              OBJ* obj, std::string* err);

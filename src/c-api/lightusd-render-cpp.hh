@@ -517,6 +517,12 @@ class RenderSession {
   uint64_t revision() const noexcept {
     return lightusd_render_session_revision(handle_.get());
   }
+  lightusd_status set_time_code(double time_code) noexcept {
+    return lightusd_render_session_set_time_code(handle_.get(), time_code);
+  }
+  double time_code() const noexcept {
+    return lightusd_render_session_time_code(handle_.get());
+  }
   uint64_t resource_id(uint8_t kind, const char* key) const noexcept {
     return lightusd_render_session_resource_id(handle_.get(), kind, key);
   }

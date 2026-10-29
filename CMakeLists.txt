@@ -45,6 +45,46 @@ if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "legacy")
   message(DEPRECATION
     "LIGHTUSD_NATIVE_PRODUCT=legacy is deprecated; use next for new integrations. The legacy product remains available for compatibility and CI.")
 endif()
+# [ccache] Configured before the next-product branch below (which returns
+# early) so both products use it.
+option(LIGHTUSD_USE_CCACHE "Use ccache for faster recompile." ON)
+option(LIGHTUSD_USE_PCH "Use a precompiled header (does not help this codebase; opt-in)." OFF)
+if(LIGHTUSD_USE_CCACHE)
+  if(MSVC)
+    # No ccache support
+  else()
+    find_program(CCACHE_EXE ccache)
+    if(CCACHE_EXE)
+
+      message(STATUS "Use ccache : " ${CCACHE_EXE})
+
+      # ccache + precompiled headers: ccache will refuse to cache PCH-using TUs
+      # unless told to relax the PCH/time-macro hash checks. Wrap the launcher
+      # with `env CCACHE_SLOPPINESS=...` (Unix; MSVC path does not use ccache).
+      set(CCACHE_LAUNCHER "${CCACHE_EXE}")
+      if(LIGHTUSD_USE_PCH AND CMAKE_HOST_UNIX)
+        set(CCACHE_LAUNCHER env CCACHE_SLOPPINESS=pch_defines,time_macros "${CCACHE_EXE}")
+      endif()
+
+      # CMAKE_C_COMPILER_LAUNCHER = available from cmake 3.4+)
+      if(CMAKE_C_COMPILER_LAUNCHER)
+        set(CMAKE_C_COMPILER_LAUNCHER "${CMAKE_C_COMPILER_LAUNCHER}"
+                                      ${CCACHE_LAUNCHER})
+      else()
+        set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_LAUNCHER})
+      endif()
+
+      if(CMAKE_CXX_COMPILER_LAUNCHER)
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${CMAKE_CXX_COMPILER_LAUNCHER}"
+                                        ${CCACHE_LAUNCHER})
+      else()
+        set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_LAUNCHER})
+      endif()
+
+    endif(CCACHE_EXE)
+  endif()
+endif()
+
 if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
   # The next product returns before the legacy dependency/configuration block
   # below. Load sanitizer support here as well so SANITIZE_ADDRESS and
@@ -154,11 +194,9 @@ else()
 endif ()
 
 # options
-option(LIGHTUSD_USE_CCACHE "Use ccache for faster recompile." ON)
 # NOTE: Measured to NOT help (and slightly hurt codegen) on this codebase: the
 # compile cost is dominated by template *instantiation* and -O3 codegen, not by
 # header parsing, which is all a PCH can cache. Kept as an opt-in knob; default OFF.
-option(LIGHTUSD_USE_PCH "Use a precompiled header (does not help this codebase; opt-in)." OFF)
 option(LIGHTUSD_BUILD_SHARED_LIBS "Build as dll?" ${BUILD_SHARED_LIBS})
 option(LIGHTUSD_ENABLE_THREAD "Enable optional std::thread parallel paths (default OFF; keep OFF for default WASM/browser builds)" OFF)
 option(LIGHTUSD_MSAN "Build with MSAN support(for developer only)" OFF)
@@ -464,10 +502,16 @@ find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
 # __asan_report_load*, __asan_memcpy, etc. Setting CMAKE_EXE_LINKER_FLAGS
 # globally avoids that footgun across examples/, tests/feat/,
 # tests/pprint/, ... — every binary in the build tree gets the runtime
-# automatically.
+# automatically. Shared libraries need it too: liblightusd_c embeds the
+# instrumented asset-import and render-support objects, and macOS rejects
+# undefined __asan_* references when linking a dylib.
 if(SANITIZE_ADDRESS)
   set(CMAKE_EXE_LINKER_FLAGS
       "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+  set(CMAKE_SHARED_LINKER_FLAGS
+      "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+  set(CMAKE_MODULE_LINKER_FLAGS
+      "${CMAKE_MODULE_LINKER_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
 endif()
 
 # [cifuzz]
@@ -523,42 +567,6 @@ if(MSVC)
   add_compile_definitions(_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
 endif()
 
-# [ccache]
-if(LIGHTUSD_USE_CCACHE)
-  if(MSVC)
-    # No ccache support
-  else()
-    find_program(CCACHE_EXE ccache)
-    if(CCACHE_EXE)
-
-      message(STATUS "Use ccache : " ${CCACHE_EXE})
-
-      # ccache + precompiled headers: ccache will refuse to cache PCH-using TUs
-      # unless told to relax the PCH/time-macro hash checks. Wrap the launcher
-      # with `env CCACHE_SLOPPINESS=...` (Unix; MSVC path does not use ccache).
-      set(CCACHE_LAUNCHER "${CCACHE_EXE}")
-      if(LIGHTUSD_USE_PCH AND CMAKE_HOST_UNIX)
-        set(CCACHE_LAUNCHER env CCACHE_SLOPPINESS=pch_defines,time_macros "${CCACHE_EXE}")
-      endif()
-
-      # CMAKE_C_COMPILER_LAUNCHER = available from cmake 3.4+)
-      if(CMAKE_C_COMPILER_LAUNCHER)
-        set(CMAKE_C_COMPILER_LAUNCHER "${CMAKE_C_COMPILER_LAUNCHER}"
-                                      ${CCACHE_LAUNCHER})
-      else()
-        set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_LAUNCHER})
-      endif()
-
-      if(CMAKE_CXX_COMPILER_LAUNCHER)
-        set(CMAKE_CXX_COMPILER_LAUNCHER "${CMAKE_CXX_COMPILER_LAUNCHER}"
-                                        ${CCACHE_LAUNCHER})
-      else()
-        set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_LAUNCHER})
-      endif()
-
-    endif(CCACHE_EXE)
-  endif()
-endif()
 
 
 if (LIGHTUSD_WITH_MCP_SERVER)
@@ -1046,9 +1054,8 @@ if(LIGHTUSD_WITH_USDVOX)
 endif()
 
 if(LIGHTUSD_WITH_USDVOL)
-  list(APPEND LIGHTUSD_SOURCES ${PROJECT_SOURCE_DIR}/src/usdVol.cc)
-  list(APPEND LIGHTUSD_DEP_SOURCES
-       ${PROJECT_SOURCE_DIR}/src/external/tinyvdb/tinyvdb_io.c)
+  # usdVol.cc and tydra/vol build in lightusd_asset_import (shared with the
+  # next tydra), with tinyvdb from lightusd_tinyvdb.
 endif()
 
 if(LIGHTUSD_WITH_TIFF)
@@ -1671,7 +1678,22 @@ endif()
 #add_library(${LIGHTUSD_TARGET_STATIC} STATIC $<TARGET_OBJECTS:lightusd_object>)
 #add_sanitizers(${LIGHTUSD_TARGET_STATIC})
 
+# miniz (and the bundled zstd) build inside lightusd_tinyvdb, which links
+# after the root objects: one copy serves the root library and tinyvdb, and
+# single-pass static links resolve both (an archive linked before tinyvdb
+# could not provide its codec symbols).
+list(REMOVE_ITEM LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/miniz.c)
+set(LIGHTUSD_TINYVDB_ZSTD OFF)
+if(LIGHTUSD_WITH_ZSTD_COMPRESSION AND NOT LIGHTUSD_USE_SYSTEM_ZSTD)
+  list(REMOVE_ITEM LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/zstd.c)
+  set(LIGHTUSD_TINYVDB_ZSTD ON)
+endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/lightusd-asset-import.cmake")
+if(TARGET lightusd_asset_import)
+  # lightusd_asset_import compiles pugixml and is linked below; a second copy
+  # in lightusd_static gives macOS ld duplicate pugi:: symbols.
+  list(REMOVE_ITEM LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/pugixml.cpp)
+endif()
 add_library(${LIGHTUSD_TARGET_STATIC} STATIC ${LIGHTUSD_SOURCES} ${LIGHTUSD_DEP_SOURCES} ${LIGHTUSD_EXT_SOURCES})
 target_link_libraries(${LIGHTUSD_TARGET_STATIC} lightusd_asset_import)
 set_target_properties(${LIGHTUSD_TARGET_STATIC} PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -1712,6 +1734,12 @@ endif()
 # Optional: next::pcp::Cache backend for LargeSceneLoader
 #
 if(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+  if(LIGHTUSD_BUILD_EXAMPLES)
+    # examples/lusdcat defines the legacy `lusdcat`; keep the next subproject
+    # from defining its own CLI (and the tests that require it) under that name.
+    set(LIGHTUSD_NEXT_BUILD_TOOLS OFF CACHE BOOL "Build next CLI tools (lusdcat)" FORCE)
+    set(LIGHTUSD_NEXT_BUILD_TESTS OFF CACHE BOOL "Build tests for stable LightUSD Next" FORCE)
+  endif()
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/next lightusd_next_build)
 endif()
 
@@ -2301,6 +2329,59 @@ if(LIGHTUSD_BUILD_TESTS)
   add_subdirectory(${PROJECT_SOURCE_DIR}/tests/pprint)
 
 
+  if(TARGET lightusd_tinyvdb)
+    add_executable(test-tet-float-range tests/volumetric/tet-float-range.c src/lz4/lz4.c)
+    target_link_libraries(test-tet-float-range PRIVATE lightusd_tinyvdb)
+    add_test(NAME volumetric-tet-float-range COMMAND test-tet-float-range)
+    set_tests_properties(volumetric-tet-float-range PROPERTIES LABELS "cpu;volume;security")
+    if(LIGHTUSD_TINYVDB_GPU AND NOT EMSCRIPTEN)
+      add_executable(profile-gpu-level-set tests/volumetric/profile-gpu-level-set.c src/lz4/lz4.c)
+      target_link_libraries(profile-gpu-level-set PRIVATE lightusd_tinyvdb ${CMAKE_DL_LIBS})
+    endif()
+    add_executable(test-level-set-allocator tests/volumetric/test-level-set-allocator.c src/lz4/lz4.c)
+    target_link_libraries(test-level-set-allocator PRIVATE lightusd_tinyvdb)
+    add_test(NAME volumetric-level-set-allocator COMMAND test-level-set-allocator)
+    set_tests_properties(volumetric-level-set-allocator PROPERTIES LABELS "cpu;volume;security")
+    add_executable(test-graded-stencil tests/volumetric/test-graded-stencil.c src/lz4/lz4.c)
+    target_link_libraries(test-graded-stencil PRIVATE lightusd_tinyvdb)
+    add_test(NAME volumetric-graded-stencil COMMAND test-graded-stencil)
+    set_tests_properties(volumetric-graded-stencil PROPERTIES LABELS "cpu;volume")
+    add_executable(test-tet-center-sample tests/volumetric/tet-center-sample.c
+      src/lz4/lz4.c)
+    target_link_libraries(test-tet-center-sample PRIVATE lightusd_tinyvdb)
+    add_test(NAME volumetric-tet-center-sample COMMAND test-tet-center-sample)
+    set_tests_properties(volumetric-tet-center-sample PROPERTIES LABELS "cpu;volume")
+    add_executable(test-tet-worker-identity
+      tests/volumetric/tet-worker-identity.c src/lz4/lz4.c)
+    target_link_libraries(test-tet-worker-identity PRIVATE lightusd_tinyvdb)
+    add_test(NAME volumetric-tet-worker-identity COMMAND test-tet-worker-identity)
+    set_tests_properties(volumetric-tet-worker-identity PROPERTIES LABELS "cpu;volume")
+    add_executable(profile-tet tests/volumetric/profile-tet.c src/lz4/lz4.c)
+    target_link_libraries(profile-tet PRIVATE lightusd_tinyvdb)
+    # The graded background is experimental and not wired into stuffing yet.
+    add_executable(test-graded-refine tests/volumetric/test-graded-refine.c
+      src/external/tinyvdb/tinyvdb_tet_refine.c)
+    target_include_directories(test-graded-refine PRIVATE src/external/tinyvdb)
+    if(UNIX)
+      target_link_libraries(test-graded-refine PRIVATE m)
+    endif()
+    if(MSVC)
+      target_compile_options(test-graded-refine PRIVATE /UNDEBUG)
+    else()
+      target_compile_options(test-graded-refine PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME volumetric-graded-refine COMMAND test-graded-refine)
+    set_tests_properties(volumetric-graded-refine PROPERTIES LABELS "cpu;volume")
+  endif()
+
+  if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND TARGET lightusd_tinyvdb)
+    add_executable(test-tet-overflow-32 tests/volumetric/tet-overflow-32.c src/lz4/lz4.c)
+    target_include_directories(test-tet-overflow-32 PRIVATE src/external/tinyvdb)
+    target_link_libraries(test-tet-overflow-32 PRIVATE lightusd_tinyvdb)
+    add_test(NAME volumetric-tet-overflow-32 COMMAND test-tet-overflow-32)
+    set_tests_properties(volumetric-tet-overflow-32 PROPERTIES LABELS "cpu;volume;security")
+  endif()
+
   # Prefer an explicitly configured interpreter so CTest can use a virtualenv,
   # cross-build host Python, or another interpreter selected by CI. Keep the
   # automatic lookup as the default for ordinary native builds.
@@ -2344,6 +2425,18 @@ if(LIGHTUSD_BUILD_TESTS)
     endif()
   endif()
   if(TARGET lusdrender AND LUSDR_PYTHON)
+    set(LUSDR_SPARSE_QJS_ARG)
+    if(LIGHTUSD_WITH_QJS)
+      set(LUSDR_SPARSE_QJS_ARG --with-qjs)
+    endif()
+    add_test(
+      NAME tool-lusdrender-sparse-volume-cpu
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_sparse_volume.py
+              "$<TARGET_FILE:lusdrender>" ${LUSDR_SPARSE_QJS_ARG})
+    set_tests_properties(tool-lusdrender-sparse-volume-cpu PROPERTIES
+                         TIMEOUT 180 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;volume")
     add_test(
       NAME tool-lusdrender-smoke
       COMMAND ${LUSDR_PYTHON}
@@ -2352,6 +2445,11 @@ if(LIGHTUSD_BUILD_TESTS)
               ${PROJECT_SOURCE_DIR}
               ${CMAKE_BINARY_DIR}/tools/lusdrender
     )
+    # This smoke mixes CPU assertions with optional HIP/Vulkan requests, so
+    # exclude it from explicitly CPU-only profiles even when those backends
+    # happen to be installed on the test host.
+    set_tests_properties(tool-lusdrender-smoke PROPERTIES
+                         LABELS "lusdrender;cpu;gpu")
 
     add_test(
       NAME tool-lusdrender-materialx-cpu-graph
@@ -2503,6 +2601,13 @@ if(LIGHTUSD_BUILD_TESTS)
                 "$<TARGET_FILE:lusdrender>"
       )
       set_tests_properties(tool-lusdrender-${t} PROPERTIES SKIP_RETURN_CODE 77)
+      if(t MATCHES "gpu|^vk-ray-tiling$|^hermite-curves$|^gaussian-carrier-dispatch$")
+        set_tests_properties(tool-lusdrender-${t} PROPERTIES
+                             LABELS "lusdrender;gpu")
+      else()
+        set_tests_properties(tool-lusdrender-${t} PROPERTIES
+                             LABELS "lusdrender;cpu")
+      endif()
     endforeach()
 
     # run-material-resolver.sh takes the binary via $LUSDRENDER (its positional
@@ -4288,6 +4393,15 @@ if(LIGHTUSD_BUILD_TESTS)
       tests/feat/lightrt-uv/test-lightrt-uv.cc
       ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_tri.c)
     add_sanitizers(feat-lightrt-uv)
+    # lightrt_c_tri.c uses <stdatomic.h>: C11 plus, on MSVC, the C11 atomics flag.
+    set_target_properties(feat-lightrt-uv PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+    if(MSVC)
+      # A source property, not $<COMPILE_LANGUAGE:C>: Visual Studio generators
+      # ignore that genex on targets that mix C and C++.
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_tri.c
+        PROPERTIES COMPILE_OPTIONS "/experimental:c11atomics")
+    endif()
     target_include_directories(feat-lightrt-uv PRIVATE
       ${PROJECT_SOURCE_DIR}/src/external/lightrt)
     if(UNIX AND NOT APPLE)

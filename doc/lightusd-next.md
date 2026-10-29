@@ -153,6 +153,15 @@ succeeds, calls `AbortUpdate` on rejection, and rejects candidates whose base
 revision became stale. A rejected candidate remains retryable, while `Abort()`
 explicitly discards it. The existing `Initialize()` and `Apply()` calls are
 compatibility wrappers around this two-phase protocol.
+
+The session converts at `ConverterConfig::time_code` until `SetTimeCode()`
+changes it. A changed time marks the next update as a full resync: time samples
+can move any prim, and UsdVol volume material constants (density, scattering,
+emission) are read at that time too, so an update with an empty change set still
+re-converts the scene instead of taking the no-op or mesh-patch shortcut. The C
+API mirrors this as `lightusd_render_session_set_time_code` /
+`lightusd_render_session_time_code`, and the C++ facade as
+`RenderSession::set_time_code()` / `time_code()`.
 older immutable render snapshots. Broader resync, material, hierarchy, light,
 camera, and animation changes currently take the full conversion path.
 

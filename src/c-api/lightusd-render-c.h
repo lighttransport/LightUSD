@@ -386,6 +386,14 @@ LIGHTUSD_API uint64_t lightusd_render_session_revision(
 LIGHTUSD_API uint64_t lightusd_render_session_resource_id(
     const lightusd_render_session* session, uint8_t kind, const char* key);
 LIGHTUSD_API void lightusd_render_session_reset(lightusd_render_session* session);
+/* Time code for subsequent updates. A changed time makes the next update a
+ * full resync: every resource is re-converted (time-sampled attributes, shader
+ * ports, transforms and UsdVol volume material constants), so an update with
+ * an empty change set still re-evaluates the scene. */
+LIGHTUSD_API lightusd_status lightusd_render_session_set_time_code(
+    lightusd_render_session* session, double time_code);
+LIGHTUSD_API double lightusd_render_session_time_code(
+    const lightusd_render_session* session);
 LIGHTUSD_API lightusd_status lightusd_render_session_set_event_sink(
     lightusd_render_session* session, const lightusd_render_event_sink* sink);
 LIGHTUSD_API lightusd_status lightusd_render_session_update(
@@ -1154,6 +1162,146 @@ typedef struct lightusd_render_unsupported_info {
 LIGHTUSD_API lightusd_status lightusd_render_unsupported_get_info(
     const lightusd_render_scene* scene, int32_t id,
     lightusd_render_unsupported_info* out);
+
+/* ============================================================
+ * UsdVol: Volumes, their fields, and ParticleFields
+ *
+ * Volumes list their `field:*` bindings resolved against the referenced
+ * .vdb (fieldName, then fieldIndex among equal names). Matrices are USD
+ * row-vector 4x4 (translation in elements 12..14). A field's index_to_world
+ * already includes the field prim's transform (UsdVol placement). Voxels are
+ * decoded on demand; the returned buffers live as long as the scene.
+ * ============================================================ */
+LIGHTUSD_API size_t lightusd_render_volume_count(const lightusd_render_scene* scene);
+
+typedef struct lightusd_render_volume_info {
+  lightusd_sv prim_path;
+  uint32_t field_count;
+  int32_t material_id;            /* -1 when unbound */
+  uint8_t has_extent;
+  uint8_t extent_is_world;        /* extent from field bounds (world space) */
+  uint8_t _pad[2];
+  float density_scale;
+  float albedo[3];
+  float emission[3];
+  float emission_intensity;
+  double extent_min[3];
+  double extent_max[3];
+  double world_matrix[16];
+} lightusd_render_volume_info;
+LIGHTUSD_API lightusd_status lightusd_render_volume_get_info(
+    const lightusd_render_scene* scene, int32_t id, lightusd_render_volume_info* out);
+
+typedef struct lightusd_render_volume_field_info {
+  lightusd_sv binding;            /* relationship name without "field:" */
+  lightusd_sv field_prim;
+  lightusd_sv file_path;          /* resolved */
+  lightusd_sv grid_name;
+  lightusd_sv grid_class;         /* levelSet, fogVolume, staggered, unknown */
+  lightusd_sv value_type;         /* float, double, int32, int64, bool, mask, vec3f, vec3d, vec3i */
+  uint32_t components;
+  uint32_t source_index;          /* grid position in the file */
+  uint8_t has_bounds;
+  /* 1 when the field is a signed distance function to shade as an isosurface
+   * (fieldClass levelSet and the grid does not contradict it). */
+  uint8_t level_set;
+  uint8_t _pad[6];
+  double index_to_world[16];
+  double world_min[3];
+  double world_max[3];
+} lightusd_render_volume_field_info;
+LIGHTUSD_API lightusd_status lightusd_render_volume_field_get_info(
+    const lightusd_render_scene* scene, int32_t volume, int32_t field,
+    lightusd_render_volume_field_info* out);
+
+typedef struct lightusd_render_volume_dense {
+  const float* data;              /* dims[0]*dims[1]*dims[2]*components, x fastest */
+  int32_t dims[3];
+  int32_t index_origin[3];        /* index of cell (0,0,0)'s first voxel */
+  int32_t stride;                 /* index voxels per cell per axis */
+  uint32_t components;
+  float background;
+  float _pad;
+  /* Cell (x,y,z) center -> world (row vector): (x,y,z,1) * cell_to_world. */
+  double cell_to_world[16];
+} lightusd_render_volume_dense;
+/* Dense float voxels of a field: max_voxels caps the cells (0 = 640^3);
+ * downsample (nonzero) box-filters to fit instead of failing;
+ * vector_components (nonzero) keeps vec3 channels (else magnitude). */
+LIGHTUSD_API lightusd_status lightusd_render_volume_field_dense(
+    const lightusd_render_scene* scene, int32_t volume, int32_t field, uint64_t max_voxels,
+    int downsample, int vector_components, lightusd_render_volume_dense* out);
+
+/* NanoVDB grid types (PNANOVDB_GRID_TYPE_* ids). */
+typedef enum lightusd_nanovdb_grid_type {
+  LIGHTUSD_NANOVDB_GRID_TYPE_UNKNOWN = 0,
+  LIGHTUSD_NANOVDB_GRID_TYPE_FLOAT = 1,
+  LIGHTUSD_NANOVDB_GRID_TYPE_DOUBLE = 2,
+  LIGHTUSD_NANOVDB_GRID_TYPE_INT32 = 4,
+  LIGHTUSD_NANOVDB_GRID_TYPE_INT64 = 5,
+  LIGHTUSD_NANOVDB_GRID_TYPE_VEC3F = 6,
+  LIGHTUSD_NANOVDB_GRID_TYPE_VEC3D = 7,
+  LIGHTUSD_NANOVDB_GRID_TYPE_MASK = 8,
+  LIGHTUSD_NANOVDB_GRID_TYPE_HALF = 9
+} lightusd_nanovdb_grid_type;
+
+typedef struct lightusd_render_volume_nanovdb {
+  /* Raw NanoVDB grid bytes (GridData first, no file header, CPU or GPU
+   * pointer-free layout), kept alive by the scene. */
+  const uint8_t* data;
+  size_t size;
+  uint32_t grid_type;             /* lightusd_nanovdb_grid_type */
+  uint32_t components;
+  lightusd_sv value_type;
+  lightusd_sv grid_class;
+  /* Grid index -> world including the field prim's transform: the map of
+   * lightusd_render_volume_field_info, stored transposed (column vectors,
+   * translation in elements 3, 7, 11) as PNanoVDB's map expects. The
+   * buffer's embedded map is the file's index -> grid-world only. */
+  double index_to_world[16];
+} lightusd_render_volume_nanovdb;
+/* The field's sparse grid as one NanoVDB grid buffer, converted on first use
+ * and cached with the scene. Bool and vec3i grids have no NanoVDB type
+ * (LIGHTUSD_ERR_UNSUPPORTED). */
+LIGHTUSD_API lightusd_status lightusd_render_volume_field_nanovdb(
+    const lightusd_render_scene* scene, int32_t volume, int32_t field,
+    lightusd_render_volume_nanovdb* out);
+
+typedef struct lightusd_render_volume_samples {
+  /* count * components floats, component-interleaved. Owned by the scene and
+   * valid until the next lightusd_render_volume_field_sample call on it. */
+  const float* values;
+  uint64_t count;
+  uint32_t components;
+  uint32_t _pad;
+} lightusd_render_volume_samples;
+/* Sample a field at world-space `points` (3 doubles each): the sparse grid's
+ * own voxel values, nearest (`trilinear` 0) or trilinear. World space needs
+ * an invertible field transform. */
+LIGHTUSD_API lightusd_status lightusd_render_volume_field_sample(
+    const lightusd_render_scene* scene, int32_t volume, int32_t field,
+    const double* world_points, uint64_t count, int trilinear,
+    lightusd_render_volume_samples* out);
+
+LIGHTUSD_API size_t lightusd_render_particle_data_count(const lightusd_render_scene* scene);
+typedef struct lightusd_render_particle_data {
+  lightusd_sv prim_path;
+  lightusd_sv type_name;
+  lightusd_sv kernel;             /* gaussianEllipsoid, gaussianSurflet, constantSurflet, none */
+  lightusd_sv projection_mode_hint;
+  lightusd_sv sorting_mode_hint;
+  uint64_t count;
+  int32_t sh_degree;
+  int32_t _pad;
+  const float* positions;         /* 3 * count */
+  const float* orientations;      /* 4 * count, quaternion (real, i, j, k) */
+  const float* scales;            /* 3 * count */
+  const float* opacities;         /* count */
+  const float* sh_coefficients;   /* (sh_degree + 1)^2 * 3 * count */
+  double world_matrix[16];
+} lightusd_render_particle_data;
+LIGHTUSD_API lightusd_status lightusd_render_particle_data_get(
+    const lightusd_render_scene* scene, int32_t id, lightusd_render_particle_data* out);
 
 #ifdef __cplusplus
 } /* extern "C" */

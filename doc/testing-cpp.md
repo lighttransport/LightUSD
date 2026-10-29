@@ -226,6 +226,41 @@ USDC, or written-crate checker failures. Declaration-only relationships have no
 target list-op; the comparator ignores their unused qualifiers while preserving
 the distinction between declarations and authored `None`/`[]` target opinions.
 
+### pxr crate fidelity (does OpenUSD read our crates as the source layer?)
+
+`run-usdcat-compare.sh` compares our *reader* against pxr's (both tools read the
+same input) and asks `usdchecker` whether our crates validate like the source.
+A third failure mode is left uncovered by both: a crate our own reader accepts
+but pxr decodes differently. `tests/run-pxr-crate-fidelity.sh` covers it — for
+each fixture it writes our crate with `lusdcat`, then has *pxr's* `usdcat` print
+both the source and our crate and diffs the two prints:
+
+```bash
+# tests/usda/*.usda by default; pass a pattern/binding for another corpus
+LUSDCAT_PATH=./build/lusdcat USDCAT_PATH=ref/dist/bin/usdcat \
+  bash tests/run-pxr-crate-fidelity.sh
+
+LUSDCAT_PATH=./build/lusdcat USDCAT_PATH=ref/dist/bin/usdcat \
+  bash tests/run-pxr-crate-fidelity.sh 'tests/usdc/*.usdc'
+
+SHOW=40 bash tests/run-pxr-crate-fidelity.sh tests/usda/variantSet-003.usda
+```
+
+It reports byte-identical / text-only / semantic counts and exits nonzero on a
+semantic difference. Textual differences (spec field and property ordering) are
+re-classified through `tests/compare-usda.js` so they do not mask data loss.
+Fixtures `lusdcat` cannot write standalone are skipped and remain covered by
+`run-usdcat-compare.sh`'s checker pass; a source pxr cannot parse is skipped
+too.
+
+This is the check that found variant specs without a `properties` field,
+integer-compressed `string[]`/`token[]`/`asset[]` index arrays, `= None`
+relationships and payloads written as `ValueBlock`, the `relocates` /
+`layerRelocates` crate field rename, and the shader/material node types that had
+no writer (`MtlxAutodeskStandardSurface`, `OpenPBRSurface`, MaterialX
+`outputs:mtlx:surface`). Each of those was invisible to a self-round-trip
+because our reader accepts both encodings.
+
 ### Headless NVIDIA viewer regression
 
 The viewer tests are part of the native CTest tree only when
@@ -1664,6 +1699,221 @@ with animation enabled/disabled and a mesh triangulation/tangent configuration;
 it checks both exit status and scene counts. The command's legacy conversion
 path remains separate.
 
+`next_test_volume_c` covers the UsdVol render C surface: volume/field info
+(binding, grid name, value type, components, bounds), dense voxels,
+`lightusd_render_volume_field_nanovdb` (grid magic, header grid type, cached
+buffer identity), `lightusd_render_volume_field_sample` in world space
+(nearest and trilinear, scalar and vec3) and the unsupported bool grid. It
+also compares sparse samples with dense voxel values under translated,
+rotated and scaled field transforms, covers batches above 256 points, and
+checks rejection of a singular field transform. When the optional corpus
+contains `utahteapot.vdb`, it checks that sparse world sampling still reaches
+interior and exterior values after dense extraction exceeds its voxel budget.
+It checks sample count overflow, and has been run as a 32-bit Linux executable
+to verify that the 8 GiB request cap does not wrap on a 32-bit `size_t`.
+It needs the out-of-tree tinyvdbio reference corpus (`TINYVDBIO_DATA_DIR` or
+argv[1], expected under `reference/`) and prints SKIP without it, like the
+`usdvol-vdb-corpus` C++ test.
+The legacy `usdvol_vdb_corpus_test` also checks that a dense grid rejected by
+its voxel limit reports both the requested cell count and the limit. It checks
+header and sparse decoder budget failures release partial allocations and
+rejects sampling below the retained grid-and-sampler footprint.
+
+On a 32-bit native build, `volumetric-tet-overflow-32` (legacy) or
+`next_test_tet_overflow_32` (next) checks that a lattice whose position buffer
+would overflow `size_t` is rejected before allocation or sampling. A standalone
+build against a 32-bit tinyvdb checkout can run the same fixture:
+
+```sh
+cc -m32 -std=c11 -O2 -I/path/to/tinyvdb/src tests/volumetric/tet-overflow-32.c \
+  /path/to/tinyvdb-build/libtinyvdb_mesh_ops.a \
+  /path/to/tinyvdb-build/libtinyvdb.a -lm -pthread -o /tmp/tet-overflow-32
+/tmp/tet-overflow-32
+```
+
+The experimental CPU sparse renderer can be checked with the optional teapot
+corpus (the test skips when the file is unavailable):
+
+```sh
+TINYVDBIO_DATA_DIR=/path/to/tinyvdb/data \
+  ctest --test-dir build_ninja/sdf-legacy \
+  -R '^tool-lusdrender-sparse-volume-cpu$' --output-on-failure
+```
+
+It checks a volume-only render, field translation, 180-degree rotation, uniform
+and nonuniform scaling, foreground and coincident-volume depth ordering,
+identical images with one and two
+threads, low-memory diagnostics, and the shared budget across two VDB files.
+When `icosahedron.vdb` is available, it compares visible images from the dense
+and sparse paths byte-for-byte. It also compares animated field-transform and
+VDB file-path frames with equivalent single-time renders.
+The foreground check fails with the old scaled-field depth
+calculation. This compares the two LightUSD paths, not an external reference. Custom
+asset readers allocate their own file buffers outside the cache budget.
+When `LIGHTUSD_WITH_QJS=ON`, CMake adds `--with-qjs` to this regression. It
+also renders both time samples through the persistent `-js` `setTime` path and
+compares them byte-for-byte with the corresponding frame renders.
+
+For CPU mesher changes, build each tinyvdb revision separately and compare a
+level-set fixture on the same host (the test uses two workers and writes only
+temporary files):
+
+```sh
+bash tests/volumetric/compare-mesh-identity.sh \
+  /path/to/old-tinyvdb /path/to/old-build \
+  /path/to/new-tinyvdb /path/to/new-build /path/to/level-set.vdb 0.15
+```
+
+The command compares the bytes of surface vertices and triangles, tetrahedral
+vertices and cells, and boundary triangles. It reports SHA-256 hashes and fails
+on differences or empty output. Choose a spacing appropriate for the fixture;
+run representative fixtures to cover the change. Since the serialization is
+native binary, compare builds on the same host with the same ABI. This does
+not independently check internal scan-budget counts.
+
+`volumetric-tet-worker-identity` checks that the uniform stuffing output stays
+byte-identical with 1, 2, 4 and 8 workers for an analytic sphere. When
+`TINYVDBIO_DATA_DIR` contains `icosahedron.vdb`, it repeats the comparison
+through the real level-set sampler, including its per-worker accessor state.
+Run it with:
+
+```sh
+TINYVDBIO_DATA_DIR=/path/to/tinyvdb/data \
+  ctest --test-dir build_ninja/sdf-legacy \
+  -R '^volumetric-tet-worker-identity$' --output-on-failure
+```
+
+For experimental CPU graded stuffing, compare an analytic sphere, box and
+torus using two builds on the same host:
+
+```sh
+bash tests/volumetric/compare-graded-identity.sh \
+  /path/to/old-tinyvdb /path/to/old-build \
+  /path/to/new-tinyvdb /path/to/new-build 0.2
+```
+
+This compares counts and all vertex, tetrahedron and boundary array bytes.
+The refinement suite also tests a high-valence edge; these three outputs do
+not cover every topology or numeric scale.
+The `volumetric-tet-float-range` CPU test checks that both uniform and graded
+stuffing reject coordinates outside float range and tetrahedra that collapse
+when a small object is represented at a large world offset, while preserving
+the caller's existing output.
+`next_test_tydra` exercises bounded VDB decoding, grid-selection fallback and
+allocator ownership across moves. The Python volumetric suite additionally
+tests that a compressed MJCF VDB exceeding the decoded-memory budget is
+rejected and that a larger budget succeeds.
+
+`volumetric-level-set-allocator` (legacy) and `next_test_level_set_allocator`
+(next) sweep allocation failures through the CPU mesh-to-level-set pipeline.
+They verify unchanged existing outputs/reports, complete cleanup, exact-cap
+success and just-below-cap rejection, byte-identical serialized grids versus
+normal allocation and multiple worker counts, and independent concurrent calls.
+The initial tetrahedron fixture covers 350 allocation sites. The sweep also
+passes Valgrind with zero errors and no leaked blocks.
+
+`next_test_tydra` additionally checks generated-field peak/retained accounting,
+move ownership, bounded replacement failure and retry, and serialized identity.
+The Python volumetric suite exercises repeated distinct SDF assets within one
+import budget and successful retry after optional generation failures.
+
+The Blender CPU runtime script `blender/tests/test_usd_physics_runtime.py`
+checks fractional timestep restoration, finite/unlimited hinge and slider limits,
+D6 locked/free axes, skipped unsupported limits and unlimited export. Its
+motor-driven hinge must rotate more than a full revolution. Run with
+`ALSOFT_DRIVERS=null blender -b --factory-startup --python
+blender/tests/test_usd_physics_runtime.py`; require the final
+`BLENDER_USD_PHYSICS_RUNTIME_PASS` marker as well as process success, since
+Blender can exit zero after a Python exception. The lightweight Python hook
+suite also covers invalid timesteps and one-sided/out-of-range limits.
+
+For the corresponding single-thread analytic sphere instruction profile:
+
+```sh
+cc -O2 -I/path/to/tinyvdb/src tests/volumetric/profile-graded.c \
+  /path/to/build/libtinyvdb_mesh_ops.a /path/to/build/libtinyvdb.a \
+  -lm -pthread -o /tmp/profile-graded
+nice valgrind --tool=callgrind --callgrind-out-file=/tmp/graded.callgrind \
+  /tmp/profile-graded 0.2
+```
+
+The hash is a quick diagnostic, not a substitute for the byte comparison.
+Pass `1` as a second argument to `/tmp/profile-graded` to enable the optional
+surface guard; compare it separately because it intentionally changes the mesh.
+
+For a CPU-only wasm32 graded regression, after building the next WASM target
+with `LIGHTUSD_TINYVDB_GPU=OFF`, run the refinement and complete stencil tests
+with Emscripten and Node. Set `EM_CACHE` to a writable cache if needed:
+
+```sh
+EMCC_CORES=2 emcc -O2 -std=c11 -Isrc/external/tinyvdb \
+  tests/volumetric/test-graded-refine.c src/external/tinyvdb/tinyvdb_tet_refine.c \
+  -sENVIRONMENT=node -sEXIT_RUNTIME=1 -o /tmp/graded-refine-wasm.js
+node /tmp/graded-refine-wasm.js
+EMCC_CORES=2 emcc -O2 -std=c11 -Isrc/external/tinyvdb \
+  tests/volumetric/test-graded-stencil.c src/lz4/lz4.c \
+  web/build_ninja/vol-next/lightusd_next_build/tydra_next_build/liblightusd_tinyvdb.a \
+  -sENVIRONMENT=node -sEXIT_RUNTIME=1 -o /tmp/graded-stencil-wasm.js
+node /tmp/graded-stencil-wasm.js
+```
+
+The tests check topology, positive volumes, accuracy and limits on each
+platform. Identical serialized output across native and wasm32 is not
+guaranteed: the three analytic fixtures had equal counts but different array
+bytes across the tested builds.
+The tinyvdb `test_sparse_tools` suite additionally checks meshing when the
+background is below the isovalue, alongside its threaded determinism and
+budget-failure cases.
+
+For a reproducible one-worker surface-mesher instruction count, build the same
+driver against each revision and use the same VDB and host:
+
+```sh
+cc -O2 -I/path/to/tinyvdb/src tests/volumetric/profile-surface.c \
+  /path/to/build/libtinyvdb_mesh_ops.a /path/to/build/libtinyvdb.a \
+  -lm -pthread -o /tmp/profile-surface
+nice valgrind --tool=callgrind --callgrind-out-file=/tmp/surface.callgrind \
+  /tmp/profile-surface /path/to/level-set.vdb
+```
+
+This includes file loading and one-worker surface construction; compare
+instruction counts rather than inferring CPU speed from a loaded host.
+
+For the corresponding tetrahedral stuffing workload, build the `profile-tet`
+target and pass the VDB path, spacing and optional worker count (default 1):
+
+```sh
+nice cmake --build build_ninja/sdf-legacy --target profile-tet -j2
+nice valgrind --tool=callgrind --callgrind-out-file=/tmp/tet.callgrind \
+  build_ninja/sdf-legacy/profile-tet /path/to/level-set.vdb 1.0 8
+```
+
+This includes file loading, lattice sampling, stuffing and boundary assembly.
+The worker argument makes the parallel stuffing path reproducible; use wall
+clock comparisons only on an idle host.
+
+To profile CPU mesh-to-level-set construction with a reproducible closed mesh,
+build `bench_volumetric` from tinyvdb's `tests/bench_volumetric.c` against its
+CPU libraries, then run:
+
+```sh
+python3 tests/volumetric/make-profile-sphere.py /tmp/profile-sphere.obj
+nice valgrind --tool=callgrind --callgrind-out-file=/tmp/vol.callgrind \
+  /path/to/bench_volumetric /tmp/profile-sphere.obj --res 32 --tets 0 --threads 1
+callgrind_annotate --inclusive=yes --threshold=95 /tmp/vol.callgrind
+```
+
+The fixture has 1,106 vertices and 2,208 triangles. At tinyvdb `33a9532` this
+run recorded 10.86 billion instructions for 48,458 candidates; winding-number
+evaluation accounted for 94.7% inclusive. At `f990ab8`, skipping winding for
+candidates outside both band widths reduced the count to 5.01 billion and
+produced the same VDB bytes on that fixture. The tinyvdb mesh-level-set test
+also compares a full evaluator against the optimized path for asymmetric bands,
+open and closed meshes, both winding modes and partial evaluator fallback.
+Use representative meshes and retain instruction counts when comparing runs
+under shared CPU load. `--host-only`
+uses a synthetic evaluator, so its output is not a correctness comparison.
+
 `lusdview_incremental_scene_update_test` now builds without linking next core
 and exercises the public C change-record planner interface. It retains the
 slot/remap/deformation/material/texture cases and checks short records, null
@@ -2321,6 +2571,12 @@ stage's paths remain unchanged.
 
 `next_test_asset_import` covers owned report queries, failure reports, option
 validation and the shared unsupported-feature policies through the C API.
+Its MJCF flexcomp cases reject incomplete pin tuples, fractional or out-of-range
+pin indices, and out-of-bounds reversed ranges; they also check valid tuples
+split across pin elements and valid empty ranges. Direct flexcomp connectivity
+rejects fractional, out-of-range and missing vertex indices while accepting a
+valid triangle. `python/tests/test_mjcf_raw_flex.py` verifies raw flex index
+diagnostics in warn and error policies.
 `next_test_obj_textures` also checks native collector reuse, bounded diagnostic
 storage, malformed UTF-8 and explicit truncation counts.
 `python/tests/test_import_report.py` exercises independent input/memory/depth
@@ -2339,6 +2595,8 @@ engine properties, dictionary metadata, large array views, stage edits/closure
 and invalid arguments. The new C header is also valid C11.
 Generated standard physics descriptor cases verify uniform/varying authoring,
 allowed-token metadata and drive/limit instance namespaces. The descriptor
+tests also compare immutable OpenUSD, MuJoCo and Newton version and commit
+provenance against the generated schema manifests. The descriptor
 lookups also link from a pure C11 consumer of `lightusd_core_c`, without the
 C++ validation engine.
 
@@ -2423,7 +2681,26 @@ joints by sorted prim path, not authored order).
 `tests/next/run-openusd-physics-check.py` saves every profile as USDA, runs all
 registered OpenUSD `UsdValidation` validators (including
 `usdPhysicsValidators:*`) and reports what `UsdPhysics.LoadUsdPhysicsFromRange`
-recovers. It exits nonzero on any validator issue.
+recovers. It fails if the four physics validators are unavailable, a converted
+stage cannot be opened, or a validator reports an issue. Repeat `--require-kind
+KIND=COUNT` to require at least that many parsed records in each result; for
+example:
+
+```sh
+PYTHONPATH="$ISOLATED_PYTHON_PACKAGE:$OPENUSD_PYTHONPATH" "$OPENUSD_PYTHON" \
+  tests/next/run-openusd-physics-check.py --require-kind RevoluteJoint=1 \
+  --require-kind CubeShape=2 tests/feat/physics-oracle/hinge.urdf
+```
+
+`python/tests/test_openusd_physics_harness.py` checks missing validators,
+failed stage opens and missing required parser records without needing OpenUSD.
+These checks establish validation and parser coverage, not dynamics equivalence.
+
+With Python OpenUSD available, `python/tests/test_openusd_physics_semantics.py`
+also checks a rotated URDF hinge's parsed world-space anchor, axis, limits and
+body relationships across three profiles and both layouts. It checks parsed
+site-frame connect and weld joints across the two physics profiles and both
+layouts. These are rest-frame semantic checks; they do not simulate dynamics.
 
 The urdf-usd-converter test corpus (`tests/data/*.urdf`, 81 files) is a useful
 URDF sweep: all non-`error_*` files except those referencing deliberately
@@ -2448,3 +2725,13 @@ The `next_test_spill_array` test checks append/resolve equivalence with spilling
 enabled and disabled. On Windows, requesting spill uses an in-memory fallback;
 the test verifies that no bytes spill and no I/O failure is reported. The
 structural-column spill budget and directory have no effect on Windows.
+
+### Opt-in NVIDIA level-set regression
+
+For bounded OpenGL, Vulkan, CUDA and OptiX surface checks, use
+`examples/lusdview/tests/check-level-set-gpu.py` and the optional
+`profile-gpu-level-set` fixture/profiling target. The runner verifies actual
+backend selection, transformed silhouettes and mesh occlusion, and monitors
+additional VRAM without changing other GPU processes. Build, Xvfb, validation
+layer and profiler instructions are in [lusdview.md](lusdview.md). These hardware
+checks are opt-in and are not part of the ordinary CPU regression suite.

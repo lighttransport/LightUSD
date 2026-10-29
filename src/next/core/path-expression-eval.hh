@@ -17,6 +17,8 @@
 #include "path-expression.hh"
 
 namespace lightusd {
+// See path-expression.hh for the inline namespace.
+inline namespace next_path_expr {
 
 // Caller-provided hooks. Both are optional; when unset the matcher evaluates
 // structurally (predicates pass, references match nothing).
@@ -88,4 +90,5 @@ inline bool MatchPath(const ParsedPathExpression &expr, const std::string &path,
                                  const_cast<void *>(static_cast<const void *>(&ctx))) == 1;
 }
 
+} // inline namespace next_path_expr
 } // namespace lightusd

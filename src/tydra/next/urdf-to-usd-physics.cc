@@ -102,6 +102,13 @@ tn::Value RotationMatrixToQuatf(double r[3][3]) {
 // all-zero tensor is left unauthored so consumers infer it from colliders,
 // except an explicit MJCF zero (`zeroInertia`), kept as a zero
 // newton:inertia (UsdPhysics reads zero diagonalInertia as unspecified).
+// UsdPhysics reads a zero mass or inertia as "unspecified" (consumers then
+// derive it from colliders, and Newton's add_usd replaces a zero inertia of
+// a body with mass by a sphere default), so an explicit MJCF zero is
+// authored as the smallest positive value instead; it is still above
+// MuJoCo's mjMINVAL (1e-15).
+constexpr double kExplicitZero = 1e-12;
+
 void AuthorInertia(tn::PrimSpec *prim, const Json &inertial) {
   double tensor[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
   const std::vector<double> full = JsonDoubles(inertial, "fullInertia");
@@ -141,8 +148,9 @@ void AuthorInertia(tn::PrimSpec *prim, const Json &inertial) {
   if (magnitude == 0.0) {
     bool zero = false;
     if (ActiveProfile().newton && ReadBool(inertial, "zeroInertia", &zero) && zero) {
-      AddAPI(prim, "NewtonMassAPI");
-      SetDoubles(prim, "newton:inertia", {0, 0, 0, 0, 0, 0});
+      const float k = static_cast<float>(kExplicitZero);
+      Set(prim, "physics:diagonalInertia", tn::Value::MakeFloat3(k, k, k), "float3");
+      Set(prim, "physics:principalAxes", tn::Value::MakeQuatf(1, 0, 0, 0), "quatf");
     }
     return;
   }
@@ -167,7 +175,10 @@ void AuthorInertia(tn::PrimSpec *prim, const Json &inertial) {
                              static_cast<float>(axes[2]), static_cast<float>(axes[3])),
         "quatf");
   }
-  if (ActiveProfile().newton) {
+  // The full tensor only for a full source tensor (MJCF fullinertia, URDF
+  // <inertia>), as mujoco-usd-converter / urdf-usd-converter write it; a
+  // diagonal one is exact in diagonalInertia + principalAxes.
+  if (ActiveProfile().newton && full.size() >= 6) {
     AddAPI(prim, "NewtonMassAPI");
     SetDoubles(prim, "newton:inertia",
                {tensor[0][0], tensor[1][1], tensor[2][2], tensor[0][1],

@@ -17,12 +17,17 @@ mkdir ${builddir}
 cd ${builddir} && CC=gcc CXX=g++ cmake \
   -DCMAKE_TOOLCHAIN_FILE=cmake/linux_i386.toolchain.cmake \
   -DCMAKE_BUILD_TYPE=Debug \
+  "-DCMAKE_C_FLAGS_DEBUG=-g -O1" \
+  "-DCMAKE_CXX_FLAGS_DEBUG=-g -O1" \
   -DSANITIZE_ADDRESS=1 \
   -DLIGHTUSD_NO_WERROR=On \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
   -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   ..
 
+# Debug at -O1 (assertions stay on): ASan's recommended level, and -O0 made
+# the unit tests ~35x slower than Release on the CI runner.
+#
 # -DLIGHTUSD_NO_WERROR=On: same reason as the asan script — gcc's
 # warnings under ASan instrumentation are noisier than the regular
 # -Wall build, and this i386+ASan job is a debug check, not a

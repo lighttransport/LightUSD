@@ -14,6 +14,7 @@ layout(set = 0, binding = 0, std140) uniform VolumeUBO {
   vec4 bmax;      // object-space AABB max (.xyz)
   vec4 albedo;    // .xyz albedo, .w densityScale
   vec4 emission;  // .xyz emission, .w background
+  vec4 params;    // .x 1 = level-set isosurface, .y isovalue (fragment only)
 } u;
 
 layout(location = 0) out vec3 vWorld;

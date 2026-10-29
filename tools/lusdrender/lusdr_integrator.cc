@@ -1707,21 +1707,32 @@ std::vector<VolumeData> BuildVolumes(const RenderScene &scene) {
     if (f.buffer_id < 0 || size_t(f.buffer_id) >= scene.buffers.size()) continue;
     const auto &buf = scene.buffers[size_t(f.buffer_id)];
     const size_t n = size_t(f.dim[0]) * size_t(f.dim[1]) * size_t(f.dim[2]);
-    if (n == 0 || buf.data.size() < n * sizeof(float)) continue;
+    if (n == 0) continue;
 
     VolumeData vd;
     vd.dim[0] = f.dim[0];
     vd.dim[1] = f.dim[1];
     vd.dim[2] = f.dim[2];
-    vd.density.resize(n);
-    std::memcpy(vd.density.data(), buf.data.data(), n * sizeof(float));
+    // Vector fields are shaded through their magnitude (the integrator reads
+    // one scalar per cell).
+    if (!lightusd::tydra::ReadVolumeFieldScalars(buf, f, &vd.density)) continue;
     vd.bmin = Vec3{f.bounds_min[0], f.bounds_min[1], f.bounds_min[2]};
     vd.bmax = Vec3{f.bounds_max[0], f.bounds_max[1], f.bounds_max[2]};
+    vd.world = v.world_matrix;
     matrix4d invw;
     if (!lightusd::inverse(v.world_matrix, invw, 1.0e-12)) {
       invw = matrix4d::identity();
     }
     vd.inv_world = invw;
+    {
+      const Vec3 ext = Sub(vd.bmax, vd.bmin);
+      const float ex = vd.dim[0] > 0 ? ext.x / float(vd.dim[0]) : 0.0f;
+      const float ey = vd.dim[1] > 0 ? ext.y / float(vd.dim[1]) : 0.0f;
+      const float ez = vd.dim[2] > 0 ? ext.z / float(vd.dim[2]) : 0.0f;
+      vd.voxel_size = std::min(ex, std::min(ey, ez));
+    }
+    // UsdVol fieldClass decides the shading: a level set is an isosurface.
+    vd.level_set = f.level_set;
     vd.density_scale = v.density_scale;
     vd.albedo = Vec3{v.albedo[0], v.albedo[1], v.albedo[2]};
     vd.emission = Vec3{v.emission_color[0] * v.emission_scale,
@@ -1735,7 +1746,7 @@ std::vector<VolumeData> BuildVolumes(const RenderScene &scene) {
       const auto &abuf = scene.buffers[size_t(aux.buffer_id)];
       const size_t an = size_t(aux.dim[0]) * size_t(aux.dim[1]) *
                         size_t(aux.dim[2]);
-      if (an == 0 || abuf.data.size() < an * sizeof(float)) continue;
+      if (an == 0) continue;
       VolumeScalarField *dst_field = nullptr;
       if (aux.field_name == "temperature") {
         dst_field = &vd.temperature_field;
@@ -1744,8 +1755,7 @@ std::vector<VolumeData> BuildVolumes(const RenderScene &scene) {
         dst_field = &vd.emission_field;
       }
       if (dst_field) {
-        dst_field->data.resize(an);
-        std::memcpy(dst_field->data.data(), abuf.data.data(), an * sizeof(float));
+        if (!lightusd::tydra::ReadVolumeFieldScalars(abuf, aux, &dst_field->data)) continue;
         for (int a = 0; a < 3; ++a) {
           dst_field->dim[a] = aux.dim[a];
         }
@@ -1757,41 +1767,6 @@ std::vector<VolumeData> BuildVolumes(const RenderScene &scene) {
     out.push_back(std::move(vd));
   }
   return out;
-}
-
-// Trilinear scalar-field sample at an object-space point. Auxiliary fields
-// deliberately use the density lattice (validated while building VolumeData).
-static float SampleVolumeField(const std::vector<float> &field,
-                               const int dim[3], const Vec3 &bmin,
-                               const Vec3 &bmax, const Vec3 &p) {
-  const float ex = bmax.x - bmin.x;
-  const float ey = bmax.y - bmin.y;
-  const float ez = bmax.z - bmin.z;
-  if (ex <= 0.0f || ey <= 0.0f || ez <= 0.0f) return 0.0f;
-  // fractional voxel index, voxel-center convention.
-  float gx = (p.x - bmin.x) / ex * float(dim[0]) - 0.5f;
-  float gy = (p.y - bmin.y) / ey * float(dim[1]) - 0.5f;
-  float gz = (p.z - bmin.z) / ez * float(dim[2]) - 0.5f;
-  int x0 = int(std::floor(gx)), y0 = int(std::floor(gy)), z0 = int(std::floor(gz));
-  float fx = gx - float(x0), fy = gy - float(y0), fz = gz - float(z0);
-  auto fetch = [&](int x, int y, int z) -> float {
-    if (x < 0) x = 0; else if (x >= dim[0]) x = dim[0] - 1;
-    if (y < 0) y = 0; else if (y >= dim[1]) y = dim[1] - 1;
-    if (z < 0) z = 0; else if (z >= dim[2]) z = dim[2] - 1;
-    return field[size_t(x) + size_t(dim[0]) *
-                                  (size_t(y) + size_t(dim[1]) * size_t(z))];
-  };
-  float c00 = fetch(x0, y0, z0) * (1 - fx) + fetch(x0 + 1, y0, z0) * fx;
-  float c10 = fetch(x0, y0 + 1, z0) * (1 - fx) + fetch(x0 + 1, y0 + 1, z0) * fx;
-  float c01 = fetch(x0, y0, z0 + 1) * (1 - fx) + fetch(x0 + 1, y0, z0 + 1) * fx;
-  float c11 = fetch(x0, y0 + 1, z0 + 1) * (1 - fx) + fetch(x0 + 1, y0 + 1, z0 + 1) * fx;
-  float c0 = c00 * (1 - fy) + c10 * fy;
-  float c1 = c01 * (1 - fy) + c11 * fy;
-  return c0 * (1 - fz) + c1 * fz;
-}
-
-static float SampleVolumeDensity(const VolumeData &vd, const Vec3 &p) {
-  return SampleVolumeField(vd.density, vd.dim, vd.bmin, vd.bmax, p);
 }
 
 // Fast blackbody approximation in linear-ish RGB. VDB fire fields are often
@@ -1841,10 +1816,126 @@ static bool RayAABBVol(const Vec3 &o, const Vec3 &d, const Vec3 &bmin,
   return true;
 }
 
+// --- Level sets (UsdVol fieldClass == "levelSet") -------------------------
+// The field holds signed distances in world units (negative inside), so it is
+// shaded as an isosurface: sphere-trace to the first zero crossing, take the
+// normal from the distance gradient and shade it as a matte surface with the
+// scene's punctual lights. Fog fields keep the emission/absorption raymarch.
+// Volume surfaces do not receive shadow rays or indirect light (documented
+// limit of this preview path), and they replace the background only when they
+// are in front of the scene geometry along the primary ray.
+
+static bool TraceLevelSetSurface(const VolumeData &vd, const Vec3 &o,
+                                 const Vec3 &d, float t0, float t1,
+                                 float *t_hit) {
+  if (!t_hit) return false;
+  const float dir_len = Length(d);
+  if (!std::isfinite(dir_len) || dir_len <= 1.0e-9f) return false;
+  // t is the world-ray parameter, while the field and voxel size are in
+  // object space. Convert all object-space distances to ray parameters.
+  const float min_step = std::max(1.0e-6f, vd.voxel_size * 0.25f) / dir_len;
+  // Capping the sphere-trace step degrades to a fine march when the stored
+  // values are not world-unit distances (a mis-scaled SDF then still finds
+  // the crossing instead of stepping over it).
+  const float max_step = std::max(min_step, vd.voxel_size * 4.0f / dir_len);
+  auto sample_at = [&](float t) {
+    return SampleVolumeDensity(vd, Add(o, Mul(d, t)));
+  };
+  float t_prev = t0;
+  float v_prev = sample_at(t_prev);
+  // The first sign change along the ray is the outermost surface, whatever the
+  // stored sign convention (narrow-band level sets store a positive value
+  // inside the solid's core, so "negative" is not the whole interior).
+  const bool entry_negative = v_prev < 0.0f;
+  auto other_side = [&](float v) { return (v < 0.0f) != entry_negative; };
+  const int max_steps = 4096;
+  for (int i = 0; i < max_steps; ++i) {
+    const float step = std::max(
+        min_step,
+        std::min(max_step, std::fabs(v_prev) / dir_len * 0.8f));
+    const float t_next = std::min(t_prev + step, t1);
+    const float v_next = sample_at(t_next);
+    if (other_side(v_next)) {
+      float lo = t_prev, hi = t_next;
+      for (int k = 0; k < 16; ++k) {
+        const float mid = 0.5f * (lo + hi);
+        if (other_side(sample_at(mid))) {
+          hi = mid;
+        } else {
+          lo = mid;
+        }
+      }
+      *t_hit = hi;
+      return true;
+    }
+    if (t_next >= t1) return false;
+    t_prev = t_next;
+    v_prev = v_next;
+  }
+  return false;
+}
+
+// Central-difference gradient of the stored field at an object-space point,
+// in object-space units.
+static Vec3 LevelSetObjectGradient(const VolumeData &vd, const Vec3 &p) {
+  const float h = std::max(1.0e-6f, vd.voxel_size * 0.5f);
+  const Vec3 dx{h, 0.0f, 0.0f}, dy{0.0f, h, 0.0f}, dz{0.0f, 0.0f, h};
+  const Vec3 g{
+      SampleVolumeDensity(vd, Add(p, dx)) - SampleVolumeDensity(vd, Sub(p, dx)),
+      SampleVolumeDensity(vd, Add(p, dy)) - SampleVolumeDensity(vd, Sub(p, dy)),
+      SampleVolumeDensity(vd, Add(p, dz)) - SampleVolumeDensity(vd, Sub(p, dz))};
+  return Mul(g, 1.0f / (2.0f * h));
+}
+
+static Vec3 ShadeLevelSetSurface(const VolumeData &vd, const Vec3 &p,
+                                 const Vec3 &n, const LightCache &lights,
+                                 float ambient) {
+  Vec3 c = Mul(vd.albedo, ambient);
+  auto add_light = [&](const PreviewLight &light) {
+    Vec3 radiance = light.radiance;
+    Vec3 l;
+    if (light.kind == PreviewLight::Kind::Distant) {
+      l = Normalize(Mul(light.direction, -1.0f));
+    } else {
+      const Vec3 d = Sub(light.position, p);
+      const float dist = Length(d);
+      if (dist <= 1.0e-6f) return;
+      l = Mul(d, 1.0f / dist);
+      if (light.kind == PreviewLight::Kind::Mesh ||
+          light.kind == PreviewLight::Kind::Rect ||
+          light.kind == PreviewLight::Kind::Disk ||
+          light.kind == PreviewLight::Kind::Cylinder) {
+        const float emit_cos = std::max(0.0f, Dot(light.normal, Mul(l, -1.0f)));
+        if (emit_cos <= 0.0f) return;
+        radiance = Mul(radiance, emit_cos * std::max(1.0f, light.area));
+      } else if (light.kind == PreviewLight::Kind::Sphere &&
+                 light.radius > 1.0e-5f) {
+        radiance = Mul(radiance, MTLX_PI * light.radius * light.radius);
+      }
+      radiance = Mul(radiance, 1.0f / std::max(1.0e-4f, dist * dist));
+    }
+    const float ndotl = Dot(n, l);
+    if (ndotl <= 0.0f) return;
+    c = Add(c, Vec3{vd.albedo.x * radiance.x * ndotl,
+                    vd.albedo.y * radiance.y * ndotl,
+                    vd.albedo.z * radiance.z * ndotl});
+  };
+  for (const PreviewLight &light : lights.finite) add_light(light);
+  for (const PreviewLight &light : lights.mesh) add_light(light);
+  // The volume material's emission, as in the fog path (already scaled by
+  // emission_scale when the volume was built).
+  return Add(c, vd.emission);
+}
+
 // Composite all volumes along the world-space primary ray over `bg`.
+// `scene_hit` is the world-space distance to the primary geometry hit (or the
+// far plane); a level-set surface behind it does not replace the geometry.
 Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
-                      const Vec3 &wdir, Vec3 bg) {
+                      const Vec3 &wdir, Vec3 bg, const LightCache &lights,
+                      float ambient, float scene_hit,
+                      Options::VolumeLevelSet level_set_shading) {
   Vec3 result = bg;
+  float nearest_surface = scene_hit;
   for (const VolumeData &vd : vols) {
     // World -> object space.
     Vec3 o = TransformPoint(vd.inv_world, worg);
@@ -1853,6 +1944,25 @@ Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
     if (!RayAABBVol(o, d, vd.bmin, vd.bmax, &t0, &t1)) continue;
     if (t0 < 0.0f) t0 = 0.0f;
     if (t1 <= t0) continue;
+
+    if (vd.level_set && level_set_shading == Options::VolumeLevelSet::Surface) {
+      float hit = 0.0f;
+      if (!TraceLevelSetSurface(vd, o, d, t0, t1, &hit)) continue;
+      // o + d * hit is the inverse transform of worg + wdir * hit, so
+      // `hit` already uses the same world-ray parameter as scene_hit.
+      if (hit >= nearest_surface) continue;  // geometry or a volume is in front
+      const Vec3 p_obj = Add(o, Mul(d, hit));
+      const Vec3 n_obj = LevelSetObjectGradient(vd, p_obj);
+      Vec3 n = Length(n_obj) > 1.0e-8f
+                   ? TransformNormal(vd.inv_world, n_obj)
+                   : Normalize(Mul(wdir, -1.0f));
+      if (Dot(n, wdir) > 0.0f) n = Mul(n, -1.0f);
+      result = ShadeLevelSetSurface(vd, TransformPoint(vd.world, p_obj), n,
+                                    lights, ambient);
+      nearest_surface = hit;
+      continue;
+    }
+
 
     const float ex = vd.bmax.x - vd.bmin.x;
     const float ey = vd.bmax.y - vd.bmin.y;
@@ -1871,7 +1981,12 @@ Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
     float t = t0;
     for (int i = 0; i < max_steps && t < t1; i++, t += step) {
       Vec3 p = Add(o, Mul(d, t + 0.5f * step));
-      float dens = (SampleVolumeDensity(vd, p) - vd.background) * vd.density_scale;
+      const float raw = SampleVolumeDensity(vd, p);
+      // A level set marched as fog: the stored distance becomes a density
+      // inside the surface (clamp(-sdf)); other fields keep their density.
+      float dens = vd.level_set
+                       ? std::max(0.0f, -raw) * vd.density_scale
+                       : (raw - vd.background) * vd.density_scale;
       if (dens > 1.0e-5f) {
         float a = 1.0f - std::exp(-dens * step);
         Vec3 emit = vd.emission;
@@ -2027,7 +2142,9 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
             }
           }
           if (!data_aov && volumes && !volumes->empty()) {
-            surf = CompositeVolumes(*volumes, org, dir, surf);
+            surf = CompositeVolumes(*volumes, org, dir, surf, lights,
+                                    opt.ambient, primary_hit_t,
+                                    opt.volume_level_set);
           }
           color = Add(color, surf);
         }

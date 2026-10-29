@@ -141,13 +141,14 @@ bool ConvertTokenAttributeToStringAttribute(
 // Build the single canonical buffer `_full` and the part offsets from prim and
 // prop strings (eager, lock-free). element = property name (when present) else
 // the last '/'-delimited segment of the prim part.
-void Path::_assemble(const std::string &prim, const std::string &prop) {
-  _full = prim;
-  _prim_len = static_cast<uint32_t>(prim.size());
-  if (!prop.empty()) {
+void Path::_assemble_slices(const char *prim, size_t prim_len,
+                            const char *prop, size_t prop_len) {
+  _full.assign(prim, prim_len);
+  _prim_len = static_cast<uint32_t>(prim_len);
+  if (prop_len) {
     _full.push_back('.');
-    _full.append(prop);
-    _prop_len = static_cast<uint32_t>(prop.size());
+    _full.append(prop, prop_len);
+    _prop_len = static_cast<uint32_t>(prop_len);
     _elem_off = _prim_len + 1u;
     _elem_len = _prop_len;
   } else {
@@ -156,16 +157,25 @@ void Path::_assemble(const std::string &prim, const std::string &prop) {
       _elem_off = 0;
       _elem_len = 0;
     } else {
-      const size_t pos = prim.rfind('/');
-      if (pos == std::string::npos) {
+      // Last '/' in the prim slice (string::rfind on a non-terminated slice is
+      // not usable, so scan backwards).
+      size_t pos = prim_len;
+      while (pos > 0 && prim[pos - 1] != '/') {
+        --pos;
+      }
+      if (pos == 0) {
         _elem_off = 0;
         _elem_len = _prim_len;
       } else {
-        _elem_off = static_cast<uint32_t>(pos + 1);
-        _elem_len = static_cast<uint32_t>(_prim_len - (pos + 1));
+        _elem_off = static_cast<uint32_t>(pos);
+        _elem_len = static_cast<uint32_t>(_prim_len - pos);
       }
     }
   }
+}
+
+void Path::_assemble(const std::string &prim, const std::string &prop) {
+  _assemble_slices(prim.data(), prim.size(), prop.data(), prop.size());
 }
 
 void Path::_update(const std::string &p, const std::string &prop) {
@@ -195,71 +205,77 @@ void Path::_update(const std::string &p, const std::string &prop) {
     }
   }
 
-  std::string lp;   // prim part
-  std::string lpr;  // prop part
+  // Part slices point either into `p` or into `prop`; they are assembled into
+  // `_full` once at the end (the previous code copied both parts into locals
+  // and _assemble() then copied them again).
+  const char *lp = p.data();
+  size_t lp_len = 0;      // prim part
+  const char *lpr = prop.data();
+  size_t lpr_len = 0;     // prop part
+
+  // Given `p` = "<prim>.<prop>", split at the single '.'. Returns false when
+  // `p` is malformed.
+  auto split_single_dot = [&]() -> bool {
+    if (p.size() < 3) {
+      return false;
+    }
+    const size_t loc = p.find_first_of('.');
+    if (loc == std::string::npos) {
+      return false;
+    }
+    // Check no '/' in prop part.
+    if (std::count(p.begin() + long(loc) + 1, p.end(), '/') > 0) {
+      return false;
+    }
+    lp = p.data();
+    lp_len = loc;
+    lpr = p.data() + loc + 1;
+    lpr_len = p.size() - loc - 1;
+    return true;
+  };
 
   if (!p.empty() && p[0] == '/') {
     // absolute path
     auto ndots = std::count_if(p.begin(), p.end(), dot_fun);
     if (ndots == 0) {
-      lp = p;
-      lpr = prop;
+      lp_len = p.size();
+      lpr_len = prop.size();
     } else if (ndots == 1) {
       // prim_part contains property name; prop must be empty.
       if (prop.size()) {
         _valid = false;
         return;
       }
-      if (p.size() < 3) {
+      if (!split_single_dot()) {
         _valid = false;
         return;
       }
-      auto loc = p.find_first_of('.');
-      if (loc == std::string::npos) {
-        _valid = false;
-        return;
-      }
-      lp = p.substr(0, size_t(loc));
-      lpr = p.substr(size_t(loc) + 1);  // remove '.'
     } else {
       _valid = false;
       return;
     }
   } else if (!p.empty() && p[0] == '.') {
     // maybe relative(e.g. "./xform", "../xform"). FIXME: Support fully.
-    lp = p;
-    lpr = prop;
+    lp_len = p.size();
+    lpr_len = prop.size();
   } else {
     // prim or prim.prop (relative)
     auto ndots = std::count_if(p.begin(), p.end(), dot_fun);
     if (ndots == 0) {
-      lp = p;
-      lpr = prop;
+      lp_len = p.size();
+      lpr_len = prop.size();
     } else if (ndots == 1) {
-      if (p.size() < 3) {
+      if (!split_single_dot()) {
         _valid = false;
         return;
       }
-      auto loc = p.find_first_of('.');
-      if (loc == std::string::npos) {
-        _valid = false;
-        return;
-      }
-      std::string prop_name = p.substr(size_t(loc) + 1);  // remove '.'
-      // Check no '/' in prop part.
-      if (std::count_if(prop_name.begin(), prop_name.end(), slash_fun) > 0) {
-        _valid = false;
-        return;
-      }
-      lp = p.substr(0, size_t(loc));
-      lpr = prop_name;
     } else {
       _valid = false;
       return;
     }
   }
 
-  _assemble(lp, lpr);
+  _assemble_slices(lp, lp_len, lpr, lpr_len);
   _valid = true;
 }
 
@@ -293,7 +309,16 @@ Path Path::append_property(const std::string &elem) {
     return p;
   } else {
     // TODO: Validate property path. Keep the prim part, set the property part.
-    p._assemble(std::string(p._full.data(), p._prim_len), elem);
+    //
+    // Append in place: _assemble() takes std::string copies of the prim part,
+    // which costs two allocations per property path on top of the append. The
+    // fields set here are exactly the ones _assemble(prim, elem) computes.
+    p._full.resize(p._prim_len);
+    p._full.push_back('.');
+    p._full.append(elem);
+    p._prop_len = static_cast<uint32_t>(elem.size());
+    p._elem_off = p._prim_len + 1u;
+    p._elem_len = p._prop_len;
     return p;
   }
 }
@@ -1331,6 +1356,9 @@ bool IsXformablePrim(const Prim &prim) {
     }
     // UsdVol (GPrim / Xformable-derived)
     case value::TYPE_ID_VOLUME:
+    case value::TYPE_ID_VOLUME_FIELD_BASE:
+    case value::TYPE_ID_FIELD_BASE:
+    case value::TYPE_ID_VOLUME_FIELD_ASSET:
     case value::TYPE_ID_FIELD_ASSET:
     case value::TYPE_ID_OPENVDB_ASSET:
     case value::TYPE_ID_FIELD3D_ASSET: {

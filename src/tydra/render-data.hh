@@ -59,8 +59,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <functional>
 #include <unordered_map>
+#include <vector>
 
 #include "asset-resolution.hh"
 #include "nonstd/expected.hpp"
@@ -1753,14 +1755,22 @@ struct SceneMetadata
 };
 
 ///
-/// One scalar field (e.g. "density") of a UsdVol Volume, decoded into a DENSE
-/// float voxel grid. The voxel data lives in RenderScene::buffers[buffer_id]
-/// (componentType Float, length dim[0]*dim[1]*dim[2], x-contiguous:
-/// index = x + dim[0]*(y + dim[1]*z)).
+/// One field (e.g. "density") of a UsdVol Volume, decoded into a DENSE float
+/// voxel grid. The voxel data lives in RenderScene::buffers[buffer_id]
+/// (componentType Float, length dim[0]*dim[1]*dim[2]*components, x-contiguous:
+/// index = c + components*(x + dim[0]*(y + dim[1]*z))).
 ///
 struct RenderVolumeField {
   std::string field_name;        // "density", "temperature", ...
-  std::string field_data_type;   // logical type ("float")
+  std::string field_data_type;   // logical type ("float", "vec3f", ...)
+  // UsdVol fieldClass: "levelSet", "fogVolume", "staggered" or "unknown".
+  // The authored OpenVDBAsset.fieldClass when present, else the grid's class
+  // metadata.
+  std::string field_class = "unknown";
+  // True when the field is a signed distance function (fieldClass "levelSet"
+  // and the grid does not contradict it). Renderers shade it as an isosurface.
+  bool level_set = false;
+  int32_t components = 1;        // 1 scalar, or 3 interleaved vec3 components
   int32_t dim[3] = {0, 0, 0};    // voxel dimensions (x, y, z)
   int32_t origin[3] = {0, 0, 0}; // index-space origin (min voxel coord)
   float voxel_size[3] = {1.0f, 1.0f, 1.0f};
@@ -1773,6 +1783,61 @@ struct RenderVolumeField {
   float bounds_min[3] = {0.0f, 0.0f, 0.0f};
   float bounds_max[3] = {0.0f, 0.0f, 0.0f};
 };
+
+///
+/// Read a volume field's dense voxels as one scalar per cell into `out`
+/// (magnitude for 3-component vector fields). Returns false when the buffer
+/// is missing, not float-typed, or smaller than the field claims.
+///
+inline bool ReadVolumeFieldScalars(const BufferData &buffer,
+                                   const RenderVolumeField &field,
+                                   std::vector<float> *out) {
+  if (!out || buffer.componentType != ComponentType::Float) return false;
+  const size_t cells = size_t(field.dim[0]) * size_t(field.dim[1]) *
+                       size_t(field.dim[2]);
+  const size_t components = field.components > 0 ? size_t(field.components) : 1;
+  if (cells == 0 || buffer.data.size() < cells * components * sizeof(float))
+    return false;
+  out->resize(cells);
+  const uint8_t *bytes = buffer.data.data();
+  if (bytes) {  // contiguous fast path
+    const float *src = reinterpret_cast<const float *>(bytes);
+    if (components == 1) {
+      std::memcpy(out->data(), src, cells * sizeof(float));
+    } else {
+      for (size_t i = 0; i < cells; ++i) {
+        const float *v = src + components * i;
+        float sum = 0.0f;
+        for (size_t c = 0; c < components; ++c) sum += v[c] * v[c];
+        (*out)[i] = std::sqrt(sum);
+      }
+    }
+    return true;
+  }
+  // Chunked storage: read each float through the array's element access.
+  const size_t count = cells * components;
+  std::vector<float> scalars(count);
+  for (size_t i = 0; i < count; ++i) {
+    uint8_t raw[sizeof(float)];
+    for (size_t b = 0; b < sizeof(float); ++b) {
+      raw[b] = buffer.data[i * sizeof(float) + b];
+    }
+    std::memcpy(&scalars[i], raw, sizeof(float));
+  }
+  if (components == 1) {
+    *out = std::move(scalars);
+  } else {
+    for (size_t i = 0; i < cells; ++i) {
+      float sum = 0.0f;
+      for (size_t c = 0; c < components; ++c) {
+        const float v = scalars[components * i + c];
+        sum += v * v;
+      }
+      (*out)[i] = std::sqrt(sum);
+    }
+  }
+  return true;
+}
 
 ///
 /// A UsdVol Volume prim converted for rendering. Carries its own world matrix

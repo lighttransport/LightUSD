@@ -148,4 +148,11 @@ bool BuildKeptCompressedFromKtx2(const uint8_t* data, size_t size,
                                  DrawTextureCPU* tex);
 #endif
 
+// Generated primitives (curve ribbons, NURBS patches, level-set isosurfaces):
+// append a preview material and finish a mesh built without authored
+// topology metadata.
+void AppendGeneratedMaterial(DrawScene* out, const float color[3],
+                             const std::string& name, int* materialId);
+void FinalizeGeneratedMesh(DrawMeshCPU* dm);
+
 }  // namespace lusdview

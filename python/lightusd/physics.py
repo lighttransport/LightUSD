@@ -7,6 +7,7 @@ and quaternions use USD order ``(real, i, j, k)``.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
+import json
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -176,6 +177,7 @@ for _name in ("integrator", "cone", "jacobian", "solver"):
 # table above only types legacy extension properties outside those schemas.
 from . import _core as _native_core
 _SCHEMA_DEFINITIONS = _native_core._physics_schema_definitions()
+_SCHEMA_PROVENANCE = json.loads(_native_core._physics_schema_provenance())
 _STANDARD_PROPERTIES = {}
 _MULTIPLE_SCHEMAS = []
 for _schema in _SCHEMA_DEFINITIONS.values():
@@ -193,10 +195,22 @@ def schema_definitions():
 
     Definitions list local properties, parent schema, multiple-apply namespace,
     native source, types, variability, relationships and allowed token values.
-    Engine schemas are generated from pinned MuJoCo and newton-usd-schemas
-    releases; ``source`` identifies the originating schema file.
+    ``source`` identifies the originating schema file; ``provenance`` contains
+    the upstream project, pinned version and commit for each schema.
     """
-    return _freeze(_native_core._physics_schema_definitions())
+    definitions = _native_core._physics_schema_definitions()
+    for name, definition in definitions.items():
+        if name.startswith("Mjc"):
+            project = "mujoco"
+            provenance = _SCHEMA_PROVENANCE["engines"][project]
+        elif name.startswith("Newton"):
+            project = "newton-usd-schemas"
+            provenance = _SCHEMA_PROVENANCE["engines"][project]
+        else:
+            project = "openusd"
+            provenance = _SCHEMA_PROVENANCE[project]
+        definition["provenance"] = {"project": project, **provenance}
+    return _freeze(definitions)
 
 
 def _property_definition(name):

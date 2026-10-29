@@ -318,13 +318,117 @@ f121272e (2026-10-24; Menagerie Newton compare still 65/69). Fixed in the
   mass by a sphere default while add_mjcf keeps it). Also fixed: the
   supported-schema ledger (usdProc/usdUI in scope, 9bd1cc133) and the
   roundtrip fuzzer build.
-- Kept as is (deliberate): the URDF root stays welded to the world (as
-  urdf-usd-converter and `add_urdf`'s default; `add_usd(floating=True)`
-  still floats it, verified); URDF effort reaches Newton only through the MuJoCo
-  resolver (`mjc:actuatorfrcrange`; Newton schemas have no joint effort
-  attribute and a zero-gain drive would change Newton's actuator mode);
-  `newton:contactGap` is unauthored without an MJCF `gap` (matches
-  `add_mjcf`).
+- MJCF colliders now always carry `newton:contactMargin`/`contactGap`
+  (MuJoCo's 0 when unauthored), as mujoco-usd-converter writes them; Newton
+  would otherwise apply `rigid_gap = 0.1` m (its own `add_mjcf` does).
+- Resolved by verification, no change (accepted by the user): the URDF root weld (as
+  urdf-usd-converter and `add_urdf`; `add_usd(floating=True)` still floats it
+  because the weld has no `physics:body0`); URDF effort limits (Newton
+  schemas 0.6.0 have no joint effort attribute; Newton reads effort only from
+  `mjc:actuatorfrcrange` via its MuJoCo resolver, which we author, or a
+  drive's force limit, and a zero-gain drive would switch Newton to effort
+  control). The stretch residual was traced to the MuJoCo 3.16 wheel's own
+  decoder: called directly it returns 23,575 faces for
+  `link_SG3_gripper_body.obj` with bit-identical vertices, while
+  tinyobjloader 2945a96 (and every release, gcc/clang, float/double,
+  fast-math, FMA, earcut) yields 23,776; our triangulation matches the
+  source.
+
+- Residual Newton-compare mismatches fixed (2026-10-24, user asked to keep
+  working on them): the MuJoCo 3.16 PyPI OBJ decoder drops every polygon of
+  more than 100 vertices (found by black-box tests against the wheel's
+  decoder; 100 kept, 101 dropped), which we now match, so stretch's gripper
+  equals MuJoCo's compiled mass; explicit MJCF zero inertia/mass are authored
+  as 1e-12 (UsdPhysics cannot hold an exact 0), so lite6 `link_base` keeps
+  ~zero inertia and rby1 `NECK_0` ~zero mass in Newton's `add_usd` (Newton's
+  finalize then floors that body's inertia at 1e-6, which only an exact zero
+  mass escapes; the compare records it as a note). Menagerie Newton compare
+  69/69. Upstream issue drafts (Newton zero-inertia/zero-mass handling,
+  MuJoCo wheel polygon limit) are in the session scratchpad for filing; the
+  repo no longer depends on them.
+
+- Review closed (2026-10-24, accepted by the user): the 22 gap-review fixes,
+  the stretch/rby1/lite6 residual fixes (Newton compare 69/69), the URDF root
+  weld and effort limit (verified, unchanged) and the two not-planned items
+  (interpolated flex dofs, cube-projected material textures).
+
+- URDF Newton compare (2026-10-24): `run-newton-compare.py --urdf DIR`
+  compares `add_urdf` with `add_usd` of LightUSD's output over Newton's own
+  assets (g1, h1, anymal, fr3, allegro), Newton examples, urdf-usd-converter's
+  corpus, chrono and tiny-differentiable-simulator: 135 pass, the 3 invalid
+  `error_*` fixtures are rejected. Fixed on the way: negative MTL `Ns`
+  (Blender) rejected the OBJ, zero-size URDF primitives and unsupported mesh
+  formats failed the import, `../meshes` in a ROS package was outside the
+  allowed roots, mimic-of-mimic chains made `add_usd` fail, explicit URDF zero
+  mass/inertia were derived from colliders, and ghost links were judged by
+  converted rather than authored geometry.
+
+- MuJoCo USD-decoder check (2026-10-24): `run-mujoco-usd-compare.py`
+  compiles each Menagerie MJCF with MuJoCo 3.16 and compiles LightUSD's stage
+  through MuJoCo's own USD decoder (OpenUSD 26.05 build): 68/69 pass (stretch:
+  the wheel-only OBJ polygon limit). Fixed in LightUSD: default gravity was
+  9.80665 (MuJoCo 9.81); actuator default classes were inlined by tag
+  (ms_human's `<general class="muscle">` lost its muscle model, stretch's
+  `<position class>` its `<general>` gains, rby1's velocity took a
+  position's kv); shell meshes used as visual geoms lacked the shell mass
+  model (stretch, adam_lite failed to compile); `newton:inertia` was written
+  for diagonal tensors too. Decoder bugs/limits found (issues/, untracked):
+  newton:inertia + diagonalInertia rejected, physics-purpose material
+  bindings ignored, sites also decoded as geoms, unauthored limits decode as
+  limited, no tree ball joints, no collision bitmasks, no body gravcomp.
+
+- openusd collision filtering (2026-10-24): MJCF contype/conaffinity bitmasks
+  become UsdPhysics collision groups (exact for any masks: one group per
+  distinct pair, filtered pairs from MuJoCo's rule), parsed by OpenUSD's
+  UsdPhysics (iit_softfoot 1 group, agility_cassie 3), validators clean.
+
+- MJCF SDF geoms (2026-10-24): `<geom type="sdf">` becomes a mesh collider
+  with NewtonSDFCollisionAPI (approximation none); MuJoCo's analytic SDF
+  plugin meshes are generated as MuJoCo's compiler does (port of
+  plugin/sdf distances + vendored MarchingCubeCpp `f03a1b3e`), identical
+  vertex/face counts. MuJoCo's model/plugin/sdf examples: decoder compare 6/6
+  (torus bowl gear nutbolt primitives cow), Newton compare 4/4 (no CUDA here:
+  the harness compares SDF colliders as meshes, since Newton builds SDFs on
+  CUDA only; Newton's add_mjcf drops these geoms, mass 0, while the USD
+  matches MuJoCo's masses). The remaining open items are resolved:
+  `mesh.xml`'s die.obj (a vertex-only point cloud) is now the convex hull of its
+  vertices, as MuJoCo's `mjCMesh::Process` does (`mjcf.mesh_convex_hull`;
+  degenerate point sets are reported and rejected), and `mug.xml`'s
+  `../../mug/mug.obj` resolves when the model root is an allowed asset root --
+  `run-mujoco-usd-compare.py` now derives that root for MJCF inputs whose text
+  references `../`.
+
+- MJCF `<skin>` and binary GMSH (2026-10-24): skins become UsdSkel
+  (SkelRoot/Skeleton/skinned Mesh, weights normalized, inflate baked so the
+  rest pose is exact) with a LightUSD extension relationship
+  `lightusd:mjcSkin:bodies` to the bone bodies; rest pose equals MuJoCo's
+  `mjv_updateScene` skin vertices to float precision (flag 7462 verts,
+  cube_skin .skn with a world bone, a rotated two-bone blend). Binary GMSH
+  4.1/2.2 (gmsh and fTetWild layouts) for flexcomp matches the ASCII files and
+  MuJoCo's flex sizes on its 8 cube test models; `.gmsh` and legacy `.msh`
+  mesh assets pass the MuJoCo-decoder compare. Newton's add_mjcf cannot load
+  the binary volume GMSH or `.msh` references (its own limits).
+
+- SDF and volumetric processing through tinyvdb (2026-10-25): tinyvdbio
+  branch volumetric-sdf (mesh -> sparse level set with winding-number signs,
+  winding numbers, isosurface stuffing, file init for writing; a quadratic
+  sparse-map rehash fixed, OpenVDB oracle build fixed) vendored as one
+  lightusd_tinyvdb target that also owns miniz/zstd. MJCF sdf geoms get
+  level-set .vdb sidecars (generated assets) + Newton SDF parameters +
+  guide Volume/OpenVDBAsset + lightusd:sdf; flexcomp opt-in stuffing;
+  .vdb mesh/flexcomp inputs; C/Python/CLI APIs. Checks: OpenUSD validators
+  clean, Newton resolves the SDF parameters and imports stuffed TetMeshes,
+  vdb_print reads the sidecars, legacy byte-identical. Open: graded
+  stuffing lattices.
+- CUDA/HIP level sets and stuffing (2026-10-25): tinyvdb gained a HIP backend
+  (HIP driver API in the CUDA loader table; all CUDA tests pass on HIP) and
+  tinyvdb_gpu_compute (device distance + winding and lattice samples, host
+  bookkeeping; CPU-equal results). Brick-based candidate bands and a
+  bucketed stuffing boundary also made the CPU path faster with byte-identical
+  output. LightUSD: opt-in LIGHTUSD_TINYVDB_GPU build, `volumetric_device`
+  (cpu default, cuda, hip, auto) in importers, C, Python and CLI. RX 9070 XT:
+  level sets 24-32x faster than 8 CPU threads; sidecars of the plugin SDF
+  examples match the CPU's except for on-surface signs.
 
 Reference specifications: [UsdPhysics](https://openusd.org/dev/api/usd_physics_page_front.html),
 [MJCF](https://mujoco.readthedocs.io/en/stable/XMLreference.html), and

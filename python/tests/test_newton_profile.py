@@ -185,6 +185,18 @@ def test_urdf_package_found_by_relative_path(tmp_path):
         lightusd.import_urdf(escape)
 
 
+def test_urdf_package_discovery_does_not_widen_roots(tmp_path):
+    # Two levels above a non-ROS directory, without package.xml: a package://
+    # URI must not turn that directory (here the whole tmp tree) into a root.
+    _write(tmp_path / 'secret' / 'm.obj', _TRI_OBJ)
+    urdf = _write(tmp_path / 'a' / 'b' / 'r.urdf', _package_urdf('package://x/secret/m.obj'))
+    with pytest.raises(lightusd.UsdError):
+        lightusd.import_urdf(urdf)
+    # A real package (package.xml) at that level is found.
+    _write(tmp_path / 'package.xml', '<package/>')
+    assert [p for p in lightusd.import_urdf(urdf) if p.type_name == 'Mesh']
+
+
 def test_self_collision_is_only_authored_when_the_source_sets_it():
     xml = _mjcf('<body name="a"><freejoint/><geom size=".1"/><body name="b"><joint axis="0 0 1"/>'
                 '<geom size=".1"/></body></body>')
@@ -377,6 +389,213 @@ def test_explicit_zero_inertia_is_kept():
     xml = _mjcf('<body name="a"><freejoint/><inertial pos="0 0 0" mass="2" diaginertia="0 0 0"/>'
                 '<geom size=".1" mass="0"/></body>')
     a = lightusd.load_bytes(xml, format='mjcf').prim_at('/World/Links/a')
-    assert list(a['newton:inertia']) == [0] * 6
+    # UsdPhysics reads zero as unspecified: the smallest positive value stands in.
+    assert tuple(a['physics:diagonalInertia']) == pytest.approx((1e-12, 1e-12, 1e-12))
+    assert 'newton:inertia' not in a.attributes
     assert a['physics:mass'] == 2
 
+
+def test_explicit_zero_mass_with_colliders():
+    xml = _mjcf('<body name="a"><freejoint/><geom size=".1"/>'
+                '<body name="b"><inertial pos="0 0 0" mass="0"/><geom size=".1"/></body>'
+                '<body name="c"><inertial pos="0 0 0" mass="0"/><geom size=".1" contype="0" conaffinity="0"/></body></body>')
+    stage = lightusd.load_bytes(xml, format='mjcf')
+    assert stage.prim_at('/World/Links/b')['physics:mass'] == pytest.approx(1e-12)
+    assert 'physics:mass' not in stage.prim_at('/World/Links/c').attributes
+
+
+
+def test_mjcf_colliders_carry_mujoco_default_margin_and_gap():
+    xml = _mjcf('<body name="a"><freejoint/><geom name="g" size=".1"/><geom name="h" size=".1" gap=".01"/></body>')
+    stage = lightusd.load_bytes(xml, format='mjcf')
+    g, h = stage.prim_at('/World/Links/a/g'), stage.prim_at('/World/Links/a/h')
+    assert (g['newton:contactMargin'], g['newton:contactGap']) == (0, 0)
+    assert h['newton:contactGap'] == pytest.approx(.01)
+
+
+def test_mjcf_obj_polygons_over_100_vertices_are_dropped_like_mujoco(tmp_path):
+    import math
+    n = 120
+    obj = ''.join(f'v {math.cos(2 * math.pi * i / n)} {math.sin(2 * math.pi * i / n)} 0\n' for i in range(n))
+    obj += 'v 0 0 1\nf ' + ' '.join(str(i + 1) for i in range(n)) + f'\nf 1 2 {n + 1}\nf 2 3 {n + 1}\n'
+    _write(tmp_path / 'cap.obj', obj)
+    xml = _mjcf('<body name="a"><freejoint/><geom type="mesh" mesh="cap" mass="1"/></body>',
+                '<asset><mesh name="cap" file="cap.obj"/></asset>')
+    path = tmp_path / 'm.xml'
+    path.write_bytes(xml)
+    stage = lightusd.import_mjcf(path)
+    mesh = next(p for p in stage if p.type_name == 'Mesh')
+    assert len(mesh['faceVertexCounts']) == 2
+    assert 'mjcf.obj_polygon_dropped' in [d['code'] for d in stage.import_report()['diagnostics']]
+
+
+def test_obj_negative_shininess_is_accepted(tmp_path):
+    _write(tmp_path / 'm.mtl', 'newmtl m\nNs -1.960784\nKd 1 0 0\n')
+    obj = _write(tmp_path / 'm.obj', 'mtllib m.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl m\nf 1 2 3\n')
+    assert [p for p in lightusd.import_obj(obj) if p.type_name == 'Mesh']
+
+
+def test_urdf_unconvertible_geometry_is_skipped(tmp_path):
+    urdf = _write(tmp_path / 'r.urdf', f'''<robot name="r"><link name="a">{_INERTIAL}
+      <collision><geometry><sphere radius="0.0"/></geometry></collision>
+      <collision><geometry><mesh filename="part.dxf"/></geometry></collision>
+      <collision><geometry><box size=".1 .1 .1"/></geometry></collision></link></robot>''')
+    stage = lightusd.import_urdf(urdf)
+    assert len([p for p in stage if 'PhysicsCollisionAPI' in _apis(p)]) == 1
+    assert [d['code'] for d in stage.import_report()['diagnostics']].count('urdf.geometry_unsupported') == 2
+    with pytest.raises(lightusd.UsdError):
+        lightusd.import_urdf(urdf, unsupported_policy='error')
+
+
+def test_urdf_ros_package_layout_allows_sibling_meshes(tmp_path):
+    _write(tmp_path / 'robot_pkg' / 'meshes' / 'm.obj', _TRI_OBJ)
+    urdf = _write(tmp_path / 'robot_pkg' / 'urdf' / 'r.urdf', _package_urdf('../meshes/m.obj'))
+    stage = lightusd.import_urdf(urdf)
+    assert [p for p in stage if p.type_name == 'Mesh']
+    assert 'urdf.package_root' in [d['code'] for d in stage.import_report()['diagnostics']]
+    # Outside that layout `..` stays outside the allowed roots.
+    loose = _write(tmp_path / 'loose' / 'r.urdf', _package_urdf('../robot_pkg/meshes/m.obj'))
+    with pytest.raises(lightusd.UsdError):
+        lightusd.import_urdf(loose)
+
+
+def test_urdf_explicit_zero_mass_properties():
+    zero = '<inertia ixx="0" iyy="0" izz="0" ixy="0" ixz="0" iyz="0"/>'
+    urdf = f'''<robot name="r"><link name="a"><inertial><mass value="2"/>{zero}</inertial>
+      <collision><geometry><box size=".2 .2 .2"/></geometry></collision></link>
+      <link name="b"><inertial><mass value="0"/>{zero}</inertial>
+      <collision><geometry><sphere radius=".1"/></geometry></collision></link>
+      <joint name="j" type="revolute"><parent link="a"/><child link="b"/><axis xyz="0 0 1"/>
+      <limit lower="-1" upper="1"/></joint></robot>'''.encode()
+    stage = lightusd.load_bytes(urdf, format='urdf')
+    assert tuple(stage.prim_at('/World/Links/a')['physics:diagonalInertia']) == pytest.approx((1e-12,) * 3)
+    assert stage.prim_at('/World/Links/b')['physics:mass'] == pytest.approx(1e-12)
+
+
+def test_urdf_mimic_chain_targets_the_leading_joint():
+    joints = ''.join(f'<link name="l{i}">{_INERTIAL}</link>' for i in range(4))
+    joints += ''.join(f'''<joint name="j{i}" type="revolute"><parent link="l{i - 1}"/><child link="l{i}"/>
+      <axis xyz="0 0 1"/><limit lower="-1" upper="1"/>{mimic}</joint>''' for i, mimic in (
+        (1, ''), (2, '<mimic joint="j1" multiplier="2" offset="0.1"/>'),
+        (3, '<mimic joint="j2" multiplier="3" offset="0.2"/>')))
+    stage = lightusd.load_bytes(f'<robot name="r">{joints}</robot>'.encode(), format='urdf')
+    j3 = stage.prim_at('/World/Joints/j3')
+    assert j3.relationship('newton:mimicJoint').targets == ('/World/Joints/j1',)
+    assert j3['newton:mimicCoef1'] == pytest.approx(6)
+    assert j3['newton:mimicCoef0'] == pytest.approx(math.degrees(3 * 0.1 + 0.2), rel=1e-5)
+    assert 'urdf.mimic_chain_resolved' in [d['code'] for d in stage.import_report()['diagnostics']]
+
+
+def _actuator(stage, name):
+    return stage.prim_at(f'/World/MjcActuators/{name}')
+
+
+def test_mjcf_actuator_default_classes_follow_mujoco():
+    xml = _mjcf('<body name="a"><joint name="j" axis="0 0 1"/><geom size=".1"/>'
+                '<site name="s"/></body>',
+                '<default><motor ctrllimited="true" ctrlrange="-1 1"/><velocity ctrllimited="true"/>'
+                '<position kp="4000" kv="400"/>'
+                '<default class="musc"><muscle ctrllimited="true" ctrlrange="0 1"/></default>'
+                '<default class="pd"><general gainprm="400" biasprm="0 -200 -100" forcerange="-70 70"/></default>'
+                '</default><tendon><fixed name="t"><joint joint="j" coef="1"/></fixed></tendon>')
+    xml = xml.replace(b'</mujoco>', b'''<actuator>
+      <velocity name="vel" joint="j"/>
+      <position name="pos" joint="j"/>
+      <general name="mus" class="musc" tendon="t" gainprm="0.75 1.05 625" lengthrange="0.1 0.2"/>
+      <position name="pd" joint="j" class="pd"/></actuator></mujoco>''')
+    stage = lightusd.load_bytes(xml, format='mjcf')
+    vel = _actuator(stage, 'vel')
+    # A <velocity> does not take the class's <position kv> (MuJoCo 3.16: the
+    # nearest default written with the same shortcut).
+    assert list(vel['mjc:gainPrm'])[:1] == [1]
+    assert list(_actuator(stage, 'pos')['mjc:gainPrm'])[:1] == [4000]
+    mus = _actuator(stage, 'mus')
+    assert (mus['mjc:gainType'], mus['mjc:biasType'], mus['mjc:dynType']) == ('muscle', 'muscle', 'muscle')
+    assert list(mus['mjc:gainPrm'])[:4] == pytest.approx([0.75, 1.05, 625, 200])
+    assert (mus['mjc:ctrlRange:min'], mus['mjc:ctrlRange:max']) == (0, 1)
+    pd = _actuator(stage, 'pd')
+    # A shortcut converts a <general> default's gain/bias back to kp/kv.
+    assert list(pd['mjc:gainPrm'])[:1] == [400]
+    assert list(pd['mjc:biasPrm'])[:3] == pytest.approx([0, -400, -100])
+
+
+def test_mjcf_default_gravity_and_full_inertia_only():
+    xml = _mjcf('<body name="a"><freejoint/><inertial pos="0 0 0" mass="1" diaginertia="1 2 3"/><geom size=".1"/>'
+                '<body name="b"><freejoint/><inertial pos="0 0 0" mass="1" fullinertia="1 2 3 0.1 0 0"/>'
+                '<geom size=".1"/></body></body>')
+    stage = lightusd.load_bytes(xml, format='mjcf')
+    assert stage.prim_at('/World/PhysicsScene')['physics:gravityMagnitude'] == pytest.approx(9.81)
+    # newton:inertia only for a full source tensor (MuJoCo's decoder rejects
+    # it next to diagonalInertia, as mujoco-usd-converter writes it).
+    assert 'newton:inertia' not in stage.prim_at('/World/Links/a').attributes
+    assert len(stage.prim_at('/World/Links/b')['newton:inertia']) == 6
+
+
+def test_mjcf_shell_mesh_visual_keeps_shell_mass_model(tmp_path):
+    _write(tmp_path / 'tri.obj', 'v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n')
+    xml = _mjcf('<body name="a"><freejoint/><geom type="mesh" mesh="m" contype="0" conaffinity="0" group="1"/>'
+                '<geom size=".1"/></body>', '<asset><mesh name="m" file="tri.obj" inertia="shell"/></asset>')
+    path = tmp_path / 'm.xml'
+    path.write_bytes(xml)
+    visual = next(p for p in lightusd.import_mjcf(path) if p.type_name == 'Mesh')
+    assert 'PhysicsCollisionAPI' not in _apis(visual)
+    assert visual['newton:massModel'] == 'shell'
+
+
+def test_openusd_collision_groups_follow_mujoco_bitmasks():
+    geoms = ''.join(f'<body name="b{i}" pos="{i} 0 0"><freejoint/><geom name="g{i}" size=".1" '
+                    f'contype="{ct}" conaffinity="{ca}"/></body>'
+                    for i, (ct, ca) in enumerate(((1, 1), (2, 2), (1, 2))))
+    stage = lightusd._import(data=_mjcf(geoms), format='mjcf', profile='openusd')
+    groups = {p.name: p for p in stage if p.type_name == 'PhysicsCollisionGroup'}
+    assert set(groups) == {'contype_1_conaffinity_1', 'contype_2_conaffinity_2', 'contype_1_conaffinity_2'}
+    def filtered(name):
+        p = groups[name]
+        if 'physics:filteredGroups' not in p.relationships:
+            return set()
+        return {t.split('/')[-1] for t in p.relationship('physics:filteredGroups').targets}
+    # MuJoCo collides a pair iff (ct_a & ca_b) or (ct_b & ca_a).
+    assert filtered('contype_1_conaffinity_1') == {'contype_2_conaffinity_2'}
+    assert filtered('contype_2_conaffinity_2') == {'contype_1_conaffinity_1'}
+    assert filtered('contype_1_conaffinity_2') == {'contype_1_conaffinity_2'}
+    assert groups['contype_1_conaffinity_1'].relationship('collection:colliders:includes').targets == (
+        '/World/Links/b0/g0',)
+    # Default bitmasks need no groups; the newton profile keeps mjc:contype.
+    assert not [p for p in lightusd._import(data=_mjcf('<body><freejoint/><geom size=".1"/></body>'),
+                                            format='mjcf', profile='openusd')
+                if p.type_name == 'PhysicsCollisionGroup']
+    assert not [p for p in lightusd.load_bytes(_mjcf(geoms), format='mjcf') if p.type_name == 'PhysicsCollisionGroup']
+
+
+_SDF_TORUS = ('<extension><plugin plugin="mujoco.sdf.torus"><instance name="torus">'
+              '<config key="radius1" value="0.35"/><config key="radius2" value="0.15"/>'
+              '</instance></plugin></extension>'
+              '<asset><mesh name="torus"><plugin instance="torus"/></mesh></asset>')
+
+
+def _sdf_collider(stage):
+    return next(p for p in stage if p.type_name == 'Mesh' and 'physics:collisionEnabled' in p.attributes)
+
+
+def test_mjcf_sdf_plugin_mesh_and_sdf_collider():
+    xml = _mjcf('<body name="a"><freejoint/><geom type="sdf" mesh="torus"><plugin instance="torus"/>'
+                '</geom></body>', _SDF_TORUS)
+    stage = lightusd.load_bytes(xml, format='mjcf')
+    col = _sdf_collider(stage)
+    # MuJoCo 3.16 meshes this torus to 49896 vertices / 99792 triangles.
+    assert (len(col['points']), len(col['faceVertexIndices']) // 3) == (49896, 99792)
+    apis = _apis(col)
+    assert 'NewtonSDFCollisionAPI' in apis and 'NewtonMeshCollisionAPI' not in apis
+    assert col['physics:approximation'] == 'none'
+    openusd = _sdf_collider(lightusd._import(data=xml, format='mjcf', profile='openusd'))
+    assert not [a for a in _apis(openusd) if a.startswith('Newton')]
+    assert openusd['physics:approximation'] == 'none'
+
+
+def test_mjcf_sdf_unknown_plugin_mesh_is_reported():
+    xml = _mjcf('<body name="a"><freejoint/><geom size=".1"/></body>',
+                '<extension><plugin plugin="vendor.sdf.blob"><instance name="b"/></plugin></extension>'
+                '<asset><mesh name="blob"><plugin instance="b"/></mesh></asset>')
+    with pytest.raises(Exception, match='cannot be generated'):
+        lightusd._import(data=xml, format='mjcf', unsupported_policy='error')
+    lightusd._import(data=xml, format='mjcf')  # warn policy: the unused asset is skipped

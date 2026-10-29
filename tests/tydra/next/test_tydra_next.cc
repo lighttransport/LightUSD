@@ -9,6 +9,9 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#if defined(__linux__) || defined(__APPLE__)
+#include <sys/stat.h>
+#endif
 #include <cstdio>
 #include <cmath>
 #include <cstring>
@@ -28,12 +31,15 @@
 #include "tydra/next/render-extract.hh"
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/render-converter-assembly.hh"
+#include "tydra/asset-import/volumetric.hh"
+#include "tinyvdb_io.h"
 #include "tydra/next/usdz-entry-match.hh"
 #include "tydra/next/render-session.hh"
 #include "tydra/next/resource-budget.hh"
 #include "tydra/next/texture-cache.hh"
 #include "tydra/next/urdf-to-usd.hh"
 #include "next/pcp/cache.hh"
+#include "next/load-usd.hh"
 #include "next/reader/usda-reader.hh"
 #include "next/schema/geom-mesh.hh"
 #include "next/schema/geom-point-instancer.hh"
@@ -973,7 +979,7 @@ class RetainedStreamSink : public SceneSink {
 };
 
 void TestStrictConversionDiagnostics() {
-  const std::string unsupported = "#usda 1.0\ndef Volume \"V\" {}\n";
+  const std::string unsupported = "#usda 1.0\ndef NurbsPatch \"V\" {}\n";
   auto loaded = LoadUSDAFromString(unsupported.data(), unsupported.size());
   assert(loaded.success);
   RenderSceneConverter permissive;
@@ -4461,10 +4467,11 @@ def Xform "Root"
   assert(scene.nodes[static_cast<size_t>(pts_node->second)].type == NodeType::Points);
   assert(scene.nodes[static_cast<size_t>(pts_node->second)].data_id == 0);
 
-  // BasisCurves are converted now (the empty def fails conversion with a
-  // warning), so only Volume remains unsupported.
-  assert(scene.unsupported_renderables.size() == 1);
-  assert(scene.unsupported_renderables[0].type_name == "Volume");
+  // BasisCurves and Volumes are converted now (the empty curves def fails
+  // conversion with a warning; the field-less Volume converts empty).
+  assert(scene.unsupported_renderables.empty());
+  assert(scene.volumes.size() == 1);
+  assert(scene.volumes[0].fields.empty());
   assert(scene.curves.empty());  // "/Root/Curve" has no points/counts
   bool saw_curve_warning = false;
   for (const std::string& w : res.warnings) {
@@ -7455,6 +7462,105 @@ def Xform "World"
   std::cout << "  incremental RenderSession dependencies: PASSED\n";
 }
 
+
+void TestRenderSessionTimeCode() {
+  std::cout << "Testing RenderSession time code...\n";
+  const char* usda = R"(#usda 1.0
+
+def Mesh "M"
+{
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    point3f[] points.timeSamples = {
+        0: [(0, 0, 0), (1, 0, 0), (0, 1, 0)],
+        10: [(5, 0, 0), (6, 0, 0), (5, 1, 0)],
+    }
+}
+
+def Volume "V"
+{
+    rel material:binding = </VolMat>
+}
+
+def Material "VolMat"
+{
+    token outputs:volume.connect = </VolMat/Shader.outputs:volume>
+
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_volume"
+        float inputs:density.timeSamples = {
+            0: 1,
+            10: 4,
+        }
+        token outputs:volume
+    }
+}
+)";
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse time-code USDA: " << lr.error_summary << ")\n";
+    return;
+  }
+  StageSnapshot first;
+  first.revision = 1;
+  first.stage.reset(new Stage(std::move(lr.stage)));
+  RecordingSceneUpdateSink sink;
+  RenderSession session;
+  RenderUpdateResult initial = session.Initialize(first, &sink);
+  if (!initial) std::cerr << "  time-code init failed: " << initial.error << "\n";
+  assert(initial && initial.full_resync);
+  assert(session.GetTimeCode() == 0.0);
+  {
+    RenderSceneSnapshot snap = session.GetSnapshot();
+    assert(snap);
+    assert(snap->meshes.size() == 1 && snap->volumes.size() == 1);
+    assert(std::fabs(sink.mesh_x.at("/M")) < 1.0e-6f);
+    assert(std::fabs(snap->volumes[0].density_scale - 1.0f) < 1.0e-6f);
+  }
+  /* An empty change set at the same time takes the no-op path. */
+  StageSnapshot second;
+  second.revision = 2;
+  second.stage = first.stage;
+  ::lightusd::next::StageChangeSet quiet;
+  quiet.base_revision = 1;
+  quiet.new_revision = 2;
+  RenderUpdateResult no_op = session.Apply(second, quiet, &sink);
+  if (!no_op) std::cerr << "  no-op apply failed: " << no_op.error << "\n";
+  assert(no_op && !no_op.full_resync && no_op.converted_resource_count == 0);
+  assert(sink.mesh_upserts == 0);
+  /* The same empty change set at a new time must re-evaluate everything. */
+  session.SetTimeCode(10.0);
+  assert(session.GetTimeCode() == 10.0);
+  StageSnapshot third;
+  third.revision = 3;
+  third.stage = first.stage;
+  ::lightusd::next::StageChangeSet quiet_at_time;
+  quiet_at_time.base_revision = 2;
+  quiet_at_time.new_revision = 3;
+  RenderUpdateResult timed = session.Apply(third, quiet_at_time, &sink);
+  if (!timed) std::cerr << "  time apply failed: " << timed.error << "\n";
+  assert(timed);
+  assert(timed.full_resync && timed.converted_resource_count > 0);
+  assert(timed.upsert_count > 0);
+  assert(std::fabs(sink.mesh_x.at("/M") - 5.0f) < 1.0e-6f);
+  {
+    RenderSceneSnapshot snap = session.GetSnapshot();
+    assert(snap && snap->volumes.size() == 1);
+    assert(std::fabs(snap->volumes[0].density_scale - 4.0f) < 1.0e-6f);
+  }
+  /* No pending time change: the next empty update is a no-op again. */
+  StageSnapshot fourth;
+  fourth.revision = 4;
+  fourth.stage = first.stage;
+  ::lightusd::next::StageChangeSet quiet_again;
+  quiet_again.base_revision = 3;
+  quiet_again.new_revision = 4;
+  RenderUpdateResult settled = session.Apply(fourth, quiet_again, &sink);
+  assert(settled && !settled.full_resync && settled.converted_resource_count == 0);
+  std::cout << "  RenderSession time code: PASSED\n";
+}
+
 void TestIncrementalRenderSession() {
   std::cout << "Testing incremental RenderSession...\n";
   auto source = [](float x) {
@@ -7979,6 +8085,472 @@ def Mesh "M"
   assert(heat.indices[0] == 2 && heat.indices[1] == 1 && heat.indices[2] == 0);
 }
 
+// OpenUSD's UsdImagingGL VDB test fixtures (vdbVolume*.usda in
+// pxr/usdImaging/usdImagingGL/testenv/testUsdImagingGLVdbVolume). They are
+// outside this repo, so the test skips unless LIGHTUSD_OPENUSD_VDB_FIXTURES (or
+// OPENUSD_ROOT) points at them. Covers pxr-authored files rather than our own
+// writer: two fields sharing one file, a time-sampled filePath, flipped /
+// large scale placement, and the fallback material.
+static void TestOpenUsdVdbVolumeFixtures() {
+  std::cout << "OpenUSD VDB volume fixtures\n";
+  namespace fs = std::filesystem;
+  fs::path dir;
+  if (const char* env = std::getenv("LIGHTUSD_OPENUSD_VDB_FIXTURES")) {
+    if (env[0]) dir = env;
+  } else if (const char* root = std::getenv("OPENUSD_ROOT")) {
+    if (root[0]) {
+      dir = fs::path(root) / "pxr/usdImaging/usdImagingGL/testenv/"
+                             "testUsdImagingGLVdbVolume";
+    }
+  }
+  if (dir.empty() || !fs::exists(dir / "vdbVolume.usda")) {
+    std::cout << "  SKIP: set LIGHTUSD_OPENUSD_VDB_FIXTURES to OpenUSD's "
+                 "testUsdImagingGLVdbVolume directory\n";
+    return;
+  }
+
+  auto convert_fixture = [&](const char* name, double time) {
+    const std::string path = (dir / name).string();
+    ::lightusd::next::Stage stage;
+    std::string warn, err;
+    assert(::lightusd::next::LoadUSD(path, &stage, &warn, &err));
+    ConverterConfig config;
+    config.time_code = time;
+    config.asset_base_dir = dir.string();
+    RenderSceneConverter conv(config);
+    return conv.Convert(stage);
+  };
+
+  // Two fields in one file (densityAndHeat.vdb): both bindings resolve to
+  // their own grid, and both are placed by the same field transform.
+  {
+    ConvertResult res = convert_fixture("vdbVolumeTwoFields.usda", 1.0);
+    assert(res.success);
+    assert(res.scene.volumes.size() == 1);
+    const RenderVolume& volume = res.scene.volumes[0];
+    assert(volume.fields.size() == 2);
+    std::map<std::string, bool> seen;
+    for (const RenderVolumeField& field : volume.fields) {
+      seen[field.binding] = true;
+      assert(field.field.grid.name == field.binding);
+      assert(field.field.value_type == "float");
+      assert(field.field.has_bounds);
+    }
+    assert(seen["density"] && seen["heat"]);
+    // The Volume authors an extent, so it must not be replaced by the fields'
+    // union box.
+    assert(volume.has_extent);
+  }
+
+  // The fallback-material fixture samples filePath over time (smoke_000001/2/3).
+  // A different time must resolve a different file, and one whose grid decodes.
+  {
+    ConvertResult first = convert_fixture("vdbVolumeFallbackMaterial.usda", 1.0);
+    assert(first.success);
+    assert(first.scene.volumes.size() == 1);
+    assert(first.scene.volumes[0].fields.size() == 1);
+    const std::string file_t1 = first.scene.volumes[0].fields[0].field.request.file_path;
+    assert(!file_t1.empty());
+
+    ConvertResult last = convert_fixture("vdbVolumeFallbackMaterial.usda", 250.0);
+    assert(last.success);
+    assert(last.scene.volumes.size() == 1);
+    assert(last.scene.volumes[0].fields.size() == 1);
+    const std::string file_t250 = last.scene.volumes[0].fields[0].field.request.file_path;
+    assert(!file_t250.empty());
+    assert(file_t1 != file_t250);
+  }
+
+  // Flipped and large-scale placements keep resolving; the flipped fixture
+  // negates an axis, so its index-to-world must have a negative 3x3
+  // determinant while the unflipped one stays positive.
+  for (const char* name : {"vdbVolumeFlipped.usda", "vdbVolumeLarge.usda",
+                           "vdbVolumeInside.usda", "vdbVolume.usda"}) {
+    ConvertResult res = convert_fixture(name, 1.0);
+    assert(res.success);
+    assert(res.scene.volumes.size() == 1);
+    assert(!res.scene.volumes[0].fields.empty());
+    const RenderVolumeField& field = res.scene.volumes[0].fields[0];
+    const double (*m)[4] = field.field.index_to_world;  // row vectors
+    const double det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
+                       m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
+                       m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    assert(std::fabs(det) > 0.0);
+    if (std::strcmp(name, "vdbVolumeFlipped.usda") == 0) {
+      assert(det < 0.0);
+    } else {
+      assert(det > 0.0);
+    }
+  }
+  std::cout << "  OpenUSD VDB volume fixtures: PASSED\n";
+}
+
+// A radius-1 sphere's narrow-band level set (grid "sdf") written to a temp
+// .vdb, so the volume tests need no external corpus. Returns its path.
+static const double kSphereLevelSetVoxel = 2.0 / 24.0;
+static std::filesystem::path WriteSphereLevelSet(const char* tag,
+                                                 bool check_write_budget = false) {
+  namespace fs = std::filesystem;
+  using lightusd::tydra::import_asset::LevelSet;
+  using lightusd::tydra::import_asset::LevelSetOptions;
+  using lightusd::tydra::import_asset::Mesh;
+  using lightusd::tydra::import_asset::MeshToLevelSet;
+  using lightusd::tydra::import_asset::WriteLevelSetVDB;
+
+  // Unit sphere (radius 1), enough rings for a clean narrow-band level set.
+  const int kLat = 24, kLon = 48;
+  Mesh sphere;
+  sphere.positions = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, -1.0f};
+  for (int i = 1; i < kLat; ++i) {
+    const double th = M_PI * double(i) / double(kLat);
+    for (int j = 0; j < kLon; ++j) {
+      const double ph = 2.0 * M_PI * double(j) / double(kLon);
+      sphere.positions.push_back(float(std::sin(th) * std::cos(ph)));
+      sphere.positions.push_back(float(std::sin(th) * std::sin(ph)));
+      sphere.positions.push_back(float(std::cos(th)));
+    }
+  }
+  const auto ring = [&](int i, int j) {
+    return int32_t(2 + (i - 1) * kLon + (j % kLon));
+  };
+  for (int j = 0; j < kLon; ++j) {
+    sphere.indices.insert(sphere.indices.end(),
+                          {0, ring(1, j), ring(1, j + 1), 1, ring(kLat - 1, j + 1),
+                           ring(kLat - 1, j)});
+  }
+  for (int i = 1; i < kLat - 1; ++i) {
+    for (int j = 0; j < kLon; ++j) {
+      sphere.indices.insert(sphere.indices.end(),
+                            {ring(i, j), ring(i + 1, j), ring(i + 1, j + 1),
+                             ring(i, j), ring(i + 1, j + 1), ring(i, j + 1)});
+    }
+  }
+
+  LevelSetOptions options;
+  options.voxel_size = kSphereLevelSetVoxel;
+  options.exterior_width = 3.0 * options.voxel_size;
+  options.interior_width = 3.0 * options.voxel_size;
+  LevelSet level_set;
+  std::string err;
+  assert(MeshToLevelSet(sphere, options, &level_set, &err));
+  if (check_write_budget) {
+    const size_t peak = level_set.build_peak_bytes();
+    const size_t retained = level_set.retained_allocation_bytes();
+    assert(retained > 0 && peak > retained);
+    LevelSet bounded;
+    options.max_working_memory_bytes = peak;
+    assert(MeshToLevelSet(sphere, options, &bounded, &err));
+    assert(bounded.build_peak_bytes() <= peak);
+    const auto* original = bounded.grid();
+    options.max_working_memory_bytes = peak - 1;
+    assert(!MeshToLevelSet(sphere, options, &bounded, &err));
+    assert(err.find("memory budget") != std::string::npos);
+    assert(bounded.grid() == original);
+    std::vector<uint8_t> expected_bytes, actual_bytes;
+    assert(WriteLevelSetVDB(level_set, &expected_bytes, &err));
+    LevelSet moved(std::move(bounded));
+    assert(bounded.empty() && moved.grid() == original);
+    LevelSet assigned;
+    assigned = std::move(moved);
+    assert(moved.empty() && assigned.retained_allocation_bytes() == retained);
+    assert(WriteLevelSetVDB(assigned, &actual_bytes, &err));
+    assert(expected_bytes == actual_bytes);
+    options.max_working_memory_bytes = peak;
+    assert(MeshToLevelSet(sphere, options, &bounded, &err));
+    std::vector<uint8_t> limited{0x12, 0x34};
+    const std::vector<uint8_t> previous = limited;
+    std::string budget_error;
+    assert(!WriteLevelSetVDB(level_set, &limited, &budget_error, 1));
+    assert(budget_error.find("memory budget exceeded") != std::string::npos);
+    assert(limited == previous);
+  }
+  std::vector<uint8_t> bytes;
+  assert(WriteLevelSetVDB(level_set, &bytes, &err));
+  assert(!bytes.empty());
+
+  const fs::path path =
+      fs::temp_directory_path() /
+      (std::string("lightusd_") + tag + "_" +
+       std::to_string(reinterpret_cast<uintptr_t>(&err)) + ".vdb");
+  {
+    std::ofstream out(path, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
+  }
+
+  return path;
+}
+
+// FieldCache::MeshLevelSet: a level-set field meshes to its zero isosurface,
+// placed by the field transform. Builds the fixture in a temp file so it needs
+// no external corpus.
+static void TestLevelSetFieldMesh() {
+  std::cout << "Level-set field mesh\n";
+  namespace fs = std::filesystem;
+  using lightusd::tydra::vol::FieldCache;
+  using lightusd::tydra::vol::FieldRequest;
+  using lightusd::tydra::vol::ResolvedField;
+
+  const fs::path path = WriteSphereLevelSet("level_set_mesh", true);
+  std::string err;
+  FieldCache cache;
+  FieldRequest request;
+  request.binding = "sdf";
+  request.field_prim = "/ls/sdf";
+  request.prim_type = "OpenVDBAsset";
+  request.file_path = path.string();
+  request.field_name = "sdf";
+  request.field_class = "levelSet";
+  ResolvedField field;
+  const bool resolved = cache.Resolve(request, &field, &err);
+  if (!resolved) std::cerr << err << "\n";
+  assert(resolved);
+  assert(field.level_set);
+
+  std::vector<float> positions;
+  std::vector<int32_t> tri;
+  const bool meshed = cache.MeshLevelSet(field, 0, &positions, &tri, &err);
+  if (!meshed) std::cerr << err << "\n";
+  assert(meshed);
+  fs::remove(path);
+  assert(!positions.empty() && positions.size() % 3 == 0);
+  assert(!tri.empty() && tri.size() % 3 == 0);
+  const size_t nv = positions.size() / 3;
+
+  // Closed two-manifold and outward winding.
+  std::map<std::pair<int32_t, int32_t>, int> edges;
+  double volume6 = 0.0;
+  double min_radius = 1.0e30, max_radius = 0.0;
+  for (size_t f = 0; f + 2 < tri.size(); f += 3) {
+    const int32_t a = tri[f], b = tri[f + 1], c = tri[f + 2];
+    assert(a >= 0 && size_t(a) < nv && b >= 0 && size_t(b) < nv && c >= 0 &&
+           size_t(c) < nv);
+    for (int k = 0; k < 3; ++k) {
+      const int32_t u = tri[f + size_t(k)];
+      const int32_t v = tri[f + size_t((k + 1) % 3)];
+      ++edges[{u, v}];
+    }
+    const float* p0 = &positions[size_t(a) * 3];
+    const float* p1 = &positions[size_t(b) * 3];
+    const float* p2 = &positions[size_t(c) * 3];
+    volume6 += double(p0[0]) * (double(p1[1]) * double(p2[2]) - double(p1[2]) * double(p2[1])) -
+               double(p0[1]) * (double(p1[0]) * double(p2[2]) - double(p1[2]) * double(p2[0])) +
+               double(p0[2]) * (double(p1[0]) * double(p2[1]) - double(p1[1]) * double(p2[0]));
+  }
+  for (const auto& e : edges) {
+    auto opposite = edges.find({e.first.second, e.first.first});
+    assert(e.second == 1 && opposite != edges.end() && opposite->second == 1);
+  }
+  for (size_t i = 0; i < nv; ++i) {
+    const double r = std::sqrt(double(positions[3 * i]) * positions[3 * i] +
+                               double(positions[3 * i + 1]) * positions[3 * i + 1] +
+                               double(positions[3 * i + 2]) * positions[3 * i + 2]);
+    min_radius = std::min(min_radius, r);
+    max_radius = std::max(max_radius, r);
+  }
+  const double volume = volume6 / 6.0;
+  const double expected = 4.0 * M_PI / 3.0;
+  assert(volume > 0.0);
+  assert(std::fabs(volume - expected) / expected < 0.05);
+  const double tolerance = 4.0 * kSphereLevelSetVoxel;
+  assert(min_radius > 1.0 - tolerance && max_radius < 1.0 + tolerance);
+  const size_t triangles = tri.size() / 3;
+
+  // A fog field must not claim a surface.
+  request.field_class = "fogVolume";
+  ResolvedField fog;
+  std::string fog_err;
+  if (cache.Resolve(request, &fog, &fog_err)) {
+    assert(!fog.level_set);
+    assert(!cache.MeshLevelSet(fog, 0, &positions, &tri, &fog_err));
+  }
+  std::cout << "  level set -> " << triangles << " triangles, volume " << volume
+            << ", radius [" << min_radius << ", " << max_radius << "]\n";
+}
+
+// ResolveWithFirstGridFallback only falls back when fieldName was defaulted,
+// never for an authored name or a named grid the filter rejects; and the
+// dense box of a grid is cell-centred (a sphere at the origin stays there).
+// ReadLevelSetVDB reads every header first, then decodes only what it needs:
+// the first float grid classed "level set", else the first float grid with a
+// positive background.
+static void TestLevelSetGridChoice() {
+  std::cout << "Level-set grid choice\n";
+  namespace fs = std::filesystem;
+  namespace ia = lightusd::tydra::import_asset;
+  const fs::path path = WriteSphereLevelSet("grid_choice");
+  std::vector<uint8_t> sphere;
+  {
+    std::ifstream in(path, std::ios::binary);
+    sphere.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  }
+  fs::remove(path);
+  assert(!sphere.empty());
+  // Two copies of the sphere grid, re-classed and tagged "first"/"second".
+  auto two_grids = [&](const char* class0, const char* class1, bool negative_first = false) {
+    const char* classes[2] = {class0, class1};
+    const char* tags[2] = {"first", "second"};
+    tvdb_file_t files[2];
+    tvdb_grid_t grids[2];
+    for (int i = 0; i < 2; ++i) {
+      tvdb_error_t e{};
+      assert(tvdb_file_open_memory(&files[i], sphere.data(), sphere.size(), nullptr, &e) ==
+             TVDB_OK);
+      assert(tvdb_read_grid(&files[i], 0, &e) == TVDB_OK);
+      assert(tvdb_grid_set_metadata_string(&files[i].grids[0], "class", classes[i], &e) ==
+             TVDB_OK);
+      assert(tvdb_grid_set_metadata_string(&files[i].grids[0], "tag", tags[i], &e) == TVDB_OK);
+      if (i == 0 && negative_first) {
+        tvdb_value_t background{};
+        background.type = TVDB_VALUE_FLOAT;
+        background.u.f = -1.0f;
+        tvdb_grid_set_background(&files[i].grids[0], background);
+      }
+      grids[i] = files[i].grids[0];  // shallow copy, only written
+    }
+    tvdb_file_t out;
+    tvdb_file_init_for_write(&out, nullptr);
+    out.grids = grids;
+    out.num_grids = 2;
+    uint8_t* data = nullptr;
+    size_t size = 0;
+    tvdb_error_t e{};
+    assert(tvdb_write_to_memory(&out, TVDB_COMPRESS_ZIP, 0, &data, &size, &e) == TVDB_OK);
+    std::vector<uint8_t> bytes(data, data + size);
+    std::free(data);
+    for (tvdb_file_t& f : files) tvdb_file_close(&f);
+    return bytes;
+  };
+  auto chosen = [](std::vector<uint8_t> bytes, size_t budget = 0) {
+    ia::LevelSet level_set;
+    std::string err;
+    if (!ia::ReadLevelSetVDB(bytes.data(), bytes.size(), &level_set, &err, budget))
+      return "error: " + err;
+    std::fill(bytes.begin(), bytes.end(), uint8_t(0));  // the level set owns its grid
+    bytes.clear();
+    bytes.shrink_to_fit();
+    const double p[3] = {0, 0, 0};
+    float inside = 1;
+    assert(ia::SampleLevelSet(level_set, p, 1, &inside, &err) && inside < 0);
+    const tvdb_meta_entry_t* tag = tvdb_grid_find_metadata(level_set.grid(), "tag");
+    return std::string(tag && tag->value.type == TVDB_VALUE_STRING ? tag->value.u.s.str : "?");
+  };
+  assert(chosen(two_grids("fog volume", "level set")) == "second");  // the class wins
+  assert(chosen(two_grids("level set", "level set")) == "first");
+  assert(chosen(two_grids("fog volume", "unknown")) == "first");  // positive background
+  assert(chosen(two_grids("unknown", "unknown", true), 64 * 1024 * 1024) == "second");
+  {
+    // Bounded decoding preserves an existing result on failure and retains
+    // the allocator correctly through move construction and assignment.
+    ia::LevelSet level_set;
+    std::string err;
+    constexpr size_t limit = 64 * 1024 * 1024;
+    assert(ia::ReadLevelSetVDB(sphere.data(), sphere.size(), &level_set, &err, limit));
+    const size_t peak = level_set.decode_peak_bytes();
+    assert(peak > 0 && peak <= limit);
+    const auto* original = level_set.grid();
+    assert(!ia::ReadLevelSetVDB(sphere.data(), sphere.size(), &level_set, &err, 1024));
+    assert(err.find("memory budget") != std::string::npos && level_set.grid() == original);
+    assert(!ia::ReadLevelSetVDB(sphere.data(), sphere.size(), &level_set, &err, peak - 1));
+    assert(err.find("memory budget") != std::string::npos && level_set.grid() == original);
+    const uint8_t malformed[] = {'n', 'o', 't', 'v', 'd', 'b'};
+    assert(!ia::ReadLevelSetVDB(malformed, sizeof(malformed), &level_set, &err, limit));
+    assert(level_set.grid() == original);
+    ia::LevelSet moved(std::move(level_set));
+    assert(level_set.empty() && moved.grid() == original && moved.decode_peak_bytes() == peak);
+    ia::LevelSet assigned;
+    assigned = std::move(moved);
+    assert(moved.empty() && assigned.grid() == original && assigned.decode_peak_bytes() == peak);
+    const double p[3] = {0, 0, 0}; float value = 1;
+    assert(ia::SampleLevelSet(assigned, p, 1, &value, &err) && value < 0);
+  }
+  std::cout << "  Level-set grid choice: PASSED\n";
+}
+
+static void TestFieldFallbackAndDenseBox() {
+  std::cout << "Field fallback rules and dense box\n";
+  namespace fs = std::filesystem;
+  using lightusd::tydra::vol::FieldCache;
+  using lightusd::tydra::vol::FieldRequest;
+  using lightusd::tydra::vol::ResolvedField;
+  using lightusd::tydra::vol::ResolveWithFirstGridFallback;
+
+  const fs::path path = WriteSphereLevelSet("field_fallback");
+  FieldCache cache;
+  FieldRequest request;
+  request.binding = "density";
+  request.field_prim = "/V/density";
+  request.prim_type = "OpenVDBAsset";
+  request.file_path = path.string();
+  request.field_name = "density";  // the file only has "sdf"
+
+  ResolvedField field;
+  std::string err;
+  // Authored fieldName: a missing grid is an error.
+  assert(!ResolveWithFirstGridFallback(cache, request, &field, &err));
+  assert(err.find("no grid 'density'") != std::string::npos);
+  // Defaulted fieldName: the first grid, with a warning.
+  request.field_name_defaulted = true;
+  err.clear();
+  assert(ResolveWithFirstGridFallback(cache, request, &field, &err));
+  assert(field.grid.name == "sdf");
+  assert(!field.warnings.empty() &&
+         field.warnings.back().find("fieldName not authored") != std::string::npos);
+  // A grid that resolves but is unusable is an error, not a fallback.
+  request.field_name = "sdf";
+  int filtered = 0;
+  const auto reject = [&](const ResolvedField&) {
+    ++filtered;
+    return false;
+  };
+  err.clear();
+  assert(!ResolveWithFirstGridFallback(cache, request, reject, &field, &err));
+  assert(filtered == 1);
+  assert(err.find("could not be loaded") != std::string::npos);
+
+  // Dense box: cell-centred, so the symmetric sphere grid is centred at 0.
+  request.field_name_defaulted = false;
+  assert(cache.Resolve(request, &field, &err));
+  lightusd::usdVol::VDBReadOptions options;
+  const lightusd::usdVol::VDBGrid* grid = cache.Dense(field, options, nullptr, &err);
+  assert(grid && grid->stride == 1);
+  double bmin[3], bmax[3];
+  assert(lightusd::usdVol::DenseGridBox(*grid, bmin, bmax));
+  for (int a = 0; a < 3; ++a) {
+    const double voxel = grid->voxel_size[a];
+    assert(std::fabs(bmax[a] - bmin[a] - grid->dim[a] * voxel) < 1e-9);
+    assert(std::fabs(0.5 * (bmin[a] + bmax[a])) < 1e-6);
+  }
+  // Dense and NanoVDB built from a sparse tree already decoded for sampling
+  // equal the ones decoded from the file.
+  {
+    FieldCache sampled;
+    ResolvedField f2;
+    assert(sampled.Resolve(request, &f2, &err));
+    const double origin[3] = {0, 0, 0};
+    std::vector<float> values;
+    assert(sampled.SampleWorld(f2, origin, 1, true, &values, nullptr, &err));
+    const lightusd::usdVol::VDBGrid* reused = sampled.Dense(f2, options, nullptr, &err);
+    assert(reused && reused->data == grid->data && reused->origin[0] == grid->origin[0]);
+    const std::vector<uint8_t>* nano_reused = sampled.NanoVDB(f2, nullptr, &err);
+    const std::vector<uint8_t>* nano_file = cache.NanoVDB(field, nullptr, &err);
+    assert(nano_reused && nano_file && *nano_reused == *nano_file);
+  }
+  fs::remove(path);
+#if defined(__linux__) || defined(__APPLE__)
+  // Field files come from the stage: a FIFO (or device) is not read.
+  const fs::path fifo = fs::temp_directory_path() /
+                        ("lightusd_fifo_" + std::to_string(reinterpret_cast<uintptr_t>(&cache)));
+  if (::mkfifo(fifo.c_str(), 0600) == 0) {
+    std::vector<uint8_t> bytes;
+    std::string why;
+    const bool read = lightusd::tydra::vol::ReadFileAsset(fifo.string(), &bytes, &why);
+    fs::remove(fifo);
+    assert(!read && bytes.empty());
+  }
+#endif
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -8064,12 +8636,17 @@ int main() {
   TestRenderColorManagement();
   TestIncrementalRenderSessionDependencies();
   TestIncrementalRenderSession();
+  TestRenderSessionTimeCode();
   TestRenderSessionResidentCap();
   TestPtexMaterialInterfaceAsset();
   TestSurfaceUnlitMaterialXConversion();
   TestParallelMaterialTextureRemapAndCallbackPolicy();
   TestStrictConversionDiagnostics();
   TestSparseUDIMTextureRetention();
+  TestOpenUsdVdbVolumeFixtures();
+  TestLevelSetFieldMesh();
+  TestFieldFallbackAndDenseBox();
+  TestLevelSetGridChoice();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
   return 0;

@@ -10,7 +10,7 @@
 namespace {
 
 [[maybe_unused]] bool ReconstructMaterialBindingProperties(
-  std::set<std::string> &table, /* inout */
+  ParsePropertyTable &table, /* inout */
   std::map<std::string, Property> &properties,
   MaterialBinding *mb, /* inout */
   std::string *err)
@@ -110,7 +110,7 @@ namespace {
 }
 
 [[maybe_unused]] bool ReconstructCollectionProperties(
-  std::set<std::string> &table, /* inout */
+  ParsePropertyTable &table, /* inout */
   std::map<std::string, Property> &properties,
   Collection *coll, /* inout */
   std::string *warn,
@@ -205,7 +205,7 @@ namespace {
 // xformOps and built-in props
 [[maybe_unused]] bool ReconstructGPrimProperties(
   const Specifier &spec,
-  std::set<std::string> &table, /* inout */
+  ParsePropertyTable &table, /* inout */
   std::map<std::string, Property> &properties,
   GPrim *gprim, /* inout */
   std::string *warn,
@@ -247,7 +247,7 @@ namespace {
 #define RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(PrimClass, prim_ptr, TYPED_ATTRS, ENUM_EXPANSION) \
   (void)references; \
   \
-  std::set<std::string> table; \
+  ParsePropertyTable table; \
   if (!ReconstructGPrimProperties(spec, table, properties, prim_ptr, warn, err, \
                                    options.strict_allowedToken_check)) { \
     return false; \

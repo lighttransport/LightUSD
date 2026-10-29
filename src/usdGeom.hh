@@ -66,6 +66,9 @@ constexpr auto kGeomHermiteCurves = "HermiteCurves";
 
 // UsdVol
 constexpr auto kVolume = "Volume";
+constexpr auto kVolumeFieldBase = "VolumeFieldBase";
+constexpr auto kFieldBase = "FieldBase";
+constexpr auto kVolumeFieldAsset = "VolumeFieldAsset";
 constexpr auto kFieldAsset = "FieldAsset";
 constexpr auto kOpenVDBAsset = "OpenVDBAsset";
 constexpr auto kField3DAsset = "Field3DAsset";
@@ -1168,24 +1171,36 @@ bool ComputeMaskAtTime(const GeomPointInstancer &pi, double time,
 // references a volume asset file and names the grid to read from it.
 //
 
-// Base class for field-asset prims (UsdVolFieldAsset). Modeled as a GPrim for
-// reconstruct reuse (it is Xformable in USD; the extra Boundable/Collection
-// members are harmless and unauthored by default).
-struct FieldAsset : GPrim {
+// Base class for field prims (UsdVolVolumeFieldBase): an Xformable with no
+// attributes of its own.
+struct VolumeFieldBase : GPrim {};
+
+// Deprecated spelling of VolumeFieldBase (UsdVolFieldBase).
+struct FieldBase : VolumeFieldBase {};
+
+// Base class for file-backed field prims (UsdVolVolumeFieldAsset).
+struct VolumeFieldAsset : VolumeFieldBase {
   TypedAttribute<Animatable<value::AssetPath>> filePath;   // asset filePath
   TypedAttribute<Animatable<value::token>> fieldName;      // token fieldName
   TypedAttribute<Animatable<value::token>> fieldDataType;  // token fieldDataType
   TypedAttribute<Animatable<int>> fieldIndex;              // int fieldIndex
+  // token vectorDataRoleHint ("None", "Point", "Normal", "Vector", "Color")
+  TypedAttribute<Animatable<value::token>> vectorDataRoleHint;
 };
 
+// Deprecated spelling of VolumeFieldAsset (UsdVolFieldAsset). Modeled as a
+// GPrim for reconstruct reuse (it is Xformable in USD; the extra
+// Boundable/Collection members are harmless and unauthored by default).
+struct FieldAsset : VolumeFieldAsset {};
+
 // OpenVDB field asset (UsdVolOpenVDBAsset).
-struct OpenVDBAsset : FieldAsset {
+struct OpenVDBAsset : VolumeFieldAsset {
   // token fieldClass ("levelSet", "fogVolume", "staggered", "unknown")
   TypedAttribute<Animatable<value::token>> fieldClass;
 };
 
 // Field3D field asset (UsdVolField3DAsset).
-struct Field3DAsset : FieldAsset {
+struct Field3DAsset : VolumeFieldAsset {
   TypedAttribute<Animatable<value::token>> fieldPurpose;  // token fieldPurpose
 };
 
@@ -1259,6 +1274,9 @@ DEFINE_TYPE_TRAIT(GeomHermiteCurves, kGeomHermiteCurves, TYPE_ID_GEOM_HERMITE_CU
 
 // UsdVol
 DEFINE_TYPE_TRAIT(Volume, kVolume, TYPE_ID_VOLUME, 1);
+DEFINE_TYPE_TRAIT(VolumeFieldBase, kVolumeFieldBase, TYPE_ID_VOLUME_FIELD_BASE, 1);
+DEFINE_TYPE_TRAIT(FieldBase, kFieldBase, TYPE_ID_FIELD_BASE, 1);
+DEFINE_TYPE_TRAIT(VolumeFieldAsset, kVolumeFieldAsset, TYPE_ID_VOLUME_FIELD_ASSET, 1);
 DEFINE_TYPE_TRAIT(FieldAsset, kFieldAsset, TYPE_ID_FIELD_ASSET, 1);
 DEFINE_TYPE_TRAIT(OpenVDBAsset, kOpenVDBAsset, TYPE_ID_OPENVDB_ASSET, 1);
 DEFINE_TYPE_TRAIT(Field3DAsset, kField3DAsset, TYPE_ID_FIELD3D_ASSET, 1);

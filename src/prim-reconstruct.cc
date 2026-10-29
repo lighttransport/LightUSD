@@ -94,7 +94,7 @@ static bool ReconstructXformOpFromToken(
 
   const std::string &token, int i,
   std::map<std::string, Property> &properties,
-  std::set<std::string> &table, /* inout */
+  ParsePropertyTable &table, /* inout */
   std::vector<XformOp> *xformOps, std::string *err) {
   if (!xformOps) {
     PUSH_ERROR_AND_RETURN("Internal error: xformOps ptr is null");
@@ -673,7 +673,7 @@ static bool ReconstructXformOpFromToken(
 
 bool ReconstructXformOpsFromProperties(
   const Specifier &spec,
-  std::set<std::string> &table, /* inout */
+  ParsePropertyTable &table, /* inout */
   std::map<std::string, Property> &properties,
   std::vector<XformOp> *xformOps,
   std::string *err)
@@ -756,7 +756,7 @@ bool ReconstructPrim<Xform>(
   (void)options;
   (void)references;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!ReconstructGPrimProperties(spec, table, properties, xform, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
@@ -785,7 +785,7 @@ bool ReconstructPrim<Model>(
   (void)err;
   (void)options;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!ReconstructMaterialBindingProperties(table, properties, model, err)) {
     return false;
   }
@@ -820,7 +820,7 @@ bool ReconstructPrim<Scope>(
   (void)options;
 
   DCOUT("Scope");
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!ReconstructMaterialBindingProperties(table, properties, scope, err)) {
     return false;
   }
@@ -853,7 +853,7 @@ bool ReconstructPrim<Scope>(
     (void)references;                                                   \
     (void)err;                                                          \
     (void)options;                                                      \
-    std::set<std::string> table;                                        \
+    ParsePropertyTable table;                                        \
     for (auto &prop : properties) {                                     \
       ADD_PROPERTY(table, prop, __ty, prim->props)                      \
       PARSE_PROPERTY_END_MAKE_WARN(table, prop)                         \
@@ -882,7 +882,7 @@ bool ReconstructPrim(
   (void)references;
   (void)properties;
 
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!ReconstructGPrimProperties(spec, table, properties, gprim, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
@@ -917,6 +917,9 @@ bool ReconstructPrim<__prim_ty>( \
 
 RECONSTRUCT_PRIM_PROPERTYMAP_DECL(GeomMesh)
 RECONSTRUCT_PRIM_PROPERTYMAP_DECL(Volume)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(VolumeFieldBase)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(FieldBase)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(VolumeFieldAsset)
 RECONSTRUCT_PRIM_PROPERTYMAP_DECL(FieldAsset)
 RECONSTRUCT_PRIM_PROPERTYMAP_DECL(OpenVDBAsset)
 RECONSTRUCT_PRIM_PROPERTYMAP_DECL(Field3DAsset)
@@ -956,6 +959,9 @@ RECONSTRUCT_PRIM_PRIMSPEC_IMPL(RenderVar)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GenerativeProcedural)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomMesh)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Volume)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(VolumeFieldBase)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(FieldBase)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(VolumeFieldAsset)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(FieldAsset)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(OpenVDBAsset)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Field3DAsset)

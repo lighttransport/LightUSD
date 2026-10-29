@@ -7,6 +7,8 @@
 #include "render-data-texture.hh"
 #include "render-data-light.hh"
 #include "render-data-material.hh"
+#include "render-data-volume.hh"
+#include "render-data-particles.hh"
 #include <memory>
 #include <string>
 #include <vector>
@@ -72,6 +74,13 @@ class RenderScene {
   std::vector<RenderCamera> cameras;
   std::vector<AnimationClip> animations;
   std::vector<Skeleton> skeletons;
+  // UsdVol Volumes and their resolved fields. Voxels are decoded on demand
+  // through volume_cache (shared by copies of the scene).
+  std::vector<RenderVolume> volumes;
+  std::shared_ptr<vol::FieldCache> volume_cache;
+  // UsdVol ParticleFields (3D Gaussian splats) with full per-particle data;
+  // ParticleField3DGaussianSplat prims also appear in `points`.
+  std::vector<RenderParticleField> particle_fields;
   std::vector<UnsupportedRenderable> unsupported_renderables;
   // Degradation is separate from success: unsupported data remains in the
   // source Stage, approximations have render output, and failures omit output.
@@ -88,6 +97,7 @@ class RenderScene {
   std::unordered_map<std::string, int32_t> curves_by_path;
   std::unordered_map<std::string, int32_t> point_instancer_by_path;
   std::unordered_map<std::string, int32_t> material_by_path;
+  std::unordered_map<std::string, int32_t> volume_by_path;
 
   // Memory usage
   size_t memory_usage() const;

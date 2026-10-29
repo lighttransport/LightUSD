@@ -539,7 +539,7 @@ static void test_resource_budget(void) {
 }
 
 static void test_conversion_diagnostics(void) {
-  const char source[] = "#usda 1.0\ndef Volume \"V\" {}\n";
+  const char source[] = "#usda 1.0\ndef NurbsPatch \"V\" {}\n";
   lightusd_stage* stage = NULL;
   assert(lightusd_stage_load_from_memory((const uint8_t*)source,
       sizeof(source) - 1, NULL, &stage) == LIGHTUSD_OK);

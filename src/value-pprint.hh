@@ -10,6 +10,7 @@
 
 #include "value-types.hh"
 #include "chunked-typed-array.hh"
+#include "pprint-buf.hh"   // pprint::Scratch (reused format buffer)
 #include "pprint-enum.hh"  // pprint::GetColumnLimit, format_wrapped_array, is_wrappable_element_v
 
 // forward decl
@@ -147,9 +148,18 @@ std::ostream &operator<<(std::ostream &os, const lightusd::Collection &v);
 // then hands the strings to the once-compiled non-template print_1d_array(). This
 // keeps per-(element-type x container) instantiations thin instead of re-emitting
 // the wrap/join logic in each.
+//
+// Two paths:
+//  - No column wrapping (the default) needs no element widths, so elements are
+//    formatted straight into a reused per-thread buffer and the finished array is
+//    written out in one go. A fresh std::ostringstream per element used to be
+//    built here, and its ios_base/locale setup alone cost ~400 instructions per
+//    element — about a third of the whole print pass on an array-heavy layer.
+//  - Wrapped layout (SetColumnLimit) needs every width up front; keep the
+//    element-string vector for it.
 template <typename ArrayT>
-inline std::ostream &print_array_impl(std::ostream &os, const ArrayT &v,
-                                      bool wrappable) {
+inline std::ostream &print_array_impl_wrapped(std::ostream &os, const ArrayT &v,
+                                              bool wrappable) {
   std::vector<std::string> elems;
   elems.reserve(v.size());
   for (size_t i = 0; i < v.size(); i++) {
@@ -158,6 +168,38 @@ inline std::ostream &print_array_impl(std::ostream &os, const ArrayT &v,
     elems.push_back(ess.str());
   }
   lightusd::pprint::print_1d_array(os, elems, wrappable);
+  return os;
+}
+
+template <typename ArrayT>
+inline std::ostream &print_array_impl(std::ostream &os, const ArrayT &v,
+                                      bool wrappable) {
+  // Flush every so often so a huge array does not double its memory here.
+  constexpr size_t kFlushBytes = 1u << 16;
+
+  if (wrappable && lightusd::pprint::GetColumnLimit() > 0) {
+    // Column-wrapped layout needs every element width up front.
+    return print_array_impl_wrapped(os, v, wrappable);
+  }
+
+  lightusd::pprint::ScratchRef buf;
+  std::ostream &ess = buf.os();
+  std::string &out = buf.buffer();
+
+  out.push_back('[');
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) {
+      out.append(", ", 2);
+    }
+    ess << v[i];
+    if (out.size() >= kFlushBytes) {
+      os.write(out.data(), static_cast<std::streamsize>(out.size()));
+      out.clear();
+    }
+  }
+  out.push_back(']');
+  os.write(out.data(), static_cast<std::streamsize>(out.size()));
+
   return os;
 }
 

@@ -4,6 +4,7 @@
 // validation_detail namespace shared through usd-validation-internal.hh.
 
 #include "usd-validation-internal.hh"
+#include "../schema/schema-registry.hh"
 
 #include <algorithm>
 #include <array>
@@ -234,7 +235,7 @@ void ValidateGeomCurves(const PrimSpec &ps, const std::string &prim_location,
 // ---------------------------------------------------------------------------
 
 void ValidateVolume(const PrimSpec &ps, const std::string &prim_location,
-                    USDValidationResult *result) {
+                    const PrimTypeByPath &prim_types, USDValidationResult *result) {
   // Volume binds its fields through `field:<name>` RELATIONSHIPS; an
   // attribute in that namespace is an authoring error, and a bound field
   // relationship without a target renders nothing. Attributes live in the
@@ -257,6 +258,29 @@ void ValidateVolume(const PrimSpec &ps, const std::string &prim_location,
                  MakePropertyLocation(prim_location, rel_name),
                  "Volume field relationship `" + rel_name +
                      "` has no target");
+      continue;
+    }
+    // UsdVolVolume::GetFieldPaths ignores a field relationship unless it has
+    // exactly one target.
+    if (targets->size() != 1) {
+      AddWarning(result, "vol.volume.fieldTargetCount",
+                 MakePropertyLocation(prim_location, rel_name),
+                 "Volume field relationship `" + rel_name + "` has " +
+                     std::to_string(targets->size()) +
+                     " targets; UsdVol uses a field only with exactly one");
+      continue;
+    }
+    // Same-layer targets must be volume fields (VolumeFieldBase).
+    const std::string target = (*targets)[0].str();
+    const std::string *type = FindPrimType(prim_types, target);
+    if (!type || type->empty()) continue;
+    const SchemaRegistry &registry = GetSchemaRegistry();
+    if (registry.HasParentEntry(*type) &&
+        !registry.InheritsFrom(*type, "VolumeFieldBase")) {
+      AddWarning(result, "vol.volume.fieldTargetType",
+                 MakePropertyLocation(prim_location, rel_name),
+                 "Volume field relationship `" + rel_name + "` targets `" + target +
+                     "`, a " + *type + ", not a volume field (VolumeFieldBase)");
     }
   }
 }
@@ -384,6 +408,32 @@ void ValidateParticleField(
                      " particles; OpenUSD will " +
                      (value_count < particle_count ? "discard" : "truncate") +
                      " it");
+    }
+  }
+
+  // Spherical harmonics: (degree + 1)^2 coefficients per particle.
+  int64_t degree = 3;
+  if (const Value *v = GetAttrValue(ps, "radiance:sphericalHarmonicsDegree")) {
+    if (const int32_t *i = v->as_int()) degree = *i;
+  }
+  if (degree < 0) {
+    AddWarning(result, "vol.particleField.shDegree",
+               MakePropertyLocation(prim_location, "radiance:sphericalHarmonicsDegree"),
+               "spherical harmonics degree must not be negative");
+    return;
+  }
+  const uint64_t per_particle = uint64_t(degree + 1) * uint64_t(degree + 1);
+  for (const char *prop_name : {"radiance:sphericalHarmonicsCoefficients",
+                                "radiance:sphericalHarmonicsCoefficientsh"}) {
+    size_t value_count = 0;
+    if (GetArrayLengthProperty(ps, prop_name, &value_count) &&
+        uint64_t(value_count) != per_particle * particle_count) {
+      AddWarning(result, "vol.particleField.shCount",
+                 MakePropertyLocation(prim_location, prop_name),
+                 std::string(prop_name) + " has " + std::to_string(value_count) +
+                     " coefficients; degree " + std::to_string(degree) + " with " +
+                     std::to_string(particle_count) + " particles needs " +
+                     std::to_string(per_particle * particle_count));
     }
   }
 }

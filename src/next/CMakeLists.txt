@@ -34,6 +34,10 @@ function(lightusd_next_harden tgt)
   endif()
   if(MSVC)
     target_compile_options(${tgt} PRIVATE /sdl /guard:cf)
+    # /sdl turns the CRT deprecation warning (C4996: fopen, getenv, gmtime,
+    # strncpy, ...) into an error. Keep /sdl's runtime checks but silence that
+    # one, as the clang-cl toolchain files already do.
+    target_compile_definitions(${tgt} PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_link_options(${tgt} PRIVATE /guard:cf /DYNAMICBASE /NXCOMPAT)
   elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(${tgt} PRIVATE -fstack-protector-strong)
@@ -308,6 +312,10 @@ endif()
 if(LIGHTUSD_NEXT_USE_PCH)
   target_precompile_headers(lightusd_next PRIVATE
     "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/pch.hh>")
+  # Without this, clang embeds the header mtimes in the PCH and ccache cannot
+  # cache any TU that uses it (CI sets the matching CCACHE_SLOPPINESS).
+  target_compile_options(lightusd_next PRIVATE
+    "$<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:SHELL:-Xclang -fno-pch-timestamp>")
 endif()
 target_link_libraries(lightusd_next PUBLIC lightusd_core_c)
 
@@ -729,6 +737,7 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_schemas_ext.cc
     )
     target_link_libraries(test_schemas_ext PRIVATE lightusd_next)
+
     target_compile_definitions(test_schemas_ext PRIVATE
         LIGHTUSD_TEST_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../..")
 
@@ -1084,7 +1093,8 @@ if(LIGHTUSD_WITH_TYDRA)
     add_library(lightusd_render_c STATIC
         ../c-api/lightusd-render-c.cc
         ../c-api/lightusd-render-glb-c.cc
-        ../c-api/lightusd-import-c.cc)
+        ../c-api/lightusd-import-c.cc
+        ../c-api/lightusd-volumetric-c.cc)
     target_link_libraries(lightusd_render_c PUBLIC lightusd_c tydra_next)
     lightusd_next_harden(lightusd_render_c)
     list(APPEND LIGHTUSD_C_TARGETS lightusd_render_c)
@@ -1191,13 +1201,21 @@ if(LIGHTUSD_NEXT_BUILD_SHARED_C_API)
         target_sources(lightusd_c_shared PRIVATE
             ../c-api/lightusd-render-c.cc
             ../c-api/lightusd-render-glb-c.cc
-            ../c-api/lightusd-import-c.cc)
+            ../c-api/lightusd-import-c.cc
+            ../c-api/lightusd-volumetric-c.cc)
         target_link_libraries(lightusd_c_shared PRIVATE tydra_next)
     endif()
     target_compile_definitions(lightusd_c_shared
         PRIVATE LIGHTUSD_C_BUILD_SHARED=1
         INTERFACE LIGHTUSD_C_USE_SHARED=1)
     set_target_properties(lightusd_c_shared PROPERTIES OUTPUT_NAME lightusd_c)
+    if(WIN32)
+        # On Windows the DLL's import library is lightusd_c.lib, the same file
+        # the static lightusd_c archive would write; the import library (C
+        # exports only) then replaces the archive and static consumers such as
+        # lightusd_render_c lose the internal C++ helpers (LNK2019).
+        set_target_properties(lightusd_c PROPERTIES OUTPUT_NAME lightusd_c_static)
+    endif()
     list(APPEND LIGHTUSD_C_TARGETS lightusd_c_shared)
 endif()
 
@@ -1206,7 +1224,7 @@ if(LIGHTUSD_WITH_TYDRA)
   # Packaging must use actual target artifacts, including nested build dirs.
   # Searching by basename can select an obsolete archive after reconfiguration.
   file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/lightusd-python-libraries-$<CONFIG>.txt"
-    CONTENT "$<TARGET_FILE:lightusd_validation_c>\n$<TARGET_FILE:lightusd_render_c>\n$<TARGET_FILE:lightusd_c>\n$<TARGET_FILE:tydra_next>\n$<TARGET_FILE:lightusd_asset_import>\n$<TARGET_FILE:lightusd_validation>\n$<TARGET_FILE:lightusd_next>\n$<TARGET_FILE:lightusd_obj_import>\n$<TARGET_FILE:lightusd_core_c>\n")
+    CONTENT "$<TARGET_FILE:lightusd_validation_c>\n$<TARGET_FILE:lightusd_render_c>\n$<TARGET_FILE:lightusd_c>\n$<TARGET_FILE:tydra_next>\n$<TARGET_FILE:lightusd_asset_import>\n$<TARGET_FILE:lightusd_validation>\n$<TARGET_FILE:lightusd_next>\n$<TARGET_FILE:lightusd_obj_import>\n$<TARGET_FILE:lightusd_tinyvdb>\n$<TARGET_FILE:lightusd_core_c>\n")
 endif()
 include(GNUInstallDirs)
 set_target_properties(lightusd_c PROPERTIES EXPORT_NAME c)
@@ -1246,6 +1264,9 @@ if(TARGET lightusd_asset_import)
 endif()
 if(TARGET lightusd_obj_import)
   install(TARGETS lightusd_obj_import EXPORT LightUSDTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+endif()
+if(TARGET lightusd_tinyvdb)
+  install(TARGETS lightusd_tinyvdb EXPORT LightUSDTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 endif()
 install(EXPORT LightUSDTargets NAMESPACE lightusd::
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/LightUSD")
@@ -1386,6 +1407,51 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         endif()
         add_test(NAME next_test_render_session_c
             COMMAND test_lightusd_render_session)
+        add_executable(test_lightusd_volume_c
+            ../../tests/c-api/test_lightusd_volume_c.c)
+        target_link_libraries(test_lightusd_volume_c PRIVATE
+            lightusd_render_c)
+        set_target_properties(test_lightusd_volume_c PROPERTIES
+            C_STANDARD 11 C_STANDARD_REQUIRED ON)
+        if(NOT MSVC)
+            target_compile_options(test_lightusd_volume_c PRIVATE
+                -Wall -Wextra -Werror -pedantic)
+        endif()
+        # Needs the out-of-tree tinyvdbio reference corpus; skips without it.
+        add_test(NAME next_test_volume_c COMMAND test_lightusd_volume_c)
+        set_tests_properties(next_test_volume_c PROPERTIES
+                             LABELS "next;c-api;render;volume")
+        if(TARGET lightusd_tinyvdb)
+            add_executable(test_next_level_set_allocator
+                ../../tests/volumetric/test-level-set-allocator.c)
+            target_link_libraries(test_next_level_set_allocator PRIVATE lightusd_tinyvdb lightusd_next)
+            set_target_properties(test_next_level_set_allocator PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+            add_test(NAME next_test_level_set_allocator COMMAND test_next_level_set_allocator)
+            set_tests_properties(next_test_level_set_allocator PROPERTIES LABELS "next;cpu;volume;security")
+        endif()
+        if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND TARGET lightusd_tinyvdb)
+            add_executable(test_next_tet_overflow_32
+                ../../tests/volumetric/tet-overflow-32.c)
+            target_include_directories(test_next_tet_overflow_32 PRIVATE
+                ../../src/external/tinyvdb)
+            target_link_libraries(test_next_tet_overflow_32 PRIVATE lightusd_tinyvdb)
+            add_test(NAME next_test_tet_overflow_32 COMMAND test_next_tet_overflow_32)
+            set_tests_properties(next_test_tet_overflow_32 PROPERTIES
+                                 LABELS "next;cpu;volume;security")
+        endif()
+        add_executable(test_lightusd_level_set_c
+            ../../tests/c-api/test_lightusd_level_set_c.c)
+        target_link_libraries(test_lightusd_level_set_c PRIVATE
+            lightusd_render_c)
+        set_target_properties(test_lightusd_level_set_c PROPERTIES
+            C_STANDARD 11 C_STANDARD_REQUIRED ON)
+        if(NOT MSVC)
+            target_compile_options(test_lightusd_level_set_c PRIVATE
+                -Wall -Wextra -Werror -pedantic)
+        endif()
+        add_test(NAME next_test_level_set_c COMMAND test_lightusd_level_set_c)
+        set_tests_properties(next_test_level_set_c PROPERTIES
+                             LABELS "next;c-api;volume")
     endif()
 
     # C API smoke test (pure C11 translation unit)
@@ -1505,6 +1571,19 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     if(LIGHTUSD_WITH_TYDRA)
         add_test(NAME next_test_tydra COMMAND test_tydra_next
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+        # Convex hull for face-less MJCF mesh assets; lives in asset-import.
+        if(TARGET lightusd_asset_import)
+            add_executable(test_convex_hull
+                ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_convex_hull.cc
+            )
+            target_link_libraries(test_convex_hull PRIVATE lightusd_asset_import
+                                                  lightusd_next)
+            target_include_directories(test_convex_hull PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/..)
+            target_compile_features(test_convex_hull PRIVATE cxx_std_17)
+            add_test(NAME next_test_convex_hull COMMAND test_convex_hull
+                WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+        endif()
         add_test(NAME next_test_urdf_to_usd COMMAND test_urdf_to_usd_next
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     endif()

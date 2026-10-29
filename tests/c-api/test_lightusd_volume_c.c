@@ -1,0 +1,418 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* UsdVol render C API: volume and field info, dense voxels, NanoVDB export and
+ * world-space sampling.
+ *
+ * Needs the tinyvdbio reference corpus (ref_float.vdb / ref_vec3s.vdb /
+ * ref_bool.vdb): set TINYVDBIO_DATA_DIR to the tinyvdbio data directory (the
+ * files are expected under <dir>/reference/), or pass <dir> as argv[1]. Without
+ * it the test prints SKIP and exits 0, like the C++ usdvol corpus test. */
+#include <assert.h>
+#include <math.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "lightusd-c.h"
+#include "lightusd-render-c.h"
+
+#define MAX_USDA 2048
+
+/* Field records follow the converter's relationship order, not the authored
+ * one: find a binding instead of assuming an index. */
+static int32_t find_field(lightusd_render_scene* scene, int32_t volume,
+                          const char* binding) {
+  const size_t len = strlen(binding);
+  lightusd_render_volume_info info;
+  memset(&info, 0, sizeof(info));
+  assert(lightusd_render_volume_get_info(scene, volume, &info) == LIGHTUSD_OK);
+  for (uint32_t i = 0; i < info.field_count; ++i) {
+    lightusd_render_volume_field_info field;
+    memset(&field, 0, sizeof(field));
+    assert(lightusd_render_volume_field_get_info(scene, volume, (int32_t)i,
+                                                 &field) == LIGHTUSD_OK);
+    if (field.binding.len == len &&
+        memcmp(field.binding.data, binding, len) == 0)
+      return (int32_t)i;
+  }
+  assert(0 && "field binding not found");
+  return -1;
+}
+
+static void check_volume(lightusd_render_scene* scene, int32_t volume,
+                         uint32_t expect_fields) {
+  lightusd_render_volume_info info;
+  memset(&info, 0, sizeof(info));
+  assert(lightusd_render_volume_get_info(scene, volume, &info) == LIGHTUSD_OK);
+  assert(info.field_count == expect_fields);
+  assert(info.prim_path.len == 2 && memcmp(info.prim_path.data, "/V", 2) == 0);
+}
+
+int main(int argc, char** argv) {
+  const char* root = argc > 1 ? argv[1] : getenv("TINYVDBIO_DATA_DIR");
+  if (!root || !root[0]) {
+    printf("SKIP: set TINYVDBIO_DATA_DIR (tinyvdbio data directory) or pass it "
+           "as argv[1]\n");
+    return 0;
+  }
+
+  char usda[MAX_USDA];
+  const int n = snprintf(
+      usda, sizeof(usda),
+      "#usda 1.0\n"
+      "def Volume \"V\"\n"
+      "{\n"
+      "    rel field:density = </V/density>\n"
+      "    rel field:vec = </V/vec>\n"
+      "    rel field:broken = </V/broken>\n"
+      "    def OpenVDBAsset \"density\"\n"
+      "    {\n"
+      "        asset filePath = @%s/reference/ref_float.vdb@\n"
+      "        token fieldName = \"float_test\"\n"
+      "        token fieldDataType = \"float\"\n"
+      "    }\n"
+      "    def OpenVDBAsset \"vec\"\n"
+      "    {\n"
+      "        asset filePath = @%s/reference/ref_vec3s.vdb@\n"
+      "        token fieldName = \"vec3s_test\"\n"
+      "        token fieldDataType = \"float3\"\n"
+      "        token vectorDataRoleHint = \"Vector\"\n"
+      "        double3 xformOp:translate = (5, 0, 0)\n"
+      "        float xformOp:rotateZ = 90\n"
+      "        float3 xformOp:scale = (2, 3, 4)\n"
+      "        uniform token[] xformOpOrder = [\"xformOp:translate\", \"xformOp:rotateZ\", \"xformOp:scale\"]\n"
+      "    }\n"
+      "    def OpenVDBAsset \"broken\"\n"
+      "    {\n"
+      "        asset filePath = @%s/reference/ref_bool.vdb@\n"
+      "        token fieldName = \"bool_test\"\n"
+      "    }\n"
+      "}\n",
+      root, root, root);
+  assert(n > 0 && (size_t)n < sizeof(usda));
+
+  lightusd_stage* stage = NULL;
+  assert(lightusd_stage_load_from_memory((const uint8_t*)usda, (size_t)n, NULL,
+                                         &stage) == LIGHTUSD_OK);
+  assert(stage != NULL);
+
+  lightusd_render_config config;
+  lightusd_render_config_init(&config);
+  lightusd_render_scene* scene = NULL;
+  assert(lightusd_render_convert(stage, &config, &scene) == LIGHTUSD_OK);
+  assert(scene != NULL);
+
+  assert(lightusd_render_volume_count(scene) == 1);
+  check_volume(scene, 0, 3);
+
+  /* Scalar field: float, one component, float NanoVDB grid type, samples. */
+  const int32_t density = find_field(scene, 0, "density");
+  {
+    lightusd_render_volume_field_info field;
+    memset(&field, 0, sizeof(field));
+    assert(lightusd_render_volume_field_get_info(scene, 0, density, &field) ==
+           LIGHTUSD_OK);
+    assert(field.binding.len == 7 &&
+           memcmp(field.binding.data, "density", 7) == 0);
+    assert(field.grid_name.len == 10 &&
+           memcmp(field.grid_name.data, "float_test", 10) == 0);
+    assert(field.value_type.len == 5 &&
+           memcmp(field.value_type.data, "float", 5) == 0);
+    assert(field.components == 1);
+    assert(field.has_bounds);
+    assert(field.level_set == 0);  // a float fog/unknown grid is not an SDF
+
+    lightusd_render_volume_dense dense;
+    memset(&dense, 0, sizeof(dense));
+    assert(lightusd_render_volume_field_dense(scene, 0, density, 0, 0, 0, &dense) ==
+           LIGHTUSD_OK);
+    assert(dense.data != NULL);
+    assert(dense.dims[0] == 4 && dense.dims[1] == 4 && dense.dims[2] == 4);
+    assert(dense.components == 1 && dense.stride == 1);
+
+    lightusd_render_volume_nanovdb nano;
+    memset(&nano, 0, sizeof(nano));
+    assert(lightusd_render_volume_field_nanovdb(scene, 0, density, &nano) ==
+           LIGHTUSD_OK);
+    assert(nano.data != NULL && nano.size >= 736);
+    assert(nano.grid_type == LIGHTUSD_NANOVDB_GRID_TYPE_FLOAT);
+    assert(nano.components == 1);
+    /* GridData magic ("NanoVDB1", what NanoVDB's GridHandle writes) and the
+       grid type field (offset 636). */
+    uint64_t magic = 0;
+    memcpy(&magic, nano.data, sizeof(magic));
+    assert(magic == 0x314244566f6e614eULL);
+    uint32_t header_type = 0;
+    memcpy(&header_type, nano.data + 636, sizeof(header_type));
+    assert(header_type == LIGHTUSD_NANOVDB_GRID_TYPE_FLOAT);
+    /* Cached: a second call returns the same buffer. */
+    lightusd_render_volume_nanovdb again;
+    memset(&again, 0, sizeof(again));
+    assert(lightusd_render_volume_field_nanovdb(scene, 0, density, &again) ==
+           LIGHTUSD_OK);
+    assert(again.data == nano.data && again.size == nano.size);
+
+    /* Sample the centre of voxel (0,0,0): nearest must be that voxel's stored
+     * value and trilinear must stay within the grid's value range. */
+    const double point[3] = {0.5, 0.5, 0.5};
+    lightusd_render_volume_samples nearest;
+    memset(&nearest, 0, sizeof(nearest));
+    assert(lightusd_render_volume_field_sample(scene, 0, density, point, 1, 0,
+                                               &nearest) == LIGHTUSD_OK);
+    assert(nearest.count == 1 && nearest.components == 1);
+    assert(nearest.values != NULL);
+    lightusd_render_volume_samples trilinear;
+    memset(&trilinear, 0, sizeof(trilinear));
+    assert(lightusd_render_volume_field_sample(scene, 0, density, point, 1, 1,
+                                               &trilinear) == LIGHTUSD_OK);
+    float lo = dense.data[0], hi = dense.data[0];
+    for (size_t i = 1; i < 64; ++i) {
+      if (dense.data[i] < lo) lo = dense.data[i];
+      if (dense.data[i] > hi) hi = dense.data[i];
+    }
+    assert(nearest.values[0] >= lo && nearest.values[0] <= hi);
+    assert(trilinear.values[0] >= lo - 1e-5f && trilinear.values[0] <= hi + 1e-5f);
+    /* Reject impossible counts before touching the supplied point buffer. */
+    assert(lightusd_render_volume_field_sample(scene, 0, density, point, UINT64_MAX, 0,
+                                               &nearest) == LIGHTUSD_ERR_OVERFLOW);
+  }
+
+  /* Vec3 field: three components, vec3f NanoVDB grid, three values per point. */
+  const int32_t vec = find_field(scene, 0, "vec");
+  {
+    lightusd_render_volume_field_info field;
+    memset(&field, 0, sizeof(field));
+    assert(lightusd_render_volume_field_get_info(scene, 0, vec, &field) ==
+           LIGHTUSD_OK);
+    assert(field.binding.len == 3 && memcmp(field.binding.data, "vec", 3) == 0);
+    assert(field.value_type.len == 5 &&
+           memcmp(field.value_type.data, "vec3f", 5) == 0);
+    assert(field.components == 3);
+
+    lightusd_render_volume_dense dense;
+    memset(&dense, 0, sizeof(dense));
+    assert(lightusd_render_volume_field_dense(scene, 0, vec, 0, 0, 1, &dense) ==
+           LIGHTUSD_OK);
+    assert(dense.components == 3 && dense.data != NULL);
+
+    /* The dense map includes the field prim's +5 translation. Sampling all
+     * cell centers in world space must return the same stored values. */
+    {
+      double centers[320 * 3];
+      assert(dense.dims[0] == 4 && dense.dims[1] == 4 && dense.dims[2] == 4);
+      for (int z = 0; z < 4; ++z)
+        for (int y = 0; y < 4; ++y)
+          for (int x = 0; x < 4; ++x) {
+            const size_t i = (size_t)(x + 4 * (y + 4 * z));
+            for (int a = 0; a < 3; ++a)
+              centers[3 * i + a] = x * dense.cell_to_world[a] +
+                  y * dense.cell_to_world[4 + a] + z * dense.cell_to_world[8 + a] +
+                  dense.cell_to_world[12 + a];
+          }
+      /* Cross the sampler's bounded intermediate-buffer boundary. */
+      for (int i = 64; i < 320; ++i)
+        for (int a = 0; a < 3; ++a) centers[3 * i + a] = centers[3 * (i % 64) + a];
+      lightusd_render_volume_samples at_center = {0};
+      assert(lightusd_render_volume_field_sample(scene, 0, vec, centers, 320, 0,
+                                                 &at_center) == LIGHTUSD_OK);
+      assert(at_center.count == 320 && at_center.components == 3);
+      for (int k = 0; k < 320 * 3; ++k) assert(at_center.values[k] == dense.data[k % (64 * 3)]);
+      assert(lightusd_render_volume_field_sample(scene, 0, vec, centers, 320, 1,
+                                                 &at_center) == LIGHTUSD_OK);
+      for (int k = 0; k < 320 * 3; ++k)
+        assert(fabsf(at_center.values[k] - dense.data[k % (64 * 3)]) < 1e-5f);
+    }
+
+    lightusd_render_volume_nanovdb nano;
+    memset(&nano, 0, sizeof(nano));
+    assert(lightusd_render_volume_field_nanovdb(scene, 0, vec, &nano) ==
+           LIGHTUSD_OK);
+    assert(nano.grid_type == LIGHTUSD_NANOVDB_GRID_TYPE_VEC3F);
+    assert(nano.components == 3);
+    /* The NanoVDB map is field_info's map (field prim transform included)
+     * stored transposed; the field prim is translated by +5 in x. */
+    for (int r = 0; r < 4; ++r)
+      for (int c = 0; c < 4; ++c)
+        assert(nano.index_to_world[4 * r + c] == field.index_to_world[4 * c + r]);
+    {
+      lightusd_render_volume_field_info plain;
+      memset(&plain, 0, sizeof(plain));
+      assert(lightusd_render_volume_field_get_info(scene, 0, density, &plain) ==
+             LIGHTUSD_OK);
+      assert(field.index_to_world[12] - plain.index_to_world[12] > 4.0);
+    }
+
+    const double points[6] = {0.5, 0.5, 0.5, 1.5, 1.5, 1.5};
+    lightusd_render_volume_samples samples;
+    memset(&samples, 0, sizeof(samples));
+    assert(lightusd_render_volume_field_sample(scene, 0, vec, points, 2, 1,
+                                               &samples) == LIGHTUSD_OK);
+    assert(samples.count == 2 && samples.components == 3);
+    assert(samples.values != NULL);
+  }
+
+  /* Bool grids have no NanoVDB type: dense works, NanoVDB reports it. */
+  const int32_t broken = find_field(scene, 0, "broken");
+  {
+    lightusd_render_volume_dense dense;
+    memset(&dense, 0, sizeof(dense));
+    assert(lightusd_render_volume_field_dense(scene, 0, broken, 0, 0, 0, &dense) ==
+           LIGHTUSD_OK);
+    lightusd_render_volume_nanovdb nano;
+    memset(&nano, 0, sizeof(nano));
+    assert(lightusd_render_volume_field_nanovdb(scene, 0, broken, &nano) ==
+           LIGHTUSD_ERR_UNSUPPORTED);
+  }
+
+  /* Out-of-range ids are rejected. */
+  {
+    lightusd_render_volume_info info;
+    assert(lightusd_render_volume_get_info(scene, 7, &info) ==
+           LIGHTUSD_ERR_NOT_FOUND);
+    lightusd_render_volume_field_info field;
+    assert(lightusd_render_volume_field_get_info(scene, 0, 99, &field) ==
+           LIGHTUSD_ERR_NOT_FOUND);
+    lightusd_render_volume_samples samples;
+    assert(lightusd_render_volume_field_sample(scene, 0, 99, NULL, 0, 0,
+                                               &samples) ==
+           LIGHTUSD_ERR_NOT_FOUND);
+  }
+
+  lightusd_render_scene_destroy(scene);
+  lightusd_stage_destroy(stage);
+
+  /* A large level set must remain sampleable when dense extraction is over
+   * budget. The large corpus fixture is optional alongside the references. */
+  {
+    char path[MAX_USDA];
+    int len = snprintf(path, sizeof(path), "%s/utahteapot.vdb", root);
+    assert(len > 0 && (size_t)len < sizeof(path));
+    FILE* fixture = fopen(path, "rb");
+    if (!fixture) {
+      printf("SKIP: optional large VDB fixture %s\n", path);
+    } else {
+      fclose(fixture);
+      len = snprintf(usda, sizeof(usda),
+          "#usda 1.0\ndef Volume \"V\" {\n"
+          "  rel field:sdf = </V/sdf>\n"
+          "  def OpenVDBAsset \"sdf\" {\n"
+          "    asset filePath = @%s@\n"
+          "    token fieldName = \"ls_utahteapot\"\n"
+          "    token fieldClass = \"levelSet\"\n"
+          "  }\n}\n", path);
+      assert(len > 0 && (size_t)len < sizeof(usda));
+      stage = NULL;
+      scene = NULL;
+      assert(lightusd_stage_load_from_memory((const uint8_t*)usda, (size_t)len,
+                                             NULL, &stage) == LIGHTUSD_OK);
+      assert(lightusd_render_convert(stage, &config, &scene) == LIGHTUSD_OK);
+      check_volume(scene, 0, 1);
+      lightusd_render_volume_field_info info = {0};
+      assert(lightusd_render_volume_field_get_info(scene, 0, 0, &info) == LIGHTUSD_OK);
+      assert(info.level_set && info.has_bounds);
+      lightusd_render_volume_dense dense = {0};
+      assert(lightusd_render_volume_field_dense(scene, 0, 0, 1000, 0, 0, &dense) ==
+             LIGHTUSD_ERR_RESOURCE_LIMIT);
+      /* Probe a grid over the active world bounds plus an exterior point. */
+      double points[(21 * 21 * 21 + 1) * 3];
+      size_t count = 0;
+      for (int z = 0; z < 21; ++z)
+        for (int y = 0; y < 21; ++y)
+          for (int x = 0; x < 21; ++x) {
+            const int step[3] = {x, y, z};
+            for (int a = 0; a < 3; ++a)
+              points[3 * count + a] = info.world_min[a] +
+                  (info.world_max[a] - info.world_min[a]) * step[a] / 20.0;
+            ++count;
+          }
+      for (int a = 0; a < 3; ++a)
+        points[3 * count + a] = info.world_max[a] + 10;
+      ++count;
+      lightusd_render_volume_samples samples = {0};
+      assert(lightusd_render_volume_field_sample(scene, 0, 0, points, count, 1, &samples) ==
+             LIGHTUSD_OK);
+      assert(samples.count == count && samples.components == 1);
+      int negative = 0, positive = 0;
+      for (size_t i = 0; i < count; ++i) {
+        assert(isfinite(samples.values[i]));
+        negative |= samples.values[i] < 0;
+        positive |= samples.values[i] > 0;
+      }
+      assert(negative && positive && samples.values[count - 1] > 0);
+      lightusd_render_scene_destroy(scene);
+      lightusd_stage_destroy(stage);
+    }
+  }
+
+  /* Singular USD field transforms cannot be inverted for world sampling. */
+  {
+    const int len = snprintf(usda, sizeof(usda),
+        "#usda 1.0\ndef Volume \"V\" {\n"
+        "  rel field:density = </V/density>\n"
+        "  def OpenVDBAsset \"density\" {\n"
+        "    asset filePath = @%s/reference/ref_float.vdb@\n"
+        "    token fieldName = \"float_test\"\n"
+        "    float3 xformOp:scale = (0, 1, 1)\n"
+        "    uniform token[] xformOpOrder = [\"xformOp:scale\"]\n"
+        "  }\n}\n", root);
+    assert(len > 0 && (size_t)len < sizeof(usda));
+    stage = NULL;
+    scene = NULL;
+    assert(lightusd_stage_load_from_memory((const uint8_t*)usda, (size_t)len,
+                                           NULL, &stage) == LIGHTUSD_OK);
+    assert(lightusd_render_convert(stage, &config, &scene) == LIGHTUSD_OK);
+    check_volume(scene, 0, 1);
+    const double point[3] = {0, 0, 0};
+    lightusd_render_volume_samples samples = {0};
+    assert(lightusd_render_volume_field_sample(scene, 0, 0, point, 1, 0, &samples) ==
+           LIGHTUSD_ERR_UNSUPPORTED);
+    lightusd_render_scene_destroy(scene);
+    lightusd_stage_destroy(stage);
+  }
+
+  /* A time-only update must rebuild the VDB-backed field and its transform. */
+  {
+    const int len = snprintf(
+        usda, sizeof(usda),
+        "#usda 1.0\n"
+        "def Volume \"V\" {\n"
+        "  rel field:density = </V/density>\n"
+        "  def OpenVDBAsset \"density\" {\n"
+        "    asset filePath = @%s/reference/ref_float.vdb@\n"
+        "    token fieldName = \"float_test\"\n"
+        "    double3 xformOp:translate.timeSamples = { 0: (0, 0, 0), 10: (5, 0, 0) }\n"
+        "    uniform token[] xformOpOrder = [\"xformOp:translate\"]\n"
+        "  }\n"
+        "}\n", root);
+    assert(len > 0 && (size_t)len < sizeof(usda));
+    stage = NULL;
+    assert(lightusd_stage_load_from_memory((const uint8_t*)usda, (size_t)len,
+                                           NULL, &stage) == LIGHTUSD_OK);
+    lightusd_render_session* session = NULL;
+    assert(lightusd_render_session_create(stage, &config, &session) == LIGHTUSD_OK);
+    lightusd_render_scene* first = NULL;
+    assert(lightusd_render_session_update(session, stage, &first, NULL) == LIGHTUSD_OK);
+    check_volume(first, 0, 1);
+    lightusd_render_volume_field_info before = {0};
+    assert(lightusd_render_volume_field_get_info(first, 0, 0, &before) == LIGHTUSD_OK);
+    const double x = before.index_to_world[12];
+    assert(lightusd_render_session_set_time_code(session, 10.0) == LIGHTUSD_OK);
+    lightusd_render_change_set changes;
+    lightusd_render_change_set_init(&changes);
+    lightusd_render_update_info update;
+    lightusd_render_update_info_init(&update);
+    lightusd_render_scene* second = NULL;
+    assert(lightusd_render_session_apply(session, stage, &changes, &second, &update) == LIGHTUSD_OK);
+    assert(update.full_resync);
+    check_volume(second, 0, 1);
+    lightusd_render_volume_field_info after = {0};
+    assert(lightusd_render_volume_field_get_info(second, 0, 0, &after) == LIGHTUSD_OK);
+    assert(after.index_to_world[12] - x > 4.999 && after.index_to_world[12] - x < 5.001);
+    lightusd_render_scene_destroy(second);
+    lightusd_render_scene_destroy(first);
+    lightusd_render_session_destroy(session);
+    lightusd_stage_destroy(stage);
+  }
+  printf("volume C API: OK\n");
+  return 0;
+}

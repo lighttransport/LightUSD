@@ -737,8 +737,8 @@ __device__ int traverseSteps(const Node* tlas, const Inst* insts, const Node* bl
 // as a 4th int) = float offset into the shared `volDens` buffer.
 struct VolParam {
   float invModel[16];
-  float bmin[4];      // .xyz aabb min
-  float bmax[4];      // .xyz aabb max
+  float bmin[4];      // .xyz aabb min, .w level-set selector
+  float bmax[4];      // .xyz aabb max, .w isovalue
   int   dim[4];       // .xyz dims, .w = data offset (floats) into volDens
   float albedo[4];    // .xyz albedo, .w densityScale
   float emission[4];  // .xyz emission, .w background
@@ -780,7 +780,7 @@ __device__ float sampleVol(const float* dens, const VolParam* vp, F3 p){
   return c0*(1-fz)+c1*fz;
 }
 // Emission/absorption composite of one volume over background color `bg`.
-__device__ F3 compositeVolume(const float* dens, const VolParam* vp, F3 worg, F3 wdir, F3 bg){
+__device__ F3 compositeVolume(const float* dens, const VolParam* vp, F3 worg, F3 wdir, F3 bg, float* nearest){
   F3 oo=xfPt4(vp->invModel, worg);
   F3 od=norm3(xfDir4(vp->invModel, wdir));
   F3 inv=mk(1.f/od.x, 1.f/od.y, 1.f/od.z);
@@ -800,6 +800,49 @@ R"CUDA(  float t0=fmaxf(tmin,0.f);
   float ex=vp->bmax[0]-vp->bmin[0], ey=vp->bmax[1]-vp->bmin[1], ez=vp->bmax[2]-vp->bmin[2];
   float vmin=fminf(ex/vp->dim[0], fminf(ey/vp->dim[1], ez/vp->dim[2]));
   float step=vmin*0.5f; if (step<=0.f) step=(tmax-t0)/256.f;
+  if(vp->bmin[3]>0.5f){
+    F3 objectDirection=xfDir4(vp->invModel,wdir);
+    float speed=sqrtf(dot3(objectDirection,objectDirection));
+    if(speed<=0.f||!isfinite(speed))return bg;
+    tmax=fminf(tmax,(*nearest)*speed);
+    if(tmax<=t0)return bg;
+    float ds=fmaxf((tmax-t0)/512.f,vmin*.5f);
+    float iso=vp->bmax[3],previous=sampleVol(dens,vp,add(oo,scale(od,t0)))-iso;
+    float previousT=t0,hit=-1.f;
+    for(int i=0;i<512;i++){
+      float tn=fminf(t0+(i+1)*ds,tmax);
+      float f=sampleVol(dens,vp,add(oo,scale(od,tn)))-iso;
+      if((f<0.f&&previous>0.f)||(f>0.f&&previous<0.f)){
+        float lo=previousT,hi=tn,flo=previous;
+        for(int k=0;k<16;k++){
+          float mid=.5f*(lo+hi);
+          float fm=sampleVol(dens,vp,add(oo,scale(od,mid)))-iso;
+          if(fm==0.f){lo=hi=mid;break;}
+          if((fm>0.f)==(flo>0.f)){lo=mid;flo=fm;}else hi=mid;
+        }
+        hit=.5f*(lo+hi);break;
+      }
+      if(f!=0.f){previous=f;previousT=tn;}
+      else if(previous==0.f)previousT=tn;
+      if(tn>=tmax)break;
+    }
+    if(hit<0.f||hit/speed>=*nearest)return bg;
+    F3 p=add(oo,scale(od,hit));
+    float hx=ex/vp->dim[0],hy=ey/vp->dim[1],hz=ez/vp->dim[2];
+    F3 g=mk((sampleVol(dens,vp,add(p,mk(hx,0,0)))-sampleVol(dens,vp,sub(p,mk(hx,0,0))))/hx,
+            (sampleVol(dens,vp,add(p,mk(0,hy,0)))-sampleVol(dens,vp,sub(p,mk(0,hy,0))))/hy,
+            (sampleVol(dens,vp,add(p,mk(0,0,hz)))-sampleVol(dens,vp,sub(p,mk(0,0,hz))))/hz);
+    const float* m=vp->invModel;
+    F3 n=norm3(mk(m[0]*g.x+m[1]*g.y+m[2]*g.z,
+                  m[4]*g.x+m[5]*g.y+m[6]*g.z,
+                  m[8]*g.x+m[9]*g.y+m[10]*g.z));
+    F3 view=scale(norm3(wdir),-1.f);
+    if(dot3(n,n)==0.f)n=view;
+    float light=.15f+.85f*fabsf(dot3(n,view));
+    *nearest=hit/speed;
+    return add(scale(mk(vp->albedo[0],vp->albedo[1],vp->albedo[2]),light),
+               mk(vp->emission[0],vp->emission[1],vp->emission[2]));
+  }
   float scaleD=vp->albedo[3], background=vp->emission[3];
   float T=1.f; F3 L=mk(0.f,0.f,0.f);
   float t=t0;
@@ -1733,8 +1776,15 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
         mk(cam.clear[0],cam.clear[1],cam.clear[2]),pathSeed,
         maxDepth>0?maxDepth:1,rrDepth,(int)fmaxf(cam.pathLimits[0],1.f),
         cam.context[0],cam.context[1],geomProps,geomPropValues,geomPropCount);
+    float volumeDepth=1e30f;
+    if(numVols>0 && tris && tlas && insts){
+      int vh=-1,vi=-1;float vu=0.f,vv=0.f;
+      volumeDepth=traverseCutout(tlas,insts,blas,tris,o,d,1e30f,&vh,&vu,&vv,
+          &vi,cols,mats,backMats,matPbr,matLightRt,matGraph,numMats,matTex,
+          matTexParam,texels,textures,numTextures,uvs,uvs1,-1,false);
+    }
     for(int vi=0;vi<numVols;++vi)
-      path=compositeVolume(volDens,&volParams[vi],o,d,path);
+      path=compositeVolume(volDens,&volParams[vi],o,d,path,&volumeDepth);
     int idx=(py*W+px)*4;
     float ar=(sampleIdx==0)?path.x:accum[idx]+path.x;
     float ag=(sampleIdx==0)?path.y:accum[idx+1]+path.y;
@@ -1746,7 +1796,7 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       F3 c=mk(linearToSrgb1(ar*inv*ex),linearToSrgb1(ag*inv*ex),linearToSrgb1(ab*inv*ex));
       out[idx]=(unsigned char)(c.x*255.f+.5f);out[idx+1]=(unsigned char)(c.y*255.f+.5f);out[idx+2]=(unsigned char)(c.z*255.f+.5f);out[idx+3]=255;
     }
-    if(hitDepth)hitDepth[py*W+px]=1e30f;
+    if(hitDepth)hitDepth[py*W+px]=volumeDepth;
     return;
   }
 
@@ -2678,7 +2728,7 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
   // UsdVol volumes: composite over the shaded color (default mode only).
   if (rmodePre==0){
     for (int vi=0; vi<numVols; vi++){
-      outc=compositeVolume(volDens, &volParams[vi], o, d, outc);
+      outc=compositeVolume(volDens, &volParams[vi], o, d, outc, &t);
     }
   }
   if (rmodePre==0) {

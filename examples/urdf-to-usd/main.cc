@@ -17,9 +17,11 @@ using OutputStage = lightusd::next::Stage;
 using OutputStage = lightusd::Stage;
 #endif
 #include <cerrno>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <string>
 
 #include "external/filesystem/include/ghc/filesystem.hpp"
@@ -38,15 +40,33 @@ void Help() {
          "         --max-input BYTES --max-depth 1..1024 "
          "--unsupported-policy warn|error|preserve\n"
          "         --layout flat|nested\n"
+         "         --sdf auto|off --sdf-resolution N --sdf-band VOXELS (MJCF sdf\n"
+         "           geoms: level-set .vdb sidecars, newton profile)\n"
+         "         --flex-tetrahedralize mujoco|stuffing --flex-tet-spacing H\n"
+         "         --volumetric-device cpu|cuda|hip|auto (level sets and tets;\n"
+         "           CUDA/HIP need a LIGHTUSD_TINYVDB_GPU build)\n"
          "         --profile newton|openusd|legacy (next-core writer; the "
          "legacy writer always emits legacy)\n";
 }
-bool Convert(const ia::Json& payload, OutputStage* stage, std::string* warn,
-             std::string* err) {
 #if defined(LIGHTUSD_URDF_TO_USD_NEXT)
-  return lightusd::tydra::next::ConvertURDFPayloadToUSDStage(payload, stage,
+using MeshBuffers = std::map<std::string, lightusd::tydra::next::URDFMeshBuffer>;
+#else
+using MeshBuffers = std::map<std::string, int>;  // the legacy converter takes JSON meshes
+#endif
+
+// `consume`: the payload is converted only once, so its mesh buffers may be
+// moved into the stage.
+bool Convert(const ia::Json& payload, MeshBuffers& meshes, bool consume, OutputStage* stage,
+             std::string* warn, std::string* err) {
+#if defined(LIGHTUSD_URDF_TO_USD_NEXT)
+  if (consume)
+    return lightusd::tydra::next::ConvertURDFPayloadToUSDStageConsuming(payload, &meshes, stage,
+                                                                        warn, err);
+  return lightusd::tydra::next::ConvertURDFPayloadToUSDStage(payload, &meshes, stage,
                                                           warn, err);
 #else
+  (void)meshes;
+  (void)consume;
   return lightusd::tydra::ConvertURDFPayloadToUSDStage(payload, stage, warn,
                                                     err);
 #endif
@@ -127,6 +147,35 @@ int main(int argc, char** argv) {
       if (opts.layout != "flat" && opts.layout != "nested")
         err = "--layout expects flat or nested";
     }
+    else if (arg == "--sdf") {
+      opts.sdf = value();
+      if (opts.sdf != "auto" && opts.sdf != "off") err = "--sdf expects auto or off";
+    } else if (arg == "--volumetric-device") {
+      opts.volumetric_device = value();
+      if (opts.volumetric_device != "cpu" && opts.volumetric_device != "cuda" &&
+          opts.volumetric_device != "hip" && opts.volumetric_device != "auto")
+        err = "--volumetric-device expects cpu, cuda, hip or auto";
+    } else if (arg == "--flex-tetrahedralize") {
+      opts.flex_tetrahedralize = value();
+      if (opts.flex_tetrahedralize != "mujoco" && opts.flex_tetrahedralize != "stuffing")
+        err = "--flex-tetrahedralize expects mujoco or stuffing";
+    } else if (arg == "--sdf-resolution" || arg == "--sdf-band" || arg == "--flex-tet-spacing") {
+      const std::string str = value();
+      char* end = nullptr;
+      const double v = std::strtod(str.c_str(), &end);
+      if (str.empty() || !end || *end || !std::isfinite(v))
+        err = "Invalid number for " + arg;
+      else if (arg == "--sdf-resolution") {
+        if (v < 8 || v > 4096 || v != std::floor(v)) err = "--sdf-resolution expects 8..4096";
+        else opts.sdf_resolution = int(v);
+      } else if (arg == "--sdf-band") {
+        if (v < 1 || v > 64) err = "--sdf-band expects 1..64 voxels";
+        else opts.sdf_band = v;
+      } else {
+        if (v < 0) err = "--flex-tet-spacing expects a nonnegative length";
+        else opts.flex_tet_spacing = v;
+      }
+    }
     else if (arg == "-o" || arg == "--output")
       output = value();
     else if (arg == "--dump-json")
@@ -178,6 +227,11 @@ int main(int argc, char** argv) {
     std::cerr << "urdf-to-usd: " << err << "\n";
     return 1;
   }
+#if defined(LIGHTUSD_URDF_TO_USD_NEXT)
+  // Large mesh arrays travel as typed buffers (as through the C API) unless
+  // the JSON dump needs them inline: one value per scalar costs far more.
+  opts.typed_meshes = dump.empty();
+#endif
   ia::Result result;
   if (!ia::BuildPayloadFile(input, opts, &result, &err)) {
     std::cerr << "urdf-to-usd: " << err << "\n";
@@ -192,22 +246,38 @@ int main(int argc, char** argv) {
     }
   }
   if (!result.warnings.empty()) std::cerr << result.warnings;
+  MeshBuffers meshes;
+#if defined(LIGHTUSD_URDF_TO_USD_NEXT)
+  for (auto& entry : result.meshes) {
+    auto& buffer = meshes[entry.first];
+    buffer.positions = std::move(entry.second.positions);
+    buffer.normals = std::move(entry.second.normals);
+    buffer.uvs = std::move(entry.second.uvs);
+    buffer.indices = std::move(entry.second.indices);
+  }
+  result.meshes.clear();
+#endif
   for (const char* kind : {"usda", "usdc", "usdz"}) {
     if (format != "all" && format != kind) continue;
     fs::path path = output.empty() ? fs::path(input) : fs::path(output);
     if (output.empty() || format == "all" || path.extension().empty())
       path.replace_extension(std::string(".") + kind);
-    ia::Json payload = result.payload;
-    if (std::string(kind) == "usdz")
-      for (auto& mat : payload["materials"]) {
+    // Only a USDZ rewrites texture paths, so only it needs its own payload.
+    const ia::Json* payload = &result.payload;
+    ia::Json usdz_payload;
+    if (std::string(kind) == "usdz") {
+      usdz_payload = result.payload;
+      for (auto& mat : usdz_payload["materials"]) {
         if (mat.contains("texturePackage"))
           mat["texture"] = mat["texturePackage"];
         for (auto& map : mat["maps"])
           if (map.contains("package")) map["file"] = map["package"];
       }
+      payload = &usdz_payload;
+    }
     OutputStage stage;
     std::string warn;
-    if (!Convert(payload, &stage, &warn, &err) ||
+    if (!Convert(*payload, meshes, format != "all", &stage, &warn, &err) ||
         !Save(stage, path.string(), kind, result.assets, &err)) {
       std::cerr << "urdf-to-usd: " << err << "\n";
       return 1;
@@ -221,6 +291,23 @@ int main(int argc, char** argv) {
         auto bytes = result.assets.find(mat["texturePackage"].get<std::string>());
         if (bytes == result.assets.end() || !bytes->second) continue;
         const fs::path target = path.parent_path() / mat["texture"].get<std::string>();
+        std::error_code ec;
+        fs::create_directories(target.parent_path(), ec);
+        std::ofstream out(target.string(), std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(bytes->second->data()),
+                  static_cast<std::streamsize>(bytes->second->size()));
+        if (!out) {
+          std::cerr << "urdf-to-usd: cannot write " << target.string() << "\n";
+          return 1;
+        }
+      }
+    // Generated level sets (MJCF sdf geoms) are referenced by relative path.
+    if (std::string(kind) != "usdz")
+      for (const auto& name : result.payload["generatedAssets"]) {
+        if (!name.is_string()) continue;
+        auto bytes = result.assets.find(name.get<std::string>());
+        if (bytes == result.assets.end() || !bytes->second) continue;
+        const fs::path target = path.parent_path() / name.get<std::string>();
         std::error_code ec;
         fs::create_directories(target.parent_path(), ec);
         std::ofstream out(target.string(), std::ios::binary | std::ios::trunc);

@@ -671,6 +671,23 @@ static PyObject* Stage_save_usdz(PyObject* self, PyObject* args,
   Py_RETURN_NONE;
 }
 
+static PyObject* Stage_add_generated_asset(PyObject* self, PyObject* args) {
+  const char* path;
+  Py_buffer data = {0};
+  if (!PyArg_ParseTuple(args, "sy*:add_generated_asset", &path, &data)) return NULL;
+  lightusd_stage* stage;
+  lightusd_state* st = stage_context(self, &stage);
+  if (!st) {
+    PyBuffer_Release(&data);
+    return NULL;
+  }
+  lightusd_status status =
+      lightusd_stage_add_generated_asset(stage, path, (const uint8_t*)data.buf, (size_t)data.len);
+  PyBuffer_Release(&data);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "add_generated_asset");
+  Py_RETURN_NONE;
+}
+
 static PyObject* Stage_generated_assets(PyObject* self, PyObject* noargs) {
   (void)noargs;
   lightusd_stage* stage;
@@ -797,6 +814,9 @@ static PyMethodDef Stage_methods[] = {
      "save_usdz(path, assets=None)\nWrite a USDZ with package assets."},
     {"generated_assets", Stage_generated_assets, METH_NOARGS,
      "generated_assets() -> dict[str, bytes] of importer-generated files"},
+    {"add_generated_asset", Stage_add_generated_asset, METH_VARARGS,
+     "add_generated_asset(path, data)\nAttach a file the stage references by a "
+     "relative path; saves write it beside the layer and USDZ packages it."},
     {"export_usda", Stage_export_usda, METH_NOARGS,
      "Serialize to a USDA string."},
     {"export_usdc", Stage_export_usdc, METH_NOARGS,

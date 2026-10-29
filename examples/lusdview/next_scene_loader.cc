@@ -72,6 +72,7 @@
 #include "displacement_bake.hh"        // Ptex-aware coarse geometry bake
 #include "lightrt_mtlx_bridge.hh"      // BakeLightRtOpenPBR (next material bake)
 #include "texture_tools.hh"            // TexToolsBuildDomeIbl / ProbeToEquirect
+#include "tydra/vol/volume-field.hh"     // shared UsdVol field resolver
 #include "usdVol.hh"                   // OpenVDB (.vdb) loader
 
 #include <chrono>
@@ -6224,11 +6225,18 @@ std::vector<float> ResampleNextVolumeField(
         const int dc[3] = {x, y, z};
         int sc[3];
         for (int a = 0; a < 3; ++a) {
+          // Cell centres in index space: origin + stride * cell + (stride-1)/2
+          // (grids may be box-filtered by different strides).
+          const double ds = double(std::max(1, density.stride));
+          const double ss = double(std::max(1, src.stride));
           const double world =
-              double(density.origin[a] + dc[a]) * density.voxel_size[a] +
+              (double(density.origin[a]) + ds * dc[a] + 0.5 * (ds - 1.0)) *
+                  density.voxel_size[a] +
               density.world_translation[a];
-          sc[a] = int(std::floor((world - src.world_translation[a]) /
-                                 src.voxel_size[a] + 0.5)) - src.origin[a];
+          const double index =
+              (world - src.world_translation[a]) / src.voxel_size[a];
+          sc[a] = int(std::floor((index - double(src.origin[a]) -
+                                  0.5 * (ss - 1.0)) / ss + 0.5));
           sc[a] = std::max(0, std::min(src.dim[a] - 1, sc[a]));
         }
         out[size_t(x) + size_t(density.dim[0]) *
@@ -6352,6 +6360,11 @@ bool BuildNextVolumes(
           LIGHTUSD_OK)
         return true;
 
+      // Shared UsdVol field resolver: one cache per Volume prim so a file is
+      // read once and only the selected grids are decoded.
+      lightusd::tydra::vol::FieldCache fieldCache;
+      const lightusd::usdVol::VDBReadOptions vdbOptions;
+
       lightusd::api::StringList relationshipNames;
       if (lightusd_prim_relationship_names(publicVolume,
                                            relationshipNames.put()) !=
@@ -6375,60 +6388,261 @@ bool BuildNextVolumes(
         const lightusd_prim publicField = lightusd_stage_prim_at_path(
             stageHandle, fieldPath.c_str());
         if (!lightusd_prim_is_valid(publicField)) continue;
-        lightusd_sv assetPath{};
-        if (lightusd_attr_get_string(publicField, "filePath", &assetPath) !=
-                LIGHTUSD_OK || assetPath.len == 0)
-          continue;
-        std::string fieldName = relName.substr(std::strlen("field:"));
-        lightusd_sv authoredFieldName{};
-        if (lightusd_attr_get_string(publicField, "fieldName",
-                                     &authoredFieldName) == LIGHTUSD_OK)
-          fieldName = PublicString(authoredFieldName);
+        // UsdVol: resolve and decode the field through the shared resolver
+        // (fieldName / fieldIndex / fieldDataType / fieldClass, plus a
+        // time-sampled filePath) instead of walking the prims and decoding
+        // every grid of the file here.
+        auto evalString = [&](lightusd_prim prim, const char* name) {
+          if (!std::isnan(time)) {
+            std::string evaluated =
+                ReadPublicEvaluatedString(stageHandle, prim, name, time);
+            if (!evaluated.empty()) return evaluated;
+          }
+          lightusd_sv fallback{};
+          return lightusd_attr_get_string(prim, name, &fallback) == LIGHTUSD_OK
+                     ? PublicString(fallback)
+                     : std::string();
+        };
+        auto evalInt = [&](lightusd_prim prim, const char* name, int fallback) {
+          lightusd::api::Value value;
+          lightusd_status status =
+              std::isnan(time)
+                  ? LIGHTUSD_ERR_NOT_FOUND
+                  : lightusd_attr_eval_ex(prim._owner, prim, name, time, 1, 0,
+                                          value.put());
+          if (status != LIGHTUSD_OK &&
+              lightusd_attr_copy_default(prim, name, value.put()) != LIGHTUSD_OK)
+            return fallback;
+          lightusd_value_view view{};
+          if (lightusd::api::ValueView(value, &view) != LIGHTUSD_OK ||
+              view.is_array || view.storage != LIGHTUSD_COMP_INT32 || !view.data ||
+              view.nbytes < sizeof(int32_t))
+            return fallback;
+          return *static_cast<const int32_t*>(view.data);
+        };
 
+        const std::string authoredPath = evalString(publicField, "filePath");
+        if (authoredPath.empty()) continue;
+        lightusd::tydra::vol::FieldRequest request;
+        request.binding = relName.substr(std::strlen("field:"));
+        request.field_prim = fieldPath;
+        request.prim_type = PublicPrimType(publicField);
         // Resolve the asset path relative to the USD file directory.
-        std::string vpath = PublicString(assetPath);
-        if (!vpath.empty() && !lightusd::io::IsAbsPath(vpath) && !baseDir.empty()) {
-          vpath = baseDir + "/" + vpath;
+        request.file_path = authoredPath;
+        if (!lightusd::io::IsAbsPath(request.file_path) && !baseDir.empty()) {
+          request.file_path = baseDir + "/" + request.file_path;
         }
-        std::vector<lightusd::usdVol::VDBGrid> grids;
-        std::string vw, ve;
-        if (!lightusd::usdVol::ReadVDBFromFile(vpath, &grids, &vw, &ve) || grids.empty()) {
-          const std::string reason = !ve.empty() ? ve : (!vw.empty() ? vw :
-              "no supported voxel grids");
-          draw->skipped.push_back("Volume '" + volumePath + "': " + reason);
+        request.field_name = evalString(publicField, "fieldName");
+        if (request.field_name.empty()) {
+          request.field_name = request.binding;
+          request.field_name_defaulted = true;
+        }
+        request.field_index = evalInt(publicField, "fieldIndex", 0);
+        request.field_data_type =
+            evalString(publicField, "fieldDataType");
+        request.field_class = evalString(publicField, "fieldClass");
+        const std::string roleHint =
+            evalString(publicField, "vectorDataRoleHint");
+        if (!roleHint.empty()) request.vector_role_hint = roleHint;
+
+        lightusd::tydra::vol::ResolvedField resolved;
+        std::string resolveErr;
+        if (!lightusd::tydra::vol::ResolveWithFirstGridFallback(
+                fieldCache, request, &resolved, &resolveErr)) {
+          const std::string reason =
+              resolveErr.empty() ? "no matching grid" : resolveErr;
+          if (draw) {
+            draw->skipped.push_back("Volume '" + volumePath + "': " + reason);
+          }
           LOGW("next: Volume '%s' failed to load '%s': %s",
-               volumePath.c_str(), vpath.c_str(), reason.c_str());
+               volumePath.c_str(), request.file_path.c_str(), reason.c_str());
           continue;
         }
-        lightusd::usdVol::VDBGrid* g = nullptr;
-        for (auto& gg : grids)
-          if (gg.name == fieldName) { g = &gg; break; }
-        if (!g) g = &grids[0];
-        if (g->data.empty() || g->dim[0] <= 0 || g->dim[1] <= 0 || g->dim[2] <= 0)
+        for (const std::string& w : resolved.warnings)
+          LOGW("next: Volume '%s': %s", volumePath.c_str(), w.c_str());
+        // lusdview's volume pass marches a density field; a level set is an
+        // isosurface, so mesh it and draw the surface as geometry instead
+        // (the same thing lusdrender's CPU integrator shades directly).
+        if (resolved.level_set) {
+          std::vector<float> positions;
+          std::vector<int32_t> indices;
+          std::string meshErr;
+          if (!fieldCache.MeshLevelSet(resolved, /*max_cells=*/0, &positions,
+                                       &indices, &meshErr) ||
+              positions.empty() || indices.empty()) {
+            const std::string reason =
+                meshErr.empty() ? "empty level-set surface" : meshErr;
+            if (draw) {
+              draw->skipped.push_back("Volume '" + volumePath + "': " + reason);
+            }
+            LOGW("next: Volume '%s' level set '%s': %s", volumePath.c_str(),
+                 fieldPath.c_str(), reason.c_str());
+            continue;
+          }
+          // Positions are in the grid's index-to-world space (field_to_world
+          // is identity here). Bake the Volume prim's transform into them, as
+          // static next meshes are baked, then extend the scene bounds.
+          for (size_t v = 0; v + 2 < positions.size(); v += 3) {
+            const float p[3] = {positions[v], positions[v + 1], positions[v + 2]};
+            for (int c = 0; c < 3; ++c)
+              positions[v + size_t(c)] =
+                  p[0] * float(w16[0 * 4 + c]) + p[1] * float(w16[1 * 4 + c]) +
+                  p[2] * float(w16[2 * 4 + c]) + float(w16[3 * 4 + c]);
+            if (bounds) bounds->add(&positions[v]);
+          }
+          DrawVolumeCPU shading;
+          ResolveNextVolumeMaterial(stageHandle, volumePath, &shading);
+          int materialId = -1;
+          AppendGeneratedMaterial(draw, shading.albedo,
+                                  "__lusdview_volume_level_set", &materialId);
+          DrawMeshCPU dm;
+          dm.name = PublicString(lightusd_prim_name(publicVolume)) + "_sdf";
+          dm.absPath = fieldPath;
+          dm.purpose = ResolveNextPurpose(stageHandle, volumePath);
+          const float kIdentity[16] = {1, 0, 0, 0, 0, 1, 0, 0,
+                                       0, 0, 1, 0, 0, 0, 0, 1};
+          std::memcpy(dm.world, kIdentity, sizeof(kIdentity));
+          dm.vertices.resize(positions.size() / 3);
+          for (size_t v = 0; v < dm.vertices.size(); ++v) {
+            DrawVertex& dvtx = dm.vertices[v];
+            dvtx.px = positions[3 * v + 0];
+            dvtx.py = positions[3 * v + 1];
+            dvtx.pz = positions[3 * v + 2];
+            dvtx.nx = 0.0f;
+            dvtx.ny = 1.0f;
+            dvtx.nz = 0.0f;
+            dvtx.u = 0.0f;
+            dvtx.v = 0.0f;
+          }
+          // Area-weighted per-vertex normals from the isosurface triangles.
+          for (size_t f = 0; f + 2 < indices.size(); f += 3) {
+            const uint32_t a = static_cast<uint32_t>(indices[f + 0]);
+            const uint32_t b = static_cast<uint32_t>(indices[f + 1]);
+            const uint32_t c = static_cast<uint32_t>(indices[f + 2]);
+            if (a >= dm.vertices.size() || b >= dm.vertices.size() ||
+                c >= dm.vertices.size())
+              continue;
+            const DrawVertex& va = dm.vertices[a];
+            const DrawVertex& vb = dm.vertices[b];
+            const DrawVertex& vc = dm.vertices[c];
+            const float e1[3] = {vb.px - va.px, vb.py - va.py, vb.pz - va.pz};
+            const float e2[3] = {vc.px - va.px, vc.py - va.py, vc.pz - va.pz};
+            const float n[3] = {e1[1] * e2[2] - e1[2] * e2[1],
+                                e1[2] * e2[0] - e1[0] * e2[2],
+                                e1[0] * e2[1] - e1[1] * e2[0]};
+            for (uint32_t v : {a, b, c}) {
+              DrawVertex& dvtx = dm.vertices[v];
+              dvtx.nx += n[0];
+              dvtx.ny += n[1];
+              dvtx.nz += n[2];
+            }
+          }
+          for (DrawVertex& dvtx : dm.vertices) {
+            const float len = std::sqrt(dvtx.nx * dvtx.nx + dvtx.ny * dvtx.ny +
+                                        dvtx.nz * dvtx.nz);
+            if (len > 0.0f) {
+              dvtx.nx /= len;
+              dvtx.ny /= len;
+              dvtx.nz /= len;
+            } else {
+              dvtx.nx = 0.0f;
+              dvtx.ny = 1.0f;
+              dvtx.nz = 0.0f;
+            }
+          }
+          dm.indices.resize(indices.size());
+          for (size_t i = 0; i < indices.size(); ++i) {
+            dm.indices[i] = indices[i] < 0 ? 0u : static_cast<uint32_t>(indices[i]);
+          }
+          DrawSubmesh submesh;
+          submesh.indexOffset = 0;
+          submesh.indexCount = static_cast<uint32_t>(dm.indices.size());
+          submesh.materialId = materialId;
+          dm.submeshes.push_back(submesh);
+          FinalizeGeneratedMesh(&dm);
+          if (draw) {
+            draw->triangleCount += dm.indices.size() / 3;
+            draw->meshes.push_back(std::move(dm));
+          }
+          // Without field:density the first usable field is the medium.
+          if (!hasDensityRelationship) break;
           continue;
+        }
+
+        // Under a density budget the decode itself is capped (tinyvdb
+        // box-filters by the smallest stride that fits) instead of decoding
+        // the full grid and decimating it afterwards.
+        lightusd::usdVol::VDBReadOptions decode = vdbOptions;
+        if (densityBudgetBytes > 0 && densityBytesUsed) {
+          const size_t used = *densityBytesUsed;
+          const size_t remaining =
+              used < densityBudgetBytes ? densityBudgetBytes - used : 0;
+          if (remaining < sizeof(float)) {
+            if (draw) {
+              draw->skipped.push_back(
+                  "Volume '" + volumePath +
+                  "': density budget exhausted; grid skipped");
+            }
+            continue;
+          }
+          decode.max_voxels = remaining / sizeof(float);
+          decode.downsample = true;
+        }
+        lightusd::usdVol::VDBGrid grid;
+        std::string decodeWarn, decodeErr;
+        if (!fieldCache.TakeDense(resolved, decode, &grid, &decodeWarn,
+                                  &decodeErr) ||
+            grid.data.empty() || grid.dim[0] <= 0 || grid.dim[1] <= 0 ||
+            grid.dim[2] <= 0) {
+          const std::string reason =
+              "grid '" + resolved.grid.name + "' not loaded: " +
+              (decodeErr.empty() ? decodeWarn : decodeErr);
+          if (draw)
+            draw->skipped.push_back("Volume '" + volumePath + "': " + reason);
+          LOGW("next: Volume '%s': %s", volumePath.c_str(), reason.c_str());
+          continue;
+        }
 
         DrawVolumeCPU dv;
         dv.name = PublicString(lightusd_prim_name(publicVolume));
         for (int k = 0; k < 16; ++k) dv.world[k] = static_cast<float>(w16[k]);
-        // Transfer ownership out of the temporary VDB grid instead of copying
-        // a dense field while the decoded archive remains alive.
-        for (const auto& aux : grids) {
-          if (aux.name == "temperature") {
-            dv.temperatureField = ResampleNextVolumeField(aux, *g);
-          } else if (aux.name == "emission" || aux.name == "flame" ||
-                     aux.name == "heat") {
-            dv.emissionField = ResampleNextVolumeField(aux, *g);
-          }
+        // Auxiliary scalar grids of the same file (temperature / emission).
+        for (const char* auxName :
+             {"temperature", "emission", "flame", "heat"}) {
+          std::vector<float>* dst =
+              std::strcmp(auxName, "temperature") == 0
+                  ? &dv.temperatureField
+                  : &dv.emissionField;
+          if (!dst->empty()) continue;  // first matching alias wins
+          lightusd::tydra::vol::FieldRequest aux = request;
+          aux.binding = auxName;
+          aux.field_name = auxName;
+          aux.field_index = 0;
+          lightusd::tydra::vol::ResolvedField auxResolved;
+          if (!fieldCache.Resolve(aux, &auxResolved, nullptr)) continue;
+          // Resampled onto the density lattice: never decoded finer than it.
+          lightusd::usdVol::VDBReadOptions auxDecode = vdbOptions;
+          auxDecode.max_voxels =
+              size_t(grid.dim[0]) * size_t(grid.dim[1]) * size_t(grid.dim[2]);
+          auxDecode.downsample = true;
+          lightusd::usdVol::VDBGrid auxGrid;
+          if (!fieldCache.TakeDense(auxResolved, auxDecode, &auxGrid, nullptr,
+                                    nullptr))
+            continue;
+          *dst = ResampleNextVolumeField(auxGrid, grid);
         }
-        dv.density = std::move(g->data);
+        dv.density = std::move(grid.data);
+        double boxMin[3], boxMax[3];
+        if (!lightusd::usdVol::DenseGridBox(grid, boxMin, boxMax)) {
+          LOGW("next: Volume '%s': rotated VDB index map; drawing its "
+               "axis-aligned bound", volumePath.c_str());
+        }
         for (int a = 0; a < 3; ++a) {
-          dv.dim[a] = g->dim[a];
-          dv.aabbMin[a] = float(g->origin[a]) * float(g->voxel_size[a]) +
-                          float(g->world_translation[a]);
-          dv.aabbMax[a] = float(g->origin[a] + g->dim[a]) * float(g->voxel_size[a]) +
-                          float(g->world_translation[a]);
+          dv.dim[a] = grid.dim[a];
+          dv.aabbMin[a] = float(boxMin[a]);
+          dv.aabbMax[a] = float(boxMax[a]);
         }
-        dv.background = g->background;
+        dv.background = grid.background;
         ResolveNextVolumeMaterial(stageHandle, volumePath, &dv);
 
         if (densityBudgetBytes > 0 && densityBytesUsed) {
@@ -6481,6 +6695,9 @@ bool BuildNextVolumes(
         } else {
           draw->volumes.push_back(std::move(dv));
         }
+        // Without field:density the first usable field is the medium; the
+        // rest (velocity, temperature, ...) are not densities.
+        if (!hasDensityRelationship) break;
       }
     }
     const size_t childCount = lightusd_prim_child_count(publicVolume);

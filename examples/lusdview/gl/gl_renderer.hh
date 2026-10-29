@@ -105,6 +105,8 @@ class GLRenderer final : public Renderer {
     float albedo[3]{0.6f, 0.6f, 0.65f};
     float emission[3]{0, 0, 0};
     float background{0.0f};
+    bool isLevelSet{false};
+    float isovalue{0.0f};
   };
   struct GLMesh {
     GLuint vao{0}, vbo{0}, ebo{0}, jointVbo{0}, weightVbo{0};
@@ -460,6 +462,7 @@ class GLRenderer final : public Renderer {
   GLint uVolEmissionField_{-1}, uVolTemperatureField_{-1};
   GLint uVolHasEmissionField_{-1}, uVolHasTemperatureField_{-1};
   GLint uVolAlbedo_{-1}, uVolEmission_{-1}, uVolBackground_{-1};
+  GLint uVolIsLevelSet_{-1}, uVolIsovalue_{-1};
   std::vector<GLVolume> volumes_;
 
   // Offscreen target

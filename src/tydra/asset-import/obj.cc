@@ -144,7 +144,8 @@ std::array<double, 3> FaceNormal(const tobj_index* indices, size_t count,
   }
   return n;
 }
-Json RGB(const float* v) { return Json::array({v[0], v[1], v[2]}); }
+// Not `RGB`: <wingdi.h> defines that as a macro on Windows.
+Json ColorJSON(const float* v) { return Json::array({v[0], v[1], v[2]}); }
 }  // namespace
 
 Json MeshRefJSON(const Mesh& m, Reader& reader) {
@@ -186,7 +187,7 @@ Json MeshJSON(const Mesh& m) {
 }
 
 bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
-             bool triangulate, OBJ* obj, std::string* err) {
+             bool triangulate, OBJ* obj, std::string* err, bool collect_vertices) {
   if (!obj || text.size() > reader.options.max_input) {
     if (err) *err = "OBJ input limit exceeded or null output";
     return false;
@@ -302,8 +303,8 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
     Json mat{{"name", name},
              {"rgba", Json::array({m.diffuse[0], m.diffuse[1], m.diffuse[2],
                                    m.dissolve})},
-             {"specularColor", RGB(m.specular)},
-             {"emissiveColor", RGB(m.emission)},
+             {"specularColor", ColorJSON(m.specular)},
+             {"emissiveColor", ColorJSON(m.emission)},
              {"roughness", info.roughness
                                ? m.roughness
                                : float(std::sqrt(2.0 / (m.shininess + 2.0)))},
@@ -706,10 +707,20 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
       }
     }
   if (obj->meshes.empty()) {
-    if (err)
-      *err = triangulate ? "OBJ contains no polygon faces"
-                         : "OBJ contains no supported primitives";
-    return false;
+    if (!collect_vertices) {
+      if (err)
+        *err = triangulate ? "OBJ contains no polygon faces"
+                           : "OBJ contains no supported primitives";
+      return false;
+    }
+    if (!a.vertices.count) {
+      if (err) *err = "OBJ contains no vertices";
+      return false;
+    }
+    // Only a face-less file needs its positions: MJCF hulls them the way
+    // MuJoCo does. Files with faces do not pay for this copy.
+    if (!reader.ChargeArray(a.vertices.count, sizeof(float), err)) return false;
+    obj->vertices.assign(a.vertices.ptr, a.vertices.ptr + a.vertices.count);
   }
   return true;
 }

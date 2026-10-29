@@ -16,11 +16,12 @@ constexpr uint32_t kAllGroups = LIGHTUSD_VALIDATE_CORE | LIGHTUSD_VALIDATE_GEOM 
     LIGHTUSD_VALIDATE_RENDER | LIGHTUSD_VALIDATE_ARKIT;
 constexpr uint32_t kAllFlags = LIGHTUSD_VALIDATE_SAMPLES |
     LIGHTUSD_VALIDATE_REQUIRE_COMPLETE | LIGHTUSD_VALIDATE_NO_ASSET_CHECKS;
+uint32_t Bit(bool on, uint32_t bit) { return on ? bit : 0u; }
 uint32_t Groups(const n::ValidationOptions& o) {
-  return (o.core ? LIGHTUSD_VALIDATE_CORE : 0u) | (o.geom ? LIGHTUSD_VALIDATE_GEOM : 0u) |
-      (o.shade ? LIGHTUSD_VALIDATE_SHADE : 0u) | (o.lux ? LIGHTUSD_VALIDATE_LUX : 0u) |
-      (o.physics ? LIGHTUSD_VALIDATE_PHYSICS : 0u) | (o.render ? LIGHTUSD_VALIDATE_RENDER : 0u) |
-      (o.arkit ? LIGHTUSD_VALIDATE_ARKIT : 0u);
+  return Bit(o.core, LIGHTUSD_VALIDATE_CORE) | Bit(o.geom, LIGHTUSD_VALIDATE_GEOM) |
+      Bit(o.shade, LIGHTUSD_VALIDATE_SHADE) | Bit(o.lux, LIGHTUSD_VALIDATE_LUX) |
+      Bit(o.physics, LIGHTUSD_VALIDATE_PHYSICS) | Bit(o.render, LIGHTUSD_VALIDATE_RENDER) |
+      Bit(o.arkit, LIGHTUSD_VALIDATE_ARKIT);
 }
 lightusd_sv View(const std::string& text) { return {text.data(), text.size()}; }
 }  // namespace

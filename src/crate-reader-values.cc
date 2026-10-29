@@ -205,9 +205,12 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
     return false;
   }
 
-  const auto tyRet = crate::GetCrateDataType(rep.GetType());
-  if (!tyRet) {
-    PUSH_ERROR(tyRet.error());
+  // Hot path: only the type id is needed here, so validate it directly
+  // instead of materializing a CrateDataType (name + supports_array).
+  const int32_t type_id = rep.GetType();
+  if (!crate::IsKnownCrateDataTypeId(type_id)) {
+    PUSH_ERROR("Unknown or unsupported crate data type id: " +
+               std::to_string(type_id));
     return false;
   }
 
@@ -221,13 +224,13 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
     return false;
   }
 
-  const auto dty = tyRet.value();
-  DCOUT(crate::GetCrateDataTypeRepr(dty));
+  const auto dty = static_cast<crate::CrateDataTypeId>(type_id);
+  DCOUT(crate::GetCrateDataTypeRepr(crate::GetCrateDataType(type_id).value()));
 
   uint32_t d = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
   DCOUT("d = " << d);
 
-  switch (dty.dtype_id) {
+  switch (dty) {
     case crate::CrateDataTypeId::NumDataTypes:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID: {
       PUSH_ERROR("`Invalid` DataType.");
@@ -695,7 +698,7 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64_LIST_OP: {
       PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("ListOp data type `{}` cannot be inlined.",
-          crate::GetCrateDataTypeName(dty.dtype_id)));
+          crate::GetCrateDataTypeName(dty)));
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_VECTOR:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR:
@@ -710,7 +713,7 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_RELOCATES:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_VECTOR: {
       PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Data type `{}` cannot be inlined.",
-          crate::GetCrateDataTypeName(dty.dtype_id)));
+          crate::GetCrateDataTypeName(dty)));
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE:
@@ -722,7 +725,7 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       PUSH_ERROR(
           "Invalid data type(or maybe not supported in LightUSD yet) for "
           "Inlined value: " +
-          crate::GetCrateDataTypeName(dty.dtype_id));
+          crate::GetCrateDataTypeName(dty));
       return false;
     }
   }
@@ -1105,33 +1108,36 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
   }
 
   DCOUT("ValueRep type value = " << rep.GetType());
-  auto tyRet = crate::GetCrateDataType(rep.GetType());
-  if (!tyRet) {
-    // Unknown/invalid crate data type id from the file. PUSH_ERROR does NOT
-    // return, so calling tyRet.value() below would abort (bad_expected_access
-    // under -fno-exceptions) on a crafted rep.GetType(). Bail out cleanly.
-    PUSH_ERROR_AND_RETURN_TAG(kTag, tyRet.error());
+  // Hot path: only the type id is consulted below, so validate it directly
+  // instead of materializing a CrateDataType (name + supports_array) from the
+  // type table for every value. Unknown/invalid ids from a crafted file must
+  // still bail out cleanly (no expected::value() abort under -fno-exceptions).
+  const int32_t type_id = rep.GetType();
+  if (!crate::IsKnownCrateDataTypeId(type_id)) {
+    PUSH_ERROR_AND_RETURN_TAG(
+        kTag, "Unknown or unsupported crate data type id: " +
+                  std::to_string(type_id));
   }
 
-  const auto dty = tyRet.value();
+  const auto dty = static_cast<crate::CrateDataTypeId>(type_id);
 
 #define COMPRESS_UNSUPPORTED_CHECK(__dty)                                     \
   if (rep.IsCompressed()) {                                                   \
-    PUSH_ERROR("Compressed [" + crate::GetCrateDataTypeName(__dty.dtype_id) + \
+    PUSH_ERROR("Compressed [" + crate::GetCrateDataTypeName(__dty) + \
                "' data is not yet supported.");                               \
     return false;                                                             \
   }
 
 #define NON_ARRAY_UNSUPPORTED_CHECK(__dty)                                   \
   if (!rep.IsArray()) {                                                      \
-    PUSH_ERROR("Non array '" + crate::GetCrateDataTypeName(__dty.dtype_id) + \
+    PUSH_ERROR("Non array '" + crate::GetCrateDataTypeName(__dty) + \
                "' data is not yet supported.");                              \
     return false;                                                            \
   }
 
 #define ARRAY_UNSUPPORTED_CHECK(__dty)                                      \
   if (rep.IsArray()) {                                                      \
-    PUSH_ERROR("Array of '" + crate::GetCrateDataTypeName(__dty.dtype_id) + \
+    PUSH_ERROR("Array of '" + crate::GetCrateDataTypeName(__dty) + \
                "' data type is not yet supported.");                        \
     return false;                                                           \
   }
@@ -1142,14 +1148,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
   // Handle empty arrays: non-inlined array with payload=0 means no data was
   // written (Pixar uses this encoding for empty arrays like `string[] = []`).
   if (rep.IsArray() && offset == 0 && !rep.IsInlined()) {
-    auto tyRet0 = crate::GetCrateDataType(rep.GetType());
-    if (!tyRet0) {
-      PUSH_ERROR("Invalid type for empty array.");
-      return false;
-    }
-
     // Set a properly-typed empty array value
-    switch (tyRet0.value().dtype_id) {
+    switch (dty) {
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL:   value->Set(std::vector<bool>()); break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR:  value->Set(std::vector<uint8_t>()); break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT:    value->Set(std::vector<int32_t>()); break;
@@ -1182,7 +1182,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D: value->Set(std::vector<value::matrix4d>()); break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE: value->Set(std::vector<value::timecode>()); break;
       default:
-        DCOUT("Empty array: unhandled type " << crate::GetCrateDataTypeName(tyRet0.value().dtype_id));
+        DCOUT("Empty array: unhandled type " << crate::GetCrateDataTypeName(dty));
         break;  // leave as void for unknown/unhandled empty array types
     }
     return true;
@@ -1193,10 +1193,10 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     return false;
   }
 
-  switch (dty.dtype_id) {
+  switch (dty) {
     case crate::CrateDataTypeId::NumDataTypes:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID: {
-      DCOUT("dtype_id = " << std::to_string(uint32_t(dty.dtype_id)));
+      DCOUT("dtype_id = " << std::to_string(uint32_t(dty)));
       PUSH_ERROR("`Invalid` DataType.");
       return false;
     }
@@ -1532,13 +1532,13 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         return false;
       }
 
-      if (dty.dtype_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_SPECIFIER) {
+      if (dty == crate::CrateDataTypeId::CRATE_DATA_TYPE_SPECIFIER) {
         if (raw >= static_cast<uint32_t>(Specifier::Invalid)) {
           PUSH_ERROR("Invalid value for Specifier.");
           return false;
         }
         value->Set(static_cast<Specifier>(raw));
-      } else if (dty.dtype_id ==
+      } else if (dty ==
                  crate::CrateDataTypeId::CRATE_DATA_TYPE_PERMISSION) {
         if (raw >= static_cast<uint32_t>(Permission::Invalid)) {
           PUSH_ERROR("Invalid value for Permission.");
@@ -3603,8 +3603,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       // Should be STRING or DICTIONARY for UNREGISTERED_VALUE.
       if (local_dty.dtype_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING) {
-        COMPRESS_UNSUPPORTED_CHECK(local_dty)
-        ARRAY_UNSUPPORTED_CHECK(local_dty)
+        COMPRESS_UNSUPPORTED_CHECK(local_dty.dtype_id)
+        ARRAY_UNSUPPORTED_CHECK(local_dty.dtype_id)
 
         if (local_rep.IsInlined()) {
           uint32_t local_d = (local_rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
@@ -3635,8 +3635,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
       } else if (local_dty.dtype_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_DICTIONARY) {
-        COMPRESS_UNSUPPORTED_CHECK(local_dty)
-        ARRAY_UNSUPPORTED_CHECK(local_dty)
+        COMPRESS_UNSUPPORTED_CHECK(local_dty.dtype_id)
+        ARRAY_UNSUPPORTED_CHECK(local_dty.dtype_id)
 
         CustomDataType dict;
 
@@ -3858,7 +3858,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       PUSH_ERROR(
           "Invalid data type(or maybe not supported in LightUSD yet) for "
           "Uninlined value: " +
-          crate::GetCrateDataTypeName(dty.dtype_id));
+          crate::GetCrateDataTypeName(dty));
       return false;
     }
   }

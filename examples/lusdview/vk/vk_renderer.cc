@@ -3610,6 +3610,7 @@ struct VkVolumeUBO {
   float bmax[4];
   float albedo[4];    // .xyz albedo, .w densityScale
   float emission[4];  // .xyz emission, .w background
+  float params[4];    // .x 1 = level-set isosurface, .y isovalue
 };
 
 bool VulkanRenderer::createVolumePipeline(std::string* err) {
@@ -3810,6 +3811,8 @@ void VulkanRenderer::recordVolumePass(VkCommandBuffer cb, VkPipeline pipe) {
     ubo.bmax[3] = gv.hasTemperatureField ? 1.0f : 0.0f;
     ubo.albedo[3] = gv.densityScale;
     ubo.emission[3] = gv.background;
+    ubo.params[0] = gv.isLevelSet ? 1.0f : 0.0f;
+    ubo.params[1] = gv.isovalue;
     if (gv.uboMapped) std::memcpy(gv.uboMapped, &ubo, sizeof(ubo));
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, volumeLayout_, 0, 1,
                             &gv.set, 0, nullptr);
@@ -3837,6 +3840,8 @@ void VulkanRenderer::appendVolume(const DrawVolumeCPU& v) {
     gv.emission[a] = v.emission[a];
   }
   gv.densityScale = v.densityScale;
+  gv.isLevelSet = v.isLevelSet;
+  gv.isovalue = v.isovalue;
   gv.background = v.background;
   gv.hasEmissionField = v.emissionField.size() == v.density.size();
   gv.hasTemperatureField = v.temperatureField.size() == v.density.size();
@@ -3917,7 +3922,7 @@ void VulkanRenderer::appendVolume(const DrawVolumeCPU& v) {
   vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
   vci.image = gv.img;
   vci.viewType = VK_IMAGE_VIEW_TYPE_3D;
-  vci.format = VK_FORMAT_R32_SFLOAT;
+  vci.format = VK_FORMAT_R32G32B32A32_SFLOAT;
   vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   vci.subresourceRange.levelCount = 1;
   vci.subresourceRange.layerCount = 1;

@@ -275,6 +275,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   if(${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 17)
     set(LUSDRENDER_CXX_FLAGS "${LUSDRENDER_CXX_FLAGS} -Wno-switch-default")
   endif()
+  # libc++ annotates std::mutex, so next headers (pcp/layer-registry.hh) trip
+  # -Wthread-safety-negative on macOS; the core library suppresses it too.
+  if(LIGHTUSD_HAS_WTHREAD_SAFETY_NEGATIVE)
+    set(LUSDRENDER_CXX_FLAGS "${LUSDRENDER_CXX_FLAGS} -Wno-thread-safety-negative")
+  endif()
   if(NOT LIGHTUSD_NO_WERROR)
     set(LUSDRENDER_CXX_FLAGS "${LUSDRENDER_CXX_FLAGS} -Werror")
   endif()

@@ -214,11 +214,88 @@ remain; VolumeFieldBase / VolumeFieldAsset are abstract bases)
 > (Volume, FieldAsset, OpenVDBAsset, Field3DAsset) are GPrim-derived and defined
 > in `usdGeom.hh`, not placeholder structs.
 
-The runtime OpenVDB adapter is backed by the current vendored TinyVDB C API and
-loads scalar bool/int/half/float/double grids from OpenVDB 1.x--13.x files.
-Vector grids are exposed to the existing scalar volume renderer as magnitude;
-PointDataGrid is diagnosed and skipped. The external corpus regression is
-`tests/run-tinyvdbio-corpus.sh`.
+The runtime OpenVDB adapter (`src/usdVol.hh`) is backed by the vendored
+TinyVDB C API:
+- **Value types:** bool, mask, int32, int64, half, float and double grids from
+  OpenVDB 1.x--13.x files.
+- **Vector grids:** vec3i/f/d, as magnitude or, with
+  `VDBReadOptions::vector_components`, as three channels.
+- **Transforms:** any linear map, reported as an index-to-world matrix.
+- **Field reads:** `ReadVDBGrid` decodes only the grid a field selects
+  (`fieldName`, then `fieldIndex` among equal names), optionally downsampled to
+  a voxel budget. `ReadVDBGridInfo` lists grids, class and bounds from headers
+  alone.
+- **Point grids:** PointDataGrid is diagnosed and skipped.
+- **Agreement with OpenVDB:** dense values equal OpenVDB's on all 20 float
+  grids of the tinyvdbio corpus.
+  - Active tiles now carry their values; they used to read the background, as
+    in `suzanne.vdb`'s interior.
+  - Half-stored subnormals decode exactly; `smoke.vdb`'s faint densities used
+    to come out at half their value.
+- **Corpus regression:** `tests/run-tinyvdbio-corpus.sh`, also the
+  `usdvol-vdb-corpus` ctest. Set `LIGHTUSD_TINYVDBIO_DATA_DIR` or
+  `$TINYVDBIO_DATA_DIR` to run it; it is skipped otherwise.
+
+**Rendering (tydra/next).** `RenderScene::volumes` holds one `RenderVolume`
+per Volume.
+- **Fields:** each `field:<name>` relationship with exactly one (forwarded)
+  target, resolved by `src/tydra/vol` at the scene time. Placement is the
+  field prim's transform times the grid transform.
+- **Extent:** authored, or else the union of the fields' world boxes.
+- **Material:** volume shader constants.
+- **Voxels:** decoded on demand through `RenderScene::volume_cache`.
+- **NanoVDB and sampling:** the same cache converts a sparse grid to one
+  NanoVDB buffer (`ReadVDBGridNanoVDB`) and samples world-space points through
+  tinyvdb's sparse sampler (nearest or trilinear, scalar or vec3), per scene
+  time. The NanoVDB info's `index_to_world` is the field's full map (field
+  prim transform included, as in the field info), stored transposed
+  (column vectors); the buffer's embedded map is the file's grid map only. A
+  grid the cache already decoded for sampling or meshing is converted
+  without decoding the file again.
+- **Grid selection:** `fieldName`, then `fieldIndex` among equal names. The
+  render consumers fall back to the file's first usable grid only when
+  `fieldName` is not authored and no grid is named after the relationship;
+  a named grid that fails to decode is an error, never replaced.
+- **Limits:** field files are read only when they are regular files
+  (16 GiB cap, 1 GiB on 32-bit/WASM). Dense decodes are capped before they
+  allocate (cells; 640^3 by default, 384^3 on 32-bit/WASM); under a budget
+  (`FieldCache` byte budget, `RenderSceneConverterConfig::volume_max_voxels`,
+  lusdrender/lusdview's volume budget) an oversized grid is box-filtered by
+  the smallest stride that fits while it is decoded.
+- **Level sets:** `fieldClass = "levelSet"` fields are shaded as an isosurface
+  (sphere traced, gradient normal, matte shading) by lusdrender's CPU
+  integrator, in front of scene geometry only; `-volumeLevelSet fog` marches
+  them as `density = clamp(-sdf)` instead. Fog-class fields keep the
+  emission/absorption march. lusdview's raster volume pass consumes density,
+  so its next loader meshes a level-set field through
+  `FieldCache::MeshLevelSet` and draws the surface as geometry (with the
+  volume's albedo as a generated material); the legacy loader path does not.
+- **ParticleFields:** `RenderScene::particle_fields` applies the schema's
+  array rules.
+- **Access:** C API `lightusd_render_volume_*` (including
+  `..._field_nanovdb` and `..._field_sample`) and
+  `lightusd_render_particle_data_*`, Python `RenderScene.volumes()` /
+  `volume_dense()` / `volume_nanovdb()` / `volume_sample()` /
+  `particle_fields()`, and next wasm `getVolumes` / `getVolumeDense` /
+  `getVolumeNanovdb` / `getVolumeSample` / `getParticleField`.
+
+**Authoring.** `lightusd.volume` provides:
+- `inspect_vdb`;
+- `create_volume_from_vdb`, which authors an OpenVDBAsset per grid with
+  `fieldIndex` for repeated names, `fieldDataType`, `fieldClass` and
+  `extent`;
+- `compute_extent`;
+- `field_paths` / `set_field` / `block_field`;
+- `python -m lightusd.volume inspect|create`.
+
+The C entry point is `lightusd_vdb_inspect`.
+
+**Validation.** On top of the existing checks:
+- `vol.volume.fieldTargetCount`: exactly one target;
+- `vol.volume.fieldTargetType`: same-layer targets must be VolumeFieldBase;
+- `vol.particleField.shCount` / `shDegree`.
+
+The capability ledger lists usdVol as a required domain.
 
 ---
 

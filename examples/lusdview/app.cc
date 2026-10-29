@@ -50,6 +50,7 @@
 #include "lightrt_mtlx_bridge.hh"
 #include "mesh_build.hh"
 #include "next_scene_loader.hh"
+#include "raster_lighting.hh"  // PrepareRasterGeometryLightSamples (GL-only builds)
 #include "scene_validation.hh"
 #include "skinning.hh"
 #include "texture_residency_policy.hh"

@@ -1,3 +1,4 @@
+#include "optix_launch_abi.hh"
 // SPDX-License-Identifier: Apache-2.0
 #include "cuda_raytracer.hh"
 
@@ -89,8 +90,12 @@ struct alignas(8) OptixPreviewParams {
   uint32_t pathSeed;
   uint32_t numLights;
   uint32_t numInstances;
+  uintptr_t volumeDensity;
+  uintptr_t volumes;
+  uint32_t numVolumes;
+  uint32_t volumePadding;
 };
-static_assert(sizeof(OptixPreviewParams) == 312,
+static_assert(sizeof(OptixPreviewParams) == kOptixLaunchParamsBytes,
               "OptiX launch parameter ABI changed");
 #endif
 
@@ -412,6 +417,7 @@ void CudaRayTracer::freeScene() {
   F(dPointOrder_); F(dPointBvh_); F(dPointChunks_);
   F(dPointDepth_);
   numVols_ = 0;
+  sceneAllLevelSetVolumes_ = true;
   numMats_ = 0;
   numLights_ = 0;
   numTextures_ = 0;
@@ -716,6 +722,9 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
   numLights_ = hs.numLights;
   numTextures_ = hs.numTextures;
   numVols_ = hs.numVols;
+  sceneAllLevelSetVolumes_ = true;
+  for (const HostVolParam& volume : hs.volParams)
+    if (volume.bmin[3] <= .5f) sceneAllLevelSetVolumes_ = false;
   if (hs.pointCount > static_cast<size_t>(std::numeric_limits<int>::max())) {
     if (err) *err = "CUDA: Gaussian point count exceeds kernel limit (" +
                     std::to_string(hs.pointCount) + ")";
@@ -1533,8 +1542,8 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
       optixFallbackReason_ = "selected AOV is not implemented by OptiX";
     } else if (pointCount_ != 0) {
       optixFallbackReason_ = "analytic point/curve carriers require software BVH";
-    } else if (numVols_ != 0) {
-      optixFallbackReason_ = "volume traversal requires software BVH";
+    } else if (numVols_ != 0 && !sceneAllLevelSetVolumes_) {
+      optixFallbackReason_ = "density volume traversal uses software BVH";
     } else if (!optixReady) {
       optixFallbackReason_ = optixStatus_.empty()
                                  ? "OptiX pipeline or acceleration is unavailable"
@@ -1543,7 +1552,8 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   }
   const bool useOptix = rtBackend_ == CudaRtBackend::Optix ||
                         (rtBackend_ == CudaRtBackend::Auto && optixCompatible &&
-                         optixReady && pointCount_ == 0 && numVols_ == 0);
+                         optixReady && pointCount_ == 0 &&
+                         (numVols_ == 0 || sceneAllLevelSetVolumes_));
   if (useOptix) {
 #if defined(LUSDVIEW_HAVE_OPTIX)
     if (!optixIasHandle_ || !dOptixSbt_ || !optixRuntime_.pipelineReady()) {
@@ -1601,6 +1611,9 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
     params.pathSeed = pathTrace ? pathTrace->seed : 0u;
     params.numLights = static_cast<uint32_t>(numLights_);
     params.numInstances = static_cast<uint32_t>(instCount_);
+    params.volumeDensity = dVolDens_;
+    params.volumes = dVolParams_;
+    params.numVolumes = static_cast<uint32_t>(numVols_);
     params.width = static_cast<uint32_t>(w);
     params.height = static_cast<uint32_t>(h);
     params.background = background;

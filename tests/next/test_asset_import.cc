@@ -2,8 +2,15 @@
 #include <cassert>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
+#if defined(__linux__)
+#include <pthread.h>
+#endif
+#include <string>
 
 #include "c-api/lightusd-import-c.h"
 #include "minijson.hh"
@@ -126,6 +133,49 @@ int main() {
   lightusd_string_destroy(text);
   lightusd_stage_destroy(stage);
 
+  // The importer can approximate reduced flexcomp DOFs and skip interpolated
+  // raw flexes, but preserve mode must retain the original non-executable XML.
+  const char* reduced_flexcomp =
+      "<mujoco><worldbody><flexcomp name='radial' type='grid' dim='2' "
+      "count='2 2 1' spacing='.1 .1 .1' dof='radial'/></worldbody></mujoco>";
+  lightusd_import_options_init(&options);
+  options.format = LIGHTUSD_IMPORT_MJCF;
+  options.settings_json = "{\"profile\":\"newton\",\"unsupported_policy\":\"preserve\"}";
+  assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(reduced_flexcomp),
+      std::strlen(reduced_flexcomp), "memory:reduced-flexcomp.xml", &options, &stage) ==
+      LIGHTUSD_OK);
+  report = Report(stage);
+  assert(report["features"][size_t(0)]["disposition"].get<std::string>() == "preserved");
+  assert(lightusd_stage_export_usda(stage, &text) == LIGHTUSD_OK);
+  auto preserved = lightusd_string_view(text);
+  const std::string reduced_usda(preserved.data, preserved.len);
+  assert(reduced_usda.find("lightusdImportUnsupported") != std::string::npos);
+  assert(reduced_usda.find("dof") != std::string::npos &&
+         reduced_usda.find("radial") != std::string::npos);
+  lightusd_string_destroy(text);
+  lightusd_stage_destroy(stage);
+
+  const char* interpolated_flex = R"(<mujoco><worldbody>
+    <body name="v0"/><body name="v1"/>
+  </worldbody><deformable><flex name="interpolated" body="v0 v1"
+    vertex="0 0 0 1 0 0" element="0 1" dim="1" node="0 1" dof="0 1"/>
+  </deformable></mujoco>)";
+  assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(interpolated_flex),
+      std::strlen(interpolated_flex), "memory:interpolated-flex.xml", &options, &stage) ==
+      LIGHTUSD_OK);
+  report = Report(stage);
+  assert(report["features"][size_t(0)]["disposition"].get<std::string>() == "preserved");
+  assert(!lightusd_prim_is_valid(
+      lightusd_stage_prim_at_path(stage, "/World/Deformables/interpolated")));
+  assert(lightusd_stage_export_usda(stage, &text) == LIGHTUSD_OK);
+  preserved = lightusd_string_view(text);
+  const std::string interpolated_usda(preserved.data, preserved.len);
+  assert(interpolated_usda.find("lightusdImportUnsupported") != std::string::npos);
+  assert(interpolated_usda.find("node") != std::string::npos &&
+         interpolated_usda.find("dof") != std::string::npos);
+  lightusd_string_destroy(text);
+  lightusd_stage_destroy(stage);
+
   // Newton profile paths in one model (also the sanitizer target): inferred
   // inertia, stacked joints, expanded actuators, sites below bodies, every
   // equality kind and physics materials; then the legacy and openusd profiles.
@@ -233,5 +283,151 @@ int main() {
                                   "memory:cable.xml", &old_options, &stage) == LIGHTUSD_OK);
     lightusd_stage_destroy(stage);
   }
+  // Hostile inputs fail cleanly and quickly instead of expanding, spinning or
+  // reading non-finite data.
+  {
+    lightusd_import_options limits;
+    lightusd_import_options_init(&limits);
+    limits.format = LIGHTUSD_IMPORT_MJCF;
+    auto rejected = [&](const std::string& xml, uint64_t max_memory = 0) {
+      lightusd_import_options o = limits;
+      if (max_memory) o.max_memory_bytes = max_memory;
+      lightusd_stage* s = nullptr;
+      const lightusd_status st = lightusd_import_memory(
+          reinterpret_cast<const uint8_t*>(xml.data()), xml.size(), "memory:bad.xml", &o, &s);
+      if (s) lightusd_stage_destroy(s);
+      return st != LIGHTUSD_OK && !s;
+    };
+    // An empty <replicate> still adds one <frame> per copy.
+    assert(rejected("<mujoco><worldbody><replicate count='2000000'/></worldbody></mujoco>"));
+    assert(rejected("<mujoco><worldbody><flexcomp name='f' type='grid' dim='3' "
+                    "count='2 2 2' spacing='.1 .1 .1' dof='trilnear'/>"
+                    "</worldbody></mujoco>"));
+    // Cable composites share the expansion budget (each is 512 vertices).
+    std::string cables = "<mujoco><worldbody>";
+    for (int i = 0; i < 300; ++i)
+      cables += "<body name='h" + std::to_string(i) + "'><composite prefix='c" + std::to_string(i) +
+                "' type='cable' curve='s' count='512 1 1' size='1'><geom type='capsule' "
+                "size='.001'/></composite></body>";
+    cables += "</worldbody></mujoco>";
+    assert(rejected(cables));
+    // A pin range far outside the lattice does not iterate it.
+    assert(rejected("<mujoco><worldbody><flexcomp name='f' type='grid' dim='2' count='3 3 1' "
+                    "spacing='.1 .1 .1'><pin gridrange='0 0 2147483647 2'/></flexcomp>"
+                    "</worldbody></mujoco>"));
+    for (const char* pin : {"<pin id='1.5'/>", "<pin id='2147483648'/>",
+                            "<pin range='0'/>", "<pin grid='0'/>",
+                            "<pin gridrange='0 0 1'/>", "<pin range='99 -1'/>",
+                            "<pin gridrange='99 0 -1 2'/>"}) {
+      const std::string bad = std::string("<mujoco><worldbody><flexcomp name='f' type='grid' ") +
+          "dim='2' count='3 3 1' spacing='.1 .1 .1'>" + pin +
+          "</flexcomp></worldbody></mujoco>";
+      assert(rejected(bad));
+    }
+    // Connectivity is integral: truncating 2.5 would silently turn a bad
+    // direct triangle into a different, otherwise valid triangle.
+    for (const char* elements : {"0 1 2.5", "0 1 2147483648", "0 1 -1"}) {
+      const std::string bad = std::string("<mujoco><worldbody><flexcomp name='f' type='direct' ") +
+          "dim='2' point='0 0 0 1 0 0 0 1 0' element='" + elements +
+          "'/></worldbody></mujoco>";
+      assert(rejected(bad));
+    }
+    const char* direct = "<mujoco><worldbody><flexcomp name='f' type='direct' dim='2' "
+                         "point='0 0 0 1 0 0 0 1 0' element='0 1 2'/>"
+                         "</worldbody></mujoco>";
+    lightusd_stage* direct_stage = nullptr;
+    assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(direct), std::strlen(direct),
+                                  "memory:direct.xml", &limits, &direct_stage) == LIGHTUSD_OK);
+    assert(direct_stage);
+    lightusd_stage_destroy(direct_stage);
+    // MuJoCo combines pin attributes across elements before parsing tuples.
+    const char* split_pins = "<mujoco><worldbody><flexcomp name='f' type='grid' "
+        "dim='2' count='3 3 1' spacing='.1 .1 .1'><pin range='0'/><pin range='1'/>"
+        "<pin grid='1'/><pin grid='2'/><pin gridrange='2 0'/><pin gridrange='2 1'/>"
+        "<pin range='2 1' gridrange='1 2 0 1'/>"
+        "</flexcomp></worldbody></mujoco>";
+    lightusd_stage* pin_stage = nullptr;
+    assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(split_pins),
+                                  std::strlen(split_pins), "memory:pins.xml", &limits,
+                                  &pin_stage) == LIGHTUSD_OK);
+    auto pins = lightusd_stage_prim_at_path(pin_stage, "/World/Deformables/f_pins");
+    assert(lightusd_prim_is_valid(pins));
+    lightusd_value_view pin_indices{};
+    assert(lightusd_attr_get(pins, "physics:indices0", &pin_indices) == LIGHTUSD_OK);
+    const int32_t expected_pins[] = {0, 1, 5, 6, 7};
+    assert(pin_indices.count == 5 &&
+           std::memcmp(pin_indices.data, expected_pins, sizeof(expected_pins)) == 0);
+    lightusd_stage_destroy(pin_stage);
+    // A 10M-point lattice is charged before it is built.
+    assert(rejected("<mujoco><worldbody><flexcomp name='f' type='grid' dim='3' "
+                    "count='215 215 215' spacing='.1 .1 .1'/></worldbody></mujoco>",
+                    64ull << 20));
+    // A binary STL with a NaN vertex is rejected, not welded into the mesh.
+    const char* tmp = std::getenv("TMPDIR");
+    const std::string dir = (tmp && *tmp) ? tmp : "/tmp";
+    const std::string stl = dir + "/lightusd_nan_" + std::to_string(reinterpret_cast<uintptr_t>(&limits)) + ".stl";
+    const std::string xml = stl.substr(0, stl.size() - 4) + ".xml";
+    {
+      unsigned char bytes[84 + 50] = {};
+      const uint32_t one = 1;
+      std::memcpy(bytes + 80, &one, 4);
+      const float v[9] = {0, 0, 0, 1, 0, 0, 0, std::nanf(""), 0};
+      std::memcpy(bytes + 84 + 12, v, sizeof(v));
+      FILE* f = std::fopen(stl.c_str(), "wb");
+      const size_t wrote = f ? std::fwrite(bytes, 1, sizeof(bytes), f) : 0;
+      assert(wrote == sizeof(bytes));
+      if (f) std::fclose(f);
+      const std::string model = "<mujoco><asset><mesh name='m' file='" + stl +
+                                "'/></asset><worldbody><geom type='mesh' mesh='m'/></worldbody></mujoco>";
+      f = std::fopen(xml.c_str(), "wb");
+      const size_t wrote_xml = f ? std::fwrite(model.data(), 1, model.size(), f) : 0;
+      assert(wrote_xml == model.size());
+      if (f) std::fclose(f);
+    }
+    lightusd_stage* s = nullptr;
+    const lightusd_status nan_status = lightusd_import_file(xml.c_str(), &limits, &s);
+    assert(nan_status != LIGHTUSD_OK && !s);
+    assert(std::string(lightusd_last_error()).find("not finite") != std::string::npos);
+    std::remove(stl.c_str());
+    std::remove(xml.c_str());
+  }
+#if defined(__linux__)
+  // The walkers are iterative: a 1000-deep body chain plus a 512-vertex cable
+  // imports on a 512 KB thread stack.
+  {
+    struct Job {
+      std::string xml, error;
+      lightusd_status status = LIGHTUSD_OK;
+    } job;
+    job.xml = "<mujoco><worldbody>";
+    for (int i = 0; i < 1000; ++i) job.xml += "<body name='b" + std::to_string(i) + "'><geom size='.01'/>";
+    job.xml += "<composite type='cable' curve='s' count='512 1 1' size='1'><geom type='capsule' "
+               "size='.001'/></composite>";
+    for (int i = 0; i < 1000; ++i) job.xml += "</body>";
+    job.xml += "</worldbody></mujoco>";
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 512 * 1024);
+    pthread_t thread;
+    const int created = pthread_create(&thread, &attr, [](void* arg) -> void* {
+      auto* j = static_cast<Job*>(arg);
+      lightusd_import_options o;
+      lightusd_import_options_init(&o);
+      o.format = LIGHTUSD_IMPORT_MJCF;
+      o.max_depth = 1024;
+      lightusd_stage* s = nullptr;
+      j->status = lightusd_import_memory(reinterpret_cast<const uint8_t*>(j->xml.data()),
+                                         j->xml.size(), "memory:deep.xml", &o, &s);
+      j->error = lightusd_last_error();  // per thread
+      if (s) lightusd_stage_destroy(s);
+      return nullptr;
+    }, &job);
+    assert(created == 0);
+    if (created == 0) pthread_join(thread, nullptr);
+    pthread_attr_destroy(&attr);
+    if (job.status != LIGHTUSD_OK) std::cerr << job.error << "\n";
+    assert(job.status == LIGHTUSD_OK);
+  }
+#endif
   std::cout << "Native import C API tests passed\n";
 }

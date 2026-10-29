@@ -442,7 +442,8 @@ static PyObject* Resolver_is_context_dependent(PyObject* self, PyObject* args) {
       lightusd_asset_resolver_is_context_dependent(r->resolver, path));
 }
 
-static PyObject* Resolver_get_current_context(PyObject* self, void*) {
+static PyObject* Resolver_get_current_context(PyObject* self, void* closure) {
+  (void)closure;
   LightUSDResolver* r = resolver_self(self);
   lightusd_resolver_context* context = NULL;
   const lightusd_status status =
@@ -525,7 +526,8 @@ static PyObject* Resolver_bind_context(PyObject* self, PyObject* args,
   return obj;
 }
 
-static PyObject* Resolver_cache_scope(PyObject* self, PyObject*) {
+static PyObject* Resolver_cache_scope(PyObject* self, PyObject* unused) {
+  (void)unused;
   lightusd_state* st = lightusd_state_from_obj(self);
   PyObject* obj = lightusd_alloc(st->ResolverCacheScopeType);
   if (!obj) return NULL;
@@ -725,7 +727,8 @@ static PyObject* Resolver_dependency_report(PyObject* self, PyObject* args) {
   return Py_BuildValue("(Ni)", report, complete ? 1 : 0);
 }
 
-static PyObject* Resolver_get_memory_stats(PyObject* self, void*) {
+static PyObject* Resolver_get_memory_stats(PyObject* self, void* closure) {
+  (void)closure;
   LightUSDResolver* r = resolver_self(self);
   size_t count = 0, bytes = 0, limit = 0;
   const lightusd_status status = lightusd_asset_resolver_get_memory_stats(
@@ -956,7 +959,8 @@ static void Binding_dealloc(PyObject* self) {
   resolver_type_free(self);
 }
 
-static PyObject* Binding_enter(PyObject* self, PyObject*) {
+static PyObject* Binding_enter(PyObject* self, PyObject* unused) {
+  (void)unused;
   LightUSDResolverBinding* b = (LightUSDResolverBinding*)self;
   if (b->bound) {
     Py_INCREF(self);
@@ -980,7 +984,8 @@ static PyObject* Binding_enter(PyObject* self, PyObject*) {
   return self;
 }
 
-static PyObject* Binding_exit(PyObject* self, PyObject*) {
+static PyObject* Binding_exit(PyObject* self, PyObject* unused) {
+  (void)unused;
   LightUSDResolverBinding* b = (LightUSDResolverBinding*)self;
   if (b->bound && b->owner && b->context) {
     LightUSDResolver* r = (LightUSDResolver*)b->owner;
@@ -1026,7 +1031,8 @@ static void Cache_dealloc(PyObject* self) {
   resolver_type_free(self);
 }
 
-static PyObject* Cache_enter(PyObject* self, PyObject*) {
+static PyObject* Cache_enter(PyObject* self, PyObject* unused) {
+  (void)unused;
   LightUSDResolverCache* c = (LightUSDResolverCache*)self;
   if (c->scope) {
     Py_INCREF(self);
@@ -1047,7 +1053,8 @@ static PyObject* Cache_enter(PyObject* self, PyObject*) {
   return self;
 }
 
-static PyObject* Cache_exit(PyObject* self, PyObject*) {
+static PyObject* Cache_exit(PyObject* self, PyObject* unused) {
+  (void)unused;
   LightUSDResolverCache* c = (LightUSDResolverCache*)self;
   if (c->scope) {
     lightusd_resolver_cache_scope_destroy(c->scope);

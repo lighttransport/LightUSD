@@ -34,6 +34,7 @@ struct RenderContext {
   std::vector<float> tri_normals;  // 9 floats/tri (per-corner normals); empty if none
   std::vector<VolumeData> volumes;  // UsdVol volumes (OpenVDB) for raymarching
   Bounds bounds;
+  Bounds geometry_bounds;
   RTPreviewStats stats;
   lrt_tri_scene *scene{nullptr};  // owned flat BVH (no-instance path)
   std::vector<TriangleSceneChunk> triangle_chunks;
@@ -332,6 +333,7 @@ bool LoadProgress(float progress, void *);
 // ---- next-loader / driver (defined in lusdrender.cc for now) ----
 bool BuildRenderContext(const Options &opt, RenderContext &ctx);
 bool ExtractAndBuildBVH(RenderContext &ctx, double time);
+void RefreshVolumesNext(RenderContext &ctx, double time);
 bool BuildNextGaussianEllipses(const lightusd::next::Stage &stage,
                                RenderContext &ctx, double time,
                                bool defer_gpu_bvh = false);
@@ -538,14 +540,6 @@ size_t CollectRTInstancePlacementsNext(const lightusd::next::Stage &stage,
                                        const std::vector<std::string> &mask,
                                        const RtInstanceSink &sink,
                                        size_t max_placements);
-
-void CollectVolumesNext(const lightusd::next::Stage &stage,
-                        const lightusd::next::UsdPrim &prim,
-                        const matrix4d &parent_world, double time,
-                        const std::string &baseDir,
-                        std::vector<VolumeData> *out,
-                        size_t max_density_bytes = 0,
-                        size_t *density_bytes_used = nullptr);
 
 float ReadCamFloatNext(const lightusd::next::UsdPrim &prim, const char *name,
                        float fallback);

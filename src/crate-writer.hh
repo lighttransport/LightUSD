@@ -465,6 +465,12 @@ private:
 
   /// UsdVol: extract Volume `field:*` relationships
   bool ExtractVolumeProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  /// UsdVol: extract VolumeFieldBase inherited attributes only (none of its own)
+  bool ExtractVolumeFieldBaseProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  /// UsdVol: extract FieldBase (deprecated) inherited attributes only
+  bool ExtractFieldBaseProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  /// UsdVol: extract VolumeFieldAsset attributes (filePath, fieldName, ...)
+  bool ExtractVolumeFieldAssetProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
   /// UsdVol: extract FieldAsset attributes (filePath, fieldName, ...)
   bool ExtractFieldAssetProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
   /// UsdVol: extract OpenVDBAsset attributes
@@ -635,6 +641,20 @@ private:
   /// this the typed MaterialX OpenPBR inputs are dropped on stage->USDC write.
   bool AddMtlxOpenPBRSurfaceInputSpecs(const MtlxOpenPBRSurface* surface, const Path& prim_path, std::string* err);
 
+  /// Same for the plain (non-MaterialX) OpenPBRSurface node. It carries the
+  /// identical input set, so both share AddOpenPBRInputSpecs.
+  bool AddOpenPBRSurfaceInputSpecs(const OpenPBRSurface* surface, const Path& prim_path, std::string* err);
+
+  /// Shared body of the two writers above (defined in sconv-shader.cc).
+  template <typename SurfaceT>
+  bool AddOpenPBRInputSpecs(const SurfaceT* surface, const Path& prim_path,
+                            std::string* err);
+
+  /// Add MaterialX standard_surface shader input specs (info:id
+  /// `ND_standard_surface_surfaceshader` and `MtlxAutodeskStandardSurface`).
+  bool AddMtlxAutodeskStandardSurfaceInputSpecs(const MtlxAutodeskStandardSurface* surface,
+                                                const Path& prim_path, std::string* err);
+
   /// Add material binding relationships as separate relationship specs (called after Prim spec is added)
   /// Handles material:binding, material:binding:preview, and material:binding:full relationships
   bool AddMaterialBindingSpecs(const Prim& prim, const Path& prim_path, std::string* err);
@@ -786,6 +806,20 @@ private:
   /// as a Token[] array pxr's hierarchy traversal cannot use them.
   crate::ValueRep PackTokenVectorValue(const std::vector<value::token>& tokens,
                                        std::string* err);
+
+  /// PackTokenVectorValue with payload reuse: the same token-index list (the
+  /// `properties` / `primChildren` / `variantChildren` fields) is written once
+  /// and shared by every spec that carries it.
+  ///
+  /// These fields bypass PackValue's value dedup (they are packed as the
+  /// dedicated uncompressed TokenVector type), so without this cache every prim
+  /// got its own copy of an identical name list. That cost 1 field per prim,
+  /// and because identical prims then had distinct FIELDSETS, their fieldset
+  /// offsets stopped repeating -- which is exactly the pattern the SPECS
+  /// section's integer compression feeds on. A 4000-mesh test layer came out
+  /// 31% larger than pxr's and its fieldset index column was 17x pxr's.
+  crate::ValueRep PackTokenVectorValueDeduped(
+      const std::vector<value::token>& tokens, std::string* err);
 
   /// Pack a StringVector metadata value (e.g. `subLayers`) into ValueRep.
   crate::ValueRep PackStringVectorValue(const std::vector<std::string>& strs,
@@ -960,6 +994,20 @@ private:
   /// If compression fails or expands data, original data is kept
   bool CompressData(const char* input, size_t inputSize,
                     std::vector<char>* compressed, std::string* err);
+
+  /// Write an uncompressed uint32 array (count + raw elements).
+  ///
+  /// Required for the "index array" value types -- string[], asset[] and
+  /// token[] store table indices, and pxr's writer only ever compresses
+  /// *numeric* element types: `_WritePossiblyCompressedArray` has overloads
+  /// for int/uint/int64/uint64 and for half/float/double, and everything else
+  /// (including TfToken / std::string / SdfAssetPath arrays) falls through to
+  /// `_WriteUncompressedArray`. pxr's reader mirrors that: those types ignore
+  /// the ValueRep compressed bit, so a Usd_IntegerCompression stream there is
+  /// read back as raw indices and silently corrupts every array of >= 16
+  /// strings/tokens/assets.
+  int64_t WriteIndexArray32(const uint32_t* data, uint64_t count,
+                            const char* typeName, std::string* err);
 
   /// Write a compressed integer array (32-bit) using Usd_IntegerCompression.
   /// If compression fails or count < 16, writes uncompressed.
@@ -1169,6 +1217,10 @@ private:
   size_t GetValueDedupBudgetBytes() const;
 
   std::unordered_multimap<size_t, ValueDedupEntry> value_dedup_map_;
+
+  /// TokenVector payloads already written, keyed by their raw token-index
+  /// bytes (see PackTokenVectorValueDeduped).
+  std::unordered_map<std::string, crate::ValueRep> token_vector_rep_cache_;
   size_t value_dedup_bytes_ = 0;
 
   // Finalize phase profiling, enabled by LIGHTUSD_CRATE_PROFILE=1 (stderr

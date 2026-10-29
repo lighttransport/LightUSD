@@ -67,43 +67,53 @@ def Camera "cam" {
 }
 )";
 
-  // Debug: check if 2.5 is in the USDC bytes. OpenUSD-style writers may store
-  // float-exact doubles inline as float bits, so accept either representation.
+  // The crate FIELDS section stores value reps in an LZ4-compressed blob
+  // (crate >= 0.4.0 layout), so the raw value bits are never literally present
+  // in the file. Decode the crate instead: `double radius = 2.5` must be stored
+  // either inlined as a float-exact payload or out-of-line as a raw double, and
+  // both encodings must yield 2.5.
   {
     Stage tmp;
     std::string w2, e2;
-    LoadUSDAFromMemory(reinterpret_cast<const uint8_t *>(usda),
-                        std::strlen(usda), "test.usda", &tmp, &w2, &e2);
+    TEST_ASSERT(LoadUSDAFromMemory(reinterpret_cast<const uint8_t *>(usda),
+                                   std::strlen(usda), "test.usda", &tmp, &w2,
+                                   &e2));
     std::vector<uint8_t> bytes;
-    usdc::SaveAsUSDCToMemory(tmp, &bytes, &w2, &e2);
-    double target = 2.5;
-    uint8_t target_bytes[8];
-    std::memcpy(target_bytes, &target, 8);
-    bool found = false;
-    bool found_inline = false;
-    size_t found_offset = 0;
-    for (size_t i = 0; i + 8 <= bytes.size(); i++) {
-      if (std::memcmp(bytes.data() + i, target_bytes, 8) == 0) {
-        found = true;
-        found_offset = i;
-        break;
+    TEST_ASSERT(usdc::SaveAsUSDCToMemory(tmp, &bytes, &w2, &e2));
+
+    StreamReader sr(bytes.data(), bytes.size(), /* swap_endian */ false);
+    lightusd::crate::CrateReader reader(&sr, {});
+    TEST_ASSERT(reader.ReadBootStrap());
+    TEST_ASSERT(reader.ReadTOC());
+    TEST_ASSERT(reader.ReadTokens());
+    TEST_ASSERT(reader.ReadFields());
+    TEST_ASSERT(reader.ReadFieldSets());
+    TEST_ASSERT(reader.ReadPaths());
+    TEST_ASSERT(reader.ReadSpecs());
+
+    bool found_double = false;
+    for (const auto &spec : reader.GetSpecs()) {
+      auto path = reader.GetPathString(spec.path_index);
+      if (!path || path->find("radius") == std::string::npos) {
+        continue;
       }
-    }
-    float inline_target = 2.5f;
-    uint8_t inline_bytes[4];
-    std::memcpy(inline_bytes, &inline_target, 4);
-    for (size_t i = 0; i + 4 <= bytes.size(); i++) {
-      if (std::memcmp(bytes.data() + i, inline_bytes, 4) == 0) {
-        found_inline = true;
-        if (!found) {
-          found_offset = i;
+      lightusd::crate::FieldValuePairVector pairs;
+      TEST_CHECK(reader.DecodeFieldSet(spec.fieldset_index, &pairs));
+      for (const auto &pair : pairs) {
+        if (pair.first != "default") {
+          continue;
         }
-        break;
+        auto decoded = pair.second.get_value<double>();
+        TEST_CHECK(decoded.has_value());
+        if (decoded) {
+          TEST_MSG("double radius decoded=%f", *decoded);
+          TEST_CHECK(*decoded == 2.5);
+          found_double = *decoded == 2.5;
+        }
       }
     }
-    TEST_CHECK(found || found_inline);
-    TEST_MSG("USDC bytes=%zu, found 2.5 at offset %zu (raw=%d inline=%d)",
-             bytes.size(), found_offset, found, found_inline);
+    TEST_CHECK(found_double);
+    TEST_MSG("USDC bytes=%zu", bytes.size());
   }
 
   Stage stage;

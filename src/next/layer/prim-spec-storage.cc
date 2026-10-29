@@ -464,6 +464,7 @@ void TypeNameTable::register_common_types() {
   // Volume
   intern("Volume");
   intern("OpenVDBAsset");
+  intern("Field3DAsset");
 
   // Render
   intern("RenderSettings");

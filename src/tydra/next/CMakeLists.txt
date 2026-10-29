@@ -19,6 +19,8 @@ set(TYDRA_NEXT_SOURCES
     render-converter-geometry.cc
     render-converter-convert.cc
     render-converter-points.cc
+    render-converter-volume.cc
+    render-converter-particles.cc
     render-converter-curves.cc
     render-converter-clip.cc
     render-converter-tangents.cc
@@ -87,6 +89,10 @@ option(TYDRA_NEXT_USE_PCH "Use a precompiled header for tydra/next C++ sources" 
 if(TYDRA_NEXT_USE_PCH)
   target_precompile_headers(tydra_next PRIVATE
     "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/pch.hh>")
+  # Without this, clang embeds the header mtimes in the PCH and ccache cannot
+  # cache any TU that uses it (CI sets the matching CCACHE_SLOPPINESS).
+  target_compile_options(tydra_next PRIVATE
+    "$<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:SHELL:-Xclang -fno-pch-timestamp>")
 endif()
 
 # Link to lightusd_next

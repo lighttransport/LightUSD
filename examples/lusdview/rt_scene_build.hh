@@ -80,12 +80,13 @@ struct HostPrototype {
 // Per-volume params (must match `VolParam` in the trace kernel).
 struct HostVolParam {
   float invModel[16];
-  float bmin[4];
-  float bmax[4];
+  float bmin[4];  // .w = level-set selector
+  float bmax[4];  // .w = isovalue
   int dim[4];  // .xyz dims, .w = float offset into volDens
   float albedo[4];
   float emission[4];
 };
+static_assert(sizeof(HostVolParam) == 144, "RT volume host/device layout mismatch");
 
 // Compact RT texture descriptor. offset indexes HostScene::texels as RGBA8 bytes.
 struct HostTextureDesc {

@@ -1,0 +1,13 @@
+<mujoco model="offdiagonal_hinge">
+  <option timestep="0.0166666666666667" gravity="0 0 -9.81" integrator="implicitfast" iterations="50"/>
+  <worldbody>
+    <body name="anchor" pos="0 0 0">
+      <geom name="anchor_geom" type="sphere" size="0.002" contype="0" conaffinity="0"/>
+      <body name="bar" pos="1 0 0">
+        <joint name="hinge" type="hinge" pos="-1 0 0" axis="0.894427190999916 0.447213595499958 0"/>
+        <inertial pos="0 0 0" mass="1" fullinertia="0.5 0.5 0.8 -0.15 0 0"/>
+        <geom name="box" type="box" size="1.284523 0.866025 0.547723" quat="0.9238795325 0 0 0.3826834324"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

@@ -148,9 +148,11 @@ namespace lightusd {
 namespace image {
 
 namespace {
+// Leaked function-local mutex: a namespace-scope std::mutex needs a global
+// destructor under libc++ (-Wglobal-constructors / -Wexit-time-destructors).
 std::mutex &ImageLoaderMutex() {
-  static std::mutex mutex;
-  return mutex;
+  static std::mutex *mutex = new std::mutex();
+  return *mutex;
 }
 LoadImageDataFunction g_image_loader = nullptr;
 void *g_image_loader_user_data = nullptr;

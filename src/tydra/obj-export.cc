@@ -16,11 +16,11 @@
 namespace lightusd {
 namespace tydra {
 
-#define PushError(msg) { \
+#define PushError(msg) do { \
   if (err) { \
     (*err) += msg + "\n"; \
   } \
-}
+} while (0)
 
 bool export_to_obj(const RenderScene &scene, const int mesh_id,
   std::string &obj_str, std::string &mtl_str, std::string *warn, std::string *err) {

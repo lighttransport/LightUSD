@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include "external/fast_float/include/fast_float/fast_float.h"
 #include "external/pugixml.hpp"
 #include "import.hh"
 
@@ -51,7 +52,15 @@ bool Numbers(const char* text, std::vector<T>* out, size_t limit) {
     if (p >= end) return true;
     if (out->size() >= limit) return false;
     T value{};
-    const auto parsed = std::from_chars(p, end, value);
+    // fast_float for floats: Apple libc++ lacks floating-point std::from_chars.
+    std::from_chars_result parsed{};
+    if constexpr (std::is_floating_point<T>::value) {
+      const auto r = fast_float::from_chars(p, end, value);
+      parsed.ptr = r.ptr;
+      parsed.ec = r.ec;
+    } else {
+      parsed = std::from_chars(p, end, value);
+    }
     if (parsed.ec != std::errc()) return false;
     if constexpr (std::is_floating_point<T>::value) {
       if (!std::isfinite(value)) return false;

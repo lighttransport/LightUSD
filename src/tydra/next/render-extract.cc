@@ -293,7 +293,6 @@ bool IsMeshRenderableTypeName(const std::string& type_name) {
 bool IsUnsupportedRenderableTypeName(const std::string& type_name) {
   return type_name == "Points" ||
          type_name == "ParticleField3DGaussianSplat" ||
-         type_name == "Volume" ||
          type_name == "NurbsPatch";
 }
 

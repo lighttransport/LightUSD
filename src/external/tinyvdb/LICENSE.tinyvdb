@@ -1,10 +1,15 @@
-TinyVDB I/O (tinyvdb_io.h) — vendored into lightusd
-==============================================
+TinyVDB (OpenVDB I/O, sparse level-set tools, isosurface stuffing) — vendored into lightusd
+=========================================================================================
 
-Source: https://github.com/syoyo/tinyvdbio
+Source: https://github.com/syoyo/tinyvdb
 License: Apache License 2.0
+Revision: see UPSTREAM.txt
 
 Local integration changes are limited to repointing miniz, LZ4, and zstd
-includes at lightusd's existing vendored copies. `src/usdVol.cc` owns the
-renderer-facing dense conversion and memory budget rather than modifying the
-upstream sparse-tree representation.
+includes in tinyvdb_io.h at lightusd's existing vendored copies. `src/usdVol.cc`
+maps tinyvdb's grid info and dense extraction (tinyvdb_volume.h) onto the
+renderer-facing VDBGrid and its memory budget.
+
+third_party/nanovdb/PNanoVDB.h is part of OpenVDB's NanoVDB (Copyright
+Contributors to the OpenVDB Project, Apache License 2.0), used by
+tinyvdb_to_nanovdb.c for NanoVDB node layouts.

@@ -4,6 +4,8 @@
 
 #include "generated-schema-tables.h"
 
+const char lu_validation_schema_provenance[] = "{\"engines\": {\"mujoco\": {\"commit\": \"a892750516336d8358949f4518fcc4fbbd85beae\", \"version\": \"3.16.0\"}, \"newton-usd-schemas\": {\"commit\": \"38ed9588943dda2eccb42d837ec56abd7030b42d\", \"version\": \"0.6.0\"}}, \"openusd\": {\"commit\": \"ee47c679abde5b467a7b6a41f3b2285564a4222e\", \"version\": \"26.08\"}}";
+
 /* NUL-separated UTF-8 arena, with no overlength C string literals. */
 const char lu_validation_strings[] = {
     65, 80, 73, 83, 99, 104, 101, 109, 97, 66, 97, 115, 101, 0, 0, 97, 98, 115, 116, 114, 97, 99, 116, 0,

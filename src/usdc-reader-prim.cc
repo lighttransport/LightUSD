@@ -212,15 +212,17 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "type, but got '" +
             fv.second.type_name() + "'");
       }
-    } else if (fv.first == "relocates") {
+    } else if (fv.first == "layerRelocates" || fv.first == "relocates") {
       // AOUSD Core Spec 10.3.2.6: layer-level relocates (Crate type 58).
+      // `layerRelocates` is the crate 0.11.0+ field name (what pxr writes);
+      // `relocates` is the deprecated spelling our own older crates carry.
       if (auto vr =
               fv.second.get_value<std::vector<std::pair<Path, Path>>>()) {
         metas->layerRelocates = vr.value();
         DCOUT("relocates = " << metas->layerRelocates.size() << " pair(s)");
       } else {
         PUSH_ERROR_AND_RETURN(
-            "`relocates` value must be SdfRelocates "
+            "`" + fv.first + "` value must be SdfRelocates "
             "type, but got '" +
             fv.second.type_name() + "'");
       }
@@ -455,6 +457,9 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(Model, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Scope, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Volume, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(VolumeFieldBase, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(FieldBase, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(VolumeFieldAsset, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(OpenVDBAsset, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Field3DAsset, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(RenderSettings, typeName, prim_name, spec)
@@ -463,6 +468,9 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(GenerativeProcedural, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomMesh, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Volume, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(VolumeFieldBase, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(FieldBase, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(VolumeFieldAsset, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(FieldAsset, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(OpenVDBAsset, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Field3DAsset, typeName, prim_name, spec)

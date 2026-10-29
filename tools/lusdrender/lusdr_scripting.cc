@@ -151,6 +151,8 @@ JSValue js_setTime(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv,
   if (!ExtractAndBuildBVH(*g_render_ctx, t)) {
     return JS_ThrowInternalError(ctx, "failed to rebuild geometry at time");
   }
+  g_render_ctx->geometry_bounds = g_render_ctx->bounds;
+  RefreshVolumesNext(*g_render_ctx, t);
   ResolveCameraNext(*g_render_ctx);
   JSValue o = JS_NewObject(ctx);
   JS_SetPropertyStr(ctx, o, "time", std::isnan(t) ? JS_NULL : JS_NewFloat64(ctx, t));

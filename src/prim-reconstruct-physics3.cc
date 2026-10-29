@@ -56,7 +56,7 @@ bool ReconstructPrim<PhysicsRevoluteJoint>(
     PhysicsRevoluteJoint *joint, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references;
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!ReconstructJointBaseProperties(table, properties, joint, warn, err, options)) return false;
 #define PRIM_PTR_ joint
   for (auto &prop : properties) {
@@ -84,7 +84,7 @@ bool ReconstructPrim<PhysicsPrismaticJoint>(
     PhysicsPrismaticJoint *joint, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references;
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!ReconstructJointBaseProperties(table, properties, joint, warn, err, options)) return false;
 #define PRIM_PTR_ joint
   for (auto &prop : properties) {
@@ -112,7 +112,7 @@ bool ReconstructPrim<PhysicsSphericalJoint>(
     PhysicsSphericalJoint *joint, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references;
-  std::set<std::string> table;
+  ParsePropertyTable table;
   if (!ReconstructJointBaseProperties(table, properties, joint, warn, err, options)) return false;
 #define PRIM_PTR_ joint
   for (auto &prop : properties) {

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import gc
+import os
 import weakref
 
 import lightusd
@@ -34,7 +35,7 @@ def test_resolver_context_and_new_asset(tmp_path):
         raise AssertionError("non-string scheme context was accepted")
 
     with resolver.cache_scope():
-        assert resolver.resolve_new("/tmp/cache.usda")[0] == "/tmp/cache.usda"
+        assert resolver.resolve_new("/tmp/cache.usda")[0] == os.path.normpath("/tmp/cache.usda")
 
 
 def test_resolver_memory_alias_and_report():
@@ -117,7 +118,7 @@ def test_resolver_asset_info_and_timestamp(tmp_path):
     assert stamp is not None and stamp[0] > 0
 
     identifier = resolver.create_identifier("future.usda", "/tmp/look/layer.usda")
-    assert identifier == "/tmp/look/future.usda"
+    assert identifier == os.path.normpath("/tmp/look/future.usda")
     assert resolver.modification_timestamp("missing.usda") is None
     missing = resolver.asset_info("missing.usda")
     assert missing["exists"] is False

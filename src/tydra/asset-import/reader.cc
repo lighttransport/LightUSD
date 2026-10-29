@@ -269,6 +269,7 @@ bool Reader::Open(const std::string& name, const std::string& anchor,
     };
     for (const std::string& r : options.asset_dirs) add_root(r);
     for (const auto& p : packages) add_root(p.second);
+    for (const std::string& r : extra_roots) add_root(r);
     add_root(base.string());
     if (!root_source.empty())
       add_root(absolute(fs::path(root_source)).parent_path().string());

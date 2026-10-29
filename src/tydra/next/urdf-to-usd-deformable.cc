@@ -41,6 +41,71 @@ void SetTyped(tn::PrimSpec *prim, const std::string &name,
   SetToken(prim, name + ":elementType", element_type, true);
 }
 
+// MuJoCo inflates a skin after skinning, along the skinned mesh's
+// area-weighted vertex normals (mjv_updateActiveSkin), which UsdSkel cannot
+// express. Skinning is linear in each bind-pose point, so offsetting point v
+// by d * inverse(sum_i w_i R_i), with d = inflate * normal at qpos0, makes
+// UsdSkel's rest pose equal MuJoCo's inflated skin at qpos0.
+void BakeSkinInflate(Json *geometry, const std::vector<Matrix4> &skinning, double inflate) {
+  std::vector<float> points = JsonFloats(*geometry, "positions");
+  const std::vector<int32_t> faces = JsonInts(*geometry, "indices");
+  const std::vector<int32_t> joints = JsonInts(*geometry, "jointIndices");
+  const std::vector<float> weights = JsonFloats(*geometry, "jointWeights");
+  const size_t nvert = points.size() / 3;
+  const size_t k = nvert ? joints.size() / nvert : 0;
+  if (!k || joints.size() != nvert * k || weights.size() != joints.size()) return;
+  std::vector<double> posed(points.size(), 0.0), blend(9 * nvert, 0.0);
+  for (size_t v = 0; v < nvert; ++v)
+    for (size_t j = 0; j < k; ++j) {
+      const double w = weights[v * k + j];
+      const size_t bone = size_t(joints[v * k + j]);
+      if (w == 0.0 || bone >= skinning.size()) continue;
+      const Matrix4 &m = skinning[bone];
+      for (size_t c = 0; c < 3; ++c) {
+        posed[3 * v + c] += w * (points[3 * v] * m[c] + points[3 * v + 1] * m[4 + c] +
+                                 points[3 * v + 2] * m[8 + c] + m[12 + c]);
+        for (size_t r = 0; r < 3; ++r) blend[9 * v + 3 * r + c] += w * m[4 * r + c];
+      }
+    }
+  std::vector<double> normal(points.size(), 0.0);
+  for (size_t f = 0; f + 2 < faces.size(); f += 3) {
+    const double *a = &posed[3 * size_t(faces[f])], *b = &posed[3 * size_t(faces[f + 1])],
+                 *c = &posed[3 * size_t(faces[f + 2])];
+    const double e1[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+    const double e2[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+    const double n[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2],
+                         e1[0] * e2[1] - e1[1] * e2[0]};
+    for (size_t r = 0; r < 3; ++r)
+      for (size_t t = 0; t < 3; ++t) normal[3 * size_t(faces[f + r]) + t] += n[t];
+  }
+  Json out = Json::array();
+  for (size_t v = 0; v < nvert; ++v) {
+    const double *n = &normal[3 * v];
+    const double len = std::max(1e-15, std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]));
+    const double d[3] = {inflate * n[0] / len, inflate * n[1] / len, inflate * n[2] / len};
+    // delta * A = d (row vectors): delta = d * inverse(A).
+    const double *A = &blend[9 * v];
+    const double det = A[0] * (A[4] * A[8] - A[5] * A[7]) - A[1] * (A[3] * A[8] - A[5] * A[6]) +
+                       A[2] * (A[3] * A[7] - A[4] * A[6]);
+    double inv[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+    if (std::fabs(det) > 1e-12) {
+      inv[0] = (A[4] * A[8] - A[5] * A[7]) / det;
+      inv[1] = (A[2] * A[7] - A[1] * A[8]) / det;
+      inv[2] = (A[1] * A[5] - A[2] * A[4]) / det;
+      inv[3] = (A[5] * A[6] - A[3] * A[8]) / det;
+      inv[4] = (A[0] * A[8] - A[2] * A[6]) / det;
+      inv[5] = (A[2] * A[3] - A[0] * A[5]) / det;
+      inv[6] = (A[3] * A[7] - A[4] * A[6]) / det;
+      inv[7] = (A[1] * A[6] - A[0] * A[7]) / det;
+      inv[8] = (A[0] * A[4] - A[1] * A[3]) / det;
+    }
+    for (size_t c = 0; c < 3; ++c)
+      out.push_back(double(points[3 * v + c] + float(d[0] * inv[c] + d[1] * inv[3 + c] +
+                                                     d[2] * inv[6 + c])));
+  }
+  (*geometry)["positions"] = std::move(out);
+}
+
 }  // namespace
 
 void AddDeformablesFromJson(tn::Layer *layer, const Json &items,
@@ -259,6 +324,74 @@ void AddDeformablesFromJson(tn::Layer *layer, const Json &items,
       AppendWarn(warn, "Flex `" + name + "` edge equality constraints are not representable; "
                        "they are dropped.\n");
   }
+}
+
+bool AddSkinsFromJson(tn::Layer *layer, const Json &items, const NameMap &link_names,
+                      const std::map<std::string, Matrix4> &link_worlds, std::string *warn,
+                      std::string *err) {
+  if (!items.is_array() || items.empty()) return true;
+  Define(layer, "/World/Skins", "Scope");
+  std::set<std::string> siblings;
+  for (const Json &skin : items) {
+    const std::string name = ChildName(Sanitize(JsonString(skin, "name", "skin"), "skin"), &siblings);
+    const Json *bones = JsonArray(skin, "bones");
+    std::vector<std::string> joints, bodies;
+    std::vector<double> bind, rest;
+    std::vector<Matrix4> skinning;
+    std::set<std::string> joint_names;
+    bool resolved = bones && !bones->empty();
+    for (size_t b = 0; resolved && b < bones->size(); ++b) {
+      const std::string body = JsonString((*bones)[b], "body");
+      const auto link = link_names.find(body);
+      const auto world = link_worlds.find(body);
+      const std::vector<double> matrix = JsonDoubles((*bones)[b], "bindTransform");
+      // MuJoCo's world body is a bone at the identity.
+      const bool world_body = body == "world";
+      if ((!world_body && (link == link_names.end() || world == link_worlds.end())) ||
+          matrix.size() != 16) {
+        AppendWarn(warn, "Skipping skin `" + name + "`: bone body `" + body + "` is not a link.\n");
+        resolved = false;
+        break;
+      }
+      const Matrix4 joint = world_body ? IdentityMatrix() : world->second;
+      joints.push_back(ChildName(Sanitize(body, "bone"), &joint_names));
+      bodies.push_back(world_body ? std::string("/World") : "/World/Links/" + link->second);
+      bind.insert(bind.end(), matrix.begin(), matrix.end());
+      rest.insert(rest.end(), joint.begin(), joint.end());
+      skinning.push_back(MultiplyRowMajor(InverseRigid(MatrixFromArray(matrix)), joint));
+    }
+    if (!resolved) continue;
+    const std::string root = "/World/Skins/" + name;
+    Define(layer, root, "SkelRoot");
+    tn::PrimSpec *skeleton = Define(layer, root + "/Skeleton", "Skeleton");
+    if (!skeleton) {
+      if (err) *err = "Failed to add skeleton for skin `" + name + "`";
+      return false;
+    }
+    Set(skeleton, "joints", tn::Value::MakeTokenArray(joints), "token[]", true);
+    Set(skeleton, "bindTransforms",
+        tn::Value::MakeArrayFromRaw(tn::TypeId::Matrix4d, bind.data(), joints.size()), "matrix4d[]",
+        true);
+    Set(skeleton, "restTransforms",
+        tn::Value::MakeArrayFromRaw(tn::TypeId::Matrix4d, rest.data(), joints.size()), "matrix4d[]",
+        true);
+    SetRel(skeleton, "lightusd:mjcSkin:bodies", bodies);
+    Set(skeleton, "lightusd:mjcSkin:inflate",
+        tn::Value(static_cast<float>(Number(skin, "inflate", 0.0))), "float", true);
+    Set(skeleton, "lightusd:mjcSkin:group", tn::Value(JsonInt(skin, "group", 0)), "int", true);
+    Json mesh = Json::object();
+    mesh["name"] = "Mesh";
+    for (const char *key : {"geometry", "rgba", "material", "group"})
+      if (skin.contains(key)) mesh[key] = skin[key];
+    const double inflate = Number(skin, "inflate", 0.0);
+    if (inflate != 0.0 && mesh.contains("geometry")) BakeSkinInflate(&mesh["geometry"], skinning, inflate);
+    std::set<std::string> children{"Skeleton"};
+    if (!AddMeshFromJson(layer, root, &children, mesh, nullptr, "Mesh", false, true, warn, err))
+      return false;
+    if (tn::PrimSpec *prim = layer->prim_at_path_mutable(root + "/Mesh"))
+      SetRel(prim, "skel:skeleton", {root + "/Skeleton"});
+  }
+  return true;
 }
 
 }  // namespace urdf_detail

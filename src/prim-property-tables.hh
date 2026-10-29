@@ -144,20 +144,30 @@
   X("radius", radius)
 
 // ============================================================================
-// UsdVol field-asset Properties (FieldAsset / OpenVDBAsset / Field3DAsset)
+// UsdVol field-asset Properties
+// (VolumeFieldBase / FieldBase / VolumeFieldAsset / FieldAsset /
+//  OpenVDBAsset / Field3DAsset)
 // ============================================================================
-#define FIELD_ASSET_TYPED_ATTRS(X) \
+#define VOLUME_FIELD_BASE_TYPED_ATTRS(X) /* no attributes of its own */
+
+#define FIELD_BASE_TYPED_ATTRS(X) /* deprecated spelling; no attributes */
+
+#define VOLUME_FIELD_ASSET_TYPED_ATTRS(X) \
   X("filePath", filePath) \
   X("fieldName", fieldName) \
   X("fieldDataType", fieldDataType) \
-  X("fieldIndex", fieldIndex)
+  X("fieldIndex", fieldIndex) \
+  X("vectorDataRoleHint", vectorDataRoleHint)
+
+#define FIELD_ASSET_TYPED_ATTRS(X) \
+  VOLUME_FIELD_ASSET_TYPED_ATTRS(X)
 
 #define OPENVDB_ASSET_TYPED_ATTRS(X) \
-  FIELD_ASSET_TYPED_ATTRS(X) \
+  VOLUME_FIELD_ASSET_TYPED_ATTRS(X) \
   X("fieldClass", fieldClass)
 
 #define FIELD3D_ASSET_TYPED_ATTRS(X) \
-  FIELD_ASSET_TYPED_ATTRS(X) \
+  VOLUME_FIELD_ASSET_TYPED_ATTRS(X) \
   X("fieldPurpose", fieldPurpose)
 
 // ============================================================================
