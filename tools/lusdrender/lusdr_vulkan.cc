@@ -639,6 +639,7 @@ bool RunVulkanGaussianLightRT(const Options &opt, DirectScene *direct,
       lrt_vk_engine_destroy(vk);
       return false;
     }
+    if(opt.stats) std::cerr<<"Vulkan Gaussian hit rays: "<<traced<<" / "<<nrays<<"\n";
     for (size_t i = 0; i < nrays; ++i) {
       if (chunk_hits[i].prim_id != LRT_TRI_NO_HIT &&
           chunk_hits[i].t < hits[i].t) {

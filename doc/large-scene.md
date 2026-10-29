@@ -6214,6 +6214,6 @@ budget is one quarter of installed VRAM (2 GiB on an 8 GiB GPU), with a runtime
 reserve and conservative geometry/scratch accounting.
 
 See [the converter guide](../tools/lusdpreview/README.md) for conversion,
-export, explicit resolution/budget refinement, cache invalidation, memory
+export, automatic camera-based LOD, explicit resolution/budget refinement, cache invalidation, memory
 limits and headless hardware qualification. Volume previews include a cached
 colored isosurface carrier for the existing surface renderers.

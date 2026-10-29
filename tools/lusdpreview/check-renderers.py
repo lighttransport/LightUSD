@@ -29,6 +29,8 @@ def main():
     ap.add_argument("--output", required=True, type=Path)
     ap.add_argument("--cache", required=True, type=Path)
     ap.add_argument("--timeout", default=1800, type=int)
+    ap.add_argument("--camera", default="")
+    ap.add_argument("--time", type=float)
     ap.add_argument("--kinds", nargs="+", default=["gaussian", "points", "volume"])
     args = ap.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -60,12 +62,16 @@ def main():
                            "--render-report", str(args.output / (label + ".json"))]
                     cmd += {"cpu": ["--cpu-rt"], "vk": ["--backend", "vk", "--vk-device", "nvidia"],
                             "cuda": ["--cuda", "--cuda-rt-backend", "software"]}[backend]
+                    if args.camera: cmd += ["--camera",args.camera]
+                    if args.time is not None: cmd += ["--time",str(args.time)]
                     cmd += [str(args.source)]
                 else:
                     cmd = [str(args.renderer.resolve()), str(args.source), str(image), *common,
                            "-w", "320", "-height", "240", "-autoframe", "-stats"]
                     cmd += {"cpu": [], "vk": ["-vkr", "-vkDevice", "0"],
                             "cuda": ["-cuda"]}[backend]
+                    if args.camera: cmd += ["-camera",args.camera]
+                    if args.time is not None: cmd += ["-timecode",str(args.time)]
                 started = time.monotonic()
                 peak_gpu = peak_rss = 0
                 reason = None

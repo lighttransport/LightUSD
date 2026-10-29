@@ -20,6 +20,7 @@ int main(int argc, char** argv) {
   options.composition.usdc_limits.max_fieldset_indices = 300000000;
   std::string source, output;
   bool budget_explicit = false;
+  bool lod = false;
   auto number = [](const char* arg, uint64_t* n) {
     char* end = nullptr;
     errno = 0;
@@ -40,8 +41,12 @@ int main(int argc, char** argv) {
           "--host-budget-mib N (default 16384)\n  --preview-resolution N (auto "
           "by default)\n  --texture-max-edge N (default 512)\n  --batch-prims "
           "N --batch-roots N\n  --time-code T --variant SET=VALUE --refresh "
-          "--progress");
+          "--progress --lod");
       return 0;
+    }
+    if (a == "--lod") {
+      lod = true;
+      continue;
     }
     if (a == "--refresh") {
       options.refresh = true;
@@ -125,6 +130,14 @@ int main(int argc, char** argv) {
   if (!result.success) {
     std::fprintf(stderr, "preview failed: %s\n", result.error.c_str());
     return 1;
+  }
+  if (lod) {
+    const auto levels = BuildScenePreviewLods(result, options);
+    if (!levels.success) {
+      std::fprintf(stderr, "LOD build failed: %s\n", levels.error.c_str());
+      return 1;
+    }
+    std::printf("[scene-preview] lod_root=%s\n", levels.root_path.c_str());
   }
   if (!output.empty()) {
     std::string error;

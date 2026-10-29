@@ -38,6 +38,7 @@
 #include "parametric_tess.hh"
 #include "ptex_atlas.hh"
 #include "prototype_lod.hh"
+#include "tydra/next/scene-preview.hh"
 #include "renderer.hh"
 #include "rt_camera.hh"
 #include "tydra/rb-dynamics.hh"
@@ -112,6 +113,11 @@ class App
     rasterLodEnabled_ = enabled;
     if (fullPx > 0.f) rasterLodFullPx_ = fullPx;
     if (cullPx >= 0.f) rasterLodCullPx_ = cullPx;
+  }
+  void setScenePreviewLods(const lightusd::tydra::next::ScenePreviewLods& lods,
+                           double pixelError) {
+    previewLods_ = lods;
+    previewLodPixelError_ = pixelError;
   }
   void setDynamicPrototypeLod(bool enabled) {
     dynamicPrototypeLodEnabled_ = enabled;
@@ -672,6 +678,15 @@ class App
   float rasterLodFullPx_{8.0f};
   float rasterLodCullPx_{1.5f};
   bool dynamicPrototypeLodEnabled_{false};
+  void stepScenePreviewLods();
+  lightusd::tydra::next::ScenePreviewLods previewLods_;
+  double previewLodPixelError_ = 2;
+  bool previewLodReloadPending_ = false;
+  bool previewLodHaveCamera_ = false;
+  uint64_t previewLodUpdates_ = 0;
+  light3d::Vec3 previewLodLastEye_{0, 0, 0}, previewLodLastForward_{0, 0, -1};
+  std::chrono::steady_clock::time_point previewLodStillSince_{};
+
   struct PendingPrototypeLod {
     std::future<PrototypeLodBuildResult> future;
   };

@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
+#include <vector>
 
 #include "next/pcp/prim-index.hh"
 
@@ -76,10 +79,48 @@ ScenePreviewResult ConvertScenePreview(
 bool ExportScenePreview(const ScenePreviewResult& result,
                         const std::string& directory, std::string* error);
 
+struct ScenePreviewLodTile {
+  std::string path;
+  std::array<double, 3> minimum{}, maximum{};
+  std::array<uint64_t, 4> bytes{};
+  double cell_size = 0;
+};
+struct ScenePreviewLods {
+  bool success = false;
+  std::string root_path, error;
+  double cell_size = 0;
+  uint64_t gpu_budget_bytes = 0;
+  std::vector<ScenePreviewLodTile> tiles;
+};
+struct ScenePreviewLodCamera {
+  std::array<double, 3> eye{}, forward{0, 0, -1};
+  double focal_pixels = 500;
+  double near_plane = .01;
+  bool orthographic = false;
+};
+using ScenePreviewLodSelections =
+    std::map<std::string, std::map<std::string, std::string>>;
+// Build portable USD variant levels from cached geometry, without recomposing
+// the original scene. Only the selected levels enter the renderer working set.
+ScenePreviewLods BuildScenePreviewLods(const ScenePreviewResult& result,
+                                       const ScenePreviewOptions& options);
+ScenePreviewLodSelections SelectScenePreviewLods(
+    const ScenePreviewLods& lods, const ScenePreviewLodCamera& camera,
+    double pixel_error = 2, const ScenePreviewLodSelections& previous = {});
+
+ScenePreviewLodCamera InitialScenePreviewLodCamera(
+    const ScenePreviewResult& result, const std::string& lod_root,
+    const std::string& camera_name, int viewport_height, double fit_scale = 1.8,
+    std::array<double, 3> direction = {1, .6, 1});
+
 struct ScenePreviewRequest {
   bool enabled = false;
   bool budget_explicit = false;
+  bool camera_lod = true;
+  double lod_pixel_error = 2;
   ScenePreviewOptions options;
+  ScenePreviewResult result;
+  ScenePreviewLods lods;
 };
 // Consume the same preview-specific switches before each app's normal parser.
 // Other arguments, including renderer/camera/time/variant options, are

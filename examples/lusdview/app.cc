@@ -720,6 +720,18 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
   report["exit_code"] = exitCode;
   report["scene"] = scenePath;
   report["profile"] = largeSceneProfile_;
+  if(previewLods_.success) {
+    uint64_t bytes=0;std::array<size_t,4> levels{};
+    for(const auto& tile:previewLods_.tiles) {
+      int level=3;const auto selection=loadOpts_.variantOverrides.find(tile.path);
+      if(selection!=loadOpts_.variantOverrides.end()) {
+        const auto value=selection->second.find("previewLod");
+        if(value!=selection->second.end() && value->second.size()==4)level=std::max(0,std::min(3,int(value->second[3]-'0')));
+      }
+      ++levels[size_t(level)];bytes+=tile.bytes[size_t(level)];
+    }
+    report["preview_lod"]={{"levels",levels},{"selected_geometry_bytes",bytes},{"budget_bytes",previewLods_.gpu_budget_bytes},{"updates",previewLodUpdates_},{"pixel_error",previewLodPixelError_}};
+  }
   report["camera"] = cameraName_.empty() ? "auto" : cameraName_;
   nlohmann::json stereo = {{"requested", stereoRequested_},
                            {"resolved", false}};
@@ -3164,6 +3176,14 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
         fitMin = robustBoundsMin_;
         fitMax = robustBoundsMax_;
       }
+      float previewMin[3]={1e30f,1e30f,1e30f},previewMax[3]={-1e30f,-1e30f,-1e30f};
+      if(previewLods_.success && loaded_.filepath==previewLods_.root_path) {
+        for(const auto& tile:previewLods_.tiles) for(size_t k=0;k<3;++k) {
+          previewMin[k]=std::min(previewMin[k],static_cast<float>(tile.minimum[k]));
+          previewMax[k]=std::max(previewMax[k],static_cast<float>(tile.maximum[k]));
+        }
+        fitMin=previewMin;fitMax=previewMax;
+      }
       camera_.fitToScene(fitMin, fitMax);
       if (!viewDirExplicit_) {
         float openYaw = 0.0f;
@@ -4652,40 +4672,87 @@ bool App::tryApplyNextSceneUpdate(
       next->meshes[i].prototypeLods = draw_.meshes[i].prototypeLods;
     }
   }
-  LOGI("incremental scene update: retained %zu/%zu mesh GPU slots; "
-       "replaced %zu meshes, updated %zu vertex buffers, %zu transforms, "
-       "%zu instance buffers, %zu materials, and %zu textures; %.3f ms, "
-       "%.2f MiB uploaded",
-       next->meshes.size() - plan.replacementUpdates.size(),
-       next->meshes.size(), plan.replacementUpdates.size(),
-       plan.vertexUpdates.size(), plan.worldUpdates.size(),
-       plan.instanceUpdates.size(), plan.materialUpdates.size(),
-       plan.textureUpdates.size(), transaction_ms,
-       static_cast<double>(plan.estimatedUploadBytes) / (1024.0 * 1024.0));
+  LOGI(
+      "incremental scene update: retained %zu/%zu mesh GPU slots; "
+      "replaced %zu meshes, updated %zu vertex buffers, %zu transforms, "
+      "%zu instance buffers, %zu materials, and %zu textures; %.3f ms, "
+      "%.2f MiB uploaded",
+      next->meshes.size() - plan.replacementUpdates.size(), next->meshes.size(),
+      plan.replacementUpdates.size(), plan.vertexUpdates.size(),
+      plan.worldUpdates.size(), plan.instanceUpdates.size(),
+      plan.materialUpdates.size(), plan.textureUpdates.size(), transaction_ms,
+      static_cast<double>(plan.estimatedUploadBytes) / (1024.0 * 1024.0));
   return true;
+}
+
+void App::stepScenePreviewLods() {
+  if (!previewLods_.success || !useNextLoader_ || !nextSession_ ||
+      !loaded_.ok || loadActive_ || progressiveActive_ || renderThreadActive_ ||
+      loaded_.filepath != previewLods_.root_path)
+    return;
+  const auto now = std::chrono::steady_clock::now();
+  const auto eye = camera_.eye(),
+             forward = light3d::normalize(camera_.target() - eye);
+  const auto delta = eye - previewLodLastEye_,
+             turn = forward - previewLodLastForward_;
+  const bool changed = !previewLodHaveCamera_ ||
+                       light3d::dot(delta, delta) > 1e-8f ||
+                       light3d::dot(turn, turn) > 1e-8f;
+  if (changed) {
+    previewLodLastEye_ = eye;
+    previewLodLastForward_ = forward;
+    previewLodStillSince_ = now;
+    previewLodHaveCamera_ = true;
+  }
+  if (!headless_ &&
+      (gui_.cameraInteractive() ||
+       now - previewLodStillSince_ < std::chrono::milliseconds(250)))
+    return;
+  int width = 0, height = 0;
+  gui_.viewportPixelSize(&width, &height);
+  if (height < 1) getRequestedWindowSize(&width, &height);
+  const auto projection = camera_.proj(false);
+  lightusd::tydra::next::ScenePreviewLodCamera camera;
+  camera.eye = {eye.x, eye.y, eye.z};
+  camera.forward = {forward.x, forward.y, forward.z};
+  camera.orthographic = std::abs(projection.m[15]) > .5f;
+  camera.focal_pixels = std::max(1, height) * .5 * std::abs(projection.m[5]);
+  camera.near_plane = camera_.nearPlane();
+  const auto choices = lightusd::tydra::next::SelectScenePreviewLods(
+      previewLods_, camera, previewLodPixelError_, loadOpts_.variantOverrides);
+  if (choices.empty() || choices == loadOpts_.variantOverrides) return;
+  loadOpts_.variantOverrides = choices;
+  previewLodReloadPending_ = true;
+  size_t levels[4] = {};
+  for (const auto& choice : choices)
+    ++levels[size_t(choice.second.at("previewLod")[3] - '0')];
+  LOGI("preview LOD: tiles=%zu levels=%zu/%zu/%zu/%zu, camera error %.2f px",
+       choices.size(), levels[0], levels[1], levels[2], levels[3],
+       previewLodPixelError_);
+  startRecomposeAsync({});
 }
 
 void App::finishLoadIfReady() {
   if (!loadActive_) return;
   if (!loadFinished_.load(std::memory_order_acquire)) return;
   if (streamLoadActive_ && !streamCompleteSeen_) return;
-  if (loadThread_.joinable()) loadThread_.join();  // sync point: worker fully done
-  clearPtexDecode();  // readers point into the outgoing draw_'s source bytes
+  if (loadThread_.joinable())
+    loadThread_.join();  // sync point: worker fully done
+  clearPtexDecode();     // readers point into the outgoing draw_'s source bytes
   loaded_ = std::move(*pendingLoaded_);
   const bool ok = loaded_.ok;
   bool incrementalUploaded = false;
   bool renderSessionCommitted = false;
   const bool render_session_bootstrap =
-      pendingNextRenderUpdate_ &&
-      pendingNextRenderBootstrap_;
+      pendingNextRenderUpdate_ && pendingNextRenderBootstrap_;
   if (!streamLoadActive_ && ok && nextSession_ && pendingDraw_ &&
       pendingNextRenderSession_ && pendingNextRenderUpdate_ &&
-      !render_session_bootstrap) {
+      !render_session_bootstrap && !previewLodReloadPending_) {
     DrawSceneCommitSink sink([&]() {
       return tryApplyNextSceneUpdate(pendingDraw_.get(), pendingNextChanges_);
     });
-    const auto committed = CommitPreparedScene(*pendingNextRenderSession_,
-                                               pendingNextRenderUpdate_.get(), &sink);
+    const auto committed = CommitPreparedScene(
+        *pendingNextRenderSession_, pendingNextRenderUpdate_.get(), &sink);
     incrementalUploaded = committed == LIGHTUSD_OK && sink.committed();
     renderSessionCommitted = committed == LIGHTUSD_OK;
     if (committed != LIGHTUSD_OK) {
@@ -4693,15 +4760,15 @@ void App::finishLoadIfReady() {
            lightusd::api::LastError());
     }
   } else if (!streamLoadActive_ && ok && nextSession_ && pendingDraw_ &&
-             !render_session_bootstrap) {
+             !render_session_bootstrap && !previewLodReloadPending_) {
     incrementalUploaded =
         tryApplyNextSceneUpdate(pendingDraw_.get(), pendingNextChanges_);
   }
-  // Bootstrap the retained RenderSession after an initial load. The GPU upload
-  // still follows the normal full/progressive path; this commit publishes only
-  // the stable-ID catalog prepared by the worker.
-  if (ok && render_session_bootstrap && pendingNextRenderSession_ &&
-      pendingNextRenderUpdate_) {
+  // LOD variants can replace complete mesh buffer layouts. Publish the retained
+  // catalog without an incremental GPU sink, then upload the complete scene.
+  // Bootstrap uses the same catalog-only commit after an initial load.
+  if (ok && (render_session_bootstrap || previewLodReloadPending_) &&
+      pendingNextRenderSession_ && pendingNextRenderUpdate_) {
     const auto committed = CommitPreparedScene(*pendingNextRenderSession_,
                                                pendingNextRenderUpdate_.get());
     renderSessionCommitted = committed == LIGHTUSD_OK;
@@ -4731,18 +4798,33 @@ void App::finishLoadIfReady() {
     nextRenderSession_ = std::move(pendingNextRenderSession_);
   }
   auto snapshot = nextSession_ ? nextSession_->PublicSnapshot()
-                             : lightusd::api::DocumentSnapshot{};
+                               : lightusd::api::DocumentSnapshot{};
   nextStageSnapshot_ = lightusd::api::Stage{};
-  if (snapshot) lightusd::api::DocumentSnapshotStage(snapshot, &nextStageSnapshot_);
+  if (snapshot)
+    lightusd::api::DocumentSnapshotStage(snapshot, &nextStageSnapshot_);
   nextStageRevision_ = nextStageSnapshot_
-        ? lightusd::api::DocumentSnapshotRevision(snapshot) : 0;
+                           ? lightusd::api::DocumentSnapshotRevision(snapshot)
+                           : 0;
   pendingNextSession_.reset();
   pendingNextRenderSession_.reset();
   pendingNextRenderUpdate_.reset();
   pendingLoaded_.reset();
   pendingDraw_.reset();
   loadActive_ = false;
-  applyLoaded(ok, /*progressive=*/!alreadyUploaded, alreadyUploaded);
+  const auto savedCamera = camera_;
+  const auto savedLens = cameraLens_;
+  const auto savedShutter = cameraShutter_;
+  applyLoaded(ok, /*progressive=*/!alreadyUploaded && !previewLodReloadPending_,
+              alreadyUploaded);
+  if (previewLodReloadPending_) {
+    camera_ = savedCamera;
+    cameraLens_ = savedLens;
+    cameraShutter_ = savedShutter;
+    gui_.setCameraLens(cameraLens_);
+    gui_.setCameraShutter(cameraShutter_);
+    previewLodReloadPending_ = false;
+    ++previewLodUpdates_;
+  }
   streamLoadActive_ = false;
   loadStream_.reset();
 }
@@ -7626,6 +7708,13 @@ int App::run(const std::string& initialFile, int maxFrames,
     finishLoadIfReady();
     stepProgressiveUpload();
     finishReconvertIfReady();  // swap in re-evaluated animation geometry
+    stepScenePreviewLods();
+    // Batch captures wait for the camera-selected variants, not an intermediate
+    // coarse frame. The CPU/CUDA screenshot paths consume the same final scene.
+    if (headless_ && previewLodReloadPending_) {
+      std::this_thread::yield();
+      continue;
+    }
 
     // Advance the playback clock and request a re-evaluation at the new time.
     // Headless renders a fixed --time frame unless --play asked for playback --

@@ -1278,6 +1278,8 @@ int main(int argc, char** argv) {
           "  --preview-resolution N  Explicit sampling resolution.\n"
           "  --preview-cache-dir DIR  Reuse portable cached USD sidecars.\n"
           "  --preview-refresh  Regenerate the cached preview.\n"
+          "  --preview-lod-pixels N  Camera LOD error (default 2 pixels).\n"
+          "  --preview-no-lod  Load the finest cached representation.\n"
           "  --cuda        Ray-trace the screenshot on CUDA (driver API + NVRTC "
           "loaded at runtime via cuew; falls back if no CUDA device).\n"
           "  --cuda-rt-backend MODE  CUDA traversal: auto, optix, or software.\n"
@@ -2129,6 +2131,8 @@ int main(int argc, char** argv) {
   }
   if (windowSizeExplicit) app.setWindowSize(windowWidth, windowHeight);
   app.setUseNextLoader(useNextLoader);
+  if(scenePreview.enabled && scenePreview.camera_lod)
+    app.setScenePreviewLods(scenePreview.lods,scenePreview.lod_pixel_error);
   app.setCullEnabled(!noCull);
   app.setShowGrid(showGrid);
   app.setShowSkeleton(showSkeleton || virtualHumanProfile);

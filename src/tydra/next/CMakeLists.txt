@@ -8,6 +8,7 @@ cmake_minimum_required(VERSION 3.10)
 # Define tydra/next source files
 set(TYDRA_NEXT_SOURCES
     scene-preview.cc
+    scene-preview-lod.cc
     scene-preview-cli.cc
     scene-preview-sample.cc
     scene-preview-write.cc

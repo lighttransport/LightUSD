@@ -67,6 +67,9 @@ struct Build {
   std::set<std::string> dependencies;
   std::set<std::string> prototypes;
   std::set<std::string> point_prototypes;
+  std::map<std::string, std::string> native_prototypes;
+  std::map<std::string, std::array<double, 16>> point_prototype_local;
+  std::string resolve_prototype(std::string) const;
   std::map<std::string, uint64_t> pending_prototype_placements;
   std::ofstream placements;
   std::unordered_map<std::string, std::array<double, 16>> prototype_inverse;
@@ -96,7 +99,8 @@ struct Build {
   bool flush_prototype(const std::string&);
   bool queue_placement(
       const std::string&, const double*,
-      const std::vector<std::pair<std::string, std::array<double, 16>>>&);
+      const std::vector<std::pair<std::string, std::array<double, 16>>>&,
+      bool point = false);
   bool finish_placements();
   void prepare_material(const usd::Stage&, const usd::UsdPrim&);
   std::string binding(usd::UsdPrim) const;
@@ -108,6 +112,9 @@ std::array<double, 16> Identity();
 bool Inverse(const double*, double*);
 void Multiply(const double*, const double*, double*);
 Sample Transform(const Sample&, const double*);
+std::vector<Sample> ReadPreviewSamples(const usd::UsdPrim&, ScenePreviewKind);
+void MakePreviewParticles(usd::Layer&, const std::string&, const Sample*,
+                          size_t, double, ScenePreviewKind);
 bool WriteProxy(Build&);
 void AppendPreviewExtras(const Build&, usd::Layer&);
 bool WriteVolume(Build&, usd::Layer&, const std::vector<Sample>&);

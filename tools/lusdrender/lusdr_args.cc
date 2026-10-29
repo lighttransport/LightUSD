@@ -101,6 +101,8 @@ void PrintUsage(const char *prog) {
       << "  --preview-kind gaussian|points|volume (default gaussian).\n"
       << "  --preview-budget-mib N Total renderer cap (default 1/4 VRAM).\n"
       << "  --preview-resolution N Sampling resolution; auto by default.\n"
+      << "  --preview-lod-pixels N Camera LOD error (default 2 pixels).\n"
+      << "  --preview-no-lod      Load the finest cached representation.\n"
       << "  --preview-cache-dir DIR --preview-refresh  Cache location/regeneration.\n"
       << "  -w, -width <N>         Output width (default 960).\n"
       << "  -height <N>            Output height (default from aspect or 540).\n"

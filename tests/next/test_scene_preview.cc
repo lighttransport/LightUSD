@@ -41,12 +41,14 @@ std::string Quad(const std::string& name) {
          "[(0,0),(1,0),(1,1),(0,1)] (interpolation=\"vertex\")\n uniform token "
          "subdivisionScheme = \"none\"\n}\n";
 }
-usd::Stage Load(const std::string& path) {
+usd::Stage Load(const std::string& path,
+                const td::ScenePreviewLodSelections& variants = {}) {
   usd::AssetResolver resolver;
   usd::Stage stage;
   std::string warning, error;
   usd::pcp::CompositionOptions options;
   options.num_threads = 1;
+  options.variant_overrides_by_path = variants;
   Require(usd::pcp::ComposeStageFromFile(path, resolver, &stage, options,
                                          &warning, &error),
           "proxy reopen: " + error);
@@ -129,13 +131,55 @@ int main() {
       });
       Require(found, "bounded surface carrier");
     }
+    const auto pyramid = td::BuildScenePreviewLods(first, options);
+    Require(pyramid.success, pyramid.error);
+    auto pyramid_stage = Load(pyramid.root_path);
+    Require(
+        bool(pyramid_stage.GetPrimAtPath(usd::Path("/ScenePreview/Tile_0"))),
+        "portable LOD variant geometry");
     const fs::path exported =
         scratch / (std::string("export-") + td::ScenePreviewKindName(kind));
     std::string error;
     Require(td::ExportScenePreview(first, exported.string(), &error), error);
+    const auto portable_lods =
+        Load((exported / fs::path(pyramid.root_path).parent_path().filename() /
+              "root.usdc")
+                 .string());
+    Require(
+        bool(portable_lods.GetPrimAtPath(usd::Path("/ScenePreview/Tile_0"))),
+        "exported LOD references remain relative");
     Require(!td::ExportScenePreview(first, exported.string(), &error),
             "export must not overwrite");
   }
+  Write(scratch / "mixed-scales.usda",
+        "#usda 1.0\n" + Quad("Room") +
+            "def Sphere \"Environment\" { double radius=1000000\n double3 "
+            "xformOp:translate=(3000000,0,0)\n uniform token[] "
+            "xformOpOrder=[\"xformOp:translate\"]\n }\n");
+  auto multiscale_options = options;
+  multiscale_options.kind = td::ScenePreviewKind::Volume;
+  multiscale_options.gpu_budget_bytes = uint64_t(2) << 30;
+  const auto multiscale = td::ConvertScenePreview(
+      (scratch / "mixed-scales.usda").string(), resolver, multiscale_options);
+  Require(multiscale.success, multiscale.error);
+  Require(multiscale.voxel_size < 1,
+          "distant environment does not erase fine volume detail");
+  auto multiscale_stage = Load(multiscale.render_usd_path);
+  bool room_retained = false;
+  multiscale_stage.Traverse([&](const usd::UsdPrim& prim) {
+    if (prim.GetTypeName() == "Mesh") {
+      const auto* p = prim.GetPropertyValue("points");
+      if (p) {
+        const auto v = p->view().as_float_array();
+        for (size_t i = 0; i + 2 < v.size(); i += 3)
+          if (std::abs(v[i]) < 5 && std::abs(v[i + 1]) < 5 &&
+              std::abs(v[i + 2]) < 5)
+            room_retained = true;
+      }
+    }
+    return true;
+  });
+  Require(room_retained, "small object remains in mixed-scale volume carrier");
   options.kind = td::ScenePreviewKind::Gaussian;
   const auto cached =
       td::ConvertScenePreview(input.string(), resolver, options);
@@ -145,6 +189,63 @@ int main() {
       td::ConvertScenePreview(input.string(), resolver, refined_options);
   Require(refined.success && refined.samples > cached.samples,
           "explicit resolution refines sampling");
+  const auto lods = td::BuildScenePreviewLods(refined, refined_options);
+  Require(lods.success, lods.error);
+  td::ScenePreviewLodCamera near_camera, far_camera;
+  near_camera.eye = {0, 0, .01};
+  far_camera.eye = {0, 0, 1000000};
+  const auto near_lods = td::SelectScenePreviewLods(lods, near_camera);
+  const auto far_lods = td::SelectScenePreviewLods(lods, far_camera);
+  Require(!near_lods.empty() && !far_lods.empty() && near_lods != far_lods,
+          "camera selects finer nearby LOD");
+  auto count_particles = [](usd::Stage& stage) {
+    size_t count = 0;
+    stage.Traverse([&](const usd::UsdPrim& prim) {
+      if (usd::IsParticleField(prim))
+        count += prim.GetPropertyValue("positions")->array_size();
+      return true;
+    });
+    return count;
+  };
+  auto near_stage = Load(lods.root_path, near_lods),
+       far_stage = Load(lods.root_path, far_lods);
+  Require(count_particles(near_stage) > count_particles(far_stage),
+          "USD LOD variants refine particle detail");
+  Require(td::BuildScenePreviewLods(refined, refined_options).success,
+          "warm LOD cache");
+  td::ScenePreviewLods constrained;
+  constrained.success = true;
+  constrained.cell_size = 1;
+  constrained.gpu_budget_bytes = uint64_t(128) << 20;
+  td::ScenePreviewLodTile constrained_tile;
+  constrained_tile.path = "/Tile";
+  constrained_tile.minimum = {-1, -1, -1};
+  constrained_tile.maximum = {1, 1, 1};
+  constrained_tile.bytes = {uint64_t(80) << 20, uint64_t(80) << 20,
+                            uint64_t(20) << 20, uint64_t(10) << 20};
+  constrained.tiles.push_back(constrained_tile);
+  Require(td::SelectScenePreviewLods(constrained, near_camera)
+                  .at("/Tile")
+                  .at("previewLod") == "lod2",
+          "budget reduction skips equal-cost levels");
+  constrained.gpu_budget_bytes = uint64_t(512) << 20;
+  auto boundary_camera = near_camera;
+  boundary_camera.eye = {0, 0, 19};
+  boundary_camera.focal_pixels = 10;
+  td::ScenePreviewLodSelections previous;
+  previous["/Tile"]["previewLod"] = "lod0";
+  Require(
+      td::SelectScenePreviewLods(constrained, boundary_camera)
+                  .at("/Tile")
+                  .at("previewLod") == "lod1" &&
+          td::SelectScenePreviewLods(constrained, boundary_camera, 2, previous)
+                  .at("/Tile")
+                  .at("previewLod") == "lod0",
+      "LOD hysteresis prevents threshold chatter");
+  Write(fs::path(lods.root_path).parent_path() / "manifest.json",
+        R"({"version":2,"tiles":"invalid"})");
+  Require(td::BuildScenePreviewLods(refined, refined_options).success,
+          "malformed LOD cache regenerates");
   const fs::path manifest =
       fs::path(cached.usd_path).parent_path() / "manifest.json";
   Write(manifest, R"({"version":2,"dependencies":[],"statistics":"invalid"})");
@@ -194,6 +295,29 @@ def Xform "World" {
   Require(pi.source_instances == 2, "PointInstancer count");
   Require(ParticleCount(pi.usd_path, &lo, &hi) > 0 && lo < 0 && hi > 9,
           "forward PointInstancer prototype placement");
+
+  Write(scratch / "native-prototype.usda",
+        "#usda 1.0\ndef Xform \"Asset\" {\n def Xform \"Prototype\" {\n "
+        "double3 xformOp:translate=(2,0,0)\n uniform token[] "
+        "xformOpOrder=[\"xformOp:translate\"]\n" +
+            Quad("Surface") + "}\n}\n");
+  Write(scratch / "native-target.usda", R"USD(#usda 1.0
+def Xform "A" (references=@native-prototype.usda@</Asset> instanceable=true) {}
+def Xform "B" (references=@native-prototype.usda@</Asset> instanceable=true) {
+ double3 xformOp:translate=(20,0,0)
+ uniform token[] xformOpOrder=["xformOp:translate"]
+}
+def PointInstancer "Instances" {
+ rel prototypes=[</B/Prototype>]
+ int[] protoIndices=[0]
+ point3f[] positions=[(40,0,0)]
+}
+)USD");
+  const auto aliased = td::ConvertScenePreview(
+      (scratch / "native-target.usda").string(), resolver, options);
+  Require(aliased.success, aliased.error);
+  Require(ParticleCount(aliased.usd_path, &lo, &hi) > 0 && hi > 42.5 && hi < 44,
+          "native descendant prototype resolves with its local transform");
 
   // Bake a texture through a real PreviewSurface connection, then change the
   // texture without touching USD. A warm cache must invalidate that dependency.

@@ -6427,6 +6427,7 @@ bool LoadNextStageBudgeted(const Options &opt, lightusd::next::Stage *stage,
   session_options.compose = true;
   session_options.composition.load_payloads = true;
   session_options.composition.variant_overrides = opt.variant_overrides;
+  session_options.composition.variant_overrides_by_path = opt.preview_variant_overrides;
   // A render mask is also a composition boundary. Loading every payload and
   // filtering its geometry afterwards defeats the memory purpose of -mask on
   // payload-heavy scenes. Keep payloads whose authored prim path intersects a

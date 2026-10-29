@@ -56,24 +56,72 @@ static bool TryWriteVolume(Build& build, usd::Layer& root,
     build.result.error = "volume preview budget cannot hold one brick";
     return false;
   }
-  double cell = build.cell_size;
-  std::map<std::array<int64_t, 3>, std::vector<size_t>> bricks;
-  for (;;) {
-    bricks.clear();
-    for (size_t i = 0; i < samples.size(); ++i) {
-      std::array<int64_t, 3> key{};
-      for (int k = 0; k < 3; ++k)
-        key[k] =
-            static_cast<int64_t>(std::floor(samples[i].p[k] / (cell * side)));
-      bricks[key].push_back(i);
+  // Separate sampling scales before assigning the brick budget. A distant
+  // environment shell must not force a room-sized object onto kilometre voxels.
+  std::map<int, std::vector<size_t>> bands;
+  for (size_t i = 0; i < samples.size(); ++i) {
+    int level = 0;
+    if (!build.opts.resolution) {
+      const double ratio =
+          std::max(1., double(samples[i].radius) / (4 * build.cell_size));
+      level = static_cast<int>(std::min(48., std::ceil(std::log2(ratio))));
     }
-    if (bricks.size() <= limit) break;
-    if (build.opts.resolution) {
-      build.result.error =
-          "volume preview resolution exceeds the GPU brick budget";
-      return false;
+    bands[level].push_back(i);
+  }
+  while (bands.size() > limit) {
+    auto last = std::prev(bands.end()), before = std::prev(last);
+    last->second.insert(last->second.end(), before->second.begin(),
+                        before->second.end());
+    bands.erase(before);
+  }
+  struct Brick {
+    std::array<int64_t, 3> key;
+    double cell;
+    std::vector<size_t> samples;
+  };
+  std::vector<Brick> bricks;
+  std::map<int, size_t> budgets;
+  double weight_sum = 0;
+  for (const auto& band : bands)
+    weight_sum += std::sqrt(double(band.second.size()) / (1 + band.first));
+  size_t assigned = 0;
+  for (const auto& band : bands) {
+    const double weight =
+        std::sqrt(double(band.second.size()) / (1 + band.first));
+    const size_t budget =
+        1 + static_cast<size_t>(
+                std::floor((limit - bands.size()) * weight / weight_sum));
+    budgets[band.first] = budget;
+    assigned += budget;
+  }
+  for (auto it = budgets.begin(); assigned < limit; ++assigned) {
+    ++it->second;
+    if (++it == budgets.end()) it = budgets.begin();
+  }
+  double finest_cell = 1e300;
+  for (const auto& band : bands) {
+    double cell = std::ldexp(build.cell_size, band.first);
+    std::map<std::array<int64_t, 3>, std::vector<size_t>> spatial;
+    for (;;) {
+      spatial.clear();
+      for (size_t i : band.second) {
+        std::array<int64_t, 3> key{};
+        for (size_t k = 0; k < 3; ++k)
+          key[k] =
+              static_cast<int64_t>(std::floor(samples[i].p[k] / (cell * side)));
+        spatial[key].push_back(i);
+      }
+      if (spatial.size() <= budgets[band.first]) break;
+      if (build.opts.resolution) {
+        build.result.error =
+            "volume preview resolution exceeds the GPU brick budget";
+        return false;
+      }
+      cell *= 2;
     }
-    cell *= 2;
+    finest_cell = std::min(finest_cell, cell);
+    for (auto& item : spatial)
+      bricks.push_back({item.first, cell, std::move(item.second)});
   }
   usd::LayerBuilder builder(root);
   builder.begin_prim("ScenePreview", "Xform");
@@ -87,16 +135,17 @@ static bool TryWriteVolume(Build& build, usd::Layer& root,
   uint64_t surface_bytes = 0;
   size_t index = 0;
   for (const auto& brick : bricks) {
+    const double cell = brick.cell;
     if (!build.check("volume", index)) return false;
     double origin[3];
     for (int k = 0; k < 3; ++k)
-      origin[k] = (brick.first[k] * side - halo) * cell;
+      origin[k] = (brick.key[size_t(k)] * side - halo) * cell;
     const size_t count = size_t(dim) * dim * dim;
     std::vector<float> sdf(count, static_cast<float>(3 * cell));
     std::vector<float> albedo(count * 3, 0.5f);
     // Rasterize oriented surflet discs, then use their finite-thickness shell
     // distance. This remains meaningful for open terrain and thin walls.
-    for (size_t si : brick.second) {
+    for (size_t si : brick.samples) {
       const Sample& s = samples[si];
       // Deterministic coverage preserves fractional opacity in opaque shells.
       const double coverage =
@@ -234,6 +283,7 @@ static bool TryWriteVolume(Build& build, usd::Layer& root,
       mb.current()
           ->ensure_property_meta("primvars:displayColor")
           .interpolation = "vertex";
+      mb.add_property("lightusd:preview:voxelSize", usd::Value(cell));
       mb.add_property("subdivisionScheme", usd::Value::MakeToken("none"));
       mb.add_property("doubleSided", usd::Value(true));
       mb.end_prim();
@@ -282,7 +332,7 @@ static bool TryWriteVolume(Build& build, usd::Layer& root,
     build.result.error = written.error;
     return false;
   }
-  build.result.voxel_size = cell;
+  build.result.voxel_size = finest_cell;
   build.result.estimated_gpu_bytes =
       reserve + std::max(surface_bytes, index * brick_cost);
   return true;

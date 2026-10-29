@@ -23,9 +23,10 @@ bool Save(const fs::path& file, const usd::Layer& layer, std::string* error) {
   }
   return true;
 }
-void Particles(usd::Layer& layer, const std::string& name,
-               const Sample* samples, size_t count, double cell,
-               ScenePreviewKind kind) {
+}  // namespace
+void MakePreviewParticles(usd::Layer& layer, const std::string& name,
+                          const Sample* samples, size_t count, double cell,
+                          ScenePreviewKind kind) {
   usd::LayerBuilder builder(layer);
   builder.begin_prim(name, kind == ScenePreviewKind::Gaussian
                                ? "ParticleField3DGaussianSplat"
@@ -88,7 +89,6 @@ void Particles(usd::Layer& layer, const std::string& name,
   builder.end_prim();
   builder.finalize();
 }
-}  // namespace
 void AppendPreviewExtras(const Build& build, usd::Layer& layer) {
   usd::LayerBuilder builder(layer);
   for (const auto& extra : build.extras) {
@@ -160,9 +160,9 @@ bool WriteProxy(Build& build) {
                         file = "particles_" + std::to_string(first / chunk) +
                                ".usdc";
       usd::Layer tile;
-      Particles(tile, name, samples.data() + first,
-                std::min(chunk, samples.size() - first), build.cell_size,
-                build.opts.kind);
+      MakePreviewParticles(tile, name, samples.data() + first,
+                           std::min(chunk, samples.size() - first),
+                           build.cell_size, build.opts.kind);
       if (!Save(build.directory / file, tile, &build.result.error) ||
           !build.check("write", first))
         return false;

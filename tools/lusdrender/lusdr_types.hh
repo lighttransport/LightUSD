@@ -611,6 +611,7 @@ struct Options {
   std::string frames;             // -frames FRAMESPEC: render an animation
   bool default_time{false};       // -defaultTime: evaluate at the default time
   double max_mem_gib{0.0};        // -maxMem <GiB>: 0 = auto min(32, 0.5*avail)
+  std::map<std::string,std::map<std::string,std::string>> preview_variant_overrides;
   std::map<std::string, std::string> variant_overrides;  // --variant set=selection
   // -lodStream: view-dependent district LOD. A cheap proxy pass measures each
   // district's camera distance + proxy size, then promotes the nearest districts

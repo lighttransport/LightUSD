@@ -1186,6 +1186,15 @@ int main(int argc, char **argv) {
       std::cerr << "scene preview: " << scenePreviewError << "\n";
       return EXIT_FAILURE;
     }
+    if(scenePreview.camera_lod) {
+      std::array<double,3> direction={1,.6,1};
+      if(opt.has_view_dir) direction={-opt.view_dir.x,-opt.view_dir.y,-opt.view_dir.z};
+      const auto camera=lightusd::tydra::next::InitialScenePreviewLodCamera(
+          scenePreview.result,opt.input,opt.camera,opt.height>0?opt.height:540,opt.fit_scale,direction);
+      opt.preview_variant_overrides=lightusd::tydra::next::SelectScenePreviewLods(
+          scenePreview.lods,camera,scenePreview.lod_pixel_error);
+      if(opt.preview_variant_overrides.empty()) {std::cerr<<"preview LOD selection exceeds budget\n";return EXIT_FAILURE;}
+    }
     opt.rt_preview = true;
     opt.legacy_load = false;
     opt.max_vram_gib = double(scenePreview.options.gpu_budget_bytes) /

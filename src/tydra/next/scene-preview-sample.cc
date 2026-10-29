@@ -298,8 +298,12 @@ bool Build::plan(usd::pcp::ComposedBatch& batch) {
   for (size_t i = 0; i < prims.size(); ++i) {
     usd::UsdPrim prim(&prims[i], stage.GetRootLayer(),
                       static_cast<uint32_t>(i));
-    if (!prim.GetMeta().instance_prototype().empty())
+    if (!prim.GetMeta().instance_prototype().empty()) {
       prototypes.insert(prim.GetMeta().instance_prototype());
+      if (prim.GetMeta().instance_prototype() != prim.GetPath().str())
+        native_prototypes[prim.GetPath().str()] =
+            prim.GetMeta().instance_prototype();
+    }
     if (prim.GetTypeName() == "PointInstancer") {
       for (const auto& p : usd::UsdGeomPointInstancer(prim).GetPrototypes()) {
         prototypes.insert(p.str());
@@ -379,7 +383,37 @@ bool Build::plan(usd::pcp::ComposedBatch& batch) {
   batch.layer = stage.ReleaseRootLayer();
   return check("plan", prims.size());
 }
+std::string Build::resolve_prototype(std::string path) const {
+  for (size_t depth = 0; depth < 1024; ++depth) {
+    std::string ancestor = path;
+    bool changed = false;
+    while (!ancestor.empty()) {
+      const auto it = native_prototypes.find(ancestor);
+      if (it != native_prototypes.end()) {
+        path = it->second + path.substr(ancestor.size());
+        changed = true;
+        break;
+      }
+      const auto slash = ancestor.rfind('/');
+      if (slash == std::string::npos || slash == 0) break;
+      ancestor.resize(slash);
+    }
+    if (!changed) return path;
+  }
+  return {};
+}
 bool Build::finish_plan() {
+  std::set<std::string> canonical;
+  for (const auto& path : point_prototypes) {
+    const auto resolved = resolve_prototype(path);
+    if (resolved.empty()) {
+      result.error = "cyclic preview prototype aliases";
+      return false;
+    }
+    canonical.insert(resolved);
+    prototypes.insert(resolved);
+  }
+  point_prototypes.swap(canonical);
   usd::Layer catalog;
   catalog.meta() = meta;
   usd::LayerBuilder builder(catalog);
@@ -773,6 +807,11 @@ bool Build::consume(usd::pcp::ComposedBatch& batch) {
         result.error = "singular preview prototype transform: " + path;
         return false;
       }
+      if (point_prototypes.count(path)) {
+        auto local = Identity();
+        usd::ComputeLocalTransform(prim, local.data(), opts.time_code);
+        point_prototype_local[path] = local;
+      }
       ancestors.emplace_back(path, inv);
       std::ofstream create(prototype_file(path), std::ios::binary);
       if (!create) {
@@ -800,7 +839,7 @@ bool Build::consume(usd::pcp::ComposedBatch& batch) {
         double placed[16];
         Multiply(world.data(), transforms[j].matrix, placed);
         ++result.source_instances;
-        if (!queue_placement(target, placed, ancestors)) return false;
+        if (!queue_placement(target, placed, ancestors, true)) return false;
       }
     }
     if ((i & 4095) == 0 && !check("compose", result.source_prims)) return false;
@@ -831,13 +870,21 @@ bool ReadString(std::istream& stream, std::string* value) {
 bool Build::queue_placement(
     const std::string& key, const double* world,
     const std::vector<std::pair<std::string, std::array<double, 16>>>&
-        ancestors) {
+        ancestors,
+    bool point) {
+  const auto canonical = resolve_prototype(key);
+  if (canonical.empty()) {
+    result.error = "cyclic preview prototype aliases";
+    return false;
+  }
   if (!placements.is_open())
     placements.open(directory / "prototypes" / "placements", std::ios::binary);
-  if (!WriteString(placements, key)) {
+  if (!WriteString(placements, canonical)) {
     result.error = "cannot spill preview placements";
     return false;
   }
+  const uint8_t is_point = point ? 1 : 0;
+  placements.write(reinterpret_cast<const char*>(&is_point), 1);
   placements.write(reinterpret_cast<const char*>(world), 16 * sizeof(double));
   const uint32_t count = static_cast<uint32_t>(ancestors.size());
   placements.write(reinterpret_cast<const char*>(&count), sizeof(count));
@@ -871,6 +918,8 @@ bool Build::finish_placements() {
         result.error = "invalid preview placement spill";
         return false;
       }
+      uint8_t is_point = 0;
+      input.read(reinterpret_cast<char*>(&is_point), 1);
       input.read(reinterpret_cast<char*>(world.data()), 16 * sizeof(double));
       input.read(reinterpret_cast<char*>(&count), sizeof(count));
       if (count > 1024) {
@@ -891,7 +940,11 @@ bool Build::finish_placements() {
         return false;
       }
       if (pending_prototype_placements[key] == 0) {
-        if (!replay(key, world.data(), ancestors)) return false;
+        auto placed = world;
+        const auto local = point_prototype_local.find(key);
+        if (is_point && local != point_prototype_local.end())
+          Multiply(world.data(), local->second.data(), placed.data());
+        if (!replay(key, placed.data(), ancestors)) return false;
         for (const auto& a : ancestors) {
           if (!flush_prototype(a.first)) return false;
           --pending_prototype_placements[a.first];
@@ -899,6 +952,7 @@ bool Build::finish_placements() {
         ++done;
       } else {
         if (!WriteString(deferred, key)) return false;
+        deferred.write(reinterpret_cast<const char*>(&is_point), 1);
         deferred.write(reinterpret_cast<const char*>(world.data()),
                        16 * sizeof(double));
         deferred.write(reinterpret_cast<const char*>(&count), sizeof(count));

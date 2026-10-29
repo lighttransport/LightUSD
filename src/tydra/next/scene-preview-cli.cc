@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <algorithm>
 #include <cerrno>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -60,6 +61,27 @@ bool ExtractScenePreviewArguments(int* argc, char** argv,
     const std::string a = argv[i];
     if (a == "--scene-preview") {
       request->enabled = true;
+      continue;
+    }
+    if (a == "--preview-lod-pixels") {
+      if (i + 1 >= *argc) {
+        if (error) *error = "missing preview LOD pixel error";
+        return false;
+      }
+      char* end = nullptr;
+      const double pixels = std::strtod(argv[++i], &end);
+      if (!end || end == argv[i] || *end || !std::isfinite(pixels) ||
+          pixels <= 0) {
+        if (error) *error = "invalid preview LOD pixel error";
+        return false;
+      }
+      request->enabled = true;
+      request->lod_pixel_error = pixels;
+      continue;
+    }
+    if (a == "--preview-no-lod") {
+      request->enabled = true;
+      request->camera_lod = false;
       continue;
     }
     if (a == "--preview-refresh") {
@@ -154,7 +176,16 @@ bool PrepareScenePreview(std::string* source, ScenePreviewRequest& request,
       ScenePreviewKindName(request.options.kind), result.cache_hit ? 1 : 0,
       static_cast<unsigned long long>(result.samples),
       double(result.estimated_gpu_bytes) / (1 << 20), result.elapsed_seconds);
+  request.result = result;
   *source = result.render_usd_path;
+  if (request.camera_lod) {
+    request.lods = BuildScenePreviewLods(result, request.options);
+    if (!request.lods.success) {
+      if (error) *error = request.lods.error;
+      return false;
+    }
+    *source = request.lods.root_path;
+  }
   return true;
 }
 }  // namespace next

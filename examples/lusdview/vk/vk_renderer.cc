@@ -1293,6 +1293,14 @@ bool VulkanRenderer::createDevice(std::string* err) {
   supported12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
   featureQuery.pNext = &supported12;
   vkGetPhysicalDeviceFeatures2(phys_, &featureQuery);
+  // RT shaders declare SampledImageArrayNonUniformIndexing even when this
+  // scene has no textures. The capability must be enabled on the device.
+  v12.shaderSampledImageArrayNonUniformIndexing =
+      supported12.shaderSampledImageArrayNonUniformIndexing;
+  if (rtSupported_ && !v12.shaderSampledImageArrayNonUniformIndexing) {
+    LOGW("Vulkan hardware RT requires nonuniform sampled-image indexing");
+    rtSupported_ = false;
+  }
   bufferDeviceAddressSupported_ = supported12.bufferDeviceAddress &&
                                   supported12.scalarBlockLayout &&
                                   featureQuery.features.shaderInt64;
@@ -6983,6 +6991,9 @@ void VulkanRenderer::destroyMeshResources(VkMeshGPU& m) {
 
 void VulkanRenderer::destroyScene() {
   oitRequirementsDirty_ = true;
+  // A camera LOD reload can replace a scene before its first draw flushes the
+  // staged mesh uploads. Submit those copies while their destinations exist.
+  flushPendingUploads();
   for (auto& m : meshes_) {
     if (m.vbo) vkDestroyBuffer(device_, m.vbo, nullptr);
     if (m.vboMem) vkFreeMemory(device_, m.vboMem, nullptr);
@@ -7086,7 +7097,6 @@ void VulkanRenderer::destroyScene() {
   // All pooled per-mesh buffers were destroyed in the loop above; release the shared
   // host-memory blocks they sub-allocated from (their per-buffer *Mem was NULL, so the
   // vkFreeMemory calls above were no-ops).
-  flushPendingUploads();  // release any staging buffers still queued
   freeHostPool();
   freeDevicePool();
   matColor_.clear();

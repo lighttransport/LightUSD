@@ -2743,7 +2743,22 @@ Build `lusdpreview` and `test_scene_preview`, then run
 The generated fixtures cover all three representations, bounded outputs,
 portable export, cross-batch native instances, forward PointInstancers,
 texture baking, dependency invalidation, malformed/truncated cache recovery,
-cancellation and default VRAM sizing.
+cancellation and default VRAM sizing. Additional cases cover PointInstancer
+targets inside native instance copies, prototype-local transforms, adaptive
+volume bricks with mixed-scale environment geometry, portable four-level USD
+variants, hysteresis and aggregate LOD budget selection.
+
+Run `python3 tools/lusdpreview/check-lod.py --viewer build_ninja/lusdview
+--output build_ninja/preview-lod-check` for 27 headless captures across all three
+representations and CPU / Vulkan / CUDA. Near/far captures must trigger automatic
+refinement within budget; the finest capture must match disabled-LOD rendering
+within one 8-bit rounding step. Run under GPU-assisted validation as below.
+LOD reloads upload the complete replacement scene before capturing a settled
+frame. The camera runner forces device-local staged mesh uploads to cover scene
+replacement before the first raster draw; scene teardown must flush pending
+copies before destroying their destination buffers.
+The `lusdview-vk-gaussian-chunks` hardware-RT test also checks the shader
+feature declarations required by the NVIDIA ray-query path.
 
 For headless hardware qualification run
 [check-renderers.py](../tools/lusdpreview/check-renderers.py) with the built

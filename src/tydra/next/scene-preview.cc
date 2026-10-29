@@ -8,6 +8,7 @@
 #include <sstream>
 
 #include "external/jsonhpp/nlohmann/json.hpp"
+#include "next/pcp/cache.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "scene-preview-internal.hh"
 #if defined(__linux__)
@@ -21,7 +22,7 @@ namespace preview_impl = preview_detail;
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 namespace {
-constexpr int kVersion = 2;
+constexpr int kVersion = 3;
 json FileStamp(const std::string& path) {
   // Package dependencies are invalidated by their containing archive.
   const std::string file = path.substr(0, path.find('['));
@@ -50,6 +51,7 @@ std::string Fingerprint(const std::string& source,
     << o.texture_max_edge << ':' << o.texture_budget_bytes << ':'
     << o.composition.load_payloads << ':'
     << static_cast<int>(o.composition.expression_variable_policy);
+  if (o.kind == ScenePreviewKind::Volume) s << ":adaptive-bricks-1";
   if (o.composition.strict_aousd_conformance) s << ":strict";
   if (o.composition.error_when_asset_not_found) s << ":missing-error";
   if (!o.composition.detect_instances) s << ":no-instances";
@@ -229,6 +231,8 @@ ScenePreviewResult ConvertScenePreview(
       valid = false;
     if (valid) {
       ReadStatistics(manifest["statistics"], result);
+      if (manifest.contains("warning") && manifest["warning"].is_string())
+        result.warning = manifest["warning"].get<std::string>();
       result.success = true;
       result.cache_hit = true;
       result.usd_path = (directory / "root.usdc").string();
@@ -263,45 +267,97 @@ ScenePreviewResult ConvertScenePreview(
     }
   } cleanup{work};
   preview_impl::Build build(options, result, work);
-  ::lightusd::next::pcp::CompositionOptions compose = options.composition;
-  compose.flatten_instances = false;
-  compose.instance_flatten_mode =
-      ::lightusd::next::pcp::InstanceFlattenMode::Native;
-  compose.background_reclaim = true;
-  compose.release_layers_during_fill = true;
-  ::lightusd::next::pcp::BatchedComposeOptions batches;
-  batches.target_batch_prims = options.batch_prims;
-  batches.roots_per_batch = options.batch_roots;
-  batches.pipeline = false;
-  ::lightusd::next::pcp::BatchedComposer composer;
-  if (!build.check("open", 0) ||
-      !composer.Open(source, resolver, compose, batches, &result.warning,
-                     &result.error) ||
-      !composer.Plan(&result.warning, &result.error,
-                     [&](auto& batch) { return build.plan(batch); }))
-    return finish();
-  if (!composer.whole() && !build.finish_plan()) return finish();
   json dependencies = json::array();
-  for (const auto& file : composer.source_identifiers()) {
-    const auto dep = FileStamp(file);
-    if (dep.is_null() || dep.contains("missing")) {
-      result.error =
-          "preview caching requires file-backed source dependencies: " + file;
+  if (options.kind != ScenePreviewKind::Gaussian) {
+    // Geometry discovery/sampling is representation-independent. Reuse the
+    // canonical Gaussian cache rather than expanding large instance sets again.
+    auto sampled_options = options;
+    sampled_options.kind = ScenePreviewKind::Gaussian;
+    const auto sampled = ConvertScenePreview(source, resolver, sampled_options);
+    if (!sampled.success) {
+      result.error = sampled.error;
       return finish();
     }
-    dependencies.push_back(dep);
-    build.dependencies.insert(file);
+    const auto manifest =
+        ReadJson(fs::path(sampled.usd_path).parent_path() / "manifest.json");
+    if (!ValidManifest(manifest)) {
+      result.error = "sample cache changed during conversion";
+      return finish();
+    }
+    dependencies = manifest["dependencies"];
+    result.source_prims = sampled.source_prims;
+    result.source_meshes = sampled.source_meshes;
+    result.source_instances = sampled.source_instances;
+    result.warning = sampled.warning;
+    build.cell_size = sampled.voxel_size;
+    ::lightusd::next::Stage stage;
+    ::lightusd::next::pcp::CompositionOptions read;
+    read.num_threads = 1;
+    if (!::lightusd::next::pcp::ComposeStageFromFile(
+            sampled.usd_path, resolver, &stage, read, &result.warning,
+            &result.error))
+      return finish();
+    ::lightusd::next::pcp::ComposedBatch batch;
+    batch.layer = stage.ReleaseRootLayer();
+    if (!build.plan(batch) || !build.finish_plan()) return finish();
+    stage.SetRootLayer(std::move(*batch.layer));
+    bool ok = true;
+    stage.Traverse([&](const ::lightusd::next::UsdPrim& prim) {
+      if (prim.GetTypeName() != "ParticleField3DGaussianSplat") return true;
+      const auto samples =
+          preview_impl::ReadPreviewSamples(prim, ScenePreviewKind::Gaussian);
+      for (const auto& sample : samples)
+        if (!build.insert(sample)) {
+          ok = false;
+          return false;
+        }
+      if (!build.check("reuse-samples", build.cells.size())) {
+        ok = false;
+        return false;
+      }
+      return true;
+    });
+    if (!ok) return finish();
+  } else {
+    ::lightusd::next::pcp::CompositionOptions compose = options.composition;
+    compose.flatten_instances = false;
+    compose.instance_flatten_mode =
+        ::lightusd::next::pcp::InstanceFlattenMode::Native;
+    compose.background_reclaim = true;
+    compose.release_layers_during_fill = true;
+    ::lightusd::next::pcp::BatchedComposeOptions batches;
+    batches.target_batch_prims = options.batch_prims;
+    batches.roots_per_batch = options.batch_roots;
+    batches.pipeline = false;
+    ::lightusd::next::pcp::BatchedComposer composer;
+    if (!build.check("open", 0) ||
+        !composer.Open(source, resolver, compose, batches, &result.warning,
+                       &result.error) ||
+        !composer.Plan(&result.warning, &result.error,
+                       [&](auto& batch) { return build.plan(batch); }))
+      return finish();
+    if (!composer.whole() && !build.finish_plan()) return finish();
+    for (const auto& file : composer.source_identifiers()) {
+      const auto dep = FileStamp(file);
+      if (dep.is_null() || dep.contains("missing")) {
+        result.error =
+            "preview caching requires file-backed source dependencies: " + file;
+        return finish();
+      }
+      dependencies.push_back(dep);
+      build.dependencies.insert(file);
+    }
+    // Plan() has no callbacks for plain, already-composed files.
+    if (!composer.Run(
+            [&](auto& batch) {
+              if (composer.whole() &&
+                  (!build.plan(batch) || !build.finish_plan()))
+                return false;
+              return build.consume(batch);
+            },
+            &result.warning, &result.error))
+      return finish();
   }
-  // Plan() has no callbacks for plain, already-composed files.
-  if (!composer.Run(
-          [&](auto& batch) {
-            if (composer.whole() &&
-                (!build.plan(batch) || !build.finish_plan()))
-              return false;
-            return build.consume(batch);
-          },
-          &result.warning, &result.error))
-    return finish();
   if (!build.finish_placements() || !build.check("write", build.cells.size()) ||
       !preview_impl::WriteProxy(build))
     return finish();
@@ -333,6 +389,7 @@ ScenePreviewResult ConvertScenePreview(
     std::ofstream f(work / "manifest.json");
     f << json{{"version", kVersion},
               {"dependencies", dependencies},
+              {"warning", result.warning},
               {"outputs", outputs},
               {"statistics", Statistics(result)}}
              .dump(2);
