@@ -43,6 +43,14 @@ tvdb_grid_t Template(double size, const double* origin,
 }  // namespace
 static bool TryWriteVolume(Build& build, usd::Layer& root,
                            const std::vector<Sample>& samples) {
+  if (!build.compute) {
+    build.compute =
+        CreatePreviewCompute(build.opts.compute_backend,
+                             build.opts.gpu_budget_bytes, &build.result.error);
+    if (!build.compute) return false;
+    std::fprintf(stderr, "[scene-preview] volume conversion compute=%s\n",
+                 build.compute->name());
+  }
   // Small independent bricks keep dense GPU upload bounded; empty world space
   // never becomes a scene-wide dense volume. Geometry sampling and output share
   // one budget, including the three overlapping device/upload copies.
@@ -145,46 +153,88 @@ static bool TryWriteVolume(Build& build, usd::Layer& root,
     std::vector<float> albedo(count * 3, 0.5f);
     // Rasterize oriented surflet discs, then use their finite-thickness shell
     // distance. This remains meaningful for open terrain and thin walls.
-    for (size_t si : brick.samples) {
-      const Sample& s = samples[si];
-      // Deterministic coverage preserves fractional opacity in opaque shells.
-      const double coverage =
-          double(Hash(std::to_string(si)) >> 11) / 9007199254740992.0;
-      if (coverage >= std::max(0.f, std::min(1.f, s.opacity))) continue;
-      double center[3];
-      for (int k = 0; k < 3; ++k) center[k] = (s.p[k] - origin[k]) / cell;
-      const double radius =
-          std::max(cell, std::min(double(s.radius), cell * 4));
-      const int extent = static_cast<int>(std::ceil(radius / cell)) + halo;
-      const int cx = static_cast<int>(std::floor(center[0])),
-                cy = static_cast<int>(std::floor(center[1])),
-                cz = static_cast<int>(std::floor(center[2]));
-      for (int z = std::max(0, cz - extent); z < std::min(dim, cz + extent + 1);
-           ++z)
-        for (int y = std::max(0, cy - extent);
-             y < std::min(dim, cy + extent + 1); ++y)
-          for (int x = std::max(0, cx - extent);
-               x < std::min(dim, cx + extent + 1); ++x) {
-            const double d[] = {x - center[0], y - center[1], z - center[2]};
-            const double plane = d[0] * s.n[0] + d[1] * s.n[1] + d[2] * s.n[2];
-            const double radial = std::sqrt(std::max(
-                0.0, d[0] * d[0] + d[1] * d[1] + d[2] * d[2] - plane * plane));
-            const double q0 = radial - radius / cell,
-                         q1 = std::abs(plane) - .55;
-            const double distance =
-                (std::min(std::max(q0, q1), 0.0) +
-                 std::hypot(std::max(q0, 0.0), std::max(q1, 0.0))) *
-                cell;
-            const size_t off =
-                (size_t(z) * dim + static_cast<size_t>(y)) * dim +
-                static_cast<size_t>(x);
-            if (distance < sdf[off]) {
-              sdf[off] = static_cast<float>(distance);
-              for (int c = 0; c < 3; ++c)
-                albedo[off * 3 + static_cast<size_t>(c)] = s.color[c];
+    if (std::string(build.compute->name()) != "cpu") {
+      std::vector<uint32_t> input(16);
+      input[0] = 0;
+      input[1] = dim;
+      const float spacing = static_cast<float>(cell);
+      std::memcpy(&input[3], &spacing, 4);
+      for (size_t si : brick.samples) {
+        const auto& sample = samples[si];
+        const double coverage =
+            double(Hash(std::to_string(si)) >> 11) / 9007199254740992.0;
+        if (coverage >= std::max(0.f, std::min(1.f, sample.opacity))) continue;
+        const size_t off = input.size();
+        input.resize(off + 12);
+        const float data[] = {
+            float((sample.p[0] - origin[0]) / cell),
+            float((sample.p[1] - origin[1]) / cell),
+            float((sample.p[2] - origin[2]) / cell),
+            float(std::max(cell, std::min(double(sample.radius), cell * 4)) /
+                  cell),
+            sample.n[0],
+            sample.n[1],
+            sample.n[2],
+            sample.opacity,
+            sample.color[0],
+            sample.color[1],
+            sample.color[2],
+            0};
+        std::memcpy(input.data() + off, data, sizeof(data));
+        ++input[2];
+      }
+      std::vector<float> output;
+      if (!build.compute->dispatch(input, count * 4, &output,
+                                   &build.result.error))
+        return false;
+      for (size_t i = 0; i < count; ++i) {
+        sdf[i] = output[i * 4];
+        for (size_t k = 0; k < 3; ++k)
+          albedo[i * 3 + k] = output[i * 4 + 1 + k];
+      }
+    } else
+      for (size_t si : brick.samples) {
+        const Sample& s = samples[si];
+        // Deterministic coverage preserves fractional opacity in opaque shells.
+        const double coverage =
+            double(Hash(std::to_string(si)) >> 11) / 9007199254740992.0;
+        if (coverage >= std::max(0.f, std::min(1.f, s.opacity))) continue;
+        double center[3];
+        for (int k = 0; k < 3; ++k) center[k] = (s.p[k] - origin[k]) / cell;
+        const double radius =
+            std::max(cell, std::min(double(s.radius), cell * 4));
+        const int extent = static_cast<int>(std::ceil(radius / cell)) + halo;
+        const int cx = static_cast<int>(std::floor(center[0])),
+                  cy = static_cast<int>(std::floor(center[1])),
+                  cz = static_cast<int>(std::floor(center[2]));
+        for (int z = std::max(0, cz - extent);
+             z < std::min(dim, cz + extent + 1); ++z)
+          for (int y = std::max(0, cy - extent);
+               y < std::min(dim, cy + extent + 1); ++y)
+            for (int x = std::max(0, cx - extent);
+                 x < std::min(dim, cx + extent + 1); ++x) {
+              const double d[] = {x - center[0], y - center[1], z - center[2]};
+              const double plane =
+                  d[0] * s.n[0] + d[1] * s.n[1] + d[2] * s.n[2];
+              const double radial =
+                  std::sqrt(std::max(0.0, d[0] * d[0] + d[1] * d[1] +
+                                              d[2] * d[2] - plane * plane));
+              const double q0 = radial - radius / cell,
+                           q1 = std::abs(plane) - .55;
+              const double distance =
+                  (std::min(std::max(q0, q1), 0.0) +
+                   std::hypot(std::max(q0, 0.0), std::max(q1, 0.0))) *
+                  cell;
+              const size_t off =
+                  (size_t(z) * dim + static_cast<size_t>(y)) * dim +
+                  static_cast<size_t>(x);
+              if (distance < sdf[off]) {
+                sdf[off] = static_cast<float>(distance);
+                for (int c = 0; c < 3; ++c)
+                  albedo[off * 3 + static_cast<size_t>(c)] = s.color[c];
+              }
             }
-          }
-    }
+      }
     std::vector<tvdb_vec3i> coords;
     std::vector<float> values, colors;
     coords.reserve(count);
@@ -234,7 +284,7 @@ static bool TryWriteVolume(Build& build, usd::Layer& root,
       build.result.error = "cannot serialize preview volume";
       return false;
     }
-    {
+    if (build.opts.volume_surface_carrier) {
       ::lightusd::tydra::vol::FieldCache fields({}, uint64_t(128) << 20);
       ::lightusd::tydra::vol::FieldRequest request;
       request.prim_type = "OpenVDBAsset";
@@ -302,6 +352,8 @@ static bool TryWriteVolume(Build& build, usd::Layer& root,
       renderBuilder.end_prim();
     }
     builder.begin_prim(name, "Volume");
+    builder.add_property("lightusd:preview:overlapGroup",
+                         usd::Value::MakeToken("surface"));
     builder.add_relationship("field:density",
                              usd::Path("/ScenePreview/" + name + "/Surface"));
     builder.add_relationship("field:albedo",
@@ -322,6 +374,26 @@ static bool TryWriteVolume(Build& build, usd::Layer& root,
   }
   builder.end_prim();
   builder.finalize();
+  if (!build.opts.volume_surface_carrier) {
+    // Camera/load metadata only. Direct rendering reads UsdVol grids and never
+    // requests a triangulated surface carrier.
+    renderBuilder.begin_prim("Bounds", "Cube");
+    renderBuilder.add_property("size", usd::Value(2.0));
+    double matrix[16] = {};
+    matrix[15] = 1;
+    for (int k = 0; k < 3; ++k) {
+      matrix[k * 5] =
+          (build.result.bounds_max[k] - build.result.bounds_min[k]) * .5;
+      matrix[12 + k] =
+          (build.result.bounds_max[k] + build.result.bounds_min[k]) * .5;
+    }
+    renderBuilder.add_property("xformOp:transform",
+                               usd::Value::MakeMatrix4d(matrix));
+    renderBuilder.add_property(
+        "xformOpOrder", usd::Value::MakeTokenArray(
+                            std::vector<std::string>{"xformOp:transform"}));
+    renderBuilder.end_prim();
+  }
   renderBuilder.end_prim();
   renderBuilder.finalize();
   AppendPreviewExtras(build, renderRoot);

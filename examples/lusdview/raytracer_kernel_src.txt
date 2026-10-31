@@ -2721,7 +2721,7 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
     if (rmodePre == 2 || rmodePre == 4) outc = scale(add(N, mk(1.f,1.f,1.f)), 0.5f);
     else if (rmodePre == 6) outc = mk(fminf(t / fmaxf(cam.lightDir[3], 1e-6f), 1.f), 0.f, 0.f);
     else if (rmodePre == 0) {
-      float lam = fmaxf(dot3(N, norm3(mk(cam.lightDir[0],cam.lightDir[1],cam.lightDir[2]))), 0.f);
+      float lam = cam.context[2] > .5f ? fabsf(dot3(N,d)) : fmaxf(dot3(N, norm3(mk(cam.lightDir[0],cam.lightDir[1],cam.lightDir[2]))), 0.f);
       outc = add(scale(C, 0.18f + 0.82f * lam), scale(mk(cam.clear[0],cam.clear[1],cam.clear[2]), 1.f-alpha));
     } else outc = C;
   }

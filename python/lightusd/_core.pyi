@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Type stubs for the lightusd._core extension."""
-from typing import Any, Iterator, Optional, Sequence, Union
+from typing import Any, Callable, Iterator, Optional, Sequence, Union
 
 __version__: str
 
@@ -385,6 +385,19 @@ def load_bytes(data: Union[bytes, bytearray, memoryview], *,
                max_crate_elements: int = 0) -> Stage: ...
 def flatten_file(src: str, dst: str, *, max_memory: int = 0,
                  max_crate_elements: int = 0) -> None: ...
+
+# Portable light-filter registry (custom kinds are data-only and participate in
+# every conversion that uses the shared registry).
+def register_light_filter(
+    kind: str,
+    callable: Callable[[dict[str, Any]], Any],
+) -> None: ...
+def unregister_light_filter(kind: str) -> None: ...
+def light_filter_kinds() -> list[str]: ...
+def light_filter_effective(
+    stage: Stage, prim_path: str, time: float = 0.0
+) -> tuple[float, tuple[float, float, float]]: ...
+
 def to_render_scene(stage: Stage, *, triangulate: bool = True,
                     compute_normals: bool = True,
                     compute_tangents: bool = False,

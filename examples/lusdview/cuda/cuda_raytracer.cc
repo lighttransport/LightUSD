@@ -709,6 +709,8 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
                           float displacementScale, BuildProgress* progress,
                           bool retainForRefit,
                           uint32_t purposeVisibleMask) {
+  previewAlbedo_=std::any_of(scene.points.begin(),scene.points.end(),[](const DrawPointsCPU& points){return points.previewAlbedo;});
+
   if (!ctx_) { if (err) *err = "CUDA not initialized"; return false; }
   cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_));
   freeScene();
@@ -1467,6 +1469,7 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   cam.clear[3] = static_cast<float>(renderMode);
   cam.context[0] = sceneTime;
   cam.context[1] = sceneFrame;
+  cam.context[2] = previewAlbedo_?1.0f:0.0f;
   cam.camPos[3] = exposure;
   cam.lightDir[3] = depthScale;  // depth AOV normalizer
   for (int i = 0; i < 3; ++i) { cam.sceneMin[i] = sceneMin[i]; cam.sceneExtent[i] = sceneExtent[i]; }

@@ -1330,6 +1330,11 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     const float id = float(tri.capture_prim_id);
     return Vec3{id, id, id};
   }
+  // Converted particle previews bake surface color rather than illumination.
+  // Keep their camera light independent of the original scene's light powers.
+  if(opt.scene_preview_albedo && direct_hit.hit) {
+    return Mul(tri.base_color,.25f+.75f*std::abs(Dot(Normalize(tri.n),Normalize(ray_dir))));
+  }
   // Occlusion against whichever acceleration structure is active.
   auto occluded = [&](const Vec3 &op, const Vec3 &on, const Vec3 &ol,
                       float omax) -> bool {

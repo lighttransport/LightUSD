@@ -2,6 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 // Tydra Next - light conversion
 #include "render-converter-internal.hh"
+#include "light-filter.hh"
 #include "next/eval/attribute-eval.hh"
 #include "next/schema/usd-lux.hh"
 #include <string>
@@ -111,8 +112,8 @@ bool RenderSceneConverter::Impl::ConvertLight(
     case LightKind::PluginLightFilter:
       out->type = LightType::Point;
       AddConversionWarning(prim.GetPath().str(), "Light filter '" + prim.GetPath().str() +
-                          "': filter evaluation is unsupported; "
-                          "using inert point light fallback");
+                          "': a filter prim is not an emitter; "
+                          "using an inert placeholder");
       out->intensity = 0.0f;
       break;
     default: out->type = LightType::Point; break;
@@ -148,6 +149,37 @@ bool RenderSceneConverter::Impl::ConvertLight(
   out->filter_targets = ReadRelationshipTargets(prim, "filters");
   if (out->filter_targets.empty()) {
     out->filter_targets = ReadRelationshipTargets(prim, "light:filters");
+  }
+  // Resolve portable filter descriptors. An unknown or malformed filter leaves
+  // the light unchanged and is reported, never silently applied.
+  out->filters.clear();
+  for (const std::string& target : out->filter_targets) {
+    const UsdPrim filter_prim = stage.GetPrimAtPath(target);
+    if (!filter_prim) {
+      AddConversionWarning(prim.GetPath().str(),
+                           "Light filter '" + target + "': no prim at path");
+      continue;
+    }
+    LightFilter filter;
+    std::string filter_error;
+    if (!ParseLightFilter(stage, filter_prim, config_.time_code, &filter,
+                          &filter_error)) {
+      AddConversionWarning(prim.GetPath().str(),
+                           "Light filter '" + target + "': " + filter_error);
+      continue;
+    }
+    out->filters.push_back(std::move(filter));
+  }
+  // Receiver-independent filters fold into the render-ready light so every
+  // backend (raster, RT, preview kernels, C API consumers) agrees without a
+  // second evaluation step. Shaper-style per-receiver filters would extend
+  // LightFilter instead of folding here.
+  if (!out->filters.empty()) {
+    std::array<float, 3> color{out->color.x, out->color.y, out->color.z};
+    ApplyLightFilters(out->filters, &out->intensity, &color);
+    out->color.x = color[0];
+    out->color.y = color[1];
+    out->color.z = color[2];
   }
 
   // Type-specific properties

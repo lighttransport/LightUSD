@@ -21,6 +21,8 @@
 #include "next/load-usd.hh"
 #include "next/schema/usd-vol.hh"
 #include "next/resolver/asset-resolver.hh"
+#include "next/eval/attribute-eval.hh"
+#include "tydra/next/light-filter.hh"
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/render-extract.hh"
 #include "tydra/next/render-session.hh"
@@ -33,6 +35,152 @@ namespace n = lightusd::next;
 using lightusd_internal::EmptySV;
 using lightusd_internal::Fail;
 using lightusd_internal::SV;
+
+namespace {
+
+struct CFilterBinding {
+  lightusd_light_filter_parse_fn parse = nullptr;
+  void* user = nullptr;
+};
+
+std::mutex& FilterMutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
+std::map<std::string, CFilterBinding>& FilterBindings() {
+  static std::map<std::string, CFilterBinding> bindings;
+  return bindings;
+}
+
+bool EvalFilterFloat(const n::AttributeEval& eval, const n::UsdPrim& prim,
+                     const char* name, float* out) {
+  if (const auto value = eval.EvalFloat(prim, name)) {
+    *out = *value;
+    return true;
+  }
+  if (const auto value = eval.EvalDouble(prim, name)) {
+    *out = static_cast<float>(*value);
+    return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+lightusd_status lightusd_register_light_filter(
+    const char* kind, lightusd_light_filter_parse_fn parse, void* user) {
+  if (!kind || !*kind || !parse) return LIGHTUSD_ERR_INVALID_ARG;
+  const std::string name(kind);
+  if (td::HasLightFilter(name)) return LIGHTUSD_ERR_INVALID_ARG;
+  {
+    std::lock_guard<std::mutex> lock(FilterMutex());
+    if (!FilterBindings().emplace(name, CFilterBinding{parse, user}).second)
+      return LIGHTUSD_ERR_INVALID_ARG;
+  }
+  const bool registered = td::RegisterLightFilter(
+      name, [name, parse, user](const n::Stage& stage, const n::UsdPrim& prim,
+                                double time, td::LightFilter* out,
+                                std::string* error) {
+        n::AttributeEval eval(&stage);
+        eval.SetTime(time);
+        lightusd_light_filter_params params{};
+        const std::string path = prim.GetPath().str();
+        params.kind = name.c_str();
+        params.prim_path = path.c_str();
+        params.intensity = 1.0f;
+        params.color[0] = params.color[1] = params.color[2] = 1.0f;
+        EvalFilterFloat(eval, prim, "lightusd:filter:intensity",
+                        &params.intensity);
+        float rgb[3];
+        if (eval.EvalFloat3(prim, "lightusd:filter:color", rgb)) {
+          for (size_t k = 0; k < 3; ++k) params.color[k] = rgb[k];
+        } else {
+          double wide[3];
+          if (eval.EvalDouble3(prim, "lightusd:filter:color", wide))
+            for (size_t k = 0; k < 3; ++k)
+              params.color[k] = static_cast<float>(wide[k]);
+        }
+        for (size_t i = 0; i < 8; ++i) {
+          char property[32];
+          std::snprintf(property, sizeof property,
+                        "lightusd:filter:value%zu", i);
+          EvalFilterFloat(eval, prim, property, &params.values[i]);
+        }
+        params.value_count = 8;
+        float intensity = 1.0f, color[3] = {1.0f, 1.0f, 1.0f};
+        if (!parse(&params, user, &intensity, color)) {
+          *error = "custom light filter rejected the prim";
+          return false;
+        }
+        if (!std::isfinite(intensity) || intensity < 0.0f) {
+          *error = "custom light filter returned an invalid intensity";
+          return false;
+        }
+        out->intensity = std::min(intensity, 64.0f);
+        for (size_t k = 0; k < 3; ++k) {
+          if (!std::isfinite(color[k]) || color[k] < 0.0f) {
+            *error = "custom light filter returned an invalid color";
+            return false;
+          }
+          out->color[k] = std::min(color[k], 16.0f);
+        }
+        return true;
+      });
+  if (!registered) {
+    std::lock_guard<std::mutex> lock(FilterMutex());
+    FilterBindings().erase(name);
+    return LIGHTUSD_ERR_INVALID_ARG;
+  }
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_unregister_light_filter(const char* kind) {
+  if (!kind || !*kind) return LIGHTUSD_ERR_INVALID_ARG;
+  const std::string name(kind);
+  {
+    std::lock_guard<std::mutex> lock(FilterMutex());
+    if (!FilterBindings().erase(name)) return LIGHTUSD_ERR_NOT_FOUND;
+  }
+  // Built-ins are compile-time providers and stay registered.
+  if (!td::UnregisterLightFilter(name)) return LIGHTUSD_ERR_NOT_FOUND;
+  return LIGHTUSD_OK;
+}
+
+size_t lightusd_light_filter_kind_count(void) {
+  return td::LightFilterKinds().size();
+}
+
+lightusd_status lightusd_light_filter_kind(size_t index, char* out,
+                                           size_t capacity, size_t* required) {
+  const auto kinds = td::LightFilterKinds();
+  if (index >= kinds.size()) return LIGHTUSD_ERR_NOT_FOUND;
+  const std::string& kind = kinds[index];
+  if (required) *required = kind.size() + 1;
+  if (!out) return LIGHTUSD_OK;
+  if (capacity < kind.size() + 1) return LIGHTUSD_ERR_RESOURCE_LIMIT;
+  std::memcpy(out, kind.data(), kind.size());
+  out[kind.size()] = '\0';
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_light_filter_parse(const lightusd_stage* stage,
+                                            lightusd_prim prim, double time,
+                                            float* intensity, float* color3) {
+  if (!stage || !intensity || !color3 || !std::isfinite(time))
+    return LIGHTUSD_ERR_INVALID_ARG;
+  const n::UsdPrim filter_prim = lightusd_internal::FromC(prim);
+  if (!filter_prim.IsValid()) return LIGHTUSD_ERR_INVALID_ARG;
+  td::LightFilter filter;
+  std::string error;
+  if (!td::ParseLightFilter(stage->ReadStage(), filter_prim, time, &filter,
+                            &error)) {
+    return lightusd_internal::Fail(LIGHTUSD_ERR_UNSUPPORTED, error);
+  }
+  *intensity = filter.intensity;
+  for (size_t k = 0; k < 3; ++k) color3[k] = filter.color[k];
+  return LIGHTUSD_OK;
+}
 
 struct BufferCacheKey {
   uint8_t domain;

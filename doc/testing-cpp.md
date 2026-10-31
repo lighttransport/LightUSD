@@ -1016,6 +1016,8 @@ payloads, three-layer edits, and deterministic comparisons with the string
 list-op model. A 9,001-prim case checks serial/parallel staged and streaming
 writer parity. Retained operation storage is included in memory estimates.
 Nested list-op values outside metadata are not covered by this codec.
+The CPU preview test checks inactiveIds visibility and rejection of preview
+cache version 3; current preview and source geometry versions are 4 and 2.
 
 `next_test_stream_residency` compares staged/streamed bytes for owned and
 observable mapped sources around the 32 MiB digest threshold. It checks serial
@@ -2998,3 +3000,99 @@ records actual per-process NVML VRAM and RSS, and requires hardware allocations.
 Use the [Vulkan validation layer procedure](lusdview.md#gpu-assisted-validation-shader-faults--device-loss)
 for shader/descriptor qualification. Keep large source assets, cached sidecars,
 images and measurement logs in ignored build directories.
+
+
+For extended previews, `next_test_scene_preview_compute` checks CPU conversion
+and direct UsdVol SDF/albedo rendering, rejects malformed compute buffers and
+verifies camera updates reuse immutable grid data. Run its executable with
+`vulkan` and `cuda` on hardware to compare each kernel against the CPU reference;
+an unavailable requested backend fails. `next_test_light_filter` checks the
+portable light-filter registry, `lightusd:filter:kind`/parameter parsing with
+clamping, the fold into the render-ready light intensity/color, warnings for
+unknown kinds and missing targets, custom-kind registration/unregistration, and
+the folded values recorded in a cached preview. The compute test also checks
+preview light and shadow linking (mask exclusion/inclusion, independent light and
+shadow masks, CPU/lavapipe parity), and `check-source-refinement.py --software`
+runs the 12-capture refinement matrix against Mesa without NVIDIA probing.
+Custom filter kinds register through the C API
+(`lightusd_register_light_filter`, covered by `next_test_light_filter_c`) and
+through Python (`lightusd.register_light_filter`, covered by
+`python/tests/test_light_filter.py`); both surfaces share the C++ registry used
+by conversion and preview caches. `next_test_scene_preview` also checks
+that regional source resampling produces finer detail and retains the background,
+including PointInstancer targets inside native instances and nested prototype
+triangle/placement graphs.
+Run `tools/lusdpreview/check-source-refinement.py` for 18 automatic-resampling
+captures and run it under Xvfb with `--threaded --owner vk` / `--owner gl` for six
+captures per actual render owner. The JSON report must confirm an active render
+thread, finer source cells and increased sample counts; direct volume captures
+must report the grid path. Keep logs, caches and images in ignored build folders.
+
+Persistent-index qualification must request an uncached camera region and reject
+the `open` progress phase, while observing `source-index`. The retained sample
+count and source detail must increase for a targeted surface. Changing a source
+layer must invalidate the index; keep original geometry and generated indices
+out of Git. Index creation may revisit the whole scene once.
+
+The compute test also checks analytic Beer-Lambert absorption and single
+scattering, emission and phase changes, density-only UsdVol loading/framing,
+and authored scene light effects. Passing a third argument to the executable
+retains its fixtures in that directory for application-level checks. Run
+`check-renderers.py ... --native-volume` on its `fog.usda`, and use
+`--kinds volume --volume-mode medium` to qualify participating media on larger
+previews. `check-particle-radiance.py` guards against relighting converted point
+colors with extreme scene lights; captures must remain nonblank and identical.
+
+Textured-emission and multiple-scattering qualification extends the compute test
+with analytic Monte Carlo Beer-Lambert transmission, nonnegative higher-order
+energy, fixed-seed repeatability, colored dome/rect lighting, rotated dome
+transforms and malformed texture/sample descriptors. CPU, CUDA and Vulkan must
+pass; Vulkan runs under GPU-assisted validation. The conversion test checks
+portable linear-HDR sidecars after deleting the original texture, and upgrades
+a legacy lighting cache while rejecting geometry resampling. For application
+checks, retain the compute fixtures and run:
+
+```sh
+python3 tools/lusdpreview/check-renderers.py FIXTURES/textured-fog.usda \
+  --native-volume --volume-mode medium --volume-bounces 4 --volume-samples 8 \
+  --viewer build_ninja/preview-render/lusdview \
+  --renderer build_ninja/preview-render/lusdview_lightrt_c_build/lusdrender \
+  --cache build_ninja/textured-volume-cache --output build_ninja/textured-volume-check
+```
+
+Use the same scattering controls with `--kinds volume --no-source-refine` for
+Caldera and larger cached scenes. Keep the 2048 MiB process VRAM gate and inspect
+noise and lighting variation in the captures; stochastic paths need an RMS
+comparison, since tiny floating-point differences can change collision branches.
+
+Emitter-importance checks add single-pixel off-axis dome and rect maps and
+compare their raw radiance against integrated energy at one light sample.
+Validate truncated/nonmonotone CDFs, the 1–64 CLI bound and render-cache
+invalidation when the sample count changes. Headless qualification should also
+use a sparse bright map whose nonzero texels occupy less than 0.1% of the image.
+Run CPU, CUDA and GPU-assisted Vulkan; keep captures within the 2048 MiB gate.
+
+Projection and accumulation checks cover angular/mirrored-ball emission energy
+against numerical spherical integrals, including partial texels at disk edges.
+The compute test compares both GPU backends to CPU and checks statistically
+bounded Monte Carlo energy. Accumulation must reduce image MSE, respect its cap,
+reset on camera/viewport/shading/scene changes, and retain its count when a final
+capture reads the last frame. App reports include `preview_accumulated_frames`;
+require a value above one for real progressive viewer/render-thread tests.
+
+For software-only preview development, run compute checks through
+`scripts/with-software-rendering.sh` and application checks with
+`tools/lusdpreview/check-renderers.py --software`. This pins Mesa lavapipe and
+llvmpipe, disables the preview NVIDIA-memory probe, skips CUDA and distinguishes
+software results from hardware qualification. Do not force an NVIDIA device
+when using this mode. Hardware tests remain an explicit separate qualification.
+
+Higher-quality medium/light checks include independent partial overlaps,
+extinction-weighted emission, finest-level halo priority, a thin density peak,
+diagonal cubic-density optical depth, rays beyond 4096 steps, scattering beyond
+eight bounces, and explicit ray/shadow-budget exhaustion. Finite rect/disk/
+sphere/cylinder illumination is checked against geometric solid-angle integrals;
+a conservative medium in a unit environment checks radiance conservation.
+The shared scalar kernel runs on CPU and Mesa lavapipe only for current goal
+qualification. See `doc/preview-lighting-goal.md` for the mandatory no-hardware
+constraint and completion audit.

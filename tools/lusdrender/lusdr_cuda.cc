@@ -419,6 +419,7 @@ bool RunSharedRT(const char *backend, const Options &opt,
       lusdview::DrawPointsCPU points;
       SetIdentity(points.world);
       points.gaussian = true;
+      points.previewAlbedo=opt.scene_preview_albedo;
       points.materialId = 0;
       points.purpose = "default";
       points.points = chunk.centers;
@@ -440,6 +441,7 @@ bool RunSharedRT(const char *backend, const Options &opt,
     scene.hasBounds=true;
     std::cerr << backend << " native Gaussian carriers: " << scene.points.size() << " chunk(s)\n";
   }
+  if(opt.scene_preview_albedo)scene.lights.clear();
   Tracer tracer;
   std::string err;
   if (!tracer.init(&err)) {
@@ -516,7 +518,7 @@ bool RunSharedRT(const char *backend, const Options &opt,
   std::vector<uint8_t> rgba;
   std::vector<float> linear_rgba;
   uint32_t rendered_samples = 0;
-  if (!tracer.trace(inv.m, vp.m, cam, light, clear, 1.0f, 0, 1.0f,
+  if (!tracer.trace(inv.m, vp.m, cam, light, clear, opt.scene_preview_albedo?0.0f:1.0f, 0, 1.0f,
                     scene_min, scene_extent, w, h, &rgba, &err,
                     spp, nullptr, path_trace.enabled ? &path_trace : nullptr,
                     path_trace.enabled ? &linear_rgba : nullptr,

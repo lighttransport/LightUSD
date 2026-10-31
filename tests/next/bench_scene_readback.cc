@@ -2,6 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 // CPU-only, opt-in profiling probe; not registered as a regression test.
 // Usage: bench_scene_readback scene.usdc [threads=1] [metadata|retained]
+//        [budget_mib=512]
 #include "next/crate/crate-reader.hh"
 #include "next/layer/layer.hh"
 #include "tydra/next/render-converter.hh"
@@ -69,9 +70,9 @@ size_t CopyArrays(const std::vector<
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc < 2 || argc > 4) {
+  if (argc < 2 || argc > 5) {
     std::fprintf(stderr, "Usage: bench_scene_readback scene.usdc [threads=1] "
-                         "[metadata|retained]\n");
+                         "[metadata|retained] [budget_mib=512]\n");
     return 2;
   }
   int threads = 1;
@@ -81,14 +82,24 @@ int main(int argc, char** argv) {
     if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() ||
         threads < 1 || threads > 64) return 2;
   }
-  const std::string mode = argc == 4 ? argv[3] : "retained";
+  const std::string mode = argc >= 4 ? argv[3] : "retained";
   if (mode != "retained" && mode != "metadata") return 2;
+  // The default keeps the historical 512 MiB bound. Larger composed files and
+  // retained-geometry runs need a larger resident budget to complete; this
+  // budget is the converter/reader limit, not a process RSS measurement.
+  size_t budget_mib = 512;
+  if (argc >= 5) {
+    const std::string text(argv[4]);
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), budget_mib);
+    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() ||
+        budget_mib < 64 || budget_mib > 16384) return 2;
+  }
 
   lightusd::logging::Logger::getInstance().setLogLevel(
       lightusd::logging::LogLevel::Info);
 
   lightusd::next::CrateReadOptions options;
-  options.max_memory = size_t(512) << 20;
+  options.max_memory = budget_mib << 20;
   options.num_threads = threads;
   options.enable_timing = true;
   options.lazy_arrays = true;
@@ -101,11 +112,12 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "Read failed\n");
     return 1;
   }
-  std::printf("[readback_profile] prims=%zu threads=%d mode=%s\n",
-              loaded.stage.GetRootLayer()->prim_count(), threads, mode.c_str());
+  std::printf("[readback_profile] prims=%zu threads=%d mode=%s budget_mib=%zu\n",
+              loaded.stage.GetRootLayer()->prim_count(), threads, mode.c_str(),
+              budget_mib);
 
   lightusd::tydra::next::ConverterConfig config;
-  config.limits.max_resident_bytes = size_t(512) << 20;
+  config.limits.max_resident_bytes = budget_mib << 20;
   config.execution.max_threads = threads;
   config.material.load_textures = false;
   config.animation.enabled = false;

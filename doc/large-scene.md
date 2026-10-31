@@ -6308,7 +6308,9 @@ metadata. Require unchanged output for unaffected fixtures and classify scene
 differences before accepting them. Regression coverage includes exact signed
 64-bit boundaries, IDs beyond 2^53, independent wire-byte checks, malformed
 payloads, multi-layer composition, masking, and serial/parallel staged and
-streaming writer parity above the 8,192-prim threshold.
+streaming writer parity above the 8,192-prim threshold. CPU preview cache
+version 4 and source geometry index version 2 reject samples produced before
+metadata visibility was applied.
 
 Final native CTest passes (73 passed, one optional skip), standalone Debug
 passes (77 passed, one optional skip), and three targeted no-thread tests pass.
@@ -7467,6 +7469,213 @@ ignored `cpu-implementation/qualification-scene-performance*`. An earlier run
 with one frontier root per batch was deliberately interrupted and archived as
 `qualification-scene-stress`; it is excluded from these measurements.
 
+### 10.120 Phase split of the opt-in low-memory modes
+
+The follow-up profile attributes the overhead instead of changing policy. Four
+warm-cache, rotated-order laps used four compose/parse/writer threads, the
+production batching defaults and an 8 GiB process guard; every run reproduced
+the same 732547046-byte output. `LIGHTUSD_NEXT_TIMING=1` supplied the phase
+splits, `time -v` the user/system time, peak RSS and 512-byte block I/O, and a
+100 ms sampler the scratch-dir residency.
+
+| Mode | Wall | Peak RSS | user/sys | Output+scratch writes | discover | plan build | encode wait | consumer busy | Run |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Default | 1.11 s | 646 MiB | 1.90/0.82 s | 699 MiB | - | - | - | - | - |
+| Low, retained | 1.70 s | 663 MiB | 2.29/0.93 s | 699 MiB | 546 ms | 373 ms | 4 ms | 24 ms | 587 ms |
+| Low, snapshots | 2.38 s | 680 MiB | 2.97/1.68 s | 1474 MiB | 766 ms | 696 ms | 5 ms | 23 ms | 560 ms |
+| Low, prepared | 3.20 s | 836 MiB | 3.06/2.40 s | 2223 MiB | 764 ms | 706 ms | 855 ms | 1284 ms | - |
+
+The default path composes this 12 GB source set in one 441 ms stage build and is
+both the fastest and the smallest-RSS option. Batched composition adds a
+546 ms discovery pass and a 373 ms batched plan build that the single-stage
+path does not pay, and retained mode shows no peak-RSS gain on this scene
+(663 versus 646 MiB), so the low-memory profile is a memory-bounding option for
+scenes that do not fit, not a speed option.
+
+Source snapshots add 0.68 s and 775 MiB of writes. Discovery and plan build
+each grow by about 0.22 s and 0.32 s while 8281 layers are evicted and captured,
+and the replay pass itself is cheap (560 ms) because it hits page cache: block
+reads stay at 0 MiB after the first cold lap. Prepared mode adds another 0.82 s
+and 156 MiB: the encoded operation log is 1.40 GB, the writer waits 855 ms on
+the composition callback while the consumer is busy for 1284 ms, and the skipped
+Run pass (560 ms) does not pay for the encode. Costs track scratch bytes written
+and per-batch bookkeeping rather than SSD reads, so extra consumer parallelism
+could only help if the encoder stays CPU-bound; here user time grows with each
+mode.
+
+No policy change was made from this profile. The default path remains the
+recommended mode for this workload, and the opt-in modes remain appropriate only
+where the scene does not fit the default profile. Profile inputs and results are
+under ignored `build_ninja/preview-baseline/` (`phase1-profile.py`,
+`phase1-profile*.json`, `phase1-<lap>-<mode>.log`).
+
+### 10.121 Composed-file readback and conversion split
+
+A bounded probe on the 241 MB Caldera flattened USDC (53972 prims, 897 meshes,
+four threads) separates crate readback from Tydra conversion and the native
+mesh copies that stand in for FFI marshaling. `bench_scene_readback` now takes an
+optional fourth argument for the reader/converter resident budget, because its
+historical fixed 512 MiB bound cannot open production-size composed files and
+fails retained-geometry conversion:
+
+| Gate | metadata mode | Notes |
+|---|---:|---|
+| Crate read (lazy arrays, mmap) | 844 ms wall / 2324 ms CPU | 800 MiB peak |
+| Node hierarchy | 125 ms | |
+| Mesh conversion | 4642 ms wall / 17358 ms CPU | 4.1 s of CPU per thread, ~90% parallel efficiency |
+| Conversion finalize | 91 ms | 1360 MiB peak |
+| Owned chunk copy | 4.6 ms | 55.1 MB copied |
+| Scalar chunk copy | 10.7 ms | 55.1 MB copied |
+
+Conversion is about 7.5x the read cost in CPU time and 82% of the probe's total,
+while the owned/scalar mesh copies are below 0.1%. There is therefore no
+justification for changing FFI or mesh-copy paths. Retained mode reports failure
+at the 2048 MiB budget on this scene (peak 3.34 GiB, 13.9 s convert), so
+retained-mode probe numbers are only usable for smaller inputs or after the
+converter's retained accounting is understood.
+
+Mesh conversion is CPU-bound with good thread scaling and no measured defect, so
+this records a target for an instrumented follow-up rather than a change made
+here. The probe and logs stay under ignored `build_ninja/preview-baseline/`.
+
+### 10.122 Shadow convergence audit
+
+The preview volume integrator already applies the same adaptive refinement and
+`integration_error` tolerance to primary and shadow rays, with separate
+`shadow_steps` and `transmittance_cutoff` limits. An incomplete refinement or an
+exhausted step budget returns a NaN sentinel that the renderer converts into the
+reported "volume integration did not converge within the ray/shadow step limits"
+error; three compute-test cases plus a renderer-level `max_steps=1` case cover
+primary, surface and shadow exhaustion.
+
+A bounded measurement checked whether a separate shadow tolerance is needed.
+On a lit fog fixture (density 32, one sphere light), disabling shadows changes
+the image by RMS 101.9 / max 233 (mean 106.7 versus 56.9), so shadow rays are
+active. Rendering the same frame with 8, 512 and 4096 shadow steps produces
+byte-identical images (0 of 57600 differing bytes), as does a variant with a
+light 30 units away and a two-field overlap fixture. These fixtures cross only a
+few grid cells per shadow ray, so the measurement establishes convergence and the
+absence of step-count bias at ordinary lengths, not behaviour at exhaustion
+limits, which the unit tests cover.
+
+No separate shadow error tolerance or adaptive step bound was added: the shared
+refinement already bounds the error, the step limit is explicit, and exhaustion
+is reported rather than silently clamped. Revisit only with a measured bias case,
+for example a large high-resolution VDB with long shadow paths.
+
+### 10.123 Preview light and shadow linking
+
+Preview volumes identify their receivers without new prims: while
+`PreviewVolumeRenderer::load` traverses the cached stage it assigns a dense
+1-based id to each `OpenVDBAsset` parent path and stores it in field metadata
+lane 11; the header records the count in lane 47. A light with an authored
+`light:link`/`collection:lightLink:includes` or
+`shadow:link`/`collection:shadowLink:includes` relationship gets a compiled
+`ceil(count/32)`-word mask appended after its IES profile block, with the
+pointer in record lane 33 (light) or 34 (shadow). A zero pointer means the light
+links everything.
+
+The shared kernel tests the light mask once per light before emission and the
+shadow mask before the shadow ray, so the two links stay independent. Receiver
+0 (isosurface shading, which has no media prim) is unfiltered. Unlike USD, the
+shadow link is applied receiver-side: a receiver excluded from a light's shadow
+set is lit unshadowed, rather than the shadow ray filtering individual blockers.
+That is deliberate for a volume preview and is documented in the converter guide.
+
+Cached previews keep the scene-relative link relationships on the light prim
+(`light:link`, `shadow:link` and the collection forms), so an exported cache
+compiles the same masks without the original asset tree. Unresolved targets
+contribute no receivers.
+
+Coverage: `next_test_scene_preview_compute` checks light-link exclusion (the
+light is skipped, leaving only transmitted background), light-link inclusion
+(restores the unshadowed radiance), and shadow-link exclusion/inclusion
+(identical to the unshadowed frame and to the unmasked shadows-on frame
+respectively), with CPU and Mesa-lavapipe parity.
+`next_test_preview_light_assets` checks that a cached light keeps both
+relationships.
+
+An end-to-end check rendered a cached fog volume with one sphere light through
+the loader: linking the light to the fog prim keeps the frame at mean 97.4,
+while linking it to an unrelated path (`/NotFog`) resolves to no receivers and
+drops the mean to 50.7 (RMS 100.9, 5106 of 20736 pixels differing). That
+confirms the cached relationship, the compiled mask and the kernel test all
+reach the rendered image, not just the unit-level buffers.
+
+### 10.124 Software GPU qualification
+
+All results below are **software** (Mesa lavapipe for Vulkan, llvmpipe for GL)
+and do not qualify hardware performance or VRAM.
+
+- Shader budget (G1): the preview compute shader builds in 49.8 MiB / 0.2 s
+  after dropping the GLSL `precise` qualifier (see "Preview shader compiler
+  budget"); the previous >14.3 GiB failure is gone.
+- Compute parity (G2): `test_scene_preview_compute` passes on cpu and vulkan with
+  `geometry_max_error=0`, `conversion max_error=0`, `direct-grid
+  pixel_error=0`, `medium_pixel_error=0` (foreground 1291/1289).
+- Raster and renderer (G3/G5): the fog volume fixture passes all four
+  viewer/renderer x cpu/vk combinations in software (0.9 s / 219 MiB, 4.8 s /
+  986 MiB, 0.15 s / 15 MiB, 4.8 s / 842 MiB). A bounded Caldera capture
+  (`caldera.flattened.usdc`, 160x120, gaussian, no refinement) renders in 46.4 s
+  / 2044.7 MiB on CPU and 0.9 s / 218.5 MiB on Vulkan with 136224 samples.
+- Render thread (G4): `lusdview --threaded --backend gl` under Xvfb+llvmpipe
+  reports `render_thread: true` and `preview_accumulated_frames: 4`, and
+  `--threaded --backend vk` does the same on lavapipe. Both owners also pass the
+  full refinement matrix (gaussian/points/volume, cached and refined) with
+  `render_thread: true` in every report: cell 0.125 to 0.0052-0.0060 and samples
+  5204 to 118157-130722. Refinement installs asynchronously, so threaded
+  captures need a longer window than the non-threaded path;
+  `check-source-refinement.py` now takes `--threaded-frames` (default 600).
+- IES parser: the app no longer carries a second LM-63 parser.
+  `examples/lusdview/lighting_ies.cc` adapts `scene-preview-photometry.cc`,
+  keeping the app's max-candela normalization, TILT baked into the candela
+  table, the 0..180 symmetry wrap column, and the count-first TILT=INCLUDE
+  layout the app historically accepted (including external TILT tables).
+  `lusdview_lighting_test` covers parsing, interpolation, azimuth symmetry,
+  malformed/empty/CRLF reloads, TILT interpolation and packing.
+- Custom filter registration: the C API (`lightusd_register_light_filter`,
+  `next_test_light_filter_c`) and the Python module
+  (`lightusd.register_light_filter`, `python/tests/test_light_filter.py`) both
+  register a custom kind, feed it `lightusd:filter:value0..7`/color, and drive
+  the shared registry (duplicate kinds, rejecting parsers and unknown kinds are
+  covered).
+- CUDA (G6): the kernel compiles into the GPU tree (`scene-preview-compute-cuda`
+  and its generated kernel source); it is never executed or probed, per the
+  no-hardware constraint.
+- Source refinement: `check-source-refinement.py --software` passes 12 captures
+  (gaussian, points, volume x cpu, vk). Refined caches drop the cell size from
+  0.125 to 0.0055-0.0060 and raise samples from 5204 to 118157-130722; volume
+  kinds report `direct_volume: true`.
+- Bounded ALab: the merged ALab entry caches 1300538 gaussian samples and the
+  viewer selects 142411 samples at the 2 px LOD for both backends. The CPU frame
+  is much brighter than the Vulkan frame (mean 229.5 versus 28.1) because the
+  CPU capture ray traces the source triangles while Vulkan rasterizes cached
+  splats with ambient-only shading; an earlier qualification capture of the same
+  scene shows the same relationship.
+- Bounded Island: the full `island.usda` scene did not finish within a 40 minute
+  guarded conversion (it reached batch 282827, about 118 prims/s, before the
+  guard timeout), which puts a complete pass at several hours and a multi-GB
+  cache against 18 GB free. With explicit user agreement the full scene is out
+  of scope for this qualification, and a bounded subset referencing two elements
+  (`isBayCedarA1`, `isHibiscusYoung`, 101 MB of source) was captured instead.
+  Both backends render 896357 samples at
+  cell 1.3807 (Vulkan draws 16138 instances at the selected LOD); the CPU frame
+  traces 129104 source triangles while the Vulkan frame rasterizes the splats,
+  giving means 113.1 versus 32.7 for the representation reason described below.
+- Known backend difference: the CPU capture uses `--cpu-rt`, which renders the
+  source triangles (the Island subset reports 129104 tris), while the Vulkan
+  raster path draws the cached Gaussian splats with `nonmesh.frag`'s 0.2
+  ambient term and whatever authored lights exist (none in these scenes). The
+  two images therefore differ by representation and shading policy (cube
+  gaussian RMS 39.3 where both cover the same silhouette; Caldera 79.8; ALab
+  means 229.5 versus 28.1; Island subset 113.1 versus 32.7). An earlier
+  qualification pair shows the same relationship, so this is not a regression.
+  Direct volume-grid frames are byte-identical (RMS 0.0) and the compute kernels
+  agree exactly, which are the meaningful parity checks. Aligning splat
+  brightness with the RT path would mean changing the preview raster ambient
+  policy, a deliberate visual change rather than a bug fix; with explicit user
+  agreement it stays a documented representation difference.
+
 ## Cached surface previews
 
 `lusdpreview` and `--scene-preview` in `lusdview` / `lusdrender` convert a composed
@@ -7479,4 +7688,27 @@ reserve and conservative geometry/scratch accounting.
 See [the converter guide](../tools/lusdpreview/README.md) for conversion,
 export, automatic camera-based LOD, explicit resolution/budget refinement, cache invalidation, memory
 limits and headless hardware qualification. Volume previews include a cached
-colored isosurface carrier for the existing surface renderers.
+colored isosurface carrier for external surface renderers. Both applications now
+march cached UsdVol SDF/albedo bricks directly by default, with CPU/Vulkan/CUDA
+kernels. Camera refinement can resample the visible source region beyond the
+initial cache and also supports the experimental GL/Vulkan render thread.
+
+### Preview shader compiler budget
+
+`LIGHTUSD_PREVIEW_GPU_COMPUTE=ON` runs `glslangValidator` at build time for
+`scene-preview-compute.comp`. With `#define PREVIEW_PRECISE precise`, glslang
+16.2 grows about 780 MiB/s and exceeds 14.3 GiB after 18.5 s, which trips the
+8 GiB development guard and makes every GPU-enabled build unusable on a 30 GiB
+host. `-Od`, `glslc`, and an empty `main()` (definitions only, no call into
+`work()`) behave the same, and each of the two `precise` declarations in the
+ray functions reproduces it alone, so this is a compiler pathology rather than
+shader size or the call graph.
+
+The GLSL build therefore leaves `PREVIEW_PRECISE` empty; the kernel keeps its
+compensated summation, which is the actual accuracy mechanism. The same shader
+then compiles in 49.8 MiB / 0.2 s and emits a 475,834-byte header. Restoring
+`precise` requires re-measuring the compiler and re-running
+`test_scene_preview_compute vulkan` for CPU parity. Measure with the converter
+probe used for this record: run the shader through `glslangValidator` under a
+peak-RSS sampler (50 ms sampling, kill above a hard ceiling) rather than relying
+on wall time, because the growth is linear and looks like a slow compile.

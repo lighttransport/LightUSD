@@ -11,7 +11,13 @@ set(TYDRA_NEXT_SOURCES
     scene-preview-lod.cc
     scene-preview-cli.cc
     scene-preview-sample.cc
+    scene-preview-light.cc
+    scene-preview-photometry.cc
+    scene-preview-index.cc
+    scene-preview-source.cc
+    scene-preview-geometry.cc
     scene-preview-write.cc
+    scene-preview-native-volume.cc
     scene-preview-volume.cc
     chunk-storage.cc
     render-data.cc
@@ -40,6 +46,7 @@ set(TYDRA_NEXT_SOURCES
     render-converter-texture.cc
     render-converter-animation.cc
   render-converter-lights.cc
+  light-filter.cc
   render-converter-camera.cc
   render-converter-material.cc
   render-converter-mtlx-eval.cc
@@ -135,6 +142,38 @@ if(NOT EMSCRIPTEN AND NOT TARGET lusdpreview)
       target_link_libraries(test_scene_preview PRIVATE ${LIGHTUSD_TARGET_STATIC})
     endif()
     add_test(NAME next_test_scene_preview COMMAND test_scene_preview)
+    add_executable(test_scene_preview_compute "${CMAKE_CURRENT_LIST_DIR}/../../../tests/next/test_scene_preview_compute.cc")
+    target_link_libraries(test_scene_preview_compute PRIVATE ${LIGHTUSD_NEXT_ALLOCATOR_LIB} tydra_next)
+    if(TARGET lightusd_preview_images)
+      target_link_libraries(test_scene_preview_compute PRIVATE lightusd_preview_images)
+    else()
+      target_link_libraries(test_scene_preview_compute PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    endif()
+    add_test(NAME next_test_scene_preview_compute COMMAND test_scene_preview_compute cpu)
+    add_executable(test_scene_preview_photometry "${CMAKE_CURRENT_LIST_DIR}/../../../tests/next/test_scene_preview_photometry.cc")
+    target_link_libraries(test_scene_preview_photometry PRIVATE ${LIGHTUSD_NEXT_ALLOCATOR_LIB} tydra_next)
+    if(TARGET lightusd_preview_images)
+      target_link_libraries(test_scene_preview_photometry PRIVATE lightusd_preview_images)
+    else()
+      target_link_libraries(test_scene_preview_photometry PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    endif()
+    add_test(NAME next_test_scene_preview_photometry COMMAND test_scene_preview_photometry)
+    add_executable(test_light_filter ${CMAKE_CURRENT_LIST_DIR}/../../../tests/next/test_light_filter.cc)
+    target_link_libraries(test_light_filter PRIVATE ${LIGHTUSD_NEXT_ALLOCATOR_LIB} tydra_next)
+    if(TARGET lightusd_preview_images)
+      target_link_libraries(test_light_filter PRIVATE lightusd_preview_images)
+    else()
+      target_link_libraries(test_light_filter PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    endif()
+    add_test(NAME next_test_light_filter COMMAND test_light_filter)
+    add_executable(test_preview_light_assets ${CMAKE_CURRENT_LIST_DIR}/../../../tests/next/test_preview_light_assets.cc)
+    target_link_libraries(test_preview_light_assets PRIVATE ${LIGHTUSD_NEXT_ALLOCATOR_LIB} tydra_next)
+    if(TARGET lightusd_preview_images)
+      target_link_libraries(test_preview_light_assets PRIVATE lightusd_preview_images)
+    else()
+      target_link_libraries(test_preview_light_assets PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    endif()
+    add_test(NAME next_test_preview_light_assets COMMAND test_preview_light_assets)
   endif()
 endif()
 
@@ -217,4 +256,34 @@ if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_NEXT_BUILD_TESTS)
   add_executable(test_gltf_export ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/tydra/next/test_gltf_export.cc)
   target_link_libraries(test_gltf_export PRIVATE tydra_next)
   add_test(NAME next_gltf_export COMMAND test_gltf_export)
+endif()
+
+# Optional hardware preview compute; CPU builds retain no GPU dependency.
+target_sources(tydra_next PRIVATE scene-preview-compute.cc)
+option(LIGHTUSD_PREVIEW_GPU_COMPUTE "Enable optional GPU preview compute kernels" ON)
+if(NOT EMSCRIPTEN AND LIGHTUSD_PREVIEW_GPU_COMPUTE)
+  find_package(Vulkan QUIET)
+  find_program(LIGHTUSD_PREVIEW_GLSLANG glslangValidator)
+  if(Vulkan_FOUND AND LIGHTUSD_PREVIEW_GLSLANG)
+    set(preview_spv "${CMAKE_CURRENT_BINARY_DIR}/scene-preview-compute-spv.hh")
+    add_custom_command(OUTPUT "${preview_spv}"
+      COMMAND "${LIGHTUSD_PREVIEW_GLSLANG}" -V --target-env vulkan1.1 -S comp
+        --vn kPreviewComputeSpv -o "${preview_spv}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/scene-preview-compute.comp"
+      DEPENDS scene-preview-compute.comp scene-preview-kernel.inc VERBATIM)
+    target_sources(tydra_next PRIVATE scene-preview-compute-vk.cc "${preview_spv}")
+    target_compile_definitions(tydra_next PRIVATE LIGHTUSD_PREVIEW_VULKAN=1)
+    target_include_directories(tydra_next SYSTEM PRIVATE ${Vulkan_INCLUDE_DIRS})
+  endif()
+  find_path(LIGHTUSD_PREVIEW_CUDA_INCLUDE cuda.h HINTS /usr/local/cuda/include)
+  if(LIGHTUSD_PREVIEW_CUDA_INCLUDE AND UNIX)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/scene-preview-kernel.inc" preview_kernel_source)
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/scene-preview-kernel-source.hh"
+      "static const char kPreviewKernelSource[] = R\"kernel(${preview_kernel_source})kernel\";\n")
+    target_sources(tydra_next PRIVATE scene-preview-compute-cuda.cc)
+    target_include_directories(tydra_next PRIVATE "${LIGHTUSD_PREVIEW_CUDA_INCLUDE}")
+    target_compile_definitions(tydra_next PRIVATE LIGHTUSD_PREVIEW_CUDA=1)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS scene-preview-kernel.inc)
+  endif()
+  target_include_directories(tydra_next PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 endif()

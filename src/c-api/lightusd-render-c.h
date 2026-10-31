@@ -956,6 +956,45 @@ LIGHTUSD_API lightusd_status lightusd_render_light_link_copy(
     const lightusd_render_scene* scene, int32_t id, uint8_t which,
     size_t index, char* out, size_t cap, size_t* required);
 
+/* ============================================================
+ * Portable light-filter registry
+ * ============================================================ */
+
+/* Authored parameters handed to a custom filter parser. `values` exposes
+ * lightusd:filter:value0..7 (default 0) so a custom kind can carry up to eight
+ * scalars without new schema. Parsers return the receiver-independent
+ * intensity/color multiplier; a zero return rejects the filter prim. */
+typedef struct lightusd_light_filter_params {
+  const char* kind;
+  const char* prim_path;
+  float intensity;
+  float color[3];
+  float values[8];
+  uint32_t value_count;
+} lightusd_light_filter_params;
+
+typedef int (*lightusd_light_filter_parse_fn)(
+    const lightusd_light_filter_params* params, void* user,
+    float* intensity, float* color3);
+
+/* Registers a custom kind. Fails with INVALID_ARG for an empty/duplicate kind
+ * or a null parser. Registered kinds participate in every conversion that uses
+ * the shared registry (render scene, previews, caches). */
+LIGHTUSD_API lightusd_status lightusd_register_light_filter(
+    const char* kind, lightusd_light_filter_parse_fn parse, void* user);
+LIGHTUSD_API lightusd_status lightusd_unregister_light_filter(const char* kind);
+LIGHTUSD_API size_t lightusd_light_filter_kind_count(void);
+/* Copies a NUL-terminated kind name. Pass out=NULL to query `required`
+ * (bytes including the terminator) only. */
+LIGHTUSD_API lightusd_status lightusd_light_filter_kind(
+    size_t index, char* out, size_t capacity, size_t* required);
+
+/* Parses one filter prim through the registry (built-ins and custom kinds) and
+ * returns its receiver-independent multiplier. */
+LIGHTUSD_API lightusd_status lightusd_light_filter_parse(
+    const lightusd_stage* stage, lightusd_prim prim, double time,
+    float* intensity, float* color3);
+
 typedef struct lightusd_render_camera_info {
   lightusd_sv name;
   lightusd_sv prim_path;

@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "color-transform.hh"
+#include "light-filter.hh"
 #include "next/eval/xform-eval.hh"
 #include "next/layer/asset-anchor.hh"
 #include "next/layer/prim-spec.hh"
@@ -167,7 +168,11 @@ bool Build::flush_prototype(const std::string& key) {
   it->second.clear();
   return true;
 }
-bool Build::insert(const Sample& s) {
+bool Build::insert(const Sample& s, bool filter_region) {
+  if (opts.region_enabled && filter_region)
+    for (size_t k = 0; k < 3; ++k)
+      if (s.p[k] < opts.region_min[k] || s.p[k] > opts.region_max[k])
+        return true;
   if (!std::isfinite(s.p[0]) || !std::isfinite(s.p[1]) ||
       !std::isfinite(s.p[2]) || !std::isfinite(s.radius) || s.radius <= 0 ||
       s.opacity <= 0)
@@ -231,6 +236,10 @@ bool Build::replay(
     const std::string& key, const double* world,
     const std::vector<std::pair<std::string, std::array<double, 16>>>&
         ancestors) {
+  if (source_capture || opts.region_enabled) {
+    if (!source_placement(key, world, ancestors)) return false;
+    if (opts.region_enabled) return true;
+  }
   if (!flush_prototype(key)) return false;
   std::ifstream f(prototype_file(key), std::ios::binary);
   if (!f) {
@@ -328,6 +337,20 @@ bool Build::plan(usd::pcp::ComposedBatch& batch) {
           copy.remove_property(name);
         else if (const auto* v = prim.GetValueAtTime(name, opts.time_code)) {
           if (v->type_id() == usd::TypeId::AssetPath) {
+            if ((name == "inputs:texture:file" &&
+                 (type == "DomeLight" || type == "RectLight")) ||
+                name == "inputs:shaping:ies:file") {
+              std::string file = v->as_asset_path();
+              if (!file.empty()) {
+                const auto anchor =
+                    usd::AssetAnchorPath(prims[i].asset_anchor_id());
+                if (!fs::path(file).is_absolute() && !anchor.empty())
+                  file = (fs::path(anchor) / file).lexically_normal().string();
+                copy.upsert_property(name, usd::Value::MakeAssetPath(file));
+                dependencies.insert(file);
+                continue;
+              }
+            }
             // Baked previews must not retain paths into the original asset
             // tree. Keep an untextured light when its environment/IES texture
             // cannot be represented by the baked surface colors.
@@ -339,6 +362,61 @@ bool Build::plan(usd::pcp::ComposedBatch& batch) {
           } else
             copy.upsert_property(name, *v);
         }
+      }
+      // Keep scene-relative link relationships so a cached preview can compile
+      // light/shadow linking masks without the original asset tree.
+      for (const char* name :
+           {"light:link", "shadow:link", "collection:lightLink:includes",
+            "collection:shadowLink:includes"}) {
+        if (const auto* targets = prim.GetRelationship(name))
+          copy.set_relationship_targets(name, *targets);
+      }
+      // Portable filters fold into the cached light's effective intensity and
+      // color, so an exported cache lights the same way without the filter
+      // prims (relationships are not carried into the cache root).
+      std::vector<LightFilter> filters;
+      for (const char* relation : {"light:filters", "filters"}) {
+        const auto* targets = prim.GetRelationship(relation);
+        if (!targets) continue;
+        for (const auto& target : *targets) {
+          const auto filter_prim = stage.GetPrimAtPath(target);
+          if (!filter_prim) {
+            if (result.warning.size() < 16384)
+              result.warning +=
+                  "Preview light filter missing: " + target.str() + "\n";
+            continue;
+          }
+          LightFilter filter;
+          std::string filter_error;
+          if (!ParseLightFilter(stage, filter_prim, opts.time_code, &filter,
+                                &filter_error)) {
+            if (result.warning.size() < 16384)
+              result.warning += "Preview light filter '" + target.str() +
+                                "': " + filter_error + "\n";
+            continue;
+          }
+          filters.push_back(std::move(filter));
+        }
+        if (!filters.empty()) break;
+      }
+      if (!filters.empty()) {
+        float intensity = 1.0f;
+        std::array<float, 3> color{1.0f, 1.0f, 1.0f};
+        if (const auto* value =
+                prim.GetValueAtTime("inputs:intensity", opts.time_code))
+          if (const float* authored = value->as_float())
+            intensity = *authored;
+        if (const auto* value =
+                prim.GetValueAtTime("inputs:color", opts.time_code)) {
+          const auto channels = value->as_float_array();
+          if (channels.size() >= 3)
+            color = {channels[0], channels[1], channels[2]};
+        }
+        ApplyLightFilters(filters, &intensity, &color);
+        copy.upsert_property("inputs:intensity", usd::Value(intensity));
+        copy.upsert_property(
+            "inputs:color",
+            usd::Value::MakeColor3f(color[0], color[1], color[2]));
       }
       auto world = Identity();
       usd::ComputeWorldTransform(stage, prim, world.data(), opts.time_code);
@@ -438,6 +516,7 @@ bool Build::finish_plan() {
     while (depth--) builder.end_prim();
   }
   builder.finalize();
+  if (source_capture && !source_save_catalog(catalog)) return false;
   usd::Stage stage;
   stage.SetRootLayer(std::move(catalog));
   for (const auto& item : material_specs)
@@ -615,6 +694,13 @@ bool Build::mesh(
   if (!converter.ConvertRenderableMesh(stage, prim, &geometry)) return true;
   if (geometry.points.empty() || geometry.triangulated_indices.empty())
     return true;
+  ++result.source_meshes;
+  if (source_capture || (opts.region_enabled && !ancestors.empty())) {
+    if (!source_mesh(stage, prim, geometry, world, ancestors)) return false;
+    for (const auto& ancestor : ancestors)
+      if (opts.region_enabled && point_prototypes.count(ancestor.first))
+        return true;
+  }
   if (cell_size <= 0) {
     double lo[3] = {1e300, 1e300, 1e300}, hi[3] = {-1e300, -1e300, -1e300};
     for (size_t v = 0; v < geometry.point_count(); ++v)
@@ -630,7 +716,8 @@ bool Build::mesh(
     cell_size = std::max(
         1e-9, extent * scale / (opts.resolution ? opts.resolution : 256));
   }
-  ++result.source_meshes;
+  const bool gpu_geometry = geometry_backend();
+  if (!result.error.empty()) return false;
   const std::string material = binding(prim);
   const size_t triangles = geometry.triangulated_indices.size() / 3;
   // Each prototype mesh gets a bounded reusable sample set. The global grid
@@ -674,6 +761,23 @@ bool Build::mesh(
       for (int k = 0; k < 3; ++k)
         p[c][k] = geometry.points[vi[c] * 3 + static_cast<size_t>(k)];
     }
+    if (opts.region_enabled) {
+      bool outside = false;
+      double lo[3] = {1e300, 1e300, 1e300}, hi[3] = {-1e300, -1e300, -1e300};
+      for (int c = 0; c < 3; ++c) {
+        Sample vertex;
+        std::copy(p[c], p[c] + 3, vertex.p);
+        vertex = transform(vertex);
+        for (int k = 0; k < 3; ++k) {
+          lo[k] = std::min(lo[k], vertex.p[k]);
+          hi[k] = std::max(hi[k], vertex.p[k]);
+        }
+      }
+      for (size_t k = 0; k < 3; ++k)
+        outside =
+            outside || hi[k] < opts.region_min[k] || lo[k] > opts.region_max[k];
+      if (outside) continue;
+    }
     double a[3], b[3], normal[3];
     for (int k = 0; k < 3; ++k) {
       a[k] = p[1][k] - p[0][k];
@@ -684,68 +788,193 @@ bool Build::mesh(
     normal[2] = a[0] * b[1] - a[1] * b[0];
     const double twice_area = Length(normal);
     if (twice_area < 1e-20) continue;
-    const double area = twice_area * .5;
-    double spacing = cell_size > 0 ? cell_size : std::sqrt(area);
-    // Explicit refinement increases per-triangle texture/surface detail while
-    // preserving a bounded prototype working set. Convert world spacing back
-    // into the mesh's local units when evaluating the requested resolution.
-    const double sample_limit = opts.resolution ? 4096.0 : 64.0;
-    if (opts.resolution && transform.scale > 0) spacing /= transform.scale;
-    const size_t count = std::max(
-        size_t(1), static_cast<size_t>(std::min(
-                       sample_limit, std::ceil(area / (spacing * spacing)))));
-    for (size_t j = 0; j < count; ++j) {
-      const double u = std::sqrt((j + .5) / count),
-                   v = std::fmod((j + .5) * .6180339887498949, 1.0);
-      const float w[3] = {static_cast<float>(1 - u),
-                          static_cast<float>(u * (1 - v)),
-                          static_cast<float>(u * v)};
-      Sample s;
-      float uv[2] = {};
-      for (int k = 0; k < 3; ++k) {
-        s.p[k] = 0;
-        s.n[k] = 0;
-        for (int c = 0; c < 3; ++c) {
-          s.p[k] += w[c] * p[c][k];
-          s.n[k] +=
-              w[c] * Attribute(geometry.normals, geometry.normals_interp, vi[c],
-                               ci[c], static_cast<uint32_t>(face), 3,
-                               static_cast<size_t>(k),
-                               static_cast<float>(normal[k] / twice_area));
-        }
+    using Weight = std::array<float, 3>;
+    std::vector<Weight> polygon = {Weight{1, 0, 0}, Weight{0, 1, 0},
+                                   Weight{0, 0, 1}};
+    if (opts.region_enabled) {
+      double world_points[3][3];
+      for (int c = 0; c < 3; ++c) {
+        Sample point;
+        std::copy(p[c], p[c] + 3, point.p);
+        point = transform(point);
+        std::copy(point.p, point.p + 3, world_points[c]);
       }
-      Normalize(s.n);
-      for (int k = 0; k < 2; ++k)
-        for (int c = 0; c < 3; ++c)
-          uv[k] += w[c] * Attribute(geometry.texcoords_0,
-                                    geometry.texcoords_0_interp, vi[c], ci[c],
-                                    static_cast<uint32_t>(face), 2,
-                                    static_cast<size_t>(k), 0);
-      std::string mat = material;
-      for (const auto& subset : subsets)
-        if (subset.second.count(static_cast<int32_t>(face))) {
-          mat = subset.first;
-          break;
+      for (size_t axis = 0; axis < 3; ++axis)
+        for (int side = 0; side < 2; ++side) {
+          std::vector<Weight> clipped;
+          auto distance = [&](const Weight& w) {
+            double value = 0;
+            for (int c = 0; c < 3; ++c)
+              value += w[size_t(c)] * world_points[c][axis];
+            return side ? opts.region_max[axis] - value
+                        : value - opts.region_min[axis];
+          };
+          for (size_t q = 0; q < polygon.size(); ++q) {
+            const auto& a = polygon[q];
+            const auto& b = polygon[(q + 1) % polygon.size()];
+            const double da = distance(a), db = distance(b);
+            if (da >= 0) clipped.push_back(a);
+            if ((da >= 0) != (db >= 0)) {
+              Weight w{};
+              const double t = da / (da - db);
+              for (size_t k = 0; k < 3; ++k)
+                w[k] = float(a[k] + t * (b[k] - a[k]));
+              clipped.push_back(w);
+            }
+          }
+          polygon.swap(clipped);
         }
-      auto color = shade(mat, geometry, face, uv);
-      for (int k = 0; k < 3; ++k) {
-        float display = 0;
-        for (int c = 0; c < 3; ++c)
-          display += w[c] * Attribute(geometry.colors, geometry.colors_interp,
-                                      vi[c], ci[c], static_cast<uint32_t>(face),
-                                      3, static_cast<size_t>(k), 1);
-        s.color[k] = color[k] * display;
-      }
-      float alpha = 0;
-      for (int c = 0; c < 3; ++c)
-        alpha += w[c] * Attribute(geometry.opacities, geometry.opacities_interp,
-                                  vi[c], ci[c], static_cast<uint32_t>(face), 1,
-                                  0, 1);
-      s.opacity = color[3] * alpha;
-      s.radius = static_cast<float>(
-          std::sqrt(area * stride / (3.141592653589793 * count)) * 1.5);
-      if (!emit(transform(s), ancestors)) return false;
     }
+    for (size_t patch = 1; patch + 1 < polygon.size(); ++patch) {
+      const Weight patch_weights[] = {polygon[0], polygon[patch],
+                                      polygon[patch + 1]};
+      double patch_points[3][3] = {};
+      for (int c = 0; c < 3; ++c)
+        for (int k = 0; k < 3; ++k)
+          for (int q = 0; q < 3; ++q)
+            patch_points[c][k] += patch_weights[c][size_t(q)] * p[q][k];
+      double pa[3], pb[3], pn[3];
+      for (int k = 0; k < 3; ++k) {
+        pa[k] = patch_points[1][k] - patch_points[0][k];
+        pb[k] = patch_points[2][k] - patch_points[0][k];
+      }
+      pn[0] = pa[1] * pb[2] - pa[2] * pb[1];
+      pn[1] = pa[2] * pb[0] - pa[0] * pb[2];
+      pn[2] = pa[0] * pb[1] - pa[1] * pb[0];
+      const double area = Length(pn) * .5;
+      if (area < 1e-24) continue;
+      double spacing = cell_size > 0 ? cell_size : std::sqrt(area);
+      // Explicit refinement increases per-triangle texture/surface detail while
+      // preserving a bounded prototype working set. Convert world spacing back
+      // into the mesh's local units when evaluating the requested resolution.
+      const double sample_limit =
+          (opts.resolution || (opts.region_enabled)) ? 4096.0 : 64.0;
+      if ((opts.resolution || opts.region_enabled) && transform.scale > 0)
+        spacing /= transform.scale;
+      const size_t count = std::max(
+          size_t(1), static_cast<size_t>(std::min(
+                         sample_limit, std::ceil(area / (spacing * spacing)))));
+      if (gpu_geometry) {
+        Sample vertices[3];
+        float texcoords[6] = {};
+        for (size_t c = 0; c < 3; ++c) {
+          auto& vertex = vertices[c];
+          float object_normal[3] = {};
+          vertex.opacity = 0;
+          for (size_t k = 0; k < 3; ++k) {
+            vertex.p[k] = world[k] * patch_points[c][0] +
+                          world[4 + k] * patch_points[c][1] +
+                          world[8 + k] * patch_points[c][2];
+            vertex.color[k] = 0;
+            for (size_t q = 0; q < 3; ++q) {
+              object_normal[k] +=
+                  patch_weights[c][q] *
+                  Attribute(geometry.normals, geometry.normals_interp, vi[q],
+                            ci[q], uint32_t(face), 3, k,
+                            float(normal[k] / twice_area));
+              vertex.color[k] +=
+                  patch_weights[c][q] *
+                  Attribute(geometry.colors, geometry.colors_interp, vi[q],
+                            ci[q], uint32_t(face), 3, k, 1);
+            }
+          }
+          for (size_t k = 0; k < 3; ++k)
+            vertex.n[k] =
+                transform.invertible
+                    ? float(transform.inverse[k * 4] * object_normal[0] +
+                            transform.inverse[k * 4 + 1] * object_normal[1] +
+                            transform.inverse[k * 4 + 2] * object_normal[2])
+                    : object_normal[k];
+          for (size_t q = 0; q < 3; ++q) {
+            for (size_t k = 0; k < 2; ++k)
+              texcoords[c * 2 + k] +=
+                  patch_weights[c][q] *
+                  Attribute(geometry.texcoords_0, geometry.texcoords_0_interp,
+                            vi[q], ci[q], uint32_t(face), 2, k, 0);
+            vertex.opacity +=
+                patch_weights[c][q] *
+                Attribute(geometry.opacities, geometry.opacities_interp, vi[q],
+                          ci[q], uint32_t(face), 1, 0, 1);
+          }
+        }
+        std::string mat = material;
+        for (const auto& subset : subsets)
+          if (subset.second.count(static_cast<int32_t>(face))) {
+            mat = subset.first;
+            break;
+          }
+        const float radius =
+            float(std::sqrt(area * stride / (3.141592653589793 * count)) * 1.5 *
+                  transform.scale);
+        if (!queue_geometry(vertices, texcoords, count, radius, mat, face,
+                            ancestors, world + 12))
+          return false;
+        continue;
+      }
+      for (size_t j = 0; j < count; ++j) {
+        const double u = std::sqrt((j + .5) / count),
+                     v = std::fmod((j + .5) * .6180339887498949, 1.0);
+        const float local_w[3] = {static_cast<float>(1 - u),
+                                  static_cast<float>(u * (1 - v)),
+                                  static_cast<float>(u * v)};
+        float w[3] = {};
+        for (int c = 0; c < 3; ++c)
+          for (int k = 0; k < 3; ++k)
+            w[k] += local_w[c] * patch_weights[c][size_t(k)];
+        Sample s;
+        float uv[2] = {};
+        for (int k = 0; k < 3; ++k) {
+          s.p[k] = 0;
+          s.n[k] = 0;
+          for (int c = 0; c < 3; ++c) {
+            s.p[k] += w[c] * p[c][k];
+            s.n[k] +=
+                w[c] * Attribute(geometry.normals, geometry.normals_interp,
+                                 vi[c], ci[c], static_cast<uint32_t>(face), 3,
+                                 static_cast<size_t>(k),
+                                 static_cast<float>(normal[k] / twice_area));
+          }
+        }
+        Normalize(s.n);
+        for (int k = 0; k < 2; ++k)
+          for (int c = 0; c < 3; ++c)
+            uv[k] += w[c] * Attribute(geometry.texcoords_0,
+                                      geometry.texcoords_0_interp, vi[c], ci[c],
+                                      static_cast<uint32_t>(face), 2,
+                                      static_cast<size_t>(k), 0);
+        // Authored texcoords can be non-finite on degenerate or broken mesh
+        // data; keep them from poisoning shading and the GPU sample buffer.
+        if (!std::isfinite(uv[0]) || !std::isfinite(uv[1])) uv[0] = uv[1] = 0.0f;
+        std::string mat = material;
+        for (const auto& subset : subsets)
+          if (subset.second.count(static_cast<int32_t>(face))) {
+            mat = subset.first;
+            break;
+          }
+        auto color = shade(mat, geometry, face, uv);
+        for (int k = 0; k < 3; ++k) {
+          float display = 0;
+          for (int c = 0; c < 3; ++c)
+            display +=
+                w[c] * Attribute(geometry.colors, geometry.colors_interp, vi[c],
+                                 ci[c], static_cast<uint32_t>(face), 3,
+                                 static_cast<size_t>(k), 1);
+          s.color[k] = color[k] * display;
+        }
+        float alpha = 0;
+        for (int c = 0; c < 3; ++c)
+          alpha += w[c] * Attribute(geometry.opacities,
+                                    geometry.opacities_interp, vi[c], ci[c],
+                                    static_cast<uint32_t>(face), 1, 0, 1);
+        s.opacity = color[3] * alpha;
+        s.radius = static_cast<float>(
+            std::sqrt(area * stride / (3.141592653589793 * count)) * 1.5);
+        if (opts.region_enabled) {
+          if (!insert(transform(s))) return false;
+        } else if (!emit(transform(s), ancestors))
+          return false;
+      }
+    }  // clipped triangle patches
     ++triangle_count;
     if ((triangle_count & 4095) == 0 && !check("sample", triangle_count))
       return false;
@@ -844,6 +1073,7 @@ bool Build::consume(usd::pcp::ComposedBatch& batch) {
     }
     if ((i & 4095) == 0 && !check("compose", result.source_prims)) return false;
   }
+  if (!flush_geometry()) return false;
   for (const auto& pending : prototype_buffers)
     if (!flush_prototype(pending.first)) return false;
   prototype_buffers.clear();

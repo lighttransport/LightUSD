@@ -9869,7 +9869,7 @@ bool VulkanRenderer::rebuildNativeCarrierBuffer(int curveSegments) {
         points.ellipseNormals.size() >= count * 3;
     NativeCarrierRange range;
     range.first = static_cast<uint32_t>(records.size());
-    range.kind = orientedGaussian ? 2 : 0;
+    range.kind = orientedGaussian ? (points.previewAlbedo ? 3 : 2) : 0;
     range.materialId = points.materialId;
     range.carrierId = carrierId++;
     range.purpose = PurposeId(points.purpose);

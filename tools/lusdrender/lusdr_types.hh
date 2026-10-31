@@ -583,6 +583,7 @@ struct Options {
   bool rt_lod_full_px_explicit{false};
   bool rt_lod_cull_px_explicit{false};
   bool rt_preview{false};
+  bool scene_preview_albedo{false};
   bool legacy_load{false};  // use the legacy eager loader instead of `next`
   bool smooth{false};       // interpolate authored normals (smooth shading)
   bool ibl_envmap{false};   // -ibl envmap: vendored envmap-lib IBL precompute

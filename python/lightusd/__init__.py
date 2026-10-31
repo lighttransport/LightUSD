@@ -41,8 +41,12 @@ from ._core import (  # noqa: F401  (re-exports)
     VariantSet,
     VariantSets,
     flatten_file,
+    light_filter_effective,
+    light_filter_kinds,
+    register_light_filter,
     type_from_name,
     type_name,
+    unregister_light_filter,
 )
 
 try:
@@ -65,6 +69,10 @@ __all__ = [
     "ValueBlock",
     "VariantSet",
     "VariantSets",
+    "light_filter_effective",
+    "light_filter_kinds",
+    "register_light_filter",
+    "unregister_light_filter",
     "load",
     "import_obj",
     "import_urdf",

@@ -31,7 +31,7 @@ def main():
                 report = args.output / (label + ".json")
                 image = args.output / (label + ".ppm")
                 cmd = [str(args.viewer.resolve()), "--headless", "--no-grid",
-                       "--scene-preview", "--preview-kind", kind,
+                       "--scene-preview", "--preview-no-source-refine", "--preview-volume-carrier", "--preview-kind", kind,
                        "--preview-resolution", "64", "--preview-budget-mib", "2048",
                        "--preview-cache-dir", str(args.output / "cache"),
                        "--cam-dolly", dolly, "--frames", "1", "--size", "320x240",

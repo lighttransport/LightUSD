@@ -518,7 +518,6 @@ ScenePreviewLodCamera InitialScenePreviewLodCamera(
         (result.bounds_min[k] + result.bounds_max[k]) * .5 -
         camera.forward[k] * std::max(1e-6, diagonal * fit_scale * .5);
   }
-  if (camera_name.empty()) return camera;
   usd::AssetResolver resolver;
   usd::Stage stage;
   usd::pcp::CompositionOptions opts;
@@ -527,6 +526,8 @@ ScenePreviewLodCamera InitialScenePreviewLodCamera(
   if (!usd::pcp::ComposeStageFromFile(root, resolver, &stage, opts, &warning,
                                       &error))
     return camera;
+  if (stage.GetRootLayer()->meta().upAxis == "Z") camera.up = {0, 0, 1};
+  if (camera_name.empty()) return camera;
   usd::UsdPrim chosen;
   stage.Traverse([&](const usd::UsdPrim& prim) {
     if (prim.GetTypeName() == "Camera" &&
@@ -543,6 +544,7 @@ ScenePreviewLodCamera InitialScenePreviewLodCamera(
   for (size_t k = 0; k < 3; ++k) {
     camera.eye[k] = matrix[12 + k];
     camera.forward[k] = -matrix[8 + k];
+    camera.up[k] = matrix[4 + k];
   }
   double forward_length = 0;
   for (double value : camera.forward) forward_length += value * value;
@@ -558,6 +560,16 @@ ScenePreviewLodCamera InitialScenePreviewLodCamera(
       return std::isfinite(*f) ? double(*f) : fallback;
     return fallback;
   };
+  if (const auto* range = chosen.GetPropertyValue("clippingRange")) {
+    if (const float* f = range->view().as_float2()) {
+      if (std::isfinite(f[0]) && std::isfinite(f[1]) && f[0] >= 0 &&
+          f[1] > f[0]) {
+        camera.near_plane = f[0];
+        camera.far_plane = f[1];
+      }
+    }
+  }
+  camera.exposure = number("exposure",0);
   const double focal = number("focalLength", 50),
                aperture = number("verticalAperture", 20.955);
   const auto* projection = chosen.GetPropertyValue("projection");

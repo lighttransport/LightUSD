@@ -1067,6 +1067,7 @@ struct DrawPointsCPU {
   // Gaussian splat covariance carrier. Radii are semi-axes in local space;
   // normals/major_axes are optional and parallel to points.
   bool gaussian{false};
+  bool previewAlbedo{false};  // Converted previews bake color, not scene lighting.
   std::vector<float> ellipseRadii;
   std::vector<float> ellipseNormals;
   std::vector<float> ellipseMajorAxes;

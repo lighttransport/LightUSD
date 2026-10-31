@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
@@ -41,8 +42,30 @@ int main(int argc, char** argv) {
           "--host-budget-mib N (default 16384)\n  --preview-resolution N (auto "
           "by default)\n  --texture-max-edge N (default 512)\n  --batch-prims "
           "N --batch-roots N\n  --time-code T --variant SET=VALUE --refresh "
-          "--progress --lod");
+          "--progress --lod\n  --preview-compute auto|cpu|vulkan|cuda\n  "
+          "--volume-no-surface");
       return 0;
+    }
+    if (a == "--volume-no-surface") {
+      options.volume_surface_carrier = false;
+      continue;
+    }
+    if (a == "--preview-compute") {
+      if (i + 1 >= argc) return 1;
+      const std::string backend = argv[++i];
+      if (backend == "auto")
+        options.compute_backend = PreviewComputeBackend::Auto;
+      else if (backend == "cpu")
+        options.compute_backend = PreviewComputeBackend::Cpu;
+      else if (backend == "vulkan")
+        options.compute_backend = PreviewComputeBackend::Vulkan;
+      else if (backend == "cuda")
+        options.compute_backend = PreviewComputeBackend::Cuda;
+      else {
+        std::fprintf(stderr, "invalid preview compute backend\n");
+        return 1;
+      }
+      continue;
     }
     if (a == "--lod") {
       lod = true;
@@ -118,6 +141,7 @@ int main(int argc, char** argv) {
                  "usage: lusdpreview input.usd [export-directory] --help\n");
     return 2;
   }
+  options.composition.max_array_elements=static_cast<size_t>(std::min(uint64_t(1)<<30,options.host_budget_bytes/16));
   lightusd::next::AssetResolver resolver;
   if (!budget_explicit) {
     uint64_t capacity = 0, available = 0;

@@ -490,7 +490,8 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(lusdview_lighting_test PRIVATE
-      ${LIGHTUSD_TARGET_STATIC})
+      ${LIGHTUSD_TARGET_STATIC}
+      tydra_next)
   if(UNIX AND NOT APPLE)
     target_link_libraries(lusdview_lighting_test PRIVATE Threads::Threads)
   endif()
