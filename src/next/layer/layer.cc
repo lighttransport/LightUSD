@@ -3,6 +3,7 @@
 //
 // LightUSD Next - Layer Implementation
 
+#include "int64-listop.hh"
 #include "layer.hh"
 #include "../memory-trim.hh"
 #include "../prim/identifier.hh"
@@ -307,6 +308,7 @@ void Layer::build_path_index() {
     }
   }
   path_index_dirty_.store(false, std::memory_order_release);
+  lu_storage_note_materialization();
 }
 
 void Layer::ensure_path_index() const {
@@ -755,6 +757,7 @@ size_t Layer::memory_usage() const {
     for (const DecodedExtensionField& field : meta.unknownFields) {
       add(field.name.capacity());
       add(field.unregistered_source.capacity());
+      if (field.int64_list_op) add(Int64ListOpsMemoryUsage(*field.int64_list_op));
       add_value(field.value);
     }
   }

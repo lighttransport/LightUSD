@@ -66,7 +66,17 @@ private:
     if (tok != UINT32_MAX) return tok;
     if (WorkerCtx* w = WorkerTLS()) {  // chunk-local cache; committed later
       uint32_t& wtok = w->field_tok[t];
-      if (wtok == UINT32_MAX) wtok = InternToken(FieldTokName(t));
+      if (wtok == UINT32_MAX) {
+        const size_t before = w->events.size();
+        wtok = InternToken(FieldTokName(t));
+        if (preparing_plan_ && t == kTokInstanceable && w->events.size() != before)
+          w->events.back().kind = 3;  // definition bound by a surviving field use
+      }
+      // A generated prototype's field may disappear after Plan. Record each
+      // field use, not merely its first intern, so replay can preserve the
+      // first surviving use's position in the token stream.
+      if (preparing_plan_ && t == kTokInstanceable)
+        w->events.push_back(InternEvent{FieldTokName(t), wtok, 2, WFieldCount()});
       return wtok;
     }
     tok = InternToken(FieldTokName(t));
@@ -96,7 +106,8 @@ private:
 
   // Paths. Each path is a canonical (stem, name) VIEW pair (see PathRec in
   // crate-writer-tables.inc); pointers reference storage that outlives the
-  // write: the input Layer's prim paths, the PropNameTable, or path_owned_.
+  // write: the input Layer's prim paths (packed copies for batched writes),
+  // the PropNameTable, or path_owned_.
   struct PathRec {
     const char* stem_data = nullptr;
     const char* name_data = nullptr;
@@ -315,7 +326,8 @@ private:
   struct InternEvent {
     std::string_view text;   // points into the worker's owned storage
     uint32_t local;          // provisional id >= base
-    uint8_t kind;            // 0 = token, 1 = string
+    uint8_t kind;            // 0 = token, 1 = string, 2 = field use, 3 = deferred definition
+    uint64_t field = UINT64_MAX;  // kind 2: deferred instanceable field use
   };
   struct PathEvent {
     std::string_view stem;
@@ -435,11 +447,26 @@ private:
     };
     std::vector<BlockLogOp> ops;
 
+    // Immutable source identities remain unique after destruction. Keep only
+    // eight large-range digests across chunk resets: no buffers are pinned,
+    // and only this ctx's encoder thread reads/writes the cache.
+    struct SourceDigest {
+      uint64_t id = 0, offset = 0, length = 0, low = 0, high = 0;
+    };
+    SourceDigest source_digests[8] = {};
+    size_t next_source_digest = 0;
+
     // fields/fieldsets/specs chunk delta (rebased at commit)
     ChunkFieldColumns fields;
     std::vector<uint32_t> fs_offsets;  // per fieldset: local flat offset
     std::vector<uint32_t> flat;        // local field ids + sentinels
     std::vector<CrateSpec> specs;
+    struct PendingInstanceField {
+      size_t field;
+      bool authored;
+      std::string path;
+    };
+    std::vector<PendingInstanceField> pending_instance_fields;
 
     // final ids for this chunk's provisional domains, produced by commit
     // stage A (tok/str/path) and stage B (block), consumed by B and C
@@ -468,6 +495,7 @@ private:
       fields.clear();
       fs_offsets.clear(); flat.clear();
       specs.clear();
+      pending_instance_fields.clear();
       req_minor = 0; passed = 0; reencoded = 0;
       // Cached type-name tokens are chunk-local provisional ids; a reused ctx
       // must not serve them to the next chunk. Keep the capacity.
@@ -611,11 +639,35 @@ private:
     op.kind = kind;
     op.tag = tag;
     op.block = std::move(block);
-    if (n) {
+    // Push ops never enter a dedup table; their digest is not consumed by
+    // either commit path, including blocks whose embedded reps are fixed up.
+    if (n && kind == kOpIntern) {
       if (stream_values_) {
-        const XXH128_hash_t digest = StreamDigest(op.block.bytes(), n);
-        op.digest = digest.low64;
-        op.digest2 = digest.high64;
+        const bool cacheable = op.block.is_ref() && n >= kSourceWindowBytes &&
+            tag == kBlobNone && op.block.embedded_value_rep_offsets.empty();
+        const uint64_t id = cacheable ? op.block.src->identity() : 0;
+        bool hit = false;
+        if (cacheable) {
+          for (const auto& entry : w.source_digests) {
+            if (entry.id == id && entry.offset == op.block.src_offset &&
+                entry.length == op.block.src_len) {
+              op.digest = entry.low;
+              op.digest2 = entry.high;
+              hit = true;
+              break;
+            }
+          }
+        }
+        if (!hit) {
+          const XXH128_hash_t digest = StreamDigest(op.block.bytes(), n, &op.block);
+          op.digest = digest.low64;
+          op.digest2 = digest.high64;
+          if (cacheable) {
+            w.source_digests[w.next_source_digest] = WorkerCtx::SourceDigest{
+                id, op.block.src_offset, op.block.src_len, op.digest, op.digest2};
+            w.next_source_digest = (w.next_source_digest + 1) % 8;
+          }
+        }
       } else {
         op.digest = HashBlockBytes(op.block.bytes(), n);
       }
@@ -888,7 +940,12 @@ private:
 
   // Write `n` bytes at the next 8-byte-aligned sink position; returns that
   // absolute offset.
-  uint64_t StreamRawBlock(const uint8_t* bytes, size_t n) {
+  static constexpr size_t kSourceWindowBytes = size_t(4) << 20;
+  bool WindowMappedSources() const {
+    return serial_sections_ || options_.spill_columns_bytes != 0;
+  }
+  uint64_t StreamRawBlock(const uint8_t* bytes, size_t n,
+                          const DataBlock* source = nullptr) {
     static const uint8_t kZeros[8] = {0, 0, 0, 0, 0, 0, 0, 0};
     const uint64_t pad = (8 - (value_stream_pos_ % 8)) % 8;
     if (pad) {
@@ -899,17 +956,38 @@ private:
     }
     const uint64_t off = value_stream_pos_;
     if (n) {
-      if (!(*value_sink_)(bytes, n)) value_stream_error_ = true;
+      if (WindowMappedSources() && source && source->is_ref() && source->src->is_mmapped() &&
+          n >= kSourceWindowBytes) {
+        for (size_t at = 0; at < n;) {
+          const size_t count = std::min(kSourceWindowBytes, n - at);
+          if (!(*value_sink_)(bytes + at, count)) {
+            value_stream_error_ = true;
+            break;
+          }
+          DropStreamedSourceRange(*source, at, count);
+          at += count;
+        }
+      } else if (!(*value_sink_)(bytes, n)) value_stream_error_ = true;
       value_stream_pos_ += n;
     }
     return off;
   }
 
   uint64_t StreamInternBlock(const DataBlock& block) {
+    // A previously emitted immutable range already has its final offset.
+    // Probe before touching its bytes, not after needlessly faulting/hash-reading
+    // a source that the low-memory writer may have just retired.
+    if (block.is_ref()) {
+      if (const uint64_t* cached = stream_source_ranges_.find(
+              block.src->identity(), block.src_offset, block.src_len)) {
+        ++blocks_deduped_;
+        return *cached;
+      }
+    }
     const size_t n = block.size();
     uint64_t h = 0, h2 = 0;
     if (n) {
-      const XXH128_hash_t digest = StreamDigest(block.bytes(), n);
+      const XXH128_hash_t digest = StreamDigest(block.bytes(), n, &block);
       h = digest.low64;
       h2 = digest.high64;
     }
@@ -936,7 +1014,7 @@ private:
         stream_source_ranges_.emplace(key_id, block.src_offset, block.src_len, *off);
       return *off;
     }
-    const uint64_t off = StreamRawBlock(p, n);
+    const uint64_t off = StreamRawBlock(p, n, &block);
     if (block.is_ref()) DropStreamedSourceRange(block);
     // Empty blocks are never shared (a staged empty block is never deduped).
     if (n) {
@@ -954,7 +1032,7 @@ private:
     if (WorkerCtx* w = WorkerTLS())
       return WorkerLogBlock(*w, std::move(block), kOpPush, tag);
     if (stream_values_) {
-      const uint64_t off = StreamRawBlock(block.bytes(), block.size());
+      const uint64_t off = StreamRawBlock(block.bytes(), block.size(), &block);
       if (block.is_ref()) DropStreamedSourceRange(block);
       return off;
     }
@@ -970,21 +1048,50 @@ private:
   // read-only, so any later touch just re-faults the same bytes from the file
   // -- the output cannot change. No-op for owned (non-mmap) sources.
   static constexpr size_t kDropResidentMinBytes = size_t(1) << 20;
-  static void DropStreamedSourceRange(const DataBlock& block) {
-    if (!block.is_ref() || block.src_len < kDropResidentMinBytes) return;
+  static void DropStreamedSourceRange(const DataBlock& block, size_t at = 0,
+                                      size_t count = SIZE_MAX) {
+    if (!block.is_ref() || !block.src->is_mmapped() || at >= block.src_len) return;
+    const uint64_t length = std::min<uint64_t>(count, block.src_len - at);
+    if (length < kDropResidentMinBytes) return;
     constexpr uint64_t kPage = 4096;
-    const uint64_t begin = (block.src_offset + kPage - 1) & ~(kPage - 1);
-    const uint64_t end = (block.src_offset + block.src_len) & ~(kPage - 1);
+    const uint64_t begin = (block.src_offset + at + kPage - 1) & ~(kPage - 1);
+    const uint64_t end = (block.src_offset + at + length) & ~(kPage - 1);
     if (end > begin) block.src->DiscardRange(begin, end - begin);
   }
 
   // Batched write (see StreamWriteBatch): prims of the current batch an
   // earlier batch already wrote; full primChildren tokens of the batch's prims
-  // whose children span batches; the prim paths the path table views, kept
-  // after their batch is freed; pass-1 counts for the table reserves.
+  // whose children span batches; packed prim path text that survives batch
+  // release; pass-1 counts for the table reserves. Blocks never move their
+  // bytes, so path records can retain views without one Path per prim.
   const std::vector<uint8_t>* skip_prims_ = nullptr;
   std::unordered_map<uint32_t, std::vector<uint32_t>> stream_child_tokens_;
-  std::deque<Path> stream_paths_;
+  std::vector<std::unique_ptr<char[]>> stream_path_blocks_;
+  std::deque<Path> stream_paths_;  // move ownership when copying costs more
+  char* stream_path_next_ = nullptr;
+  size_t stream_path_remaining_ = 0;
+  std::vector<std::string_view> stream_path_views_;  // current batch only
+  std::string_view OwnStreamPath(std::string_view text) {
+    if (text.empty()) return {};
+    if (text.size() > stream_path_remaining_) {
+      const size_t capacity = std::max<size_t>(size_t(1) << 20, text.size());
+      stream_path_blocks_.emplace_back(new char[capacity]);
+      stream_path_next_ = stream_path_blocks_.back().get();
+      stream_path_remaining_ = capacity;
+    }
+    char* const data = stream_path_next_;
+    std::memcpy(data, text.data(), text.size());
+    stream_path_next_ += text.size();
+    stream_path_remaining_ -= text.size();
+    return {data, text.size()};
+  }
+  void ClearStreamPaths() {
+    stream_path_views_.clear();
+    stream_path_blocks_.clear();
+    stream_paths_.clear();
+    stream_path_next_ = nullptr;
+    stream_path_remaining_ = 0;
+  }
   bool stream_meta_done_ = false;
   bool stream_root_done_ = false;
   bool stream_reserved_ = false;  // ReserveTables done for this stream
@@ -1070,14 +1177,38 @@ private:
   // digests seeded with the length: the result depends only on the bytes.
   static constexpr size_t kDigestPieceBytes = size_t(4) << 20;
   static constexpr size_t kParallelDigestMinBytes = size_t(32) << 20;
-  XXH128_hash_t StreamDigest(const uint8_t* p, size_t n) const {
-    if (n < kParallelDigestMinBytes) return XXH3_128bits(p, n);
+  XXH128_hash_t StreamDigest(const uint8_t* p, size_t n,
+                             const DataBlock* source = nullptr) const {
+    const bool discard = WindowMappedSources() && source && source->is_ref() &&
+                         source->src->is_mmapped();
+    if (n < kParallelDigestMinBytes) {
+      if (!discard || n < kSourceWindowBytes) {
+        const XXH128_hash_t digest = XXH3_128bits(p, n);
+        if (discard) DropStreamedSourceRange(*source);
+        return digest;
+      }
+      // Streaming XXH3 matches its one-shot digest; only source residency and
+      // read granularity change, never the content-dedup key.
+      XXH3_state_t state;
+      (void)XXH3_128bits_reset(&state);
+      for (size_t at = 0; at < n;) {
+        const size_t count = std::min(kSourceWindowBytes, n - at);
+        (void)XXH3_128bits_update(&state, p + at, count);
+        DropStreamedSourceRange(*source, at, count);
+        at += count;
+      }
+      const XXH128_hash_t digest = XXH3_128bits_digest(&state);
+      DropStreamedSourceRange(*source);  // boundary pages and a short last window
+      return digest;
+    }
     const size_t pieces = (n + kDigestPieceBytes - 1) / kDigestPieceBytes;
     std::vector<XXH128_hash_t> d(pieces);
     auto run = [&](size_t lo, size_t hi) {
       for (size_t k = lo; k < hi; ++k) {
         const size_t off = k * kDigestPieceBytes;
-        d[k] = XXH3_128bits(p + off, std::min(kDigestPieceBytes, n - off));
+        const size_t count = std::min(kDigestPieceBytes, n - off);
+        d[k] = XXH3_128bits(p + off, count);
+        if (discard) DropStreamedSourceRange(*source, off, count);
       }
     };
 #if defined(LIGHTUSD_ENABLE_THREAD)
@@ -1092,8 +1223,10 @@ private:
     } else
 #endif
       run(0, pieces);
-    return XXH3_128bits_withSeed(d.data(), pieces * sizeof(XXH128_hash_t),
-                                 static_cast<XXH64_hash_t>(n));
+    const XXH128_hash_t digest = XXH3_128bits_withSeed(
+        d.data(), pieces * sizeof(XXH128_hash_t), static_cast<XXH64_hash_t>(n));
+    if (discard) DropStreamedSourceRange(*source);
+    return digest;
   }
 
   static uint64_t HashBlockBytes(const uint8_t* p, size_t n) {
@@ -1145,10 +1278,13 @@ private:
   // ResolveThreads() threads (t = slice number); serial below `min_parallel`
   // items or in a non-threaded build. Returns the slice count used.
   template <class Fn>
-  size_t ParallelRanges(size_t n, size_t min_parallel, Fn fn) const {
+  size_t ParallelRanges(size_t n, size_t min_parallel, Fn fn,
+                        size_t max_threads = SIZE_MAX) const {
     size_t T = 1;
 #if defined(LIGHTUSD_ENABLE_THREAD)
-    if (n >= min_parallel) T = static_cast<size_t>(ResolveThreads());
+    if (n >= min_parallel)
+      T = std::min(static_cast<size_t>(ResolveThreads()),
+                   std::max(size_t(1), max_threads));
     if (T > n) T = n;
     if (T > 1) {
       std::vector<std::thread> pool;
@@ -1161,6 +1297,7 @@ private:
     }
 #else
     (void)min_parallel;
+    (void)max_threads;
 #endif
     fn(size_t(0), size_t(0), n);
     return 1;
@@ -1225,6 +1362,8 @@ private:
   #include "crate-writer-fields.inc"
 
   #include "crate-writer-sections.inc"
+
+  #include "crate-writer-plan.inc"
 
 };
 

@@ -440,7 +440,8 @@ class CrateReader::Impl {
   // Field-name views point into the token blob, which outlives the stage build
   // (no per-field string allocation while decoding millions of fieldsets).
   bool ResolveFieldset(uint32_t fieldset_index,
-                       std::vector<std::pair<std::string_view, Value>>& out);
+                       std::vector<std::pair<std::string_view, Value>>& out,
+                       std::vector<DecodedExtensionField>* extensions = nullptr);
   bool ResolveFieldsetRaw(
       uint32_t fieldset_index,
       std::vector<std::pair<std::string_view, ValueRep>>& out);
@@ -452,6 +453,8 @@ class CrateReader::Impl {
   bool DecodeVariantSelectionMap(
       ValueRep rep, std::vector<std::pair<std::string, std::string>>& out);
   bool DecodeTokenListOp(ValueRep rep, std::vector<std::string>& out);
+  bool DecodeInt64ListOpField(std::string name, ValueRep rep,
+                              DecodedExtensionField* out);
   bool DecodeDictionary(ValueRep rep, Value& out, int depth);
   bool DecodeDictionaryUncached(ValueRep rep, Value& out, int depth);
   // Decoded dictionaries and arrays by ValueRep. A crate stores each distinct

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
+#include "../layer/int64-listop.hh"
 #include <unordered_set>
 #include <string_view>
 #include "cache-internal.hh"
@@ -364,6 +365,8 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
     // prim that references a variant-set asset), and share plain property
     // metadata now rather than at the layer's finalize, after every prim of
     // a ~10M-prim stage has been filled.
+    if (!static_cast<const PrimSpec*>(out)->meta().unknownFields().empty())
+      ResolveInt64ListOpFields(&out->meta().unknownFields());
     out->meta().trim_ext();
     out->share_property_metas();
   }

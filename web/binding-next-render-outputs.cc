@@ -210,7 +210,7 @@ int RenderStream::meshView(int mesh_id, lightusd_next_mesh_view* out) {
     bool soup = false;
     std::string mesh_error;
     s_tangents_.clear();
-    if (!buildRenderMesh_(prim, &soup, &mesh_error)) {
+    if (!prepareCopyMesh_(mesh_id, source_index, &soup, &mesh_error)) {
       mesh_view_error_ = mesh_error.empty() ? "mesh build failed" : mesh_error;
       return -2;
     }

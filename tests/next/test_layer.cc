@@ -705,6 +705,26 @@ void test_schema_registry_new_schemas() {
   assert(reg.InheritsFrom("ClipsAPI", "Typed"));
   std::cout << "  schema registry new schemas: PASSED" << std::endl;
 }
+void test_lazy_path_index_materialization_epoch() {
+  Layer layer;
+  layer.set_lazy_path_index(true);
+  LayerBuilder builder(layer);
+  builder.begin_prim("Root", "Xform");
+  builder.begin_prim("Mesh", "Mesh");
+  builder.end_prim();
+  builder.end_prim();
+  builder.finalize();
+  const size_t before_bytes = layer.memory_usage();
+  const size_t before_epoch = lu_storage_materialization_epoch();
+  assert(before_epoch != 0);
+  assert(layer.prim_at_path("/Root/Mesh"));
+  const size_t after_epoch = lu_storage_materialization_epoch();
+  assert(after_epoch == before_epoch + 1);
+  assert(layer.memory_usage() > before_bytes);
+  assert(layer.prim_at_path("/Root"));
+  assert(lu_storage_materialization_epoch() == after_epoch);
+}
+
 int main() {
   std::cout << "=== Layer/PrimSpec Tests ===" << std::endl;
 
@@ -716,6 +736,7 @@ int main() {
   test_prim_spec();
   test_layer_builder();
   test_layer_stats();
+  test_lazy_path_index_materialization_epoch();
   test_finalize_does_not_allocate_cold_prim_metadata();
   test_layer_sort_rebuilds_hierarchy();
   test_metadata();

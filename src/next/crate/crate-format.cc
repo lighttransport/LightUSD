@@ -62,28 +62,40 @@ DecompressResult DecompressLZ4(const uint8_t* src, size_t src_size,
 /// Maximum input size for a single LZ4 chunk (~2GB - 32MB safety margin)
 static constexpr size_t kMaxLZ4ChunkSize = 0x7E000000;
 
-CompressResult CompressCrateBlob(const uint8_t* src, size_t src_size) {
-  CompressResult result;
+bool CompressCrateBlobTo(const uint8_t* src, size_t src_size,
+                         const std::function<void(const uint8_t*, size_t)>& emit,
+                         std::string* error) {
+  if (error) error->clear();
+  if (!emit) {
+    if (error) *error = "Missing compression emitter";
+    return false;
+  }
   size_t bound = 0;
   if (!lu_crate_blob_compress_bound(src_size, &bound)) {
-    result.error = "LZ4_compressBound failed";
-    return result;
+    if (error) *error = "LZ4_compressBound failed";
+    return false;
   }
-  // Compress into uninitialized scratch, then keep an exact-size copy: a
-  // vector resized to the bound zero-fills (and so makes resident) a buffer
-  // as large as the input, and keeps that capacity after shrinking -- ~1.4 GB
-  // per section on full-LOD benchmark scene, while the sections build concurrently.
+  // The bound stays uninitialized: resizing a vector to it would fault in
+  // input-sized pages even for highly compressible data. Emit directly from
+  // scratch so a section builder need not hold a second compressed copy.
   std::unique_ptr<uint8_t[]> scratch(new uint8_t[bound ? bound : 1]);
-  const char* error = nullptr;
+  const char* codec_error = nullptr;
   size_t out_size = 0;
   if (lu_crate_blob_compress(src, src_size, scratch.get(), bound, &out_size,
-                             &error)) {
-    result.data.assign(scratch.get(), scratch.get() + out_size);
-    result.success = true;
-  } else {
-    result.data.clear();
-    result.error = error ? error : "LZ4 compression failed";
+                             &codec_error)) {
+    emit(scratch.get(), out_size);
+    return true;
   }
+  if (error) *error = codec_error ? codec_error : "LZ4 compression failed";
+  return false;
+}
+
+CompressResult CompressCrateBlob(const uint8_t* src, size_t src_size) {
+  CompressResult result;
+  result.success = CompressCrateBlobTo(src, src_size,
+      [&result](const uint8_t* encoded, size_t size) {
+        result.data.assign(encoded, encoded + size);
+      }, &result.error);
   return result;
 }
 
@@ -289,12 +301,12 @@ DecompressResult DecompressIntegers(const uint8_t* src, size_t src_size,
 // pxrUSD delta-coded integer compression
 // ============================================================
 
-#if defined(LIGHTUSD_ENABLE_THREAD)
 namespace {
 
-// Parallel twin of lu_crate_encode_delta_u32 for large columns (the crate
-// writer's FIELDS / FIELDSETS / SPECS / PATHS integer tables reach 10^8
-// entries). Output is byte-identical to the serial encoder:
+// Column-accessor twin of lu_crate_encode_delta_u32. Large columns use a
+// parallel histogram; projected columns can also use it serially without
+// allocating full input/delta scratch arrays. The byte layout matches the C
+// encoder:
 //  - deltas depend only on the previous value;
 //  - the common delta is the most frequent one, ties to the smallest, which
 //    depends only on the global counts (per-chunk histograms, merged);
@@ -391,27 +403,26 @@ struct WideDeltaSummary {
   }
 };
 
-bool EncodeDeltaU32Parallel(const uint32_t* values, size_t count,
-                            std::vector<uint8_t>* out) {
+template <class ValueAt>
+bool EncodeDeltaU32Column(const ValueAt& value_at, size_t count, size_t nt,
+                          std::vector<uint8_t>* out) {
   size_t code_bytes = 0;
   size_t bound = 0;
   if (!lu_crate_delta_code_bytes(count, &code_bytes) ||
       !lu_crate_encode_delta_u32_bound(count, &bound)) {
     return false;
   }
-  unsigned hw = std::thread::hardware_concurrency();
-  size_t nt = std::min<size_t>(hw ? hw : 1, 8);
-  if (nt < 2) return false;
   // Chunk boundaries on multiples of 4 elements.
   std::vector<size_t> bnd(nt + 1);
-  for (size_t t = 0; t <= nt; ++t) bnd[t] = ((count * t / nt) + 3) & ~size_t(3);
+  for (size_t t = 0; t <= nt; ++t)
+    bnd[t] = ((count / nt * t + count % nt * t / nt) + 3) & ~size_t(3);
   bnd[0] = 0;
   bnd[nt] = count;
   for (size_t t = 1; t < nt; ++t) bnd[t] = std::min(bnd[t], count);
 
-  auto delta_at = [values](size_t i) -> int32_t {
-    const int32_t prev = i ? static_cast<int32_t>(values[i - 1]) : 0;
-    return static_cast<int32_t>(static_cast<int64_t>(values[i]) -
+  auto delta_at = [&value_at](size_t i) -> int32_t {
+    const int32_t prev = i ? static_cast<int32_t>(value_at(i - 1)) : 0;
+    return static_cast<int32_t>(static_cast<int64_t>(value_at(i)) -
                                 static_cast<int64_t>(prev));
   };
 
@@ -421,13 +432,19 @@ bool EncodeDeltaU32Parallel(const uint32_t* values, size_t count,
   // exactly cost seconds and GBs of hash table).
   constexpr int32_t kSmallMin = -32768;
   constexpr size_t kSmallSpan = 65536;
-  std::vector<std::vector<uint32_t>> small(nt);
+  std::vector<std::vector<size_t>> small(nt);
   std::vector<WideDeltaSummary> summary(nt);
   auto run = [nt](const std::function<void(size_t)>& fn) {
+    if (nt == 1) {
+      fn(0);
+      return;
+    }
+#if defined(LIGHTUSD_ENABLE_THREAD)
     std::vector<std::thread> pool;
     pool.reserve(nt);
     for (size_t t = 0; t < nt; ++t) pool.emplace_back(fn, t);
     for (std::thread& th : pool) th.join();
+#endif
   };
   run([&](size_t t) {
     small[t].assign(kSmallSpan, 0);
@@ -457,7 +474,7 @@ bool EncodeDeltaU32Parallel(const uint32_t* values, size_t count,
     for (size_t t = 0; t < nt; ++t) c += small[t][k];
     consider(static_cast<int32_t>(k) + kSmallMin, c);
   }
-  std::vector<std::vector<uint32_t>>().swap(small);
+  std::vector<std::vector<size_t>>().swap(small);
   size_t wide_total = 0;
   for (size_t t = 0; t < nt; ++t) wide_total += summary[t].added;
   if (wide_total) {
@@ -568,17 +585,36 @@ bool EncodeDeltaU32Parallel(const uint32_t* values, size_t count,
   return true;
 }
 
-}  // namespace
+size_t DeltaColumnThreads(size_t count) {
+  if (count < kParallelDeltaMin) return 1;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  const unsigned hw = std::thread::hardware_concurrency();
+  return std::min<size_t>(hw ? hw : 1, 8);
+#else
+  return 1;
 #endif
+}
+
+}  // namespace
+
+std::vector<uint8_t> EncodeDeltaU32Projected(
+    size_t count, const std::function<uint32_t(size_t)>& value_at) {
+  std::vector<uint8_t> result;
+  if (count && value_at)
+    EncodeDeltaU32Column(value_at, count, DeltaColumnThreads(count), &result);
+  return result;
+}
 
 std::vector<uint8_t> EncodeDeltaU32(const uint32_t* values, size_t count) {
   std::vector<uint8_t> result;
   if (count == 0 || !values) return result;
-#if defined(LIGHTUSD_ENABLE_THREAD)
-  if (count >= kParallelDeltaMin && EncodeDeltaU32Parallel(values, count, &result))
+  const size_t nt = DeltaColumnThreads(count);
+  // Large columns need the scratch-free path on one-core/no-thread builds
+  // too; the C fallback retains both full deltas and worst-case output.
+  if (count >= kParallelDeltaMin && EncodeDeltaU32Column(
+                    [values](size_t i) { return values[i]; }, count, nt, &result))
     return result;
   result.clear();
-#endif
   size_t bound = 0;
   if (!lu_crate_encode_delta_u32_bound(count, &bound)) return result;
   // Uninitialized scratch + exact-size copy (see CompressCrateBlob).

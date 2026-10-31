@@ -629,6 +629,7 @@ int lu_value_materialize(lu_value* v) {
     return 0;
   }
   publish(v, &decoded);
+  lu_storage_note_materialization();
   return 1;
 }
 

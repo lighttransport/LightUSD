@@ -1332,6 +1332,14 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_next_render_mesh_buffer(
       ->meshBufferCopy(mesh_id, kind, out, cap);
 }
 
+EMSCRIPTEN_KEEPALIVE int32_t lightusd_next_render_mesh_copy_scope(
+    uint32_t handle, int32_t mesh_id, uint8_t begin) {
+  const Slot* slot = Lookup(handle);
+  if (!slot || slot->kind != 4 || begin > 1) return -1;
+  return static_cast<lightusd::web_next::RenderStream*>(slot->object)
+      ->meshCopyScope(mesh_id, begin != 0);
+}
+
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_next_render_request_mesh_tangents(
     uint32_t handle, int32_t mesh_id) {
   const Slot* slot = Lookup(handle);

@@ -75,6 +75,10 @@ struct CrateWriteOptions {
   /// output is byte-identical to an in-memory write.
   /// 0 = never spill (default; the columns stay plain in-memory vectors).
   /// Windows keeps these columns in memory regardless of this budget.
+  /// A nonzero budget also bounds mapped-array hashing/copy residency in
+  /// streaming writes. Batched writes use these source windows even with a
+  /// zero spill budget; ordinary zero-budget writes retain source pages until
+  /// each block has been written, favoring throughput.
   uint64_t spill_columns_bytes = 0;
 
   /// Directory receiving the (unlinked) spill file when
@@ -117,6 +121,9 @@ struct CrateWriteOptions {
   /// based on retained Layer data plus Crate table/index overhead; it is a
   /// policy estimate, not an operating-system RSS limit.
   uint64_t max_memory_bytes = 0;
+  /// Total encoded-operation scratch bytes allowed while planning and encoding
+  /// overlap. Requires an explicit spill_directory and a mapped native backend.
+  uint64_t max_prepared_bytes = uint64_t(8) << 30;
 };
 
 /// Result of crate write operation
@@ -185,9 +192,20 @@ public:
   /// FinishBatched. `repeated` flags a batch's prims an earlier batch already
   /// holds (written once); a prim in `full_children` (flagged in `spine`)
   /// gets that child-name list as its primChildren. The file is
-  /// byte-identical to WriteLayerToFile of the whole layer. WriteBatch moves
-  /// the written prims' paths out of `batch`.
+  /// byte-identical to WriteLayerToFile of the whole layer. WriteBatch retains
+  /// private path text (copying or moving written paths), so the caller may
+  /// release `batch` after it returns.
   void AddBatchTables(const Layer& batch, const std::vector<uint8_t>& repeated);
+  /// Encode a batch while subsequent batches are still being planned. Writes
+  /// bounded operation scratch, without retaining the input Layer. Final ids,
+  /// raw-byte dedup and late Holder metadata are resolved by WritePreparedFile.
+  /// PrepareBatch owns the table prepass; do not also call AddBatchTables.
+  bool PrepareBatch(Layer& batch, const std::vector<uint8_t>& spine,
+                    const std::vector<uint8_t>& repeated,
+                    const std::unordered_map<std::string, std::vector<std::string>>&
+                        full_children);
+  CrateWriteResult WritePreparedFile(
+      const char* filename, const std::vector<std::string>& cleared_prototypes);
   bool BeginBatchedFile(const char* filename);
   bool WriteBatch(Layer& batch, const std::vector<uint8_t>& spine,
                   const std::vector<uint8_t>& repeated,

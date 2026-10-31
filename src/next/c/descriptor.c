@@ -42,7 +42,8 @@ int lu_type_describe(uint16_t type, int array, lu_type_descriptor* out) {
   return 1;
 }
 lu_abi_info lu_abi_get(void) {
-  const lu_abi_info info = {LU_CORE_C_VERSION_MAJOR, sizeof(void*) * 8, 1,
+  const lu_abi_info info = {LU_CORE_C_VERSION_MAJOR, sizeof(void*) * 8,
+    LU_CORE_C_LAYOUT_REVISION,
     sizeof(lu_value), _Alignof(lu_value), offsetof(lu_value, store),
     sizeof(lu_type_descriptor), sizeof(lu_chunks)};
   return info;

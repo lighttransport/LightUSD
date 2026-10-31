@@ -245,7 +245,12 @@ bool CrateReader::Impl::CollectPropertyRecords(
           } else if (!DecodePropMetaField(f.first, f.second,
                                           ri.ensure_meta())) {
             Value value;
-            if (UnpackValue(f.second, value)) {
+            DecodedExtensionField integer_field;
+            if (f.second.type_id() == CrateTypeId::Int64ListOp &&
+                DecodeInt64ListOpField(std::string(f.first), f.second, &integer_field)) {
+              ri.meta->unknownFields.push_back(std::move(integer_field));
+              ri.meta->authored |= PropMeta::kUnknownMeta;
+            } else if (UnpackValue(f.second, value)) {
               ri.meta->unknownFields.push_back(
                   MakeTypedExtensionField(std::string(f.first),
                                           std::move(value)));
@@ -364,7 +369,12 @@ bool CrateReader::Impl::CollectPropertyRecords(
         } else if (!DecodePropMetaField(f.first, f.second,
                                         ai.ensure_meta())) {
           Value value;
-          if (UnpackValue(f.second, value)) {
+          DecodedExtensionField integer_field;
+          if (f.second.type_id() == CrateTypeId::Int64ListOp &&
+              DecodeInt64ListOpField(std::string(f.first), f.second, &integer_field)) {
+            ai.meta->unknownFields.push_back(std::move(integer_field));
+            ai.meta->authored |= PropMeta::kUnknownMeta;
+          } else if (UnpackValue(f.second, value)) {
             ai.meta->unknownFields.push_back(
                 MakeTypedExtensionField(std::string(f.first),
                                         std::move(value)));

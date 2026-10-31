@@ -6204,6 +6204,1269 @@ is mid pass 2 (rsstrace: 9.35 GiB at 53 s), not the section build.
 - Staged parallel output equals serial (579,974,418 bytes both ways);
   CTest 65/65.
 
+### 10.81 Reject impossible discovery levels earlier (2026-10-31)
+
+The low-profile frontier discovery used to stop only when the already-expanded
+portion of a level exceeded `max_frontier`. Each unvisited root must also
+contribute at least one entry, even when inactive, instanceable or a leaf.
+Discovery now rejects a level when its expanded entries plus that lower bound
+cannot fit. It retains the previous complete frontier, without resolving later
+roots' composition sources. The subtraction check avoids unsigned overflow.
+Batch sizing, prototype decisions and writer/token order are unchanged.
+
+Warm-input alternating pairs (three measured pairs after one warmup, SSD spill,
+`/dev/null`, `--fast-exit`, identical binaries apart from this change):
+
+| scene, low profile | baseline | candidate |
+|---|---:|---:|
+| Island, 8 parse/compose/write threads, median wall | 4.48 s | 4.39 s |
+| Island, median discovery | 838.2 ms | 754.7 ms |
+| ALab, automatic threads, median wall | 1.52 s | 1.52 s |
+| full45, automatic threads, median wall (two pairs) | 83.42 s | 83.28 s |
+
+Maximum RSS ratios are 1.00190 for Island and 1.00094 for ALab, within the
+1.05 limit. Sampled process swap is zero in every run (one-second samples).
+Evidence: `build_ninja/low-discovery/paired-small/`.
+Full45 shows no material wall-time regression; its maximum RSS ratio is
+0.99869 and every run has zero sampled process swap. These four low-profile
+runs use a 12 GiB process-tree RSS threshold, an 8 GiB headroom reserve and SSD
+spill; minimum observed available memory was 15,681.9 MiB. Evidence:
+`build_ninja/low-discovery/paired-full/`.
+
+The composition sweep matches the saved pre-change binary on 1,934 fixtures
+in both USDA and USDC (3,868 comparisons). The same fixtures also match its
+USDC output with low-profile batch targets 1, 400, and 50 plus frontier 64
+(5,802 comparisons). A PCP regression checks that a later reference is not
+loaded once the frontier lower bound overflows, and verifies complete composed
+output at caps 0, 1, 3, 4 and 8. The targeted native PCP, parallel PCP and
+composition tests pass. Complete CPU-only native and standalone Debug builds
+and CTest suites pass (72/76 passed respectively, one optional skip each).
+A fresh no-thread Release CLI/PCP build and its PCP test pass. Island, ALab
+and district real-file outputs match between threaded/no-thread builds and
+their references. Full45's real-file output with normal teardown matches
+`a0175bc1292f189afdb4108261cf2b36d9db13129691fdea87e34f873ced9867`
+(3,014,654,530 bytes, 85.77 s; sampled process-tree RSS 9,538.2 MiB).
+Full hashes and check logs are in `build_ninja/low-discovery/`.
+
+Development remains serial after the reported OOM crash: `-j1` builds,
+guarded commands, disk-backed output/spill, and no physical GPU access.
+The historically ~24 GiB default-profile full45 run is excluded on the 32 GiB
+host; this change only runs in batched discovery.
+The local CPU qualification disables `LIGHTUSD_PREVIEW_GPU_COMPUTE`: unrelated
+preview SPIR-V generation exceeded the 8 GiB build guard, and a separate `-Od`
+compiler probe exceeded 4 GiB. The CPU build instead peaked at 545.3 MiB.
+
+### 10.82 CPU correctness audit: report the current C value layout (2026-10-31)
+
+The value carrier's earlier `max_align_t` -> `uint64_t`/`double` alignment
+change reduced `lu_value` from 64 to 48 bytes on this host. `lu_abi_get()`
+reported the actual dimensions, but its layout revision still said 1, the
+same revision used for the older carrier. The public descriptor now exposes
+`LU_CORE_C_LAYOUT_REVISION` = 2 and the runtime reports it. The package/core
+major versions and the current carrier layout are unchanged.
+
+Consumers preflight both major and layout revision, pointer width and the
+reported sizes/alignment/offsets before exchanging value storage with a loaded
+library. The storage regression fails before this correction and passes after
+it. C API coverage checks that `lightusd_abi_get()` forwards the revision and
+value dimensions. A strict-C11 dynamic-loader probe rejects the saved old
+revision-1 library and accepts the new revision-2 library before using values.
+Native full build/CTest passes (72 passed, one optional skip), as do focused
+storage and strict-C11 syntax checks. Standalone Debug build/CTest passes
+(76 passed, one optional skip), along with the no-thread storage/PCP build and
+both tests. Native/Debug build peaks are 415.2 / 493.7 MiB under serial guarded
+CPU-only execution. Evidence is retained in
+`build_ninja/cpu-correctness/`.
+
+At audit time, `Int64ListOp` was unhandled by next's value dispatch and
+reached the unsupported-value warning. Metadata restoration is implemented
+in §10.83 below, including preservation of authored operation sublists. The
+speculative instance registry remains an optimization prerequisite: wrong
+guesses are rejected at commit, partial state is cleared and a serial walk
+is used. This audit found no new failing-output case there; the fallback is
+retained. No serialization or composition logic changes in the ABI correction,
+so the scene performance/hash gates in §10.81 are not repeated.
+
+### 10.83. Preserve Int64 list-op metadata
+
+The next reader now retains USDC type-37 metadata on prims, layers and
+properties, including all six authored runs and empty-run header bits. USDA
+`inactiveIds` supports explicit, add, prepend, append, delete and reorder
+opinions. Composition retains edits until weaker layers are known and then
+writes a resolved explicit list. PointInstancer visibility uses these metadata
+IDs without floating-point conversion; the legacy attribute fallback remains.
+
+Optional immutable operation stacks live on extension fields. The dense prim
+and C value layouts are unchanged. Memory estimates include retained lists;
+binary decoding checks element counts, remaining bytes and allocation budgets
+before allocation. ID processing uses deterministic O(n log n) operations with
+a linear path for sorted explicit IDs. Nested list-op values outside metadata
+remain unsupported by this codec.
+
+Restored fields can change output hashes that previously reflected dropped
+metadata. Require unchanged output for unaffected fixtures and classify scene
+differences before accepting them. Regression coverage includes exact signed
+64-bit boundaries, IDs beyond 2^53, independent wire-byte checks, malformed
+payloads, multi-layer composition, masking, and serial/parallel staged and
+streaming writer parity above the 8,192-prim threshold.
+
+Final native CTest passes (73 passed, one optional skip), standalone Debug
+passes (77 passed, one optional skip), and three targeted no-thread tests pass.
+Composition comparisons are exact for 1,934 fixtures across five configurations
+(9,670 comparisons); 705 files rewritten in two formats also match (1,410).
+
+Three monitored low-profile pairs show median times 1.53 -> 1.52 s for the
+reference folder scene and 4.49 -> 4.36 s for the island scene. Maximum RSS
+ratios are 0.99758 and 1.00405. Two full-size low-profile pairs show median
+83.75 -> 83.57 s, maximum candidate RSS 9,519.9 MiB and RSS ratio 0.99978.
+All accepted pairs have zero sampled process swap. The initial full-size
+attempt tripped the unchanged 1 MiB swap gate and was discarded; a fresh
+attempt passed every run. No OOM event was recorded for that attempt.
+The saved Release baseline also predates §10.81, so these comparisons measure
+combined changes and do not isolate this feature's cost or speed.
+
+Real-output native/no-thread checks agree. Island and district output hashes
+match their prior references. The reference folder scene restores two integer
+list-op fields; removing only these fields and canonically rewriting both
+versions produces identical bytes. A full-size low-profile real write with
+normal teardown completes in 84.0 s and matches the unchanged reference SHA.
+Evidence, including discarded-run logs, is retained under
+`build_ninja/int64-listop/`.
+
+### 10.84. Reject overflowing frontiers before joining paths
+
+Discovery checks the next level's lower bound before constructing full child
+paths. The bound includes retained entries, this root's child count, and one
+entry per unvisited root. Separate checked subtractions avoid size_t overflow.
+A rejected level retains the previous frontier and spine; arc targets of later
+roots remain unopened as in §10.81. The PCP regression covers zero, exact-fit,
+near-fit and SIZE_MAX caps with byte-equivalent composed USDA output.
+
+The isolated baseline includes §10.83. Three low-profile pairs give reference
+folder median 1.52 -> 1.52 s and Island 4.40 -> 4.39 s, with maximum RSS ratios
+0.99906 and 0.99823. On a generated 50,000-child namespace with long names and
+a frontier cap of 64, discovery median is 228.4 -> 220.8 ms, while end-to-end
+runtime stays 0.77 s. This is a small allocation saving, not a demonstrated
+scene-level speedup. Two full-size low-profile pairs pass (elapsed ratio
+0.99880, maximum RSS ratio 1.00154); all accepted pairs have zero sampled swap.
+Native/Debug full suites, three no-thread checks and all 9,670 fixture
+comparisons pass. All four real-output reference hashes match; the full-size
+write with normal teardown takes 84.3 s. Evidence lives in
+`build_ninja/frontier-paths/`.
+
+### 10.85. Pack low-memory writer path text
+
+The batched writer can copy prim paths into stable 1 MiB text blocks before
+building specs. It does so only when this batch's path-text copy fits the
+Path-object storage saved over the whole stream; otherwise it retains the
+previous move-ownership path, including short-string promotion. Prim and property path records both reference
+these copies. The batch-sized view vector is reused after workers finish;
+blocks remain until PATHS encoding finishes, then are released. Transient
+relationship/connection paths keep their existing ownership. Normal staged
+writing still borrows its input layer's stable paths.
+
+This replaces retained `deque<Path>` objects and their individual string
+allocations. PathRec layout, first-use IDs and output encoding are unchanged.
+Copying text temporarily overlaps the input batch, so memory and runtime must
+be measured together. An eight-batch lifetime regression crosses both block and
+parallel-writer thresholds and requires serial/parallel batched bytes to match
+regular staged output, including short paths, properties and external targets.
+
+The unconditional first experiment passed correctness checks but failed a
+District null-output RSS gate (+10.9%), so it was rejected. Its evidence is kept
+under `build_ninja/path-arena/`. Final adaptive-storage qualification is
+tracked separately under `build_ninja/path-arena-final/`.
+
+Native full CTest passes (73 passed, one optional skip), standalone Debug
+passes (77 passed, one optional skip), and three targeted no-thread tests pass.
+All 9,670 composition and 1,410 rewrite comparisons match. Three small-scene
+pairs show no material runtime/RSS change. District null-output pairs pass the
+unchanged RSS/swap gates: median 21.305 -> 21.36 s, max RSS 2793.3 -> 2775.0
+MiB. Two full-size low-profile pairs give median 83.68 -> 82.20 s and max RSS
+9523.6 -> 9473.6 MiB. Every accepted run samples zero process swap.
+
+One-second RSS samples between pass-2 completion and path-token completion
+show about 742 MiB less retained memory (per-run phase medians, then median
+across pairs). The global peak falls only about 50 MiB because other phases
+still dominate. The packed storage is retained for its lower writer residency
+and modest runtime improvement; source-layer/page residency remains open.
+Phase samples and log offsets are recorded in `phase-memory.json`.
+All four real-output hashes match their references, with native/no-thread
+parity on the three smaller scenes. The full-size low-profile real write with
+normal teardown completes in 83.37 s, peak guarded group RSS 9466.5 MiB, and
+unchanged reference SHA. All final qualification stages pass.
+
+Benchmark-label correction: the scratch paired harness used in §10.85 changed
+its placeholder file but left the current CLI's `-o /dev/null` hardcoded. Its
+paired measurements are null-output runs, including those formerly labeled
+District SSD. Separate real-file hash writes remain valid. Corrected SSD
+comparisons in §10.86 use explicit file destinations and validate nonempty
+output sizes against the CLI report.
+
+### 10.86. Bound mapped array source residency while streaming
+
+Pass 1 only learns final source-layer use after planning. Releasing registry
+ownership earlier needs a dependency lifetime index or reloading inputs, so
+that ownership and the existing pass-2 last-use release remain unchanged.
+This round instead addresses pages faulted while streaming mapped arrays.
+
+Low-memory writes release mapped source pages after each 4 MiB hash window;
+sink copies use the same window size. This applies to batched writing and
+streaming writes with a nonzero structural spill budget. Regular zero-budget
+writes preserve their original source residency to favor throughput. A final hash cleanup releases boundary and tail pages,
+including sources eliminated by deduplication and therefore never written.
+The existing composite digest for >=32 MiB blocks is unchanged. Smaller mapped
+blocks use XXH3's equivalent streaming state; owned/staged bytes keep their
+existing path. The mapped source object and lazy values remain alive and
+readable. Per-thread windows do not imply a global process RSS cap.
+
+An always-on regression fails against the saved old library and passes with
+the windowed writer. It checks both digest regimes, source-range/content dedup,
+owned/mapped bytes, serial/parallel execution and partial sink failure.
+Qualification and real SSD measurements are in `build_ninja/source-residency/`.
+Corrected real-SSD tests rejected unconditional windowing: regular Island
+RSS fell 3231.2 -> 2262.1 MiB but median time rose 3.94 -> 5.03 s. Therefore
+windowing is restricted to the existing low-memory policy. Final qualification
+is tracked separately under `build_ninja/source-residency-low/`; this policy
+remains an experiment until its checks and timings complete.
+
+### 10.87. Avoid redundant streaming block hashes
+
+The serial writer checks already-emitted immutable source ranges before
+reading their bytes. Worker logs skip hashes for push-only blocks, whose
+digests neither commit path consumes. For interned large source references,
+each encoder context caches eight 128-bit digests keyed by unique source
+identity, offset and length. The cache retains no source ownership, survives
+chunk resets, and excludes tagged/embedded-rep blocks. It adds about 328 bytes
+per context and does not read shared commit tables concurrently.
+
+The native library and CLI compile successfully under a serial memory guard.
+Regression and performance validation are deferred at the user's request;
+these changes are implemented, not yet qualified. Earlier source-window
+measurements do not validate this newer hashing implementation.
+
+### 10.88. Reuse batch release and sizing bookkeeping
+
+The batched composer incrementally populates its pass-2 release-eligibility set
+from sorted last-use records. Each layer identifier is inserted once, replacing
+repeated full-map scans and temporary set construction. Older eligible ids
+remain eligible, including reloaded layers. Registry drops still occur after
+batch composition, sorted by last-use index then identifier as before. The
+sorted records borrow immutable plan keys rather than copying their strings.
+
+Pass-1 parent statistics borrow parent-prefix views from the fixed frontier.
+They replace temporary parent strings without changing estimates or batch
+ramp limits. Refinement occurs after that pass's view-key map has been destroyed.
+
+The native library and CLI compile successfully with a serial memory guard
+(420.5 MiB peak). Regression/performance checks are deferred at the user's
+request; no measured speedup or requalified output equivalence is claimed.
+
+### 10.89. Map completed spill columns for section encoding
+
+Spilled structural columns expose an RAII read-only view. The private spill
+file receives the resident tail, then existing delta/LZ4 codecs read the mapped
+column directly, avoiding a full private reconstruction/pread copy. Logical
+spill offsets/counts stay unchanged. Prefix length, byte sizing, file resize
+and partial/EINTR tail writes are checked. Unsupported/failed mappings retain
+the old Resolve copy path; one resident chunk still aliases its vector.
+The column must remain immutable until its view is released.
+
+FIELDS, FIELDSETS and SPECS use these views. FIELDS releases its token input
+before preparing value reps, reducing simultaneous reconstructed input buffers
+on the fallback path too. Codec scratch and spec projection buffers remain.
+The optimization adds temporary-file tail writes/space in exchange for removing
+full input copies; actual SSD throughput and peak RSS remain to be measured.
+
+Native library/CLI compilation passes under a serial 8 GiB memory guard
+(673.8 MiB peak). Regression, fault-injection, platform and output-byte checks
+are deferred at the user's request. This is implemented, not yet qualified.
+
+### 10.90. Reuse prototype seed containers between batches
+
+Batch composition lends the pass's prototype vector and key set to its local
+scope using constant-time swaps. A scoped owner restores them on all return
+paths. Successful builds append newly discovered prototypes after BuildStage
+has detached the scope. This removes the per-batch vector/key-set copy while
+keeping the prototype-path membership set local; selection and serial fallback
+logic are unchanged. Ancestor traversal similarly borrows prefix views and
+constructs the scope's owning strings directly, eliminating temporary parents.
+
+The native library and CLI compile under a serial memory guard (419.1 MiB
+peak). Regression/performance validation remains deferred; no measured speedup
+or output-equivalence claim is made for this implementation yet.
+
+### 10.91. Commit-authoritative instance claims
+
+Parallel structure workers still use ranked claims to avoid expanding every
+duplicate prototype. Commit now confirms actual prototype keys in those same
+sharded entries, releasing their speculative rank storage. Confirmed keys and
+earlier-batch seeds are authoritative for subsequent worker pruning.
+
+A speculative instance can refer to a claim made inside a subtree that commit
+later discards. If DFS-order registration instead makes it a prototype, commit
+seeds its shared child sources with workers parked, then re-walks that subtree
+with only its root forced to expand. Descendants retain ordinary pruning and
+commit-order registration. This replaces the immediate whole-walk fallback for
+that mismatch. Source-cache repairs retain their existing path; unresolved
+repairs and depth failures still discard the parallel result and fall back to
+the serial walk.
+
+The changed native cache translation unit compiles under a serial 8 GiB guard
+(655.6 MiB peak). The CLI build timed out while rebuilding stale objects and
+has not relinked this change. Regression qualification remains deferred.
+Required coverage includes claims
+from discarded subtrees, nested repairs/donations, shared prototype child
+seeding, earlier-batch seeds, inactive prims, depth limits and serial fallback.
+No performance or output-equivalence claim is made yet.
+
+### 10.92. Encode SPECS projections directly from read views
+
+The delta encoder accepts an immutable projected u32 accessor as well as a
+contiguous input array. It reuses the large-column histogram/common-delta
+selection and exact output sizing, with inline execution below the existing
+parallel threshold and on no-thread builds. SPECS now projects path indices,
+fieldset offsets and spec types from its retained read view instead of
+allocating a u32 per spec. Fieldset offsets are resolved only for their column
+and released before spec types are encoded.
+
+This removes the full spec projection buffer and, on the projected serial
+path, the C encoder's full delta and worst-case output scratch arrays. The
+result is allocated at its exact encoded size. Histograms, compressed payload
+buffers and other sections' projections remain; wide-delta counting can still
+grow with the number of distinct deltas. Histogram counters use size_t to
+support a serial column larger than UINT32_MAX elements (up to 512 KiB per
+worker for the flat histogram on 64-bit hosts). Accessor calls add work and
+read the immutable source repeatedly; throughput and full-scene RSS need
+measurement before qualification.
+
+Changed native and no-thread codec/writer units compile under serial 8 GiB
+guards (673.3 and 595.6 MiB peak). A small standalone codec smoke passes 16
+byte-parity cases against the contiguous C-backed path and decode checks on
+each build, including empty/singleton inputs, wraparound and mixed/wide deltas.
+These small cases do not exercise the parallel threshold or complete writer.
+CLI relinking, spilled SPECS parity, parallel-threshold cases, full regression
+and SSD measurements remain deferred.
+
+### 10.93. Split heavy field-encoding chunks
+
+Large default-profile writes refine each existing 1024-prim field chunk using
+an array-work estimate from immutable value headers. The estimate sums default
+and time-sampled array counts times the fixed element size; variable-size
+elements use sizeof(std::string) as a work proxy. It never materializes or
+hashes an array. A prim at the 16 MiB work threshold is isolated; smaller prims
+split before their combined estimate exceeds that threshold. The threshold
+is a scheduling heuristic, not a bound on encoded bytes or process memory.
+
+Every refined range remains inside its original chunk. Workers and consume-
+prim reapers share the same explicit boundaries; all commit stages retain
+prim order. Worker/context counts stay based on the original chunk count, so
+refinement adds no in-flight slots. Boundary/readiness bookkeeping does grow
+with the number of splits, and encoder/source residency still needs measuring.
+Low-memory batched/spill-budget writes, small writes and deferred-fill stages
+retain fixed ranges. A missing array flag or unexpectedly expensive scalar
+may make the estimate inaccurate without affecting encoding decisions.
+
+Opt-in writer timing now reports chunk_plan and the refined/fixed chunk counts,
+worker count and context count. Use these to measure planning overhead along
+with fields_specs and true SSD timing/RSS. Native writer compilation passes
+under a serial 8 GiB guard (673.4 MiB peak); the no-thread writer unit also
+compiles (595.9 MiB peak). Writer runtime, byte parity,
+consume/reaper/error paths and Island performance qualification are deferred;
+no measured throughput or memory improvement is claimed.
+
+### 10.94. Discovery fan-out and proven small-stage sizing
+
+Automatic arc prefetch now sizes its outer worker team from the existing
+thread budget, independent of the initial seed count. A root with one reference
+can reveal many layers; previously its one-worker pool stayed serial for that
+entire fan-out. Idle workers wait while a load is active. The automatic outer
+budget remains max(1, threads/4), with at most eight parser threads per file
+and no multiplication beyond the supplied budget. Explicit parser-thread
+settings keep the prior policy. A lone initial file may now use fewer parser
+threads in exchange for later fan-out capacity; actual wait/throughput effects
+still need measurement.
+
+Discovery also records the prim count when it reaches every leaf without
+stopping at a frontier/depth cap or opaque active instanceable subtree. The
+count is expanded ancestors plus frontier leaves, excluding the pseudo-root.
+Policy/resolver callbacks disable this optimization. If that completed count
+fits the existing target, automatic pass 1 plans all roots in one batch. An
+incomplete discovery, opaque instance subtree or larger count keeps the old
+cautious ramp; fixed roots-per-batch remains explicit. No new source walk or
+array payload access is added. Timing reports discovered_prims (zero means
+unknown/empty), so a small frontier is never mistaken for a small stage.
+
+Native cache/batch units compile with a serial 8 GiB guard (655.4 MiB peak),
+as do no-thread units (387.1 MiB peak).
+Behavior, completed-count coverage and fan-out/SSD performance remain deferred.
+
+### 10.95. Source lifetime at the retained-plan boundary
+
+The one-shot file-flatten driver drops source registry ownership immediately
+after a successful retained Plan, before writer initialization. This advances
+the release previously done inside Run. It requires a nonempty retained result
+covering the whole plan and a joined batch consumer; Run then reads only owning
+composed groups. Root ownership and array/imported-resource owners survive.
+Public BatchedComposer Plan retains its registry and dependency-query/repeated-
+Plan behavior. Errors or discarded/incomplete retained plans do not release.
+
+The lifetime constraints for general pass 1 remain:
+
+| State | Safe release condition |
+| --- | --- |
+| A batch's temporary composition cache | BuildStage and all fill/walk workers have joined; existing batch teardown |
+| Sources in a complete retained one-shot plan | Final planning callback has completed and the retained groups own all output; release before writer initialization |
+| A source shared with an unplanned frontier root | Keep it: future last use has not been established |
+| Multi-batch pass 2 | Existing recorded last-use cutoff plus fill watermark |
+| Public/custom-reader composer snapshots | Retain under the existing API lifetime; no speculative eviction/reload |
+
+This does not lower the general multi-batch pass-1 peak. Earlier release there
+still needs a complete future-dependency proof or a snapshot-preserving spill
+mechanism, not an LRU reload of potentially stateful readers. The changed batch
+unit compiles (418.5 MiB peak); retained-output parity, failure cleanup and actual
+RSS remain unqualified under the deferred-regression workflow.
+
+### 10.96. Bounded CPU readback/conversion/copy profile
+
+`bench_scene_readback` is an opt-in EXCLUDE_FROM_ALL target, not a CTest. It
+reads a crate with lazy mmap arrays and a 512 MiB reader budget, converts with
+textures/animation disabled and a 512 MiB conversion budget, then measures
+owned bulk and element-indexed chunk copies. It reports wall/process CPU time,
+process high-water RSS, copied bytes and progress gates (mesh names stripped).
+Native copies are a lower bound for JS extraction: floats/indices are retained
+separately and JS marshaling, scratch reconstruction and heap growth are absent.
+
+A bounded warm-cache fixture contains 8,201 prims (8 regular triangle meshes),
+702,903 crate bytes and 14,082,240 retained geometry bytes to copy. Single runs
+against the existing native archives, identified by hashes in the ignored
+profile artifacts, give:
+
+| Operation | One thread | Four threads |
+| --- | ---: | ---: |
+| Read composed crate | 44.9 ms | 28.0 ms |
+| Retained conversion | 74.8 ms | 33.5 ms |
+| Bulk owned chunk copy | 1.18 ms | 1.19 ms |
+
+An instrumented reader run attributes 40.5 of 45.1 ms to BuildStage; its
+properties/bodies laps take 9.2/10.9 ms. Structural-table reads total only a few
+milliseconds. Thus this fixture is stage-construction-bound, not file-I/O-bound.
+Metadata-only conversion still takes 59.3 ms with one thread and copies 7.0 MB
+of retained triangulation; it is not a cheap skip of mesh work. Progress is
+reported in the serial merge AFTER the mesh arena completes, explaining a
+silent interval before the first mesh callback; gate intervals are not exact
+per-algorithm timings. High-water native RSS stays near 54 MiB. The external
+guard samples can miss short peaks; use getrusage high-water values here.
+
+An older pre-change WASM runtime was staged locally and profiled under Node
+on the same fixture. A first run spends 195.5 ms in begin and 567.5 ms in
+getMeshCopy for eight meshes. A second instrumented run gives 575.5 ms copy,
+including 442.0 ms in 160 size queries, 65.7 ms in 24 payload transfers and
+45.2 ms in getMesh headers. It peaks below 194 MiB. These are separate samples,
+not a paired improvement claim or qualification of the current worktree.
+
+Source inspection matches the main WASM bottleneck: meshBufferCopy calls
+buildRenderMesh_ even for zero-destination size queries, and getMeshCopy first
+preflights all ten streams, then queries each again through its copy accessor.
+The next substantial change needs scoped geometry preparation with complete
+scratch/configuration invalidation; blindly retaining the current scratch ID
+would risk stale geometry. Bulk copies (§10.97) address the element-loop cost,
+not this repeated reconstruction. Large production/readback and fresh-runtime
+qualification remain deferred. All profiling artifacts and fixture data stay
+under ignored build_ninja/cpu-implementation, with an artifact hash manifest.
+
+### 10.97. Bulk copies into unaligned FFI byte buffers
+
+ChunkedArray::copy_bytes_to validates byte capacity, then uses the existing C
+chunk-storage memcpy path. It accepts unaligned destinations without casting
+them to typed element pointers. Web mesh, points and curves buffer copies use
+it for multi-chunk payloads instead of resolving a chunk for every element;
+existing contiguous memcpy and short-buffer/size-query behavior are preserved.
+
+An Emscripten syntax check passes for the changed binding. A small native smoke
+passes 15 shape/type cases (float/u32/u16; empty, single, exact chunk and partial
+tails), including unaligned destinations, untouched short destinations and
+null handling. The native profile measures 1.17 ms bulk versus 2.60 ms indexed
+copies on its 14.1 MB geometry stream; this is not a WASM speedup measurement.
+Full WASM relinking, typed-buffer/heap-growth regression and current-runtime
+performance remain deferred.
+
+### 10.98. Scope geometry preparation to one owned mesh copy
+
+The counted web bridge adds an internal mesh-copy scope around the synchronous
+getMeshCopy operation. Its size preflight, header view and buffer transfers
+share one successful preparation of the existing scratch geometry. The scope
+adds only descriptor state, not another geometry buffer. An older runtime
+without the new dispatch export retains the previous path. JS keeps the stream
+busy for the entire operation and closes the native scope in finally, including
+preflight errors, header failures and transfer exceptions. Nested native scopes
+are rejected.
+
+Reuse requires the same output mesh/source index and the same explicit/adaptive
+vertex-index settings and value-clip enable flag. Every actual scratch build
+invalidates preparation before reading/altering geometry, including builds for
+other meshes, merging and failures. Supplied-asset changes/clear/removal also
+invalidate it; stream end/reset clears the scope. A successful preparation can
+republish it only inside the matching scope. Tangents and skin streams keep
+their existing preparation logic; unscoped getters always rebuild as before.
+
+This targets the repeated-build size-query cost in §10.96 without creating a
+cross-call cache or depending on mesh_view_source_id_ as a validity token.
+All six changed native web units pass Emscripten syntax checks under an 8 GiB
+guard (216.9 MiB peak). A focused current-JS/mock-dispatch check passes normal
+and failure cleanup, busy/deletion guarding, begin rejection and old-runtime
+fallback (60.4 MiB peak). These checks do not establish native geometry parity
+or actual build counts. A full current WASM relink and runtime checks for merged/
+analytic output, indexed/soup meshes, skin/blend remaps, supplied clips, config
+changes and performance remain deferred. The older WASM timings are baselines,
+not evidence of a speedup from this implementation.
+
+### 10.99. Emit compressed sections without an intermediate result vector
+
+CompressCrateBlobTo compresses into the existing uninitialized bound-sized
+scratch and synchronously emits its encoded bytes. Structural section builders
+append directly from that borrowed buffer, removing the exact-size compressed
+result vector previously copied between scratch and section payload. The owning
+CompressCrateBlob API wraps the same helper and retains its previous behavior.
+Codec framing, LZ4 chunk boundaries and raw fallback are unchanged. An emitter
+is invoked once on success and never on compression failure; destination errors
+remain with the destination, so they cannot trigger an extra raw fallback after
+a partially written compressed header.
+
+Large contiguous u32 columns also use the existing exact-size histogram encoder
+on no-thread/one-core builds, at the existing 4M-element threshold. Previously
+those builds retained a full delta array and worst-case output scratch through
+the C fallback. Small contiguous columns and signed-column fallback still use
+that path. Histograms, compression scratch and final payload buffers remain;
+this is not a fully streaming codec or a measured whole-scene peak reduction.
+
+The adjacent C blob bound now computes ceiling division without adding to an
+untrusted near-SIZE_MAX size, checks aggregate bound additions and uses remaining
+capacity for chunk headers. This rejects oversized scratch requests before
+allocation rather than allowing the chunk count or bound to wrap.
+
+Native and no-thread codec/writer units compile under serial 8 GiB guards
+(675.6/597.3 MiB peak). Ten small compressible/incompressible cases match the
+direct C codec, decode correctly, and preserve short-destination failure flags;
+missing emitters and SIZE_MAX inputs reject without invoking the emitter.
+A 4M+3-element smoke matches the C delta encoder and decodes exactly for wrapped
+common/mixed-wide deltas on both builds (<55 MiB sampled RSS). These probes link
+the changed objects directly; complete CLI/library relinking, 32-bit overflow
+coverage, multi-chunk LZ4 and actual SSD scene/RSS qualification remain deferred.
+
+### 10.100. Integrated CPU CLI and retained-plan smoke
+
+The native next/core archives and lusdcat now link the accumulated CPU changes
+through §10.99. Earlier object-only build notes remain historical. The serial
+integrated build peaks at 477.7 MiB under an 8 GiB guard; a final diagnostic
+relink peaks at 418.7 MiB. GPU compute remains disabled. Old readback profile
+artifact hashes/timings must not be relabeled as measurements of these new
+archives.
+
+A tiny two-hop reference fixture discovers five prims and plans one batch;
+default/low outputs match at 1,344 bytes and read back with two meshes. An
+instanceable counterpart correctly leaves the size unknown, keeps its two-
+batch plan, and matches at 1,386 bytes with one shared mesh. Both log
+kept_registry_layers_dropped=2 at the retained-plan boundary before writer
+initialization. This counts ownership drops, not reclaimed physical bytes.
+The smoke stays below 23 MiB and is not a regression campaign.
+
+These cases establish basic integrated read/compose/write behavior and the
+complete/opaque discovery distinction. They do not qualify parallel speculative
+repairs, wide heavy chunks, actual spills, large-scene throughput/RSS or WASM
+runtime geometry parity. Broader checks remain deferred. General pass-1 source
+eviction still requires a proof covering unplanned roots' transitive back-
+references or snapshot-preserving storage; dropping a recently used registry
+entry alone supplies neither.
+
+### 10.101. Pass-1 lifetime audit with a late back-reference
+
+A focused callback-reader fixture establishes why a completed batch is not a
+layer's final-use proof. Discovery uses a two-root frontier cap and one thread
+(no prefetch); the first root has two children, so it rejects the next whole
+level before resolving the second root. The trace is:
+
+| Boundary | Shared-layer reads | Later-root layer reads |
+| --- | ---: | ---: |
+| After discovery | 1 | 0 |
+| After planning batch 0 | 1 | 0 |
+| After planning batch 1 | 1 | 1 |
+
+The later-root layer references the same shared layer. The reader deliberately
+would return different shared contents on a second invocation. The current
+registry preserves the original snapshot: both pass 1 and pass 2 contain all
+four expected mesh appearances with one shared-layer read. Evicting/re-reading
+at the first boundary would change the later result. Source dependency queries
+after Plan also retain all four expected identifiers.
+
+This completes the current-lifetime investigation: temporary caches can die
+after their workers join; retained one-shot plans release registry ownership
+after planning; general pass 1 must retain snapshots until future dependencies
+are established; pass 2 uses the recorded cutoff and fill watermark. General
+earlier eviction is still unimplemented and would require snapshot-preserving
+storage or a complete dependency proof. A page-only alternative is already
+present: CrateReader::ReadFile discards mapped input pages after parsing.
+
+The tiny stateful-reader probe passes below 2 MiB sampled RSS and compiles below
+248 MiB. It is a lifecycle audit, not a large-scene memory/performance claim.
+For the separate instance-authority work, opt-in next_walk diagnostics now count
+attempted speculative/seed/source re-walks and serial_fallback. Counts distinguish
+unexercised repairs from successful parallel results; they do not themselves
+prove parity. The updated native CLI links under the serial guard (656.5 MiB
+peak). Runtime coverage of the new parallel repair remains deferred.
+
+### 10.102. Focused instance-authority and fallback checks
+
+A bounded 65,575-prim in-memory scene crosses the actual 64K source-cache gate
+for ParallelStructureWalk. It contains nested instance groups and no large
+arrays. The serial and eight-thread builds produce identical 1,078,448-byte
+crates, identical prim/prototype counts and serial_fallback=0. This natural run
+reports zero re-walks, so it is not claimed as repair-path coverage.
+
+The same scene with a namespace-depth limit exercises serial_fallback=1.
+Serial/fallback crates match at 1,078,660 bytes with 65,573 prims; both report
+the typed MaxDepthExceeded diagnostic. The existing API returns a diagnostic-
+bearing partial stage here, not false. The probe initially assumed a fatal
+return; that harness assertion was corrected without changing library behavior.
+This confirms fallback preserves the serial contract, including diagnostics.
+
+A separate tiny direct-source probe injects two earlier speculative claims
+without authoritative prototypes, representing claims from discarded subtrees.
+It compiles the current cache/batch implementation sources and uses the existing
+internal accessor, without an exported test hook. Commit performs two nested
+speculative re-walks, materializes four correctly ordered/typed prims, preserves
+child links, and confirms both prototype keys without fallback. This directly
+exercises forced-root expansion even after prototype confirmation.
+
+The threshold smoke peaks at 147.7 MiB; the injected probe stays below 2 MiB
+(its source compilation peaks at 647.7 MiB). These focused checks are not a race
+campaign: donated-task interleavings, seeded large batches and production output/
+performance qualification remain deferred. Artifacts/logs stay under ignored
+build_ninja/cpu-implementation/parallel-walk-smoke* and claim-repair-smoke*.
+
+### 10.103. Bounded heavy-chunk and reaper check
+
+A synthetic write with 262,144 prims crosses the real wide-writer threshold.
+Four array-heavy prims sit next to each other and on either side of an original
+chunk edge. Metadata refinement creates 261 ranges from the original 256;
+four workers still use eight contexts. A consume-prims run verifies all
+property slots have been reaped after completion. Refined parallel, fixed-
+chunk parallel and serial outputs match exactly at 21,369,287 bytes on real SSD
+files.
+
+The fixed-chunk control compiles an isolated copy of the current writer with
+only refine_chunks=false; copied writer files are checked against production
+sources. Its optimization/hardening flags match the normal writer. Both
+parallel probes use the same four-thread/consume configuration and system libc
+allocator (the production CLI uses jemalloc). Single samples are:
+
+| Parallel policy | fields_specs | Whole write | Peak RSS |
+| --- | ---: | ---: | ---: |
+| Fixed 256 chunks | 161.9 ms | 441.8 ms | 301.0 MiB |
+| Refined 261 chunks | 142.8 ms | 422.3 ms | 298.5 MiB |
+
+Refinement planning takes 2.5 ms. These samples exercise splitting, ordered
+commit and consume/reaper boundaries with no observed RSS increase in this
+workload; they are not statistical performance evidence or Island qualification.
+Array sharing, workload and allocator differ from the production scene.
+Source overlays, probes, logs and the checked artifact/byte-parity manifest are
+ignored build_ninja/cpu-implementation/heavy-chunk-* and fixed-chunk-overlay.
+Failure/fallback, variable/time-sampled arrays, large lazy payloads and actual
+Island SSD throughput/RSS remain deferred.
+
+### 10.104 Focused mapped-spill, fallback and writer integration checks
+
+Bounded standalone checks exercise the current SpillVec read views for u32,
+ValueRep and CrateSpec columns: empty/single/exact-chunk inputs, multiple
+chunks plus resident tails, view reset and appends after a completed snapshot.
+Mapped views match the legacy owning Resolve output. Injected mmap failure
+falls back to an owning copy; truncated prefixes, ftruncate/pwrite failure and
+fallback-read EOF fail without publishing a view. Interrupted and partial tail
+writes recover. All 18 successful native mappings are unmapped; the no-mmap
+build passes with zero mappings. Both runtime checks stay below 2 MiB sampled
+RSS; the native probe compiles below 186 MiB.
+
+A real batched writer fixture contains 131,073 Xform prims with eight scalar
+attributes each. It crosses the actual structural-column chunk thresholds,
+with four writer threads and either no spill budget or a 1 KiB budget. The
+spill case writes 41,943,032 prefix bytes, snapshots 16,777,704 tail bytes and
+successfully maps four views totaling 58,720,736 bytes. A third run injects
+ENOMEM for all four spill mappings, exercising the actual section builders'
+owning-copy fallback. All three runs succeed and produce byte-identical,
+nonempty regular SSD files of 16,798,763 bytes, SHA-256
+`1905ad096263d03df8726e15df172a0a5384f32df010987e8e7ec68c6ed1b0ca`.
+The spill directory is empty after completion.
+
+Sampled process-tree peaks are 552.2 MiB without spilling, 495.7 MiB with
+mapped spills and 534.1 MiB with forced mapping fallback. These are single
+synthetic implementation checks using libc allocation, not production-scene
+RSS or performance qualification (the production CLI uses jemalloc). The
+initial ordinary-layer probe did not evict columns; only the corrected
+AddBatchTables/BeginBatchedFile/WriteBatch/FinishBatched runs establish spill
+coverage. Probes, logs, files and a hashed provenance manifest remain ignored
+under build_ninja/cpu-implementation/spill-view-* and writer-spill-*.
+Large-scene SSD performance, 32-bit platforms, multi-chunk LZ4 and broad
+regressions remain deferred.
+
+### 10.105 Fresh WASM scoped-copy integration and bounded profile
+
+The current next-only wasm32 module is now compiled and linked from the
+working tree in web/build_ninja (MinSizeRel, SIMD, dlmalloc, no threads or GPU
+compute). Serial compilation peaks at 360 MiB; the final link at 364.7 MiB.
+Emscripten requires SDK symbol-cache lock writes outside the workspace, so the
+link was retried with approved SDK-cache access after a sandbox failure.
+Generated outputs stay under ignored build_ninja/cpu-implementation/wasm-current.
+
+The bounded 8-mesh grid fixture from §10.96 compares scoped copies with the
+scope export disabled in the *same* new module. Two fresh streams reverse the
+sample order. Complete copied typed-array bytes and output metadata match.
+Geometry-read statistics divided by the fixture's known per-build byte count
+establish 192 preparations without scopes versus 8 with scopes: 24 versus one
+per mesh. Both paths still issue 160 size queries and 24 transfers; the scope
+removes repeated preparation rather than changing the extraction calls.
+Indexed copy samples are 721.5–729.6 ms unscoped and 75.9–76.1 ms scoped.
+The explicit indices-disabled setting matches too (714.7–722.5 versus
+71.2–80.3 ms), but this grid retains indexed geometry because it has no
+face-varying expansion. A separate authored face-varying UV fixture establishes
+actual soup parity: six vertices, no index stream and twelve UV scalars.
+
+Merged output also matches, with zero source preparations in either mode.
+Its 8–15 ms samples do not establish a speedup. Nested begin and mismatched
+end calls are rejected, invalid ids preserve their error result, and injected
+size-query failures close scopes before a subsequent real copy succeeds.
+All 47 scopes close. The complete probe peaks at 222.6 MiB sampled process-tree
+RSS (231.1 MiB process high-water report).
+
+An initial repeated unscoped loop eventually failed a topology read. The
+reader uses a monotonic cumulative allocation budget, including temporary
+deferred decodes, so the final A/B uses fresh streams with 512 MiB limits;
+the safety policy is unchanged. Mesh field/buffer queries now preserve failed
+preparation diagnostics for meshViewString instead of discarding them. This
+does not alter their existing source fallback behavior. The cumulative policy
+is consistent with the repeated-loop failure; this check does not measure
+general long-session capacity.
+
+These are current-runtime synthetic results, not a comparison with the older
+October runtime or browser/production-scene qualification. Skinned/blend-shape
+streams, supplied-clip mutation, forced heap growth, memory64 and complete
+regressions remain deferred. Probe, terminal log and source/runtime/fixture
+hashes are mesh-copy-current.mjs, mesh-copy-current.log and
+mesh-copy-current-summary.json under ignored build_ninja/cpu-implementation.
+
+### 10.106 Bounded discovery sizing and prefetch policy checks
+
+A standalone probe compiles current cache.cc and batched-compose.cc directly,
+using the existing internal batch accessor without adding a public test hook.
+A six-prim reference fixture establishes these sizing boundaries:
+
+| Policy | Discovered count | Pass-1 batches |
+| --- | ---: | ---: |
+| Complete, target six | 6 | 1 |
+| Complete, target five | 6 | 2 |
+| Frontier capped at two | unknown (0) | 1 |
+| Namespace depth capped at two | unknown (0) | 2 |
+| Authored inactive leaf | 6 | 1 |
+| Asset-reader callback | unknown (0) | 2 |
+| Payload selection callback | unknown (0) | 2 |
+| Payload notification callback | unknown (0) | 2 |
+| Fixed one root per batch | 6 | 5 |
+
+Every pass-1 path sequence (excluding repeated ancestors) matches an independent
+serial BuildStage call with the same options. An unknown count does not itself
+require multiple batches: the capped frontier has one root, so the original
+conservative policy also produces one batch. The inactive leaf remains an
+authored prim in the composed stage; this case does not prove arbitrary
+inactive-subtree or namespace-edit coverage.
+
+A controlled byte-reader check starts prefetch with eight requested threads
+and exactly one seed. That seed reveals two child files. A condition-variable
+barrier establishes both automatic workers are inside child reads concurrently;
+the seed and both children are each read once. The explicit three-parser-thread
+configuration retains one outer worker for the same initial queue and drains
+successfully. A third case stops while the seed read is held, releases it and
+joins all workers: the children are never read. These are policy and lifecycle
+checks, not filesystem throughput measurements or parser-speed claims.
+
+All twelve cases pass at 1.6 MiB sampled RSS; the direct-source probe compiles
+at 616.6 MiB. Fixtures, probe, terminal log and hashed provenance remain ignored
+under build_ninja/cpu-implementation/discovery-policy*. Large fan-out timing,
+namespace edits, more callback/load-rule combinations and broad regression
+qualification remain deferred. No production implementation change was needed
+by these checks.
+
+### 10.107 Reuse PATHS node storage for low-memory column encoding
+
+Large batched writes (serialized structural sections) and explicit spill-budget
+writes no longer allocate separate preorder token/jump arrays. After tree
+ordering, each node's element offset and subtree size are read for the last
+time while its token and jump are computed. Those entries are then overwritten
+in place with the final scalar columns. Nodes are unique in the preorder, and
+each worker reads and writes only its own node's entries. After the workers
+join, immutable accessors project through the retained preorder into these
+columns for encoding. No token lookup or source-array decode is repeated by
+the codec.
+
+This removes eight bytes per encoded path at the column-preparation phase.
+All three PATHS columns, including the preorder, use exact-size projected delta
+encoding sequentially, avoiding the contiguous C encoder's full delta and
+worst-case output scratch below its large-input threshold. The token column's
+node storage is released before the jump column encodes. The policy starts at
+131,072 encoded paths so fixed histogram overhead does not dominate small
+writes; small writes and ordinary zero-spill-budget writes keep the existing
+contiguous/parallel policy. The retained preorder and codec histograms still
+consume memory; this is not an overall process-memory bound.
+
+The native core/CLI is relinked. The first three-minute build slice stopped
+safely at its time limit (672.3 MiB peak), then the remaining serial build
+completed (673.5 MiB peak). A bounded 131,073-prim/eight-property fixture crosses
+the new path threshold. Ordinary, batched memory-only, mapped-spill and forced
+mapping-fallback writes all succeed and match the saved pre-change regular SSD
+output byte for byte: 16,798,763 bytes, SHA-256
+`1905ad096263d03df8726e15df172a0a5384f32df010987e8e7ec68c6ed1b0ca`.
+Spill cases still exercise four actual mappings or four injected mapping
+failures, with no leftover spill files. A no-thread writer/codec object overlay
+also produces identical mapped-spill output; writer compilation peaks at
+598.1 MiB and codec compilation at 281.4 MiB. Its complete library archive was
+not relinked; the probe explicitly supplies the new objects before that archive.
+
+These focused libc probes do not establish production peak-RSS or throughput
+improvement. Process-tree RSS samples vary across modes and codec phases; the
+allocation reduction above is specific to column preparation. Large-scene
+SSD/RSS qualification, deep/variant/relative/empty path cases on the new branch,
+threshold boundaries and broad regressions remain deferred. Probe, outputs,
+logs and hashed artifact provenance remain ignored under
+build_ninja/cpu-implementation/writer-path-projection-* and path-projection-*.
+The wasm32 module in §10.105 predates this writer change; its scoped mesh-copy
+implementation and focused results are otherwise unchanged.
+
+### 10.108 Mixed-array heavy-chunk scheduling check
+
+A bounded 262,144-prim fixture extends the fixed-size scheduling check with a
+time-sampled-only array property, a token array sized by the string-footprint
+proxy, an authored default plus a sample, four smaller arrays on one prim,
+and smaller arrays whose combined work splits a range. Heavy prims sit next
+to each other and on the original 1024-prim range edges. Estimation reads
+array headers and stored time-sample indices, without materializing payloads.
+
+The planner produces the expected 262 ranges from 256 fixed ranges, retaining
+four workers and eight contexts. Parallel consume/reaper output exactly matches
+serial non-consuming output: 19,272,856 bytes, SHA-256
+`296d84072d321d4479c05f7c792b157ee9cb3b09667425bccbc10f8147b35099`.
+Every consumed prim has no properties or remaining time samples. Planning
+takes 2.49 ms in this sample; sampled process-tree peaks are 235.8 MiB serial
+and 313.4 MiB parallel. Different thread/consumption policies make this a
+functional check, not an isolated refinement speed or RSS comparison. The
+probe compiles at 192.6 MiB. No production implementation change was needed.
+
+Fixtures/probe, terminal logs, outputs and source/archive hashes remain ignored
+under build_ninja/cpu-implementation/heavy-chunk-mixed*. Large lazy payloads,
+failure/fallback coverage and actual Island SSD throughput/RSS remain deferred.
+
+### 10.109 Preserve earlier-batch prototype authority during serial fallback
+
+A failed parallel structure walk cleared every prototype map before the serial
+fallback. In a batched build, this also erased authoritative prototypes from
+earlier batches. BuildStage installs those seeds before attempting the parallel
+walk, so the later serial loop did not reinstall them: a later member could
+become a new prototype instead of remaining an instance of the earlier owner.
+
+The failure reset now discards this attempt's registrations and restores the
+batch scope's seed keys/prototype paths and ordering, matching BuildStage's
+initial state. Normal successful walks and non-batched fallback keep their
+existing behavior. No speculative claim survives the reset.
+
+A bounded reproduction compiles current cache/batch sources directly, supplies
+an earlier-owner BatchScope seed through the existing internal accessor, then
+uses the actual public Cache::BuildStage call. Its 65,536 ordinary children
+cross the real parallel source-count threshold. A separate depth-three branch
+with namespace depth limited to two forces a real eight-thread parallel failure
+and serial fallback (next_walk serial_fallback=1).
+
+Before the fix, serial reports the member as an instance of
+`/PreviousBatchOwner`, while parallel fallback incorrectly reports it as its
+own `/World/Member` prototype. Both builds still report 65,540 prims and
+1,077,664 crate bytes: prim/byte counts alone do not detect the authority bug.
+After the fix, both retain the earlier owner, report the same typed depth
+diagnostic/partial-stage success contract, and produce byte-identical crates.
+The probe passes at 140.5 MiB sampled RSS, compiling at 591.8 MiB. The native
+core/CLI is relinked (655.9 MiB peak). Reproduction binaries, before/after
+terminal logs and hashed provenance remain ignored under
+build_ninja/cpu-implementation/seeded-fallback-*.
+
+This fixes a concrete fallback defect; broader donation/race, seeded batch
+integration and production qualification remain deferred. The original
+before-fix reproduction is deliberately retained as an expected failing run.
+
+### 10.110 Complete source-miss to prototype-seed repair
+
+Resolving a parallel walk's cached-source miss can reveal an instanceable
+prototype whose child sources have not yet been seeded. The rewalk guard
+previously rejected both another source miss and any unseeded prototype. This
+discarded a repair that had made progress and unnecessarily requested serial
+fallback before the existing prototype-seeding branch could run.
+
+The guard now accepts an unseeded prototype after source resolution and lets
+CommitWalk perform its existing paused seed mutation and forced-root rewalk.
+Another source miss still fails immediately; a forced prototype rewalk that
+still reports unseeded children also fails. Thus the transition is bounded:
+source miss -> seed -> forced rewalk, with the serial fallback retained when
+a step cannot progress or hits a depth failure. No public API changes.
+
+A current-source internal probe distinguishes stale claims, unseeded prototypes
+and source misses. Before the change, the source-miss case returns false after
+one source attempt and zero seed repairs. Afterward it commits four expected
+prims with one source and two nested seed repairs. Seed-only repair commits
+with two seed repairs; stale-claim repair commits with two speculative repairs.
+All successful cases verify paths, child order, types and confirmed claim
+authority after temporary read-only stores are gone. Source pointers refer to
+stable cache-owned vectors; read-only spec lookups do not memoize pointers into
+temporary stores. The cache/layer lifetime remains required through materialize
+and opinion fill; this audit does not justify earlier pass-1 registry eviction.
+
+A depth-limited source-miss case reaches seed repair and then returns false,
+preserving the caller's serial fallback. Pause state and read-only TLS are
+cleared in every case. All four cases pass below 2.2 MiB sampled RSS; the probe
+compiles at 594.1 MiB. The native core/CLI is relinked at 655.9 MiB peak.
+Probe, before/after binaries, terminal logs and provenance stay ignored under
+build_ninja/cpu-implementation/repair-transition-*.
+These controlled repairs do not establish production fallback rates or worker
+race/donation coverage; broad regressions remain deferred.
+
+### 10.111 Exact-size encoding for medium low-memory structural columns
+
+FIELDS token ids and FIELDSETS indices still reached the contiguous C delta
+encoder below four million elements. Even with mapped spill views, that path
+allocated a full delta array, histogram state and worst-case output scratch
+before copying the exact result. The writer now selects projected exact-size
+encoding for structural u32 columns of at least 131,072 elements when sections
+are serialized (batched writes) or an explicit spill budget is set. Small
+columns and ordinary zero-budget writes retain their prior codec policy.
+PATHS reuse shares the same threshold constant. No public API changes.
+
+The projection aliases the existing input through an immutable accessor;
+it does not allocate another input column. Exact output and histogram state
+remain, including potentially large wide-delta counting state: this is an
+allocation reduction, not a bound on the complete codec or writer working set.
+
+A link-wrapped counter on the C u32 delta entry point checks calls between
+131,072 and four million elements in the bounded 131,073-prim/eight-property
+fixture. Before this change, a batched memory-only write makes two such calls.
+Afterward batched memory-only, mapped-spill and forced mapping-fallback writes
+make zero; ordinary zero-budget output still makes five. Every file matches
+the saved pre-change output byte for byte: 16,798,763 bytes, SHA-256
+`1905ad096263d03df8726e15df172a0a5384f32df010987e8e7ec68c6ed1b0ca`.
+The before probe intentionally fails its new counter assertion after successfully
+writing the file; this is not a baseline writer failure.
+
+In this single matched libc memory-only pair, process high-water RSS falls
+from 547.3 to 325.8 MiB (guard-sampled group peaks 502.0 to 329.5 MiB).
+After-change mapped-spill and mapping-fallback process peaks are 313.7 and
+344.0 MiB. These synthetic samples do not establish production-scene RSS or
+throughput gains. A no-thread writer/codec object overlay also produces
+identical mapped-spill output with zero medium C calls (272.3 MiB process peak).
+No spill files remain. Native CLI/core relink passes at 675.2 MiB; no-thread
+writer compilation at 599.1 MiB. Its full archive remains historical; the probe
+links the current objects explicitly. Generated artifacts and provenance stay
+ignored under build_ninja/cpu-implementation/writer-medium-delta-* and
+medium-delta-*. Threshold/pathological-delta coverage, production SSD/RSS and
+broad regressions remain deferred. The earlier WASM runtime predates this change.
+
+### 10.112 Residual web mesh-copy budget-query profile
+
+The wasm32 scoped-copy runtime from §10.105 was profiled with resolved export
+wrappers around the remaining-memory and mesh-buffer calls. Eight indexed mesh
+copies issue 64 exported memory-budget queries in each of two passes. Those
+queries take 38.7/38.4 ms of 88.2/76.5 ms total extraction; 160 size queries
+and 24 transfers remain, taking 35.5/29.7 ms in the mesh-buffer export.
+These export timings are disjoint, but include their respective internal work;
+they are not pure memcpy or geometry-build timings. Runtime peak is 142.7 MiB
+sampled process-tree RSS. Module/fixture/script hashes and results are recorded
+in ignored cpu-implementation/mesh-copy-budget-profile-summary.json.
+
+RemainingMemoryLimitBytes recomputes Stage::GetMemoryUsage, which traverses
+layer/prims/value storage. That repeated scene traversal is the next extraction
+cost after eliminating repeated geometry preparation. No budget check was
+removed or cached: lazy materialization and mutable asset/export state require
+sound invalidation or a native transaction boundary before reusing an estimate.
+This is a profile of the recorded scoped-copy module, which predates the later
+writer-only changes; it is not a fresh all-source WASM release qualification.
+
+### 10.113 Parallel compact chunk planning and real Island comparison
+
+The named Island workload was profiled after the CPU implementations were in
+place, using regular SSD output and 8 GiB RSS/4 GiB reserve guards. This was a
+bounded implementation/performance check, not a restart of the disabled full
+qualification driver. A current-source writer overlay disables only
+refine_chunks, retaining the same CLI object, libraries, jemalloc allocator,
+optimization/hardening flags, worker count and encoded-context count. The
+overlay compiles without the production precompiled header; all copied writer
+sources are checked against production, with only that boolean changed.
+
+The real scene exposed about 78 ms of sequential range-planning cost, compared
+with 2.5 ms on the small synthetic scheduling fixture. Planning now examines
+independent original 1024-prim chunks on at most eight threads. Each chunk
+records its right boundaries in a 1024-bit mask. After joining, masks merge in
+namespace order. Cuts, the 16 MiB work estimate and ordered commit are unchanged.
+This adds 128 bytes per original chunk (35,456 bytes for Island), without a
+payload copy, a second header scan or one allocation per cut. Planner threads
+are joined and their masks released before encoded worker contexts are created.
+The existing ParallelRanges helper accepts an optional thread cap; its other
+callers retain their previous default behavior.
+
+Three warm alternating pairs compare the final implementation with the
+matched fixed-chunk control. Each output is fsynced after process exit before
+the next run; that separately recorded flush is outside CLI write timing.
+Normal teardown is used, without fast-exit. No final-pair samples are excluded.
+
+| Metric | Fixed chunks | Refined, parallel plan |
+| --- | ---: | ---: |
+| Chunks / workers / encoded contexts | 277 / 16 / 32 | 362 / 16 / 32 |
+| Median chunk planning | 0.007 ms | 23.3 ms |
+| Median fields_specs | 1459.0 ms | 1441.4 ms |
+| Median complete write | 2317.2 ms | 2310.9 ms |
+| Median sampled process-tree peak | 3219.3 MiB | 2732.1 MiB |
+| Maximum sampled process-tree peak | 3233.2 MiB | 2899.8 MiB |
+
+Writing time is essentially flat at this sample size; do not present the 0.3%
+median difference as a proven throughput gain. Median peak RSS is 15.1% lower,
+and even the highest observed refined peak is below the lowest fixed peak in
+these pairs. Planning falls from the prior sequential 77.5–79.2 ms samples to
+23.3–23.7 ms. The initial single pair and sequential-plan measurements remain
+in the logs; their timing variability motivated the alternating/flushed protocol.
+
+Both final regular files match byte for byte, 2,512,205,846 bytes, SHA-256
+`a8f5092209cbcd30841c129354bda0aaae5ea21607f7bd70725ef933d7b2c478`,
+also matching the established Island reference. Every run reports that byte
+count and the expected worker/context counts. The mixed-array consume check
+retains 262/256 ranges and its previous exact bytes; planning there is 0.98 ms.
+Native CLI/core relink passes at 675.2 MiB, no-thread writer compilation at
+600.2 MiB. No GPU access or full45 run was involved. The bounded results establish
+this workload's memory improvement, not universal scene/cold-storage behavior.
+Broad regression suites remain deferred.
+
+Logs, full output files, before/after planners, exact overlay/source/compiler
+provenance and binary hashes stay ignored under
+build_ninja/cpu-implementation/island-chunk-profile/parallel-summary.json,
+island-fixed-* and parallel-chunk-plan-*.
+
+### 10.114 Six-item CPU completion record
+
+The six requested CPU work items have requirement-specific implementation,
+audit and profiling evidence:
+
+| Requested item | Result and evidence |
+| --- | --- |
+| Instance-claim authority | Commit-confirmed claims and forced-root repair replace speculative authority; nested/source/seed repair and current 64K-gated seeded serial fallback pass (§10.102, §10.109–110). |
+| Earlier source lifetimes | The late-back-reference/stateful-reader counterexample establishes required pass-1 retention. Registry ownership is released at the proven retained-plan boundary before writer initialization; current tiny default/low output and snapshot checks pass (§10.100–101). General earlier eviction is deliberately not enabled. |
+| Discovery/pass 1 | Automatic fan-out team, complete small-stage sizing and conservative unknown/fixed-batch behavior are implemented and checked (§10.94, §10.106). |
+| Spill codecs | Mapped/fallback views, direct compressed emission, SPECS/PATHS projections and medium exact-size delta encoding remove full-size scratch/copies with byte parity (§10.104, §10.107, §10.111). |
+| Readback/Tydra costs | Native load/conversion/progress and web extraction profiles are recorded. Scoped preparation removes repeated mesh builds; output/lifecycle checks pass, and residual budget traversal is measured without weakening checks (§10.96–98, §10.105, §10.112). |
+| Default Island writing | Actual reference bytes, matched controls, unchanged encoded-context counts and three alternating pairs establish lower observed peak RSS at essentially unchanged write time; compact parallel planning removes most planning overhead (§10.108, §10.113). |
+
+The final combined source-repair/seeded-fallback reproduction passes against
+current code at 139.2 MiB sampled RSS; the final late-reader snapshot and tiny
+retained-plan CLI checks are rerun against the current native archive/CLI.
+The audit checks relevant source identities, terminal results, pinned profiling
+artifacts and the actual Island comparison; its detailed record is ignored
+build_ninja/cpu-implementation/six-item-cpu-audit.json.
+
+This closes these six work items without claiming broad regression or release
+qualification. The user deferred full suites; repository pre-merge gates still
+apply before a future merge. Other-scene/cold-storage/platform qualification,
+fresh all-source WASM distribution checks and GPU work are not claimed complete.
+
+### 10.115 Scoped mesh-copy Stage budget accounting
+
+This follow-up implements repeated budget-scan reuse, general pass-1 source
+snapshots/eviction and planning/write overlap. Fresh qualification and bounded
+scene measurements are recorded in the following sections.
+
+Within a mesh-copy scope, the private, structurally immutable loaded Stage's
+footprint is reused until a read-side storage materialization occurs. Lazy
+Value publication and deferred Layer path-index construction advance a shared
+atomic generation. Saturation disables reuse permanently rather than wrapping.
+Explicit scope/lifecycle/asset invalidation clears the cache. Layers with
+on-demand opinion fillers retain full scans because those callbacks can change
+arbitrary metadata. This generation is not a general-purpose mutation version.
+Input, asset, formatted-text, retained-export and streaming charges, and the
+configured limit, are still evaluated on each budget query.
+
+A saved pre-change wasm32 module and the fresh CPU-only module ran the same
+8-mesh fixture serially under the RSS guard: 64 budget queries took 37.9/37.8 ms
+before versus 4.9/4.9 ms after; warmed total mesh-copy time was 76.2 versus
+43.6 ms. This is a bounded fixture measurement, not a production-wide speedup.
+Scoped/unscoped indexed, indices-disabled, merged and face-varying output parity
+passes; 47 scopes opened and closed, including injected query failure.
+
+The permanent `web/js/tests/next-mesh-budget-cache.test.mjs` compares cached
+queries to a fresh scan after scope reopening. Eight cases cover limit changes,
+asset addition/removal/clear, retained USDC export and forced heap growth, with
+owned points surviving growth. It accepts `LIGHTUSD_NEXT_MODULE` for a specific
+built module, or the standard wasm32/memory64 product path. Fresh wasm32 passes
+at 85.1 MiB guarded group RSS. Native lazy-value tests and a bounded 8-thread
+1600-materialization/saturation probe pass. Fresh native Layer build passes
+at 676.8 MiB, and all Layer tests including lazy-index invalidation pass
+at 1.1 MiB. Broader qualification results follow below. Logs/scripts are under ignored
+`build_ninja/cpu-implementation/budget-*`; snapshot modules are retained there.
+
+### 10.116 Immutable source snapshots and pass-1 eviction
+
+`BatchedComposeOptions::source_snapshot_directory` enables exact raw-input
+snapshots in a caller-selected disk directory. The total payload byte limit is
+`source_snapshot_bytes` (8 GiB by default). Empty directory retains the prior
+cache policy. Low-memory `lusdcat --spill-dir DIR` enables this mode;
+`--source-snapshot-mib N` sets its total limit, and zero disables snapshots.
+Choose SSD storage explicitly; system temporary directories may be tmpfs.
+The initial backend is POSIX, with explicit configuration failure on unsupported
+platforms. No GPU work is involved.
+
+Native inputs copy in 64 KiB blocks into mode-0600 private files; descriptor
+identity, size and modification/change timestamps are checked during capture.
+Callback inputs are captured from the first returned bytes. A shared budget
+reserves concurrent captures before writing; I/O or limit failure fails the
+load rather than silently rereading or abandoning the memory policy. Raw
+snapshot files are removed on ordinary destruction/failure. Parsed metadata can
+then leave the registry after discovery and each batch, including pass 1;
+composed/lazy array owners keep their independent backing ownership.
+
+Replay preserves the original asset anchor and USDZ entry selection. Initial
+parse limits/modes are retained without keeping old callback captures; current
+progress callbacks and worker hints apply to replay. Observed request/anchor
+resolution bindings are frozen for snapshot replay. Snapshot identifiers remain
+in the final dependency manifest even after their parsed layer is evicted.
+Explicit preloads and sources with deferred opinion fillers or retained foreign
+import dependencies stay pinned: their complete mutable/auxiliary state has no
+native raw-USD replay contract. Foreign imports keep their existing dispatch.
+
+The native PCP suite passes with checks for weak-owner expiration after
+metadata eviction, read-once stateful callbacks, concurrent first/replay loads,
+byte-budget failure, native source removal, pass-1/back-reference correctness,
+mapped USDC value ownership after registry cleanup and USDZ entry selection
+following archive removal (357.4 MiB guarded peak on the final source). A four-reference CLI fixture
+produces identical 1380-byte files in ordinary, retained-batch and snapshot-batch
+modes; snapshot eviction counters are 5 at Plan and 9 at Run, versus zero in
+retained mode. No raw snapshot files remain after that run. Logs are in ignored
+`build_ninja/cpu-implementation/source-snapshot-*`.
+
+The final native-extension/content-dispatch distinction, opaque callback keys
+and warm-alias binding checks pass in that same fresh native suite. Final CLI
+parity is recorded in `source-snapshot-smoke/run-current.log` (30.0 MiB peak).
+The fresh native/no-thread/WASM qualification and bounded scene comparison
+below extend these focused checks. Planning/write overlap is described next.
+
+### 10.117 Planning overlaps writer encoding and scratch I/O
+
+`BatchedComposeOptions::overlap_plan_write` enables an encoded-operation log in
+an explicit writer spill directory. CLI usage is `--memory-profile low
+--overlap-plan-write --spill-dir DIR`; `--prepared-log-mib N` sets the total
+scratch-byte cap (8 GiB by default, `CrateWriteOptions::max_prepared_bytes`).
+The native mapped spill backend is required. This opt-in path avoids the second
+composition pass: Plan's existing consumer encodes while the next batch
+composes. Final USDC assembly follows Plan, once all ids and Holder facts are
+known. The current encoder uses one consumer worker alongside composition;
+large-scene throughput improvement has not been established.
+
+Each batch still contributes its table prepass in namespace order. The writer
+records its existing worker operations, fieldsets, specs, paths and intern
+events into an unlinked spill log. Field/block contexts flush every 1024 prims;
+token/string domains persist only for that batch so batch-wide name references
+remain valid. Immutable identical scratch payloads share disk bytes using the
+existing 128-bit digest table; every operation retains its separate replay
+identity. Final raw-byte dedup is rebuilt in original operation order after ids
+are fixed. This preserves dedup across token vectors, token arrays and numeric
+payloads; symbolic token patching alone would not preserve that equivalence.
+
+Late Holder changes can remove an unauthored instanceable field or turn an
+authored field false. Replay compacts affected field/fieldset columns, and
+records each instanceable field use so its token is interned at the first
+surviving use. Scalar values, dictionary contents, paths and nested ValueReps
+use the ordinary commit relocation logic. The public writer entry points are
+`PrepareBatch` and `WritePreparedFile`. Successful/failed final replay releases
+its scratch; a second commit is rejected before touching the final file.
+
+Large payloads replay from mapped spans; mapping failure returns a checked
+error rather than creating an unbounded private copy. Planning I/O and byte-limit
+failures stop planning, propagate the encoder error, join the consumer and do
+not publish a final output. Prepared mode skips Plan's retained-layer merger
+and releases source ownership once its operation log is complete.
+
+Focused native evidence: the full PCP executable passes, including three
+late-field removal/authored-false cases and its ~72000-prim path-lifetime case
+with an added prepared run (502.3 MiB guarded peak). Current CLI fixtures match
+ordinary and retained two-pass output byte for byte: 1912-byte mixed
+strings/token-vector/time-sample/target-path output and 1386-byte cross-batch
+instance output, with 1 and 4 compose threads. Prepare records precede Plan
+completion and no Run pass occurs. Zero scratch budget preserves the concrete
+error without creating the final file; temporary files are cleaned up. Fresh CPU-only native full build passes at 553.3 MiB; CTest passes 74 tests
+with one optional AOUSD value-resolution skip, zero failures, in 39.89 s
+(952.2 MiB guarded peak). Standalone Debug build and CTest also pass: 78 tests, one optional AOUSD
+skip, zero failures in 166.17 s (952.6 MiB guarded peak).
+No-thread build and CTest subsequently pass 61 tests with one optional AOUSD
+skip in 27.68 s (696.1 MiB). A mapped 12.58 MB raw-payload fixture matches
+ordinary output while four references reuse only 12.59 MB operation scratch.
+Injected ENOMEM at mapping, EIO during Plan writes and EIO during snapshot-tail
+writes return errors, leave no final CLI output and clean temporary files;
+guarded group peak is 30.5 MiB. Probe/logs: `plan-writer-faults/run-final.log`.
+
+### 10.118 Codec boundary qualification
+
+Fresh native and no-thread probes each pass 50 exact-byte/roundtrip cases.
+Lengths cover 1/3/4/5 and 131072/4194304 +/-1; inputs cover all-zero, ramp,
+equal-frequency deltas, signed extremes/wrapping and wide-unique histograms.
+Both projected and direct C++ encoders match the independent C delta encoder,
+then decode to the original column. Guarded peaks are 726.2 MiB (native) and
+694.0 MiB (no-thread). Source/results are in ignored
+`cpu-implementation/qualification-boundaries`. Writer integration and WASM
+qualification extend these codec checks below.
+
+Fresh writer integration now also passes on native and no-thread libraries:
+131073 prims with eight properties each produce identical 16798763-byte files
+through ordinary, batched-memory, mapped-spill and forced mapping-fallback
+paths. Projected path indices avoid the medium delta materialization call;
+spill files are removed after all eight cases (561.0 MiB guarded peak).
+Results: `cpu-implementation/qualification-writer-integration-summary.json`.
+
+Fresh WASM32 and memory64 core, four independent feature, combined compatibility
+and MCP modules build. Both full CPU Node profiles pass all 61 tests, zero
+failures: 523.1 MiB guarded peak for WASM32 and 607.1 MiB for memory64. Coverage
+includes skin weights, animation and blend-shape copies, live budget/heap
+growth, allocation failures, Worker isolation, loading/composition/export parity
+and legacy native validation parity. The latter requires a refreshed legacy
+`lusdcat`; the default next CLI does not implement `--validate-all`.
+
+Qualification corrected a volume-sampling ABI conversion error: its point
+count is `uint32_t`, so only the point and output-info pointers become BigInt
+on memory64. Both products were relinked and their contract tests pass. Actual
+filesystem-disabled WASM32 and memory64 probes also verify snapshot capture
+reports that it is unavailable on those platforms. Full-profile reports are
+`qualification-full-node32-final/summary.json` and
+`qualification-full-node64/summary.json` under ignored `cpu-implementation`.
+These are CPU-only results; browser rendering and physical GPU qualification
+remain outside this follow-up scope.
+
+### 10.119 Bounded scene comparison
+
+Three rotated-order, warm-cache ALab runs per mode use four compose, parse and
+writer threads, the production batching defaults and an 8 GiB process guard.
+Every run produces the same 732547046-byte USDC, SHA-256
+`6910d31b06e66867bf5992ae33ca91dce4be6ce1c4afe8c7f685118d03823596`.
+All snapshot and writer scratch files are removed on normal completion.
+
+| Mode | Median CLI wall time | Maximum process RSS |
+|---|---:|---:|
+| Default | 1.15 s | 645 MiB |
+| Low, retained sources | 1.79 s | 664 MiB |
+| Low, source snapshots | 2.48 s | 681 MiB |
+| Low, snapshots and prepared writer | 3.30 s | 836 MiB |
+
+This scene shows the additional SSD/replay cost; these opt-in modes provide no
+speed or RSS improvement here. Keep the default path for this workload. The
+comparison establishes production-scene byte parity and bounded operation, not
+a general throughput or peak-memory improvement. Source/log/results are under
+ignored `cpu-implementation/qualification-scene-performance*`. An earlier run
+with one frontier root per batch was deliberately interrupted and archived as
+`qualification-scene-stress`; it is excluded from these measurements.
+
 ## Cached surface previews
 
 `lusdpreview` and `--scene-preview` in `lusdview` / `lusdrender` convert a composed

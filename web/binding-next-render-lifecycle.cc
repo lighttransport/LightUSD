@@ -11,6 +11,7 @@
 #include "next/writer/usdc-writer.hh"
 #include "image-loader.hh"
 #include "safe-arithmetic.hh"
+#include "next/c/storage.h"
 #include <cmath>
 namespace lightusd {
 namespace web_next {
@@ -361,7 +362,7 @@ int RenderStream::setMaxMemoryLimitMB(int32_t limit_mb) {
     if (used >= new_limit) return -1;
     if (loaded_) {
       const size_t input_bytes = stats_.input_bytes;
-      const size_t stage_bytes = stage_.GetMemoryUsage();
+      const size_t stage_bytes = stageMemoryForBudget_();
       if (input_bytes >= new_limit - used ||
           stage_bytes >= new_limit - used - input_bytes) return -1;
     }
@@ -370,12 +371,31 @@ int RenderStream::setMaxMemoryLimitMB(int32_t limit_mb) {
 }
 
 
+size_t RenderStream::stageMemoryForBudget_() const {
+    if (mesh_copy_scope_id_ < 0) return stage_.GetMemoryUsage();
+    // On-demand opinion fillers can edit arbitrary C++ metadata as well as
+    // values. Keep their accounting uncached rather than infer completeness.
+    if (stage_.GetRootLayer() && stage_.GetRootLayer()->prim_filler())
+      return stage_.GetMemoryUsage();
+    for (size_t i = 0; i < stage_.GetSubLayerCount(); ++i)
+      if (stage_.GetSubLayer(i) && stage_.GetSubLayer(i)->prim_filler())
+        return stage_.GetMemoryUsage();
+    const size_t epoch = lu_storage_materialization_epoch();
+    if (epoch == 0) return stage_.GetMemoryUsage();
+    if (!stage_budget_cache_valid_ || stage_budget_cache_epoch_ != epoch) {
+      stage_budget_cache_bytes_ = stage_.GetMemoryUsage();
+      stage_budget_cache_epoch_ = epoch;
+      stage_budget_cache_valid_ = lu_storage_materialization_epoch() == epoch;
+    }
+    return stage_budget_cache_bytes_;
+}
+
 size_t RenderStream::remainingMemoryLimitBytes() const {
     const size_t limit = maxMemoryLimitBytes();
     size_t used = providedAssetMemoryBytes();
     if (stats_.input_bytes > std::numeric_limits<size_t>::max() - used) return 0;
     used += stats_.input_bytes;
-    const size_t stage_bytes = stage_.GetMemoryUsage();
+    const size_t stage_bytes = stageMemoryForBudget_();
     if (stage_bytes > std::numeric_limits<size_t>::max() - used) return 0;
     used += stage_bytes;
     if (formatted_material_text_.size() >
@@ -430,6 +450,8 @@ double RenderStream::valueClipSetting(uint8_t field) const {
 }
 
 void RenderStream::end() {
+    mesh_copy_scope_id_ = -1;
+    invalidateCopyPreparation_();
     loaded_ = false;
     warning_.clear();
     composition_report_ = lightusd::next::pcp::CompositionReport{};

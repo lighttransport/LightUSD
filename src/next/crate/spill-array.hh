@@ -12,16 +12,16 @@
 // builders at the end need them back as one contiguous block. SpillVec keeps
 // elements in ~8 MiB chunks; the writer discards fully committed chunks
 // strictly from the front by appending their bytes to a file that is unlinked
-// at creation (so any exit path removes it), and the section builders
-// reconstruct the whole array with one sequential pread.
+// at creation (so any exit path removes it). Section builders can map a
+// completed column read-only rather than reconstructing a full private copy.
 //
 // Order invariant: elements are appended only at the back and evicted only
 // from the front, so a column's absolute element identity (field ids, spec
 // offsets) never changes; sizes are absolute across evictions.
 //
 // Spill only changes where bytes live, never their values, so callers that
-// read a column through Resolve() see exactly the bytes they appended --
-// output files are byte-identical to a fully in-memory write.
+// read a column through Resolve()/ResolveReadOnly() see exactly the bytes they
+// appended -- output files are byte-identical to a fully in-memory write.
 //
 // The spill file goes to the directory the caller configures through
 // CrateWriteOptions::spill_directory. Nothing here reads the environment.
@@ -36,6 +36,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <string>
 #include <type_traits>
@@ -44,6 +45,13 @@
 #if !defined(_WIN32)
 #include <fcntl.h>
 #include <unistd.h>
+#endif
+#if !defined(_WIN32) && !defined(LIGHTUSD_NEXT_NO_MMAP) && \
+    !defined(__EMSCRIPTEN__) && !defined(__wasi__) && \
+    (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
+#define LIGHTUSD_NEXT_SPILL_HAVE_MMAP 1
+#include <sys/mman.h>
+#include <sys/stat.h>
 #endif
 #include "../memory-trim.hh"  // AdviseHugePages (portable no-op off Linux)
 
@@ -105,6 +113,97 @@ class SpillVec final : public SpillColumnBase {
 
   SpillVec() = default;
   ~SpillVec() override { Release(); }
+
+  // One read-only view for section encoding. Single-chunk unspilled storage
+  // is borrowed; spilled storage is mapped when available. Other cases own
+  // Resolve's private copy. Do not mutate the column while a view is live.
+  class ReadView {
+   public:
+    ReadView() = default;
+    ReadView(const ReadView&) = delete;
+    ReadView& operator=(const ReadView&) = delete;
+    ~ReadView() { Reset(); }
+    const T* data() const { return data_; }
+    size_t size() const { return count_; }
+    bool is_mapped() const { return mapped_bytes_ != 0; }
+    void Reset() noexcept {
+#if defined(LIGHTUSD_NEXT_SPILL_HAVE_MMAP)
+      if (mapped_bytes_) ::munmap(mapping_, mapped_bytes_);
+#endif
+      mapping_ = nullptr;
+      mapped_bytes_ = 0;
+      owned_.reset();
+      data_ = nullptr;
+      count_ = 0;
+    }
+   private:
+    friend class SpillVec;
+    std::unique_ptr<T[]> owned_;
+    void* mapping_ = nullptr;
+    size_t mapped_bytes_ = 0;
+    const T* data_ = nullptr;
+    size_t count_ = 0;
+  };
+
+  bool ResolveReadOnly(ReadView* out, std::string* error,
+                       bool require_mapping = false) const {
+    out->Reset();
+    if (size_ > (std::numeric_limits<size_t>::max)() / sizeof(T)) {
+      if (error) *error = "writer spill column byte size overflow";
+      io_failed_.store(true, std::memory_order_relaxed);
+      return false;
+    }
+#if defined(LIGHTUSD_NEXT_SPILL_HAVE_MMAP)
+    const size_t bytes = size_ * sizeof(T);
+    if (spilled_elems_ &&
+        static_cast<uint64_t>(bytes) <=
+            static_cast<uint64_t>((std::numeric_limits<off_t>::max)())) {
+      struct stat st;
+      if (spill_fd_ < 0 || ::fstat(spill_fd_, &st) != 0 || st.st_size < 0 ||
+          static_cast<uint64_t>(st.st_size) < spilled_bytes()) {
+        if (error) *error = "writer spill file is missing or truncated";
+        io_failed_.store(true, std::memory_order_relaxed);
+        return false;
+      }
+      // Extend before mapping so every mapped page is backed by the private
+      // file. Logical spill counters stay unchanged: only sealed chunks count
+      // as spilled, and later appends still overwrite from that prefix end.
+      if (::ftruncate(spill_fd_, static_cast<off_t>(bytes)) != 0) {
+        if (error) *error = "writer spill snapshot resize failed: " +
+                            std::string(std::strerror(errno));
+        io_failed_.store(true, std::memory_order_relaxed);
+        return false;
+      }
+      void* mapping = ::mmap(nullptr, bytes, PROT_READ, MAP_PRIVATE, spill_fd_, 0);
+      if (mapping != MAP_FAILED) {
+        if (reinterpret_cast<uintptr_t>(mapping) % alignof(T) == 0) {
+          // mmap can fail without adding tail I/O. Publish the view only once
+          // every resident tail byte has been written successfully.
+          if (!WriteSnapshotTail(error)) {
+            ::munmap(mapping, bytes);
+            return false;
+          }
+          out->mapping_ = mapping;
+          out->mapped_bytes_ = bytes;
+          out->data_ = static_cast<const T*>(mapping);
+          out->count_ = size_;
+          return true;
+        }
+        ::munmap(mapping, bytes);  // over-aligned T: use the normal allocation
+      }
+      // Address-space/mapping failures retain the existing checked read path.
+    }
+#endif
+    if (require_mapping && spilled_elems_) {
+      if (error) *error = "cannot map prepared writer log without an unbounded copy";
+      return false;
+    }
+    const T* data = nullptr;
+    if (!Resolve(&out->owned_, &data, error)) return false;
+    out->data_ = data;
+    out->count_ = size_;
+    return true;
+  }
 
   size_t size() const { return size_; }
   uint64_t spilled_bytes() const { return spilled_elems_ * sizeof(T); }
@@ -277,6 +376,32 @@ class SpillVec final : public SpillColumnBase {
   }
 
  private:
+#if defined(LIGHTUSD_NEXT_SPILL_HAVE_MMAP)
+  bool WriteSnapshotTail(std::string* error) const {
+    uint64_t offset = spilled_bytes();
+    for (const auto& chunk : chunks_) {
+      const uint8_t* data = reinterpret_cast<const uint8_t*>(chunk.data());
+      size_t remaining = chunk.size() * sizeof(T);
+      while (remaining) {
+        const ssize_t written = ::pwrite(spill_fd_, data, remaining,
+                                          static_cast<off_t>(offset));
+        if (written <= 0) {
+          if (written < 0 && errno == EINTR) continue;
+          if (error) *error = "writer spill snapshot write failed: " +
+              std::string(std::strerror(written < 0 ? errno : EIO));
+          io_failed_.store(true, std::memory_order_relaxed);
+          return false;
+        }
+        const size_t step = static_cast<size_t>(written);
+        data += step;
+        remaining -= step;
+        offset += step;
+      }
+    }
+    return true;
+  }
+#endif
+
   void EnsureChunk() {
     if (chunks_.empty()) chunks_.emplace_back();
   }
@@ -380,5 +505,9 @@ class SpillVec final : public SpillColumnBase {
 
 }  // namespace next
 }  // namespace lightusd
+
+#if defined(LIGHTUSD_NEXT_SPILL_HAVE_MMAP)
+#undef LIGHTUSD_NEXT_SPILL_HAVE_MMAP
+#endif
 
 #endif  // LIGHTUSD_NEXT_CRATE_SPILL_ARRAY_HH_

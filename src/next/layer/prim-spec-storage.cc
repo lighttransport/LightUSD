@@ -4,6 +4,7 @@
 // LightUSD Next - PrimSpec Implementation
 
 #include "prim-spec.hh"
+#include "int64-listop.hh"
 #include "../prim/identifier.hh"
 #include "../../safe-arithmetic.hh"
 #include <algorithm>
@@ -145,6 +146,140 @@ void MergeWeakerDictionaryValue(
   }
 }
 
+namespace {
+std::vector<int64_t> SortedIds(std::vector<int64_t> ids) {
+  std::sort(ids.begin(), ids.end());
+  ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+  return ids;
+}
+
+// Deterministic O(n log n), avoiding attacker-selected integer hash collisions.
+// Most authored explicit ID lists are sorted and use the allocation-free path.
+void UniqueIds(std::vector<int64_t>* ids, const std::vector<int64_t>& last) {
+  if (std::is_sorted(ids->begin(), ids->end())) {
+    ids->erase(std::unique(ids->begin(), ids->end()), ids->end());
+    return;
+  }
+  std::vector<size_t> rank(ids->size());
+  for (size_t i = 0; i < rank.size(); ++i) rank[i] = i;
+  std::sort(rank.begin(), rank.end(), [&](size_t a, size_t b) {
+    return (*ids)[a] < (*ids)[b] || ((*ids)[a] == (*ids)[b] && a < b);
+  });
+  std::vector<uint8_t> keep(ids->size(), 0);
+  for (size_t i = 0; i < rank.size();) {
+    size_t end = i + 1;
+    while (end < rank.size() && (*ids)[rank[end]] == (*ids)[rank[i]]) ++end;
+    keep[std::binary_search(last.begin(), last.end(), (*ids)[rank[i]])
+             ? rank[end - 1] : rank[i]] = 1;
+    i = end;
+  }
+  size_t count = 0;
+  for (size_t i = 0; i < ids->size(); ++i)
+    if (keep[i]) (*ids)[count++] = (*ids)[i];
+  ids->resize(count);
+}
+
+std::vector<int64_t> ApplyInt64Op(const Int64ListOp& op,
+                                 const std::vector<int64_t>& base) {
+  auto run = [&](size_t i) {
+    auto a = op.items[i].as_int64_array();
+    std::vector<int64_t> values;
+    if (a && !a->empty()) {
+      values.resize(a->size());
+      std::copy_n(a->data(), values.size(), values.data());
+    }
+    return values;
+  };
+  if (op.is_explicit()) {
+    auto result = run(0);
+    UniqueIds(&result, {});
+    return result;
+  }
+  const auto deleted = SortedIds(run(4)), appended = run(3);
+  const auto move_back = SortedIds(appended);
+  const auto is_appended = [&](int64_t id) {
+    return std::binary_search(move_back.begin(), move_back.end(), id);
+  };
+  std::vector<int64_t> result;
+  for (int64_t id : run(2)) if (!is_appended(id)) result.push_back(id);
+  for (int64_t id : base)
+    if (!std::binary_search(deleted.begin(), deleted.end(), id) && !is_appended(id))
+      result.push_back(id);
+  for (int64_t id : run(1)) if (!is_appended(id)) result.push_back(id);
+  result.insert(result.end(), appended.begin(), appended.end());
+  UniqueIds(&result, move_back);
+
+  const auto order = run(5);
+  if (order.empty()) return result;
+  const auto ordered = SortedIds(order);
+  struct Block { int64_t id; size_t begin, end; };
+  std::vector<Block> blocks;
+  size_t prefix = result.size();
+  for (size_t i = 0; i < result.size(); ++i) {
+    if (!std::binary_search(ordered.begin(), ordered.end(), result[i])) continue;
+    if (!blocks.empty()) blocks.back().end = i;
+    else prefix = i;
+    blocks.push_back({result[i], i, result.size()});
+  }
+  std::sort(blocks.begin(), blocks.end(),
+            [](const Block& a, const Block& b) { return a.id < b.id; });
+  std::vector<uint8_t> emitted(blocks.size(), 0);
+  std::vector<int64_t> reordered(result.begin(), result.begin() + static_cast<ptrdiff_t>(prefix));
+  for (int64_t id : order) {
+    auto block = std::lower_bound(blocks.begin(), blocks.end(), id,
+        [](const Block& b, int64_t value) { return b.id < value; });
+    if (block == blocks.end() || block->id != id) continue;
+    const size_t index = static_cast<size_t>(block - blocks.begin());
+    if (emitted[index]) continue;
+    emitted[index] = 1;
+    reordered.insert(reordered.end(), result.begin() + static_cast<ptrdiff_t>(block->begin),
+                     result.begin() + static_cast<ptrdiff_t>(block->end));
+  }
+  return reordered;
+}
+}  // namespace
+
+size_t Int64ListOpsMemoryUsage(const Int64ListOpStack& stack) {
+  size_t bytes = safe::saturating_add(sizeof(Int64ListOpStack),
+      safe::saturating_mul(stack.ops.capacity(), sizeof(Int64ListOp)));
+  for (const auto& op : stack.ops)
+    for (const auto& items : op.items)
+      bytes = safe::saturating_add(bytes, items.heap_memory_usage());
+  return bytes;
+}
+
+Value ApplyInt64ListOps(const Int64ListOpStack& stack) {
+  std::vector<int64_t> result;
+  for (auto op = stack.ops.rbegin(); op != stack.ops.rend(); ++op)
+    result = ApplyInt64Op(*op, result);
+  return Value::MakeInt64Array(result);
+}
+
+DecodedExtensionField MakeInt64ListOpField(std::string name, Int64ListOp op) {
+  for (size_t r = 0; r < op.items.size(); ++r)
+    if ((op.bits & kInt64ListOpBits[r]) && op.items[r].is_empty())
+      op.items[r] = Value::MakeInt64Array({});
+  DecodedExtensionField field;
+  field.name = std::move(name);
+  auto stack = std::make_shared<Int64ListOpStack>();
+  stack->ops.push_back(std::move(op));
+  field.value = ApplyInt64ListOps(*stack);
+  field.int64_list_op = std::move(stack);
+  return field;
+}
+
+void ResolveInt64ListOpFields(std::vector<DecodedExtensionField>* fields) {
+  for (auto& field : *fields) {
+    if (!field.int64_list_op) continue;
+    Int64ListOp op;
+    op.bits = 3;
+    op.items[0] = field.value;
+    auto resolved = std::make_shared<Int64ListOpStack>();
+    resolved->ops.push_back(std::move(op));
+    field.int64_list_op = std::move(resolved);
+  }
+}
+
 void MergeWeakerExtensionFields(
     std::vector<DecodedExtensionField>* stronger,
     const std::vector<DecodedExtensionField>& weaker) {
@@ -155,6 +290,16 @@ void MergeWeakerExtensionFields(
         [&](const DecodedExtensionField& own) { return own.name == field.name; });
     if (existing == stronger->end()) {
       stronger->push_back(field);
+    } else if (existing->int64_list_op && field.int64_list_op) {
+      if (std::any_of(existing->int64_list_op->ops.begin(),
+                      existing->int64_list_op->ops.end(),
+                      [](const Int64ListOp& op) { return op.is_explicit(); }))
+        continue;
+      auto stack = std::make_shared<Int64ListOpStack>(*existing->int64_list_op);
+      stack->ops.insert(stack->ops.end(), field.int64_list_op->ops.begin(),
+                        field.int64_list_op->ops.end());
+      existing->value = ApplyInt64ListOps(*stack);
+      existing->int64_list_op = std::move(stack);
     } else if (existing->value.is_dictionary() && field.value.is_dictionary()) {
       MergeWeakerDictionaryValue(&existing->value, field.value);
       // The authored source represented only the stronger dictionary. Force

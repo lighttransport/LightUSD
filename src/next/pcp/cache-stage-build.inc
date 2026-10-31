@@ -65,7 +65,7 @@
     kWalkRegistered = 1,    // instanceable + active (+ detect_instances)
     kWalkSpecInstance = 2,  // walked as an instance (children not expanded)
     kWalkRoot = 4,
-    kWalkFail = 8,          // depth limit: fatal if committed
+    kWalkFail = 8,          // depth limit: fail parallel commit, report via fallback
     kWalkMiss = 16,         // source-cache miss: resolved at commit
     kWalkSeed = 32,         // prototype child sources unseeded: resolved at
                             // commit (seeding is a mutation)
@@ -117,7 +117,7 @@
                        const WalkCanDonate &can_donate,
                        const WalkDonate &donate, WalkClaims *claims,
                        std::unordered_set<std::string> *local_keys,
-                       WalkPause *pause);
+                       WalkPause *pause, bool force_root_prototype = false);
   bool CommitWalk(std::vector<WalkItem> &items, uint32_t outer_parent,
                   const std::vector<uint32_t> &rank_prefix, WalkCommitCtx &ctx);
   void MaterializeWalk(Layer *out, WalkCommitCtx &ctx, int threads);

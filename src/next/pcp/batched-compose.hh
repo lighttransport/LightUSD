@@ -45,6 +45,16 @@ struct BatchedComposeOptions {
   // Run the per-batch callback (the writer) on its own thread while the next
   // batch composes; one more batch is alive at a time. Threaded builds only.
   bool pipeline = true;
+  // Encode and spill writer operations during Plan, then commit them after
+  // final ids/instance facts are known. Avoids the second composition pass.
+  // Requires a mapped native backend and an explicit writer spill_directory.
+  bool overlap_plan_write = false;
+  // Exact first-read USD source snapshots enable eviction of parsed layers
+  // between batches, including pass 1. Empty disables disk snapshots. Choose
+  // an SSD directory explicitly (a system temporary directory may be tmpfs).
+  // Unsupported backends and snapshot I/O/limit failures are reported.
+  std::string source_snapshot_directory;
+  uint64_t source_snapshot_bytes = uint64_t(8) << 30;
 };
 
 // One composed batch, in namespace pre-order.
@@ -96,6 +106,7 @@ class BatchedComposer {
   struct Impl;
 
  private:
+  friend struct BatchedComposeAccess;
   std::unique_ptr<Impl> impl_;
 };
 

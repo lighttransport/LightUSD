@@ -115,7 +115,6 @@
       required_version_minor_ = 0;
       if (!CheckWriteOptions()) return;
       ResetWriteState();
-      stream_paths_.clear();
       stream_root_done_ = false;
       stream_nprim_ = stream_nprop_ = 0;
       InternFixedTokens(batch);
@@ -205,26 +204,45 @@
       result_.error = "batched write: a prim name is missing from the pass-1 tables";
       return false;
     }
-    // The path table keeps views of the prim paths (moved out below, after
-    // the batch is written); a short path's text lives inside its string
-    // object, so give it heap storage that survives the move.
+    // A short stream can peak while this batch's originals and packed copies
+    // coexist. Pack only when this batch's copy fits the Path-object storage
+    // saved over the whole stream; otherwise retain the existing move path.
+    size_t copy_budget = stream_nprim_ > SIZE_MAX / sizeof(Path)
+        ? SIZE_MAX : stream_nprim_ * sizeof(Path);
+    bool pack_paths = true;
     for (size_t i = 0; i < n; ++i) {
       if (repeated[i]) continue;
-      const std::string& p = batch.prims()[i].path().str();
-      if (p.size() >= 16) continue;
-      std::string heap;
-      heap.reserve(16);
-      heap = p;
-      batch.prim(static_cast<uint32_t>(i))->set_path(Path(std::move(heap)));
+      const size_t bytes = batch.prims()[i].path().str().size();
+      if (bytes > copy_budget) { pack_paths = false; break; }
+      copy_budget -= bytes;
+    }
+    if (pack_paths) {
+      stream_path_views_.assign(n, std::string_view());
+      for (size_t i = 0; i < n; ++i)
+        if (!repeated[i])
+          stream_path_views_[i] = OwnStreamPath(batch.prims()[i].path().str());
+    } else {
+      // Short strings keep text inside the Path object: promote them to a
+      // heap buffer that survives moving the written paths into the deque.
+      for (size_t i = 0; i < n; ++i) {
+        if (repeated[i]) continue;
+        const std::string& p = batch.prims()[i].path().str();
+        if (p.size() >= 16) continue;
+        std::string heap;
+        heap.reserve(16);
+        heap = p;
+        batch.prim(static_cast<uint32_t>(i))->set_path(Path(std::move(heap)));
+      }
     }
     skip_prims_ = &repeated;
     BuildPrimSpecs(batch);
     skip_prims_ = nullptr;
     stream_child_tokens_.clear();
-    for (size_t i = 0; i < n; ++i) {
-      if (!repeated[i])
-        stream_paths_.push_back(batch.prim(static_cast<uint32_t>(i))->take_path());
-    }
+    stream_path_views_.clear();
+    if (!pack_paths)
+      for (size_t i = 0; i < n; ++i)
+        if (!repeated[i])
+          stream_paths_.push_back(batch.prim(static_cast<uint32_t>(i))->take_path());
     // Batch boundary: every column append of this batch is complete, so the
     // front chunks can move to the spill file without any element changing
     // meaning.
@@ -275,6 +293,11 @@
 
   // Clears all accumulated table state from a previous write.
   void ResetWriteState() {
+    prepared_log_.reset();
+    prepared_batches_ = 0;
+    prepared_contexts_ = 0;
+    prepared_continuation_ = false;
+    preparing_plan_ = false;
     buffer_.clear();
     writer_.clearFailure();
     serial_sections_ = false;
@@ -291,6 +314,7 @@
     string_indices_.clear();
     string_to_index_.clear();
     paths_.clear();
+    ClearStreamPaths();
     for (PathShard& sh : path_shards_) {
       sh.slots.clear();
       sh.count = 0;
@@ -581,7 +605,7 @@
           sh.count = 0;
         }
         std::deque<std::string>().swap(path_owned_);
-        std::deque<Path>().swap(stream_paths_);
+        ClearStreamPaths();
         // With the path table gone the rest fit side by side.
         auto fields_task = [&]() {
           build_fields();

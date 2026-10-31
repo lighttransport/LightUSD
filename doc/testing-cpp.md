@@ -1002,6 +1002,46 @@ tests check stable pointers and field parity with the C table. On GCC/Clang,
 `next_c11_syntax` compiles every first-party C core source (including generated
 schema data) with `-std=c11 -Wall -Wextra -Wpedantic -Werror`.
 
+`next_c11_storage` checks core ABI layout revision 2 and the reported value
+size, alignment, storage offset, type-descriptor size and chunk size against
+the consumer headers. The C API test also checks that `lightusd_abi_get()`
+forwards the same core layout revision and value dimensions. Consumers must
+reject a mismatched core major/revision or target layout before passing value
+storage across a shared-library boundary.
+
+`next_test_int64_listop` checks signed 64-bit list-op metadata through USDA,
+USDC, composition and PointInstancer masking. It covers all six authored runs,
+empty versus explicit clear, exact IDs beyond 2^53, malformed/count-limited
+payloads, three-layer edits, and deterministic comparisons with the string
+list-op model. A 9,001-prim case checks serial/parallel staged and streaming
+writer parity. Retained operation storage is included in memory estimates.
+Nested list-op values outside metadata are not covered by this codec.
+
+`next_test_stream_residency` compares staged/streamed bytes for owned and
+observable mapped sources around the 32 MiB digest threshold. It checks serial
+and parallel encoders (9,001 prims), source-range and cross-source content
+deduplication, page advice before writing, bounded sink calls, lazy-value reuse
+and a sink failure after the first window. It also checks that ordinary
+zero-budget writes preserve their non-windowed path. Real SSD measurements are also
+required: source advice changes read faults and cannot be assessed from
+`/dev/null` timings alone. Use guards and check both low and regular profiles.
+
+The PCP test checks low-profile discovery at frontier caps 0, 1, 2, 3, 4, 5,
+8 and SIZE_MAX.
+Once expanded children plus one entry per unvisited root cannot fit, discovery
+must retain the previous whole frontier without loading later references.
+The later references and all children must still appear in the final composed
+stage. Run the fixture composition sweep and low-profile batch targets 1, 400,
+and 50 with frontier 64 when changing this pruning rule.
+
+The PCP writer lifetime regression uses eight >8,192-prim batches with short
+and long paths, exceeding a packed path-storage block in each batch. Both
+serial and parallel low-memory output must match regular staged output after
+the source batches have been released. Property paths and external target
+paths exercise both borrowed and separately owned path text. Run composition,
+writer rewrite and real-output hash gates when changing this ownership.
+
+
 For C-core size measurements, configure a Ninja tree with
 `CMAKE_EXPORT_COMPILE_COMMANDS=ON`, then use the shared measurement harness:
 
@@ -2720,6 +2760,196 @@ skin weights, geometry-property parity with a native USDA import, binary/package
 roundtrips and physics JSON authoring. Pass its module path and a native USDA
 fixture exported from the inline OBJ source in the script. This avoids replacing
 another worker's WASM artifacts.
+
+Parallel instance-claim repair (large-scene §10.91) needs fresh coverage in
+`next_test_pcp_parallel` and `next_test_instance_group`: compare serial and
+parallel prototype selection/child order when a discarded subtree owns a
+speculative claim, including nested repairs, donations and earlier-batch seeds.
+Check depth-limit/unresolved-source fallback as well. This qualification is
+deferred under the current implementation-first workflow; existing passing
+results do not validate the new repair path.
+
+Projected SPECS delta encoding (large-scene §10.92) additionally needs byte
+parity against the C encoder for most-common-delta ties, arbitrary/wrapped u32
+values, wide-delta candidate pruning and counts across the parallel threshold.
+Exercise mapped and fallback spec views, invalid-fieldset fallback to zero,
+and complete writer parity. A small standalone native/no-thread codec smoke
+has passed; the integration and regression work remains deferred.
+
+Heavy field chunk refinement (large-scene §10.93) needs complete writer parity
+for multiple heavy prims in one original chunk, a heavy prim on either chunk
+edge, combined smaller arrays, time samples and variable-size elements. Check
+consume-prims reaping and pre/post-first-commit failures, plus unchanged fixed
+ranges for low-memory/deferred-fill inputs. Real-SSD Island measurements must
+include chunk_plan overhead and peak RSS; equal context counts alone do not
+prove equal memory use. These runtime checks remain deferred.
+
+Discovery sizing and prefetch fan-out (large-scene §10.94) need coverage for a
+single seed revealing several targets, queue drain/shutdown and explicit parser
+budgets. Compare the complete discovered count to BuildStage for inactive prims,
+arcs and namespace edits. Frontier/depth caps, active instanceable subtrees and
+callback policies must keep conservative sizing; fixed batches remain fixed.
+Retained-plan release (§10.95) needs one-shot output/resource parity, failed
+Plan/writer startup cleanup and confirmation that public repeated Plan and
+dependency manifests retain their previous behavior. Runtime checks are deferred.
+
+For bounded readback/Tydra profiling, build the opt-in `bench_scene_readback`
+target and run `bench_scene_readback scene.usdc 1 retained` (or `4 metadata`).
+It uses 512 MiB reader/converter budgets; still use the process memory guard.
+Its native chunk-copy timing excludes JS extraction and is not a browser result.
+See large-scene §10.96 for baseline provenance and progress-gate limitations.
+
+ChunkedArray::copy_bytes_to and the web geometry bridge (§10.97) need permanent
+native/WASM coverage for aligned/unaligned copies, exact/short capacities,
+partial chunk tails, f32/u32/u16 payloads, heap growth and complete mesh/points/
+curves output parity. The native focused smoke and Emscripten syntax check have
+passed; full regressions/current-runtime performance checks remain deferred.
+
+Scoped web mesh preparation (large-scene §10.98) needs native dispatch/runtime
+coverage for begin/end/nesting, one actual geometry build across repeated
+size/header/payload calls, failed builds and intervening scratch builds. Check
+all ten streams for indexed/soup/merged/analytic/skinned/blend-shape inputs,
+flag changes and supplied-clip replacement/removal. JS must close on preflight,
+header and copy failures and block deletion during the operation. Syntax and
+a small mock-dispatch lifecycle check pass; fresh WASM output/performance and
+heap-growth checks remain deferred.
+
+Direct compressed-section emission (large-scene §10.99) needs permanent coverage
+for byte parity with the owning/C APIs, zero/partial inputs, callback lifetime,
+compression failures without emission and destination failures without raw
+fallback. Check C bound overflow on 32-bit/memory64 and near the 255-chunk limit
+without allocating giant fixtures. Large no-thread u32 columns need independent
+C byte parity across threshold/chunk-code boundaries. Focused native/no-thread
+smokes pass; complete section/scene parity and SSD/RSS qualification are deferred.
+
+Pass-1 lifetime coverage should include the late back-reference/stateful-reader
+case in large-scene §10.101: discovery and the first batch have not loaded the
+later root, whose layer then reaches an earlier shared source. The original
+reader must not be invoked again across planning/run; dependency identifiers
+must stay complete. A focused two-batch probe passes. Parallel authority checks
+should also inspect next_walk speculative_rewalks/seed_rewalks/source_rewalks
+and serial_fallback so an unexercised branch or silent serial fallback cannot
+masquerade as repair-path coverage.
+
+Focused authority checks (§10.102) now establish a real 64K-gated parallel walk
+with byte parity and no fallback, depth-triggered fallback matching the serial
+partial-stage/typed-diagnostic contract, and two injected stale-claim repairs
+with nested child/type/order checks. The injected probe compiles current
+implementation sources directly; it does not establish worker race coverage.
+Permanent cases should retain these distinct gates instead of treating a
+successful parallel run with zero re-walks as repair coverage.
+
+A focused wide-writer check (§10.103) now exercises real range refinement
+(261 versus 256 chunks), serial/fixed/refined byte parity and consume/reaper
+cleanup using a bounded synthetic input. The isolated fixed-chunk control
+changes only the refinement boolean; both parallel probes use identical
+thread/consumption/allocator settings. This does not cover production Island,
+lazy-array fan-out, time-sampled/variable-size workloads or failure paths.
+
+Focused spill-view checks (§10.104) now cover typed view/legacy parity, appends
+after snapshots, mapped and no-mmap builds, mapping fallback, interrupted and
+partial writes, truncated prefixes, tail-write failures and fallback-read EOF.
+A batched writer fixture crosses real chunk thresholds and observes four
+actual mapped spill views; memory-only, mapped-spill and forced-ENOMEM fallback
+writes produce identical regular SSD files. Ordinary WriteLayerToFile alone
+does not trigger boundary eviction and cannot establish this coverage. These
+bounded checks do not replace large-scene, 32-bit or multi-chunk LZ4 gates.
+
+Fresh wasm32 scoped-copy checks (§10.105) now link the current module and
+compare complete copied outputs with scopes enabled/disabled in that same
+runtime. Fixture geometry-read counters establish one versus 24 preparations
+per mesh. Indexed, explicit indices-disabled, merged and a real face-varying
+soup case pass; nested/mismatched scope rejection and failure cleanup pass.
+Use fresh streams for bounded A/B checks: the crate reader's cumulative decode
+budget charges temporary decodes as well as retained storage. This does not
+replace skinned/blend-shape, clip-mutation, heap-growth or memory64 coverage.
+
+Focused discovery/prefetch checks (§10.106) now establish the complete-count
+target boundary, unknown sizing under frontier/depth limits and reader/payload
+callbacks, an authored inactive leaf, and fixed-root batch preservation. Their
+pass-1 path order matches serial BuildStage. A controlled single-seed reader
+proves two automatic workers overlap after fan-out, explicit parser settings
+retain the former one-worker policy, and stopping during a read joins without
+loading newly found children. This does not establish actual parser throughput,
+namespace-edit coverage or the full callback/load-rule matrix.
+
+Low-memory PATHS node-storage reuse (§10.107) needs coverage around the 131,072
+encoded-node threshold, deep trees, variants, relative/property and empty paths,
+and serial/parallel node preparation. A bounded wide fixture now establishes
+ordinary, batched memory-only, mapped-spill, forced mapping-fallback and
+no-thread mapped-spill byte parity with saved pre-change output. Exact-size
+projected encoding also applies to the preorder in the selected policy. This
+check does not establish whole-process memory or production throughput gains;
+the two eliminated arrays account for eight bytes per encoded path specifically
+at column preparation, while retained traversal/codec state remains live.
+
+Mixed-array scheduling checks (§10.108) now cover time-sampled-only arrays,
+default-plus-sample arrays, the variable-size token proxy, multiple small arrays
+per prim and accumulated work across prims, including original chunk edges.
+The expected refined range count, complete serial/parallel byte parity and
+consume/reaper removal of both properties and time samples pass. Large lazy
+payloads and pre/post-commit failures still need separate coverage; serial
+versus parallel timings do not isolate the benefit of refinement itself.
+
+Earlier-batch prototype seeds must survive a failed parallel walk (§10.109).
+The focused 64K-gated reproduction now checks the member's IsInstance and
+GetPrototype results, typed depth diagnostics and complete post-fix crate
+parity against serial. Before the fix, primitive/byte counts were unchanged
+despite the member being incorrectly promoted to a new prototype. Permanent
+coverage must inspect prototype identity as well as output counts and retain
+the explicit serial_fallback timing gate. Full seeded-batch/donation coverage
+remains deferred.
+
+Source-miss repair (§10.110) must distinguish a repeated miss from progress to
+an unseeded prototype. A focused current-source probe now establishes the
+source -> seed -> forced-rewalk transition, seed-only and stale-claim repairs,
+and depth-triggered failure after partial repair. Successful cases inspect
+child/type/order and confirmed authority after temporary spec stores are gone;
+failure cases inspect pause/TLS cleanup. Keep the repeated-miss and unresolved
+forced-seed guards when extending coverage. This does not replace concurrent
+worker/donation checks or measure production fallback frequency.
+
+Medium low-memory structural delta encoding (§10.111) has focused writer parity
+with a C-entry-point counter: batched memory-only, mapped spill, mapping fallback
+and no-thread spill outputs match the saved file and avoid medium C delta calls;
+ordinary zero-budget output retains those calls. Future coverage should include
+131,072/four-million-element boundaries and pathological wide-delta histograms.
+Lower full-delta/output scratch does not bound histogram state or prove a
+production-scene RSS/throughput gain.
+
+The bounded Island comparison (§10.113) now establishes full-file parity and
+the default-profile refinement's observed RSS reduction with a matched
+fixed-chunk control. Three alternating pairs use regular SSD files, per-run
+fsync, normal teardown, identical jemalloc/flags and unchanged encoded-context
+counts. Parallel planning uses disjoint boundary masks merged in order; the
+mixed-array consume check also retains its exact output/range count, and
+no-thread compilation passes. Full suites and cold/other-scene performance
+remain deferred; a near-equal write median is not a general throughput claim.
+
+The residual scoped WASM extraction profile (§10.112) times 64 exported budget
+queries separately from mesh-buffer calls. Any future budget-query reuse must
+preserve accounting across lazy materialization and asset/export mutations;
+the current change retains all checks. Its recorded module is a profiling
+artifact, not a newly qualified WASM distribution.
+
+The PCP path-lifetime fixture also compares the prepared writer path against
+ordinary output across ~72000 prims, exercising mapped encoded-operation
+scratch and multiple 1024-prim contexts. Three smaller checks cover late
+instanceable-field removal, moving the first surviving token use, authored-false
+updates, raw token-vector/array dedup and rejection of a second commit before
+it can truncate the output. CLI focused checks compare retained/prepared and
+ordinary output with 1/4 compose threads, require preparation before Plan
+completion with no Run pass, and verify scratch-limit failure cleanup. See
+[planning/encoding overlap](large-scene.md#10117-planning-overlaps-writer-encoding-and-scratch-io).
+
+The `next_test_pcp` suite also checks opt-in immutable source snapshots:
+read-once callback replay, concurrent initial/replay loads, parsed-layer
+expiration, byte-limit failures, native-file removal, original asset anchors,
+pass-1 back references, retained mapped USDC values after registry cleanup and
+USDZ entry replay after archive removal. Source snapshots require a selected
+POSIX disk directory; preloads and foreign dependency owners remain retained.
+See [large-scene snapshot details](large-scene.md#10116-immutable-source-snapshots-and-pass-1-eviction)
+for options, focused CLI parity evidence and remaining qualification.
 
 The `next_test_spill_array` test checks append/resolve equivalence with spilling
 enabled and disabled. On Windows, requesting spill uses an in-memory fallback;

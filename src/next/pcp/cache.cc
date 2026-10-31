@@ -736,12 +736,17 @@ auto Cache::Impl::BuildStage(Layer *out, const BuildStageWork &root_work,
 // First-claim registry for instance keys during the parallel structure walk.
 // A rank is a prim's DFS position: the item indices from the top list down
 // through nested tasks, compared lexicographically. The lowest claim of a key
-// is its prototype candidate.
+// is its prototype candidate. Only commit-order registration is authoritative;
+// claims from subtrees later discarded by commit remain speculative hints.
 struct Cache::Impl::WalkClaims {
   static constexpr size_t kShards = 64;
+  struct Claim {
+    std::vector<uint32_t> rank;
+    bool committed = false;
+  };
   struct Shard {
     std::mutex m;
-    std::unordered_map<std::string, std::vector<uint32_t>> rank;
+    std::unordered_map<std::string, Claim> rank;
   };
   Shard shards[kShards];
   // Keys whose prototype an earlier batch owns (batched build): every claim
@@ -755,18 +760,29 @@ struct Cache::Impl::WalkClaims {
     std::lock_guard<std::mutex> lk(sh.m);
     auto it = sh.rank.find(key);
     if (it == sh.rank.end()) {
-      sh.rank.emplace(key, rank);
+      sh.rank.emplace(key, Claim{rank, false});
       return false;
     }
-    const std::vector<uint32_t> &held = it->second;
+    if (it->second.committed) return true;
+    const std::vector<uint32_t> &held = it->second.rank;
     // A held rank that is a proper prefix of ours is the same position: a
     // prim re-walked at commit (CommitWalk) under its own rank.
     const bool prefix = held.size() < rank.size() &&
                         std::equal(held.begin(), held.end(), rank.begin());
     if (prefix) return false;
     if (held < rank) return true;
-    it->second = rank;
+    it->second.rank = rank;
     return false;
+  }
+  // Called only after AssignPrototype establishes a prototype in DFS order.
+  // Publish in the same entry so no second owning key set is needed.
+  void ConfirmPrototype(const std::string &key) {
+    if (seeded && seeded->count(key)) return;
+    Shard &sh = shards[std::hash<std::string>()(key) % kShards];
+    std::lock_guard<std::mutex> lk(sh.m);
+    Claim &claim = sh.rank[key];
+    claim.committed = true;
+    std::vector<uint32_t>().swap(claim.rank);
   }
 };
 
@@ -782,6 +798,11 @@ struct Cache::Impl::WalkCommitCtx {
   std::vector<uint32_t> parents;
   std::vector<uint32_t> roots;
   std::deque<std::vector<WalkItem>> rewalks;
+  // Commit-thread-only diagnostics. These count attempted re-walks; a failed
+  // repair can still send the whole build through the serial fallback.
+  size_t speculative_rewalks = 0;
+  size_t seed_rewalks = 0;
+  size_t source_rewalks = 0;
   WalkPause *pause = nullptr;
   WalkCanDonate can_donate;
   WalkDonate donate;
@@ -813,14 +834,15 @@ struct Cache::Impl::WalkCommitCtx {
 // `donate` at the point the serial walk would reach it; a placeholder item
 // then stands in for that subtree. Anything that would need a mutation
 // (source-cache miss, unseeded prototype child, depth limit) marks the item
-// kWalkFail and stops that branch; committing it falls back.
+// kWalkMiss, kWalkSeed or kWalkFail and stops that branch. Commit repairs the
+// first two; failures retain the serial fallback.
 void Cache::Impl::SpeculativeWalk(const BuildStageWork &root,
                                   const std::vector<uint32_t> &rank_prefix,
                                   std::vector<WalkItem> *items,
                                   const WalkCanDonate &can_donate,
                                   const WalkDonate &donate, WalkClaims *claims,
                                   std::unordered_set<std::string> *local_keys,
-                                  WalkPause *pause) {
+                                  WalkPause *pause, bool force_root_prototype) {
     struct Entry {
       BuildStageWork w;
       uint32_t parent;
@@ -859,6 +881,7 @@ void Cache::Impl::SpeculativeWalk(const BuildStageWork &root,
           continue;
         }
       }
+      const bool force_prototype = at_root && force_root_prototype;
       at_root = false;
       WalkItem it;
       it.parent = e.parent;
@@ -903,7 +926,8 @@ void Cache::Impl::SpeculativeWalk(const BuildStageWork &root,
       if (composed_active && instanceable && options.detect_instances) {
         it.flags |= kWalkRegistered;
         it.ikey.reset(new std::string(ComputeInstanceKeyImpl(*srcs)));
-        if (local_keys->count(*it.ikey) || claims->EarlierOrClaim(*it.ikey, rank)) {
+        if (!force_prototype &&
+            (local_keys->count(*it.ikey) || claims->EarlierOrClaim(*it.ikey, rank))) {
           walked_as_instance = true;
           it.flags |= kWalkSpecInstance;
         } else {
@@ -956,15 +980,17 @@ void Cache::Impl::SpeculativeWalk(const BuildStageWork &root,
 // with the workers parked, a source-cache miss resolves its sources, a
 // prototype seeds its children's sources; then that prim's subtree is walked
 // again (ranked at this position) and committed in place. A prim walked as
-// an instance that turns out to be a prototype, or the depth limit, returns
-// false (the caller falls back to the serial walk).
+// an instance that turns out to be a prototype is repaired the same way,
+// ignoring speculative claims for that root. Unresolved repairs and depth
+// limits return false (the caller falls back to the serial walk).
 bool Cache::Impl::CommitWalk(std::vector<WalkItem> &items, uint32_t outer_parent,
                              const std::vector<uint32_t> &rank_prefix,
                              WalkCommitCtx &ctx) {
     std::vector<uint32_t> gidx(items.size(), UINT32_MAX);
     std::vector<uint32_t> rank = rank_prefix;
     rank.push_back(0);
-    auto rewalk = [&](const WalkItem &it, uint32_t parent_g) {
+    auto rewalk = [&](const WalkItem &it, uint32_t parent_g,
+                      bool force_root_prototype) {
       ctx.rewalks.emplace_back();
       std::vector<WalkItem> &again = ctx.rewalks.back();
       std::unordered_set<std::string> local;
@@ -973,10 +999,13 @@ bool Cache::Impl::CommitWalk(std::vector<WalkItem> &items, uint32_t outer_parent
       SpeculativeWalk(BuildStageWork{Path(), it.path, 0,
                                      (it.flags & kWalkRoot) != 0, it.depth},
                       rank, &again, ctx.can_donate, ctx.donate, ctx.claims,
-                      &local, nullptr);
+                      &local, nullptr, force_root_prototype);
       SpecReadOnlyTLS() = nullptr;
-      // Still unresolved after the mutation: do not loop.
-      if (again.empty() || (again[0].flags & (kWalkMiss | kWalkSeed)))
+      // A resolved source miss can expose an unseeded prototype: commit may
+      // seed it once before a forced re-walk. Repeated misses, or a forced
+      // prototype whose children are still unseeded, cannot make progress.
+      if (again.empty() || (again[0].flags & kWalkMiss) ||
+          (force_root_prototype && (again[0].flags & kWalkSeed)))
         return false;
       return CommitWalk(again, parent_g, rank, ctx);
     };
@@ -994,10 +1023,11 @@ bool Cache::Impl::CommitWalk(std::vector<WalkItem> &items, uint32_t outer_parent
       }
       if (it.flags & kWalkFail) return false;
       if (it.flags & kWalkMiss) {
+        ++ctx.source_rewalks;
         ctx.Pause();
         (void)SourcesForPath(it.path, ctx.warn, ctx.err);
         ctx.Resume();
-        if (!rewalk(it, parent_g)) return false;
+        if (!rewalk(it, parent_g, false)) return false;
         ++k;
         continue;
       }
@@ -1009,13 +1039,18 @@ bool Cache::Impl::CommitWalk(std::vector<WalkItem> &items, uint32_t outer_parent
         AssignPrototype(path, *it.ikey, false);
         auto pit = prototype_of.find(path);
         is_instance = pit != prototype_of.end() && pit->second.proto != path;
+        if (pit != prototype_of.end() && !is_instance)
+          ctx.claims->ConfirmPrototype(*it.ikey);
         it.ikey.reset();  // the prototype maps keep their own copy
       }
-      if (walked_as_instance && !is_instance) return false;
-      if ((it.flags & kWalkSeed) && !is_instance) {
+      if (((it.flags & kWalkSeed) || walked_as_instance) && !is_instance) {
+        if (walked_as_instance) ++ctx.speculative_rewalks;
+        else ++ctx.seed_rewalks;
         // A prototype whose child sources are not seeded yet: seed them as
         // the serial walk does (its registration above is idempotent when
-        // the re-walk registers it again), then walk its subtree.
+        // the re-walk registers it again), then walk its subtree. A speculative
+        // instance may have relied on a claim from a discarded subtree; its
+        // children need the same seeding before the forced prototype re-walk.
         ctx.Pause();
         std::vector<Src> shared_srcs;
         for (const Src &s : *it.srcs) {
@@ -1036,7 +1071,7 @@ bool Cache::Impl::CommitWalk(std::vector<WalkItem> &items, uint32_t outer_parent
           }
         }
         ctx.Resume();
-        if (!rewalk(it, parent_g)) return false;
+        if (!rewalk(it, parent_g, true)) return false;
         ++k;
         continue;
       }
@@ -1119,8 +1154,8 @@ void Cache::Impl::MaterializeWalk(Layer *out, WalkCommitCtx &ctx, int threads) {
 // subtree still spreads over all threads). This thread then commits the top
 // items in DFS order, splicing each task's items in as soon as it is done
 // (CommitWalk) and freeing them. Returns false -- with `out`, fill_ and the
-// instancing maps reset -- when a commit hits a failed item or a wrong
-// instance guess; the caller then runs the serial walk.
+// instancing maps reset to earlier-batch seeds -- when a commit hits a failed
+// item or cannot repair a speculative result; the caller runs the serial walk.
 bool Cache::Impl::ParallelStructureWalk(Layer *out,
                                         const std::vector<std::string> &root_names,
                                         int threads,
@@ -1336,10 +1371,23 @@ bool Cache::Impl::ParallelStructureWalk(Layer *out,
       instances_by_prototype.clear();
       instance_key_order.clear();
       instance_prim_index_.clear();
+      // Discard this attempt's registrations, but retain earlier batches'
+      // authoritative prototypes. The serial fallback must start with the
+      // same seeds as BuildStage did before the speculative walk.
+      if (batch_scope_) {
+        for (const auto &kp : batch_scope_->seeded_protos) {
+          prototype_by_key[kp.first] = PathStr(kp.second);
+          instance_key_order.push_back(kp.first);
+        }
+      }
     }
     if (options.enable_timing)
       LIGHTUSD_LOG_I("[next_walk] tasks=" + UIntToStr(recs.size()) +
-                     " bundled_roots=" + UIntToStr(bundled_roots));
+                     " bundled_roots=" + UIntToStr(bundled_roots) +
+                     " speculative_rewalks=" + UIntToStr(ctx.speculative_rewalks) +
+                     " seed_rewalks=" + UIntToStr(ctx.seed_rewalks) +
+                     " source_rewalks=" + UIntToStr(ctx.source_rewalks) +
+                     " serial_fallback=" + UIntToStr(ok ? 0 : 1));
     return ok;
   }
 #endif
@@ -2355,7 +2403,10 @@ auto Cache::Impl::StartArcLayerPrefetch(ArcLayerPrefetch *pf, int nt) -> void {
       // Divide the loading budget between files and each file's parser.
       // All-serial readers strand cores behind a large layer; an automatic
       // arena per outer worker would multiply the budget instead.
-      n = std::min(n, static_cast<size_t>(std::max(1, nt / 4)));
+      // A single seed can reveal many targets. Keep the full outer team
+      // available for that fan-out rather than permanently sizing it to the
+      // initial queue. Idle workers wait while another load is active.
+      n = static_cast<size_t>(std::max(1, nt / 4));
       const int parse_threads = std::min(8, nt / static_cast<int>(n));
       load_opts.parse_num_threads = parse_threads;
       load_opts.usda_parse_options.num_threads = parse_threads;

@@ -247,7 +247,8 @@ std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
 std::shared_ptr<Layer> LoadLayerFromUSDZ(const std::string &package_file,
                                          const std::string &entry_name,
                                          const LayerLoadOptions &options,
-                                         std::string *warn, std::string *err) {
+                                         std::string *warn, std::string *err,
+                                         const std::string& identifier = {}) {
   USDZReadOptions zopts;
   zopts.max_archive_size = options.max_memory;
   zopts.max_entry_size = options.max_memory;
@@ -262,7 +263,8 @@ std::shared_ptr<Layer> LoadLayerFromUSDZ(const std::string &package_file,
     return nullptr;
   }
 
-  return LoadLayerFromUSDZEntry(reader, package_file, entry_name, options,
+  return LoadLayerFromUSDZEntry(reader, identifier.empty() ? package_file : identifier,
+                                entry_name, options,
                                 warn, err);
 }
 
@@ -307,6 +309,53 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
   if (layer && !AssetResolver::IsPackagePath(resolved_path)) {
     StampAssetAnchor(layer.get(), resolved_path);
   }
+  return layer;
+}
+
+std::shared_ptr<Layer> LoadLayerFromSourceSnapshot(
+    const std::string& identifier, const std::string& storage_path,
+    std::string* warn, std::string* err, const LayerLoadOptions& options,
+    bool content_dispatch) {
+  char magic[8] = {};
+  std::ifstream input(storage_path, std::ios::binary);
+  input.read(magic, sizeof(magic));
+  const size_t got = static_cast<size_t>(input.gcount());
+  const bool crate_magic = got == 8 && std::memcmp(magic, "PXR-USDC", 8) == 0;
+  const bool zip_magic = got >= 4 && std::memcmp(magic, "PK\x03\x04", 4) == 0;
+  const std::string ext = ToLowerExt(identifier);
+  const bool crate = content_dispatch ? crate_magic
+      : !AssetResolver::IsPackagePath(identifier) &&
+          (ext == "usdc" || (ext == "usd" && crate_magic));
+  const bool zip = content_dispatch ? zip_magic
+      : ext == "usdz" || AssetResolver::IsPackagePath(identifier);
+  std::shared_ptr<Layer> layer;
+  if (crate) {
+    USDCLoadOptions opts;
+    opts.crate_options.strict_aousd_conformance = options.strict_aousd_conformance;
+    opts.crate_options.max_memory = options.max_memory;
+    static_cast<CrateLimits&>(opts.crate_options) = options.usdc_limits;
+    opts.crate_options.max_array_elements = options.max_array_elements;
+    opts.crate_options.progress_callback = options.progress_callback;
+    opts.crate_options.num_threads = options.parse_num_threads;
+    opts.crate_options.min_parallel_parse_bytes = options.min_parallel_parse_bytes;
+    opts.crate_options.enable_timing = options.enable_timing;
+    opts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
+    opts.crate_options.use_mmap = options.usdc_use_mmap;
+    layer = ConvertLoadedUSDC(LoadUSDCFromFile(storage_path, opts),
+                             identifier, warn, err);
+  } else if (zip) {
+    std::string package, entry;
+    AssetResolver::ParsePackagePath(identifier, &package, &entry);
+    layer = LoadLayerFromUSDZ(storage_path, entry, options, warn, err,
+                              package.empty() ? identifier : package);
+  } else {
+    LoadOptions opts;
+    opts.parse_options = MakeUSDAParseOptions(options);
+    layer = ConvertLoadedUSDA(LoadUSDAFromFile(storage_path, opts),
+                             identifier, warn, err);
+  }
+  if (layer && !AssetResolver::IsPackagePath(identifier))
+    StampAssetAnchor(layer.get(), identifier);
   return layer;
 }
 

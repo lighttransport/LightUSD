@@ -6,6 +6,14 @@
 extern "C" {
 #endif
 
+/* Compare this revision and LU_CORE_C_VERSION_MAJOR with lu_abi_get() before
+ * passing by-value storage across a shared-library boundary. Revision 2 uses
+ * uint64_t/double alignment for lu_value.store; revision 1 used max_align_t
+ * (64 rather than 48 bytes on 64-bit ABIs with 16-byte max_align_t).
+ * Also compare the reported sizes, alignment and offsets for the target ABI.
+ * This layout revision is independent of the package release version. */
+#define LU_CORE_C_LAYOUT_REVISION 2u
+
 typedef enum lu_component {
   LU_COMP_NONE, LU_COMP_UINT8, LU_COMP_INT32, LU_COMP_UINT32,
   LU_COMP_INT64, LU_COMP_UINT64, LU_COMP_FLOAT16, LU_COMP_FLOAT32,

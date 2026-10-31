@@ -4,6 +4,7 @@
 // LightUSD Next - PCP LayerRegistry implementation
 
 #include "layer-registry.hh"
+#include "layer-source-snapshot.hh"
 #include "../safe-file-size.hh"
 
 #include "../layer/asset-anchor.hh"
@@ -23,6 +24,69 @@
 namespace lightusd {
 namespace next {
 namespace pcp {
+
+bool LayerRegistry::EnableSourceSnapshots(const std::string& directory,
+                                         uint64_t max_bytes,
+                                         std::string* error) {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lock(*mu_);
+  if (!in_flight_.empty()) return false;
+#endif
+  if (directory.empty() || !max_bytes || !by_resolved_.empty() ||
+      !snapshots_.empty() || !LayerSourceSnapshot::supported()) {
+    if (error) *error += "invalid source snapshot configuration\n";
+    return false;
+  }
+  snapshot_directory_ = directory;
+  snapshot_budget_ = std::make_shared<AssetPayloadBudget>(max_bytes);
+  return true;
+}
+
+size_t LayerRegistry::EvictSnapshottedLayers() {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lock(*mu_);
+  if (!in_flight_.empty()) return 0;
+#endif
+  size_t count = 0;
+  for (const auto& entry : snapshots_) {
+    auto found = by_resolved_.find(entry.first);
+    if (found == by_resolved_.end() || !found->second ||
+        found->second->prim_filler() || found->second->meta().imported_assets)
+      continue;
+    file_layers_.erase(found->second.get());
+    by_resolved_.erase(found);
+    ++count;
+  }
+  return count;
+}
+
+std::vector<std::string> LayerRegistry::snapshot_identifiers() const {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lock(*mu_);
+#endif
+  std::vector<std::string> ids;
+  ids.reserve(snapshots_.size());
+  for (const auto& entry : snapshots_) ids.push_back(entry.first);
+  return ids;
+}
+
+namespace {
+std::string SourceExtension(const std::string& identifier) {
+  std::string package, entry;
+  const std::string& name = AssetResolver::ParsePackagePath(identifier, &package,
+                                                         &entry) ? entry : identifier;
+  const size_t dot = name.find_last_of('.');
+  if (dot == std::string::npos) return {};
+  std::string ext = name.substr(dot);
+  std::transform(ext.begin(), ext.end(), ext.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return ext;
+}
+bool SnapshotFormat(const std::string& identifier) {
+  const std::string ext = SourceExtension(identifier);
+  return ext == ".usd" || ext == ".usda" || ext == ".usdc" || ext == ".usdz";
+}
+}  // namespace
 
 void LayerRegistry::RetainImportedAssets(Layer* output) const {
   if (!output) return;
@@ -47,8 +111,19 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
                                                 std::string *warn,
                                                 std::string *err,
                                                 const LayerLoadOptions &options) {
-  ResolvedAsset resolved_asset = resolver.Resolve(
-      asset_path, anchor, !options.strict_aousd_conformance);
+  SnapshotRequest request;
+  ResolvedAsset resolved_asset;
+  if (snapshot_budget_) {
+    request = SnapshotRequest(anchor, asset_path, options.strict_aousd_conformance);
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    std::lock_guard<std::mutex> lock(*mu_);
+#endif
+    auto found = snapshot_resolutions_.find(request);
+    if (found != snapshot_resolutions_.end()) resolved_asset = found->second;
+  }
+  if (resolved_asset.resolved_path.empty())
+    resolved_asset = resolver.Resolve(asset_path, anchor,
+                                      !options.strict_aousd_conformance);
   const std::string resolved = resolved_asset.resolved_path;
   if (resolved.empty()) {
     if (err) *err += "Failed to resolve asset path: " + asset_path + "\n";
@@ -87,8 +162,63 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
       return true;
     };
   }
+  std::shared_ptr<LayerSourceSnapshot> snapshot;
   auto load_resolved = [&](std::string* load_warn,
                            std::string* load_err) -> std::shared_ptr<Layer> {
+    if (snapshot_budget_ && (!native_file || SnapshotFormat(resolved))) {
+      {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+        std::lock_guard<std::mutex> lock(*mu_);
+#endif
+        auto found = snapshots_.find(resolved);
+        if (found != snapshots_.end()) snapshot = found->second;
+      }
+      const bool replay = static_cast<bool>(snapshot);
+      if (!snapshot) {
+        if (native_file) {
+          ResolvedAsset source = resolved_asset;
+          std::string package, entry;
+          if (AssetResolver::ParsePackagePath(resolved, &package, &entry))
+            source = resolver.Resolve(package, "", false);
+          snapshot = LayerSourceSnapshot::FromFile(
+              source, effective.max_memory, snapshot_directory_, snapshot_budget_, load_err);
+          if (snapshot && !resolver.FileIdentityUnchanged(source)) {
+            if (load_err) *load_err += "asset changed while snapshotting: " + resolved + "\n";
+            snapshot.reset();
+          }
+        } else {
+          std::vector<uint8_t> bytes;
+          if (!resolver.ReadAsset(resolved_asset, &bytes, load_err)) return nullptr;
+          if (effective.max_memory && bytes.size() > effective.max_memory) {
+            if (load_err) *load_err += "source snapshot input limit exceeded\n";
+            return nullptr;
+          }
+          // Content-based callback readers can return foreign XML even under
+          // a USD-looking identifier. Preserve that reader's dispatch and pin
+          // its parsed dependency owner instead of attempting native replay.
+          const bool usd_magic =
+              (bytes.size() >= 8 && std::memcmp(bytes.data(), "PXR-USDC", 8) == 0) ||
+              (bytes.size() >= 4 && std::memcmp(bytes.data(), "PK\x03\x04", 4) == 0);
+          if (!usd_magic && (LooksLikeMtlxXML(bytes.data(), bytes.size()) ||
+                              SourceExtension(resolved) == ".obj"))
+            return LoadLayerFromMemory(resolved, bytes.data(), bytes.size(),
+                                       load_warn, load_err, effective);
+          snapshot = LayerSourceSnapshot::FromMemory(
+              bytes.data(), bytes.size(), snapshot_directory_, snapshot_budget_, load_err);
+        }
+        if (!snapshot) return nullptr;
+        snapshot->set_options(effective, !native_file);
+      }
+      auto loaded = LoadLayerFromSourceSnapshot(
+          resolved, snapshot->path(), load_warn, load_err,
+          replay ? snapshot->replay_options(effective) : effective,
+          snapshot->content_dispatch());
+      // A package may select a foreign importer rather than a native USD
+      // entry. Its auxiliary dependencies have not been snapshotted.
+      if (loaded && (loaded->prim_filler() || loaded->meta().imported_assets))
+        snapshot.reset();
+      return loaded;
+    }
     if (!AssetResolver::GetIdentifierScheme(resolved).empty() ||
         resolver.HasAssetReader()) {
       std::vector<uint8_t> bytes;
@@ -113,7 +243,11 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
   {
     std::lock_guard<std::mutex> lk(*mu_);
     auto it = by_resolved_.find(resolved);
-    if (it != by_resolved_.end()) return it->second;  // already parsed
+    if (it != by_resolved_.end()) {
+      if (snapshots_.count(resolved))
+        snapshot_resolutions_.emplace(request, resolved_asset);
+      return it->second;
+    }
 
     auto fit = in_flight_.find(resolved);
     if (fit != in_flight_.end()) {
@@ -128,6 +262,11 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
   if (!my_promise) {
     // Someone else is loading this exact path; wait for them (outside the lock).
     LoadOutcome outcome = wait_fut.get();
+    if (outcome.layer && snapshot_budget_) {
+      std::lock_guard<std::mutex> lock(*mu_);
+      if (snapshots_.count(resolved))
+        snapshot_resolutions_.emplace(request, resolved_asset);
+    }
     if (warn) *warn += outcome.warn;
     if (err) *err += outcome.err;
     return outcome.layer;
@@ -141,6 +280,10 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
     if (outcome.layer) {
       ++parse_count_;
       by_resolved_.emplace(resolved, outcome.layer);
+      if (snapshot) {
+        snapshots_.emplace(resolved, snapshot);
+        snapshot_resolutions_.emplace(request, resolved_asset);
+      }
       if (native_file) file_layers_.insert(outcome.layer.get());
     }
     in_flight_.erase(resolved);  // a failed load is retried by the next caller
@@ -152,6 +295,8 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
 #else
   auto it = by_resolved_.find(resolved);
   if (it != by_resolved_.end()) {
+    if (snapshots_.count(resolved))
+      snapshot_resolutions_.emplace(request, resolved_asset);
     return it->second;  // Cache hit -- no re-parse.
   }
 
@@ -162,6 +307,10 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
 
   ++parse_count_;
   by_resolved_.emplace(resolved, layer);
+  if (snapshot) {
+    snapshots_.emplace(resolved, snapshot);
+    snapshot_resolutions_.emplace(request, resolved_asset);
+  }
   if (native_file) file_layers_.insert(layer.get());
   return layer;
 #endif

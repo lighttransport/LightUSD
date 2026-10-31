@@ -4,6 +4,7 @@
 #include "../layer/array-edit.hh"
 #include "../types/type-info.hh"
 #include <algorithm>
+#include <iterator>
 #include <map>
 #include <string>
 #include <string_view>
@@ -94,7 +95,8 @@ void CrateReader::Impl::EmitPrimBody(
       }
     };
 
-    ResolveFieldset(entry.fieldset_index, prim_value_field_scratch);
+    std::vector<DecodedExtensionField> integer_fields;
+    ResolveFieldset(entry.fieldset_index, prim_value_field_scratch, &integer_fields);
 
     // Add properties and extract composition arcs / metadata into PrimMetadata
     for (auto& field : prim_value_field_scratch) {
@@ -564,9 +566,12 @@ void CrateReader::Impl::EmitPrimBody(
       // Unknown Prim fields are extension metadata, not body properties.
       // Preserve the decoded typed value and re-emit it as the same field.
       if (ps) {
-        ps->meta().unknownFields().push_back(
-            MakeTypedExtensionField(std::string(field.first),
-                                    std::move(field.second)));
+        auto integer = std::find_if(integer_fields.begin(), integer_fields.end(),
+            [&](const DecodedExtensionField& f) { return f.name == field.first; });
+        if (integer != integer_fields.end())
+          ps->meta().unknownFields().push_back(std::move(*integer));
+        else ps->meta().unknownFields().push_back(
+            MakeTypedExtensionField(std::string(field.first), std::move(field.second)));
       }
     }
 

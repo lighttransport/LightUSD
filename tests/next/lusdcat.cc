@@ -119,12 +119,15 @@ int main(int argc, char **argv) {
   // into the writer (pcp::FlattenToUSDCFileBatched). Same bytes, slower,
   // a fraction of the peak memory.
   bool low_memory = false;
+  bool overlap_plan_write = false;
   size_t batch_frontier = 65536;
   size_t batch_prims = 400000;
   // Low profile writer: shared resident budget (MiB) for the append-only
   // structural columns; the oldest committed chunks move to `spill_dir` past
   // it. 0 keeps every column in memory.
   uint64_t spill_mib = 512;
+  uint64_t source_snapshot_mib = 8192;
+  uint64_t prepared_log_mib = 8192;
   // Directory for the (unlinked) spill file; empty = system temp ("/tmp").
   std::string spill_dir;
   // --variant-fallback set=opt1,opt2  (repeatable). Stock pxr registers NO
@@ -248,6 +251,8 @@ int main(int argc, char **argv) {
         std::fprintf(stderr, "ERR : --memory-profile must be default or low\n");
         return 2;
       }
+    } else if (std::strcmp(argv[i], "--overlap-plan-write") == 0) {
+      overlap_plan_write = true;
     } else if (std::strcmp(argv[i], "--batched-compose") == 0 && i + 1 < argc) {
       batch_roots = std::atol(argv[++i]);
     } else if (std::strcmp(argv[i], "--batch-frontier") == 0 && i + 1 < argc) {
@@ -258,6 +263,23 @@ int main(int argc, char **argv) {
       spill_mib = static_cast<uint64_t>(std::strtoull(argv[++i], nullptr, 10));
     } else if (std::strcmp(argv[i], "--spill-dir") == 0 && i + 1 < argc) {
       spill_dir = argv[++i];
+    } else if (std::strcmp(argv[i], "--source-snapshot-mib") == 0 && i + 1 < argc) {
+      const char* value = argv[++i];
+      char* end = nullptr;
+      source_snapshot_mib = static_cast<uint64_t>(std::strtoull(value, &end, 10));
+      if (!*value || *value == '-' || !end || *end ||
+          source_snapshot_mib > (UINT64_MAX >> 20)) {
+        std::fprintf(stderr, "ERR : invalid --source-snapshot-mib\n");
+        return 2;
+      }
+    } else if (std::strcmp(argv[i], "--prepared-log-mib") == 0 && i + 1 < argc) {
+      const char* value = argv[++i];
+      char* end = nullptr;
+      prepared_log_mib = static_cast<uint64_t>(std::strtoull(value, &end, 10));
+      if (!*value || *value == '-' || !end || *end || prepared_log_mib > (UINT64_MAX >> 20)) {
+        std::fprintf(stderr, "ERR : invalid --prepared-log-mib\n");
+        return 2;
+      }
     } else if (std::strcmp(argv[i], "--fast-exit") == 0) {
       fast_exit = true;
     } else if (std::strcmp(argv[i], "--load-payloads") == 0) {
@@ -297,6 +319,9 @@ int main(int argc, char **argv) {
                          "[--no-consume-values] "
                          "[--memory-profile default|low] [--batch-prims N] "
                          "[--spill-mib N] [--spill-dir DIR] "
+                         "[--source-snapshot-mib N] "
+                         "[--overlap-plan-write] "
+                         "[--prepared-log-mib N] "
                          "[--fast-exit] "
                          "[--aousd-strict] "
                          "[--max-crate-elements N] "
@@ -523,6 +548,9 @@ int main(int argc, char **argv) {
       pcp::BatchedComposeOptions bopts;
       bopts.max_frontier = batch_frontier;
       bopts.target_batch_prims = batch_prims;
+      bopts.overlap_plan_write = overlap_plan_write;
+      if (source_snapshot_mib) bopts.source_snapshot_directory = spill_dir;
+      bopts.source_snapshot_bytes = source_snapshot_mib << 20;
       if (batch_roots > 0) bopts.roots_per_batch = static_cast<size_t>(batch_roots);
       CrateWriteOptions wopts;
       wopts.num_threads = 0;
@@ -536,6 +564,7 @@ int main(int argc, char **argv) {
       // resident budget (0 keeps them fully in memory).
       wopts.spill_columns_bytes = spill_mib << 20;
       wopts.spill_directory = spill_dir;
+      wopts.max_prepared_bytes = prepared_log_mib << 20;
       CrateWriteResult res;
       const bool flat_ok = pcp::FlattenToUSDCFileBatched(
           filename, resolver, out_path, opts, bopts, wopts, &res, &warn, &err);

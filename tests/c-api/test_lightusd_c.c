@@ -1458,7 +1458,10 @@ static int test_buffer_pins(void) {
   const lightusd_abi_info abi = lightusd_abi_get();
   float replacement[] = {90, 91, 92};
   CHECK(abi.major == 5 && abi.core.major == 2);
+  CHECK(abi.core.layout_revision == LU_CORE_C_LAYOUT_REVISION);
   CHECK(abi.core.pointer_bits == sizeof(void*) * 8);
+  CHECK(abi.core.value_size == sizeof(lu_value));
+  CHECK(abi.core.value_store_offset == offsetof(lu_value, store));
   CHECK(abi.value_view_size == sizeof(lightusd_value_view));
   CHECK(abi.value_view_data_offset == offsetof(lightusd_value_view, data));
   CHECK_OK(lightusd_stage_create(&stage));

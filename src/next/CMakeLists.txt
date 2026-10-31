@@ -169,6 +169,7 @@ set(LIGHTUSD_NEXT_HEADERS
     # Layer (unified PrimSpec storage)
     layer/property-index.hh
     layer/prim-spec.hh
+    layer/int64-listop.hh
     layer/layer.hh
 
     # Stage (composed scene)
@@ -619,6 +620,12 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdc.cc
     )
     target_link_libraries(test_usdc_reader PRIVATE lightusd_next)
+    add_executable(test_int64_listop ../../tests/next/test_int64_listop.cc)
+    target_link_libraries(test_int64_listop PRIVATE lightusd_next)
+    add_test(NAME next_test_int64_listop COMMAND test_int64_listop)
+    add_executable(test_stream_residency ../../tests/next/test_stream_residency.cc)
+    target_link_libraries(test_stream_residency PRIVATE lightusd_next)
+    add_test(NAME next_test_stream_residency COMMAND test_stream_residency)
     # Fixtures are found by walking relative prefixes from the working
     # directory, which only resolves when the build dir sits directly under the
     # repo root. Hand the real root in so the test also runs from an
@@ -1320,6 +1327,10 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     endif()
 
   if(LIGHTUSD_WITH_TYDRA)
+    add_executable(bench_scene_readback EXCLUDE_FROM_ALL
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/bench_scene_readback.cc)
+    target_link_libraries(bench_scene_readback PRIVATE tydra_next lightusd_next)
+
     add_executable(test_tydra_next
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/next/test_tydra_next.cc
     )

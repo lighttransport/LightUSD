@@ -3,6 +3,7 @@
 //
 // LightUSD Next - PrimSpec Implementation
 
+#include "int64-listop.hh"
 #include "prim-spec.hh"
 #include "../prim/identifier.hh"
 #include "../../safe-arithmetic.hh"
@@ -1107,6 +1108,7 @@ size_t PrimSpec::memory_usage() const {
     for (const DecodedExtensionField& field : fields) {
       add(field.name.capacity());
       add(field.unregistered_source.capacity());
+      if (field.int64_list_op) add(Int64ListOpsMemoryUsage(*field.int64_list_op));
       add_value(field.value);
     }
   };

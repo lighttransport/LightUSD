@@ -19,7 +19,9 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <map>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -83,6 +85,7 @@ struct LayerLoadOptions {
       asset_open;
 };
 
+class LayerSourceSnapshot;
 class LayerRegistry {
  public:
 #if defined(LIGHTUSD_ENABLE_THREAD)
@@ -96,6 +99,17 @@ class LayerRegistry {
   LayerRegistry &operator=(LayerRegistry &&) = default;
   LayerRegistry(const LayerRegistry &) = delete;
   LayerRegistry &operator=(const LayerRegistry &) = delete;
+
+  /// Enable exact first-read source snapshots before loading any layers.
+  /// Requires a caller-selected disk directory and a total byte limit. A
+  /// failed snapshot is a load failure, never permission to reread a source.
+  bool EnableSourceSnapshots(const std::string& directory, uint64_t max_bytes,
+                             std::string* error);
+  /// Between batches, after cache queries/loaders join, release parsed layers
+  /// that can be replayed from their original snapshots. Preloads and foreign
+  /// dependency owners remain pinned. Does not invalidate live shared owners.
+  size_t EvictSnapshottedLayers();
+  std::vector<std::string> snapshot_identifiers() const;
 
   /// Resolve `asset_path` against `anchor` (the referencing file's directory),
   /// parse once, and return shared ownership. Returns nullptr on failure.
@@ -115,6 +129,7 @@ class LayerRegistry {
     auto old = by_resolved_.find(resolved_id);
     if (old != by_resolved_.end()) file_layers_.erase(old->second.get());
     file_layers_.erase(layer.get());  // caller-provided layers may own callbacks
+    snapshots_.erase(resolved_id);
     by_resolved_[resolved_id] = std::move(layer);
   }
 
@@ -130,6 +145,8 @@ class LayerRegistry {
 #endif
     by_resolved_.clear();
     file_layers_.clear();
+    snapshots_.clear();
+    snapshot_resolutions_.clear();
   }
   /// Internal cache teardown support. Call only after all loads/queries join.
   /// Pin file-reader-created layers while dropping cache borrowers, then
@@ -189,6 +206,11 @@ class LayerRegistry {
  private:
   std::unordered_map<std::string, std::shared_ptr<Layer>> by_resolved_;
   std::unordered_set<const Layer*> file_layers_;
+  std::string snapshot_directory_;
+  std::shared_ptr<AssetPayloadBudget> snapshot_budget_;
+  std::unordered_map<std::string, std::shared_ptr<LayerSourceSnapshot>> snapshots_;
+  using SnapshotRequest = std::tuple<std::string, std::string, bool>;
+  std::map<SnapshotRequest, ResolvedAsset> snapshot_resolutions_;
   size_t parse_count_ = 0;
 #if defined(LIGHTUSD_ENABLE_THREAD)
   // Heap-allocated so the registry stays movable. Guards by_resolved_/parse_count_
@@ -215,6 +237,14 @@ class LayerRegistry {
 std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
                                          std::string *warn, std::string *err,
                                          const LayerLoadOptions &options);
+
+/// Replay native USD bytes without changing the original identifier, package
+/// selection or asset anchor. The storage filename is private and has no format
+/// extension; sniffing chooses USDA/USDC/USDZ. No foreign importer replay.
+std::shared_ptr<Layer> LoadLayerFromSourceSnapshot(
+    const std::string& identifier, const std::string& storage_path,
+    std::string* warn, std::string* err, const LayerLoadOptions& options,
+    bool content_dispatch);
 
 /// Back-compat overload for callers that only need USDA parse parallelism.
 std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,

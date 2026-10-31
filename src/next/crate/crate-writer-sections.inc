@@ -14,21 +14,37 @@
   // keeps TOC offsets and output bytes identical at any thread count.
   static void WriteCompressedBytes(StreamWriter& out, const uint8_t* data,
                                    size_t size) {
-    CompressResult cr = CompressCrateBlob(data, size);
-    if (!cr.success) {
+    const bool compressed = CompressCrateBlobTo(data, size,
+        [&out](const uint8_t* encoded, size_t encoded_size) {
+          out.write_u64(encoded_size);
+          out.write_bytes(encoded, encoded_size);
+        });
+    if (!compressed) {
       // Fall back to storing uncompressed.
       out.write_u64(size);
       if (size) out.write_bytes(data, size);
-    } else {
-      out.write_u64(cr.data.size());
-      if (!cr.data.empty()) out.write_bytes(cr.data.data(), cr.data.size());
     }
   }
 
   // Usd_IntegerCompression: delta encode + LZ4 (TfFastCompression format).
-  static void WriteCompressedDeltaU32(StreamWriter& out, const uint32_t* vals,
-                                      size_t count) {
-    std::vector<uint8_t> delta = EncodeDeltaU32(vals, count);
+  static constexpr size_t kMinLowMemoryDeltaCount = size_t(1) << 17;
+  void WriteCompressedDeltaU32(StreamWriter& out, const uint32_t* vals,
+                                size_t count) {
+    // Medium structural columns otherwise use the C encoder's full delta
+    // array and worst-case output scratch. Select exact-size encoding for
+    // memory-saving writes too, below its normal large-column threshold.
+    const bool exact = count >= kMinLowMemoryDeltaCount &&
+        (serial_sections_ || options_.spill_columns_bytes != 0);
+    std::vector<uint8_t> delta = exact
+        ? EncodeDeltaU32Projected(count, [vals](size_t i) { return vals[i]; })
+        : EncodeDeltaU32(vals, count);
+    WriteCompressedBytes(out, delta.data(), delta.size());
+  }
+
+  static void WriteCompressedProjectedU32(
+      StreamWriter& out, size_t count,
+      const std::function<uint32_t(size_t)>& value_at) {
+    std::vector<uint8_t> delta = EncodeDeltaU32Projected(count, value_at);
     WriteCompressedBytes(out, delta.data(), delta.size());
   }
 
@@ -83,20 +99,17 @@
     uint64_t num_fields = fields_.size();
     out.write_u64(num_fields);
 
-    // Whole-column contiguous bytes. A spilled column hands back its spilled
-    // prefix with one private copy; an unspilled one aliases the resident
-    // storage exactly as the plain vectors did.
-    std::unique_ptr<uint32_t[]> tok_copy;
-    std::unique_ptr<ValueRep[]> rep_copy;
-    const uint32_t* tokens = nullptr;
-    const ValueRep* reps = nullptr;
-    if (!fields_.tokens.Resolve(&tok_copy, &tokens, error) ||
-        !fields_.reps.Resolve(&rep_copy, &reps, error)) {
+    // Map spilled input directly for the unchanged codecs. Finish the token
+    // input before preparing reps, so both reconstructed columns never have
+    // to coexist when a mapping is unavailable.
+    SpillVec<uint32_t>::ReadView tokens;
+    if (!fields_.tokens.ResolveReadOnly(&tokens, error)) {
       return false;
     }
 
     // Encode the retained token column directly (delta + LZ4).
-    WriteCompressedDeltaU32(out, tokens, num_fields);
+    WriteCompressedDeltaU32(out, tokens.data(), num_fields);
+    tokens.Reset();
 
     // Write compressed value reps (TfFastCompression LZ4 format)
     size_t value_rep_bytes = 0;
@@ -107,10 +120,10 @@
     static_assert(sizeof(ValueRep) == sizeof(uint64_t) &&
                       std::is_trivially_copyable<ValueRep>::value,
                   "ValueRep must retain its raw 64-bit object representation");
+    SpillVec<ValueRep>::ReadView reps;
+    if (!fields_.reps.ResolveReadOnly(&reps, error)) return false;
     WriteCompressedBytes(out,
-        reinterpret_cast<const uint8_t*>(reps), value_rep_bytes);
-    // The copies (if any) die here; the resident chunks die with the caller's
-    // Release() calls.
+        reinterpret_cast<const uint8_t*>(reps.data()), value_rep_bytes);
     return true;
   }
 
@@ -118,11 +131,10 @@
     StreamWriter out(*payload);
     // The construction pass already retains indices and sentinels in exactly
     // this order. Compress in place without a second full-size flat copy.
-    std::unique_ptr<uint32_t[]> flat_copy;
-    const uint32_t* flat = nullptr;
+    SpillVec<uint32_t>::ReadView flat;
     {
       std::string resolve_error;
-      if (!flat_fieldsets_.Resolve(&flat_copy, &flat, &resolve_error)) {
+      if (!flat_fieldsets_.ResolveReadOnly(&flat, &resolve_error)) {
         // The writer-level spill I/O flag aborts the finish; leave the
         // payload incomplete rather than corrupt the shared result from this
         // thread.
@@ -132,7 +144,7 @@
     const uint64_t flat_count = flat_fieldsets_.size();
     out.write_u64(flat_count);
     // Use Usd_IntegerCompression (delta + LZ4)
-    WriteCompressedDeltaU32(out, flat, static_cast<size_t>(flat_count));
+    WriteCompressedDeltaU32(out, flat.data(), static_cast<size_t>(flat_count));
   }
 
   // Pre-order rank of a path character: the structural separators sort below
@@ -505,12 +517,21 @@
     }
     std::vector<uint32_t>().swap(parent);
 
-    // Build 3 arrays: path indices (the pre-order itself), element token
+    // Build 3 columns: path indices (the pre-order itself), element token
     // indices (negated for a property), jump indices:
     //   jump  > 0 : child (next node) AND sibling (at +jump = subtree size)
     //   jump == 0 : sibling only;  -1: child only;  -2: leaf
-    std::vector<uint32_t> element_tokens(order.size());
-    std::vector<uint32_t> jump_indices(order.size());
+    // On large memory-saving writes, reuse the node-indexed offset/subtree
+    // arrays for tokens/jumps. Their original entries are dead after this
+    // node's token lookup and jump calculation; no node reads another node's
+    // entry here. Projecting through order avoids two full preorder copies.
+    // Keep small/default writes on the existing contiguous codec path.
+    const bool project_paths = num_paths >= kMinLowMemoryDeltaCount &&
+        (serial_sections_ || options_.spill_columns_bytes != 0);
+    std::vector<uint32_t> element_tokens(project_paths ? 0 : order.size());
+    std::vector<uint32_t> jump_indices(project_paths ? 0 : order.size());
+    auto& token_nodes = project_paths ? elem_off : element_tokens;
+    auto& jump_nodes = project_paths ? subtree : jump_indices;
     // Every element token was registered by RegisterPathElementTokens before
     // TOKENS was built, so the slices only look tokens up (the table is read
     // concurrently by the TOKENS payload build). A miss cannot be encoded.
@@ -530,7 +551,8 @@
         int32_t tok = static_cast<int32_t>(tok_id);
         // Property element tokens are negated (pxr's is_property marker).
         if (!root && (flags[node] & kProp)) tok = -tok;
-        element_tokens[k] = static_cast<uint32_t>(tok);
+        const size_t column_index = project_paths ? node : k;
+        token_nodes[column_index] = static_cast<uint32_t>(tok);
         const bool has_child = subtree[node] > 1;
         const bool has_sibling = (flags[node] & kSibling) != 0;
         int32_t jump;
@@ -543,16 +565,35 @@
         } else {
           jump = -2;
         }
-        jump_indices[k] = static_cast<uint32_t>(jump);
+        jump_nodes[column_index] = static_cast<uint32_t>(jump);
       }
     };
     ParallelRanges(order.size(), 100000, [&](size_t, size_t lo, size_t hi) {
       build_nodes(lo, hi);
     });
     if (token_miss.load()) return false;
+    std::vector<uint8_t>().swap(flags);
+
+    if (project_paths) {
+      // All lookups and node mutations have joined. Codec accessors may now
+      // revisit entries concurrently, but see only immutable scalar columns.
+      // Serialize these columns to bound codec scratch in the low-memory path.
+      // Use exact-size encoding for the preorder too, including columns
+      // below the contiguous encoder's large-input threshold.
+      WriteCompressedProjectedU32(out, order.size(), [&](size_t k) {
+        return order[k];
+      });
+      WriteCompressedProjectedU32(out, order.size(), [&](size_t k) {
+        return elem_off[order[k]];
+      });
+      std::vector<uint32_t>().swap(elem_off);
+      WriteCompressedProjectedU32(out, order.size(), [&](size_t k) {
+        return subtree[order[k]];
+      });
+      return true;
+    }
     std::vector<uint32_t>().swap(subtree);
     std::vector<uint32_t>().swap(elem_off);
-    std::vector<uint8_t>().swap(flags);
 
     // Write 3 compressed arrays using Usd_IntegerCompression (delta + LZ4),
     // each released once written.
@@ -589,44 +630,42 @@
     uint64_t num_specs = specs_.size();
     out.write_u64(num_specs);
 
-    // Rebuild the (possibly spilled) columns contiguously. A spilled spec /
-    // fieldset-offset column returns through one private pread copy; the
-    // unspilled shapes alias as before.
-    std::unique_ptr<CrateSpec[]> spec_copy;
-    const CrateSpec* spec_arr = nullptr;
-    std::unique_ptr<uint32_t[]> fs_off_copy;
-    const uint32_t* fs_off = nullptr;
+    // Read spilled specs/offsets through file-backed views without allocating
+    // a second full-size input array. Single resident chunks keep the alias path.
+    SpillVec<CrateSpec>::ReadView spec_view;
+    SpillVec<uint32_t>::ReadView fs_view;
     {
       std::string resolve_error;
-      if (!specs_.Resolve(&spec_copy, &spec_arr, &resolve_error) ||
-          !fieldset_offsets_.Resolve(&fs_off_copy, &fs_off, &resolve_error)) {
+      if (!specs_.ResolveReadOnly(&spec_view, &resolve_error)) {
         return;  // io flag aborts below
       }
     }
+    const CrateSpec* spec_arr = spec_view.data();
 
-    // Compress each column before reusing its storage for the next. Keeping
-    // all three columns live together costs eight extra bytes per spec and
-    // provides no benefit to the independent, ordered codec calls below.
-    std::vector<uint32_t> indices(num_specs);
-    for (size_t i = 0; i < num_specs; i++) {
-      indices[i] = spec_arr[i].path_index.value;
-    }
-    WriteCompressedDeltaU32(out, indices.data(), num_specs);
+    // Project directly from the immutable spec view. The delta encoder sizes
+    // its output before filling it, without a full u32 projection or delta
+    // scratch array. Keep fieldset offsets live only for their own column.
+    WriteCompressedProjectedU32(out, num_specs, [spec_arr](size_t i) {
+      return spec_arr[i].path_index.value;
+    });
 
     // Offsets were recorded when each fieldset was appended.
-    for (size_t i = 0; i < num_specs; i++) {
+    {
+      std::string resolve_error;
+      if (!fieldset_offsets_.ResolveReadOnly(&fs_view, &resolve_error)) return;
+    }
+    const uint32_t* fs_off = fs_view.data();
+    const size_t fs_count = fieldset_offsets_.size();
+    WriteCompressedProjectedU32(out, num_specs, [spec_arr, fs_off, fs_count](size_t i) {
       // Convert fieldset number → flat array offset
       uint32_t fs_num = spec_arr[i].fieldset_index.value;
-      indices[i] = (fs_num < fieldset_offsets_.size())
-                       ? fs_off[fs_num]
-                       : 0;
-    }
-    WriteCompressedDeltaU32(out, indices.data(), num_specs);
+      return (fs_num < fs_count) ? fs_off[fs_num] : 0;
+    });
+    fs_view.Reset();
 
-    for (size_t i = 0; i < num_specs; i++) {
-      indices[i] = static_cast<uint32_t>(spec_arr[i].spec_type);
-    }
-    WriteCompressedDeltaU32(out, indices.data(), num_specs);
+    WriteCompressedProjectedU32(out, num_specs, [spec_arr](size_t i) {
+      return static_cast<uint32_t>(spec_arr[i].spec_type);
+    });
   }
 
   void _PatchTimeSamplesBlock(uint64_t data_idx) {

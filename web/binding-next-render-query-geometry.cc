@@ -50,9 +50,8 @@ int RenderStream::meshField(int mesh_id, uint8_t field) {
         static_cast<size_t>(source_index) < meshes_.size()) {
       bool soup = false;
       std::string mesh_error;
-      built_source = buildRenderMesh_(meshes_[static_cast<size_t>(source_index)].GetPrim(),
-                                      &soup, &mesh_error);
-      (void)mesh_error;
+      built_source = prepareCopyMesh_(mesh_id, source_index, &soup, &mesh_error);
+      if (!built_source) mesh_view_error_ = mesh_error;
     }
     const size_t vertices = output ? output->points.size() / 3
                                    : (built_source ? s_points_.size() / 3
@@ -132,9 +131,8 @@ int RenderStream::meshBufferCopy(int mesh_id, uint8_t kind, uint8_t* out,
         static_cast<size_t>(source_index) < meshes_.size()) {
       bool soup = false;
       std::string mesh_error;
-      built_source = buildRenderMesh_(meshes_[static_cast<size_t>(source_index)].GetPrim(),
-                                      &soup, &mesh_error);
-      (void)mesh_error;
+      built_source = prepareCopyMesh_(mesh_id, source_index, &soup, &mesh_error);
+      if (!built_source) mesh_view_error_ = mesh_error;
     }
 
     size_t count = 0;
@@ -229,14 +227,11 @@ int RenderStream::meshBufferCopy(int mesh_id, uint8_t kind, uint8_t* out,
     if (contiguous) {
       std::memcpy(out, contiguous, bytes);
     } else if (chunked) {
-      for (size_t i = 0; i < count; ++i)
-        std::memcpy(out + i * element_size, &(*chunked)[i], element_size);
+      if (!chunked->copy_bytes_to(out, cap)) return -1;
     } else if (indices) {
-      for (size_t i = 0; i < count; ++i)
-        std::memcpy(out + i * element_size, &(*indices)[i], element_size);
+      if (!indices->copy_bytes_to(out, cap)) return -1;
     } else {
-      for (size_t i = 0; i < count; ++i)
-        std::memcpy(out + i * element_size, &(*joint_indices)[i], element_size);
+      if (!joint_indices->copy_bytes_to(out, cap)) return -1;
     }
     return required;
 }
@@ -256,11 +251,7 @@ int RenderStream::pointsBufferCopy(int points_id, uint8_t kind, uint8_t* out,
     if (bytes > static_cast<size_t>((std::numeric_limits<int>::max)())) return -1;
     const int required = static_cast<int>(bytes);
     if (!out || cap < bytes || bytes == 0) return required;
-    if (values->is_contiguous()) {
-      std::memcpy(out, values->chunk_data(0), bytes);
-    } else {
-      for (size_t i = 0; i < values->size(); ++i) std::memcpy(out + i * sizeof(float), &(*values)[i], sizeof(float));
-    }
+    if (!values->copy_bytes_to(out, cap)) return -1;
     return required;
 }
 
@@ -318,10 +309,8 @@ int RenderStream::curvesBufferCopy(int curves_id, uint8_t kind, uint8_t* out,
     if (!out || cap < bytes || bytes == 0) return required;
     if (counts) {
       std::memcpy(out, counts->data(), bytes);
-    } else if (values->is_contiguous()) {
-      std::memcpy(out, values->chunk_data(0), bytes);
     } else {
-      for (size_t i = 0; i < values->size(); ++i) std::memcpy(out + i * sizeof(float), &(*values)[i], sizeof(float));
+      if (!values->copy_bytes_to(out, cap)) return -1;
     }
     return required;
 }
