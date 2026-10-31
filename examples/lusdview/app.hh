@@ -27,7 +27,7 @@
 #include "viewer_document.hh"
 #include "lightusd-render-cpp.hh"
 
-#include "camera_nav.hh"
+#include "light3d/camera-nav.hh"
 #include "cpu/cpu_raytracer.hh"
 #include "cuda/cuda_raytracer.hh"
 #include "gpu_scene.hh"
@@ -55,6 +55,13 @@ struct GLFWwindow;
 
 namespace lightusd { namespace next { class Stage; } }
 namespace lusdview {
+
+// The orbit camera is shared with examples/lmetalview
+// (examples/common/light3d/camera-nav.hh).
+using light3d::CameraConform;
+using light3d::CameraProjection;
+using light3d::CameraViewPreset;
+using light3d::OrbitCamera;
 class ViewerDocument;
 
 // Encode an RGBA8 (top-down) buffer to an image file; format chosen by extension

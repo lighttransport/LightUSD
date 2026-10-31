@@ -113,7 +113,7 @@ set(LUSDVIEW_SOURCES
     skinning.cc
     ${PROJECT_SOURCE_DIR}/examples/vchar/autorigger_client.cc
     vchar_control_map.cc
-    camera_nav.cc
+    ${COMMON_DIR}/light3d/camera-nav.cc
     camera_stereo.cc
     frame_packet.cc
     gui.cc
@@ -578,7 +578,7 @@ if(LIGHTUSD_BUILD_TESTS)
 
   add_executable(lusdview_camera_nav_test
       tests/camera_nav_test.cc
-      camera_nav.cc
+      ${COMMON_DIR}/light3d/camera-nav.cc
       ${COMMON_DIR}/light3d/math.cpp)
   target_compile_features(lusdview_camera_nav_test PRIVATE cxx_std_17)
   lusdview_set_warning_flags(lusdview_camera_nav_test)
