@@ -551,6 +551,18 @@ ctest -R roundtrip --output-on-failure
 ctest --output-on-failure -LE benchmark
 ```
 
+## Native Metal viewer regression (macOS)
+
+With the GUI viewer and tests enabled, build `lusdview_metal_renderer_test` and
+run `ctest --test-dir build_ninja -R '^lusdview-metal-'
+--output-on-failure`. This windowless GPU test checks depth, transforms,
+instancing, visibility, sampled textures and streaming bounds, eviction,
+clipping, resize and ImGui composition with a dynamic font atlas. The Python integration test also verifies default/explicit backend selection, USD
+loading, capability reporting and scene/UI captures. No Metal device
+returns skip code 77; shader or pixel failures fail. Run with GPU access when a
+sandbox hides Metal devices. See [Native Metal on macOS](lusdview.md#native-metal-on-macos)
+for configuration, CLI screenshots and current feature limits.
+
 ## Regression Test Procedure
 
 Local edits can require composition even when a layer has no external arcs.

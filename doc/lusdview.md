@@ -1,6 +1,6 @@
 # lusdview — build & GPU debugging
 
-`lusdview` is the interactive OpenGL/Vulkan USD viewer example
+`lusdview` is the interactive OpenGL/Vulkan/Metal USD viewer example
 (`examples/lusdview/`). This page covers building it and the Vulkan
 **validation-layer** workflow used to debug the GPU/threaded paths. For the
 feature set, CLI flags, config and MCP server, see
@@ -69,6 +69,61 @@ product does not create the `lusdview` target.
 
   See [`threading-stage2.md`](../examples/lusdview/doc/threading-stage2.md). When
   OFF, the thread flags are no-ops and the single-threaded path is unchanged.
+
+## Native Metal on macOS
+
+On macOS, `-DLUSDVIEW_WITH_METAL=ON` (the default) builds a native Metal
+renderer and selects it by default, including with the next loader. It uses the
+already vendored Apple `examples/common/metalcpp/Metal/Metal.hpp` C++ binding
+([Apple metal-cpp](https://developer.apple.com/metal/cpp/)). GPU commands dispatch
+directly through the Objective-C runtime. A small Objective-C++ file attaches a
+`CAMetalLayer` to the GLFW Cocoa window; no MoltenVK or Vulkan SDK is involved.
+Shaders compile from embedded Metal source at startup, so the Xcode command-line
+shader compiler is not required.
+
+```sh
+cmake -S . -B build_ninja -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DLIGHTUSD_NATIVE_PRODUCT=legacy -DLIGHTUSD_BUILD_EXAMPLES=ON \
+  -DLIGHTUSD_BUILD_GUI_VIEWER=ON -DLIGHTUSD_BUILD_TESTS=ON \
+  -DLUSDVIEW_WITH_METAL=ON -DLUSDVIEW_WITH_VULKAN=OFF
+cmake --build build_ninja --target lusdview lusdview_metal_renderer_test -j8
+./build_ninja/lusdview --backend metal models/suzanne-pbr.usda
+./build_ninja/lusdview --backend metal --headless --frames 4 \
+  --size 640x480 --screenshot /tmp/metal.ppm models/suzanne-pbr.usda
+ctest --test-dir build_ninja -R '^lusdview-metal-' --output-on-failure
+```
+
+`--backend mtl` is an alias. View → Render Technique → Metal Raster switches
+backends at runtime when the current owner is running without `--threaded`.
+Cocoa UI sizes use logical points; the Retina framebuffer scales raster targets
+without doubling the default font/widget sizes. Explicit `--ui-scale` remains
+available. Metal runs on the main thread; `--threaded` applies to GL/Vulkan only.
+The bundled GLFW retries missing Cocoa screens and falls back to Core Graphics
+display bounds for workarea queries during display reconfiguration or remote
+sessions. Menu-bar and Dock insets are used when an `NSScreen` is available.
+Headless Metal renders both the viewport and ImGui composite into readable offscreen
+textures without a Cocoa window. CPU ray tracing can upload its image to the
+Metal viewport through the common renderer interface.
+
+The initial Metal renderer supports indexed polygon meshes, material subsets,
+GPU instancing and per-instance colors/opacity, vertex colors, constant
+metallic/roughness/emissive materials, base-color RGBA8 textures (including sRGB
+decode), live texture region updates/eviction, CPU-deformed vertex updates,
+world transforms, visibility, user clipping planes, wireframe, helper/selection
+lines, common debug AOVs, Retina presentation and screenshot readback. Shading
+uses a directional-light GGX preview; it does not yet match the full GL/Vulkan
+lighting and MaterialX pipelines. Points/curves/volumes, Metal ray tracing,
+GPU skinning, advanced texture semantics, mipmapped filtering and sorted/OIT
+transparency are not implemented. Alpha blending currently follows draw order.
+The backend reports these GPU features as unavailable.
+
+The `lusdview-metal-viewer` integration test also checks default backend selection,
+both CLI aliases, USD loading, capability reporting and full UI screenshots.
+The GPU regression checks actual readback pixels for occlusion, visibility,
+transforms, instancing, texture streaming/eviction, clipping, target resize and
+ImGui's dynamic font atlas. It skips only when no Metal device is visible; shader
+or render failures fail the test. Sandboxed sessions may hide the GPU: run the
+same test with GPU access before treating a skip as hardware verification.
 
 ## Vulkan run test (verified working on NVIDIA)
 
