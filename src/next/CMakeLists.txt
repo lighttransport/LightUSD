@@ -554,7 +554,7 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     # would compile those out and make the tests vacuous. Re-enable asserts for
     # everything defined below (directory-scoped; -UNDEBUG is appended after the
     # build-type flags so it wins). The library above keeps its NDEBUG/-O flags.
-    add_compile_options(-UNDEBUG)
+    add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-UNDEBUG>")
 
     add_executable(test_lightusd_next
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_next.cc
@@ -1057,6 +1057,18 @@ if(LIGHTUSD_WITH_TYDRA)
                                  PROPERTIES LABELS "next;c-api;render")
         endif()
     endif()
+endif()
+
+# Native macOS viewer example (Swift + Metal). next + tydra_next only; the
+# shaders are compiled by the Metal driver at runtime, so no offline Metal
+# toolchain is needed. Works in every native-next build (legacy product builds
+# do not add this subdirectory).
+option(LIGHTUSD_NEXT_BUILD_LMETALVIEW
+       "Build the native macOS Swift+Metal USD viewer example 'lmetalview'"
+       ${LIGHTUSD_NEXT_BUILD_EXAMPLES})
+if(LIGHTUSD_NEXT_BUILD_LMETALVIEW AND LIGHTUSD_WITH_TYDRA AND
+   CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    add_subdirectory(../../examples/lmetalview lmetalview_example)
 endif()
 
 # Native MJCF -> USD converter on the next converter and writers (the same

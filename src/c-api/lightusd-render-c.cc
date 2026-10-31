@@ -2204,12 +2204,16 @@ lightusd_status lightusd_render_mesh_buffer(lightusd_render_scene* scene, int32_
                              out);
     case LIGHTUSD_MESH_BUF_JOINT_INDICES:
       if (!m->skin) return Fail(LIGHTUSD_ERR_NOT_FOUND, "mesh has no skin");
-      return ViewFromChunked(scene, m->skin->joint_indices, key,
-                             LIGHTUSD_COMP_UINT16, 4, out);
+      return ViewFromChunked(
+          scene, m->skin->joint_indices, key, LIGHTUSD_COMP_UINT16,
+          m->skin->influences_per_vertex ? m->skin->influences_per_vertex : 4u,
+          out);
     case LIGHTUSD_MESH_BUF_JOINT_WEIGHTS:
       if (!m->skin) return Fail(LIGHTUSD_ERR_NOT_FOUND, "mesh has no skin");
-      return ViewFromChunked(scene, m->skin->joint_weights, key,
-                             LIGHTUSD_COMP_FLOAT32, 4, out);
+      return ViewFromChunked(
+          scene, m->skin->joint_weights, key, LIGHTUSD_COMP_FLOAT32,
+          m->skin->influences_per_vertex ? m->skin->influences_per_vertex : 4u,
+          out);
     default:
       return Fail(LIGHTUSD_ERR_INVALID_ARG, "unknown mesh buffer kind");
   }
@@ -2361,6 +2365,46 @@ lightusd_status lightusd_render_mesh_primvar_buffer(lightusd_render_scene* scene
   }
 }
 
+lightusd_status lightusd_render_mesh_skin_binding(
+    const lightusd_render_scene* scene, int32_t mesh_id,
+    lightusd_render_mesh_skin_info* out) {
+  if (!scene || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "scene/out is null");
+  const td::RenderMesh* m = MeshAt(scene, mesh_id);
+  if (!m) return Fail(LIGHTUSD_ERR_NOT_FOUND, "mesh id out of range");
+  std::memset(out, 0, sizeof(*out));
+  out->geom_bind_transform[0] = 1.0;
+  out->geom_bind_transform[5] = 1.0;
+  out->geom_bind_transform[10] = 1.0;
+  out->geom_bind_transform[15] = 1.0;
+  out->influences_per_vertex = 4;
+  if (!m->skin) {
+    out->skeleton_id = -1;
+    return LIGHTUSD_OK;
+  }
+  out->skeleton_id = m->skin->skeleton_id;
+  out->influences_per_vertex = m->skin->influences_per_vertex
+                                   ? m->skin->influences_per_vertex
+                                   : 4u;
+  for (size_t i = 0; i < 16; ++i) {
+    out->geom_bind_transform[i] =
+        static_cast<double>(m->skin->geom_bind_transform.m[i]);
+  }
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_render_mesh_blendshape_indices(
+    lightusd_render_scene* scene, int32_t mesh_id, size_t bs_index,
+    lightusd_buffer_view* out) {
+  if (!scene || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "scene/out is null");
+  const td::RenderMesh* m = MeshAt(scene, mesh_id);
+  if (!m) return Fail(LIGHTUSD_ERR_NOT_FOUND, "mesh id out of range");
+  if (bs_index >= m->blend_shapes.size()) {
+    return Fail(LIGHTUSD_ERR_NOT_FOUND, "blend shape index out of range");
+  }
+  const auto& bs = m->blend_shapes[bs_index];
+  return ViewFromVector(bs.point_indices, LIGHTUSD_COMP_UINT32, 1, out);
+}
+
 lightusd_status lightusd_render_mesh_blendshape(lightusd_render_scene* scene,
                                         int32_t mesh_id, size_t bs_index,
                                         uint8_t which, lightusd_sv* name,
@@ -2464,6 +2508,24 @@ lightusd_status lightusd_render_conversion_diagnostic_get(
   out->disposition = static_cast<uint8_t>(diagnostic.disposition);
   out->prim_path = SV(diagnostic.prim_path);
   out->message = SV(diagnostic.message);
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_render_material_normal_scales(
+    const lightusd_render_scene* scene, int32_t id, float* normal_map_scale,
+    float* coat_normal_map_scale) {
+  if (!scene) return Fail(LIGHTUSD_ERR_INVALID_ARG, "scene is null");
+  const td::RenderMaterial* mat = scene->data().get_material(id);
+  if (!mat) return Fail(LIGHTUSD_ERR_NOT_FOUND, "material id out of range");
+  if (normal_map_scale) *normal_map_scale = 1.0f;
+  if (coat_normal_map_scale) *coat_normal_map_scale = 1.0f;
+  if (mat->shader_type == td::RenderMaterial::ShaderType::OpenPBR &&
+      mat->openpbr) {
+    if (normal_map_scale) *normal_map_scale = mat->openpbr->normal_map_scale;
+    if (coat_normal_map_scale) {
+      *coat_normal_map_scale = mat->openpbr->coat_normal_map_scale;
+    }
+  }
   return LIGHTUSD_OK;
 }
 
@@ -2680,6 +2742,17 @@ lightusd_status lightusd_render_light_get_info(const lightusd_render_scene* scen
       break;
   }
   out->shaping_ies_file = SV(l.shaping_ies_file);
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_render_light_dome_texture_id(
+    const lightusd_render_scene* scene, int32_t id, int32_t* out) {
+  if (!scene || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "scene/out is null");
+  if (id < 0 || static_cast<size_t>(id) >= scene->data().lights.size()) {
+    return Fail(LIGHTUSD_ERR_NOT_FOUND, "light id out of range");
+  }
+  const td::RenderLight& light = scene->data().lights[static_cast<size_t>(id)];
+  *out = light.type == td::LightType::Dome ? light.params.dome.texture_id : -1;
   return LIGHTUSD_OK;
 }
 

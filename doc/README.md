@@ -48,6 +48,8 @@ documents live in [archive/](archive/).
 - [workflow-tools.md](workflow-tools.md) — Dependency reports, property traces, checker baselines/SARIF, recursive diff, static GLB and CPU capture workflows.
 
 - [lusdview.md](lusdview.md) — `lusdview` build & GPU debugging notes.
+- [lmetalview](../examples/lmetalview/README.md) — native macOS Swift + Metal
+  Quick Look-style viewer (`next` product only).
 - [lusdview-tasks.md](lusdview-tasks.md) — `lusdview`/`lusdrender` open tasks
   and working notes (incl. the external usd-assets run log).
 - [lusdrender.md](lusdrender.md) — `lusdrender` GPU backend testing.
