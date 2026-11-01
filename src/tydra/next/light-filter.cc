@@ -3,6 +3,7 @@
 #include "light-filter.hh"
 
 #include <algorithm>
+#include <cstdio>
 #include <cmath>
 #include <map>
 #include <mutex>

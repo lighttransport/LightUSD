@@ -311,6 +311,7 @@ if(NOT MSVC)
 endif()
 target_link_libraries(lightusd_gpu_rt_common PUBLIC
     ${LIGHTUSD_TARGET_STATIC}
+    tydra_next
     ${CMAKE_DL_LIBS})
 if(Threads_FOUND)
   target_link_libraries(lightusd_gpu_rt_common PUBLIC Threads::Threads)
@@ -441,6 +442,7 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
+  target_link_libraries(lusdview_lightrt_bridge_test PRIVATE tydra_next)
   if(UNIX AND NOT APPLE)
     find_package(Threads REQUIRED)
     target_link_libraries(lusdview_lightrt_bridge_test PRIVATE Threads::Threads)
@@ -464,7 +466,8 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(lusdview_openpbr_material_test PRIVATE
-      ${LIGHTUSD_TARGET_STATIC})
+      ${LIGHTUSD_TARGET_STATIC}
+      tydra_next)
   if(UNIX AND NOT APPLE)
     target_link_libraries(lusdview_openpbr_material_test PRIVATE Threads::Threads)
   endif()
@@ -513,7 +516,8 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(lusdview_geometry_primvar_test PRIVATE
-      ${LIGHTUSD_TARGET_STATIC})
+      ${LIGHTUSD_TARGET_STATIC}
+      tydra_next)
   if(UNIX AND NOT APPLE)
     target_link_libraries(lusdview_geometry_primvar_test PRIVATE Threads::Threads)
   endif()
@@ -535,7 +539,8 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(lusdview_texture_pipeline_test PRIVATE
-      ${LIGHTUSD_TARGET_STATIC})
+      ${LIGHTUSD_TARGET_STATIC}
+      tydra_next)
   if(UNIX AND NOT APPLE)
     target_link_libraries(lusdview_texture_pipeline_test PRIVATE Threads::Threads)
   endif()

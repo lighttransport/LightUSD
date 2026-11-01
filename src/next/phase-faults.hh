@@ -17,7 +17,7 @@ struct FaultCounters {
   unsigned long major = 0;
 };
 
-#if !defined(__EMSCRIPTEN__)
+#if !defined(__EMSCRIPTEN__) && (defined(__unix__) || defined(__APPLE__))
 }  // namespace next
 }  // namespace lightusd
 
@@ -29,7 +29,7 @@ namespace next {
 
 inline FaultCounters ReadFaultCounters() {
   FaultCounters out;
-#if !defined(__EMSCRIPTEN__)
+#if !defined(__EMSCRIPTEN__) && (defined(__unix__) || defined(__APPLE__))
   struct rusage usage {};
   if (::getrusage(RUSAGE_SELF, &usage) == 0) {
     out.minor = static_cast<unsigned long>(usage.ru_minflt);
