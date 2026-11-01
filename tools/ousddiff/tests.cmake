@@ -11,6 +11,15 @@ if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_NEXT_BUILD_TESTS)
                        -s "${PROJECT_SOURCE_DIR}/tools/ousddiff" -v)
       set_tests_properties(tool-ousddiff-harness PROPERTIES
                            LABELS "tools;ousddiff;python;cpu" TIMEOUT 60)
+      option(LIGHTUSD_OUSDDIFF_AMD_TESTS "Run tiny offscreen AMD hardware integration" OFF)
+      if(LIGHTUSD_OUSDDIFF_AMD_TESTS)
+        add_test(NAME tool-ousddiff-amd-hardware
+                 COMMAND "${CMAKE_COMMAND}" -E env OUSDDIFF_RUN_AMD_INTEGRATION=1
+                         "${Python3_EXECUTABLE}" -m unittest discover
+                         -s "${PROJECT_SOURCE_DIR}/tools/ousddiff" -p test_gpu_integration.py -v)
+        set_tests_properties(tool-ousddiff-amd-hardware PROPERTIES
+                             LABELS "tools;ousddiff;gpu;amd" TIMEOUT 240)
+      endif()
       option(LIGHTUSD_OUSDDIFF_EXTERNAL_TESTS "Run external ousddiff 1-percent CPU probe" OFF)
       if(LIGHTUSD_OUSDDIFF_EXTERNAL_TESTS)
         add_test(NAME tool-ousddiff-assets-probe

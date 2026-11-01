@@ -34,11 +34,29 @@ def executable(value, base):
     return shutil.which(value) or value
 
 
-def load(path, presets=None):
+def load(path, presets=None, profile=None):
     path = Path(path).resolve()
     config = json.loads(path.read_text())
     if not isinstance(config, dict):
         raise ValueError('configuration must be a JSON object')
+    if not isinstance(config.get('profiles', {}), dict):
+        raise ValueError('profiles must be an object')
+    if profile:
+        override = config.get('profiles', {}).get(profile)
+        if not isinstance(override, dict):
+            raise ValueError('unknown or invalid profile: ' + profile)
+        config = copy.deepcopy(config)
+        for key, value in override.items():
+            if key in ('profiles', 'schema_version'):
+                raise ValueError('profiles cannot override ' + key)
+            if key in ('render', 'resources', 'openusd') and isinstance(value, dict):
+                original = config.get(key, {})
+                if not isinstance(original, dict):
+                    raise ValueError(key + ' must be an object')
+                config[key] = dict(original, **value)
+            else:
+                config[key] = value
+        config['_profile'] = profile
     for key in ('datasets', 'cases', 'renderers', 'pairs'):
         if key in config and not isinstance(config[key], list):
             raise ValueError(key + ' must be an array')
@@ -82,6 +100,14 @@ def load(path, presets=None):
             renderer['argv'][0] = executable(renderer['argv'][0], base)
         else:
             renderer['executable'] = executable(renderer['executable'], base)
+        for key in ('device_pattern', 'backend_pattern'):
+            if key in renderer:
+                if not isinstance(renderer[key], str):
+                    raise ValueError(key + ' must be a regular-expression string')
+                try:
+                    re.compile(renderer[key])
+                except re.error as exc:
+                    raise ValueError('invalid ' + key + ': ' + str(exc)) from exc
         renderer['env'] = {k: os.path.expanduser(os.path.expandvars(v.replace('{repo}', str(REPO)))) for k, v in renderer.get('env', {}).items()}
     names = [r['name'] for r in config['renderers']]
     if len(set(names)) != len(names):

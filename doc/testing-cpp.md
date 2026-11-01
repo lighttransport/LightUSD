@@ -3174,3 +3174,16 @@ ctest --test-dir build_ninja -R '^tool-ousddiff-harness$' --output-on-failure
 `LIGHTUSD_OUSDDIFF_EXTERNAL_TESTS=ON` additionally registers an optional 1% CPU
 USD-assets probe; absent datasets return CTest skip code 77. Full-corpus and
 complete large-scene runs require explicit invocation.
+
+For the AMD hardware matrix, use `--profile amd`. This selects Storm, Vulkan
+compute, and Vulkan ray queries with explicit AMD-device/backend checks. Run
+outside the managed sandbox when `/dev/dri` is hidden. The opt-in
+`LIGHTUSD_OUSDDIFF_AMD_TESTS=ON` CMake option registers
+`tool-ousddiff-amd-hardware`, a tiny offscreen test requiring real AMD hardware.
+
+Use `--failed-from <results.json>` to retry unexpected failures only, including
+individual failed animation frames. The runner writes `failed_ids.json` and
+structured diagnostic codes; JSON summaries and HTML filters distinguish
+unsupported geometry, MaterialX failures, context/device failures and visual
+threshold failures. These details and the profile configuration rules are in
+the tool README.

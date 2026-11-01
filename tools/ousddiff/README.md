@@ -265,3 +265,75 @@ Storm and Vulkan. The USD-assets probe retained a Storm MaterialX nodedef error
 and two lusdrender inputs without supported Mesh geometry as failures. An
 explicit MaterialX standard-library search path did not resolve the Storm
 fixture error. These are separate from GPU device availability.
+
+### Named profiles and failure reruns
+
+`--profile amd` selects the checked-in hardware matrix: Storm, Vulkan compute,
+and Vulkan ray queries. It requires an AMD Radeon device, selects the Radeon
+Vulkan ICD for native GPU jobs, and requires `ray_query` in the vkr backend's
+reported identity. `--renderers storm,vk` optionally narrows that matrix.
+Dataset selection (`--preset`) and full-scene exclusion still apply separately.
+Run the profile in the authorized host context with GPU device access:
+
+```sh
+python3 tools/ousddiff/runner.py run --profile amd --preset usd-assets \
+  --mode probe --sample-percent 1 --no-full-scenes --max-input-mib 16 \
+  --out /tmp/ousddiff-amd
+
+# Retry only failed inputs, preserving individual failed frame IDs.
+python3 tools/ousddiff/runner.py run --profile amd --preset usd-assets \
+  --mode probe --sample-percent 1 --no-full-scenes --max-input-mib 16 \
+  --failed-from /tmp/ousddiff-amd/results.json --out /tmp/ousddiff-amd-retry
+```
+
+Named profiles live under the config's `profiles` object. A profile replaces
+list sections such as `renderers` and `pairs`; `render`, `resources`, and
+`openusd` object values merge with the base settings. Paths are still resolved
+relative to the configuration file. Renderer `device_pattern` and
+`backend_pattern` are case-insensitive regular-expression searches. For an
+explicit RX 9070 XT requirement, set `device_pattern` to `Radeon RX 9070 XT`.
+The recorded identity always identifies the device actually used.
+
+Results now contain per-attempt `diagnostics`, per-case `failure_codes`, and
+aggregate `summary.failure_code_counts`. Nonfatal shader warnings stay
+informational. Important codes include:
+
+| Code | Meaning |
+|---|---|
+| `no_renderable_geometry` | The candidate found no supported geometry, including successful exits that wrote blank fallback images. |
+| `materialx_nodedef_missing` | Shader generation could not find a MaterialX node definition. |
+| `materialx_interface_mismatch` | The generated material inputs do not match their declaration. |
+| `graphics_context_unavailable` | The offscreen OpenGL/Qt context or display could not initialize. |
+| `device_mismatch` / `backend_mismatch` | Reported identity did not match the configured requirement. |
+| `software_device` / `backend_fallback` | Hardware was required but a software device or fallback was selected. |
+
+Failed render summaries retain their last attempt's wall time and RSS even
+when no repetition completed. `measurement_kind` distinguishes `failed_attempt`
+from `median_successful`; `total_wall_s` includes every attempted repetition and
+warmup. `image_attempt` identifies which attempt supplied a retained image.
+Successful timing/RSS medians continue to exclude warmups. Renderer summary
+`total_attempt_wall_s` includes failed attempts and warmups as well.
+
+The complete logs remain on disk; excerpts are bounded and classification reads
+only the last 256 KiB of each log to bound parent memory. New failure codes do
+not change visual thresholds or turn warnings into failures automatically.
+
+`failed_ids.json` and `results.json.failed_ids` contain unexpected failures only;
+expected failures and support/empty inputs are excluded. The HTML report can
+filter by failure code and download the failing ID list. Pass that list to
+`--cases-from`, or pass the original results to `--failed-from`. IDs with
+`#frame=...` retain their original frame; combining them with a new `--frames`
+range is rejected. Eligibility filters remain enforced on reruns. A clean
+`--failed-from` report exits successfully without launching any renderers.
+
+The dedicated tiny AMD integration test is opt-in:
+
+```sh
+OUSDDIFF_RUN_AMD_INTEGRATION=1 python3 -m unittest discover \
+  -s tools/ousddiff -p test_gpu_integration.py -v
+```
+
+CMake's `LIGHTUSD_OUSDDIFF_AMD_TESTS=ON` registers the same hardware test as
+`tool-ousddiff-amd-hardware`; run it in a host context with render-node access.
+It verifies actual device identity and ray-query operation without loading a
+complete large scene.

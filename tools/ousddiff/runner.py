@@ -15,6 +15,7 @@ import sys
 
 from config import HERE, REPO, digest, inventory, load, metadata, sample
 from images import compare, gate, validate
+from diagnostics import SUCCESS_STATUSES, annotate_execution, failure_codes, hardware_error, read_log
 from report import report
 from supervisor import execute, parse_stats
 
@@ -50,7 +51,7 @@ def limits(config):
 
 def run_command(argv, directory, config, env=None):
     policy = limits(config)
-    return execute(argv, directory, policy.pop('timeout_s'), env, **policy)
+    return annotate_execution(execute(argv, directory, policy.pop('timeout_s'), env, **policy))
 
 
 def prepare_case(row, config, directory):
@@ -187,16 +188,17 @@ def render_once(renderer, prepared, settings, directory, config, display):
             row['image'] = str(image)
         except (OSError, ValueError) as exc:
             row.update(status='invalid_image', error=str(exc))
-    try:
-        log = Path(row['stderr']).read_text(errors='replace')
-        stats = parse_stats(log)
-        row['stats'] = stats
-        if renderer.get('require_hardware') and (stats['software_device'] or stats['fallback']):
-            row.update(status='backend_mismatch', error='software device or backend fallback rejected')
-        if renderer.get('kind') == 'lusdrender' and renderer.get('require_hardware') and not stats.get('device') and row['status'] == 'ok':
-            row.update(status='backend_mismatch', error='hardware identity missing from renderer output')
-    except OSError:
-        pass
+    stats = parse_stats(read_log(row.get('stderr')))
+    row['stats'] = stats
+    codes = {d['code'] for d in row.get('diagnostics', [])}
+    if 'no_renderable_geometry' in codes and row['status'] in ('ok', 'render_error'):
+        row.update(status='no_renderable_geometry', error='renderer found no supported renderable geometry')
+    if row['status'] == 'ok':
+        mismatch = hardware_error(renderer, stats)
+        if mismatch:
+            code, message = mismatch
+            row.update(status='backend_mismatch', error=message)
+            row.setdefault('diagnostics', []).append({'code': code, 'occurrences': 1, 'examples': [message]})
     return row
 
 
@@ -230,7 +232,7 @@ def Camera "Camera" {
             probe_config = copy.deepcopy(config)
             probe_config['resources']['timeout_s'] = min(45, config['resources']['timeout_s'])
             row = render_once(renderer, prepared, {'complexity': 'low'}, output / 'capabilities' / renderer['name'], probe_config, display)
-            if renderer.get('require_hardware') and renderer.get('kind') == 'usdrecord' and row['status'] == 'ok':
+            if (renderer.get('require_hardware') or renderer.get('device_pattern')) and renderer.get('kind') == 'usdrecord' and row['status'] == 'ok':
                 if not shutil.which('glxinfo'):
                     row.update(status='unavailable', error='glxinfo required to verify Storm hardware identity')
                 else:
@@ -240,6 +242,15 @@ def Camera "Camera" {
                     row['hardware_identity'] = '\n'.join(line.strip() for line in text.splitlines() if any(key in line for key in ('OpenGL vendor string:', 'OpenGL renderer string:', 'OpenGL core profile version string:', 'direct rendering:')))
                     if identity['status'] != 'ok' or 'OpenGL renderer string:' not in text or parse_stats(text)['software_device']:
                         row.update(status='backend_mismatch', error='Storm hardware identity unavailable or software renderer')
+                    if row['status'] == 'ok':
+                        identity_stats = dict(row.get('stats', {}), software_device=parse_stats(text)['software_device'])
+                        mismatch = hardware_error(renderer, identity_stats, row['hardware_identity'])
+                        if mismatch:
+                            code, message = mismatch
+                            row.update(status='backend_mismatch', error=message)
+                            row.setdefault('diagnostics', []).append({'code': code, 'occurrences': 1, 'examples': [message]})
+        if row['status'] != 'ok' and not row.get('diagnostics'):
+            annotate_execution(row)
         row['required'] = renderer.get('required', True)
         capabilities[renderer['name']] = row
     return capabilities
@@ -290,6 +301,25 @@ def historical(case, baseline, config, directory, compatible_host):
     return {'status': 'fail' if failed else 'pass', 'renderers': entries}
 
 
+def summarize_attempts(attempts, repeat):
+    measured = [a for a in attempts if not a.get('warmup') and a['status'] == 'ok']
+    complete = len(measured) == repeat and all(a['status'] == 'ok' for a in attempts)
+    render = {'status': 'ok' if complete else attempts[-1]['status'], 'attempts': attempts,
+              'measurement_count': len(measured), 'measurement_kind': 'median_successful' if complete else 'failed_attempt',
+              'total_wall_s': sum(a.get('wall_s', 0) for a in attempts),
+              'diagnostics': [item for attempt in attempts for item in attempt.get('diagnostics', [])],
+              'stats': attempts[-1].get('stats', {})}
+    # Failures still need timing and RSS evidence, especially timeouts/OOM guards.
+    observations = measured if complete else [attempts[-1]]
+    for field in ('wall_s', 'peak_rss_bytes', 'peak_tree_rss_bytes'):
+        values = [a[field] for a in observations if a.get(field) is not None]
+        render[field] = statistics.median(values) if values else None
+    images = [(index, a['image']) for index, a in enumerate(attempts) if a.get('image')]
+    if images:
+        render['image_attempt'], render['image'] = images[-1]
+    return render
+
+
 def case_run(row, config, output, capabilities, display):
     directory = output / 'cases' / digest(row['id'])[:24]
     directory.mkdir(parents=True, exist_ok=True)
@@ -321,7 +351,7 @@ def case_run(row, config, output, capabilities, display):
             name = renderer['name']
             capability = capabilities[name]
             if capability['status'] != 'ok':
-                case['renders'][name] = {'status': 'unavailable', 'reason': capability.get('error', capability['status']), 'required': renderer.get('required', True)}
+                case['renders'][name] = {'status': 'unavailable', 'reason': capability.get('error', capability['status']), 'required': renderer.get('required', True), 'diagnostics': capability.get('diagnostics', [])}
                 if renderer.get('required', True):
                     case['status'] = 'fail'
                 continue
@@ -332,15 +362,7 @@ def case_run(row, config, output, capabilities, display):
                 attempts.append(attempt)
                 if attempt['status'] != 'ok':
                     break
-            measured = [a for a in attempts if not a['warmup'] and a['status'] == 'ok']
-            render = {'status': 'ok' if len(measured) == render_config.get('repeat', 1) and all(a['status'] == 'ok' for a in attempts) else 'render_error', 'attempts': attempts}
-            if measured:
-                render['image'] = measured[-1]['image']
-                render['stats'] = measured[-1].get('stats', {})
-                for field in ('wall_s', 'peak_rss_bytes', 'peak_tree_rss_bytes'):
-                    values = [a[field] for a in measured if a.get(field) is not None]
-                    render[field] = statistics.median(values) if values else None
-                render['measurement_count'] = len(measured)
+            render = summarize_attempts(attempts, render_config.get('repeat', 1))
             case['renders'][name] = render
             if render['status'] != 'ok':
                 case['status'] = 'fail'
@@ -365,6 +387,7 @@ def case_run(row, config, output, capabilities, display):
                     item.update(status='invalid_comparison', error=str(exc))
                     case['status'] = 'fail'
             case['comparisons'].append(item)
+    case['failure_codes'] = failure_codes(case) if case['status'] not in SUCCESS_STATUSES else []
     write(checkpoint, case)
     return case
 
@@ -382,12 +405,14 @@ def summarize(result):
     for dataset in {case.get('dataset', 'explicit') for case in result['cases']}:
         cases = [c for c in result['cases'] if c.get('dataset', 'explicit') == dataset]
         result['summary']['datasets'][dataset] = dict(Counter(c['status'] for c in cases))
-    success = {'pass', 'support_or_empty', 'empty_for_purposes', 'xfail'}
+    success = SUCCESS_STATUSES
+    result['summary']['failure_code_counts'] = dict(Counter(code for c in result['cases'] if c['status'] not in success for code in c.get('failure_codes', failure_codes(c))))
+    result['failed_ids'] = [c['id'] for c in result['cases'] if c['status'] not in success]
     result['summary']['comparison_status_counts'] = dict(Counter(p['status'] for c in result['cases'] for p in c.get('comparisons', [])))
     result['summary']['renderer_totals'] = {}
     for name in result['capabilities']:
         renders = [c.get('renders', {}).get(name, {}) for c in result['cases']]
-        result['summary']['renderer_totals'][name] = {'completed': sum(r.get('status') == 'ok' for r in renders), 'sum_wall_s': sum(r.get('wall_s') or 0 for r in renders), 'max_peak_rss_bytes': max((r.get('peak_rss_bytes') or 0 for r in renders), default=0)}
+        result['summary']['renderer_totals'][name] = {'completed': sum(r.get('status') == 'ok' for r in renders), 'sum_wall_s': sum(r.get('wall_s') or 0 for r in renders), 'total_attempt_wall_s': sum(r.get('total_wall_s') or 0 for r in renders), 'max_peak_rss_bytes': max((r.get('peak_rss_bytes') or 0 for r in renders), default=0)}
     result['summary']['failed'] = bool(result['summary']['capability_failures']) or any(c['status'] not in success for c in result['cases']) or any(d.get('required', True) and not d['available'] for d in result.get('datasets', []))
 
 
@@ -431,6 +456,47 @@ def cpu_identity():
     return {'model': model, 'logical_cores': os.cpu_count()}
 
 
+def requested_cases(eligible, requested):
+    available = {row['id']: row for row in eligible}
+    selected, seen = [], set()
+    for identifier in requested:
+        if not isinstance(identifier, str):
+            raise ValueError('case selections must contain string IDs')
+        if identifier in seen:
+            continue
+        seen.add(identifier)
+        if identifier in available:
+            selected.append(copy.deepcopy(available[identifier]))
+            continue
+        source, separator, frame = identifier.rpartition('#frame=')
+        if not separator or source not in available:
+            raise ValueError('requested case missing or excluded: ' + identifier)
+        try:
+            value = 'default' if frame == 'default' else float(frame)
+        except ValueError as exc:
+            raise ValueError('invalid frame in requested ID: ' + identifier) from exc
+        if value != 'default' and not math.isfinite(value):
+            raise ValueError('requested frame must be finite')
+        row = copy.deepcopy(available[source])
+        row.update(id=identifier, source_id=source)
+        row['render'] = dict(row.get('render', {}), frame=value)
+        selected.append(row)
+    return sorted(selected, key=lambda row: row['id'])
+
+
+def rerun_ids(path, failures_only=False):
+    data = json.loads(path.read_text())
+    if isinstance(data, list) and not failures_only:
+        return data
+    if not isinstance(data, dict):
+        raise ValueError('failed-from requires a results JSON object')
+    if failures_only:
+        if not isinstance(data.get('cases'), list):
+            raise ValueError('failed-from requires a cases array')
+        return [case['id'] for case in data['cases'] if case.get('status') not in SUCCESS_STATUSES]
+    return data.get('selected_ids', [case['id'] for case in data.get('cases', [])])
+
+
 def run(config, args):
     if args.max_input_mib is not None and (not math.isfinite(args.max_input_mib) or args.max_input_mib <= 0):
         raise ValueError('--max-input-mib must be positive and finite')
@@ -454,21 +520,17 @@ def run(config, args):
         else:
             eligible.append(row)
     selected = sample(eligible, args.sample_percent, args.seed) if args.mode == 'probe' else eligible
-    if args.cases_from:
-        requested = json.loads(args.cases_from.read_text())
-        if isinstance(requested, dict):
-            requested = requested.get('selected_ids', [r['id'] for r in requested.get('cases', [])])
-        wanted = set(requested)
-        missing = wanted - {r['id'] for r in eligible}
-        if missing:
-            raise ValueError('requested cases missing or excluded: ' + ', '.join(sorted(missing)))
-        selected = [r for r in eligible if r['id'] in wanted]
-    selected_scene_count = len(selected)
+    if args.cases_from or args.failed_from:
+        selected = requested_cases(eligible, rerun_ids(args.cases_from or args.failed_from, bool(args.failed_from)))
+    selected_scene_count = len({row.get('source_id', row['id']) for row in selected})
     if args.frames:
+        if any(row.get('source_id') for row in selected):
+            raise ValueError('--frames cannot replace frames in an explicit frame-ID rerun')
         expanded = []
         for row in selected:
             for frame in args.frames:
                 item = copy.deepcopy(row)
+                item['source_id'] = row['id']
                 item['id'] += '#frame=' + frame
                 item['render'] = dict(item.get('render', {}), frame='default' if frame == 'default' else float(frame))
                 expanded.append(item)
@@ -476,7 +538,7 @@ def run(config, args):
     config['_resume'] = args.resume
     config['_binary_hashes'] = {r['name']: file_hash(r.get('executable', r.get('argv', [''])[0])) for r in config['renderers']}
     selection = {'schema_version': 1, 'mode': args.mode, 'sample_percent': args.sample_percent if args.mode == 'probe' else None,
-                 'seed': args.seed, 'selection_method': 'explicit_ids' if args.cases_from else ('stratified_hash_round_up' if args.mode == 'probe' else 'all'), 'selected_scene_count': selected_scene_count, 'effective_percent': 100 * selected_scene_count / len(eligible) if eligible else 0, 'inventory_count': len(rows), 'eligible_count': len(eligible),
+                 'seed': args.seed, 'selection_method': 'failed_ids' if args.failed_from else 'explicit_ids' if args.cases_from else ('stratified_hash_round_up' if args.mode == 'probe' else 'all'), 'selected_scene_count': selected_scene_count, 'effective_percent': 100 * selected_scene_count / len(eligible) if eligible else 0, 'inventory_count': len(rows), 'eligible_count': len(eligible),
                  'excluded': dict(excluded), 'selected_ids': [r['id'] for r in selected], 'cases': selected,
                  'strata': dict(Counter('%s/%s/10^%s' % (r.get('dataset'), r.get('group'), int(math.log10(max(1, r.get('bytes', 1))))) for r in selected))}
     write(output / 'selection.json', selection)
@@ -492,6 +554,13 @@ def run(config, args):
         write(output / 'results.json', result)
         report(result, output / 'report.html')
         return 77
+    if args.failed_from and not selected:
+        result['summary'] = {'failed': False, 'completed': 0, 'status': 'no_failures_to_rerun'}
+        result['failed_ids'] = []
+        write(output / 'results.json', result)
+        write(output / 'failed_ids.json', [])
+        report(result, output / 'report.html')
+        return 0
     if not selected:
         result['error'] = 'no eligible cases selected'
         result['summary'] = {'failed': True, 'completed': 0}
@@ -521,9 +590,11 @@ def run(config, args):
                 case['expectation'] = expectation
                 case['actual_status'] = actual
                 case['status'] = 'xfail' if actual == expectation['status'] else ('xpass' if actual == 'pass' else actual)
+            case['failure_codes'] = failure_codes(case) if case['status'] not in SUCCESS_STATUSES else []
             result['cases'].append(case)
             summarize(result)
             write(output / 'results.json', result)
+            write(output / 'failed_ids.json', result['failed_ids'])
             # Avoid quadratic HTML work for large batches; JSON is always current.
             if index == 0 or (index + 1) % 25 == 0:
                 report(result, output / 'report.html')
@@ -540,6 +611,7 @@ def run(config, args):
     summarize(result)
     write(output / 'results.json', result)
     report(result, output / 'report.html')
+    write(output / 'failed_ids.json', result['failed_ids'])
     print(json.dumps(result['summary'], indent=2))
     return int(result['summary']['failed'])
 
@@ -550,6 +622,7 @@ def main(argv=None):
     for command in ('list', 'run'):
         sub = subparsers.add_parser(command)
         sub.add_argument('--config', type=Path, default=HERE / 'presets.json')
+        sub.add_argument('--profile', help='named renderer/settings profile, e.g. amd')
         sub.add_argument('--preset', help='comma-separated dataset names; default all')
         sub.add_argument('--out', type=Path, required=True)
         if command == 'run':
@@ -557,7 +630,9 @@ def main(argv=None):
             sub.add_argument('--sample-percent', type=float, default=5)
             sub.add_argument('--seed', type=int, default=0)
             sub.add_argument('--baseline', type=Path)
-            sub.add_argument('--cases-from', type=Path)
+            selection = sub.add_mutually_exclusive_group()
+            selection.add_argument('--cases-from', type=Path)
+            selection.add_argument('--failed-from', type=Path, help='rerun failing case IDs from results.json')
             sub.add_argument('--resume', action='store_true')
             sub.add_argument('--optional', action='store_true', help='exit 77 if the external dataset is absent')
             sub.add_argument('--no-full-scenes', action='store_true', help='exclude preset complete scene roots before sampling')
@@ -584,7 +659,7 @@ def main(argv=None):
         if args.command == 'report':
             report(json.loads(args.input.read_text()), args.out)
             return 0
-        config = load(args.config, args.preset.split(',') if args.preset else None)
+        config = load(args.config, args.preset.split(',') if args.preset else None, args.profile)
         if args.command == 'list':
             rows, datasets = inventory(config)
             write(args.out, {'schema_version': 1, 'datasets': datasets, 'cases': rows})

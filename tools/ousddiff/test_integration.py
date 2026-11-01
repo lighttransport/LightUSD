@@ -108,6 +108,16 @@ def Camera "AuthoredCamera" {
             self.assertEqual(runner.main(history_argv), 0)
             historical = json.loads((second / 'results.json').read_text())
             self.assertTrue(all(case['historical']['status'] == 'pass' for case in historical['cases']))
+            failures = root / 'failed-run.json'
+            failures.write_text(json.dumps({'cases': [{'id': 'fixture#frame=2', 'status': 'fail'}, {'id': 'fixture#frame=3', 'status': 'pass'}]}))
+            rerun_output = root / 'rerun'
+            self.assertEqual(runner.main(['run', '--config', str(settings), '--failed-from', str(failures), '--no-full-scenes', '--out', str(rerun_output)]), 0)
+            rerun = json.loads((rerun_output / 'results.json').read_text())
+            self.assertEqual(rerun['selected_count'], 1)
+            self.assertEqual(rerun['cases'][0]['id'], 'fixture#frame=2')
+            self.assertEqual(rerun['cases'][0]['prepared']['frame'], 2)
+            self.assertEqual(json.loads((rerun_output / 'failed_ids.json').read_text()), [])
+
 
 
 if __name__ == '__main__':
