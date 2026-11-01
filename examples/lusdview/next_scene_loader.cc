@@ -9139,8 +9139,16 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     }
     b.dm.vertices.insert(b.dm.vertices.end(), source.vertices.begin(),
                          source.vertices.end());
+    const uint32_t indexOffset =
+        static_cast<uint32_t>(b.dm.indices.size());
     b.dm.indices.reserve(b.dm.indices.size() + source.indices.size());
     for (uint32_t index : source.indices) b.dm.indices.push_back(vbase + index);
+    // A plain static mesh can share a batch with a mesh that already added
+    // material submeshes. The plain append must extend the submesh range too,
+    // otherwise its indices are present in the EBO but outside every drawn
+    // submesh (the shaded pass disappears while the wire pass still shows it).
+    appendLogicalSubmesh(&b, indexOffset,
+                         static_cast<uint32_t>(source.indices.size()), 0, -1);
     b.dm.sourceFaceId.insert(b.dm.sourceFaceId.end(), source.sourceFaceId.begin(),
                              source.sourceFaceId.end());
     if (!source.wireframeIndices.empty()) {
