@@ -2909,27 +2909,6 @@ bool VulkanRenderer::createPipeline(std::string* err) {
                                     &wireXrayPipeline_) != VK_SUCCESS)
         wireXrayPipeline_ = VK_NULL_HANDLE;
     }
-    if (wireVs && wireFs) {
-      VkPipelineDepthStencilStateCreateInfo hiddenDs = wireDs;
-      hiddenDs.depthTestEnable = VK_FALSE;
-      VkPipelineColorBlendAttachmentState hiddenAttachment = cba;
-      hiddenAttachment.blendEnable = VK_TRUE;
-      hiddenAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-      hiddenAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-      hiddenAttachment.colorBlendOp = VK_BLEND_OP_ADD;
-      hiddenAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-      hiddenAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-      hiddenAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
-      VkPipelineColorBlendStateCreateInfo hiddenBlend = cb;
-      hiddenBlend.pAttachments = &hiddenAttachment;
-      VkGraphicsPipelineCreateInfo hiddenCi = wireCi;
-      hiddenCi.pDepthStencilState = &hiddenDs;
-      hiddenCi.pColorBlendState = &hiddenBlend;
-      if (vkCreateGraphicsPipelines(device_, pipelineCache, 1, &hiddenCi,
-                                    nullptr, &wireOccludedPipeline_) !=
-          VK_SUCCESS)
-        wireOccludedPipeline_ = VK_NULL_HANDLE;
-    }
     if (wireVs) vkDestroyShaderModule(device_, wireVs, nullptr);
     if (wireFs) vkDestroyShaderModule(device_, wireFs, nullptr);
     reportPipeline("authored cage wire");
@@ -16483,14 +16462,11 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
 
     // Draw authored polygon boundaries, not renderer triangulation or generated
     // tessellation edges. This matches usdview's control-cage overlay.
-    // X-ray only applies to the scene wireframe; the selection cage keeps its
-    // own selection-display depth mode when scene wireframe is off.
+    // Scene wireframe and selection display have independent X-ray settings:
+    // bind the appropriate depth-tested / no-depth pipeline per mesh.
     const bool wireXrayActive = wireXray_ && wireMode_ != 0;
-    const VkPipeline wirePl =
-        (wireXrayActive && wireXrayPipeline_) ? wireXrayPipeline_ : wirePipeline_;
     if ((wireMode_ != 0 || (highlightMeshIndex_ >= 0 && !highlightHasSubset_)) &&
-        wirePl != VK_NULL_HANDLE) {
-      vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, wirePl);
+        wirePipeline_ != VK_NULL_HANDLE) {
       if (dynCullSupported_) vkCmdSetCullMode_(cb, VK_CULL_MODE_NONE);
       if (!materialSets_.empty() && materialSets_[0]) {
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -16516,6 +16492,10 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         if (!mesh.vbo || !mesh.wireEbo || mesh.wireIndexCount == 0 ||
             mesh.instanceCount > 0)
           continue;
+        const bool xray = selected ? highlightXray_ : wireXrayActive;
+        const VkPipeline meshWirePl =
+            (xray && wireXrayPipeline_) ? wireXrayPipeline_ : wirePipeline_;
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, meshWirePl);
         VkDescriptorSet deform =
             mesh.deformDesc ? mesh.deformDesc : dummyDeformDesc_;
         if (deform) {
@@ -16541,21 +16521,6 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         // buffer of a subdivided mesh has no deform data (see wire.vert).
         pc.ids[3] = mesh.wireVbo == VK_NULL_HANDLE ? 1 : 0;
         vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(pc), &pc);
-        if (selected && !wireXrayActive && wireOccludedPipeline_) {
-          // A subdivision control cage can lie inside its smooth limit surface.
-          // Draw it faintly first, then redraw depth-visible edges at full
-          // strength. This preserves occlusion cues without losing the cage.
-          pc.baseColor[3] = 0.18f;
-          vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(pc),
-                             &pc);
-          vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            wireOccludedPipeline_);
-          vkCmdDrawIndexed(cb, mesh.wireIndexCount, 1, 0, 0, 0);
-          pc.baseColor[3] = 1.0f;
-          vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(pc),
-                             &pc);
-          vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, wirePl);
-        }
         vkCmdDrawIndexed(cb, mesh.wireIndexCount, 1, 0, 0, 0);
         if (std::getenv("LUSDVIEW_DEBUG_WIRE"))
           LOGI("Vulkan authored cage draw: mesh=%zu indices=%u selected=%d",
@@ -17497,7 +17462,6 @@ void VulkanRenderer::shutdown() {
   if (pipeline_) { vkDestroyPipeline(device_, pipeline_, nullptr); pipeline_ = VK_NULL_HANDLE; }
   if (environmentPipeline_) { vkDestroyPipeline(device_, environmentPipeline_, nullptr); environmentPipeline_ = VK_NULL_HANDLE; }
   if (wirePipeline_) { vkDestroyPipeline(device_, wirePipeline_, nullptr); wirePipeline_ = VK_NULL_HANDLE; }
-  if (wireOccludedPipeline_) { vkDestroyPipeline(device_, wireOccludedPipeline_, nullptr); wireOccludedPipeline_ = VK_NULL_HANDLE; }
   if (wireDepthPipeline_) { vkDestroyPipeline(device_, wireDepthPipeline_, nullptr); wireDepthPipeline_ = VK_NULL_HANDLE; }
   if (wireXrayPipeline_) { vkDestroyPipeline(device_, wireXrayPipeline_, nullptr); wireXrayPipeline_ = VK_NULL_HANDLE; }
   if (shadowPipeline_) { vkDestroyPipeline(device_, shadowPipeline_, nullptr); shadowPipeline_ = VK_NULL_HANDLE; }

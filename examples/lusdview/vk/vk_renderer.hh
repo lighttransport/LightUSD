@@ -715,7 +715,6 @@ class VulkanRenderer final : public Renderer {
   VkPipeline pipeline_{VK_NULL_HANDLE};
   VkPipeline environmentPipeline_{VK_NULL_HANDLE};
   VkPipeline wirePipeline_{VK_NULL_HANDLE};
-  VkPipeline wireOccludedPipeline_{VK_NULL_HANDLE};
   // Color-write-disabled fill used as the hidden-line depth prepass in
   // wireframe-only mode.
   VkPipeline wireDepthPipeline_{VK_NULL_HANDLE};
