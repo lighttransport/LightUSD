@@ -8988,7 +8988,26 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       std::min<size_t>(stream ? (size_t(512) << 10) : (size_t(8) << 20),
                        stagingVertexCap);
 
+  static const bool timeBatch =
+      std::getenv("LUSDVIEW_TIME_BATCH") != nullptr;
+  using BatchClock = std::chrono::steady_clock;
+  double batchLoopSeconds = 0.0;
+  double batchStageSeconds = 0.0;
+  double batchAppendSeconds = 0.0;
+  double batchFlushSeconds = 0.0;
+  struct BatchScope {
+    BatchClock::time_point t0;
+    double* acc;
+    bool on;
+    ~BatchScope() {
+      if (on) {
+        *acc += std::chrono::duration<double>(BatchClock::now() - t0).count();
+      }
+    }
+  };
+
   auto flushBatch = [&](Batch& b) {
+    BatchScope flushTimer{BatchClock::now(), &batchFlushSeconds, timeBatch};
     if (b.dm.vertices.empty()) return;
     if (!b.anyColor) b.dm.vertexColors.clear();
     if (!b.anyAlpha) b.dm.vertexAlpha.clear();
@@ -9141,22 +9160,29 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                          source.vertices.end());
     const uint32_t indexOffset =
         static_cast<uint32_t>(b.dm.indices.size());
-    b.dm.indices.reserve(b.dm.indices.size() + source.indices.size());
-    for (uint32_t index : source.indices) b.dm.indices.push_back(vbase + index);
+    const size_t indexCount = source.indices.size();
+    b.dm.indices.resize(indexOffset + indexCount);
+    {
+      uint32_t* dst = b.dm.indices.data() + indexOffset;
+      for (size_t i = 0; i < indexCount; ++i)
+        dst[i] = vbase + source.indices[i];
+    }
     // A plain static mesh can share a batch with a mesh that already added
     // material submeshes. The plain append must extend the submesh range too,
     // otherwise its indices are present in the EBO but outside every drawn
     // submesh (the shaded pass disappears while the wire pass still shows it).
     appendLogicalSubmesh(&b, indexOffset,
-                         static_cast<uint32_t>(source.indices.size()), 0, -1);
+                         static_cast<uint32_t>(indexCount), 0, -1);
     b.dm.sourceFaceId.insert(b.dm.sourceFaceId.end(), source.sourceFaceId.begin(),
                              source.sourceFaceId.end());
     if (!source.wireframeIndices.empty()) {
       b.dm.hasWireframe = true;
-      b.dm.wireframeIndices.reserve(b.dm.wireframeIndices.size() +
-                                    source.wireframeIndices.size());
-      for (uint32_t index : source.wireframeIndices)
-        b.dm.wireframeIndices.push_back(vbase + index);
+      const size_t wireOffset = b.dm.wireframeIndices.size();
+      const size_t wireCount = source.wireframeIndices.size();
+      b.dm.wireframeIndices.resize(wireOffset + wireCount);
+      uint32_t* dst = b.dm.wireframeIndices.data() + wireOffset;
+      for (size_t i = 0; i < wireCount; ++i)
+        dst[i] = vbase + source.wireframeIndices[i];
     }
     b.nextFaceId += static_cast<uint32_t>(sourceMesh.face_count());
   };
@@ -9595,6 +9621,16 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             if (convertedMesh &&
                 FillFlatGeometry(result->mesh, &result->draw,
                                  &result->vertexToPoint)) {
+              // Build the authored control cage here, in the conversion worker:
+              // it is a per-mesh read-only stage query, and doing it in the
+              // serial batching loop was a large part of the load time.
+              BuildAuthoredControlCage(
+                  stage_owner.get(), meshPrims[i].path, time,
+                  result->vertexToPoint, result->mesh.point_count(),
+                  &result->draw);
+              result->draw.hasWireframe =
+                  !result->draw.wireframeIndices.empty() ||
+                  !result->draw.wireframeVertices.empty();
               if (!result->mesh.has_skin() &&
                   !result->mesh.has_blend_shapes() &&
                   !meshPrims[i].animatedWorld) {
@@ -9632,6 +9668,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   };
 
   for (size_t meshIndex = 0; meshIndex < meshPrims.size(); ++meshIndex) {
+    BatchScope loopTimer{BatchClock::now(), &batchLoopSeconds, timeBatch};
     if (ctrl && ctrl->cancel.load()) break;
     if (capped) break;
     if (opts.maxMeshConversions > 0 &&
@@ -9740,15 +9777,17 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         releasePendingPrim(meshRecord.path, meshRecord.rootLayerResourceId);
         continue;
       }
+      BuildAuthoredControlCage(stage_owner.get(), meshPath, time,
+                               vertexToPoint, m.point_count(), &loc);
+      loc.hasWireframe = !loc.wireframeIndices.empty() ||
+                         !loc.wireframeVertices.empty();
     }
     if (loc.vertices.empty()) {
       releasePendingPrim(meshRecord.path, meshRecord.rootLayerResourceId);
       continue;
     }
-    BuildAuthoredControlCage(stage_owner.get(), meshPath, time, vertexToPoint,
-                             m.point_count(), &loc);
-    loc.hasWireframe = !loc.wireframeIndices.empty() ||
-                       !loc.wireframeVertices.empty();
+    const auto stageStart =
+        timeBatch ? BatchClock::now() : BatchClock::time_point{};
     const std::string backMaterialPath = cachedBackMaterialPath(meshPath);
     bool hasSubsetMaterialBindings = false;
     const lightusd_prim meshPrim =
@@ -9772,6 +9811,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       }
       if (hasSubsetMaterialBindings) break;
     }
+    if (timeBatch) {
+      batchStageSeconds +=
+          std::chrono::duration<double>(BatchClock::now() - stageStart).count();
+    }
     const bool plainStatic =
         worldBaked && !m.has_skin() && !m.has_blend_shapes() &&
         meshRecord.materialPath.empty() && backMaterialPath.empty() &&
@@ -9789,8 +9832,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       admittedGeometryBytes +=
           loc.vertices.size() * sizeof(DrawVertex) +
           loc.indices.size() * sizeof(uint32_t);
-      appendPlainStatic(meshRecord.purpose, meshRecord.proxyFallback, loc, m,
-                        meshRecord.path);
+      {
+        BatchScope plainTimer{BatchClock::now(), &batchAppendSeconds,
+                              timeBatch};
+        appendPlainStatic(meshRecord.purpose, meshRecord.proxyFallback, loc, m,
+                          meshRecord.path);
+      }
       const tydn::Float3& lo = m.bbox_min;
       const tydn::Float3& hi = m.bbox_max;
       float mf[16];
@@ -10168,6 +10215,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       b.dm.morphOffsetCount.push_back(cnt);
     };
 
+    const auto appendStart =
+        timeBatch ? BatchClock::now() : BatchClock::time_point{};
     if (triMat.empty()) {
       // --- Single-material fast path: append the whole mesh to one batch. ---
       // A Ptex file's face ids are local to one source mesh. Isolate that mesh
@@ -10415,6 +10464,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         if (!needsPtex)
           b.nextFaceId += static_cast<uint32_t>(m.face_count());
       }
+    }
+    if (timeBatch) {
+      batchAppendSeconds += std::chrono::duration<double>(
+                                BatchClock::now() - appendStart)
+                                .count();
     }
 
     // Provisional scene bounds, from the 8 local-bbox corners pushed through the
@@ -10871,6 +10925,14 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     if (stream)
       stream->pushFailed(err ? *err : "next: no renderable geometry produced");
     return false;
+  }
+  if (timeBatch) {
+    std::fprintf(stderr,
+                 "[batch] loop=%.3fs stage=%.3fs append=%.3fs flush=%.3fs "
+                 "other=%.3fs\n",
+                 batchLoopSeconds, batchStageSeconds, batchAppendSeconds,
+                 batchFlushSeconds,
+                 batchLoopSeconds - batchStageSeconds - batchAppendSeconds);
   }
   if (timing) {
     LOGI("next timing: ptex atlas build %.3f s (%zu file(s))",
